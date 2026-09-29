@@ -627,12 +627,13 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
   const nginxConf = repo(path.join('nginx', 'phytoemagry.conf'));
 
   /**
-   * Directivas reales de una config de nginx: sin comentarios y con las dos
-   * líneas que cambian a propósito entre contenedor y servidor
-   * (`root` y `server_name`) normalizadas.
+   * Directivas reales de una config de nginx: sin comentarios y con las
+   * diferencias a propósito entre contenedor y servidor normalizadas (el
+   * contenedor escucha en el puerto que le da el panel: `${PORT}`).
    */
   const directives = (text) =>
     text
+      .replaceAll('${PORT}', '80')
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '' && !line.startsWith('#'))
@@ -641,19 +642,27 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
 
   /** Config de nginx escrita dentro del Dockerfile (heredoc de la etapa 2). */
   const inlineConfig = () => {
-    const start = dockerfile.indexOf("<<'NGINX_CONF'");
+    const start = dockerfile.indexOf("<<'NGINX_TEMPLATE'");
     if (start === -1) return '';
-    const end = dockerfile.indexOf('\nNGINX_CONF', start);
+    const end = dockerfile.indexOf('\nNGINX_TEMPLATE', start);
     return dockerfile.slice(dockerfile.indexOf('\n', start) + 1, end);
   };
 
   it('el Dockerfile trae dentro la misma config que nginx/phytoemagry.conf', () => {
     const inline = inlineConfig();
     // Sin esto, cambiar una y olvidar la otra publicaría dos comportamientos.
-    expect(inline).toContain('listen 80;');
+    expect(inline).toContain('listen ${PORT};');
     expect(directives(inline)).toEqual(directives(nginxConf));
     expect(nginxConf).toContain('root /var/www/phytoemagry;');
     expect(inline).toContain('root /usr/share/nginx/html;');
+  });
+
+  it('el puerto de escucha se puede ajustar desde el panel (PORT), con 80 por defecto', () => {
+    // Easypanel y otros paneles definen PORT en tiempo de ejecución: si la
+    // plantilla no lo usara, el proxy apuntaría a un puerto donde nadie escucha.
+    expect(dockerfile).toContain('ENV PORT=80');
+    expect(dockerfile).toContain('/etc/nginx/templates/default.conf.template');
+    expect(dockerfile).toContain('EXPOSE 80');
   });
 
   it('la imagen compila, verifica y sirve solo los archivos generados', () => {

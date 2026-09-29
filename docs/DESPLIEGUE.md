@@ -8,6 +8,7 @@ datos, ni proceso Node en producción, ni secretos dentro de la imagen.
 - Dockerfile: raíz del proyecto (dos etapas: build + nginx). **Lleva dentro la configuración del servidor web**, así que no hay que copiar ningún archivo de configuración a mano
 - Compose: `docker-compose.yml` (opcional pero recomendado: trae los valores y el healthcheck)
 - `nginx/phytoemagry.conf`: la misma configuración, para un servidor con nginx del sistema (sin Docker)
+- **Easypanel**: ver §3 (no hace falta terminal: el panel clona, construye y da el HTTPS)
 
 > **Requisito**: Docker 23 o superior (2019+ con Compose v2). Comprueba con
 > `docker --version`. Si tienes uno más antiguo, arranca el build con
@@ -69,7 +70,43 @@ docker compose down          # parar (los datos no se pierden: no hay datos)
 
 ---
 
-## 3. Sin Compose (con `docker` a secas)
+## 3. Easypanel (con el panel, sin terminal)
+
+Si tu servidor ya tiene Easypanel, este es el camino más rápido: el panel clona
+el repositorio, construye la imagen y te da el HTTPS automático.
+
+1. **Crear el servicio**: proyecto → **+ Service** → **App**.
+2. **Source** → *Git*:
+   - Repository: `https://github.com/JUNIORPRUEVA/phytoemagrywed.git`
+   - Branch: `main`
+3. **Build** → *Dockerfile*, con la ruta `Dockerfile` (está en la raíz del repo).
+   El panel se encarga del `docker build`; no hay que escribir ningún comando.
+4. **Environment** (variables públicas; se pasan también en el build):
+
+   | Variable | Valor |
+   | --- | --- |
+   | `PHYTO_WHATSAPP_NUMBER` | `18297853794` |
+   | `SEO_SITE_URL` | `https://tudominio.com` (sin barra final) |
+   | `PHYTO_CRM_ENDPOINT` | *(opcional)* |
+   | `PHYTO_META_PIXEL_ID` | *(opcional)* |
+   | `CONTACT_EMAIL` | *(opcional)* |
+
+   Si no pones ninguna, la imagen usa los valores por defecto del Dockerfile
+   (que ya llevan el número real de WhatsApp).
+5. **Domains** → añade tu dominio y pon el **puerto del proxy = 80** (es donde
+   escucha nginx). Easypanel emite el certificado Let's Encrypt por su cuenta.
+
+   > **Si el panel define la variable `PORT`** (algunos paneles lo hacen), la
+   > imagen escucha en ese puerto: pon **el mismo número** en el puerto del proxy.
+   > Sin `PORT`, escucha en el 80. Nunca hay que tocar el Dockerfile.
+6. **Deploy**.
+
+Cada vez que hagas `git push`, en Easypanel solo tienes que pulsar **Deploy**
+(o activar el *auto deploy* del servicio).
+
+---
+
+## 4. Sin Compose (con `docker` a secas)
 
 ```bash
 docker build -t phytoemagry .
@@ -81,7 +118,7 @@ docker run -d --name phytoemagry \
 
 ---
 
-## 4. Cambiar los datos públicos (número, dominio, pixel…)
+## 5. Cambiar los datos públicos (número, dominio, pixel…)
 
 Todas las variables de la web son **públicas** (acaban en el HTML/JS): no hay
 secretos que proteger y por eso viajan como *build args*.
@@ -115,7 +152,7 @@ docker compose up -d --build
 
 ---
 
-## 5. Dominio y HTTPS
+## 6. Dominio y HTTPS
 
 El contenedor escucha en **HTTP:80** y acepta cualquier `Host`. El certificado se
 gestiona **delante**, en el proxy del servidor. Dos caminos habituales:
@@ -155,7 +192,7 @@ compartir el enlace por WhatsApp.
 
 ---
 
-## 6. Comprobaciones después de publicar
+## 7. Comprobaciones después de publicar
 
 ```bash
 # La página responde y trae el número real de WhatsApp
@@ -174,7 +211,7 @@ frasco y ver que el chat abre con el pedido escrito y el número correcto.
 
 ---
 
-## 7. Problemas típicos
+## 8. Problemas típicos
 
 | Síntoma | Causa y solución |
 | --- | --- |
@@ -183,11 +220,12 @@ frasco y ver que el chat abre con el pedido escrito y el número correcto.
 | Al cambiar una variable no veo el cambio | Hay que reconstruir: `docker compose up -d --build` (los valores van dentro del HTML) |
 | El build falla en `npm run verify` | Es intencionado: hay un test en rojo, un precio incoherente, una foto que falta o un número de atención que no coincide. El propio mensaje dice qué arreglar |
 | Error raro al leer el Dockerfile (`unknown instruction`, heredoc) | Docker demasiado antiguo: `DOCKER_BUILDKIT=1 docker build -t phytoemagry .` o actualiza Docker (`docker --version` debe ser 23 o superior) |
+| Easypanel: el dominio responde **502** o "no hay servicio escuchando" | El **puerto del proxy** no es el que usa la app. Por defecto es **80**; si el panel define la variable `PORT`, pon ese mismo número en el dominio (`docker logs` lo confirma: nginx registra en qué puerto escucha) |
 | Quiero ver la web sin publicar | `docker run --rm -p 8080:80 phytoemagry` en tu máquina, o `npm run preview` en local |
 
 ---
 
-## 8. Alternativa sin Docker
+## 9. Alternativa sin Docker
 
 ```bash
 npm ci

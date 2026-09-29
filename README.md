@@ -174,8 +174,19 @@ npm run build     # genera dist/
 ```
 
 `dist/` es 100 % estático: Nginx, Caddy, CDN o cualquier hosting sirven la carpeta.
-Incluye `nginx/phytomagry.conf` (cache, compresión y cabeceras de seguridad) y un
-`Dockerfile` multi-stage (`docker build -t phytoemagry . && docker run -p 8080:80 phytoemagry`).
+Incluye un `Dockerfile` **autocontenido** (compila con tests y sirve con nginx;
+lleva dentro su propia config del servidor) y un `docker-compose.yml`.
+
+```bash
+docker compose up -d --build        # o: docker build -t phytoemagry . && docker run -p 8080:80 phytoemagry
+```
+
+La imagen funciona tal cual en **Easypanel, Dokploy o Coolify** (servicio *App* →
+Git → Dockerfile; puerto del proxy 80, o el que indique `PORT`). Guía completa,
+dominio y HTTPS: [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
+
+Para un servidor con nginx del sistema, el equivalente de la config del
+contenedor está en `nginx/phytoemagry.conf`.
 
 La cabecera CSP recomendada se genera en cada build en `dist/csp-header.txt` con
 los hashes reales de los scripts inline (no hace falta `'unsafe-inline'`).

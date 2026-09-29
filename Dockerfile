@@ -17,6 +17,11 @@
 #  O con Compose (trae los valores y el healthcheck):
 #    docker compose up -d --build
 #
+#  EASYPANEL / DOKPLOY / COOLIFY (paneles con Docker):
+#    Service → App → Source: Git (este repo, branch main)
+#    Build: Dockerfile (ruta `Dockerfile`)  ·  Domains: puerto del proxy 80
+#    Environment: PHYTO_WHATSAPP_NUMBER, SEO_SITE_URL, ... (llegan al build)
+#
 #  NOTA: el Dockerfile necesita el CÓDIGO del proyecto (src/, public/,
 #  package.json...), que ya viaja en el repositorio. No es un archivo suelto:
 #  `docker build` se ejecuta sobre la carpeta del proyecto.
@@ -61,16 +66,23 @@ RUN npm run verify
 # ---------------------------------------------------------------- etapa 2: nginx
 FROM nginx:1.27-alpine AS runtime
 
+# Puerto de escucha. 80 por defecto para `docker run -p 8080:80`.
+# Los paneles (Easypanel, Dokploy, Coolify...) suelen definir `PORT` en tiempo de
+# ejecución: si lo hacen, nginx escucha ahí y solo hay que poner ese mismo número
+# en el puerto del proxy/dominio. Ver docs/DESPLIEGUE.md.
+ENV PORT=80
+
 # Config del servidor web, escrita aquí mismo: este Dockerfile no depende de
 # ningún otro archivo de configuración. (Para un servidor con nginx del sistema,
 # el equivalente está en nginx/phytoemagry.conf.)
 #
-# `tr -d '\015'` quita los retornos de carro: si el proyecto se compila desde un
-# Windows con CRLF, la config llega igualmente en LF al contenedor.
-RUN <<'NGINX_CONF' tr -d '\015' > /etc/nginx/conf.d/default.conf
+# Se guarda como PLANTILLA: el entrypoint oficial de nginx sustituye ${PORT} al
+# arrancar (solo variables de entorno, así que $uri, $host y compañía quedan
+# intactos).
+COPY <<'NGINX_TEMPLATE' /etc/nginx/templates/default.conf.template
 server {
-    listen 80;
-    listen [::]:80;
+    listen ${PORT};
+    listen [::]:${PORT};
     server_name _;
 
     root /usr/share/nginx/html;
@@ -127,7 +139,11 @@ server {
     location ~ /\.(?!well-known) { deny all; }
     location ~* \.(?:map|md|json)$ { deny all; }
 }
-NGINX_CONF
+NGINX_TEMPLATE
+
+# CRLF → LF (por si el build se lanza desde un Windows con saltos de línea CRLF).
+RUN tr -d '\015' < /etc/nginx/templates/default.conf.template > /tmp/conf \
+    && mv /tmp/conf /etc/nginx/templates/default.conf.template
 
 # Solo los archivos generados: ni fuentes, ni tests, ni node_modules.
 COPY --from=build /app/dist /usr/share/nginx/html
