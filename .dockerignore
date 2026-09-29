@@ -12,6 +12,10 @@ node_modules
 dist
 dist-dev
 
+# Base de datos local del CRM (si has arrancado `npm run crm` en tu máquina):
+# en la imagen los datos viven en el volumen /data, nunca en el contexto de build.
+data
+
 # Configuración local: los valores públicos entran por build args (ver Dockerfile)
 .env
 .env.local

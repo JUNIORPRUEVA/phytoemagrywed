@@ -190,7 +190,10 @@ export function createCrmClient(options) {
     debug = false,
   } = options;
 
-  const enabled = typeof endpoint === 'string' && /^https?:\/\//i.test(endpoint);
+  // Endpoint válido: una URL absoluta (`https://mi-crm.com/lead`) o una ruta del
+  // MISMO dominio (`/api/crm`, lo que usa la imagen Docker con su propia base de
+  // datos). Cualquier otra cosa se trata como "sin endpoint" y se usa la cola.
+  const enabled = typeof endpoint === 'string' && /^(https?:\/\/|\/)/i.test(endpoint.trim());
 
   /** @returns {any[]} */
   function listQueued() {
@@ -208,17 +211,12 @@ export function createCrmClient(options) {
   }
 
   /**
-   * @param {'lead'|'order_intent'} type
+   * Envía un payload sin tocar la cola. Devuelve `true` solo si el servidor lo
+   * aceptó (2xx). Cualquier fallo lo trata como dato NO guardado.
    * @param {any} payload
-   * @returns {Promise<{ ok: boolean, queued: boolean, status?: number, id: string, error?: string }>}
    */
-  async function send(type, payload) {
-    if (!enabled || !fetchImpl) {
-      const size = enqueue(payload);
-      if (debug) console.info(`[crm] endpoint no configurado: ${type} guardado en cola local (${size}).`);
-      return { ok: true, queued: true, id: payload.id };
-    }
-
+  async function post(payload) {
+    if (!fetchImpl) return false;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     try {
@@ -231,19 +229,64 @@ export function createCrmClient(options) {
         credentials: 'omit',
         mode: 'cors',
       });
-      if (!response.ok) {
-        enqueue(payload);
-        return { ok: false, queued: true, status: response.status, id: payload.id, error: 'http_error' };
-      }
-      return { ok: true, queued: false, status: response.status, id: payload.id };
-    } catch (error) {
-      // Fallo de red: no perdemos el dato, se reintentará después.
-      enqueue(payload);
-      if (debug) console.warn(`[crm] fallo al enviar ${type}:`, error);
-      return { ok: false, queued: true, id: payload.id, error: 'network_error' };
+      return response.ok ? true : false;
+    } catch {
+      return false;
     } finally {
       if (timer) clearTimeout(timer);
     }
+  }
+
+  /**
+   * @param {'lead'|'order_intent'} type
+   * @param {any} payload
+   * @returns {Promise<{ ok: boolean, queued: boolean, status?: number, id: string, error?: string }>}
+   */
+  async function send(type, payload) {
+    if (!enabled || !fetchImpl) {
+      const size = enqueue(payload);
+      if (debug) console.info(`[crm] endpoint no configurado: ${type} guardado en cola local (${size}).`);
+      return { ok: true, queued: true, id: payload.id };
+    }
+
+    const sent = await post(payload);
+    if (!sent) {
+      enqueue(payload);
+      if (debug) console.warn(`[crm] no se pudo enviar ${type}: queda en la cola local para reintentarlo.`);
+      return { ok: false, queued: true, id: payload.id, error: 'send_failed' };
+    }
+    return { ok: true, queued: false, id: payload.id };
+  }
+
+  /** @param {string} id */
+  function removeQueued(id) {
+    storage.set(
+      QUEUE_KEY,
+      listQueued().filter((item) => item.id !== id),
+    );
+  }
+
+  /**
+   * Reintenta los envíos que quedaron pendientes (porque el endpoint no estaba
+   * configurado, o porque el móvil se quedó sin datos en ese momento). Se llama
+   * al cargar la página: es la diferencia entre "la web no pierde el contacto" y
+   * "el contacto se queda en el navegador del visitante para siempre".
+   * @param {{ limit?: number }} [options]
+   */
+  async function flushQueue(options = {}) {
+    const { limit = 10 } = options;
+    if (!enabled || !fetchImpl) return { ok: false, sent: 0, remaining: listQueued().length };
+
+    let sent = 0;
+    for (const item of listQueued().slice(0, limit)) {
+      // `queuedAt` es del navegador: no forma parte del contrato del CRM.
+      const { queuedAt, ...payload } = item;
+      if (!(await post(payload))) break; // sin conexión: se reintentará más tarde
+      removeQueued(item.id);
+      sent += 1;
+    }
+    if (debug && sent > 0) console.info(`[crm] ${sent} envío(s) pendiente(s) recuperado(s).`);
+    return { ok: true, sent, remaining: listQueued().length };
   }
 
   return {
@@ -254,13 +297,8 @@ export function createCrmClient(options) {
     /** @param {any} payload */
     submitOrderIntent: (payload) => send('order_intent', payload),
     listQueued,
-    /** @param {string} id */
-    removeQueued(id) {
-      storage.set(
-        QUEUE_KEY,
-        listQueued().filter((item) => item.id !== id),
-      );
-    },
+    flushQueue,
+    removeQueued,
     clearQueue() {
       storage.remove(QUEUE_KEY);
     },

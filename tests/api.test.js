@@ -157,6 +157,29 @@ describe('cliente del CRM', () => {
     expect(storage.get(QUEUE_KEY)).toBeNull();
   });
 
+  it('acepta una ruta del mismo dominio (/api/crm): es la base de datos de la imagen Docker', async () => {
+    const storage = createMemoryStorage();
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 202 }));
+    const client = createCrmClient({ endpoint: '/api/crm', storage, fetchImpl });
+
+    expect(client.enabled).toBe(true);
+    const lead = buildLeadPayload({ name: 'Ana', phone: '+56911112222', source: 'checkout', consent: true });
+    const result = await client.submitLead(lead);
+
+    expect(result.ok).toBe(true);
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/crm');
+    expect(storage.get(QUEUE_KEY)).toBeNull();
+  });
+
+  it('un endpoint sin forma de URL se trata como "sin endpoint"', async () => {
+    const storage = createMemoryStorage();
+    const fetchImpl = vi.fn();
+    const client = createCrmClient({ endpoint: 'mi-crm.com', storage, fetchImpl });
+
+    expect(client.enabled).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('si el envío falla, el dato no se pierde', async () => {
     const storage = createMemoryStorage();
     const fetchImpl = vi.fn(async () => {
@@ -169,8 +192,58 @@ describe('cliente del CRM', () => {
 
     expect(result.ok).toBe(false);
     expect(result.queued).toBe(true);
-    expect(result.error).toBe('network_error');
+    expect(result.error).toBe('send_failed');
     expect(client.listQueued()).toHaveLength(1);
+  });
+
+  it('la cola pendiente se reintenta y se vacía cuando vuelve la conexión', async () => {
+    const storage = createMemoryStorage();
+    // Primero sin conexión, luego con ella (el móvil se quedó sin datos).
+    let online = false;
+    const fetchImpl = vi.fn(async () => {
+      if (!online) throw new Error('offline');
+      return { ok: true, status: 202 };
+    });
+    const client = createCrmClient({ endpoint: 'https://crm.test/api/crm', storage, fetchImpl });
+
+    const lead = buildLeadPayload({ name: 'Ana', phone: '+56911112222', source: 'formulario', consent: true });
+    await client.submitLead(lead);
+    expect(client.listQueued()).toHaveLength(1);
+
+    online = true;
+    const result = await client.flushQueue();
+    expect(result).toMatchObject({ ok: true, sent: 1, remaining: 0 });
+    expect(client.listQueued()).toHaveLength(0);
+    // El payload enviado es el del contrato: sin los metadatos del navegador.
+    const body = JSON.parse(fetchImpl.mock.calls.at(-1)[1].body);
+    expect(body.name).toBe('Ana');
+    expect(body.queuedAt).toBeUndefined();
+  });
+
+  it('si el reintento falla, los datos siguen en la cola (no se pierden)', async () => {
+    const storage = createMemoryStorage();
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    const client = createCrmClient({ endpoint: 'https://crm.test/api/crm', storage, fetchImpl });
+    await client.submitLead(buildLeadPayload({ name: 'Ana', phone: '+56911112222', source: 'formulario', consent: true }));
+    await client.submitOrderIntent(buildLeadPayload({ name: 'Luis', phone: '+56911113333', source: 'checkout', consent: true }));
+
+    const result = await client.flushQueue();
+    expect(result.sent).toBe(0);
+    expect(client.listQueued()).toHaveLength(2);
+  });
+
+  it('sin endpoint configurado no se reintenta nada (no hay a dónde enviar)', async () => {
+    const storage = createMemoryStorage();
+    const fetchImpl = vi.fn();
+    const client = createCrmClient({ endpoint: null, storage, fetchImpl });
+    await client.submitLead(buildLeadPayload({ name: 'Ana', phone: '+56911112222', source: 'formulario', consent: true }));
+
+    const result = await client.flushQueue();
+    expect(result.ok).toBe(false);
+    expect(result.remaining).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('la cola está limitada para no crecer sin control', async () => {

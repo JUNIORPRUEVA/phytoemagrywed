@@ -27,8 +27,10 @@ services:
         # Dominio final (sin barra al final): activa canonical, sitemap y la
         # vista previa con imagen al compartir el enlace. Vacío = desactivado.
         SEO_SITE_URL: "${SEO_SITE_URL:-}"
-        # Endpoint del CRM (vacío = los datos se quedan en la cola local).
-        PHYTO_CRM_ENDPOINT: "${PHYTO_CRM_ENDPOINT:-}"
+        # Endpoint del CRM. `/api/crm` (por defecto) es el API que ya trae esta
+        # imagen: guarda los contactos y los pedidos en la base de datos del
+        # volumen `/data`. Para usar otro CRM, pon aquí su URL completa.
+        PHYTO_CRM_ENDPOINT: "${PHYTO_CRM_ENDPOINT:-/api/crm}"
         # Meta Pixel (vacío = no se carga ningún script de Meta).
         PHYTO_META_PIXEL_ID: "${PHYTO_META_PIXEL_ID:-}"
         # Email de contacto visible (vacío = no se muestra).
@@ -39,26 +41,34 @@ services:
     container_name: phytoemagry
     restart: unless-stopped
 
+    # Clave para LEER los datos (`/panel?token=...` y la descarga en CSV).
+    # Cámbiala por una tuya, larga y solo tuya, en el archivo `.env`.
+    # Sin ella, los datos se siguen guardando pero no se pueden consultar.
+    environment:
+      PHYTO_CRM_TOKEN: "${PHYTO_CRM_TOKEN:-}"
+
     # Puerto del servidor : puerto del contenedor.
     # Cámbialo con WEB_PORT en el `.env` si el 8080 está ocupado.
     ports:
       - "${WEB_PORT:-8080}:80"
 
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 
-    # Sin privilegios extra: el contenedor solo sirve archivos estáticos.
+    # Aquí vive la base de datos (pedidos y contactos). Es el volumen el que hace
+    # que los datos sobrevivan a `docker compose up -d --build`.
+    # Copia de seguridad:  docker run --rm -v phytoemagry-data:/data -v "$PWD":/backup \
+    #                        alpine tar czf /backup/phytoemagry-datos.tar.gz -C /data .
+    volumes:
+      - phytoemagry-data:/data
+
+    # Sin privilegios extra.
     security_opt:
       - no-new-privileges:true
 
-    # Endurecimiento opcional (el sitio no escribe nada en disco). Si tu versión
-    # de nginx se queja al arrancar, comenta estas cuatro líneas:
-    # read_only: true
-    # tmpfs:
-    #   - /var/cache/nginx
-    #   - /var/run
-    #   - /tmp
+volumes:
+  phytoemagry-data:

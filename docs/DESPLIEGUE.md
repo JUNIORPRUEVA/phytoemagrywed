@@ -21,14 +21,18 @@ datos, ni proceso Node en producción, ni secretos dentro de la imagen.
 | Etapa | Qué pasa |
 | --- | --- |
 | `build` (node:22-alpine) | `npm ci` → `npm run verify` (**tests + revisión de contenido + build**) |
-| `runtime` (nginx:1.27-alpine) | nginx con la config escrita dentro del Dockerfile + solo `dist/`. Nada de Node, ni `node_modules`, ni fuentes |
+| `runtime` (node:22-alpine + nginx) | nginx sirve `dist/` y el **API del CRM** (`server/crm-server.mjs`) guarda los pedidos y los contactos en SQLite (`/data/phytoemagry.sqlite`). Dentro del contenedor corren dos procesos: nginx (el principal) y Node |
 
 Si los tests fallan, falta una foto de frasco, un precio no cuadra o el número de
 atención no coincide, **la imagen no se construye**: no se puede publicar una web
 rota por accidente.
 
-Tamaño aproximado de la imagen final: ~50 MB. Peso real de la página: ~150 kB al
-cargar (todo lo demás se carga en diferido).
+Tamaño aproximado de la imagen final: ~180 MB (Node + nginx; el API usa
+`node:sqlite`, que ya viene dentro de Node y no añade ninguna librería). Peso real
+de la página: ~150 kB al cargar (todo lo demás se carga en diferido).
+
+> **Los datos NO van dentro de la imagen**: viven en el volumen `/data`. Si no
+> montas ese volumen, cada actualización empieza con la base de datos vacía.
 
 ---
 
@@ -39,15 +43,32 @@ cargar (todo lo demás se carga en diferido).
 git clone https://github.com/JUNIORPRUEVA/phytoemagrywed.git
 cd phytoemagrywed
 
-# 2) Construir y levantar (el primer build tarda unos minutos: instala y prueba)
+# 2) (una vez) la clave para leer los pedidos y los contactos
+echo "PHYTO_CRM_TOKEN=$(openssl rand -hex 24)" > .env
+
+# 3) Construir y levantar (el primer build tarda unos minutos: instala y prueba)
 docker compose up -d --build
 
-# 3) Comprobar
+# 4) Comprobar
 docker compose ps          # debe decir "healthy"
 curl -I http://localhost:8080
 ```
 
-La web queda en **http://IP-del-servidor:8080**.
+La web queda en **http://IP-del-servidor:8080** y los pedidos y contactos se leen
+en **`http://IP-del-servidor:8080/panel?token=LA-CLAVE-DEL-.env`**.
+
+La clave del `.env` es `PHYTO_CRM_TOKEN`: guárdala, porque es lo único que impide
+que un desconocido lea los teléfonos de tus clientes. Los datos (el volumen
+`phytoemagry-data`) sobreviven a `docker compose up -d --build`.
+
+### Copia de seguridad de los datos
+
+```bash
+docker run --rm -v phytoemagry-data:/data -v "$PWD":/backup \
+  alpine tar czf /backup/phytoemagry-datos.tar.gz -C /data .
+```
+
+(En Windows/PowerShell: cambia `-v "$PWD":/backup` por `-v "${PWD}:/backup"`.)
 
 ### Actualizar a la última versión
 
@@ -59,13 +80,19 @@ docker compose up -d --build
 
 Docker reutiliza las capas que no cambian, así que las siguientes veces es mucho
 más rápido. El contenedor anterior se reemplaza sin cortar el servicio más de
-unos segundos.
+unos segundos, y los datos se conservan en el volumen.
 
 ### Ver logs / parar
 
 ```bash
+# Logs de nginx y del API del CRM (cada registro guardado sale aquí)
 docker compose logs -f --tail=50
-docker compose down          # parar (los datos no se pierden: no hay datos)
+
+# Parar (los datos NO se pierden: están en el volumen)
+docker compose down
+
+# Parar Y borrar los datos (cuidado: irreversible)
+docker compose down -v
 ```
 
 ---
@@ -93,15 +120,26 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    Opcionales (déjalas fuera si no las usas):
 
    ```bash
-   PHYTO_CRM_ENDPOINT=      # endpoint del CRM (si no, cola local)
    PHYTO_META_PIXEL_ID=     # Meta Pixel (si no, sin medición publicitaria)
    CONTACT_EMAIL=           # email visible en el footer
    ```
+
+   **La base de datos de los pedidos** (recomendado dejarlo así):
+
+   ```bash
+   PHYTO_CRM_TOKEN=pon-una-clave-larga-y-solo-tuya   # para leer /panel?token=...
+   ```
+
+   El endpoint ya apunta solo a `/api/crm` (el API que trae la imagen), así que no
+   hay que definir nada más. Si algún día quieres enviar los datos a **otro** CRM,
+   pon ahí su URL completa: `PHYTO_CRM_ENDPOINT=https://...`.
 
    | Variable | Para qué sirve | Si no la pones |
    | --- | --- | --- |
    | `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | Se usa el valor por defecto del Dockerfile (el número real) |
    | `SEO_SITE_URL` | Dominio final: activa `canonical`, `sitemap.xml` y la **vista previa con imagen** al compartir por WhatsApp | Se publica sin canonical ni sitemap |
+   | `PHYTO_CRM_TOKEN` | Clave para leer los pedidos y los contactos en `/panel?token=...` y en CSV | Se siguen guardando, pero **no se pueden consultar** |
+   | `PHYTO_CRM_DATA` | Ruta del archivo de la base de datos | `/data/phytoemagry.sqlite` |
    | `APP_ENV` | `production` | `production` por defecto |
 
    > **No pongas `PORT`** salvo que el panel te lo pida (ver el punto 5). Tampoco
@@ -118,10 +156,18 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    > **Si el panel define la variable `PORT`** (algunos paneles lo hacen), la
    > imagen escucha en ese puerto: pon **el mismo número** en el puerto del proxy.
    > Sin `PORT`, escucha en el 80. Nunca hay que tocar el Dockerfile.
-6. **Deploy**.
+
+6. **Mounts** → añade un **Volume** montado en **`/data`**. Ahí vive la base de
+   datos de los pedidos y los contactos: sin este volumen, cada *Deploy* empieza
+   de cero. (Nombre del volumen: `phytoemagry-data`, por ejemplo.)
+7. **Deploy**.
+
+Cuando termine, entra en `https://tudominio.com/panel?token=TU_CLAVE`: ahí están
+los pedidos y los contactos con su fecha, teléfono, frasco y total, y desde ahí
+mismo se descarga el CSV.
 
 Cada vez que hagas `git push`, en Easypanel solo tienes que pulsar **Deploy**
-(o activar el *auto deploy* del servicio).
+(o activar el *auto deploy* del servicio). Los datos no se tocan.
 
 ---
 
@@ -131,22 +177,30 @@ Cada vez que hagas `git push`, en Easypanel solo tienes que pulsar **Deploy**
 docker build -t phytoemagry .
 docker run -d --name phytoemagry \
   -p 8080:80 \
+  -v phytoemagry-data:/data \
+  -e PHYTO_CRM_TOKEN=pon-una-clave-larga-y-solo-tuya \
   --restart unless-stopped \
   phytoemagry
 ```
+
+Sin `-v phytoemagry-data:/data` funciona igual, pero los pedidos y los contactos
+se pierden en cuanto recrees el contenedor. Sin `-e PHYTO_CRM_TOKEN` se siguen
+guardando, pero no se pueden leer en `/panel`.
 
 ---
 
 ## 5. Cambiar los datos públicos (número, dominio, pixel…)
 
 Todas las variables de la web son **públicas** (acaban en el HTML/JS): no hay
-secretos que proteger y por eso viajan como *build args*.
+secretos que proteger y por eso viajan como *build args*. El API del CRM es la
+excepción: `PHYTO_CRM_TOKEN` se pasa **en tiempo de ejecución** (`-e` / Environment
+del panel) y nunca se escribe en el build.
 
 | Variable | Para qué | Valor actual |
 | --- | --- | --- |
 | `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | `18297853794` |
 | `SEO_SITE_URL` | Dominio final (activa canonical, sitemap y la vista previa con imagen al compartir). Sin barra al final | vacío |
-| `PHYTO_CRM_ENDPOINT` | Endpoint del CRM (ver `CRM-CONTRACT.md`) | vacío |
+| `PHYTO_CRM_ENDPOINT` | Endpoint del CRM (ver `CRM-CONTRACT.md`) | `/api/crm` (el API que trae la imagen) |
 | `PHYTO_META_PIXEL_ID` | Meta Pixel (medición publicitaria) | vacío |
 | `CONTACT_EMAIL` | Email visible en el footer | vacío |
 | `APP_ENV` | `production` (los logs de depuración solo salen en dev) | `production` |
@@ -223,10 +277,21 @@ curl -sI http://localhost:8080/sitemap.xml   # solo si SEO_SITE_URL está puesto
 
 # Caché correcta de los assets (1 año, immutable)
 curl -sI http://localhost:8080/assets/ | head -3
+
+# La base de datos de pedidos y contactos está viva (sin datos personales)
+curl -s http://localhost:8080/api/health
+# → {"ok":true,"storage":"sqlite","items":0}
+
+# Leer los datos (debe responder 401 si la clave es incorrecta)
+curl -s "http://localhost:8080/api/crm/items?token=LA-CLAVE" | head -c 200
 ```
 
 Y en el navegador, la prueba que importa: pulsar **Pedir por WhatsApp** en un
 frasco y ver que el chat abre con el pedido escrito y el número correcto.
+Después, **hacer un pedido de prueba** desde el móvil y comprobar que aparece en
+`/panel?token=...` (y borrarlo luego con `DELETE` directo al SQLite si quieres
+dejarlo limpio: `docker exec -it phytoemagry node -e "..."`, o simplemente
+ignorarlo: los registros de prueba no molestan).
 
 ---
 
@@ -241,6 +306,10 @@ frasco y ver que el chat abre con el pedido escrito y el número correcto.
 | Error raro al leer el Dockerfile (`unknown instruction`, heredoc) | Docker demasiado antiguo: `DOCKER_BUILDKIT=1 docker build -t phytoemagry .` o actualiza Docker (`docker --version` debe ser 23 o superior) |
 | Easypanel: el dominio responde **502** o "no hay servicio escuchando" | El **puerto del proxy** no es el que usa la app. Por defecto es **80**; si el panel define la variable `PORT`, pon ese mismo número en el dominio (`docker logs` lo confirma: nginx registra en qué puerto escucha) |
 | Quiero ver la web sin publicar | `docker run --rm -p 8080:80 phytoemagry` en tu máquina, o `npm run preview` en local |
+| `/panel` responde **401** «La clave no es correcta» | La clave del enlace no es la de `PHYTO_CRM_TOKEN`. Cópiala del `.env` (o del panel de Easypanel) y vuelve a entrar |
+| `/panel` responde **503** «Para leer los datos define PHYTO_CRM_TOKEN» | No has puesto la variable: los datos SÍ se están guardando, solo hace falta la clave para leerlos. Define `PHYTO_CRM_TOKEN` y reinicia |
+| `/api/health` responde 404 o 502 | El API del CRM no está arrancado o nginx no lo encuentra. `docker logs` debe mostrar `[crm] escuchando en http://127.0.0.1:8787`. Si no aparece, revisa que el contenedor use el `ENTRYPOINT` del Dockerfile (no lo sobrescribas con `command:`) |
+| `/panel` **funciona pero está vacío tras un Deploy** | No montaste el volumen en `/data`: la base de datos se recrea con la imagen. Añade Mounts → Volume → `/data` |
 
 ---
 
@@ -251,4 +320,11 @@ npm ci
 npm run verify      # tests + revisión + build
 # copiar dist/ a /var/www/phytoemagry y usar nginx/phytoemagry.conf
 # (cambiando `root` y `server_name` como indica el propio archivo)
+
+# Y, si quieres la base de datos de pedidos y contactos, el API en paralelo:
+PHYTO_CRM_TOKEN=una-clave-larga npm run crm
 ```
+
+Sin el API, la web sigue funcionando: los pedidos y los contactos llegan a
+WhatsApp como siempre (y quedan en la cola local del navegador si el envío falla).
+Lo único que se pierde es el registro ordenado en el panel.

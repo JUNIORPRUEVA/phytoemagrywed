@@ -153,6 +153,7 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 | Foto real por frasco | Carrusel deslizable; el cliente ve justo el frasco que va a pedir |
 | Número a la vista | `+1 829 785 3794` en el footer y junto al formulario: se ve que hay alguien detrás |
 | Sin riesgo percibido | "No se realiza ningún cobro en esta página" (resumen, modal y formulario) |
+| Nada se pierde | Si un envío falla (móvil sin datos), el dato queda en una cola local y se reenvía al cargar la siguiente página |
 | Dos caminos, nunca un callejón | Pedir (WhatsApp/modal) **y** dejar el contacto desde el propio resumen |
 | Prueba social aprobada | "Miles de personas ya cuentan con Phytoemagry." (verificada por el negocio) |
 | Cero afirmaciones que resten | Sin promesas médicas ni de resultados: nada que un consumidor pueda rebatir |
@@ -175,15 +176,18 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 ### Para captar clientes potenciales de verdad
 
 - **Dónde llegan los contactos**: hoy **al WhatsApp del negocio**
-  (`+1 829 785 3794`). Los **pedidos** llegan completos (frasco, cantidad, precio
-  por frasco, cápsulas, total y el nombre que se escribe en el modal); los
+  (`+1 829 785 3794`) **y a la base de datos de la propia web** (incluida en la
+  imagen Docker). Los **pedidos** llegan completos (frasco, cantidad, precio por
+  frasco, cápsulas, total y el nombre que se escribe en el modal); los
   **contactos del formulario** llegan con nombre, teléfono y ubicación ya
-  escritos. El visitante solo pulsa enviar. Detalle y opciones en
+  escritos. El visitante solo pulsa enviar. Se leen en
+  `tu-dominio/panel?token=TU_CLAVE` y se descargan en CSV. Detalle y opciones en
   [`CRM-CONTRACT.md`](CRM-CONTRACT.md) → "¿Dónde llegan los contactos?".
-- **Endpoint del CRM** (`PHYTO_CRM_ENDPOINT`), para tener además el registro
-  ordenado: sin él, la cola local vive en el navegador **del visitante** y no es
-  una base de datos (solo sirve de red de seguridad). Opciones sin servidor
-  propio: Google Sheets (Apps Script), Make/Zapier/n8n o un formulario externo.
+- **Dos cosas que hacer una vez en el servidor** (si despliegas con Docker):
+  montar un volumen en `/data` (ahí vive la base de datos) y definir
+  `PHYTO_CRM_TOKEN` (la clave para leerla). Sin el volumen, cada *Deploy* empieza
+  con la base de datos vacía; sin la clave, los datos se guardan pero no se
+  pueden consultar. Paso a paso en [`DESPLIEGUE.md`](DESPLIEGUE.md) → §3.
 - **Horario de atención** (`contact.whatsapp.hours`): decir cuándo se responde
   sube la tasa de respuesta del primer mensaje.
 - **Testimonios reales** (`content.testimonials.items` + su `disclaimer`): la

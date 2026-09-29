@@ -316,7 +316,9 @@ el producto, su modo de uso, los 7 frascos con precio y cómo comprar.
 | El navegador bloquea la pestaña de WhatsApp | Se detecta (`window.open` devuelve `null`) y se muestra el enlace para pulsar; el evento se envía igual con `opened: false` |
 | Bloqueadores de anuncios bloquean el pixel | Todo el tracking propio sigue funcionando; el pixel es opcional y aislado en un adaptador |
 | `localStorage` deshabilitado (modo privado) | `createStorage` degrada a memoria y nunca lanza |
-| Datos sin backend mientras el CRM no existe | Cola local limitada a 50 elementos, visible con `Phytoemagry.pendingCrmItems()` |
+| Datos sin backend mientras el CRM no existe | Cola local limitada a 50 elementos, con reintento al cargar la página y visible con `Phytoemagry.pendingCrmItems()` (desde §28 el CRM y su base de datos viajan en la imagen) |
+| La base de datos del contenedor se pierde al actualizar | `VOLUME /data` en el Dockerfile + volumen en Compose/Easypanel, con el aviso en tres sitios (Dockerfile, compose y guía de despliegue) |
+| Cualquiera con la URL lee los teléfonos de los clientes | `PHYTO_CRM_TOKEN` obligatorio para `/panel`, `/api/crm/items` y el CSV (comparación en tiempo constante); sin la clave, el servidor responde 503 y los datos siguen guardándose |
 | Atribución perdida entre navegaciones | First-touch en `localStorage` con TTL 90 días + last-touch en `sessionStorage` |
 | Publicar una cifra de clientes | Solo desde `trust.claim` con `claimVerified: true`; en cualquier otro campo el detector la bloquea |
 | Que no se pueda demostrar la cifra de clientes | Es responsabilidad del negocio: conviene guardar facturas/base de clientes por si una plataforma o un consumidor la cuestiona |
@@ -426,3 +428,55 @@ Comprar muestra el aviso (el modal no se abre); al elegir un frasco el aviso
 desaparece, el resumen se completa y el modal abre con **un solo campo**; al
 enviar solo el nombre se abre `wa.me/18297853794` con frasco, cantidad, precio por
 frasco, cápsulas, total y nombre; enviarlo vacío marca el campo y no abre nada.
+
+## 28. La base de datos de los pedidos va DENTRO de la imagen (SQLite, sin dependencias)
+
+Petición del negocio: "necesito que conecte la DB". Traducido a algo que él pueda
+usar de verdad (no un concepto): los pedidos y los contactos tienen que quedar
+guardados en algún sitio que pueda abrir desde el móvil, además de llegar por
+WhatsApp.
+
+1. **Se resuelve dentro de la imagen, no con un servicio externo.** `server/
+   crm-server.mjs` es un servidor HTTP pequeño y **sin ninguna dependencia**: usa
+   `node:sqlite` (viene dentro de Node) y `node:http`. Un servicio aparte (Postgres,
+   un contenedor extra, una suscripción) añadía coste, otro despliegue y otro
+   punto de fallo para un negocio que vende por WhatsApp; un `docker run` con un
+   volumen hace lo mismo para este volumen de datos.
+2. **El endpoint por defecto pasa a ser `/api/crm`** (mismo dominio). La web se
+   construye apuntando a su propio API, así que "conectar la base de datos" no
+   requiere configurar nada. `createCrmClient` acepta ahora una ruta relativa
+   (`/api/...`) además de una URL absoluta; cualquier otro valor se sigue tratando
+   como "sin endpoint" y usa la cola local.
+3. **Idempotencia por `id`**: la cola local reintenta los envíos, así que el
+   `INSERT OR IGNORE` (y la comprobación por id en el modo JSONL) evita duplicados.
+   Es la clase de detalle que solo aparece cuando el transporte falla una vez.
+4. **Leer los datos exige `PHYTO_CRM_TOKEN`.** Sin él, guardar funciona pero leer
+   responde 503 con instrucciones: es preferible que el negocio vea "falta una
+   clave" a que cualquiera con la URL descargue los teléfonos de sus clientes. La
+   comparación es en tiempo constante, `/panel` va `noindex, nofollow` y
+   `/api/health` (lo único público) no expone datos personales.
+5. **El panel y el CSV son la respuesta a "¿dónde veo yo esto?"**: `/panel?token=`
+   lista fecha, tipo, nombre, teléfono, frasco, total y ciudad, con descarga en
+   CSV para Excel/Sheets. Sin panel, una base de datos es un cajón cerrado.
+6. **Sin volumen no hay memoria**: el `Dockerfile` declara `VOLUME /data` y tanto
+   Compose como la guía de Easypanel lo montan. Si se pierde, es culpa de un
+   despliegue mal hecho, no de un error silencioso: está escrito en tres sitios
+   (Dockerfile, compose y `docs/DESPLIEGUE.md`).
+7. **Si SQLite no está** (una versión de Node antigua, o el flag experimental
+   ausente), cae automáticamente a un archivo JSONL en el mismo directorio y lo
+   dice en los logs. Degradar es mejor que no arrancar.
+8. **Y la cola local ahora SÍ se reintenta.** Al construir la base de datos
+   apareció el agujero: `api.js` guardaba los envíos fallidos en `localStorage`
+   pero nada los reenviaba nunca (la documentación decía "se reintenta" y era
+   falso). Ahora `createCrmClient().flushQueue()` reenvía hasta 10 pendientes al
+   cargar la página, quitando de la cola los que el servidor acepta y parando en
+   el primer fallo de red. Se puede forzar con
+   `Phytoemagry.retryPendingCrmItems()`.
+
+Verificado con peticiones HTTP reales (12 tests con el servidor arrancado de
+verdad en un puerto libre): guarda un `lead` y un `order_intent`, no duplica el
+mismo `id`, sobrevive al reinicio (los datos están en el archivo), rechaza
+cuerpos inválidos sin guardar nada, exige la clave para leer, exporta CSV, filtra
+por tipo y el modo JSONL funciona igual. Y verificado en el navegador con la
+landing real (dev server + API con CORS): el lead del formulario y los dos envíos
+pendientes de la cola llegaron a la base de datos, y `/panel` los lista.

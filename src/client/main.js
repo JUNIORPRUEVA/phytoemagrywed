@@ -88,6 +88,15 @@ export function boot() {
   const checkout = initCheckout(ctx);
   initLeadForm(ctx);
 
+  // Reintento de los envíos que quedaron pendientes (móvil sin datos, servidor
+  // reiniciándose...). Se lanza cuando la página ya está lista, no antes: la
+  // medición y la interacción nunca esperan a la red.
+  const retryPending = () => {
+    crm.flushQueue().catch(() => {});
+  };
+  if (document.readyState === 'complete') window.setTimeout(retryPending, 1500);
+  else window.addEventListener('load', () => window.setTimeout(retryPending, 1500), { once: true });
+
   // 4) API pública mínima (documentada en docs/CRM-CONTRACT.md).
   window.Phytoemagry = {
     version: '1.1.0',
@@ -105,6 +114,8 @@ export function boot() {
     },
     /** Cola local pendiente de enviar al CRM (modo sin endpoint). */
     pendingCrmItems: () => crm.listQueued(),
+    /** Fuerza el reintento de la cola pendiente (lo hace solo al cargar la página). */
+    retryPendingCrmItems: () => crm.flushQueue(),
     debug,
   };
 

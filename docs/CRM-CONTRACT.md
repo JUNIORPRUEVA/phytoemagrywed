@@ -1,31 +1,68 @@
 # Contrato de datos con el mini-CRM Phytoemagry
 
-La landing **ya está preparada** para enviar datos al CRM. Mientras
-`PHYTO_CRM_ENDPOINT` esté vacío, los datos se guardan en una cola local del
-navegador (`localStorage`, clave `pe:crm.queue`, máximo 50 elementos) y nada sale
-a la red. Al configurar el endpoint, los mismos payloads viajan por HTTP sin
-tocar la interfaz.
+La landing envía cada contacto y cada pedido al CRM por HTTP. La imagen Docker ya
+incluye ese CRM (`server/crm-server.mjs`) con su propia base de datos SQLite, así
+que **funciona sin configurar nada**. Si prefieres otro destino (Google Sheets,
+Make/Zapier/n8n, tu backend), basta poner su URL en `PHYTO_CRM_ENDPOINT`: el
+payload no cambia. Y si el envío falla, el dato se queda en una cola local del
+navegador (`localStorage`, clave `pe:crm.queue`, máximo 50 elementos) para
+reintentarlo: la web nunca pierde un contacto.
 
 Implementación: `src/lib/api.js` (`buildLeadPayload`, `buildOrderIntentPayload`,
-`createCrmClient`). Esquema actual: **`schemaVersion: "1.1"`**.
+`createCrmClient`) y `server/crm-server.mjs`. Esquema actual:
+**`schemaVersion: "1.1"`**.
 
 ---
 
 ## ¿Dónde llegan los contactos y los pedidos?
 
-Hay **dos canales**, y hoy funciona el primero:
+Hay **dos canales**, y funcionan los dos a la vez:
 
 | Canal | Qué llega | Cuándo |
 | --- | --- | --- |
 | **WhatsApp `+1 829 785 3794`** | Todo, ya escrito y listo: cada pedido (frasco, cantidad, precio, total y el nombre) y cada contacto del formulario (nombre, teléfono, ubicación) | **Ya funciona**, sin configurar nada |
-| **CRM** (`PHYTO_CRM_ENDPOINT`) | El mismo dato en formato estructurado (`lead` y `order_intent`), guardado en tu sistema | Cuando exista el endpoint |
+| **La base de datos de la propia web** (`/api/crm`, dentro de la imagen) | El mismo dato en formato estructurado (`lead` y `order_intent`), guardado en `/data/phytoemagry.sqlite` | **Ya funciona** en la imagen Docker; se lee en `/panel?token=...` |
 
-**Importante:** mientras no haya endpoint, la cola local (`pe:crm.queue`) vive en
-el navegador **del visitante**, no en un servidor. Sirve como red de seguridad
-(la web no pierde el dato si el envío falla), pero **no es una base de datos de
-clientes**: solo se ve desde la consola de ese navegador con
-`Phytoemagry.pendingCrmItems()`. La vía por la que el negocio recibe el contacto
-hoy es WhatsApp.
+### La base de datos que trae la web (SQLite)
+
+`server/crm-server.mjs` es un servidor HTTP pequeño **sin dependencias** que usa
+el módulo SQLite incluido en Node (`node:sqlite`). Con la imagen Docker:
+
+- nginx sirve la web y le pasa `/api/` y `/panel` a este proceso;
+- los datos viven en `/data/phytoemagry.sqlite` (monta un volumen ahí: es lo que
+  hace que sobrevivan a las actualizaciones);
+- **`PHYTO_CRM_TOKEN`** es la clave para leerlos. Sin ella, la web sigue
+  guardando, pero leer queda desactivado (respuesta `503` con el aviso).
+
+Rutas:
+
+| Ruta | Qué hace |
+| --- | --- |
+| `POST /api/crm` | Recibe un `lead` o un `order_intent` (o una lista de hasta 25). Responde `202`. Si repites el mismo `id` (la cola reintenta) **no duplica**: `duplicate: true` |
+| `GET /api/health` | Estado: `{ ok, storage, items }`. Sin datos personales |
+| `GET /api/crm/items?token=...` | Los registros en JSON (más nuevo primero). Acepta `limit` (máx. 1000, por defecto 100) y `type=lead` / `type=order_intent` |
+| `GET /api/crm/export.csv?token=...` | El mismo listado en CSV (se abre en Excel o Google Sheets) |
+| `GET /panel?token=...` | Panel en HTML: fecha, tipo, nombre, teléfono, frasco, total y ciudad, con el botón de descargar el CSV |
+
+La clave se puede pasar como `?token=` o en la cabecera `x-crm-token`. Se compara
+en tiempo constante, y el panel se marca `noindex, nofollow`.
+
+Probar en local (sin Docker):
+
+```bash
+npm run crm            # arranca el API en http://127.0.0.1:8787
+```
+
+Variables (solo servidor, nunca llegan al navegador): `PHYTO_CRM_TOKEN`,
+`PHYTO_CRM_DATA`, `PHYTO_CRM_PORT`, `PHYTO_CRM_HOST`, `PHYTO_CRM_ALLOWED_ORIGIN`
+(esta última solo si sirves la web desde otro dominio). Ver `.env.example`.
+
+**Nota:** mientras no exista ni endpoint ni base de datos (por ejemplo si sirves
+`dist/` en un hosting estático sin el API), la cola local (`pe:crm.queue`) vive en
+el navegador **del visitante**: sirve de red de seguridad, pero **no es una base
+de datos de clientes** (solo se ve con `Phytoemagry.pendingCrmItems()` en la
+consola de ese navegador). La vía por la que el negocio recibe el contacto es
+WhatsApp.
 
 ### Cómo se comporta el formulario "quiero que me escriban"
 
@@ -49,21 +86,23 @@ hoy es WhatsApp.
    frasco, cantidad, precio por frasco, cápsulas en total, total y nombre) y se
    registran `lead` + `order_intent` en el CRM (o en la cola local).
 
-Así el contacto se puede responder en minutos y también queda preparado para
-enviarse al CRM cuando exista.
+Así el contacto se puede responder en minutos (WhatsApp) y queda además
+registrado en la base de datos del servidor.
 
-### Opciones para conectarlo (elige una)
+### Opciones para cambiar el destino (si no quieres la base de datos incluida)
 
 | Opción | Coste | Notas |
 | --- | --- | --- |
+| **La base de datos incluida** (por defecto en la imagen Docker) | Incluida | SQLite dentro del contenedor + panel y CSV. Nada que configurar salvo el volumen `/data` y el token |
 | **Google Sheets** (Apps Script publicado como Web App) | Gratis | Los leads caen en una hoja de cálculo que puedes abrir en el móvil. Apps Script no responde al preflight CORS: hay que recibirlo como `text/plain` (ajuste pequeño en `src/lib/api.js`, se hace al conectar) |
 | **Make / Zapier / n8n** (webhook) | Desde gratis | Envía un correo, avisa por WhatsApp/Telegram o escribe en Sheets sin programar |
 | **Formulario tipo Formspree / Getform** | Gratis con límite | Recibe el POST y te avisa por correo; luego se descarga a Excel/Sheets |
-| **Backend propio** | VPS | Es el destino definitivo: ya tienes `Dockerfile` + `nginx/` en el repositorio para el despliegue |
+| **Backend propio** | VPS | Es el destino definitivo, y ya está hecho: `server/crm-server.mjs` sobre el `Dockerfile` del repositorio |
 
 El payload ya está definido abajo, así que cualquiera de ellos se conecta
 poniendo una URL en `PHYTO_CRM_ENDPOINT` (y, si hace falta, ajustando el
-`Content-Type`). **Dime cuál prefieres y lo dejo funcionando y probado.**
+`Content-Type`). Si prefieres otro destino, dime cuál y lo dejo funcionando y
+probado.
 
 ---
 
@@ -192,9 +231,9 @@ completo**: se identifica con la etiqueta neutra "Frasco completo", nunca con
 | Evento | Cuándo | Datos relevantes |
 | --- | --- | --- |
 | `page_view` | Carga de la landing | `page`, `landingPage`, `referrer`, `hasCampaign` |
-| `view_product` | Carga de la landing | `variants`, frasco preseleccionado |
+| `view_product` | Carga de la landing | `variants` (y `variantId: null`: al entrar no hay frasco elegido) |
 | `select_variant` | El usuario elige frasco | `variantId`, `capsules`, `unitPrice`, `quantity`, `total` |
-| `click_buy` | Clic en cualquier botón *Comprar* | `source` + datos del frasco |
+| `click_buy` | Clic en cualquier botón *Comprar* | `source` + datos del frasco. Si no hay frasco elegido: `blocked: 'no_variant'` (y no se abre el modal) |
 | `begin_checkout` | Se abre el modal de pedido | `variantId`, `capsules`, `quantity`, `totalCapsules`, `unitPrice`, `total` |
 | `lead` | Formulario o pedido iniciado | `source`, `channel`, `leadId`/`orderIntentId` + frasco |
 | `click_whatsapp` | Clic en un enlace de WhatsApp | `context: link\|selector\|checkout`, `variantId`, `quantity`, `total`, `opened` |
@@ -271,9 +310,22 @@ cualquier otro texto de configuración, el detector de afirmaciones la bloquea
 Phytoemagry.getSelection();                     // { variant, quantity, totals }
 Phytoemagry.selectVariant('capsules_30', 2);    // útil para pruebas
 Phytoemagry.pendingCrmItems();                  // cola local pendiente
+Phytoemagry.retryPendingCrmItems();             // reenvía la cola ahora mismo
 Phytoemagry.confirmPurchase({ orderId, value, currency }); // solo desde el CRM
 ```
 
 `trackPurchase()` ignora cualquier llamada sin
 `{ orderId, confirmedByBackend: true }`: es imposible registrar una compra falsa
 pulsando un botón.
+
+### La cola local sí se reintenta
+
+Cuando un envío no llega (el visitante se quedó sin datos justo en ese momento,
+o el servidor se estaba reiniciando), el payload queda en `localStorage` con su
+`queuedAt`. Al cargar la siguiente página, el cliente **reenvía hasta 10
+pendientes** (uno por uno, y para en cuanto vuelve a fallar la red). Si el envío
+se recupera, el registro entra en la base de datos y la cola se vacía. También se
+puede forzar a mano con `Phytoemagry.retryPendingCrmItems()`.
+
+Sin esto, la frase "no se pierde ningún contacto" era media verdad: el dato
+sobrevivía, pero se quedaba para siempre en el navegador del visitante.

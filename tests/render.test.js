@@ -675,17 +675,35 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
 
   /** Config de nginx escrita dentro del Dockerfile (heredoc de la etapa 2). */
   const inlineConfig = () => {
-    const start = dockerfile.indexOf("<<'NGINX_TEMPLATE'");
+    const start = dockerfile.indexOf("<<'NGINX_CONF'");
     if (start === -1) return '';
-    const end = dockerfile.indexOf('\nNGINX_TEMPLATE', start);
+    const end = dockerfile.indexOf('\nNGINX_CONF', start);
     return dockerfile.slice(dockerfile.indexOf('\n', start) + 1, end);
+  };
+
+  /**
+   * Solo el bloque `server { ... }` (el Dockerfile trae además el `http { ... }`
+   * completo; `nginx/phytoemagry.conf` se incluye dentro de uno que ya existe).
+   */
+  const serverBlock = (config) => {
+    const start = config.indexOf('server {');
+    if (start === -1) return '';
+    let depth = 0;
+    for (let i = config.indexOf('{', start); i < config.length; i += 1) {
+      if (config[i] === '{') depth += 1;
+      else if (config[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return config.slice(start, i + 1);
+      }
+    }
+    return config.slice(start);
   };
 
   it('el Dockerfile trae dentro la misma config que nginx/phytoemagry.conf', () => {
     const inline = inlineConfig();
     // Sin esto, cambiar una y olvidar la otra publicaría dos comportamientos.
     expect(inline).toContain('listen ${PORT};');
-    expect(directives(inline)).toEqual(directives(nginxConf));
+    expect(directives(serverBlock(inline))).toEqual(directives(serverBlock(nginxConf)));
     expect(nginxConf).toContain('root /var/www/phytoemagry;');
     expect(inline).toContain('root /usr/share/nginx/html;');
   });
@@ -702,6 +720,21 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
     expect(dockerfile).toContain('RUN npm run verify');
     expect(dockerfile).toContain('COPY --from=build /app/dist /usr/share/nginx/html');
     expect(dockerfile).toContain('HEALTHCHECK');
+  });
+
+  it('la base de datos de pedidos y contactos sobrevive a las actualizaciones', () => {
+    // El API del CRM viaja en la imagen y los datos viven FUERA de ella: si
+    // alguien quita el volumen, cada Deploy empezaría con la base vacía.
+    expect(dockerfile).toContain('COPY --from=build /app/server /app/server');
+    expect(dockerfile).toContain('node --experimental-sqlite /app/server/crm-server.mjs');
+    expect(dockerfile).toContain('VOLUME ["/data"]');
+    expect(dockerfile).toContain('PHYTO_CRM_DATA=/data/phytoemagry.sqlite');
+    expect(dockerfile).toContain('/api/health');
+  });
+
+  it('el endpoint del CRM por defecto es el API de la propia imagen', () => {
+    // `/api/crm` (mismo dominio) = la web guarda los datos sin configurar nada.
+    expect(dockerfile).toContain('ARG PHYTO_CRM_ENDPOINT="/api/crm"');
   });
 
   it('el número de atención tiene valor por defecto: una imagen no sale sin WhatsApp', () => {

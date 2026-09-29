@@ -11,6 +11,7 @@
     "clean": "node scripts/clean.mjs",
     "build": "node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",
+    "crm": "node --experimental-sqlite server/crm-server.mjs",
     "preview": "node scripts/dev.mjs --dist --port 4173",
     "test": "vitest run",
     "test:watch": "vitest",

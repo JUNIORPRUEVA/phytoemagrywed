@@ -3,12 +3,15 @@
 #  Phytoemagry — imagen de producción (este archivo es TODO el despliegue)
 #
 #  No hace falta copiar nada a mano ni instalar Node en el servidor: el
-#  Dockerfile compila la web y sirve el resultado con nginx.
+#  Dockerfile compila la web, la sirve con nginx y guarda los pedidos y los
+#  contactos en una base de datos SQLite dentro del contenedor.
 #
 #  EN EL SERVIDOR (2 comandos):
 #    git clone https://github.com/JUNIORPRUEVA/phytoemagrywed.git
 #    cd phytoemagrywed && docker build -t phytoemagry . && docker run -d \
-#      --name phytoemagry -p 8080:80 --restart unless-stopped phytoemagry
+#      --name phytoemagry -p 8080:80 --restart unless-stopped \
+#      -v phytoemagry-data:/data \
+#      -e PHYTO_CRM_TOKEN=una-clave-larga tu-phytoemagry
 #
 #  (Si nada más usa el puerto 80, cambia `-p 8080:80` por `-p 80:80` y ya no
 #  hace falta ningún proxy delante. Con dominio y HTTPS, deja 8080 y pon el
@@ -20,15 +23,22 @@
 #  EASYPANEL / DOKPLOY / COOLIFY (paneles con Docker):
 #    Service → App → Source: Git (este repo, branch main)
 #    Build: Dockerfile (ruta `Dockerfile`)  ·  Domains: puerto del proxy 80
-#    Environment: PHYTO_WHATSAPP_NUMBER, SEO_SITE_URL, ... (llegan al build)
+#    Environment: PHYTO_WHATSAPP_NUMBER, SEO_SITE_URL, PHYTO_CRM_TOKEN, ...
+#    Mounts: Volume en `/data` (imprescindible: ahí vive la base de datos)
+#
+#  DÓNDE QUEDAN LOS DATOS: en `/data/phytoemagry.sqlite`, y se pueden leer
+#  entrando en `/panel?token=TU_CLAVE` (o descargar en CSV desde ahí).
+#  Ver docs/CRM-CONTRACT.md. Monta SIEMPRE un volumen en /data: sin él, la base
+#  de datos se pierde en cada actualización de la imagen.
 #
 #  NOTA: el Dockerfile necesita el CÓDIGO del proyecto (src/, public/,
 #  package.json...), que ya viaja en el repositorio. No es un archivo suelto:
 #  `docker build` se ejecuta sobre la carpeta del proyecto.
 #
 #  Los valores de abajo son PÚBLICOS: acaban en el HTML/JS que recibe el
-#  navegador (el número de WhatsApp se ve en la página). Esta imagen no lleva
-#  ningún secreto. Guía completa: docs/DESPLIEGUE.md
+#  navegador (el número de WhatsApp se ve en la página). PHYTO_CRM_TOKEN se pasa
+#  EN TIEMPO DE EJECUCIÓN (`docker run -e`), nunca aquí: el build no lleva
+#  secretos. Guía completa: docs/DESPLIEGUE.md
 # ============================================================================
 
 # ---------------------------------------------------------------- etapa 1: build
@@ -47,7 +57,10 @@ COPY . .
 #   docker build --build-arg SEO_SITE_URL=https://phytoemagry.com .
 ARG PHYTO_WHATSAPP_NUMBER="18297853794"
 ARG SEO_SITE_URL=""
-ARG PHYTO_CRM_ENDPOINT=""
+# `/api/crm` es la ruta del API que ya trae esta imagen (mismo dominio): así los
+# contactos quedan guardados en /data/phytoemagry.sqlite sin configurar nada. Si
+# prefieres otro CRM (Sheets, Make, tu propio backend), pásale su URL completa.
+ARG PHYTO_CRM_ENDPOINT="/api/crm"
 ARG PHYTO_META_PIXEL_ID=""
 ARG CONTACT_EMAIL=""
 ARG APP_ENV="production"
@@ -63,94 +76,177 @@ ENV PHYTO_WHATSAPP_NUMBER=$PHYTO_WHATSAPP_NUMBER \
 # publica una web rota.
 RUN npm run verify
 
-# ---------------------------------------------------------------- etapa 2: nginx
-FROM nginx:1.27-alpine AS runtime
+# ------------------------------------------------- etapa 2: nginx + API del CRM
+FROM node:22-alpine AS runtime
 
-# Puerto de escucha. 80 por defecto para `docker run -p 8080:80`.
+# nginx sirve la web (estática, rápida) y delante del API que guarda los datos.
+# node: no necesita ninguna librería de base de datos: usa `node:sqlite`, que ya
+# viene dentro de Node (por eso el flag --experimental-sqlite al arrancar).
+RUN apk add --no-cache nginx
+
+# Puerto de escucha de la web. 80 por defecto para `docker run -p 8080:80`.
 # Los paneles (Easypanel, Dokploy, Coolify...) suelen definir `PORT` en tiempo de
 # ejecución: si lo hacen, nginx escucha ahí y solo hay que poner ese mismo número
 # en el puerto del proxy/dominio. Ver docs/DESPLIEGUE.md.
-ENV PORT=80
+ENV PORT=80 \
+    PHYTO_CRM_PORT=8787 \
+    PHYTO_CRM_HOST=127.0.0.1 \
+    PHYTO_CRM_DATA=/data/phytoemagry.sqlite \
+    PHYTO_CRM_TOKEN=""
 
-# Config del servidor web, escrita aquí mismo: este Dockerfile no depende de
-# ningún otro archivo de configuración. (Para un servidor con nginx del sistema,
-# el equivalente está en nginx/phytoemagry.conf.)
+# Config de nginx, escrita aquí mismo: este Dockerfile no depende de ningún otro
+# archivo de configuración. (Para un servidor con nginx del sistema, el
+# equivalente está en nginx/phytoemagry.conf.)
 #
-# Se guarda como PLANTILLA: el entrypoint oficial de nginx sustituye ${PORT} al
-# arrancar (solo variables de entorno, así que $uri, $host y compañía quedan
-# intactos).
-COPY <<'NGINX_TEMPLATE' /etc/nginx/templates/default.conf.template
-server {
-    listen ${PORT};
-    listen [::]:${PORT};
-    server_name _;
+# La plantilla es la configuración COMPLETA de nginx (no un trozo para incluir):
+# el entrypoint le fija el puerto y la escribe como /etc/nginx/nginx.conf. Se
+# sustituye solo ${PORT}, así que $uri, $host y compañía quedan intactos.
+COPY <<'NGINX_CONF' /etc/nginx/templates/default.conf.template
+worker_processes auto;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
 
-    root /usr/share/nginx/html;
-    index index.html;
-    charset utf-8;
-
-    # ------------------------------------------------------------ seguridad
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
-    # HSTS: descomentar cuando el HTTPS funcione delante (proxy/certificado).
-    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    # CSP: pega aquí el valor de dist/csp-header.txt (se genera en cada build).
-    # add_header Content-Security-Policy "default-src 'self'; ..." always;
-
-    # ---------------------------------------------------------- compresión
-    gzip on;
-    gzip_vary on;
-    gzip_comp_level 6;
-    gzip_min_length 512;
-    gzip_types text/plain text/css text/xml application/javascript application/json application/xml image/svg+xml;
-
-    # --------------------------------------------------------------- rutas
-    # Páginas legales: /privacidad y /terminos (sin .html)
-    location = /privacidad { try_files /privacidad.html =404; }
-    location = /terminos   { try_files /terminos.html   =404; }
-
-    # Assets con hash de contenido: caché inmutable de 1 año
-    location /assets/ {
-        add_header Cache-Control "public, max-age=31536000, immutable" always;
-        access_log off;
-        try_files $uri =404;
-    }
-
-    # Imágenes y fuentes sin hash: caché de 30 días
-    location ~* \.(?:png|jpe?g|webp|avif|svg|ico|woff2?)$ {
-        add_header Cache-Control "public, max-age=2592000" always;
-        access_log off;
-        try_files $uri =404;
-    }
-
-    # El HTML y los archivos de SEO nunca se cachean (publicar = ver el cambio ya)
-    location ~* \.(?:html|xml|txt)$ {
-        add_header Cache-Control "no-cache, must-revalidate" always;
-    }
-
-    location / {
-        try_files $uri $uri/ =404;
-        add_header Cache-Control "no-cache, must-revalidate" always;
-    }
-
-    # Endurecimiento básico
-    location ~ /\.(?!well-known) { deny all; }
-    location ~* \.(?:map|md|json)$ { deny all; }
+events {
+    worker_connections 1024;
 }
-NGINX_TEMPLATE
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /dev/stdout;
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65;
+    server_tokens off;
+    client_max_body_size 256k;
+
+    server {
+        listen ${PORT};
+        listen [::]:${PORT};
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+        charset utf-8;
+
+        # -------------------------------------------------------- seguridad
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        # HSTS: descomentar cuando el HTTPS funcione delante (proxy/certificado).
+        # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        # CSP: pega aquí el valor de dist/csp-header.txt (se genera en cada build).
+        # add_header Content-Security-Policy "default-src 'self'; ..." always;
+
+        # ------------------------------------------------------ compresión
+        gzip on;
+        gzip_vary on;
+        gzip_comp_level 6;
+        gzip_min_length 512;
+        gzip_types text/plain text/css text/xml application/javascript application/json application/xml image/svg+xml;
+
+        # -------------------------------------------------- API del CRM (Node)
+        # Guarda los `lead` y los `order_intent` en /data/phytoemagry.sqlite.
+        # `^~` evita que lo capturen las reglas de abajo (map/md/json).
+        location ^~ /api/ {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Panel para leer los pedidos y los contactos (pide ?token=TU_CLAVE).
+        location = /panel {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # ----------------------------------------------------------- rutas
+        # Páginas legales: /privacidad y /terminos (sin .html)
+        location = /privacidad { try_files /privacidad.html =404; }
+        location = /terminos   { try_files /terminos.html   =404; }
+
+        # Assets con hash de contenido: caché inmutable de 1 año
+        location /assets/ {
+            add_header Cache-Control "public, max-age=31536000, immutable" always;
+            access_log off;
+            try_files $uri =404;
+        }
+
+        # Imágenes y fuentes sin hash: caché de 30 días
+        location ~* \.(?:png|jpe?g|webp|avif|svg|ico|woff2?)$ {
+            add_header Cache-Control "public, max-age=2592000" always;
+            access_log off;
+            try_files $uri =404;
+        }
+
+        # El HTML y los archivos de SEO nunca se cachean (publicar = ver el cambio ya)
+        location ~* \.(?:html|xml|txt)$ {
+            add_header Cache-Control "no-cache, must-revalidate" always;
+        }
+
+        location / {
+            try_files $uri $uri/ =404;
+            add_header Cache-Control "no-cache, must-revalidate" always;
+        }
+
+        # Endurecimiento básico
+        location ~ /\.(?!well-known) { deny all; }
+        location ~* \.(?:map|md|json)$ { deny all; }
+    }
+}
+NGINX_CONF
+
+# Entrypoint: prepara la carpeta de datos, escribe el puerto real en la config de
+# nginx y arranca los dos procesos (API del CRM + nginx, que se queda en primer
+# plano para que el contenedor siga vivo y reciba las señales).
+COPY <<'ENTRYPOINT' /usr/local/bin/entrypoint.sh
+#!/bin/sh
+set -e
+
+: "${PORT:=80}"
+: "${PHYTO_CRM_DATA:=/data/phytoemagry.sqlite}"
+
+mkdir -p "$(dirname "$PHYTO_CRM_DATA")" /var/lib/nginx /var/log/nginx
+
+# La plantilla es la configuración completa de nginx: solo hay que fijar el puerto.
+sed "s/\${PORT}/${PORT}/g" /etc/nginx/templates/default.conf.template > /etc/nginx/nginx.conf
+
+# API del CRM en segundo plano. `--experimental-sqlite` habilita la base de datos
+# incluida en Node (en versiones más nuevas el flag se acepta igual y sobra).
+node --experimental-sqlite /app/server/crm-server.mjs &
+
+# nginx en primer plano: es el proceso principal del contenedor.
+exec nginx -g 'daemon off;'
+ENTRYPOINT
 
 # CRLF → LF (por si el build se lanza desde un Windows con saltos de línea CRLF).
 RUN tr -d '\015' < /etc/nginx/templates/default.conf.template > /tmp/conf \
-    && mv /tmp/conf /etc/nginx/templates/default.conf.template
+    && mv /tmp/conf /etc/nginx/templates/default.conf.template \
+    && tr -d '\015' < /usr/local/bin/entrypoint.sh > /tmp/entrypoint \
+    && mv /tmp/entrypoint /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh \
+    && mkdir -p /data
 
-# Solo los archivos generados: ni fuentes, ni tests, ni node_modules.
+# Solo los archivos generados (+ el servidor del API): ni fuentes, ni tests,
+# ni node_modules.
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/server /app/server
+
+# Los datos viven aquí: monta un volumen para que sobrevivan a las actualizaciones
+# (Easypanel → Mounts → Volume → /data). Sin volumen, cada despliegue empieza de cero.
+VOLUME ["/data"]
 
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
 
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
