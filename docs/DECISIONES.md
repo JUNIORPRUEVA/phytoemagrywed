@@ -508,3 +508,48 @@ Aplicado:
    peor fallo posible en esta web.
 5. **La imagen lleva solo `pg`** (etapa `runtime-deps` con `npm ci --omit=dev`):
    las dependencias de desarrollo se quedan en la etapa de build.
+
+## 30. En móvil, menos aire y un escalón menos de tamaño (la página se veía "demasiado cerca")
+
+El negocio lo describió así: "siento como si estuviera demasiado zoom, que en
+móvil se vea más lejos, las letras más pequeñas y los botones más pequeños".
+Antes de tocar nada se MIDIÓ en un móvil real (390×844, navegador de verdad):
+
+| Medida | Antes | Después |
+| --- | --- | --- |
+| Portada | 524 px (**62%** de la pantalla) | 460 px (**54%**) |
+| Párrafos | **18 px** | 16 px |
+| Títulos de sección | 26 px | 22 px |
+| Aire por sección (arriba + abajo) | 48 + 48 px | 32 + 32 px |
+| Botón principal | 56 px de alto | 50 px |
+| Tarjeta de frasco | 240 × 410 px | 216 × 378 px |
+| Página completa | 5,8 pantallas | 5,2 pantallas |
+| Cabecera | 64 px | 56 px |
+
+Todo con un `@media (max-width: 767px)`: **el escritorio no cambia ni un píxel**
+(verificado a 1440: párrafos 18, títulos 32, botones 56, tarjetas 232).
+
+1. **Dos palancas, no veinte retoques.** Primero los tokens (`tokens.css`): los
+   tamaños grandes bajan un escalón y se aprieta el interlineado. Después el aire
+   (`layout.css` + `components.css`): secciones, portada, CTA final y footer.
+   Veinte ajustes sueltos por toda la hoja habrían sido imposibles de mantener.
+2. **Lo que NO se tocó, a propósito:**
+   - **mínimos táctiles** (`--pe-tap: 48 px`): el botón baja a 50 px, nunca a 44
+     ni menos. Un botón que se falla con el dedo cuesta más ventas que el aire
+     que se gana; es la línea que no se cruza por "que se vea más fino";
+   - **texto pequeño** (`--pe-fs-xs/sm`): es el que ya estaba en el límite de lo
+     legible (avisos, notas, etiquetas); bajarlo habría empeorado la lectura sin
+     ganar sensación de amplitud.
+3. **La sensación de "zoom" casi nunca es la tipografía, es el aire.** Cuatro
+   secciones con 96 px de aire cada una eran más de media pantalla de nada. Bajar
+   el aire de 48 a 32 px se nota mucho más que bajar la letra de 16 a 15 px, y no
+   cuesta legibilidad.
+4. **La tarjeta del carrusel baja a 216 px**: la siguiente asoma 162 px (antes
+   92–162), que es lo que invita a deslizar. Los `sizes` de la foto no cambian
+   (216 px sigue entrando en el archivo de 320), así que el peso de la imagen es
+   exactamente el mismo.
+
+Verificado en navegador real a 360, 390 y 1440 px: sin desbordamiento horizontal
+en ningún ancho, la primera pantalla ahora incluye la portada **y** el arranque de
+la siguiente sección, y el modal de pedido sigue cabiendo sin scroll (724 px de
+844).

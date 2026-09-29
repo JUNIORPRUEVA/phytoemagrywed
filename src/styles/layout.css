@@ -698,6 +698,66 @@
   }
 }
 
+/* ------------------------------------------------------ MÓVIL: menos "zoom" */
+/*
+ * Medido en un móvil de 390×844: la portada ocupaba 588 px (el 70% de la
+ * pantalla) y cada sección dejaba 48 px de aire arriba y abajo, así que en una
+ * pantalla cabía muy poco y todo parecía más grande de lo que es.
+ *
+ * Aquí se aprieta el AIRE solo en móvil (los tamaños de texto se ajustan en
+ * `tokens.css`): es lo que más cambia la sensación de "está todo muy cerca".
+ */
+@media (max-width: 767px) {
+  .pe-hero {
+    padding-bottom: var(--pe-space-4);
+  }
+
+  .pe-hero__content {
+    padding-top: var(--pe-space-4);
+  }
+
+  .pe-hero .pe-price-block {
+    margin-top: var(--pe-space-3);
+  }
+
+  .pe-hero__cta {
+    gap: var(--pe-space-2);
+    margin-top: var(--pe-space-3);
+  }
+
+  .pe-section {
+    padding: var(--pe-space-6) 0;
+  }
+
+  .pe-section__subtitle {
+    margin-bottom: var(--pe-space-4);
+  }
+
+  .pe-trust {
+    margin-top: var(--pe-space-4);
+  }
+
+  .pe-presentation__cta {
+    margin-top: var(--pe-space-4);
+  }
+
+  .pe-order {
+    margin-top: var(--pe-space-4);
+  }
+
+  .pe-footer {
+    padding: var(--pe-space-6) 0 var(--pe-space-4);
+  }
+
+  .pe-footer__bottom {
+    margin-top: var(--pe-space-5);
+  }
+
+  .pe-footer__grid {
+    gap: var(--pe-space-5);
+  }
+}
+
 /* ------------------------------------------------------------------- LEGAL */
 .pe-legal {
   padding: var(--pe-space-7) 0 var(--pe-space-8);

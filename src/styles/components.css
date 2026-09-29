@@ -1469,3 +1469,30 @@
     width: auto;
   }
 }
+
+/* ------------------------------------------------------ MÓVIL: menos "zoom" */
+@media (max-width: 767px) {
+  /* La sección final tiene su propio aire: también se aprieta en móvil. */
+  .pe-final {
+    padding: var(--pe-space-6) 0;
+  }
+
+  /*
+   * Botón principal un escalón más bajo (56 → 50 px). Se queda por encima del
+   * mínimo táctil de 44 px: bajar más ahorraría píxeles y haría que se fallara
+   * el toque, que cuesta más ventas que el aire que se gana.
+   */
+  .pe-btn--lg {
+    min-height: 50px;
+    padding: var(--pe-space-3) var(--pe-space-5);
+  }
+
+  /*
+   * Tarjeta de frasco más estrecha (240 → 216 px): entra más carrusel en pantalla
+   * y la tarjeta de al lado asoma más, que es lo que invita a deslizar. La foto
+   * sigue siendo el mismo archivo (los `sizes` no cambian: 216 px cabe en 320).
+   */
+  .pe-variant {
+    width: 216px;
+  }
+}

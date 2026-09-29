@@ -77,3 +77,30 @@
   /* Alto de la foto del hero en móvil: deja sitio a título + precio + CTA */
   --pe-hero-media-h: clamp(190px, 32vh, 320px);
 }
+
+/*
+ * ---------------------------------------------------------------------- MÓVIL
+ * En un móvil de 390 px la página se veía "demasiado cerca": la portada ocupaba
+ * 588 px (el 70% de la pantalla), los párrafos medían 18 px, el título 32 px y
+ * cada sección dejaba 48 px de aire arriba y abajo. El resultado era una página
+ * que parecía ampliada y en la que cabía muy poco.
+ *
+ * Estos ajustes son SOLO para móvil y bajan un escalón los tamaños grandes y los
+ * huecos, para que se vea más contenido y todo parezca un poco más lejos.
+ *
+ * Lo que NO se toca:
+ *  - los mínimos táctiles (`--pe-tap: 48px`): un botón más bajo se falla con el
+ *    dedo, y eso cuesta más ventas que unos píxeles de aire;
+ *  - el texto pequeño (`--pe-fs-xs/sm`), que se queda igual: es el que ya estaba
+ *    en el límite de lo legible.
+ */
+@media (max-width: 767px) {
+  :root {
+    --pe-fs-lg: 1rem; /* párrafos y subtítulos: 16 px (antes 18) */
+    --pe-fs-xl: 1.0625rem; /* 17 px */
+    --pe-fs-2xl: 1.375rem; /* títulos de sección y precio: 22 px (antes 26) */
+    --pe-lh-base: 1.55;
+    --pe-header-h: 56px; /* cabecera pegada arriba: menos espacio robado */
+    --pe-mobile-bar-h: 64px; /* = botón 48 px + 8 + 8 de la barra fija */
+  }
+}
