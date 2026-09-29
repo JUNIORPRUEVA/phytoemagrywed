@@ -8,7 +8,11 @@
 #  EN EL SERVIDOR (2 comandos):
 #    git clone https://github.com/JUNIORPRUEVA/phytoemagrywed.git
 #    cd phytoemagrywed && docker build -t phytoemagry . && docker run -d \
-#      --name phytoemagry -p 80:80 --restart unless-stopped phytoemagry
+#      --name phytoemagry -p 8080:80 --restart unless-stopped phytoemagry
+#
+#  (Si nada más usa el puerto 80, cambia `-p 8080:80` por `-p 80:80` y ya no
+#  hace falta ningún proxy delante. Con dominio y HTTPS, deja 8080 y pon el
+#  certificado en el proxy: ver docs/DESPLIEGUE.md.)
 #
 #  O con Compose (trae los valores y el healthcheck):
 #    docker compose up -d --build
