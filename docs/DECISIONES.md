@@ -480,3 +480,31 @@ cuerpos inválidos sin guardar nada, exige la clave para leer, exporta CSV, filt
 por tipo y el modo JSONL funciona igual. Y verificado en el navegador con la
 landing real (dev server + API con CORS): el lead del formulario y los dos envíos
 pendientes de la cola llegaron a la base de datos, y `/panel` los lista.
+## 29. Los datos van a PostgreSQL, en su propia base de datos y con su propio usuario
+
+Cuando el negocio pidió "crear una base de datos y conectarla", el servidor ya
+tenia un PostgreSQL 17 en marcha (el servicio `studio-db` de su otro proyecto).
+Aplicado:
+
+1. **Base de datos nueva y aislada**: `phytoemagry`, con su propio rol
+   `phytoemagry_user` (sin superusuario, sin crear bases ni roles). No se reutiliza
+   el usuario del otro proyecto: si algún día la web se viera comprometida, lo que
+   hay detrás es una base con pedidos, no acceso al servidor entero.
+2. **`REVOKE CONNECT ... FROM PUBLIC`** en `phytoemagry` **y en `video_studio`**:
+   el usuario nuevo no puede leer el proyecto vecino, y el vecino sigue igual
+   (es el propietario de su base). Un `docker exec` a `pg_hba` en la mano
+   demuestra lo que pasa: reconectar como el rol nuevo pasa, lo que no pasa es
+   ver datos ajenos.
+3. **Almacén `pg` en el API** (`server/crm-server.mjs`), con pool (se reconecta
+   solo tras una caída) y la tabla `phytoemagry_items` creada al arrancar.
+   `payload jsonb` para poder consultar dentro del propio pgweb/dbgate del
+   servidor, y `ON CONFLICT (id) DO NOTHING` para que los reintentos de la cola
+   local no dupliquen nada. La fila se devuelve **con la misma forma que en
+   SQLite**, así el panel, el CSV y los tests valen para los dos almacenes.
+4. **SQLite no se borra: pasa a ser el respaldo.** Sin `PHYTO_CRM_DATABASE_URL`
+   sigue siendo el almacén por defecto (cero configuración, cero dependencias), y
+   si Postgres está configurado pero no responde, el API lo dice en los logs y
+   sigue guardando ahí. Un pedido perdido por un problema de base de datos es el
+   peor fallo posible en esta web.
+5. **La imagen lleva solo `pg`** (etapa `runtime-deps` con `npm ci --omit=dev`):
+   las dependencias de desarrollo se quedan en la etapa de build.

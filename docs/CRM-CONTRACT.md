@@ -21,17 +21,27 @@ Hay **dos canales**, y funcionan los dos a la vez:
 | Canal | Qué llega | Cuándo |
 | --- | --- | --- |
 | **WhatsApp `+1 829 785 3794`** | Todo, ya escrito y listo: cada pedido (frasco, cantidad, precio, total y el nombre) y cada contacto del formulario (nombre, teléfono, ubicación) | **Ya funciona**, sin configurar nada |
-| **La base de datos de la propia web** (`/api/crm`, dentro de la imagen) | El mismo dato en formato estructurado (`lead` y `order_intent`), guardado en `/data/phytoemagry.sqlite` | **Ya funciona** en la imagen Docker; se lee en `/panel?token=...` |
+| **La base de datos de la propia web** (`/api/crm`, dentro de la imagen) | El mismo dato en formato estructurado (`lead` y `order_intent`), guardado en PostgreSQL (o en `/data/phytoemagry.sqlite`) | **Ya funciona** en la imagen Docker; se lee en `/panel?token=...` |
 
-### La base de datos que trae la web (SQLite)
+### La base de datos de la web (PostgreSQL o SQLite)
 
-`server/crm-server.mjs` es un servidor HTTP pequeño **sin dependencias** que usa
-el módulo SQLite incluido en Node (`node:sqlite`). Con la imagen Docker:
+`server/crm-server.mjs` es un servidor HTTP pequeño que habla con la base de
+datos que le indiques. Dos almacenes, y elige solo:
+
+| Almacén | Cuándo se usa | Dónde quedan los datos |
+| --- | --- | --- |
+| **PostgreSQL** (recomendado en producción) | Si defines `PHYTO_CRM_DATABASE_URL` | En el servidor de base de datos (tabla `phytoemagry_items`) |
+| **SQLite** (por defecto, cero configuración) | Si no hay `PHYTO_CRM_DATABASE_URL` | `/data/phytoemagry.sqlite`, dentro del contenedor (monta ahí un volumen) |
+
+Además, si el módulo SQLite de Node no existiera, cae a un archivo `.jsonl`. Y si
+PostgreSQL está configurado pero no responde, lo avisa en los logs y **sigue
+guardando en SQLite**: la web nunca pierde un pedido por un problema de la base de
+datos.
+
+Con la imagen Docker:
 
 - nginx sirve la web y le pasa `/api/` y `/panel` a este proceso;
-- los datos viven en `/data/phytoemagry.sqlite` (monta un volumen ahí: es lo que
-  hace que sobrevivan a las actualizaciones);
-- **`PHYTO_CRM_TOKEN`** es la clave para leerlos. Sin ella, la web sigue
+- **`PHYTO_CRM_TOKEN`** es la clave para leer los datos. Sin ella, la web sigue
   guardando, pero leer queda desactivado (respuesta `503` con el aviso).
 
 Rutas:
@@ -53,16 +63,40 @@ Probar en local (sin Docker):
 npm run crm            # arranca el API en http://127.0.0.1:8787
 ```
 
-Variables (solo servidor, nunca llegan al navegador): `PHYTO_CRM_TOKEN`,
-`PHYTO_CRM_DATA`, `PHYTO_CRM_PORT`, `PHYTO_CRM_HOST`, `PHYTO_CRM_ALLOWED_ORIGIN`
-(esta última solo si sirves la web desde otro dominio). Ver `.env.example`.
+Variables (solo servidor, nunca llegan al navegador): `PHYTO_CRM_DATABASE_URL`,
+`PHYTO_CRM_TOKEN`, `PHYTO_CRM_DATA`, `PHYTO_CRM_PORT`, `PHYTO_CRM_HOST`,
+`PHYTO_CRM_ALLOWED_ORIGIN` (esta última solo si sirves la web desde otro dominio).
+Ver `.env.example`.
+
+#### Tabla de PostgreSQL
+
+```sql
+CREATE TABLE phytoemagry_items (
+  id text PRIMARY KEY, type text NOT NULL, received_at text NOT NULL,
+  name text, phone text, location text,
+  variant_id text, variant_name text, capsules integer,
+  quantity integer, unit_price integer, total integer, currency text,
+  source text, session_id text,
+  payload jsonb NOT NULL, stored_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+El API la crea sola al arrancar (`CREATE TABLE IF NOT EXISTS`), con índices por
+`received_at` y `type`. El `id` es la clave primaria y el `INSERT` usa
+`ON CONFLICT (id) DO NOTHING`: la cola local puede reintentar sin duplicar. Los
+intentos `testpg-...` que crean los tests se borran al terminar, así que se puede
+apuntar la suite a una base de datos real sin dejar basura:
+
+```bash
+PHYTO_CRM_TEST_DATABASE_URL=postgres://... npm test
+```
 
 **Nota:** mientras no exista ni endpoint ni base de datos (por ejemplo si sirves
 `dist/` en un hosting estático sin el API), la cola local (`pe:crm.queue`) vive en
 el navegador **del visitante**: sirve de red de seguridad, pero **no es una base
-de datos de clientes** (solo se ve con `Phytoemagry.pendingCrmItems()` en la
-consola de ese navegador). La vía por la que el negocio recibe el contacto es
-WhatsApp.
+de datos de clientes** (se ve con `Phytoemagry.pendingCrmItems()` y se reenvía
+al cargar la página siguiente). La vía por la que el negocio recibe el contacto
+es WhatsApp.
 
 ### Cómo se comporta el formulario "quiero que me escriban"
 
@@ -93,7 +127,7 @@ registrado en la base de datos del servidor.
 
 | Opción | Coste | Notas |
 | --- | --- | --- |
-| **La base de datos incluida** (por defecto en la imagen Docker) | Incluida | SQLite dentro del contenedor + panel y CSV. Nada que configurar salvo el volumen `/data` y el token |
+| **La base de datos incluida** (por defecto en la imagen Docker) | Incluida | PostgreSQL si le das `PHYTO_CRM_DATABASE_URL` (recomendado) o SQLite dentro del contenedor. Panel y CSV incluidos |
 | **Google Sheets** (Apps Script publicado como Web App) | Gratis | Los leads caen en una hoja de cálculo que puedes abrir en el móvil. Apps Script no responde al preflight CORS: hay que recibirlo como `text/plain` (ajuste pequeño en `src/lib/api.js`, se hace al conectar) |
 | **Make / Zapier / n8n** (webhook) | Desde gratis | Envía un correo, avisa por WhatsApp/Telegram o escribe en Sheets sin programar |
 | **Formulario tipo Formspree / Getform** | Gratis con límite | Recibe el POST y te avisa por correo; luego se descarga a Excel/Sheets |

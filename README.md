@@ -63,15 +63,15 @@ src/
     checkout.js  lead-form.js  whatsapp-actions.js  consent-banner.js
   styles/            tokens → base → layout → componentes
 server/
-  crm-server.mjs     API del CRM: guarda los pedidos y los contactos en SQLite
-                     (+ panel en /panel?token=... y descarga en CSV). Sin dependencias
+  crm-server.mjs     API del CRM: guarda los pedidos y los contactos en PostgreSQL
+                     (o SQLite si no hay base de datos), + panel y CSV. Ver docs/CRM-CONTRACT.md
 scripts/
   build.mjs  dev.mjs  render-once.mjs  check-content.mjs  audit-content.mjs
   inspect-render.mjs  clean.mjs  generate-placeholder-images.py  optimize-hero-image.py
   optimize-variant-images.py
 public/              assets estáticos (favicon, OG, iconos, fotos)
   assets/img/frascos/  foto de cada frasco (carrusel): frasco-<N>-{320,480}.{avif,webp,jpg}
-data/                base de datos local del CRM (SQLite) — NO se versiona
+data/                base de datos local de SQLite (solo si no usas PostgreSQL) — NO se versiona
 docs/                contrato del CRM, pendientes y decisiones técnicas
 tests/               unidades, render, flujos de cliente, API del CRM y contenido
 ```
@@ -185,12 +185,18 @@ servidor) y un `docker-compose.yml`.
 docker compose up -d --build        # o: docker build -t phytoemagry . && docker run -p 8080:80 phytoemagry
 ```
 
-Dos cosas que hay que hacer **una vez** en el servidor para no perder datos:
+Dos variables bastan para no perder datos (ni quedarte sin poder leerlos):
 
-1. **Volumen en `/data`** (ahí vive la base de datos de pedidos y contactos).
-   Con Compose ya está; en Easypanel: Mounts → Volume → `/data`.
+1. **`PHYTO_CRM_DATABASE_URL`** con la cadena de PostgreSQL (los pedidos y los
+   contactos se guardan ahí, no dentro del contenedor). Si la dejas vacía, se usa
+   SQLite y entonces sí necesitas un **volumen en `/data`**: Easypanel → Mounts →
+   Volume → `/data`; con Compose ya está configurado.
 2. **`PHYTO_CRM_TOKEN`** (clave larga y solo tuya) para poder leerlos en
    `https://tu-dominio/panel?token=...`.
+
+Y `PHYTO_CRM_ENDPOINT` debe apuntar a `/api/crm` (o no estar declarado: ese ya es
+el valor por defecto). Si lo dejas declarado pero **vacío**, la web no enviará
+nada al API.
 
 La imagen funciona tal cual en **Easypanel, Dokploy o Coolify** (servicio *App* →
 Git → Dockerfile; puerto del proxy 80, o el que indique `PORT`). Guía completa,
@@ -279,7 +285,7 @@ que no quedan anclas rota.
 | **Déjanos tu contacto y te escribimos** | Enlace en el propio resumen del pedido que baja al formulario: el visitante que no compra hoy también puede dejar su número |
 | **Modal de pedido** | Formulario **mínimo: solo el nombre**. El frasco, la cantidad, el precio y el total ya están elegidos arriba y viajan escritos en el mensaje de WhatsApp. El modal avisa en 3 sitios de que **el pedido se finaliza por WhatsApp** (frase de entrada, línea informativa junto al botón y nota al pie) |
 | **Formulario de contacto** | Valida, se envía al CRM (cola local si no hay endpoint) **y abre WhatsApp con nombre, teléfono y ubicación ya escritos**: así el contacto llega al negocio y se puede responder |
-| **Base de datos** | La imagen Docker trae su propio API (`server/crm-server.mjs`): cada pedido y cada contacto se guarda en SQLite (`/data/phytoemagry.sqlite`) y se lee en `/panel?token=...` o en CSV. Ver «Dónde quedan los pedidos y los contactos» |
+| **Base de datos** | La imagen Docker trae su propio API (`server/crm-server.mjs`): cada pedido y cada contacto se guarda en PostgreSQL (o en SQLite si no se configura) y se lee en `/panel?token=...` o en CSV. Ver «Dónde quedan los pedidos y los contactos» |
 | **Pago** | *No implementado a propósito.* La venta la confirma el CRM |
 
 ### Dónde quedan los pedidos y los contactos
@@ -288,17 +294,18 @@ Hay **dos canales** y funcionan a la vez:
 
 1. **WhatsApp `+1 829 785 3794`** (el principal): cada pedido y cada contacto
    llegan al chat ya escritos, y el negocio responde desde el móvil.
-2. **La base de datos de la propia web** (`server/crm-server.mjs` + SQLite): la
-   imagen Docker ya la trae y la web le envía los mismos datos a `/api/crm`. Se
-   leen en `https://tu-dominio/panel?token=TU_CLAVE` (tabla con fecha, tipo,
-   nombre, teléfono, frasco, total y ciudad) y se descargan en CSV desde ahí
-   mismo. El token se define con `PHYTO_CRM_TOKEN`; sin él, se sigue guardando
-   pero no se puede leer.
+2. **La base de datos de la propia web** (`server/crm-server.mjs`): la imagen
+   Docker ya la trae y la web le envía los mismos datos a `/api/crm`. Con
+   `PHYTO_CRM_DATABASE_URL`, los datos van a **PostgreSQL**; sin ella, a SQLite
+   dentro del contenedor. Se leen en `https://tu-dominio/panel?token=TU_CLAVE`
+   (tabla con fecha, tipo, nombre, teléfono, frasco, total y ciudad) y se
+   descargan en CSV desde ahí mismo. El token se define con `PHYTO_CRM_TOKEN`; sin
+   él, se sigue guardando pero no se puede leer.
 
-En el servidor hay que montar un volumen en `/data` para que la base de datos
-sobreviva a las actualizaciones (Easypanel → Mounts → Volume → `/data`; con
-Compose ya está configurado). Contrato completo, endpoints y alternativas
-(Google Sheets, Make/Zapier/n8n) en [`docs/CRM-CONTRACT.md`](docs/CRM-CONTRACT.md).
+Si usas SQLite (sin PostgreSQL), monta un volumen en `/data` para que los datos
+sobrevivan a las actualizaciones. Contrato completo, endpoints, la tabla de
+PostgreSQL y alternativas (Google Sheets, Make/Zapier/n8n) en
+[`docs/CRM-CONTRACT.md`](docs/CRM-CONTRACT.md).
 
 ### Frasco ≠ cantidad (importante)
 

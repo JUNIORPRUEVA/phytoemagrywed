@@ -183,11 +183,13 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
   escritos. El visitante solo pulsa enviar. Se leen en
   `tu-dominio/panel?token=TU_CLAVE` y se descargan en CSV. Detalle y opciones en
   [`CRM-CONTRACT.md`](CRM-CONTRACT.md) → "¿Dónde llegan los contactos?".
-- **Dos cosas que hacer una vez en el servidor** (si despliegas con Docker):
-  montar un volumen en `/data` (ahí vive la base de datos) y definir
-  `PHYTO_CRM_TOKEN` (la clave para leerla). Sin el volumen, cada *Deploy* empieza
-  con la base de datos vacía; sin la clave, los datos se guardan pero no se
-  pueden consultar. Paso a paso en [`DESPLIEGUE.md`](DESPLIEGUE.md) → §3.
+- **Lo que hay que hacer una vez en el servidor** (si despliegas con Docker):
+  definir `PHYTO_CRM_DATABASE_URL` (la base de datos PostgreSQL donde se guardan
+  los pedidos y los contactos), `PHYTO_CRM_TOKEN` (la clave para leerlos) y
+  `PHYTO_CRM_ENDPOINT=/api/crm` (para que la web envíe los datos al API; si se
+  queda vacío, la web no envía nada). Si no configuras PostgreSQL, hay que montar
+  un volumen en `/data` (ahí queda el archivo de SQLite). Paso a paso en
+  [`DESPLIEGUE.md`](DESPLIEGUE.md) → §3.
 - **Horario de atención** (`contact.whatsapp.hours`): decir cuándo se responde
   sube la tasa de respuesta del primer mensaje.
 - **Testimonios reales** (`content.testimonials.items` + su `disclaimer`): la
