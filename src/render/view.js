@@ -278,8 +278,15 @@ export function buildView(overrides = {}) {
    * configurado, la variable queda en `https://` — sin host. Eso produciría un
    * canonical roto (`https:///`) y una vista previa sin imagen al compartir el
    * enlace: mejor no publicar ninguna URL que publicar una mala.
+   *
+   * Tampoco se publica un dominio de EJEMPLO (`tudominio.com`, `example.com`…):
+   * un canonical que apunta a un dominio que no es del negocio es peor que no
+   * tener canonical, porque le dice a Google cuál es la dirección "buena". En
+   * ese caso la URL se ignora y el aviso sigue en `looksLikePlaceholder`.
    */
-  const siteUrl = normalizeSiteUrl(site.seo?.siteUrl);
+  const rawSiteUrl = normalizeSiteUrl(site.seo?.siteUrl);
+  const siteUrlIsPlaceholder = rawSiteUrl ? isPlaceholderUrl(rawSiteUrl) : false;
+  const siteUrl = siteUrlIsPlaceholder ? null : rawSiteUrl;
   const flags = {
     whatsapp: waEnabled,
     /** Hay al menos una presentación con precio real. */
@@ -401,7 +408,7 @@ export function buildView(overrides = {}) {
     flags,
     seo: {
       siteUrl,
-      looksLikePlaceholder: siteUrl ? isPlaceholderUrl(siteUrl) : false,
+      looksLikePlaceholder: siteUrlIsPlaceholder,
       canonicalFor: (path) => (siteUrl ? `${siteUrl}${path.startsWith('/') ? path : `/${path}`}` : null),
       ogImageUrl: siteUrl && isSet(site.seo?.ogImage) ? `${siteUrl}${site.seo.ogImage}` : null,
     },

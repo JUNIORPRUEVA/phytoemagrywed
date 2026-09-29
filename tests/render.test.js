@@ -65,8 +65,12 @@ describe('configuración sin datos (producto sin frascos)', () => {
   });
 });
 
+/**
+ * Dominio REAL del resto de la suite: los `.example` son placeholders y ya no
+ * se publican (se prueban aparte, en «SEO: una URL de sitio a medias»).
+ */
 describe('landing con los 7 frascos reales', () => {
-  const view = makeShopView({ whatsapp: WHATSAPP, siteUrl: 'https://phytoemagry.example' });
+  const view = makeShopView({ whatsapp: WHATSAPP, siteUrl: 'https://phytoemagry.com' });
   const html = renderIndexPage(view);
   const doc = parse(html);
 
@@ -492,8 +496,8 @@ describe('landing con los 7 frascos reales', () => {
   });
 
   it('genera canonical y sitemap', () => {
-    expect(doc.querySelector('link[rel="canonical"]').getAttribute('href')).toBe('https://phytoemagry.example/');
-    expect(renderSitemap(view)).toContain('<loc>https://phytoemagry.example/</loc>');
+    expect(doc.querySelector('link[rel="canonical"]').getAttribute('href')).toBe('https://phytoemagry.com/');
+    expect(renderSitemap(view)).toContain('<loc>https://phytoemagry.com/</loc>');
   });
 
   it('no deja ningún importe sin los 7 frascos', () => {
@@ -599,7 +603,7 @@ describe('seguridad del render', () => {  it('escapa HTML procedente de la confi
 });
 
 describe('páginas legales', () => {
-  const view = makeShopView({ siteUrl: 'https://phytoemagry.example' });
+  const view = makeShopView({ siteUrl: 'https://phytoemagry.com' });
 
   it('mantiene placeholders identificados y no se indexan', () => {
     const doc = parse(renderLegalPage(view, { kind: 'privacy' }));
@@ -632,6 +636,18 @@ describe('SEO: una URL de sitio a medias no se publica', () => {
     expect(view.seo.siteUrl).toBeNull();
     expect(renderSitemap(view)).toBeNull();
     expect(parse(renderIndexPage(view)).querySelector('link[rel="canonical"]')).toBeNull();
+  });
+
+  it('un dominio de EJEMPLO no se publica (pero el aviso sigue saliendo)', () => {
+    // Caso real: en Easypanel quedó `SEO_SITE_URL=https://tudominio.com` y la web
+    // publicaba un canonical apuntando a un dominio que no es del negocio.
+    for (const raw of ['https://tudominio.com', 'https://www.sudominio.com/', 'https://mitienda.example']) {
+      const view = makeView({ siteUrl: raw });
+      expect({ raw, siteUrl: view.seo.siteUrl }).toEqual({ raw, siteUrl: null });
+      expect(view.seo.looksLikePlaceholder).toBe(true);
+      expect(renderSitemap(view)).toBeNull();
+      expect(parse(renderIndexPage(view)).querySelector('link[rel="canonical"]')).toBeNull();
+    }
   });
 
   it('un dominio real genera canonical, sitemap y og:url coherentes', () => {

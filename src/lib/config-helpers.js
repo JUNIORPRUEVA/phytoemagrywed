@@ -75,7 +75,12 @@ export function isPlaceholderUrl(value) {
     url.includes('example.com') ||
     url.includes('localhost') ||
     url.includes('midominio') ||
+    url.includes('tudominio') ||
+    url.includes('sudominio') ||
+    url.includes('tu-dominio') ||
     url.includes('mydomain') ||
+    url.includes('yourdomain') ||
+    url.includes('ejemplo.com') ||
     url.includes('cambiar')
   );
 }
