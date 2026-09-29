@@ -323,6 +323,9 @@ ignorarlo: los registros de prueba no molestan).
 | `/panel` responde **503** «Para leer los datos define PHYTO_CRM_TOKEN» | No has puesto la variable: los datos SÍ se están guardando, solo hace falta la clave para leerlos. Define `PHYTO_CRM_TOKEN` y reinicia |
 | `/api/health` responde 404 o 502 | El API del CRM no está arrancado o nginx no lo encuentra. `docker logs` debe mostrar `[crm] escuchando en http://127.0.0.1:8787`. Si no aparece, revisa que el contenedor use el `ENTRYPOINT` del Dockerfile (no lo sobrescribas con `command:`) |
 | `/panel` **funciona pero está vacío tras un Deploy** | No montaste el volumen en `/data`: la base de datos se recrea con la imagen. Añade Mounts → Volume → `/data` |
+| El panel dice «**El CRM no está respondiendo en el puerto 8787**» | El proceso Node del API no está vivo (o no es el de este contenedor). En local: arranca `npm run dev` (que ya levanta el CRM) o `npm run crm`. En el servidor: `docker logs` debe mostrar `[crm] escuchando en http://127.0.0.1:8787`; si no, el `ENTRYPOINT` del Dockerfile se está sobrescribiendo |
+| El panel dice «**El panel no está conectado con el CRM (respuesta 404)**» | Estás entrando por un servidor que sirve el panel pero no reenvía `/api/` (típico: abrir `dist/admin/` con un servidor de ficheros). Entra por el dominio de la web o por `http://localhost:5173/admin/` |
+| Tras un `Deploy`, la **web va pero el panel sale vacío** con pedidos ya hechos | Falta `PHYTO_CRM_ENDPOINT` en el **build** (los valores públicos van dentro del HTML): la imagen trae `/api/crm` por defecto; si lo pasaste vacío, los pedidos solo quedaron en la cola del navegador. Reconstruye con `PHYTO_CRM_ENDPOINT=/api/crm` |
 
 ---
 

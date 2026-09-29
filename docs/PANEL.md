@@ -28,6 +28,51 @@ no, las instrucciones según el teléfono.
 
 ---
 
+## 1-bis. Probarlo en tu ordenador (sin publicar)
+
+Un solo comando levanta la web, el API y el panel:
+
+```bash
+npm run dev
+```
+
+Y abre **http://localhost:5173/admin/**. La consola te dice la clave local:
+
+```
+🧩 CRM encendido en http://127.0.0.1:8787 · almacén sqlite · 4 registro(s)
+📱 panel del CRM (app instalable): http://localhost:5173/admin/
+   clave local: phyto-local   (cámbiala con PHYTO_CRM_TOKEN en .env.local)
+```
+
+Cosas útiles de este modo:
+
+- **La clave es `phyto-local`** (el CRM de verdad se niega a abrir el panel sin
+  `PHYTO_CRM_TOKEN`; en local la pone el dev server por ti). Si prefieres la tuya,
+  ponla en `.env.local` y se respeta.
+- **Los pedidos de verdad llegan al panel**: si rellenas el formulario de compra
+  en `http://localhost:5173/`, el pedido se guarda y aparece en el panel (queda en
+  `data/phytoemagry.sqlite`; borra ese archivo para empezar limpio).
+- También funciona el panel solo: `http://localhost:8787/admin/`.
+- **Desde el móvil, en la misma wifi**: `http://IP-DE-TU-PC:5173/admin/`.
+
+Si prefieres el CRM solo (sin la web de desarrollo): `npm run crm` y abre
+`http://127.0.0.1:8787/admin/` con la clave de `PHYTO_CRM_TOKEN`.
+
+### Si dice que no puede entrar
+
+El panel ahora explica el motivo en pantalla. Los dos casos de siempre:
+
+| Mensaje | Qué pasa y qué hacer |
+| --- | --- |
+| *La clave no es correcta.* | La clave escrita no es `PHYTO_CRM_TOKEN` (en local, `phyto-local`) |
+| *El CRM no está respondiendo en el puerto 8787…* | El API está apagado: arranca `npm run dev` (lo levanta solo) o `npm run crm` |
+| *El panel no está conectado con el CRM (respuesta 404)* | Estás abriendo el panel en un servidor que no reenvía `/api/`: usa `http://localhost:5173/admin/`, no la URL del servidor de ficheros |
+
+Antes, cualquiera de estos tres casos decía solo «No se pudo entrar», que no
+ayudaba a nadie: el motivo real es siempre uno de esos tres.
+
+---
+
 ## 2. Las cuatro pestañas
 
 | Pestaña | Para qué sirve |
@@ -106,6 +151,12 @@ El panel está pensado para ir por la calle. Si no hay conexión:
   `/api/`: el negocio tiene que ver el último pedido, no una copia vieja.
 - **Dónde vive**: `server/crm-server.mjs` sirve la app y el API; en producción
   nginx sirve `/admin/` como archivos estáticos y le pasa `/api/` al API.
+- **En local no hay nginx**: `npm run dev` levanta el CRM como proceso hijo y
+  reenvía `/api/...` a `127.0.0.1:8787` (`scripts/crm-proxy.mjs`). Por eso el panel
+  funciona en `localhost:5173/admin/` igual que en producción. Si el CRM no está
+  encendido, el proxy contesta **502 en JSON con un mensaje legible** en vez de
+  dejar que el panel reciba el 404 en HTML del servidor de ficheros (eso era el
+  «No se pudo entrar» sin explicación).
 - **Tests**: `tests/panel.test.js` arranca el servidor de verdad y entra como el
   negocio: clave, cookie, gestión de un cliente, plantillas y CSV.
 - **Iconos**: se generan con `npm run images:admin` (Pillow), sin archivos

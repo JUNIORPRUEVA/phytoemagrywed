@@ -107,13 +107,39 @@
       headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
       credentials: 'same-origin',
     });
-    if (response.status === 401) {
-      showLogin('Tu sesión ha caducado. Vuelve a entrar.');
-      throw new Error('unauthorized');
+
+    // La respuesta puede NO ser JSON: si el CRM no está en marcha, delante
+    // contesta el servidor de ficheros y devuelve un 404 en HTML. Sin mirar el
+    // texto, el panel decía "No se pudo entrar." sin ninguna pista.
+    const raw = await response.text();
+    let body = {};
+    if (raw) {
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        body = { message: disconnectedMessage(response) };
+      }
     }
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw Object.assign(new Error(body.message ?? body.error ?? 'error'), { body });
+
+    if (response.status === 401) {
+      showLogin(body.message ?? 'Tu sesión ha caducado. Vuelve a entrar.');
+      throw Object.assign(new Error('unauthorized'), { body });
+    }
+    if (!response.ok) throw Object.assign(new Error(body.message ?? 'error'), { body });
     return body;
+  }
+
+  /**
+   * Qué contestar cuando el CRM no contesta.
+   *
+   * @param {Response} response
+   * @returns {string}
+   */
+  function disconnectedMessage(response) {
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      return 'El CRM no está encendido. Arráncalo con «npm run crm» (o con el botón del servidor) y vuelve a intentarlo.';
+    }
+    return `El panel no está conectado con el CRM (respuesta ${response.status}). Comprueba que el API responda en /api/health.`;
   }
 
   // ------------------------------------------------------- copia local (offline)
@@ -734,7 +760,9 @@
         await load();
       } catch (error) {
         $('#login-error').hidden = false;
-        $('#login-error').textContent = error.body?.message ?? 'No se pudo entrar.';
+        $('#login-error').textContent =
+          error.body?.message ??
+          (error.message === 'unauthorized' ? 'La clave no es correcta.' : 'No se pudo entrar: no hay conexión con el CRM.');
       }
     });
 

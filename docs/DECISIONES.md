@@ -605,3 +605,33 @@ servidor guardaba bien y **el negocio no lo veía**; (c) sin conexión se abría
 pantalla de la clave aunque hubiera sesión y datos guardados: no se puede
 preguntar al servidor si hay sesión cuando no hay servidor.
 
+## 32. El panel tiene que estar conectado al API, también en local (y decirlo claro)
+
+Queja del negocio, con estas palabras: "dice que no se puede entrar, no sé por
+qué". No era la clave: era que **no había nada al otro lado**.
+
+1. **El fallo real:** al abrir el panel en `http://localhost:5173/admin/` (la URL
+   de `npm run dev`), el panel cargaba pero su `POST /api/admin/login` acababa en
+   el servidor de ficheros del dev server, que devolvía un 404 en **HTML**. El
+   panel intentaba leerlo como JSON, no lo conseguía y mostraba "No se pudo
+   entrar." **sin ninguna pista** de si la clave estaba mal, si faltaba la sesión
+   o si el CRM estaba apagado. Un mensaje que no distingue tres causas distintas
+   no es un mensaje de error: es un callejón sin salida.
+2. **El dev server ahora reenvía `/api/…` al CRM** (`scripts/crm-proxy.mjs`,
+   probado en `tests/crm-proxy.test.js`: cuerpo, cabeceras, estado y `set-cookie`
+   de ida y vuelta) **y lo arranca él solo** si no está encendido, con la clave
+   local `phyto-local` a la vista. Un comando (`npm run dev`) y el panel funciona
+   en `localhost:5173/admin/`: lo mismo que hace nginx en producción, sin tener
+   que abrir dos terminales ni adivinar puertos.
+3. **Si el CRM no responde, el proxy contesta 502 con un JSON legible**
+   ("El CRM no está respondiendo en el puerto 8787 (no está encendido)…") y el
+   panel lo pinta en la pantalla de entrada, en vez de inventarse un
+   "No se pudo entrar". En local, además, `npm run dev` avisa por consola de la
+   clave y de la URL del panel.
+4. **Un pedido hecho en local también se guarda:** con `PHYTO_CRM_ENDPOINT` vacío
+   la landing no envía los pedidos a ninguna parte (quedan en la cola del
+   navegador), así que el panel salía siempre vacío y parecía roto. El dev server
+   usa `/api/crm` por defecto (el mismo valor que trae la imagen Docker) y la
+   revisión previa a publicar ya avisa con su efecto real: "Los pedidos NO llegan
+   a la base de datos: el panel sale vacío".
+

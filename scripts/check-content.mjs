@@ -121,7 +121,7 @@ const checklist = [
   { label: 'Testimonios aprobados', value: contentConfig.testimonials.items, file: 'content.config.js', field: 'testimonials.items', impact: 'Sección oculta (correcto si no hay)' },
   { label: 'Aviso de testimonios', value: contentConfig.testimonials.disclaimer, file: 'content.config.js', field: 'testimonials.disclaimer', impact: 'Obligatorio si hay testimonios' },
   { label: 'Texto del footer', value: contentConfig.footer.about, file: 'content.config.js', field: 'footer.about', impact: 'Footer sin descripción' },
-  { label: 'Endpoint del CRM', value: siteConfig.crm.endpoint, file: '.env', field: 'PHYTO_CRM_ENDPOINT', impact: 'Modo cola local (no se envía nada)' },
+  { label: 'Endpoint del CRM', value: siteConfig.crm.endpoint, file: '.env', field: 'PHYTO_CRM_ENDPOINT', impact: 'Los pedidos NO llegan a la base de datos: el panel sale vacío' },
   { label: 'Meta Pixel', value: siteConfig.tracking.metaPixelId, file: '.env', field: 'PHYTO_META_PIXEL_ID', impact: 'Sin medición publicitaria (opcional)' },
 ];
 

@@ -5,9 +5,12 @@
  *  - Re-renderiza el HTML cuando cambian config/render/lib.
  *  - Sirve `dist/` con recarga automática del navegador (polling de revisión).
  *
+ *  - Reenvía `/api/...` al mini-CRM y lo arranca si no está encendido, para que
+ *    el panel (`/admin/`) funcione en local sin abrir dos terminales.
+ *
  * Sin dependencias externas: solo Node + esbuild.
  *
- *   npm run dev            → http://localhost:5173
+ *   npm run dev            → http://localhost:5173  · panel: /admin/
  *   npm run dev -- --port 4000
  */
 
@@ -18,6 +21,17 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import * as esbuild from 'esbuild';
 import { copyPublic, DIST, DIST_DEV, envObject, loadEnv, ROOT } from './build.mjs';
+import { crmPortFromEnv, isCrmPath, probeCrm, proxyToCrm, waitForCrm } from './crm-proxy.mjs';
+
+/**
+ * Clave del panel en desarrollo.
+ *
+ * El CRM de verdad se niega a abrir el panel sin `PHYTO_CRM_TOKEN` (obligatoria
+ * en el servidor). En local sería incómodo tener que inventarse una clave para
+ * ver el panel, así que el dev server la pone por ti y la imprime. Solo se usa
+ * aquí: el contenedor de producción ejecuta `server/crm-server.mjs` a secas.
+ */
+const DEV_CRM_TOKEN = 'phyto-local';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -70,11 +84,76 @@ function renderInChildProcess(outDir) {
   });
 }
 
+/**
+ * Deja un CRM escuchando en `port`.
+ *
+ * Si ya hay uno (por ejemplo `npm run crm` en otra terminal) no toca nada.
+ * Si no, lo arranca como proceso hijo e imprime la clave para entrar al panel,
+ * porque el CRM real se niega a abrir el panel sin `PHYTO_CRM_TOKEN`.
+ *
+ * @param {number} port
+ * @returns {Promise<import('node:child_process').ChildProcess | null>}
+ */
+async function ensureCrm(port) {
+  if (await probeCrm({ port })) {
+    console.log(`🧩 CRM ya encendido en http://127.0.0.1:${port} (se reutiliza)`);
+    return null;
+  }
+  if (process.env.PHYTO_CRM_NO_AUTO === '1') {
+    console.log('🧩 CRM no arrancado (PHYTO_CRM_NO_AUTO=1): el panel dará aviso de que no responde');
+    return null;
+  }
+
+  const usingOwnKey = !process.env.PHYTO_CRM_TOKEN;
+  const child = spawn(process.execPath, ['--experimental-sqlite', path.join('server', 'crm-server.mjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      PHYTO_CRM_PORT: String(port),
+      PHYTO_CRM_TOKEN: process.env.PHYTO_CRM_TOKEN || DEV_CRM_TOKEN,
+    },
+  });
+  child.on('exit', (code, signal) => {
+    // Si lo matamos nosotros (o lo cierras tú), `signal` viene informado y no
+    // hay nada que avisar: solo interesa un cierre anómalo por sí mismo.
+    if (!signal && code) console.error(`🧩 el CRM se cerró con código ${code}`);
+  });
+
+  if (!(await waitForCrm({ port }))) {
+    console.error(`🧩 el CRM no respondió en el puerto ${port}: el panel lo avisará al entrar`);
+    return child;
+  }
+
+  const health = await probeCrm({ port });
+  console.log(
+    `🧩 CRM encendido en http://127.0.0.1:${port} · almacén ${health?.storage ?? '?'}` +
+      (typeof health?.items === 'number' ? ` · ${health.items} registro(s)` : ''),
+  );
+  console.log(`   panel local: http://localhost:${port}/admin/`);
+  if (usingOwnKey) console.log(`   clave local: ${DEV_CRM_TOKEN}   (cámbiala con PHYTO_CRM_TOKEN en .env.local)`);
+  return child;
+}
+
 async function main() {
   // En desarrollo SÍ se aplican los overrides locales (.env.local).
-  await loadEnv({ includeLocal: true });  const preview = process.argv.includes('--dist');
+  await loadEnv({ includeLocal: true });
+  /**
+   * Sin endpoint, la landing no manda los pedidos a ningún sitio: el panel
+   * saldría siempre vacío y parecería roto. En local el CRM lo levanta este
+   * mismo servidor y `/api/` se reenvía a él, así que el valor correcto es
+   * `/api/crm` (el mismo que trae la imagen Docker). Si ya hay uno definido en
+   * `.env`/`.env.local`, se respeta.
+   */
+  const crmEndpointFromEnv = Boolean((process.env.PHYTO_CRM_ENDPOINT ?? '').trim());
+  if (!crmEndpointFromEnv) process.env.PHYTO_CRM_ENDPOINT = '/api/crm';
+  const preview = process.argv.includes('--dist');
   const portArg = process.argv.indexOf('--port');
   const port = portArg > -1 ? Number(process.argv[portArg + 1]) : preview ? 4173 : 5173;
+  /** Puerto del CRM (`PHYTO_CRM_PORT`, 8787 por defecto): el mismo en el proxy y en el hijo. */
+  const crmPort = crmPortFromEnv();
+  /** @type {import('node:child_process').ChildProcess | null} */
+  let crmChild = null;
 
   let rev = 0;
   const assets = { css: '/assets/main.css', js: '/assets/main.js' };
@@ -150,11 +229,28 @@ async function main() {
     });
   }
 
+  // El CRM antes que el servidor: así el panel ya está listo cuando abras /admin/.
+  crmChild = await ensureCrm(crmPort);
+
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
     if (url.pathname === '/__rev') {
       response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       response.end(JSON.stringify({ rev }));
+      return;
+    }
+
+    // El API y el panel viven en el CRM: se reenvía ANTES de buscar ficheros.
+    if (isCrmPath(url.pathname)) {
+      await proxyToCrm(request, response, url, { port: crmPort });
+      return;
+    }
+
+    // Mismo atajo que en producción (`location = /panel`), para que un enlace
+    // antiguo `?token=...` no se convierta en un 404 raro en local.
+    if (url.pathname === '/panel') {
+      response.writeHead(302, { location: `/admin/${url.search}` });
+      response.end();
       return;
     }
 
@@ -202,10 +298,15 @@ async function main() {
     if (!existsSync(path.join(ROOT, '.env'))) {
       console.log('   (sin .env: WhatsApp/SEO/CRM se muestran desactivados)');
     }
+    console.log(`📱 panel del CRM (app instalable): http://localhost:${port}/admin/`);
+    if (!crmEndpointFromEnv) {
+      console.log('   (PHYTO_CRM_ENDPOINT estaba vacío: en local los pedidos se guardan en /api/crm → CRM local)');
+    }
     console.log('   Ctrl+C para parar\n');
   });
 
   const shutdown = async () => {
+    if (crmChild) crmChild.kill();
     await Promise.all(contexts.map((context) => context.dispose()));
     server.close(() => process.exit(0));
   };
