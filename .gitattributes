@@ -1,0 +1,15 @@
+# Normaliza los finales de línea a LF en el repositorio.
+#
+# El proyecto se edita en Windows y se despliega en Linux (Docker). Sin esto, un
+# archivo con CRLF puede llegar al contenedor y romper la ejecución de comandos
+# en el Dockerfile o en los scripts de shell.
+* text=auto eol=lf
+
+# Binarios: Git no debe tocarlos nunca
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.woff2 binary
