@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Phytoemagry">
+  <defs>
+    <linearGradient id="pe-fav" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#128C68"/>
+      <stop offset="1" stop-color="#073D2E"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#pe-fav)"/>
+  <path d="M47 17c0 15-9.5 25-26 25" fill="none" stroke="#DFF2E9" stroke-width="6" stroke-linecap="round"/>
+  <path d="M21 42c3.5-10 10-15.5 20-17.5" fill="none" stroke="#C9E265" stroke-width="4.5" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-dev/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+
+# Artefactos de verificación local
+.playwright-mcp/
+lighthouse-*.json
+
+# Entorno de Python (solo para scripts/generate-placeholder-images.py)
+.venv/

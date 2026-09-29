@@ -1,0 +1,5 @@
+/* Punto de entrada de estilos (esbuild bundla los @import en un solo CSS). */
+@import './tokens.css';
+@import './base.css';
+@import './layout.css';
+@import './components.css';

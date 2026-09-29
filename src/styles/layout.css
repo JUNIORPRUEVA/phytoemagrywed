@@ -1,0 +1,722 @@
+/* Estructura: contenedores, header, hero, secciones, footer, barra móvil, modal. */
+
+/* ------------------------------------------------------------------ LAYOUT */
+.pe-container {
+  width: 100%;
+  max-width: var(--pe-container);
+  margin-inline: auto;
+  /* max() respeta el notch/curva de la pantalla en horizontal (viewport-fit=cover) */
+  padding-left: max(var(--pe-space-4), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--pe-space-4), env(safe-area-inset-right, 0px));
+}
+
+.pe-container--narrow {
+  max-width: var(--pe-container-narrow);
+}
+
+.pe-main {
+  display: block;
+}
+
+/* Para que la barra fija inferior no tape contenido en móvil. */
+@media (max-width: 1023px) {
+  .pe-body {
+    padding-bottom: calc(var(--pe-mobile-bar-h) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (min-width: 768px) {
+  .pe-container {
+    padding-left: max(var(--pe-space-6), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--pe-space-6), env(safe-area-inset-right, 0px));
+  }
+}
+
+/* ------------------------------------------------------------------ HEADER */
+.pe-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.97);
+  border-bottom: 1px solid var(--pe-border);
+  backdrop-filter: saturate(140%) blur(6px);
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pe-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+  min-height: var(--pe-header-h);
+}
+
+.pe-logo {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pe-tap);
+  color: var(--pe-brand-800);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: var(--pe-fs-lg);
+  letter-spacing: -0.01em;
+}
+
+.pe-logo__text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pe-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pe-space-2);
+  flex: 0 0 auto;
+}
+
+/* Móviles estrechos (320-379 px): cabecera compacta sin sacrificar el CTA */
+@media (max-width: 379px) {
+  .pe-header__inner {
+    gap: var(--pe-space-2);
+  }
+
+  .pe-logo {
+    font-size: var(--pe-fs-base);
+  }
+
+  .pe-header .pe-btn--sm {
+    padding-inline: var(--pe-space-3);
+  }
+}
+
+.pe-nav {
+  display: none;
+}
+
+.pe-header[data-nav-open='true'] .pe-nav {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  background: var(--pe-surface);
+  border-bottom: 1px solid var(--pe-border);
+  box-shadow: var(--pe-shadow-md);
+  padding: var(--pe-space-2) var(--pe-space-4) var(--pe-space-4);
+}
+
+.pe-nav__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-1);
+}
+
+.pe-nav__link {
+  display: flex;
+  align-items: center;
+  min-height: var(--pe-tap);
+  padding: var(--pe-space-2) var(--pe-space-2);
+  border-radius: var(--pe-radius-sm);
+  color: var(--pe-ink-900);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.pe-nav__link:hover {
+  background: var(--pe-surface-alt);
+  color: var(--pe-brand-700);
+}
+
+.pe-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pe-tap);
+  height: var(--pe-tap);
+  flex: 0 0 auto;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-sm);
+  background: var(--pe-surface);
+  color: var(--pe-ink-900);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pe-nav-toggle__close {
+  display: none;
+}
+
+.pe-header[data-nav-open='true'] .pe-nav-toggle__open {
+  display: none;
+}
+
+.pe-header[data-nav-open='true'] .pe-nav-toggle__close {
+  display: block;
+}
+
+@media (min-width: 1024px) {
+  .pe-nav {
+    display: block;
+    position: static;
+  }
+
+  .pe-nav__list {
+    flex-direction: row;
+    gap: var(--pe-space-2);
+  }
+
+  .pe-nav-toggle {
+    display: none;
+  }
+}
+
+/* -------------------------------------------------------------------- HERO */
+/*
+ * La portada es la IMAGEN panorámica (línea completa de frascos).
+ *
+ * Reglas de la composición:
+ *  - Nunca se recorta ni se deforma: el ancho y el alto van siempre juntos
+ *    (aspecto natural). En desktop se limita por ALTURA, así que la foto se
+ *    encoge completa en pantallas bajas.
+ *  - En móvil va a ancho completo (full-bleed): es una imagen horizontal y
+ *    necesita todo el ancho disponible para que se distingan los 7 frascos.
+ *  - Sin marcos, tarjetas ni badges alrededor: la foto es el impacto visual.
+ */
+.pe-hero {
+  padding: 0 0 var(--pe-space-6);
+  background: linear-gradient(180deg, var(--pe-surface-alt) 0%, var(--pe-surface) 100%);
+  border-bottom: 1px solid var(--pe-border);
+}
+
+.pe-hero__media {
+  width: 100%;
+  margin-inline: auto;
+}
+
+.pe-hero__picture,
+.pe-hero__picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pe-hero__content {
+  padding-top: var(--pe-space-5);
+  text-align: center;
+}
+
+.pe-hero__lead {
+  max-width: 34ch;
+  margin: 0 auto;
+  color: var(--pe-ink-700);
+  font-size: var(--pe-fs-lg);
+  text-wrap: balance;
+}
+
+/* El precio inicial es el dato que más se busca: se centra y gana tamaño. */
+.pe-hero .pe-price-block {
+  justify-content: center;
+  margin: var(--pe-space-4) 0 0;
+}
+
+.pe-hero .pe-price {
+  font-size: var(--pe-fs-2xl);
+}
+
+.pe-hero__cta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-3);
+  margin-top: var(--pe-space-4);
+}
+
+.pe-hero__cta .pe-btn {
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .pe-hero__media {
+    max-width: 92vw;
+  }
+
+  .pe-hero__picture img {
+    border-radius: var(--pe-radius-lg);
+    box-shadow: var(--pe-shadow-sm);
+  }
+
+  .pe-hero__lead {
+    font-size: var(--pe-fs-xl);
+  }
+
+  .pe-hero__cta {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .pe-hero__cta .pe-btn {
+    width: auto;
+  }
+}
+
+@media (min-width: 1024px) {
+  .pe-hero {
+    padding-bottom: var(--pe-space-7);
+  }
+
+  .pe-hero__media {
+    max-width: var(--pe-container);
+  }
+
+  /*
+   * En desktop la foto se limita por ALTURA para que el copy y los CTA queden
+   * cerca del pliegue. `object-fit: contain` garantiza que NUNCA se deforme ni se
+   * recorte: si el límite de alto aprieta, la imagen se centra y el hueco queda
+   * del color del fondo (el `img` no pinta fondo propio).
+   */
+  .pe-hero__picture img {
+    width: 100%;
+    height: auto;
+    max-height: min(58vh, 620px);
+    object-fit: contain;
+    /* El radio/sombra se aplican en tablet, donde la caja abraza la imagen. */
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .pe-hero__content {
+    padding-top: var(--pe-space-6);
+  }
+}
+
+/* Afirmación de confianza aprobada: línea discreta, sin cajas ni badges. */
+.pe-trust {
+  display: flex;
+  align-items: center;
+  gap: var(--pe-space-3);
+  margin: var(--pe-space-5) 0 0;
+  padding: var(--pe-space-3) 0;
+  border-top: 1px solid var(--pe-border);
+  color: var(--pe-ink-700);
+  font-size: var(--pe-fs-lg);
+  font-weight: 600;
+}
+
+.pe-trust__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+}
+
+/* Modo de uso: dato práctico de etiqueta, destacado sobre la ficha técnica. */
+.pe-usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pe-space-2) var(--pe-space-3);
+  margin: var(--pe-space-5) 0 0;
+  padding: var(--pe-space-4);
+  border-left: 3px solid var(--pe-brand-700);
+  border-radius: var(--pe-radius);
+  background: var(--pe-brand-100);
+}
+
+.pe-usage__label {
+  color: var(--pe-brand-800);
+  font-size: var(--pe-fs-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pe-usage__value {
+  color: var(--pe-ink-900);
+  font-size: var(--pe-fs-lg);
+}
+
+.pe-facts {
+  display: grid;
+  gap: var(--pe-space-2);
+  padding: var(--pe-space-4);
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  margin-top: var(--pe-space-3);
+}
+
+.pe-facts--stacked {
+  grid-template-columns: 1fr;
+}
+
+.pe-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-fact dt {
+  color: var(--pe-ink-500);
+}
+
+.pe-fact dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+@media (min-width: 768px) {
+  .pe-facts:not(.pe-facts--stacked) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------- SECCIONES */
+.pe-section {
+  padding: var(--pe-space-7) 0;
+}
+
+.pe-section--alt {
+  background: var(--pe-surface-alt);
+  border-block: 1px solid var(--pe-border);
+}
+
+.pe-section__title {
+  font-size: var(--pe-fs-2xl);
+  letter-spacing: -0.01em;
+}
+
+.pe-section__subtitle {
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-lg);
+  margin-bottom: var(--pe-space-5);
+}
+
+.pe-section__inner {
+  display: grid;
+  gap: var(--pe-space-4);
+}
+
+.pe-block {
+  margin-bottom: var(--pe-space-4);
+}
+
+.pe-block__title {
+  font-size: var(--pe-fs-lg);
+  margin-bottom: var(--pe-space-2);
+}
+
+@media (min-width: 1024px) {
+  .pe-section {
+    padding: var(--pe-space-8) 0;
+  }
+}
+
+/* ------------------------------------------------------------ PRESENTACIÓN */
+.pe-presentation {
+  display: grid;
+  gap: var(--pe-space-5);
+}
+
+.pe-presentation__media {
+  border-radius: var(--pe-radius-lg);
+  overflow: hidden;
+  background: var(--pe-surface);
+  box-shadow: var(--pe-shadow-md);
+}
+
+.pe-presentation__cta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-3);
+  margin-top: var(--pe-space-5);
+}
+
+.pe-presentation__cta .pe-btn {
+  width: 100%;
+}
+
+@media (min-width: 1024px) {
+  .pe-presentation {
+    grid-template-columns: 0.95fr 1.05fr;
+    align-items: center;
+    gap: var(--pe-space-7);
+  }
+
+  .pe-presentation__cta {
+    flex-direction: row;
+  }
+
+  .pe-presentation__cta .pe-btn {
+    width: auto;
+  }
+}
+
+/* -------------------------------------------------------------- BARRA MÓVIL */
+.pe-mobile-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  gap: var(--pe-space-2);
+  align-items: center;
+  padding: var(--pe-space-2) max(var(--pe-space-3), env(safe-area-inset-right, 0px))
+    calc(var(--pe-space-2) + env(safe-area-inset-bottom, 0px))
+    max(var(--pe-space-3), env(safe-area-inset-left, 0px));
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid var(--pe-border);
+  box-shadow: 0 -4px 16px rgba(14, 27, 22, 0.08);
+}
+
+@media (min-width: 1024px) {
+  .pe-mobile-bar {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ FOOTER */
+.pe-footer {
+  background: var(--pe-brand-900);
+  color: #e8f1ed;
+  padding: var(--pe-space-7) 0 var(--pe-space-5);
+}
+
+.pe-footer__grid {
+  display: grid;
+  gap: var(--pe-space-6);
+}
+
+.pe-footer__brand {
+  font-size: var(--pe-fs-lg);
+  font-weight: 700;
+  color: #fff;
+}
+
+.pe-footer__text,
+.pe-footer__list {
+  color: #cfe0d9;
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-footer__title {
+  font-size: var(--pe-fs-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9fc4b4;
+  margin-bottom: var(--pe-space-2);
+}
+
+.pe-footer__list {
+  display: grid;
+  gap: var(--pe-space-2);
+}
+
+/* Objetivo táctil cómodo en móvil para los enlaces del footer */
+.pe-footer__list a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+@media (min-width: 768px) {
+  .pe-footer__list a {
+    min-height: 28px;
+  }
+}
+
+.pe-footer a,
+.pe-footer .pe-link {
+  color: #dff2e9;
+}
+
+.pe-footer__bottom {
+  margin-top: var(--pe-space-6);
+  padding-top: var(--pe-space-4);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.pe-footer__rights {
+  font-size: var(--pe-fs-xs);
+  color: #a8c6ba;
+  margin: 0;
+}
+
+@media (min-width: 768px) {
+  .pe-footer__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .pe-footer__grid {
+    grid-template-columns: 1.4fr repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ------------------------------------------------------------------- MODAL */
+/*
+ * Estructura pensada para MÓVIL:
+ *   - la cabecera (título + cerrar) queda fija arriba,
+ *   - solo el cuerpo (campos + resumen) se desplaza,
+ *   - el botón de continuar queda SIEMPRE visible abajo.
+ * Así, en una pantalla de 320×568 no hay que hacer scroll para encontrar el CTA.
+ */
+.pe-dialog {
+  width: min(560px, calc(100vw - 2rem));
+  max-height: min(90vh, 760px);
+  /* dvh evita que la barra del navegador móvil tape el botón de continuar */
+  max-height: min(92dvh, 760px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--pe-radius-lg);
+  box-shadow: var(--pe-shadow-lg);
+  background: var(--pe-surface);
+  color: var(--pe-ink-900);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/*
+ * IMPORTANTE: `display` solo se define con [open]. Si se pusiera en la regla
+ * base, anularía el `display: none` nativo de los <dialog> cerrados y el modal
+ * aparecería siempre al final de la página.
+ */
+.pe-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.pe-dialog::backdrop {
+  background: rgba(7, 30, 23, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.pe-dialog__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+  padding: var(--pe-space-4) var(--pe-space-4) var(--pe-space-3);
+  border-bottom: 1px solid var(--pe-border);
+}
+
+.pe-dialog__title {
+  font-size: var(--pe-fs-lg);
+  margin: 0;
+}
+
+.pe-dialog__form {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pe-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-3);
+  padding: var(--pe-space-4);
+}
+
+.pe-dialog__actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-2);
+  padding: var(--pe-space-3) var(--pe-space-4) calc(var(--pe-space-4) + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--pe-border);
+  background: var(--pe-surface);
+  box-shadow: 0 -6px 16px rgba(14, 27, 22, 0.06);
+}
+
+.pe-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-sm);
+  background: var(--pe-surface);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pe-dialog__intro {
+  margin: 0;
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-dialog__note {
+  margin: 0;
+  font-size: var(--pe-fs-xs);
+  color: var(--pe-ink-500);
+  text-align: center;
+}
+
+.pe-dialog__note--center {
+  display: flex;
+  justify-content: center;
+}
+
+@media (min-width: 640px) {
+  .pe-dialog__head {
+    padding: var(--pe-space-5) var(--pe-space-6) var(--pe-space-3);
+  }
+
+  .pe-dialog__title {
+    font-size: var(--pe-fs-xl);
+  }
+
+  .pe-dialog__body {
+    gap: var(--pe-space-4);
+    padding: var(--pe-space-5) var(--pe-space-6);
+  }
+
+  .pe-dialog__actions {
+    padding: var(--pe-space-3) var(--pe-space-6) var(--pe-space-5);
+  }
+}
+
+/* ------------------------------------------------------------------- LEGAL */
+.pe-legal {
+  padding: var(--pe-space-7) 0 var(--pe-space-8);
+}
+
+.pe-legal__title {
+  font-size: var(--pe-fs-2xl);
+}
+
+.pe-legal__updated {
+  font-size: var(--pe-fs-xs);
+  color: var(--pe-ink-500);
+}
+
+.pe-legal__section {
+  margin-top: var(--pe-space-5);
+}
+
+.pe-legal__section h2 {
+  font-size: var(--pe-fs-lg);
+  margin-bottom: var(--pe-space-2);
+}

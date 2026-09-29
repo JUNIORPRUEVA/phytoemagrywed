@@ -1,0 +1,1410 @@
+/* Componentes: botones, campos, tarjetas, pasos, FAQ, opiniones, precio, avisos. */
+
+/* ------------------------------------------------------------------ BOTONES */
+.pe-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pe-space-2);
+  min-height: var(--pe-tap);
+  padding: var(--pe-space-3) var(--pe-space-5);
+  border: 1px solid transparent;
+  border-radius: var(--pe-radius);
+  font-size: var(--pe-fs-base);
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s ease, background-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+
+.pe-btn:active {
+  transform: translateY(1px);
+}
+
+.pe-btn--primary {
+  background: var(--pe-brand-700);
+  color: #fff;
+  box-shadow: var(--pe-shadow-sm);
+}
+
+.pe-btn--primary:hover {
+  background: var(--pe-brand-800);
+}
+
+.pe-btn--whatsapp {
+  background: var(--pe-whatsapp);
+  color: #fff;
+  box-shadow: var(--pe-shadow-sm);
+}
+
+.pe-btn--whatsapp:hover {
+  background: var(--pe-whatsapp-dark);
+}
+
+.pe-btn--ghost {
+  background: var(--pe-surface);
+  border-color: var(--pe-border);
+  color: var(--pe-ink-900);
+}
+
+.pe-btn--ghost:hover {
+  border-color: var(--pe-brand-600);
+  color: var(--pe-brand-700);
+}
+
+.pe-btn--sm {
+  min-height: 44px;
+  padding: var(--pe-space-2) var(--pe-space-4);
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-btn--lg {
+  min-height: 56px;
+  padding: var(--pe-space-4) var(--pe-space-6);
+  font-size: var(--pe-fs-lg);
+}
+
+.pe-btn--block {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+.pe-btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ------------------------------------------------------------ PRECIO/BADGES */
+.pe-price-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pe-space-3);
+  margin: var(--pe-space-3) 0;
+}
+
+.pe-price {
+  font-size: var(--pe-fs-xl);
+  font-weight: 700;
+  color: var(--pe-brand-800);
+  letter-spacing: -0.01em;
+}
+
+.pe-price-block--lg .pe-price {
+  font-size: var(--pe-fs-2xl);
+}
+
+.pe-price--on-request {
+  color: var(--pe-ink-700);
+}
+
+.pe-price__compare {
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-base);
+}
+
+.pe-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pe-space-1);
+  padding: 2px var(--pe-space-3);
+  border-radius: var(--pe-radius-pill);
+  font-size: var(--pe-fs-xs);
+  font-weight: 600;
+}
+
+.pe-badge--ok {
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+}
+
+.pe-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pe-space-2);
+  margin-top: var(--pe-space-3);
+}
+
+.pe-tag {
+  background: var(--pe-surface-alt);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-pill);
+  padding: var(--pe-space-1) var(--pe-space-3);
+  font-size: var(--pe-fs-xs);
+  color: var(--pe-ink-700);
+}
+
+.pe-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: var(--pe-fs-xs);
+  font-weight: 700;
+  color: var(--pe-brand-700);
+  margin-bottom: var(--pe-space-2);
+}
+
+/* ------------------------------------------------------------------ IMÁGENES */
+.pe-picture,
+.pe-picture img {
+  width: 100%;
+  height: auto;
+}
+
+.pe-hero__picture img {
+  background: transparent;
+}
+
+.pe-presentation__picture img {
+  background: var(--pe-surface-alt);
+}
+
+/*
+ * La portada (panorámica) NO se recorta ni se mete en una caja de alto fijo:
+ * manda la proporción natural de la imagen. El tamaño lo define `layout.css`.
+ * El marcador se usa solo cuando todavía no hay foto de portada.
+ */
+.pe-hero__media .pe-media-placeholder {
+  width: 100%;
+  height: var(--pe-hero-media-h);
+}
+
+.pe-presentation__picture img {
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+.pe-media-placeholder {
+  display: grid;
+  place-items: center;
+  gap: var(--pe-space-3);
+  aspect-ratio: 1 / 1;
+  padding: var(--pe-space-5);
+  text-align: center;
+  color: var(--pe-brand-700);
+  background: repeating-linear-gradient(
+      135deg,
+      var(--pe-surface-alt) 0 12px,
+      #eaf3ef 12px 24px
+    );
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+}
+
+.pe-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pe-space-3);
+  margin-top: var(--pe-space-3);
+}
+
+.pe-gallery__item {
+  border-radius: var(--pe-radius);
+  overflow: hidden;
+}
+
+.pe-gallery__picture img {
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+/* ------------------------------------------------------------------ TARJETAS */
+.pe-cards {
+  display: grid;
+  gap: var(--pe-space-4);
+  margin-top: var(--pe-space-5);
+}
+
+.pe-card {
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  padding: var(--pe-space-5);
+  box-shadow: var(--pe-shadow-sm);
+}
+
+.pe-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--pe-radius);
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-700);
+  margin-bottom: var(--pe-space-3);
+}
+
+.pe-card__title {
+  font-size: var(--pe-fs-lg);
+  margin-bottom: var(--pe-space-2);
+}
+
+.pe-card__text {
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-sm);
+  margin: 0;
+}
+
+@media (min-width: 768px) {
+  .pe-cards {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+}
+
+/* -------------------------------------------------------------------- PASOS */
+.pe-steps {
+  display: grid;
+  gap: var(--pe-space-4);
+  margin: var(--pe-space-5) 0;
+  counter-reset: step;
+}
+
+.pe-step {
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  padding: var(--pe-space-5);
+}
+
+.pe-step__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--pe-brand-700);
+  color: #fff;
+  font-weight: 700;
+  margin-bottom: var(--pe-space-3);
+}
+
+.pe-step__title {
+  font-size: var(--pe-fs-lg);
+  margin-bottom: var(--pe-space-2);
+}
+
+.pe-step__text {
+  margin: 0;
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-sm);
+}
+
+@media (min-width: 768px) {
+  .pe-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .pe-steps {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------------- FAQ */
+.pe-faq {
+  margin-top: var(--pe-space-5);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  background: var(--pe-surface);
+  overflow: hidden;
+}
+
+.pe-faq__item + .pe-faq__item {
+  border-top: 1px solid var(--pe-border);
+}
+
+.pe-faq__question {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+  min-height: var(--pe-tap);
+  padding: var(--pe-space-4) var(--pe-space-5);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  touch-action: manipulation;
+}
+
+.pe-faq__question::-webkit-details-marker {
+  display: none;
+}
+
+.pe-faq__question:hover {
+  background: var(--pe-surface-alt);
+}
+
+.pe-faq__chevron {
+  flex: 0 0 auto;
+  color: var(--pe-ink-500);
+  transition: transform 0.2s ease;
+}
+
+.pe-faq__item[open] .pe-faq__chevron {
+  transform: rotate(180deg);
+}
+
+.pe-faq__answer {
+  padding: 0 var(--pe-space-5) var(--pe-space-4);
+  color: var(--pe-ink-700);
+}
+
+.pe-faq__answer p {
+  margin: 0;
+}
+
+/* --------------------------------------------------------------- OPINIONES */
+.pe-testimonials {
+  display: grid;
+  gap: var(--pe-space-4);
+  margin-top: var(--pe-space-5);
+}
+
+.pe-testimonial {
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  padding: var(--pe-space-5);
+  display: grid;
+  gap: var(--pe-space-3);
+}
+
+.pe-testimonial__photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.pe-testimonial__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+  font-weight: 700;
+}
+
+.pe-testimonial__text {
+  margin: 0;
+  color: var(--pe-ink-700);
+}
+
+.pe-testimonial__meta {
+  display: flex;
+  gap: var(--pe-space-3);
+  margin: 0;
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+}
+
+.pe-testimonial__name {
+  font-weight: 600;
+  color: var(--pe-ink-900);
+}
+
+@media (min-width: 768px) {
+  .pe-testimonials {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+}
+
+/* --------------------------------------------------------------- FORMULARIOS */
+.pe-form {
+  display: grid;
+  gap: var(--pe-space-4);
+  padding: var(--pe-space-5);
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  box-shadow: var(--pe-shadow-sm);
+  margin-top: var(--pe-space-5);
+}
+
+.pe-field {
+  display: grid;
+  gap: var(--pe-space-2);
+}
+
+.pe-label {
+  font-weight: 600;
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-input {
+  width: 100%;
+  min-height: var(--pe-tap);
+  padding: var(--pe-space-3) var(--pe-space-4);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  background: var(--pe-surface);
+  color: var(--pe-ink-900);
+}
+
+.pe-input:hover {
+  border-color: #c6d5cf;
+}
+
+.pe-input:focus {
+  border-color: var(--pe-brand-600);
+  outline: 2px solid var(--pe-brand-100);
+  outline-offset: 0;
+}
+
+.pe-input[aria-invalid='true'] {
+  border-color: var(--pe-danger);
+  background: var(--pe-danger-bg);
+}
+
+.pe-input--qty {
+  max-width: 140px;
+}
+
+.pe-hint {
+  margin: 0;
+  font-size: var(--pe-fs-xs);
+  color: var(--pe-ink-500);
+}
+
+.pe-error {
+  margin: 0;
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+  color: var(--pe-danger);
+}
+
+.pe-form__alert {
+  margin: 0;
+  padding: var(--pe-space-3) var(--pe-space-4);
+  border-radius: var(--pe-radius);
+  background: var(--pe-danger-bg);
+  color: var(--pe-danger);
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+}
+
+.pe-form__note {
+  margin: 0;
+  font-size: var(--pe-fs-xs);
+  color: var(--pe-ink-500);
+  text-align: center;
+}
+
+/*
+ * Camino directo bajo el formulario: "¿Prefieres preguntar antes?" + botón de
+ * WhatsApp con el número real a la vista. Para quien no quiere dejar sus datos
+ * todavía; es la vía más rápida para resolver una duda.
+ */
+.pe-direct {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pe-space-2) var(--pe-space-3);
+  margin: var(--pe-space-5) 0 0;
+  padding: var(--pe-space-4);
+  border: 1px dashed var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  background: var(--pe-surface-alt);
+  color: var(--pe-ink-700);
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.pe-direct__icon {
+  flex: none;
+  color: var(--pe-brand-700);
+}
+
+.pe-direct__cta {
+  flex: none;
+}
+
+@media (max-width: 419px) {
+  .pe-direct__cta {
+    width: 100%;
+  }
+}
+
+.pe-field--check {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: var(--pe-space-3);
+}
+
+.pe-field--check .pe-error {
+  grid-column: 2;
+}
+
+.pe-checkbox {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  accent-color: var(--pe-brand-700);
+  flex: 0 0 auto;
+}
+
+.pe-label--check {
+  font-weight: 400;
+  font-size: var(--pe-fs-sm);
+  line-height: 1.5;
+}
+
+/* Enlace legal dentro de la frase de consentimiento: se agranda el área táctil
+   en vertical (el padding de un inline no altera la altura de línea). */
+.pe-label--check .pe-link {
+  padding-block: 4px;
+}
+
+/* Resumen del pedido */
+.pe-summary {
+  display: grid;
+  gap: var(--pe-space-2);
+  margin: 0;
+  padding: var(--pe-space-4);
+  background: var(--pe-surface-alt);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-summary__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+}
+
+.pe-summary__row dt {
+  color: var(--pe-ink-500);
+}
+
+.pe-summary__row dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+.pe-summary__row--total {
+  padding-top: var(--pe-space-2);
+  border-top: 1px solid var(--pe-border);
+}
+
+.pe-summary__row--total dd {
+  font-size: var(--pe-fs-lg);
+  color: var(--pe-brand-800);
+}
+
+/* Éxito */
+.pe-success {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: var(--pe-space-3);
+  padding: var(--pe-space-6) var(--pe-space-5);
+  text-align: center;
+  place-items: center;
+  align-content: center;
+}
+
+.pe-success__title {
+  font-size: var(--pe-fs-xl);
+  color: var(--pe-brand-800);
+  margin: 0;
+}
+
+.pe-success__text {
+  margin: 0;
+  color: var(--pe-ink-700);
+}
+
+.pe-success__fallback {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------- AVISOS */
+.pe-note {
+  margin-top: var(--pe-space-4);
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+}
+
+.pe-note--small {
+  font-size: var(--pe-fs-xs);
+}
+
+.pe-note--warn {
+  padding: var(--pe-space-3) var(--pe-space-4);
+  border-radius: var(--pe-radius);
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
+  border: 1px solid #f0dcae;
+}
+
+.pe-note--info {
+  padding: var(--pe-space-3) var(--pe-space-4);
+  border-radius: var(--pe-radius);
+  background: var(--pe-info-bg);
+  color: var(--pe-info);
+}
+
+.pe-warning {
+  color: var(--pe-warn);
+  font-weight: 600;
+}
+
+.pe-prose {
+  color: var(--pe-ink-700);
+  max-width: 68ch;
+}
+
+.pe-prose--lead {
+  font-size: var(--pe-fs-lg);
+  color: var(--pe-ink-900);
+}
+
+/* Placeholder visible de datos legales pendientes */
+.pe-pending {
+  display: inline-block;
+  padding: 0 var(--pe-space-2);
+  border-radius: var(--pe-radius-sm);
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
+  border: 1px dashed #d9a72c;
+  font-size: var(--pe-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* ---------------------------------------------------------------- CTA FINAL */
+.pe-final {
+  padding: var(--pe-space-7) 0;
+  background: linear-gradient(160deg, var(--pe-brand-800) 0%, var(--pe-brand-900) 100%);
+  color: #eaf4f0;
+}
+
+.pe-final__inner {
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: var(--pe-space-2);
+}
+
+.pe-final__title {
+  color: #fff;
+  font-size: var(--pe-fs-2xl);
+  margin: 0;
+}
+
+.pe-final__text {
+  color: #cfe4db;
+  margin: 0;
+}
+
+.pe-final .pe-price {
+  color: #fff;
+}
+
+.pe-final .pe-price__compare {
+  color: #b8d4c7;
+}
+
+.pe-final__cta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-3);
+  width: 100%;
+  margin-top: var(--pe-space-4);
+}
+
+.pe-final__cta .pe-btn {
+  width: 100%;
+}
+
+.pe-final .pe-note {
+  color: #b8d4c7;
+}
+
+@media (min-width: 768px) {
+  .pe-final {
+    padding: var(--pe-space-8) 0;
+  }
+
+  .pe-final__cta {
+    flex-direction: row;
+    width: auto;
+    justify-content: center;
+  }
+
+  .pe-final__cta .pe-btn {
+    width: auto;
+  }
+}
+
+/* ------------------------------------------------------------- CONSENTIMIENTO */
+.pe-consent {
+  position: fixed;
+  left: var(--pe-space-3);
+  right: var(--pe-space-3);
+  bottom: calc(var(--pe-mobile-bar-h) + var(--pe-space-3) + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  box-shadow: var(--pe-shadow-lg);
+  padding: var(--pe-space-4);
+}
+
+.pe-consent__inner {
+  display: grid;
+  gap: var(--pe-space-3);
+}
+
+.pe-consent__text {
+  margin: 0;
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-700);
+}
+
+.pe-consent__actions {
+  display: flex;
+  gap: var(--pe-space-2);
+  justify-content: flex-end;
+}
+
+@media (min-width: 1024px) {
+  .pe-consent {
+    left: auto;
+    bottom: var(--pe-space-4);
+    max-width: 520px;
+  }
+
+  .pe-consent__inner {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --------------------------------------------------------- CARRUSEL DE FRASCOS */
+/*
+ * El carrusel es el punto de conversión principal: foto grande, precio y un
+ * botón "Pedir por WhatsApp" en CADA tarjeta.
+ *
+ * Criterio visual: tarjeta limpia, borde fino, sombra muy discreta y una única
+ * señal de selección (borde de marca + check) sobre la foto. Nada de rejillas
+ * tipo tabla, bordes gruesos ni colores chillones.
+ *
+ * Horizontal y a sangre en móvil: se desliza con el dedo y la siguiente tarjeta
+ * asoma para que se entienda. Las flechas son mejora progresiva (las activa el JS).
+ */
+.pe-carousel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+  min-height: 40px;
+  margin-top: var(--pe-space-4);
+}
+
+/* Ayuda de deslizamiento: solo en móvil (en escritorio sobran tarjetas y flechas). */
+.pe-carousel__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pe-space-2);
+  margin: 0;
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+}
+
+.pe-carousel__hint-icon {
+  flex: none;
+  animation: pe-nudge 2.6s ease-in-out infinite;
+}
+
+@keyframes pe-nudge {
+  0%,
+  55%,
+  100% {
+    transform: translateX(0);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pe-carousel__hint-icon {
+    animation: none;
+  }
+}
+
+/* Flechas: `hidden` hasta que el JS confirma que las usa (sin JS sobran). */
+.pe-carousel__nav {
+  display: flex;
+  gap: var(--pe-space-2);
+}
+
+.pe-carousel__nav[hidden] {
+  display: none;
+}
+
+.pe-carousel__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--pe-border);
+  border-radius: 50%;
+  background: var(--pe-surface);
+  color: var(--pe-brand-800);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.pe-carousel__btn:hover:not([disabled]) {
+  border-color: var(--pe-brand-600);
+  color: var(--pe-brand-700);
+}
+
+.pe-carousel__btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pe-carousel__btn:focus-visible {
+  outline: 3px solid var(--pe-focus);
+  outline-offset: 2px;
+}
+
+.pe-variants {
+  display: flex;
+  gap: var(--pe-space-3);
+  /*
+   * Un `fieldset` NO baja de su `min-content`: sin esto mide lo que miden las 7
+   * tarjetas (≈1780 px), se sale de la pantalla y el carrusel no se desliza.
+   */
+  min-inline-size: 0;
+  /* A sangre en móvil: la primera tarjeta arranca en el borde de la pantalla. */
+  margin: var(--pe-space-4) calc(var(--pe-space-4) * -1) 0;
+  padding: var(--pe-space-1) var(--pe-space-4) var(--pe-space-4);
+  border: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: var(--pe-space-4);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* La tarjeta entera es la unidad visual: foto + datos + botón. */
+.pe-variant {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* Ancho fijo: todas las tarjetas iguales y el `sizes` de la foto, exacto. */
+  width: 240px;
+  gap: var(--pe-space-2);
+  padding: var(--pe-space-2);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  background: var(--pe-surface);
+  box-shadow: var(--pe-shadow-sm);
+  scroll-snap-align: start;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pe-variant:hover {
+  border-color: var(--pe-brand-600);
+}
+
+.pe-variant__body {
+  position: relative;
+  display: grid;
+  gap: var(--pe-space-2);
+  align-content: start;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pe-variant__info {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  text-align: center;
+}
+
+/* El radio existe para teclado/lectores de pantalla, pero no se ve. */
+.pe-variant__input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.pe-variant__prefix {
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pe-variant__capsules {
+  font-weight: 700;
+  color: var(--pe-ink-900);
+  font-size: var(--pe-fs-lg);
+  line-height: var(--pe-lh-tight);
+}
+
+.pe-variant__price {
+  margin-top: var(--pe-space-1);
+  font-size: var(--pe-fs-lg);
+  font-weight: 700;
+  color: var(--pe-brand-800);
+}
+
+.pe-variant__badge {
+  margin-top: var(--pe-space-1);
+  padding: 2px var(--pe-space-3);
+  border-radius: var(--pe-radius-pill);
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+  font-size: var(--pe-fs-xs);
+  font-weight: 700;
+}
+
+/* Marca de selección: un check discreto sobre la esquina de la foto. */
+.pe-variant__check {
+  position: absolute;
+  top: var(--pe-space-2);
+  right: var(--pe-space-2);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--pe-brand-700);
+  color: #fff;
+  /* Aro blanco: el check se lee sobre cualquier foto. */
+  box-shadow: 0 0 0 2px var(--pe-surface);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.pe-variant__media,
+.pe-variant__picture {
+  display: block;
+  width: 100%;
+}
+
+/* Caja cuadrada para las 7 fotos cuadradas: todas las tarjetas miden igual. */
+.pe-variant__picture img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--pe-radius);
+  background: var(--pe-surface-alt);
+}
+
+/* Botón de pedido de ESE frasco: siempre al pie de la tarjeta. */
+.pe-variant__cta {
+  width: 100%;
+  margin-top: auto;
+}
+
+/*
+ * Frasco elegido: borde de marca + halo muy suave + check visible.
+ * `data-selected` lo pone el cliente; `:has()` cubre los navegadores modernos
+ * incluso antes de que se ejecute el JavaScript.
+ */
+.pe-variant[data-selected='true'],
+.pe-variant:has(.pe-variant__input:checked) {
+  border-color: var(--pe-brand-700);
+  box-shadow: 0 0 0 2px var(--pe-brand-100), var(--pe-shadow-md);
+}
+
+.pe-variant[data-selected='true'] .pe-variant__check,
+.pe-variant:has(.pe-variant__input:checked) .pe-variant__check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.pe-variant:has(.pe-variant__input:focus-visible) {
+  outline: 3px solid var(--pe-focus);
+  outline-offset: 2px;
+}
+
+@media (min-width: 768px) {
+  /* A partir de tablet el carrusel respeta los márgenes del contenedor. */
+  .pe-variants {
+    margin-inline: 0;
+    padding-inline: 0;
+    scroll-padding-inline: 0;
+  }
+
+  .pe-carousel__hint {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .pe-variants {
+    gap: var(--pe-space-4);
+  }
+
+  .pe-variant {
+    width: 232px;
+  }
+}
+
+
+/* ------------------------------------------------------- RESUMEN DEL PEDIDO */
+.pe-order {
+  margin-top: var(--pe-space-5);
+  padding: var(--pe-space-4);
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  box-shadow: var(--pe-shadow-sm);
+}
+
+.pe-order__summary {
+  display: grid;
+  gap: var(--pe-space-2);
+  margin: 0 0 var(--pe-space-2);
+}
+
+.pe-order__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pe-space-3);
+  font-size: var(--pe-fs-sm);
+}
+
+.pe-order__row dt {
+  color: var(--pe-ink-500);
+}
+
+.pe-order__row dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
+.pe-order__row--qty dd {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pe-order__row--total {
+  margin-top: var(--pe-space-2);
+  padding-top: var(--pe-space-3);
+  border-top: 1px solid var(--pe-border);
+  align-items: baseline;
+}
+
+.pe-order__row--total dd {
+  font-size: var(--pe-fs-xl);
+  color: var(--pe-brand-800);
+}
+
+/* Cantidad de UNIDADES de la presentación (nunca cápsulas) */
+.pe-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  overflow: hidden;
+  background: var(--pe-surface);
+}
+
+.pe-stepper__btn {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  background: var(--pe-surface-alt);
+  color: var(--pe-ink-900);
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pe-stepper__btn:hover {
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+}
+
+.pe-stepper__input {
+  width: 56px;
+  height: 48px;
+  border: 0;
+  border-inline: 1px solid var(--pe-border);
+  text-align: center;
+  font-weight: 700;
+  font-size: var(--pe-fs-base);
+  background: var(--pe-surface);
+  -moz-appearance: textfield;
+}
+
+.pe-stepper__input::-webkit-outer-spin-button,
+.pe-stepper__input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pe-order__cta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pe-space-3);
+  margin-top: var(--pe-space-4);
+}
+
+.pe-order__cta .pe-btn {
+  width: 100%;
+}
+
+.pe-price__from {
+  color: var(--pe-ink-500);
+  font-size: var(--pe-fs-base);
+  font-weight: 600;
+}
+
+/* Botón "Cambiar presentación" dentro del resumen del modal */
+.pe-summary__change {
+  display: block;
+  margin-top: var(--pe-space-1);
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--pe-brand-700);
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* --------------------------------------------------------------- COMUNIDAD */
+/*
+ * Bloque de confianza: fondo suave propio, tarjetas de apoyo y CTA grande.
+ * Sin avatares ni fotos que aparenten clientes reales.
+ */
+.pe-section--community {
+  background: linear-gradient(180deg, var(--pe-brand-100) 0%, var(--pe-surface-alt) 100%);
+}
+
+.pe-community {
+  display: grid;
+  justify-items: center;
+  gap: var(--pe-space-5);
+  max-width: 960px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.pe-community__intro {
+  display: grid;
+  justify-items: center;
+  gap: var(--pe-space-3);
+}
+
+.pe-community__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--pe-whatsapp);
+  color: #fff;
+  box-shadow: var(--pe-shadow-sm);
+}
+
+.pe-community__eyebrow {
+  margin: 0;
+}
+
+.pe-community__title {
+  max-width: 22ch;
+}
+
+.pe-community__text {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--pe-ink-700);
+}
+
+.pe-community__text--soft {
+  color: var(--pe-ink-500);
+}
+
+.pe-community__claim {
+  margin: 0;
+  font-weight: 700;
+  color: var(--pe-brand-800);
+}
+
+.pe-community__cards {
+  display: grid;
+  gap: var(--pe-space-3);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.pe-community__card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: var(--pe-space-3);
+  padding: var(--pe-space-4);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  background: var(--pe-surface);
+  box-shadow: var(--pe-shadow-sm);
+}
+
+.pe-community__card-icon {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--pe-radius);
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+}
+
+.pe-community__card-title {
+  margin: 0;
+  font-size: var(--pe-fs-base);
+  color: var(--pe-ink-900);
+}
+
+.pe-community__card-text {
+  margin: 2px 0 0;
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+}
+
+.pe-community__action {
+  display: grid;
+  justify-items: center;
+  gap: var(--pe-space-2);
+  width: 100%;
+  max-width: 480px;
+}
+
+.pe-community__micro {
+  margin: 0;
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+}
+
+.pe-community__disclaimer {
+  max-width: 62ch;
+}
+
+/* Enlace discreto a la comunidad dentro de la zona de compra. */
+.pe-order__community {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pe-space-2);
+  margin: var(--pe-space-4) 0 0;
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+  text-align: center;
+}
+
+.pe-order__community-icon {
+  color: var(--pe-brand-700);
+}
+
+.pe-order__community .pe-link {
+  font-weight: 600;
+}
+
+/* Camino de cliente potencial dentro de la zona de compra (deja su contacto). */
+.pe-order__contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pe-space-2);
+  margin: var(--pe-space-3) 0 0;
+  padding-top: var(--pe-space-3);
+  border-top: 1px dashed var(--pe-border);
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+  text-align: center;
+}
+
+.pe-order__contact-icon {
+  color: var(--pe-brand-700);
+}
+
+.pe-order__contact .pe-link {
+  font-weight: 600;
+}
+
+@media (min-width: 640px) {
+  .pe-community__cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pe-community__card {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    justify-items: start;
+    row-gap: var(--pe-space-2);
+  }
+
+  .pe-community__card-icon {
+    grid-row: auto;
+  }
+
+  .pe-order {
+    padding: var(--pe-space-5);
+  }
+
+  .pe-order__cta {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .pe-order__cta .pe-btn {
+    width: auto;
+  }
+
+  .pe-community__cta,
+  .pe-community__cta .pe-btn {
+    width: auto;
+  }
+}

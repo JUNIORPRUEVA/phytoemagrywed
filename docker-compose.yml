@@ -1,0 +1,64 @@
+# ============================================================================
+#  Phytoemagry — despliegue con Docker Compose
+#
+#  En el servidor:
+#    1) git clone https://github.com/JUNIORPRUEVA/phytoemagrywed.git
+#    2) cd phytoemagrywed
+#    3) docker compose up -d --build
+#    4) abre http://IP-del-servidor:8080
+#
+#  Actualizar a la última versión:
+#    git pull && docker compose up -d --build
+#
+#  Valores: los de abajo son los que se usan si no defines otra cosa. Puedes
+#  sobrescribirlos sin tocar este archivo creando un `.env` junto al compose
+#  (mismas claves). Son datos PÚBLICOS: van dentro del HTML/JS.
+#  Guía completa: docs/DESPLIEGUE.md
+# ============================================================================
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Número que recibe los pedidos y las consultas de WhatsApp.
+        PHYTO_WHATSAPP_NUMBER: "${PHYTO_WHATSAPP_NUMBER:-18297853794}"
+        # Dominio final (sin barra al final): activa canonical, sitemap y la
+        # vista previa con imagen al compartir el enlace. Vacío = desactivado.
+        SEO_SITE_URL: "${SEO_SITE_URL:-}"
+        # Endpoint del CRM (vacío = los datos se quedan en la cola local).
+        PHYTO_CRM_ENDPOINT: "${PHYTO_CRM_ENDPOINT:-}"
+        # Meta Pixel (vacío = no se carga ningún script de Meta).
+        PHYTO_META_PIXEL_ID: "${PHYTO_META_PIXEL_ID:-}"
+        # Email de contacto visible (vacío = no se muestra).
+        CONTACT_EMAIL: "${CONTACT_EMAIL:-}"
+        APP_ENV: "${APP_ENV:-production}"
+
+    image: phytoemagry:latest
+    container_name: phytoemagry
+    restart: unless-stopped
+
+    # Puerto del servidor : puerto del contenedor.
+    # Cámbialo con WEB_PORT en el `.env` si el 8080 está ocupado.
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    # Sin privilegios extra: el contenedor solo sirve archivos estáticos.
+    security_opt:
+      - no-new-privileges:true
+
+    # Endurecimiento opcional (el sitio no escribe nada en disco). Si tu versión
+    # de nginx se queja al arrancar, comenta estas cuatro líneas:
+    # read_only: true
+    # tmpfs:
+    #   - /var/cache/nginx
+    #   - /var/run
+    #   - /tmp

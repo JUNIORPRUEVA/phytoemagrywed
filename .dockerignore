@@ -1,0 +1,39 @@
+# ============================================================================
+#  Contexto de build de la imagen Docker.
+#
+#  Lo que NO entra: nada que se pueda regenerar dentro del contenedor o que no
+#  haga falta para compilar. Así el build es más pequeño y más rápido.
+#
+#  OJO: `tests/` SÍ entra, porque el Dockerfile corre `npm run verify` (tests +
+#  revisión de contenido + build) como puerta de calidad antes de publicar.
+# ============================================================================
+
+node_modules
+dist
+dist-dev
+
+# Configuración local: los valores públicos entran por build args (ver Dockerfile)
+.env
+.env.local
+
+# Originales pesados (~15 MB): las versiones web ya están en public/
+assets
+
+# Repositorio y metadatos
+.git
+.gitignore
+.gitattributes
+
+# Entorno de Python (solo para los scripts de imágenes en local)
+.venv
+
+# Documentación y artefactos de verificación local
+docs
+*.md
+.playwright-mcp
+lighthouse-*.json
+
+# Editor
+.vscode
+.DS_Store
+Thumbs.db

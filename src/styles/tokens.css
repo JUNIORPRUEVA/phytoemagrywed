@@ -1,0 +1,79 @@
+/**
+ * Design tokens — Phytoemagry
+ * Paleta bienestar/natural, sobria (sin apariencia "milagrosa").
+ * Contrastes verificados AA (≥4.5:1) para texto sobre sus fondos.
+ */
+
+:root {
+  /* Marca */
+  --pe-brand-900: #073d2e;
+  --pe-brand-800: #0a5540;
+  --pe-brand-700: #0b6b4f; /* 6.5:1 sobre blanco */
+  --pe-brand-600: #128c68;
+  --pe-brand-100: #dfeee8;
+  --pe-accent: #c9e265; /* decorativo; texto oscuro encima (12:1) */
+
+  /* WhatsApp (verde oscurecido para cumplir AA con texto blanco) */
+  --pe-whatsapp: #0e7a3d;
+  --pe-whatsapp-dark: #0b6331;
+
+  /* Texto / superficies */
+  --pe-ink-900: #0e1b16;
+  --pe-ink-700: #2a3a33;
+  --pe-ink-500: #4a5a52; /* 7.3:1 sobre blanco */
+  --pe-border: #dce6e1;
+  --pe-surface: #ffffff;
+  --pe-surface-alt: #f4f8f6;
+  --pe-surface-sunken: #eaf1ee;
+
+  /* Estados */
+  --pe-danger: #b3261e; /* 6.5:1 sobre blanco */
+  --pe-danger-bg: #fdecea;
+  --pe-warn: #7a4c00;
+  --pe-warn-bg: #fff6e5;
+  --pe-info: #0d4f6c;
+  --pe-info-bg: #eaf5fa;
+  --pe-focus: #0d6efd;
+
+  /* Tipografía (fuentes del sistema: cero peticiones, cero CLS) */
+  --pe-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif;
+  --pe-fs-xs: 0.8125rem;
+  --pe-fs-sm: 0.875rem;
+  --pe-fs-base: 1rem;
+  --pe-fs-lg: 1.125rem;
+  --pe-fs-xl: clamp(1.25rem, 1.1rem + 1vw, 1.5rem);
+  --pe-fs-2xl: clamp(1.5rem, 1.25rem + 1.6vw, 2rem);
+  --pe-fs-3xl: clamp(1.875rem, 1.5rem + 2.4vw, 2.75rem);
+  --pe-lh-tight: 1.2;
+  --pe-lh-base: 1.6;
+
+  /* Espaciado */
+  --pe-space-1: 0.25rem;
+  --pe-space-2: 0.5rem;
+  --pe-space-3: 0.75rem;
+  --pe-space-4: 1rem;
+  --pe-space-5: 1.5rem;
+  --pe-space-6: 2rem;
+  --pe-space-7: 3rem;
+  --pe-space-8: 4rem;
+  --pe-space-9: 6rem;
+
+  /* Formas */
+  --pe-radius-sm: 8px;
+  --pe-radius: 12px;
+  --pe-radius-lg: 18px;
+  --pe-radius-pill: 999px;
+  --pe-shadow-sm: 0 1px 2px rgba(14, 27, 22, 0.06), 0 1px 3px rgba(14, 27, 22, 0.08);
+  --pe-shadow-md: 0 4px 12px rgba(14, 27, 22, 0.08), 0 2px 4px rgba(14, 27, 22, 0.05);
+  --pe-shadow-lg: 0 12px 32px rgba(14, 27, 22, 0.14);
+
+  /* Layout */
+  --pe-container: 1120px;
+  --pe-container-narrow: 760px;
+  --pe-header-h: 64px;
+  --pe-mobile-bar-h: 72px;
+  --pe-tap: 48px; /* altura mínima de todo elemento interactivo */
+  /* Alto de la foto del hero en móvil: deja sitio a título + precio + CTA */
+  --pe-hero-media-h: clamp(190px, 32vh, 320px);
+}
