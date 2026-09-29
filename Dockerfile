@@ -170,19 +170,14 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # Panel para leer los pedidos y los contactos (pide ?token=TU_CLAVE).
-        location = /panel {
-            proxy_pass http://127.0.0.1:8787;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
         # --------------------------------------------- app del panel (PWA)
         # El negocio la instala en el móvil. Los archivos son estáticos, pero
         # nunca se cachean: publicar tiene que verse al instante.
+        #
+        # `/panel` es el enlace antiguo (llevaba la clave en la URL): se
+        # redirige a `/admin/`, que pide la clave una vez y guarda la sesión.
+        # OJO: un solo `location = /panel` por servidor; dos iguales hacen que
+        # nginx aborte con `duplicate location` y el contenedor no arranca.
         location = /panel { return 302 /admin/; }
 
         location ^~ /admin/ {

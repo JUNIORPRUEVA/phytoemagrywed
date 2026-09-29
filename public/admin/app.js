@@ -919,7 +919,8 @@
     initPwa();
 
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
-    const wanted = new URLSearchParams(location.search).get('v');
+    const query = new URLSearchParams(location.search);
+    const wanted = query.get('v');
     if (['hoy', 'clientes', 'mensajes', 'ajustes'].includes(wanted)) state.tab = wanted;
 
     /*
@@ -933,6 +934,24 @@
       await load({ keepTab: true });
       toast('Sin conexión: datos guardados en el teléfono');
       return;
+    }
+
+    /*
+     * Enlace con la clave dentro (`/panel?token=…`, el de antes; nginx lo
+     * redirige a `/admin/?token=…`): se entra solo y se quita la clave de la
+     * barra de direcciones, para que no quede a la vista ni en el historial.
+     */
+    const linkToken = query.get('token');
+    if (linkToken) {
+      try {
+        await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ token: linkToken }) });
+        history.replaceState(null, '', `${location.pathname}${wanted ? `?v=${wanted}` : ''}`);
+        showApp();
+        await load();
+        return;
+      } catch {
+        /* Clave caducada o CRM apagado: se cae al acceso normal, que explica el motivo. */
+      }
     }
 
     if (await checkSession()) {

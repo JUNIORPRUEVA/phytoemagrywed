@@ -724,6 +724,45 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
     expect(inline).toContain('root /usr/share/nginx/html;');
   });
 
+  /**
+   * Claves de todos los `location` de un bloque `server`.
+   *
+   * nginx ABORTA al arrancar si hay dos `location` iguales ("duplicate location
+   * /panel in /etc/nginx/nginx.conf"): el contenedor sale con código 1, el
+   * despliegue queda a medias y la versión vieja sigue sirviendo. Pasó de
+   * verdad: al añadir el panel PWA se quedó el `/panel` antiguo al lado del
+   * nuevo. Comparar directivas (el test de arriba) NO lo detecta, porque la
+   * duplicidad viaja igual en las dos copias de la config.
+   */
+  const locationKeys = (block) =>
+    [...block.matchAll(/^[ \t]*location\s+([^\s{]+)(?:\s+([^\s{]+))?\s*\{/gm)].map((match) =>
+      `${match[1]} ${match[2] ?? ''}`.trim(),
+    );
+
+  it('no hay dos `location` iguales en el mismo servidor (nginx no arrancaría)', () => {
+    for (const [name, config] of [
+      ['Dockerfile', inlineConfig()],
+      ['nginx/phytoemagry.conf', nginxConf],
+    ]) {
+      const keys = locationKeys(serverBlock(config));
+      expect(keys.length, `${name}: no se encontró ningún location`).toBeGreaterThan(4);
+      const duplicated = keys.filter((key, index) => keys.indexOf(key) !== index);
+      expect(duplicated, `${name}: locations repetidos → ${duplicated.join(', ')}`).toEqual([]);
+    }
+  });
+
+  it('las llaves de la config están equilibradas (nginx no arrancaría)', () => {
+    for (const [name, config] of [
+      ['Dockerfile', inlineConfig()],
+      ['nginx/phytoemagry.conf', nginxConf],
+    ]) {
+      const block = serverBlock(config);
+      const open = (block.match(/\{/g) ?? []).length;
+      const close = (block.match(/\}/g) ?? []).length;
+      expect(open, `${name}: llaves desequilibradas`).toBe(close);
+    }
+  });
+
   it('el puerto de escucha se puede ajustar desde el panel (PORT), con 80 por defecto', () => {
     // Easypanel y otros paneles definen PORT en tiempo de ejecución: si la
     // plantilla no lo usara, el proxy apuntaría a un puerto donde nadie escucha.

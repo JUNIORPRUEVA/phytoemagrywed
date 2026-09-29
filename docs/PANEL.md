@@ -13,6 +13,11 @@ funciona aunque el móvil se quede sin datos.
 1. Abre `https://TU-DOMINIO/admin/` en el móvil.
 2. Escribe la clave del panel (es `PHYTO_CRM_TOKEN`, la misma que está en
    Easypanel → Environment). Se queda guardada en ese teléfono durante 90 días.
+
+> También vale el enlace antiguo con la clave dentro (`/panel?token=TU-CLAVE`):
+> redirige a `/admin/` y **entra solo**, sin escribirla, y borra la clave de la
+> barra de direcciones. Cómodo para un enlace guardado; para el día a día es
+> mejor instalar la app y dejar la sesión abierta.
 3. Instálala:
    - **Android (Chrome)**: menú ⋮ → **Añadir a pantalla de inicio** → *Instalar*.
    - **iPhone (Safari)**: botón Compartir → **Añadir a pantalla de inicio**.

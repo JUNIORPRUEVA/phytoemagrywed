@@ -635,3 +635,37 @@ qué". No era la clave: era que **no había nada al otro lado**.
    revisión previa a publicar ya avisa con su efecto real: "Los pedidos NO llegan
    a la base de datos: el panel sale vacío".
 
+## 33. El despliegue fallaba sin decirlo: `duplicate location` (y los guardas que faltaban)
+
+Al añadir el panel PWA quedaron **dos `location = /panel`** en la config de
+nginx: el nuevo (redirige a `/admin/`) y el viejo (hacía proxy al API). nginx
+aborta con `[emerg] duplicate location "/panel"`, el contenedor sale con código
+1 y Swarm **deja la versión anterior sirviendo**: la web seguía respondiendo, así
+que desde fuera parecía que "el panel no se puede abrir", cuando en realidad el
+despliegue nunca llegó a arrancar.
+
+Lo que faltaba no era la corrección, eran las **redes de seguridad**:
+
+1. **Un test que lee la config de nginx como la lee nginx** (`tests/render.test.js`):
+   saca las claves de todos los `location` del bloque `server` y falla si alguna
+   se repite, además de comprobar que las llaves están equilibradas. El test de
+   paridad que ya existía (Dockerfile ↔ `nginx/phytoemagry.conf`) **no lo
+   detectaba**, porque la duplicidad viajaba igual en las dos copias: comparar
+   listas de directivas no es validar una config. El guarda se probó contra el
+   `Dockerfile` de HEAD (el roto) y contra el arreglado: detecta `= /panel` en el
+   primero y no dice nada en el segundo.
+2. **Un despliegue que falla tiene que verse.** El aviso estaba en los logs de la
+tarea que murió (`docker service ps` lo marca como `Failed: task: non-zero exit
+   (1)`), no en la web: por eso ahora está en la tabla de problemas típicos de
+   `docs/DESPLIEGUE.md` con el diagnóstico exacto.
+3. **El enlace viejo entra de verdad.** `/panel?token=…` redirige a
+   `/admin/?token=…` y el panel inicia sesión solo con esa clave y limpia la URL
+   (`history.replaceState`): antes la promesa era solo "redirige", y quien tenía
+   el enlace guardado acababa en la pantalla de la clave.
+4. **PostgreSQL de verdad, no en silencio a SQLite.** El CRM arranca con
+   `storage: sqlite` si Postgres rechaza al usuario (defensa buena: no se pierde
+   ningún pedido), pero con la clave del rol desalineada se queda ahí para
+   siempre, y sin volumen montado ese SQLite desaparece en el siguiente
+   despliegue. Se alineó la clave del rol con la del servicio y ahora
+   `/api/health` responde `storage: postgres`.
+
