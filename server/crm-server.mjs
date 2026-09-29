@@ -1,45 +1,53 @@
 /**
  * ============================================================================
- *  API del CRM — recibe los `lead` y los `order_intent` de la web y los guarda
- *  en una base de datos.
+ *  API del CRM + panel de administración (PWA).
  *
- *  Dos almacenes, el que diga el entorno:
- *    1. PostgreSQL  → PHYTO_CRM_DATABASE_URL (recomendado en producción: los
- *       datos viven en el servidor de base de datos, no en el contenedor).
- *    2. SQLite      → PHYTO_CRM_DATA (por defecto; usa `node:sqlite`, que ya
- *       viene dentro de Node: cero dependencias y cero configuración).
- *
- *  Si Postgres está configurado pero no responde, se avisa en los logs y se
- *  sigue guardando en SQLite: perder datos nunca es una opción.
- *
- *  Rutas:
+ *  Público (lo usa la web):
  *    POST /api/crm                  → guarda un `lead` o un `order_intent`
- *    GET  /api/health               → estado (público, sin datos personales)
- *    GET  /api/crm/items?token=...  → JSON con los registros (más nuevo primero)
- *    GET  /api/crm/export.csv?token=... → el mismo listado en CSV (Excel/Sheets)
- *    GET  /panel?token=...          → panel HTML para leerlos desde el móvil
+ *    GET  /api/health               → estado (sin datos personales)
  *
- *  Variables de entorno (todas opcionales):
- *    PHYTO_CRM_DATABASE_URL  cadena de PostgreSQL (activa el almacén Postgres)
- *    PHYTO_CRM_PORT      puerto (por defecto 8787)
- *    PHYTO_CRM_HOST      interfaz (por defecto 127.0.0.1: solo lo alcanza nginx)
- *    PHYTO_CRM_DATA      archivo de datos (por defecto ./data/phytoemagry.sqlite)
- *                        con extensión .jsonl usa el almacén JSONL
- *    PHYTO_CRM_TOKEN     clave para LEER los datos. Sin ella, leer está
- *                        desactivado (escribir sigue funcionando).
- *    PHYTO_CRM_ALLOWED_ORIGIN  origen permitido por CORS, si la web se sirve
- *                        desde otro dominio (por defecto: mismo origen)
+ *  Panel (lo usa el negocio, con sesión):
+ *    GET  /admin/                   → la app instalable (PWA)
+ *    POST /api/admin/login          → cambia la clave por una cookie de sesión
+ *    POST /api/admin/logout
+ *    GET  /api/admin/data           → items + cuentas + plantillas (una petición)
+ *    PATCH /api/admin/items/:id     → estado, notas y recordatorio
+ *    POST/DELETE /api/admin/messages[/:id] → plantillas de WhatsApp
  *
- *  Documentación: docs/CRM-CONTRACT.md y docs/DESPLIEGUE.md
+ *  Compatibilidad (curl, enlaces antiguos): `/api/crm/items?token=…`,
+ *  `/api/crm/export.csv?token=…` y `/panel?token=…` siguen funcionando.
+ *
+ *  Variables de entorno:
+ *    PHYTO_CRM_DATABASE_URL  Postgres (recomendado) · si no, SQLite · si no, JSONL
+ *    PHYTO_CRM_DATA          archivo de SQLite/JSONL
+ *    PHYTO_CRM_TOKEN         clave del panel (obligatoria para administrar)
+ *    PHYTO_CRM_PORT/HOST     puerto e interfaz (por defecto 8787 / 127.0.0.1)
+ *    PHYTO_ADMIN_DIR         carpeta de la app del panel (por defecto: dist/admin)
+ *    PHYTO_CRM_ALLOWED_ORIGIN  CORS, solo si la web vive en otro dominio
+ *    PHYTO_CRM_TZ            zona horaria del negocio (por defecto America/Santo_Domingo)
+ *
+ *  Documentación: docs/CRM-CONTRACT.md y docs/PANEL.md
  * ============================================================================
  */
 
 import { createServer } from 'node:http';
-import { timingSafeEqual, randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+
+import {
+  CLOSED_STATUSES,
+  STATUSES,
+  computeStats,
+  createStore,
+  day,
+  dueToday,
+  longText,
+  messageId,
+  text,
+} from './stores.mjs';
 
 const PORT = Number.parseInt(process.env.PHYTO_CRM_PORT ?? '8787', 10);
 const HOST = process.env.PHYTO_CRM_HOST ?? '127.0.0.1';
@@ -47,344 +55,37 @@ const DATA_FILE = path.resolve(process.env.PHYTO_CRM_DATA ?? path.join('data', '
 const DATABASE_URL = (process.env.PHYTO_CRM_DATABASE_URL ?? '').trim();
 const TOKEN = (process.env.PHYTO_CRM_TOKEN ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
+const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
 
-/** Tabla donde se guardan los registros (nombre propio: no choca con otras apps). */
-const TABLE = 'phytoemagry_items';
+/**
+ * Carpeta de la app del panel. Se resuelve al arrancar (no al importar) para
+ * poder apuntarla desde los tests o desde otro directorio con `PHYTO_ADMIN_DIR`.
+ */
+function resolveAdminDir(configured) {
+  if (configured) return path.resolve(configured);
+  if (process.env.PHYTO_ADMIN_DIR) return path.resolve(process.env.PHYTO_ADMIN_DIR);
+  const built = path.join(process.cwd(), 'dist', 'admin');
+  return existsSync(built) ? built : path.join(process.cwd(), 'public', 'admin');
+}
 
 /** Tamaño máximo del cuerpo aceptado (un pedido ocupa ~1 kB). */
 const MAX_BODY_BYTES = 64 * 1024;
 /** Tipos de registro que acepta la web (ver src/lib/api.js). */
 const TYPES = new Set(['lead', 'order_intent']);
+/** Duración de la sesión del panel (90 días: se instala y no se vuelve a pedir). */
+const SESSION_SECONDS = 90 * 24 * 60 * 60;
+const COOKIE = 'pe_crm';
 
-// --------------------------------------------------------------------- datos
-
-/**
- * Almacén SQLite. Es el modo normal: permite consultar, exportar y crecer sin
- * cargar todo el archivo en memoria.
- */
-async function createSqliteStore(file) {
-  const { DatabaseSync } = await import('node:sqlite');
-  mkdirSync(path.dirname(file), { recursive: true });
-
-  const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA synchronous = NORMAL');
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS items (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      received_at TEXT NOT NULL,
-      name TEXT,
-      phone TEXT,
-      location TEXT,
-      variant_id TEXT,
-      variant_name TEXT,
-      capsules INTEGER,
-      quantity INTEGER,
-      unit_price INTEGER,
-      total INTEGER,
-      currency TEXT,
-      source TEXT,
-      session_id TEXT,
-      payload TEXT NOT NULL
-    )
-  `);
-  db.exec('CREATE INDEX IF NOT EXISTS items_received_at ON items (received_at DESC)');
-  db.exec('CREATE INDEX IF NOT EXISTS items_type ON items (type)');
-
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO items (
-      id, type, received_at, name, phone, location, variant_id, variant_name,
-      capsules, quantity, unit_price, total, currency, source, session_id, payload
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const count = db.prepare('SELECT COUNT(*) AS n FROM items');
-
-  return {
-    kind: 'sqlite',
-    file,
-    /** @param {ReturnType<typeof toRow>} row */
-    save(row) {
-      const result = insert.run(
-        row.id,
-        row.type,
-        row.receivedAt,
-        row.name,
-        row.phone,
-        row.location,
-        row.variantId,
-        row.variantName,
-        row.capsules,
-        row.quantity,
-        row.unitPrice,
-        row.total,
-        row.currency,
-        row.source,
-        row.sessionId,
-        row.payload,
-      );
-      return { duplicate: Number(result.changes) === 0 };
-    },
-    /** @param {{limit:number, type:string|null}} options */
-    list({ limit, type }) {
-      const rows = type
-        ? db.prepare('SELECT * FROM items WHERE type = ? ORDER BY received_at DESC LIMIT ?').all(type, limit)
-        : db.prepare('SELECT * FROM items ORDER BY received_at DESC LIMIT ?').all(limit);
-      return rows;
-    },
-    count() {
-      return Number(count.get().n);
-    },
-    close() {
-      db.close();
-    },
-  };
-}
-
-/**
- * Almacén JSONL: red de seguridad para versiones de Node sin `node:sqlite`.
- * Una línea por registro, se añade al final (nunca reescribe).
- */
-function createJsonlStore(file) {
-  mkdirSync(path.dirname(file), { recursive: true });
-
-  return {
-    kind: 'jsonl',
-    file,
-    /** @param {ReturnType<typeof toRow>} row */
-    save(row) {
-      // Sin base de datos la deduplicación se hace comparando el id ya escrito.
-      if (readRows(file).some((item) => item.id === row.id)) return { duplicate: true };
-      appendFileSync(file, `${JSON.stringify(record(row))}\n`, 'utf8');
-      return { duplicate: false };
-    },
-    /** @param {{limit:number, type:string|null}} options */
-    list({ limit, type }) {
-      return readRows(file)
-        .filter((item) => (type ? item.type === type : true))
-        .slice(-limit)
-        .reverse();
-    },
-    count() {
-      return readRows(file).length;
-    },
-    close() {},
-  };
-}
-
-/**
- * Almacén PostgreSQL (producción: los datos viven en el servidor de base de
- * datos y sobreviven a cualquier despliegue). Usa un pool, así que si la
- * conexión se cae, la siguiente consulta la vuelve a abrir sola.
- * @param {string} url cadena `postgres://usuario:clave@host:puerto/base`
- */
-async function createPostgresStore(url) {
-  const { Pool } = await import('pg');
-  const pool = new Pool({
-    connectionString: url,
-    max: 4,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 8_000,
-    application_name: 'phytoemagry-crm',
-  });
-
-  // Detecta credenciales/red mal configuradas AL ARRANCAR, no en el primer pedido.
-  const first = await pool.connect();
-  try {
-    await first.query(`
-      CREATE TABLE IF NOT EXISTS ${TABLE} (
-        id            text PRIMARY KEY,
-        type          text NOT NULL,
-        received_at   text NOT NULL,
-        name          text,
-        phone         text,
-        location      text,
-        variant_id    text,
-        variant_name   text,
-        capsules      integer,
-        quantity      integer,
-        unit_price    integer,
-        total         integer,
-        currency      text,
-        source        text,
-        session_id    text,
-        payload       jsonb NOT NULL,
-        stored_at     timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_received_at ON ${TABLE} (received_at DESC)`);
-    await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_type ON ${TABLE} (type)`);
-  } finally {
-    first.release();
-  }
-
-  const COLUMNS = [
-    'id',
-    'type',
-    'received_at',
-    'name',
-    'phone',
-    'location',
-    'variant_id',
-    'variant_name',
-    'capsules',
-    'quantity',
-    'unit_price',
-    'total',
-    'currency',
-    'source',
-    'session_id',
-    'payload',
-  ];
-  /** Columnas que se devuelven al panel/JSON (el payload como texto: mismo formato que SQLite). */
-  const SELECT = `${COLUMNS.filter((c) => c !== 'payload').join(', ')}, payload::text AS payload`;
-
-  return {
-    kind: 'postgres',
-    /** Sin usuario ni clave: esta cadena acaba en los logs. */
-    file: (() => {
-      try {
-        const parsed = new URL(url);
-        return `${parsed.hostname}:${parsed.port || 5432}${parsed.pathname}`;
-      } catch {
-        return 'postgres';
-      }
-    })(),
-    /** @param {ReturnType<typeof toRow>} row */
-    async save(row) {
-      const result = await pool.query(
-        `INSERT INTO ${TABLE} (${COLUMNS.join(', ')})
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-         ON CONFLICT (id) DO NOTHING`,
-        [
-          row.id,
-          row.type,
-          row.receivedAt,
-          row.name,
-          row.phone,
-          row.location,
-          row.variantId,
-          row.variantName,
-          row.capsules,
-          row.quantity,
-          row.unitPrice,
-          row.total,
-          row.currency,
-          row.source,
-          row.sessionId,
-          row.payload,
-        ],
-      );
-      // ON CONFLICT DO NOTHING → rowCount 0 significa "ya estaba" (la cola reintenta).
-      return { duplicate: result.rowCount === 0 };
-    },
-    /** @param {{limit:number, type:string|null}} options */
-    async list({ limit, type }) {
-      const result = type
-        ? await pool.query(
-            `SELECT ${SELECT} FROM ${TABLE} WHERE type = $1 ORDER BY received_at DESC LIMIT $2`,
-            [type, limit],
-          )
-        : await pool.query(`SELECT ${SELECT} FROM ${TABLE} ORDER BY received_at DESC LIMIT $1`, [limit]);
-      return result.rows;
-    },
-    async count() {
-      const result = await pool.query(`SELECT COUNT(*)::int AS n FROM ${TABLE}`);
-      return Number(result.rows[0]?.n ?? 0);
-    },
-    async close() {
-      await pool.end();
-    },
-  };
-}
-
-/** Lee el archivo JSONL y descarta las líneas corruptas (nunca revienta). */
-function readRows(file) {
-  if (!existsSync(file)) return [];
-  /** @type {any[]} */
-  const rows = [];
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      rows.push(JSON.parse(line));
-    } catch {
-      console.warn('[crm] línea ilegible en el archivo JSONL: se ignora');
-    }
-  }
-  return rows;
-}
-
-/**
- * Fila tal y como se guarda y se devuelve (misma forma en los dos almacenes:
- * si SQLite está disponible los datos no cambian de forma al exportarlos).
- * @param {ReturnType<typeof toRow>} row
- */
-function record(row) {
-  return {
-    id: row.id,
-    type: row.type,
-    received_at: row.receivedAt,
-    name: row.name,
-    phone: row.phone,
-    location: row.location,
-    variant_id: row.variantId,
-    variant_name: row.variantName,
-    capsules: row.capsules,
-    quantity: row.quantity,
-    unit_price: row.unitPrice,
-    total: row.total,
-    currency: row.currency,
-    source: row.source,
-    session_id: row.sessionId,
-    payload: row.payload,
-  };
-}
-
-async function createStore(options = {}) {
-  const { databaseUrl = '', dataFile = DATA_FILE } = options;
-
-  if (databaseUrl) {
-    try {
-      return await createPostgresStore(databaseUrl);
-    } catch (error) {
-      console.error(`[crm] PostgreSQL configurado pero no responde (${error.message}).`);
-      console.error('[crm] Se guardará en SQLite para no perder ningún pedido o contacto.');
-    }
-  }
-
-  if (dataFile.toLowerCase().endsWith('.jsonl')) return createJsonlStore(dataFile);
-  try {
-    return await createSqliteStore(dataFile);
-  } catch (error) {
-    const fallback = dataFile.replace(/\.sqlite$/i, '') + '.jsonl';
-    console.warn(
-      `[crm] SQLite no disponible (${error.message}); se usa el archivo ${fallback}. ` +
-        'En Node 22 hace falta arrancar con --experimental-sqlite.',
-    );
-    return createJsonlStore(fallback);
-  }
-}
+const STATUS_LABELS = {
+  nuevo: 'Nuevo',
+  contactado: 'Contactado',
+  interesado: 'Interesado',
+  confirmado: 'Confirmado',
+  entregado: 'Entregado',
+  perdido: 'Perdido',
+};
 
 // ------------------------------------------------------------------ utilidades
-
-/** Texto corto y sin saltos de línea, para la tabla y el CSV. */
-function text(value, max = 120) {
-  if (value === null || value === undefined) return null;
-  const clean = String(value).replace(/\s+/g, ' ').trim();
-  return clean ? clean.slice(0, max) : null;
-}
-
-/** Entero o null (los precios viajan en unidades enteras de la moneda). */
-function int(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.trunc(number) : null;
-}
-
-function csvCell(value) {
-  if (value === null || value === undefined) return '';
-  const raw = String(value);
-  return /[",;\n\r]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
-}
 
 /** ¿La clave recibida es la configurada? Comparación en tiempo constante. */
 function tokenOk(candidate, expectedToken) {
@@ -395,26 +96,13 @@ function tokenOk(candidate, expectedToken) {
   return timingSafeEqual(a, b);
 }
 
-function json(res, status, body) {
+function json(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
     'cache-control': 'no-store',
-  });
-  res.end(payload);
-}
-
-function html(res, status, body) {
-  const payload = `<!doctype html><html lang="es"><head><meta charset="utf-8">` +
-    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<meta name="robots" content="noindex, nofollow">` +
-    `<title>Pedidos y contactos · Phytoemagry</title>` +
-    `<style>${PANEL_CSS}</style></head><body>${body}</body></html>`;
-  res.writeHead(status, {
-    'content-type': 'text/html; charset=utf-8',
-    'content-length': Buffer.byteLength(payload),
-    'cache-control': 'no-store',
+    ...extraHeaders,
   });
   res.end(payload);
 }
@@ -423,7 +111,7 @@ function cors(res, allowedOrigin) {
   if (!allowedOrigin) return;
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Headers', 'content-type, x-crm-token');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, PATCH, DELETE, OPTIONS');
   res.setHeader('Vary', 'Origin');
 }
 
@@ -455,7 +143,7 @@ function readJsonBody(req) {
 
 /**
  * Convierte el payload de la web (ver docs/CRM-CONTRACT.md) en una fila.
- * No rechaza campos desconocidos: se guarda el payload completo en `payload`.
+ * No rechaza campos desconocidos: se guarda el payload completo.
  */
 function toRow(payload) {
   const type = text(payload.type, 40);
@@ -465,10 +153,10 @@ function toRow(payload) {
     throw error;
   }
   const customer = payload.customer ?? {};
-  const id = text(payload.id, 80) ?? randomBytes(16).toString('hex');
+  const number = (value) => (Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : null);
 
   return {
-    id,
+    id: text(payload.id, 80) ?? randomBytes(16).toString('hex'),
     type,
     receivedAt: text(payload.createdAt, 40) ?? new Date().toISOString(),
     name: text(payload.name, 120) ?? text(customer.name, 120),
@@ -476,10 +164,10 @@ function toRow(payload) {
     location: text(payload.location, 120) ?? text(customer.location, 120),
     variantId: text(payload.variantId, 60),
     variantName: text(payload.variantName, 60) ?? text(payload.product?.presentation, 60),
-    capsules: int(payload.capsules),
-    quantity: int(payload.quantity),
-    unitPrice: int(payload.unitPrice),
-    total: int(payload.total),
+    capsules: number(payload.capsules),
+    quantity: number(payload.quantity),
+    unitPrice: number(payload.unitPrice),
+    total: number(payload.total),
     currency: text(payload.currency, 8) ?? text(payload.product?.currency, 8),
     source: text(payload.source, 40),
     sessionId: text(payload.sessionId, 80),
@@ -487,109 +175,115 @@ function toRow(payload) {
   };
 }
 
-function money(value, currency) {
+function csvCell(value) {
   if (value === null || value === undefined) return '';
-  const formatted = new Intl.NumberFormat('es-DO', { maximumFractionDigits: 0 }).format(value);
-  return `${currency ?? 'DOP'} ${formatted}`;
-}
-
-function when(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso ?? '';
-  return new Intl.DateTimeFormat('es-DO', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-    timeZone: 'America/Santo_Domingo',
-  }).format(date);
+  const raw = String(value);
+  return /[",;\n\r]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
 }
 
 function typeLabel(type) {
   return type === 'order_intent' ? 'Pedido' : 'Contacto';
 }
 
-// ---------------------------------------------------------------------- panel
+// ------------------------------------------------------------------ sesiones
 
-const PANEL_CSS = `
-:root{color-scheme:light}
-*{box-sizing:border-box}
-body{margin:0;padding:16px;font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f6f8f7;color:#14231c}
-h1{font-size:1.3rem;margin:0 0 4px}
-p.sub{margin:0 0 16px;color:#4a5b53}
-.cards{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px}
-.card{background:#fff;border:1px solid #dfe7e2;border-radius:12px;padding:12px 16px;min-width:140px}
-.card b{display:block;font-size:1.6rem;line-height:1.2}
-.card span{color:#4a5b53;font-size:.85rem}
-a.btn{display:inline-block;background:#16613f;color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:600}
-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dfe7e2;border-radius:12px;overflow:hidden}
-th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eef2ef;vertical-align:top;font-size:.92rem;white-space:nowrap}
-td:first-child,th:first-child{white-space:normal;min-width:120px}
-th{background:#eef4f0;font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:#3c4b44}
-tr:last-child td{border-bottom:0}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:700}
-.tag--order{background:#e3f0ff;color:#134b8a}
-.tag--lead{background:#eaf7ee;color:#16613f}
-.empty{background:#fff;border:1px dashed #c9d6ce;border-radius:12px;padding:24px;text-align:center;color:#4a5b53}
-code{background:#eef2ef;padding:2px 6px;border-radius:6px;font-size:.85rem}
-.warn{background:#fff6e5;border:1px solid #f0dcb4;border-radius:12px;padding:12px 16px;margin-bottom:16px}
-/* La tabla se desliza sola: la página nunca scrollea en horizontal (se lee en el móvil). */
-.table-wrap{overflow-x:auto;border-radius:12px;box-shadow:0 1px 2px rgba(20,35,28,.04)}
-.table-wrap table{border-radius:12px;min-width:720px}
-`;
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+/*
+ * Sesión sin estado en el servidor: la cookie lleva la caducidad y una firma
+ * HMAC hecha con la propia clave del panel. Así no hay tabla de sesiones, aguanta
+ * un reinicio y, si cambias PHYTO_CRM_TOKEN, todas las sesiones dejan de valer.
+ */
+function signSession(expiresAt, secret) {
+  return createHmac('sha256', secret).update(`admin:${expiresAt}`).digest('base64url');
 }
 
-function panelPage(rows, total, token, query) {
-  const orders = rows.filter((row) => row.type === 'order_intent');
-  const sum = orders.reduce((acc, row) => acc + (Number(row.total) || 0), 0);
-  const list = rows
-    .map(
-      (row) => `<tr>
-      <td>${escapeHtml(when(row.received_at))}</td>
-      <td><span class="tag tag--${row.type === 'order_intent' ? 'order' : 'lead'}">${escapeHtml(typeLabel(row.type))}</span></td>
-      <td>${escapeHtml(row.name ?? '—')}</td>
-      <td>${escapeHtml(row.phone ?? '—')}</td>
-      <td>${escapeHtml(row.variant_name ?? '—')}${row.quantity ? ` ×${escapeHtml(row.quantity)}` : ''}</td>
-      <td>${escapeHtml(money(row.total, row.currency))}</td>
-      <td>${escapeHtml(row.location ?? '—')}</td>
-    </tr>`,
-    )
-    .join('');
+function createSessionValue(secret) {
+  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
+  return `${expiresAt}.${signSession(expiresAt, secret)}`;
+}
 
-  return `
-  <h1>Pedidos y contactos</h1>
-  <p class="sub">Todo lo que llega por WhatsApp queda también aquí, dentro de tu servidor.</p>
-  <div class="cards">
-    <div class="card"><b>${total}</b><span>registros guardados</span></div>
-    <div class="card"><b>${orders.length}</b><span>pedidos en esta vista</span></div>
-    <div class="card"><b>${escapeHtml(money(sum, 'DOP'))}</b><span>facturado (pedidos de la vista)</span></div>
-  </div>
-  <p><a class="btn" href="/api/crm/export.csv?token=${encodeURIComponent(token)}">Descargar CSV</a></p>
-  ${
-    rows.length === 0
-      ? '<div class="empty">Todavía no hay nada guardado.<br>Los pedidos y los contactos aparecen aquí en cuanto alguien usa la web.</div>'
-      : `<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Nombre</th><th>Teléfono</th><th>Frasco</th><th>Total</th><th>Ciudad</th></tr></thead><tbody>${list}</tbody></table></div>`
+function sessionValid(value, secret) {
+  if (!secret || typeof value !== 'string') return false;
+  const [rawExpires, signature] = value.split('.');
+  const expiresAt = Number.parseInt(rawExpires ?? '', 10);
+  if (!Number.isFinite(expiresAt) || expiresAt * 1000 < Date.now()) return false;
+  return tokenOk(signature, signSession(expiresAt, secret));
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of String(header).split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(rest.join('='));
   }
-  <p class="sub" style="margin-top:16px">
-    ${
-      query
-        ? `Filtrado por <code>${escapeHtml(query)}</code> · <a href="/panel?token=${encodeURIComponent(token)}">ver todo</a> · `
-        : ''
-    }
-    <a href="/api/crm/items?token=${encodeURIComponent(token)}">JSON</a>
-  </p>`;
+  return null;
 }
 
-// --------------------------------------------------------------------- rutas
+function isSecureRequest(req) {
+  return String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() === 'https';
+}
+
+function setSessionCookie(req, res, value) {
+  const attributes = [`${COOKIE}=${value}`, 'Path=/', 'HttpOnly', 'SameSite=Strict'];
+  attributes.push(value ? `Max-Age=${SESSION_SECONDS}` : 'Max-Age=0');
+  if (isSecureRequest(req)) attributes.push('Secure');
+  res.setHeader('Set-Cookie', attributes.join('; '));
+}
+
+/** Límite de intentos de clave por IP: frena la fuerza bruta sin molestar. */
+const loginAttempts = new Map();
+
+function loginAllowed(ip) {
+  const entry = loginAttempts.get(ip);
+  if (!entry || entry.until < Date.now()) return true;
+  return entry.count < 10;
+}
+
+function registerLoginFailure(ip) {
+  const entry = loginAttempts.get(ip) ?? { count: 0, until: 0 };
+  loginAttempts.set(ip, { count: entry.count + 1, until: Date.now() + 15 * 60 * 1000 });
+}
+
+// ------------------------------------------------------------------ estáticos
+
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+/** Sirve un archivo de la app del panel (sin poder salir de su carpeta). */
+function serveAdminFile(res, urlPath, adminDir) {
+  const relative = urlPath.replace(/^\/admin\/?/, '') || 'index.html';
+  const target = path.resolve(adminDir, relative);
+  if (!target.startsWith(adminDir) || !existsSync(target) || !statSync(target).isFile()) {
+    json(res, 404, { ok: false, error: 'not_found' });
+    return;
+  }
+  const body = readFileSync(target);
+  res.writeHead(200, {
+    'content-type': CONTENT_TYPES[path.extname(target)] ?? 'application/octet-stream',
+    'content-length': body.length,
+    // El panel y su service worker nunca se cachean: publicar = ver el cambio ya.
+    'cache-control': 'no-cache, must-revalidate',
+    'service-worker-allowed': '/admin/',
+    'x-robots-tag': 'noindex, nofollow',
+  });
+  res.end(body);
+}
+
+// -------------------------------------------------------------------- rutas
 
 async function handle(req, res, ctx) {
-  const { store, token: expectedToken } = ctx;
+  const { store, token } = ctx;
   cors(res, ctx.allowedOrigin);
+
   const url = new URL(req.url ?? '/', 'http://localhost');
   const route = url.pathname.replace(/\/+$/, '') || '/';
 
@@ -598,6 +292,7 @@ async function handle(req, res, ctx) {
     return;
   }
 
+  // --------------------------------------------------------------- público
   if (route === '/api/health') {
     json(res, 200, { ok: true, storage: store.kind, items: await store.count() });
     return;
@@ -625,21 +320,185 @@ async function handle(req, res, ctx) {
         }
       }
     } catch (error) {
-      json(res, /** @type {any} */ (error).status ?? 400, {
-        ok: false,
-        error: error.message,
-        saved,
-      });
+      json(res, /** @type {any} */ (error).status ?? 400, { ok: false, error: error.message, saved });
       return;
     }
     json(res, 202, { ok: true, saved, storage: store.kind });
     return;
   }
 
-  const wantsData = route === '/api/crm/items' || route === '/api/crm/export.csv' || route === '/panel';
-  if (wantsData) {
-    const token = url.searchParams.get('token') ?? req.headers['x-crm-token'];
-    if (!ctx.token) {
+  // --------------------------------------------------- app instalable (PWA)
+  if (route === '/admin' || route.startsWith('/admin/')) {
+    serveAdminFile(res, url.pathname, ctx.adminDir);
+    return;
+  }
+
+  // Enlace antiguo con la clave en la URL: entra y limpia la barra de direcciones.
+  if (route === '/panel') {
+    const candidate = url.searchParams.get('token');
+    if (candidate && tokenOk(candidate, token)) setSessionCookie(req, res, createSessionValue(token));
+    res.writeHead(302, { location: '/admin/', 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+
+  const authenticated = sessionValid(readCookie(req, COOKIE), token);
+
+  // ------------------------------------------------------------- el panel
+  if (route === '/api/admin/login' && req.method === 'POST') {
+    const ip = String(req.headers['x-real-ip'] ?? req.socket.remoteAddress ?? '?');
+    if (!loginAllowed(ip)) {
+      json(res, 429, {
+        ok: false,
+        error: 'too_many_attempts',
+        message: 'Demasiados intentos seguidos. Espera 15 minutos.',
+      });
+      return;
+    }
+    /** @type {any} */
+    let body = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      body = {};
+    }
+    if (!token) {
+      json(res, 503, {
+        ok: false,
+        error: 'no_token',
+        message: 'Define PHYTO_CRM_TOKEN en el servidor para poder entrar al panel.',
+      });
+      return;
+    }
+    if (!tokenOk(text(body.token, 200) ?? '', token)) {
+      registerLoginFailure(ip);
+      json(res, 401, { ok: false, error: 'invalid_token', message: 'La clave no es correcta.' });
+      return;
+    }
+    loginAttempts.delete(ip);
+    setSessionCookie(req, res, createSessionValue(token));
+    json(res, 200, { ok: true, storage: store.kind });
+    return;
+  }
+
+  if (route === '/api/admin/logout' && req.method === 'POST') {
+    setSessionCookie(req, res, '');
+    json(res, 200, { ok: true });
+    return;
+  }
+
+  if (route === '/api/admin/session') {
+    json(res, 200, { ok: authenticated, storage: store.kind, timeZone: TIME_ZONE });
+    return;
+  }
+
+  if (route.startsWith('/api/admin/')) {
+    if (!token) {
+      json(res, 503, {
+        ok: false,
+        error: 'no_token',
+        message: 'Define PHYTO_CRM_TOKEN en el servidor para poder usar el panel.',
+      });
+      return;
+    }
+    if (!authenticated) {
+      json(res, 401, { ok: false, error: 'unauthorized', message: 'Entra con tu clave.' });
+      return;
+    }
+
+    // Todo lo que necesita el panel en una sola petición (móvil con mala señal).
+    if (route === '/api/admin/data' && req.method === 'GET') {
+      const items = await store.listAdmin({ limit: 500 });
+      const messages = await store.messages().list();
+      json(res, 200, {
+        ok: true,
+        storage: store.kind,
+        timeZone: TIME_ZONE,
+        statuses: STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] ?? value })),
+        items,
+        messages,
+        stats: computeStats(items, TIME_ZONE),
+        pendientes: dueToday(items, TIME_ZONE).map((item) => item.id),
+      });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/items/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      const id = decodeURIComponent(route.slice('/api/admin/items/'.length));
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      /** @type {Record<string, unknown>} */
+      const patch = {};
+      if (body.status !== undefined) {
+        const status = text(body.status, 20);
+        if (!STATUSES.includes(status)) {
+          json(res, 422, { ok: false, error: 'invalid_status' });
+          return;
+        }
+        patch.status = status;
+      }
+      if (body.notes !== undefined) patch.notes = longText(body.notes, 2000);
+      if (body.nextActionAt !== undefined) patch.nextActionAt = day(body.nextActionAt);
+      if (body.contacted) {
+        patch.lastContactAt = new Date().toISOString();
+        if (patch.status === undefined) patch.status = 'contactado';
+      }
+      const updated = await store.update(id, patch);
+      if (!updated) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      console.log(`[crm] actualizado ${id}${patch.status ? ` → ${patch.status}` : ''}`);
+      json(res, 200, { ok: true, item: updated });
+      return;
+    }
+
+    if (route === '/api/admin/messages' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const name = text(body.name, 60);
+      const messageBody = longText(body.body, 1200);
+      if (!name || !messageBody) {
+        json(res, 422, { ok: false, error: 'invalid_message', message: 'La plantilla necesita nombre y texto.' });
+        return;
+      }
+      const message = {
+        id: text(body.id, 60) ?? messageId(name),
+        name,
+        body: messageBody,
+        position: Number.isFinite(Number(body.position)) ? Math.trunc(Number(body.position)) : 99,
+      };
+      await store.messages().save(message);
+      console.log(`[crm] plantilla guardada: ${message.name}`);
+      json(res, 200, { ok: true, message, messages: await store.messages().list() });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/messages/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(route.slice('/api/admin/messages/'.length));
+      await store.messages().remove(id);
+      json(res, 200, { ok: true, messages: await store.messages().list() });
+      return;
+    }
+
+    json(res, 404, { ok: false, error: 'not_found' });
+    return;
+  }
+
+  // --------------------------------------- lectura por clave (curl / scripts)
+  if (route === '/api/crm/items' || route === '/api/crm/export.csv') {
+    const candidate = url.searchParams.get('token') ?? req.headers['x-crm-token'];
+    if (!token) {
       json(res, 503, {
         ok: false,
         error: 'read_disabled',
@@ -648,7 +507,8 @@ async function handle(req, res, ctx) {
       });
       return;
     }
-    if (!tokenOk(typeof token === 'string' ? token : '', ctx.token)) {
+    // Vale la clave (`?token=`, para curl) o la sesión del panel (la cookie).
+    if (!tokenOk(typeof candidate === 'string' ? candidate : '', token) && !authenticated) {
       json(res, 401, { ok: false, error: 'invalid_token', message: 'La clave (?token=) no es correcta.' });
       return;
     }
@@ -657,15 +517,11 @@ async function handle(req, res, ctx) {
     const type = url.searchParams.get('type');
     const rows = await store.list({ limit, type: type === 'lead' || type === 'order_intent' ? type : null });
 
-    if (route === '/panel') {
-      html(res, 200, panelPage(rows, await store.count(), ctx.token, type));
-      return;
-    }
-
     if (route === '/api/crm/export.csv') {
       const header = [
         'fecha',
         'tipo',
+        'estado',
         'nombre',
         'telefono',
         'ciudad',
@@ -676,12 +532,15 @@ async function handle(req, res, ctx) {
         'total',
         'moneda',
         'origen',
-        'sesion',
+        'recordatorio',
+        'notas',
+        'ultimo_contacto',
       ];
       const lines = rows.map((row) =>
         [
           row.received_at,
           typeLabel(row.type),
+          STATUS_LABELS[row.status ?? 'nuevo'] ?? row.status,
           row.name,
           row.phone,
           row.location,
@@ -692,7 +551,9 @@ async function handle(req, res, ctx) {
           row.total,
           row.currency,
           row.source,
-          row.session_id,
+          row.next_action_at,
+          row.notes,
+          row.last_contact_at,
         ]
           .map(csvCell)
           .join(','),
@@ -723,14 +584,14 @@ async function handle(req, res, ctx) {
 // ------------------------------------------------------------------ arranque
 
 /**
- * Levanta la API. Se exporta para poder arrancarla en los tests con un puerto
- * efímero y un archivo temporal.
+ * Levanta la API y el panel.
  * @param {object} [config]
  * @param {number} [config.port] 0 = puerto libre (lo elige el sistema)
  * @param {string} [config.host]
  * @param {string} [config.dataFile]
  * @param {string} [config.databaseUrl] cadena de PostgreSQL (vacía = SQLite)
- * @param {string} [config.token] clave para leer (vacía = leer desactivado)
+ * @param {string} [config.token] clave del panel (vacía = panel desactivado)
+ * @param {string} [config.adminDir] carpeta de la app del panel
  * @param {string} [config.allowedOrigin] origen permitido por CORS
  * @param {boolean} [config.quiet] no imprimir el banner de arranque
  */
@@ -742,11 +603,17 @@ export async function startCrmServer(config = {}) {
     databaseUrl: config.databaseUrl ?? DATABASE_URL,
     token: config.token ?? TOKEN,
     allowedOrigin: config.allowedOrigin ?? ALLOWED_ORIGIN,
+    adminDir: resolveAdminDir(config.adminDir),
     quiet: config.quiet ?? false,
   };
 
   const store = await createStore({ databaseUrl: settings.databaseUrl, dataFile: settings.dataFile });
-  const ctx = { store, token: settings.token, allowedOrigin: settings.allowedOrigin };
+  const ctx = {
+    store,
+    token: settings.token,
+    allowedOrigin: settings.allowedOrigin,
+    adminDir: settings.adminDir,
+  };
 
   const server = createServer((req, res) => {
     handle(req, res, ctx).catch((error) => {
@@ -766,10 +633,9 @@ export async function startCrmServer(config = {}) {
 
   if (!settings.quiet) {
     console.log(`[crm] escuchando en http://${settings.host}:${port} · almacén ${store.kind} → ${store.file}`);
+    console.log(`[crm] panel: http://${settings.host}:${port}/admin/ · app instalable (PWA)`);
     if (!settings.token) {
-      console.warn('[crm] PHYTO_CRM_TOKEN sin definir: guardar funciona, leer está desactivado.');
-    } else {
-      console.log('[crm] panel: /panel?token=<tu clave> · CSV: /api/crm/export.csv?token=<tu clave>');
+      console.warn('[crm] PHYTO_CRM_TOKEN sin definir: guardar funciona, el panel está desactivado.');
     }
   }
 
@@ -778,6 +644,7 @@ export async function startCrmServer(config = {}) {
     url: `http://${settings.host}:${port}`,
     storage: store.kind,
     file: store.file,
+    adminDir: settings.adminDir,
     server,
     store,
     close: () =>
@@ -808,3 +675,5 @@ if (isEntryPoint) {
     });
   }
 }
+
+export { CLOSED_STATUSES, STATUSES };

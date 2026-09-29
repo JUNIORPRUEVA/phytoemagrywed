@@ -142,22 +142,18 @@ describe('leer los datos (panel y exportación)', () => {
     expect(response.status).toBe(401);
   });
 
-  it('el panel muestra los registros y no se indexa', async () => {
-    const response = await fetch(`${app.url}/panel?token=${TOKEN}`);
-    const body = await response.text();
-    expect(response.status).toBe(200);
-    expect(body).toContain('noindex');
-    expect(body).toContain('Junior');
-    expect(body).toContain('Ana Gómez');
-    expect(body).toContain('Pedido');
-    expect(body).toContain('Contacto');
+  it('el enlace antiguo /panel manda al panel nuevo (con sesión si lleva la clave)', async () => {
+    const response = await fetch(`${app.url}/panel?token=${TOKEN}`, { redirect: 'manual' });
+    expect([301, 302]).toContain(response.status);
+    expect(response.headers.get('location')).toBe('/admin/');
+    expect(response.headers.get('set-cookie')).toContain('pe_crm=');
   });
 
   it('la exportación CSV sale con cabecera y datos', async () => {
     const response = await fetch(`${app.url}/api/crm/export.csv?token=${TOKEN}`);
     const body = await response.text();
     expect(response.headers.get('content-type')).toContain('text/csv');
-    expect(body).toContain('fecha,tipo,nombre,telefono');
+    expect(body).toContain('fecha,tipo,estado,nombre,telefono');
     expect(body).toContain('Junior');
     expect(body.split('\r\n').filter(Boolean)).toHaveLength(3);
   });

@@ -553,3 +553,55 @@ Verificado en navegador real a 360, 390 y 1440 px: sin desbordamiento horizontal
 en ningún ancho, la primera pantalla ahora incluye la portada **y** el arranque de
 la siguiente sección, y el modal de pedido sigue cabiendo sin scroll (724 px de
 844).
+
+## 31. El mini-CRM es una app instalable (PWA), no una pantalla más de la web
+
+Petición del negocio: "necesito la parte administrativa, el panel donde llevar
+todo: recordatorios, mensajes personalizados a los clientes… y que sea PWA para
+administrarla desde el móvil".
+
+1. **El panel es una app aparte, no una sección de la landing.** Una sola página
+   en `public/admin/` (sin frameworks, sin build), servida en `/admin/`, con su
+   `manifest.json`, su service worker y su icono: se instala en el teléfono con
+   nombre propio ("CRM Phyto") y abre a pantalla completa. La landing no carga
+   nada de esto y el panel no carga nada de la landing.
+2. **La clave deja de viajar en la URL.** El panel viejo vivía en
+   `/panel?token=…`: la clave quedaba en el historial, en los enlaces que se
+   comparten y en cualquier captura. Ahora se escribe **una vez** y el servidor
+   responde con una cookie `HttpOnly` + `SameSite=Strict` firmada con HMAC (sin
+   tabla de sesiones: si cambias `PHYTO_CRM_TOKEN`, todas las sesiones mueren).
+   `/panel?token=…` sigue funcionando: entra y redirige, para no romper la
+   costumbre ni los enlaces guardados. Además hay límite de 10 intentos por IP
+   cada 15 minutos.
+3. **Sin conexión se puede trabajar.** El service worker guarda el armazón y el
+   panel guarda la última copia de los datos y los cambios pendientes. En la
+   calle, sin datos: se abre con lo último, se cambian estados, se apuntan notas y
+   se programan recordatorios; al volver la red, los cambios se envían solos. Los
+   endpoints `/api/…` **nunca** se cachean: un pedido de hace tres días no puede
+   parecer el de hoy.
+4. **Los recordatorios son una fecha, no una alarma.** Se guardan como
+   `YYYY-MM-DD` (día, no hora) en la zona del negocio (America/Santo_Domingo), y
+   la pestaña "Hoy" muestra lo de hoy y lo atrasado. Eso es lo que evita que un
+   cliente se enfríe; una notificación push necesitaría claves VAPID y un
+   servidor de notificaciones, y queda como siguiente paso (el panel ya lleva la
+   insignia con el número de pendientes).
+5. **Escribir es contactar.** Al abrir WhatsApp desde el panel, el cliente pasa a
+   *contactado* y se guarda `last_contact_at`. El mensaje se puede ver antes de
+   enviarlo, con las variables (`{nombre}`, `{frasco}`, `{cantidad}`, `{total}`)
+   ya rellenas, y las plantillas se editan desde el propio móvil.
+6. **El estado del cliente vive en la misma fila que el dato.** Añadir
+   `status`, `notes`, `next_action_at`, `last_contact_at` y `updated_at` a
+   `phytoemagry_items` (con `ALTER TABLE … ADD COLUMN IF NOT EXISTS`) evita una
+   segunda tabla con la que habría que hacer *joins* y sincronizaciones; y como
+   los tres almacenes devuelven la misma forma, el panel, el CSV y los tests
+   valen igual con Postgres, SQLite o JSONL.
+
+Tres fallos reales que aparecieron AL PROBARLO en el navegador, no leyendo el
+código: (a) pulsar "Escribir por WhatsApp" dentro de una tarjeta abría la ficha
+porque el botón vive dentro del elemento táctil — el orden de comprobación en el
+manejador de clics es la diferencia; (b) los cambios optimistas usaban los nombres
+del API (`nextActionAt`) y la pantalla pinta `next_action_at`, así que el
+servidor guardaba bien y **el negocio no lo veía**; (c) sin conexión se abría la
+pantalla de la clave aunque hubiera sesión y datos guardados: no se puede
+preguntar al servidor si hay sesión cuando no hay servidor.
+

@@ -54,6 +54,27 @@ Rutas:
 | `GET /api/crm/export.csv?token=...` | El mismo listado en CSV (se abre en Excel o Google Sheets) |
 | `GET /panel?token=...` | Panel en HTML: fecha, tipo, nombre, teléfono, frasco, total y ciudad, con el botón de descargar el CSV |
 
+### API del panel (mini-CRM)
+
+La app instalable vive en `/admin/` y usa estos endpoints. Todos piden **sesión**
+(cookie `pe_crm`, que se obtiene del login) y responden `401` si no la hay:
+
+| Ruta | Qué hace |
+| --- | --- |
+| `POST /api/admin/login` | Cambia la clave por la cookie de sesión (10 intentos por IP cada 15 min) |
+| `POST /api/admin/logout` | Borra la cookie |
+| `GET /api/admin/session` | `{ ok }`: sirve para saber si hay sesión sin pedir nada más |
+| `GET /api/admin/data` | Todo lo que pinta el panel en **una** petición: registros (500), estados, cuentas (`stats`) y plantillas |
+| `PATCH /api/admin/items/:id` | `{ status, notes, nextActionAt, contacted }`. Valida el estado contra la lista; `nextActionAt: ''` quita el recordatorio |
+| `POST /api/admin/messages` | Crea o actualiza una plantilla (`{ id?, name, body, position? }`) |
+| `DELETE /api/admin/messages/:id` | Borra una plantilla |
+
+Campos de gestión que se añaden a cada registro: `status` (nuevo, contactado,
+interesado, confirmado, entregado, perdido), `notes`, `next_action_at`
+(`YYYY-MM-DD`), `last_contact_at` y `updated_at`. El CSV los incluye todos.
+
+Guía de uso (la que lee el negocio): [`PANEL.md`](PANEL.md).
+
 La clave se puede pasar como `?token=` o en la cabecera `x-crm-token`. Se compara
 en tiempo constante, y el panel se marca `noindex, nofollow`.
 

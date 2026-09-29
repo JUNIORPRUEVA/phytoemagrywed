@@ -154,6 +154,7 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 | Número a la vista | `+1 829 785 3794` en el footer y junto al formulario: se ve que hay alguien detrás |
 | Sin riesgo percibido | "No se realiza ningún cobro en esta página" (resumen, modal y formulario) |
 | Nada se pierde | Si un envío falla (móvil sin datos), el dato queda en una cola local y se reenvía al cargar la siguiente página |
+| Panel para el negocio | `/admin/` se instala en el móvil como app (PWA): recordatorios, notas, estados y mensajes de WhatsApp con plantillas. Ver [`PANEL.md`](PANEL.md) |
 | Dos caminos, nunca un callejón | Pedir (WhatsApp/modal) **y** dejar el contacto desde el propio resumen |
 | Prueba social aprobada | "Miles de personas ya cuentan con Phytoemagry." (verificada por el negocio) |
 | Cero afirmaciones que resten | Sin promesas médicas ni de resultados: nada que un consumidor pueda rebatir |

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#0b6b4f" />
+    <meta name="color-scheme" content="light" />
+    <title>CRM · Phytoemagry</title>
+    <meta name="description" content="Panel privado de Phytoemagry: contactos, pedidos y recordatorios." />
+
+    <!-- PWA: se instala en el móvil y abre a pantalla completa -->
+    <link rel="manifest" href="/admin/manifest.json" />
+    <link rel="icon" href="/admin/icon-192.png" />
+    <link rel="apple-touch-icon" href="/admin/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="CRM Phyto" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <link rel="stylesheet" href="/admin/admin.css" />
+  </head>
+  <body>
+    <!-- ------------------------------------------------------------- ENTRAR -->
+    <main id="login" class="login" hidden>
+      <img class="login__logo" src="/admin/icon-192.png" alt="" width="72" height="72" />
+      <h1 class="login__title">Panel de Phytoemagry</h1>
+      <p class="login__text">
+        Escribe la clave del panel (la que está en el servidor como <code>PHYTO_CRM_TOKEN</code>).
+        Se queda guardada en este dispositivo.
+      </p>
+      <form id="login-form" class="login__form" autocomplete="on">
+        <label class="field">
+          <span class="field__label">Clave</span>
+          <input
+            class="field__input"
+            id="login-token"
+            name="token"
+            type="password"
+            autocomplete="current-password"
+            required
+            placeholder="Pega aquí tu clave"
+          />
+        </label>
+        <p class="login__error" id="login-error" role="alert" hidden></p>
+        <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+      </form>
+      <p class="login__hint">
+        Se instala como app: en Chrome, menú ⋮ → «Añadir a pantalla de inicio». En iPhone, Compartir →
+        «Añadir a pantalla de inicio».
+      </p>
+    </main>
+
+    <!-- --------------------------------------------------------------- APP -->
+    <div id="app" class="app" hidden>
+      <header class="topbar">
+        <div class="topbar__title">
+          <span class="topbar__brand">Phytoemagry</span>
+          <span class="topbar__sub" id="topbar-sub">CRM</span>
+        </div>
+        <div class="topbar__actions">
+          <span class="pill" id="state-pill" hidden></span>
+          <button class="icon-btn" id="refresh" type="button" aria-label="Actualizar datos">⟳</button>
+        </div>
+      </header>
+
+      <p class="banner" id="offline-banner" hidden>
+        Sin conexión: estás viendo los datos guardados en este teléfono. Los cambios se enviarán solos
+        cuando vuelva la red.
+      </p>
+      <p class="banner banner--warn" id="outbox-banner" hidden></p>
+
+      <main class="content">
+        <!-- HOY -->
+        <section class="view" id="view-hoy" hidden>
+          <div class="stats" id="stats"></div>
+          <h2 class="view__title">Para hoy</h2>
+          <div class="list" id="list-hoy"></div>
+        </section>
+
+        <!-- CLIENTES -->
+        <section class="view" id="view-clientes" hidden>
+          <div class="filters">
+            <input
+              class="field__input"
+              id="search"
+              type="search"
+              placeholder="Buscar nombre, teléfono, ciudad…"
+              autocomplete="off"
+            />
+            <div class="chips" id="chips"></div>
+          </div>
+          <p class="view__count" id="clientes-count"></p>
+          <div class="list" id="list-clientes"></div>
+        </section>
+
+        <!-- MENSAJES -->
+        <section class="view" id="view-mensajes" hidden>
+          <h2 class="view__title">Mensajes para clientes</h2>
+          <p class="view__hint">
+            Son plantillas de WhatsApp. Puedes usar <code>{nombre}</code>, <code>{frasco}</code>,
+            <code>{cantidad}</code>, <code>{total}</code> y <code>{negocio}</code>.
+          </p>
+          <div class="list" id="list-mensajes"></div>
+          <button class="btn btn--ghost btn--block" id="nueva-plantilla" type="button">
+            + Añadir plantilla
+          </button>
+        </section>
+
+        <!-- AJUSTES -->
+        <section class="view" id="view-ajustes" hidden>
+          <h2 class="view__title">Ajustes</h2>
+          <div class="card" id="install-card">
+            <p class="card__title">Instalar en el móvil</p>
+            <p class="card__text" id="install-text">
+              Abre el panel como una app, con su icono y a pantalla completa: en Chrome, menú ⋮ → «Añadir a
+              pantalla de inicio». En iPhone, Compartir → «Añadir a pantalla de inicio».
+            </p>
+            <button class="btn btn--primary" id="install" type="button" hidden>Instalar ahora</button>
+          </div>
+          <div class="card">
+            <p class="card__title">Datos</p>
+            <dl class="facts" id="facts"></dl>
+          </div>
+          <div class="card">
+            <p class="card__title">Exportar</p>
+            <p class="card__text">Descarga todos los contactos y pedidos en CSV (Excel, Sheets).</p>
+            <a class="btn btn--ghost" id="csv" href="/api/crm/export.csv?limit=1000" download
+              >Descargar CSV</a
+            >
+          </div>
+          <button class="btn btn--danger btn--block" id="logout" type="button">Cerrar sesión</button>
+          <p class="view__hint" id="build-info"></p>
+        </section>
+      </main>
+
+      <nav class="tabs" aria-label="Secciones">
+        <button class="tab" data-tab="hoy" type="button">
+          <span class="tab__icon" aria-hidden="true">☀</span><span>Hoy</span>
+          <span class="tab__badge" id="badge-hoy" hidden></span>
+        </button>
+        <button class="tab" data-tab="clientes" type="button">
+          <span class="tab__icon" aria-hidden="true">👥</span><span>Clientes</span>
+        </button>
+        <button class="tab" data-tab="mensajes" type="button">
+          <span class="tab__icon" aria-hidden="true">💬</span><span>Mensajes</span>
+        </button>
+        <button class="tab" data-tab="ajustes" type="button">
+          <span class="tab__icon" aria-hidden="true">⚙</span><span>Ajustes</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- ------------------------------------------------------ FICHA DE UNO -->
+    <div class="sheet" id="sheet" hidden>
+      <div class="sheet__backdrop" data-close-sheet></div>
+      <div class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+        <header class="sheet__head">
+          <h2 class="sheet__title" id="sheet-title">Ficha</h2>
+          <button class="icon-btn" data-close-sheet type="button" aria-label="Cerrar">✕</button>
+        </header>
+        <div class="sheet__body" id="sheet-body"></div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <script src="/admin/app.js" defer></script>
+  </body>
+</html>

@@ -72,9 +72,9 @@ scripts/
 public/              assets estáticos (favicon, OG, iconos, fotos)
   assets/img/frascos/  foto de cada frasco (carrusel): frasco-<N>-{320,480}.{avif,webp,jpg}
 data/                base de datos local de SQLite (solo si no usas PostgreSQL) — NO se versiona
-docs/                contrato del CRM, pendientes y decisiones técnicas
-tests/               unidades, render, flujos de cliente, API del CRM y contenido
-```
+docs/                contrato del CRM, guía del panel, pendientes y decisiones técnicas
+tests/               unidades, render, flujos de cliente, API del CRM, panel y contenido
+public/admin/        el mini-CRM instalable (PWA): una página, sin frameworks
 
 ### Editar contenido
 

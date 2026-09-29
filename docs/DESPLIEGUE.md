@@ -56,8 +56,10 @@ docker compose ps          # debe decir "healthy"
 curl -I http://localhost:8080
 ```
 
-La web queda en **http://IP-del-servidor:8080** y los pedidos y contactos se leen
-en **`http://IP-del-servidor:8080/panel?token=LA-CLAVE-DEL-.env`**.
+La web queda en **http://IP-del-servidor:8080** y el panel del negocio (mini-CRM)
+en **`http://IP-del-servidor:8080/admin/`** (se entra con la clave
+`PHYTO_CRM_TOKEN`; el enlace antiguo `/panel?token=…` también funciona y redirige).
+Guía del panel: [`PANEL.md`](PANEL.md).
 
 La clave del `.env` es `PHYTO_CRM_TOKEN`: guárdala, porque es lo único que impide
 que un desconocido lea los teléfonos de tus clientes. Los datos (el volumen
@@ -129,7 +131,7 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    **La base de datos de los pedidos** (recomendado dejarlo así):
 
    ```bash
-   PHYTO_CRM_TOKEN=pon-una-clave-larga-y-solo-tuya   # para leer /panel?token=...
+   PHYTO_CRM_TOKEN=pon-una-clave-larga-y-solo-tuya   # clave para entrar al panel /admin/
    PHYTO_CRM_DATABASE_URL=postgres://usuario:clave@servicio-db:5432/phytoemagry
    ```
 
@@ -145,7 +147,7 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    | --- | --- | --- |
    | `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | Se usa el valor por defecto del Dockerfile (el número real) |
    | `SEO_SITE_URL` | Dominio final: activa `canonical`, `sitemap.xml` y la **vista previa con imagen** al compartir por WhatsApp | Se publica sin canonical ni sitemap |
-   | `PHYTO_CRM_TOKEN` | Clave para leer los pedidos y los contactos en `/panel?token=...` y en CSV | Se siguen guardando, pero **no se pueden consultar** |
+   | `PHYTO_CRM_TOKEN` | Clave para entrar al panel `/admin/` (móvil) y para leer los datos en CSV | Se siguen guardando, pero **no se pueden consultar** |
    | `PHYTO_CRM_DATABASE_URL` | Base de datos PostgreSQL donde se guardan los pedidos y los contactos | Se usa SQLite en `/data/phytoemagry.sqlite` (necesita volumen) |
    | `APP_ENV` | `production` | `production` por defecto |
 
@@ -169,10 +171,9 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    configurado, la base de datos está fuera del contenedor y no hace falta.
 7. **Deploy**.
 
-Cuando termine, entra en `https://tudominio.com/panel?token=TU_CLAVE`: ahí están
-los pedidos y los contactos con su fecha, teléfono, frasco y total, y desde ahí
-mismo se descarga el CSV.
-
+Cuando termine, abre **`https://tudominio.com/admin/`** en tu móvil, escribe la
+clave y añádela a la pantalla de inicio: ahí están los pedidos, los contactos, los
+recordatorios y los mensajes para clientes (ver [`PANEL.md`](PANEL.md)).
 Cada vez que hagas `git push`, en Easypanel solo tienes que pulsar **Deploy**
 (o activar el *auto deploy* del servicio). Los datos no se tocan.
 
@@ -290,8 +291,12 @@ curl -sI http://localhost:8080/assets/ | head -3
 curl -s http://localhost:8080/api/health
 # → {"ok":true,"storage":"postgres","items":0}
 
-# Leer los datos (debe responder 401 si la clave es incorrecta)
+# Leer los datos con la clave (debe responder 401 si la clave es incorrecta)
 curl -s "http://localhost:8080/api/crm/items?token=LA-CLAVE" | head -c 200
+
+# El panel del negocio y su app instalable
+curl -sI http://localhost:8080/admin/            # 200 + X-Robots-Tag: noindex
+curl -s  http://localhost:8080/admin/manifest.json | head -c 120
 ```
 
 Y en el navegador, la prueba que importa: pulsar **Pedir por WhatsApp** en un

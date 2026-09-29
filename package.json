@@ -22,7 +22,8 @@
     "verify": "npm run test && npm run check && npm run build",
     "images": "python scripts/generate-placeholder-images.py",
     "images:hero": "python scripts/optimize-hero-image.py",
-    "images:frascos": "python scripts/optimize-variant-images.py"
+    "images:frascos": "python scripts/optimize-variant-images.py",
+    "images:admin": "python scripts/generate-admin-icons.py"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

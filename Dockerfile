@@ -180,6 +180,21 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        # --------------------------------------------- app del panel (PWA)
+        # El negocio la instala en el móvil. Los archivos son estáticos, pero
+        # nunca se cachean: publicar tiene que verse al instante.
+        location = /panel { return 302 /admin/; }
+
+        location ^~ /admin/ {
+            try_files $uri $uri/ /admin/index.html;
+            expires -1;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "DENY" always;
+            add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+            add_header X-Robots-Tag "noindex, nofollow" always;
+            add_header Service-Worker-Allowed "/admin/" always;
+        }
+
         # ----------------------------------------------------------- rutas
         # Páginas legales: /privacidad y /terminos (sin .html)
         location = /privacidad { try_files /privacidad.html =404; }
@@ -251,7 +266,12 @@ RUN tr -d '\015' < /etc/nginx/templates/default.conf.template > /tmp/conf \
 # fuentes, ni tests, ni las dependencias de desarrollo.
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY --from=build /app/server /app/server
+# La app del panel también viaja al API: así funciona aunque no haya nginx
+# delante (desarrollo, pruebas) y no depende de una ruta del host.
+COPY --from=build /app/dist/admin /app/admin
 COPY --from=runtime-deps /app/node_modules /app/node_modules
+
+ENV PHYTO_ADMIN_DIR=/app/admin
 
 # Los datos viven aquí: monta un volumen para que sobrevivan a las actualizaciones
 # (Easypanel → Mounts → Volume → /data). Solo se usa si NO hay PostgreSQL
