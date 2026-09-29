@@ -669,3 +669,62 @@ tarea que murió (`docker service ps` lo marca como `Failed: task: non-zero exit
    despliegue. Se alineó la clave del rol con la del servicio y ahora
    `/api/health` responde `storage: postgres`.
 
+## 34. Meta: el píxel no estaba midiendo (y la venta solo cuenta si es una venta)
+
+Petición del negocio: "hacer la parte de los eventos de Facebook". La auditoría
+previa (exigida por el propio encargo) encontró **un fallo que invalidaba casi
+toda la integración**, además de lo que faltaba por construir.
+
+1. **El píxel recibía 2 eventos de 8.** Los adaptadores de medición (Meta Pixel y
+   dataLayer) se creaban, se guardaban en un array… y **nunca se registraban en el
+   tracker** (`tracker.addAdapter` no se llamaba en ningún sitio del proyecto). Lo
+   único que llegaba a Meta era el `PageView`/`ViewContent` que `enableAds`
+   reenvía al aceptar el consentimiento. Ni `InitiateCheckout`, ni `Lead`, ni
+   `Contact`, ni un solo evento propio. La web *parecía* medida —el script se
+   cargaba, la consola estaba limpia, había hits a `facebook.com/tr`— y las
+   campañas se habrían optimizado con datos que no existían. Ahora los adaptadores
+   se registran y un test (`tests/meta-pixel-wiring.test.js`) comprueba que el
+   píxel recibe **todos** los eventos del flujo, no solo los del arranque.
+2. **`Purchase` es una venta, no un clic.** Se envía **solo** cuando el negocio
+   marca el pedido como `entregado` (dinero cobrado), que es el mismo criterio
+   que usa el panel para su "valor entregado": la web y Meta dicen lo mismo. Ni
+   al cargar, ni al elegir frasco, ni al pulsar Comprar, ni al abrir WhatsApp, ni
+   al crear el lead, ni al marcar `confirmado` (un pedido confirmado todavía puede
+   caerse). El estado es configurable (`PHYTO_META_PURCHASE_STATUS`) para no
+   tener que tocar código si el negocio cambia de criterio.
+3. **Un `event_id` por acción, compartido entre navegador y servidor.** Meta
+   deduplica por `event_id`: si el píxel manda el `Lead` y el CRM lo reenvía por
+   la API de conversiones con el **mismo** identificador, cuenta uno. Generar dos
+   UUID distintos para la misma acción es la forma más fácil de duplicar
+   conversiones sin darse cuenta. La venta usa `purchase_<id del pedido>`, que es
+   estable para siempre.
+4. **Idempotencia en la fila del pedido, no en memoria.** `meta_purchase_event_id`,
+   `meta_purchase_sent_at`, `meta_purchase_status`, `meta_purchase_attempts` y
+   `meta_purchase_error` viven en `phytoemagry_items` (migración automática en los
+   tres almacenes). Si el proceso se reinicia, una venta ya enviada **no** se
+   reenvía; si falló, se reintenta con tope de intentos y el panel deja
+   reenviarla a mano. Una variable en memoria no habría sobrevivido al reinicio.
+5. **El token de Meta es de servidor.** Vive en `server/meta-capi.mjs` y en
+   ninguna otra parte: viaja en el **cuerpo** de la petición (no en la URL, para
+   no acabar en logs de proxy), nunca se registra y los errores se sanean
+   (`[oculto]`). Un test comprueba que el token no aparece en ninguna respuesta
+   HTTP que reciba el navegador.
+6. **El código de eventos de prueba no puede envenenar producción.** Con
+   `APP_ENV=production` se ignora aunque esté puesto, y solo se acepta con el
+   formato real (`TEST12345`). Está pensado para que un olvido no convierta el
+   tráfico real en tráfico de prueba.
+7. **`Contact` una vez por sesión, clics siempre.** El clic en WhatsApp es una
+   interacción: el primero de la sesión cuenta como `Contact` y el resto quedan
+   como evento propio (`click_whatsapp`), para no inflar conversiones repitiendo
+   el mismo gesto.
+8. **Si Meta se cae, el CRM sigue.** El envío a Meta es un efecto secundario: el
+   lead se guarda, el pedido se crea y el estado se marca igual. El resultado
+   (`sent`/`failed`) se escribe en la fila y el panel lo enseña.
+
+Un fallo real más, encontrado al arrancar en local: la variable
+`PHYTO_META_GRAPH_VERSION` vacía llegaba como `''` (no como `undefined`), así que
+`??` no aplicaba el valor por defecto y la URL salía
+`graph.facebook.com//<pixel>/events`. Se vio en el banner del servidor y ahora una
+variable vacía usa la versión por defecto.
+
+

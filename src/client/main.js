@@ -14,7 +14,7 @@ import { attributionRef, getAttribution, persistAttribution } from '../lib/attri
 import { createCrmClient } from '../lib/api.js';
 import { createConsent } from '../lib/consent.js';
 import { createStorage } from '../lib/storage.js';
-import { EVENTS } from '../lib/tracking.js';
+import { EVENTS, newEventId } from '../lib/tracking.js';
 import { buildView } from '../render/view.js';
 import { initCheckout } from './checkout.js';
 import { initConsentBanner, initNav } from './consent-banner.js';
@@ -57,6 +57,14 @@ export function boot() {
     selection,
     enableAds: tracking.enableAds,
     sessionId: () => tracking.sessionId,
+    /**
+     * `event_id` de los eventos que la API de conversiones también va a enviar
+     * (espejo del píxel): el pedido los lleva para que Meta deduplique.
+     * @type {{ viewContent?: string, initiateCheckout?: string }}
+     */
+    eventIds: {},
+    /** URL exacta donde ocurrió la acción (`event_source_url` de CAPI). */
+    currentUrl: () => (typeof location === 'undefined' ? null : location.href),
     getAttribution: () => getAttribution({ local, session }),
     getAttributionRef: () => attributionRef(getAttribution({ local, session })),
     /** Enlace de WhatsApp del pedido con la selección vigente (o un frasco concreto). */
@@ -72,13 +80,15 @@ export function boot() {
     referrer: attribution?.referrer ?? null,
     hasCampaign: Boolean(attributionRef(attribution)),
   });
-  tracker.trackEvent(EVENTS.VIEW_PRODUCT, {
+  const viewProduct = tracker.trackEvent(EVENTS.VIEW_PRODUCT, {
     productId: view.product.id,
     productName: view.product.name,
     currency: view.currency,
     variants: view.pricing.variants.length,
     ...variantEventData(selection.get()),
   });
+  // El pedido reenviará este mismo id si el servidor manda el `ViewContent`.
+  ctx.eventIds.viewContent = viewProduct?.eventId ?? newEventId(EVENTS.VIEW_PRODUCT);
 
   // 3) Interacción.
   initNav();

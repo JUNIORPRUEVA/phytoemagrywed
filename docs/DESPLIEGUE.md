@@ -209,7 +209,11 @@ del panel) y nunca se escribe en el build.
 | `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | `18297853794` |
 | `SEO_SITE_URL` | Dominio final (activa canonical, sitemap y la vista previa con imagen al compartir). Sin barra al final | vacío |
 | `PHYTO_CRM_ENDPOINT` | Endpoint del CRM (ver `CRM-CONTRACT.md`) | `/api/crm` (el API que trae la imagen) |
-| `PHYTO_META_PIXEL_ID` | Meta Pixel (medición publicitaria) | vacío |
+| `PHYTO_META_PIXEL_ID` | Píxel de Meta (medición de anuncios). **Se incrusta en el build**: necesita Deploy, no solo reinicio | vacío |
+| `PHYTO_META_CAPI_ACCESS_TOKEN` | **Secreto** de la API de conversiones (enviar la venta desde el servidor). Solo en Environment, nunca en el repositorio | vacío |
+| `PHYTO_META_CAPI_TEST_EVENT_CODE` | Código `TEST…` para ver eventos en vivo. **En producción debe quedar vacío** (con `APP_ENV=production` se ignora igualmente) | vacío |
+| `PHYTO_META_GRAPH_VERSION` | Versión de la Graph API (opcional) | `v21.0` |
+| `PHYTO_META_PURCHASE_STATUS` | Estado del CRM que cuenta como venta | `entregado` |
 | `CONTACT_EMAIL` | Email visible en el footer | vacío |
 | `APP_ENV` | `production` (los logs de depuración solo salen en dev) | `production` |
 
@@ -324,7 +328,13 @@ ignorarlo: los registros de prueba no molestan).
 | `/api/health` responde 404 o 502 | El API del CRM no está arrancado o nginx no lo encuentra. `docker logs` debe mostrar `[crm] escuchando en http://127.0.0.1:8787`. Si no aparece, revisa que el contenedor use el `ENTRYPOINT` del Dockerfile (no lo sobrescribas con `command:`) |
 | `/panel` **funciona pero está vacío tras un Deploy** | No montaste el volumen en `/data`: la base de datos se recrea con la imagen. Añade Mounts → Volume → `/data` |
 | El panel dice «**El CRM no está respondiendo en el puerto 8787**» | El proceso Node del API no está vivo (o no es el de este contenedor). En local: arranca `npm run dev` (que ya levanta el CRM) o `npm run crm`. En el servidor: `docker logs` debe mostrar `[crm] escuchando en http://127.0.0.1:8787`; si no, el `ENTRYPOINT` del Dockerfile se está sobrescribiendo |
+| El píxel no dispara (`PageView` y nada más) | Falta `PHYTO_META_PIXEL_ID` en el **build** (los valores públicos van dentro del HTML) o el visitante no aceptó el banner. Si el panel muestra `meta.configured: false`, falta además el token de CAPI |
+| `Purchase` nunca llega a Meta | El pedido no está en `entregado` (o en el estado de `PHYTO_META_PURCHASE_STATUS`), o el token de CAPI no está definido. La ficha del pedido dice `sent` / `failed` / pendiente y permite reenviar |
+| Los eventos aparecen en *Probar eventos* pero no cuentan en los informes | El `PHYTO_META_CAPI_TEST_EVENT_CODE` sigue puesto en ese entorno: déjalo vacío en producción |
 | El panel dice «**El panel no está conectado con el CRM (respuesta 404)**» | Estás entrando por un servidor que sirve el panel pero no reenvía `/api/` (típico: abrir `dist/admin/` con un servidor de ficheros). Entra por el dominio de la web o por `http://localhost:5173/admin/` |
+| El píxel no dispara (`PageView` y nada más) | Falta `PHYTO_META_PIXEL_ID` en el **build** (los valores públicos van dentro del HTML) o el visitante no aceptó el banner. Si el panel muestra `meta.configured: false`, falta el token de CAPI |
+| `Purchase` nunca llega a Meta | El pedido no está en `entregado` (o en el estado de `PHYTO_META_PURCHASE_STATUS`), o el token de CAPI no está definido. La ficha del pedido en el panel dice `sent` / `failed` / pendiente y permite reenviar |
+| Los eventos aparecen en *Probar eventos* pero no cuentan | El `PHYTO_META_CAPI_TEST_EVENT_CODE` sigue puesto en ese entorno: déjalo vacío en producción |
 | El **despliegue falla** y el contenedor nuevo sale con código 1: `nginx: [emerg] duplicate location ...` | Hay dos bloques `location` iguales en la config de nginx: nginx se niega a arrancar y Swarm deja la versión vieja sirviendo (el panel nuevo nunca aparece). Quita el duplicado (`tests/render.test.js` lo detecta antes de subir) y vuelve a desplegar |
 | `/api/health` dice `"storage":"sqlite"` aunque hay `PHYTO_CRM_DATABASE_URL` | PostgreSQL rechazó el usuario (clave distinta entre la base y la variable) y el CRM siguió guardando en SQLite para no perder pedidos. Los logs del contenedor lo dicen con todas las letras. Alinea la clave: `ALTER ROLE <usuario> WITH LOGIN PASSWORD '<la del servicio>'` en la base, y reinicia el servicio |
 | Tras un `Deploy`, la **web va pero el panel sale vacío** con pedidos ya hechos | Falta `PHYTO_CRM_ENDPOINT` en el **build** (los valores públicos van dentro del HTML): la imagen trae `/api/crm` por defecto; si lo pasaste vacío, los pedidos solo quedaron en la cola del navegador. Reconstruye con `PHYTO_CRM_ENDPOINT=/api/crm` |

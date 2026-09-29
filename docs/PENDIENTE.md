@@ -37,7 +37,8 @@ que se publicará y los datos que faltan.
 | **Descripción corta (hero)** aprobada | `product.config.js` → `shortDescription` | Hero sin bajada (funciona, pero comunica menos) |
 | **Horario de atención** | `site.config.js` → `contact.whatsapp.hours` | El visitante no sabe cuándo le responderán |
 | **Endpoint del CRM** | `.env` → `PHYTO_CRM_ENDPOINT` | Los contactos viven solo en el navegador del visitante (cola local) |
-| **Meta Pixel** | `.env` → `PHYTO_META_PIXEL_ID` | Sin medición publicitaria (opcional, pero sin ella no se puede optimizar) |
+| **Meta Pixel** | `.env` → `PHYTO_META_PIXEL_ID` | ✅ Configurado. Ver `docs/META_INTEGRATION.md` |
+| **API de conversiones** (`Purchase` real) | Easypanel → `PHYTO_META_CAPI_ACCESS_TOKEN` | Quitar `PHYTO_META_CAPI_TEST_EVENT_CODE` en producción (con `APP_ENV=production` se ignora igualmente) |
 
 ## 3. Fotos
 

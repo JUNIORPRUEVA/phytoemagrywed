@@ -241,6 +241,7 @@
       state.messages = data.messages ?? [];
       state.stats = data.stats ?? null;
       state.statuses = data.statuses ?? [];
+      state.meta = data.meta ?? null;
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
@@ -308,6 +309,16 @@
     }
     if (state.openId === id) renderSheet();
     await refreshStats();
+    /*
+     * La venta se manda a Meta DESPUÉS de responder (para no hacer esperar al
+     * panel), así que el resultado se recoge un momento más tarde: si no, el
+     * negocio vería "pendiente" para siempre.
+     */
+    if (state.meta?.configured && patch.status === state.meta.purchaseStatus) {
+      setTimeout(() => {
+        load({ keepTab: true }).catch(() => {});
+      }, 1800);
+    }
   }
 
   /** Recalcula los contadores en el cliente (respuesta inmediata al tocar). */
@@ -636,10 +647,27 @@
         <button class="btn btn--whatsapp btn--block" id="sheet-wa" type="button">Escribir por WhatsApp</button>
       </div>
 
+      ${metaBlock(item)}
+
       ${phone ? `<a class="btn btn--ghost btn--block" href="tel:${escapeHtml(phone)}">Llamar</a>` : ''}
     `;
     $('#sheet').hidden = false;
     updatePreview();
+
+    $('#sheet-meta')?.addEventListener('click', async () => {
+      const button = $('#sheet-meta');
+      button.disabled = true;
+      button.textContent = 'Enviando…';
+      try {
+        const result = await api(`/api/admin/items/${encodeURIComponent(item.id)}/meta-purchase`, { method: 'POST' });
+        if (result.item) Object.assign(item, result.item);
+        toast(result.ok ? 'Venta enviada a Meta' : 'Meta no aceptó el envío');
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar a Meta');
+      }
+      renderSheet();
+      await refreshStats();
+    });
 
     $('#sheet-status').addEventListener('change', (event) => {
       patchItem(item.id, { status: event.target.value }, `Estado: ${statusLabel(event.target.value)}`);
@@ -669,6 +697,33 @@
     const message = state.messages.find((entry) => entry.id === $('#sheet-template')?.value);
     const preview = $('#sheet-preview');
     if (preview && message && item) preview.textContent = fillTemplate(message.body, item);
+  }
+
+  /**
+   * Bloque "Venta en Meta" de la ficha.
+   *
+   * Solo se enseña en pedidos y solo se puede reenviar cuando el negocio ya dio
+   * el pedido por ENTREGADO (que es cuando de verdad hay una venta que contar).
+   */
+  function metaBlock(item) {
+    if (item.type !== 'order_intent') return '';
+    const venta = state.meta?.purchaseStatus ?? 'entregado';
+    const enviada = Boolean(item.meta_purchase_sent_at);
+    let texto;
+    if (enviada) texto = `Venta enviada a Meta el ${fmtWhen(item.meta_purchase_sent_at)}.`;
+    else if (item.meta_purchase_status === 'failed')
+      texto = `Meta rechazó el envío (${item.meta_purchase_error ?? 'error'}). Se reintenta solo al reiniciar.`;
+    else if (item.status === venta) texto = 'Enviando la venta a Meta…';
+    else texto = `Al marcar el pedido como «${venta}» se envía la venta a Meta una sola vez.`;
+
+    const canRetry = !enviada && item.status === venta;
+    return `
+      <div class="field">
+        <span class="field__label">Venta en Meta</span>
+        <p class="view__hint">${escapeHtml(texto)}</p>
+        ${canRetry ? `<button class="btn btn--ghost btn--block" id="sheet-meta" type="button">${item.meta_purchase_status === 'failed' ? 'Reintentar envío' : 'Enviar a Meta'}</button>` : ''}
+      </div>
+    `;
   }
 
   // ------------------------------------------------------------------ PWA

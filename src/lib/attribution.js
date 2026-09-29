@@ -25,6 +25,44 @@ export const LAST_TOUCH_KEY = 'attribution.last';
 export const FIRST_TOUCH_TTL_DAYS = 90;
 
 /**
+ * Cookies de Meta (`_fbc`, `_fbp`).
+ *
+ * Son la mejor señal para atribuir una conversión al anuncio: el píxel las pone
+ * en el navegador. Si no están, `_fbc` se puede reconstruir desde el `fbclid`
+ * con el mismo formato (`fb.1.<milisegundos>.<fbclid>`) — ver `buildFbcValue`.
+ *
+ * @param {string|null} [cookieHeader]
+ * @returns {{ fbc: string|null, fbp: string|null }}
+ */
+export function readMetaCookies(cookieHeader = null) {
+  const source = cookieHeader ?? (typeof document === 'undefined' ? '' : document.cookie);
+  /** @type {Record<string,string>} */
+  const jar = {};
+  for (const part of String(source ?? '').split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key) jar[key] = rest.join('=');
+  }
+  const valid = (value) => (/^fb\.\d+\.\d+\./.test(value ?? '') ? value : null);
+  return { fbc: valid(jar._fbc), fbp: valid(jar._fbp) };
+}
+
+/**
+ * Construye `_fbc` desde el `fbclid` (formato oficial de Meta).
+ *
+ * Está duplicado a propósito respecto a `server/meta-capi.mjs`: el navegador no
+ * puede importar código de servidor (`node:crypto`). Un test compara los dos
+ * para que no se separen.
+ *
+ * @param {unknown} fbclid
+ * @param {number} [timestampMs]
+ */
+export function buildFbcValue(fbclid, timestampMs = Date.now()) {
+  const value = typeof fbclid === 'string' ? fbclid.trim() : '';
+  if (!value) return null;
+  return `fb.1.${Math.trunc(timestampMs)}.${value}`;
+}
+
+/**
  * @typedef {object} Attribution
  * @property {string|null} utm_source
  * @property {string|null} utm_medium
@@ -32,6 +70,8 @@ export const FIRST_TOUCH_TTL_DAYS = 90;
  * @property {string|null} utm_content
  * @property {string|null} utm_term
  * @property {Record<string,string>} clickIds
+ * @property {string|null} fbc
+ * @property {string|null} fbp
  * @property {string|null} landingPage
  * @property {string|null} referrer
  * @property {string} capturedAt  ISO 8601
@@ -87,6 +127,12 @@ export function buildAttribution(input) {
       ? clean(referrer, 500)
       : null;
 
+  // Cookies de Meta: si están, se usan tal cual (valen más que un fbclid suelto).
+  const cookies = input.cookies ?? readMetaCookies();
+  const fbc =
+    cookies.fbc ??
+    buildFbcValue(clickIds.fbclid, Number.isFinite(Date.parse(now)) ? Date.parse(now) : Date.now());
+
   return {
     utm_source: utm.utm_source ?? null,
     utm_medium: utm.utm_medium ?? null,
@@ -94,6 +140,8 @@ export function buildAttribution(input) {
     utm_content: utm.utm_content ?? null,
     utm_term: utm.utm_term ?? null,
     clickIds,
+    fbc,
+    fbp: cookies.fbp ?? null,
     landingPage,
     referrer: externalReferrer,
     capturedAt: now,

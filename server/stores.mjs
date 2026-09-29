@@ -145,6 +145,14 @@ export function record(row) {
     next_action_at: row.nextActionAt ?? null,
     last_contact_at: row.lastContactAt ?? null,
     updated_at: row.updatedAt ?? row.receivedAt,
+    // ---- Envío de la venta a Meta (API de conversiones) ----
+    // Vive en la misma fila que el pedido: así la idempotencia sobrevive a un
+    // reinicio (una variable en memoria no lo haría) y el CSV lo puede mostrar.
+    meta_purchase_event_id: row.metaPurchaseEventId ?? null,
+    meta_purchase_sent_at: row.metaPurchaseSentAt ?? null,
+    meta_purchase_status: row.metaPurchaseStatus ?? null,
+    meta_purchase_attempts: row.metaPurchaseAttempts ?? 0,
+    meta_purchase_error: row.metaPurchaseError ?? null,
   };
 }
 
@@ -157,6 +165,13 @@ function normalize(item) {
     next_action_at: item?.next_action_at ?? null,
     last_contact_at: item?.last_contact_at ?? null,
     updated_at: item?.updated_at ?? item?.received_at ?? null,
+    meta_purchase_event_id: item?.meta_purchase_event_id ?? null,
+    meta_purchase_sent_at: item?.meta_purchase_sent_at ?? null,
+    meta_purchase_status: item?.meta_purchase_status ?? null,
+    meta_purchase_attempts: Number.isFinite(Number(item?.meta_purchase_attempts))
+      ? Number(item.meta_purchase_attempts)
+      : 0,
+    meta_purchase_error: item?.meta_purchase_error ?? null,
   };
 }
 
@@ -249,6 +264,11 @@ async function createSqliteStore(file) {
   addColumn('next_action_at', 'next_action_at TEXT');
   addColumn('last_contact_at', 'last_contact_at TEXT');
   addColumn('updated_at', 'updated_at TEXT');
+  addColumn('meta_purchase_event_id', 'meta_purchase_event_id TEXT');
+  addColumn('meta_purchase_sent_at', 'meta_purchase_sent_at TEXT');
+  addColumn('meta_purchase_status', 'meta_purchase_status TEXT');
+  addColumn('meta_purchase_attempts', 'meta_purchase_attempts INTEGER NOT NULL DEFAULT 0');
+  addColumn('meta_purchase_error', 'meta_purchase_error TEXT');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -264,14 +284,18 @@ async function createSqliteStore(file) {
     INSERT OR IGNORE INTO items (
       id, type, received_at, name, phone, location, variant_id, variant_name,
       capsules, quantity, unit_price, total, currency, source, session_id, payload,
-      status, notes, next_action_at, last_contact_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, notes, next_action_at, last_contact_at, updated_at,
+      meta_purchase_attempts
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const count = db.prepare('SELECT COUNT(*) AS n FROM items');
   const allItems = db.prepare('SELECT * FROM items ORDER BY received_at DESC LIMIT ?');
   const byId = db.prepare('SELECT * FROM items WHERE id = ?');
   const updateItem = db.prepare(
-    'UPDATE items SET status = ?, notes = ?, next_action_at = ?, last_contact_at = ?, updated_at = ? WHERE id = ?',
+    `UPDATE items SET status = ?, notes = ?, next_action_at = ?, last_contact_at = ?, updated_at = ?,
+       meta_purchase_event_id = ?, meta_purchase_sent_at = ?, meta_purchase_status = ?,
+       meta_purchase_attempts = ?, meta_purchase_error = ?
+     WHERE id = ?`,
   );
   const allMessages = db.prepare('SELECT * FROM messages ORDER BY position, name');
   const upsertMessage = db.prepare(`
@@ -308,6 +332,7 @@ async function createSqliteStore(file) {
         null,
         null,
         row.receivedAt,
+        0,
       );
       return { duplicate: Number(result.changes) === 0 };
     },
@@ -332,8 +357,31 @@ async function createSqliteStore(file) {
           patch.nextActionAt !== undefined ? patch.nextActionAt : item.next_action_at,
         last_contact_at: patch.lastContactAt !== undefined ? patch.lastContactAt : item.last_contact_at,
         updated_at: new Date().toISOString(),
+        meta_purchase_event_id:
+          patch.metaPurchaseEventId !== undefined ? patch.metaPurchaseEventId : item.meta_purchase_event_id,
+        meta_purchase_sent_at:
+          patch.metaPurchaseSentAt !== undefined ? patch.metaPurchaseSentAt : item.meta_purchase_sent_at,
+        meta_purchase_status:
+          patch.metaPurchaseStatus !== undefined ? patch.metaPurchaseStatus : item.meta_purchase_status,
+        meta_purchase_attempts: Number.isFinite(Number(patch.metaPurchaseAttempts))
+          ? Number(patch.metaPurchaseAttempts)
+          : item.meta_purchase_attempts,
+        meta_purchase_error:
+          patch.metaPurchaseError !== undefined ? patch.metaPurchaseError : item.meta_purchase_error,
       };
-      updateItem.run(next.status, next.notes, next.next_action_at, next.last_contact_at, next.updated_at, id);
+      updateItem.run(
+        next.status,
+        next.notes,
+        next.next_action_at,
+        next.last_contact_at,
+        next.updated_at,
+        next.meta_purchase_event_id,
+        next.meta_purchase_sent_at,
+        next.meta_purchase_status,
+        next.meta_purchase_attempts,
+        next.meta_purchase_error,
+        id,
+      );
       return { ...item, ...next };
     },
     messages() {
@@ -408,6 +456,17 @@ function createJsonlStore(file) {
         next_action_at: patch.nextActionAt !== undefined ? patch.nextActionAt : item.next_action_at,
         last_contact_at: patch.lastContactAt !== undefined ? patch.lastContactAt : item.last_contact_at,
         updated_at: new Date().toISOString(),
+        meta_purchase_event_id:
+          patch.metaPurchaseEventId !== undefined ? patch.metaPurchaseEventId : item.meta_purchase_event_id,
+        meta_purchase_sent_at:
+          patch.metaPurchaseSentAt !== undefined ? patch.metaPurchaseSentAt : item.meta_purchase_sent_at,
+        meta_purchase_status:
+          patch.metaPurchaseStatus !== undefined ? patch.metaPurchaseStatus : item.meta_purchase_status,
+        meta_purchase_attempts: Number.isFinite(Number(patch.metaPurchaseAttempts))
+          ? Number(patch.metaPurchaseAttempts)
+          : item.meta_purchase_attempts,
+        meta_purchase_error:
+          patch.metaPurchaseError !== undefined ? patch.metaPurchaseError : item.meta_purchase_error,
       };
       rows[index] = next;
       writeFileSync(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(''), 'utf8');
@@ -485,6 +544,11 @@ async function createPostgresStore(url) {
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS next_action_at text`);
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS last_contact_at text`);
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS updated_at text`);
+    await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_event_id text`);
+    await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_sent_at text`);
+    await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_status text`);
+    await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_attempts integer NOT NULL DEFAULT 0`);
+    await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_error text`);
     await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_next_action ON ${TABLE} (next_action_at)`);
     await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_status ON ${TABLE} (status)`);
     await first.query(`
@@ -520,7 +584,9 @@ async function createPostgresStore(url) {
   ];
   /** El payload como texto: mismo formato que SQLite y JSONL. */
   const SELECT = `${COLUMNS.filter((c) => c !== 'payload').join(', ')}, payload::text AS payload`;
-  const SELECT_ADMIN = `${SELECT}, status, notes, next_action_at, last_contact_at, updated_at`;
+  const SELECT_ADMIN = `${SELECT}, status, notes, next_action_at, last_contact_at, updated_at,
+    meta_purchase_event_id, meta_purchase_sent_at, meta_purchase_status,
+    meta_purchase_attempts, meta_purchase_error`;
   const MESSAGE_COLUMNS = 'id, name, body, position, updated_at';
 
   const store = {
@@ -614,11 +680,36 @@ async function createPostgresStore(url) {
         next_action_at: patch.nextActionAt !== undefined ? patch.nextActionAt : item.next_action_at,
         last_contact_at: patch.lastContactAt !== undefined ? patch.lastContactAt : item.last_contact_at,
         updated_at: new Date().toISOString(),
+        meta_purchase_event_id:
+          patch.metaPurchaseEventId !== undefined ? patch.metaPurchaseEventId : item.meta_purchase_event_id,
+        meta_purchase_sent_at:
+          patch.metaPurchaseSentAt !== undefined ? patch.metaPurchaseSentAt : item.meta_purchase_sent_at,
+        meta_purchase_status:
+          patch.metaPurchaseStatus !== undefined ? patch.metaPurchaseStatus : item.meta_purchase_status,
+        meta_purchase_attempts: Number.isFinite(Number(patch.metaPurchaseAttempts))
+          ? Number(patch.metaPurchaseAttempts)
+          : item.meta_purchase_attempts,
+        meta_purchase_error:
+          patch.metaPurchaseError !== undefined ? patch.metaPurchaseError : item.meta_purchase_error,
       };
       await pool.query(
-        `UPDATE ${TABLE} SET status = $1, notes = $2, next_action_at = $3, last_contact_at = $4, updated_at = $5
-         WHERE id = $6`,
-        [next.status, next.notes, next.next_action_at, next.last_contact_at, next.updated_at, id],
+        `UPDATE ${TABLE} SET status = $1, notes = $2, next_action_at = $3, last_contact_at = $4, updated_at = $5,
+           meta_purchase_event_id = $6, meta_purchase_sent_at = $7, meta_purchase_status = $8,
+           meta_purchase_attempts = $9, meta_purchase_error = $10
+         WHERE id = $11`,
+        [
+          next.status,
+          next.notes,
+          next.next_action_at,
+          next.last_contact_at,
+          next.updated_at,
+          next.meta_purchase_event_id,
+          next.meta_purchase_sent_at,
+          next.meta_purchase_status,
+          next.meta_purchase_attempts,
+          next.meta_purchase_error,
+          id,
+        ],
       );
       return { ...item, ...next };
     },

@@ -8,7 +8,7 @@
  */
 
 import { createConsent } from '../lib/consent.js';
-import { createDataLayerAdapter, createMetaPixelAdapter, createTracker, EVENTS, SESSION_KEY } from '../lib/tracking.js';
+import { createDataLayerAdapter, createMetaPixelAdapter, createTracker, EVENTS, newEventId, SESSION_KEY } from '../lib/tracking.js';
 import { createStorage } from '../lib/storage.js';
 
 /** Identificador de sesión anónimo (persistente en la sesión del navegador). */
@@ -21,6 +21,9 @@ export function getSessionId(storage = createStorage('pe', 'session')) {
   return id;
 }
 
+/** Bandera de sesión: `Contact` ya se envió (no repetir la conversión). */
+const CONTACT_SENT_KEY = 'meta.contactSent';
+
 /**
  * @param {object} input
  * @param {import('../render/view.js').buildView extends (...args: any) => infer R ? R : any} input.view
@@ -30,6 +33,7 @@ export function getSessionId(storage = createStorage('pe', 'session')) {
 export function initTracking(input) {
   const { view } = input;
   const storage = input.storage ?? createStorage('pe', 'local');
+  const sessionStorage = createStorage('pe', 'session');
   const consent = input.consent ?? createConsent({ storage });
   const debug = view.site.tracking.debug === true;
   const pixelId = view.site.tracking.metaPixelId;
@@ -56,35 +60,61 @@ export function initTracking(input) {
   }
 
   const metaPixel = pixelId
-    ? createMetaPixelAdapter({ pixelId, allowed: () => consent.adsAllowed(), debug })
+    ? createMetaPixelAdapter({
+        pixelId,
+        allowed: () => consent.adsAllowed(),
+        debug,
+        /*
+         * Un clic en WhatsApp no es una compra, pero SI es un contacto. Se cuenta
+         * una sola vez por sesion: volver a pulsar el mismo dia no son dos
+         * contactos distintos y no debe inflar la conversion.
+         */
+        contactGuard: {
+          seen: () => sessionStorage.get(CONTACT_SENT_KEY) === true,
+          mark: () => sessionStorage.set(CONTACT_SENT_KEY, true),
+        },
+      })
     : null;
   if (metaPixel) adsAdapters.push(metaPixel);
+
+  /*
+   * Los adaptadores de medición publicitaria tienen que quedar REGISTRADOS en el
+   * tracker. Guardarlos solo en un array hacía que el píxel recibiera el
+   * PageView/ViewContent del arranque (los reenvía `enableAds`) y **ningún evento
+   * más**: ni InitiateCheckout, ni Lead, ni Contact. Pasó de verdad.
+   */
+  for (const adapter of adsAdapters) tracker.addAdapter(adapter);
 
   /** Se llama cuando el usuario acepta la medición. */
   function enableAds(context = {}) {
     if (adsStarted) return;
     adsStarted = true;
     // El pixel puede aparecer DESPUÉS del page_view inicial: se le reenvía el
-    // estado actual para no perder el PageView/ViewContent de esta visita.
+    // estado actual para no perder el PageView/ViewContent de esta visita, y se
+    // reutiliza el `event_id` original (misma acción = mismo identificador).
     for (const adapter of adsAdapters) {
       try {
-        adapter.track({
-          event: EVENTS.PAGE_VIEW,
-          timestamp: new Date().toISOString(),
-          sessionId,
-          data: { page: 'landing' },
-        });
-        if (view.flags.pricing || view.product.id) {
+        const replay = (name, data) => {
+          const previous = tracker.getLastPayload(name);
+          if (previous) {
+            adapter.track({ ...previous, data: { ...previous.data, ...data } });
+            return;
+          }
           adapter.track({
-            event: EVENTS.VIEW_PRODUCT,
+            event: name,
+            eventId: newEventId(name),
             timestamp: new Date().toISOString(),
             sessionId,
-            data: {
-              productId: view.product.id,
-              productName: view.product.name,
-              value: view.pricing.hasPrice ? view.pricing.unitPrice : undefined,
-              currency: view.currency,
-            },
+            data,
+          });
+        };
+        replay(EVENTS.PAGE_VIEW, { page: 'landing' });
+        if (view.flags.pricing || view.product.id) {
+          replay(EVENTS.VIEW_PRODUCT, {
+            productId: view.product.id,
+            productName: view.product.name,
+            value: view.pricing.hasPrice ? view.pricing.unitPrice : undefined,
+            currency: view.currency,
           });
         }
       } catch (error) {

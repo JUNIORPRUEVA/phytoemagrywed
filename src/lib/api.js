@@ -49,6 +49,8 @@ export function flattenAttribution(attribution) {
       utm_content: null,
       utm_term: null,
       fbclid: null,
+      fbc: null,
+      fbp: null,
       clickIds: {},
       landingPage: null,
       referrer: null,
@@ -64,12 +66,35 @@ export function flattenAttribution(attribution) {
     utm_content: attribution.utm_content ?? null,
     utm_term: attribution.utm_term ?? null,
     fbclid: attribution.clickIds?.fbclid ?? null,
+    fbc: attribution.fbc ?? null,
+    fbp: attribution.fbp ?? null,
     clickIds: attribution.clickIds ?? {},
     landingPage: attribution.landingPage ?? null,
     referrer: attribution.referrer ?? null,
     capturedAt: attribution.capturedAt ?? null,
     touch: attribution.touch ?? null,
   };
+}
+
+/**
+ * Bloque `meta` del payload: lo que necesita la API de conversiones de Meta.
+ *
+ * - `events`: los `event_id` que ya usó el píxel en el navegador. Al reenviar el
+ *   evento desde el servidor con el MISMO id, Meta deduplica las dos copias.
+ * - `sourceUrl`: la URL exacta donde ocurrió la acción (`event_source_url`).
+ *   Se guarda porque el servidor no la conoce cuando la venta se cierra días
+ *   después.
+ *
+ * @param {{ events?: Record<string,string|null>, sourceUrl?: string|null }} [input]
+ */
+export function buildMetaBlock(input = {}) {
+  /** @type {Record<string,string>} */
+  const events = {};
+  for (const [key, value] of Object.entries(input.events ?? {})) {
+    const clean = trim(value, 80);
+    if (clean) events[key] = clean;
+  }
+  return { events, sourceUrl: trim(input.sourceUrl, 500) };
 }
 
 /**
@@ -87,6 +112,7 @@ export function flattenAttribution(attribution) {
  * @param {string|null} [input.sessionId]
  * @param {string|null} [input.id]
  * @param {string} [input.createdAt]
+ * @param {{ events?: Record<string,string|null>, sourceUrl?: string|null }} [input.meta]
  */
 export function buildLeadPayload(input) {
   const variant = input.variant ?? null;
@@ -109,6 +135,7 @@ export function buildLeadPayload(input) {
     sessionId: trim(input.sessionId, 60),
     attribution: flattenAttribution(input.attribution ?? null),
     landingPage: input.attribution?.landingPage ?? null,
+    meta: buildMetaBlock(input.meta ?? {}),
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 }
@@ -130,6 +157,7 @@ export function buildLeadPayload(input) {
  * @param {import('./attribution.js').Attribution|null} [input.attribution]
  * @param {string|null} [input.sessionId]
  * @param {string} [input.createdAt]
+ * @param {{ events?: Record<string,string|null>, sourceUrl?: string|null }} [input.meta]
  */
 export function buildOrderIntentPayload(input) {
   const variant = input.variant ?? null;
@@ -163,6 +191,7 @@ export function buildOrderIntentPayload(input) {
     status: 'pending_confirmation',
     attribution: flattenAttribution(input.attribution ?? null),
     sessionId: trim(input.sessionId, 60),
+    meta: buildMetaBlock(input.meta ?? {}),
     createdAt: input.createdAt ?? new Date().toISOString(),
     customer: {
       name: trim(input.customer?.name, 80),

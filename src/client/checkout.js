@@ -8,7 +8,7 @@
  */
 
 import { buildLeadPayload, buildOrderIntentPayload } from '../lib/api.js';
-import { EVENTS } from '../lib/tracking.js';
+import { EVENTS, newEventId } from '../lib/tracking.js';
 import { sanitizeName } from '../lib/validation.js';
 import { clearFieldErrors, focusById, hideElement, on, prefersReducedMotion, qs, setAlert, setFieldError, showElement } from './dom.js';
 import { promptChooseVariant } from './choose-variant.js';
@@ -89,13 +89,18 @@ export function initCheckout(ctx) {
       }
     }
 
-    tracker.trackEvent(EVENTS.BEGIN_CHECKOUT, {
+    const initiateCheckout = tracker.trackEvent(EVENTS.BEGIN_CHECKOUT, {
       source,
       productId: view.product.id,
       productName: view.product.name,
       currency: view.currency,
       ...variantEventData(store.get()),
     });
+    // El pedido reenviará este mismo id si el servidor manda el `InitiateCheckout`.
+    if (initiateCheckout?.eventId) {
+      ctx.eventIds = ctx.eventIds ?? {};
+      ctx.eventIds.initiateCheckout = initiateCheckout.eventId;
+    }
 
     // Foco en el primer campo (accesibilidad) sin robar el scroll.
     window.setTimeout(() => focusById('pe-co-name'), prefersReducedMotion() ? 0 : 60);
@@ -190,6 +195,18 @@ export function initCheckout(ctx) {
     const attribution = ctx.getAttribution();
     const source = 'checkout';
 
+    /*
+     * `event_id` compartido con el servidor: el píxel manda el `Lead` desde el
+     * navegador y el CRM lo reenvía por la API de conversiones con ESTE MISMO id,
+     * así Meta cuenta una sola conversión aunque lleguen las dos copias.
+     */
+    const events = {
+      lead: newEventId(EVENTS.LEAD),
+      ...(ctx.eventIds?.initiateCheckout ? { initiateCheckout: ctx.eventIds.initiateCheckout } : {}),
+      ...(ctx.eventIds?.viewContent ? { viewContent: ctx.eventIds.viewContent } : {}),
+    };
+    const meta = { events, sourceUrl: ctx.currentUrl?.() ?? null };
+
     // 1) Lead + intención de pedido (van al CRM cuando exista endpoint; si no,
     //    quedan en la cola local del navegador).
     const lead = buildLeadPayload({
@@ -204,6 +221,7 @@ export function initCheckout(ctx) {
       variant,
       quantity,
       sessionId: ctx.sessionId(),
+      meta,
     });
     const orderIntent = buildOrderIntentPayload({
       customer: { id: lead.id, name: lead.name, phone: lead.phone, location: lead.location },
@@ -213,6 +231,7 @@ export function initCheckout(ctx) {
       source,
       attribution,
       sessionId: ctx.sessionId(),
+      meta,
     });
     lastOrderIntent = orderIntent;
 
@@ -221,16 +240,20 @@ export function initCheckout(ctx) {
       return null;
     });
 
-    tracker.trackEvent(EVENTS.LEAD, {
-      source,
-      channel: 'checkout',
-      productId: view.product.id,
-      productName: view.product.name,
-      orderIntentId: orderIntent.id,
-      currency: view.currency,
-      consent: true,
-      ...variantEventData(selection),
-    });
+    tracker.trackEvent(
+      EVENTS.LEAD,
+      {
+        source,
+        channel: 'checkout',
+        productId: view.product.id,
+        productName: view.product.name,
+        orderIntentId: orderIntent.id,
+        currency: view.currency,
+        consent: true,
+        ...variantEventData(selection),
+      },
+      { eventId: events.lead },
+    );
 
     // 2) WhatsApp (síncrono, conserva el gesto del usuario).
     //    Si no hay número configurado no hay enlace y, por tanto, NO se registra

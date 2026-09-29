@@ -26,7 +26,14 @@
  *    PHYTO_CRM_ALLOWED_ORIGIN  CORS, solo si la web vive en otro dominio
  *    PHYTO_CRM_TZ            zona horaria del negocio (por defecto America/Santo_Domingo)
  *
- *  Documentación: docs/CRM-CONTRACT.md y docs/PANEL.md
+ *  Meta (ver docs/META_INTEGRATION.md):
+ *    PHYTO_META_PIXEL_ID              ID del píxel/dataset (público)
+ *    PHYTO_META_CAPI_ACCESS_TOKEN     token de la API de conversiones (SECRETO)
+ *    PHYTO_META_CAPI_TEST_EVENT_CODE  solo UAT; en `APP_ENV=production` se ignora
+ *    PHYTO_META_GRAPH_VERSION         versión de la Graph API (por defecto v21.0)
+ *    PHYTO_META_PURCHASE_STATUS       estado que representa una VENTA (por defecto `entregado`)
+ *
+ *  Documentación: docs/CRM-CONTRACT.md, docs/PANEL.md y docs/META_INTEGRATION.md
  * ============================================================================
  */
 
@@ -37,6 +44,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { buildUserData, createMetaCapi } from './meta-capi.mjs';
 import {
   CLOSED_STATUSES,
   STATUSES,
@@ -56,6 +64,26 @@ const DATABASE_URL = (process.env.PHYTO_CRM_DATABASE_URL ?? '').trim();
 const TOKEN = (process.env.PHYTO_CRM_TOKEN ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
 const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
+
+// ------------------------------------------------------------------- Meta CAPI
+/** ID del píxel/dataset. Es público (el navegador lo lleva en el HTML). */
+const META_PIXEL_ID = (process.env.PHYTO_META_PIXEL_ID ?? '').trim();
+/** Token de la API de conversiones: SECRETO. Solo vive en el servidor. */
+const META_CAPI_TOKEN = (process.env.PHYTO_META_CAPI_ACCESS_TOKEN ?? '').trim();
+/** Código de eventos de prueba: solo UAT (en producción se ignora). */
+const META_TEST_EVENT_CODE = (process.env.PHYTO_META_CAPI_TEST_EVENT_CODE ?? '').trim();
+const META_GRAPH_VERSION = (process.env.PHYTO_META_GRAPH_VERSION ?? '').trim();
+const APP_ENV = (process.env.APP_ENV ?? 'production').trim();
+/**
+ * Estado del CRM que representa una VENTA REAL (dinero cobrado).
+ *
+ * `entregado` es el único que cierra el pedido con cobro: `confirmado` todavía
+ * puede caerse (el cliente se arrepiente y no recibe). Si el negocio prefiere
+ * otro criterio, se cambia con una variable, sin tocar código.
+ */
+const META_PURCHASE_STATUS = (process.env.PHYTO_META_PURCHASE_STATUS ?? 'entregado').trim();
+/** Reintentos automáticos por venta (evita reintentos infinitos). */
+const META_PURCHASE_MAX_ATTEMPTS = 5;
 
 /**
  * Carpeta de la app del panel. Se resuelve al arrancar (no al importar) para
@@ -183,6 +211,176 @@ function csvCell(value) {
 
 function typeLabel(type) {
   return type === 'order_intent' ? 'Pedido' : 'Contacto';
+}
+
+// ------------------------------------------------------------------ Meta CAPI
+
+/**
+ * El payload guardado es un JSON en texto. Se lee sin romper si viene mal.
+ * @param {any} item
+ */
+function parsePayload(item) {
+  try {
+    if (typeof item?.payload === 'string') return JSON.parse(item.payload);
+    return item?.payload ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * `event_id` de la venta. Es el MISMO para siempre: si se reintenta, Meta
+ * deduplica en lugar de contar dos compras.
+ * @param {any} item
+ */
+export function purchaseEventId(item) {
+  if (item?.meta_purchase_event_id) return item.meta_purchase_event_id;
+  return `purchase_${item?.id ?? 'sin-id'}`;
+}
+
+/**
+ * Manda la venta a Meta y deja el resultado escrito EN LA FILA del pedido.
+ *
+ * Devuelve `{ ok, skipped?, error? }` y nunca lanza: un problema con Meta no
+ * puede tumbar el CRM ni deshacer el estado que marcó el negocio.
+ *
+ * @param {object} input
+ * @param {any} input.store
+ * @param {any} input.metaCapi
+ * @param {any} input.item
+ * @param {string} [input.source] motivo (diagnóstico)
+ */
+export async function sendPurchaseToMeta({ store, metaCapi, item, source = 'estado' }) {
+  if (!metaCapi?.enabled) return { ok: false, skipped: true, reason: 'not_configured' };
+  // Idempotencia: si ya se envió, no se vuelve a enviar jamás.
+  if (item.meta_purchase_sent_at) return { ok: false, skipped: true, reason: 'already_sent' };
+
+  const eventId = purchaseEventId(item);
+  const payload = parsePayload(item);
+  const attribution = payload.attribution ?? {};
+  const attempts = Number(item.meta_purchase_attempts ?? 0);
+  const result = await metaCapi.sendPurchase({
+    eventId,
+    orderId: item.id,
+    value: Number(item.total ?? payload.total ?? 0),
+    currency: item.currency ?? payload.currency ?? 'DOP',
+    eventSourceUrl: payload.meta?.sourceUrl ?? null,
+    contentIds: [item.variant_id ?? payload.variantId].filter(Boolean),
+    contents: item.variant_id
+      ? [{ id: item.variant_id, quantity: Number(item.quantity ?? 1), item_price: Number(item.unit_price ?? 0) }]
+      : undefined,
+    userData: buildUserData({
+      payload,
+      phone: item.phone,
+      name: item.name,
+      externalId: item.session_id ?? item.id,
+    }),
+  });
+
+  const updated = await store.update(item.id, {
+    metaPurchaseEventId: eventId,
+    metaPurchaseStatus: result.ok ? 'sent' : 'failed',
+    metaPurchaseAttempts: attempts + 1,
+    metaPurchaseSentAt: result.ok ? new Date().toISOString() : item.meta_purchase_sent_at ?? null,
+    metaPurchaseError: result.ok ? null : describeMetaFailure(result),
+  });
+
+  const tag = result.ok ? 'enviada' : result.skipped ? 'no configurada' : 'falló';
+  console.log(
+    `[crm] venta a Meta (${source}): ${tag}${item.id ? ` · pedido ${item.id}` : ''}` +
+      (result.ok || result.skipped ? '' : ` · ${describeMetaFailure(result)}`),
+  );
+  return { ...result, item: updated };
+}
+
+/**
+ * Texto corto y sin secretos para guardar en la fila (nunca el token).
+ * @param {any} result
+ */
+function describeMetaFailure(result) {
+  if (!result?.error) return 'error desconocido';
+  const { status, code, type, message } = result.error;
+  return [status ? `HTTP ${status}` : null, code ? `code ${code}` : null, type, message]
+    .filter(Boolean)
+    .join(' · ')
+    .slice(0, 300);
+}
+
+/**
+ * Reintenta las ventas que quedaron pendientes (caída de Meta, reinicio…).
+ *
+ * Se ejecuta al arrancar, con un tope de intentos por venta: no hay bucles
+ * infinitos y nunca reenvía algo que ya se envió.
+ */
+async function retryPendingPurchases(store, metaCapi, log = console.log) {
+  if (!metaCapi?.enabled || !store?.listAdmin) return;
+  const items = await store.listAdmin({ limit: 200 });
+  const pending = items.filter(
+    (item) =>
+      item.type === 'order_intent' &&
+      item.status === META_PURCHASE_STATUS &&
+      !item.meta_purchase_sent_at &&
+      Number(item.meta_purchase_attempts ?? 0) < META_PURCHASE_MAX_ATTEMPTS,
+  );
+  if (pending.length === 0) return;
+  log(`[crm] Meta: reintentando ${pending.length} venta(s) pendiente(s)`);
+  for (const item of pending.slice(0, 10)) {
+    await sendPurchaseToMeta({ store, metaCapi, item, source: 'reintento' });
+  }
+}
+
+/** IP del visitante (detrás de nginx llega en `x-forwarded-for`). */
+function clientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] ?? '')
+    .split(',')[0]
+    .trim();
+  return forwarded || req.socket?.remoteAddress || null;
+}
+
+/**
+ * Espejo server-side del `Lead` del navegador.
+ *
+ * Usa el `event_id` que mandó la landing (mismo identificador → Meta deduplica
+ * las dos copias). Si el payload no lo trae (JS desactivado, cliente antiguo),
+ * se genera uno estable a partir del registro: nunca se manda dos veces lo mismo.
+ *
+ * @param {any} ctx
+ * @param {any} row
+ * @param {import('node:http').IncomingMessage} req
+ */
+function mirrorLeadToMeta(ctx, row, req) {
+  const capi = ctx?.metaCapi;
+  if (!capi?.enabled) return;
+  const payload = parsePayload({ payload: row.payload });
+  const events = payload.meta?.events ?? {};
+  const eventId = typeof events.lead === 'string' && events.lead ? events.lead : `lead_${row.id}`;
+  const userData = buildUserData({
+    payload,
+    phone: row.phone,
+    name: row.name,
+    externalId: row.sessionId ?? row.id,
+    ip: clientIp(req),
+    userAgent: row.payload ? String(req.headers['user-agent'] ?? '') || null : null,
+  });
+  capi
+    .send({
+      eventName: 'Lead',
+      eventId,
+      eventSourceUrl: payload.meta?.sourceUrl ?? null,
+      userData,
+      customData: {
+        ...(row.variantName ? { content_name: row.variantName } : {}),
+        ...(row.currency ? { currency: row.currency } : {}),
+      },
+    })
+    .then((result) => {
+      if (!result.ok && !result.skipped) {
+        console.log(`[crm] lead a Meta: falló · ${describeMetaFailure(result)}`);
+      }
+    })
+    .catch(() => {
+      /* Nunca puede afectar al guardado: el registro ya está a salvo. */
+    });
 }
 
 // ------------------------------------------------------------------ sesiones
@@ -317,6 +515,9 @@ async function handle(req, res, ctx) {
         saved.push({ id: row.id, duplicate: result.duplicate });
         if (!result.duplicate) {
           console.log(`[crm] guardado ${row.type} ${row.id}${row.variantName ? ` · ${row.variantName}` : ''}`);
+          // Espejo del `Lead` del navegador con el MISMO `event_id`: si el píxel
+          // no cargó (adblock, iOS), la conversión llega igual y Meta no la cuenta dos veces.
+          if (row.type === 'lead') mirrorLeadToMeta(ctx, row, req);
         }
       }
     } catch (error) {
@@ -419,11 +620,57 @@ async function handle(req, res, ctx) {
         messages,
         stats: computeStats(items, TIME_ZONE),
         pendientes: dueToday(items, TIME_ZONE).map((item) => item.id),
+        // Estado de Meta SIN secretos: el panel solo necesita saber si está activo.
+        meta: {
+          configured: Boolean(ctx.metaCapi?.enabled),
+          testEventCode: Boolean(ctx.metaCapi?.hasTestEventCode),
+          purchaseStatus: ctx.purchaseStatus,
+          graphVersion: ctx.metaCapi?.graphVersion ?? null,
+        },
       });
       return;
     }
 
-    if (route.startsWith('/api/admin/items/') && (req.method === 'PATCH' || req.method === 'POST')) {
+    // Reenvío manual de la venta a Meta (lo usa el panel cuando un envío falló).
+  // Va ANTES de la ruta del pedido para que `/items/<id>/meta-purchase` no se
+  // confunda con el id del registro.
+  if (route.startsWith('/api/admin/items/') && route.endsWith('/meta-purchase') && req.method === 'POST') {
+    if (!authenticated) {
+      json(res, 401, { ok: false, error: 'unauthorized', message: 'Entra con tu clave.' });
+      return;
+    }
+    if (!ctx.metaCapi?.enabled) {
+      json(res, 503, {
+        ok: false,
+        error: 'meta_not_configured',
+        message: 'Falta PHYTO_META_CAPI_ACCESS_TOKEN (o PHYTO_META_PIXEL_ID) en el servidor.',
+      });
+      return;
+    }
+    const id = decodeURIComponent(route.slice('/api/admin/items/'.length, -'/meta-purchase'.length));
+    const items = await store.listAdmin({ limit: 500 });
+    const item = items.find((entry) => entry.id === id);
+    if (!item) {
+      json(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+    if (item.type !== 'order_intent') {
+      json(res, 409, { ok: false, error: 'not_an_order', message: 'Solo se envía la venta de un pedido.' });
+      return;
+    }
+    const result = await sendPurchaseToMeta({ store, metaCapi: ctx.metaCapi, item, source: 'manual' });
+    json(res, result.ok ? 200 : result.skipped ? 409 : 502, {
+      ok: result.ok,
+      skipped: result.skipped ?? false,
+      reason: result.reason ?? null,
+      error: result.error ?? null,
+      response: result.response ?? null,
+      item: result.item ?? item,
+    });
+    return;
+  }
+
+  if (route.startsWith('/api/admin/items/') && (req.method === 'PATCH' || req.method === 'POST')) {
       const id = decodeURIComponent(route.slice('/api/admin/items/'.length));
       /** @type {any} */
       let body = {};
@@ -454,6 +701,21 @@ async function handle(req, res, ctx) {
         return;
       }
       console.log(`[crm] actualizado ${id}${patch.status ? ` → ${patch.status}` : ''}`);
+      /*
+       * ¿El negocio acaba de cerrar la venta? Solo entonces se le cuenta a Meta.
+       * Se envía en segundo plano: si Meta tarda o falla, el panel ya tiene su
+       * respuesta y el pedido queda igual (con el resultado escrito en su fila).
+       */
+      if (
+        ctx.metaCapi?.enabled &&
+        updated.type === 'order_intent' &&
+        updated.status === ctx.purchaseStatus &&
+        !updated.meta_purchase_sent_at
+      ) {
+        sendPurchaseToMeta({ store, metaCapi: ctx.metaCapi, item: updated, source: 'estado' }).catch((error) => {
+          console.error('[crm] venta a Meta:', error?.message ?? error);
+        });
+      }
       json(res, 200, { ok: true, item: updated });
       return;
     }
@@ -535,6 +797,8 @@ async function handle(req, res, ctx) {
         'recordatorio',
         'notas',
         'ultimo_contacto',
+        'meta_venta',
+        'meta_enviada',
       ];
       const lines = rows.map((row) =>
         [
@@ -554,6 +818,8 @@ async function handle(req, res, ctx) {
           row.next_action_at,
           row.notes,
           row.last_contact_at,
+          row.meta_purchase_status,
+          row.meta_purchase_sent_at,
         ]
           .map(csvCell)
           .join(','),
@@ -594,6 +860,13 @@ async function handle(req, res, ctx) {
  * @param {string} [config.adminDir] carpeta de la app del panel
  * @param {string} [config.allowedOrigin] origen permitido por CORS
  * @param {boolean} [config.quiet] no imprimir el banner de arranque
+ * @param {any} [config.metaCapi] cliente de CAPI ya construido (tests)
+ * @param {string} [config.metaPixelId]
+ * @param {string} [config.metaAccessToken]
+ * @param {string} [config.metaTestEventCode]
+ * @param {string} [config.metaGraphVersion]
+ * @param {string} [config.appEnv]
+ * @param {string} [config.purchaseStatus] estado que representa una venta
  */
 export async function startCrmServer(config = {}) {
   const settings = {
@@ -608,11 +881,30 @@ export async function startCrmServer(config = {}) {
   };
 
   const store = await createStore({ databaseUrl: settings.databaseUrl, dataFile: settings.dataFile });
+
+  /*
+   * Cliente de Meta. Si no hay credenciales queda desactivado y todo sigue
+   * funcionando igual: el CRM no puede depender de un tercero para guardar un
+   * pedido. El token solo vive aquí (nunca sale en una respuesta HTTP).
+   */
+  const metaCapi =
+    config.metaCapi ??
+    createMetaCapi({
+      pixelId: config.metaPixelId ?? META_PIXEL_ID,
+      accessToken: config.metaAccessToken ?? META_CAPI_TOKEN,
+      testEventCode: config.metaTestEventCode ?? META_TEST_EVENT_CODE,
+      graphVersion: config.metaGraphVersion ?? META_GRAPH_VERSION,
+      appEnv: config.appEnv ?? APP_ENV,
+      debug: !settings.quiet,
+    });
+
   const ctx = {
     store,
     token: settings.token,
     allowedOrigin: settings.allowedOrigin,
     adminDir: settings.adminDir,
+    metaCapi,
+    purchaseStatus: config.purchaseStatus ?? META_PURCHASE_STATUS,
   };
 
   const server = createServer((req, res) => {
@@ -634,10 +926,38 @@ export async function startCrmServer(config = {}) {
   if (!settings.quiet) {
     console.log(`[crm] escuchando en http://${settings.host}:${port} · almacén ${store.kind} → ${store.file}`);
     console.log(`[crm] panel: http://${settings.host}:${port}/admin/ · app instalable (PWA)`);
+    console.log(
+      `[crm] Meta: ${
+        metaCapi.enabled
+          ? `API de conversiones activa (${metaCapi.graphVersion}${metaCapi.hasTestEventCode ? ', modo prueba' : ''})`
+          : 'desactivada (faltan PHYTO_META_PIXEL_ID o PHYTO_META_CAPI_ACCESS_TOKEN)'
+      } · venta = estado "${ctx.purchaseStatus}"`,
+    );
     if (!settings.token) {
       console.warn('[crm] PHYTO_CRM_TOKEN sin definir: guardar funciona, el panel está desactivado.');
     }
   }
+
+  // Reintento de ventas pendientes en segundo plano: no retrasa el arranque.
+  retryPendingPurchases(store, metaCapi).catch(() => {});
+
+  // Cierre idempotente: cerrar dos veces (un test, un reinicio, dos señales)
+  // no puede lanzar "database is not open".
+  let closed = false;
+  const close = () => {
+    if (closed) return Promise.resolve();
+    closed = true;
+    return new Promise((resolve, reject) => {
+      server.close(async () => {
+        try {
+          await store.close();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  };
 
   return {
     port,
@@ -647,17 +967,9 @@ export async function startCrmServer(config = {}) {
     adminDir: settings.adminDir,
     server,
     store,
-    close: () =>
-      new Promise((resolve, reject) => {
-        server.close(async () => {
-          try {
-            await store.close();
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
-        });
-      }),
+    metaCapi,
+    purchaseStatus: ctx.purchaseStatus,
+    close,
   };
 }
 

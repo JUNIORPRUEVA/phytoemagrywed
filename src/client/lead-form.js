@@ -11,7 +11,7 @@
  */
 
 import { buildLeadPayload } from '../lib/api.js';
-import { EVENTS } from '../lib/tracking.js';
+import { EVENTS, newEventId } from '../lib/tracking.js';
 import { FIELD_LIMITS, sanitizeText, validateLead } from '../lib/validation.js';
 import { clearFieldErrors, focusById, hideElement, on, qs, setAlert, setFieldError, showElement } from './dom.js';
 import { buildLeadWhatsAppUrl } from './order-message.js';
@@ -79,6 +79,13 @@ export function initLeadForm(ctx) {
       location: sanitizeText(result.values.location, FIELD_LIMITS.location),
     };
 
+    /*
+     * `event_id` del `Lead`: se genera AQUÍ, antes de enviar al CRM, para que el
+     * mismo identificador viaje en el payload y en el píxel del navegador. Con
+     * eso Meta deduplica las dos copias (píxel + API de conversiones).
+     */
+    const leadEventId = newEventId(EVENTS.LEAD);
+
     const payload = buildLeadPayload({
       name: lead.name,
       phone: lead.phone,
@@ -89,6 +96,8 @@ export function initLeadForm(ctx) {
       attribution: ctx.getAttribution(),
       productId: view.product.id,
       sessionId: ctx.sessionId(),
+      // El `event_id` viaja con el lead: el CRM reenvía el mismo `Lead` por CAPI.
+      meta: { events: { lead: leadEventId }, sourceUrl: ctx.currentUrl?.() ?? null },
     });
 
     // 1) WhatsApp: SÍNCRONO y antes de cualquier `await`, para conservar el gesto
@@ -112,15 +121,19 @@ export function initLeadForm(ctx) {
     // 2) Lead al CRM (o a la cola local mientras no haya endpoint).
     const response = await crm.submitLead(payload);
 
-    tracker.trackEvent(EVENTS.LEAD, {
-      source: 'formulario',
-      channel: 'form',
-      productId: view.product.id,
-      productName: view.product.name,
-      leadId: payload.id,
-      queued: response.queued,
-      consent: true,
-    });
+    tracker.trackEvent(
+      EVENTS.LEAD,
+      {
+        source: 'formulario',
+        channel: 'form',
+        productId: view.product.id,
+        productName: view.product.name,
+        leadId: payload.id,
+        queued: response.queued,
+        consent: true,
+      },
+      { eventId: leadEventId },
+    );
 
     if (submitButton) submitButton.disabled = false;
 
