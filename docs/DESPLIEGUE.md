@@ -81,18 +81,37 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    - Branch: `main`
 3. **Build** → *Dockerfile*, con la ruta `Dockerfile` (está en la raíz del repo).
    El panel se encarga del `docker build`; no hay que escribir ningún comando.
-4. **Environment** (variables públicas; se pasan también en el build):
+4. **Environment** (variables públicas; se pasan al build y al runtime). Pega
+   esto en la pestaña y cambia el dominio:
 
-   | Variable | Valor |
-   | --- | --- |
-   | `PHYTO_WHATSAPP_NUMBER` | `18297853794` |
-   | `SEO_SITE_URL` | `https://tudominio.com` (sin barra final) |
-   | `PHYTO_CRM_ENDPOINT` | *(opcional)* |
-   | `PHYTO_META_PIXEL_ID` | *(opcional)* |
-   | `CONTACT_EMAIL` | *(opcional)* |
+   ```bash
+   PHYTO_WHATSAPP_NUMBER=18297853794
+   SEO_SITE_URL=https://tudominio.com
+   APP_ENV=production
+   ```
 
-   Si no pones ninguna, la imagen usa los valores por defecto del Dockerfile
-   (que ya llevan el número real de WhatsApp).
+   Opcionales (déjalas fuera si no las usas):
+
+   ```bash
+   PHYTO_CRM_ENDPOINT=      # endpoint del CRM (si no, cola local)
+   PHYTO_META_PIXEL_ID=     # Meta Pixel (si no, sin medición publicitaria)
+   CONTACT_EMAIL=           # email visible en el footer
+   ```
+
+   | Variable | Para qué sirve | Si no la pones |
+   | --- | --- | --- |
+   | `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | Se usa el valor por defecto del Dockerfile (el número real) |
+   | `SEO_SITE_URL` | Dominio final: activa `canonical`, `sitemap.xml` y la **vista previa con imagen** al compartir por WhatsApp | Se publica sin canonical ni sitemap |
+   | `APP_ENV` | `production` | `production` por defecto |
+
+   > **No pongas `PORT`** salvo que el panel te lo pida (ver el punto 5). Tampoco
+   > `WEB_PORT`: esa es solo para Docker Compose.
+   >
+   > Si escribes `SEO_SITE_URL=https://$(PRIMARY_DOMAIN)` (variable especial de
+   > Easypanel), añade **antes** el dominio en la pestaña *Domains*: si la variable
+   > queda a medias (`https://`), la web lo detecta y **no publica** un canonical
+   > roto.
+
 5. **Domains** → añade tu dominio y pon el **puerto del proxy = 80** (es donde
    escucha nginx). Easypanel emite el certificado Let's Encrypt por su cuenta.
 

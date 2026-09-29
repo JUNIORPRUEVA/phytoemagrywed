@@ -612,6 +612,29 @@ describe('páginas legales', () => {
   });
 });
 
+describe('SEO: una URL de sitio a medias no se publica', () => {
+  // En paneles como Easypanel es fácil dejar `SEO_SITE_URL=https://` o una
+  // variable sin sustituir: eso generaría un canonical roto, no nada.
+  const INVALIDAS = ['https://', 'https://$(PRIMARY_DOMAIN)', 'tudominio.com', '   ', 'ftp://phytoemagry.com'];
+
+  it.each(INVALIDAS)('"%s" no genera canonical ni sitemap', (raw) => {
+    const view = makeView({ siteUrl: raw });
+    expect(view.seo.siteUrl).toBeNull();
+    expect(renderSitemap(view)).toBeNull();
+    expect(parse(renderIndexPage(view)).querySelector('link[rel="canonical"]')).toBeNull();
+  });
+
+  it('un dominio real genera canonical, sitemap y og:url coherentes', () => {
+    const view = makeView({ siteUrl: 'https://phytoemagry.com/' });
+    expect(view.seo.siteUrl).toBe('https://phytoemagry.com');
+    expect(renderSitemap(view)).toContain('<loc>https://phytoemagry.com/</loc>');
+    const doc = parse(renderIndexPage(view));
+    expect(doc.querySelector('link[rel="canonical"]').getAttribute('href')).toBe('https://phytoemagry.com/');
+    // La portada se comparte por WhatsApp: la imagen debe ser absoluta.
+    expect(doc.querySelector('meta[property="og:image"]').getAttribute('content')).toContain('https://phytoemagry.com/');
+  });
+});
+
 describe('grupos de comunidad por configuración', () => {
   it('los 5 grupos siguen configurados (por si se reactivan)', () => {
     expect(buildGroups(siteConfig.community.groups)).toHaveLength(5);

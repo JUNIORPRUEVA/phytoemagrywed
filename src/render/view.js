@@ -41,10 +41,35 @@ export function pricesList(variants, prefix = '') {
 }
 
 /**
+ * Normaliza la URL pública del sitio.
+ *
+ * Devuelve `null` si no es una URL absoluta con host real: así un valor a medias
+ * (`https://`, `tudominio.com`, `https://$(PRIMARY_DOMAIN)` sin sustituir) no
+ * genera un `canonical` ni un `og:url` rotos. Nunca se publica una URL mala.
+ *
+ * @param {unknown} raw
+ * @returns {string|null} URL sin barra final, o null si no es utilizable
+ */
+export function normalizeSiteUrl(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  // Sin host real (p. ej. "https://") no sirve para canonical ni para OG.
+  if (!parsed.hostname || !parsed.hostname.includes('.')) return null;
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+/**
  * Frase de zonas de entrega. Devuelve '' mientras el negocio no confirme zonas:
  * nunca se inventan plazos, costos ni coberturas.
- */
-function deliveryAreasSentence(site) {
+ */function deliveryAreasSentence(site) {
   const areas = (Array.isArray(site.commerce?.deliveryAreas) ? site.commerce.deliveryAreas : []).filter(
     (area) => isSet(area),
   );
@@ -234,7 +259,16 @@ export function buildView(overrides = {}) {
     hasCommunity: activeGroup !== null,
   });
 
-  const siteUrl = textOrNull(site.seo?.siteUrl) ? String(site.seo.siteUrl).replace(/\/+$/, '') : null;
+  /**
+   * URL del sitio (canonical, sitemap y `og:url`).
+   *
+   * Se valida de verdad: los paneles (Easypanel, Dokploy…) permiten escribir
+   * `SEO_SITE_URL=https://$(PRIMARY_DOMAIN)` y, si el dominio todavía no está
+   * configurado, la variable queda en `https://` — sin host. Eso produciría un
+   * canonical roto (`https:///`) y una vista previa sin imagen al compartir el
+   * enlace: mejor no publicar ninguna URL que publicar una mala.
+   */
+  const siteUrl = normalizeSiteUrl(site.seo?.siteUrl);
   const flags = {
     whatsapp: waEnabled,
     /** Hay al menos una presentación con precio real. */
