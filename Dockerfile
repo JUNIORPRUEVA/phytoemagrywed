@@ -1,21 +1,25 @@
+# syntax=docker/dockerfile:1
 # ============================================================================
-#  Phytoemagry — imagen de producción
+#  Phytoemagry — imagen de producción (este archivo es TODO el despliegue)
 #
-#  Sitio estático generado en build (esbuild) y servido por nginx.
-#  Etapa 1: compila y verifica el sitio (tests + revisión de contenido + build).
-#  Etapa 2: solo nginx con los archivos ya generados (~50 MB menos de imagen).
+#  No hace falta copiar nada a mano ni instalar Node en el servidor: el
+#  Dockerfile compila la web y sirve el resultado con nginx.
 #
-#  Uso rápido:
-#    docker build -t phytoemagry .
-#    docker run -d --name phytoemagry -p 8080:80 --restart unless-stopped phytoemagry
+#  EN EL SERVIDOR (2 comandos):
+#    git clone https://github.com/JUNIORPRUEVA/phytoemagrywed.git
+#    cd phytoemagrywed && docker build -t phytoemagry . && docker run -d \
+#      --name phytoemagry -p 80:80 --restart unless-stopped phytoemagry
 #
-#  O con compose (ya trae los valores y el reinicio automático):
+#  O con Compose (trae los valores y el healthcheck):
 #    docker compose up -d --build
 #
+#  NOTA: el Dockerfile necesita el CÓDIGO del proyecto (src/, public/,
+#  package.json...), que ya viaja en el repositorio. No es un archivo suelto:
+#  `docker build` se ejecuta sobre la carpeta del proyecto.
+#
 #  Los valores de abajo son PÚBLICOS: acaban en el HTML/JS que recibe el
-#  navegador (el número de WhatsApp se ve en la página). No pongas aquí ningún
-#  secreto: esta imagen no lleva ninguno.
-#  Guía completa: docs/DESPLIEGUE.md
+#  navegador (el número de WhatsApp se ve en la página). Esta imagen no lleva
+#  ningún secreto. Guía completa: docs/DESPLIEGUE.md
 # ============================================================================
 
 # ---------------------------------------------------------------- etapa 1: build
@@ -53,9 +57,73 @@ RUN npm run verify
 # ---------------------------------------------------------------- etapa 2: nginx
 FROM nginx:1.27-alpine AS runtime
 
-# Config del contenedor (root en /usr/share/nginx/html, compresión, cachés y
-# cabeceras de seguridad).
-COPY nginx/phytoemagry.conf /etc/nginx/conf.d/default.conf
+# Config del servidor web, escrita aquí mismo: este Dockerfile no depende de
+# ningún otro archivo de configuración. (Para un servidor con nginx del sistema,
+# el equivalente está en nginx/phytoemagry.conf.)
+#
+# `tr -d '\015'` quita los retornos de carro: si el proyecto se compila desde un
+# Windows con CRLF, la config llega igualmente en LF al contenedor.
+RUN <<'NGINX_CONF' tr -d '\015' > /etc/nginx/conf.d/default.conf
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+    charset utf-8;
+
+    # ------------------------------------------------------------ seguridad
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    # HSTS: descomentar cuando el HTTPS funcione delante (proxy/certificado).
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # CSP: pega aquí el valor de dist/csp-header.txt (se genera en cada build).
+    # add_header Content-Security-Policy "default-src 'self'; ..." always;
+
+    # ---------------------------------------------------------- compresión
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 6;
+    gzip_min_length 512;
+    gzip_types text/plain text/css text/xml application/javascript application/json application/xml image/svg+xml;
+
+    # --------------------------------------------------------------- rutas
+    # Páginas legales: /privacidad y /terminos (sin .html)
+    location = /privacidad { try_files /privacidad.html =404; }
+    location = /terminos   { try_files /terminos.html   =404; }
+
+    # Assets con hash de contenido: caché inmutable de 1 año
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # Imágenes y fuentes sin hash: caché de 30 días
+    location ~* \.(?:png|jpe?g|webp|avif|svg|ico|woff2?)$ {
+        add_header Cache-Control "public, max-age=2592000" always;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # El HTML y los archivos de SEO nunca se cachean (publicar = ver el cambio ya)
+    location ~* \.(?:html|xml|txt)$ {
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
+    # Endurecimiento básico
+    location ~ /\.(?!well-known) { deny all; }
+    location ~* \.(?:map|md|json)$ { deny all; }
+}
+NGINX_CONF
 
 # Solo los archivos generados: ni fuentes, ni tests, ni node_modules.
 COPY --from=build /app/dist /usr/share/nginx/html

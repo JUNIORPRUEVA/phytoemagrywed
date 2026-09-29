@@ -621,6 +621,55 @@ describe('grupos de comunidad por configuración', () => {
   });
 });
 
+describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
+  const repo = (file) => readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', file), 'utf8');
+  const dockerfile = repo('Dockerfile');
+  const nginxConf = repo(path.join('nginx', 'phytoemagry.conf'));
+
+  /**
+   * Directivas reales de una config de nginx: sin comentarios y con las dos
+   * líneas que cambian a propósito entre contenedor y servidor
+   * (`root` y `server_name`) normalizadas.
+   */
+  const directives = (text) =>
+    text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'))
+      .map((line) => line.split('  #')[0].trimEnd())
+      .map((line) => line.replace(/^server_name .*/, 'server_name X').replace(/^root .*/, 'root X'));
+
+  /** Config de nginx escrita dentro del Dockerfile (heredoc de la etapa 2). */
+  const inlineConfig = () => {
+    const start = dockerfile.indexOf("<<'NGINX_CONF'");
+    if (start === -1) return '';
+    const end = dockerfile.indexOf('\nNGINX_CONF', start);
+    return dockerfile.slice(dockerfile.indexOf('\n', start) + 1, end);
+  };
+
+  it('el Dockerfile trae dentro la misma config que nginx/phytoemagry.conf', () => {
+    const inline = inlineConfig();
+    // Sin esto, cambiar una y olvidar la otra publicaría dos comportamientos.
+    expect(inline).toContain('listen 80;');
+    expect(directives(inline)).toEqual(directives(nginxConf));
+    expect(nginxConf).toContain('root /var/www/phytoemagry;');
+    expect(inline).toContain('root /usr/share/nginx/html;');
+  });
+
+  it('la imagen compila, verifica y sirve solo los archivos generados', () => {
+    expect(dockerfile).toContain('RUN npm run verify');
+    expect(dockerfile).toContain('COPY --from=build /app/dist /usr/share/nginx/html');
+    expect(dockerfile).toContain('HEALTHCHECK');
+  });
+
+  it('el número de atención tiene valor por defecto: una imagen no sale sin WhatsApp', () => {
+    const arg = dockerfile.match(/ARG PHYTO_WHATSAPP_NUMBER="(\d+)"/);
+    expect(arg).not.toBeNull();
+    expect(arg[1].length).toBeGreaterThanOrEqual(10);
+    expect(siteConfig.contact.whatsapp.displayNumber.replace(/\D/g, '')).toBe(arg[1]);
+  });
+});
+
 describe('atención por WhatsApp: un solo número para todo', () => {
   /** Número de atención (República Dominicana) y cómo se le enseña al visitante. */
   const NUMBER = '18297853794';

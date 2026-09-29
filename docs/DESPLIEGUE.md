@@ -5,9 +5,13 @@ estático generado en el build (esbuild) y servido por **nginx**: no hay base de
 datos, ni proceso Node en producción, ni secretos dentro de la imagen.
 
 - Repositorio: `https://github.com/JUNIORPRUEVA/phytoemagrywed.git`
-- Dockerfile: raíz del proyecto (dos etapas: build + nginx)
-- Config de nginx: `nginx/phytoemagry.conf`
-- Compose: `docker-compose.yml`
+- Dockerfile: raíz del proyecto (dos etapas: build + nginx). **Lleva dentro la configuración del servidor web**, así que no hay que copiar ningún archivo de configuración a mano
+- Compose: `docker-compose.yml` (opcional pero recomendado: trae los valores y el healthcheck)
+- `nginx/phytoemagry.conf`: la misma configuración, para un servidor con nginx del sistema (sin Docker)
+
+> **Requisito**: Docker 23 o superior (2019+ con Compose v2). Comprueba con
+> `docker --version`. Si tienes uno más antiguo, arranca el build con
+> `DOCKER_BUILDKIT=1 docker build -t phytoemagry .`.
 
 ---
 
@@ -16,7 +20,7 @@ datos, ni proceso Node en producción, ni secretos dentro de la imagen.
 | Etapa | Qué pasa |
 | --- | --- |
 | `build` (node:22-alpine) | `npm ci` → `npm run verify` (**tests + revisión de contenido + build**) |
-| `runtime` (nginx:1.27-alpine) | Copia solo `dist/` + la config de nginx. Nada de Node, ni `node_modules`, ni fuentes |
+| `runtime` (nginx:1.27-alpine) | nginx con la config escrita dentro del Dockerfile + solo `dist/`. Nada de Node, ni `node_modules`, ni fuentes |
 
 Si los tests fallan, falta una foto de frasco, un precio no cuadra o el número de
 atención no coincide, **la imagen no se construye**: no se puede publicar una web
@@ -137,8 +141,8 @@ Y el certificado con Certbot:
 sudo certbot --nginx -d phytoemagry.com -d www.phytoemagry.com
 ```
 
-Después de tener HTTPS, en `nginx/phytoemagry.conf` dentro del contenedor ya
-puedes descomentar la línea de **HSTS**.
+Después de tener HTTPS, en el Dockerfile (bloque de la etapa `runtime`) puedes
+descomentar la línea de **HSTS**.
 
 ### b) Traefik / otro proxy con certificados automáticos
 
@@ -178,6 +182,7 @@ frasco y ver que el chat abre con el pedido escrito y el número correcto.
 | La web carga pero **no aparece ningún botón de WhatsApp** | La imagen se construyó sin número: reconstruye con `--build-arg PHYTO_WHATSAPP_NUMBER=...` o revisa el `.env` del compose |
 | Al cambiar una variable no veo el cambio | Hay que reconstruir: `docker compose up -d --build` (los valores van dentro del HTML) |
 | El build falla en `npm run verify` | Es intencionado: hay un test en rojo, un precio incoherente, una foto que falta o un número de atención que no coincide. El propio mensaje dice qué arreglar |
+| Error raro al leer el Dockerfile (`unknown instruction`, heredoc) | Docker demasiado antiguo: `DOCKER_BUILDKIT=1 docker build -t phytoemagry .` o actualiza Docker (`docker --version` debe ser 23 o superior) |
 | Quiero ver la web sin publicar | `docker run --rm -p 8080:80 phytoemagry` en tu máquina, o `npm run preview` en local |
 
 ---
