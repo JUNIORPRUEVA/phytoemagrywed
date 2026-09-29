@@ -103,6 +103,12 @@ export const contentConfig = {
     cardCta: 'Pedir por WhatsApp',
     /** Etiqueta cuando un frasco no tiene precio público. */
     priceOnRequest: 'Consultar precio',
+    /** Se muestra en el resumen mientras el visitante no ha elegido frasco. */
+    notChosen: 'Elige tu frasco',
+    /** Aviso cuando pulsa Comprar (o pedir) sin haber elegido frasco. */
+    chooseFirst: 'Elige primero tu frasco: toca la foto del que quieras.',
+    /** Recordatorio bajo el resumen vacío. */
+    orderEmpty: 'Toca el frasco que quieras para ver su precio y el total.',
     labels: {
       selected: 'Frasco elegido',
       unitPrice: 'Precio por frasco',
@@ -116,8 +122,12 @@ export const contentConfig = {
     },
     ctaBuy: 'Comprar / Consultar',
     ctaWhatsApp: 'Pedir por WhatsApp',
-    /** Nota bajo el resumen del pedido. */
-    note: 'No se realiza ningún cobro en esta página: coordinamos el pago y la entrega por WhatsApp.',
+    /**
+     * Nota bajo el resumen del pedido: deja claro que la web solo prepara el
+     * pedido y que el pedido se FINALIZA en WhatsApp (ahí se confirma y se paga).
+     */
+    note:
+      'El pedido se finaliza por WhatsApp: al pulsar «Comprar» se abre el chat con tu frasco, la cantidad y el total ya escritos. No se realiza ningún cobro en esta página.',
     /**
      * Enlace discreto a la comunidad junto a la zona de compra: engancha al
      * visitante que todavía no está listo para comprar (no es un Lead).
@@ -361,32 +371,38 @@ export const contentConfig = {
 
   /** --------------------------------------------------------- MODAL DE COMPRA */
   checkout: {
-    title: 'Confirmar pedido',
+    title: 'Hacer tu pedido',
     closeLabel: 'Cerrar',
-    intro: 'Solo necesitamos estos datos para coordinar tu pedido.',
+    /** Una sola frase: lo mínimo y qué pasa después. */
+    intro: 'Escribe tu nombre y seguimos en WhatsApp para confirmar tu pedido.',
+    /** Se muestra cuando no hay ningún frasco elegido. */
+    needVariant: 'Elige tu frasco antes de continuar.',
     labels: {
-      name: 'Nombre',
-      phone: 'WhatsApp o teléfono',
-      location: 'Ubicación (ciudad/país)',
-      quantity: 'Cantidad de frascos',
-      presentation: 'Frasco',
+      name: 'Tu nombre',
       product: 'Producto',
+      presentation: 'Frasco',
       unitPrice: 'Precio por frasco',
+      quantity: 'Cantidad de frascos',
       totalCapsules: 'Cápsulas en total',
       total: 'Total',
       priceOnRequest: 'A confirmar por WhatsApp',
+      notChosen: 'Sin elegir',
       changeVariant: 'Cambiar frasco',
+      /**
+       * Aviso informativo (sin casilla): el pedido se cierra en WhatsApp y es
+       * la propia persona quien inicia la conversación.
+       */
       consent:
-        'Autorizo que Phytoemagry me contacte por WhatsApp o teléfono para confirmar este pedido.',
+        'Al continuar se abre WhatsApp con tu pedido escrito: allí lo confirmamos y coordinamos pago y entrega.',
     },
     quantityHint: (max) => `Máximo ${max} frascos por pedido.`,
-    submit: 'Continuar pedido por WhatsApp',
+    submit: 'Continuar el pedido en WhatsApp',
     submitFallback: 'Enviar solicitud',
-    note: 'No se realiza ningún cobro en esta página. El pedido se confirma por WhatsApp.',
+    note: 'El pedido se finaliza por WhatsApp. En esta página no se realiza ningún cobro.',
     /** Texto mostrado cuando no hay número de WhatsApp configurado. */
     whatsappUnavailable: 'Número de WhatsApp pendiente de configurar.',
     successTitle: 'Pedido preparado',
-    successMessage: 'Te escribimos por WhatsApp para confirmar disponibilidad, pago y entrega.',
+    successMessage: 'Envíalo por WhatsApp: ahí confirmamos disponibilidad, pago y entrega.',
   },
 
   /** ------------------------------------------------------------ CTA FINAL */

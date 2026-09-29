@@ -171,13 +171,33 @@ export function renderVariantSelector(view) {
   const selector = content.selector;
   const labels = selector.labels;
   const multiple = pricing.variants.length > 1;
-  const defaultVariant = pricing.variants.find((variant) => variant.id === pricing.defaultVariantId) ?? pricing.variants[0];
-  const totals = pricing.forQuantity(1);
+  // Sin frasco elegido al entrar (a propósito): el resumen arranca vacío.
+  const chosenVariant = pricing.variants.find((variant) => variant.id === pricing.defaultVariantId) ?? null;
+  const totals = chosenVariant ? pricing.totalsFor(chosenVariant, 1) : null;
   const max = pricing.bounds.max;
 
-  // Enlace de WhatsApp ya construido para la presentación por defecto: así
-  // funciona incluso sin JavaScript. El cliente lo recalcula al cambiar.
-  const waUrl = variantOrderUrl(view, defaultVariant, 1);
+  // Enlace de WhatsApp ya construido: así funciona incluso sin JavaScript. Si
+  // todavía no hay frasco elegido, el mensaje sale genérico y el cliente lo
+  // completa en cuanto se elige uno.
+  const waUrl = view.whatsapp.enabled
+    ? buildWhatsAppUrl({
+        number: view.whatsapp.number,
+        message: buildWhatsAppMessage({
+          template: content.whatsapp.checkout,
+          data: chosenVariant
+            ? {
+                labels: view.whatsapp.labels,
+                productName: view.product.name,
+                variantName: chosenVariant.name,
+                capsules: chosenVariant.capsules,
+                quantity: 1,
+                unitPriceLabel: chosenVariant.priceLabel,
+                totalLabel: totals.totalLabel,
+              }
+            : { labels: view.whatsapp.labels },
+        }),
+      })
+    : null;
 
   return `<section class="pe-section pe-section--variants" id="frascos" aria-labelledby="pe-frascos-title">
       <div class="pe-container">
@@ -205,11 +225,11 @@ export function renderVariantSelector(view) {
           <dl class="pe-order__summary">
             <div class="pe-order__row">
               <dt>${escapeHtml(labels.selected)}</dt>
-              <dd data-summary-variant>${escapeHtml(defaultVariant.name)}</dd>
+              <dd data-summary-variant>${escapeHtml(chosenVariant?.name ?? selector.notChosen)}</dd>
             </div>
             <div class="pe-order__row">
               <dt>${escapeHtml(labels.unitPrice)}</dt>
-              <dd data-summary-unit>${escapeHtml(defaultVariant.priceLabel ?? selector.priceOnRequest)}</dd>
+              <dd data-summary-unit>${escapeHtml(chosenVariant ? (chosenVariant.priceLabel ?? selector.priceOnRequest) : '—')}</dd>
             </div>
             <div class="pe-order__row pe-order__row--qty">
               <dt>${escapeHtml(labels.quantity)}</dt>
@@ -223,14 +243,19 @@ export function renderVariantSelector(view) {
             </div>
             <div class="pe-order__row">
               <dt>${escapeHtml(labels.totalCapsules)}</dt>
-              <dd data-summary-capsules>${escapeHtml(String(totals.totalCapsules ?? ''))}</dd>
+              <dd data-summary-capsules>${escapeHtml(chosenVariant ? String(totals?.totalCapsules ?? '') : '—')}</dd>
             </div>
             <div class="pe-order__row pe-order__row--total">
               <dt>${escapeHtml(labels.total)}</dt>
-              <dd data-summary-total>${escapeHtml(totals.totalLabel ?? selector.priceOnRequest)}</dd>
+              <dd data-summary-total>${escapeHtml(chosenVariant ? (totals?.totalLabel ?? selector.priceOnRequest) : '—')}</dd>
             </div>
           </dl>
           <p class="pe-hint">${escapeHtml(labels.quantityHint(max))}</p>
+
+          ${/* Aviso cuando se pulsa comprar/pedir sin haber elegido frasco. */ ''}
+          <p class="pe-order__alert" data-order-alert role="alert" hidden></p>
+          ${/* Recordatorio mientras el resumen está vacío (lo oculta el cliente). */ ''}
+          <p class="pe-order__empty" data-order-empty${chosenVariant ? ' hidden' : ''}>${icon('arrowRight', { size: 16, className: 'pe-order__empty-icon' })}<span>${escapeHtml(selector.orderEmpty)}</span></p>
 
           <div class="pe-order__cta">
             ${buyAction({ source: 'selector', label: selector.ctaBuy, size: 'lg' })}

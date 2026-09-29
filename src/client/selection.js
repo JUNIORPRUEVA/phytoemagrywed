@@ -5,6 +5,10 @@
  * mensaje de WhatsApp. Se guarda en `sessionStorage` para que el usuario no
  * pierda su elección al recargar o al volver desde un enlace.
  *
+ * IMPORTANTE: puede NO haber frasco elegido (`variant: null`). Así el visitante
+ * tiene que elegir el suyo y, si pulsa "Comprar" sin hacerlo, se le pide que
+ * elija primero en vez de mandarle un pedido de un tamaño que no ha decidido.
+ *
  * Recordatorio del modelo: `variant` = presentación (cápsulas);
  * `quantity` = unidades de esa presentación.
  */
@@ -49,10 +53,10 @@ export function createSelectionStore(input) {
     storage.set(SELECTION_KEY, { variantId, quantity });
   }
 
-  /** Estado actual con totales ya calculados. */
+  /** Estado actual con totales ya calculados (puede no haber frasco elegido). */
   function get() {
-    const variant = findVariant(variants, variantId) ?? variants[0] ?? null;
-    const totals = view.pricing.forVariant(variant?.id ?? null, quantity);
+    const variant = findVariant(variants, variantId) ?? null;
+    const totals = view.pricing.totalsFor(variant, quantity);
     return { variant, variantId: variant?.id ?? null, quantity: totals.quantity, totals };
   }
 
@@ -73,6 +77,12 @@ export function createSelectionStore(input) {
     setVariant(id) {
       if (!findVariant(variants, id)) return get();
       variantId = id;
+      persist();
+      return emit('variant');
+    },
+    /** Vuelve al estado inicial (sin frasco elegido). */
+    clearVariant() {
+      variantId = view.pricing.defaultVariantId;
       persist();
       return emit('variant');
     },

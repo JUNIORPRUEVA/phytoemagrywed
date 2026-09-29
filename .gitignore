@@ -11,6 +11,7 @@ Thumbs.db
 
 # Artefactos de verificación local
 .playwright-mcp/
+.tmp-playwright/
 lighthouse-*.json
 
 # Entorno de Python (solo para scripts/generate-placeholder-images.py)

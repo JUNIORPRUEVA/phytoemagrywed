@@ -7,6 +7,7 @@
 
 import { attributionRef } from '../lib/attribution.js';
 import { EVENTS } from '../lib/tracking.js';
+import { promptChooseVariant } from './choose-variant.js';
 import { on } from './dom.js';
 import { buildOrderWhatsAppUrl, variantEventData } from './order-message.js';
 
@@ -52,6 +53,22 @@ export function initWhatsAppActions(ctx) {
     const orderLink = element.closest('[data-action="whatsapp-order"]');
     if (orderLink instanceof HTMLAnchorElement && ctx.selection) {
       const cardVariant = orderLink.dataset.variant ?? null;
+      // Botón del resumen sin frasco elegido: no se abre un pedido a medias, se
+      // pide que elija primero (y no se registra `click_whatsapp`: sería falso,
+      // porque no se abrió WhatsApp).
+      if (!cardVariant && !ctx.selection.get().variant) {
+        event.preventDefault();
+        tracker.trackEvent(EVENTS.CLICK_BUY, {
+          source: orderLink.dataset.source ?? 'selector',
+          blocked: 'no_variant',
+          productId: view.product.id,
+          productName: view.product.name,
+          currency: view.currency,
+        });
+        promptChooseVariant(view);
+        return;
+      }
+
       if (cardVariant && ctx.selection.get().variantId !== cardVariant) {
         const state = ctx.selection.setVariant(cardVariant);
         tracker.trackEvent(EVENTS.SELECT_VARIANT, { source: 'card', ...variantEventData(state) });

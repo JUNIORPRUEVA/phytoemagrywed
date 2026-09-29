@@ -9,8 +9,9 @@
 
 import { buildLeadPayload, buildOrderIntentPayload } from '../lib/api.js';
 import { EVENTS } from '../lib/tracking.js';
-import { validateOrder } from '../lib/validation.js';
+import { sanitizeName } from '../lib/validation.js';
 import { clearFieldErrors, focusById, hideElement, on, prefersReducedMotion, qs, setAlert, setFieldError, showElement } from './dom.js';
+import { promptChooseVariant } from './choose-variant.js';
 import { buildOrderWhatsAppUrl, variantEventData } from './order-message.js';
 import { openWhatsAppWindow } from './whatsapp-open.js';
 
@@ -25,7 +26,6 @@ export function initCheckout(ctx) {
   if (!dialog || !form) return null;
 
   const store = ctx.selection;
-  const qtyInput = /** @type {HTMLInputElement|null} */ (qs('#pe-co-quantity', form));
   const summaryVariant = qs('[data-summary-variant]', form);
   const summaryUnit = qs('[data-summary-unit]', form);
   const summaryQty = qs('[data-summary-qty]', form);
@@ -45,16 +45,28 @@ export function initCheckout(ctx) {
   function updateSummary() {
     const state = store.get();
     const { variant, quantity, totals } = state;
-    if (summaryVariant) summaryVariant.textContent = variant?.name ?? priceOnRequest;
+    if (summaryVariant) summaryVariant.textContent = variant?.name ?? view.content.checkout.labels.notChosen;
     if (summaryUnit) summaryUnit.textContent = variant?.priceLabel ?? priceOnRequest;
     if (summaryQty) summaryQty.textContent = String(quantity);
-    if (summaryCapsules) summaryCapsules.textContent = String(totals.totalCapsules ?? '');
+    if (summaryCapsules) summaryCapsules.textContent = variant ? String(totals.totalCapsules ?? '') : '';
     if (summaryTotal) summaryTotal.textContent = totals.totalLabel ?? priceOnRequest;
-    if (qtyInput && String(qtyInput.value) !== String(quantity)) qtyInput.value = String(quantity);
     return state;
   }
 
   function open(source) {
+    // Sin frasco elegido no se abre el pedido: se pide que lo elija primero.
+    if (!store.get().variant) {
+      tracker.trackEvent(EVENTS.CLICK_BUY, {
+        source,
+        blocked: 'no_variant',
+        productId: view.product.id,
+        productName: view.product.name,
+        currency: view.currency,
+      });
+      promptChooseVariant(view);
+      return null;
+    }
+
     clearFieldErrors(form);
     setAlert(alertBox, '');
     hideElement(successPanel);
@@ -87,6 +99,8 @@ export function initCheckout(ctx) {
 
     // Foco en el primer campo (accesibilidad) sin robar el scroll.
     window.setTimeout(() => focusById('pe-co-name'), prefersReducedMotion() ? 0 : 60);
+
+    return store.get();
   }
 
   function close() {
@@ -141,10 +155,6 @@ export function initCheckout(ctx) {
     }
   });
 
-  // La cantidad del modal es la MISMA que la del selector (estado compartido).
-  on(qtyInput, 'change', () => store.setQuantity(qtyInput?.value));
-  on(qtyInput, 'input', () => store.setQuantity(qtyInput?.value));
-
   // Si la presentación o la cantidad cambian en cualquier sitio, el resumen se actualiza.
   store.subscribe((state, reason) => {
     if (reason === 'variant' || reason === 'quantity') updateSummary();
@@ -157,42 +167,35 @@ export function initCheckout(ctx) {
     clearFieldErrors(form);
     setAlert(alertBox, '');
 
+    // Formulario mínimo: SOLO el nombre. El frasco y la cantidad ya se eligieron
+    // arriba y el pedido se cierra en WhatsApp (donde el negocio ve el número).
     const data = new FormData(form);
-    const result = validateOrder(
-      {
-        name: data.get('name'),
-        phone: data.get('phone'),
-        location: data.get('location'),
-        quantity: data.get('quantity'),
-        consent: data.get('consent') === 'on',
-      },
-      { maxQuantity: view.maxQuantity },
-    );
-
-    if (!result.ok) {
-      for (const [field, code] of Object.entries(result.errors)) {
-        setFieldError(form, field, view.content.errors[code] ?? view.content.errors.generic);
-      }
+    const name = sanitizeName(data.get('name'));
+    if (!name || name.length < 2) {
+      setFieldError(form, 'name', view.content.errors[name ? 'name_too_short' : 'name_required']);
       setAlert(alertBox, view.content.leadForm.errorSummary);
-      const first = Object.keys(result.errors)[0];
-      const focusTarget = { name: 'pe-co-name', phone: 'pe-co-phone', location: 'pe-co-location', quantity: 'pe-co-quantity', consent: 'pe-co-consent' }[first];
-      if (focusTarget) focusById(focusTarget);
+      focusById('pe-co-name');
+      tracker.trackEvent('form_error', { form: 'checkout', fields: ['name'] });
       return;
     }
 
-    // La cantidad del modal es la de UNIDADES de la presentación elegida.
-    store.setQuantity(result.values.quantity);
     const selection = store.get();
     const { variant, quantity, totals } = selection;
+    // Si llegara aquí sin frasco (no debería: `open()` lo impide), se pide elegir.
+    if (!variant) {
+      promptChooseVariant(view);
+      return;
+    }
+
     const attribution = ctx.getAttribution();
     const source = 'checkout';
 
     // 1) Lead + intención de pedido (van al CRM cuando exista endpoint; si no,
     //    quedan en la cola local del navegador).
     const lead = buildLeadPayload({
-      name: result.values.name,
-      phone: result.values.phone,
-      location: result.values.location,
+      name,
+      phone: null,
+      location: null,
       source,
       consent: true,
       consentVersion: view.site.crm.consentTextVersion,
@@ -234,7 +237,7 @@ export function initCheckout(ctx) {
     //    `click_whatsapp` (sería una métrica falsa: no se abrió WhatsApp).
     const url = buildOrderWhatsAppUrl(ctx, {
       selection,
-      customer: { name: result.values.name, location: result.values.location },
+      customer: { name },
       template: view.content.whatsapp.checkout,
     });
     const opened = url ? openWhatsApp(url) : false;

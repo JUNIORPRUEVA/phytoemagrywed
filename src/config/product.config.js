@@ -77,8 +77,15 @@ export const productConfig = {
     { id: 'capsules_30', capsules: 30, price: 6000, image: '/assets/img/frascos/frasco-30' },
     { id: 'capsules_60', capsules: 60, price: 10000, image: '/assets/img/frascos/frasco-60', completeBottle: true },
   ],
-  /** Presentación preseleccionada en el selector (debe existir en `variants`). */
-  defaultVariantId: 'capsules_10',
+  /**
+   * FRASCO ELEGIDO AL ENTRAR: ninguno (a propósito).
+   *
+   * El visitante elige su frasco en el carrusel y, si pulsa "Comprar" sin
+   * haberlo elegido, la web se lo pide en vez de mandarle un pedido de un
+   * tamaño que no ha decidido. El precio "Desde" no depende de esto: sale
+   * siempre del frasco más económico real.
+   */
+  defaultVariantId: null,
 
   /** ------------------------------------------------------------------ FORMATO */
   /** Presentación comercial principal (null => se usa el nombre de la variante). */

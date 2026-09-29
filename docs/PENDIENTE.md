@@ -146,6 +146,9 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 | Palanca | Cómo está |
 | --- | --- |
 | Pedir en 1 toque, sin registrarse | Cada frasco tiene su botón de WhatsApp con el pedido ya escrito (producto, frasco, cantidad, precio, total) |
+| Pedido sin fricción | El modal de compra pide **solo el nombre**; el frasco/cantidad/total ya están elegidos y viajan en el mensaje |
+| Nada de callejones | Comprar sin frasco elegido no falla ni abre el modal: pide elegir el frasco y baja al carrusel |
+| Dónde se cierra la venta, dicho claro | "El pedido se finaliza por WhatsApp" en el resumen, en el modal (3 sitios) y en el panel de éxito |
 | Precio claro antes de pedir | Los 7 precios en RD$, a la vista, sin "consultar precio" |
 | Foto real por frasco | Carrusel deslizable; el cliente ve justo el frasco que va a pedir |
 | Número a la vista | `+1 829 785 3794` en el footer y junto al formulario: se ve que hay alguien detrás |
@@ -172,8 +175,10 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 ### Para captar clientes potenciales de verdad
 
 - **Dónde llegan los contactos**: hoy **al WhatsApp del negocio**
-  (`+1 829 785 3794`), con nombre, teléfono y ubicación ya escritos; el visitante
-  solo pulsa enviar. Detalle y opciones en
+  (`+1 829 785 3794`). Los **pedidos** llegan completos (frasco, cantidad, precio
+  por frasco, cápsulas, total y el nombre que se escribe en el modal); los
+  **contactos del formulario** llegan con nombre, teléfono y ubicación ya
+  escritos. El visitante solo pulsa enviar. Detalle y opciones en
   [`CRM-CONTRACT.md`](CRM-CONTRACT.md) → "¿Dónde llegan los contactos?".
 - **Endpoint del CRM** (`PHYTO_CRM_ENDPOINT`), para tener además el registro
   ordenado: sin él, la cola local vive en el navegador **del visitante** y no es

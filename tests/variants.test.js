@@ -173,11 +173,14 @@ describe('cálculo de totales: presentación × unidades', () => {
 
   it('no inventa precio si la presentación no existe', () => {
     const totals = total('capsules_999', 1);
-    // findVariant no la encuentra: se usa la presentación por defecto (comportamiento seguro)
-    expect(totals.total).toBe(2500);
+    // findVariant no la encuentra: se usa la presentación de referencia (comportamiento seguro)
+    expect(totals.total).toBe(1250);
+    // Y sin frasco elegido no hay precio en absoluto (el resumen arranca vacío).
     const empty = variantTotals(null, 2, { currency: 'DOP', locale: 'es-DO' });
     expect(empty.total).toBeNull();
     expect(empty.totalLabel).toBeNull();
+    expect(empty.hasPrice).toBe(false);
+    expect(empty.totalCapsules).toBeNull();
   });
 });
 

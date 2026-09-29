@@ -155,7 +155,18 @@ export function buildView(overrides = {}) {
     /** Foto REAL de esa presentación (null mientras no exista el archivo). */
     image: resolveImage(variant.image, { alt: `${altBase} — ${variant.name}`, ...variantImage }),
   }));
-  const defaultVariant = findVariant(variants, product.defaultVariantId) ?? variants[0] ?? null;
+  /**
+   * FRASCO ELEGIDO AL ENTRAR.
+   *
+   * A propósito NO se preselecciona ninguno (`defaultVariantId: null`): el
+   * visitante tiene que elegir su frasco, y si pulsa "Comprar" sin elegirlo se
+   * le pide que lo haga. Así no se cuela un pedido del tamaño equivocado.
+   *
+   * `referenceVariant` es solo para etiquetas y datos estructurados (p. ej. el
+   * precio de referencia); nunca decide por el visitante.
+   */
+  const preselectedVariant = findVariant(variants, product.defaultVariantId) ?? null;
+  const referenceVariant = preselectedVariant ?? variants[0] ?? null;
   const fromVariant = cheapestVariant(variants);
 
   // ---------------------------------------------------------------- COMUNIDAD
@@ -273,8 +284,8 @@ export function buildView(overrides = {}) {
     whatsapp: waEnabled,
     /** Hay al menos una presentación con precio real. */
     variants: variants.length > 0,
-    pricing: Boolean(defaultVariant),
-    priceOnRequest: !defaultVariant && showPriceWhenUnknown,
+    pricing: Boolean(referenceVariant),
+    priceOnRequest: !referenceVariant && showPriceWhenUnknown,
     compareAt: false,
     availability: Boolean(availabilityLabel),
     community: activeGroup !== null,
@@ -328,10 +339,10 @@ export function buildView(overrides = {}) {
       locale,
       bounds,
       variants,
-      defaultVariantId: defaultVariant?.id ?? null,
-      hasPrice: Boolean(defaultVariant),
-      unitPrice: defaultVariant?.price ?? null,
-      unitPriceLabel: defaultVariant?.priceLabel ?? null,
+      defaultVariantId: preselectedVariant?.id ?? null,
+      hasPrice: Boolean(referenceVariant),
+      unitPrice: referenceVariant?.price ?? null,
+      unitPriceLabel: referenceVariant?.priceLabel ?? null,
       /** "Desde RD$1,250" — presentación más económica disponible. */
       fromLabel: fromVariant ? formatPrice(fromVariant.price, { currency, locale }) : null,
       fromVariantId: fromVariant?.id ?? null,
@@ -345,14 +356,21 @@ export function buildView(overrides = {}) {
        * @param {unknown} quantity
        */
       forVariant: (variantId, quantity) =>
-        variantTotals(findVariant(variants, variantId) ?? defaultVariant, quantity, {
+        variantTotals(findVariant(variants, variantId) ?? referenceVariant, quantity, {
           currency,
           locale,
           ...bounds,
         }),
-      /** Atajo: totales de la presentación por defecto. */
+      /**
+       * Totales a partir del frasco YA resuelto (o `null` si no hay ninguno
+       * elegido). No cae a otro frasco: sin elección, no hay total.
+       * @param {any} variant
+       * @param {unknown} quantity
+       */
+      totalsFor: (variant, quantity) => variantTotals(variant ?? null, quantity, { currency, locale, ...bounds }),
+      /** Atajo: totales del frasco preseleccionado (o sin precio si no hay). */
       forQuantity: (quantity) =>
-        variantTotals(defaultVariant, quantity, { currency, locale, ...bounds }),
+        variantTotals(preselectedVariant ?? referenceVariant, quantity, { currency, locale, ...bounds }),
     },
     community: {
       groups,

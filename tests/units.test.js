@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeTotals, formatPrice, hasPrice, normalizeQuantity } from '../src/lib/format.js';
-import { normalizePhone, sanitizeText, validateLead, validateOrder } from '../src/lib/validation.js';
+import { normalizePhone, sanitizeText, validateLead } from '../src/lib/validation.js';
 import { attributionRef, buildAttribution, hasCampaignData } from '../src/lib/attribution.js';
 import { buildWhatsAppMessage, buildWhatsAppUrl, isWhatsAppConfigured, normalizeWhatsAppNumber } from '../src/lib/whatsapp.js';
 import { attributionRef as ref2 } from '../src/lib/attribution.js';
@@ -67,12 +67,15 @@ describe('validación de entradas', () => {
     expect(ok.values.consent).toBe(true);
   });
 
-  it('valida el pedido: la ubicación y la cantidad son obligatorias', () => {
-    const result = validateOrder({ name: 'Ana', phone: '+56911112222', consent: true, quantity: '99' }, { maxQuantity: 10 });
-    expect(result.errors.location).toBe('location_required');
-    expect(result.errors.quantity).toBe('quantity_too_high');
-    expect(result.values.quantity).toBe(10);
-    expect(result.ok).toBe(false);
+  it('el nombre sigue siendo obligatorio para dejar un contacto', () => {
+    // El formulario de compra ya solo pide el nombre (el frasco y la cantidad se
+    // eligen en el carrusel y el pedido se cierra en WhatsApp), así que aquí se
+    // comprueba lo que sigue siendo obligatorio en el formulario de contacto.
+    const sinNombre = validateLead({ phone: '+56911112222', consent: true });
+    expect(sinNombre.errors.name).toBe('name_required');
+
+    const nombreCorto = validateLead({ name: 'A', phone: '+56911112222', consent: true });
+    expect(nombreCorto.errors.name).toBe('name_too_short');
   });
 });
 

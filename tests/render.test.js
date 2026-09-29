@@ -139,9 +139,9 @@ describe('landing con los 7 frascos reales', () => {
       expect(input.getAttribute('name')).toBe('pe-variant');
       expect(input.closest('label')).not.toBeNull();
     }
-    // Solo una preseleccionada
-    expect(inputs.filter((input) => input.hasAttribute('checked'))).toHaveLength(1);
-    expect(inputs.find((input) => input.hasAttribute('checked')).value).toBe('capsules_10');
+    // NINGUNA preseleccionada: el visitante tiene que elegir su frasco.
+    expect(inputs.filter((input) => input.hasAttribute('checked'))).toHaveLength(0);
+    expect(doc.querySelectorAll('[data-variant-card][data-selected="true"]')).toHaveLength(0);
   });
 
   it('marca el frasco completo con una etiqueta neutra y una sola vez', () => {
@@ -222,12 +222,20 @@ describe('landing con los 7 frascos reales', () => {
     expect(hero.textContent).not.toMatch(/más vendido|mejor opción|recomendado|oferta|ahorras/i);
   });
 
-  it('el resumen del pedido parte de la presentación preseleccionada', () => {
+  it('el resumen arranca vacío y pide elegir el frasco', () => {
     const order = doc.querySelector('[data-order]');
-    expect(order.querySelector('[data-summary-variant]').textContent.trim()).toBe('10 cápsulas');
-    expect(order.querySelector('[data-summary-unit]').textContent.trim()).toBe('RD$2,500');
+    expect(order.querySelector('[data-summary-variant]').textContent.trim()).toBe('Elige tu frasco');
+    expect(order.querySelector('[data-summary-unit]').textContent.trim()).toBe('—');
+    expect(order.querySelector('[data-summary-capsules]').textContent.trim()).toBe('—');
+    expect(order.querySelector('[data-summary-total]').textContent.trim()).toBe('—');
     expect(order.querySelector('[data-qty-input]').getAttribute('max')).toBe('10');
-    expect(order.querySelector('[data-summary-total]').textContent.trim()).toBe('RD$2,500');
+    // Y se dice claramente qué falta (esto lo oculta el cliente al elegir).
+    const vacio = order.querySelector('[data-order-empty]');
+    expect(vacio).not.toBeNull();
+    expect(vacio.hasAttribute('hidden')).toBe(false);
+    expect(vacio.textContent).toContain('Toca el frasco que quieras');
+    // El aviso de "elige primero" está listo pero oculto.
+    expect(order.querySelector('[data-order-alert]').hasAttribute('hidden')).toBe(true);
   });
 
   it('la tarjeta de frasco no repite el nombre con texto oculto', () => {
@@ -265,14 +273,16 @@ describe('landing con los 7 frascos reales', () => {
     expect(order.textContent).toContain('Cápsulas en total');
   });
 
-  it('el enlace de WhatsApp del resumen ya lleva el frasco por defecto (sin JS)', () => {
+  it('el enlace de WhatsApp del resumen existe y se completa al elegir (sin JS, genérico)', () => {
     const link = doc.querySelector('[data-order] [data-action="whatsapp-order"]');
-    const url = new URL(link.getAttribute('href'));
+    expect(link).not.toBeNull();
+    const url = new URL(link.getAttribute("href"));
     expect(url.origin + url.pathname).toBe(`https://wa.me/${WHATSAPP}`);
     const text = url.searchParams.get('text');
-    expect(text).toContain('Frasco: 10 cápsulas');
-    expect(text).toContain('Cantidad: 1');
-    expect(text).toContain('Total: RD$2,500');
+    // Sin frasco elegido el mensaje sale sin datos inventados…
+    expect(text).toContain('quiero confirmar este pedido');
+    expect(text).not.toContain('Frasco:');
+    expect(text).not.toContain('Total:');
   });
 
   it('cada tarjeta del carrusel pide SU frasco con el pedido completo (sin JS)', () => {

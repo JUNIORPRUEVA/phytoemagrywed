@@ -1374,6 +1374,67 @@
   font-weight: 600;
 }
 
+/*
+ * Resumen sin frasco elegido: se dice claramente qué falta, en tono de aviso
+ * suave (nunca como error: el visitante no ha hecho nada mal).
+ */
+.pe-order__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pe-space-2);
+  margin: var(--pe-space-3) 0 0;
+  padding: var(--pe-space-3) var(--pe-space-4);
+  border-radius: var(--pe-radius);
+  background: var(--pe-brand-100);
+  color: var(--pe-brand-800);
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.pe-order__empty[hidden] {
+  display: none;
+}
+
+.pe-order__empty-icon {
+  flex: none;
+}
+
+/* Aviso al pulsar Comprar sin frasco: llama la atención y desaparece solo. */
+.pe-order__alert {
+  margin: var(--pe-space-3) 0 0;
+  padding: var(--pe-space-3) var(--pe-space-4);
+  border: 1px solid var(--pe-warn);
+  border-radius: var(--pe-radius);
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
+  font-size: var(--pe-fs-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.pe-order__alert[hidden] {
+  display: none;
+}
+
+/* Aviso informativo del modal: el pedido se cierra en WhatsApp. */
+.pe-dialog__consent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pe-space-2);
+  margin: var(--pe-space-4) 0 0;
+  font-size: var(--pe-fs-sm);
+  color: var(--pe-ink-500);
+  line-height: 1.45;
+}
+
+.pe-dialog__consent-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--pe-brand-700);
+}
+
 @media (min-width: 640px) {
   .pe-community__cards {
     grid-template-columns: repeat(3, minmax(0, 1fr));

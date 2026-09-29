@@ -135,21 +135,23 @@ beforeEach(() => {
 });
 
 describe('selector de frascos', () => {
-  it('muestra la presentación preseleccionada y su precio', () => {
+  it('arranca sin frasco elegido y lo pide en el resumen', () => {
     const app = mount();
-    expect(app.inOrder('[data-summary-variant]').textContent).toBe('10 cápsulas');
-    expect(app.inOrder('[data-summary-unit]').textContent).toBe('RD$2,500');
-    expect(app.inOrder('[data-summary-total]').textContent).toBe('RD$2,500');
-    expect(app.variantCard('capsules_10').getAttribute('data-selected')).toBe('true');
+    expect(app.inOrder('[data-summary-variant]').textContent).toBe('Elige tu frasco');
+    expect(app.inOrder('[data-summary-unit]').textContent).toBe('—');
+    expect(app.inOrder('[data-summary-total]').textContent).toBe('—');
+    expect(app.inOrder('[data-order-empty]').hidden).toBe(false);
+    expect(app.variantCard('capsules_10').getAttribute('data-selected')).toBe('false');
   });
 
-  it('al elegir otra presentación actualiza precio, total y evento', () => {
+  it('al elegir la presentación actualiza precio, total y evento', () => {
     const app = mount();
     app.selectVariant('capsules_30');
 
     expect(app.inOrder('[data-summary-variant]').textContent).toBe('30 cápsulas');
     expect(app.inOrder('[data-summary-unit]').textContent).toBe('RD$6,000');
     expect(app.inOrder('[data-summary-total]').textContent).toBe('RD$6,000');
+    expect(app.inOrder('[data-order-empty]').hidden).toBe(true);
     expect(app.variantCard('capsules_30').getAttribute('data-selected')).toBe('true');
     expect(app.variantCard('capsules_10').getAttribute('data-selected')).toBe('false');
 
@@ -159,6 +161,7 @@ describe('selector de frascos', () => {
 
   it('la cantidad son unidades: 10 cápsulas × 2 = RD$5,000 (20 cápsulas)', () => {
     const app = mount();
+    app.selectVariant('capsules_10');
     app.setQty(2);
     expect(app.inOrder('[data-qty-input]').value).toBe('2');
     expect(app.inOrder('[data-summary-total]').textContent).toBe('RD$5,000');
@@ -296,64 +299,118 @@ describe('selector de frascos', () => {
   });
 });
 
-describe('modal de compra', () => {
-  it('abre con la presentación y cantidad elegidas y registra los eventos', () => {
+describe('modal de compra (mínimo: solo el nombre)', () => {
+  it('sin frasco elegido NO abre el pedido: pide elegir frasco primero', () => {
+    const app = mount();
+    app.click('[data-action="buy"][data-source="selector"]');
+
+    expect(app.$('#pe-checkout').hasAttribute('open')).toBe(false);
+    const alerta = app.inOrder('[data-order-alert]');
+    expect(alerta.hidden).toBe(false);
+    expect(alerta.textContent).toContain('Elige primero tu frasco');
+
+    // Se registra el intento, pero no se cuenta como pedido iniciado ni WhatsApp.
+    const buy = app.events.find((event) => event.event === EVENTS.CLICK_BUY);
+    expect(buy.data).toMatchObject({ source: 'selector', blocked: 'no_variant' });
+    expect(app.eventNames()).not.toContain(EVENTS.BEGIN_CHECKOUT);
+    expect(app.eventNames()).not.toContain(EVENTS.CLICK_WHATSAPP);
+  });
+
+  it('el resumen arranca vacío, sin ninguna tarjeta marcada', () => {
+    const app = mount();
+    expect(app.inOrder('[data-summary-variant]').textContent).toBe('Elige tu frasco');
+    expect(app.inOrder('[data-summary-unit]').textContent).toBe('—');
+    expect(app.inOrder('[data-summary-capsules]').textContent).toBe('—');
+    expect(app.inOrder('[data-summary-total]').textContent).toBe('—');
+    expect(app.inOrder('[data-order-empty]').hidden).toBe(false);
+    expect(document.querySelectorAll('[data-variant-card][data-selected="true"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-variant-input]:checked')).toHaveLength(0);
+  });
+
+  it('el botón de pedir del resumen también pide elegir frasco primero', () => {
+    const app = mount();
+    const link = app.inOrder('[data-action="whatsapp-order"]');
+    link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(app.inOrder('[data-order-alert]').hidden).toBe(false);
+    // No se abrió WhatsApp: no puede contarse como clic de WhatsApp.
+    expect(app.eventNames()).not.toContain(EVENTS.CLICK_WHATSAPP);
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it('el aviso de "elige tu frasco" desaparece en cuanto se elige', () => {
+    const app = mount();
+    app.click('[data-action="buy"]');
+    expect(app.inOrder('[data-order-alert]').hidden).toBe(false);
+
+    app.selectVariant('capsules_5');
+    expect(app.inOrder('[data-order-alert]').hidden).toBe(true);
+  });
+
+  it('con el frasco elegido abre con el resumen completo', () => {
     const app = mount();
     app.selectVariant('capsules_20');
     app.setQty(2);
+
+    // El resumen de la sección se completa y el recordatorio desaparece.
+    expect(app.inOrder('[data-summary-variant]').textContent).toBe('20 cápsulas');
+    expect(app.inOrder('[data-summary-unit]').textContent).toBe('RD$5,000');
+    expect(app.inOrder('[data-summary-total]').textContent).toBe('RD$10,000');
+    expect(app.inOrder('[data-order-empty]').hidden).toBe(true);
+
     app.click('[data-action="buy"][data-source="selector"]');
 
     expect(app.$('#pe-checkout').hasAttribute('open')).toBe(true);
     expect(app.$('#pe-checkout-form [data-summary-variant]').textContent).toBe('20 cápsulas');
     expect(app.$('#pe-checkout-form [data-summary-unit]').textContent).toBe('RD$5,000');
     expect(app.$('#pe-checkout-form [data-summary-qty]').textContent).toBe('2');
+    expect(app.$('#pe-checkout-form [data-summary-capsules]').textContent).toBe('40');
     expect(app.$('#pe-checkout-form [data-summary-total]').textContent).toBe('RD$10,000');
 
-    const buy = app.events.find((event) => event.event === EVENTS.CLICK_BUY);
     const begin = app.events.find((event) => event.event === EVENTS.BEGIN_CHECKOUT);
-    expect(buy.data).toMatchObject({ source: 'selector', variantId: 'capsules_20', total: 10000 });
     expect(begin.data).toMatchObject({ variantId: 'capsules_20', capsules: 20, quantity: 2, total: 10000 });
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('valida antes de enviar', () => {
+  it('el formulario pide SOLO el nombre y avisa de que el pedido se cierra en WhatsApp', () => {
     const app = mount();
+    app.selectVariant('capsules_10');
+    app.click('[data-action="buy"]');
+
+    const form = app.$('#pe-checkout-form');
+    expect([...form.querySelectorAll('input')].map((input) => input.name)).toEqual(['name']);
+    expect(form.textContent).toContain('seguimos en WhatsApp');
+    expect(form.textContent).toContain('se abre WhatsApp con tu pedido escrito');
+    expect(form.textContent).toContain('El pedido se finaliza por WhatsApp');
+  });
+
+  it('valida el nombre antes de enviar', () => {
+    const app = mount();
+    app.selectVariant('capsules_10');
     app.click('[data-action="buy"]');
     app.submit('#pe-checkout-form');
 
-    const form = '#pe-checkout-form ';
-    expect(app.$(`${form}[data-error-for="name"]`).hidden).toBe(false);
-    expect(app.$(`${form}[data-error-for="consent"]`).textContent).toContain('autorización');
+    expect(app.$('#pe-checkout-form [data-error-for="name"]').hidden).toBe(false);
     expect(app.$('[data-form-alert]').hidden).toBe(false);
     expect(app.storage.get(QUEUE_KEY)).toBeNull();
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('cambiar la cantidad en el modal actualiza el selector', () => {
+  it('"Cambiar frasco" cierra el modal y lleva al selector', () => {
     const app = mount();
-    app.click('[data-action="buy"]');
-    app.setQty(3);
-    expect(app.inOrder('[data-summary-total]').textContent).toBe('RD$7,500');
-  });
-
-  it('"Cambiar presentación" cierra el modal y lleva al selector', () => {
-    const app = mount();
+    app.selectVariant('capsules_60');
     app.click('[data-action="buy"]');
     expect(app.$('#pe-checkout').open).toBe(true);
     app.$('[data-change-variant]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     expect(app.$('#pe-checkout').open).toBe(false);
   });
 
-  it('con datos válidos guarda lead + order_intent y abre WhatsApp con la presentación', async () => {
+  it('con solo el nombre guarda lead + order_intent y abre WhatsApp con el pedido', async () => {
     const app = mount();
     app.selectVariant('capsules_10');
     app.click('[data-action="buy"]');
 
     app.fill('#pe-co-name', 'Ana Gómez');
-    app.fill('#pe-co-phone', '+1 809 555 1234');
-    app.fill('#pe-co-location', 'Higüey, La Altagracia');
-    app.fill('#pe-co-quantity', '2');
-    app.check('#pe-co-consent');
     app.submit('#pe-checkout-form');
     await flush();
 
@@ -364,25 +421,25 @@ describe('modal de compra', () => {
     const lead = queue.find((item) => item.type === 'lead');
     const order = queue.find((item) => item.type === 'order_intent');
 
+    // Sin teléfono ni ubicación a propósito: solo el nombre.
     expect(lead).toMatchObject({
       name: 'Ana Gómez',
-      phone: '+18095551234',
-      location: 'Higüey, La Altagracia',
+      phone: null,
+      location: null,
       source: 'checkout',
       consent: true,
       variantId: 'capsules_10',
       variantName: '10 cápsulas',
       capsules: 10,
-      quantity: 2,
+      quantity: 1,
     });
     expect(order).toMatchObject({
       variantId: 'capsules_10',
       variantName: '10 cápsulas',
       capsules: 10,
-      quantity: 2,
+      quantity: 1,
       unitPrice: 2500,
-      total: 5000,
-      totalCapsules: 20,
+      total: 2500,
       currency: 'DOP',
       status: 'pending_confirmation',
     });
@@ -392,23 +449,23 @@ describe('modal de compra', () => {
     const url = new URL(openSpy.mock.calls[0][0]);
     const text = url.searchParams.get('text');
     expect(text).toContain('Frasco: 10 cápsulas');
-    expect(text).toContain('Cantidad: 2');
-    expect(text).toContain('Total: RD$5,000');
-    expect(text).toContain('Ana Gómez');
+    expect(text).toContain('Cantidad: 1');
+    expect(text).toContain('Total: RD$2,500');
+    // El nombre del cliente va en el mensaje: el negocio sabe con quién habla.
+    expect(text).toContain('Nombre: Ana Gómez');
     expect(text).toContain('Ref: facebook/cpc/verano');
 
     expect(app.$('#pe-checkout-form').hidden).toBe(true);
     expect(app.$('[data-checkout-success]').hidden).toBe(false);
+    expect(app.$('[data-checkout-success]').textContent).toContain('WhatsApp');
   });
 
   it('si el navegador bloquea la pestaña ofrece el enlace manual', async () => {
     const app = mount();
     window.open = vi.fn(() => null);
+    app.selectVariant('capsules_5');
     app.click('[data-action="buy"]');
     app.fill('#pe-co-name', 'Ana');
-    app.fill('#pe-co-phone', '+18095551234');
-    app.fill('#pe-co-location', 'Higüey');
-    app.check('#pe-co-consent');
     app.submit('#pe-checkout-form');
     await flush();
 
@@ -420,11 +477,9 @@ describe('modal de compra', () => {
   it('sin WhatsApp configurado guarda la solicitud y no simula un clic de WhatsApp', async () => {
     const app = mount({ whatsapp: null });
     expect(app.$('[data-action="whatsapp-order"]')).toBeNull();
+    app.selectVariant('capsules_5');
     app.click('[data-action="buy"]');
     app.fill('#pe-co-name', 'Ana');
-    app.fill('#pe-co-phone', '+18095551234');
-    app.fill('#pe-co-location', 'Higüey');
-    app.check('#pe-co-consent');
     app.submit('#pe-checkout-form');
     await flush();
 

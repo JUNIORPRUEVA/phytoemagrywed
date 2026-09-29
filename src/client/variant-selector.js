@@ -80,20 +80,29 @@ export function initVariantSelector(ctx) {
   const summaryUnit = qs('[data-summary-unit]', section);
   const summaryCapsules = qs('[data-summary-capsules]', section);
   const summaryTotal = qs('[data-summary-total]', section);
+  const emptyHint = qs('[data-order-empty]', section);
+  const alertBox = qs('[data-order-alert]', section);
   /** TODOS los botones de pedido: uno por tarjeta (+ el del resumen). */
   const orderLinks = /** @type {HTMLAnchorElement[]} */ (qsa('[data-action="whatsapp-order"]', section));
   const cards = qsa('[data-variant-card]', section);
 
-  /** Sincroniza la interfaz con el estado actual. */
+  /** Sincroniza la interfaz con el estado actual (puede no haber frasco). */
   function render(state, reason) {
     const { variant, quantity, totals } = state;
-    const label = variant?.priceLabel ?? view.content.selector.priceOnRequest;
+    const selector = view.content.selector;
+    const empty = variant === null;
 
-    if (summaryVariant) summaryVariant.textContent = variant?.name ?? view.content.selector.priceOnRequest;
-    if (summaryUnit) summaryUnit.textContent = label;
-    if (summaryCapsules && totals.totalCapsules) summaryCapsules.textContent = String(totals.totalCapsules);
-    if (summaryTotal) summaryTotal.textContent = totals.totalLabel ?? view.content.selector.priceOnRequest;
+    if (summaryVariant) summaryVariant.textContent = variant?.name ?? selector.notChosen;
+    if (summaryUnit) summaryUnit.textContent = variant ? (variant.priceLabel ?? selector.priceOnRequest) : '—';
+    if (summaryCapsules) summaryCapsules.textContent = empty ? '—' : String(totals.totalCapsules ?? '');
+    if (summaryTotal) {
+      summaryTotal.textContent = empty ? '—' : (totals.totalLabel ?? selector.priceOnRequest);
+    }
     if (qtyInput && String(qtyInput.value) !== String(quantity)) qtyInput.value = String(quantity);
+    // Mientras no haya frasco, se recuerda que hay que elegirlo.
+    if (emptyHint) emptyHint.hidden = !empty;
+    // Al elegir, el aviso de "elige primero tu frasco" sobra.
+    if (!empty && reason !== 'init' && alertBox) alertBox.hidden = true;
 
     for (const card of cards) {
       const selected = card.getAttribute('data-variant-card') === variant?.id;
@@ -111,7 +120,6 @@ export function initVariantSelector(ctx) {
       }
     }
   }
-
   // ---- Selección de presentación ----
   for (const input of qsa('[data-variant-input]', section)) {
     on(input, 'change', () => {

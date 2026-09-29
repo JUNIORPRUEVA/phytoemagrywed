@@ -100,34 +100,6 @@ export function validateLead(fields, options = {}) {
 }
 
 /**
- * Valida el formulario de pedido (modal de compra).
- * @param {object} fields
- * @param {object} [options]
- * @param {number} [options.maxQuantity]
- * @param {number} [options.minQuantity]
- */
-export function validateOrder(fields, options = {}) {
-  const { maxQuantity = 10, minQuantity = 1 } = options;
-  const base = validateLead(fields, { requireLocation: true });
-
-  /** @type {Record<string, string>} */
-  const errors = { ...base.errors };
-
-  const raw = Number.parseInt(String(fields.quantity ?? ''), 10);
-  let quantity = Number.isFinite(raw) ? raw : minQuantity;
-  if (!Number.isFinite(raw)) errors.quantity = 'quantity_required';
-  else if (raw < minQuantity) errors.quantity = 'quantity_too_low';
-  else if (raw > maxQuantity) errors.quantity = 'quantity_too_high';
-  else quantity = raw;
-
-  return {
-    ok: Object.keys(errors).length === 0,
-    errors,
-    values: { ...base.values, quantity: Math.min(Math.max(quantity, minQuantity), maxQuantity) },
-  };
-}
-
-/**
  * ¿Este valor es un email con forma razonable? (nunca se envía email; solo contacto telefónico).
  * @param {unknown} value
  */

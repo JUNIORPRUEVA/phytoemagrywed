@@ -81,7 +81,7 @@ export const fullProduct = {
     { id: 'capsules_30', capsules: 30, price: 6000, image: '/assets/img/frascos/frasco-30' },
     { id: 'capsules_60', capsules: 60, price: 10000, image: '/assets/img/frascos/frasco-60', completeBottle: true },
   ],
-  defaultVariantId: 'capsules_10',
+  defaultVariantId: null,
   presentation: 'Frasco de 60 cápsulas',
   contents: '60 cápsulas',
   shortDescription: 'Descripción corta aprobada.',

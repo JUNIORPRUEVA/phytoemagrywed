@@ -255,7 +255,8 @@ que no quedan anclas rota.
 
 | Acción | Comportamiento |
 | --- | --- |
-| **Comprar / Consultar** (hero, header, selector, CTA final, barra móvil) | Abre el modal con el frasco y la cantidad elegidos |
+| **Comprar / Consultar** (hero, header, selector, CTA final, barra móvil) | Abre el modal con el frasco y la cantidad elegidos. **Sin frasco elegido NO abre nada**: muestra el aviso "Elige primero tu frasco" y baja al carrusel |
+| **Frasco al entrar** | **Ninguno**: el resumen arranca vacío ("Elige tu frasco") para que el visitante tenga que tocar una tarjeta y ver su precio. La elección se recuerda solo durante la sesión |
 | **Escribir por WhatsApp** | Abre WhatsApp con `Ref:` de campaña |
 | **Ver frascos y precios** (hero) | Baja al selector `#frascos` |
 | **Selector de frascos** | **Carrusel horizontal**: se desliza de lado (swipe/arrastre) y cada tarjeta trae la foto real del frasco, "Frasco de · N cápsulas · precio" y su botón **Pedir por WhatsApp**. La de 60 lleva la etiqueta neutra "Frasco completo" |
@@ -265,7 +266,8 @@ que no quedan anclas rota.
 | **Cápsulas en total** | Se calculan aparte (10 cápsulas × 2 = 20 cápsulas · RD$5,000) |
 | **Número de atención a la vista** | `+1 829 785 3794` en el footer y junto al formulario (`contact.whatsapp.displayNumber`). `npm run check` falla si sus dígitos no son los mismos que los del número que recibe los pedidos |
 | **Déjanos tu contacto y te escribimos** | Enlace en el propio resumen del pedido que baja al formulario: el visitante que no compra hoy también puede dejar su número |
-| **Formulario** | Valida, se envía al CRM (cola local si no hay endpoint) **y abre WhatsApp con nombre, teléfono y ubicación ya escritos**: así el contacto llega al negocio y se puede responder |
+| **Modal de pedido** | Formulario **mínimo: solo el nombre**. El frasco, la cantidad, el precio y el total ya están elegidos arriba y viajan escritos en el mensaje de WhatsApp. El modal avisa en 3 sitios de que **el pedido se finaliza por WhatsApp** (frase de entrada, línea informativa junto al botón y nota al pie) |
+| **Formulario de contacto** | Valida, se envía al CRM (cola local si no hay endpoint) **y abre WhatsApp con nombre, teléfono y ubicación ya escritos**: así el contacto llega al negocio y se puede responder |
 | **Pago** | *No implementado a propósito.* La venta la confirma el CRM |
 
 ### Frasco ≠ cantidad (importante)
@@ -281,7 +283,9 @@ pedido se cierra por WhatsApp y el detalle completo se envía al CRM como
 ### Dos caminos para el visitante que llega desde un anuncio
 
 1. **Comprar** (modal de pedido, siempre a un toque en la barra inferior en móvil).
-   Deja nombre, teléfono y ubicación → se guardan como `lead` + `order_intent`.
+   Sin frasco elegido primero le pide elegirlo; después solo deja el **nombre** → se
+   guardan `lead` + `order_intent` y se abre WhatsApp con el pedido completo
+   (producto, frasco, cantidad, precio por frasco, cápsulas en total, total y nombre).
 2. **Hablar por WhatsApp** (1:1, sin grupos: la conversación deja el número).
 3. **Dejar el contacto** en el formulario si todavía no quiere pedir.
 

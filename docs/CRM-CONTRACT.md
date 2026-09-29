@@ -17,7 +17,7 @@ Hay **dos canales**, y hoy funciona el primero:
 
 | Canal | Qué llega | Cuándo |
 | --- | --- | --- |
-| **WhatsApp `+1 829 785 3794`** | Todo, ya escrito y listo: cada pedido (frasco, cantidad, precio, total) y cada contacto del formulario (nombre, teléfono, ubicación) | **Ya funciona**, sin configurar nada |
+| **WhatsApp `+1 829 785 3794`** | Todo, ya escrito y listo: cada pedido (frasco, cantidad, precio, total y el nombre) y cada contacto del formulario (nombre, teléfono, ubicación) | **Ya funciona**, sin configurar nada |
 | **CRM** (`PHYTO_CRM_ENDPOINT`) | El mismo dato en formato estructurado (`lead` y `order_intent`), guardado en tu sistema | Cuando exista el endpoint |
 
 **Importante:** mientras no haya endpoint, la cola local (`pe:crm.queue`) vive en
@@ -36,6 +36,18 @@ hoy es WhatsApp.
    datos como botón.
 3. Además se registra el `lead` en el CRM (o en la cola local) y se envía el
    evento `lead` a la medición.
+
+### Cómo se comporta el modal de pedido (Comprar)
+
+1. El visitante elige el frasco en el carrusel (al entrar **no hay ninguno
+   elegido**: si pulsa Comprar sin elegir, la web se lo pide y baja al carrusel).
+2. El modal pide **solo el nombre** y muestra el resumen del pedido. No pide
+   teléfono ni ubicación a propósito: son fricción y el número llega igual, en el
+   propio chat (WhatsApp no permite escribir a quien no ha escrito antes). Por
+   eso el `lead` de origen `checkout` va con `phone: null` y `location: null`.
+3. Al enviar se abre WhatsApp con el pedido completo ya escrito (producto,
+   frasco, cantidad, precio por frasco, cápsulas en total, total y nombre) y se
+   registran `lead` + `order_intent` en el CRM (o en la cola local).
 
 Así el contacto se puede responder en minutos y también queda preparado para
 enviarse al CRM cuando exista.
@@ -98,7 +110,7 @@ completo**: se identifica con la etiqueta neutra "Frasco completo", nunca con
   "variantName": "10 cápsulas",
   "capsules": 10,
   "quantity": 2,
-  "consent": true,
+  "consent": true,                  // un aviso: al pulsar el botón la persona inicia la conversación
   "consentVersion": "v1",
   "sessionId": "s_xxx",
   "attribution": {
@@ -119,6 +131,11 @@ completo**: se identifica con la etiqueta neutra "Frasco completo", nunca con
   "createdAt": "2026-09-28T12:03:11.000Z"
 }
 ```
+
+> Si `source` es `checkout` (modal de compra), **`phone` y `location` van a
+> `null`**: ese formulario solo pide el nombre, y el teléfono llega en el propio
+> chat de WhatsApp. El ejemplo de arriba es del formulario de contacto, que sí
+> los pide.
 
 ## 2. `order_intent`
 
@@ -143,7 +160,7 @@ completo**: se identifica con la etiqueta neutra "Frasco completo", nunca con
 
   "source": "checkout",
   "status": "pending_confirmation",
-  "customer": { "name": "Ana Gómez", "phone": "+18095551234", "location": "Higüey, La Altagracia" },
+  "customer": { "name": "Ana Gómez", "phone": null, "location": null },
   "attribution": { "…": "igual que en el lead" },
   "sessionId": "s_xxx",
   "createdAt": "2026-09-28T12:03:11.000Z"

@@ -148,15 +148,17 @@ export function renderConsentBanner(view) {
 
 /**
  * Modal de pedido. Usa <dialog> nativo (ESC + foco + inert de fondo gratis).
- * Solo pide lo mínimo: nombre, teléfono, ubicación y cantidad.
+ *
+ * Pide lo MÍNIMO: solo el nombre. El frasco y la cantidad ya se eligieron en el
+ * carrusel (el resumen de arriba los repite) y el pedido se cierra en WhatsApp,
+ * donde el negocio recibe además el número de quien escribe.
  */
 export function renderCheckoutDialog(view) {
-  const { content, product, pricing } = view;
+  const { content, pricing } = view;
   const c = content.checkout;
-  const max = view.maxQuantity;
-  const defaultVariant =
-    pricing.variants.find((variant) => variant.id === pricing.defaultVariantId) ?? pricing.variants[0] ?? null;
-  const initialTotals = pricing.forQuantity(1);
+  // Sin frasco elegido no hay nada preseleccionado que mostrar.
+  const chosenVariant = pricing.variants.find((variant) => variant.id === pricing.defaultVariantId) ?? null;
+  const initialTotals = chosenVariant ? pricing.totalsFor(chosenVariant, 1) : null;
 
   const row = (label, value, extra = '') =>
     `<div class="pe-summary__row"><dt>${escapeHtml(label)}</dt><dd>${value}${extra}</dd></div>`;
@@ -164,22 +166,18 @@ export function renderCheckoutDialog(view) {
   const summaryRows = [
     row(
       c.labels.presentation,
-      `<span data-summary-variant>${escapeHtml(defaultVariant?.name ?? c.labels.priceOnRequest)}</span>`,
-      defaultVariant && view.flags.variants
+      `<span data-summary-variant>${escapeHtml(chosenVariant?.name ?? c.labels.notChosen)}</span>`,
+      view.flags.variants
         ? `<button type="button" class="pe-summary__change" data-change-variant>${escapeHtml(c.labels.changeVariant)}</button>`
         : '',
     ),
     row(
       c.labels.unitPrice,
-      `<span data-summary-unit>${escapeHtml(defaultVariant?.priceLabel ?? c.labels.priceOnRequest)}</span>`,
+      `<span data-summary-unit>${escapeHtml(chosenVariant?.priceLabel ?? c.labels.priceOnRequest)}</span>`,
     ),
     row(c.labels.quantity, `<span data-summary-qty>1</span>`),
-    defaultVariant
-      ? row(c.labels.totalCapsules, `<span data-summary-capsules>${initialTotals.totalCapsules}</span>`)
-      : '',
-  ]
-    .filter(Boolean)
-    .join('');
+    row(c.labels.totalCapsules, `<span data-summary-capsules>${chosenVariant ? (initialTotals?.totalCapsules ?? '') : ''}</span>`),
+  ].join('');
 
   return `<dialog class="pe-dialog" id="pe-checkout" aria-labelledby="pe-checkout-title" data-checkout>
       <header class="pe-dialog__head">
@@ -193,7 +191,7 @@ export function renderCheckoutDialog(view) {
 
           <dl class="pe-summary" data-summary>
             ${summaryRows}
-            <div class="pe-summary__row pe-summary__row--total"><dt>${escapeHtml(c.labels.total)}</dt><dd><span data-summary-total>${escapeHtml(initialTotals.totalLabel ?? c.labels.priceOnRequest)}</span></dd></div>
+            <div class="pe-summary__row pe-summary__row--total"><dt>${escapeHtml(c.labels.total)}</dt><dd><span data-summary-total>${escapeHtml(initialTotals?.totalLabel ?? c.labels.priceOnRequest)}</span></dd></div>
           </dl>
 
           <div class="pe-field">
@@ -202,30 +200,7 @@ export function renderCheckoutDialog(view) {
             <p class="pe-error" data-error-for="name" hidden></p>
           </div>
 
-          <div class="pe-field">
-            <label class="pe-label" for="pe-co-phone">${escapeHtml(c.labels.phone)}</label>
-            <input class="pe-input" id="pe-co-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required maxlength="24" data-field="phone">
-            <p class="pe-error" data-error-for="phone" hidden></p>
-          </div>
-
-          <div class="pe-field">
-            <label class="pe-label" for="pe-co-location">${escapeHtml(c.labels.location)}</label>
-            <input class="pe-input" id="pe-co-location" name="location" type="text" autocomplete="address-level2" required maxlength="120" data-field="location">
-            <p class="pe-error" data-error-for="location" hidden></p>
-          </div>
-
-          <div class="pe-field">
-            <label class="pe-label" for="pe-co-quantity">${escapeHtml(c.labels.quantity)}</label>
-            <input class="pe-input pe-input--qty" id="pe-co-quantity" name="quantity" type="number" inputmode="numeric" min="1" max="${max}" step="1" value="1" required data-field="quantity">
-            <p class="pe-hint">${escapeHtml(c.quantityHint(max))}</p>
-            <p class="pe-error" data-error-for="quantity" hidden></p>
-          </div>
-
-          <div class="pe-field pe-field--check">
-            <input class="pe-checkbox" id="pe-co-consent" name="consent" type="checkbox" required data-field="consent">
-            <label class="pe-label pe-label--check" for="pe-co-consent">${escapeHtml(c.labels.consent)} <span class="pe-muted">(<a class="pe-link" href="${escapeHtml(view.site.privacy.privacyPath)}">${escapeHtml(content.leadForm.labels.privacyLink)}</a>)</span></label>
-            <p class="pe-error" data-error-for="consent" hidden></p>
-          </div>
+          <p class="pe-dialog__consent">${icon('info', { size: 16, className: 'pe-dialog__consent-icon' })}<span>${escapeHtml(c.labels.consent)} <a class="pe-link" href="${escapeHtml(view.site.privacy.privacyPath)}">${escapeHtml(content.leadForm.labels.privacyLink)}</a>.</span></p>
         </div>
 
         <div class="pe-dialog__actions">

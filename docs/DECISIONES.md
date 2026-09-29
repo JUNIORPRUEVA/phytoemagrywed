@@ -391,3 +391,38 @@ El negocio dio el número (**829 785 3794**) para pedidos y consultas. Aplicado:
    fiscales, aviso al consumidor, horario, CRM, testimonios reales) está listado
    en `docs/PENDIENTE.md` §7 con el campo exacto de cada dato.
 
+
+## 27. Comprar cuesta un toque: sin frasco elegido de entrada, y el pedido se cierra en WhatsApp
+
+Petición del negocio: "que el formulario de compra sea lo más simple posible,
+solo el nombre; si le doy a comprar y no tengo nada elegido, que me pida elegir
+primero el frasco; y que quede claro que el pedido se finaliza por WhatsApp".
+
+1. **Al entrar no hay frasco elegido** (`product.config.js →
+   defaultVariantId: null`). El resumen se dibuja vacío ("Elige tu frasco", "—")
+   con un recordatorio ("Toca el frasco que quieras para ver su precio y el
+   total"). Antes venía marcado el de 10 cápsulas y más de un visitante confirmó
+   sin haber visto nunca los demás precios. Solo se recuerda dentro de la sesión.
+2. **Comprar sin frasco no abre nada**: los dos CTA de la zona de compra (el
+   botón del resumen y su enlace "Pedir por WhatsApp") muestran el aviso "Elige
+   primero tu frasco: toca la foto del que quieras", bajan al carrusel y enfocan
+   la primera tarjeta. Se registra `CLICK_BUY { blocked: 'no_variant' }` para saber
+   cuánta gente pulsa comprar antes de elegir. El aviso se oculta solo a los 6 s.
+3. **El modal pide SOLO el nombre**. Frasco, cantidad, precio por frasco, cápsulas
+   en total y total ya están decididos arriba y viajan escritos en el mensaje de
+   WhatsApp, así que pedir el teléfono y la ubicación era fricción pura: el número
+   llega igual, en el propio chat (WhatsApp no permite escribir a un número que no
+   ha escrito primero). Menos campos = menos abandono.
+4. **"El pedido se finaliza por WhatsApp" está escrito tres veces** en el modal
+   (frase de entrada, línea informativa junto al botón, nota al pie) y una cuarta
+   bajo el resumen de la sección. El botón dice "Continuar el pedido en WhatsApp",
+   no "Pagar".
+5. **El panel de éxito lo confirma**: "Pedido preparado · Envíalo por WhatsApp:
+   ahí confirmamos disponibilidad, pago y entrega" (y si el navegador bloquea la
+   pestaña, el enlace manual queda a la vista).
+
+Verificado en navegador real (390 y 1440): sin frasco el resumen arranca vacío y
+Comprar muestra el aviso (el modal no se abre); al elegir un frasco el aviso
+desaparece, el resumen se completa y el modal abre con **un solo campo**; al
+enviar solo el nombre se abre `wa.me/18297853794` con frasco, cantidad, precio por
+frasco, cápsulas, total y nombre; enviarlo vacío marca el campo y no abre nada.
