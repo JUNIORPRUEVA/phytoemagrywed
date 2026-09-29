@@ -231,3 +231,96 @@ describe('almacén alternativo', () => {
     expect(app.storage).toBe('sqlite');
   });
 });
+
+/**
+ * PostgreSQL: solo se ejecuta si hay una base de datos de prueba. Se lanza así:
+ *   PHYTO_CRM_TEST_DATABASE_URL=postgres://usuario:clave@host:5432/phytoemagry npm test
+ * Los registros que crea llevan prefijo y se borran al terminar.
+ */
+const PG_URL = (process.env.PHYTO_CRM_TEST_DATABASE_URL ?? '').trim();
+
+describe.skipIf(!PG_URL)('almacén PostgreSQL (PHYTO_CRM_TEST_DATABASE_URL)', () => {
+  const prefix = `testpg-${Date.now().toString(36)}`;
+  /** @type {Awaited<ReturnType<typeof startCrmServer>>} */
+  let pgApp;
+
+  beforeAll(async () => {
+    pgApp = await startCrmServer({
+      port: 0,
+      host: '127.0.0.1',
+      databaseUrl: PG_URL,
+      dataFile: path.join(tmpDir, 'no-deberia-usarse.sqlite'),
+      token: TOKEN,
+      quiet: true,
+    });
+  });
+
+  afterAll(async () => {
+    await pgApp?.close();
+    // Limpieza: la base de datos de prueba puede ser la de producción.
+    const { Client } = await import('pg');
+    const client = new Client({ connectionString: PG_URL });
+    await client.connect();
+    await client.query('DELETE FROM phytoemagry_items WHERE id LIKE $1', [`${prefix}%`]);
+    await client.end();
+  });
+
+  const pgPost = (body) =>
+    fetch(`${pgApp.url}/api/crm`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('usa Postgres, guarda, no duplica y devuelve el mismo formato que SQLite', async () => {
+    expect(pgApp.storage).toBe('postgres');
+    expect(pgApp.file).not.toContain('@'); // sin credenciales en el log
+
+    const mine = { ...lead, id: `${prefix}-lead` };
+    const first = await pgPost(mine);
+    expect(first.status).toBe(202);
+    expect((await first.json()).storage).toBe('postgres');
+
+    const again = await pgPost(mine);
+    expect((await again.json()).saved[0].duplicate).toBe(true);
+
+    const response = await fetch(`${pgApp.url}/api/crm/items?token=${TOKEN}&limit=1`);
+    const body = await response.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      id: `${prefix}-lead`,
+      type: 'lead',
+      name: 'Ana Gómez',
+      phone: '+18095551234',
+      payload: { schemaVersion: '1.1' },
+    });
+    // Mismo tipo que en SQLite: texto ISO, no un objeto Date.
+    expect(typeof body.items[0].received_at).toBe('string');
+
+    const csv = await fetch(`${pgApp.url}/api/crm/export.csv?token=${TOKEN}&limit=1`);
+    expect(await csv.text()).toContain('Ana Gómez');
+  });
+
+  it('si Postgres no responde, avisa y sigue guardando en SQLite', async () => {
+    // Puerto cerrado: la conexión falla y el servidor arranca igual.
+    const caido = await startCrmServer({
+      port: 0,
+      host: '127.0.0.1',
+      databaseUrl: 'postgres://phytoemagry_user:x@127.0.0.1:6553/phytoemagry',
+      dataFile: path.join(tmpDir, 'respaldo-postgres-caido.sqlite'),
+      token: TOKEN,
+      quiet: true,
+    });
+    try {
+      expect(caido.storage).toBe('sqlite');
+      const posted = await fetch(`${caido.url}/api/crm`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...lead, id: `${prefix}-caido` }),
+      });
+      expect(posted.status).toBe(202);
+    } finally {
+      await caido.close();
+    }
+  });
+});

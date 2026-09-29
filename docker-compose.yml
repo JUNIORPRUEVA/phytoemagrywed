@@ -46,6 +46,9 @@ services:
     # Sin ella, los datos se siguen guardando pero no se pueden consultar.
     environment:
       PHYTO_CRM_TOKEN: "${PHYTO_CRM_TOKEN:-}"
+      # Base de datos PostgreSQL (recomendado). Si la dejas vacía, los datos se
+      # guardan en SQLite dentro del contenedor (volumen `phytoemagry-data`).
+      PHYTO_CRM_DATABASE_URL: "${PHYTO_CRM_DATABASE_URL:-}"
 
     # Puerto del servidor : puerto del contenedor.
     # Cámbialo con WEB_PORT en el `.env` si el 8080 está ocupado.
@@ -59,8 +62,8 @@ services:
       retries: 3
       start_period: 10s
 
-    # Aquí vive la base de datos (pedidos y contactos). Es el volumen el que hace
-    # que los datos sobrevivan a `docker compose up -d --build`.
+    # Aquí vive la base de datos cuando NO hay PostgreSQL configurado. Es el
+    # volumen el que hace que los datos sobrevivan a `docker compose up -d --build`.
     # Copia de seguridad:  docker run --rm -v phytoemagry-data:/data -v "$PWD":/backup \
     #                        alpine tar czf /backup/phytoemagry-datos.tar.gz -C /data .
     volumes:

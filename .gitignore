@@ -17,3 +17,4 @@ lighthouse-*.json
 
 # Entorno de Python (solo para scripts/generate-placeholder-images.py)
 .venv/
+.tmp-server/

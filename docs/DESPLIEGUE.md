@@ -21,7 +21,7 @@ datos, ni proceso Node en producción, ni secretos dentro de la imagen.
 | Etapa | Qué pasa |
 | --- | --- |
 | `build` (node:22-alpine) | `npm ci` → `npm run verify` (**tests + revisión de contenido + build**) |
-| `runtime` (node:22-alpine + nginx) | nginx sirve `dist/` y el **API del CRM** (`server/crm-server.mjs`) guarda los pedidos y los contactos en SQLite (`/data/phytoemagry.sqlite`). Dentro del contenedor corren dos procesos: nginx (el principal) y Node |
+| `runtime` (node:22-alpine + nginx) | nginx sirve `dist/` y el **API del CRM** (`server/crm-server.mjs`) guarda los pedidos y los contactos en **PostgreSQL** (`PHYTO_CRM_DATABASE_URL`) o, si no hay, en SQLite (`/data/phytoemagry.sqlite`). Dentro del contenedor corren dos procesos: nginx (el principal) y Node |
 
 Si los tests fallan, falta una foto de frasco, un precio no cuadra o el número de
 atención no coincide, **la imagen no se construye**: no se puede publicar una web
@@ -31,8 +31,10 @@ Tamaño aproximado de la imagen final: ~180 MB (Node + nginx; el API usa
 `node:sqlite`, que ya viene dentro de Node y no añade ninguna librería). Peso real
 de la página: ~150 kB al cargar (todo lo demás se carga en diferido).
 
-> **Los datos NO van dentro de la imagen**: viven en el volumen `/data`. Si no
-> montas ese volumen, cada actualización empieza con la base de datos vacía.
+> **Los datos NO van dentro de la imagen**: con `PHYTO_CRM_DATABASE_URL` viven en
+> el servidor de base de datos (lo recomendado); sin esa variable, en el volumen
+> `/data`. Si usas SQLite y no montas el volumen, cada actualización empieza con
+> la base de datos vacía.
 
 ---
 
@@ -128,18 +130,23 @@ el repositorio, construye la imagen y te da el HTTPS automático.
 
    ```bash
    PHYTO_CRM_TOKEN=pon-una-clave-larga-y-solo-tuya   # para leer /panel?token=...
+   PHYTO_CRM_DATABASE_URL=postgres://usuario:clave@servicio-db:5432/phytoemagry
    ```
 
    El endpoint ya apunta solo a `/api/crm` (el API que trae la imagen), así que no
    hay que definir nada más. Si algún día quieres enviar los datos a **otro** CRM,
    pon ahí su URL completa: `PHYTO_CRM_ENDPOINT=https://...`.
 
+   > **Ojo con `PHYTO_CRM_ENDPOINT`**: si lo dejas declarado pero **vacío**, la web
+   > no enviará nada al API (solo guardará en el navegador del visitante).
+   > Bórralo o ponlo en `/api/crm`.
+
    | Variable | Para qué sirve | Si no la pones |
    | --- | --- | --- |
    | `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | Se usa el valor por defecto del Dockerfile (el número real) |
    | `SEO_SITE_URL` | Dominio final: activa `canonical`, `sitemap.xml` y la **vista previa con imagen** al compartir por WhatsApp | Se publica sin canonical ni sitemap |
    | `PHYTO_CRM_TOKEN` | Clave para leer los pedidos y los contactos en `/panel?token=...` y en CSV | Se siguen guardando, pero **no se pueden consultar** |
-   | `PHYTO_CRM_DATA` | Ruta del archivo de la base de datos | `/data/phytoemagry.sqlite` |
+   | `PHYTO_CRM_DATABASE_URL` | Base de datos PostgreSQL donde se guardan los pedidos y los contactos | Se usa SQLite en `/data/phytoemagry.sqlite` (necesita volumen) |
    | `APP_ENV` | `production` | `production` por defecto |
 
    > **No pongas `PORT`** salvo que el panel te lo pida (ver el punto 5). Tampoco
@@ -157,9 +164,9 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    > imagen escucha en ese puerto: pon **el mismo número** en el puerto del proxy.
    > Sin `PORT`, escucha en el 80. Nunca hay que tocar el Dockerfile.
 
-6. **Mounts** → añade un **Volume** montado en **`/data`**. Ahí vive la base de
-   datos de los pedidos y los contactos: sin este volumen, cada *Deploy* empieza
-   de cero. (Nombre del volumen: `phytoemagry-data`, por ejemplo.)
+6. **Mounts** → solo si NO usas PostgreSQL: añade un **Volume** montado en
+   **`/data`** (ahí vive el archivo de SQLite). Con `PHYTO_CRM_DATABASE_URL`
+   configurado, la base de datos está fuera del contenedor y no hace falta.
 7. **Deploy**.
 
 Cuando termine, entra en `https://tudominio.com/panel?token=TU_CLAVE`: ahí están
@@ -279,8 +286,9 @@ curl -sI http://localhost:8080/sitemap.xml   # solo si SEO_SITE_URL está puesto
 curl -sI http://localhost:8080/assets/ | head -3
 
 # La base de datos de pedidos y contactos está viva (sin datos personales)
+# `storage` dice dónde se está guardando: postgres o sqlite
 curl -s http://localhost:8080/api/health
-# → {"ok":true,"storage":"sqlite","items":0}
+# → {"ok":true,"storage":"postgres","items":0}
 
 # Leer los datos (debe responder 401 si la clave es incorrecta)
 curl -s "http://localhost:8080/api/crm/items?token=LA-CLAVE" | head -c 200

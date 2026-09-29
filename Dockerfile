@@ -4,14 +4,15 @@
 #
 #  No hace falta copiar nada a mano ni instalar Node en el servidor: el
 #  Dockerfile compila la web, la sirve con nginx y guarda los pedidos y los
-#  contactos en una base de datos SQLite dentro del contenedor.
+#  contactos con su propio API.
 #
 #  EN EL SERVIDOR (2 comandos):
 #    git clone https://github.com/JUNIORPRUEVA/phytoemagrywed.git
 #    cd phytoemagrywed && docker build -t phytoemagry . && docker run -d \
 #      --name phytoemagry -p 8080:80 --restart unless-stopped \
-#      -v phytoemagry-data:/data \
-#      -e PHYTO_CRM_TOKEN=una-clave-larga tu-phytoemagry
+#      -e PHYTO_CRM_TOKEN=una-clave-larga \
+#      -e PHYTO_CRM_DATABASE_URL=postgres://usuario:clave@host:5432/phytoemagry \
+#      tu-phytoemagry
 #
 #  (Si nada más usa el puerto 80, cambia `-p 8080:80` por `-p 80:80` y ya no
 #  hace falta ningún proxy delante. Con dominio y HTTPS, deja 8080 y pon el
@@ -23,13 +24,15 @@
 #  EASYPANEL / DOKPLOY / COOLIFY (paneles con Docker):
 #    Service → App → Source: Git (este repo, branch main)
 #    Build: Dockerfile (ruta `Dockerfile`)  ·  Domains: puerto del proxy 80
-#    Environment: PHYTO_WHATSAPP_NUMBER, SEO_SITE_URL, PHYTO_CRM_TOKEN, ...
-#    Mounts: Volume en `/data` (imprescindible: ahí vive la base de datos)
+#    Environment: PHYTO_WHATSAPP_NUMBER, SEO_SITE_URL, PHYTO_CRM_TOKEN,
+#                 PHYTO_CRM_DATABASE_URL, ...  (los públicos llegan al build)
 #
-#  DÓNDE QUEDAN LOS DATOS: en `/data/phytoemagry.sqlite`, y se pueden leer
-#  entrando en `/panel?token=TU_CLAVE` (o descargar en CSV desde ahí).
-#  Ver docs/CRM-CONTRACT.md. Monta SIEMPRE un volumen en /data: sin él, la base
-#  de datos se pierde en cada actualización de la imagen.
+#  DÓNDE QUEDAN LOS DATOS: en la base de datos PostgreSQL que indiques en
+#  PHYTO_CRM_DATABASE_URL. Si no la configuras, se guardan en
+#  `/data/phytoemagry.sqlite` (dentro del contenedor: monta ahí un volumen o se
+#  pierden en cada actualización). En los dos casos se leen entrando en
+#  `/panel?token=TU_CLAVE` (o se descargan en CSV desde ahí).
+#  Ver docs/CRM-CONTRACT.md.
 #
 #  NOTA: el Dockerfile necesita el CÓDIGO del proyecto (src/, public/,
 #  package.json...), que ya viaja en el repositorio. No es un archivo suelto:
@@ -76,12 +79,19 @@ ENV PHYTO_WHATSAPP_NUMBER=$PHYTO_WHATSAPP_NUMBER \
 # publica una web rota.
 RUN npm run verify
 
-# ------------------------------------------------- etapa 2: nginx + API del CRM
+# ------------------------------------------- etapa 2: dependencias de ejecución
+# Solo lo que necesita el API en marcha (hoy: `pg`, el cliente de PostgreSQL).
+# Las de desarrollo (esbuild, vitest, jsdom) se quedan en la etapa de build: la
+# imagen final no las lleva.
+FROM node:22-alpine AS runtime-deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+
+# ------------------------------------------------- etapa 3: nginx + API del CRM
 FROM node:22-alpine AS runtime
 
 # nginx sirve la web (estática, rápida) y delante del API que guarda los datos.
-# node: no necesita ninguna librería de base de datos: usa `node:sqlite`, que ya
-# viene dentro de Node (por eso el flag --experimental-sqlite al arrancar).
 RUN apk add --no-cache nginx
 
 # Puerto de escucha de la web. 80 por defecto para `docker run -p 8080:80`.
@@ -92,6 +102,7 @@ ENV PORT=80 \
     PHYTO_CRM_PORT=8787 \
     PHYTO_CRM_HOST=127.0.0.1 \
     PHYTO_CRM_DATA=/data/phytoemagry.sqlite \
+    PHYTO_CRM_DATABASE_URL="" \
     PHYTO_CRM_TOKEN=""
 
 # Config de nginx, escrita aquí mismo: este Dockerfile no depende de ningún otro
@@ -147,7 +158,8 @@ http {
         gzip_types text/plain text/css text/xml application/javascript application/json application/xml image/svg+xml;
 
         # -------------------------------------------------- API del CRM (Node)
-        # Guarda los `lead` y los `order_intent` en /data/phytoemagry.sqlite.
+        # Guarda los `lead` y los `order_intent` en PostgreSQL
+        # (PHYTO_CRM_DATABASE_URL) o, si no hay, en /data/phytoemagry.sqlite.
         # `^~` evita que lo capturen las reglas de abajo (map/md/json).
         location ^~ /api/ {
             proxy_pass http://127.0.0.1:8787;
@@ -235,13 +247,16 @@ RUN tr -d '\015' < /etc/nginx/templates/default.conf.template > /tmp/conf \
     && chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /data
 
-# Solo los archivos generados (+ el servidor del API): ni fuentes, ni tests,
-# ni node_modules.
+# Solo los archivos generados (+ el servidor del API y sus dependencias): ni
+# fuentes, ni tests, ni las dependencias de desarrollo.
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY --from=build /app/server /app/server
+COPY --from=runtime-deps /app/node_modules /app/node_modules
 
 # Los datos viven aquí: monta un volumen para que sobrevivan a las actualizaciones
-# (Easypanel → Mounts → Volume → /data). Sin volumen, cada despliegue empieza de cero.
+# (Easypanel → Mounts → Volume → /data). Solo se usa si NO hay PostgreSQL
+# configurado (PHYTO_CRM_DATABASE_URL): con Postgres, los datos están en el
+# servidor de base de datos y este volumen sobra.
 VOLUME ["/data"]
 
 EXPOSE 80

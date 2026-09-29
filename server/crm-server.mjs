@@ -1,11 +1,16 @@
 /**
  * ============================================================================
  *  API del CRM — recibe los `lead` y los `order_intent` de la web y los guarda
- *  en una base de datos SQLite.
+ *  en una base de datos.
  *
- *  Sin dependencias: solo módulos de Node (`node:http` y `node:sqlite`). Si el
- *  módulo SQLite no está disponible en la versión de Node, cae a un archivo
- *  JSONL (una línea JSON por registro) para no perder nada.
+ *  Dos almacenes, el que diga el entorno:
+ *    1. PostgreSQL  → PHYTO_CRM_DATABASE_URL (recomendado en producción: los
+ *       datos viven en el servidor de base de datos, no en el contenedor).
+ *    2. SQLite      → PHYTO_CRM_DATA (por defecto; usa `node:sqlite`, que ya
+ *       viene dentro de Node: cero dependencias y cero configuración).
+ *
+ *  Si Postgres está configurado pero no responde, se avisa en los logs y se
+ *  sigue guardando en SQLite: perder datos nunca es una opción.
  *
  *  Rutas:
  *    POST /api/crm                  → guarda un `lead` o un `order_intent`
@@ -15,6 +20,7 @@
  *    GET  /panel?token=...          → panel HTML para leerlos desde el móvil
  *
  *  Variables de entorno (todas opcionales):
+ *    PHYTO_CRM_DATABASE_URL  cadena de PostgreSQL (activa el almacén Postgres)
  *    PHYTO_CRM_PORT      puerto (por defecto 8787)
  *    PHYTO_CRM_HOST      interfaz (por defecto 127.0.0.1: solo lo alcanza nginx)
  *    PHYTO_CRM_DATA      archivo de datos (por defecto ./data/phytoemagry.sqlite)
@@ -38,8 +44,12 @@ import { fileURLToPath } from 'node:url';
 const PORT = Number.parseInt(process.env.PHYTO_CRM_PORT ?? '8787', 10);
 const HOST = process.env.PHYTO_CRM_HOST ?? '127.0.0.1';
 const DATA_FILE = path.resolve(process.env.PHYTO_CRM_DATA ?? path.join('data', 'phytoemagry.sqlite'));
+const DATABASE_URL = (process.env.PHYTO_CRM_DATABASE_URL ?? '').trim();
 const TOKEN = (process.env.PHYTO_CRM_TOKEN ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
+
+/** Tabla donde se guardan los registros (nombre propio: no choca con otras apps). */
+const TABLE = 'phytoemagry_items';
 
 /** Tamaño máximo del cuerpo aceptado (un pedido ocupa ~1 kB). */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -162,6 +172,132 @@ function createJsonlStore(file) {
   };
 }
 
+/**
+ * Almacén PostgreSQL (producción: los datos viven en el servidor de base de
+ * datos y sobreviven a cualquier despliegue). Usa un pool, así que si la
+ * conexión se cae, la siguiente consulta la vuelve a abrir sola.
+ * @param {string} url cadena `postgres://usuario:clave@host:puerto/base`
+ */
+async function createPostgresStore(url) {
+  const { Pool } = await import('pg');
+  const pool = new Pool({
+    connectionString: url,
+    max: 4,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 8_000,
+    application_name: 'phytoemagry-crm',
+  });
+
+  // Detecta credenciales/red mal configuradas AL ARRANCAR, no en el primer pedido.
+  const first = await pool.connect();
+  try {
+    await first.query(`
+      CREATE TABLE IF NOT EXISTS ${TABLE} (
+        id            text PRIMARY KEY,
+        type          text NOT NULL,
+        received_at   text NOT NULL,
+        name          text,
+        phone         text,
+        location      text,
+        variant_id    text,
+        variant_name   text,
+        capsules      integer,
+        quantity      integer,
+        unit_price    integer,
+        total         integer,
+        currency      text,
+        source        text,
+        session_id    text,
+        payload       jsonb NOT NULL,
+        stored_at     timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_received_at ON ${TABLE} (received_at DESC)`);
+    await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_type ON ${TABLE} (type)`);
+  } finally {
+    first.release();
+  }
+
+  const COLUMNS = [
+    'id',
+    'type',
+    'received_at',
+    'name',
+    'phone',
+    'location',
+    'variant_id',
+    'variant_name',
+    'capsules',
+    'quantity',
+    'unit_price',
+    'total',
+    'currency',
+    'source',
+    'session_id',
+    'payload',
+  ];
+  /** Columnas que se devuelven al panel/JSON (el payload como texto: mismo formato que SQLite). */
+  const SELECT = `${COLUMNS.filter((c) => c !== 'payload').join(', ')}, payload::text AS payload`;
+
+  return {
+    kind: 'postgres',
+    /** Sin usuario ni clave: esta cadena acaba en los logs. */
+    file: (() => {
+      try {
+        const parsed = new URL(url);
+        return `${parsed.hostname}:${parsed.port || 5432}${parsed.pathname}`;
+      } catch {
+        return 'postgres';
+      }
+    })(),
+    /** @param {ReturnType<typeof toRow>} row */
+    async save(row) {
+      const result = await pool.query(
+        `INSERT INTO ${TABLE} (${COLUMNS.join(', ')})
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          row.id,
+          row.type,
+          row.receivedAt,
+          row.name,
+          row.phone,
+          row.location,
+          row.variantId,
+          row.variantName,
+          row.capsules,
+          row.quantity,
+          row.unitPrice,
+          row.total,
+          row.currency,
+          row.source,
+          row.sessionId,
+          row.payload,
+        ],
+      );
+      // ON CONFLICT DO NOTHING → rowCount 0 significa "ya estaba" (la cola reintenta).
+      return { duplicate: result.rowCount === 0 };
+    },
+    /** @param {{limit:number, type:string|null}} options */
+    async list({ limit, type }) {
+      const result = type
+        ? await pool.query(
+            `SELECT ${SELECT} FROM ${TABLE} WHERE type = $1 ORDER BY received_at DESC LIMIT $2`,
+            [type, limit],
+          )
+        : await pool.query(`SELECT ${SELECT} FROM ${TABLE} ORDER BY received_at DESC LIMIT $1`, [limit]);
+      return result.rows;
+    },
+    async count() {
+      const result = await pool.query(`SELECT COUNT(*)::int AS n FROM ${TABLE}`);
+      return Number(result.rows[0]?.n ?? 0);
+    },
+    async close() {
+      await pool.end();
+    },
+  };
+}
+
 /** Lee el archivo JSONL y descarta las líneas corruptas (nunca revienta). */
 function readRows(file) {
   if (!existsSync(file)) return [];
@@ -204,12 +340,23 @@ function record(row) {
   };
 }
 
-async function createStore(file) {
-  if (file.toLowerCase().endsWith('.jsonl')) return createJsonlStore(file);
+async function createStore(options = {}) {
+  const { databaseUrl = '', dataFile = DATA_FILE } = options;
+
+  if (databaseUrl) {
+    try {
+      return await createPostgresStore(databaseUrl);
+    } catch (error) {
+      console.error(`[crm] PostgreSQL configurado pero no responde (${error.message}).`);
+      console.error('[crm] Se guardará en SQLite para no perder ningún pedido o contacto.');
+    }
+  }
+
+  if (dataFile.toLowerCase().endsWith('.jsonl')) return createJsonlStore(dataFile);
   try {
-    return await createSqliteStore(file);
+    return await createSqliteStore(dataFile);
   } catch (error) {
-    const fallback = file.replace(/\.sqlite$/i, '') + '.jsonl';
+    const fallback = dataFile.replace(/\.sqlite$/i, '') + '.jsonl';
     console.warn(
       `[crm] SQLite no disponible (${error.message}); se usa el archivo ${fallback}. ` +
         'En Node 22 hace falta arrancar con --experimental-sqlite.',
@@ -452,7 +599,7 @@ async function handle(req, res, ctx) {
   }
 
   if (route === '/api/health') {
-    json(res, 200, { ok: true, storage: store.kind, items: store.count() });
+    json(res, 200, { ok: true, storage: store.kind, items: await store.count() });
     return;
   }
 
@@ -471,7 +618,7 @@ async function handle(req, res, ctx) {
     try {
       for (const item of payload.slice(0, 25)) {
         const row = toRow(item ?? {});
-        const result = store.save(row);
+        const result = await store.save(row);
         saved.push({ id: row.id, duplicate: result.duplicate });
         if (!result.duplicate) {
           console.log(`[crm] guardado ${row.type} ${row.id}${row.variantName ? ` · ${row.variantName}` : ''}`);
@@ -508,10 +655,10 @@ async function handle(req, res, ctx) {
 
     const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '100', 10) || 100, 1), 1000);
     const type = url.searchParams.get('type');
-    const rows = store.list({ limit, type: type === 'lead' || type === 'order_intent' ? type : null });
+    const rows = await store.list({ limit, type: type === 'lead' || type === 'order_intent' ? type : null });
 
     if (route === '/panel') {
-      html(res, 200, panelPage(rows, store.count(), ctx.token, type));
+      html(res, 200, panelPage(rows, await store.count(), ctx.token, type));
       return;
     }
 
@@ -563,7 +710,7 @@ async function handle(req, res, ctx) {
     json(res, 200, {
       ok: true,
       storage: store.kind,
-      total: store.count(),
+      total: await store.count(),
       count: rows.length,
       items: rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) })),
     });
@@ -582,6 +729,7 @@ async function handle(req, res, ctx) {
  * @param {number} [config.port] 0 = puerto libre (lo elige el sistema)
  * @param {string} [config.host]
  * @param {string} [config.dataFile]
+ * @param {string} [config.databaseUrl] cadena de PostgreSQL (vacía = SQLite)
  * @param {string} [config.token] clave para leer (vacía = leer desactivado)
  * @param {string} [config.allowedOrigin] origen permitido por CORS
  * @param {boolean} [config.quiet] no imprimir el banner de arranque
@@ -591,12 +739,13 @@ export async function startCrmServer(config = {}) {
     port: config.port ?? PORT,
     host: config.host ?? HOST,
     dataFile: config.dataFile ?? DATA_FILE,
+    databaseUrl: config.databaseUrl ?? DATABASE_URL,
     token: config.token ?? TOKEN,
     allowedOrigin: config.allowedOrigin ?? ALLOWED_ORIGIN,
     quiet: config.quiet ?? false,
   };
 
-  const store = await createStore(settings.dataFile);
+  const store = await createStore({ databaseUrl: settings.databaseUrl, dataFile: settings.dataFile });
   const ctx = { store, token: settings.token, allowedOrigin: settings.allowedOrigin };
 
   const server = createServer((req, res) => {
@@ -632,10 +781,14 @@ export async function startCrmServer(config = {}) {
     server,
     store,
     close: () =>
-      new Promise((resolve) => {
-        server.close(() => {
-          store.close();
-          resolve();
+      new Promise((resolve, reject) => {
+        server.close(async () => {
+          try {
+            await store.close();
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
         });
       }),
   };
