@@ -11,6 +11,37 @@ const attribution = buildAttribution({
   now: '2026-01-01T00:00:00.000Z',
 });
 
+describe('contrato del bloque meta (pixel + API de conversiones)', () => {
+  it('lleva los event_id del píxel y la URL donde ocurrió la acción', () => {
+    const lead = buildLeadPayload({
+      name: 'Ana',
+      source: 'checkout',
+      consent: true,
+      attribution,
+      meta: { events: { lead: 'lead_abc', initiateCheckout: 'ic_1', vacio: '' }, sourceUrl: 'https://x.test/#frascos' },
+    });
+    // Los ids se comparten con el píxel: Meta deduplica navegador + servidor.
+    expect(lead.meta.events).toEqual({ lead: 'lead_abc', initiateCheckout: 'ic_1' });
+    expect(lead.meta.sourceUrl).toBe('https://x.test/#frascos');
+  });
+
+  it('sin eventos sigue habiendo bloque (el servidor no revienta)', () => {
+    const lead = buildLeadPayload({ name: 'Ana', source: 'checkout', consent: true });
+    expect(lead.meta).toEqual({ events: {}, sourceUrl: null });
+  });
+
+  it('el pedido también lo lleva', () => {
+    const order = buildOrderIntentPayload({
+      customer: { name: 'Ana' },
+      product: { id: 'phytoemagry-v1', name: 'Phytoemagry' },
+      variant: { id: 'capsules_5', name: '5 cápsulas', price: 1250, capsules: 5 },
+      quantity: 1,
+      meta: { events: { lead: 'lead_z' }, sourceUrl: 'https://x.test/' },
+    });
+    expect(order.meta.events.lead).toBe('lead_z');
+    expect(order.meta.sourceUrl).toBe('https://x.test/');
+  });
+});
 describe('contrato de LEAD', () => {
   it('incluye identidad, origen, consentimiento y atribución', () => {
     const lead = buildLeadPayload({
@@ -36,9 +67,11 @@ describe('contrato de LEAD', () => {
     expect(lead.attribution.utm_campaign).toBe('verano');
     expect(lead.attribution.fbclid).toBe('FB1');
     expect(lead.attribution.utm_source).toBe('facebook');
+    // `_fbc` para Meta: sin cookie real, se construye desde el fbclid.
+    expect(lead.attribution.fbc).toMatch(/^fb\.1\.\d+\.FB1$/);
+    expect(lead.attribution.fbp).toBeNull();
     expect(lead.landingPage).toContain('utm_source=facebook');
-    expect(lead.createdAt).toBe('2026-01-01T10:00:00.000Z');
-    // Datos de la presentación elegida
+    expect(lead.createdAt).toBe('2026-01-01T10:00:00.000Z');    // Datos de la presentación elegida
     expect(lead.variantId).toBe('capsules_10');
     expect(lead.variantName).toBe('10 cápsulas');
     expect(lead.capsules).toBe(10);
