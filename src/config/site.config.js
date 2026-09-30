@@ -74,7 +74,7 @@ export const siteConfig = {
        * Debe tener LOS MISMOS dígitos que `number`: `npm run check` lo verifica
        * para que nunca se publique un número distinto del que recibe los pedidos.
        */
-      displayNumber: '+1 829 785 3794',
+      displayNumber: '+1 849-424-0621',
     },
     /** Email comercial visible (null => no se muestra). */
     email: envString('CONTACT_EMAIL'),

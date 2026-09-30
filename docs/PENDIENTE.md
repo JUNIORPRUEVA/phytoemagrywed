@@ -17,8 +17,8 @@ que se publicará y los datos que faltan.
 | "Frasco completo" en el frasco de 60 cápsulas | `variants[].completeBottle` | ✅ |
 | **Portada principal** con la línea completa de frascos | `images.hero` (+ `assets/portadaprincipal.png`) | ✅ |
 | **Foto propia de cada frasco** en el carrusel | `variants[].image` (+ `assets/fasco <N> capsula.png`) | ✅ |
-| **Número de WhatsApp de atención** (pedidos y dudas) | `.env` → `PHYTO_WHATSAPP_NUMBER` | ✅ `18297853794` |
-| **Número a la vista** del visitante (footer y contacto) | `site.config.js` → `contact.whatsapp.displayNumber` | ✅ `+1 829 785 3794` |
+| **Número de WhatsApp de atención** (pedidos y dudas) | `.env` → `PHYTO_WHATSAPP_NUMBER` | ✅ `18494240621` |
+| **Número a la vista** del visitante (footer y contacto) | `site.config.js` → `contact.whatsapp.displayNumber` | ✅ `+1 849-424-0621` |
 | **Descripción del producto** y **modo de uso** | `product.config.js` → `description`, `usage` | ✅ |
 | Moneda y formato dominicano (RD$1,250) | `site.config.js` → `commerce.currency/locale` | ✅ |
 | 5 grupos de WhatsApp con selección automática por prioridad | `site.config.js` → `community.groups` | ✅ (no publicados) |
@@ -152,7 +152,7 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 | Dónde se cierra la venta, dicho claro | "El pedido se finaliza por WhatsApp" en el resumen, en el modal (3 sitios) y en el panel de éxito |
 | Precio claro antes de pedir | Los 7 precios en RD$, a la vista, sin "consultar precio" |
 | Foto real por frasco | Carrusel deslizable; el cliente ve justo el frasco que va a pedir |
-| Número a la vista | `+1 829 785 3794` en el footer y junto al formulario: se ve que hay alguien detrás |
+| Número a la vista | `+1 849-424-0621` en el footer y junto al formulario: se ve que hay alguien detrás |
 | Sin riesgo percibido | "No se realiza ningún cobro en esta página" (resumen, modal y formulario) |
 | Nada se pierde | Si un envío falla (móvil sin datos), el dato queda en una cola local y se reenvía al cargar la siguiente página |
 | Panel para el negocio | `/admin/` se instala en el móvil como app (PWA): recordatorios, notas, estados y mensajes de WhatsApp con plantillas. Ver [`PANEL.md`](PANEL.md) |
@@ -178,7 +178,7 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 ### Para captar clientes potenciales de verdad
 
 - **Dónde llegan los contactos**: hoy **al WhatsApp del negocio**
-  (`+1 829 785 3794`) **y a la base de datos de la propia web** (incluida en la
+  (`+1 849-424-0621`) **y a la base de datos de la propia web** (incluida en la
   imagen Docker). Los **pedidos** llegan completos (frasco, cantidad, precio por
   frasco, cápsulas, total y el nombre que se escribe en el modal); los
   **contactos del formulario** llegan con nombre, teléfono y ubicación ya

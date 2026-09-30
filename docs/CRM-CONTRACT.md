@@ -20,7 +20,7 @@ Hay **dos canales**, y funcionan los dos a la vez:
 
 | Canal | Qué llega | Cuándo |
 | --- | --- | --- |
-| **WhatsApp `+1 829 785 3794`** | Todo, ya escrito y listo: cada pedido (frasco, cantidad, precio, total y el nombre) y cada contacto del formulario (nombre, teléfono, ubicación) | **Ya funciona**, sin configurar nada |
+| **WhatsApp `+1 849-424-0621`** | Todo, ya escrito y listo: cada pedido (frasco, cantidad, precio, total y el nombre) y cada contacto del formulario (nombre, teléfono, ubicación) | **Ya funciona**, sin configurar nada |
 | **La base de datos de la propia web** (`/api/crm`, dentro de la imagen) | El mismo dato en formato estructurado (`lead` y `order_intent`), guardado en PostgreSQL (o en `/data/phytoemagry.sqlite`) | **Ya funciona** en la imagen Docker; se lee en `/panel?token=...` |
 
 ### La base de datos de la web (PostgreSQL o SQLite)

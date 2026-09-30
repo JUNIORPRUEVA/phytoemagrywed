@@ -802,8 +802,8 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
 
 describe('atención por WhatsApp: un solo número para todo', () => {
   /** Número de atención (República Dominicana) y cómo se le enseña al visitante. */
-  const NUMBER = '18297853794';
-  const DISPLAY = '+1 829 785 3794';
+  const NUMBER = '18494240621';
+  const DISPLAY = '+1 849-424-0621';
   const view = makeShopView({
     whatsapp: NUMBER,
     site: { contact: { whatsapp: { number: NUMBER, displayNumber: DISPLAY } } },

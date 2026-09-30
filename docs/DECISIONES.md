@@ -727,4 +727,35 @@ Un fallo real más, encontrado al arrancar en local: la variable
 `graph.facebook.com//<pixel>/events`. Se vio en el banner del servidor y ahora una
 variable vacía usa la versión por defecto.
 
+## 35. El número de atención es el del WhatsApp Cloud API: `+1 849-424-0621`
+
+La decisión 26 publicó el número **`829 785 3794`**. Al pasar a WhatsApp Cloud API
+se comprobó que **ese no es el número que atiende**: el negocio opera con el
+número verificado **`+1 849-424-0621`** (Display Name "Phytoemagry", Phone Number
+ID `1410599278794907`, WABA `2559517617897858`). Publicar un teléfono que no
+atiende es exactamente el error caro que este proyecto se propuso evitar, así que
+todo se unifica en el oficial:
+
+1. **Un único sitio para el número** (no se duplica en componentes):
+   `.env` → `PHYTO_WHATSAPP_NUMBER=18494240621` (el que recibe pedidos y
+   consultas) y `site.config.js` → `contact.whatsapp.displayNumber =
+   '+1 849-424-0621'` (lo que se enseña en el footer y junto al formulario).
+   `npm run check` **sigue fallando** si los dígitos del visible y del receptor no
+   coinciden.
+2. **Los valores por defecto de la imagen** (`Dockerfile` y `docker-compose.yml`)
+   pasan al número oficial: una imagen no puede salir apuntando al número viejo.
+3. **Prueba de regresión nueva** (`tests/contact-number.test.js`): falla si el
+   número viejo reaparece en cualquier superficie de ejecución (`src/`, `public/`,
+   `server/`, `scripts/`, `nginx/`, `Dockerfile`, `docker-compose.yml`) o en el
+   HTML renderizado, y exige que los enlaces comerciales sean
+   `https://wa.me/18494240621` generados desde la configuración.
+4. **Qué no se toca**: los grupos de la comunidad (`chat.whatsapp.com/…`, que no
+   tienen nada que ver con el número comercial), los teléfonos de los clientes
+   (ni en conversaciones ni en la base de datos) y los identificadores de Meta
+   (Phone Number ID / WABA / token), que no son el número público y nunca deben
+   llegar al frontend.
+
+El número anterior queda en este registro como lo que fue: el que el negocio dio
+en su momento, hoy **superado** por el verificado de Cloud API.
+
 

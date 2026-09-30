@@ -281,7 +281,7 @@ que no quedan anclas rota.
 | **Flechas del carrusel** | Avanzan una tarjeta y se desactivan en los extremos; solo aparecen con JavaScript (sin JS el carrusel se desliza igual) |
 | **Cantidad** | Botones + / − y campo numérico: son **frascos**, no cápsulas |
 | **Cápsulas en total** | Se calculan aparte (10 cápsulas × 2 = 20 cápsulas · RD$5,000) |
-| **Número de atención a la vista** | `+1 829 785 3794` en el footer y junto al formulario (`contact.whatsapp.displayNumber`). `npm run check` falla si sus dígitos no son los mismos que los del número que recibe los pedidos |
+| **Número de atención a la vista** | `+1 849-424-0621` en el footer y junto al formulario (`contact.whatsapp.displayNumber`). `npm run check` falla si sus dígitos no son los mismos que los del número que recibe los pedidos |
 | **Déjanos tu contacto y te escribimos** | Enlace en el propio resumen del pedido que baja al formulario: el visitante que no compra hoy también puede dejar su número |
 | **Modal de pedido** | Formulario **mínimo: solo el nombre**. El frasco, la cantidad, el precio y el total ya están elegidos arriba y viajan escritos en el mensaje de WhatsApp. El modal avisa en 3 sitios de que **el pedido se finaliza por WhatsApp** (frase de entrada, línea informativa junto al botón y nota al pie) |
 | **Formulario de contacto** | Valida, se envía al CRM (cola local si no hay endpoint) **y abre WhatsApp con nombre, teléfono y ubicación ya escritos**: así el contacto llega al negocio y se puede responder |
@@ -292,7 +292,7 @@ que no quedan anclas rota.
 
 Hay **dos canales** y funcionan a la vez:
 
-1. **WhatsApp `+1 829 785 3794`** (el principal): cada pedido y cada contacto
+1. **WhatsApp `+1 849-424-0621`** (el principal): cada pedido y cada contacto
    llegan al chat ya escritos, y el negocio responde desde el móvil.
 2. **La base de datos de la propia web** (`server/crm-server.mjs`): la imagen
    Docker ya la trae y la web le envía los mismos datos a `/api/crm`. Con
@@ -364,7 +364,7 @@ Todo lo que empuja a la compra está activo y verificado con tests:
 | Pedir en un toque, sin registro | Botón **Pedir por WhatsApp** en cada frasco, con el pedido ya escrito |
 | Precio claro antes de pedir | Los 7 precios en RD$, sin "consultar precio" |
 | Ver el producto real | Foto propia de cada frasco en el carrusel |
-| Saber con quién se habla | Número **+1 829 785 3794** a la vista (footer y formulario) |
+| Saber con quién se habla | Número **+1 849-424-0621** a la vista (footer y formulario) |
 | Sin riesgo percibido | "No se realiza ningún cobro en esta página" en el resumen, el modal y el formulario |
 | Nunca un callejón sin salida | Pedir (WhatsApp/modal) **y** dejar el contacto desde el resumen |
 | Prueba social aprobada | `trust.claim` (verificada por el negocio; sin cifras sueltas) |

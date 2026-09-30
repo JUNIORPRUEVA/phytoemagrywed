@@ -23,7 +23,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Número que recibe los pedidos y las consultas de WhatsApp.
-        PHYTO_WHATSAPP_NUMBER: "${PHYTO_WHATSAPP_NUMBER:-18297853794}"
+        PHYTO_WHATSAPP_NUMBER: "${PHYTO_WHATSAPP_NUMBER:-18494240621}"
         # Dominio final (sin barra al final): activa canonical, sitemap y la
         # vista previa con imagen al compartir el enlace. Vacío = desactivado.
         SEO_SITE_URL: "${SEO_SITE_URL:-}"

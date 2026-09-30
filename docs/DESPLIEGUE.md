@@ -116,7 +116,7 @@ el repositorio, construye la imagen y te da el HTTPS automático.
    esto en la pestaña y cambia el dominio:
 
    ```bash
-   PHYTO_WHATSAPP_NUMBER=18297853794
+   PHYTO_WHATSAPP_NUMBER=18494240621
    SEO_SITE_URL=https://tudominio.com
    APP_ENV=production
    ```
@@ -206,7 +206,7 @@ del panel) y nunca se escribe en el build.
 
 | Variable | Para qué | Valor actual |
 | --- | --- | --- |
-| `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | `18297853794` |
+| `PHYTO_WHATSAPP_NUMBER` | Número que recibe pedidos y consultas | `18494240621` |
 | `SEO_SITE_URL` | Dominio final (activa canonical, sitemap y la vista previa con imagen al compartir). Sin barra al final | vacío |
 | `PHYTO_CRM_ENDPOINT` | Endpoint del CRM (ver `CRM-CONTRACT.md`) | `/api/crm` (el API que trae la imagen) |
 | `PHYTO_META_PIXEL_ID` | Píxel de Meta (medición de anuncios). **Se incrusta en el build**: necesita Deploy, no solo reinicio | vacío |
