@@ -122,9 +122,12 @@ describe('el panel llama a los endpoints del CRM', () => {
   });
 
   it('el hilo distingue CLIENTE, NEGOCIO y AUTOMATIZACIÓN', () => {
-    expect(app).toContain("'Cliente'");
-    expect(app).toContain("'Negocio'");
-    expect(app).toContain("'Automatización'");
+    // Quién escribe se ve por el LADO y el color (izquierda/derecha), no por una
+    // etiqueta repetida en cada mensaje: eso era ruido. Lo que SÍ se etiqueta es
+    // lo automático, porque ahí hay algo que el negocio tiene que saber.
+    expect(app).toContain("bubble--${inbound ? 'in' : 'out'}");
+    expect(app).toContain('Automatización');
+    expect(app).toContain('bubble--auto');
   });
 });
 

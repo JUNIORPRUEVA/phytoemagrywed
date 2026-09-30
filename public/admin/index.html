@@ -53,24 +53,26 @@
 
     <!-- --------------------------------------------------------------- APP -->
     <div id="app" class="app" hidden>
+      <!--
+        El menú y el estado del sistema FLOTAN sobre la pantalla: en WhatsApp no
+        hay barra superior (la conversación empieza arriba del todo), así que
+        estos dos controles siguen a mano sin ocupar una franja.
+      -->
+      <button
+        class="float-btn float-btn--menu"
+        id="menu"
+        type="button"
+        aria-label="Abrir menú"
+        aria-expanded="false"
+        aria-controls="drawer"
+      >
+        <span class="burger" aria-hidden="true"><span></span><span></span></span>
+      </button>
+      <span class="presence" id="state-pill" role="status" hidden></span>
       <header class="topbar">
-        <button
-          class="icon-btn topbar__menu"
-          id="menu"
-          type="button"
-          aria-label="Abrir menú"
-          aria-expanded="false"
-          aria-controls="drawer"
-        >
-          ☰
-        </button>
         <div class="topbar__title">
           <span class="topbar__brand">Phytoemagry</span>
           <span class="topbar__sub" id="topbar-sub">CRM</span>
-        </div>
-        <div class="topbar__actions">
-          <span class="pill" id="state-pill" hidden></span>
-          <button class="icon-btn" id="refresh" type="button" aria-label="Actualizar datos">⟳</button>
         </div>
       </header>
 
@@ -79,33 +81,35 @@
       <aside class="drawer" id="drawer" hidden aria-label="Menú del CRM">
         <div class="drawer__head">
           <div class="drawer__brand"><strong>Phytoemagry</strong><span>CRM</span></div>
-          <button class="icon-btn" id="drawer-close" type="button" aria-label="Cerrar menú">✕</button>
+          <button class="icon-btn" id="drawer-close" type="button" aria-label="Cerrar menú">
+            <span class="ico" aria-hidden="true" data-icon="close"></span>
+          </button>
         </div>
         <p class="drawer__group">Operación</p>
         <nav class="drawer__nav">
           <button class="drawer__item" data-tab="hoy" type="button">
-            <span class="drawer__icon" aria-hidden="true">☀</span>Hoy
+            <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
           </button>
           <button class="drawer__item" data-tab="whatsapp" type="button">
-            <span class="drawer__icon" aria-hidden="true">💬</span>WhatsApp
+            <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>WhatsApp
           </button>
           <button class="drawer__item" data-tab="clientes" type="button">
-            <span class="drawer__icon" aria-hidden="true">👥</span>Clientes
+            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
           </button>
         </nav>
         <p class="drawer__group">Gestión</p>
         <nav class="drawer__nav">
           <button class="drawer__item" data-tab="pedidos" type="button">
-            <span class="drawer__icon" aria-hidden="true">📦</span>Pedidos y compras
+            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
           </button>
           <button class="drawer__item" data-tab="seguimientos" type="button">
-            <span class="drawer__icon" aria-hidden="true">🔔</span>Seguimientos
+            <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
           </button>
           <button class="drawer__item" data-tab="mensajes" type="button">
-            <span class="drawer__icon" aria-hidden="true">📝</span>Mensajes y plantillas
+            <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
           </button>
           <button class="drawer__item" data-tab="ajustes" type="button">
-            <span class="drawer__icon" aria-hidden="true">⚙</span>Ajustes
+            <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
           </button>
         </nav>
         <p class="drawer__group">Sesión</p>
@@ -127,24 +131,21 @@
         </section>
 
         <!-- WHATSAPP: bandeja de conversaciones (izquierda lista, derecha conversación) -->
-        <section class="view" id="view-whatsapp" hidden>
+        <section class="view view--wa" id="view-whatsapp" hidden>
           <div id="wa-status"></div>
           <div class="wa" id="wa" data-view="list">
             <!-- Columna izquierda -->
             <div class="wa__list">
               <div class="wa__list-head">
-                <p class="wa__title">WhatsApp</p>
-                <button class="icon-btn" id="wa-refresh" type="button" aria-label="Actualizar conversaciones">
-                  ⟳
-                </button>
+                <input
+                  class="field__input wa__search"
+                  id="wa-search"
+                  type="search"
+                  placeholder="Buscar conversación"
+                  aria-label="Buscar conversación"
+                  autocomplete="off"
+                />
               </div>
-              <input
-                class="field__input"
-                id="wa-search"
-                type="search"
-                placeholder="Buscar conversación"
-                autocomplete="off"
-              />
               <div class="chips" id="wa-filters"></div>
               <div class="wa__error" id="wa-error" hidden></div>
               <div class="wa__convs" id="wa-conversations"></div>
@@ -153,25 +154,32 @@
             <!-- Columna derecha -->
             <div class="wa__chat" id="wa-chat-pane" hidden>
               <div class="wa__chat-head">
-                <button class="icon-btn wa__back" id="wa-back" type="button" aria-label="Volver a conversaciones">
-                  ←
+                <button class="wa__back" id="wa-back" type="button" aria-label="Volver a conversaciones">
+                  <span class="ico" aria-hidden="true" data-icon="back"></span>
                 </button>
                 <span class="avatar avatar--sm" id="wa-chat-avatar" aria-hidden="true"></span>
                 <div class="wa__chat-who">
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
+              </div>
+              <div class="thread thread--wa chat-bg" id="thread"></div>
+              <!--
+                Acciones del cliente: botón flotante, separado del «+» del
+                compositor (que adjunta) y sin tapar mensajes, compositor ni barra.
+              -->
+              <div class="wa__fab-row">
                 <button
-                  class="icon-btn"
+                  class="wa-fab"
                   id="wa-actions"
                   type="button"
                   aria-label="Acciones del cliente"
                   title="Acciones del cliente"
+                  disabled
                 >
-                  ⋯
+                  <span class="ico" aria-hidden="true" data-icon="spark"></span>
                 </button>
               </div>
-              <div class="thread thread--wa chat-bg" id="thread"></div>
               <div class="wa__composer" id="wa-composer"></div>
             </div>
 
@@ -179,12 +187,6 @@
               Elige una conversación de la izquierda para ver los mensajes.
             </p>
           </div>
-          <p class="view__hint">
-            <strong>Nada se envía solo</strong>: tú escribes y pulsas Enviar.
-          </p>
-          <button class="btn btn--primary btn--block" id="compra-nueva-wa" type="button">
-            + Registrar compra de un cliente
-          </button>
         </section>
 
         <!-- CLIENTES -->
@@ -303,15 +305,15 @@
 
       <nav class="tabs" aria-label="Secciones">
         <button class="tab" data-tab="hoy" type="button">
-          <span class="tab__icon" aria-hidden="true">☀</span><span>Hoy</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="sun"></span><span>Hoy</span>
           <span class="tab__badge" id="badge-hoy" hidden></span>
         </button>
         <button class="tab tab--center" data-tab="whatsapp" type="button">
-          <span class="tab__icon" aria-hidden="true">💬</span><span>WhatsApp</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="chat"></span><span>WhatsApp</span>
           <span class="tab__badge" id="badge-whatsapp" hidden></span>
         </button>
         <button class="tab" data-tab="clientes" type="button">
-          <span class="tab__icon" aria-hidden="true">👥</span><span>Clientes</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="users"></span><span>Clientes</span>
         </button>
       </nav>
     </div>
@@ -322,7 +324,9 @@
       <div class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         <header class="sheet__head">
           <h2 class="sheet__title" id="sheet-title">Ficha</h2>
-          <button class="icon-btn" data-close-sheet type="button" aria-label="Cerrar">✕</button>
+          <button class="icon-btn" data-close-sheet type="button" aria-label="Cerrar">
+            <span class="ico" aria-hidden="true" data-icon="close"></span>
+          </button>
         </header>
         <div class="sheet__body" id="sheet-body"></div>
       </div>

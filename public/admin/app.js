@@ -77,6 +77,52 @@
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#039;');
 
+  /*
+   * ICONOS — UN solo sistema visual: trazos SVG de 24x24 (nada de emojis
+   * mezclados con iconos, nada de estilos distintos por pantalla).
+   *
+   * Los que viven en el HTML estático se pintan al arrancar con `paintIcons()`:
+   * así la forma de cada icono se define UNA vez, aquí.
+   */
+  const svg = (paths) =>
+    `<svg class="svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" `+
+    `stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+
+  const ICONS = {
+    sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>'),
+    chat: svg('<path d="M21 11.6a8 8 0 0 1-8 8H8.2L3 22.5l1.3-4.4A8 8 0 1 1 21 11.6z"/>'),
+    users: svg('<path d="M15.5 20v-1.4a4 4 0 0 0-4-4H7.2a4 4 0 0 0-4 4V20"/><circle cx="9.3" cy="7.6" r="3.1"/><path d="M17.4 15.4a3.9 3.9 0 0 1 2.6 3.7V20M15.8 4.6a3.1 3.1 0 0 1 0 6"/>'),
+    box: svg('<path d="M20.5 8.4v7.2L12 20.4l-8.5-4.8V8.4L12 3.6z"/><path d="M3.5 8.4 12 13l8.5-4.6M12 13v7.4"/>'),
+    bell: svg('<path d="M18 15.2V10a6 6 0 1 0-12 0v5.2L4 18.6h16z"/><path d="M10 21.4h4"/>'),
+    note: svg('<path d="M8 3.5h8a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/><path d="M9.2 8h5.6M9.2 12h5.6M9.2 16h3.4"/>'),
+    /* Ajustes = mandos que se deslizan (un engranaje aquí se confundía con el sol de Hoy). */
+    gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
+    close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
+    back: svg('<path d="M14.5 19l-7-7 7-7"/>'),
+    plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
+    mic: svg('<rect x="9.2" y="2.8" width="5.6" height="10.8" rx="2.8"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.4V21M9.4 21h5.2"/>'),
+    send: svg('<path d="M4.6 12 20 4.6l-7.3 15-1.9-6.3z"/><path d="M10.8 13.3 20 4.6"/>'),
+    spark: svg('<path d="M11.4 3.6l1.8 4.9 4.9 1.8-4.9 1.8-1.8 4.9-1.8-4.9L4.7 10.3l4.9-1.8z"/><path d="M18.4 15.6l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/>'),
+    bag: svg('<path d="M4.6 7.4h14.8l-1.2 11.9a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8z"/><path d="M8.8 7.4V5.8a3.2 3.2 0 0 1 6.4 0v1.6"/>'),
+    clock: svg('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3 1.9"/>'),
+    person: svg('<circle cx="12" cy="7.9" r="3.9"/><path d="M4.8 20.4c1.3-3.3 4-4.9 7.2-4.9s5.9 1.6 7.2 4.9"/>'),
+    image: svg('<rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6"/><circle cx="9" cy="10" r="1.6"/><path d="M3.6 17.2l4.9-4.9 4.4 4.4 2.8-2.7 4.7 4.6"/>'),
+    audio: svg('<path d="M4 13.6v-3.2M8 17V7M12 20V4M16 16.4v-8.8M20 13.4v-2.8"/>'),
+    doc: svg('<path d="M7.2 3.4h6.3l5 5V20.6H7.2z"/><path d="M13.2 3.4v5.2h5.3"/>'),
+    video: svg('<rect x="3.2" y="6.2" width="11.6" height="11.6" rx="2.6"/><path d="M15 11.2l5.8-3.4v8.4L15 12.8z"/>'),
+    tagIcon: svg('<path d="M4.4 12.6V5.2a.8.8 0 0 1 .8-.8h7.4l7.2 7.2-8.2 8.2z"/><circle cx="8.7" cy="8.7" r="1.3"/>'),
+    pin: svg('<path d="M12 20.8s6.2-5.8 6.2-10.6a6.2 6.2 0 1 0-12.4 0C5.8 15 12 20.8 12 20.8z"/><circle cx="12" cy="10" r="2.3"/>'),
+    retry: svg('<path d="M19.6 12a7.6 7.6 0 1 1-2.5-5.6"/><path d="M19.8 4.4v4.2h-4.2"/>'),
+  };
+
+  /** Pinta los iconos declarados en el HTML (`data-icon="..."`). */
+  function paintIcons(root = document) {
+    $$('[data-icon]', root).forEach((slot) => {
+      const art = ICONS[slot.dataset.icon];
+      if (art) slot.innerHTML = art;
+    });
+  }
+
   /** Fecha-hora corta en español (la del teléfono es la del negocio). */
   const fmtWhen = (iso) => {
     const date = new Date(iso);
@@ -770,10 +816,13 @@
 
   function renderWhatsapp() {
     const wa = state.whatsapp ?? { configured: false };
+    /*
+     * En WhatsApp NO se anuncia "conectado" ni se repite el número del negocio:
+     * es SU número y la pantalla ya dice dónde estamos. Solo se avisa cuando hay
+     * algo que hacer de verdad: que WhatsApp no esté configurado en el servidor.
+     */
     $('#wa-status').innerHTML = wa.configured
-      ? `<p class="rule">WhatsApp conectado${
-          wa.phoneNumber ? ` · ${escapeHtml(wa.phoneNumber)}` : ''
-        }. Los mensajes del cliente aparecen aquí solos.</p>`
+      ? ''
       : `<p class="rule rule--warn">WhatsApp todavía no está configurado en el servidor. Puedes registrar
          clientes y compras y ver sus fichas, pero el panel no envía ni recibe mensajes. Faltan las
          variables del servidor (ver docs/WHATSAPP_INTEGRATION.md).</p>`;
@@ -1223,10 +1272,18 @@
 
   // ------------------------------------------------ conversación y ficha 360
 
-  function openSheet(title, html) {
+  /**
+   * Abre la hoja. `variant: 'menu'` la convierte en popover en escritorio (un
+   * menú no sube desde abajo en una pantalla grande); en el móvil es la misma
+   * hoja de siempre.
+   */
+  function openSheet(title, html, { variant = '' } = {}) {
     $('#sheet-title').textContent = title;
     $('#sheet-body').innerHTML = html;
-    $('#sheet').hidden = false;
+    const sheet = $('#sheet');
+    if (variant) sheet.dataset.variant = variant;
+    else delete sheet.dataset.variant;
+    sheet.hidden = false;
   }
 
   function closeSheet() {
@@ -1309,11 +1366,22 @@
      * corchete raro.
      */
     let cuerpo;
+    /*
+     * ¿El mensaje es SOLO el archivo? Entonces el archivo ES la burbuja (una
+     * sola pieza visual, sin tarjeta dentro de tarjeta). Si además trae texto, la
+     * burbuja hace de marco para la imagen + el pie de foto.
+     */
+    let soloArchivo = false;
     if (tipo === 'image' && mediaSrc && mediaListo) {
+      soloArchivo = !message.body;
       cuerpo = `<button class="media-thumb" data-media-view="${escapeHtml(media.id)}" type="button" aria-label="Ver la imagen en grande">
           <img src="${escapeHtml(mediaSrc)}" alt="Imagen del cliente" loading="lazy" decoding="async" /></button>`;
-      if (message.body) cuerpo += escapeHtml(message.body);
+      if (message.body) cuerpo += `<span class="media-caption">${escapeHtml(message.body)}</span>`;
     } else if ((tipo === 'audio' || tipo === 'voice') && mediaSrc && mediaListo) {
+      soloArchivo = true;
+      // Si el servidor ya sabe cuánto dura (Meta lo manda), se enseña desde el
+      // principio: un reproductor que arranca en «--:--» parece roto.
+      const duracion = Number(media?.durationMs) > 0 ? fmtSeconds(media.durationMs / 1000) : '--:--';
       cuerpo = `<span class="audio" data-audio="${escapeHtml(media.id)}">
           <button class="audio__play" data-audio-play="${escapeHtml(media.id)}" data-audio-src="${escapeHtml(
             mediaSrc,
@@ -1321,9 +1389,9 @@
           <span class="audio__main">
             <input class="audio__seek" data-audio-seek="${escapeHtml(media.id)}" type="range" min="0" max="1000" value="0"
               aria-label="Posición del audio" />
-            <span class="audio__times"><span data-audio-current>0:00</span><span data-audio-total>--:--</span></span>
+            <span class="audio__times"><span data-audio-current>0:00</span><span data-audio-total>${duracion}</span></span>
           </span>
-          <span class="audio__label" aria-hidden="true">${tipo === 'voice' ? '🎤' : '🎵'}</span>
+          <span class="audio__kind" aria-hidden="true">${tipo === 'voice' ? ICONS.mic : ICONS.audio}</span>
         </span>`;
     } else if (tipo !== 'text' && tipo !== 'button' && tipo !== 'interactive') {
       const falló = media?.status === 'FAILED' || Boolean(media?.errorCode);
@@ -1353,8 +1421,8 @@
     }
     return `<div class="bubble bubble--${inbound ? 'in' : 'out'} ${auto ? 'bubble--auto' : ''} ${
       message.status === 'failed' ? 'bubble--failed' : ''
-    } ${grouped ? 'bubble--grouped' : ''}">
-        <span class="bubble__who">${inbound ? 'Cliente' : auto ? 'Automatización' : 'Negocio'}</span>
+    } ${grouped ? 'bubble--grouped' : ''} ${soloArchivo ? 'bubble--media' : ''}">
+        ${auto ? '<span class="bubble__who">Automatización</span>' : ''}
         ${cuerpo}
         <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
           estado ? ` · ${escapeHtml(estado)}` : ''
@@ -1393,15 +1461,15 @@
     return (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
   };
 
-  /** Icono y nombre legible de cada tipo de contenido (sin emojis raros). */
+  /** Icono y nombre legible de cada tipo de contenido (mismo sistema de iconos). */
   const WA_KIND_ICON = {
-    image: '🖼',
-    audio: '🎤',
-    voice: '🎤',
-    document: '📎',
-    video: '🎬',
-    sticker: '🏷',
-    location: '📍',
+    image: ICONS.image,
+    audio: ICONS.audio,
+    voice: ICONS.mic,
+    document: ICONS.doc,
+    video: ICONS.video,
+    sticker: ICONS.tagIcon,
+    location: ICONS.pin,
   };
   const WA_KIND_LABEL = {
     image: 'Imagen',
@@ -1485,7 +1553,6 @@
 
   /** Una conversación de la lista (nombre o teléfono, nunca un id técnico). */
   function waRow(row) {
-    const customer = waCustomer(row);
     const unread = Number(row.unread_count) || 0;
     const awaiting = waAwaiting(row);
     const last = row.last_message;
@@ -1514,7 +1581,6 @@
             <span class="conv__name">${escapeHtml(nombre)}</span>
             <span class="conv__when">${row.last_message_at ? escapeHtml(fmtWhen(row.last_message_at)) : ''}</span>
           </span>
-          ${customer?.phone_e164 ? `<span class="conv__phone">${escapeHtml(customer.phone_e164)}</span>` : ''}
           <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
           ${flags}
         </span>
@@ -1575,21 +1641,30 @@
     }
     const puedeAdjuntar = state.media?.enabled === true;
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
+    /*
+     * Un solo compositor: adjuntar · campo · (audio | enviar), todo dentro de la
+     * misma superficie. El micro y el envío viven en la MISMA casilla, así que el
+     * cambio de uno a otro no mueve nada de sitio.
+     */
     return `<div class="composer-bar">
         <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio"
           title="${
             puedeAdjuntar ? 'Adjuntar imagen o audio' : 'Adjuntar: la multimedia no está activa en el servidor'
-          }">+</button>
+          }">${ICONS.plus}</button>
         <textarea id="wa-text" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
-        <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
-          title="${
-            puedeGrabar
-              ? 'Grabar nota de voz'
-              : 'Este navegador no permite grabar: usa + para adjuntar un audio'
-          }">${puedeGrabar ? '🎤' : '🎵'}</button>
-        <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden>➤</button>
+        <span class="composer-end">
+          <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
+            title="${
+              puedeGrabar
+                ? 'Grabar nota de voz'
+                : 'Este navegador no permite grabar: usa + para adjuntar un audio'
+            }">${puedeGrabar ? ICONS.mic : ICONS.audio}</button>
+          <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden>${
+            ICONS.send
+          }</button>
+        </span>
       </div>
-      <p class="view__hint">Enter envía · Shift+Enter hace un salto de línea. Nada se envía solo.</p>`;
+      <p class="composer-rule">Enter envía · Shift+Enter salto de línea · Nada se envía solo.</p>`;
   }
 
   function renderWaChat() {
@@ -1677,8 +1752,22 @@
       });
       adjust();
     }
+    /*
+     * Abrir una conversación tiene que dejar a la vista lo ÚLTIMO. Las imágenes
+     * entran con `loading="lazy"` y crecen cuando llegan, así que se vuelve al
+     * final en el cuadro siguiente y cada vez que una imagen termina de cargar.
+     */
     const thread = $('#thread');
-    if (thread) thread.scrollTop = thread.scrollHeight;
+    if (thread) {
+      const irAlFinal = () => {
+        thread.scrollTop = thread.scrollHeight;
+      };
+      irAlFinal();
+      // `requestAnimationFrame` no existe en todos los entornos de prueba: si no
+      // está, basta con el empujón de arriba.
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(irAlFinal);
+      $$('img', thread).forEach((img) => img.addEventListener('load', irAlFinal, { once: true }));
+    }
 
     $('#wa-send')?.addEventListener('click', (event) => {
       const body = $('#wa-text').value.trim();
@@ -1830,7 +1919,10 @@
     if (current) current.textContent = fmtSeconds(sharedAudio.currentTime);
     if (total) total.textContent = Number.isFinite(duration) && duration > 0 ? fmtSeconds(duration) : '--:--';
     if (seek && Number.isFinite(duration) && duration > 0) {
-      seek.value = String(Math.round((sharedAudio.currentTime / duration) * 1000));
+      const avance = sharedAudio.currentTime / duration;
+      seek.value = String(Math.round(avance * 1000));
+      /* La barra se pinta con esta variable: el avance se ve sin repintar el hilo. */
+      row.style.setProperty('--audio-progress', `${Math.round(avance * 100)}%`);
     }
     if (play) {
       // Sonando = de verdad suena: si el archivo no se pudo decodificar
@@ -1838,6 +1930,7 @@
       const sonando = !sharedAudio.paused && !sharedAudio.error && audioBlocked !== audioOwner;
       play.textContent = sonando ? '❚❚' : '▶';
       play.setAttribute('aria-label', sonando ? 'Pausar' : 'Reproducir');
+      row.classList.toggle('audio--playing', sonando);
     }
   }
 
@@ -1957,20 +2050,21 @@
     openSheet(
       'Adjuntar',
       `
-      <p class="view__hint">Elige qué enviar. Después podrás verlo antes de mandarlo: <strong>nada se envía al elegir</strong>.</p>
+      <p class="view__hint">Nada se envía al elegir: primero lo ves y después lo mandas.</p>
       <div class="menu-list">
         <button class="menu-item" id="attach-image" type="button">
-          <span aria-hidden="true">🖼</span>
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.image}</span>
           <span><strong>Imagen</strong><small>JPG, PNG o WebP · hasta 5 MB</small></span>
         </button>
         <button class="menu-item" id="attach-audio" type="button">
-          <span aria-hidden="true">🎵</span>
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.audio}</span>
           <span><strong>Audio</strong><small>Un archivo de audio · hasta 16 MB</small></span>
         </button>
       </div>
       <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
       <input id="attach-audio-input" type="file" accept="${AUDIO_ACCEPT}" hidden />
       `,
+      { variant: 'menu' },
     );
 
     const pick = (inputSelector, kind) => {
@@ -2225,6 +2319,9 @@
   function setWaView(view) {
     const box = $('#wa');
     if (box) box.dataset.view = view;
+    /* La hoja de estilos necesita saberlo para el modo "conversación a pantalla
+     * completa" (ahí no hay menú flotante: se vuelve con ←). */
+    document.body.dataset.waView = view;
   }
 
   /** Abre una conversación: carga el hilo y apaga la insignia de no leído. */
@@ -2782,35 +2879,40 @@
   function openChatActions(customerId, conversationId) {
     const customer = customerById(customerId);
     if (!customer) return;
+    /*
+     * Acciones del cliente: icono + título corto, sin párrafos. La única que
+     * lleva una nota es la que ENVÍA sola (una plantilla la manda el sistema): no
+     * se puede confundir con una tarea para una persona.
+     */
     openSheet(
       customerName(customer),
       `
-      <p class="view__hint">Acciones de venta con este cliente, sin salir del chat.</p>
       <div class="menu-list">
         <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
-          <span aria-hidden="true">📦</span>
-          <span><strong>Crear pedido</strong><small>Elige frascos, cantidad y total</small></span>
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+          <span><strong>Crear pedido</strong></span>
         </button>
         <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
-          <span aria-hidden="true">🔔</span>
-          <span><strong>Programar seguimiento</strong><small>Tarea para ti (no envía nada)</small></span>
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
+          <span><strong>Programar seguimiento</strong></span>
         </button>
         <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
-          <span aria-hidden="true">⏰</span>
-          <span><strong>Programar mensaje</strong><small>El sistema lo intentará enviar</small></span>
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
+          <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
         </button>
         <button class="menu-item" data-customer="${escapeHtml(customer.id)}" type="button">
-          <span aria-hidden="true">👤</span>
-          <span><strong>Ver cliente</strong><small>Ficha 360 del cliente</small></span>
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+          <span><strong>Ver cliente</strong></span>
         </button>
       </div>
     `,
+      { variant: 'menu' },
     );
   }
 
@@ -2834,11 +2936,17 @@
     const defaultStatus = order?.status ?? 'nuevo';
 
     openSheet(
-      `${orderId ? 'Modificar pedido' : 'Crear pedido'} · ${customer ? customerName(customer) : 'Nuevo cliente'}`,
+      `${
+        orderId
+          ? `Modificar pedido · ${customer ? customerName(customer) : 'cliente'}`
+          : customer
+            ? `Pedido para ${customerName(customer)}`
+            : 'Pedido para un cliente nuevo'
+      }`,
       `
       ${
         customer
-          ? '<p class="view__hint">Cliente precargado de la conversación. Los precios salen del catálogo oficial.</p>'
+          ? ''
           : `<p class="view__hint">El teléfono identifica al cliente: si ya existe, el pedido se suma a su historial.</p>
              <label class="field">
                <span class="field__label">Teléfono del cliente</span>
@@ -3269,8 +3377,16 @@
     state.online = online;
     const pill = $('#state-pill');
     pill.hidden = false;
-    pill.textContent = online ? 'en línea' : 'sin conexión';
-    pill.classList.toggle('pill--offline', !online);
+    /*
+     * Indicador de PRESENCIA: un punto con un halo lento. Dice "sistema
+     * conectado", no es un botón (no hace nada al tocarlo) y no finge nada: si
+     * el navegador dice que no hay red, cambia de color y de texto.
+     */
+    pill.dataset.online = online ? 'true' : 'false';
+    pill.innerHTML =
+      '<span class="presence__dot" aria-hidden="true"></span>' +
+      `<span class="presence__label">${online ? 'En línea' : 'Sin conexión'}</span>`;
+    pill.setAttribute('aria-label', online ? 'Sistema en línea' : 'Sin conexión');
     $('#offline-banner').hidden = online;
     if (online) flushOutbox();
   }
@@ -3424,11 +3540,6 @@
     });
 
     $$('[data-tab]').forEach((button) => button.addEventListener('click', () => setTab(button.dataset.tab)));
-
-    $('#refresh').addEventListener('click', async () => {
-      await load({ keepTab: true });
-      toast('Datos actualizados');
-    });
 
     $('#search').addEventListener('input', (event) => {
       state.q = event.target.value.trim();
@@ -3682,7 +3793,6 @@
 
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
     $('#compra-nueva').addEventListener('click', () => openPurchaseForm(null));
-    $('#compra-nueva-wa').addEventListener('click', () => openPurchaseForm(null));
     $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
 
     // Interruptores del plan de postventa (Ajustes): cada día se activa o apaga.
@@ -3721,11 +3831,10 @@
     });
 
     // -------------------------------------------------- bandeja de WhatsApp
-    $('#wa-refresh').addEventListener('click', () => {
-      refreshWhatsapp()
-        .then(() => toast('Conversaciones actualizadas'))
-        .catch(() => toast('No se pudo actualizar'));
-    });
+    /*
+     * La bandeja no tiene botón de recargar: se refresca sola (sondeo de 8 s) y
+     * al entrar en la pestaña. Buscar y filtrar sí son acciones de la persona.
+     */
     $('#wa-search').addEventListener('input', (event) => {
       state.wa.q = event.target.value.trim();
       renderWaList();
@@ -3794,6 +3903,7 @@
 
   async function boot() {
     initEvents();
+    paintIcons();
     initPwa();
 
     // Un único temporizador para la bandeja de WhatsApp (8 s, solo cuando toca).

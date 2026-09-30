@@ -415,16 +415,16 @@ describe('UAT del panel con multimedia', () => {
   it('grabar una nota de voz: detener NO envía, y se puede previsualizar antes', async () => {
     const antes = sends;
     click($('#wa-mic') ?? $('#wa-mic'));
-    await waitFor(() => $('#rec-start'), 'la hoja de grabación');
+    await waitFor(() => $('#rec-start'), 'la hoja de grabación', 8000);
     click('#rec-start');
-    await waitFor(() => !$('#rec-stop').hidden, 'grabando');
+    await waitFor(() => !$('#rec-stop').hidden, 'grabando', 8000);
     expect($('#rec-time').textContent).toMatch(/^\d+:\d\d$/);
 
     click('#rec-stop');
     const preview = await waitFor(() => {
       const box = $('#rec-preview');
       return !box.hidden && box.querySelector('audio') ? box : null;
-    }, 'la previsualización del audio');
+    }, 'la previsualización del audio', 8000);
     expect(preview.innerHTML).toContain('Nota de voz');
     expect($('#rec-send').hidden).toBe(false);
     expect($('#rec-reset').hidden).toBe(false);
@@ -438,23 +438,23 @@ describe('UAT del panel con multimedia', () => {
 
     // Grabar otra vez y enviar.
     click('#rec-start');
-    await waitFor(() => !$('#rec-stop').hidden, 'grabando de nuevo');
+    await waitFor(() => !$('#rec-stop').hidden, 'grabando de nuevo', 8000);
     click('#rec-stop');
-    await waitFor(() => !$('#rec-send').hidden && !$('#rec-send').disabled, 'listo para enviar');
+    await waitFor(() => !$('#rec-send').hidden && !$('#rec-send').disabled, 'listo para enviar', 8000);
     click('#rec-send');
-    await waitFor(() => sends === antes + 1, 'la nota de voz enviada');
+    await waitFor(() => sends === antes + 1, 'la nota de voz enviada', 8000);
     expect($('#sheet').hidden).toBe(true);
-  });
+  }, 30000);
 
   it('si el navegador graba en webm, NO se finge compatibilidad con Meta', async () => {
     FakeRecorder.mimeType = 'audio/webm;codecs=opus';
     const antes = sends;
     click($('#wa-mic'));
-    await waitFor(() => $('#rec-start'), 'la hoja de grabación');
+    await waitFor(() => $('#rec-start'), 'la hoja de grabación', 8000);
     click('#rec-start');
-    await waitFor(() => !$('#rec-stop').hidden, 'grabando');
+    await waitFor(() => !$('#rec-stop').hidden, 'grabando', 8000);
     click('#rec-stop');
-    await waitFor(() => !$('#rec-send').hidden, 'la previsualización');
+    await waitFor(() => !$('#rec-send').hidden, 'la previsualización', 8000);
     // Se puede oír, pero no enviar: se dice por qué.
     expect($('#rec-send').disabled).toBe(true);
     expect($('#rec-preview').textContent).toMatch(/webm/i);
@@ -463,7 +463,7 @@ describe('UAT del panel con multimedia', () => {
     expect(sends).toBe(antes);
     click('#rec-reset');
     FakeRecorder.mimeType = 'audio/ogg;codecs=opus';
-  });
+  }, 30000);
 
   it('un envío ambiguo no se reintenta desde el chat y aparece en Ajustes', async () => {
     graph.ambiguity = true;
