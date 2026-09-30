@@ -54,6 +54,16 @@
     <!-- --------------------------------------------------------------- APP -->
     <div id="app" class="app" hidden>
       <header class="topbar">
+        <button
+          class="icon-btn topbar__menu"
+          id="menu"
+          type="button"
+          aria-label="Abrir menú"
+          aria-expanded="false"
+          aria-controls="drawer"
+        >
+          ☰
+        </button>
         <div class="topbar__title">
           <span class="topbar__brand">Phytoemagry</span>
           <span class="topbar__sub" id="topbar-sub">CRM</span>
@@ -63,6 +73,44 @@
           <button class="icon-btn" id="refresh" type="button" aria-label="Actualizar datos">⟳</button>
         </div>
       </header>
+
+      <!-- Menú lateral: lo secundario no ocupa la barra inferior -->
+      <div class="scrim" id="scrim" hidden></div>
+      <aside class="drawer" id="drawer" hidden aria-label="Menú del CRM">
+        <div class="drawer__head">
+          <div class="drawer__brand"><strong>Phytoemagry</strong><span>CRM</span></div>
+          <button class="icon-btn" id="drawer-close" type="button" aria-label="Cerrar menú">✕</button>
+        </div>
+        <p class="drawer__group">Operación</p>
+        <nav class="drawer__nav">
+          <button class="drawer__item" data-tab="hoy" type="button">
+            <span class="drawer__icon" aria-hidden="true">☀</span>Hoy
+          </button>
+          <button class="drawer__item" data-tab="whatsapp" type="button">
+            <span class="drawer__icon" aria-hidden="true">💬</span>WhatsApp
+          </button>
+          <button class="drawer__item" data-tab="clientes" type="button">
+            <span class="drawer__icon" aria-hidden="true">👥</span>Clientes
+          </button>
+        </nav>
+        <p class="drawer__group">Gestión</p>
+        <nav class="drawer__nav">
+          <button class="drawer__item" data-tab="pedidos" type="button">
+            <span class="drawer__icon" aria-hidden="true">📦</span>Pedidos y compras
+          </button>
+          <button class="drawer__item" data-tab="seguimientos" type="button">
+            <span class="drawer__icon" aria-hidden="true">🔔</span>Seguimientos
+          </button>
+          <button class="drawer__item" data-tab="mensajes" type="button">
+            <span class="drawer__icon" aria-hidden="true">📝</span>Mensajes y plantillas
+          </button>
+          <button class="drawer__item" data-tab="ajustes" type="button">
+            <span class="drawer__icon" aria-hidden="true">⚙</span>Ajustes
+          </button>
+        </nav>
+        <p class="drawer__group">Sesión</p>
+        <button class="btn btn--danger btn--block" id="logout-drawer" type="button">Cerrar sesión</button>
+      </aside>
 
       <p class="banner" id="offline-banner" hidden>
         Sin conexión: estás viendo los datos guardados en este teléfono. Los cambios se enviarán solos
@@ -108,13 +156,14 @@
                 <button class="icon-btn wa__back" id="wa-back" type="button" aria-label="Volver a conversaciones">
                   ←
                 </button>
+                <span class="avatar avatar--sm" id="wa-chat-avatar" aria-hidden="true"></span>
                 <div class="wa__chat-who">
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
                 <button class="btn btn--ghost btn--sm" id="wa-view-customer" type="button">Ver cliente</button>
               </div>
-              <div class="thread thread--wa" id="thread"></div>
+              <div class="thread thread--wa chat-bg" id="thread"></div>
               <div class="wa__composer" id="wa-composer"></div>
             </div>
 
@@ -147,6 +196,23 @@
             + Registrar compra de un cliente
           </button>
           <div class="list" id="list-clientes"></div>
+        </section>
+
+        <!-- PEDIDOS Y COMPRAS (menú lateral) -->
+        <section class="view" id="view-pedidos" hidden>
+          <h2 class="view__title">Pedidos y compras</h2>
+          <p class="view__hint">Todo lo que ha entrado por la web o lo has apuntado tú. Una compra es un hecho, no un mensaje.</p>
+          <div class="list" id="list-pedidos"></div>
+          <button class="btn btn--primary btn--block" id="compra-nueva-ped" type="button">
+            + Registrar compra de un cliente
+          </button>
+        </section>
+
+        <!-- SEGUIMIENTOS (menú lateral) -->
+        <section class="view" id="view-seguimientos" hidden>
+          <h2 class="view__title">Seguimientos</h2>
+          <p class="view__hint">Tareas para una persona: el sistema avisa, pero <strong>nada se envía solo</strong>.</p>
+          <div class="list" id="list-seguimientos"></div>
         </section>
 
         <!-- MENSAJES -->
@@ -198,18 +264,12 @@
           <span class="tab__icon" aria-hidden="true">☀</span><span>Hoy</span>
           <span class="tab__badge" id="badge-hoy" hidden></span>
         </button>
-        <button class="tab" data-tab="whatsapp" type="button">
+        <button class="tab tab--center" data-tab="whatsapp" type="button">
           <span class="tab__icon" aria-hidden="true">💬</span><span>WhatsApp</span>
           <span class="tab__badge" id="badge-whatsapp" hidden></span>
         </button>
         <button class="tab" data-tab="clientes" type="button">
           <span class="tab__icon" aria-hidden="true">👥</span><span>Clientes</span>
-        </button>
-        <button class="tab" data-tab="mensajes" type="button">
-          <span class="tab__icon" aria-hidden="true">📝</span><span>Mensajes</span>
-        </button>
-        <button class="tab" data-tab="ajustes" type="button">
-          <span class="tab__icon" aria-hidden="true">⚙</span><span>Ajustes</span>
         </button>
       </nav>
     </div>

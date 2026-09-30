@@ -233,7 +233,7 @@ export function createCustomerService(deps) {
         return {
           ...conversation,
           customer,
-          last_message: last ? { body: last.body, direction: last.direction, status: last.status, at: last.created_at } : null,
+          last_message: last ? { body: last.body, direction: last.direction, status: last.status, type: last.type ?? 'text', at: last.created_at } : null,
           /*
            * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
            * Se calcula del propio hilo, así que NO se apaga por abrir o marcar

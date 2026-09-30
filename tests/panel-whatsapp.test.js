@@ -55,8 +55,24 @@ describe('el panel tiene las secciones nuevas', () => {
     expect(app).toContain("$$('[data-tab]')");
   });
 
-  it('la barra de pestañas está preparada para cinco secciones', () => {
-    expect(css).toContain('repeat(5, 1fr)');
+  it('la barra de pestañas tiene TRES destinos y WhatsApp en el centro', () => {
+    expect(css).toContain('repeat(3, 1fr)');
+    expect(html).toContain('class="tab tab--center" data-tab="whatsapp"');
+    // Lo secundario vive en el menú lateral, no en la barra de abajo.
+    expect(html).toContain('id="drawer"');
+    expect(html).toContain('data-tab="pedidos"');
+    expect(html).toContain('data-tab="seguimientos"');
+    expect(html).not.toContain('class="tab" data-tab="mensajes"');
+  });
+
+  it('el menú lateral está y se cierra de tres formas', () => {
+    expect(html).toContain('aria-controls="drawer"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('id="drawer-close"');
+    expect(app).toContain('function openDrawer');
+    expect(app).toContain('function closeDrawer');
+    expect(app).toContain("event.key === 'Escape'");
+    expect(app).toContain("$('#scrim').addEventListener('click'");
   });
 });
 
@@ -73,7 +89,26 @@ describe('el panel llama a los endpoints del CRM', () => {
     // El envío sale de un botón con una persona delante.
     expect(app).toContain("id=\"wa-send\"");
     expect(app).toContain("id=\"wa-send-template\"");
-    expect(app).toContain('Se envía solo cuando pulsas Enviar.');
+    expect(app).toContain('Nada se envía solo.');
+    // Enter envía; Shift+Enter hace salto de línea (nunca automático).
+    expect(app).toContain("event.key === 'Enter' && !event.shiftKey");
+  });
+
+  it('la conversación tiene cara de aplicación de mensajería', () => {
+    // Avatar con iniciales, icono según el contenido y separadores de día.
+    expect(app).toContain('const waInitials');
+    expect(app).toContain('WA_KIND_ICON');
+    expect(app).toContain('const waDayLabel');
+    expect(app).toContain("return 'Hoy'");
+    expect(app).toContain("return 'Ayer'");
+    expect(app).toContain('bubble--grouped');
+    // Compositor: adjuntar · campo · micrófono/Enviar.
+    expect(app).toContain('composer-bar');
+    expect(app).toContain("id=\"wa-attach\"");
+    expect(app).toContain("id=\"wa-mic\"");
+    // Fondo botánico propio (CSS, sin assets ajenos).
+    expect(css).toContain('.chat-bg');
+    expect(html).toContain('chat-bg');
   });
 
   it('las acciones del día (hecho, posponer, cancelar, no contactar)', () => {

@@ -51,6 +51,7 @@
     },
     online: navigator.onLine,
     syncedAt: null,
+    drawer: false,
   };
 
   // ------------------------------------------------------------------ helpers
@@ -440,6 +441,8 @@
     renderHoy();
     renderWhatsapp();
     renderClientes();
+    renderPedidos();
+    renderSeguimientos();
     renderMensajes();
     renderAjustes();
     updateBadge();
@@ -735,6 +738,35 @@
       : emptyState('No hay nada con este filtro.');
   }
 
+  /** Pedidos y compras (menú lateral): lo que entró por la web o se apuntó a mano. */
+  function renderPedidos() {
+    const box = $('#list-pedidos');
+    if (!box) return;
+    const items = applyOutbox(state.items.filter((item) => item.type === 'order_intent'));
+    box.innerHTML = items.length
+      ? items.map(itemCard).join('')
+      : emptyState('Todavía no hay pedidos registrados.');
+  }
+
+  /** Seguimientos (menú lateral): vencidos, de hoy y los que vienen. */
+  function renderSeguimientos() {
+    const box = $('#list-seguimientos');
+    if (!box) return;
+    const followups = state.followups ?? {};
+    const bloque = (titulo, filas) =>
+      filas?.length
+        ? `<h2 class="view__title">${escapeHtml(titulo)} (${filas.length})</h2>${filas.map(followupCard).join('')}`
+        : '';
+    const html = [
+      bloque('Vencidos', followups.overdue),
+      bloque('Para hoy', followups.today),
+      bloque('Próximos', followups.upcoming),
+    ]
+      .filter(Boolean)
+      .join('');
+    box.innerHTML = html || emptyState('No hay seguimientos pendientes. Se crean solos al entregar una compra.');
+  }
+
   /** Plantilla marcada para borrar (segundo toque confirma). */
   let pendingDelete = null;
   /** Cliente marcado como "no contactar" (segundo toque confirma). */
@@ -1008,16 +1040,37 @@
   }
 
   /** Un mensaje del hilo. Se distingue QUIÉN escribió: cliente, negocio o el sistema. */
-  function bubble(message) {
+  function bubble(message, grouped = false) {
     const inbound = message.direction === 'inbound';
     const auto = !inbound && message.sent_by !== 'panel';
     // El cliente ve “Enviando / Enviado / Entregado / Leído / Fallido”, como en WhatsApp.
     const estado = inbound ? '' : WA_STATUS[message.status] ?? '';
+    const media = message.media ?? null;
+    const tipo = message.type ?? 'text';
+    /*
+     * Contenido: el texto se escapa SIEMPRE (nunca se pinta HTML de WhatsApp).
+     * Multimedia: si el servidor ya la tiene, se muestra de verdad (imagen con
+     * visor, audio con reproductor); si no, una tarjeta segura que explica qué
+     * es. Nunca aparece “un objeto” ni un corchete raro.
+     */
+    let cuerpo;
+    if (tipo === 'image' && media?.url) {
+      cuerpo = `<a class="media-bubble" href="${escapeHtml(media.url)}" target="_blank" rel="noopener noreferrer">
+          <img src="${escapeHtml(media.url)}" alt="Imagen" loading="lazy" decoding="async" /></a>`;
+      if (message.body) cuerpo += escapeHtml(message.body);
+    } else if ((tipo === 'audio' || tipo === 'voice') && media?.url) {
+      cuerpo = `<span class="audio-player"><audio controls preload="none" src="${escapeHtml(media.url)}"></audio></span>`;
+    } else if (tipo !== 'text' && tipo !== 'button' && tipo !== 'interactive') {
+      const etiqueta = media && media.error ? 'No se pudo descargar el archivo' : `${WA_KIND_LABEL[tipo] ?? 'Mensaje'} recibido`;
+      cuerpo = `<span class="media-fallback"><span aria-hidden="true">${WA_KIND_ICON[tipo] ?? '📄'}</span>${escapeHtml(etiqueta)}</span>`;
+    } else {
+      cuerpo = escapeHtml(message.body ?? '');
+    }
     return `<div class="bubble bubble--${inbound ? 'in' : 'out'} ${auto ? 'bubble--auto' : ''} ${
       message.status === 'failed' ? 'bubble--failed' : ''
-    }">
+    } ${grouped ? 'bubble--grouped' : ''}">
         <span class="bubble__who">${inbound ? 'Cliente' : auto ? 'Automatización' : 'Negocio'}</span>
-        ${escapeHtml(message.body ?? `[${message.type}]`)}
+        ${cuerpo}
         <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
           estado ? ` · ${escapeHtml(estado)}` : ''
         }${message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''}</span>
@@ -1054,6 +1107,62 @@
     const customer = waCustomer(row);
     return (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
   };
+
+  /** Icono y nombre legible de cada tipo de contenido (sin emojis raros). */
+  const WA_KIND_ICON = {
+    image: '🖼',
+    audio: '🎤',
+    voice: '🎤',
+    document: '📎',
+    video: '🎬',
+    sticker: '🏷',
+    location: '📍',
+  };
+  const WA_KIND_LABEL = {
+    image: 'Imagen',
+    audio: 'Audio',
+    voice: 'Nota de voz',
+    document: 'Documento',
+    video: 'Video',
+    sticker: 'Sticker',
+    location: 'Ubicación',
+  };
+
+  /** Iniciales para el avatar (todavía no hay fotos de perfil). */
+  const waInitials = (value) => {
+    const parts = String(value ?? '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+  };
+
+  /** «Hoy», «Ayer» o la fecha: el separador que ordena el hilo. */
+  const waDayLabel = (iso) => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    if (day === todayISO()) return 'Hoy';
+    if (day === addDaysISO(-1)) return 'Ayer';
+    return new Intl.DateTimeFormat('es-DO', { day: 'numeric', month: 'long' }).format(date);
+  };
+
+  /** Hilo completo: separadores por día y agrupación de mensajes seguidos. */
+  function waThreadHtml(messages) {
+    let html = '';
+    let lastDay = '';
+    let lastDirection = '';
+    for (const message of messages) {
+      const day = waDayLabel(message.created_at);
+      if (day && day !== lastDay) {
+        html += `<div class="day-sep">${escapeHtml(day)}</div>`;
+        lastDay = day;
+        lastDirection = '';
+      }
+      const grouped = message.direction === lastDirection;
+      html += bubble(message, grouped);
+      lastDirection = message.direction;
+    }
+    return html;
+  }
 
   /** Firma del hilo: si no cambia, no se vuelve a pintar (y no se pierde lo escrito). */
   const waThreadSig = (data) => {
@@ -1095,9 +1204,14 @@
     const unread = Number(row.unread_count) || 0;
     const awaiting = waAwaiting(row);
     const last = row.last_message;
-    const preview = last
-      ? `${last.direction === 'inbound' ? 'Cliente' : 'Tú'}: ${String(last.body ?? '').slice(0, 80)}`
+    const tipo = last?.type ?? 'text';
+    const kind = last && tipo !== 'text' ? WA_KIND_ICON[tipo] ?? '' : '';
+    const texto = last
+      ? tipo === 'text'
+        ? String(last.body ?? '').slice(0, 80)
+        : WA_KIND_LABEL[tipo] ?? 'Adjunto'
       : 'Sin mensajes todavía';
+    const nombre = waDisplayName(row);
     const flags =
       unread || awaiting || row.status === 'HUMAN_REQUIRED'
         ? `<span class="conv__flags">
@@ -1106,16 +1220,19 @@
             ${row.status === 'HUMAN_REQUIRED' ? '<span class="conv__await">Necesita una persona</span>' : ''}
           </span>`
         : '';
-    return `<button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${
-      awaiting ? 'conv--pending' : ''
-    }" data-conv="${escapeHtml(row.id)}" type="button">
-        <span class="conv__top">
-          <span class="conv__name">${escapeHtml(waDisplayName(row))}</span>
-          <span class="conv__when">${row.last_message_at ? escapeHtml(fmtWhen(row.last_message_at)) : ''}</span>
+    return `<button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''}" data-conv="${escapeHtml(
+      row.id,
+    )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
+        <span class="avatar conv__avatar" aria-hidden="true">${escapeHtml(waInitials(nombre))}</span>
+        <span class="conv__body">
+          <span class="conv__top">
+            <span class="conv__name">${escapeHtml(nombre)}</span>
+            <span class="conv__when">${row.last_message_at ? escapeHtml(fmtWhen(row.last_message_at)) : ''}</span>
+          </span>
+          ${customer?.phone_e164 ? `<span class="conv__phone">${escapeHtml(customer.phone_e164)}</span>` : ''}
+          <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
+          ${flags}
         </span>
-        ${customer?.phone_e164 ? `<span class="conv__phone">${escapeHtml(customer.phone_e164)}</span>` : ''}
-        <span class="conv__preview">${escapeHtml(preview)}</span>
-        ${flags}
       </button>`;
   }
 
@@ -1171,14 +1288,15 @@
         </label>
         <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>`;
     }
-    return `<label class="field">
-        <span class="field__label">Escribe un mensaje</span>
-        <textarea class="field__area" id="wa-text" placeholder="Escribe un mensaje..."></textarea>
-      </label>
-      <div class="wa__send">
-        <span class="view__hint">Se envía solo cuando pulsas Enviar.</span>
-        <button class="btn btn--whatsapp" id="wa-send" type="button">Enviar</button>
-      </div>`;
+    return `<div class="composer-bar">
+        <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio" disabled
+          title="Adjuntar archivo: llega en la fase de multimedia">+</button>
+        <textarea id="wa-text" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
+        <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz" disabled
+          title="Grabar nota de voz: llega en la fase de multimedia">🎤</button>
+        <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden>➤</button>
+      </div>
+      <p class="view__hint">Enter envía · Shift+Enter hace un salto de línea. Nada se envía solo.</p>`;
   }
 
   function renderWaChat() {
@@ -1221,13 +1339,39 @@
     viewCustomer.dataset.customer = customer?.id ?? '';
     viewCustomer.disabled = !customer?.id;
 
+    const avatar = $('#wa-chat-avatar');
+    if (avatar) avatar.textContent = waInitials((customer?.name ?? '').trim() || customer?.phone_e164);
+
     $('#thread').innerHTML = messages.length
-      ? messages.map(bubble).join('')
+      ? waThreadHtml(messages)
       : '<p class="view__hint">Todavía no hay mensajes.</p>';
 
     $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText });
     const area = $('#wa-text');
-    if (area) area.value = state.wa.draft ?? '';
+    if (area) {
+      area.value = state.wa.draft ?? '';
+      const adjust = () => {
+        area.style.height = 'auto';
+        area.style.height = `${Math.min(area.scrollHeight, 132)}px`;
+        // Sin texto: micrófono. Con texto: Enviar. (El envío nunca es automático.)
+        const vacio = !area.value.trim();
+        const mic = $('#wa-mic');
+        const send = $('#wa-send');
+        if (mic) mic.hidden = !vacio;
+        if (send) send.hidden = vacio;
+      };
+      area.addEventListener('input', () => {
+        state.wa.draft = area.value;
+        adjust();
+      });
+      area.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          $('#wa-send')?.click();
+        }
+      });
+      adjust();
+    }
     const thread = $('#thread');
     if (thread) thread.scrollTop = thread.scrollHeight;
 
@@ -1791,7 +1935,61 @@
     else $('#install').hidden = !installEvent;
   }
 
+  // ------------------------------------------------------------------- menú
+  /*
+   * El menú lateral guarda lo secundario (pedidos, seguimientos, plantillas y
+   * ajustes) para que abajo solo queden los tres destinos de trabajo. Se cierra
+   * tocando fuera, con la ✕ o con Escape, y devuelve el foco a quien lo abrió.
+   */
+  let drawerFocusBack = null;
+
+  function openDrawer() {
+    const drawer = $('#drawer');
+    const scrim = $('#scrim');
+    if (!drawer || !scrim) return;
+    drawerFocusBack = document.activeElement;
+    drawer.hidden = false;
+    scrim.hidden = false;
+    requestAnimationFrame(() => {
+      drawer.classList.add('drawer--open');
+      scrim.classList.add('scrim--open');
+    });
+    $('#menu')?.setAttribute('aria-expanded', 'true');
+    state.drawer = true;
+    drawer.querySelector('button')?.focus();
+  }
+
+  function closeDrawer() {
+    const drawer = $('#drawer');
+    const scrim = $('#scrim');
+    if (!drawer || !scrim || drawer.hidden) return;
+    drawer.classList.remove('drawer--open');
+    scrim.classList.remove('scrim--open');
+    $('#menu')?.setAttribute('aria-expanded', 'false');
+    state.drawer = false;
+    setTimeout(() => {
+      if (!state.drawer) {
+        drawer.hidden = true;
+        scrim.hidden = true;
+      }
+    }, 200);
+    if (drawerFocusBack instanceof HTMLElement) drawerFocusBack.focus();
+    drawerFocusBack = null;
+  }
+
   // ------------------------------------------------------------------- tabs
+
+  /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'pedidos', 'seguimientos', 'mensajes', 'ajustes'];
+  const VIEW_SUBTITLE = {
+    hoy: 'CRM',
+    whatsapp: 'WhatsApp',
+    clientes: 'Clientes',
+    pedidos: 'Pedidos',
+    seguimientos: 'Seguimientos',
+    mensajes: 'Plantillas',
+    ajustes: 'Ajustes',
+  };
 
   function setTab(tab, options = {}) {
     state.tab = tab;
@@ -1799,9 +1997,12 @@
     // El ancho de la bandeja de WhatsApp depende de la pestaña activa (CSS).
     document.body.dataset.tab = tab;
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
-    ['hoy', 'whatsapp', 'clientes', 'mensajes', 'ajustes'].forEach((name) => {
-      $(`#view-${name}`).hidden = name !== tab;
+    VIEWS.forEach((name) => {
+      const view = $(`#view-${name}`);
+      if (view) view.hidden = name !== tab;
     });
+    const sub = $('#topbar-sub');
+    if (sub) sub.textContent = VIEW_SUBTITLE[tab] ?? 'CRM';
     if (!options.silent) {
       window.scrollTo({ top: 0 });
       // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
@@ -2013,6 +2214,26 @@
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
     $('#compra-nueva').addEventListener('click', () => openPurchaseForm(null));
     $('#compra-nueva-wa').addEventListener('click', () => openPurchaseForm(null));
+    $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
+
+    // ------------------------------------------------------- menú lateral
+    $('#menu').addEventListener('click', () => (state.drawer ? closeDrawer() : openDrawer()));
+    $('#drawer-close').addEventListener('click', () => closeDrawer());
+    $('#scrim').addEventListener('click', () => closeDrawer());
+    $('#drawer').addEventListener('click', (event) => {
+      // Elegir una opción del menú navega y lo cierra.
+      if (event.target.closest('[data-tab]')) closeDrawer();
+    });
+    $('#logout-drawer').addEventListener('click', () => $('#logout').click());
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (state.drawer) {
+          closeDrawer();
+          return;
+        }
+        if (!$('#sheet')?.hidden) closeSheet();
+      }
+    });
 
     // -------------------------------------------------- bandeja de WhatsApp
     $('#wa-refresh').addEventListener('click', () => {
@@ -2096,7 +2317,7 @@
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
     const query = new URLSearchParams(location.search);
     const wanted = query.get('v');
-    if (['hoy', 'whatsapp', 'clientes', 'mensajes', 'ajustes'].includes(wanted)) state.tab = wanted;
+    if (VIEWS.includes(wanted)) state.tab = wanted;
 
     /*
      * Sin conexión NO se puede comprobar la sesión, pero el panel ya estuvo
