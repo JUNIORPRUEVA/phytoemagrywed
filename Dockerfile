@@ -264,7 +264,20 @@ COPY --from=build /app/server /app/server
 # La app del panel también viaja al API: así funciona aunque no haya nginx
 # delante (desarrollo, pruebas) y no depende de una ruta del host.
 COPY --from=build /app/dist/admin /app/admin
+# `src/config` lo importa el API en tiempo de ejecución (el catálogo de precios
+# oficial, `server/crm-server.mjs` → `../src/config/product.config.js`). Sin
+# esto, la imagen construye y los tests pasan, pero el contenedor NO ARRANCA
+# (ERR_MODULE_NOT_FOUND) y Swarm hace rollback: pasó en producción el 30/09.
+COPY --from=build /app/src /app/src
 COPY --from=runtime-deps /app/node_modules /app/node_modules
+
+# Guarda de RUNTIME: comprueba que el API puede resolver TODOS sus imports
+# dentro de esta imagen final (no solo que compila). `import()` aquí no arranca
+# el servidor ni toca la base de datos: `isEntryPoint` es falso al venir de
+# `node -e`, así que solo se recorre el grafo de módulos. Si falta algo
+# (por ejemplo `src/`), el BUILD falla en vez de fallar en el despliegue.
+# (crm-server.mjs importa a los demás, así que este solo import basta.)
+RUN node --input-type=module -e "await import('/app/server/crm-server.mjs')"
 
 ENV PHYTO_ADMIN_DIR=/app/admin
 
