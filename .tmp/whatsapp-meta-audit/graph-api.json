@@ -1,0 +1,192 @@
+{
+  "auditAt": "2026-09-30T02:23:47.887Z",
+  "presence": {
+    "META_APP_ID": "PRESENTE",
+    "META_APP_SECRET": "PRESENTE",
+    "WHATSAPP_BUSINESS_ACCOUNT_ID": "PRESENTE",
+    "WHATSAPP_PHONE_NUMBER_ID": "PRESENTE",
+    "WHATSAPP_PHONE_NUMBER": "PRESENTE",
+    "WHATSAPP_ACCESS_TOKEN": "PRESENTE",
+    "WHATSAPP_VERIFY_TOKEN": "PRESENTE"
+  },
+  "calls": [
+    {
+      "path": "v21.0/debug_token",
+      "status": 400,
+      "ms": 642,
+      "body": {
+        "error": {
+          "message": "(#100) The App_id in the input_token did not match the Viewing App",
+          "type": "OAuthException",
+          "code": 100,
+          "fbtrace_id": "A7b8RhWboLB_uYcx2v3Xuhl"
+        }
+      }
+    },
+    {
+      "path": "v21.0/2559517617897858",
+      "status": 400,
+      "ms": 813,
+      "body": {
+        "error": {
+          "message": "Unsupported get request. Object with ID '2559517617897858' does not exist, cannot be loaded due to missing permissions, or does not support this operation. Please read the Graph API documentation at https://developers.facebook.com/docs/graph-api",
+          "code": 100,
+          "type": "GraphMethodException",
+          "error_subcode": 33,
+          "fbtrace_id": "A1mWhS401dFdk4XnyB8nRIM"
+        }
+      },
+      "fieldsUsed": [
+        "id",
+        "name",
+        "account_review_status",
+        "business_verification_status",
+        "ownership_type",
+        "currency",
+        "timezone_id",
+        "message_template_namespace",
+        "primary_funding_id"
+      ]
+    },
+    {
+      "path": "v21.0/2559517617897858/phone_numbers",
+      "status": 403,
+      "ms": 399,
+      "body": {
+        "error": {
+          "message": "(#200) You do not have permission to access this field.",
+          "type": "OAuthException",
+          "code": 200,
+          "fbtrace_id": "A0Gx3YmHHPrai79xW8lRsgA"
+        }
+      },
+      "fieldsUsed": [
+        "id",
+        "display_phone_number",
+        "verified_name",
+        "code_verification_status",
+        "quality_rating",
+        "platform_type",
+        "throughput",
+        "name_status",
+        "new_name_status",
+        "account_mode",
+        "is_official_business_account",
+        "messaging_limit_tier",
+        "health_status",
+        "status",
+        "search_visibility_status",
+        "official_business_account_status",
+        "certificate",
+        "webhook_configuration"
+      ]
+    },
+    {
+      "path": "v21.0/1410599278794907",
+      "status": 400,
+      "ms": 887,
+      "body": {
+        "error": {
+          "message": "Unsupported get request. Object with ID '1410599278794907' does not exist, cannot be loaded due to missing permissions, or does not support this operation. Please read the Graph API documentation at https://developers.facebook.com/docs/graph-api",
+          "type": "GraphMethodException",
+          "code": 100,
+          "error_subcode": 33,
+          "fbtrace_id": "AlfcpmU1RAhG2GVdz-kGBJd"
+        }
+      },
+      "fieldsUsed": [
+        "id",
+        "display_phone_number",
+        "verified_name",
+        "code_verification_status",
+        "quality_rating",
+        "platform_type",
+        "throughput",
+        "name_status",
+        "new_name_status",
+        "account_mode",
+        "is_official_business_account",
+        "messaging_limit_tier",
+        "health_status",
+        "status",
+        "search_visibility_status",
+        "official_business_account_status",
+        "certificate",
+        "webhook_configuration"
+      ]
+    },
+    {
+      "path": "v21.0/1410599278794907/whatsapp_business_profile",
+      "status": 400,
+      "ms": 288,
+      "body": {
+        "error": {
+          "message": "Unsupported get request. Object with ID '1410599278794907' does not exist, cannot be loaded due to missing permissions, or does not support this operation. Please read the Graph API documentation at https://developers.facebook.com/docs/graph-api",
+          "type": "GraphMethodException",
+          "code": 100,
+          "error_subcode": 33,
+          "fbtrace_id": "AoSF6VPx9FHJx_X95lS9cWY"
+        }
+      },
+      "fieldsUsed": [
+        "about",
+        "address",
+        "description",
+        "email",
+        "profile_picture_url",
+        "websites",
+        "vertical"
+      ]
+    },
+    {
+      "path": "v21.0/2559517617897858/subscribed_apps",
+      "status": 403,
+      "ms": 650,
+      "body": {
+        "error": {
+          "message": "(#200) You do not have permission to access this field.",
+          "type": "OAuthException",
+          "code": 200,
+          "fbtrace_id": "ApgNW1JB9Z9H6wk-fxMRjEo"
+        }
+      }
+    },
+    {
+      "path": "v21.0/998220578866944/subscriptions",
+      "status": 200,
+      "ms": 293,
+      "body": {
+        "data": [
+          {
+            "object": "whatsapp_business_account",
+            "callback_url": "https://phytoemagryrd.lat/api/webhooks/whatsapp",
+            "active": true,
+            "fields": [
+              {
+                "name": "messages",
+                "version": "v25.0"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "v21.0/998220578866944",
+      "status": 200,
+      "ms": 231,
+      "body": {
+        "id": "998220578866944",
+        "name": "FULLTECH BOT",
+        "link": "https://www.facebook.com/games/?app_id=998220578866944"
+      },
+      "fieldsUsed": [
+        "id",
+        "name",
+        "category",
+        "link",
+        "namespace"
+      ]
+    }
+  ]
+}
