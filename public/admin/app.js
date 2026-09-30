@@ -35,6 +35,20 @@
     openId: null,
     customerId: null,
     chat: null,
+    // Bandeja de WhatsApp: conversación abierta, filtros y estado de la carga.
+    wa: {
+      selectedId: null,
+      filter: 'todos',
+      q: '',
+      chat: null,
+      draft: '',
+      listSig: null,
+      chatSig: null,
+      loadingFor: null,
+      followupId: null,
+      listError: false,
+      threadError: false,
+    },
     online: navigator.onLine,
     syncedAt: null,
   };
@@ -290,7 +304,10 @@
         toast('Sin conexión: datos guardados en el teléfono');
         render();
       } else {
+        // Sin copia guardada: la bandeja tiene que decir que FALLÓ, no “no hay nada”.
+        state.wa.listError = true;
         toast('No se pudieron cargar los datos');
+        render();
       }
     }
   }
@@ -620,7 +637,9 @@
 
     // Conversaciones: lo que no se ha leído y lo que pide una persona. Una
     // conversación que necesita una persona se lista UNA vez.
-    const sinLeer = state.conversations.filter((row) => Number(row.unread_count) > 0);
+    // “Sin contestar” = el último mensaje lo escribió el cliente y todavía no le
+    // hemos respondido. NO se apaga por abrir la conversación: solo al responder.
+    const sinLeer = state.conversations.filter((row) => row.awaiting_reply === true);
     const humano = state.conversations.filter(
       (row) => row.status === 'HUMAN_REQUIRED' && !sinLeer.some((other) => other.id === row.id),
     );
@@ -671,11 +690,21 @@
          clientes y compras y ver sus fichas, pero el panel no envía ni recibe mensajes. Faltan las
          variables del servidor (ver docs/WHATSAPP_INTEGRATION.md).</p>`;
 
-    $('#list-whatsapp').innerHTML = state.conversations.length
-      ? state.conversations.map(conversationCard).join('')
-      : emptyState('Aún no hay conversaciones. Cuando un cliente escriba, aparecerá aquí.');
-  }
+    const filters = $('#wa-filters');
+    if (filters) {
+      filters.innerHTML = WA_FILTERS.map(
+        ([value, text]) =>
+          `<button class="chip" data-wa-filter="${value}" aria-pressed="${
+            value === state.wa.filter
+          }" type="button">${text}</button>`,
+      ).join('');
+    }
+    const search = $('#wa-search');
+    if (search && search.value !== state.wa.q) search.value = state.wa.q;
 
+    renderWaList();
+    renderWaChat();
+  }
   function filteredItems() {
     const { filter, q } = state;
     const today = todayISO();
@@ -964,154 +993,383 @@
     }
   }
 
-  /** Abre el hilo de una conversación (y, si venía de un seguimiento, lo cierra al enviar). */
+  /**
+   * Abre una conversación EN LA BANDEJA (desde Hoy, un seguimiento o la lista).
+   * Ya no hay chat en ventana emergente: una sola pantalla, una sola fuente.
+   */
   async function openChat(conversationId, options = {}) {
+    if (!conversationId) return;
     state.openId = null;
     state.customerId = null;
-    state.chat = { id: conversationId, followupId: options.followupId ?? null, data: null };
-    openSheet('Conversación', '<p class="view__hint">Cargando…</p>');
-    try {
-      const [data, templates] = await Promise.all([
-        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`),
-        api('/api/admin/wa-templates').catch(() => ({ templates: [] })),
-      ]);
-      state.templates = templates.templates ?? [];
-      state.chat.data = data;
-      renderChat();
-      // Al abrir el hilo, la insignia de "sin leer" desaparece.
-      if (Number(data.conversation?.unread_count) > 0) {
-        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST' })
-          .then(() => load({ keepTab: true }))
-          .catch(() => {});
-      }
-    } catch (error) {
-      if (error.message === 'unauthorized') return;
-      openSheet('Conversación', `<p class="rule rule--warn">No se pudo abrir la conversación.</p>`);
-    }
+    closeSheet();
+    setTab('whatsapp', { silent: true });
+    await selectConversation(conversationId, options);
+    window.scrollTo({ top: 0 });
   }
 
   /** Un mensaje del hilo. Se distingue QUIÉN escribió: cliente, negocio o el sistema. */
   function bubble(message) {
     const inbound = message.direction === 'inbound';
     const auto = !inbound && message.sent_by !== 'panel';
-    const receipt = message.status === 'failed'
-      ? ' · no salió'
-      : message.read_at
-        ? ' · leído'
-        : message.delivered_at
-          ? ' · entregado'
-          : '';
+    // El cliente ve “Enviando / Enviado / Entregado / Leído / Fallido”, como en WhatsApp.
+    const estado = inbound ? '' : WA_STATUS[message.status] ?? '';
     return `<div class="bubble bubble--${inbound ? 'in' : 'out'} ${auto ? 'bubble--auto' : ''} ${
       message.status === 'failed' ? 'bubble--failed' : ''
     }">
         <span class="bubble__who">${inbound ? 'Cliente' : auto ? 'Automatización' : 'Negocio'}</span>
         ${escapeHtml(message.body ?? `[${message.type}]`)}
-        <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${receipt}${
-          message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''
-        }</span>
+        <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
+          estado ? ` · ${escapeHtml(estado)}` : ''
+        }${message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''}</span>
       </div>`;
   }
 
-  function renderChat() {
-    const data = state.chat?.data;
-    if (!data) return;
-    const { customer, conversation, messages, canSendFreeText } = data;
-    const wa = state.whatsapp ?? {};
-    const approved = (state.templates ?? []).filter((template) => template.sendable);
-    const pending = (state.templates ?? []).filter((template) => !template.sendable);
+  // --------------------------------------------------- bandeja de WhatsApp
+  /*
+   * Una sola pantalla, dos columnas: a la izquierda las conversaciones (con
+   * búsqueda y filtros), a la derecha el hilo y el compositor. En el móvil se
+   * ve la lista y, al abrir una, la conversación ocupa la pantalla con ← para
+   * volver. Nada se envía solo: el botón Enviar es siempre un acto humano.
+   */
 
-    $('#sheet-title').textContent = customer?.name ?? customer?.phone_e164 ?? 'Conversación';
-    openSheet(
-      customer?.name ?? customer?.phone_e164 ?? 'Conversación',
-      `
-      <div class="item__actions" style="margin-top:0">
-        <button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(customer?.id ?? '')}" type="button">Ficha</button>
-        <button class="btn btn--ghost btn--sm" data-purchase="${escapeHtml(customer?.id ?? '')}" type="button">Registrar compra</button>
-        <button class="btn btn--ghost btn--sm" data-followup-new="${escapeHtml(customer?.id ?? '')}" type="button">Crear seguimiento</button>
-        ${
-          customer?.phone_e164
-            ? `<a class="btn btn--ghost btn--sm" href="https://wa.me/${digits(customer.phone_e164)}" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp</a>`
-            : ''
-        }
-      </div>
-      <div class="thread" id="thread">${
-        messages.length ? messages.map(bubble).join('') : '<p class="view__hint">Todavía no hay mensajes.</p>'
-      }</div>
-      ${
-        customer?.do_not_contact
-          ? '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>'
-          : canSendFreeText
-            ? '<p class="rule">Puedes escribir texto libre: el cliente escribió hace menos de 24 h.</p>'
-            : '<p class="rule rule--warn">Han pasado más de 24 h desde su último mensaje: WhatsApp solo permite enviar una <strong>plantilla aprobada</strong>.</p>'
+  const WA_FILTERS = [
+    ['todos', 'Todos'],
+    ['sin-responder', 'Sin responder'],
+    ['no-leidos', 'No leídos'],
+  ];
+
+  /** Lo que ve una persona: nunca el `wa_message_id`. */
+  const WA_STATUS = {
+    pending: 'Enviando',
+    queued: 'Enviando',
+    sent: 'Enviado',
+    delivered: 'Entregado',
+    read: 'Leído',
+    failed: 'Fallido',
+  };
+
+  const waAwaiting = (row) => row.awaiting_reply === true;
+  const waCustomer = (row) => row.customer ?? customerById(row.customer_id);
+  const waDisplayName = (row) => {
+    const customer = waCustomer(row);
+    return (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
+  };
+
+  /** Firma del hilo: si no cambia, no se vuelve a pintar (y no se pierde lo escrito). */
+  const waThreadSig = (data) => {
+    const messages = data?.messages ?? [];
+    const last = messages[messages.length - 1];
+    return [
+      messages.length,
+      last?.id ?? '',
+      last?.status ?? '',
+      last?.delivered_at ?? '',
+      last?.read_at ?? '',
+      data?.canSendFreeText ? 1 : 0,
+    ].join('|');
+  };
+
+  /** Conversaciones visibles según el filtro y la búsqueda, la más reciente primero. */
+  function waVisibleConversations() {
+    const { filter, q } = state.wa;
+    let rows = state.conversations.slice();
+    if (filter === 'sin-responder') rows = rows.filter(waAwaiting);
+    if (filter === 'no-leidos') rows = rows.filter((row) => Number(row.unread_count) > 0);
+    if (q) {
+      const needle = q.toLowerCase();
+      rows = rows.filter((row) => {
+        const customer = waCustomer(row);
+        return [customer?.name, customer?.phone_e164, row.last_message?.body]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(needle);
+      });
+    }
+    return rows.sort((a, b) => String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? '')));
+  }
+
+  /** Una conversación de la lista (nombre o teléfono, nunca un id técnico). */
+  function waRow(row) {
+    const customer = waCustomer(row);
+    const unread = Number(row.unread_count) || 0;
+    const awaiting = waAwaiting(row);
+    const last = row.last_message;
+    const preview = last
+      ? `${last.direction === 'inbound' ? 'Cliente' : 'Tú'}: ${String(last.body ?? '').slice(0, 80)}`
+      : 'Sin mensajes todavía';
+    const flags =
+      unread || awaiting || row.status === 'HUMAN_REQUIRED'
+        ? `<span class="conv__flags">
+            ${unread ? `<span class="conv__unread">${unread}</span>` : ''}
+            ${awaiting ? '<span class="conv__await">Sin responder</span>' : ''}
+            ${row.status === 'HUMAN_REQUIRED' ? '<span class="conv__await">Necesita una persona</span>' : ''}
+          </span>`
+        : '';
+    return `<button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${
+      awaiting ? 'conv--pending' : ''
+    }" data-conv="${escapeHtml(row.id)}" type="button">
+        <span class="conv__top">
+          <span class="conv__name">${escapeHtml(waDisplayName(row))}</span>
+          <span class="conv__when">${row.last_message_at ? escapeHtml(fmtWhen(row.last_message_at)) : ''}</span>
+        </span>
+        ${customer?.phone_e164 ? `<span class="conv__phone">${escapeHtml(customer.phone_e164)}</span>` : ''}
+        <span class="conv__preview">${escapeHtml(preview)}</span>
+        ${flags}
+      </button>`;
+  }
+
+  function renderWaList() {
+    const box = $('#wa-conversations');
+    const error = $('#wa-error');
+    if (!box || !error) return;
+
+    // Una caída del API NO puede parecer “no hay mensajes”.
+    if (state.wa.listError) {
+      error.hidden = false;
+      error.innerHTML = `<span>No pudimos cargar las conversaciones.</span>
+        <button class="btn btn--ghost btn--sm" id="wa-retry" type="button">Reintentar</button>`;
+      box.innerHTML = '';
+      return;
+    }
+    error.hidden = true;
+
+    if (!state.conversations.length) {
+      box.innerHTML = emptyState('Aún no hay conversaciones. Cuando un cliente escriba por WhatsApp, aparecerá aquí.');
+      return;
+    }
+    const rows = waVisibleConversations();
+    box.innerHTML = rows.length ? rows.map(waRow).join('') : emptyState('No hay conversaciones con este filtro.');
+  }
+
+  /**
+   * El compositor. Respeta la regla de las 24 h que aplica el servidor: dentro
+   * de la ventana se escribe libre; fuera, solo plantillas APROBADAS de verdad.
+   */
+  function waComposerHtml({ customer, canSendFreeText }) {
+    const wa = state.whatsapp ?? {};
+    if (!wa.configured) {
+      return '<p class="rule rule--warn">WhatsApp no está configurado en el servidor: se reciben mensajes, pero no se pueden enviar.</p>';
+    }
+    if (customer?.do_not_contact) {
+      return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
+    }
+    if (!canSendFreeText) {
+      const approved = (state.templates ?? []).filter((template) => template.sendable);
+      if (!approved.length) {
+        return `<p class="rule rule--warn">La ventana de atención de 24 horas terminó. Para contactar nuevamente al cliente debes utilizar una plantilla aprobada.</p>
+          <p class="view__hint">Todavía no tienes ninguna plantilla aprobada en Meta.</p>`;
       }
-      <div class="composer">
+      return `<p class="rule rule--warn">La ventana de atención de 24 horas terminó. Para contactar nuevamente al cliente debes utilizar una plantilla aprobada.</p>
         <label class="field">
-          <span class="field__label">Mensaje (lo escribes y lo envías tú)</span>
-          <textarea class="field__area" id="composer-text" placeholder="Hola ${escapeHtml(
-            customer?.name ?? '',
-          )}, te escribo de Phytoemagry…"></textarea>
+          <span class="field__label">Usar plantilla</span>
+          <select class="field__select" id="wa-template">
+            ${approved
+              .map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)}</option>`)
+              .join('')}
+          </select>
         </label>
-        <button class="btn btn--whatsapp btn--block" id="composer-send" type="button"
-          ${wa.configured && !customer?.do_not_contact ? '' : 'disabled'}>
-          ${wa.configured ? 'Enviar por WhatsApp' : 'WhatsApp no configurado'}
-        </button>
-      </div>
-      <label class="field">
-        <span class="field__label">Plantilla aprobada (para escribir tras 24 h cerrado)</span>
-        <select class="field__select" id="composer-template">
-          <option value="">— ninguna —</option>
-          ${approved
-            .map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)}</option>`)
-            .join('')}
-          ${pending
-            .map(
-              (template) =>
-                `<option value="${escapeHtml(template.name)}" disabled>${escapeHtml(template.name)} (sin aprobar en Meta)</option>`,
-            )
-            .join('')}
-        </select>
+        <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>`;
+    }
+    return `<label class="field">
+        <span class="field__label">Escribe un mensaje</span>
+        <textarea class="field__area" id="wa-text" placeholder="Escribe un mensaje..."></textarea>
       </label>
-      ${
-        state.chat.followupId
-          ? '<p class="view__hint">Al enviar, esta tarea de seguimiento se marcará como hecha.</p>'
-          : ''
-      }
-      <p class="view__hint">Conversación: ${escapeHtml(conversation.status ?? '')} · ${
-        messages.length
-      } mensaje(s). Nada de esto se envía solo.</p>
-      `,
-    );
+      <div class="wa__send">
+        <span class="view__hint">Se envía solo cuando pulsas Enviar.</span>
+        <button class="btn btn--whatsapp" id="wa-send" type="button">Enviar</button>
+      </div>`;
+  }
+
+  function renderWaChat() {
+    const pane = $('#wa-chat-pane');
+    const placeholder = $('#wa-placeholder');
+    if (!pane || !placeholder) return;
+
+    if (!state.wa.selectedId) {
+      pane.hidden = true;
+      placeholder.hidden = false;
+      return;
+    }
+    pane.hidden = false;
+    placeholder.hidden = true;
+
+    const data = state.wa.chat;
+    if (!data) {
+      $('#wa-chat-name').textContent = 'Conversación';
+      $('#wa-chat-meta').textContent = '';
+      $('#thread').innerHTML = '<p class="view__hint">Cargando…</p>';
+      $('#wa-composer').innerHTML = state.wa.threadError
+        ? `<p class="rule rule--warn">No pudimos cargar esta conversación.</p>
+           <button class="btn btn--ghost btn--block" id="wa-retry-thread" type="button">Reintentar</button>`
+        : '';
+      $('#wa-view-customer').disabled = true;
+      return;
+    }
+
+    const { customer, conversation, messages, canSendFreeText } = data;
+    $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
+    $('#wa-chat-meta').textContent = [
+      customer?.phone_e164,
+      conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
+      customer?.do_not_contact ? 'No contactar' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    const viewCustomer = $('#wa-view-customer');
+    viewCustomer.dataset.customer = customer?.id ?? '';
+    viewCustomer.disabled = !customer?.id;
+
+    $('#thread').innerHTML = messages.length
+      ? messages.map(bubble).join('')
+      : '<p class="view__hint">Todavía no hay mensajes.</p>';
+
+    $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText });
+    const area = $('#wa-text');
+    if (area) area.value = state.wa.draft ?? '';
     const thread = $('#thread');
     if (thread) thread.scrollTop = thread.scrollHeight;
 
-    $('#composer-send')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      const text = $('#composer-text').value.trim();
-      const template = $('#composer-template').value || null;
-      if (!text && !template) {
-        toast('Escribe el mensaje o elige una plantilla');
+    $('#wa-send')?.addEventListener('click', (event) => {
+      const body = $('#wa-text').value.trim();
+      if (!body) {
+        toast('Escribe el mensaje');
         return;
       }
-      await working(button, 'Enviando…', async () => {
-        try {
-          await api(`/api/admin/conversations/${encodeURIComponent(conversation.id)}/messages`, {
-            method: 'POST',
-            body: JSON.stringify({ body: text || null, template, followupId: state.chat.followupId }),
-          });
-          toast('Mensaje enviado');
-          const followupId = state.chat.followupId;
-          state.chat.followupId = null;
-          await load({ keepTab: true });
-          await openChat(conversation.id);
-          if (followupId) toast('Seguimiento marcado como hecho');
-        } catch (error) {
-          if (error.message !== 'unauthorized') {
-            // El servidor explica la regla (24 h, no contactar, plantilla sin aprobar).
-            toast(error.body?.message ?? 'No se pudo enviar');
-          }
-        }
-      });
+      sendWaMessage({ body }, event.currentTarget);
     });
+    $('#wa-send-template')?.addEventListener('click', (event) =>
+      sendWaMessage({ template: $('#wa-template').value || null }, event.currentTarget),
+    );
+  }
+
+  function setWaView(view) {
+    const box = $('#wa');
+    if (box) box.dataset.view = view;
+  }
+
+  /** Abre una conversación: carga el hilo y apaga la insignia de no leído. */
+  async function selectConversation(conversationId, options = {}) {
+    if (!conversationId) return;
+    state.wa.selectedId = conversationId;
+    state.wa.followupId = options.followupId ?? null;
+    state.wa.chat = null;
+    state.wa.chatSig = null;
+    state.wa.threadError = false;
+    state.wa.draft = '';
+    setWaView('chat');
+    renderWhatsapp();
+    await loadWaThread(conversationId, { force: true });
+  }
+
+  async function loadWaThread(conversationId, options = {}) {
+    // Evita peticiones duplicadas de la misma conversación.
+    if (!options.force && state.wa.loadingFor === conversationId) return;
+    state.wa.loadingFor = conversationId;
+    try {
+      const [data, templates] = await Promise.all([
+        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`),
+        api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] })),
+      ]);
+      if (state.wa.selectedId !== conversationId) return; // se cambió mientras cargaba
+      state.templates = templates.templates ?? [];
+      state.wa.chat = data;
+      state.wa.chatSig = waThreadSig(data);
+      state.wa.threadError = false;
+      renderWaChat();
+      if (Number(data.conversation?.unread_count) > 0) {
+        // Leído ≠ contestado: apaga la insignia de no leído, no la de “sin responder”.
+        const row = state.conversations.find((candidate) => candidate.id === conversationId);
+        if (row) row.unread_count = 0;
+        renderWaList();
+        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST' }).catch(() => {});
+      }
+    } catch (error) {
+      if (error.message === 'unauthorized') return;
+      state.wa.chat = null;
+      state.wa.threadError = true;
+      renderWaChat();
+    } finally {
+      state.wa.loadingFor = null;
+    }
+  }
+
+  /** Envío MANUAL: solo se llama desde el botón Enviar. */
+  async function sendWaMessage(payload, button) {
+    const conversationId = state.wa.selectedId;
+    if (!conversationId) return;
+    await working(button, 'Enviando…', async () => {
+      try {
+        await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        state.wa.draft = '';
+        toast('Mensaje enviado');
+        const followupId = state.wa.followupId;
+        state.wa.followupId = null;
+        await load({ keepTab: true });
+        await loadWaThread(conversationId, { force: true });
+        if (followupId) toast('Seguimiento marcado como hecho');
+      } catch (error) {
+        if (error.message !== 'unauthorized') {
+          // El servidor explica la regla (24 h, no contactar, plantilla sin aprobar).
+          toast(error.body?.message ?? 'No se pudo enviar');
+        }
+      }
+    });
+  }
+
+  /**
+   * Refresco ligero (lo usa el botón ⟳ y el sondeo). Solo vuelve a pintar lo que
+   * de verdad ha cambiado, para no borrar lo que una persona está escribiendo.
+   */
+  async function refreshWhatsapp() {
+    const list = await api('/api/admin/conversations');
+    const rows = list.conversations ?? [];
+    const listSig = JSON.stringify(
+      rows.map((row) => [row.id, row.unread_count, row.last_message_at, row.status, row.awaiting_reply === true]),
+    );
+    if (listSig !== state.wa.listSig) {
+      state.wa.listSig = listSig;
+      state.conversations = rows;
+      state.wa.listError = false;
+      renderWaList();
+    }
+
+    const conversationId = state.wa.selectedId;
+    if (!conversationId) return;
+    const data = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`);
+    if (state.wa.selectedId !== conversationId) return;
+    const sig = waThreadSig(data);
+    if (sig === state.wa.chatSig) return;
+    state.wa.chatSig = sig;
+    state.wa.chat = data;
+    state.wa.threadError = false;
+    renderWaChat();
+  }
+
+  let waPolling = false;
+
+  /** Un solo temporizador para todo el panel: nada de timers huérfanos. */
+  function waPollTick() {
+    if ($('#app')?.hidden) return; // con la sesión cerrada (o el panel oculto) no se sondea
+    if (state.tab !== 'whatsapp') return; // fuera de la pestaña no se gasta red
+    if (document.visibilityState !== 'visible') return; // ni con la app en segundo plano
+    if (waPolling) return; // ni dos peticiones a la vez
+    waPolling = true;
+    refreshWhatsapp()
+      .catch((error) => {
+        if (error.message === 'unauthorized') return;
+        if (!state.conversations.length) {
+          state.wa.listError = true;
+          renderWaList();
+        }
+      })
+      .finally(() => {
+        waPolling = false;
+      });
   }
 
   /** Ficha 360 del cliente: compras, chat, seguimiento y consentimiento. */
@@ -1538,11 +1796,17 @@
   function setTab(tab, options = {}) {
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
+    // El ancho de la bandeja de WhatsApp depende de la pestaña activa (CSS).
+    document.body.dataset.tab = tab;
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
     ['hoy', 'whatsapp', 'clientes', 'mensajes', 'ajustes'].forEach((name) => {
       $(`#view-${name}`).hidden = name !== tab;
     });
-    if (!options.silent) window.scrollTo({ top: 0 });
+    if (!options.silent) {
+      window.scrollTo({ top: 0 });
+      // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
+      if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
+    }
   }
 
   // ---------------------------------------------------------------- eventos
@@ -1683,6 +1947,24 @@
         openChat(chat.dataset.chat, { followupId: chat.dataset.followup ?? null });
         return;
       }
+      const conv = event.target.closest('[data-conv]');
+      if (conv) {
+        selectConversation(conv.dataset.conv);
+        return;
+      }
+      // Reintentos de la bandeja: un fallo del API se ve y se puede volver a probar.
+      if (event.target.closest('#wa-retry')) {
+        state.wa.listError = false;
+        renderWaList();
+        load({ keepTab: true })
+          .then(() => refreshWhatsapp())
+          .catch(() => {});
+        return;
+      }
+      if (event.target.closest('#wa-retry-thread')) {
+        if (state.wa.selectedId) loadWaThread(state.wa.selectedId, { force: true });
+        return;
+      }
       const wa = event.target.closest('[data-wa]');
       if (wa) {
         const item = state.items.find((candidate) => candidate.id === wa.dataset.wa);
@@ -1731,6 +2013,31 @@
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
     $('#compra-nueva').addEventListener('click', () => openPurchaseForm(null));
     $('#compra-nueva-wa').addEventListener('click', () => openPurchaseForm(null));
+
+    // -------------------------------------------------- bandeja de WhatsApp
+    $('#wa-refresh').addEventListener('click', () => {
+      refreshWhatsapp()
+        .then(() => toast('Conversaciones actualizadas'))
+        .catch(() => toast('No se pudo actualizar'));
+    });
+    $('#wa-search').addEventListener('input', (event) => {
+      state.wa.q = event.target.value.trim();
+      renderWaList();
+    });
+    $('#wa-filters').addEventListener('click', (event) => {
+      const chip = event.target.closest('[data-wa-filter]');
+      if (!chip) return;
+      state.wa.filter = chip.dataset.waFilter;
+      $$('[data-wa-filter]').forEach((button) =>
+        button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),
+      );
+      renderWaList();
+    });
+    // En el móvil, ← vuelve a la lista de conversaciones.
+    $('#wa-back').addEventListener('click', () => setWaView('list'));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') waPollTick();
+    });
 
     $('#logout').addEventListener('click', async () => {
       await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
@@ -1782,6 +2089,9 @@
   async function boot() {
     initEvents();
     initPwa();
+
+    // Un único temporizador para la bandeja de WhatsApp (8 s, solo cuando toca).
+    setInterval(waPollTick, 8000);
 
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
     const query = new URLSearchParams(location.search);

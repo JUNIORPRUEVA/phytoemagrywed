@@ -17,13 +17,34 @@ const app = readFileSync(path.join(adminDir, 'app.js'), 'utf8');
 const css = readFileSync(path.join(adminDir, 'admin.css'), 'utf8');
 
 describe('el panel tiene las secciones nuevas', () => {
-  it('existe la pestaña de WhatsApp y su vista', () => {
+  it('existe la pestaña de WhatsApp y su bandeja', () => {
     expect(html).toContain('data-tab="whatsapp"');
     expect(html).toContain('id="view-whatsapp"');
-    expect(html).toContain('id="list-whatsapp"');
     expect(html).toContain('id="badge-whatsapp"');
+    // Bandeja real: lista a la izquierda, conversación a la derecha.
+    expect(html).toContain('id="wa-conversations"');
+    expect(html).toContain('id="wa-chat-pane"');
+    expect(html).toContain('id="wa-search"');
+    expect(html).toContain('id="wa-filters"');
+    expect(html).toContain('id="wa-back"');
     // El estado de WhatsApp también se explica en Ajustes.
     expect(html).toContain('id="wa-config"');
+    // La vista vieja de lista plana ya no existe.
+    expect(html).not.toContain('id="list-whatsapp"');
+  });
+
+  it('la bandeja cubre búsqueda, filtros, dos columnas y escritorio/móvil', () => {
+    for (const filter of ['Todos', 'Sin responder', 'No leídos']) expect(app).toContain(`'${filter}'`);
+    expect(css).toContain('.conv--active');
+    expect(css).toContain('.conv--pending');
+    expect(css).toContain("body[data-tab='whatsapp']");
+    expect(css).toContain(".wa[data-view='chat'] .wa__list");
+  });
+
+  it('distingue “no hay conversaciones” de “falló el API”', () => {
+    expect(app).toContain('No pudimos cargar las conversaciones.');
+    expect(app).toContain('Aún no hay conversaciones. Cuando un cliente escriba por WhatsApp, aparecerá aquí.');
+    expect(app).toContain('Reintentar');
   });
 
   it('las cinco vistas se muestran y se ocultan de verdad', () => {
@@ -50,8 +71,9 @@ describe('el panel llama a los endpoints del CRM', () => {
   it('conversaciones y envío manual', () => {
     expect(app).toContain('/api/admin/conversations/');
     // El envío sale de un botón con una persona delante.
-    expect(app).toContain("id=\"composer-send\"");
-    expect(app).toContain('Enviar por WhatsApp');
+    expect(app).toContain("id=\"wa-send\"");
+    expect(app).toContain("id=\"wa-send-template\"");
+    expect(app).toContain('Se envía solo cuando pulsas Enviar.');
   });
 
   it('las acciones del día (hecho, posponer, cancelar, no contactar)', () => {
@@ -68,12 +90,24 @@ describe('el panel llama a los endpoints del CRM', () => {
 });
 
 describe('nada se envía solo', () => {
-  it('no hay temporizadores ni envíos automáticos en el panel', () => {
-    // El único setTimeout del panel es el del aviso flotante y el de recoger el
-    // resultado de Meta; ninguno envía mensajes.
-    const timers = app.match(/setInterval|setTimeout/g) ?? [];
-    expect(timers.every((entry) => entry === 'setTimeout')).toBe(true);
+  it('el único temporizador es el refresco de la bandeja, y solo lee', () => {
+    // El sondeo de la bandeja (8 s) mantiene la pantalla al día; el resto son
+    // `setTimeout` (aviso flotante, espera de Meta). Nada de esto envía mensajes.
+    const intervals = app.match(/setInterval\([^)]*\)/g) ?? [];
+    expect(intervals).toEqual(['setInterval(waPollTick, 8000)']);
+    const from = app.indexOf('function waPollTick');
+    const tick = app.slice(from, from + 900);
+    expect(tick).not.toContain('POST');
+    expect(tick).not.toContain('/messages');
+    expect(app).toMatch(/waPollTick/);
     expect(app).not.toMatch(/autoSend|sendAutomatically|scheduleSend/i);
+  });
+
+  it('el sondeo no corre fuera de la pestaña ni en segundo plano', () => {
+    const from = app.indexOf('function waPollTick');
+    const tick = app.slice(from, from + 900);
+    expect(tick).toContain("state.tab !== 'whatsapp'");
+    expect(tick).toContain("document.visibilityState !== 'visible'");
   });
 
   it('el seguimiento se presenta como una tarea, no como un envío', () => {

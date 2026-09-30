@@ -733,3 +733,224 @@ code {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+/* ------------------------------------------------- BANDEJA DE WHATSAPP
+ * Escritorio: dos columnas (lista | conversación). Móvil: primero la lista y,
+ * al abrir una conversación, ocupa la pantalla con un botón ← para volver.
+ * La vista previa de cada conversación NO muestra identificadores técnicos.
+ */
+body[data-tab='whatsapp'] .content {
+  max-width: 1180px;
+}
+
+.wa {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+.wa__list {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.wa__list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wa__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.wa__convs {
+  display: grid;
+  gap: 6px;
+}
+
+.wa__error {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--pe-radius);
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
+  font-size: 0.9rem;
+}
+
+.wa__placeholder {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--pe-ink-500);
+  font-size: 0.9rem;
+}
+
+/* Una conversación de la lista: se toca entera. */
+.conv {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.conv--pending {
+  border-left: 4px solid var(--pe-warn);
+}
+
+.conv--active {
+  border-color: var(--pe-brand, #1957e0);
+  background: var(--pe-surface-alt);
+}
+
+.conv__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.conv__name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv__when {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--pe-ink-500);
+}
+
+.conv__phone {
+  font-size: 0.8rem;
+  color: var(--pe-ink-500);
+}
+
+.conv__preview {
+  font-size: 0.87rem;
+  color: var(--pe-ink-700, inherit);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv__flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.conv__unread {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--pe-brand, #1957e0);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.conv__await {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Conversación abierta */
+.wa__chat {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.wa__chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wa__chat-who {
+  flex: 1;
+  min-width: 0;
+}
+
+.wa__chat-name {
+  margin: 0;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wa__chat-meta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--pe-ink-500);
+}
+
+.thread--wa {
+  max-height: 56dvh;
+}
+
+.wa__composer {
+  display: grid;
+  gap: 8px;
+}
+
+.wa__send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 979px) {
+  .wa[data-view='list'] .wa__chat,
+  .wa[data-view='list'] .wa__placeholder {
+    display: none;
+  }
+
+  .wa[data-view='chat'] .wa__list {
+    display: none;
+  }
+
+  .thread--wa {
+    max-height: 52dvh;
+  }
+}
+
+@media (min-width: 980px) {
+  .wa {
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  }
+
+  .wa__list {
+    max-height: 74dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .wa__back {
+    display: none;
+  }
+}

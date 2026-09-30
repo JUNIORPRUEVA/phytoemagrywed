@@ -234,6 +234,12 @@ export function createCustomerService(deps) {
           ...conversation,
           customer,
           last_message: last ? { body: last.body, direction: last.direction, status: last.status, at: last.created_at } : null,
+          /*
+           * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
+           * Se calcula del propio hilo, así que NO se apaga por abrir o marcar
+           * como leída la conversación: solo cuando el negocio contesta.
+           */
+          awaiting_reply: last ? last.direction === 'inbound' : false,
         };
       });
       return options.limit ? items.slice(0, options.limit) : items;
@@ -513,6 +519,11 @@ export function createCustomerService(deps) {
           humanaActiva: conversations.filter((row) => row.status === 'HUMAN_ACTIVE').length,
           pausadas: conversations.filter((row) => row.status === 'PAUSED').length,
           sinLeer: conversations.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
+          // Sin contestar = el último mensaje del hilo lo escribió el cliente.
+          sinContestar: conversations.filter((conversation) => {
+            const last = messages.find((message) => message.conversation_id === conversation.id) ?? null;
+            return last ? last.direction === 'inbound' : false;
+          }).length,
         },
         followups: {
           hoy: followupBuckets.today.length,

@@ -1126,7 +1126,7 @@ async function handle(req, res, ctx) {
           reference: buckets.reference,
           seguimientosHoy: buckets.today.length,
           seguimientosVencidos: buckets.overdue.length,
-          sinResponder: conversationList.filter((row) => Number(row.unread_count) > 0).length,
+          sinResponder: conversationList.filter((row) => row.awaiting_reply === true).length,
           humanoRequerido: conversationList.filter((row) => row.status === 'HUMAN_REQUIRED').length,
           pedidosPendientes: items.filter(
             (item) => item.type === 'order_intent' && item.status !== 'entregado' && item.status !== 'perdido',

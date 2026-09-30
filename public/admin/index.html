@@ -78,15 +78,53 @@
           <div class="list" id="list-hoy"></div>
         </section>
 
-        <!-- WHATSAPP -->
+        <!-- WHATSAPP: bandeja de conversaciones (izquierda lista, derecha conversación) -->
         <section class="view" id="view-whatsapp" hidden>
           <div id="wa-status"></div>
-          <h2 class="view__title">Conversaciones</h2>
+          <div class="wa" id="wa" data-view="list">
+            <!-- Columna izquierda -->
+            <div class="wa__list">
+              <div class="wa__list-head">
+                <p class="wa__title">WhatsApp</p>
+                <button class="icon-btn" id="wa-refresh" type="button" aria-label="Actualizar conversaciones">
+                  ⟳
+                </button>
+              </div>
+              <input
+                class="field__input"
+                id="wa-search"
+                type="search"
+                placeholder="Buscar conversación"
+                autocomplete="off"
+              />
+              <div class="chips" id="wa-filters"></div>
+              <div class="wa__error" id="wa-error" hidden></div>
+              <div class="wa__convs" id="wa-conversations"></div>
+            </div>
+
+            <!-- Columna derecha -->
+            <div class="wa__chat" id="wa-chat-pane" hidden>
+              <div class="wa__chat-head">
+                <button class="icon-btn wa__back" id="wa-back" type="button" aria-label="Volver a conversaciones">
+                  ←
+                </button>
+                <div class="wa__chat-who">
+                  <p class="wa__chat-name" id="wa-chat-name"></p>
+                  <p class="wa__chat-meta" id="wa-chat-meta"></p>
+                </div>
+                <button class="btn btn--ghost btn--sm" id="wa-view-customer" type="button">Ver cliente</button>
+              </div>
+              <div class="thread thread--wa" id="thread"></div>
+              <div class="wa__composer" id="wa-composer"></div>
+            </div>
+
+            <p class="wa__placeholder" id="wa-placeholder">
+              Elige una conversación de la izquierda para ver los mensajes.
+            </p>
+          </div>
           <p class="view__hint">
-            Los mensajes de WhatsApp llegan aquí. <strong>Nada se envía solo</strong>: tú decides qué
-            escribir y cuándo pulsar Enviar.
+            <strong>Nada se envía solo</strong>: tú escribes y pulsas Enviar.
           </p>
-          <div class="list" id="list-whatsapp"></div>
           <button class="btn btn--primary btn--block" id="compra-nueva-wa" type="button">
             + Registrar compra de un cliente
           </button>
