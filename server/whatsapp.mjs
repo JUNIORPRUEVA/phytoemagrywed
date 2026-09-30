@@ -363,6 +363,45 @@ export function parseWebhook(body) {
 }
 
 /**
+ * Metadata del archivo de un mensaje entrante. El binario NO viaja aquí: solo el
+ * identificador de Meta y lo necesario para descargarlo y validarlo. La URL de
+ * Graph caduca en minutos, así que tampoco se guarda.
+ *
+ * @param {any} message
+ * @returns {{ kind: string, waMediaId: string|null, mimeType: string|null, caption: string|null,
+ *            filename: string|null, durationMs: number|null, sha256: string|null }|null}
+ */
+export function mediaOf(message) {
+  const type = String(message?.type ?? '');
+  const node =
+    type === 'image'
+      ? message?.image
+      : type === 'audio'
+        ? message?.audio
+        : type === 'voice'
+          ? message?.voice
+          : type === 'document'
+            ? message?.document
+            : type === 'video'
+              ? message?.video
+              : type === 'sticker'
+                ? message?.sticker
+                : null;
+  if (!node || typeof node !== 'object') return null;
+  const seconds = Number(node.duration ?? 0);
+  return {
+    // `voice` es una nota de voz: mismo audio, distinta cosa para el negocio.
+    kind: type === 'voice' || node.voice === true ? 'voice' : type,
+    waMediaId: node.id ? String(node.id) : null,
+    mimeType: node.mime_type ? String(node.mime_type) : null,
+    caption: node.caption ? String(node.caption) : null,
+    filename: node.filename ? String(node.filename) : null,
+    durationMs: Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : null,
+    sha256: node.sha256 ? String(node.sha256) : null,
+  };
+}
+
+/**
  * Mensaje entrante → objeto plano del CRM.
  * @param {any} message
  * @param {Map<string,string>} contacts
@@ -384,7 +423,9 @@ export function normalizeInboundMessage(message, contacts = new Map()) {
     buttonId = String(message?.interactive?.button_reply?.id ?? message?.interactive?.list_reply?.id ?? '');
   } else if (type === 'image') body = message?.image?.caption ? String(message.image.caption) : '[imagen]';
   else if (type === 'audio') body = '[audio]';
-  else if (type === 'document') body = '[documento]';
+  else if (type === 'voice') body = '[nota de voz]';
+  else if (type === 'video') body = message?.video?.caption ? String(message.video.caption) : '[video]';
+  else if (type === 'document') body = message?.document?.filename ? String(message.document.filename) : '[documento]';
   else if (type === 'location') body = '[ubicación]';
   else if (type === 'sticker') body = '[sticker]';
   else body = `[${type}]`;
@@ -397,6 +438,8 @@ export function normalizeInboundMessage(message, contacts = new Map()) {
     type,
     body: body?.slice(0, 4000) ?? null,
     buttonId: buttonId || null,
+    // Archivo (imagen/audio/…): identificador y datos, sin binario ni URL.
+    media: mediaOf(message),
     replyToWaId: message?.context?.id ? String(message.context.id) : null,
     timestamp: message?.timestamp ? Number(message.timestamp) : null,
     receivedAt: message?.timestamp ? new Date(Number(message.timestamp) * 1000).toISOString() : new Date().toISOString(),

@@ -85,6 +85,12 @@ import { createFollowupEngine, resolveDailyCapsules, resolvePlan } from './follo
 import { createAuditLog } from './audit.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createSettingsService } from './settings.mjs';
+import { createSqlQuery } from './sql-query.mjs';
+import { createMediaStore, MEDIA_STATUS, SEND_STATUS } from './media.mjs';
+import { createStorageService } from './storage.mjs';
+import { createWhatsAppMedia } from './whatsapp-media.mjs';
+import { createMediaPipeline } from './media-pipeline.mjs';
+import { createMediaRoutes } from './media-routes.mjs';
 import {
   ORDER_STATUS_LABELS,
   buildOrder,
@@ -157,6 +163,19 @@ const WHATSAPP_VERIFY_TOKEN = (process.env.WHATSAPP_VERIFY_TOKEN ?? '').trim();
 const WHATSAPP_WEBHOOK_URL = (process.env.WHATSAPP_WEBHOOK_URL ?? '').trim();
 /** Versión de la Graph API: la misma que Meta, salvo que se fije otra. */
 const WHATSAPP_GRAPH_VERSION = (process.env.WHATSAPP_GRAPH_VERSION ?? '').trim() || META_GRAPH_VERSION;
+
+// ------------------------------------------------- Almacén de archivos (R2)
+/*
+ * Multimedia de WhatsApp: la METADATA vive en la base de datos y el BINARIO en
+ * Cloudflare R2 (o cualquier S3 compatible). Si estas variables no están, la
+ * multimedia queda desactivada y **el CRM sigue funcionando igual**: se registran
+ * pedidos, clientes y mensajes de texto, y el panel lo dice sin inventar nada.
+ * Los valores no se imprimen nunca.
+ */
+const R2_ENDPOINT = (process.env.R2_ENDPOINT ?? '').trim();
+const R2_BUCKET_NAME = (process.env.R2_BUCKET_NAME ?? '').trim();
+const R2_ACCESS_KEY_ID = (process.env.R2_ACCESS_KEY_ID ?? '').trim();
+const R2_SECRET_ACCESS_KEY = (process.env.R2_SECRET_ACCESS_KEY ?? '').trim();
 /** Cápsulas por día: 1 es el uso aprobado del producto. */
 const DAILY_CAPSULES = resolveDailyCapsules(productConfig.usage, (process.env.PHYTO_DAILY_CAPSULES ?? '').trim());
 /** Plan de seguimiento (días configurables sin tocar código). */
@@ -799,6 +818,24 @@ export async function processWebhookPayload(ctx, body) {
         (result.cancelledFollowups ? ` · ${result.cancelledFollowups} seguimiento(s) cancelado(s)` : ''),
     );
     if (result.humanRequired) console.log('[crm] esa conversación queda para una persona (no es una pregunta simple)');
+    /*
+     * MULTIMEDIA: el mensaje y la conversación ya están guardados. El archivo se
+     * descarga DESPUÉS y en segundo plano, así que un R2 lento o caído no puede
+     * hacer que Meta reintente el webhook ni retrasar la respuesta. Si algo falla,
+     * la fila de media queda en FAILED, el mensaje sigue en la conversación y el
+     * panel ofrece reintentar.
+     */
+    if (inbound.media?.waMediaId && ctx.media?.pipeline) {
+      const contexto = { messageId: result.message.id, conversationId: result.conversation?.id ?? null, media: inbound.media };
+      ctx.media.pipeline
+        .processInbound(contexto)
+        .then((outcome) => {
+          if (!outcome.ok) {
+            console.warn(`[media] ${inbound.media.kind} de ${who} no se pudo guardar: ${outcome.error?.code ?? 'error'}`);
+          }
+        })
+        .catch((error) => console.error('[media] entrante:', error?.message ?? error));
+    }
   }
   /** @type {string[]} */
   const updated = [];
@@ -1165,6 +1202,14 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    /*
+     * MULTIMEDIA (S3): `GET /api/admin/media/:id`, `POST /api/admin/media/retry/:id`
+     * y `POST /api/admin/conversations/:id/media`. Va ANTES del resto de rutas de
+     * conversaciones porque comparte su prefijo; el módulo decide si la petición es
+     * suya y, si lo es, la atiende (y vuelve a comprobar la sesión).
+     */
+    if (ctx.handleMediaRoute && (await ctx.handleMediaRoute({ route, req, res, url }))) return;
+
     // Todo lo que necesita el panel en una sola petición (móvil con mala señal).
     if (route === '/api/admin/data' && req.method === 'GET') {
       const items = await store.listAdmin({ limit: 500 });
@@ -1174,6 +1219,33 @@ async function handle(req, res, ctx) {
       const buckets = await ctx.followups.buckets();
       const outbound = await ctx.db.list('wa_messages', { limit: 500 });
       const failed = outbound.filter((row) => row.status === 'failed');
+      /*
+       * Operaciones de archivo que quedaron AMBIGUAS (se intentó enviar y no hay
+       * confirmación) o a medias por una caída. Lista corta, saneada y solo para
+       * administración: un envío ambiguo NO se reintenta solo ni se ofrece como
+       * botón en la conversación.
+       */
+      /** @type {any[]} */
+      const mediaNeedsReview = [];
+      if (ctx.media?.store?.listBySendStatus) {
+        for (const status of [SEND_STATUS.SEND_UNKNOWN, SEND_STATUS.SENDING]) {
+          const rows = await ctx.media.store.listBySendStatus(status, 10);
+          for (const row of rows) {
+            mediaNeedsReview.push({
+              id: row.id,
+              message_id: row.message_id,
+              media_type: row.media_type,
+              send_status: row.send_status,
+              send_attempted_at: row.send_attempted_at,
+              sent_at: row.sent_at,
+              http_status: row.http_status,
+              safe_code: row.safe_code,
+              error_at: row.error_at,
+              created_at: row.created_at,
+            });
+          }
+        }
+      }
       json(res, 200, {
         ok: true,
         storage: store.kind,
@@ -1247,6 +1319,21 @@ async function handle(req, res, ctx) {
           verifyTokenConfigured: Boolean(ctx.whatsappVerifyToken),
           appSecretConfigured: Boolean(ctx.appSecret),
           businessAccountConfigured: Boolean(ctx.whatsapp?.businessAccountId),
+        },
+        /*
+         * MULTIMEDIA: qué se puede hacer y qué quedó a medias. La cola de
+         * recuperación es información de ADMINISTRACIÓN (un envío ambiguo no se
+         * reintenta solo): se muestra en Ajustes, nunca como botón en el chat, y
+         * va saneada (sin bucket, sin `object_key`, sin código del proveedor).
+         */
+        media: {
+          enabled: Boolean(ctx.media?.store && ctx.media?.storage?.enabled),
+          storageConfigured: Boolean(ctx.media?.storage?.enabled),
+          graphConfigured: Boolean(ctx.media?.whatsapp?.enabled),
+          imageLimitMb: 5,
+          audioLimitMb: 16,
+          needsReview: mediaNeedsReview.length,
+          review: mediaNeedsReview,
         },
       });
       return;
@@ -2304,6 +2391,20 @@ async function handle(req, res, ctx) {
 // ------------------------------------------------------------------ arranque
 
 /**
+ * Describe (sin secretos) si la multimedia puede funcionar y qué falta.
+ * Un CRM sin R2 o sin credenciales de WhatsApp sigue siendo un CRM completo:
+ * simplemente no hay archivos, y el log lo dice para que nadie lo busque a ciegas.
+ */
+function descripcionMultimedia(mediaStore, storage, whatsappMedia) {
+  const falta = [];
+  if (!mediaStore) falta.push('sin base de datos SQL');
+  if (!storage?.enabled) falta.push('faltan R2_ENDPOINT/R2_BUCKET_NAME/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY');
+  if (!whatsappMedia?.enabled) falta.push('faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID');
+  if (falta.length) return `desactivada (${falta.join(' · ')})`;
+  return 'activa · metadata en la base de datos, archivos en S3 (R2) privado';
+}
+
+/**
  * Levanta la API y el panel.
  * @param {object} [config]
  * @param {number} [config.port] 0 = puerto libre (lo elige el sistema)
@@ -2388,6 +2489,46 @@ export async function startCrmServer(config = {}) {
   const settingsService = createSettingsService({ db, plan: followupsBasePlan, clock: config.clock });
 
   /*
+   * MULTIMEDIA (imagen y audio).
+   *
+   * Reparto: la METADATA en la misma base de datos del CRM (tabla propia
+   * `phytoemagry_wa_media`, aditiva) y el BINARIO en R2. El `?` de SQLite y el
+   * `$1` de PostgreSQL los unifica `server/sql-query.mjs`, así que el almacén de
+   * media es EL MISMO en los dos motores (una sola fuente de verdad del esquema).
+   *
+   * Si R2 no está configurado, `storage.enabled` es false y el pipeline devuelve
+   * un error claro sin tumbar nada; si no hay SQL (JSONL), la multimedia queda
+   * desactivada y el CRM sigue igual.
+   */
+  const sqlQuery = createSqlQuery({ backend: db.kind, handle: store.handle ?? null });
+  const mediaEnabled = sqlQuery.enabled;
+  const mediaStore = config.mediaStore ?? (mediaEnabled ? createMediaStore(sqlQuery) : null);
+  const storage =
+    config.storage ??
+    createStorageService({
+      endpoint: R2_ENDPOINT,
+      bucket: R2_BUCKET_NAME,
+      accessKeyId: R2_ACCESS_KEY_ID,
+      secretAccessKey: R2_SECRET_ACCESS_KEY,
+    });
+  const whatsappMedia =
+    config.whatsappMedia ??
+    createWhatsAppMedia({
+      accessToken: config.whatsappAccessToken ?? WHATSAPP_ACCESS_TOKEN,
+      phoneNumberId: config.whatsappPhoneNumberId ?? WHATSAPP_PHONE_NUMBER_ID,
+      graphVersion: config.whatsappGraphVersion ?? WHATSAPP_GRAPH_VERSION,
+    });
+  const mediaPipelineBase =
+    mediaStore && config.media !== false
+      ? createMediaPipeline({
+          mediaStore,
+          storage,
+          whatsappMedia,
+          logger: settings.quiet ? () => {} : (message) => console.log(message),
+        })
+      : null;
+
+  /*
    * Seguimiento: crea y fecha tareas. NO envía nada por su cuenta; el envío
    * siempre lo pulsa una persona en el panel.
    */
@@ -2406,6 +2547,36 @@ export async function startCrmServer(config = {}) {
    */
   const audit = createAuditLog({ db, clock: config.clock });
 
+  /*
+   * La reconciliación de un envío AMBIGUO es una decisión humana excepcional, así
+   * que se envuelve aquí (no dentro del módulo de media) para dejar la traza de
+   * auditoría con quién lo revisó, cuándo, qué archivo y qué eligió. El envío en sí
+   * no cambia: el pipeline sigue siendo el único que decide.
+   */
+  const mediaPipeline = mediaPipelineBase
+    ? {
+        ...mediaPipelineBase,
+        async reconcileOutbound(input) {
+          const result = await mediaPipelineBase.reconcileOutbound(input);
+          if (result?.ok) {
+            await audit.record({
+              entity: 'message',
+              entityId: result.media?.id ?? input.mediaId ?? null,
+              action: 'message.reconciled',
+              summary: `Envío de archivo revisado: ${input.outcome === 'sent' ? 'sí salió' : 'no salió'}`,
+              data: {
+                media_id: result.media?.id ?? input.mediaId ?? null,
+                media_type: result.mediaType ?? null,
+                outcome: input.outcome,
+                wa_message_id: input.waMessageId ?? null,
+              },
+            });
+          }
+          return result;
+        },
+      }
+    : null;
+
   // El servicio de clientes puede necesitar los mensajes programados (ficha 360).
   // Se crea ANTES que el scheduler, así que se resuelve con una referencia diferida.
   /** @type {{ current: any }} */
@@ -2418,6 +2589,9 @@ export async function startCrmServer(config = {}) {
     followups,
     timeZone: TIME_ZONE,
     clock: config.clock,
+    // El hilo de la conversación necesita el estado de cada archivo (imagen/audio)
+    // para poder pintarlo: se consulta en UNA sola vez por hilo.
+    media: mediaStore,
     scheduled: { listForCustomer: (id) => (schedulerRef.current ? schedulerRef.current.listForCustomer(id) : Promise.resolve([])) },
   });
 
@@ -2452,6 +2626,8 @@ export async function startCrmServer(config = {}) {
     audit,
     settings: settingsService,
     scheduler,
+    // Multimedia: metadata (BD), binario (R2), Graph y el pipeline que los une.
+    media: { store: mediaStore, storage, whatsapp: whatsappMedia, pipeline: mediaPipeline },
     whatsapp,
     whatsappPhoneNumber: (config.whatsappPhoneNumber ?? WHATSAPP_PHONE_NUMBER).trim(),
     whatsappWebhookUrl: (config.whatsappWebhookUrl ?? WHATSAPP_WEBHOOK_URL).trim(),
@@ -2460,6 +2636,72 @@ export async function startCrmServer(config = {}) {
     timeZone: TIME_ZONE,
   };
   ctxRef.current = ctx;
+
+  /*
+   * RUTAS DE MULTIMEDIA (S3) — se registran con el MISMO guard de sesión que el
+   * resto de `/api/admin/*`. Sin sesión no se sirve ni un byte, y la respuesta
+   * nunca incluye bucket, `object_key`, endpoint de R2, tokens ni la URL de Graph.
+   *
+   * `persistOutbound` guarda el mensaje saliente con la MISMA función que usa el
+   * envío de texto (`recordOutbound`): una sola forma de escribir en el hilo.
+   */
+  ctx.handleMediaRoute =
+    mediaPipeline && mediaStore && storage
+      ? createMediaRoutes({
+          mediaStore,
+          storage,
+          pipeline: mediaPipeline,
+          isAuthorized: (req) => sessionValid(readCookie(req, COOKIE), settings.token),
+          resolveConversation: async (conversationId) => {
+            const conversation = await findConversation(ctx, conversationId);
+            if (!conversation) return null;
+            const customer = await ctx.customers.get(conversation.customer_id);
+            return customer ? { conversation, customer } : null;
+          },
+          persistOutbound: async (input) => {
+            const recorded = await ctx.customers.recordOutbound({
+              customer: input.customer,
+              conversation: input.conversation,
+              body: input.caption ?? null,
+              type: input.type,
+              status: 'sent',
+              waMessageId: input.waMessageId ?? null,
+              idempotencyKey: input.idempotencyKey ?? null,
+              sentBy: 'panel',
+              meta: { phoneNumberId: ctx.whatsapp?.phoneNumberId ?? null },
+            });
+            /*
+             * ENLACE. La operación de media nace ANTES que el mensaje (así una
+             * caída no pierde la intención de envío), por eso su `message_id` es
+             * provisional. Aquí se reapunta al mensaje de verdad para que el hilo
+             * pueda pintar la foto o el audio con su estado real. Si esto fallara,
+             * el mensaje sigue existiendo: solo se perdería el archivo en pantalla.
+             */
+            try {
+              const fila =
+                (input.idempotencyKey ? await ctx.media.store.byIdempotencyKey(input.idempotencyKey) : null) ??
+                (input.waMessageId ? await ctx.media.store.byWaMessageId(input.waMessageId) : null);
+              if (fila && recorded.message?.id && fila.message_id !== recorded.message.id) {
+                await ctx.media.store.update(fila.id, { messageId: recorded.message.id });
+              }
+            } catch (error) {
+              console.warn(`[media] no se pudo enlazar la operación con el mensaje: ${error?.message ?? error}`);
+            }
+            await ctx.customers.markConversationRead(input.conversation.id);
+            await ctx.audit?.record({
+              entity: 'message',
+              entityId: recorded.message?.id ?? null,
+              action: 'message.sent',
+              summary: `Archivo (${input.type}) a ${input.customer.name ?? input.customer.phone_e164}`,
+              data: { customer_id: input.customer.id, media_type: input.type },
+              idempotencyKey: recorded.message?.id ? `message.sent:${recorded.message.id}` : null,
+            });
+            return recorded;
+          },
+          findMessageByKey: (key) => ctx.db.findBy('wa_messages', 'idempotency_key', key),
+          logger: settings.quiet ? () => {} : (message) => console.log(message),
+        })
+      : null;
 
   const server = createServer((req, res) => {
     handle(req, res, ctx).catch((error) => {
@@ -2504,6 +2746,9 @@ export async function startCrmServer(config = {}) {
     );
     console.log(
       `[crm] seguimiento: ${followups.plan.length} tarea(s) por venta entregada · el envío SIEMPRE es manual (nada se envía solo)`,
+    );
+    console.log(
+      `[crm] multimedia: ${descripcionMultimedia(mediaStore, storage, whatsappMedia)}`,
     );
   }
 
@@ -2561,6 +2806,8 @@ export async function startCrmServer(config = {}) {
     audit,
     settings: settingsService,
     scheduler,
+    // Multimedia (metadatos en la base, binarios en R2, Graph para el archivo).
+    media: { store: mediaStore, storage, whatsapp: whatsappMedia, pipeline: mediaPipeline },
     whatsapp,
     purchaseStatus: ctx.purchaseStatus,
     ctx,

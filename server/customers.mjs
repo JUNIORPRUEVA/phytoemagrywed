@@ -122,6 +122,7 @@ export function createCustomerService(deps) {
   const store = deps.store;
   const followups = deps.followups;
   const scheduler = deps.scheduled ?? null;
+  const media = deps.media ?? null;
   const timeZone = deps.timeZone ?? 'America/Santo_Domingo';
   const clock = deps.clock ?? (() => new Date());
 
@@ -403,8 +404,45 @@ export function createCustomerService(deps) {
     async messagesFor(conversationId, options = {}) {
       const rows = await db.list('wa_messages', { by: 'created_at', order: 'asc' });
       const scoped = rows.filter((row) => row.conversation_id === conversationId);
-      if (options.limit) return scoped.slice(-options.limit);
-      return scoped;
+      const page = options.limit ? scoped.slice(-options.limit) : scoped;
+      /*
+       * Los mensajes con archivo (imagen, audio, nota de voz…) llevan el estado de
+       * su media para que el panel sepa si hay que pintar la foto, el reproductor,
+       * un “cargando” o un botón de reintentar. Se resuelve en UNA consulta para
+       * todo el hilo (no una por mensaje) y, si el almacén falla, el texto del
+       * mensaje se sigue viendo igual.
+       */
+      const conArchivo = page.filter(
+        (row) => row.type && !['text', 'template', 'button', 'interactive'].includes(row.type),
+      );
+      if (!media?.byMessageIds || conArchivo.length === 0) return page;
+      /** @type {Map<string, any>} */
+      const byMessage = new Map();
+      try {
+        const mediaRows = await media.byMessageIds(conArchivo.map((row) => row.id));
+        for (const row of mediaRows) if (!byMessage.has(row.message_id)) byMessage.set(row.message_id, row);
+      } catch {
+        /* sin media el hilo se ve igual: solo falta el archivo */
+      }
+      return page.map((row) => {
+        const found = byMessage.get(row.id);
+        if (!found) return row;
+        return {
+          ...row,
+          // Solo lo que el navegador necesita: nunca el `object_key` ni el bucket.
+          media: {
+            id: found.id,
+            status: found.status,
+            sendStatus: found.send_status ?? null,
+            mimeType: found.mime_type ?? null,
+            sizeBytes: found.size_bytes ?? null,
+            durationMs: found.duration_ms ?? null,
+            errorCode: found.error_code ?? null,
+            errorMessage: found.error_message ?? null,
+            direction: found.direction,
+          },
+        };
+      });
     },
 
     /**
@@ -511,7 +549,8 @@ export function createCustomerService(deps) {
         customer_id: input.customer.id,
         wa_message_id: input.waMessageId ?? null,
         direction: 'outbound',
-        type: input.template ? 'template' : 'text',
+        // El tipo lo decide quien envía: texto, plantilla, imagen, audio o nota de voz.
+        type: input.type ?? (input.template ? 'template' : 'text'),
         template_name: input.template ?? null,
         body: input.body ?? null,
         intent: null,

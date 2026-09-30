@@ -35,6 +35,7 @@
     commercial: null,
     orderStatuses: [],
     audit: null,
+    media: null,
     metrics: null,
     metricsPeriod: '30d',
     orderId: null,
@@ -298,6 +299,7 @@
       state.commercial = data.commercial ?? null;
       state.orderStatuses = data.orderStatuses ?? [];
       state.audit = data.audit ?? null;
+      state.media = data.media ?? null;
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
@@ -974,6 +976,71 @@
       state.auditLoading = true;
       loadAuditEntries();
     }
+
+    // ------------------------------------------------ multimedia (S3)
+    const media = state.media ?? {};
+    $('#media-config').innerHTML = media.enabled
+      ? `<dl class="facts">
+          <div class="fact"><dt>Imagen y audio</dt><dd>activos</dd></div>
+          <div class="fact"><dt>Archivos</dt><dd>almacén privado (S3/R2)</dd></div>
+          <div class="fact"><dt>Límites</dt><dd>imagen ${media.imageLimitMb ?? 5} MB · audio ${media.audioLimitMb ?? 16} MB</dd></div>
+        </dl>
+        <p class="card__text">Las fotos y los audios se piden al CRM con tu sesión: el almacén es privado y nadie
+        de fuera puede abrir un archivo aunque tenga el enlace.</p>`
+      : `<p class="card__text">Todavía no está activa: ${
+          media.storageConfigured === false ? 'falta el almacén de archivos (R2). ' : ''
+        }${
+          media.graphConfigured === false ? 'faltan las credenciales de WhatsApp para descargar archivos. ' : ''
+        }Los mensajes de texto, los pedidos y los comprobantes funcionan igual.</p>`;
+
+    // Recuperación de envíos ambiguos: SOLO administración, nunca en el chat.
+    const review = media.review ?? [];
+    $('#media-review-card').hidden = review.length === 0;
+    $('#media-review').innerHTML = review
+      .map(
+        (row) => `<div class="review-item">
+          <p class="item__meta"><strong>${escapeHtml(row.media_type ?? 'archivo')}</strong> ·
+            ${escapeHtml(row.send_status ?? '')}${row.http_status ? ` · HTTP ${escapeHtml(row.http_status)}` : ''}</p>
+          <p class="item__meta">Intentado ${escapeHtml(fmtWhen(row.send_attempted_at ?? row.created_at))}${
+            row.safe_code ? ` · ${escapeHtml(row.safe_code)}` : ''
+          }</p>
+          <label class="field">
+            <span class="field__label">Identificador del mensaje en WhatsApp (si salió)</span>
+            <input class="field__input" data-review-wamid="${escapeHtml(row.id)}" placeholder="wamid.…" />
+          </label>
+          <div class="item__actions">
+            <button class="btn btn--ghost btn--sm" data-review="sent" data-review-id="${escapeHtml(
+              row.id,
+            )}" type="button">Sí salió</button>
+            <button class="btn btn--primary btn--sm" data-review="not_sent" data-review-id="${escapeHtml(
+              row.id,
+            )}" type="button">No salió: reintentar</button>
+          </div>
+        </div>`,
+      )
+      .join('');
+  }
+
+  /**
+   * Reconcilia un envío ambiguo: es la ÚNICA salida y la decide una persona que
+   * ya miró WhatsApp. No llama a Meta; solo corrige el estado local y queda en la
+   * auditoría (quién, cuándo, qué archivo y qué se eligió).
+   */
+  async function reconcileMedia(mediaId, outcome) {
+    const waMessageId = outcome === 'sent' ? ($(`[data-review-wamid="${cssEscape(mediaId)}"]`)?.value ?? '').trim() : '';
+    if (outcome === 'sent' && !waMessageId) {
+      toast('Escribe el identificador del mensaje (wamid.…) o elige «No salió»');
+      return;
+    }
+    try {
+      const query = new URLSearchParams({ outcome });
+      if (waMessageId) query.set('wa_message_id', waMessageId);
+      await api(`/api/admin/media/retry/${encodeURIComponent(mediaId)}?${query.toString()}`, { method: 'POST' });
+      toast(outcome === 'sent' ? 'Marcado como enviado' : 'Marcado como no enviado: se puede reintentar');
+      await load({ keepTab: true });
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo reconciliar');
+    }
   }
 
   /**
@@ -1163,6 +1230,13 @@
   }
 
   function closeSheet() {
+    // Nada de micrófono abierto ni temporizadores vivos al cerrar la hoja.
+    try {
+      closeSheetCleanup?.();
+    } catch {
+      /* el cierre nunca puede fallar por una limpieza */
+    }
+    closeSheetCleanup = null;
     state.openId = null;
     state.customerId = null;
     state.chat = null;
@@ -1224,22 +1298,56 @@
     const estado = inbound ? '' : WA_STATUS[message.status] ?? '';
     const media = message.media ?? null;
     const tipo = message.type ?? 'text';
+    const mediaSrc = media?.id ? mediaUrl(media.id) : null;
+    const mediaListo = media?.status === 'STORED';
     /*
      * Contenido: el texto se escapa SIEMPRE (nunca se pinta HTML de WhatsApp).
-     * Multimedia: si el servidor ya la tiene, se muestra de verdad (imagen con
-     * visor, audio con reproductor); si no, una tarjeta segura que explica qué
-     * es. Nunca aparece “un objeto” ni un corchete raro.
+     * Multimedia: el archivo se pide al endpoint privado del CRM (con sesión) y se
+     * muestra de verdad: imagen con miniatura y visor, audio con reproductor
+     * propio. Si el servidor no lo tiene todavía se dice “descargando”, y si falló
+     * se dice que falló y se ofrece reintentar. Nunca aparece “un objeto” ni un
+     * corchete raro.
      */
     let cuerpo;
-    if (tipo === 'image' && media?.url) {
-      cuerpo = `<a class="media-bubble" href="${escapeHtml(media.url)}" target="_blank" rel="noopener noreferrer">
-          <img src="${escapeHtml(media.url)}" alt="Imagen" loading="lazy" decoding="async" /></a>`;
+    if (tipo === 'image' && mediaSrc && mediaListo) {
+      cuerpo = `<button class="media-thumb" data-media-view="${escapeHtml(media.id)}" type="button" aria-label="Ver la imagen en grande">
+          <img src="${escapeHtml(mediaSrc)}" alt="Imagen del cliente" loading="lazy" decoding="async" /></button>`;
       if (message.body) cuerpo += escapeHtml(message.body);
-    } else if ((tipo === 'audio' || tipo === 'voice') && media?.url) {
-      cuerpo = `<span class="audio-player"><audio controls preload="none" src="${escapeHtml(media.url)}"></audio></span>`;
+    } else if ((tipo === 'audio' || tipo === 'voice') && mediaSrc && mediaListo) {
+      cuerpo = `<span class="audio" data-audio="${escapeHtml(media.id)}">
+          <button class="audio__play" data-audio-play="${escapeHtml(media.id)}" data-audio-src="${escapeHtml(
+            mediaSrc,
+          )}" type="button" aria-label="Reproducir">▶</button>
+          <span class="audio__main">
+            <input class="audio__seek" data-audio-seek="${escapeHtml(media.id)}" type="range" min="0" max="1000" value="0"
+              aria-label="Posición del audio" />
+            <span class="audio__times"><span data-audio-current>0:00</span><span data-audio-total>--:--</span></span>
+          </span>
+          <span class="audio__label" aria-hidden="true">${tipo === 'voice' ? '🎤' : '🎵'}</span>
+        </span>`;
     } else if (tipo !== 'text' && tipo !== 'button' && tipo !== 'interactive') {
-      const etiqueta = media && media.error ? 'No se pudo descargar el archivo' : `${WA_KIND_LABEL[tipo] ?? 'Mensaje'} recibido`;
-      cuerpo = `<span class="media-fallback"><span aria-hidden="true">${WA_KIND_ICON[tipo] ?? '📄'}</span>${escapeHtml(etiqueta)}</span>`;
+      const falló = media?.status === 'FAILED' || Boolean(media?.errorCode);
+      const cargando = Boolean(media) && !mediaListo && !falló;
+      const icono = WA_KIND_ICON[tipo] ?? '📄';
+      const nombre = WA_KIND_LABEL[tipo] ?? 'Archivo';
+      if (falló) {
+        cuerpo = `<span class="media-state media-state--failed"><span aria-hidden="true">${icono}</span>
+            <span>No se pudo descargar el ${escapeHtml(nombre.toLowerCase())}</span></span>
+          ${
+            media?.id
+              ? `<button class="btn btn--ghost btn--sm" data-media-retry="${escapeHtml(media.id)}" type="button">Reintentar</button>`
+              : ''
+          }`;
+      } else if (cargando) {
+        cuerpo = `<span class="media-state"><span aria-hidden="true">${icono}</span>
+            <span>Descargando ${escapeHtml(nombre.toLowerCase())}…</span></span>`;
+      } else {
+        // Sin almacén (o mensaje antiguo): se describe, nunca se inventa el archivo.
+        cuerpo = `<span class="media-fallback"><span aria-hidden="true">${icono}</span>${escapeHtml(
+          `${nombre} recibido`,
+        )}</span>`;
+      }
+      if (message.body && message.body !== `[${tipo}]`) cuerpo += escapeHtml(message.body);
     } else {
       cuerpo = escapeHtml(message.body ?? '');
     }
@@ -1465,12 +1573,20 @@
         </label>
         <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>`;
     }
+    const puedeAdjuntar = state.media?.enabled === true;
+    const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     return `<div class="composer-bar">
-        <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio" disabled
-          title="Adjuntar archivo: llega en la fase de multimedia">+</button>
+        <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio"
+          title="${
+            puedeAdjuntar ? 'Adjuntar imagen o audio' : 'Adjuntar: la multimedia no está activa en el servidor'
+          }">+</button>
         <textarea id="wa-text" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
-        <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz" disabled
-          title="Grabar nota de voz: llega en la fase de multimedia">🎤</button>
+        <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
+          title="${
+            puedeGrabar
+              ? 'Grabar nota de voz'
+              : 'Este navegador no permite grabar: usa + para adjuntar un audio'
+          }">${puedeGrabar ? '🎤' : '🎵'}</button>
         <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden>➤</button>
       </div>
       <p class="view__hint">Enter envía · Shift+Enter hace un salto de línea. Nada se envía solo.</p>`;
@@ -1576,6 +1692,535 @@
       sendWaMessage({ template: $('#wa-template').value || null }, event.currentTarget),
     );
   }
+
+  // ------------------------------------------------------------- MULTIMEDIA
+  /*
+   * Imagen y audio, encima de la UI comercial (nada de esto cambia el menú ⋯ ni
+   * el flujo de pedido). El archivo se pide SIEMPRE a `/api/admin/media/:id` con
+   * la sesión del panel: el bucket es privado y el navegador nunca ve su
+   * dirección, ni la clave del objeto, ni ningún token.
+   *
+   * El compositor tiene TRES estados y ninguno envía solo:
+   *   elegir archivo → PREVISUALIZAR → (cancelar | ENVIAR)
+   *   grabar         → DETENER      → PREVISUALIZAR → (borrar/regrabar | ENVIAR)
+   */
+
+  const mediaUrl = (id) => `/api/admin/media/${encodeURIComponent(id)}`;
+  const mediaReady = () => state.media?.enabled === true;
+
+  /** Tipos que el almacén y Meta aceptan hoy (coincide con `server/storage.mjs`). */
+  const AUDIO_MIME_OK = ['audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/aac', 'audio/amr', 'audio/opus'];
+  const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
+  const AUDIO_ACCEPT = 'audio/ogg,audio/mp4,audio/mpeg,audio/aac,audio/amr,audio/webm,audio/*';
+
+  const fmtSeconds = (value) => {
+    const total = Math.max(0, Math.floor(Number(value) || 0));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  };
+  const fmtBytes = (value) => {
+    const bytes = Number(value) || 0;
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  };
+  const uploadKey = (kind) =>
+    `m:${kind}:${(globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`).slice(0, 40)}`;
+
+  /**
+   * Escapa un valor para usarlo en un selector. `CSS.escape` existe en todos los
+   * navegadores modernos, pero no en cualquier entorno: si falta, se usa un escape
+   * mínimo equivalente para los identificadores que genera el CRM (letras, números,
+   * guion y dos puntos).
+   */
+  const cssEscape = (value) => {
+    const raw = String(value ?? '');
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(raw);
+    return raw.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);
+  };
+
+  /**
+   * ¿Qué tipo puede grabar este navegador? Se pregunta de verdad con
+   * `MediaRecorder.isTypeSupported` y se guarda lo que responde: no se supone
+   * nada, porque grabar en un formato que Meta no acepta es prometer de más.
+   */
+  function detectSupportedRecordingType() {
+    if (typeof window.MediaRecorder === 'undefined') return null;
+    const candidates = [
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/mp4',
+      'audio/aac',
+      'audio/webm;codecs=opus',
+      'audio/webm',
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (window.MediaRecorder.isTypeSupported?.(candidate)) return candidate;
+      } catch {
+        /* un navegador que lanza aquí no soporta: se sigue probando */
+      }
+    }
+    return ''; // sin preferencia: el navegador decide (puede ser webm)
+  }
+
+  /** ¿Ese audio se puede enviar a WhatsApp hoy? (si no, se dice, no se finge) */
+  const audioSendable = (mime) => AUDIO_MIME_OK.includes(String(mime ?? '').split(';')[0].trim());
+
+  // ------------------------------------------------- reproductor de audio
+  /*
+   * Un solo elemento de audio para toda la conversación: así, al reproducir otro,
+   * el anterior se para (no suenan dos a la vez) y no hay autoplay: solo suena lo
+   * que alguien pulsa.
+   */
+  let sharedAudio = null;
+  let audioOwner = null;
+  let audioBlocked = null;
+  let ultimoAvisoAudio = 0;
+
+  /**
+   * El archivo no se pudo decodificar (descarga cortada, formato que el navegador
+   * no entiende): el botón vuelve a «▶» en vez de quedarse en «❚❚» para siempre,
+   * que haría creer que está sonando. Se avisa una sola vez por intento.
+   */
+  function audioNoReproducible() {
+    audioBlocked = audioOwner;
+    const row = audioOwner ? $(`[data-audio="${cssEscape(audioOwner)}"]`) : null;
+    const play = row?.querySelector('[data-audio-play]');
+    const current = row?.querySelector('[data-audio-current]');
+    if (play) {
+      play.textContent = '▶';
+      play.setAttribute('aria-label', 'Reproducir');
+    }
+    if (current) current.textContent = '0:00';
+    const ahora = Date.now();
+    if (ahora - ultimoAvisoAudio > 1500) {
+      ultimoAvisoAudio = ahora;
+      toast('No se pudo reproducir el audio');
+    }
+  }
+
+  function ensureAudio() {
+    if (sharedAudio) return sharedAudio;
+    sharedAudio = new Audio();
+    sharedAudio.preload = 'metadata';
+    sharedAudio.addEventListener('timeupdate', syncAudioPlayer);
+    sharedAudio.addEventListener('loadedmetadata', () => {
+      // El archivo SÍ se pudo leer: se levanta el bloqueo anterior.
+      audioBlocked = null;
+      syncAudioPlayer();
+    });
+    sharedAudio.addEventListener('pause', syncAudioPlayer);
+    sharedAudio.addEventListener('play', syncAudioPlayer);
+    sharedAudio.addEventListener('error', audioNoReproducible);
+    sharedAudio.addEventListener('ended', () => {
+      sharedAudio.currentTime = 0;
+      syncAudioPlayer();
+    });
+    return sharedAudio;
+  }
+
+  function syncAudioPlayer() {
+    const row = audioOwner ? $(`[data-audio="${cssEscape(audioOwner)}"]`) : null;
+    if (!row || !sharedAudio) return;
+    const seek = row.querySelector('[data-audio-seek]');
+    const current = row.querySelector('[data-audio-current]');
+    const total = row.querySelector('[data-audio-total]');
+    const play = row.querySelector('[data-audio-play]');
+    const duration = Number(sharedAudio.duration);
+    if (current) current.textContent = fmtSeconds(sharedAudio.currentTime);
+    if (total) total.textContent = Number.isFinite(duration) && duration > 0 ? fmtSeconds(duration) : '--:--';
+    if (seek && Number.isFinite(duration) && duration > 0) {
+      seek.value = String(Math.round((sharedAudio.currentTime / duration) * 1000));
+    }
+    if (play) {
+      // Sonando = de verdad suena: si el archivo no se pudo decodificar
+      // (`error`), el botón NO puede quedarse en «pausar».
+      const sonando = !sharedAudio.paused && !sharedAudio.error && audioBlocked !== audioOwner;
+      play.textContent = sonando ? '❚❚' : '▶';
+      play.setAttribute('aria-label', sonando ? 'Pausar' : 'Reproducir');
+    }
+  }
+
+  function toggleAudio(mediaId, src) {
+    const audio = ensureAudio();
+    if (audioOwner === mediaId && !audio.paused) {
+      audio.pause();
+      syncAudioPlayer();
+      return;
+    }
+    if (audioOwner !== mediaId) {
+      audioOwner = mediaId;
+      audioBlocked = null;
+      audio.src = src;
+      audio.currentTime = 0;
+    }
+    audioBlocked = null; // si vuelve a fallar, el aviso y el «▶» vuelven solos
+    audio.play().catch(() => {
+      audio.pause?.();
+      audioNoReproducible();
+    });
+    syncAudioPlayer();
+  }
+
+  function seekAudio(mediaId, ratio) {
+    const audio = ensureAudio();
+    if (audioOwner !== mediaId) return;
+    const duration = Number(audio.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    audio.currentTime = Math.min(duration, Math.max(0, duration * (Number(ratio) / 1000)));
+    syncAudioPlayer();
+  }
+
+  // ------------------------------------------------------------- visor
+  function openViewer(mediaId) {
+    const viewer = $('#media-viewer');
+    const image = $('#media-viewer-img');
+    if (!viewer || !image) return;
+    image.src = mediaUrl(mediaId);
+    viewer.hidden = false;
+  }
+
+  function closeViewer() {
+    const viewer = $('#media-viewer');
+    const image = $('#media-viewer-img');
+    if (!viewer) return;
+    viewer.hidden = true;
+    if (image) image.removeAttribute('src');
+  }
+
+  // ------------------------------------------- subida desde el compositor
+  /**
+   * Manda los BYTES CRUDOS (sin multipart: el servidor decide el tipo mirando el
+   * contenido, no la cabecera). La clave se genera AQUÍ y viaja en la petición:
+   * repetir el envío con la misma clave no puede crear un segundo mensaje.
+   */
+  async function uploadMediaFile({ conversationId, kind, file, caption, key }) {
+    const query = new URLSearchParams({ kind, key: key ?? uploadKey(kind) });
+    if (caption) query.set('caption', caption);
+    const response = await fetch(
+      `/api/admin/conversations/${encodeURIComponent(conversationId)}/media?${query.toString()}`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'content-type': file.type || (kind === 'audio' ? 'audio/ogg' : 'image/png'),
+          'x-phyto-filename': file.name || kind,
+        },
+        body: file,
+      },
+    );
+    const raw = await response.text();
+    let body = {};
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch {
+      body = {};
+    }
+    if (!response.ok) {
+      const error = new Error(body.message ?? 'No se pudo enviar el archivo');
+      error.body = body;
+      throw error;
+    }
+    return body;
+  }
+
+  /**
+   * Cuando el envío queda AMBIGUO (pudo salir o no), desde el chat no se
+   * reintenta NUNCA: se avisa, se cierra la hoja y se refrescan los datos para
+   * que la cola de revisión de Ajustes esté al día (si no, el vendedor no vería
+   * nada que revisar hasta la siguiente recarga).
+   */
+  async function avisoEnvioAmbiguo(error) {
+    const ambiguo = error.body?.error === 'send_unknown';
+    toast(
+      ambiguo
+        ? 'No se pudo confirmar si el mensaje salió. No se reintenta solo: míralo en Ajustes → «Envíos de archivo por revisar».'
+        : error.body?.message ?? 'No se pudo enviar el archivo',
+    );
+    if (ambiguo) {
+      closeSheet();
+      await load({ keepTab: true });
+    }
+  }
+
+  /** Elegir un archivo del teléfono y PREVISUALIZARLO (nunca se envía al elegir). */
+  function openAttachSheet(conversationId) {
+    if (!conversationId) return;
+    if (!mediaReady()) {
+      openSheet(
+        'Adjuntar',
+        `<p class="rule rule--warn">La multimedia no está activa en el servidor: faltan las variables del
+         almacén de archivos (R2) o las credenciales de WhatsApp. Los mensajes de texto siguen funcionando.</p>`,
+      );
+      return;
+    }
+    openSheet(
+      'Adjuntar',
+      `
+      <p class="view__hint">Elige qué enviar. Después podrás verlo antes de mandarlo: <strong>nada se envía al elegir</strong>.</p>
+      <div class="menu-list">
+        <button class="menu-item" id="attach-image" type="button">
+          <span aria-hidden="true">🖼</span>
+          <span><strong>Imagen</strong><small>JPG, PNG o WebP · hasta 5 MB</small></span>
+        </button>
+        <button class="menu-item" id="attach-audio" type="button">
+          <span aria-hidden="true">🎵</span>
+          <span><strong>Audio</strong><small>Un archivo de audio · hasta 16 MB</small></span>
+        </button>
+      </div>
+      <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
+      <input id="attach-audio-input" type="file" accept="${AUDIO_ACCEPT}" hidden />
+      `,
+    );
+
+    const pick = (inputSelector, kind) => {
+      const input = $(inputSelector);
+      input.value = '';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) openMediaPreview({ conversationId, kind, file });
+      };
+      input.click();
+    };
+    $('#attach-image').addEventListener('click', () => pick('#attach-image-input', 'image'));
+    $('#attach-audio').addEventListener('click', () => pick('#attach-audio-input', 'audio'));
+  }
+
+  /** Previsualización de un archivo elegido, con ENVIAR explícito. */
+  function openMediaPreview({ conversationId, kind, file, key, durationMs }) {
+    const objectUrl = URL.createObjectURL(file);
+    const mime = String(file.type || '').split(';')[0].trim();
+    const puedeEnviar = kind === 'image' ? mime.startsWith('image/') : audioSendable(mime);
+    const aviso = !puedeEnviar
+      ? kind === 'audio'
+        ? `<p class="rule rule--warn">Tu navegador grabó el audio en <strong>${escapeHtml(mime || 'un formato desconocido')}</strong>,
+             que WhatsApp todavía no acepta. Puedes oírlo aquí, pero para enviarlo adjunta un audio en OGG o M4A.</p>`
+        : `<p class="rule rule--warn">Ese archivo no parece una imagen (${escapeHtml(mime || 'tipo desconocido')}).</p>`
+      : '';
+    openSheet(
+      kind === 'image' ? 'Enviar imagen' : 'Enviar audio',
+      `
+      <div class="attach-preview">
+        ${
+          kind === 'image'
+            ? `<img src="${escapeHtml(objectUrl)}" alt="Previsualización" />`
+            : `<audio src="${escapeHtml(objectUrl)}" controls preload="metadata"></audio>`
+        }
+        <p class="attach-preview__meta">
+          <span>${escapeHtml(file.name || (kind === 'image' ? 'Imagen' : 'Audio'))}</span>
+          <span>${escapeHtml(mime || 'tipo desconocido')} · ${fmtBytes(file.size)}${durationMs ? ` · ${fmtSeconds(durationMs / 1000)}` : ''}</span>
+        </p>
+      </div>
+      ${aviso}
+      ${
+        kind === 'image'
+          ? `<label class="field">
+               <span class="field__label">Texto (opcional)</span>
+               <input class="field__input" id="attach-caption" maxlength="400" placeholder="Mira, este es el frasco…" />
+             </label>`
+          : ''
+      }
+      <button class="btn btn--primary btn--block" id="attach-send" type="button" ${puedeEnviar ? '' : 'disabled'}>Enviar</button>
+      <button class="btn btn--ghost btn--block" id="attach-cancel" type="button">Cancelar</button>
+      `,
+    );
+
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    $('#attach-cancel').addEventListener('click', () => {
+      cleanup();
+      closeSheet();
+    });
+    $('#attach-send').addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          const caption = kind === 'image' ? ($('#attach-caption')?.value ?? '').trim() : '';
+          await uploadMediaFile({ conversationId, kind, file, caption, key: key ?? uploadKey(kind) });
+          cleanup();
+          toast(kind === 'image' ? 'Imagen enviada' : 'Audio enviado');
+          closeSheet();
+          await load({ keepTab: true });
+          await loadWaThread(conversationId, { force: true });
+        } catch (error) {
+          if (error.message !== 'unauthorized') {
+            // Un envío AMBIGUO no se puede repetir desde aquí: se explica y se
+            // resuelve en Ajustes (recuperación), nunca con un botón en el chat.
+            await avisoEnvioAmbiguo(error);
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * GRABAR una nota de voz: permiso → grabar (con contador) → DETENER →
+   * PREVISUALIZAR → borrar/regrabar → ENVIAR. Nunca se envía al detener.
+   */
+  function openRecorder(conversationId) {
+    if (!conversationId) return;
+    const supportedType = detectSupportedRecordingType();
+    if (!navigator.mediaDevices?.getUserMedia || supportedType === null) {
+      openSheet(
+        'Nota de voz',
+        `<p class="rule rule--warn">Este navegador no permite grabar directamente. Puedes adjuntar un archivo
+         de audio con el botón <strong>+</strong>.</p>
+         <button class="btn btn--ghost btn--block" id="rec-attach" type="button">Adjuntar un audio</button>`,
+      );
+      $('#rec-attach').addEventListener('click', () => openAttachSheet(conversationId));
+      return;
+    }
+
+    openSheet(
+      'Nota de voz',
+      `
+      <p class="view__hint">Se graba con el micrófono del teléfono y <strong>no se envía hasta que tú lo mandes</strong>.</p>
+      <div class="rec-status" id="rec-status"><span class="rec-dot" hidden></span><span id="rec-time">0:00</span></div>
+      <div class="attach-preview" id="rec-preview" hidden></div>
+      <button class="btn btn--primary btn--block" id="rec-start" type="button">Grabar</button>
+      <button class="btn btn--danger btn--block" id="rec-stop" type="button" hidden>Detener</button>
+      <button class="btn btn--ghost btn--block" id="rec-reset" type="button" hidden>Borrar y regrabar</button>
+      <button class="btn btn--primary btn--block" id="rec-send" type="button" hidden>Enviar</button>
+      <button class="btn btn--ghost btn--block" id="rec-attach" type="button">Adjuntar un audio en su lugar</button>
+      `,
+    );
+
+    let recorder = null;
+    let chunks = [];
+    let blob = null;
+    let objectUrl = null;
+    let startedAt = 0;
+    let timer = null;
+    let stream = null;
+
+    const preview = $('#rec-preview');
+    const tick = () => {
+      const seconds = (Date.now() - startedAt) / 1000;
+      $('#rec-time').textContent = fmtSeconds(seconds);
+      if (seconds >= 300) $('#rec-stop').click(); // tope de duración del audio
+    };
+
+    const reset = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      blob = null;
+      preview.hidden = true;
+      preview.innerHTML = '';
+      $('#rec-time').textContent = '0:00';
+      $('#rec-start').hidden = false;
+      $('#rec-stop').hidden = true;
+      $('#rec-reset').hidden = true;
+      $('#rec-send').hidden = true;
+      $('#rec-status').querySelector('.rec-dot').hidden = true;
+    };
+
+    const stopStream = () => {
+      stream?.getTracks?.().forEach((track) => track.stop());
+      stream = null;
+    };
+
+    $('#rec-start').addEventListener('click', async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        toast('No se pudo usar el micrófono (permiso denegado)');
+        return;
+      }
+      chunks = [];
+      // El tipo REAL lo dice el grabador; lo guardamos tal cual (sin suponer).
+      recorder = new window.MediaRecorder(stream, supportedType ? { mimeType: supportedType } : undefined);
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        clearInterval(timer);
+        const realType = recorder?.mimeType || chunks[0]?.type || supportedType || '';
+        blob = new Blob(chunks, { type: realType });
+        objectUrl = URL.createObjectURL(blob);
+        preview.hidden = false;
+        preview.innerHTML = `
+          <audio src="${escapeHtml(objectUrl)}" controls preload="metadata"></audio>
+          <p class="attach-preview__meta"><span>Nota de voz</span>
+          <span>${escapeHtml(realType || 'tipo desconocido')} · ${fmtBytes(blob.size)}</span></p>`;
+        $('#rec-status').querySelector('.rec-dot').hidden = true;
+        $('#rec-start').hidden = true;
+        $('#rec-stop').hidden = true;
+        $('#rec-reset').hidden = false;
+        $('#rec-send').hidden = false;
+        // Si el navegador grabó en un formato que Meta no acepta, se dice AQUÍ y no
+        // se deja enviar: prometer compatibilidad sin comprobarla no es aceptable.
+        if (!audioSendable(realType)) {
+          $('#rec-send').disabled = true;
+          preview.insertAdjacentHTML(
+            'beforeend',
+            `<p class="rule rule--warn">Tu navegador grabó en <strong>${escapeHtml(realType || 'un formato desconocido')}</strong>,
+             que WhatsApp todavía no acepta. Puedes oírlo y borrarlo, o adjuntar un audio en OGG o M4A.</p>`,
+          );
+        } else {
+          $('#rec-send').disabled = false;
+        }
+        stopStream();
+      };
+      recorder.start();
+      startedAt = Date.now();
+      timer = setInterval(tick, 200);
+      $('#rec-time').textContent = '0:00';
+      $('#rec-status').querySelector('.rec-dot').hidden = false;
+      $('#rec-start').hidden = true;
+      $('#rec-stop').hidden = false;
+      $('#rec-reset').hidden = true;
+      $('#rec-send').hidden = true;
+    });
+
+    $('#rec-stop').addEventListener('click', () => {
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+    });
+
+    $('#rec-reset').addEventListener('click', () => {
+      reset();
+    });
+
+    $('#rec-send').addEventListener('click', async (event) => {
+      if (!blob) return;
+      const file = new File([blob], `nota-de-voz.${(blob.type || '').includes('ogg') ? 'ogg' : 'audio'}`, {
+        type: blob.type || 'audio/ogg',
+      });
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          await uploadMediaFile({ conversationId, kind: 'audio', file, key: uploadKey('audio') });
+          toast('Nota de voz enviada');
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          closeSheet();
+          await load({ keepTab: true });
+          await loadWaThread(conversationId, { force: true });
+        } catch (error) {
+          if (error.message !== 'unauthorized') await avisoEnvioAmbiguo(error);
+        }
+      });
+    });
+
+    $('#rec-attach').addEventListener('click', () => openAttachSheet(conversationId));
+    closeSheetCleanup = () => {
+      clearInterval(timer);
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      stopStream();
+    };
+  }
+
+  /** Al cerrar la hoja: nada de micrófono abierto ni temporizadores vivos. */
+  let closeSheetCleanup = null;
+
+  /** Reintentar la descarga de un archivo que quedó en Failed (era de Meta). */
+  async function retryMedia(mediaId) {
+    try {
+      await api(`/api/admin/media/retry/${encodeURIComponent(mediaId)}`, { method: 'POST' });
+      toast('Reintentando la descarga…');
+      await sleep(600);
+      if (state.wa.selectedId) await loadWaThread(state.wa.selectedId, { force: true });
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo reintentar');
+    }
+  }
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   function setWaView(view) {
     const box = $('#wa');
@@ -2749,7 +3394,18 @@
 
   // ---------------------------------------------------------------- eventos
 
+  /*
+   * Los manejadores se enganchan una sola vez. Si `boot` llegara a ejecutarse
+   * dos veces (por ejemplo, un `DOMContentLoaded` repetido), engancharlos de
+   * nuevo haría que un toque contara doble (enviar dos mensajes, abrir y cerrar
+   * una hoja a la vez), así que se marcan como ya montados.
+   */
+  let eventosMontados = false;
+
   function initEvents() {
+    if (eventosMontados) return;
+    eventosMontados = true;
+
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const token = $('#login-token').value.trim();
@@ -2866,6 +3522,39 @@
       const metricsChip = event.target.closest('[data-metrics]');
       if (metricsChip) {
         loadMetrics(metricsChip.dataset.metrics);
+        return;
+      }
+      const review = event.target.closest('[data-review]');
+      if (review) {
+        reconcileMedia(review.dataset.reviewId, review.dataset.review);
+        return;
+      }
+      // ---------------------------------------------- multimedia (S3)
+      const viewImage = event.target.closest('[data-media-view]');
+      if (viewImage) {
+        openViewer(viewImage.dataset.mediaView);
+        return;
+      }
+      if (event.target.closest('#media-viewer') || event.target.closest('#media-viewer-close')) {
+        closeViewer();
+        return;
+      }
+      const playAudio = event.target.closest('[data-audio-play]');
+      if (playAudio) {
+        toggleAudio(playAudio.dataset.audioPlay, playAudio.dataset.audioSrc);
+        return;
+      }
+      const retry = event.target.closest('[data-media-retry]');
+      if (retry) {
+        retryMedia(retry.dataset.mediaRetry);
+        return;
+      }
+      if (event.target.closest('#wa-attach')) {
+        openAttachSheet(state.wa.selectedId);
+        return;
+      }
+      if (event.target.closest('#wa-mic')) {
+        openRecorder(state.wa.selectedId);
         return;
       }
       const customer = event.target.closest('[data-customer]');
@@ -3002,6 +3691,12 @@
       if (toggle) toggleFollowupDay(toggle.dataset.planToggle, toggle.checked);
     });
 
+    // Buscar dentro de un audio (el deslizador manda en la reproducción).
+    document.addEventListener('input', (event) => {
+      const seek = event.target.closest('[data-audio-seek]');
+      if (seek) seekAudio(seek.dataset.audioSeek, Number(seek.value));
+    });
+
     // ------------------------------------------------------- menú lateral
     $('#menu').addEventListener('click', () => (state.drawer ? closeDrawer() : openDrawer()));
     $('#drawer-close').addEventListener('click', () => closeDrawer());
@@ -3013,6 +3708,10 @@
     $('#logout-drawer').addEventListener('click', () => $('#logout').click());
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        if (!$('#media-viewer')?.hidden) {
+          closeViewer();
+          return;
+        }
         if (state.drawer) {
           closeDrawer();
           return;

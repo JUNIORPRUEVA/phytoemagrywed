@@ -25,6 +25,9 @@ export const AUDIT_ACTIONS = Object.freeze([
   'message.failed',
   'message.blocked',
   'message.cancelled',
+  // Recuperación EXCEPCIONAL de un envío ambiguo (SEND_UNKNOWN): quién lo revisó
+  // y qué decidió. No es una acción normal del vendedor y queda registrado.
+  'message.reconciled',
   'customer.status_changed',
   'customer.opt_out',
   'customer.opt_in',

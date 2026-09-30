@@ -260,6 +260,19 @@
             <p class="card__title">Auditoría reciente</p>
             <div id="audit"></div>
           </div>
+          <div class="card">
+            <p class="card__title">Multimedia</p>
+            <div id="media-config"></div>
+          </div>
+          <div class="card" id="media-review-card" hidden>
+            <p class="card__title">Envíos de archivo por revisar</p>
+            <p class="card__text">
+              Un archivo que quedó <strong>a medias</strong> (se intentó enviar y no hay confirmación) no se
+              reintenta solo: hay que mirar WhatsApp y decidir. Es recuperación de administración, no una
+              acción del día a día; queda registrado en la auditoría.
+            </p>
+            <div id="media-review"></div>
+          </div>
           <div class="card" id="install-card">
             <p class="card__title">Instalar en el móvil</p>
             <p class="card__text" id="install-text">
@@ -313,6 +326,18 @@
         </header>
         <div class="sheet__body" id="sheet-body"></div>
       </div>
+    </div>
+
+    <!-- ------------------------------------------- VISOR DE IMAGEN (multimedia) -->
+    <!--
+      Se abre al tocar una foto de la conversación. Es un visor a pantalla completa
+      (object-fit: contain, sin desbordes) y se cierra tocando fuera o con Escape.
+      La imagen se pide SIEMPRE a /api/admin/media/:id con la sesión del panel:
+      nunca se enlaza el bucket ni una URL firmada.
+    -->
+    <div class="viewer" id="media-viewer" hidden>
+      <button class="viewer__close" id="media-viewer-close" type="button" aria-label="Cerrar imagen">✕</button>
+      <img class="viewer__img" id="media-viewer-img" alt="Imagen del cliente" />
     </div>
 
     <div class="toast" id="toast" hidden></div>

@@ -129,17 +129,25 @@ describe('el panel llama a los endpoints del CRM', () => {
 });
 
 describe('nada se envía solo', () => {
-  it('el único temporizador es el refresco de la bandeja, y solo lee', () => {
-    // El sondeo de la bandeja (8 s) mantiene la pantalla al día; el resto son
-    // `setTimeout` (aviso flotante, espera de Meta). Nada de esto envía mensajes.
-    const intervals = app.match(/setInterval\([^)]*\)/g) ?? [];
-    expect(intervals).toEqual(['setInterval(waPollTick, 8000)']);
+  it('los únicos temporizadores son el refresco de la bandeja y el reloj de la grabación, y ninguno envía', () => {
+    // El sondeo de la bandeja (8 s) mantiene la pantalla al día; el contador de
+    // la nota de voz (200 ms) SOLO pinta el tiempo y corta al llegar al tope —
+    // nunca envía: el envío lo pulsa siempre una persona. El resto son
+    // `setTimeout` (aviso flotante, espera de Meta).
+    const intervals = (app.match(/setInterval\([^)]*\)/g) ?? []).sort();
+    expect(intervals).toEqual(['setInterval(tick, 200)', 'setInterval(waPollTick, 8000)']);
     const from = app.indexOf('function waPollTick');
     const tick = app.slice(from, from + 900);
     expect(tick).not.toContain('POST');
     expect(tick).not.toContain('/messages');
     expect(app).toMatch(/waPollTick/);
     expect(app).not.toMatch(/autoSend|sendAutomatically|scheduleSend/i);
+
+    // El reloj de la grabación solo escribe el tiempo en pantalla.
+    const desde = app.indexOf('const tick = () => {');
+    const reloj = app.slice(desde, desde + 500);
+    expect(reloj).toContain('rec-time');
+    expect(reloj).not.toMatch(/fetch|uploadMediaFile|sendAudio|sendImage|POST/);
   });
 
   it('el sondeo no corre fuera de la pestaña ni en segundo plano', () => {
