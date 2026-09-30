@@ -19,7 +19,11 @@ import { createMetaCapi } from '../server/meta-capi.mjs';
 
 const TOKEN = 'clave-del-panel-de-pruebas';
 const ACCESS_TOKEN = 'EAAtoken-de-prueba-1234567890abcdefghijkl';
-const PIXEL = '2215831389345467';
+/**
+ * Píxel de mentira. El ID real es público (viaja en el HTML) pero no pinta nada
+ * en los tests: aquí se prueban los payloads, no la cuenta de nadie.
+ */
+const PIXEL = '1111222233334444';
 
 /** Servidores y carpetas temporales que hay que limpiar al final. */
 const apps = [];
@@ -281,13 +285,13 @@ describe('meta · espejo del Lead (browser + servidor con el mismo event_id)', (
 
 describe('meta · configuración y secretos', () => {
   it('test_event_code se manda en UAT y se ignora en producción', async () => {
-    const uat = await newApp({ appEnv: 'uat', testEventCode: 'TEST41382' });
+    const uat = await newApp({ appEnv: 'uat', testEventCode: 'TEST12345' });
     await post(uat, '/api/crm', orderPayload('pedido-uat'));
     await patch(uat, 'pedido-uat', { status: 'entregado' });
     await waitFor(() => uat.calls.length === 1);
-    expect(uat.calls[0].body.test_event_code).toBe('TEST41382');
+    expect(uat.calls[0].body.test_event_code).toBe('TEST12345');
 
-    const prod = await newApp({ appEnv: 'production', testEventCode: 'TEST41382' });
+    const prod = await newApp({ appEnv: 'production', testEventCode: 'TEST12345' });
     await post(prod, '/api/crm', orderPayload('pedido-prod'));
     await patch(prod, 'pedido-prod', { status: 'entregado' });
     await waitFor(() => prod.calls.length === 1);
@@ -295,7 +299,7 @@ describe('meta · configuración y secretos', () => {
   });
 
   it('el token de Meta jamás aparece en una respuesta al navegador', async () => {
-    const app = await newApp({ testEventCode: 'TEST41382' });
+    const app = await newApp({ testEventCode: 'TEST12345' });
     await post(app, '/api/crm', orderPayload('pedido-7'));
     await patch(app, 'pedido-7', { status: 'entregado' });
     await waitFor(() => app.calls.length === 1);
@@ -315,7 +319,7 @@ describe('meta · configuración y secretos', () => {
     for (const body of bodies) {
       expect(body).not.toContain(ACCESS_TOKEN);
       expect(body).not.toContain('EAAtoken');
-      expect(body).not.toContain('TEST41382');
+      expect(body).not.toContain('TEST12345');
     }
     // Pero sí se informa de que Meta está configurada (sin valores).
     const data = JSON.parse(bodies[1]);

@@ -245,20 +245,20 @@ describe('meta-capi · test_event_code', () => {
     const uatCapi = createMetaCapi({
       pixelId: '1',
       accessToken: TOKEN,
-      testEventCode: 'TEST41382',
+      testEventCode: 'TEST12345',
       appEnv: 'uat',
       fetchImpl: uat.impl,
       log: () => {},
     });
     expect(uatCapi.hasTestEventCode).toBe(true);
     await uatCapi.sendPurchase({ eventId: 'purchase_1', value: 100 });
-    expect(uat.calls[0].body.test_event_code).toBe('TEST41382');
+    expect(uat.calls[0].body.test_event_code).toBe('TEST12345');
 
     const prod = fakeFetch();
     const prodCapi = createMetaCapi({
       pixelId: '1',
       accessToken: TOKEN,
-      testEventCode: 'TEST41382',
+      testEventCode: 'TEST12345',
       appEnv: 'production',
       fetchImpl: prod.impl,
       log: () => {},
