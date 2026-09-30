@@ -29,7 +29,20 @@ export const COLLECTIONS = Object.freeze({
   conversations: {
     indexed: { customer_id: 'text', status: 'text', last_message_at: 'text', created_at: 'text' },
   },
-  messages: {
+  /*
+   * MENSAJES REALES DE WHATSAPP — la tabla física es `${prefijo}wa_messages`
+   * (`phytoemagry_wa_messages`).
+   *
+   * OJO: NO puede llamarse `messages`, y por eso lleva el prefijo `wa_`.
+   * `phytoemagry_messages` ya existía desde antes de esta fase como tabla LEGACY
+   * de PLANTILLAS del CRM (`id, name, body, position, updated_at`). Como el DDL
+   * usa `CREATE TABLE IF NOT EXISTS`, compartir nombre no daba ningún error al
+   * arrancar: el esquema nuevo se descartaba en silencio y el primer uso
+   * reventaba con un SQL crudo («column "wa_message_id" does not exist»),
+   * perdiendo los mensajes entrantes de WhatsApp y rompiendo `/api/admin/data`.
+   * Pasó en producción el 30/09/2026.
+   */
+  wa_messages: {
     indexed: {
       conversation_id: 'text',
       customer_id: 'text',
@@ -69,6 +82,32 @@ function schemaOf(name) {
   const schema = COLLECTIONS[name];
   if (!schema) throw new Error(`colección desconocida: ${name}`);
   return schema;
+}
+
+/** Columnas que esta colección necesita que existan en su tabla. */
+function expectedColumns(name) {
+  return ['id', 'doc', ...Object.keys(schemaOf(name).indexed)];
+}
+
+/**
+ * Comprueba que una tabla que YA EXISTÍA tiene el esquema que la colección espera.
+ *
+ * `CREATE TABLE IF NOT EXISTS` no toca una tabla preexistente: si esa tabla es de
+ * otra cosa (pasó en producción: `phytoemagry_messages` era la tabla legacy de
+ * plantillas), el esquema nuevo se descarta en silencio y el primer uso revienta
+ * con un error de SQL que no explica nada. Aquí se falla ANTES, con el diagnóstico
+ * exacto y sin tocar la tabla ajena.
+ *
+ * @param {{ collection: string, table: string, expected: string[], actual: string[] }} input
+ */
+function assertTableShape({ collection, table, expected, actual }) {
+  const missing = expected.filter((column) => !actual.includes(column));
+  if (missing.length === 0) return;
+  throw new Error(
+    `la tabla "${table}" ya existe con un esquema incompatible con la colección "${collection}" ` +
+      `(le faltan: ${missing.join(', ')}). No se ha modificado nada: renombra la colección o la ` +
+      'tabla heredada para que no compartan nombre.',
+  );
 }
 
 /** `undefined` nunca debe guardarse: el JSON no lo soporta. */
@@ -118,6 +157,12 @@ async function createSqliteCollections(db, prefix) {
     db.exec(
       `CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY, doc TEXT NOT NULL${indexColumns ? `, ${indexColumns}` : ''})`,
     );
+    assertTableShape({
+      collection: name,
+      table,
+      expected: expectedColumns(name),
+      actual: db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((row) => row.name),
+    });
     db.exec(`CREATE INDEX IF NOT EXISTS ${table}_created ON ${table} (id)`);
     for (const column of schema.unique ?? []) {
       db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${table}_u_${column} ON ${table} (${column}) WHERE ${column} IS NOT NULL`);
@@ -206,6 +251,17 @@ async function createPostgresCollections(pool, prefix) {
     await pool.query(
       `CREATE TABLE IF NOT EXISTS ${table} (id text PRIMARY KEY, doc jsonb NOT NULL${indexColumns ? `, ${indexColumns}` : ''})`,
     );
+    const existing = await pool.query(
+      `SELECT attname AS column_name FROM pg_catalog.pg_attribute
+        WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped`,
+      [table],
+    );
+    assertTableShape({
+      collection: name,
+      table,
+      expected: expectedColumns(name),
+      actual: existing.rows.map((row) => row.column_name),
+    });
     for (const column of schema.unique ?? []) {
       await pool.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_u_${column} ON ${table} (${column}) WHERE ${column} IS NOT NULL`,

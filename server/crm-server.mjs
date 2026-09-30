@@ -1093,7 +1093,7 @@ async function handle(req, res, ctx) {
       const customerList = await ctx.customers.list({});
       const conversationList = await ctx.customers.listConversations({});
       const buckets = await ctx.followups.buckets();
-      const outbound = await ctx.db.list('messages', { limit: 500 });
+      const outbound = await ctx.db.list('wa_messages', { limit: 500 });
       const failed = outbound.filter((row) => row.status === 'failed');
       json(res, 200, {
         ok: true,

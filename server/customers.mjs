@@ -224,7 +224,7 @@ export function createCustomerService(deps) {
       const [conversations, customers, messages] = await Promise.all([
         db.list('conversations', { by: 'last_message_at', order: 'desc' }),
         db.list('customers', { limit: 500 }),
-        db.list('messages', { by: 'created_at', order: 'desc', limit: 500 }),
+        db.list('wa_messages', { by: 'created_at', order: 'desc', limit: 500 }),
       ]);
       const byCustomer = new Map(customers.map((row) => [row.id, row]));
       const items = conversations.map((conversation) => {
@@ -241,7 +241,7 @@ export function createCustomerService(deps) {
 
     /** Mensajes de una conversación, del más antiguo al más nuevo. */
     async messagesFor(conversationId, options = {}) {
-      const rows = await db.list('messages', { by: 'created_at', order: 'asc' });
+      const rows = await db.list('wa_messages', { by: 'created_at', order: 'asc' });
       const scoped = rows.filter((row) => row.conversation_id === conversationId);
       if (options.limit) return scoped.slice(-options.limit);
       return scoped;
@@ -259,7 +259,7 @@ export function createCustomerService(deps) {
     async recordInbound(input) {
       const message = input.waMessage;
       if (!message?.waMessageId) return { ok: false, error: 'missing_message_id' };
-      const existing = await db.findBy('messages', 'wa_message_id', message.waMessageId);
+      const existing = await db.findBy('wa_messages', 'wa_message_id', message.waMessageId);
       if (existing) return { ok: true, duplicate: true, customer: null, message: existing };
 
       const found = await this.findOrCreateByPhone({
@@ -300,7 +300,7 @@ export function createCustomerService(deps) {
         received_at: message.receivedAt ?? now,
         idempotency_key: null,
       };
-      await db.insert('messages', doc);
+      await db.insert('wa_messages', doc);
 
       await db.update('conversations', conversation.id, {
         last_message_at: now,
@@ -368,7 +368,7 @@ export function createCustomerService(deps) {
         created_at: now,
         idempotency_key: input.idempotencyKey ?? null,
       };
-      const result = await db.insert('messages', doc);
+      const result = await db.insert('wa_messages', doc);
       if (result.duplicate) return { ok: true, duplicate: true, message: doc };
 
       await db.update('conversations', input.conversation.id, {
@@ -385,7 +385,7 @@ export function createCustomerService(deps) {
      * Idempotente: repetir el mismo estado no cambia nada.
      */
     async updateMessageStatus(input) {
-      const message = await db.findBy('messages', 'wa_message_id', input.waMessageId);
+      const message = await db.findBy('wa_messages', 'wa_message_id', input.waMessageId);
       if (!message) return { ok: false, error: 'unknown_message' };
       const now = new Date().toISOString();
       /** @type {Record<string, any>} */
@@ -398,7 +398,7 @@ export function createCustomerService(deps) {
         patch.error_code = input.errorCode ?? null;
         patch.error_message = short(input.errorMessage, 200);
       }
-      const updated = await db.update('messages', message.id, patch);
+      const updated = await db.update('wa_messages', message.id, patch);
       return { ok: true, message: updated, changed: updated?.status !== message.status };
     },
 
@@ -483,7 +483,7 @@ export function createCustomerService(deps) {
       const [customers, conversations, messages, followupBuckets] = await Promise.all([
         db.list('customers', { limit: 1000 }),
         db.list('conversations', { limit: 1000 }),
-        db.list('messages', { limit: 5000 }),
+        db.list('wa_messages', { limit: 5000 }),
         followups ? followups.buckets() : Promise.resolve({ today: [], overdue: [], completed: [] }),
       ]);
       const purchases = store?.listAdmin ? await store.listAdmin({ limit: 1000 }) : [];

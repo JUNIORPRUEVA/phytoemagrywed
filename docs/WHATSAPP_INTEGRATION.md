@@ -168,7 +168,7 @@ colecciones de documentos (`server/collections.mjs`) en la **misma base de datos
 | --- | --- | --- |
 | `customers` | Cliente unificado (nombre, teléfono E.164, origen, consentimiento, totales, próximo seguimiento) | `phone_e164` |
 | `conversations` | Conversación de WhatsApp (estado, sin leer, último mensaje) | — |
-| `messages` | Mensaje entrante o saliente (texto, intención, estado, errores) | `wa_message_id`, `idempotency_key` |
+| `wa_messages` | Mensaje entrante o saliente (texto, intención, estado, errores) | `wa_message_id`, `idempotency_key` |
 | `followups` | Tarea de seguimiento (fecha, tipo, motivo, estado) | `idempotency_key` = `fu:<pedido>:<día>` |
 | `wa_templates` | Plantillas oficiales (nombre, categoría, idioma, texto, variables, botones, estado real en Meta) | `name` |
 | `content` | Reservado para la fase de contenido (vacío en esta fase) | — |
