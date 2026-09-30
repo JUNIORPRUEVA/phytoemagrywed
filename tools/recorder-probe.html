@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Diagnóstico de grabación · Phytoemagry (solo desarrollo)</title>
+    <style>
+      :root { color-scheme: light; }
+      body { margin: 0; padding: 20px; font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; color: #0e1b16; background: #f5f8f6; line-height: 1.5; }
+      h1 { font-size: 1.2rem; margin: 0 0 4px; }
+      p.sub { margin: 0 0 18px; color: #4a5a52; font-size: .9rem; }
+      .card { background: #fff; border: 1px solid #dce6e1; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+      .card h2 { font-size: .95rem; margin: 0 0 10px; }
+      .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid #eef3f0; font-size: .9rem; }
+      .row:last-child { border-bottom: 0; }
+      .row code { background: #f1f8f5; padding: 1px 6px; border-radius: 6px; font-size: .85em; }
+      .yes { color: #0b6b4f; font-weight: 700; }
+      .no { color: #b3261e; font-weight: 700; }
+      .warn { color: #7a4c00; font-weight: 700; }
+      button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: #0b6b4f; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+      button.ghost { background: #f5f8f6; color: #0e1b16; border: 1px solid #dce6e1; }
+      button:disabled { opacity: .5; cursor: not-allowed; }
+      .bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      pre { white-space: pre-wrap; word-break: break-word; background: #0e1b16; color: #dfeee8; padding: 12px; border-radius: 10px; font-size: .8rem; }
+      .note { background: #fff6e5; color: #7a4c00; border-radius: 10px; padding: 10px 12px; font-size: .85rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Diagnóstico de grabación de audio</h1>
+    <p class="sub">Herramienta SOLO para desarrollo/UAT. No sube nada a Meta ni a R2: todo se queda en esta pestaña.</p>
+
+    <p class="note">
+      Esta página <strong>no se publica en producción</strong>: vive en <code>tools/</code> y no forma parte del panel.
+    </p>
+
+    <div class="card">
+      <h2>Entorno</h2>
+      <div id="entorno"></div>
+    </div>
+
+    <div class="card">
+      <h2>Formatos candidatos (<code>MediaRecorder.isTypeSupported</code>)</h2>
+      <div id="formatos"></div>
+      <p class="sub" style="margin:10px 0 0">
+        Un <code>true</code> no garantiza que la grabación termine bien: por eso abajo se comprueba el
+        <strong>tipo real</strong> del Blob producido.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Prueba real (3–5 s)</h2>
+      <div class="bar">
+        <button id="grabar" type="button">Grabar 4 segundos</button>
+        <button id="parar" class="ghost" type="button" disabled>Detener</button>
+      </div>
+      <div id="resultado" style="margin-top:12px"></div>
+    </div>
+
+    <pre id="json">Esperando…</pre>
+
+    <script>
+      // Candidatos en el orden en que nos interesan: primero lo que Meta acepta.
+      const CANDIDATOS = [
+        'audio/mp4',
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/webm',
+        'audio/webm;codecs=opus',
+        'audio/ogg',
+        'audio/ogg;codecs=opus',
+      ];
+
+      const $ = (s) => document.querySelector(s);
+      const linea = (etiqueta, valor, clase = '') =>
+        `<div class="row"><span>${etiqueta}</span><span class="${clase}">${valor}</span></div>`;
+
+      const tieneMR = typeof window.MediaRecorder !== 'undefined';
+      const tieneGUM = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+
+      $('#entorno').innerHTML = [
+        linea('User agent', navigator.userAgent),
+        linea('Plataforma', navigator.platform || '—'),
+        linea('MediaRecorder', tieneMR ? 'disponible' : 'NO disponible', tieneMR ? 'yes' : 'no'),
+        linea('getUserMedia', tieneGUM ? 'disponible' : 'NO disponible', tieneGUM ? 'yes' : 'no'),
+        linea('Contexto seguro', window.isSecureContext ? 'sí (https/localhost)' : 'NO (hará falta https)', window.isSecureContext ? 'yes' : 'warn'),
+      ].join('');
+
+      const soportados = [];
+      $('#formatos').innerHTML = CANDIDATOS.map((tipo) => {
+        let ok = false;
+        try {
+          ok = tieneMR && MediaRecorder.isTypeSupported(tipo);
+        } catch {
+          ok = false;
+        }
+        if (ok) soportados.push(tipo);
+        return linea(`<code>${tipo}</code>`, ok ? 'SUPPORTED' : 'NOT SUPPORTED', ok ? 'yes' : 'no');
+      }).join('');
+
+      let recorder = null;
+      let trozos = [];
+      let inicio = 0;
+      let tipoPedido = null;
+
+      const elegirTipo = () => {
+        for (const tipo of CANDIDATOS) {
+          try {
+            if (MediaRecorder.isTypeSupported(tipo)) return tipo;
+          } catch {
+            /* ignora */
+          }
+        }
+        return '';
+      };
+
+      const informe = (extra) =>
+        ($('#json').textContent = JSON.stringify(
+          {
+            userAgent: navigator.userAgent,
+            formatosSoportados: soportados,
+            ...extra,
+          },
+          null,
+          2,
+        ));
+
+      informe({ nota: 'pulsa «Grabar 4 segundos»' });
+
+      $('#grabar').addEventListener('click', async () => {
+        $('#resultado').innerHTML = '';
+        if (!tieneMR || !tieneGUM) {
+          $('#resultado').innerHTML =
+            '<p class="note">Este navegador no permite grabar audio directamente. Habría que ofrecer adjuntar un archivo.</p>';
+          return;
+        }
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (error) {
+          $('#resultado').innerHTML = `<p class="note">Permiso de micrófono denegado o no disponible (${error.name}).</p>`;
+          informe({ errorPermiso: error.name });
+          return;
+        }
+
+        tipoPedido = elegirTipo();
+        trozos = [];
+        try {
+          recorder = tipoPedido ? new MediaRecorder(stream, { mimeType: tipoPedido }) : new MediaRecorder(stream);
+        } catch (error) {
+          $('#resultado').innerHTML = `<p class="note">No se pudo crear el grabador con <code>${tipoPedido || 'el tipo por defecto'}</code>: ${error.name}.</p>`;
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        const tipoReal = recorder.mimeType || '(vacío)';
+        recorder.addEventListener('dataavailable', (event) => {
+          if (event.data && event.data.size > 0) trozos.push(event.data);
+        });
+        recorder.addEventListener('error', (event) => {
+          $('#resultado').innerHTML = `<p class="note">La grabación falló (${event.error?.name ?? 'error'}).</p>`;
+        });
+        recorder.addEventListener('stop', () => {
+          const blob = new Blob(trozos, { type: tipoReal === '(vacío)' ? undefined : tipoReal });
+          const segundos = Math.round((Date.now() - inicio) / 100) / 10;
+          $('#resultado').innerHTML = [
+            linea('Tipo pedido', `<code>${tipoPedido || '(por defecto)'}</code>`),
+            linea('recorder.mimeType (REAL)', `<code>${tipoReal}</code>`, 'warn'),
+            linea('Blob.type (REAL)', `<code>${blob.type || '(vacío)'}</code>`, 'warn'),
+            linea('Blob.size', `${blob.size} bytes`),
+            linea('Duración aproximada', `${segundos} s`),
+          ].join('');
+          const url = URL.createObjectURL(blob);
+          $('#resultado').insertAdjacentHTML(
+            'beforeend',
+            `<audio controls src="${url}" style="margin-top:10px;width:100%"></audio>`,
+          );
+          informe({
+            tipoPedido: tipoPedido || null,
+            mimeTypeReal: tipoReal,
+            blobType: blob.type || null,
+            blobSize: blob.size,
+            duracionSegundos: segundos,
+          });
+          stream.getTracks().forEach((t) => t.stop());
+          $('#grabar').disabled = false;
+          $('#parar').disabled = true;
+        });
+
+        inicio = Date.now();
+        recorder.start();
+        $('#grabar').disabled = true;
+        $('#parar').disabled = false;
+        setTimeout(() => {
+          if (recorder && recorder.state === 'recording') recorder.stop();
+        }, 4000);
+      });
+
+      $('#parar').addEventListener('click', () => {
+        if (recorder && recorder.state === 'recording') recorder.stop();
+      });
+    </script>
+  </body>
+</html>

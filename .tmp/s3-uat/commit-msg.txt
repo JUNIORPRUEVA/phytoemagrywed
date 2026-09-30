@@ -1,0 +1,29 @@
+fix(panel): el CTA de compra ya no queda bajo la barra fija y smoke real de R2
+
+- Panel: el hilo del chat se queda con el alto que sobra al restar TODO lo demas
+  (barra superior, aviso, cabecera, compositor, nota, CTA y barra inferior). El
+  CTA de "Registrar compra de un cliente" queda siempre a la vista y clicable sin
+  desplazar la pagina: +19 px de aire en 360x800, 390x844 y 412x915, y +59 px en
+  1280x900 (antes quedaba -103 px y -19 px, es decir tapado por la barra). Sin
+  scroll artificial, sin desborde horizontal, y con el compositor y las hojas
+  (adjuntar, pedido, comprobante, ficha) intactos.
+
+- Cliente S3: la respuesta se consume siempre. Dejar sin leer el cuerpo de un PUT
+  o un DELETE en una conexion reutilizable puede hacer que la siguiente peticion
+  lea cabeceras de la operacion ANTERIOR (dar por bueno un borrado que no lo fue).
+  Ademas, el HEAD ya no inventa un tamano: si el proveedor no anuncia
+  content-length (R2 lo omite cuando la respuesta viaja codificada), el tamano va
+  como null en vez de 0, y el tamano real se confirma leyendo el objeto.
+
+- Utilitario nuevo 'npm run smoke:r2': comprueba el almacen de verdad con un unico
+  objeto temporal bajo uat/phytoemagry-storage-test/ (PUT, HEAD, GET, tamano,
+  SHA-256, DELETE y ausencia confirmada), limpia siempre en try/finally y nunca
+  imprime credenciales, endpoint, bucket ni respuestas crudas. Ejecutado contra el
+  R2 real: PASS en las 7 etapas y CLEANUP PASS.
+
+- Pruebas: 30 archivos, 515 pasan, 2 omitidas (las mismas de siempre: la
+  comprobacion de import de node:sqlite dentro del worker de vitest y el bloque de
+  PostgreSQL que necesita PHYTO_CRM_TEST_DATABASE_URL). check y build en verde.
+
+- Evidencia nueva: docs/capturas/multimedia/final-hoy-1280.png,
+  final-whatsapp-390.png y final-pedido-390.png.
