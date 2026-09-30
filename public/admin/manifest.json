@@ -1,7 +1,7 @@
 {
   "name": "CRM Phytoemagry",
   "short_name": "CRM Phyto",
-  "description": "Panel privado: contactos, pedidos, recordatorios y mensajes para clientes.",
+  "description": "Panel privado: clientes, WhatsApp, pedidos y seguimiento.",
   "lang": "es",
   "dir": "ltr",
   "start_url": "/admin/",
@@ -24,6 +24,7 @@
   ],
   "shortcuts": [
     { "name": "Para hoy", "short_name": "Hoy", "url": "/admin/?v=hoy" },
+    { "name": "WhatsApp", "short_name": "WhatsApp", "url": "/admin/?v=whatsapp" },
     { "name": "Clientes", "short_name": "Clientes", "url": "/admin/?v=clientes" }
   ]
 }

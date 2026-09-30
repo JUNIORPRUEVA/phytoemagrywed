@@ -19,12 +19,22 @@
   const state = {
     items: [],
     messages: [],
+    // Clientes unificados (una persona = un cliente, venga de donde venga).
+    customers: [],
+    conversations: [],
+    followups: null,
+    hoy: null,
+    catalog: [],
+    whatsapp: null,
+    templates: [],
     stats: null,
     statuses: [],
     tab: localStorage.getItem(TAB_KEY) ?? 'hoy',
     filter: 'todos',
     q: '',
     openId: null,
+    customerId: null,
+    chat: null,
     online: navigator.onLine,
     syncedAt: null,
   };
@@ -148,7 +158,18 @@
     try {
       localStorage.setItem(
         SNAPSHOT_KEY,
-        JSON.stringify({ items: state.items, messages: state.messages, stats: state.stats, at: Date.now() }),
+        JSON.stringify({
+          items: state.items,
+          messages: state.messages,
+          customers: state.customers,
+          conversations: state.conversations,
+          followups: state.followups,
+          hoy: state.hoy,
+          catalog: state.catalog,
+          whatsapp: state.whatsapp,
+          stats: state.stats,
+          at: Date.now(),
+        }),
       );
     } catch {
       /* sin espacio: el panel sigue funcionando en línea */
@@ -239,6 +260,12 @@
       const data = await api('/api/admin/data');
       state.items = data.items ?? [];
       state.messages = data.messages ?? [];
+      state.customers = data.customers ?? [];
+      state.conversations = data.conversations ?? [];
+      state.followups = data.followups ?? null;
+      state.hoy = data.hoy ?? null;
+      state.catalog = data.catalog ?? [];
+      state.whatsapp = data.whatsapp ?? null;
       state.stats = data.stats ?? null;
       state.statuses = data.statuses ?? [];
       state.meta = data.meta ?? null;
@@ -252,6 +279,12 @@
       if (snapshot) {
         state.items = snapshot.items ?? [];
         state.messages = snapshot.messages ?? [];
+        state.customers = snapshot.customers ?? [];
+        state.conversations = snapshot.conversations ?? [];
+        state.followups = snapshot.followups ?? null;
+        state.hoy = snapshot.hoy ?? null;
+        state.catalog = snapshot.catalog ?? [];
+        state.whatsapp = snapshot.whatsapp ?? null;
         state.stats = snapshot.stats ?? null;
         state.syncedAt = snapshot.at ?? null;
         toast('Sin conexión: datos guardados en el teléfono');
@@ -388,6 +421,7 @@
   function render() {
     renderStats();
     renderHoy();
+    renderWhatsapp();
     renderClientes();
     renderMensajes();
     renderAjustes();
@@ -457,8 +491,117 @@
 
   const emptyState = (text) => `<p class="empty">${escapeHtml(text)}</p>`;
 
+  // ------------------------------------------- clientes, WhatsApp, seguimiento
+
+  const customerById = (id) => state.customers.find((row) => row.id === id) ?? null;
+  const conversationForCustomer = (customerId) =>
+    state.conversations.find((row) => row.customer_id === customerId) ?? null;
+
+  /** Todas las tareas pendientes (vencidas + hoy + próximas), de la más cercana a la más lejana. */
+  const pendingFollowups = () =>
+    [...(state.followups?.overdue ?? []), ...(state.followups?.today ?? []), ...(state.followups?.upcoming ?? [])].sort(
+      (a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at)),
+    );
+
+  const nextFollowupFor = (customerId) => pendingFollowups().find((row) => row.customer_id === customerId) ?? null;
+
+  /** Última compra ENTREGADA del cliente (el dinero que de verdad entró). */
+  const lastPurchase = (customerId) =>
+    state.items
+      .filter((item) => item.customer_id === customerId && item.status === 'entregado')
+      .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)))[0] ?? null;
+
+  const FOLLOWUP_LABELS = {
+    thanks: 'Agradecimiento',
+    checkin: '¿Cómo va?',
+    education: 'Información',
+    reorder: 'Recompra',
+    manual: 'Manual',
+  };
+  const followupLabel = (type) => FOLLOWUP_LABELS[type] ?? type ?? 'Seguimiento';
+
+  /** Tarjeta de una tarea de seguimiento: dice a QUIÉN y para CUÁNDO. */
+  function followupCard(row) {
+    const customer = row.customer ?? customerById(row.customer_id);
+    const conversation = conversationForCustomer(row.customer_id);
+    const late = row.scheduled_at < todayISO();
+    return `<article class="item ${late ? 'item--hoy' : ''}">
+        <div class="item__top">
+          <div>
+            <p class="item__name">${escapeHtml(customer?.name ?? customer?.phone_e164 ?? 'Cliente')}</p>
+            <span class="tag tag--recordatorio">${escapeHtml(fmtDay(row.scheduled_at))}</span>
+            <span class="tag">${escapeHtml(followupLabel(row.type))}</span>
+            ${row.origin === 'manual' ? '<span class="tag">Manual</span>' : ''}
+          </div>
+        </div>
+        <p class="item__meta">${escapeHtml(row.reason ?? 'Seguimiento')}</p>
+        <div class="item__actions">
+          ${
+            conversation
+              ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(conversation.id)}" data-followup="${
+                  escapeHtml(row.id)
+                }" type="button">Escribir ahora</button>`
+              : ''
+          }
+          <button class="btn btn--ghost btn--sm" data-followup-done="${escapeHtml(row.id)}" type="button">Hecho</button>
+          <button class="btn btn--ghost btn--sm" data-followup-postpone="${escapeHtml(row.id)}" type="button">+3 días</button>
+          <button class="btn btn--ghost btn--sm" data-followup-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>
+          ${customer ? `<button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(customer.id)}" type="button">Ficha</button>` : ''}
+        </div>
+      </article>`;
+  }
+
+  /** Tarjeta de una conversación de WhatsApp. */
+  function conversationCard(row) {
+    const customer = row.customer ?? customerById(row.customer_id);
+    const unread = Number(row.unread_count) || 0;
+    const next = nextFollowupFor(row.customer_id);
+    const purchase = lastPurchase(row.customer_id);
+    const needsHuman = row.status === 'HUMAN_REQUIRED';
+    return `<article class="item ${unread > 0 ? 'item--hoy' : ''}" data-chat="${escapeHtml(row.id)}">
+        <div class="item__top">
+          <div>
+            <p class="item__name">${escapeHtml(customer?.name ?? customer?.phone_e164 ?? 'Cliente')}</p>
+            ${unread > 0 ? `<span class="tag tag--nuevo">${unread} sin leer</span>` : ''}
+            ${needsHuman ? '<span class="tag tag--recordatorio">Necesita una persona</span>' : ''}
+            ${customer?.do_not_contact ? '<span class="tag tag--perdido">No contactar</span>' : ''}
+            ${next ? `<span class="tag tag--recordatorio">${escapeHtml(fmtDay(next.scheduled_at))}</span>` : ''}
+          </div>
+          <span class="item__when">${row.last_message_at ? escapeHtml(fmtWhen(row.last_message_at)) : ''}</span>
+        </div>
+        <p class="item__meta">
+          ${
+            row.last_message
+              ? `${row.last_message.direction === 'inbound' ? 'Cliente: ' : 'Tú: '}${escapeHtml(
+                  String(row.last_message.body ?? '').slice(0, 90),
+                )}`
+              : 'Sin mensajes todavía'
+          }
+        </p>
+        ${
+          purchase
+            ? `<p class="item__meta">Última compra: ${escapeHtml(purchase.variant_name ?? '')} ${money(
+                purchase.total,
+                purchase.currency,
+              )} · ${escapeHtml(fmtWhen(purchase.received_at))}</p>`
+            : '<p class="item__meta">Sin compras entregadas todavía</p>'
+        }
+        <div class="item__actions">
+          <button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(row.id)}" type="button">Abrir chat</button>
+          <button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(customer?.id ?? '')}" type="button">Ficha</button>
+          <button class="btn btn--ghost btn--sm" data-purchase="${escapeHtml(customer?.id ?? '')}" type="button">Registrar compra</button>
+        </div>
+      </article>`;
+  }
+
+  const section = (title, count, html) =>
+    `<h2 class="view__title">${escapeHtml(title)}${count ? ` (${count})` : ''}</h2><div class="list">${html}</div>`;
+
   function renderHoy() {
     const today = todayISO();
+    const followups = state.followups ?? { today: [], overdue: [], upcoming: [] };
+    const hoy = state.hoy ?? {};
+
     const pendientes = state.items
       .filter(
         (item) =>
@@ -474,19 +617,63 @@
     const nuevos = state.items
       .filter((item) => (item.status ?? 'nuevo') === 'nuevo' && !yaListados.has(item.id))
       .slice(0, 5);
-    const bloque = [
-      pendientes.length
-        ? `<h2 class="view__title">Recordatorios de hoy</h2><div class="list">${pendientes.map(itemCard).join('')}</div>`
+
+    // Conversaciones: lo que no se ha leído y lo que pide una persona. Una
+    // conversación que necesita una persona se lista UNA vez.
+    const sinLeer = state.conversations.filter((row) => Number(row.unread_count) > 0);
+    const humano = state.conversations.filter(
+      (row) => row.status === 'HUMAN_REQUIRED' && !sinLeer.some((other) => other.id === row.id),
+    );
+
+    const pedidosAbiertos = state.items.filter(
+      (item) => item.type === 'order_intent' && !['entregado', 'perdido'].includes(item.status ?? 'nuevo'),
+    );
+
+    const bloques = [
+      followups.overdue?.length
+        ? section('Seguimientos vencidos', followups.overdue.length, followups.overdue.map(followupCard).join(''))
         : '',
-      nuevos.length
-        ? `<h2 class="view__title">Nuevos sin contactar</h2><div class="list">${nuevos.map(itemCard).join('')}</div>`
+      followups.today?.length
+        ? section('Seguimientos de hoy', followups.today.length, followups.today.map(followupCard).join(''))
+        : '',
+      humano.length
+        ? section('Necesitan una persona', humano.length, humano.map(conversationCard).join(''))
+        : '',
+      sinLeer.length
+        ? section('Esperando respuesta', sinLeer.length, sinLeer.map(conversationCard).join(''))
+        : '',
+      pendientes.length
+        ? section('Recordatorios de hoy', pendientes.length, pendientes.map(itemCard).join(''))
+        : '',
+      nuevos.length ? section('Nuevos sin contactar', nuevos.length, nuevos.map(itemCard).join('')) : '',
+      pedidosAbiertos.length
+        ? section('Pedidos sin cerrar', pedidosAbiertos.length, pedidosAbiertos.slice(0, 5).map(itemCard).join(''))
+        : '',
+      hoy.mensajesFallidos
+        ? `<h2 class="view__title">Mensajes que no salieron (${hoy.mensajesFallidos})</h2>
+           <p class="rule rule--warn">WhatsApp los rechazó. Revisa el número y vuelve a intentarlo desde la conversación.</p>`
         : '',
     ]
       .filter(Boolean)
       .join('');
 
     $('#list-hoy').innerHTML =
-      bloque || emptyState('Todo al día 👌 Cuando alguien deje sus datos o pida algo, aparecerá aquí.');
+      bloques || emptyState('Todo al día 👌 Nada pendiente y ningún mensaje sin contestar.');
+  }
+
+  function renderWhatsapp() {
+    const wa = state.whatsapp ?? { configured: false };
+    $('#wa-status').innerHTML = wa.configured
+      ? `<p class="rule">WhatsApp conectado${
+          wa.phoneNumber ? ` · ${escapeHtml(wa.phoneNumber)}` : ''
+        }. Los mensajes del cliente aparecen aquí solos.</p>`
+      : `<p class="rule rule--warn">WhatsApp todavía no está configurado en el servidor. Puedes registrar
+         clientes y compras y ver sus fichas, pero el panel no envía ni recibe mensajes. Faltan las
+         variables del servidor (ver docs/WHATSAPP_INTEGRATION.md).</p>`;
+
+    $('#list-whatsapp').innerHTML = state.conversations.length
+      ? state.conversations.map(conversationCard).join('')
+      : emptyState('Aún no hay conversaciones. Cuando un cliente escriba, aparecerá aquí.');
   }
 
   function filteredItems() {
@@ -521,6 +708,8 @@
 
   /** Plantilla marcada para borrar (segundo toque confirma). */
   let pendingDelete = null;
+  /** Cliente marcado como "no contactar" (segundo toque confirma). */
+  let pendingOptOut = null;
 
   function renderMensajes() {
     const list = state.messages.length
@@ -545,10 +734,14 @@
   function renderAjustes() {
     const stats = state.stats ?? {};
     const outbox = readOutbox().length;
+    const wa = state.whatsapp ?? {};
     $('#facts').innerHTML = [
       ['Registros', stats.total ?? state.items.length],
+      ['Clientes', state.customers.length],
       ['Sin contactar', stats.nuevos ?? 0],
       ['Para hoy / atrasados', `${stats.hoy ?? 0} / ${stats.atrasados ?? 0}`],
+      ['Seguimientos hoy / vencidos', `${state.hoy?.seguimientosHoy ?? 0} / ${state.hoy?.seguimientosVencidos ?? 0}`],
+      ['Mensajes sin responder', state.hoy?.sinResponder ?? 0],
       ['Valor abierto', money(stats.valorAbierto ?? 0)],
       ['Valor entregado', money(stats.valorCobrado ?? 0)],
       ['Cambios pendientes', outbox],
@@ -559,9 +752,21 @@
     ]
       .map(([key, value]) => `<div class="fact"><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`)
       .join('');
+
+    // Estado de WhatsApp en palabras: lo que falta, dicho sin tecnicismos.
+    $('#wa-config').innerHTML = wa.configured
+      ? `<dl class="facts">
+        <div class="fact"><dt>Envío y recepción</dt><dd>activos${wa.phoneNumber ? ` (${escapeHtml(wa.phoneNumber)})` : ''}</dd></div>
+        <div class="fact"><dt>Webhooks</dt><dd>${wa.verifyTokenConfigured ? 'con token de verificación' : 'FALTA WHATSAPP_VERIFY_TOKEN'}</dd></div>
+        <div class="fact"><dt>Firma de Meta</dt><dd>${wa.appSecretConfigured ? 'se comprueba' : 'FALTA META_APP_SECRET'}</dd></div>
+      </dl>
+      <p class="card__text">Nada se envía solo: cada mensaje lo escribes y lo envías tú desde la conversación.</p>`
+      : `<p class="card__text">Todavía no está conectado. Puedes registrar clientes y compras, pero no
+         enviar ni recibir mensajes. Hacen falta WHATSAPP_PHONE_NUMBER_ID y WHATSAPP_ACCESS_TOKEN en el
+         servidor (ver docs/WHATSAPP_INTEGRATION.md).</p>`;
     $('#build-info').textContent = `${state.items.length} registros · ${
       state.online ? 'en línea' : 'sin conexión'
-    } · v1`;
+    } · v2`;
   }
 
   // ------------------------------------------------------------------ ficha
@@ -726,6 +931,541 @@
     `;
   }
 
+  // ------------------------------------------------ conversación y ficha 360
+
+  function openSheet(title, html) {
+    $('#sheet-title').textContent = title;
+    $('#sheet-body').innerHTML = html;
+    $('#sheet').hidden = false;
+  }
+
+  function closeSheet() {
+    state.openId = null;
+    state.customerId = null;
+    state.chat = null;
+    pendingOptOut = null;
+    $('#sheet').hidden = true;
+  }
+
+  /** Botón con estado "trabajando" (evita dos toques que envían dos mensajes). */
+  async function working(button, label, task) {
+    const original = button?.textContent;
+    if (button) {
+      button.disabled = true;
+      button.textContent = label;
+    }
+    try {
+      return await task();
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = original;
+      }
+    }
+  }
+
+  /** Abre el hilo de una conversación (y, si venía de un seguimiento, lo cierra al enviar). */
+  async function openChat(conversationId, options = {}) {
+    state.openId = null;
+    state.customerId = null;
+    state.chat = { id: conversationId, followupId: options.followupId ?? null, data: null };
+    openSheet('Conversación', '<p class="view__hint">Cargando…</p>');
+    try {
+      const [data, templates] = await Promise.all([
+        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`),
+        api('/api/admin/wa-templates').catch(() => ({ templates: [] })),
+      ]);
+      state.templates = templates.templates ?? [];
+      state.chat.data = data;
+      renderChat();
+      // Al abrir el hilo, la insignia de "sin leer" desaparece.
+      if (Number(data.conversation?.unread_count) > 0) {
+        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST' })
+          .then(() => load({ keepTab: true }))
+          .catch(() => {});
+      }
+    } catch (error) {
+      if (error.message === 'unauthorized') return;
+      openSheet('Conversación', `<p class="rule rule--warn">No se pudo abrir la conversación.</p>`);
+    }
+  }
+
+  /** Un mensaje del hilo. Se distingue QUIÉN escribió: cliente, negocio o el sistema. */
+  function bubble(message) {
+    const inbound = message.direction === 'inbound';
+    const auto = !inbound && message.sent_by !== 'panel';
+    const receipt = message.status === 'failed'
+      ? ' · no salió'
+      : message.read_at
+        ? ' · leído'
+        : message.delivered_at
+          ? ' · entregado'
+          : '';
+    return `<div class="bubble bubble--${inbound ? 'in' : 'out'} ${auto ? 'bubble--auto' : ''} ${
+      message.status === 'failed' ? 'bubble--failed' : ''
+    }">
+        <span class="bubble__who">${inbound ? 'Cliente' : auto ? 'Automatización' : 'Negocio'}</span>
+        ${escapeHtml(message.body ?? `[${message.type}]`)}
+        <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${receipt}${
+          message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''
+        }</span>
+      </div>`;
+  }
+
+  function renderChat() {
+    const data = state.chat?.data;
+    if (!data) return;
+    const { customer, conversation, messages, canSendFreeText } = data;
+    const wa = state.whatsapp ?? {};
+    const approved = (state.templates ?? []).filter((template) => template.sendable);
+    const pending = (state.templates ?? []).filter((template) => !template.sendable);
+
+    $('#sheet-title').textContent = customer?.name ?? customer?.phone_e164 ?? 'Conversación';
+    openSheet(
+      customer?.name ?? customer?.phone_e164 ?? 'Conversación',
+      `
+      <div class="item__actions" style="margin-top:0">
+        <button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(customer?.id ?? '')}" type="button">Ficha</button>
+        <button class="btn btn--ghost btn--sm" data-purchase="${escapeHtml(customer?.id ?? '')}" type="button">Registrar compra</button>
+        <button class="btn btn--ghost btn--sm" data-followup-new="${escapeHtml(customer?.id ?? '')}" type="button">Crear seguimiento</button>
+        ${
+          customer?.phone_e164
+            ? `<a class="btn btn--ghost btn--sm" href="https://wa.me/${digits(customer.phone_e164)}" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp</a>`
+            : ''
+        }
+      </div>
+      <div class="thread" id="thread">${
+        messages.length ? messages.map(bubble).join('') : '<p class="view__hint">Todavía no hay mensajes.</p>'
+      }</div>
+      ${
+        customer?.do_not_contact
+          ? '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>'
+          : canSendFreeText
+            ? '<p class="rule">Puedes escribir texto libre: el cliente escribió hace menos de 24 h.</p>'
+            : '<p class="rule rule--warn">Han pasado más de 24 h desde su último mensaje: WhatsApp solo permite enviar una <strong>plantilla aprobada</strong>.</p>'
+      }
+      <div class="composer">
+        <label class="field">
+          <span class="field__label">Mensaje (lo escribes y lo envías tú)</span>
+          <textarea class="field__area" id="composer-text" placeholder="Hola ${escapeHtml(
+            customer?.name ?? '',
+          )}, te escribo de Phytoemagry…"></textarea>
+        </label>
+        <button class="btn btn--whatsapp btn--block" id="composer-send" type="button"
+          ${wa.configured && !customer?.do_not_contact ? '' : 'disabled'}>
+          ${wa.configured ? 'Enviar por WhatsApp' : 'WhatsApp no configurado'}
+        </button>
+      </div>
+      <label class="field">
+        <span class="field__label">Plantilla aprobada (para escribir tras 24 h cerrado)</span>
+        <select class="field__select" id="composer-template">
+          <option value="">— ninguna —</option>
+          ${approved
+            .map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)}</option>`)
+            .join('')}
+          ${pending
+            .map(
+              (template) =>
+                `<option value="${escapeHtml(template.name)}" disabled>${escapeHtml(template.name)} (sin aprobar en Meta)</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      ${
+        state.chat.followupId
+          ? '<p class="view__hint">Al enviar, esta tarea de seguimiento se marcará como hecha.</p>'
+          : ''
+      }
+      <p class="view__hint">Conversación: ${escapeHtml(conversation.status ?? '')} · ${
+        messages.length
+      } mensaje(s). Nada de esto se envía solo.</p>
+      `,
+    );
+    const thread = $('#thread');
+    if (thread) thread.scrollTop = thread.scrollHeight;
+
+    $('#composer-send')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const text = $('#composer-text').value.trim();
+      const template = $('#composer-template').value || null;
+      if (!text && !template) {
+        toast('Escribe el mensaje o elige una plantilla');
+        return;
+      }
+      await working(button, 'Enviando…', async () => {
+        try {
+          await api(`/api/admin/conversations/${encodeURIComponent(conversation.id)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ body: text || null, template, followupId: state.chat.followupId }),
+          });
+          toast('Mensaje enviado');
+          const followupId = state.chat.followupId;
+          state.chat.followupId = null;
+          await load({ keepTab: true });
+          await openChat(conversation.id);
+          if (followupId) toast('Seguimiento marcado como hecho');
+        } catch (error) {
+          if (error.message !== 'unauthorized') {
+            // El servidor explica la regla (24 h, no contactar, plantilla sin aprobar).
+            toast(error.body?.message ?? 'No se pudo enviar');
+          }
+        }
+      });
+    });
+  }
+
+  /** Ficha 360 del cliente: compras, chat, seguimiento y consentimiento. */
+  async function openCustomer(customerId) {
+    if (!customerId) return;
+    state.openId = null;
+    state.chat = null;
+    state.customerId = customerId;
+    const customer = customerById(customerId);
+    openSheet(customer?.name ?? 'Cliente', '<p class="view__hint">Cargando…</p>');
+    try {
+      const profile = await api(`/api/admin/customers/${encodeURIComponent(customerId)}`);
+      renderCustomer(profile);
+    } catch (error) {
+      if (error.message === 'unauthorized') return;
+      openSheet('Cliente', '<p class="rule rule--warn">No se pudo cargar la ficha.</p>');
+    }
+  }
+
+  function renderCustomer(profile) {
+    const { customer, totals, purchases, nextFollowup, followups, conversation, canSendFreeText } = profile;
+    const phone = digits(customer.phone_e164 ?? customer.phone);
+    const conversationRow = conversation ?? conversationForCustomer(customer.id);
+    const estado = {
+      AUTOMATIC: 'Automático (puede recibir seguimiento)',
+      HUMAN_REQUIRED: 'Necesita una persona',
+      HUMAN_ACTIVE: 'Hablando con el negocio',
+      PAUSED: 'En pausa',
+      CLOSED: 'Cerrado',
+    }[customer.automation_state] ?? customer.automation_state;
+
+    openSheet(
+      customer.name ?? customer.phone_e164,
+      `
+      <div>
+        ${customer.do_not_contact ? '<span class="tag tag--perdido">No contactar</span>' : ''}
+        <span class="tag">${escapeHtml(customer.source ?? 'origen desconocido')}</span>
+        ${nextFollowup ? `<span class="tag tag--recordatorio">${escapeHtml(fmtDay(nextFollowup.scheduled_at))}</span>` : ''}
+      </div>
+      <dl class="facts">
+        <div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(customer.phone_e164 ?? customer.phone ?? '—')}</a></dd></div>
+        ${customer.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(customer.location)}</dd></div>` : ''}
+        <div class="fact"><dt>Compras entregadas</dt><dd>${totals.total_purchases}</dd></div>
+        <div class="fact"><dt>Total entregado</dt><dd>${money(totals.total_spent)}</dd></div>
+        <div class="fact"><dt>Última compra</dt><dd>${totals.last_purchase_at ? escapeHtml(fmtWhen(totals.last_purchase_at)) : '—'}</dd></div>
+        <div class="fact"><dt>Pedidos sin cerrar</dt><dd>${totals.open_purchases}</dd></div>
+        <div class="fact"><dt>Próximo seguimiento</dt><dd>${nextFollowup ? escapeHtml(fmtDay(nextFollowup.scheduled_at)) : 'ninguno'}</dd></div>
+        <div class="fact"><dt>Consentimiento</dt><dd>${
+          customer.do_not_contact ? 'pidió NO recibir mensajes' : customer.whatsapp_opt_in ? 'sí (dejó sus datos)' : 'sin confirmar'
+        }</dd></div>
+        <div class="fact"><dt>Estado</dt><dd>${escapeHtml(estado)}</dd></div>
+        <div class="fact"><dt>Ventana de 24 h</dt><dd>${canSendFreeText ? 'abierta' : 'cerrada (solo plantillas)'}</dd></div>
+      </dl>
+
+      <div class="item__actions" style="margin-top:0">
+        ${conversationRow ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(conversationRow.id)}" type="button">Abrir chat</button>` : ''}
+        <button class="btn btn--ghost btn--sm" data-purchase="${escapeHtml(customer.id)}" type="button">Registrar compra</button>
+        <button class="btn btn--ghost btn--sm" data-followup-new="${escapeHtml(customer.id)}" type="button">Crear seguimiento</button>
+        ${phone ? `<a class="btn btn--ghost btn--sm" href="tel:${escapeHtml(phone)}">Llamar</a>` : ''}
+      </div>
+
+      <div class="field">
+        <span class="field__label">Compras</span>
+        ${
+          purchases.length
+            ? `<dl class="facts">${purchases
+                .map(
+                  (row) => `<div class="fact"><dt>${escapeHtml(fmtWhen(row.received_at))} · ${escapeHtml(
+                    row.variant_name ?? '',
+                  )} ×${row.quantity ?? 1}</dt><dd>${escapeHtml(statusLabel(row.status ?? 'nuevo'))} · ${money(
+                    row.total,
+                    row.currency,
+                  )}</dd></div>`,
+                )
+                .join('')}</dl>`
+            : '<p class="view__hint">Todavía no tiene compras registradas.</p>'
+        }
+      </div>
+
+      <div class="field">
+        <span class="field__label">Seguimiento</span>
+        ${
+          followups.length
+            ? `<dl class="facts">${followups
+                .map(
+                  (row) =>
+                    `<div class="fact"><dt>${escapeHtml(fmtDay(row.scheduled_at))} · ${escapeHtml(
+                      followupLabel(row.type),
+                    )}</dt><dd>${escapeHtml(
+                      { pending: 'pendiente', completed: 'hecho', cancelled: 'cancelado', skipped: 'omitido' }[
+                        row.status
+                      ] ?? row.status,
+                    )}</dd></div>`,
+                )
+                .join('')}</dl>`
+            : '<p class="view__hint">Sin tareas de seguimiento (se crean al entregar una compra).</p>'
+        }
+      </div>
+
+      <div class="field">
+        <span class="field__label">Automatización</span>
+        <div class="item__actions" style="margin-top:0">
+          ${
+            customer.automation_state === 'PAUSED'
+              ? `<button class="btn btn--ghost btn--sm" data-resume="${escapeHtml(customer.id)}" type="button">Reactivar</button>`
+              : `<button class="btn btn--ghost btn--sm" data-pause="${escapeHtml(customer.id)}" type="button">Pausar</button>`
+          }
+          ${
+            customer.do_not_contact
+              ? `<button class="btn btn--ghost btn--sm" data-optin="${escapeHtml(customer.id)}" type="button">Volver a permitir mensajes</button>`
+              : `<button class="btn btn--danger btn--sm" data-optout="${escapeHtml(customer.id)}" type="button">No contactar nunca más</button>`
+          }
+        </div>
+        <p class="view__hint">Pausar detiene el seguimiento; «no contactar» además borra las tareas de marketing pendientes.</p>
+      </div>
+
+      <label class="field">
+        <span class="field__label">Notas</span>
+        <textarea class="field__area" id="customer-notes">${escapeHtml(customer.notes ?? '')}</textarea>
+      </label>
+      <button class="btn btn--primary btn--block" id="customer-save" type="button">Guardar notas</button>
+      `,
+    );
+
+    $('#customer-save')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await api(`/api/admin/customers/${encodeURIComponent(customer.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ notes: $('#customer-notes').value }),
+          });
+          toast('Notas guardadas');
+          await load({ keepTab: true });
+          await openCustomer(customer.id);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast('No se pudieron guardar las notas');
+        }
+      });
+    });
+  }
+
+  /** Registrar una compra a mano (efectivo, transferencia, pedido de WhatsApp). */
+  function openPurchaseForm(customerId) {
+    const customer = customerId ? customerById(customerId) : null;
+    const catalog = state.catalog ?? [];
+    openSheet(
+      customer ? `Registrar compra · ${customer.name ?? customer.phone_e164}` : 'Registrar compra',
+      `
+      ${
+        customer
+          ? ''
+          : `<label class="field">
+               <span class="field__label">Teléfono del cliente</span>
+               <input class="field__input" id="buy-phone" type="tel" inputmode="tel" placeholder="809 555 1234" />
+             </label>
+             <label class="field">
+               <span class="field__label">Nombre</span>
+               <input class="field__input" id="buy-name" placeholder="Nombre del cliente" />
+             </label>
+             <label class="field">
+               <span class="field__label">Ciudad</span>
+               <input class="field__input" id="buy-location" placeholder="Higüey" />
+             </label>`
+      }
+      <label class="field">
+        <span class="field__label">Frasco</span>
+        <select class="field__select" id="buy-variant">
+          ${catalog
+            .map(
+              (variant) =>
+                `<option value="${escapeHtml(variant.id)}">${escapeHtml(variant.label)} · ${money(variant.price, variant.currency)}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Cantidad</span>
+        <input class="field__input" id="buy-quantity" type="number" min="1" step="1" value="1" />
+      </label>
+      <label class="field">
+        <span class="field__label">Estado</span>
+        <select class="field__select" id="buy-status">
+          ${(state.statuses ?? [])
+            .map((status) => `<option value="${escapeHtml(status.value)}">${escapeHtml(status.label)}</option>`)
+            .join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Fecha de la compra</span>
+        <input class="field__input" id="buy-date" type="date" value="${todayISO()}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Notas</span>
+        <textarea class="field__area" id="buy-notes" placeholder="Pagó en efectivo, entregado en el negocio…"></textarea>
+      </label>
+      <p class="view__hint" id="buy-total"></p>
+      <button class="btn btn--primary btn--block" id="buy-save" type="button">Guardar compra</button>
+      <p class="view__hint">
+        El precio sale del catálogo oficial. Al guardar como «entregado» se envía la venta a Meta una sola
+        vez y se crea el plan de seguimiento (día 1, 3, 7, 14, 21 y 30). Si el cliente ya existe, se
+        reconoce por su teléfono: no se duplica.
+      </p>
+      `,
+    );
+
+    const variant = () => catalog.find((entry) => entry.id === $('#buy-variant').value) ?? null;
+    const refreshTotal = () => {
+      const chosen = variant();
+      const quantity = Math.max(1, Number($('#buy-quantity').value) || 1);
+      $('#buy-total').textContent = chosen ? `Total: ${money(chosen.price * quantity, chosen.currency)}` : '';
+    };
+    $('#buy-variant').addEventListener('change', refreshTotal);
+    $('#buy-quantity').addEventListener('input', refreshTotal);
+    refreshTotal();
+
+    $('#buy-save').addEventListener('click', async (event) => {
+      const chosen = variant();
+      const quantity = Math.max(1, Number($('#buy-quantity').value) || 1);
+      const chosenDate = $('#buy-date').value;
+      const typedPhone = customer ? null : $('#buy-phone').value.trim();
+      if (!customer && !typedPhone) {
+        toast('Escribe el teléfono del cliente');
+        return;
+      }
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          const result = await api('/api/admin/purchases', {
+            method: 'POST',
+            body: JSON.stringify({
+              name: customer?.name ?? $('#buy-name').value.trim(),
+              phone: customer?.phone_e164 ?? customer?.phone ?? typedPhone,
+              location: customer?.location ?? $('#buy-location').value.trim(),
+              variantId: chosen?.id,
+              quantity,
+              status: $('#buy-status').value,
+              // Mediodía de ese día: así la fecha local y la del servidor coinciden.
+              date: chosenDate ? new Date(`${chosenDate}T12:00:00`).toISOString() : undefined,
+              notes: $('#buy-notes').value,
+            }),
+          });
+          toast(
+            result.delivered?.followups?.created
+              ? `Compra guardada · ${result.delivered.followups.created} tarea(s) de seguimiento`
+              : 'Compra guardada',
+          );
+          await load({ keepTab: true });
+          await openCustomer(result.customer.id);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar la compra');
+        }
+      });
+    });
+  }
+
+  /** Crear una tarea de seguimiento a mano (fuera del plan automático). */
+  function openFollowupForm(customerId) {
+    const customer = customerById(customerId);
+    if (!customer) return;
+    openSheet(
+      `Nuevo seguimiento · ${customer.name ?? customer.phone_e164}`,
+      `
+      <label class="field">
+        <span class="field__label">Para cuándo</span>
+        <input class="field__input" id="fu-date" type="date" value="${addDaysISO(1)}" />
+      </label>
+      <div class="item__actions" style="margin-top:0">
+        ${[0, 1, 3, 7]
+          .map((days) => `<button class="chip" data-fu-days="${days}" type="button">${days === 0 ? 'Hoy' : `${days} día(s)`}</button>`)
+          .join('')}
+      </div>
+      <label class="field">
+        <span class="field__label">Motivo</span>
+        <textarea class="field__area" id="fu-reason" placeholder="Llamar para confirmar la entrega…"></textarea>
+      </label>
+      <button class="btn btn--primary btn--block" id="fu-save" type="button">Crear seguimiento</button>
+      <p class="view__hint">Es una TAREA para una persona: el sistema no envía nada solo.</p>
+      `,
+    );
+    $$('[data-fu-days]').forEach((chip) =>
+      chip.addEventListener('click', () => {
+        $('#fu-date').value = addDaysISO(Number(chip.dataset.fuDays));
+      }),
+    );
+    $('#fu-save').addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await api('/api/admin/followups', {
+            method: 'POST',
+            body: JSON.stringify({
+              customerId: customer.id,
+              scheduledAt: $('#fu-date').value,
+              reason: $('#fu-reason').value,
+            }),
+          });
+          toast('Seguimiento creado');
+          await load({ keepTab: true });
+          await openCustomer(customer.id);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast('No se pudo crear el seguimiento');
+        }
+      });
+    });
+  }
+
+  /** Decidir una tarea: hecha, pospuesta o cancelada. */
+  async function followupAction(id, action, payload = {}) {
+    try {
+      await api(`/api/admin/followups/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action, ...payload }),
+      });
+      toast(
+        { complete: 'Seguimiento hecho', postpone: 'Pospuesto 3 días', cancel: 'Seguimiento cancelado' }[action] ??
+          'Seguimiento actualizado',
+      );
+      await load({ keepTab: true });
+      if (state.chat) await openChat(state.chat.id);
+      if (state.customerId) await openCustomer(state.customerId);
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo actualizar el seguimiento');
+    }
+  }
+
+  /** Pausar, reactivar, no contactar o volver a permitir mensajes. */
+  async function customerAction(customerId, action) {
+    const routes = {
+      pause: ['/automation', { state: 'PAUSED' }],
+      resume: ['/automation', { state: 'AUTOMATIC' }],
+      optout: ['/opt-out', {}],
+      optin: ['/opt-in', {}],
+    };
+    const [route, payload] = routes[action] ?? [];
+    if (!route) return;
+    try {
+      const result = await api(`/api/admin/customers/${encodeURIComponent(customerId)}${route}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      toast(
+        action === 'optout'
+          ? `Marcado como no contactar${result.cancelled ? ` · ${result.cancelled} tarea(s) cancelada(s)` : ''}`
+          : action === 'optin'
+            ? 'Puede volver a recibir mensajes'
+            : action === 'pause'
+              ? 'Seguimiento en pausa'
+              : 'Seguimiento reactivado',
+      );
+      await load({ keepTab: true });
+      await openCustomer(customerId);
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo actualizar el cliente');
+    }
+  }
+
   // ------------------------------------------------------------------ PWA
 
   function updateBadge() {
@@ -733,9 +1473,13 @@
     const badge = $('#badge-hoy');
     badge.hidden = pendientes === 0;
     badge.textContent = pendientes;
-    if (navigator.setAppBadge) navigator.setAppBadge(pendientes).catch(() => {});
+    // WhatsApp: mensajes sin leer + conversaciones que necesitan una persona.
+    const whatsappPendiente = (state.hoy?.sinResponder ?? 0) + (state.hoy?.humanoRequerido ?? 0);
+    const waBadge = $('#badge-whatsapp');
+    waBadge.hidden = whatsappPendiente === 0;
+    waBadge.textContent = whatsappPendiente;
+    if (navigator.setAppBadge) navigator.setAppBadge(pendientes + whatsappPendiente).catch(() => {});
   }
-
   function renderOutboxBanner() {
     const count = readOutbox().length;
     const banner = $('#outbox-banner');
@@ -795,7 +1539,7 @@
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
-    ['hoy', 'clientes', 'mensajes', 'ajustes'].forEach((name) => {
+    ['hoy', 'whatsapp', 'clientes', 'mensajes', 'ajustes'].forEach((name) => {
       $(`#view-${name}`).hidden = name !== tab;
     });
     if (!options.silent) window.scrollTo({ top: 0 });
@@ -870,10 +1614,75 @@
 
     document.addEventListener('click', (event) => {
       /*
-       * El orden importa: el botón de WhatsApp vive DENTRO de la tarjeta, que
-       * también es táctil. Si se comprobara `data-open` primero, pulsar
-       * "Escribir por WhatsApp" abriría la ficha en vez de escribir.
+       * El orden importa: los botones viven DENTRO de tarjetas que también son
+       * táctiles. Si se comprobara `data-chat` primero, pulsar "Registrar compra"
+       * abriría el chat en vez de la compra.
        */
+      const purchase = event.target.closest('[data-purchase]');
+      if (purchase) {
+        openPurchaseForm(purchase.dataset.purchase);
+        return;
+      }
+      const customer = event.target.closest('[data-customer]');
+      if (customer) {
+        openCustomer(customer.dataset.customer);
+        return;
+      }
+      const newFollowup = event.target.closest('[data-followup-new]');
+      if (newFollowup) {
+        openFollowupForm(newFollowup.dataset.followupNew);
+        return;
+      }
+      const done = event.target.closest('[data-followup-done]');
+      if (done) {
+        followupAction(done.dataset.followupDone, 'complete');
+        return;
+      }
+      const postpone = event.target.closest('[data-followup-postpone]');
+      if (postpone) {
+        followupAction(postpone.dataset.followupPostpone, 'postpone', { days: 3 });
+        return;
+      }
+      const cancel = event.target.closest('[data-followup-cancel]');
+      if (cancel) {
+        followupAction(cancel.dataset.followupCancel, 'cancel', { reason: 'cancelado en el panel' });
+        return;
+      }
+      const pause = event.target.closest('[data-pause]');
+      if (pause) {
+        customerAction(pause.dataset.pause, 'pause');
+        return;
+      }
+      const resume = event.target.closest('[data-resume]');
+      if (resume) {
+        customerAction(resume.dataset.resume, 'resume');
+        return;
+      }
+      const optin = event.target.closest('[data-optin]');
+      if (optin) {
+        customerAction(optin.dataset.optin, 'optin');
+        return;
+      }
+      const optout = event.target.closest('[data-optout]');
+      if (optout) {
+        const id = optout.dataset.optout;
+        // Dos toques: dejar de escribirle a alguien para siempre no puede ser
+        // un roce con el dedo.
+        if (pendingOptOut !== id) {
+          pendingOptOut = id;
+          optout.textContent = '¿Seguro? Toca otra vez';
+          toast('Si tocas otra vez, este cliente no recibirá más mensajes');
+          return;
+        }
+        pendingOptOut = null;
+        customerAction(id, 'optout');
+        return;
+      }
+      const chat = event.target.closest('[data-chat]');
+      if (chat) {
+        openChat(chat.dataset.chat, { followupId: chat.dataset.followup ?? null });
+        return;
+      }
       const wa = event.target.closest('[data-wa]');
       if (wa) {
         const item = state.items.find((candidate) => candidate.id === wa.dataset.wa);
@@ -915,12 +1724,13 @@
         return;
       }
       if (event.target.closest('[data-close-sheet]')) {
-        state.openId = null;
-        $('#sheet').hidden = true;
+        closeSheet();
       }
     });
 
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
+    $('#compra-nueva').addEventListener('click', () => openPurchaseForm(null));
+    $('#compra-nueva-wa').addEventListener('click', () => openPurchaseForm(null));
 
     $('#logout').addEventListener('click', async () => {
       await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
@@ -976,7 +1786,7 @@
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
     const query = new URLSearchParams(location.search);
     const wanted = query.get('v');
-    if (['hoy', 'clientes', 'mensajes', 'ajustes'].includes(wanted)) state.tab = wanted;
+    if (['hoy', 'whatsapp', 'clientes', 'mensajes', 'ajustes'].includes(wanted)) state.tab = wanted;
 
     /*
      * Sin conexión NO se puede comprobar la sesión, pero el panel ya estuvo

@@ -560,7 +560,7 @@ code {
   bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: var(--pe-surface);
   border-top: 1px solid var(--pe-border);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -573,12 +573,12 @@ code {
   justify-items: center;
   gap: 2px;
   min-height: var(--pe-tabbar);
-  padding: 8px 4px;
+  padding: 8px 2px;
   border: 0;
   background: transparent;
   color: var(--pe-ink-500);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   cursor: pointer;
 }
 
@@ -630,6 +630,97 @@ code {
   text-align: center;
   color: var(--pe-ink-500);
   font-size: 0.9rem;
+}
+
+/* ------------------------------------------------------------- CONVERSACIÓN */
+/*
+ * El hilo se lee como un chat, pero con una diferencia a propósito: los
+ * mensajes AUTOMÁTICOS van marcados aparte, para que quede claro qué escribió
+ * una persona y qué salió solo.
+ */
+.thread {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: var(--pe-surface-alt);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  max-height: 46dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  font-size: 0.92rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble--in {
+  justify-self: start;
+  border-bottom-left-radius: 4px;
+}
+
+.bubble--out {
+  justify-self: end;
+  background: #e7f5ec;
+  border-color: #bfe3cb;
+  border-bottom-right-radius: 4px;
+}
+
+.bubble--auto {
+  background: #eef2ff;
+  border-color: #ccd6f6;
+}
+
+.bubble--failed {
+  background: #fdecea;
+  border-color: #f0c9c6;
+}
+
+.bubble__meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--pe-ink-500);
+}
+
+.bubble__who {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pe-ink-500);
+}
+
+.composer {
+  display: grid;
+  gap: 8px;
+}
+
+.composer textarea {
+  min-height: 90px;
+}
+
+.rule {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--pe-radius);
+  background: var(--pe-info-bg);
+  color: var(--pe-info);
+  font-size: 0.85rem;
+}
+
+.rule--warn {
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
 }
 
 @media (min-width: 720px) {

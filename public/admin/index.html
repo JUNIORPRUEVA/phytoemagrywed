@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#0b6b4f" />
     <meta name="color-scheme" content="light" />
     <title>CRM · Phytoemagry</title>
-    <meta name="description" content="Panel privado de Phytoemagry: contactos, pedidos y recordatorios." />
+    <meta name="description" content="Panel privado de Phytoemagry: clientes, WhatsApp, pedidos y seguimiento." />
 
     <!-- PWA: se instala en el móvil y abre a pantalla completa -->
     <link rel="manifest" href="/admin/manifest.json" />
@@ -78,6 +78,20 @@
           <div class="list" id="list-hoy"></div>
         </section>
 
+        <!-- WHATSAPP -->
+        <section class="view" id="view-whatsapp" hidden>
+          <div id="wa-status"></div>
+          <h2 class="view__title">Conversaciones</h2>
+          <p class="view__hint">
+            Los mensajes de WhatsApp llegan aquí. <strong>Nada se envía solo</strong>: tú decides qué
+            escribir y cuándo pulsar Enviar.
+          </p>
+          <div class="list" id="list-whatsapp"></div>
+          <button class="btn btn--primary btn--block" id="compra-nueva-wa" type="button">
+            + Registrar compra de un cliente
+          </button>
+        </section>
+
         <!-- CLIENTES -->
         <section class="view" id="view-clientes" hidden>
           <div class="filters">
@@ -91,6 +105,9 @@
             <div class="chips" id="chips"></div>
           </div>
           <p class="view__count" id="clientes-count"></p>
+          <button class="btn btn--primary btn--block" id="compra-nueva" type="button">
+            + Registrar compra de un cliente
+          </button>
           <div class="list" id="list-clientes"></div>
         </section>
 
@@ -123,6 +140,10 @@
             <dl class="facts" id="facts"></dl>
           </div>
           <div class="card">
+            <p class="card__title">WhatsApp</p>
+            <div id="wa-config"></div>
+          </div>
+          <div class="card">
             <p class="card__title">Exportar</p>
             <p class="card__text">Descarga todos los contactos y pedidos en CSV (Excel, Sheets).</p>
             <a class="btn btn--ghost" id="csv" href="/api/crm/export.csv?limit=1000" download
@@ -139,11 +160,15 @@
           <span class="tab__icon" aria-hidden="true">☀</span><span>Hoy</span>
           <span class="tab__badge" id="badge-hoy" hidden></span>
         </button>
+        <button class="tab" data-tab="whatsapp" type="button">
+          <span class="tab__icon" aria-hidden="true">💬</span><span>WhatsApp</span>
+          <span class="tab__badge" id="badge-whatsapp" hidden></span>
+        </button>
         <button class="tab" data-tab="clientes" type="button">
           <span class="tab__icon" aria-hidden="true">👥</span><span>Clientes</span>
         </button>
         <button class="tab" data-tab="mensajes" type="button">
-          <span class="tab__icon" aria-hidden="true">💬</span><span>Mensajes</span>
+          <span class="tab__icon" aria-hidden="true">📝</span><span>Mensajes</span>
         </button>
         <button class="tab" data-tab="ajustes" type="button">
           <span class="tab__icon" aria-hidden="true">⚙</span><span>Ajustes</span>

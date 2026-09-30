@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v1';
+const VERSION = 'crm-v2';
 const SHELL = [
   '/admin/',
   '/admin/index.html',
