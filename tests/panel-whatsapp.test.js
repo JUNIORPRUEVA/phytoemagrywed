@@ -79,9 +79,13 @@ describe('el panel tiene las secciones nuevas', () => {
 describe('el panel llama a los endpoints del CRM', () => {
   it('clientes, compras y seguimiento', () => {
     expect(app).toContain('/api/admin/customers/');
-    expect(app).toContain('/api/admin/purchases');
+    // Los pedidos se crean por el endpoint de pedidos (el antiguo `/purchases`
+    // sigue existiendo en el servidor por compatibilidad, pero el panel usa uno solo).
+    expect(app).toContain('/api/admin/orders');
     expect(app).toContain('/api/admin/followups');
     expect(app).toContain('/api/admin/wa-templates');
+    // Y la cola de mensajes programados del centro de ventas.
+    expect(app).toContain('/api/admin/scheduled');
   });
 
   it('conversaciones y envío manual', () => {

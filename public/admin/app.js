@@ -29,6 +29,15 @@
     templates: [],
     stats: null,
     statuses: [],
+    // Ventas (S4/S5/S6): cola de programados, ajustes, estados y auditoría.
+    scheduled: null,
+    settings: null,
+    commercial: null,
+    orderStatuses: [],
+    audit: null,
+    metrics: null,
+    metricsPeriod: '30d',
+    orderId: null,
     tab: localStorage.getItem(TAB_KEY) ?? 'hoy',
     filter: 'todos',
     q: '',
@@ -284,6 +293,11 @@
       state.stats = data.stats ?? null;
       state.statuses = data.statuses ?? [];
       state.meta = data.meta ?? null;
+      state.scheduled = data.scheduled ?? null;
+      state.settings = data.settings ?? null;
+      state.commercial = data.commercial ?? null;
+      state.orderStatuses = data.orderStatuses ?? [];
+      state.audit = data.audit ?? null;
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
@@ -301,6 +315,9 @@
         state.catalog = snapshot.catalog ?? [];
         state.whatsapp = snapshot.whatsapp ?? null;
         state.stats = snapshot.stats ?? null;
+        state.scheduled = snapshot.scheduled ?? null;
+        state.settings = snapshot.settings ?? null;
+        state.orderStatuses = snapshot.orderStatuses ?? [];
         state.syncedAt = snapshot.at ?? null;
         toast('Sin conexión: datos guardados en el teléfono');
         render();
@@ -453,16 +470,39 @@
   const statusLabel = (value) => state.statuses.find((entry) => entry.value === value)?.label ?? value;
 
   function renderStats() {
-    const stats = state.stats ?? {};
+    const hoy = state.hoy ?? {};
+    const programados = state.scheduled ?? {};
+    const conProblemas = (programados.blocked ?? 0) + (programados.failed ?? 0);
+    /*
+     * HOY es un centro OPERATIVO: los contadores son trabajo que hacer ahora
+     * (contestar, seguir, resolver un mensaje que no salió), no gráficas. Cada
+     * tarjeta lleva a la lista donde se resuelve.
+     */
     const cards = [
-      { key: 'hoy', label: 'Para hoy', value: stats.hoy ?? 0, alert: (stats.hoy ?? 0) > 0, filter: 'hoy' },
-      { key: 'atrasados', label: 'Atrasados', value: stats.atrasados ?? 0, alert: (stats.atrasados ?? 0) > 0, filter: 'atrasados' },
-      { key: 'nuevos', label: 'Sin contactar', value: stats.nuevos ?? 0, filter: 'nuevos' },
-      { key: 'pedidos', label: 'Pedidos abiertos', value: stats.pedidos ?? 0, filter: 'pedidos' },
+      {
+        label: 'Sin responder',
+        value: hoy.sinResponder ?? 0,
+        alert: (hoy.sinResponder ?? 0) > 0,
+        goto: 'whatsapp',
+      },
+      { label: 'Seguimientos hoy', value: hoy.seguimientosHoy ?? 0, goto: 'seguimientos' },
+      {
+        label: 'Seguimientos vencidos',
+        value: hoy.seguimientosVencidos ?? 0,
+        alert: (hoy.seguimientosVencidos ?? 0) > 0,
+        goto: 'seguimientos',
+      },
+      {
+        label: 'Mensajes con problemas',
+        value: conProblemas,
+        alert: conProblemas > 0,
+        goto: 'hoy',
+      },
+      { label: 'Pedidos abiertos', value: hoy.pedidosPendientes ?? 0, goto: 'pedidos' },
     ];
     $('#stats').innerHTML = cards
       .map(
-        (card) => `<button class="stat ${card.alert ? 'stat--alert' : ''}" data-stat="${card.filter}" type="button">
+        (card) => `<button class="stat ${card.alert ? 'stat--alert' : ''}" data-goto="${card.goto}" type="button">
             <span class="stat__value">${card.value}</span>
             <span class="stat__label">${escapeHtml(card.label)}</span>
           </button>`,
@@ -504,6 +544,11 @@
               ? `<button class="btn btn--whatsapp btn--sm" data-wa="${escapeHtml(item.id)}" type="button">Escribir por WhatsApp</button>`
               : '<button class="btn btn--ghost btn--sm" type="button" disabled>Cliente escribió primero</button>'
           }
+          ${
+            item.type === 'order_intent'
+              ? `<button class="btn btn--ghost btn--sm" data-receipt="${escapeHtml(item.id)}" type="button">Comprobante</button>`
+              : ''
+          }
           <button class="btn btn--ghost btn--sm" data-open="${escapeHtml(item.id)}" type="button">Abrir ficha</button>
         </div>
       </article>`;
@@ -536,6 +581,7 @@
     checkin: '¿Cómo va?',
     education: 'Información',
     reorder: 'Recompra',
+    alert: 'Aviso',
     manual: 'Manual',
   };
   const followupLabel = (type) => FOLLOWUP_LABELS[type] ?? type ?? 'Seguimiento';
@@ -567,6 +613,35 @@
           <button class="btn btn--ghost btn--sm" data-followup-postpone="${escapeHtml(row.id)}" type="button">+3 días</button>
           <button class="btn btn--ghost btn--sm" data-followup-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>
           ${customer ? `<button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(customer.id)}" type="button">Ficha</button>` : ''}
+        </div>
+      </article>`;
+  }
+
+  /** Un mensaje programado que NO salió: dice por qué y qué puede hacer una persona. */
+  function scheduledProblemCard(row) {
+    const customer = customerById(row.customer_id);
+    const conversation = conversationForCustomer(row.customer_id);
+    const motivo =
+      row.status === 'BLOCKED'
+        ? row.blocked_message ?? 'Bloqueado'
+        : `Error: ${row.error_message ?? 'no se pudo enviar'}`;
+    return `<article class="item item--hoy">
+        <div class="item__top">
+          <div>
+            <p class="item__name">${escapeHtml(customer?.name ?? customer?.phone_e164 ?? 'Cliente')}</p>
+            <span class="tag tag--recordatorio">${row.status === 'BLOCKED' ? 'Bloqueado' : 'Falló'}</span>
+            <span class="tag">${escapeHtml(fmtDay(String(row.scheduled_at).slice(0, 10)))}</span>
+          </div>
+        </div>
+        <p class="item__meta">${escapeHtml(String(row.text ?? row.template ?? '').slice(0, 90))}</p>
+        <p class="item__meta">${escapeHtml(motivo)}</p>
+        <div class="item__actions">
+          ${
+            conversation
+              ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(conversation.id)}" type="button">Escribir ahora</button>`
+              : ''
+          }
+          <button class="btn btn--ghost btn--sm" data-scheduled-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>
         </div>
       </article>`;
   }
@@ -674,6 +749,14 @@
       hoy.mensajesFallidos
         ? `<h2 class="view__title">Mensajes que no salieron (${hoy.mensajesFallidos})</h2>
            <p class="rule rule--warn">WhatsApp los rechazó. Revisa el número y vuelve a intentarlo desde la conversación.</p>`
+        : '',
+      // Mensajes programados BLOQUEADOS o fallidos: son trabajo para una persona.
+      state.scheduled?.problems?.length
+        ? section(
+            'Mensajes programados con problemas',
+            state.scheduled.problems.length,
+            state.scheduled.problems.map(scheduledProblemCard).join(''),
+          )
         : '',
     ]
       .filter(Boolean)
@@ -828,6 +911,85 @@
     $('#build-info').textContent = `${state.items.length} registros · ${
       state.online ? 'en línea' : 'sin conexión'
     } · v2`;
+
+    // -------------------------------------------- seguimiento postventa (S5)
+    const plan = state.followups?.plan ?? [];
+    const enabled = state.followups?.enabled ?? state.settings?.followup ?? {};
+    $('#followup-config').innerHTML = plan.length
+      ? plan
+          .map(
+            (entry) => `<label class="toggle">
+              <input type="checkbox" data-plan-toggle="${escapeHtml(entry.key)}" ${
+                enabled[entry.key] !== false ? 'checked' : ''
+              } />
+              <span><strong>Día ${escapeHtml(entry.day)}</strong><small>${escapeHtml(entry.reason)}</small></span>
+            </label>`,
+          )
+          .join('')
+      : '<p class="card__text">No hay plan configurado.</p>';
+
+    // ---------------------------------------------------- métricas (S6)
+    const byPeriod = state.metrics?.byPeriod ?? null;
+    const periodName = state.metrics?.period?.name ?? state.metricsPeriod;
+    $('#metrics-period')
+      ?.querySelectorAll('[data-metrics]')
+      .forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.metrics === periodName)));
+    $('#metrics').innerHTML = byPeriod
+      ? [
+          ['Leads nuevos', byPeriod.leadsNuevos],
+          ['Conversaciones', byPeriod.conversaciones],
+          ['Pedidos creados', byPeriod.pedidosCreados],
+          ['Pedidos confirmados', byPeriod.pedidosConfirmados],
+          ['Pedidos entregados', byPeriod.pedidosEntregados],
+          ['Ventas', money(byPeriod.ventas)],
+          ['Recompras', byPeriod.recompras],
+          ['Pendientes de seguimiento', byPeriod.clientesPendientesDeSeguimiento],
+          ['Pedidos cancelados', byPeriod.pedidosCancelados],
+        ]
+          .map(([key, value]) => `<div class="fact"><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+          .join('')
+      : '<div class="fact"><dt>Período</dt><dd>cargando…</dd></div>';
+    if (!state.metrics && !state.metricsLoading && state.online) {
+      state.metricsLoading = true;
+      loadMetrics(state.metricsPeriod).finally(() => {
+        state.metricsLoading = false;
+      });
+    }
+
+    // ---------------------------------------------------------- auditoría
+    $('#audit').innerHTML = state.auditEntries?.length
+      ? `<dl class="facts">${state.auditEntries
+          .slice(0, 8)
+          .map(
+            (entry) =>
+              `<div class="fact"><dt>${escapeHtml(fmtWhen(entry.created_at))} · ${escapeHtml(entry.action)}</dt><dd>${escapeHtml(
+                entry.summary ?? '',
+              )}</dd></div>`,
+          )
+          .join('')}</dl>`
+      : `<p class="card__text">${
+          state.audit?.total ? `${state.audit.total} operaciones registradas.` : 'Todavía no hay operaciones registradas.'
+        }</p>`;
+    if (!state.auditEntries && !state.auditLoading && state.online) {
+      state.auditLoading = true;
+      loadAuditEntries();
+    }
+  }
+
+  /**
+   * Auditoría reciente (lista corta). Se pide por separado porque NO cambia con
+   * cada refresco del panel y así la carga principal sigue siendo una sola llamada.
+   */
+  async function loadAuditEntries() {
+    try {
+      const body = await api('/api/admin/audit?limit=10');
+      state.auditEntries = body.entries ?? [];
+    } catch {
+      /* sin auditoría el panel sigue funcionando */
+    } finally {
+      state.auditLoading = false;
+      renderAjustes();
+    }
   }
 
   // ------------------------------------------------------------------ ficha
@@ -1037,6 +1199,21 @@
     setTab('whatsapp', { silent: true });
     await selectConversation(conversationId, options);
     window.scrollTo({ top: 0 });
+  }
+
+  /**
+   * Enlace directo del tipo `?v=whatsapp&conv=<id>`: abre ESA conversación.
+   * Lo usa el aviso de mensaje nuevo («tienes un mensaje de Ana») y sirve para
+   * compartir un chat concreto con otra persona del negocio.
+   */
+  async function applyDeepLink(query) {
+    const conversationId = query?.get('conv');
+    if (!conversationId) return;
+    try {
+      await openChat(conversationId);
+    } catch {
+      /* el enlace apunta a algo que ya no existe: se queda en la bandeja */
+    }
   }
 
   /** Un mensaje del hilo. Se distingue QUIÉN escribió: cliente, negocio o el sistema. */
@@ -1321,7 +1498,9 @@
         ? `<p class="rule rule--warn">No pudimos cargar esta conversación.</p>
            <button class="btn btn--ghost btn--block" id="wa-retry-thread" type="button">Reintentar</button>`
         : '';
-      $('#wa-view-customer').disabled = true;
+      // Mientras no hay datos no se puede pedir ninguna acción comercial.
+      const actionsLoading = $('#wa-actions');
+      if (actionsLoading) actionsLoading.disabled = true;
       return;
     }
 
@@ -1336,8 +1515,18 @@
       .join(' · ');
 
     const viewCustomer = $('#wa-view-customer');
-    viewCustomer.dataset.customer = customer?.id ?? '';
-    viewCustomer.disabled = !customer?.id;
+    if (viewCustomer) {
+      viewCustomer.dataset.customer = customer?.id ?? '';
+      viewCustomer.disabled = !customer?.id;
+    }
+    // El menú de acciones del chat (crear pedido, programar…) es una sola tecla
+    // para no llenar el encabezado de botones en el móvil.
+    const actions = $('#wa-actions');
+    if (actions) {
+      actions.dataset.customer = customer?.id ?? '';
+      actions.dataset.conversation = conversation?.id ?? '';
+      actions.disabled = !customer?.id;
+    }
 
     const avatar = $('#wa-chat-avatar');
     if (avatar) avatar.textContent = waInitials((customer?.name ?? '').trim() || customer?.phone_e164);
@@ -1535,6 +1724,8 @@
 
   function renderCustomer(profile) {
     const { customer, totals, purchases, nextFollowup, followups, conversation, canSendFreeText } = profile;
+    const scheduled = profile.scheduled ?? [];
+    const commercial = profile.commercial_state ?? customer.commercial_state ?? 'NUEVO';
     const phone = digits(customer.phone_e164 ?? customer.phone);
     const conversationRow = conversation ?? conversationForCustomer(customer.id);
     const estado = {
@@ -1549,10 +1740,39 @@
       customer.name ?? customer.phone_e164,
       `
       <div>
+        <span class="tag tag--recordatorio">${escapeHtml(commercialLabel(commercial))}</span>
         ${customer.do_not_contact ? '<span class="tag tag--perdido">No contactar</span>' : ''}
         <span class="tag">${escapeHtml(customer.source ?? 'origen desconocido')}</span>
         ${nextFollowup ? `<span class="tag tag--recordatorio">${escapeHtml(fmtDay(nextFollowup.scheduled_at))}</span>` : ''}
       </div>
+      <div class="item__actions" style="margin-top:0">
+        <button class="btn btn--primary btn--sm" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationRow?.id ?? '',
+        )}" type="button">Crear pedido</button>
+        <button class="btn btn--ghost btn--sm" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationRow?.id ?? '',
+        )}" type="button">Programar seguimiento</button>
+        <button class="btn btn--ghost btn--sm" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationRow?.id ?? '',
+        )}" type="button">Programar mensaje</button>
+      </div>
+      <label class="field">
+        <span class="field__label">Estado comercial</span>
+        <select class="field__select" id="customer-commercial">
+          <option value="" ${customer.commercial_state_manual ? '' : 'selected'}>Automático (${escapeHtml(
+            commercialLabel(commercial),
+          )})</option>
+          ${(state.commercial?.manual ?? ['INTERESADO', 'PERDIDO'])
+            .map(
+              (value) =>
+                `<option value="${escapeHtml(value)}" ${
+                  customer.commercial_state_manual === value ? 'selected' : ''
+                }>${escapeHtml(commercialLabel(value))} (a mano)</option>`,
+            )
+            .join('')}
+        </select>
+        <p class="view__hint">El estado se deriva de los hechos. Solo «Interesado» y «Perdido» se fijan a mano.</p>
+      </label>
       <dl class="facts">
         <div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(customer.phone_e164 ?? customer.phone ?? '—')}</a></dd></div>
         ${customer.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(customer.location)}</dd></div>` : ''}
@@ -1590,6 +1810,64 @@
                 )
                 .join('')}</dl>`
             : '<p class="view__hint">Todavía no tiene compras registradas.</p>'
+        }
+      </div>
+
+      <div class="field">
+        <span class="field__label">Pedidos</span>
+        ${
+          purchases.length
+            ? `<div class="orders">${purchases
+                .map(
+                  (row) => `<article class="order-card">
+                    <div class="order-card__top">
+                      <strong>${escapeHtml(row.order_number ?? '—')}</strong>
+                      <span class="tag tag--${escapeHtml(row.status ?? 'nuevo')}">${escapeHtml(
+                        statusLabel(row.status ?? 'nuevo'),
+                      )}</span>
+                    </div>
+                    <p class="item__meta">${escapeHtml(row.variant_name ?? '')}${
+                      row.quantity ? ` ×${row.quantity}` : ''
+                    } · ${money(row.total, row.currency)} · ${escapeHtml(fmtWhen(row.received_at))}</p>
+                    <div class="item__actions">
+                      <button class="btn btn--ghost btn--sm" data-receipt="${escapeHtml(
+                        row.id,
+                      )}" type="button">Ver comprobante</button>
+                    </div>
+                  </article>`,
+                )
+                .join('')}</div>`
+            : '<p class="view__hint">Todavía no tiene pedidos registrados.</p>'
+        }
+      </div>
+
+      <div class="field">
+        <span class="field__label">Mensajes programados</span>
+        ${
+          scheduled.length
+            ? `<dl class="facts">${scheduled
+                .map(
+                  (row) => `<div class="fact"><dt>${escapeHtml(
+                    new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(
+                      new Date(row.scheduled_at),
+                    ),
+                  )}</dt><dd>${escapeHtml(
+                    {
+                      SCHEDULED: 'programado',
+                      PROCESSING: 'enviando',
+                      SENT: 'enviado',
+                      DELIVERED: 'entregado',
+                      READ: 'leído',
+                      FAILED: 'falló',
+                      CANCELLED: 'cancelado',
+                      BLOCKED: 'bloqueado',
+                    }[row.status] ?? row.status,
+                  )}${
+                    row.blocked_message ? ` · ${escapeHtml(row.blocked_message)}` : ''
+                  }</dd></div>`,
+                )
+                .join('')}</dl>`
+            : '<p class="view__hint">No hay mensajes programados. Programar un mensaje NO es un seguimiento: aquí el sistema intenta enviar.</p>'
         }
       </div>
 
@@ -1653,164 +1931,113 @@
         }
       });
     });
-  }
 
-  /** Registrar una compra a mano (efectivo, transferencia, pedido de WhatsApp). */
-  function openPurchaseForm(customerId) {
-    const customer = customerId ? customerById(customerId) : null;
-    const catalog = state.catalog ?? [];
-    openSheet(
-      customer ? `Registrar compra · ${customer.name ?? customer.phone_e164}` : 'Registrar compra',
-      `
-      ${
-        customer
-          ? ''
-          : `<label class="field">
-               <span class="field__label">Teléfono del cliente</span>
-               <input class="field__input" id="buy-phone" type="tel" inputmode="tel" placeholder="809 555 1234" />
-             </label>
-             <label class="field">
-               <span class="field__label">Nombre</span>
-               <input class="field__input" id="buy-name" placeholder="Nombre del cliente" />
-             </label>
-             <label class="field">
-               <span class="field__label">Ciudad</span>
-               <input class="field__input" id="buy-location" placeholder="Higüey" />
-             </label>`
+    // El estado comercial a mano (INTERESADO / PERDIDO) o de vuelta al derivado.
+    $('#customer-commercial')?.addEventListener('change', async (event) => {
+      try {
+        await api(`/api/admin/customers/${encodeURIComponent(customer.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ commercialState: event.target.value || null }),
+        });
+        toast('Estado comercial actualizado');
+        await load({ keepTab: true });
+        await openCustomer(customer.id);
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar el estado');
       }
-      <label class="field">
-        <span class="field__label">Frasco</span>
-        <select class="field__select" id="buy-variant">
-          ${catalog
-            .map(
-              (variant) =>
-                `<option value="${escapeHtml(variant.id)}">${escapeHtml(variant.label)} · ${money(variant.price, variant.currency)}</option>`,
-            )
-            .join('')}
-        </select>
-      </label>
-      <label class="field">
-        <span class="field__label">Cantidad</span>
-        <input class="field__input" id="buy-quantity" type="number" min="1" step="1" value="1" />
-      </label>
-      <label class="field">
-        <span class="field__label">Estado</span>
-        <select class="field__select" id="buy-status">
-          ${(state.statuses ?? [])
-            .map((status) => `<option value="${escapeHtml(status.value)}">${escapeHtml(status.label)}</option>`)
-            .join('')}
-        </select>
-      </label>
-      <label class="field">
-        <span class="field__label">Fecha de la compra</span>
-        <input class="field__input" id="buy-date" type="date" value="${todayISO()}" />
-      </label>
-      <label class="field">
-        <span class="field__label">Notas</span>
-        <textarea class="field__area" id="buy-notes" placeholder="Pagó en efectivo, entregado en el negocio…"></textarea>
-      </label>
-      <p class="view__hint" id="buy-total"></p>
-      <button class="btn btn--primary btn--block" id="buy-save" type="button">Guardar compra</button>
-      <p class="view__hint">
-        El precio sale del catálogo oficial. Al guardar como «entregado» se envía la venta a Meta una sola
-        vez y se crea el plan de seguimiento (día 1, 3, 7, 14, 21 y 30). Si el cliente ya existe, se
-        reconoce por su teléfono: no se duplica.
-      </p>
-      `,
-    );
-
-    const variant = () => catalog.find((entry) => entry.id === $('#buy-variant').value) ?? null;
-    const refreshTotal = () => {
-      const chosen = variant();
-      const quantity = Math.max(1, Number($('#buy-quantity').value) || 1);
-      $('#buy-total').textContent = chosen ? `Total: ${money(chosen.price * quantity, chosen.currency)}` : '';
-    };
-    $('#buy-variant').addEventListener('change', refreshTotal);
-    $('#buy-quantity').addEventListener('input', refreshTotal);
-    refreshTotal();
-
-    $('#buy-save').addEventListener('click', async (event) => {
-      const chosen = variant();
-      const quantity = Math.max(1, Number($('#buy-quantity').value) || 1);
-      const chosenDate = $('#buy-date').value;
-      const typedPhone = customer ? null : $('#buy-phone').value.trim();
-      if (!customer && !typedPhone) {
-        toast('Escribe el teléfono del cliente');
-        return;
-      }
-      await working(event.currentTarget, 'Guardando…', async () => {
-        try {
-          const result = await api('/api/admin/purchases', {
-            method: 'POST',
-            body: JSON.stringify({
-              name: customer?.name ?? $('#buy-name').value.trim(),
-              phone: customer?.phone_e164 ?? customer?.phone ?? typedPhone,
-              location: customer?.location ?? $('#buy-location').value.trim(),
-              variantId: chosen?.id,
-              quantity,
-              status: $('#buy-status').value,
-              // Mediodía de ese día: así la fecha local y la del servidor coinciden.
-              date: chosenDate ? new Date(`${chosenDate}T12:00:00`).toISOString() : undefined,
-              notes: $('#buy-notes').value,
-            }),
-          });
-          toast(
-            result.delivered?.followups?.created
-              ? `Compra guardada · ${result.delivered.followups.created} tarea(s) de seguimiento`
-              : 'Compra guardada',
-          );
-          await load({ keepTab: true });
-          await openCustomer(result.customer.id);
-        } catch (error) {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar la compra');
-        }
-      });
     });
   }
 
-  /** Crear una tarea de seguimiento a mano (fuera del plan automático). */
-  function openFollowupForm(customerId) {
-    const customer = customerById(customerId);
+  /**
+   * Registrar una compra/pedido desde el panel.
+   *
+   * Hay UN solo formulario de pedido en todo el CRM (el mismo que se abre desde el
+   * chat): antes era de una sola línea y cada pantalla tenía el suyo.
+   */
+  function openPurchaseForm(customerId) {
+    openOrderForm({ customerId: customerId || null });
+  }
+
+  /**
+   * Crear una tarea de seguimiento a mano (fuera del plan automático).
+   *
+   * Es una TAREA para una persona: el sistema no envía nada solo. Se puede crear
+   * desde la ficha del cliente o desde la conversación (queda ligada a las dos).
+   */
+  function openFollowupForm(input) {
+    const options = typeof input === 'string' ? { customerId: input } : (input ?? {});
+    const customerId = options.customerId;
+    const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
     if (!customer) return;
+    const MOTIVOS = [
+      ['Responder consulta', 'Responder una consulta'],
+      ['Confirmar pedido', 'Confirmar el pedido'],
+      ['Confirmar entrega', 'Confirmar la entrega'],
+      ['Seguimiento postventa', 'Seguimiento postventa'],
+      ['Recompra', 'Recompra'],
+      ['Otro', 'Otro motivo'],
+    ];
+    const QUICK = [
+      ['Hoy', 0],
+      ['Mañana', 1],
+      ['En 3 días', 3],
+      ['En 7 días', 7],
+    ];
     openSheet(
-      `Nuevo seguimiento · ${customer.name ?? customer.phone_e164}`,
+      `Nuevo seguimiento · ${customerName(customer)}`,
       `
-      <label class="field">
+      <div class="field">
         <span class="field__label">Para cuándo</span>
+        <div class="item__actions" style="margin-top:0">
+          ${QUICK.map(
+            ([text, days]) => `<button class="chip" data-fu-quick="${days}" type="button">${escapeHtml(text)}</button>`,
+          ).join('')}
+            <button class="chip" data-fu-quick="custom" type="button">Fecha personalizada</button>
+        </div>
         <input class="field__input" id="fu-date" type="date" value="${addDaysISO(1)}" />
-      </label>
-      <div class="item__actions" style="margin-top:0">
-        ${[0, 1, 3, 7]
-          .map((days) => `<button class="chip" data-fu-days="${days}" type="button">${days === 0 ? 'Hoy' : `${days} día(s)`}</button>`)
-          .join('')}
       </div>
       <label class="field">
         <span class="field__label">Motivo</span>
-        <textarea class="field__area" id="fu-reason" placeholder="Llamar para confirmar la entrega…"></textarea>
+        <select class="field__select" id="fu-motivo">
+          ${MOTIVOS.map(([value, text]) => `<option value="${escapeHtml(value)}">${escapeHtml(text)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Nota (opcional)</span>
+        <textarea class="field__area" id="fu-reason" placeholder="Qué tengo que decirle o preguntarle…"></textarea>
       </label>
       <button class="btn btn--primary btn--block" id="fu-save" type="button">Crear seguimiento</button>
-      <p class="view__hint">Es una TAREA para una persona: el sistema no envía nada solo.</p>
+      <p class="view__hint">Es una TAREA para una persona: el sistema no envía nada solo. Aparecerá en HOY.</p>
       `,
     );
-    $$('[data-fu-days]').forEach((chip) =>
+    const dateInput = $('#fu-date');
+    $$('[data-fu-quick]').forEach((chip) =>
       chip.addEventListener('click', () => {
-        $('#fu-date').value = addDaysISO(Number(chip.dataset.fuDays));
+        if (chip.dataset.fuQuick === 'custom') {
+          dateInput.focus();
+          return;
+        }
+        dateInput.value = addDaysISO(Number(chip.dataset.fuQuick));
       }),
     );
     $('#fu-save').addEventListener('click', async (event) => {
+      const motivo = $('#fu-motivo').value;
+      const nota = $('#fu-reason').value.trim();
       await working(event.currentTarget, 'Guardando…', async () => {
         try {
           await api('/api/admin/followups', {
             method: 'POST',
             body: JSON.stringify({
               customerId: customer.id,
-              scheduledAt: $('#fu-date').value,
-              reason: $('#fu-reason').value,
+              conversationId: options.conversationId || undefined,
+              orderId: options.orderId || undefined,
+              scheduledAt: dateInput.value,
+              reason: nota ? `${motivo} · ${nota}` : motivo,
             }),
           });
           toast('Seguimiento creado');
           await load({ keepTab: true });
-          await openCustomer(customer.id);
+          closeSheet();
         } catch (error) {
           if (error.message !== 'unauthorized') toast('No se pudo crear el seguimiento');
         }
@@ -1867,6 +2094,508 @@
       if (error.message !== 'unauthorized') toast('No se pudo actualizar el cliente');
     }
   }
+
+  // --------------------------------------- acciones comerciales (S4 / S5)
+  /*
+   * El centro de ventas vive DENTRO de la conversación: una sola tecla abre las
+   * acciones (crear pedido, programar seguimiento, programar mensaje, ver
+   * cliente) sin llenar el encabezado de botones en el móvil.
+   */
+
+  const COMMERCIAL_LABELS = {
+    NUEVO: 'Nuevo',
+    EN_CONVERSACION: 'En conversación',
+    INTERESADO: 'Interesado',
+    PEDIDO_CREADO: 'Pedido creado',
+    CONFIRMADO: 'Confirmado',
+    ENTREGADO: 'Entregado',
+    SEGUIMIENTO: 'En seguimiento',
+    RECOMPRA: 'Recompra',
+    PERDIDO: 'Perdido',
+  };
+  const commercialLabel = (value) => COMMERCIAL_LABELS[value] ?? value ?? '—';
+  const orderStatusLabel = (value) => state.orderStatuses.find((entry) => entry.value === value)?.label ?? value;
+  const customerName = (customer) => (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
+
+  const catalogOf = (variantId) => state.catalog.find((entry) => entry.id === variantId) ?? null;
+
+  /** Total del pedido calculado con el catálogo del SERVIDOR (no hay precios aquí). */
+  function orderTotals(lines, discount = 0) {
+    const items = lines
+      .map((line) => {
+        const variant = catalogOf(line.variantId);
+        if (!variant) return null;
+        const quantity = Math.max(1, Number(line.quantity) || 1);
+        return { variant, quantity, subtotal: variant.price * quantity };
+      })
+      .filter(Boolean);
+    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+    const applied = Math.min(Math.max(0, Number(discount) || 0), subtotal);
+    return { items, subtotal, discount: applied, total: subtotal - applied };
+  }
+
+  function openChatActions(customerId, conversationId) {
+    const customer = customerById(customerId);
+    if (!customer) return;
+    openSheet(
+      customerName(customer),
+      `
+      <p class="view__hint">Acciones de venta con este cliente, sin salir del chat.</p>
+      <div class="menu-list">
+        <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span aria-hidden="true">📦</span>
+          <span><strong>Crear pedido</strong><small>Elige frascos, cantidad y total</small></span>
+        </button>
+        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span aria-hidden="true">🔔</span>
+          <span><strong>Programar seguimiento</strong><small>Tarea para ti (no envía nada)</small></span>
+        </button>
+        <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span aria-hidden="true">⏰</span>
+          <span><strong>Programar mensaje</strong><small>El sistema lo intentará enviar</small></span>
+        </button>
+        <button class="menu-item" data-customer="${escapeHtml(customer.id)}" type="button">
+          <span aria-hidden="true">👤</span>
+          <span><strong>Ver cliente</strong><small>Ficha 360 del cliente</small></span>
+        </button>
+      </div>
+    `,
+    );
+  }
+
+  /**
+   * Formulario de pedido (nuevo o edición). El catálogo y los precios vienen del
+   * servidor: el panel solo elige el frasco y la cantidad.
+   */
+  function openOrderForm({ customerId, conversationId = '', orderId = null, order = null } = {}) {
+    const customer = customerId
+      ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
+      : null;
+    const catalog = state.catalog ?? [];
+    if (!catalog.length) {
+      toast('El catálogo todavía no está disponible');
+      return;
+    }
+    /** @type {Array<{variantId: string, quantity: number}>} */
+    let lines = order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
+      { variantId: catalog[0].id, quantity: 1 },
+    ];
+    const defaultStatus = order?.status ?? 'nuevo';
+
+    openSheet(
+      `${orderId ? 'Modificar pedido' : 'Crear pedido'} · ${customer ? customerName(customer) : 'Nuevo cliente'}`,
+      `
+      ${
+        customer
+          ? '<p class="view__hint">Cliente precargado de la conversación. Los precios salen del catálogo oficial.</p>'
+          : `<p class="view__hint">El teléfono identifica al cliente: si ya existe, el pedido se suma a su historial.</p>
+             <label class="field">
+               <span class="field__label">Teléfono del cliente</span>
+               <input class="field__input" id="order-phone" type="tel" inputmode="tel" placeholder="809 555 1234" />
+             </label>
+             <label class="field">
+               <span class="field__label">Nombre</span>
+               <input class="field__input" id="order-name" placeholder="Nombre del cliente" />
+             </label>`
+      }
+      <div id="order-lines"></div>
+      <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+      <label class="field">
+        <span class="field__label">Descuento (opcional, RD$)</span>
+        <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${
+          order?.discount ?? 0
+        }" />
+      </label>
+      <label class="field">
+        <span class="field__label">Entrega · ciudad</span>
+        <input class="field__input" id="order-city" placeholder="Higüey" value="${escapeHtml(
+          order?.delivery?.city ?? customer?.location ?? '',
+        )}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Entrega · dirección o nota</span>
+        <input class="field__input" id="order-address" placeholder="Calle, referencia o «retira en el negocio»" value="${escapeHtml(
+          order?.delivery?.address ?? '',
+        )}" />
+      </label>
+      <p class="view__hint">El costo de envío se deja pendiente: no se inventa.</p>
+      <label class="field">
+        <span class="field__label">Estado</span>
+        <select class="field__select" id="order-status">
+          ${(state.orderStatuses ?? [])
+            .map(
+              (status) =>
+                `<option value="${escapeHtml(status.value)}" ${
+                  status.value === defaultStatus ? 'selected' : ''
+                }>${escapeHtml(status.label)}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Notas</span>
+        <textarea class="field__area" id="order-notes" placeholder="Pagó en efectivo, entrega el viernes…">${escapeHtml(
+          order?.notes ?? '',
+        )}</textarea>
+      </label>
+      <p class="view__hint" id="order-total"></p>
+      <button class="btn btn--primary btn--block" id="order-save" type="button">${
+        orderId ? 'Guardar cambios' : 'Guardar pedido'
+      }</button>
+      <p class="view__hint">
+        Al marcarlo como «entregado» se envía la venta a Meta una sola vez y se crean las tareas de
+        seguimiento del día 1, 3, 7, 14, 21 y 30 (según tus Ajustes).
+      </p>
+      `,
+    );
+
+    const linesBox = $('#order-lines');
+    const renderLines = () => {
+      linesBox.innerHTML = lines
+        .map(
+          (line, index) => `
+        <div class="order-line">
+          <label class="field">
+            <span class="field__label">Frasco</span>
+            <select class="field__select" data-line-variant="${index}">
+              ${catalog
+                .map(
+                  (variant) =>
+                    `<option value="${escapeHtml(variant.id)}" ${
+                      variant.id === line.variantId ? 'selected' : ''
+                    }>${escapeHtml(variant.label)} · ${money(variant.price, variant.currency)}</option>`,
+                )
+                .join('')}
+            </select>
+          </label>
+          <label class="field order-line__qty">
+            <span class="field__label">Cantidad</span>
+            <input class="field__input" type="number" min="1" step="1" value="${line.quantity}" data-line-qty="${index}" />
+          </label>
+          ${
+            lines.length > 1
+              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar frasco">✕</button>`
+              : ''
+          }
+        </div>`,
+        )
+        .join('');
+      refreshOrderTotal();
+    };
+    const refreshOrderTotal = () => {
+      const totals = orderTotals(lines, Number($('#order-discount')?.value) || 0);
+      const box = $('#order-total');
+      if (!box) return;
+      box.innerHTML = totals.items.length
+        ? `Subtotal ${money(totals.subtotal)}${totals.discount ? ` · Descuento −${money(totals.discount)}` : ''}
+           · <strong>Total ${money(totals.total)}</strong>`
+        : 'Elige al menos un frasco del catálogo.';
+    };
+
+    linesBox.addEventListener('change', (event) => {
+      const select = event.target.closest('[data-line-variant]');
+      if (select) {
+        lines[Number(select.dataset.lineVariant)].variantId = select.value;
+        refreshOrderTotal();
+      }
+      const quantity = event.target.closest('[data-line-qty]');
+      if (quantity) {
+        lines[Number(quantity.dataset.lineQty)].quantity = Math.max(1, Number(quantity.value) || 1);
+        refreshOrderTotal();
+      }
+    });
+    linesBox.addEventListener('click', (event) => {
+      const remove = event.target.closest('[data-line-remove]');
+      if (!remove) return;
+      lines = lines.filter((_, index) => index !== Number(remove.dataset.lineRemove));
+      renderLines();
+    });
+    $('#order-add').addEventListener('click', () => {
+      lines = [...lines, { variantId: catalog[0].id, quantity: 1 }];
+      renderLines();
+    });
+    $('#order-discount').addEventListener('input', refreshOrderTotal);
+    renderLines();
+
+    $('#order-save').addEventListener('click', async (event) => {
+      const totals = orderTotals(lines, Number($('#order-discount').value) || 0);
+      if (!totals.items.length) {
+        toast('Elige al menos un frasco');
+        return;
+      }
+      const typedPhone = customer ? null : $('#order-phone').value.trim();
+      if (!customer && !typedPhone) {
+        toast('Escribe el teléfono del cliente');
+        return;
+      }
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          const payload = {
+            customerId: customer?.id,
+            phone: customer?.phone_e164 ?? typedPhone,
+            name: customer?.name ?? $('#order-name')?.value.trim(),
+            conversationId: conversationId || undefined,
+            channel: conversationId ? 'whatsapp' : 'panel',
+            items: lines,
+            discount: Number($('#order-discount').value) || 0,
+            status: $('#order-status').value,
+            notes: $('#order-notes').value,
+            delivery: { city: $('#order-city').value, address: $('#order-address').value },
+          };
+          const result = orderId
+            ? await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  items: lines,
+                  discount: payload.discount,
+                  notes: payload.notes,
+                  delivery: payload.delivery,
+                }),
+              })
+            : await api('/api/admin/orders', { method: 'POST', body: JSON.stringify(payload) });
+          const savedId = orderId ?? result.item?.id;
+          toast(orderId ? 'Pedido actualizado' : `Pedido ${result.order?.order_number ?? ''} guardado`);
+          await load({ keepTab: true });
+          if (savedId) await openReceipt(savedId);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar el pedido');
+        }
+      });
+    });
+  }
+
+  /** Comprobante de compra dentro del CRM + cómo verlo, descargarlo o compartirlo. */
+  async function openReceipt(orderId) {
+    try {
+      const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
+      const receipt = data.receipt;
+      const lines = (receipt.items ?? [])
+        .map(
+          (line) => `<div class="receipt-line">
+            <span>${escapeHtml(line.label)}</span>
+            <span class="receipt-line__qty">×${escapeHtml(line.quantity)}</span>
+            <span class="receipt-line__amount">${money(line.subtotal, receipt.currency)}</span>
+          </div>`,
+        )
+        .join('');
+      openSheet(
+        `Comprobante · ${receipt.order_number}`,
+        `
+        <div class="receipt">
+          <p class="receipt__brand">${escapeHtml(receipt.business)}</p>
+          <p class="receipt__doc">${escapeHtml(receipt.document)}</p>
+          <dl class="facts">
+            <div class="fact"><dt>Pedido</dt><dd>${escapeHtml(receipt.order_number)}</dd></div>
+            <div class="fact"><dt>Fecha</dt><dd>${escapeHtml(fmtWhen(receipt.date))}</dd></div>
+            ${receipt.customer_name ? `<div class="fact"><dt>Cliente</dt><dd>${escapeHtml(receipt.customer_name)}</dd></div>` : ''}
+            ${receipt.phone_masked ? `<div class="fact"><dt>Teléfono</dt><dd>${escapeHtml(receipt.phone_masked)}</dd></div>` : ''}
+            <div class="fact"><dt>Estado</dt><dd>${escapeHtml(receipt.status_label)}</dd></div>
+          </dl>
+          <div class="receipt__lines">${lines}</div>
+          <div class="receipt__totals">
+            <div><span>Subtotal</span><strong>${money(receipt.subtotal, receipt.currency)}</strong></div>
+            ${receipt.discount ? `<div><span>Descuento</span><strong>−${money(receipt.discount, receipt.currency)}</strong></div>` : ''}
+            ${
+              receipt.shipping
+                ? `<div><span>Envío</span><strong>${money(receipt.shipping, receipt.currency)}</strong></div>`
+                : ''
+            }
+            <div class="receipt__grand"><span>TOTAL</span><span>${money(receipt.total, receipt.currency)}</span></div>
+          </div>
+          <p class="view__hint">${escapeHtml(receipt.thanks)}</p>
+          <p class="view__hint">${escapeHtml(receipt.note)}</p>
+        </div>
+        <button class="btn btn--primary btn--block" id="receipt-open" type="button">Ver / Imprimir comprobante</button>
+        <button class="btn btn--ghost btn--block" id="receipt-share" type="button">Compartir</button>
+        <button class="btn btn--ghost btn--block" id="receipt-edit" type="button">Modificar pedido</button>
+        <button class="btn btn--whatsapp btn--block" id="receipt-send" type="button" disabled
+          title="Enviar el comprobante por WhatsApp llega con la fase multimedia (S3)">Enviar comprobante</button>
+        <p class="view__hint">Enviar el comprobante por WhatsApp se activa cuando el CRM pueda enviar documentos.</p>
+        `,
+      );
+
+      const url = `${app2Base()}/api/admin/orders/${encodeURIComponent(orderId)}/receipt`;
+      $('#receipt-open').addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+      $('#receipt-share').addEventListener('click', async (event) => {
+        // Compartir nativo si el móvil puede; si no, se abre el documento.
+        if (navigator.share) {
+          try {
+            await navigator.share({ title: `Comprobante ${receipt.order_number}`, url });
+            return;
+          } catch {
+            /* el usuario canceló: se abre el documento */
+          }
+        }
+        window.open(url, '_blank', 'noopener');
+      });
+      $('#receipt-edit').addEventListener('click', () => {
+        openOrderForm({
+          customerId: data.item.customer_id,
+          conversationId: data.item.conversation_id ?? '',
+          orderId,
+          order: data.order,
+        });
+      });
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo abrir el comprobante');
+    }
+  }
+
+  /** Base del panel (para construir enlaces absolutos del comprobante). */
+  const app2Base = () => `${window.location.origin}`;
+
+  /**
+   * Programar un MENSAJE (no es un seguimiento: aquí el sistema intenta enviar).
+   * Fuera de la ventana de 24 h solo se puede programar una plantilla aprobada.
+   */
+  function openScheduledForm({ customerId, conversationId = '', orderId = '' } = {}) {
+    const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
+    if (!customer) return;
+    const approved = (state.templates ?? []).filter((template) => template.sendable === true);
+    const dentroDeVentana = state.wa.chat?.customer?.id === customerId ? state.wa.chat?.canSendFreeText !== false : null;
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    openSheet(
+      `Programar mensaje · ${customerName(customer)}`,
+      `
+      <p class="view__hint">
+        El sistema lo intentará enviar a esa hora. Si al llegar el momento ya no se puede (ventana de 24 h,
+        «no contactar»), <strong>no se fuerza</strong>: queda bloqueado y te avisa.
+      </p>
+      <label class="field">
+        <span class="field__label">Fecha</span>
+        <input class="field__input" id="sch-date" type="date" value="${todayISO()}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Hora</span>
+        <input class="field__input" id="sch-time" type="time" value="${time}" />
+      </label>
+      <div class="item__actions" style="margin-top:0">
+        <button class="chip" data-sch-quick="60" type="button">En 1 hora</button>
+        <button class="chip" data-sch-quick="1440" type="button">Mañana</button>
+        <button class="chip" data-sch-quick="10080" type="button">En 7 días</button>
+      </div>
+      <label class="field">
+        <span class="field__label">Mensaje</span>
+        <textarea class="field__area" id="sch-text" placeholder="Hola, ¿te ayudo con tu pedido?"></textarea>
+      </label>
+      ${
+        approved.length
+          ? `<label class="field">
+               <span class="field__label">O usar una plantilla aprobada</span>
+               <select class="field__select" id="sch-template">
+                 <option value="">— texto de arriba —</option>
+                 ${approved.map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)}</option>`).join('')}
+               </select>
+             </label>`
+          : `<p class="view__hint">No hay plantillas aprobadas en Meta: fuera de la ventana de 24 h el mensaje quedará bloqueado.</p>`
+      }
+      ${
+        dentroDeVentana === false
+          ? '<p class="rule rule--warn">La ventana de 24 h ya terminó: programa una plantilla aprobada.</p>'
+          : ''
+      }
+      <button class="btn btn--primary btn--block" id="sch-save" type="button">Programar mensaje</button>
+      `,
+    );
+
+    $$('[data-sch-quick]').forEach((chip) =>
+      chip.addEventListener('click', () => {
+        const when = new Date(Date.now() + Number(chip.dataset.schQuick) * 60000);
+        $('#sch-date').value = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(
+          when.getDate(),
+        ).padStart(2, '0')}`;
+        $('#sch-time').value = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+      }),
+    );
+
+    $('#sch-save').addEventListener('click', async (event) => {
+      const date = $('#sch-date').value;
+      const time = $('#sch-time').value || '09:00';
+      const template = $('#sch-template')?.value || '';
+      const body = $('#sch-text').value.trim();
+      if (!date) {
+        toast('Elige la fecha');
+        return;
+      }
+      if (!template && !body) {
+        toast('Escribe el mensaje');
+        return;
+      }
+      await working(event.currentTarget, 'Programando…', async () => {
+        try {
+          await api('/api/admin/scheduled', {
+            method: 'POST',
+            body: JSON.stringify({
+              customerId: customer.id,
+              conversationId: conversationId || undefined,
+              orderId: orderId || undefined,
+              // La hora local del teléfono → instante exacto (sin desfases).
+              scheduledAt: new Date(`${date}T${time}:00`).toISOString(),
+              type: template ? 'template' : 'text',
+              template: template || undefined,
+              text: body || undefined,
+            }),
+          });
+          toast('Mensaje programado');
+          await load({ keepTab: true });
+          closeSheet();
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo programar');
+        }
+      });
+    });
+  }
+
+  async function scheduledAction(id, action, payload = {}) {
+    try {
+      await api(`/api/admin/scheduled/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action, ...payload }),
+      });
+      toast(action === 'cancel' ? 'Mensaje cancelado' : 'Mensaje reprogramado');
+      await load({ keepTab: true });
+      if (state.customerId) await openCustomer(state.customerId);
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo actualizar el mensaje');
+    }
+  }
+
+  /** Interruptores del plan de postventa (Ajustes). */
+  async function toggleFollowupDay(key, enabled) {
+    const current = { ...(state.settings?.followup ?? {}) };
+    current[key] = enabled;
+    try {
+      const result = await api('/api/admin/settings/followup', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: current }),
+      });
+      state.settings = { ...(state.settings ?? {}), followup: result.followup.enabled };
+      toast(enabled ? 'Día activado' : 'Día desactivado');
+      renderAjustes();
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo guardar el ajuste');
+    }
+  }
+
+  /** Métricas del período elegido (Hoy / 7 días / 30 días). */
+  async function loadMetrics(period) {
+    state.metricsPeriod = period;
+    try {
+      state.metrics = (await api(`/api/admin/metrics?period=${encodeURIComponent(period)}`)).metrics;
+    } catch (error) {
+      if (error.message !== 'unauthorized') state.metrics = null;
+    }
+    renderAjustes();
+  }
+
 
   // ------------------------------------------------------------------ PWA
 
@@ -2007,6 +2736,14 @@
       window.scrollTo({ top: 0 });
       // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
       if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
+      // Al entrar en Ajustes se refresca lo que cambia con el uso: los números y
+      // la traza. Así el negocio ve el efecto de lo que acaba de hacer.
+      if (tab === 'ajustes') {
+        loadMetrics(state.metricsPeriod).catch(() => {});
+        state.auditEntries = null;
+        state.auditLoading = true;
+        loadAuditEntries();
+      }
     }
   }
 
@@ -2067,9 +2804,15 @@
     });
 
     $('#stats').addEventListener('click', (event) => {
-      const card = event.target.closest('[data-stat]');
-      if (!card) return;
-      state.filter = card.dataset.stat === 'atrasados' ? 'hoy' : card.dataset.stat;
+      const card = event.target.closest('[data-goto]');
+      if (card) {
+        setTab(card.dataset.goto);
+        return;
+      }
+      // Compatibilidad: las tarjetas antiguas filtraban la lista de clientes.
+      const legacy = event.target.closest('[data-stat]');
+      if (!legacy) return;
+      state.filter = legacy.dataset.stat === 'atrasados' ? 'hoy' : legacy.dataset.stat;
       $$('[data-filter]').forEach((button) =>
         button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)),
       );
@@ -2086,6 +2829,43 @@
       const purchase = event.target.closest('[data-purchase]');
       if (purchase) {
         openPurchaseForm(purchase.dataset.purchase);
+        return;
+      }
+      // --- acciones comerciales (S4/S5): pedido, comprobante, programar ---
+      if (event.target.closest('#wa-actions')) {
+        const button = event.target.closest('#wa-actions');
+        openChatActions(button.dataset.customer, button.dataset.conversation);
+        return;
+      }
+      const orderNew = event.target.closest('[data-order-new]');
+      if (orderNew) {
+        openOrderForm({
+          customerId: orderNew.dataset.orderNew,
+          conversationId: orderNew.dataset.conversation ?? '',
+        });
+        return;
+      }
+      const receipt = event.target.closest('[data-receipt]');
+      if (receipt) {
+        openReceipt(receipt.dataset.receipt);
+        return;
+      }
+      const scheduledNew = event.target.closest('[data-scheduled-new]');
+      if (scheduledNew) {
+        openScheduledForm({
+          customerId: scheduledNew.dataset.scheduledNew,
+          conversationId: scheduledNew.dataset.conversation ?? '',
+        });
+        return;
+      }
+      const scheduledCancel = event.target.closest('[data-scheduled-cancel]');
+      if (scheduledCancel) {
+        scheduledAction(scheduledCancel.dataset.scheduledCancel, 'cancel', { reason: 'cancelado en el panel' });
+        return;
+      }
+      const metricsChip = event.target.closest('[data-metrics]');
+      if (metricsChip) {
+        loadMetrics(metricsChip.dataset.metrics);
         return;
       }
       const customer = event.target.closest('[data-customer]');
@@ -2216,6 +2996,12 @@
     $('#compra-nueva-wa').addEventListener('click', () => openPurchaseForm(null));
     $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
 
+    // Interruptores del plan de postventa (Ajustes): cada día se activa o apaga.
+    document.addEventListener('change', (event) => {
+      const toggle = event.target.closest('[data-plan-toggle]');
+      if (toggle) toggleFollowupDay(toggle.dataset.planToggle, toggle.checked);
+    });
+
     // ------------------------------------------------------- menú lateral
     $('#menu').addEventListener('click', () => (state.drawer ? closeDrawer() : openDrawer()));
     $('#drawer-close').addEventListener('click', () => closeDrawer());
@@ -2328,6 +3114,7 @@
     if (!navigator.onLine && cached) {
       showApp();
       await load({ keepTab: true });
+      await applyDeepLink(query);
       toast('Sin conexión: datos guardados en el teléfono');
       return;
     }
@@ -2344,6 +3131,7 @@
         history.replaceState(null, '', `${location.pathname}${wanted ? `?v=${wanted}` : ''}`);
         showApp();
         await load();
+        await applyDeepLink(query);
         return;
       } catch {
         /* Clave caducada o CRM apagado: se cae al acceso normal, que explica el motivo. */
@@ -2353,10 +3141,12 @@
     if (await checkSession()) {
       showApp();
       await load();
+      await applyDeepLink(query);
     } else if (cached) {
       // El servidor no contesta (o la sesión caducó): si hay copia, se enseña.
       showApp();
       await load({ keepTab: true });
+      await applyDeepLink(query);
     } else {
       showLogin();
     }

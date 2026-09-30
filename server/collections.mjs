@@ -72,6 +72,34 @@ export const COLLECTIONS = Object.freeze({
     indexed: { name: 'text', status: 'text', updated_at: 'text' },
     unique: ['name'],
   },
+  /*
+   * MENSAJES PROGRAMADOS — la cola persistente que sobrevive a un reinicio.
+   *
+   * `idempotency_key` es ÚNICO: aunque el proceso se reinicie a mitad de un envío
+   * o el scheduler vuelva a ver el mismo trabajo, el mensaje no puede salir dos
+   * veces (ni existir dos veces en la cola).
+   */
+  scheduled_messages: {
+    indexed: {
+      customer_id: 'text',
+      conversation_id: 'text',
+      order_id: 'text',
+      status: 'text',
+      scheduled_at: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /* AUDITORÍA COMERCIAL: quién hizo qué, sobre qué y cuándo. Nunca se borra. */
+  audit: {
+    indexed: { entity: 'text', entity_id: 'text', action: 'text', created_at: 'text' },
+  },
+  /* AJUSTES del negocio (plan de seguimiento, etc.). Un documento por clave. */
+  settings: {
+    indexed: { key: 'text', updated_at: 'text' },
+    unique: ['key'],
+  },
 });
 
 /** Nombres reales de colección (valida contra la definición). */

@@ -166,3 +166,54 @@ El panel está pensado para ir por la calle. Si no hay conexión:
   negocio: clave, cookie, gestión de un cliente, plantillas y CSV.
 - **Iconos**: se generan con `npm run images:admin` (Pillow), sin archivos
   externos.
+
+---
+
+## Centro de ventas (S4 · S5 · S6)
+
+El CRM se usa desde el móvil, muchas veces con una conversación abierta. Por eso el
+trabajo comercial vive **dentro del chat**: una sola tecla (⋯) en el encabezado de la
+conversación abre las cuatro acciones, en vez de llenar la barra de botones.
+
+| Acción | Qué hace |
+| --- | --- |
+| **Crear pedido** | Bottom sheet con los frascos del catálogo, cantidad, descuento, entrega y notas. El total se calcula en el momento y **el precio sale del servidor** |
+| **Programar seguimiento** | Tarea para una persona (Hoy / Mañana / 3 días / 7 días / fecha). **No envía nada** |
+| **Programar mensaje** | Mensaje concreto que el sistema intentará enviar. Es otra cosa distinta de un seguimiento y se dice en pantalla |
+| **Ver cliente** | Ficha 360 |
+
+### Comprobante de compra
+
+Al guardar un pedido se abre su **comprobante**: número (`PE-XXXXXX`), fecha, cliente,
+teléfono **enmascarado** (`+1809••• ••01`), líneas, subtotal, descuento, total y estado.
+Dos vistas: la del panel y un documento HTML ligero (`/api/admin/orders/:id/receipt`)
+que se abre, se imprime o se guarda como PDF desde el navegador. **Nunca se llama
+«factura»**: no hay integración fiscal.
+
+### HOY = «¿qué tengo que hacer ahora para vender?»
+
+Los contadores y las secciones son trabajo pendiente con su acción directa (responder,
+abrir el chat, hecho, +3 días, cancelar, ver comprobante). El orden es el del día:
+seguimientos vencidos, de hoy, «necesitan una persona», «esperando respuesta»,
+recordatorios y el aviso de los **mensajes programados que no salieron**.
+
+### Ajustes
+
+- **Plan de postventa**: interruptores por día (1, 3, 7, 14, 21, 30). Cambiarlo afecta a
+  las tareas que se creen a partir de ese momento; las ya creadas no se borran.
+- **Métricas** por período (Hoy / 7 días / 30 días): leads, conversaciones, pedidos
+  creados / confirmados / entregados, ventas en RD$, recompras y pendientes de
+  seguimiento. Sin atribución inventada.
+- **Auditoría reciente**: quién creó, cambió, entregó o canceló qué.
+
+### Reglas que no se rompen
+
+1. **Nada se envía solo** salvo un mensaje que el negocio programó expresamente, y solo
+   si al llegar la hora sigue siendo legal.
+2. Si un mensaje programado queda fuera de la ventana de 24 h, con opt-out o con una
+   plantilla sin aprobar: **no se fuerza**. Queda `BLOQUEADO` y aparece una tarea para
+   una persona.
+3. Un reinicio del servidor **no pierde ni duplica** un mensaje programado
+   (`idempotency_key` única + recuperación de trabajos interrumpidos).
+4. El precio sale de UNA fuente (`src/config/product.config.js` → `src/lib/catalog.js`).
+5. Los pedidos antiguos (una sola línea, sin detalle) siguen leyéndose igual.

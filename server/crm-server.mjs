@@ -80,8 +80,20 @@ import { fileURLToPath } from 'node:url';
 
 import { buildUserData, createMetaCapi } from './meta-capi.mjs';
 import { createCollections } from './collections.mjs';
-import { createCustomerService, AUTOMATION_STATES } from './customers.mjs';
+import { createCustomerService, AUTOMATION_STATES, COMMERCIAL_STATES, MANUAL_COMMERCIAL_STATES } from './customers.mjs';
 import { createFollowupEngine, resolveDailyCapsules, resolvePlan } from './followups.mjs';
+import { createAuditLog } from './audit.mjs';
+import { createScheduler } from './scheduler.mjs';
+import { createSettingsService } from './settings.mjs';
+import {
+  ORDER_STATUS_LABELS,
+  buildOrder,
+  buildReceipt,
+  isOrderStatus,
+  orderOf,
+  receiptHtml,
+} from './orders.mjs';
+import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
 import {
   createWhatsAppClient,
   parseWebhook,
@@ -150,12 +162,11 @@ const DAILY_CAPSULES = resolveDailyCapsules(productConfig.usage, (process.env.PH
 /** Plan de seguimiento (días configurables sin tocar código). */
 const FOLLOWUP_PLAN = resolvePlan(process.env.PHYTO_FOLLOWUP_PLAN);
 
-/** Busca una variante del catálogo oficial por id (única fuente de precios). */
-function findVariant(id) {
-  const key = String(id ?? '').trim();
-  if (!key) return null;
-  return productConfig.variants.find((variant) => variant.id === key) ?? null;
-}
+/**
+ * Catálogo comercial publicado al panel. Sale de `src/lib/catalog.js` (fuente
+ * única derivada de `product.config.js`): ninguna pantalla repite un precio.
+ */
+const CATALOG = catalogItems();
 
 /**
  * Carpeta de la app del panel. Se resuelve al arrancar (no al importar) para
@@ -181,7 +192,10 @@ const STATUS_LABELS = {
   contactado: 'Contactado',
   interesado: 'Interesado',
   confirmado: 'Confirmado',
+  en_preparacion: 'En preparación',
+  enviado: 'Enviado',
   entregado: 'Entregado',
+  cancelado: 'Cancelado',
   perdido: 'Perdido',
 };
 
@@ -311,80 +325,144 @@ function toRow(payload) {
 }
 
 /**
- * Fila de una COMPRA registrada a mano desde el panel.
+ * Fila de un PEDIDO registrado desde el panel (o desde una conversación).
  *
- * El precio sale del catálogo oficial (`product.config.js`): el panel elige el
- * frasco y la cantidad, no inventa importes. Si el negocio quiere un precio
- * distinto para ese pedido, puede escribirlo y se respeta.
+ * Delega en `buildOrder` (`server/orders.mjs`) para que exista UNA sola forma de
+ * calcular un pedido: misma aritmética para la web, el panel y el chat. `items[]`
+ * permite varias líneas; si no viene, se usa el frasco + cantidad de siempre
+ * (compatibilidad con el formulario antiguo).
  *
  * @param {any} input
  */
 function purchaseRow(input) {
-  const variant = findVariant(input.variantId);
-  if (!variant) {
-    const error = /** @type {any} */ (new Error('invalid_variant'));
-    error.status = 422;
-    throw error;
+  const lines =
+    Array.isArray(input.items) && input.items.length
+      ? input.items
+      : [{ variantId: input.variantId, quantity: input.quantity, unitPrice: input.unitPrice }];
+  try {
+    return buildOrder({ ...input, items: lines, channel: input.channel ?? 'manual' });
+  } catch (error) {
+    const wrapped = /** @type {any} */ (new Error(error?.code ?? 'invalid_order'));
+    wrapped.status = 422;
+    throw wrapped;
   }
-  const requestedQuantity = Number(input.quantity);
-  const quantity = Number.isFinite(requestedQuantity) && requestedQuantity > 0 ? Math.trunc(requestedQuantity) : 1;
-  const requestedPrice = Number(input.unitPrice);
-  const unitPrice =
-    Number.isFinite(requestedPrice) && requestedPrice >= 0 ? Math.trunc(requestedPrice) : variant.price;
-  const requestedTotal = Number(input.total);
-  const total = Number.isFinite(requestedTotal) && requestedTotal >= 0 ? Math.trunc(requestedTotal) : unitPrice * quantity;
-  const id = text(input.id, 80) ?? randomBytes(16).toString('hex');
-  const createdAt = text(input.date, 40) ?? new Date().toISOString();
-  const variantName = text(input.variantName, 60) ?? `${variant.capsules} cápsulas`;
-  const payload = {
-    type: 'order_intent',
-    id,
-    createdAt,
-    source: 'manual',
-    channel: 'manual',
-    recordedBy: text(input.recordedBy, 60) ?? 'panel',
-    name: text(input.name, 120),
-    phone: text(input.phone, 40),
-    location: text(input.location, 120),
-    variantId: variant.id,
-    variantName,
-    capsules: variant.capsules,
-    quantity,
-    unitPrice,
-    total,
-    currency: text(input.currency, 8) ?? 'DOP',
-    customerId: text(input.customerId, 80),
-    notes: longText(input.notes, 2000),
-    meta: { source: 'manual', recordedBy: text(input.recordedBy, 60) ?? 'panel' },
-  };
-  return {
-    row: {
-      id,
-      type: 'order_intent',
-      receivedAt: createdAt,
-      name: payload.name,
-      phone: payload.phone,
-      location: payload.location,
-      variantId: variant.id,
-      variantName,
-      capsules: variant.capsules,
-      quantity,
-      unitPrice,
-      total,
-      currency: payload.currency,
-      source: 'manual',
-      sessionId: null,
-      customerId: payload.customerId,
-      payload: JSON.stringify(payload),
-    },
-    payload,
-  };
 }
 
 function csvCell(value) {
   if (value === null || value === undefined) return '';
   const raw = String(value);
   return /[",;\n\r]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
+}
+
+/**
+ * Crea un PEDIDO. Lo comparten `POST /api/admin/orders` (panel y conversación) y
+ * `POST /api/admin/purchases` (compatibilidad): UNA sola forma de crear un pedido.
+ *
+ * Resuelve el cliente (por id o por teléfono), enlaza la conversación de la que
+ * nace si procede, calcula el total con el catálogo y deja la traza de auditoría.
+ * Si el pedido nace ya «entregado», dispara los efectos de una venta (Meta,
+ * totales y plan de seguimiento), igual que al cambiar el estado a mano.
+ *
+ * @param {any} ctx
+ * @param {any} body
+ */
+async function createOrder(ctx, body = {}) {
+  /** @type {any} */
+  let customer = null;
+  const customerId = text(body.customerId, 80);
+  if (customerId) customer = await ctx.customers.get(customerId);
+  if (!customer) {
+    const found = await ctx.customers.findOrCreateByPhone({
+      phone: body.phone,
+      name: body.name,
+      location: body.location,
+      source: body.channel === 'whatsapp' ? 'whatsapp' : 'manual',
+    });
+    if (!found.ok) {
+      return {
+        ok: false,
+        status: 422,
+        error: 'invalid_phone',
+        message: 'Escribe un teléfono válido (por ejemplo 809 555 1234).',
+      };
+    }
+    customer = found.customer;
+  }
+
+  // La conversación solo se enlaza si es DE ESE cliente (nunca se cruza a otro).
+  let conversationId = text(body.conversationId, 80);
+  if (conversationId) {
+    const conversation = await ctx.db.get('conversations', conversationId);
+    conversationId = conversation && conversation.customer_id === customer.id ? conversation.id : null;
+  }
+
+  /** @type {{row: any, order: any}} */
+  let built;
+  try {
+    built = purchaseRow({
+      ...body,
+      customerId: customer.id,
+      conversationId,
+      name: customer.name ?? body.name,
+      phone: customer.phone_e164 ?? customer.phone,
+      location: customer.location ?? body.location,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 422,
+      error: /** @type {any} */ (error).message,
+      message: 'Elige un frasco del catálogo.',
+    };
+  }
+
+  const requested = text(body.status, 20);
+  const status = requested && isOrderStatus(requested) ? requested : 'nuevo';
+  // Si el pedido nace ya ENTREGADO, queda registrada también su fecha de entrega.
+  if (status === ctx.purchaseStatus) {
+    built.order.delivered_at = new Date().toISOString();
+    built.row.orderJson = JSON.stringify(built.order);
+  }
+  const saved = await ctx.store.save(built.row);
+  const item = await ctx.store.update(built.row.id, {
+    status,
+    notes: built.order.notes,
+    customerId: customer.id,
+    conversationId,
+  });
+  const finalItem = item ?? built.row;
+
+  await ctx.audit?.record({
+    entity: 'order',
+    entityId: built.row.id,
+    action: 'order.created',
+    summary: `Pedido ${built.order.order_number} · ${built.order.units} frasco(s) · ${built.order.total} ${built.order.currency}`,
+    data: {
+      customer_id: customer.id,
+      conversation_id: conversationId,
+      total: built.order.total,
+      status,
+      origin: conversationId ? 'conversation' : 'panel',
+    },
+    idempotencyKey: `order.created:${built.row.id}`,
+  });
+
+  let delivered = null;
+  if (status === ctx.purchaseStatus) {
+    delivered = await afterPurchaseDelivered(ctx, finalItem);
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: built.row.id,
+      action: 'order.status_changed',
+      summary: `Pedido ${built.order.order_number} → entregado`,
+      idempotencyKey: `order.status:${built.row.id}:entregado`,
+    });
+  }
+
+  console.log(
+    `[crm] pedido ${built.order.order_number} creado · ${customer.name ?? customer.phone_e164} · estado ${status}`,
+  );
+  return { ok: true, duplicate: saved.duplicate === true, item: finalItem, order: built.order, customer, delivered, status };
 }
 
 function typeLabel(type) {
@@ -654,6 +732,7 @@ export async function afterPurchaseDelivered(ctx, item) {
     deliveredAt: item.received_at,
     capsules: item.capsules,
     quantity: item.quantity,
+    conversationId: item.conversation_id ?? null,
   });
   const next = await ctx.followups.nextForCustomer(customerId);
   result.followups = {
@@ -1120,7 +1199,21 @@ async function handle(req, res, ctx) {
           overdue: buckets.overdue,
           upcoming: buckets.upcoming,
           completed: buckets.completed.slice(-20),
+          // Plan base + interruptores: los Ajustes los usan tal cual.
+          plan: ctx.followups.plan,
+          enabled: (await ctx.settings.followup()).enabled,
         },
+        // --------------------------------------- ventas: programados y ajustes
+        scheduled: await ctx.scheduler.summary(),
+        settings: { followup: (await ctx.settings.followup()).enabled },
+        commercial: {
+          states: COMMERCIAL_STATES,
+          manual: MANUAL_COMMERCIAL_STATES,
+        },
+        // Catálogo y estado comercial, sin repetir precios ni estados en el panel.
+        catalog: CATALOG,
+        orderStatuses: Object.entries(ORDER_STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        audit: await ctx.audit.summary(),
         // Pantalla HOY: lo que una persona tiene que mirar al abrir el panel.
         hoy: {
           reference: buckets.reference,
@@ -1144,15 +1237,6 @@ async function handle(req, res, ctx) {
             failed_at: row.failed_at,
           })),
         },
-        // Catálogo oficial: el panel no repite precios, los pide aquí.
-        catalog: productConfig.variants.map((variant) => ({
-          id: variant.id,
-          capsules: variant.capsules,
-          price: variant.price,
-          currency: 'DOP',
-          completeBottle: variant.completeBottle === true,
-          label: `${variant.capsules} cápsulas`,
-        })),
         // Estado de WhatsApp SIN secretos (solo booleanos y datos públicos).
         whatsapp: {
           configured: Boolean(ctx.whatsapp?.enabled),
@@ -1169,8 +1253,13 @@ async function handle(req, res, ctx) {
     }
 
     // Números del negocio (clientes, seguimientos, mensajes, ventas).
+    // `period` = hoy | 7d | 30d (por defecto 30d): todo lo que se cuenta respeta
+    // el período, sin doble conteo (un pedido entra UNA vez por su fecha).
     if (route === '/api/admin/metrics' && req.method === 'GET') {
-      json(res, 200, { ok: true, metrics: await ctx.customers.metrics() });
+      const period = ['hoy', '7d', '30d'].includes(url.searchParams.get('period') ?? '')
+        ? String(url.searchParams.get('period'))
+        : '30d';
+      json(res, 200, { ok: true, metrics: await ctx.customers.metrics({ period }) });
       return;
     }
 
@@ -1238,10 +1327,39 @@ async function handle(req, res, ctx) {
         patch.lastContactAt = new Date().toISOString();
         if (patch.status === undefined) patch.status = 'contactado';
       }
+      /*
+       * Fechas de transición del pedido: se guardan DENTRO del detalle del pedido
+       * (no se inventan fechas a posteriori) para poder contar «confirmados del
+       * período», «entregados del período» y «cancelados» sin doble conteo.
+       */
+      const beforeRows = await store.listAdmin({ limit: 1000 });
+      const before = beforeRows.find((row) => row.id === id);
+      if (patch.status && before?.type === 'order_intent' && before.status !== patch.status) {
+        const order = orderOf(before);
+        if (order) {
+          const stamp = new Date().toISOString();
+          if (patch.status === 'confirmado') order.confirmed_at = stamp;
+          if (patch.status === ctx.purchaseStatus) order.delivered_at = stamp;
+          if (patch.status === 'cancelado') order.cancelled_at = stamp;
+          order.status = patch.status;
+          order.status_history = [...(order.status_history ?? []), { status: patch.status, at: stamp }];
+          patch.orderJson = JSON.stringify(order);
+        }
+      }
       const updated = await store.update(id, patch);
       if (!updated) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
+      }
+      if (patch.status && before && before.status !== patch.status) {
+        await ctx.audit?.record({
+          entity: before.type === 'order_intent' ? 'order' : 'item',
+          entityId: id,
+          action: patch.status === 'cancelado' ? 'order.cancelled' : 'order.status_changed',
+          summary: `Estado: ${before.status ?? 'nuevo'} → ${patch.status}`,
+          data: { from: before.status ?? null, to: patch.status },
+          idempotencyKey: `status:${id}:${before.status ?? 'nuevo'}:${patch.status}`,
+        });
       }
       console.log(`[crm] actualizado ${id}${patch.status ? ` → ${patch.status}` : ''}`);
       /*
@@ -1313,6 +1431,25 @@ async function handle(req, res, ctx) {
         if (body.name !== undefined) patch.name = text(body.name, 120);
         if (body.location !== undefined) patch.location = text(body.location, 120);
         if (body.notes !== undefined) patch.notes = longText(body.notes, 2000);
+        // Estado comercial A MANO (INTERESADO / PERDIDO). Con `null` vuelve al derivado.
+        if (body.commercialState !== undefined) {
+          const result = await ctx.customers.setCommercialState(customerId, body.commercialState);
+          if (!result.ok) {
+            json(res, 422, { ok: false, error: result.error, manual: result.manual ?? null });
+            return;
+          }
+          await ctx.audit?.record({
+            entity: 'customer',
+            entityId: customerId,
+            action: 'customer.status_changed',
+            summary: `Estado comercial → ${result.commercial_state}`,
+            data: { manual: body.commercialState ?? null },
+          });
+          if (Object.keys(patch).length === 0) {
+            json(res, 200, { ok: true, customer: result.customer });
+            return;
+          }
+        }
         const updated = await ctx.customers.update(customerId, patch);
         json(res, 200, { ok: true, customer: updated });
         return;
@@ -1355,7 +1492,7 @@ async function handle(req, res, ctx) {
       return;
     }
 
-    // ------------------------------------------------- compras registradas a mano
+    // --------------------------------- compras/pedidos registrados desde el panel
     // El teléfono identifica al cliente: si ya existe, se suma a su historial.
     if (route === '/api/admin/purchases' && req.method === 'POST') {
       /** @type {any} */
@@ -1365,47 +1502,160 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
-      const found = await ctx.customers.findOrCreateByPhone({
-        phone: body.phone,
-        name: body.name,
-        location: body.location,
-        source: 'manual',
-      });
-      if (!found.ok) {
-        json(res, 422, {
+      const result = await createOrder(ctx, body);
+      if (!result.ok) {
+        json(res, result.status ?? 422, {
           ok: false,
-          error: 'invalid_phone',
-          message: 'Escribe un teléfono válido (por ejemplo 809 555 1234).',
+          error: result.error,
+          message: result.message ?? 'Elige un frasco del catálogo.',
         });
         return;
       }
-      const customer = found.customer;
-      /** @type {{row: any, payload: any}} */
-      let built;
+      json(res, 201, {
+        ok: true,
+        duplicate: result.duplicate,
+        item: result.item,
+        order: result.order,
+        customer: result.customer,
+        delivered: result.delivered,
+      });
+      return;
+    }
+
+    // ------------------------------------------------ pedido desde la conversación
+    // Mismo camino que la compra a mano, pero puede nacer de un chat y enlazarlo.
+    if (route === '/api/admin/orders' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
       try {
-        built = purchaseRow({ ...body, customerId: customer.id });
-      } catch (error) {
-        json(res, 422, {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await createOrder(ctx, body);
+      if (!result.ok) {
+        json(res, result.status ?? 422, {
           ok: false,
-          error: /** @type {any} */ (error).message,
-          message: 'Elige un frasco del catálogo.',
+          error: result.error,
+          message: result.message ?? 'No se pudo crear el pedido.',
         });
         return;
       }
-      const requested = text(body.status, 20);
-      const status = requested && STATUSES.includes(requested) ? requested : 'nuevo';
-      const saved = await ctx.store.save(built.row);
-      const item = await ctx.store.update(built.row.id, {
-        status,
-        notes: built.payload.notes,
-        customerId: customer.id,
+      const receipt = buildReceipt({
+        order: orderOf(result.item) ?? result.order,
+        customer: result.customer,
       });
-      let delivered = null;
-      if (status === ctx.purchaseStatus) delivered = await afterPurchaseDelivered(ctx, item ?? built.row);
-      console.log(
-        `[crm] compra registrada a mano ${built.row.id} · ${customer.name ?? customer.phone_e164} · estado ${status}`,
-      );
-      json(res, 201, { ok: true, duplicate: saved.duplicate, item, customer, delivered });
+      json(res, 201, {
+        ok: true,
+        duplicate: result.duplicate,
+        item: result.item,
+        order: orderOf(result.item) ?? result.order,
+        receipt,
+        customer: result.customer,
+        delivered: result.delivered,
+      });
+      return;
+    }
+
+    // Detalle de un pedido + comprobante (para la vista dentro del CRM).
+    if (route.startsWith('/api/admin/orders/') && req.method === 'GET') {
+      const rest = decodeURIComponent(route.slice('/api/admin/orders/'.length));
+      const [orderId, action = ''] = rest.split('/');
+      const items = await store.listAdmin({ limit: 1000 });
+      const item = items.find((entry) => entry.id === orderId) ?? null;
+      if (!item || item.type !== 'order_intent') {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
+      const receipt = buildReceipt({ order, customer });
+
+      // Documento imprimible/compartible (HTML ligero, sin PDF pesado).
+      if (action === 'receipt') {
+        const html = receiptHtml(receipt, { timeZone: TIME_ZONE });
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'content-length': Buffer.byteLength(html),
+          'cache-control': 'no-store',
+          'x-robots-tag': 'noindex, nofollow',
+        });
+        res.end(html);
+        return;
+      }
+
+      const followupRows = await ctx.db.list('followups', { limit: 2000 });
+      json(res, 200, {
+        ok: true,
+        item,
+        order,
+        receipt,
+        customer,
+        followups: followupRows.filter((row) => row.order_id === orderId || row.purchase_id === orderId),
+        scheduled: (await ctx.scheduler.list()).filter((row) => row.order_id === orderId),
+      });
+      return;
+    }
+
+    // Modificar un pedido (frascos, descuento, notas, entrega). Recalcula el total.
+    if (route.startsWith('/api/admin/orders/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length));
+      const items = await store.listAdmin({ limit: 1000 });
+      const item = items.find((entry) => entry.id === orderId) ?? null;
+      if (!item || item.type !== 'order_intent') {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const current = orderOf(item);
+      /** @type {any} */
+      let totals;
+      try {
+        totals = computeOrderTotals(Array.isArray(body.items) ? body.items : current.items, {
+          discount: body.discount !== undefined ? body.discount : current.discount,
+        });
+      } catch (error) {
+        json(res, 422, { ok: false, error: /** @type {any} */ (error).code ?? 'invalid_order' });
+        return;
+      }
+      const first = totals.items[0];
+      const nextOrder = {
+        ...current,
+        items: totals.items,
+        item_count: totals.itemCount,
+        units: totals.units,
+        total_capsules: totals.totalCapsules,
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        total: totals.total,
+        notes: body.notes !== undefined ? longText(body.notes, 2000) : current.notes,
+        delivery: body.delivery !== undefined ? { ...current.delivery, ...body.delivery } : current.delivery,
+      };
+      const updated = await store.update(orderId, {
+        notes: nextOrder.notes,
+        orderJson: JSON.stringify(nextOrder),
+        // La primera línea se refleja en las columnas de siempre.
+        variantId: first.variantId,
+        variantName: first.variantName,
+        capsules: first.capsules,
+        quantity: first.quantity,
+        unitPrice: first.unitPrice,
+        total: nextOrder.total,
+      });
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: orderId,
+        action: 'order.updated',
+        summary: `Pedido ${nextOrder.order_number} modificado · total ${nextOrder.total}`,
+        data: { total: nextOrder.total, items: nextOrder.item_count },
+      });
+      json(res, 200, { ok: true, item: updated, order: nextOrder });
       return;
     }
 
@@ -1541,6 +1791,13 @@ async function handle(req, res, ctx) {
             sentBy: 'panel',
           });
           console.error(`[crm] WhatsApp rechazó un mensaje a ${customer.id}: ${sendResult.error?.message ?? 'error'}`);
+          await ctx.audit?.record({
+            entity: 'message',
+            entityId: recorded.message?.id ?? null,
+            action: 'message.failed',
+            summary: `Mensaje a ${customer.id} rechazado: ${sendResult.error?.message ?? 'error'}`,
+            data: { customer_id: customer.id, template: template?.name ?? null },
+          });
           json(res, 502, {
             ok: false,
             error: 'send_failed',
@@ -1586,6 +1843,14 @@ async function handle(req, res, ctx) {
         }
 
         console.log(`[crm] mensaje enviado a ${customer.id}${template ? ` (plantilla ${template.name})` : ''}`);
+        await ctx.audit?.record({
+          entity: 'message',
+          entityId: recorded.message?.id ?? null,
+          action: 'message.sent',
+          summary: `Mensaje a ${customer.name ?? customer.phone_e164}${template ? ` (plantilla ${template.name})` : ''}`,
+          data: { customer_id: customer.id, followup_id: followupId ?? null },
+          idempotencyKey: recorded.message?.id ? `message.sent:${recorded.message.id}` : null,
+        });
         json(res, 200, {
           ok: true,
           message: recorded.message,
@@ -1612,7 +1877,10 @@ async function handle(req, res, ctx) {
         completed: withCustomer(buckets.completed.slice(-30), customers),
         cancelled: withCustomer(buckets.cancelled.slice(-30), customers),
         summary: await ctx.followups.summary(),
-        plan: ctx.followups.plan,
+        // Plan EFECTIVO (el de Ajustes, ya filtrado) + el plan base para editar.
+        plan: await ctx.followups.planNow(),
+        basePlan: ctx.followups.plan,
+        enabled: (await ctx.settings.followup()).enabled,
         timeZone: ctx.followups.timeZone,
       });
       return;
@@ -1632,15 +1900,36 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: 'unknown_customer' });
         return;
       }
+      // La tarea puede colgar de la conversación y del pedido de los que nace.
+      let conversationId = text(body.conversationId, 80) ?? null;
+      if (conversationId) {
+        const conversation = await ctx.db.get('conversations', conversationId);
+        conversationId = conversation && conversation.customer_id === customer.id ? conversation.id : null;
+      }
       const followup = await ctx.followups.createManual({
         customerId: customer.id,
         purchaseId: text(body.purchaseId, 80) ?? null,
+        orderId: text(body.orderId, 80) ?? null,
+        conversationId,
         type: text(body.type, 30) ?? 'manual',
         reason: longText(body.reason, 200) ?? 'Seguimiento manual',
         scheduledAt: day(body.scheduledAt) ?? undefined,
         template: text(body.template, 60) ?? null,
+        idempotencyKey: text(body.idempotencyKey, 120) ?? null,
       });
-      json(res, 201, { ok: true, followup });
+      await ctx.audit?.record({
+        entity: 'followup',
+        entityId: followup.id,
+        action: 'followup.created',
+        summary: `Seguimiento para ${followup.scheduled_at} · ${followup.reason}`,
+        data: {
+          customer_id: customer.id,
+          order_id: followup.order_id ?? null,
+          conversation_id: followup.conversation_id ?? null,
+        },
+        idempotencyKey: `followup.created:${followup.id}`,
+      });
+      json(res, 201, { ok: true, followup, duplicate: followup.duplicate === true });
       return;
     }
 
@@ -1675,6 +1964,24 @@ async function handle(req, res, ctx) {
       if (ctx.customers) {
         const next = await ctx.followups.nextForCustomer(current.customer_id);
         await ctx.customers.update(current.customer_id, { next_followup_at: next?.scheduled_at ?? null });
+      }
+      // Traza comercial: cada decisión sobre una tarea queda escrita.
+      const auditAction =
+        action === 'complete'
+          ? 'followup.completed'
+          : action === 'cancel'
+            ? 'followup.cancelled'
+            : action === 'postpone' || action === 'reschedule'
+              ? 'followup.postponed'
+              : null;
+      if (auditAction) {
+        await ctx.audit?.record({
+          entity: 'followup',
+          entityId: followupId,
+          action: auditAction,
+          summary: `Seguimiento ${action} (${current.reason ?? current.type ?? ''})`,
+          data: { customer_id: current.customer_id, order_id: current.order_id ?? null, next: followup?.scheduled_at ?? null },
+        });
       }
       json(res, 200, { ok: true, followup });
       return;
@@ -1762,6 +2069,141 @@ async function handle(req, res, ctx) {
       const id = decodeURIComponent(route.slice('/api/admin/messages/'.length));
       await store.messages().remove(id);
       json(res, 200, { ok: true, messages: await store.messages().list() });
+      return;
+    }
+
+    // -------------------------------------------------- catálogo (fuente única)
+    if (route === '/api/admin/catalog' && req.method === 'GET') {
+      json(res, 200, { ok: true, currency: 'DOP', catalog: CATALOG });
+      return;
+    }
+
+    // ------------------------------------------------------- ajustes del negocio
+    if (route === '/api/admin/settings' && req.method === 'GET') {
+      json(res, 200, { ok: true, ...(await ctx.settings.snapshot()) });
+      return;
+    }
+
+    // Interruptores del plan de postventa (día 1, 3, 7, 14, 21, 30).
+    if (route === '/api/admin/settings/followup' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const saved = await ctx.settings.saveFollowup(body);
+      const plan = await ctx.settings.followupPlan();
+      console.log(`[crm] ajustes de seguimiento: ${plan.length} día(s) activos de ${ctx.followups.plan.length}`);
+      json(res, 200, { ok: true, followup: saved, plan });
+      return;
+    }
+
+    // -------------------------------------------- mensajes programados (S5)
+    if (route === '/api/admin/scheduled' && req.method === 'GET') {
+      const rows = await ctx.scheduler.list();
+      const customers = await ctx.customers.list({});
+      const byId = new Map(customers.map((row) => [row.id, row]));
+      json(res, 200, {
+        ok: true,
+        summary: await ctx.scheduler.summary(),
+        scheduled: rows.map((row) => ({
+          ...row,
+          customer: byId.has(row.customer_id)
+            ? {
+                id: row.customer_id,
+                name: byId.get(row.customer_id).name,
+                phone_e164: byId.get(row.customer_id).phone_e164,
+              }
+            : null,
+        })),
+      });
+      return;
+    }
+
+    // Programar un mensaje (nunca se envía al crear: lo intenta el scheduler).
+    if (route === '/api/admin/scheduled' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const customerId = text(body.customerId, 80);
+      const customer = customerId ? await ctx.customers.get(customerId) : null;
+      if (!customer) {
+        json(res, 422, { ok: false, error: 'unknown_customer' });
+        return;
+      }
+      const result = await ctx.scheduler.schedule({
+        customerId: customer.id,
+        conversationId: text(body.conversationId, 80) ?? null,
+        orderId: text(body.orderId, 80) ?? null,
+        scheduledAt: body.scheduledAt,
+        type: body.type === 'template' ? 'template' : 'text',
+        text: body.text,
+        template: body.template,
+        createdBy: 'panel',
+        idempotencyKey: text(body.idempotencyKey, 120) ?? null,
+      });
+      if (!result.ok) {
+        json(res, 422, {
+          ok: false,
+          error: result.error,
+          message:
+            result.error === 'invalid_date'
+              ? 'Elige una fecha y hora válidas.'
+              : 'Escribe el mensaje (o elige una plantilla).',
+        });
+        return;
+      }
+      json(res, 201, { ok: true, duplicate: result.duplicate, message: result.message });
+      return;
+    }
+
+    // Cancelar o reprogramar un mensaje que todavía no ha salido.
+    if (route.startsWith('/api/admin/scheduled/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      const rest = decodeURIComponent(route.slice('/api/admin/scheduled/'.length));
+      const [scheduledId, actionInPath = ''] = rest.split('/');
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const action = actionInPath || text(body.action, 20) || 'reschedule';
+      const current = await ctx.db.get('scheduled_messages', scheduledId);
+      if (!current) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      /** @type {any} */
+      let updated = null;
+      if (action === 'cancel') updated = await ctx.scheduler.cancel(scheduledId, { reason: text(body.reason, 200) });
+      else if (action === 'reschedule') updated = await ctx.scheduler.reschedule(scheduledId, body.scheduledAt);
+      else {
+        json(res, 422, { ok: false, error: 'invalid_action', actions: ['cancel', 'reschedule'] });
+        return;
+      }
+      json(res, 200, { ok: true, message: updated });
+      return;
+    }
+
+    // ------------------------------------------------- auditoría comercial
+    if (route === '/api/admin/audit' && req.method === 'GET') {
+      const entityId = url.searchParams.get('entityId');
+      json(res, 200, {
+        ok: true,
+        summary: await ctx.audit.summary(),
+        entries: await ctx.audit.list({
+          limit: Math.min(Math.max(Number.parseInt(url.searchParams.get('limit') ?? '100', 10) || 100, 1), 500),
+          entity: url.searchParams.get('entity'),
+          entityId,
+        }),
+      });
       return;
     }
 
@@ -1938,17 +2380,64 @@ export async function startCrmServer(config = {}) {
     });
 
   /*
+   * Ajustes del negocio (hoy: qué días del plan de postventa están activos).
+   * El plan EFECTIVO sale de aquí, no solo de la variable de entorno: el negocio
+   * lo cambia desde Ajustes y el motor de seguimiento lo respeta al crear tareas.
+   */
+  const followupsBasePlan = config.followupPlan ?? FOLLOWUP_PLAN;
+  const settingsService = createSettingsService({ db, plan: followupsBasePlan, clock: config.clock });
+
+  /*
    * Seguimiento: crea y fecha tareas. NO envía nada por su cuenta; el envío
    * siempre lo pulsa una persona en el panel.
    */
   const followups = createFollowupEngine({
     db,
-    plan: config.followupPlan ?? FOLLOWUP_PLAN,
+    plan: followupsBasePlan,
+    planProvider: () => settingsService.followupPlan(),
     timeZone: TIME_ZONE,
     dailyCapsules: DAILY_CAPSULES,
     clock: config.clock,
   });
-  const customers = createCustomerService({ db, store, followups, clock: config.clock });
+
+  /*
+   * Traza comercial: quién creó/canceló/entregó qué y cuándo. Es la fuente de
+   * verdad para explicar cualquier número del panel.
+   */
+  const audit = createAuditLog({ db, clock: config.clock });
+
+  // El servicio de clientes puede necesitar los mensajes programados (ficha 360).
+  // Se crea ANTES que el scheduler, así que se resuelve con una referencia diferida.
+  /** @type {{ current: any }} */
+  const schedulerRef = { current: null };
+  /** @type {{ current: any }} */
+  const ctxRef = { current: null };
+  const customers = createCustomerService({
+    db,
+    store,
+    followups,
+    timeZone: TIME_ZONE,
+    clock: config.clock,
+    scheduled: { listForCustomer: (id) => (schedulerRef.current ? schedulerRef.current.listForCustomer(id) : Promise.resolve([])) },
+  });
+
+  /*
+   * Cola persistente de mensajes programados + scheduler. El trabajo vive en la
+   * base de datos: sobrevive a un reinicio y no puede enviarse dos veces.
+   */
+  const scheduler = createScheduler({
+    db,
+    customers,
+    whatsapp,
+    followups,
+    audit,
+    // La plantilla se resuelve contra el mismo criterio que el envío manual.
+    resolveTemplate: (name) => approvedTemplate(ctxRef.current, name),
+    clock: config.clock,
+    intervalMs: config.schedulerIntervalMs,
+    log: settings.quiet ? () => {} : (message) => console.log(message),
+  });
+  schedulerRef.current = scheduler;
 
   const ctx = {
     store,
@@ -1960,6 +2449,9 @@ export async function startCrmServer(config = {}) {
     purchaseStatus: config.purchaseStatus ?? META_PURCHASE_STATUS,
     followups,
     customers,
+    audit,
+    settings: settingsService,
+    scheduler,
     whatsapp,
     whatsappPhoneNumber: (config.whatsappPhoneNumber ?? WHATSAPP_PHONE_NUMBER).trim(),
     whatsappWebhookUrl: (config.whatsappWebhookUrl ?? WHATSAPP_WEBHOOK_URL).trim(),
@@ -1967,6 +2459,7 @@ export async function startCrmServer(config = {}) {
     appSecret: (config.metaAppSecret ?? META_APP_SECRET).trim(),
     timeZone: TIME_ZONE,
   };
+  ctxRef.current = ctx;
 
   const server = createServer((req, res) => {
     handle(req, res, ctx).catch((error) => {
@@ -2019,12 +2512,28 @@ export async function startCrmServer(config = {}) {
   // Y se asegura de que las ventas entregadas tengan su plan de seguimiento.
   ensureFollowupsForDelivered(ctx).catch(() => {});
 
+  /*
+   * El scheduler arranca por defecto (cada 30 s) porque es lo que hace que un
+   * mensaje programado SOBREVIVA a un reinicio: al arrancar recupera lo pendiente
+   * de la base de datos y lo intenta cuando le toca. Con `schedulerIntervalMs: 0`
+   * no arranca nada (los tests llaman a `tick()` a mano).
+   */
+  const schedulerInterval =
+    config.schedulerIntervalMs ?? (config.schedulerEnabled === false ? 0 : 30_000);
+  const stopScheduler = scheduler.start({ intervalMs: schedulerInterval });
+  if (schedulerInterval && !settings.quiet) {
+    console.log(
+      `[crm] mensajes programados: scheduler cada ${Math.round(schedulerInterval / 1000)}s · el trabajo vive en la base de datos (sobrevive reinicios)`,
+    );
+  }
+
   // Cierre idempotente: cerrar dos veces (un test, un reinicio, dos señales)
   // no puede lanzar "database is not open".
   let closed = false;
   const close = () => {
     if (closed) return Promise.resolve();
     closed = true;
+    stopScheduler();
     return new Promise((resolve, reject) => {
       server.close(async () => {
         try {
@@ -2049,8 +2558,12 @@ export async function startCrmServer(config = {}) {
     collections: db,
     followups,
     customers,
+    audit,
+    settings: settingsService,
+    scheduler,
     whatsapp,
     purchaseStatus: ctx.purchaseStatus,
+    ctx,
     close,
   };
 }

@@ -64,14 +64,41 @@ La app instalable vive en `/admin/` y usa estos endpoints. Todos piden **sesión
 | `POST /api/admin/login` | Cambia la clave por la cookie de sesión (10 intentos por IP cada 15 min) |
 | `POST /api/admin/logout` | Borra la cookie |
 | `GET /api/admin/session` | `{ ok }`: sirve para saber si hay sesión sin pedir nada más |
-| `GET /api/admin/data` | Todo lo que pinta el panel en **una** petición: registros (500), estados, cuentas (`stats`) y plantillas |
+| `GET /api/admin/data` | Todo lo que pinta el panel en **una** petición: registros (500), estados, cuentas (`stats`), plantillas, clientes con estado comercial, conversaciones, seguimientos, **mensajes programados**, ajustes, catálogo, auditoría y el bloque `hoy` |
 | `PATCH /api/admin/items/:id` | `{ status, notes, nextActionAt, contacted }`. Valida el estado contra la lista; `nextActionAt: ''` quita el recordatorio |
 | `POST /api/admin/messages` | Crea o actualiza una plantilla (`{ id?, name, body, position? }`) |
 | `DELETE /api/admin/messages/:id` | Borra una plantilla |
 
-Campos de gestión que se añaden a cada registro: `status` (nuevo, contactado,
-interesado, confirmado, entregado, perdido), `notes`, `next_action_at`
-(`YYYY-MM-DD`), `last_contact_at` y `updated_at`. El CSV los incluye todos.
+### Centro de ventas (S4 / S5 / S6)
+
+| Ruta | Qué hace |
+| --- | --- |
+| `GET /api/admin/catalog` | Catálogo oficial (frascos y precios). **Única fuente**: sale de `src/config/product.config.js` |
+| `POST /api/admin/orders` | Crea un pedido (`{ customerId o phone+name, conversationId?, items[], discount?, notes?, delivery?, status?, date? }`). El precio SIEMPRE sale del catálogo |
+| `GET /api/admin/orders/:id` | Detalle del pedido + comprobante + seguimientos y programados ligados |
+| `PATCH /api/admin/orders/:id` | Modifica frascos, descuento, notas y entrega; recalcula el total |
+| `GET /api/admin/orders/:id/receipt` | **Comprobante de compra** en HTML imprimible/descargable (teléfono enmascarado; nunca «factura fiscal») |
+| `GET`/`POST /api/admin/scheduled` | Cola de mensajes programados: listar (con resumen para HOY) y programar |
+| `PATCH /api/admin/scheduled/:id` | `{ action: 'cancel' \| 'reschedule' }` |
+| `GET`/`POST /api/admin/settings[/followup]` | Ajustes del negocio (hoy: qué días del plan de postventa están activos) |
+| `GET /api/admin/audit` | Traza comercial (`?entity=`, `?entityId=`, `?limit=`) |
+| `GET /api/admin/metrics?period=` | Números por período (`hoy` \| `7d` \| `30d`), sin doble conteo |
+
+Estados del pedido: `nuevo`, `confirmado`, `en_preparacion`, `enviado`, `entregado`,
+`cancelado`, `perdido` (más `contactado`/`interesado`, que son de la conversación).
+Estados comerciales del cliente (derivados, con `INTERESADO`/`PERDIDO` manuales):
+`NUEVO`, `EN_CONVERSACION`, `INTERESADO`, `PEDIDO_CREADO`, `CONFIRMADO`,
+`ENTREGADO`, `SEGUIMIENTO`, `RECOMPRA`, `PERDIDO`.
+
+Mensajes programados: `SCHEDULED → PROCESSING → SENT → DELIVERED → READ`, o
+`FAILED` / `CANCELLED` / `BLOCKED`. Si al llegar la hora ya no se puede enviar
+legalmente (ventana de 24 h, opt-out, plantilla sin aprobar) **no se fuerza**:
+queda `BLOCKED` y se crea una tarea de aviso para el operador.
+
+Campos de gestión que se añaden a cada registro: `status` (los del pedido),
+`notes`, `next_action_at` (`YYYY-MM-DD`), `last_contact_at`, `updated_at`,
+`conversation_id`, `order_number` y el detalle completo del pedido en
+`order_json`. El CSV los incluye todos.
 
 Guía de uso (la que lee el negocio): [`PANEL.md`](PANEL.md).
 

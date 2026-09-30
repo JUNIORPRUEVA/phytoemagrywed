@@ -161,7 +161,15 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
-                <button class="btn btn--ghost btn--sm" id="wa-view-customer" type="button">Ver cliente</button>
+                <button
+                  class="icon-btn"
+                  id="wa-actions"
+                  type="button"
+                  aria-label="Acciones del cliente"
+                  title="Acciones del cliente"
+                >
+                  ⋯
+                </button>
               </div>
               <div class="thread thread--wa chat-bg" id="thread"></div>
               <div class="wa__composer" id="wa-composer"></div>
@@ -231,6 +239,27 @@
         <!-- AJUSTES -->
         <section class="view" id="view-ajustes" hidden>
           <h2 class="view__title">Ajustes</h2>
+          <div class="card">
+            <p class="card__title">Seguimiento postventa</p>
+            <p class="card__text">
+              Elige qué días se crean tareas solas al entregar una compra. Las tareas ya creadas no se borran
+              (son un compromiso con un cliente).
+            </p>
+            <div class="toggles" id="followup-config"></div>
+          </div>
+          <div class="card">
+            <p class="card__title">Métricas de ventas</p>
+            <div class="chips" id="metrics-period">
+              <button class="chip" data-metrics="hoy" type="button">Hoy</button>
+              <button class="chip" data-metrics="7d" type="button">7 días</button>
+              <button class="chip" data-metrics="30d" aria-pressed="true" type="button">30 días</button>
+            </div>
+            <dl class="facts" id="metrics"></dl>
+          </div>
+          <div class="card">
+            <p class="card__title">Auditoría reciente</p>
+            <div id="audit"></div>
+          </div>
           <div class="card" id="install-card">
             <p class="card__title">Instalar en el móvil</p>
             <p class="card__text" id="install-text">

@@ -1343,3 +1343,200 @@ body[data-tab='whatsapp'] .content {
     transition: none;
   }
 }
+
+/* ==========================================================================
+   ACCIONES COMERCIALES (S4 / S5 / S6)
+   Pedido desde el chat, comprobante, programados, métricas y auditoría.
+   ========================================================================== */
+
+/* Menú de acciones del chat: lista táctil, sin iconos raros. */
+.menu-list {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: var(--phyto-primary-tint);
+}
+
+.menu-item > span:first-child {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.menu-item strong {
+  display: block;
+  font-size: 15px;
+}
+
+.menu-item small {
+  display: block;
+  color: var(--pe-ink-500);
+  font-size: 12.5px;
+}
+
+/* Líneas del pedido: frasco + cantidad, con la X para quitarla. */
+.order-line {
+  display: grid;
+  grid-template-columns: 1fr 88px auto;
+  align-items: end;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--pe-surface-alt);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+}
+
+.order-line .field {
+  margin: 0;
+}
+
+.order-line__qty .field__input {
+  text-align: center;
+}
+
+/* Tarjetas de pedido en la ficha del cliente. */
+.orders {
+  display: grid;
+  gap: 8px;
+}
+
+.order-card {
+  padding: 10px 12px;
+  background: var(--pe-surface-alt);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+}
+
+.order-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Comprobante: se ve como un papel dentro del CRM. */
+.receipt {
+  padding: 14px;
+  background: var(--pe-surface);
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  margin-bottom: 12px;
+}
+
+.receipt__brand {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--phyto-primary);
+}
+
+.receipt__doc {
+  margin: 2px 0 10px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pe-ink-500);
+}
+
+.receipt__lines {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  border-top: 1px solid var(--pe-border);
+  padding-top: 10px;
+}
+
+.receipt-line {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.receipt-line__qty {
+  color: var(--pe-ink-500);
+}
+
+.receipt-line__amount {
+  font-weight: 600;
+}
+
+.receipt__totals {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.receipt__totals > div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.receipt__grand {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 2px solid var(--phyto-primary);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--phyto-primary);
+}
+
+/* Interruptores del plan de postventa. */
+.toggles {
+  display: grid;
+  gap: 6px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  background: var(--pe-surface);
+}
+
+.toggle input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--phyto-primary);
+  flex: none;
+}
+
+.toggle strong {
+  display: block;
+  font-size: 14.5px;
+}
+
+.toggle small {
+  display: block;
+  color: var(--pe-ink-500);
+  font-size: 12.5px;
+}
+
+@media (max-width: 420px) {
+  .order-line {
+    grid-template-columns: 1fr 76px auto;
+  }
+}

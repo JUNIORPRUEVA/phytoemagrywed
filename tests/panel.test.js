@@ -191,7 +191,10 @@ describe('panel: gestionar clientes y pedidos', () => {
       'contactado',
       'interesado',
       'confirmado',
+      'en_preparacion',
+      'enviado',
       'entregado',
+      'cancelado',
       'perdido',
     ]);
     expect(data.stats).toMatchObject({ total: 2, nuevos: 2, pedidos: 1, valorAbierto: 10000 });

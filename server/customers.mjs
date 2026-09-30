@@ -13,6 +13,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { classifyIntent, detectHealthConcern, detectHumanRequest, detectOptOut, toE164, toWaId } from './whatsapp.mjs';
+import { addDays, dayIn } from './followups.mjs';
 
 /** Estados de automatización de una conversación. */
 export const AUTOMATION_STATES = Object.freeze(['AUTOMATIC', 'HUMAN_REQUIRED', 'HUMAN_ACTIVE', 'PAUSED', 'CLOSED']);
@@ -22,6 +23,79 @@ export const MESSAGE_STATUSES = Object.freeze(['pending', 'sent', 'delivered', '
 
 /** Canales por los que puede entrar una venta. */
 export const SALE_CHANNELS = Object.freeze(['landing', 'whatsapp', 'manual', 'otro']);
+
+/**
+ * ESTADOS COMERCIALES del cliente.
+ *
+ * No duplican lo que ya representaba el modelo: `confirmado`, `entregado` y
+ * `perdido` siguen existiendo en el PEDIDO; aquí se resume en qué punto está la
+ * RELACIÓN con la persona. Se DERIVA de los hechos (pedidos, seguimientos,
+ * mensajes) y solo dos estados son manuales (`INTERESADO` y `PERDIDO`) porque son
+ * juicios del vendedor, no datos:
+ *
+ *   1. `commercial_state_manual` (si existe) manda — decisión humana explícita.
+ *   2. ≥2 pedidos entregados → RECOMPRA
+ *   3. 1 pedido entregado → SEGUIMIENTO (si hay tarea pendiente) o ENTREGADO
+ *   4. pedido confirmado/en preparación/enviado → CONFIRMADO
+ *   5. pedido pendiente → PEDIDO_CREADO
+ *   6. hay un mensaje del cliente → EN_CONVERSACION
+ *   7. si no, NUEVO
+ *
+ * «INTERESADO» NUNCA se infiere solo porque el cliente escribió.
+ */
+export const COMMERCIAL_STATES = Object.freeze([
+  'NUEVO',
+  'EN_CONVERSACION',
+  'INTERESADO',
+  'PEDIDO_CREADO',
+  'CONFIRMADO',
+  'ENTREGADO',
+  'SEGUIMIENTO',
+  'RECOMPRA',
+  'PERDIDO',
+]);
+
+/** Estados que solo puede fijar una persona. */
+export const MANUAL_COMMERCIAL_STATES = Object.freeze(['INTERESADO', 'PERDIDO']);
+
+export const COMMERCIAL_STATE_LABELS = Object.freeze({
+  NUEVO: 'Nuevo',
+  EN_CONVERSACION: 'En conversación',
+  INTERESADO: 'Interesado',
+  PEDIDO_CREADO: 'Pedido creado',
+  CONFIRMADO: 'Confirmado',
+  ENTREGADO: 'Entregado',
+  SEGUIMIENTO: 'En seguimiento',
+  RECOMPRA: 'Recompra',
+  PERDIDO: 'Perdido',
+});
+
+/** Estados de un pedido cerrado (no piden trabajo). */
+const ORDER_CLOSED = ['entregado', 'cancelado', 'perdido'];
+
+/**
+ * Deriva el estado comercial a partir de los hechos. Función PURA.
+ *
+ * @param {{ customer?: any, purchases?: any[], followups?: any[], hasInbound?: boolean }} input
+ */
+export function deriveCommercialState(input = {}) {
+  const customer = input.customer ?? null;
+  const purchases = input.purchases ?? [];
+  const followups = input.followups ?? [];
+  const manual = String(customer?.commercial_state_manual ?? '').trim();
+  if (COMMERCIAL_STATES.includes(manual)) return manual;
+
+  const delivered = purchases.filter((row) => row.status === 'entregado');
+  if (delivered.length >= 2) return 'RECOMPRA';
+  if (delivered.length === 1) {
+    return followups.some((row) => row.status === 'pending') ? 'SEGUIMIENTO' : 'ENTREGADO';
+  }
+  const open = purchases.filter((row) => row.type === 'order_intent' && !ORDER_CLOSED.includes(row.status));
+  if (open.some((row) => ['confirmado', 'en_preparacion', 'enviado'].includes(row.status))) return 'CONFIRMADO';
+  if (open.length > 0) return 'PEDIDO_CREADO';
+  if (input.hasInbound === true) return 'EN_CONVERSACION';
+  return 'NUEVO';
+}
 
 function newId(prefix) {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
@@ -47,6 +121,8 @@ export function createCustomerService(deps) {
   const db = deps.db;
   const store = deps.store;
   const followups = deps.followups;
+  const scheduler = deps.scheduled ?? null;
+  const timeZone = deps.timeZone ?? 'America/Santo_Domingo';
   const clock = deps.clock ?? (() => new Date());
 
   /** Pedidos de un cliente (filtra en memoria: el CRM maneja cientos, no millones). */
@@ -75,6 +151,53 @@ export function createCustomerService(deps) {
     const e164 = toE164(phone);
     if (!e164) return null;
     return db.findBy('customers', 'phone_e164', e164);
+  }
+
+  /**
+   * Estado comercial de un conjunto de clientes en UNA pasada.
+   * (El CRM maneja cientos de clientes, no millones: se filtra en memoria y se
+   * evita una consulta por cliente.)
+   *
+   * @param {any[]} customerRows
+   */
+  async function statesFor(customerRows) {
+    const ids = new Set(customerRows.map((row) => row.id));
+    const items = store?.listAdmin ? await store.listAdmin({ limit: 1000 }) : [];
+    /** @type {Map<string, any[]>} */
+    const purchasesByCustomer = new Map();
+    for (const row of items) {
+      if (row.type !== 'order_intent' || !row.customer_id || !ids.has(row.customer_id)) continue;
+      const list = purchasesByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      purchasesByCustomer.set(row.customer_id, list);
+    }
+    const followupRows = await db.list('followups', { limit: 2000 });
+    /** @type {Map<string, any[]>} */
+    const pendingByCustomer = new Map();
+    for (const row of followupRows) {
+      if (row.status !== 'pending' || !ids.has(row.customer_id)) continue;
+      const list = pendingByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      pendingByCustomer.set(row.customer_id, list);
+    }
+    const messages = await db.list('wa_messages', { limit: 5000 });
+    const inbound = new Set(
+      messages.filter((row) => row.direction === 'inbound').map((row) => row.customer_id),
+    );
+    /** @type {Map<string, string>} */
+    const out = new Map();
+    for (const customer of customerRows) {
+      out.set(
+        customer.id,
+        deriveCommercialState({
+          customer,
+          purchases: purchasesByCustomer.get(customer.id) ?? [],
+          followups: pendingByCustomer.get(customer.id) ?? [],
+          hasInbound: inbound.has(customer.id),
+        }),
+      );
+    }
+    return out;
   }
 
   return {
@@ -171,7 +294,38 @@ export function createCustomerService(deps) {
               .includes(needle),
           )
         : rows;
-      return options.limit ? filtered.slice(0, options.limit) : filtered;
+      const scoped = options.limit ? filtered.slice(0, options.limit) : filtered;
+      // El estado comercial se DERIVA en cada lectura: nunca queda desincronizado.
+      const states = await statesFor(scoped);
+      return scoped.map((row) => ({ ...row, commercial_state: states.get(row.id) ?? 'NUEVO' }));
+    },
+
+    /** Estado comercial derivado de un cliente (o null si no existe). */
+    async commercialState(customerId) {
+      const customer = await db.get('customers', customerId);
+      if (!customer) return null;
+      const states = await statesFor([customer]);
+      return states.get(customer.id) ?? 'NUEVO';
+    },
+
+    /**
+     * Fija el estado comercial A MANO (INTERESADO / PERDIDO) o vuelve al derivado
+     * (pasando `null`). Es una decisión del vendedor: manda sobre lo automático.
+     */
+    async setCommercialState(customerId, state) {
+      const next = String(state ?? '').trim();
+      if (next && !COMMERCIAL_STATES.includes(next)) return { ok: false, error: 'invalid_state' };
+      if (next && !MANUAL_COMMERCIAL_STATES.includes(next)) {
+        // Los demás estados son HECHOS: no se pueden «poner a mano».
+        return { ok: false, error: 'not_manual', manual: MANUAL_COMMERCIAL_STATES };
+      }
+      const updated = await db.update('customers', customerId, {
+        commercial_state_manual: next || null,
+        updated_at: new Date().toISOString(),
+      });
+      if (!updated) return { ok: false, error: 'not_found' };
+      const commercial_state = await this.commercialState(customerId);
+      return { ok: true, customer: { ...updated, commercial_state }, commercial_state };
     },
 
     update(id, patch) {
@@ -470,8 +624,15 @@ export function createCustomerService(deps) {
       const followupRows = followups ? await followups.listForCustomer(customerId) : [];
       const nextFollowup = followupRows.find((row) => row.status === 'pending') ?? null;
       const supply = followups && purchases[0] ? followups.supplyFor(purchases[0]) : null;
-      return {
+      const scheduled = scheduler ? await scheduler.listForCustomer(customerId) : [];
+      const commercial_state = deriveCommercialState({
         customer,
+        purchases,
+        followups: followupRows,
+        hasInbound: messages.some((row) => row.direction === 'inbound'),
+      });
+      return {
+        customer: { ...customer, commercial_state },
         purchases,
         totals: totalsFrom(purchases),
         conversation,
@@ -479,13 +640,33 @@ export function createCustomerService(deps) {
         followups: followupRows,
         nextFollowup,
         supply,
+        scheduled,
+        commercial_state,
         canSendFreeText: this.canSendFreeText(conversation),
         unread: Number(conversation?.unread_count ?? 0),
       };
     },
 
-    /** Métricas simples (solo con datos que existen; nada inventado). */
+    /**
+     * Métricas simples (solo con datos que existen; nada inventado).
+     *
+     * `options.period` = 'hoy' | '7d' | '30d'. El bloque `byPeriod` cuenta SOLO lo
+     * que ocurrió en ese período y cada cosa entra UNA vez:
+     *   - un pedido se cuenta por su fecha de CREACIÓN,
+     *   - una confirmación/entrega por su fecha de TRANSICIÓN (que el pedido guarda),
+     *   - una recompra es un pedido entregado en el período cuyo cliente ya tenía
+     *     otra entrega anterior (no se cuenta dos veces la primera venta).
+     */
     async metrics(options = {}) {
+      const period = ['hoy', '7d', '30d'].includes(options.period) ? options.period : '30d';
+      const days = period === 'hoy' ? 1 : period === '7d' ? 7 : 30;
+      const endDay = dayIn(clock(), timeZone);
+      const startDay = addDays(endDay, -(days - 1));
+      const inWindow = (value) => {
+        const dayOf = String(value ?? '').slice(0, 10);
+        return Boolean(dayOf) && dayOf >= startDay && dayOf <= endDay;
+      };
+
       const [customers, conversations, messages, followupBuckets] = await Promise.all([
         db.list('customers', { limit: 1000 }),
         db.list('conversations', { limit: 1000 }),
@@ -493,6 +674,7 @@ export function createCustomerService(deps) {
         followups ? followups.buckets() : Promise.resolve({ today: [], overdue: [], completed: [] }),
       ]);
       const purchases = store?.listAdmin ? await store.listAdmin({ limit: 1000 }) : [];
+      const orders = purchases.filter((row) => row.type === 'order_intent');
       const delivered = purchases.filter((row) => row.type === 'order_intent' && row.status === 'entregado');
       const withPurchase = new Set(delivered.map((row) => row.customer_id).filter(Boolean));
       const deliveredByCustomer = new Map();
@@ -544,7 +726,71 @@ export function createCustomerService(deps) {
           recompras: [...deliveredByCustomer.values()].filter((count) => count > 1).length,
           manuales: delivered.filter((row) => row.channel === 'manual' || row.source === 'manual').length,
         },
+        // ------------------------------------------------ métricas del período
+        period: { name: period, startDay, endDay, days },
+        byPeriod: (() => {
+          /** Fecha de entrega: la real del pedido; si es un pedido antiguo, la de
+           *  su último cambio (nunca se inventa una fecha nueva). */
+          const deliveredAtOf = (row) => {
+            const order = parseOrderJson(row.order_json);
+            return order?.delivered_at ?? row.meta_purchase_sent_at ?? row.received_at;
+          };
+          const confirmedAtOf = (row) => parseOrderJson(row.order_json)?.confirmed_at ?? null;
+
+          const createdOrders = orders.filter((row) => inWindow(row.received_at));
+          const confirmedOrders = orders.filter((row) => inWindow(confirmedAtOf(row)));
+          const deliveredOrders = delivered
+            .filter((row) => inWindow(deliveredAtOf(row)))
+            .sort((a, b) => String(deliveredAtOf(a)).localeCompare(String(deliveredAtOf(b))));
+          const cancelledOrders = orders.filter((row) => {
+            const order = parseOrderJson(row.order_json);
+            const at = order?.cancelled_at ?? (row.status === 'cancelado' ? row.updated_at : null);
+            return inWindow(at);
+          });
+
+          // Recompra = entrega en el período de un cliente que YA había comprado antes.
+          const seenEarlier = new Map();
+          for (const row of [...delivered].sort((a, b) =>
+            String(deliveredAtOf(a)).localeCompare(String(deliveredAtOf(b))),
+          )) {
+            const key = row.customer_id ?? row.phone ?? row.id;
+            seenEarlier.set(key, (seenEarlier.get(key) ?? 0) + 1);
+          }
+          const recompras = deliveredOrders.filter((row) => {
+            const key = row.customer_id ?? row.phone ?? row.id;
+            const earlier = delivered
+              .filter((other) => (other.customer_id ?? other.phone ?? other.id) === key)
+              .filter((other) => String(deliveredAtOf(other)) < String(deliveredAtOf(row)));
+            return earlier.length > 0;
+          }).length;
+
+          return {
+            leadsNuevos: customers.filter((row) => inWindow(row.created_at)).length,
+            conversaciones: conversations.filter((row) => inWindow(row.last_message_at)).length,
+            pedidosCreados: createdOrders.length,
+            pedidosConfirmados: confirmedOrders.length,
+            pedidosEntregados: deliveredOrders.length,
+            pedidosCancelados: cancelledOrders.length,
+            ventas: deliveredOrders.reduce((sum, row) => sum + (Number(row.total) || 0), 0),
+            recompras,
+            // Instantánea (no depende del período): quién está esperando seguimiento.
+            clientesPendientesDeSeguimiento: new Set(
+              followupBuckets.today.concat(followupBuckets.overdue).map((row) => row.customer_id),
+            ).size,
+          };
+        })(),
       };
     },
   };
+}
+
+/** Lee el detalle de un pedido guardado como texto (o null si no lo tiene). */
+function parseOrderJson(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
 }

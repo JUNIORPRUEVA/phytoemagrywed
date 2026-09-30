@@ -129,6 +129,7 @@ function newId(prefix) {
  * @param {object} deps
  * @param {any} deps.db                almacén de colecciones (`store.db`)
  * @param {any[]} [deps.plan]
+ * @param {() => Promise<any[]>|any[]} [deps.planProvider]  plan efectivo (Ajustes)
  * @param {string} [deps.timeZone]
  * @param {() => Date} [deps.clock]
  * @param {number} [deps.dailyCapsules]
@@ -136,14 +137,31 @@ function newId(prefix) {
 export function createFollowupEngine(deps) {
   const db = deps.db;
   const plan = deps.plan ?? FOLLOWUP_PLAN;
+  const planProvider = deps.planProvider ?? null;
   const timeZone = deps.timeZone ?? DEFAULT_TIME_ZONE;
   const clock = deps.clock ?? (() => new Date());
   const dailyCapsules = Number(deps.dailyCapsules ?? DEFAULT_DAILY_CAPSULES) || DEFAULT_DAILY_CAPSULES;
 
   const today = () => dayIn(clock(), timeZone);
 
+  /**
+   * Plan EFECTIVO en este momento. Si el negocio cambia los días en Ajustes, el
+   * cambio se aplica a las tareas que se creen a partir de ese momento; las que ya
+   * existen no se tocan (son un compromiso con un cliente, no un ajuste de pantalla).
+   */
+  async function currentPlan() {
+    if (!planProvider) return plan;
+    try {
+      const value = await planProvider();
+      return Array.isArray(value) && value.length ? value : plan;
+    } catch {
+      return plan;
+    }
+  }
+
   return {
     plan,
+    planNow: currentPlan,
     today,
     timeZone,
     dailyCapsules,
@@ -160,14 +178,16 @@ export function createFollowupEngine(deps) {
     async scheduleForPurchase(input) {
       const deliveredDay = dayIn(input.deliveredAt ?? clock(), timeZone);
       const supply = estimateSupply({ capsules: input.capsules, quantity: input.quantity, dailyCapsules });
+      const activePlan = await currentPlan();
       /** @type {any[]} */
       const created = [];
-      for (const entry of plan) {
+      for (const entry of activePlan) {
         const scheduledAt = addDays(deliveredDay, entry.day);
         const doc = {
           id: newId('fu'),
           customer_id: input.customerId,
           purchase_id: input.purchaseId,
+          conversation_id: input.conversationId ?? null,
           key: entry.key,
           type: entry.type,
           reason: entry.reason,
@@ -289,26 +309,39 @@ export function createFollowupEngine(deps) {
       return db.update('followups', id, { scheduled_at: String(date).slice(0, 10), status: 'pending' });
     },
 
-    /** Tarea creada por el negocio (fuera del plan automático). */
+    /**
+     * Tarea creada por el negocio (fuera del plan automático).
+     *
+     * Puede colgar de un cliente, de una conversación y/o de un pedido — así el
+     * seguimiento aparece en «HOY», en la ficha del cliente y en la conversación
+     * desde la que se pidió. Con `idempotencyKey` no se duplica (lo usa la alerta
+     * de un mensaje programado bloqueado).
+     */
     async createManual(input) {
       const doc = {
         id: newId('fu'),
         customer_id: input.customerId,
         purchase_id: input.purchaseId ?? null,
-        key: `manual_${Date.now().toString(36)}`,
+        order_id: input.orderId ?? input.purchaseId ?? null,
+        conversation_id: input.conversationId ?? null,
+        key: input.key ?? `manual_${Date.now().toString(36)}`,
         type: input.type ?? 'manual',
         reason: input.reason ?? 'Seguimiento manual',
         template: input.template ?? null,
         channel: 'whatsapp',
         scheduled_at: String(input.scheduledAt ?? today()).slice(0, 10),
         status: 'pending',
-        origin: 'manual',
+        origin: input.origin ?? 'manual',
         attempts: 0,
         last_error: null,
         created_at: new Date().toISOString(),
         idempotency_key: input.idempotencyKey ?? `fu:manual:${newId('k')}`,
       };
-      await db.insert('followups', doc);
+      const result = await db.insert('followups', doc);
+      if (result.duplicate) {
+        const existing = await db.findBy('followups', 'idempotency_key', doc.idempotency_key);
+        return { ...(existing ?? doc), duplicate: true };
+      }
       return doc;
     },
 
