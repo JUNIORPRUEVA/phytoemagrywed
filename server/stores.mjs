@@ -139,6 +139,8 @@ export function record(row) {
     currency: row.currency,
     source: row.source,
     session_id: row.sessionId,
+    /** Cliente unificado (por teléfono). Null si el pedido aún no tiene cliente. */
+    customer_id: row.customerId ?? null,
     payload: row.payload,
     status: row.status ?? 'nuevo',
     notes: row.notes ?? null,
@@ -165,6 +167,7 @@ function normalize(item) {
     next_action_at: item?.next_action_at ?? null,
     last_contact_at: item?.last_contact_at ?? null,
     updated_at: item?.updated_at ?? item?.received_at ?? null,
+    customer_id: item?.customer_id ?? null,
     meta_purchase_event_id: item?.meta_purchase_event_id ?? null,
     meta_purchase_sent_at: item?.meta_purchase_sent_at ?? null,
     meta_purchase_status: item?.meta_purchase_status ?? null,
@@ -269,6 +272,8 @@ async function createSqliteStore(file) {
   addColumn('meta_purchase_status', 'meta_purchase_status TEXT');
   addColumn('meta_purchase_attempts', 'meta_purchase_attempts INTEGER NOT NULL DEFAULT 0');
   addColumn('meta_purchase_error', 'meta_purchase_error TEXT');
+  addColumn('customer_id', 'customer_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS items_customer ON items (customer_id)');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -285,8 +290,8 @@ async function createSqliteStore(file) {
       id, type, received_at, name, phone, location, variant_id, variant_name,
       capsules, quantity, unit_price, total, currency, source, session_id, payload,
       status, notes, next_action_at, last_contact_at, updated_at,
-      meta_purchase_attempts
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      meta_purchase_attempts, customer_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const count = db.prepare('SELECT COUNT(*) AS n FROM items');
   const allItems = db.prepare('SELECT * FROM items ORDER BY received_at DESC LIMIT ?');
@@ -294,7 +299,7 @@ async function createSqliteStore(file) {
   const updateItem = db.prepare(
     `UPDATE items SET status = ?, notes = ?, next_action_at = ?, last_contact_at = ?, updated_at = ?,
        meta_purchase_event_id = ?, meta_purchase_sent_at = ?, meta_purchase_status = ?,
-       meta_purchase_attempts = ?, meta_purchase_error = ?
+       meta_purchase_attempts = ?, meta_purchase_error = ?, customer_id = ?
      WHERE id = ?`,
   );
   const allMessages = db.prepare('SELECT * FROM messages ORDER BY position, name');
@@ -308,6 +313,8 @@ async function createSqliteStore(file) {
   const store = {
     kind: 'sqlite',
     file,
+    /** Conexión viva: la reutilizan otras tablas (una sola base de datos). */
+    handle: db,
     timeZone: undefined,
     save(row) {
       const result = insert.run(
@@ -333,6 +340,7 @@ async function createSqliteStore(file) {
         null,
         row.receivedAt,
         0,
+        row.customerId ?? null,
       );
       return { duplicate: Number(result.changes) === 0 };
     },
@@ -368,6 +376,7 @@ async function createSqliteStore(file) {
           : item.meta_purchase_attempts,
         meta_purchase_error:
           patch.metaPurchaseError !== undefined ? patch.metaPurchaseError : item.meta_purchase_error,
+        customer_id: patch.customerId !== undefined ? patch.customerId : item.customer_id,
       };
       updateItem.run(
         next.status,
@@ -380,6 +389,7 @@ async function createSqliteStore(file) {
         next.meta_purchase_status,
         next.meta_purchase_attempts,
         next.meta_purchase_error,
+        next.customer_id,
         id,
       );
       return { ...item, ...next };
@@ -425,6 +435,8 @@ function createJsonlStore(file) {
   const store = {
     kind: 'jsonl',
     file,
+    /** Sin conexión: las colecciones viven en archivos de este mismo directorio. */
+    handle: null,
     save(row) {
       if (readRows(file).some((item) => item.id === row.id)) return { duplicate: true };
       appendFileSync(file, `${JSON.stringify(record(row))}\n`, 'utf8');
@@ -467,6 +479,7 @@ function createJsonlStore(file) {
           : item.meta_purchase_attempts,
         meta_purchase_error:
           patch.metaPurchaseError !== undefined ? patch.metaPurchaseError : item.meta_purchase_error,
+        customer_id: patch.customerId !== undefined ? patch.customerId : item.customer_id,
       };
       rows[index] = next;
       writeFileSync(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(''), 'utf8');
@@ -549,6 +562,8 @@ async function createPostgresStore(url) {
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_status text`);
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_attempts integer NOT NULL DEFAULT 0`);
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS meta_purchase_error text`);
+    await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS customer_id text`);
+    await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_customer ON ${TABLE} (customer_id)`);
     await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_next_action ON ${TABLE} (next_action_at)`);
     await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_status ON ${TABLE} (status)`);
     await first.query(`
@@ -586,11 +601,13 @@ async function createPostgresStore(url) {
   const SELECT = `${COLUMNS.filter((c) => c !== 'payload').join(', ')}, payload::text AS payload`;
   const SELECT_ADMIN = `${SELECT}, status, notes, next_action_at, last_contact_at, updated_at,
     meta_purchase_event_id, meta_purchase_sent_at, meta_purchase_status,
-    meta_purchase_attempts, meta_purchase_error`;
+    meta_purchase_attempts, meta_purchase_error, customer_id`;
   const MESSAGE_COLUMNS = 'id, name, body, position, updated_at';
 
   const store = {
     kind: 'postgres',
+    /** Pool vivo: lo reutilizan otras tablas (una sola base de datos). */
+    handle: pool,
     /** Sin usuario ni clave: esta cadena acaba en los logs. */
     file: (() => {
       try {
@@ -691,12 +708,13 @@ async function createPostgresStore(url) {
           : item.meta_purchase_attempts,
         meta_purchase_error:
           patch.metaPurchaseError !== undefined ? patch.metaPurchaseError : item.meta_purchase_error,
+        customer_id: patch.customerId !== undefined ? patch.customerId : item.customer_id,
       };
       await pool.query(
         `UPDATE ${TABLE} SET status = $1, notes = $2, next_action_at = $3, last_contact_at = $4, updated_at = $5,
            meta_purchase_event_id = $6, meta_purchase_sent_at = $7, meta_purchase_status = $8,
-           meta_purchase_attempts = $9, meta_purchase_error = $10
-         WHERE id = $11`,
+           meta_purchase_attempts = $9, meta_purchase_error = $10, customer_id = $11
+         WHERE id = $12`,
         [
           next.status,
           next.notes,
@@ -708,6 +726,7 @@ async function createPostgresStore(url) {
           next.meta_purchase_status,
           next.meta_purchase_attempts,
           next.meta_purchase_error,
+          next.customer_id,
           id,
         ],
       );

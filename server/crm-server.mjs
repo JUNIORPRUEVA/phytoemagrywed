@@ -10,9 +10,27 @@
  *    GET  /admin/                   → la app instalable (PWA)
  *    POST /api/admin/login          → cambia la clave por una cookie de sesión
  *    POST /api/admin/logout
- *    GET  /api/admin/data           → items + cuentas + plantillas (una petición)
+ *    GET  /api/admin/data           → items + clientes + seguimientos (una petición)
  *    PATCH /api/admin/items/:id     → estado, notas y recordatorio
  *    POST/DELETE /api/admin/messages[/:id] → plantillas de WhatsApp
+ *
+ *  Clientes, conversaciones y seguimiento (panel):
+ *    GET  /api/admin/customers              → lista/búsqueda de clientes
+ *    GET  /api/admin/customers/:id          → perfil 360 (compras + chat + seguimiento)
+ *    PATCH /api/admin/customers/:id         → notas y datos del cliente
+ *    POST /api/admin/customers/:id/opt-out|opt-in|automation
+ *    POST /api/admin/purchases              → registrar una compra (a mano)
+ *    GET  /api/admin/conversations          → bandeja de WhatsApp
+ *    GET  /api/admin/conversations/:id/messages
+ *    POST /api/admin/conversations/:id/messages  → enviar (con una persona delante)
+ *    POST /api/admin/conversations/:id/read
+ *    GET|POST|PATCH /api/admin/followups[/:id]   → plan y decisiones del día
+ *    GET  /api/admin/wa-templates           → plantillas oficiales de Meta
+ *    GET  /api/admin/metrics                → números del negocio
+ *
+ *  WhatsApp (lo llama Meta, sin sesión):
+ *    GET  /api/webhooks/whatsapp            → verificación (hub.challenge)
+ *    POST /api/webhooks/whatsapp            → mensajes y estados entrantes
  *
  *  Compatibilidad (curl, enlaces antiguos): `/api/crm/items?token=…`,
  *  `/api/crm/export.csv?token=…` y `/panel?token=…` siguen funcionando.
@@ -33,7 +51,23 @@
  *    PHYTO_META_GRAPH_VERSION         versión de la Graph API (por defecto v21.0)
  *    PHYTO_META_PURCHASE_STATUS       estado que representa una VENTA (por defecto `entregado`)
  *
- *  Documentación: docs/CRM-CONTRACT.md, docs/PANEL.md y docs/META_INTEGRATION.md
+ *  WhatsApp Cloud API (ver docs/WHATSAPP_INTEGRATION.md):
+ *    META_APP_ID                    ID de la app de Meta (webhook)
+ *    META_APP_SECRET                clave de la app: valida la FIRMA del webhook (SECRETO)
+ *    WHATSAPP_BUSINESS_ACCOUNT_ID   cuenta de WhatsApp Business (WABA)
+ *    WHATSAPP_PHONE_NUMBER_ID       ID del número que envía
+ *    WHATSAPP_PHONE_NUMBER          número visible (público)
+ *    WHATSAPP_ACCESS_TOKEN          token de envío (SECRETO)
+ *    WHATSAPP_VERIFY_TOKEN          secreto de la verificación del webhook (SECRETO)
+ *    WHATSAPP_WEBHOOK_URL           URL pública del webhook
+ *    PHYTO_FOLLOWUP_PLAN            plan de seguimiento en JSON (días configurables)
+ *    PHYTO_DAILY_CAPSULES           cápsulas por día (por defecto 1, el uso aprobado)
+ *
+ *  Seguimiento: el servidor CREA Y FECHA las tareas; NUNCA envía solo porque
+ *  llegó la fecha. El envío siempre lo pulsa una persona desde el panel.
+ *
+ *  Documentación: docs/CRM-CONTRACT.md, docs/PANEL.md, docs/META_INTEGRATION.md
+ *  y docs/WHATSAPP_INTEGRATION.md
  * ============================================================================
  */
 
@@ -45,6 +79,16 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { buildUserData, createMetaCapi } from './meta-capi.mjs';
+import { createCollections } from './collections.mjs';
+import { createCustomerService, AUTOMATION_STATES } from './customers.mjs';
+import { createFollowupEngine, resolveDailyCapsules, resolvePlan } from './followups.mjs';
+import {
+  createWhatsAppClient,
+  parseWebhook,
+  verifyWebhookChallenge,
+  verifyWebhookSignature,
+} from './whatsapp.mjs';
+import { productConfig } from '../src/config/product.config.js';
 import {
   CLOSED_STATUSES,
   STATUSES,
@@ -84,6 +128,34 @@ const APP_ENV = (process.env.APP_ENV ?? 'production').trim();
 const META_PURCHASE_STATUS = (process.env.PHYTO_META_PURCHASE_STATUS ?? 'entregado').trim();
 /** Reintentos automáticos por venta (evita reintentos infinitos). */
 const META_PURCHASE_MAX_ATTEMPTS = 5;
+
+// ------------------------------------------------------ WhatsApp Cloud API
+/** ID de la app de Meta (no es secreto). */
+const META_APP_ID = (process.env.META_APP_ID ?? '').trim();
+/** Clave de la app: valida la firma del webhook. SECRETO. */
+const META_APP_SECRET = (process.env.META_APP_SECRET ?? '').trim();
+const WHATSAPP_BUSINESS_ACCOUNT_ID = (process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ?? '').trim();
+const WHATSAPP_PHONE_NUMBER_ID = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? '').trim();
+/** Número visible del negocio (público: el panel lo muestra para llamar). */
+const WHATSAPP_PHONE_NUMBER = (process.env.WHATSAPP_PHONE_NUMBER ?? '').trim();
+/** Token de envío. SECRETO. */
+const WHATSAPP_ACCESS_TOKEN = (process.env.WHATSAPP_ACCESS_TOKEN ?? '').trim();
+/** Secreto de la verificación del webhook (`hub.verify_token`). SECRETO. */
+const WHATSAPP_VERIFY_TOKEN = (process.env.WHATSAPP_VERIFY_TOKEN ?? '').trim();
+const WHATSAPP_WEBHOOK_URL = (process.env.WHATSAPP_WEBHOOK_URL ?? '').trim();
+/** Versión de la Graph API: la misma que Meta, salvo que se fije otra. */
+const WHATSAPP_GRAPH_VERSION = (process.env.WHATSAPP_GRAPH_VERSION ?? '').trim() || META_GRAPH_VERSION;
+/** Cápsulas por día: 1 es el uso aprobado del producto. */
+const DAILY_CAPSULES = resolveDailyCapsules(productConfig.usage, (process.env.PHYTO_DAILY_CAPSULES ?? '').trim());
+/** Plan de seguimiento (días configurables sin tocar código). */
+const FOLLOWUP_PLAN = resolvePlan(process.env.PHYTO_FOLLOWUP_PLAN);
+
+/** Busca una variante del catálogo oficial por id (única fuente de precios). */
+function findVariant(id) {
+  const key = String(id ?? '').trim();
+  if (!key) return null;
+  return productConfig.variants.find((variant) => variant.id === key) ?? null;
+}
 
 /**
  * Carpeta de la app del panel. Se resuelve al arrancar (no al importar) para
@@ -170,6 +242,41 @@ function readJsonBody(req) {
 }
 
 /**
+ * Lee el cuerpo SIN convertirlo: la firma HMAC de Meta se calcula sobre los
+ * bytes exactos que envió, así que no se puede recomponer desde el JSON.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {Promise<{raw: string, json: any}>}
+ */
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    /** @type {Buffer[]} */
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(Object.assign(new Error('body_too_large'), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('error', reject);
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      let parsed = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
+      resolve({ raw, json: parsed });
+    });
+  });
+}
+
+/**
  * Convierte el payload de la web (ver docs/CRM-CONTRACT.md) en una fila.
  * No rechaza campos desconocidos: se guarda el payload completo.
  */
@@ -200,6 +307,77 @@ function toRow(payload) {
     source: text(payload.source, 40),
     sessionId: text(payload.sessionId, 80),
     payload: JSON.stringify(payload),
+  };
+}
+
+/**
+ * Fila de una COMPRA registrada a mano desde el panel.
+ *
+ * El precio sale del catálogo oficial (`product.config.js`): el panel elige el
+ * frasco y la cantidad, no inventa importes. Si el negocio quiere un precio
+ * distinto para ese pedido, puede escribirlo y se respeta.
+ *
+ * @param {any} input
+ */
+function purchaseRow(input) {
+  const variant = findVariant(input.variantId);
+  if (!variant) {
+    const error = /** @type {any} */ (new Error('invalid_variant'));
+    error.status = 422;
+    throw error;
+  }
+  const requestedQuantity = Number(input.quantity);
+  const quantity = Number.isFinite(requestedQuantity) && requestedQuantity > 0 ? Math.trunc(requestedQuantity) : 1;
+  const requestedPrice = Number(input.unitPrice);
+  const unitPrice =
+    Number.isFinite(requestedPrice) && requestedPrice >= 0 ? Math.trunc(requestedPrice) : variant.price;
+  const requestedTotal = Number(input.total);
+  const total = Number.isFinite(requestedTotal) && requestedTotal >= 0 ? Math.trunc(requestedTotal) : unitPrice * quantity;
+  const id = text(input.id, 80) ?? randomBytes(16).toString('hex');
+  const createdAt = text(input.date, 40) ?? new Date().toISOString();
+  const variantName = text(input.variantName, 60) ?? `${variant.capsules} cápsulas`;
+  const payload = {
+    type: 'order_intent',
+    id,
+    createdAt,
+    source: 'manual',
+    channel: 'manual',
+    recordedBy: text(input.recordedBy, 60) ?? 'panel',
+    name: text(input.name, 120),
+    phone: text(input.phone, 40),
+    location: text(input.location, 120),
+    variantId: variant.id,
+    variantName,
+    capsules: variant.capsules,
+    quantity,
+    unitPrice,
+    total,
+    currency: text(input.currency, 8) ?? 'DOP',
+    customerId: text(input.customerId, 80),
+    notes: longText(input.notes, 2000),
+    meta: { source: 'manual', recordedBy: text(input.recordedBy, 60) ?? 'panel' },
+  };
+  return {
+    row: {
+      id,
+      type: 'order_intent',
+      receivedAt: createdAt,
+      name: payload.name,
+      phone: payload.phone,
+      location: payload.location,
+      variantId: variant.id,
+      variantName,
+      capsules: variant.capsules,
+      quantity,
+      unitPrice,
+      total,
+      currency: payload.currency,
+      source: 'manual',
+      sessionId: null,
+      customerId: payload.customerId,
+      payload: JSON.stringify(payload),
+    },
+    payload,
   };
 }
 
@@ -327,6 +505,236 @@ async function retryPendingPurchases(store, metaCapi, log = console.log) {
   for (const item of pending.slice(0, 10)) {
     await sendPurchaseToMeta({ store, metaCapi, item, source: 'reintento' });
   }
+}
+
+/**
+ * Al arrancar: cada venta ENTREGADA debe tener su plan de seguimiento.
+ *
+ * Es idempotente (las tareas llevan clave propia), así que se puede ejecutar
+ * siempre: repara el historial después de un reinicio y no duplica nada.
+ */
+async function ensureFollowupsForDelivered(ctx, log = console.log) {
+  const items = await ctx.store.listAdmin({ limit: 200 });
+  const delivered = items.filter(
+    (item) => item.type === 'order_intent' && item.status === ctx.purchaseStatus && item.customer_id,
+  );
+  if (delivered.length === 0) return 0;
+  let created = 0;
+  for (const item of delivered.slice(0, 50)) {
+    const result = await ctx.followups.scheduleForPurchase({
+      customerId: item.customer_id,
+      purchaseId: item.id,
+      deliveredAt: item.received_at,
+      capsules: item.capsules,
+      quantity: item.quantity,
+    });
+    created += result.created.length;
+  }
+  if (created > 0) log(`[crm] seguimiento: ${created} tarea(s) creadas para ventas entregadas anteriores`);
+  return created;
+}
+
+// ------------------------------------------- clientes · seguimiento · WhatsApp
+
+/**
+ * Plantillas oficiales de WhatsApp: nombres, categoría y variables.
+ *
+ * NINGUNA nace "aprobada": en Meta las aprueba una persona. Hasta que no estén
+ * aprobadas, el panel no deja enviarlas. Así no se promete al cliente algo que
+ * WhatsApp todavía no permite (y no se come el error 132001 de Meta).
+ */
+const WA_TEMPLATE_SEED = [
+  {
+    name: 'phyto_purchase_thanks',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Gracias por tu compra. Si tienes alguna duda sobre cómo usarlo, respóndenos por aquí.',
+    variables: [],
+    buttons: [],
+  },
+  {
+    name: 'phyto_followup_checkin',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, ¿cómo te ha ido con tu pedido? Si necesitas algo, escríbenos por aquí.',
+    variables: ['nombre'],
+    buttons: [],
+  },
+  {
+    name: 'phyto_weekly_education',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, te compartimos información aprobada sobre el producto y su forma de uso.',
+    variables: ['nombre'],
+    buttons: [],
+  },
+  {
+    name: 'phyto_reorder_reminder',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, por si te sirve: se acerca el final de tu frasco. ¿Te ayudamos con el siguiente?',
+    variables: ['nombre'],
+    buttons: [],
+  },
+];
+
+/**
+ * Plantillas del plan + las guardadas en la base de datos, sin duplicar nombres.
+ * Las nuevas se registran como `pending_approval` (la verdad de Meta manda).
+ */
+async function listWaTemplates(ctx) {
+  const stored = await ctx.db.list('wa_templates', { limit: 200 });
+  const known = new Map(stored.map((row) => [row.name, row]));
+  /** @type {any[]} */
+  const out = [];
+  for (const seed of WA_TEMPLATE_SEED) {
+    const existing = known.get(seed.name);
+    if (existing) {
+      out.push(existing);
+      continue;
+    }
+    const doc = {
+      id: `tpl_${seed.name}`,
+      name: seed.name,
+      category: seed.category,
+      language: seed.language,
+      body: seed.body,
+      variables: seed.variables,
+      buttons: seed.buttons ?? [],
+      status: 'pending_approval',
+      sendable: false,
+      // Datos que solo puede rellenar Meta cuando la plantilla se registre allí.
+      meta_template_id: null,
+      last_synced_at: null,
+      source: 'crm',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    await ctx.db.insert('wa_templates', doc);
+    out.push(doc);
+  }
+  for (const row of stored) if (!out.some((entry) => entry.name === row.name)) out.push(row);
+  return out;
+}
+
+/** Solo una plantilla APROBADA en Meta se puede enviar. */
+async function approvedTemplate(ctx, name) {
+  const templates = await listWaTemplates(ctx);
+  const found = templates.find((row) => row.name === name) ?? null;
+  if (!found) return { ok: false, reason: 'unknown_template' };
+  if (found.status !== 'approved') return { ok: false, reason: 'template_not_approved', template: found };
+  return { ok: true, template: found };
+}
+
+/**
+ * Efectos de una compra ENTREGADA (una sola vez por pedido):
+ *   1. se le cuenta la venta a Meta (si está configurado),
+ *   2. se recalculan los totales del cliente,
+ *   3. se crea su plan de seguimiento con fechas.
+ *
+ * Todo idempotente. Y nada de esto ENVÍA: solo deja tareas preparadas para que
+ * una persona decida cuándo escribir.
+ *
+ * @param {any} ctx
+ * @param {any} item
+ */
+export async function afterPurchaseDelivered(ctx, item) {
+  /** @type {{meta: any, totals: any, followups: any, nextFollowupAt: string|null}} */
+  const result = { meta: null, totals: null, followups: null, nextFollowupAt: null };
+  if (ctx.metaCapi?.enabled && !item.meta_purchase_sent_at) {
+    result.meta = await sendPurchaseToMeta({ store: ctx.store, metaCapi: ctx.metaCapi, item, source: 'estado' });
+  }
+  const customerId = item.customer_id ?? null;
+  if (!customerId) return result; // pedido sin cliente enlazado (llegó sin teléfono)
+  const refreshed = await ctx.customers.refreshTotals(customerId);
+  result.totals = refreshed.totals;
+  const schedule = await ctx.followups.scheduleForPurchase({
+    customerId,
+    purchaseId: item.id,
+    deliveredAt: item.received_at,
+    capsules: item.capsules,
+    quantity: item.quantity,
+  });
+  const next = await ctx.followups.nextForCustomer(customerId);
+  result.followups = {
+    created: schedule.created.length,
+    supply: schedule.supply,
+    nextReorderAt: schedule.nextReorderAt,
+  };
+  result.nextFollowupAt = next?.scheduled_at ?? null;
+  await ctx.customers.update(customerId, { next_followup_at: result.nextFollowupAt });
+  console.log(
+    `[crm] venta entregada ${item.id}: ${schedule.created.length} tarea(s) de seguimiento para ${customerId}`,
+  );
+  return result;
+}
+
+/** Busca una conversación por id (el negocio maneja un puñado, no millones). */
+async function findConversation(ctx, id) {
+  const rows = await ctx.db.list('conversations', { limit: 1000 });
+  return rows.find((row) => row.id === id) ?? null;
+}
+
+/** Añade el cliente a cada tarea: la pantalla HOY dice a QUIÉN atender. */
+function withCustomer(rows, customers) {
+  const byId = new Map(customers.map((row) => [row.id, row]));
+  return rows.map((row) => {
+    const customer = byId.get(row.customer_id) ?? null;
+    return {
+      ...row,
+      customer: customer
+        ? {
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phone,
+            phone_e164: customer.phone_e164,
+            do_not_contact: customer.do_not_contact === true,
+            automation_state: customer.automation_state,
+          }
+        : null,
+    };
+  });
+}
+
+/**
+ * Procesa lo que llegó por el webhook: mensajes entrantes y estados de salientes.
+ *
+ * Idempotente de punta a punta: Meta reintenta webhooks, y un reintento no puede
+ * crear un segundo mensaje, ni duplicar un cliente, ni volver a contar un estado.
+ *
+ * @param {any} ctx
+ * @param {any} body
+ */
+export async function processWebhookPayload(ctx, body) {
+  const parsed = parseWebhook(body);
+  /** @type {any[]} */
+  const stored = [];
+  for (const inbound of parsed.messages) {
+    const result = await ctx.customers.recordInbound({ waMessage: inbound });
+    if (result.duplicate) continue;
+    stored.push(result);
+    const who = result.customer?.name ?? result.customer?.phone_e164 ?? inbound.fromE164;
+    console.log(
+      `[crm] WhatsApp entrante de ${who} · intención ${result.intent}` +
+        (result.optOut ? ' · pidió NO CONTACTAR' : '') +
+        (result.cancelledFollowups ? ` · ${result.cancelledFollowups} seguimiento(s) cancelado(s)` : ''),
+    );
+    if (result.humanRequired) console.log('[crm] esa conversación queda para una persona (no es una pregunta simple)');
+  }
+  /** @type {string[]} */
+  const updated = [];
+  for (const status of parsed.statuses) {
+    if (!status.waMessageId || !status.status) continue;
+    const result = await ctx.customers.updateMessageStatus(status);
+    if (result.ok) updated.push(status.status);
+  }
+  return {
+    messages: parsed.messages.length,
+    statuses: parsed.statuses.length,
+    ignored: parsed.unknown,
+    stored,
+    updated,
+  };
 }
 
 /** IP del visitante (detrás de nginx llega en `x-forwarded-for`). */
@@ -496,6 +904,65 @@ async function handle(req, res, ctx) {
     return;
   }
 
+  // ------------------------------------------------------ webhook de WhatsApp
+  /*
+   * Verificación (la hace Meta una sola vez, al configurar el webhook): manda
+   * `hub.mode=subscribe`, el token secreto y un `challenge` que hay que devolver
+   * TAL CUAL. Sin `WHATSAPP_VERIFY_TOKEN` configurado se responde 403: antes no
+   * verificar que aceptar cualquier webhook.
+   */
+  if (route === '/api/webhooks/whatsapp' && req.method === 'GET') {
+    const check = verifyWebhookChallenge({
+      mode: url.searchParams.get('hub.mode'),
+      token: url.searchParams.get('hub.verify_token'),
+      challenge: url.searchParams.get('hub.challenge'),
+      verifyToken: ctx.whatsappVerifyToken,
+    });
+    if (!check.ok) {
+      console.warn('[crm] verificación de webhook rechazada');
+      json(res, check.status ?? 403, { ok: false, error: 'forbidden' });
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(String(check.challenge));
+    return;
+  }
+
+  if (route === '/api/webhooks/whatsapp' && req.method === 'POST') {
+    /** @type {{raw: string, json: any}} */
+    let incoming;
+    try {
+      incoming = await readRawBody(req);
+    } catch (error) {
+      json(res, /** @type {any} */ (error).status ?? 400, { ok: false, error: error.message });
+      return;
+    }
+    // La firma se calcula sobre el cuerpo EXACTO: se comprueba antes de procesar.
+    const signatureCheck = verifyWebhookSignature({
+      rawBody: incoming.raw,
+      signature: /** @type {any} */ (req.headers['x-hub-signature-256']),
+      appSecret: ctx.appSecret,
+    });
+    if (!signatureCheck.ok && signatureCheck.reason !== 'not_configured') {
+      console.warn(`[crm] webhook con firma no válida (${signatureCheck.reason ?? 'invalid_signature'})`);
+      json(res, 401, { ok: false, error: 'invalid_signature' });
+      return;
+    }
+    if (signatureCheck.reason === 'not_configured') {
+      // Se atiende el mensaje igual (no se pierde una conversación real), pero se
+      // deja claro que falta un secreto para poder comprobar quién llama.
+      console.warn('[crm] webhook sin firma comprobada: falta META_APP_SECRET');
+    }
+    // Meta espera un 200 en pocos segundos y REINTENTA si tardas: se contesta ya
+    // y se guarda después. El guardado es idempotente, así que un reintento no
+    // duplica ningún mensaje.
+    json(res, 200, { ok: true, received: true });
+    processWebhookPayload(ctx, incoming.json).catch((error) =>
+      console.error('[crm] webhook:', error?.message ?? error),
+    );
+    return;
+  }
+
   if (route === '/api/crm' && req.method === 'POST') {
     /** @type {any} */
     let body;
@@ -511,6 +978,18 @@ async function handle(req, res, ctx) {
     try {
       for (const item of payload.slice(0, 25)) {
         const row = toRow(item ?? {});
+        // Un cliente es una persona, no un canal: si el registro trae teléfono,
+        // se enlaza con el cliente unificado (y se crea si es la primera vez).
+        if (row.phone) {
+          const found = await ctx.customers.findOrCreateByPhone({
+            phone: row.phone,
+            name: row.name,
+            location: row.location,
+            source: 'landing',
+            optIn: item?.consent === true,
+          });
+          if (found.ok) row.customerId = found.customer.id;
+        }
         const result = await store.save(row);
         saved.push({ id: row.id, duplicate: result.duplicate });
         if (!result.duplicate) {
@@ -611,6 +1090,11 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/data' && req.method === 'GET') {
       const items = await store.listAdmin({ limit: 500 });
       const messages = await store.messages().list();
+      const customerList = await ctx.customers.list({});
+      const conversationList = await ctx.customers.listConversations({});
+      const buckets = await ctx.followups.buckets();
+      const outbound = await ctx.db.list('messages', { limit: 500 });
+      const failed = outbound.filter((row) => row.status === 'failed');
       json(res, 200, {
         ok: true,
         storage: store.kind,
@@ -627,7 +1111,66 @@ async function handle(req, res, ctx) {
           purchaseStatus: ctx.purchaseStatus,
           graphVersion: ctx.metaCapi?.graphVersion ?? null,
         },
+        // ------------------------------------------------ clientes y WhatsApp
+        customers: customerList,
+        conversations: conversationList,
+        followups: {
+          reference: buckets.reference,
+          today: buckets.today,
+          overdue: buckets.overdue,
+          upcoming: buckets.upcoming,
+          completed: buckets.completed.slice(-20),
+        },
+        // Pantalla HOY: lo que una persona tiene que mirar al abrir el panel.
+        hoy: {
+          reference: buckets.reference,
+          seguimientosHoy: buckets.today.length,
+          seguimientosVencidos: buckets.overdue.length,
+          sinResponder: conversationList.filter((row) => Number(row.unread_count) > 0).length,
+          humanoRequerido: conversationList.filter((row) => row.status === 'HUMAN_REQUIRED').length,
+          pedidosPendientes: items.filter(
+            (item) => item.type === 'order_intent' && item.status !== 'entregado' && item.status !== 'perdido',
+          ).length,
+          entregadosRecientes: items
+            .filter((item) => item.type === 'order_intent' && item.status === 'entregado')
+            .slice(0, 5),
+          mensajesFallidos: failed.length,
+          fallidos: failed.slice(0, 5).map((row) => ({
+            id: row.id,
+            customer_id: row.customer_id,
+            body: row.body,
+            error_code: row.error_code,
+            error_message: row.error_message,
+            failed_at: row.failed_at,
+          })),
+        },
+        // Catálogo oficial: el panel no repite precios, los pide aquí.
+        catalog: productConfig.variants.map((variant) => ({
+          id: variant.id,
+          capsules: variant.capsules,
+          price: variant.price,
+          currency: 'DOP',
+          completeBottle: variant.completeBottle === true,
+          label: `${variant.capsules} cápsulas`,
+        })),
+        // Estado de WhatsApp SIN secretos (solo booleanos y datos públicos).
+        whatsapp: {
+          configured: Boolean(ctx.whatsapp?.enabled),
+          graphVersion: ctx.whatsapp?.graphVersion ?? null,
+          phoneNumber: ctx.whatsappPhoneNumber || null,
+          phoneNumberIdConfigured: Boolean(ctx.whatsapp?.phoneNumberId),
+          webhookUrl: ctx.whatsappWebhookUrl || null,
+          verifyTokenConfigured: Boolean(ctx.whatsappVerifyToken),
+          appSecretConfigured: Boolean(ctx.appSecret),
+          businessAccountConfigured: Boolean(ctx.whatsapp?.businessAccountId),
+        },
       });
+      return;
+    }
+
+    // Números del negocio (clientes, seguimientos, mensajes, ventas).
+    if (route === '/api/admin/metrics' && req.method === 'GET') {
+      json(res, 200, { ok: true, metrics: await ctx.customers.metrics() });
       return;
     }
 
@@ -702,24 +1245,493 @@ async function handle(req, res, ctx) {
       }
       console.log(`[crm] actualizado ${id}${patch.status ? ` → ${patch.status}` : ''}`);
       /*
-       * ¿El negocio acaba de cerrar la venta? Solo entonces se le cuenta a Meta.
-       * Se envía en segundo plano: si Meta tarda o falla, el panel ya tiene su
-       * respuesta y el pedido queda igual (con el resultado escrito en su fila).
+       * ¿El negocio acaba de cerrar la venta (estado "entregado")? Solo entonces
+       * se le cuenta a Meta, se recalculan los totales del cliente y se crea su
+       * plan de seguimiento. Va en segundo plano y es idempotente: si Meta tarda
+       * o falla, el panel ya tiene su respuesta y el pedido conserva el resultado.
        */
       if (
-        ctx.metaCapi?.enabled &&
         updated.type === 'order_intent' &&
         updated.status === ctx.purchaseStatus &&
-        !updated.meta_purchase_sent_at
+        patch.status === ctx.purchaseStatus
       ) {
-        sendPurchaseToMeta({ store, metaCapi: ctx.metaCapi, item: updated, source: 'estado' }).catch((error) => {
-          console.error('[crm] venta a Meta:', error?.message ?? error);
+        afterPurchaseDelivered(ctx, updated).catch((error) => {
+          console.error('[crm] venta entregada:', error?.message ?? error);
         });
       }
       json(res, 200, { ok: true, item: updated });
       return;
     }
 
+    // ------------------------------------------------------------- clientes
+    // Listado con búsqueda (nombre, teléfono, ciudad) y su próximo seguimiento.
+    if (route === '/api/admin/customers' && req.method === 'GET') {
+      const customers = await ctx.customers.list({ q: url.searchParams.get('q') ?? '' });
+      const followupRows = await ctx.db.list('followups', { limit: 2000 });
+      const nextByCustomer = new Map();
+      for (const row of followupRows) {
+        if (row.status !== 'pending') continue;
+        const current = nextByCustomer.get(row.customer_id);
+        if (!current || row.scheduled_at < current.scheduled_at) nextByCustomer.set(row.customer_id, row);
+      }
+      json(res, 200, {
+        ok: true,
+        customers: customers.map((customer) => ({
+          ...customer,
+          next_followup: nextByCustomer.get(customer.id) ?? null,
+        })),
+      });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/customers/')) {
+      const rest = decodeURIComponent(route.slice('/api/admin/customers/'.length));
+      const [customerId, action = ''] = rest.split('/');
+      const customer = customerId ? await ctx.customers.get(customerId) : null;
+      if (!customer) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+
+      // Perfil 360: compras, chat, seguimiento, consentimiento y ventana de 24 h.
+      if (!action && req.method === 'GET') {
+        const profile = await ctx.customers.profile(customerId);
+        json(res, 200, { ok: true, ...profile });
+        return;
+      }
+
+      if (!action && (req.method === 'PATCH' || req.method === 'POST')) {
+        /** @type {any} */
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        /** @type {Record<string, unknown>} */
+        const patch = {};
+        if (body.name !== undefined) patch.name = text(body.name, 120);
+        if (body.location !== undefined) patch.location = text(body.location, 120);
+        if (body.notes !== undefined) patch.notes = longText(body.notes, 2000);
+        const updated = await ctx.customers.update(customerId, patch);
+        json(res, 200, { ok: true, customer: updated });
+        return;
+      }
+
+      // "No contactar": manda sobre cualquier plan y cancela lo de marketing.
+      if (action === 'opt-out' && req.method === 'POST') {
+        const result = await ctx.customers.applyOptOut(customerId, { reason: 'opt_out_panel' });
+        console.log(`[crm] ${customerId} marcado como NO CONTACTAR (${result.cancelled} tarea(s) cancelada(s))`);
+        json(res, 200, { ok: true, customer: result.customer, cancelled: result.cancelled });
+        return;
+      }
+
+      if (action === 'opt-in' && req.method === 'POST') {
+        const updated = await ctx.customers.clearOptOut(customerId);
+        json(res, 200, { ok: true, customer: updated });
+        return;
+      }
+
+      // AUTOMATIC | HUMAN_REQUIRED | HUMAN_ACTIVE | PAUSED | CLOSED
+      if (action === 'automation' && req.method === 'POST') {
+        /** @type {any} */
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const state = text(body.state, 30);
+        const updated = await ctx.customers.setAutomationState(customerId, state, { note: longText(body.note, 500) });
+        if (!updated) {
+          json(res, 422, { ok: false, error: 'invalid_state', states: AUTOMATION_STATES });
+          return;
+        }
+        json(res, 200, { ok: true, customer: updated });
+        return;
+      }
+
+      json(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+
+    // ------------------------------------------------- compras registradas a mano
+    // El teléfono identifica al cliente: si ya existe, se suma a su historial.
+    if (route === '/api/admin/purchases' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const found = await ctx.customers.findOrCreateByPhone({
+        phone: body.phone,
+        name: body.name,
+        location: body.location,
+        source: 'manual',
+      });
+      if (!found.ok) {
+        json(res, 422, {
+          ok: false,
+          error: 'invalid_phone',
+          message: 'Escribe un teléfono válido (por ejemplo 809 555 1234).',
+        });
+        return;
+      }
+      const customer = found.customer;
+      /** @type {{row: any, payload: any}} */
+      let built;
+      try {
+        built = purchaseRow({ ...body, customerId: customer.id });
+      } catch (error) {
+        json(res, 422, {
+          ok: false,
+          error: /** @type {any} */ (error).message,
+          message: 'Elige un frasco del catálogo.',
+        });
+        return;
+      }
+      const requested = text(body.status, 20);
+      const status = requested && STATUSES.includes(requested) ? requested : 'nuevo';
+      const saved = await ctx.store.save(built.row);
+      const item = await ctx.store.update(built.row.id, {
+        status,
+        notes: built.payload.notes,
+        customerId: customer.id,
+      });
+      let delivered = null;
+      if (status === ctx.purchaseStatus) delivered = await afterPurchaseDelivered(ctx, item ?? built.row);
+      console.log(
+        `[crm] compra registrada a mano ${built.row.id} · ${customer.name ?? customer.phone_e164} · estado ${status}`,
+      );
+      json(res, 201, { ok: true, duplicate: saved.duplicate, item, customer, delivered });
+      return;
+    }
+
+    // ------------------------------------------------------------- bandeja
+    if (route === '/api/admin/conversations' && req.method === 'GET') {
+      const conversations = await ctx.customers.listConversations({});
+      json(res, 200, { ok: true, conversations, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/conversations/')) {
+      const rest = decodeURIComponent(route.slice('/api/admin/conversations/'.length));
+      const [conversationId, action = ''] = rest.split('/');
+      const conversation = conversationId ? await findConversation(ctx, conversationId) : null;
+      if (!conversation) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const customer = await ctx.customers.get(conversation.customer_id);
+
+      if (action === 'messages' && req.method === 'GET') {
+        const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
+        json(res, 200, {
+          ok: true,
+          conversation,
+          customer,
+          messages,
+          canSendFreeText: ctx.customers.canSendFreeText(conversation),
+          whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) },
+        });
+        return;
+      }
+
+      if (action === 'read' && req.method === 'POST') {
+        const updated = await ctx.customers.markConversationRead(conversation.id);
+        json(res, 200, { ok: true, conversation: updated });
+        return;
+      }
+
+      /*
+       * ENVÍO MANUAL. Nunca automático: esto solo se ejecuta cuando una persona
+       * pulsa ENVIAR en el panel, y antes se comprueban las reglas de WhatsApp:
+       *   - el cliente no puede haber pedido no recibir mensajes;
+       *   - fuera de la ventana de 24 h solo se puede mandar una plantilla APROBADA.
+       */
+      if (action === 'messages' && req.method === 'POST') {
+        /** @type {any} */
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const messageBody = longText(body.body, 1200);
+        const templateName = text(body.template, 60);
+        if (!messageBody && !templateName) {
+          json(res, 422, { ok: false, error: 'empty_message', message: 'Escribe el mensaje.' });
+          return;
+        }
+        if (customer?.do_not_contact || customer?.whatsapp_opt_out_at) {
+          json(res, 409, {
+            ok: false,
+            error: 'do_not_contact',
+            message: 'Este cliente pidió no recibir mensajes. Respétalo.',
+          });
+          return;
+        }
+        if (!ctx.whatsapp?.enabled) {
+          json(res, 503, {
+            ok: false,
+            error: 'whatsapp_not_configured',
+            message:
+              'WhatsApp todavía no está configurado en el servidor (faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID). El mensaje NO se ha enviado.',
+          });
+          return;
+        }
+        /** @type {any} */
+        let template = null;
+        if (templateName) {
+          const check = await approvedTemplate(ctx, templateName);
+          if (!check.ok) {
+            json(res, 409, {
+              ok: false,
+              error: check.reason,
+              message:
+                check.reason === 'template_not_approved'
+                  ? `La plantilla «${templateName}» todavía no está aprobada en Meta: no se puede enviar.`
+                  : `Plantilla desconocida: ${templateName}`,
+              template: check.template ?? null,
+            });
+            return;
+          }
+          template = check.template;
+        }
+        if (!template && !ctx.customers.canSendFreeText(conversation)) {
+          json(res, 409, {
+            ok: false,
+            error: 'outside_window',
+            message:
+              'Han pasado más de 24 h desde el último mensaje del cliente: WhatsApp solo permite enviar una plantilla aprobada.',
+          });
+          return;
+        }
+
+        const sendResult = template
+          ? await ctx.whatsapp.sendTemplate(customer.phone_e164, {
+              name: template.name,
+              language: template.language ?? 'es',
+              components: [],
+            })
+          : await ctx.whatsapp.sendText(customer.phone_e164, messageBody, {
+              previewUrl: body.previewUrl === true,
+              replyTo: text(body.replyTo, 200) ?? undefined,
+            });
+
+        if (!sendResult.ok && sendResult.skipped) {
+          json(res, 503, {
+            ok: false,
+            error: 'whatsapp_not_configured',
+            message: 'WhatsApp no está configurado: el mensaje NO se ha enviado.',
+          });
+          return;
+        }
+        if (!sendResult.ok) {
+          const recorded = await ctx.customers.recordOutbound({
+            customer,
+            conversation,
+            body: template ? null : messageBody,
+            template: template?.name ?? null,
+            status: 'failed',
+            error: sendResult.error ?? { message: sendResult.reason ?? 'error' },
+            idempotencyKey: text(body.idempotencyKey, 120),
+            sentBy: 'panel',
+          });
+          console.error(`[crm] WhatsApp rechazó un mensaje a ${customer.id}: ${sendResult.error?.message ?? 'error'}`);
+          json(res, 502, {
+            ok: false,
+            error: 'send_failed',
+            message: sendResult.error?.message ?? 'WhatsApp rechazó el mensaje.',
+            detail: sendResult.error ?? null,
+            message_record: recorded.message,
+          });
+          return;
+        }
+
+        const recorded = await ctx.customers.recordOutbound({
+          customer,
+          conversation,
+          body: template ? null : messageBody,
+          template: template?.name ?? null,
+          waMessageId: sendResult.messageId ?? null,
+          status: 'sent',
+          idempotencyKey: text(body.idempotencyKey, 120),
+          // Solo datos públicos del envío: nunca el token ni la cabecera.
+          meta: { phoneNumberId: ctx.whatsapp.phoneNumberId },
+          sentBy: 'panel',
+        });
+        await ctx.customers.markConversationRead(conversation.id);
+        // Una persona acaba de escribir: la conversación pasa a manos humanas.
+        await ctx.customers.setAutomationState(customer.id, 'HUMAN_ACTIVE');
+
+        const followupId = text(body.followupId, 80);
+        const followup = followupId
+          ? await ctx.followups.complete(followupId, {
+              by: 'panel',
+              messageId: recorded.message?.id ?? null,
+              outcome: 'enviado',
+            })
+          : null;
+
+        // Dos ticks azules para el cliente (no es un mensaje: no cuenta como envío).
+        const inbound = (await ctx.customers.messagesFor(conversation.id, { limit: 50 })).filter(
+          (row) => row.direction === 'inbound',
+        );
+        const lastInbound = inbound[inbound.length - 1];
+        if (lastInbound?.wa_message_id) {
+          ctx.whatsapp.markAsRead(lastInbound.wa_message_id).catch(() => {});
+        }
+
+        console.log(`[crm] mensaje enviado a ${customer.id}${template ? ` (plantilla ${template.name})` : ''}`);
+        json(res, 200, {
+          ok: true,
+          message: recorded.message,
+          duplicate: recorded.duplicate === true,
+          followup,
+        });
+        return;
+      }
+
+      json(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+
+    // ---------------------------------------------------------- seguimiento
+    if (route === '/api/admin/followups' && req.method === 'GET') {
+      const buckets = await ctx.followups.buckets();
+      const customers = await ctx.customers.list({});
+      json(res, 200, {
+        ok: true,
+        reference: buckets.reference,
+        today: withCustomer(buckets.today, customers),
+        overdue: withCustomer(buckets.overdue, customers),
+        upcoming: withCustomer(buckets.upcoming, customers),
+        completed: withCustomer(buckets.completed.slice(-30), customers),
+        cancelled: withCustomer(buckets.cancelled.slice(-30), customers),
+        summary: await ctx.followups.summary(),
+        plan: ctx.followups.plan,
+        timeZone: ctx.followups.timeZone,
+      });
+      return;
+    }
+
+    // Tarea creada a mano (fuera del plan automático).
+    if (route === '/api/admin/followups' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const customer = body.customerId ? await ctx.customers.get(text(body.customerId, 80) ?? '') : null;
+      if (!customer) {
+        json(res, 422, { ok: false, error: 'unknown_customer' });
+        return;
+      }
+      const followup = await ctx.followups.createManual({
+        customerId: customer.id,
+        purchaseId: text(body.purchaseId, 80) ?? null,
+        type: text(body.type, 30) ?? 'manual',
+        reason: longText(body.reason, 200) ?? 'Seguimiento manual',
+        scheduledAt: day(body.scheduledAt) ?? undefined,
+        template: text(body.template, 60) ?? null,
+      });
+      json(res, 201, { ok: true, followup });
+      return;
+    }
+
+    // Decidir una tarea: completar, omitir, cancelar, posponer o cambiar la fecha.
+    if (route.startsWith('/api/admin/followups/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      const rest = decodeURIComponent(route.slice('/api/admin/followups/'.length));
+      const [followupId, actionInPath = ''] = rest.split('/');
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const action = actionInPath || text(body.action, 20) || 'complete';
+      const current = await ctx.db.get('followups', followupId);
+      if (!current) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      /** @type {any} */
+      let followup = null;
+      if (action === 'complete') followup = await ctx.followups.complete(followupId, { by: 'panel', outcome: 'hecho' });
+      else if (action === 'skip') followup = await ctx.followups.skip(followupId, { reason: text(body.reason, 200) });
+      else if (action === 'cancel') followup = await ctx.followups.cancel(followupId, { reason: text(body.reason, 200) });
+      else if (action === 'postpone') followup = await ctx.followups.postpone(followupId, { days: body.days, date: body.date });
+      else if (action === 'reschedule' && day(body.date)) followup = await ctx.followups.reschedule(followupId, day(body.date));
+      else {
+        json(res, 422, { ok: false, error: 'invalid_action', actions: ['complete', 'skip', 'cancel', 'postpone', 'reschedule'] });
+        return;
+      }
+      if (ctx.customers) {
+        const next = await ctx.followups.nextForCustomer(current.customer_id);
+        await ctx.customers.update(current.customer_id, { next_followup_at: next?.scheduled_at ?? null });
+      }
+      json(res, 200, { ok: true, followup });
+      return;
+    }
+
+    // ------------------------------------------------------- plantillas oficiales
+    if (route === '/api/admin/wa-templates' && req.method === 'GET') {
+      json(res, 200, { ok: true, templates: await listWaTemplates(ctx) });
+      return;
+    }
+
+    /*
+     * Registrar/actualizar una plantilla. El ESTADO lo dicta Meta: hasta que el
+     * negocio no marque `approved` (tras aprobarla en Meta), el panel no la deja
+     * enviar. Así el CRM nunca intenta un envío que WhatsApp va a rechazar.
+     */
+    if (route === '/api/admin/wa-templates' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const name = text(body.name, 60);
+      if (!name) {
+        json(res, 422, { ok: false, error: 'invalid_name' });
+        return;
+      }
+      const allowed = ['pending_approval', 'approved', 'rejected', 'disabled'];
+      const status = allowed.includes(text(body.status, 30)) ? text(body.status, 30) : 'pending_approval';
+      const existing = await ctx.db.findBy('wa_templates', 'name', name);
+      const doc = {
+        id: existing?.id ?? `tpl_${name}`,
+        name,
+        category: text(body.category, 30) ?? existing?.category ?? 'MARKETING',
+        language: text(body.language, 10) ?? existing?.language ?? 'es',
+        body: longText(body.body, 1024) ?? existing?.body ?? null,
+        variables: Array.isArray(body.variables) ? body.variables.slice(0, 10) : existing?.variables ?? [],
+        buttons: Array.isArray(body.buttons) ? body.buttons.slice(0, 5) : existing?.buttons ?? [],
+        status,
+        sendable: status === 'approved',
+        // Identificador y fecha que solo pueden venir de Meta (los rellena el
+        // negocio a mano tras registrarla allí). Aquí nunca se inventan.
+        meta_template_id: text(body.metaTemplateId, 80) ?? existing?.meta_template_id ?? null,
+        last_synced_at: text(body.lastSyncedAt, 40) ?? existing?.last_synced_at ?? null,
+        source: existing?.source ?? 'crm',
+        created_at: existing?.created_at ?? new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (existing) await ctx.db.update('wa_templates', existing.id, doc);
+      else await ctx.db.insert('wa_templates', doc);
+      json(res, 200, { ok: true, template: doc, templates: await listWaTemplates(ctx) });
+      return;
+    }
+
+    // Plantillas de TEXTO del panel (las que se copian en el chat).
     if (route === '/api/admin/messages' && req.method === 'POST') {
       /** @type {any} */
       let body = {};
@@ -883,6 +1895,18 @@ export async function startCrmServer(config = {}) {
   const store = await createStore({ databaseUrl: settings.databaseUrl, dataFile: settings.dataFile });
 
   /*
+   * Colecciones nuevas (clientes, conversaciones, mensajes, seguimientos,
+   * plantillas oficiales y contenido) sobre el MISMO backend que los pedidos:
+   * una sola base de datos que respaldar y una sola forma de consultarla.
+   */
+  const db = await createCollections({
+    backend: store.kind === 'postgres' ? 'postgres' : store.kind === 'sqlite' ? 'sqlite' : 'jsonl',
+    handle: store.handle ?? null,
+    dir: path.dirname(settings.dataFile),
+    prefix: 'phytoemagry_',
+  });
+
+  /*
    * Cliente de Meta. Si no hay credenciales queda desactivado y todo sigue
    * funcionando igual: el CRM no puede depender de un tercero para guardar un
    * pedido. El token solo vive aquí (nunca sale en una respuesta HTTP).
@@ -898,13 +1922,50 @@ export async function startCrmServer(config = {}) {
       debug: !settings.quiet,
     });
 
+  /*
+   * Cliente de WhatsApp Cloud API. Sin credenciales queda desactivado y el CRM
+   * sigue igual (guardar un cliente nunca puede depender de Meta). El token solo
+   * vive aquí: nunca sale en una respuesta HTTP.
+   */
+  const whatsapp =
+    config.whatsapp ??
+    createWhatsAppClient({
+      accessToken: config.whatsappAccessToken ?? WHATSAPP_ACCESS_TOKEN,
+      phoneNumberId: config.whatsappPhoneNumberId ?? WHATSAPP_PHONE_NUMBER_ID,
+      businessAccountId: config.whatsappBusinessAccountId ?? WHATSAPP_BUSINESS_ACCOUNT_ID,
+      graphVersion: config.whatsappGraphVersion ?? WHATSAPP_GRAPH_VERSION,
+      log: settings.quiet ? false : undefined,
+    });
+
+  /*
+   * Seguimiento: crea y fecha tareas. NO envía nada por su cuenta; el envío
+   * siempre lo pulsa una persona en el panel.
+   */
+  const followups = createFollowupEngine({
+    db,
+    plan: config.followupPlan ?? FOLLOWUP_PLAN,
+    timeZone: TIME_ZONE,
+    dailyCapsules: DAILY_CAPSULES,
+    clock: config.clock,
+  });
+  const customers = createCustomerService({ db, store, followups, clock: config.clock });
+
   const ctx = {
     store,
+    db,
     token: settings.token,
     allowedOrigin: settings.allowedOrigin,
     adminDir: settings.adminDir,
     metaCapi,
     purchaseStatus: config.purchaseStatus ?? META_PURCHASE_STATUS,
+    followups,
+    customers,
+    whatsapp,
+    whatsappPhoneNumber: (config.whatsappPhoneNumber ?? WHATSAPP_PHONE_NUMBER).trim(),
+    whatsappWebhookUrl: (config.whatsappWebhookUrl ?? WHATSAPP_WEBHOOK_URL).trim(),
+    whatsappVerifyToken: (config.whatsappVerifyToken ?? WHATSAPP_VERIFY_TOKEN).trim(),
+    appSecret: (config.metaAppSecret ?? META_APP_SECRET).trim(),
+    timeZone: TIME_ZONE,
   };
 
   const server = createServer((req, res) => {
@@ -936,10 +1997,27 @@ export async function startCrmServer(config = {}) {
     if (!settings.token) {
       console.warn('[crm] PHYTO_CRM_TOKEN sin definir: guardar funciona, el panel está desactivado.');
     }
+    console.log(
+      `[crm] WhatsApp: ${
+        whatsapp.enabled
+          ? `envío activo (${whatsapp.graphVersion})${ctx.whatsappPhoneNumber ? ` · número ${ctx.whatsappPhoneNumber}` : ''}`
+          : 'desactivado (faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID): la bandeja y los clientes funcionan igual'
+      }`,
+    );
+    console.log(
+      `[crm] webhook: ${
+        ctx.whatsappWebhookUrl || `/api/webhooks/whatsapp`
+      } · ${ctx.whatsappVerifyToken ? 'verificación configurada' : 'FALTA WHATSAPP_VERIFY_TOKEN'}`,
+    );
+    console.log(
+      `[crm] seguimiento: ${followups.plan.length} tarea(s) por venta entregada · el envío SIEMPRE es manual (nada se envía solo)`,
+    );
   }
 
   // Reintento de ventas pendientes en segundo plano: no retrasa el arranque.
   retryPendingPurchases(store, metaCapi).catch(() => {});
+  // Y se asegura de que las ventas entregadas tengan su plan de seguimiento.
+  ensureFollowupsForDelivered(ctx).catch(() => {});
 
   // Cierre idempotente: cerrar dos veces (un test, un reinicio, dos señales)
   // no puede lanzar "database is not open".
@@ -968,6 +2046,10 @@ export async function startCrmServer(config = {}) {
     server,
     store,
     metaCapi,
+    collections: db,
+    followups,
+    customers,
+    whatsapp,
     purchaseStatus: ctx.purchaseStatus,
     close,
   };
