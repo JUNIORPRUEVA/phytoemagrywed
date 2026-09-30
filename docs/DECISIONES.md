@@ -758,4 +758,50 @@ todo se unifica en el oficial:
 El número anterior queda en este registro como lo que fue: el que el negocio dio
 en su momento, hoy **superado** por el verificado de Cloud API.
 
+## 36. El panel se ve como una app comercial: menos cajas, más conversación
+
+El CRM funcionaba pero se veía como un formulario: barra superior oscura con
+menú, recarga y estado, un aviso permanente de «WhatsApp conectado» con el número
+del negocio, un hilo encerrado en una tarjeta de 46 dvh (324 px de 800 en un
+teléfono: más de la mitad de la pantalla desperdiciada), textos de ayuda fijos
+bajo el compositor, un botón gigante de «Registrar compra» y una acción de cliente
+escondida tras un `⋯`. Se rehizo la piel **sin tocar negocio, ni endpoints, ni
+base de datos, ni Meta, ni R2, ni el planificador**.
+
+Reglas que quedan fijadas (y que un test comprueba archivo a archivo):
+
+1. **La conversación manda.** En WhatsApp no hay barra superior general: ni
+   «WhatsApp», ni «conectado», ni el número del negocio (es SU número), ni
+   ayudas fijas. El hilo se queda con todo el alto que sobra (625 px donde antes
+   había 324) y la identidad del cliente son dos líneas de ~50 px.
+2. **Las acciones del cliente son un botón flotante**, no un botón de bloque: la
+   fila mide 0 px de alto y el botón flota en el hueco que el propio hilo reserva
+   abajo (56 px). Así **nunca** tapa el último mensaje, ni el compositor, ni la
+   barra inferior. Queda claro que el `+` del compositor **adjunta** y el FAB
+   **hace** (pedido, seguimiento, mensaje, ficha).
+3. **Un mensaje = un componente visual.** El audio y la imagen SON la burbuja
+   (se acabó la tarjeta dentro de otra tarjeta); la hora y el estado van discretos
+   al lado, y la duración conocida se enseña desde el principio en vez de `--:--`.
+4. **Un solo sistema de iconos** (SVG de trazo, pintados desde una única tabla) y
+   un estado de presencia que **respira** en vez de un punto muerto; los dos
+   respetan `prefers-reduced-motion` y el botón de menú se convierte en ✕ con una
+   transición de 220 ms.
+5. **Lo que NO se toca aunque estorbe:** la regla de «nada se envía solo» sigue
+   escrita donde se decide (el formulario de seguimiento dice que es una TAREA),
+   la ventana de 24 h solo se avisa cuando de verdad está cerrada, y el contexto
+   del cliente sigue viajando con la acción (pedido «para Ana Rosario», sin volver
+   a pedir nombre ni teléfono). El menú de acciones mantiene las cuatro acciones
+   de siempre: no se inventó ninguna.
+
+Se migró también lo secundario para que no hubiera dos lenguajes: barra inferior
+sobria (WhatsApp deja de ser un círculo elevado), menú lateral sin tarjetas y
+menús que en escritorio son popover en vez de hoja que sube desde abajo.
+
+Lo que se midió, no se supuso: `tests/panel-shell-uat.test.js` vigila el contrato
+visual sobre los archivos que se publican, y la UAT en navegador real comprobó a
+360x800, 390x844, 412x915, 1280x900 y 1440x900 que nada desborda en horizontal y
+que compositor, barra inferior y FAB no se pisan entre sí ni tapan el último
+mensaje. Las capturas antes/después quedan fuera del repositorio (herramienta
+local), igual que el CRM de pruebas con dobles que se usó para generarlas.
+
 
