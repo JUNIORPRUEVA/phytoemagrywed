@@ -114,6 +114,13 @@ export function createS3Client(options = {}) {
       typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
     try {
       const response = await fetchImpl(url, { method, headers: signed, body, signal });
+      /*
+       * La respuesta se consume SIEMPRE. Dejar sin leer el cuerpo de un PUT o un
+       * DELETE en una conexión que se reutiliza es una bomba de relojería: la
+       * siguiente petición puede encontrarse esos bytes y leer cabeceras de la
+       * operación ANTERIOR (dar por bueno un borrado que no lo fue).
+       */
+      if (method !== 'GET') await response.arrayBuffer().catch(() => {});
       return { ok: response.ok, status: response.status, response };
     } catch (error) {
       // Ni mensaje ni pila del proveedor: solo la clase de fallo.
@@ -150,17 +157,25 @@ export function createS3Client(options = {}) {
         size: buffer.length,
       };
     },
-    /** Metadatos sin descargar el cuerpo (y la comprobación de existencia). */
+    /**
+     * Metadatos sin descargar el cuerpo (y la comprobación de existencia).
+     *
+     * OJO con `size`: no todos los proveedores mandan `content-length` en un HEAD
+     * (R2 lo omite cuando la respuesta viaja codificada, comprobado contra el R2
+     * real). En ese caso `size` va como `null` —nunca un 0 inventado— y el tamaño
+     * se confirma leyendo el objeto (`get`) o un rango del mismo.
+     */
     async head(key) {
       const result = await request('HEAD', key);
       if (!result.ok) {
         return { ok: false, status: result.status, error: result.error ?? `http_${result.status}` };
       }
+      const declarado = result.response.headers.get('content-length');
       return {
         ok: true,
         status: result.status,
         contentType: result.response.headers.get('content-type') ?? null,
-        size: Number(result.response.headers.get('content-length') ?? 0),
+        size: declarado === null ? null : Number(declarado),
         etag: result.response.headers.get('etag') ?? null,
       };
     },

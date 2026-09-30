@@ -53,6 +53,15 @@
   --pe-shadow: var(--shadow-sm);
   --pe-tabbar: 62px;
   --pe-appbar: 56px;
+  /*
+   * Todo lo que NO es hilo en la pantalla del chat: barra superior 56 + relleno
+   * 14 + aviso 59 + cabecera del chat 44 + huecos 20 + compositor 120 + nota 20 y
+   * su margen 10 + CTA 48 + barra inferior 62 = 453. Con 474 quedan ~20 px de aire
+   * entre el CTA «Registrar compra de un cliente» y la barra fija, así que el CTA
+   * nunca nace tapado (antes quedaba 103 px por debajo en 360x800 y 19 px en
+   * 1280x900, y había que desplazar la página para poder pulsarlo).
+   */
+  --pe-chat-below: 474px;
   --pe-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     "Noto Sans", sans-serif;
 }
@@ -942,8 +951,13 @@ body[data-tab='whatsapp'] .content {
   color: var(--pe-ink-500);
 }
 
+/*
+ * El hilo se queda con el alto que sobra al restar lo que hay debajo (ver
+ * `--pe-chat-below`). Vale igual en móvil y en escritorio porque sale del alto
+ * real de la pantalla, no de un porcentaje.
+ */
 .thread--wa {
-  max-height: 56dvh;
+  max-height: calc(100dvh - var(--pe-chat-below));
 }
 
 .wa__composer {
@@ -967,10 +981,6 @@ body[data-tab='whatsapp'] .content {
   .wa[data-view='chat'] .wa__list {
     display: none;
   }
-
-  .thread--wa {
-    max-height: 52dvh;
-  }
 }
 
 @media (min-width: 980px) {
@@ -979,7 +989,7 @@ body[data-tab='whatsapp'] .content {
   }
 
   .wa__list {
-    max-height: 74dvh;
+    max-height: calc(100dvh - var(--pe-chat-below));
     overflow-y: auto;
     overscroll-behavior: contain;
   }

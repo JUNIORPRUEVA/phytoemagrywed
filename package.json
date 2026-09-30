@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "check": "node scripts/check-content.mjs",
     "check:content": "node scripts/check-content.mjs",
+    "smoke:r2": "node scripts/r2-smoke.mjs",
     "audit:content": "node scripts/audit-content.mjs",
     "inspect:render": "node scripts/inspect-render.mjs",
     "verify": "npm run test && npm run check && npm run build",
