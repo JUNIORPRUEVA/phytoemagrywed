@@ -1174,6 +1174,24 @@ describe.skipIf(!ffmpegInfo().available)('audio no aceptado por WhatsApp: se con
     expect(graph.lastUpload.buffer.equals(mp3)).toBe(true);
   }, 20000);
 
+  it('un MP4/M4A de grabación se convierte antes de subirlo para que no falle la entrega', async () => {
+    const m4a = generar('nota.m4a', ['-c:a', 'aac', '-b:a', '64k']);
+    const storage = fakeStorage();
+    const graph = fakeGraph();
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage, whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(out({ buffer: m4a, declaredMime: 'audio/mp4', filename: 'nota.m4a' }));
+
+    expect(resultado.ok).toBe(true);
+    expect(resultado.mimeType).toBe('audio/ogg');
+    expect(resultado.convertedTo).toBe('audio/ogg');
+    expect(graph.lastUpload.mimeType).toBe('audio/ogg');
+    expect(graph.lastUpload.filename).toBe('nota.ogg');
+    expect(graph.lastUpload.buffer.subarray(0, 4).toString('ascii')).toBe('OggS');
+    expect(graph.lastUpload.buffer.includes('OpusHead')).toBe(true);
+    expect(storage.buffers.at(-1).contentType).toBe('audio/ogg');
+  }, 20000);
+
   it('si la conversión falla, NO se envía nada y se marca el fallo con un código claro', async () => {
     const roto = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(200, 5)]); // WebM con basura
     const graph = fakeGraph();

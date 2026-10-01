@@ -13,6 +13,7 @@
  * El micrófono y el almacén van dobles: no se toca ni Meta ni R2.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -29,6 +30,17 @@ const ADMIN_DIR = path.join(process.cwd(), 'public', 'admin');
 const png = (extra = 40) =>
   Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(extra, 9)]);
 const ogg = (extra = 60) => Buffer.concat([Buffer.from('OggS'), Buffer.alloc(extra, 5)]);
+
+function audioFixture(nombre, args) {
+  const salida = path.join(tmpDir, nombre);
+  const run = spawnSync(
+    'ffmpeg',
+    ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=0.25', ...args, salida],
+    { encoding: 'utf8' },
+  );
+  if (run.status !== 0) throw new Error(`ffmpeg no pudo generar ${nombre}: ${run.stderr}`);
+  return readFileSync(salida);
+}
 
 const storage = {
   enabled: true,
@@ -503,7 +515,7 @@ describe('UAT del panel con multimedia', () => {
     const antes = sends;
     click($('#wa-attach'));
     await waitFor(() => $('#attach-audio'), 'la hoja de adjuntar');
-    const m4a = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypM4A '), Buffer.alloc(60, 7)]);
+    const m4a = audioFixture('sin-tipo.m4a', ['-c:a', 'aac', '-b:a', '64k']);
     const file = new FakeFile([m4a], 'nota-de-voz.m4a', { type: '' });
     pickFile('#attach-audio', '#attach-audio-input', file);
 
@@ -526,7 +538,7 @@ describe('UAT del panel con multimedia', () => {
     const antes = sends;
     click($('#wa-attach'));
     await waitFor(() => $('#attach-audio'), 'la hoja de adjuntar');
-    const m4a = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypM4A '), Buffer.alloc(60, 3)]);
+    const m4a = audioFixture('chrome-x-m4a.m4a', ['-c:a', 'aac', '-b:a', '64k']);
     const file = new FakeFile([m4a], 'nota.m4a', { type: 'audio/x-m4a' });
     pickFile('#attach-audio', '#attach-audio-input', file);
 

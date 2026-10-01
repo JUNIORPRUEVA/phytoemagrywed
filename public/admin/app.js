@@ -1633,8 +1633,7 @@
     let soloArchivo = false;
     if (tipo === 'image' && mediaSrc && mediaListo) {
       soloArchivo = !message.body;
-      cuerpo = `<button class="media-thumb" data-media-view="${escapeHtml(media.id)}" type="button" aria-label="Ver la imagen en grande">
-          <img src="${escapeHtml(mediaSrc)}" alt="Imagen del cliente" loading="lazy" decoding="async" /></button>`;
+      cuerpo = `<button class="media-thumb" data-media-view="${escapeHtml(media.id)}" type="button" aria-label="Ver la imagen en grande"><img src="${escapeHtml(mediaSrc)}" alt="Imagen del cliente" loading="lazy" decoding="async" /></button>`;
       if (message.body) cuerpo += `<span class="media-caption">${escapeHtml(message.body)}</span>`;
     } else if ((tipo === 'audio' || tipo === 'voice') && mediaSrc && mediaListo) {
       soloArchivo = true;
@@ -1697,15 +1696,27 @@
       : message.actor_type === 'SYSTEM'
         ? 'Sistema'
         : message.sent_by_display_name_snapshot || (message.sent_by && message.sent_by !== 'panel' ? message.sent_by : '');
-    return `<div class="bubble bubble--${inbound ? 'in' : 'out'} ${auto ? 'bubble--auto' : ''} ${
-      message.status === 'failed' ? 'bubble--failed' : ''
-    } ${grouped ? 'bubble--grouped' : ''} ${soloArchivo ? 'bubble--media' : ''}">
-        ${who && !grouped ? `<span class="bubble__who">${escapeHtml(who)}</span>` : ''}
-        ${cuerpo}
-        <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
-          estado ? ` · ${escapeHtml(estado)}` : ''
-        }${message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''}</span>
-      </div>`;
+    /*
+     * El HTML se arma PEGADO a propósito, sin saltos de línea ni sangría de
+     * plantilla. La burbuja conserva los saltos que escribió una persona
+     * (`white-space: pre-wrap`), así que cualquier espacio de la plantilla se
+     * vería como líneas VACÍAS arriba y abajo del texto: eso era el aire que
+     * dejaba el mensaje "suelto" en medio de la burbuja.
+     */
+    const quien = who && !grouped ? `<span class="bubble__who">${escapeHtml(who)}</span>` : '';
+    const hora = `<span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
+      estado ? ` · ${escapeHtml(estado)}` : ''
+    }${message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''}</span>`;
+    const clases = [
+      `bubble bubble--${inbound ? 'in' : 'out'}`,
+      auto ? 'bubble--auto' : '',
+      message.status === 'failed' ? 'bubble--failed' : '',
+      grouped ? 'bubble--grouped' : '',
+      soloArchivo ? 'bubble--media' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return `<div class="${clases}">${quien}${cuerpo}${hora}</div>`;
   }
 
   // --------------------------------------------------- bandeja de WhatsApp

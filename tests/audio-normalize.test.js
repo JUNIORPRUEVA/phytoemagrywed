@@ -67,8 +67,8 @@ describe('se identifica el audio por sus bytes, no por la extensión', () => {
     expect(oggCodec(Buffer.alloc(4))).toBe('unknown');
   });
 
-  it('no convierte lo que WhatsApp ya acepta', () => {
-    for (const mime of ['audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr']) {
+  it('no convierte lo que WhatsApp ya acepta y entrega de forma estable', () => {
+    for (const mime of ['audio/mpeg', 'audio/amr']) {
       const decision = audioDecision({ buffer: Buffer.alloc(300, 1), mimeType: mime });
       expect(decision.convert, mime).toBe(false);
       expect(decision.reason).toBe('meta_safe');
@@ -93,6 +93,15 @@ describe('se identifica el audio por sus bytes, no por la extensión', () => {
       reason: 'codec_unsupported',
     });
     expect(audioDecision({ buffer: OGG_FLAC, mimeType: 'audio/ogg' })).toMatchObject({ convert: true });
+  });
+
+  it('convierte MP4/AAC de navegador: Meta lo sube pero puede fallar al entregar', () => {
+    for (const mime of ['audio/mp4', 'audio/aac']) {
+      expect(audioDecision({ buffer: Buffer.alloc(300, 1), mimeType: mime })).toMatchObject({
+        convert: true,
+        reason: 'delivery_unstable_container',
+      });
+    }
   });
 
   it('un Ogg que no se sabe leer se DEJA PASAR (convertir a ciegas es peor)', () => {
@@ -138,6 +147,17 @@ describe.skipIf(!HAY_FFMPEG)('conversión real (necesita ffmpeg)', () => {
     expect(resultado.ok).toBe(true);
     expect(resultado.converted).toBe(false);
     expect(resultado.buffer).toBe(mp3);
+  }, 20000);
+
+  it('un M4A/MP4 válido se convierte a Ogg/Opus para evitar fallo de entrega de Meta', async () => {
+    const m4a = generar('grabacion.m4a', ['-c:a', 'aac', '-b:a', '64k']);
+    const resultado = await normalizeAudio({ buffer: m4a, mimeType: 'audio/mp4', filename: 'nota.m4a' });
+    expect(resultado.ok).toBe(true);
+    expect(resultado.converted).toBe(true);
+    expect(resultado.reason).toBe('delivery_unstable_container');
+    expect(resultado.mimeType).toBe(NORMALIZED_MIME);
+    expect(resultado.buffer.subarray(0, 4).toString('ascii')).toBe('OggS');
+    expect(resultado.buffer.includes('OpusHead')).toBe(true);
   }, 20000);
 
   it('lo que no es audio no se convierte en un éxito falso', async () => {

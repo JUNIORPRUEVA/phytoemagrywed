@@ -46,11 +46,18 @@ export const META_AUDIO_MIME = Object.freeze([
 /** Contenedores que sabemos convertir (aunque Meta no los acepte directamente). */
 export const CONVERTIBLE_AUDIO_MIME = Object.freeze([
   'audio/webm',
+  'audio/mp4',
+  'audio/aac',
   'audio/wav',
   'audio/x-wav',
   'audio/ogg',
   'audio/opus',
   'video/webm',
+]);
+
+const DELIVERY_UNSTABLE_AUDIO_MIME = Object.freeze([
+  'audio/mp4',
+  'audio/aac',
 ]);
 
 /** Salida de la conversión: el formato más seguro para voz. */
@@ -138,6 +145,9 @@ export function audioDecision({ buffer, mimeType }) {
       codec,
       mimeType: 'audio/ogg',
     };
+  }
+  if (DELIVERY_UNSTABLE_AUDIO_MIME.includes(mime)) {
+    return { convert: true, reason: 'delivery_unstable_container', codec: null, mimeType: mime };
   }
   if (META_AUDIO_MIME.includes(mime)) {
     return { convert: false, reason: 'meta_safe', codec: null, mimeType: mime };
