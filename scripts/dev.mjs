@@ -95,8 +95,13 @@ function renderInChildProcess(outDir) {
  * @returns {Promise<import('node:child_process').ChildProcess | null>}
  */
 async function ensureCrm(port) {
-  if (await probeCrm({ port })) {
-    console.log(`🧩 CRM ya encendido en http://127.0.0.1:${port} (se reutiliza)`);
+  const existing = await probeCrm({ port });
+  if (existing) {
+    console.log(`🧩 CRM ya encendido en http://127.0.0.1:${port} (se reutiliza · almacén ${existing.storage ?? '?'})`);
+    if ((process.env.PHYTO_CRM_DATABASE_URL ?? '').trim() && existing.storage && existing.storage !== 'postgres') {
+      console.warn('   ⚠ .env tiene PHYTO_CRM_DATABASE_URL, pero el CRM vivo no está usando Postgres.');
+      console.warn('     Cierra ese proceso CRM/dev y vuelve a ejecutar npm run dev para arrancar con la configuración actual.');
+    }
     return null;
   }
   if (process.env.PHYTO_CRM_NO_AUTO === '1') {
@@ -217,14 +222,27 @@ async function main() {
       }, 80);
     });
 
-    // `public/` (imágenes) se copia UNA vez al arrancar: si se generan fotos
-    // nuevas (npm run images:hero / images:frascos) el servidor no las vería y
-    // daría 404. Se vigila la carpeta para copiarlas al vuelo.
+    // `public/` (imágenes y el panel del CRM) se copia UNA vez al arrancar: si se
+    // generan fotos nuevas (npm run images:hero / images:frascos) el servidor no
+    // las vería y daría 404. Se vigila la carpeta para copiarlas al vuelo.
     let copyDebounce = null;
-    watch(path.join(ROOT, 'public'), { recursive: true }, () => {
+    watch(path.join(ROOT, 'public'), { recursive: true }, (_event, filename) => {
       clearTimeout(copyDebounce);
       copyDebounce = setTimeout(() => {
-        copyPublic(DIST_DEV).catch((error) => console.error('   ✖ no se pudo copiar public/:', error.message));
+        copyPublic(DIST_DEV)
+          .then(() => {
+            /*
+             * El panel (`public/admin/`) no lo compila esbuild: se edita a mano y
+             * hasta ahora había que recargar con F5 para verlo. Se sube `rev`
+             * cuando el archivo es del panel para que la recarga automática —que
+             * ya está puesta en el HTML— también cubra estos cambios.
+             */
+            if (String(filename ?? '').startsWith('admin')) {
+              rev += 1;
+              console.log(`   ↻ panel copiado (rev ${rev})`);
+            }
+          })
+          .catch((error) => console.error('   ✖ no se pudo copiar public/:', error.message));
       }, 120);
     });
   }

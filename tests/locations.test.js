@@ -195,7 +195,8 @@ async function customerWithPhone(app, phone) {
 }
 
 /** Crea un pedido con lo mínimo: NO se manda ciudad ni dirección (§1). */
-const createOrder = (app, body) => call(app, '/api/admin/orders', { method: 'POST', body: JSON.stringify(body) });
+const createOrder = (app, body) =>
+  call(app, '/api/admin/orders', { method: 'POST', body: JSON.stringify({ paymentMethod: 'CASH', ...body }) });
 
 describe('modelo de ubicación: validación estricta', () => {
   it('acepta coordenadas válidas y las deja tal cual (sin inventar precisión)', () => {

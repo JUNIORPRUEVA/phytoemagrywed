@@ -226,15 +226,27 @@ describe('panel: gestionar clientes y pedidos', () => {
     expect(data.stats.hoy).toBeGreaterThanOrEqual(1);
   });
 
-  it('escribir por WhatsApp queda registrado como contacto', async () => {
+  it('escribir por WhatsApp en un pedido registra contacto sin usar estados legacy', async () => {
     const response = await call(
       '/api/admin/items/order-panel',
       { method: 'PATCH', body: JSON.stringify({ contacted: true }) },
       cookie,
     );
     const body = await json(response);
-    expect(body.item.status).toBe('contactado');
+    expect(body.item.status).toBe('nuevo');
     expect(body.item.last_contact_at).toBeTruthy();
+  });
+
+  it('rechaza estados legacy en pedidos nuevos', async () => {
+    for (const status of ['contactado', 'interesado']) {
+      const response = await call(
+        '/api/admin/items/order-panel',
+        { method: 'PATCH', body: JSON.stringify({ status }) },
+        cookie,
+      );
+      expect(response.status).toBe(422);
+      expect((await json(response)).error).toBe('legacy_order_status');
+    }
   });
 
   it('quit el recordatorio con una fecha vacía', async () => {

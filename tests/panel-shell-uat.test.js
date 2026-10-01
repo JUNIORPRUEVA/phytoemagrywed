@@ -110,6 +110,27 @@ describe('WhatsApp: la conversación es la pantalla', () => {
     expect(app).toContain('document.body.dataset.waView = view');
   });
 
+  it('el icono del menú solo vive en la principal; en el resto, volver', () => {
+    // El menú lateral se abre desde el círculo grande de la cabecera de Hoy…
+    expect(app).toContain('data-open-drawer');
+    // …y en cualquier otra página el botón flotante del menú DESAPARECE: allí lo
+    // que hay es un volver, en el mismo sitio y sin superponerse (eran dos
+    // círculos a 14 px y 16 px, uno encima del otro).
+    expect(css).toMatch(/body:not\(\[data-tab='hoy'\]\) \.float-btn--menu \{\n\s+display: none;/);
+    expect(app).toContain('data-simple-back');
+    // Una conversación abierta es la pantalla entera y ya lleva su ←: la barra
+    // general (con OTRO volver) se retira para no duplicar el control.
+    expect(css).toMatch(/body\[data-wa-view='chat'\] \.mobile-header \{\n\s+display: none;/);
+    // El volver es un control de dedo (44 px, no 38) y redondo.
+    expect(css).toMatch(/\.simple-head__back \{[\s\S]*?width: 44px;\n\s+height: 44px;/);
+    expect(css).toMatch(/\.simple-head__back \{[\s\S]*?border-radius: 50%/);
+    // Alineado con el borde del contenido (los 14 px de `.content`) y sin barra dura.
+    expect(css).toMatch(/\.simple-head \{[\s\S]*?padding: calc\(5px \+ env\(safe-area-inset-top, 0px\)\) 14px 5px;/);
+    expect(css).toMatch(/\.simple-head \{[\s\S]*?border-bottom: 1px solid rgba\(11, 107, 79, 0\.07\)/);
+    // Volver lleva al inicio, que es donde está el menú.
+    expect(app).toContain("setTab('hoy')");
+  });
+
   it('la lista son filas limpias, sin tarjeta por conversación', () => {
     expect(css).toMatch(/\.conv \{[\s\S]*?border-bottom: 1px solid var\(--border-soft\)/);
     expect(css).toMatch(/\.conv \{[\s\S]*?border-radius: 0/);

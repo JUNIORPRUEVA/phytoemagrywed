@@ -230,7 +230,7 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     const response = await fetch(`${app.url}/api/admin/orders/${order.id}/receipt`, { headers: { cookie } });
     const html = await response.text();
     expect(response.status).toBe(200);
-    expect(html).toContain('Comprobante de compra');
+    expect(html).toContain('Factura de compra');
     expect(html).toContain(order.order_number);
     expect(html).toContain('RD$');
   });

@@ -35,7 +35,7 @@ const call = (route, options = {}) =>
 
 const json = async (response) => JSON.parse(await response.text());
 
-const buy = (body) => call('/api/admin/purchases', { method: 'POST', body: JSON.stringify(body) });
+const buy = (body) => call('/api/admin/purchases', { method: 'POST', body: JSON.stringify({ paymentMethod: 'CASH', ...body }) });
 
 const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString();
 

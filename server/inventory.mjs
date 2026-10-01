@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
-import { orderOf } from './orders.mjs';
+import { isCompletedPurchaseStatus, orderOf } from './orders.mjs';
 import { dayIn } from './followups.mjs';
 
 export const PRODUCT_ID = 'phytoemagry';
@@ -298,7 +298,7 @@ export function createInventoryService(deps) {
       return day >= period.startDay && day <= period.endDay;
     };
     const rows = store?.listAdmin ? await store.listAdmin({ limit: 5000 }) : [];
-    const delivered = rows.filter((row) => row.type === 'order_intent' && row.status === 'entregado' && inRange(deliveredAtOf(row)));
+    const delivered = rows.filter((row) => row.type === 'order_intent' && isCompletedPurchaseStatus(row.status) && inRange(deliveredAtOf(row)));
     const sales = delivered.map((row) => {
       const order = orderOf(row);
       const lines = order?.items ?? [];
@@ -312,6 +312,8 @@ export function createInventoryService(deps) {
         customer_id: row.customer_id,
         customer_name: row.name,
         order_number: order?.order_number ?? row.order_number,
+        payment_method: order?.payment_method ?? null,
+        payment_method_label: order?.payment_method ? { CASH: 'Efectivo', TRANSFER: 'Transferencia' }[order.payment_method] ?? order.payment_method : null,
         presentation: lines.map((line) => line.variantName ?? line.label).join(', '),
         capsules,
         product_revenue_cents: productRevenueCents,

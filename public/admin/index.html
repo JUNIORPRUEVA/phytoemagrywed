@@ -21,9 +21,18 @@
     <link rel="stylesheet" href="/admin/admin.css" />
   </head>
   <body>
+    <div class="splash" id="splash" role="status" aria-live="polite">
+      <div class="splash__mark">
+        <img src="/admin/logo-phytoemagry.png" alt="" width="132" height="132" />
+      </div>
+      <p class="splash__brand">Phytoemagry</p>
+      <p class="splash__text">Preparando el CRM</p>
+      <span class="splash__bar" aria-hidden="true"></span>
+    </div>
+
     <!-- ------------------------------------------------------------- ENTRAR -->
     <main id="login" class="login" hidden>
-      <img class="login__logo" src="/admin/icon-192.png" alt="" width="72" height="72" />
+      <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="92" height="92" />
       <h1 class="login__title">PHYTOEMAGRY<br /><span>CRM</span></h1>
       <p class="login__text">
         Entra con tu usuario del equipo.
@@ -86,7 +95,8 @@
         aria-expanded="false"
         aria-controls="drawer"
       >
-        <span class="burger" aria-hidden="true"><span></span><span></span></span>
+        <span class="burger" aria-hidden="true" hidden><span></span><span></span></span>
+        <img class="drawer-menu-icon" src="/admin/icon-menu.png" alt="" aria-hidden="true" width="22" height="22" />
       </button>
       <span class="presence" id="state-pill" role="status" hidden></span>
       <header class="topbar">
@@ -95,19 +105,23 @@
           <span class="topbar__sub" id="topbar-sub">CRM</span>
         </div>
       </header>
+      <header class="mobile-header" id="mobile-header"></header>
 
       <!-- Menú lateral: lo secundario no ocupa la barra inferior -->
       <div class="scrim" id="scrim" hidden></div>
       <aside class="drawer" id="drawer" hidden aria-label="Menú del CRM">
         <div class="drawer__head">
-          <div class="drawer__brand"><strong>Phytoemagry</strong><span>CRM</span></div>
+          <div class="drawer__brand">
+            <img class="drawer__logo" src="/admin/logo-phytoemagry.png" alt="" width="38" height="38" />
+            <span><strong>Phytoemagry</strong><span>CRM</span></span>
+          </div>
           <button class="icon-btn" id="drawer-close" type="button" aria-label="Cerrar menú">
             <span class="ico" aria-hidden="true" data-icon="close"></span>
           </button>
         </div>
         <div class="drawer__user" id="drawer-user" hidden></div>
-        <p class="drawer__group">Operación</p>
-        <nav class="drawer__nav">
+        <p class="drawer__group drawer__group--primary">Operación</p>
+        <nav class="drawer__nav drawer__nav--primary">
           <button class="drawer__item" data-tab="hoy" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
           </button>
@@ -124,9 +138,9 @@
             <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
           </button>
           <button class="drawer__item" data-tab="productos" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Productos e inventario
+            <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
           </button>
-          <button class="drawer__item" data-tab="reportes" type="button">
+          <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
             <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
           </button>
           <button class="drawer__item" data-tab="seguimientos" type="button">
@@ -135,15 +149,21 @@
           <button class="drawer__item" data-tab="mensajes" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
           </button>
-          <button class="drawer__item" data-tab="ajustes" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
-          </button>
-          <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
-            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Usuarios
-          </button>
         </nav>
-        <p class="drawer__group">Sesión</p>
-        <button class="btn btn--danger btn--block" id="logout-drawer" type="button">Cerrar sesión</button>
+        <div class="drawer__foot">
+          <nav class="drawer__nav drawer__nav--bottom">
+            <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
+              <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
+            </button>
+            <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
+              <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
+            </button>
+            <button class="drawer__item" data-tab="perfil" type="button">
+              <span class="drawer__icon" aria-hidden="true" data-icon="person"></span>Perfil
+            </button>
+          </nav>
+          <button class="btn btn--danger btn--block" id="logout-drawer" type="button">Cerrar sesión</button>
+        </div>
       </aside>
 
       <p class="banner" id="offline-banner" hidden>
@@ -156,7 +176,6 @@
         <!-- HOY -->
         <section class="view" id="view-hoy" hidden>
           <div class="stats" id="stats"></div>
-          <h2 class="view__title">Para hoy</h2>
           <div class="list" id="list-hoy"></div>
         </section>
 
@@ -166,6 +185,12 @@
           <div class="wa" id="wa" data-view="list">
             <!-- Columna izquierda -->
             <div class="wa__list">
+              <!--
+                Con una o varias conversaciones seleccionadas, esta barra ocupa el
+                sitio de la cabecera (buscador y filtros) y muestra las acciones:
+                es el gesto de WhatsApp y evita tener dos barras a la vez.
+              -->
+              <div class="wa__sel" id="wa-sel" hidden></div>
               <div class="wa__list-head">
                 <input
                   class="field__input wa__search"
@@ -175,10 +200,17 @@
                   aria-label="Buscar conversación"
                   autocomplete="off"
                 />
+                <button class="wa-date" id="wa-date-menu" type="button" aria-label="Filtrar conversaciones por fecha">
+                  <span class="wa-date__icon" aria-hidden="true" data-icon="clock"></span>
+                  <span class="wa-date__text" id="wa-date-label">Todas</span>
+                </button>
               </div>
               <div class="chips" id="wa-filters"></div>
               <div class="wa__error" id="wa-error" hidden></div>
               <div class="wa__convs" id="wa-conversations"></div>
+              <button class="wa-new-chat" id="wa-new-chat" type="button" aria-label="Agregar cliente para WhatsApp" title="Agregar cliente">
+                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="26" height="26" />
+              </button>
             </div>
 
             <!-- Columna derecha -->
@@ -187,7 +219,14 @@
                 <button class="wa__back" id="wa-back" type="button" aria-label="Volver a conversaciones">
                   <span class="ico" aria-hidden="true" data-icon="back"></span>
                 </button>
-                <span class="avatar avatar--sm" id="wa-chat-avatar" aria-hidden="true"></span>
+                <button
+                  class="avatar avatar--sm wa__chat-avatar"
+                  id="wa-chat-avatar"
+                  type="button"
+                  aria-label="Ver perfil del cliente"
+                  title="Ver perfil del cliente"
+                  disabled
+                ></button>
                 <div class="wa__chat-who">
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
@@ -232,10 +271,15 @@
             <div class="chips" id="chips"></div>
           </div>
           <p class="view__count" id="clientes-count"></p>
-          <button class="btn btn--primary btn--block" id="compra-nueva" type="button">
-            + Registrar compra de un cliente
+          <button class="client-fab" id="clientes-acciones" type="button" aria-label="Acciones de clientes" title="Acciones de clientes">
+            <span class="ico" aria-hidden="true" data-icon="plus"></span>
           </button>
           <div class="list" id="list-clientes"></div>
+        </section>
+
+        <!-- PERFIL DEL CLIENTE -->
+        <section class="view view--customer-profile" id="view-perfil-cliente" hidden>
+          <div id="customer-profile"></div>
         </section>
 
         <!-- PEDIDOS Y COMPRAS (menú lateral) -->
@@ -380,6 +424,15 @@
             </form>
           </div>
           <div class="list" id="users-view"></div>
+        </section>
+
+        <!-- MI PERFIL (el usuario que tiene la sesión) -->
+        <section class="view view--profile" id="view-perfil" hidden>
+          <h2 class="view__title">Mi perfil</h2>
+          <p class="view__hint">
+            Tu nombre y tu clave son tuyos: aquí los cambias sin pedirle nada a nadie.
+          </p>
+          <div id="profile-view"></div>
         </section>
       </main>
 

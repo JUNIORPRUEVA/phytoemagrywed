@@ -1,8 +1,8 @@
 """
 Iconos del panel (PWA) de Phytoemagry.
 
-Genera los PNG que necesita una app instalable, sin depender de ningún archivo
-externo: el icono se dibuja aquí mismo con los colores de la marca.
+Genera los PNG que necesita una app instalable usando el emblema oficial del
+panel (`public/admin/logo-phytoemagry.png`) como fuente.
 
     python scripts/generate-admin-icons.py
 
@@ -15,96 +15,64 @@ Salida (se sirven desde /admin/, junto a la app):
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "public" / "admin"
+SOURCE = OUT_DIR / "logo-phytoemagry.png"
 
 BRAND_DARK = (7, 61, 46)  # --pe-brand-900
-BRAND = (11, 107, 79)  # --pe-brand-700
-BRAND_LIGHT = (223, 238, 232)  # --pe-brand-100
-ACCENT = (201, 226, 101)  # --pe-accent
 WHITE = (255, 255, 255)
 
-# Un tipo de letra con cuerpo, probando primero las que suelen estar instaladas.
-FONT_CANDIDATES = [
-    "arialbd.ttf",
-    "Arial Bold.ttf",
-    "segoeuib.ttf",
-    "DejaVuSans-Bold.ttf",
-    "LiberationSans-Bold.ttf",
-    "HelveticaNeue-Bold.ttf",
-]
+
+def contain(source: Image.Image, size: int, padding_ratio: float) -> Image.Image:
+    """Escala el emblema completo dentro de un lienzo cuadrado transparente."""
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    padding = int(size * padding_ratio)
+    box_size = size - padding * 2
+    image = source.copy()
+    image.thumbnail((box_size, box_size), Image.Resampling.LANCZOS)
+    x = (size - image.width) // 2
+    y = (size - image.height) // 2
+    canvas.alpha_composite(image, (x, y))
+    return canvas
 
 
-def load_font(size: int) -> ImageFont.FreeTypeFont:
-    for candidate in FONT_CANDIDATES:
-        try:
-            return ImageFont.truetype(candidate, size)
-        except OSError:
-            continue
-    # Pillow ≥ 10.1 trae una fuente escalable por defecto.
-    return ImageFont.load_default(size=size)
-
-
-def rounded_square(size: int, radius_ratio: float = 0.22) -> Image.Image:
-    """Lienzo cuadrado con las esquinas redondeadas (color de marca + degradado suave)."""
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    gradient = Image.new("RGBA", (size, size))
-    draw = ImageDraw.Draw(gradient)
-    for y in range(size):
-        mix = y / max(size - 1, 1)
-        color = tuple(
-            round(BRAND_DARK[i] + (BRAND[i] - BRAND_DARK[i]) * mix) for i in range(3)
-        ) + (255,)
-        draw.line([(0, y), (size, y)], fill=color)
-    mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        [(0, 0), (size - 1, size - 1)], radius=int(size * radius_ratio), fill=255
-    )
-    image.paste(gradient, (0, 0), mask)
-    return image
-
-
-def draw_icon(size: int, *, maskable: bool = False, transparent: bool = False) -> Image.Image:
-    image = (
-        Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        if transparent
-        else rounded_square(size)
-    )
+def brand_backplate(size: int, radius_ratio: float = 0.24) -> Image.Image:
+    """Fondo sólido para plataformas que no respetan transparencia (iOS)."""
+    image = Image.new("RGBA", (size, size), WHITE + (255,))
     draw = ImageDraw.Draw(image)
-
-    # En maskable el contenido vive dentro del 80% central: Android recorta lo demás.
-    padding = size * (0.22 if maskable else 0.14)
-    font = load_font(int(size * (0.42 if maskable else 0.5)))
-    text = "P"
-    box = draw.textbbox((0, 0), text, font=font)
-    draw.text(
-        ((size - (box[2] - box[0])) / 2 - box[0], (size - (box[3] - box[1])) / 2 - box[1] - size * 0.04),
-        text,
-        font=font,
-        fill=WHITE,
-    )
-
-    # La cápsula: el detalle de marca, debajo de la letra.
-    capsule_width = size - padding * 2
-    capsule_height = max(6, int(size * 0.075))
-    top = size * 0.7
+    inset = int(size * 0.04)
     draw.rounded_rectangle(
-        [padding, top, padding + capsule_width, top + capsule_height],
-        radius=capsule_height / 2,
-        fill=ACCENT,
+        (inset, inset, size - inset - 1, size - inset - 1),
+        radius=int(size * radius_ratio),
+        fill=WHITE + (255,),
+        outline=BRAND_DARK + (32,),
+        width=max(1, size // 96),
     )
     return image
+
+
+def draw_icon(source: Image.Image, size: int, *, maskable: bool = False, apple: bool = False) -> Image.Image:
+    padding = 0.18 if maskable else 0.04
+    logo = contain(source, size, padding)
+    if not apple:
+        return logo
+    image = brand_backplate(size)
+    image.alpha_composite(contain(source, size, 0.08))
+    return image.convert("RGB")
 
 
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not SOURCE.exists():
+        raise SystemExit(f"No existe la fuente del logo: {SOURCE}")
+    source = Image.open(SOURCE).convert("RGBA")
     outputs = {
-        "icon-192.png": draw_icon(192),
-        "icon-512.png": draw_icon(512),
-        "icon-maskable-512.png": draw_icon(512, maskable=True),
+        "icon-192.png": draw_icon(source, 192),
+        "icon-512.png": draw_icon(source, 512),
+        "icon-maskable-512.png": draw_icon(source, 512, maskable=True),
         # iPhone no admite transparencia en el icono: va con fondo.
-        "apple-touch-icon.png": draw_icon(180),
+        "apple-touch-icon.png": draw_icon(source, 180, apple=True),
     }
     for name, image in outputs.items():
         path = OUT_DIR / name

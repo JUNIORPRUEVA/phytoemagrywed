@@ -16,6 +16,7 @@
   const WA_NOTIFY_KEY = 'pe_wa_notify';
   const WA_SOUND_KEY = 'pe_wa_sound';
   const NEGOCIO = 'Phytoemagry';
+  const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
 
   /** Estado en memoria del panel. */
   const state = {
@@ -39,6 +40,9 @@
     settings: null,
     commercial: null,
     orderStatuses: [],
+    paymentMethods: [],
+    customerStages: [],
+    customerTags: [],
     audit: null,
     media: null,
     auth: null,
@@ -46,6 +50,10 @@
     metrics: null,
     metricsPeriod: '30d',
     orderId: null,
+    previousTab: null,
+    customerProfile: null,
+    customerProfileLoading: false,
+    customerProfileOrderId: null,
     tab: localStorage.getItem(TAB_KEY) ?? 'hoy',
     filter: 'todos',
     q: '',
@@ -56,6 +64,7 @@
     wa: {
       selectedId: null,
       filter: 'todos',
+      date: { mode: 'all', from: '', to: '' },
       q: '',
       chat: null,
       draft: '',
@@ -105,13 +114,14 @@
     chat: svg('<path d="M21 11.6a8 8 0 0 1-8 8H8.2L3 22.5l1.3-4.4A8 8 0 1 1 21 11.6z"/>'),
     users: svg('<path d="M15.5 20v-1.4a4 4 0 0 0-4-4H7.2a4 4 0 0 0-4 4V20"/><circle cx="9.3" cy="7.6" r="3.1"/><path d="M17.4 15.4a3.9 3.9 0 0 1 2.6 3.7V20M15.8 4.6a3.1 3.1 0 0 1 0 6"/>'),
     box: svg('<path d="M20.5 8.4v7.2L12 20.4l-8.5-4.8V8.4L12 3.6z"/><path d="M3.5 8.4 12 13l8.5-4.6M12 13v7.4"/>'),
+    inventory: svg('<path d="M5.2 5.4h13.6v14H5.2z"/><path d="M8.2 5.4V3.8h7.6v1.6M8.4 10.2h7.2M8.4 14.2h7.2"/>'),
     chart: svg('<path d="M4 19.5h16"/><path d="M7 16v-5M12 16V6.5M17 16v-8"/>'),
     bell: svg('<path d="M18 15.2V10a6 6 0 1 0-12 0v5.2L4 18.6h16z"/><path d="M10 21.4h4"/>'),
     note: svg('<path d="M8 3.5h8a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/><path d="M9.2 8h5.6M9.2 12h5.6M9.2 16h3.4"/>'),
     /* Ajustes = mandos que se deslizan (un engranaje aquí se confundía con el sol de Hoy). */
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
-    back: svg('<path d="M14.5 19l-7-7 7-7"/>'),
+    back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
     plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
     mic: svg('<rect x="9.2" y="2.8" width="5.6" height="10.8" rx="2.8"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.4V21M9.4 21h5.2"/>'),
     send: svg('<path d="M4.6 12 20 4.6l-7.3 15-1.9-6.3z"/><path d="M10.8 13.3 20 4.6"/>'),
@@ -119,6 +129,7 @@
     bag: svg('<path d="M4.6 7.4h14.8l-1.2 11.9a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8z"/><path d="M8.8 7.4V5.8a3.2 3.2 0 0 1 6.4 0v1.6"/>'),
     clock: svg('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3 1.9"/>'),
     person: svg('<circle cx="12" cy="7.9" r="3.9"/><path d="M4.8 20.4c1.3-3.3 4-4.9 7.2-4.9s5.9 1.6 7.2 4.9"/>'),
+    userCog: svg('<circle cx="10" cy="7.8" r="3.4"/><path d="M3.8 19.4c1.1-3 3.4-4.5 6.2-4.5 1.1 0 2.1.2 3 .7"/><circle cx="17.6" cy="16.8" r="2.1"/><path d="M17.6 13.5v1M17.6 18.9v1M14.7 15.1l.9.5M19.6 18l.9.5M14.7 18.5l.9-.5M19.6 15.6l.9-.5"/>'),
     image: svg('<rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6"/><circle cx="9" cy="10" r="1.6"/><path d="M3.6 17.2l4.9-4.9 4.4 4.4 2.8-2.7 4.7 4.6"/>'),
     audio: svg('<path d="M4 13.6v-3.2M8 17V7M12 20V4M16 16.4v-8.8M20 13.4v-2.8"/>'),
     doc: svg('<path d="M7.2 3.4h6.3l5 5V20.6H7.2z"/><path d="M13.2 3.4v5.2h5.3"/>'),
@@ -126,6 +137,11 @@
     tagIcon: svg('<path d="M4.4 12.6V5.2a.8.8 0 0 1 .8-.8h7.4l7.2 7.2-8.2 8.2z"/><circle cx="8.7" cy="8.7" r="1.3"/>'),
     pin: svg('<path d="M12 20.8s6.2-5.8 6.2-10.6a6.2 6.2 0 1 0-12.4 0C5.8 15 12 20.8 12 20.8z"/><circle cx="12" cy="10" r="2.3"/>'),
     retry: svg('<path d="M19.6 12a7.6 7.6 0 1 1-2.5-5.6"/><path d="M19.8 4.4v4.2h-4.2"/>'),
+    /* Marcar leído (un trazo) y «seleccionar» (círculo con visto): dos gestos
+       distintos no pueden compartir el mismo dibujo. */
+    check: svg('<path d="M5 12.6l4.4 4.4L19 6.8"/>'),
+    checkCircle: svg('<circle cx="12" cy="12" r="8.6"/><path d="M8.3 12.2l2.6 2.6 4.8-5.1"/>'),
+    chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
   /** Pinta los iconos declarados en el HTML (`data-icon="..."`). */
@@ -152,16 +168,30 @@
     return new Intl.DateTimeFormat('es-DO', { day: 'numeric', month: 'short' }).format(date);
   };
 
-  /** `YYYY-MM-DD` de hoy en el reloj del teléfono. */
-  const todayISO = () => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  function businessDayISO(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: BUSINESS_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const part = (type) => parts.find((entry) => entry.type === type)?.value ?? '';
+    return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+
+  /** `YYYY-MM-DD` de hoy en la zona horaria del negocio. */
+  const todayISO = () => businessDayISO();
+
+  function addDaysToISO(day, days) {
+    const [year, month, date] = String(day).split('-').map(Number);
+    const value = new Date(Date.UTC(year, month - 1, date + Number(days || 0), 12));
+    return businessDayISO(value);
   };
 
   const addDaysISO = (days) => {
-    const date = new Date();
-    date.setDate(date.getDate() + days);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return addDaysToISO(todayISO(), days);
   };
 
   const fmtDay = (day) => {
@@ -313,9 +343,19 @@
 
   // ------------------------------------------------------------------ sesión
 
+  function hideSplash() {
+    const splash = $('#splash');
+    if (!splash) return;
+    splash.classList.add('splash--hide');
+    setTimeout(() => {
+      splash.hidden = true;
+    }, 260);
+  }
+
   function showLogin(message = '') {
     $('#app').hidden = true;
     $('#login').hidden = false;
+    hideSplash();
     $('#login-error').hidden = !message;
     $('#login-error').textContent = message;
     ($('#login-username') ?? $('#login-token')).focus({ preventScroll: true });
@@ -324,6 +364,7 @@
   function showApp() {
     $('#login').hidden = true;
     $('#app').hidden = false;
+    hideSplash();
     setTab(state.tab, { silent: true });
   }
 
@@ -337,6 +378,18 @@
       // Sin red no se puede preguntar: no significa que la sesión no valga.
       return false;
     }
+  }
+
+  function loginErrorMessage(error) {
+    if (error.body?.message) return error.body.message;
+    if (error.body?.error === 'too_many_attempts') return 'Demasiados intentos seguidos. Espera 15 minutos.';
+    if (error.body?.error === 'invalid_credentials') {
+      return error.body?.storage === 'sqlite'
+        ? 'Usuario o contraseña incorrectos. Ojo: este CRM local está usando SQLite; si esperabas Postgres/producción, reinicia el CRM con esa configuración.'
+        : 'Usuario o contraseña incorrectos.';
+    }
+    if (error.body?.error === 'invalid_token') return 'La clave no es correcta.';
+    return error.message === 'unauthorized' ? 'Usuario o contraseña incorrectos.' : 'No se pudo entrar: no hay conexión con el CRM.';
   }
 
   // -------------------------------------------------------------------- datos
@@ -364,6 +417,9 @@
       state.settings = data.settings ?? null;
       state.commercial = data.commercial ?? null;
       state.orderStatuses = data.orderStatuses ?? [];
+      state.paymentMethods = data.paymentMethods ?? [];
+      state.customerStages = data.customerStages ?? [];
+      state.customerTags = data.customerTags ?? [];
       state.audit = data.audit ?? null;
       state.media = data.media ?? null;
       state.auth = data.auth ?? null;
@@ -391,6 +447,9 @@
         state.scheduled = snapshot.scheduled ?? null;
         state.settings = snapshot.settings ?? null;
         state.orderStatuses = snapshot.orderStatuses ?? [];
+        state.paymentMethods = snapshot.paymentMethods ?? [];
+        state.customerStages = snapshot.customerStages ?? [];
+        state.customerTags = snapshot.customerTags ?? [];
         state.syncedAt = snapshot.at ?? null;
         toast('Sin conexión: datos guardados en el teléfono');
         render();
@@ -523,13 +582,14 @@
     link.remove();
     // Escribir ES contactar: queda registrado para los recordatorios.
     const patch = { contacted: true };
-    if (!item.status || item.status === 'nuevo') patch.status = 'contactado';
+    if (item.type !== 'order_intent' && (!item.status || item.status === 'nuevo')) patch.status = 'contactado';
     patchItem(item.id, patch);
   }
 
   // ------------------------------------------------------------------ render
 
   function render() {
+    renderMobileHeader();
     renderStats();
     renderHoy();
     renderWhatsapp();
@@ -542,17 +602,73 @@
     renderAjustes();
     renderCurrentUser();
     renderUsuarios();
+    renderPerfil();
+    renderCustomerProfile();
     updateBadge();
     renderOutboxBanner();
   }
 
   const label = (type) => (type === 'order_intent' ? 'Pedido' : 'Contacto');
   const statusLabel = (value) => state.statuses.find((entry) => entry.value === value)?.label ?? value;
+  const paymentMethodLabel = (value) => state.paymentMethods.find((entry) => entry.value === value)?.label ?? value ?? '—';
+  const customerStageOf = (customerOrRow) =>
+    customerOrRow?.customerStage ?? customerOrRow?.customer_stage ?? customerOrRow?.customer?.customerStage ?? customerOrRow?.customer?.customer_stage ?? 'PROSPECT';
+  const customerStageLabel = (value) => state.customerStages.find((entry) => entry.value === value)?.label ?? ({
+    PROSPECT: 'Prospecto',
+    INTERESTED: 'Interesado',
+    CUSTOMER: 'Cliente',
+    INACTIVE: 'Inactivo',
+  }[value] ?? value ?? 'Prospecto');
+  const customerTagsOf = (customerOrRow) => {
+    const tags = customerOrRow?.tags ?? customerOrRow?.customer?.tags ?? [];
+    return Array.isArray(tags) ? tags : [];
+  };
   const moneyCents = (value) => money((Number(value) || 0) / 100);
 
   const currentUser = () => state.auth?.user ?? null;
   const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
-  const roleLabel = (role) => (role === 'ADMIN' ? 'Administrador' : role === 'AGENT' ? 'Agente' : 'Sesión');
+  const permissions = () => state.auth?.permissions ?? [];
+  const hasPermission = (permission) => isAdmin() || permissions().includes('*') || permissions().includes(permission);
+  const roleLabel = (role) =>
+    role === 'ADMIN'
+      ? 'Administrador'
+      : role === 'DELIVERY'
+        ? 'Delivery'
+        : role === 'OPERADOR'
+          ? 'Operador'
+          : role === 'AGENT'
+            ? 'Agente'
+            : 'Sesión';
+
+  function currentViewTitle() {
+    if (state.tab === 'perfil-cliente' && state.customerProfile?.customer) return customerName(state.customerProfile.customer);
+    return VIEW_SUBTITLE[state.tab] ?? 'CRM';
+  }
+
+  function renderMobileHeader() {
+    const box = $('#mobile-header');
+    if (!box) return;
+    const online = state.online !== false;
+    if (state.tab === 'hoy') {
+      box.innerHTML = `<div class="dashboard-head">
+        <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú">
+          <img class="drawer-menu-icon" src="/admin/icon-menu.png" alt="" aria-hidden="true" width="26" height="26" />
+        </button>
+        <div class="dashboard-head__title">
+          <strong>Phytoemagry</strong>
+          <span>CRM</span>
+        </div>
+        <span class="dashboard-head__status" data-online="${online ? 'true' : 'false'}">
+          <span class="presence__dot" aria-hidden="true"></span>${online ? 'En línea' : 'Sin conexión'}
+        </span>
+      </div>`;
+      return;
+    }
+    box.innerHTML = `<div class="simple-head">
+      <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+      <strong>${escapeHtml(currentViewTitle())}</strong>
+    </div>`;
+  }
 
   function renderCurrentUser() {
     const user = currentUser();
@@ -560,13 +676,23 @@
     if (box) {
       const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : '');
       box.hidden = !name;
+      // El bloque de usuario ES la puerta a «Mi perfil»: se toca y se entra.
       box.innerHTML = name
-        ? `<span class="avatar avatar--sm">${escapeHtml(waInitials(name))}</span>
-           <span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(roleLabel(user?.role ?? 'ADMIN'))}</small></span>`
+        ? `<button class="drawer__user-btn" id="drawer-user-go" type="button" aria-label="Abrir mi perfil">
+             <span class="avatar avatar--sm">${escapeHtml(waInitials(name))}</span>
+             <span class="drawer__user-body"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(
+               roleLabel(user?.role ?? 'ADMIN'),
+             )}</small></span>
+             <span class="drawer__user-go" aria-hidden="true">${ICONS.chevron}</span>
+           </button>`
         : '';
+      $('#drawer-user-go')?.addEventListener('click', () => setTab('perfil'));
     }
     $$('[data-admin-only]').forEach((node) => {
       node.hidden = !isAdmin();
+    });
+    $$('[data-permission]').forEach((node) => {
+      node.hidden = !hasPermission(node.dataset.permission);
     });
   }
 
@@ -585,27 +711,35 @@
         value: hoy.sinResponder ?? 0,
         alert: (hoy.sinResponder ?? 0) > 0,
         goto: 'whatsapp',
+        icon: ICONS.chat,
+        tone: 'blue',
       },
-      { label: 'Seguimientos hoy', value: hoy.seguimientosHoy ?? 0, goto: 'seguimientos' },
+      { label: 'Seguimientos hoy', value: hoy.seguimientosHoy ?? 0, goto: 'seguimientos', icon: ICONS.users, tone: 'green' },
       {
         label: 'Seguimientos vencidos',
         value: hoy.seguimientosVencidos ?? 0,
         alert: (hoy.seguimientosVencidos ?? 0) > 0,
         goto: 'seguimientos',
+        icon: ICONS.clock,
+        tone: 'amber',
       },
       {
         label: 'Mensajes con problemas',
         value: conProblemas,
         alert: conProblemas > 0,
         goto: 'hoy',
+        icon: ICONS.retry,
+        tone: 'red',
       },
-      { label: 'Pedidos abiertos', value: hoy.pedidosPendientes ?? 0, goto: 'pedidos' },
+      { label: 'Pedidos abiertos', value: hoy.pedidosPendientes ?? 0, goto: 'pedidos', icon: ICONS.box, tone: 'purple' },
     ];
     $('#stats').innerHTML = cards
       .map(
-        (card) => `<button class="stat ${card.alert ? 'stat--alert' : ''}" data-goto="${card.goto}" type="button">
+        (card) => `<button class="stat stat--${card.tone} ${card.alert ? 'stat--alert' : ''}" data-goto="${card.goto}" type="button">
+            <span class="stat__icon" aria-hidden="true">${card.icon}</span>
             <span class="stat__value">${card.value}</span>
             <span class="stat__label">${escapeHtml(card.label)}</span>
+            <span class="stat__arrow" aria-hidden="true">${ICONS.chevron}</span>
           </button>`,
       )
       .join('');
@@ -621,13 +755,14 @@
       return;
     }
     const movements = inv.movements ?? [];
+    const canSeeCost = hasPermission('cost.view');
     box.innerHTML = `
       <div class="card">
         <p class="card__title">${escapeHtml(inv.product?.name ?? 'Phytoemagry')}</p>
         <dl class="facts">
           <div class="fact"><dt>Stock</dt><dd>${escapeHtml(inv.stock ?? 0)} cápsulas</dd></div>
-          <div class="fact"><dt>Costo vigente</dt><dd>${moneyCents(inv.product?.current_unit_cost_cents ?? 0)} / cápsula</dd></div>
-          <div class="fact"><dt>Valor referencial</dt><dd>${moneyCents(inv.inventory_value_cents ?? 0)}</dd></div>
+          ${canSeeCost ? `<div class="fact"><dt>Costo vigente</dt><dd>${moneyCents(inv.product?.current_unit_cost_cents ?? 0)} / cápsula</dd></div>` : ''}
+          ${canSeeCost ? `<div class="fact"><dt>Valor referencial</dt><dd>${moneyCents(inv.inventory_value_cents ?? 0)}</dd></div>` : ''}
           <div class="fact"><dt>Control activo</dt><dd>${inv.initialized ? 'sí' : 'sin inventario inicial'}</dd></div>
         </dl>
       </div>
@@ -638,12 +773,14 @@
             .map(
               (item) => `<div class="fact"><dt>${escapeHtml(item.name)}</dt><dd>${money(item.price)} · ${escapeHtml(
                 item.capsule_quantity,
-              )} cáps. · costo ${moneyCents(item.presentation_cost_cents)}</dd></div>`,
+              )} cáps.${canSeeCost ? ` · costo ${moneyCents(item.presentation_cost_cents)}` : ''}</dd></div>`,
             )
             .join('')}
         </dl>
       </div>
-      <form class="card" id="inventory-restock">
+      ${
+        canSeeCost
+          ? `<form class="card" id="inventory-restock">
         <p class="card__title">Agregar inventario</p>
         <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
         <label class="field"><span class="field__label">Costo unitario</span><input class="field__input" name="unitCost" type="number" min="0" step="0.01" value="${escapeHtml(
@@ -665,7 +802,9 @@
         <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
         <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" value="Ajuste manual" /></label>
         <button class="btn btn--ghost btn--block" type="submit">Guardar ajuste</button>
-      </form>
+      </form>`
+          : ''
+      }
       <div class="card">
         <p class="card__title">Movimientos recientes</p>
         <dl class="facts">
@@ -689,6 +828,10 @@
   function renderReportes() {
     const box = $('#sales-report-view');
     if (!box) return;
+    if (!hasPermission('reports.profit.view')) {
+      box.innerHTML = '';
+      return;
+    }
     $('#sales-report-period')
       ?.querySelectorAll('[data-report-period]')
       .forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.reportPeriod === state.salesReportPeriod)));
@@ -740,7 +883,7 @@
                     (row) =>
                       `<div class="fact"><dt>${escapeHtml(row.order_number ?? row.id)} · ${escapeHtml(fmtWhen(row.date))}</dt><dd>${escapeHtml(
                         row.presentation,
-                      )} · cobrado ${moneyCents(row.total_collected_cents)} · utilidad ${moneyCents(
+                      )} · ${escapeHtml(row.payment_method_label ?? paymentMethodLabel(row.payment_method))} · cobrado ${moneyCents(row.total_collected_cents)} · utilidad ${moneyCents(
                         row.gross_product_profit_cents,
                       )}</dd></div>`,
                   )
@@ -795,6 +938,31 @@
       </article>`;
   }
 
+  function dashboardLeadRow(item) {
+    const name = item.name ?? 'Sin nombre';
+    const summary = [
+      item.variant_name ? `${item.variant_name}${item.quantity ? ` ×${item.quantity}` : ''}` : null,
+      item.phone || 'sin teléfono',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return `<article class="dash-row" data-open="${escapeHtml(item.id)}">
+      <span class="avatar dash-row__avatar" aria-hidden="true">${escapeHtml(waInitials(name))}</span>
+      <span class="dash-row__body">
+        <span class="dash-row__top">
+          <strong>${escapeHtml(name)}</strong>
+          <small>${escapeHtml(fmtWhen(item.received_at))}</small>
+        </span>
+        <span class="dash-row__chips">
+          <span class="tag tag--${escapeHtml(item.status ?? 'nuevo')}">Nuevo</span>
+          <span class="tag">Contacto</span>
+        </span>
+        <span class="dash-row__summary">${escapeHtml(summary)}</span>
+      </span>
+      <button class="btn btn--ghost btn--sm dash-row__action" data-open="${escapeHtml(item.id)}" type="button">Abrir ficha</button>
+    </article>`;
+  }
+
   const emptyState = (text) => `<p class="empty">${escapeHtml(text)}</p>`;
 
   // ------------------------------------------- clientes, WhatsApp, seguimiento
@@ -816,6 +984,38 @@
     state.items
       .filter((item) => item.customer_id === customerId && item.status === 'entregado')
       .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)))[0] ?? null;
+
+  const ordersForCustomer = (customerId) =>
+    state.items
+      .filter((item) => item.customer_id === customerId && item.type === 'order_intent')
+      .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)));
+
+  function customerSalesSummary(customer) {
+    const orders = ordersForCustomer(customer.id);
+    const delivered = orders.filter((row) => row.status === 'entregado');
+    const total = delivered.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+    const latest = orders[0] ?? null;
+    return { orders, delivered, total, latest };
+  }
+
+  function customerSegment(customer) {
+    const summary = customerSalesSummary(customer);
+    const commercial = customer.commercial_state ?? 'NUEVO';
+    if (summary.delivered.length > 0 || customer.has_purchase === true) return 'cliente';
+    if (['INTERESADO', 'PEDIDO_CREADO', 'CONFIRMADO', 'SEGUIMIENTO'].includes(commercial) || summary.orders.length > 0) {
+      return 'interesado';
+    }
+    return 'prospecto';
+  }
+
+  const customerSegmentLabel = (segment, summary) =>
+    segment === 'cliente'
+      ? summary.delivered.length >= 2
+        ? 'Cliente frecuente'
+        : 'Cliente'
+      : segment === 'interesado'
+        ? 'Interesado'
+        : 'Prospecto';
 
   const FOLLOWUP_LABELS = {
     thanks: 'Agradecimiento',
@@ -983,7 +1183,15 @@
       pendientes.length
         ? section('Recordatorios de hoy', pendientes.length, pendientes.map(itemCard).join(''))
         : '',
-      nuevos.length ? section('Nuevos sin contactar', nuevos.length, nuevos.map(itemCard).join('')) : '',
+      nuevos.length
+        ? `<div class="dash-section">
+            <div class="dash-section__head">
+              <h2>Sin contactar (${nuevos.length})</h2>
+              <button class="dash-section__link" data-dashboard-tab="clientes" type="button">Ver todos ${ICONS.chevron}</button>
+            </div>
+            <div class="dash-list">${nuevos.map(dashboardLeadRow).join('')}</div>
+          </div>`
+        : '',
       pedidosAbiertos.length
         ? section('Pedidos sin cerrar', pedidosAbiertos.length, pedidosAbiertos.slice(0, 5).map(itemCard).join(''))
         : '',
@@ -1040,6 +1248,10 @@
     }
     const search = $('#wa-search');
     if (search && search.value !== state.wa.q) search.value = state.wa.q;
+    const dateLabel = $('#wa-date-label');
+    if (dateLabel) dateLabel.textContent = waDateRange().label;
+    const dateButton = $('#wa-date-menu');
+    if (dateButton) dateButton.setAttribute('aria-pressed', String(state.wa.date?.mode && state.wa.date.mode !== 'all'));
 
     renderWaList();
     renderWaChat();
@@ -1066,12 +1278,93 @@
     return items;
   }
 
+  function filteredCustomers() {
+    const { filter, q } = state;
+    let rows = state.customers.slice();
+    if (filter === 'clientes') rows = rows.filter((customer) => customerSegment(customer) === 'cliente');
+    if (filter === 'interesados') rows = rows.filter((customer) => customerSegment(customer) === 'interesado');
+    if (filter === 'prospectos') rows = rows.filter((customer) => customerSegment(customer) === 'prospecto');
+    if (filter === 'seguimiento') rows = rows.filter((customer) => Boolean(nextFollowupFor(customer.id) || customer.next_followup));
+    if (q) {
+      const needle = q.toLowerCase();
+      rows = rows.filter((customer) =>
+        [
+          customer.name,
+          customer.phone,
+          customer.phone_e164,
+          customer.location,
+          customer.city,
+          customer.email,
+          customer.document,
+          customer.cedula,
+          customer.commercial_state,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(needle),
+      );
+    }
+    return rows.sort((a, b) => {
+      const sa = customerSalesSummary(a);
+      const sb = customerSalesSummary(b);
+      const aa = a.last_contact_at ?? sa.latest?.received_at ?? a.updated_at ?? a.created_at ?? '';
+      const bb = b.last_contact_at ?? sb.latest?.received_at ?? b.updated_at ?? b.created_at ?? '';
+      return String(bb).localeCompare(String(aa));
+    });
+  }
+
+  function customerRow(customer) {
+    const summary = customerSalesSummary(customer);
+    const segment = customerSegment(customer);
+    const conversation = conversationForCustomer(customer.id);
+    const next = nextFollowupFor(customer.id) ?? customer.next_followup ?? null;
+    const latestAt = customer.last_contact_at ?? summary.latest?.received_at ?? customer.updated_at ?? customer.created_at;
+    const sales =
+      summary.delivered.length > 0
+        ? `${summary.delivered.length} compra${summary.delivered.length === 1 ? '' : 's'} · ${money(summary.total)}`
+        : summary.orders.length > 0
+          ? `${summary.orders.length} pedido${summary.orders.length === 1 ? '' : 's'} en proceso`
+          : 'Sin compra';
+    const reference = summary.latest?.order_number ?? summary.latest?.id ?? '';
+    return `<article class="client-row client-row--${escapeHtml(segment)}">
+      <button class="client-row__main" data-customer="${escapeHtml(customer.id)}" type="button" aria-label="Abrir perfil de ${escapeHtml(
+        customerName(customer),
+      )}">
+        ${avatarHtml(customer, customerName(customer), 'client-row__avatar')}
+        <span class="client-row__body">
+          <span class="client-row__topline">
+            <strong>${escapeHtml(customerName(customer))}</strong>
+            <span class="client-row__when">${latestAt ? escapeHtml(fmtWhen(latestAt)) : ''}</span>
+          </span>
+          <span class="client-row__meta">
+            <span class="tag client-row__tag">${escapeHtml(customerSegmentLabel(segment, summary))}</span>
+            ${customer.do_not_contact ? '<span class="tag tag--perdido client-row__tag">No contactar</span>' : ''}
+            ${next ? `<span class="tag tag--recordatorio client-row__tag">${escapeHtml(fmtDay(next.scheduled_at ?? next))}</span>` : ''}
+            <span>${escapeHtml(customer.phone_e164 ?? customer.phone ?? 'sin teléfono')}</span>
+          </span>
+          <span class="client-row__sales">
+            <span>${escapeHtml(sales)}</span>
+            ${reference ? `<span>Ref. ${escapeHtml(reference)}</span>` : ''}
+            ${summary.latest?.variant_name ? `<span>${escapeHtml(summary.latest.variant_name)}</span>` : ''}
+          </span>
+        </span>
+      </button>
+      <div class="client-row__actions">
+        ${conversation ? `<button class="icon-btn client-row__icon" data-chat="${escapeHtml(conversation.id)}" type="button" aria-label="Abrir chat">${ICONS.chat}</button>` : ''}
+        <button class="icon-btn client-row__icon" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversation?.id ?? '',
+        )}" type="button" aria-label="Crear pedido">${ICONS.bag}</button>
+      </div>
+    </article>`;
+  }
+
   function renderClientes() {
-    const items = applyOutbox(filteredItems());
-    $('#clientes-count').textContent = `${items.length} de ${state.items.length} registros`;
-    $('#list-clientes').innerHTML = items.length
-      ? items.map(itemCard).join('')
-      : emptyState('No hay nada con este filtro.');
+    const customers = filteredCustomers();
+    $('#clientes-count').textContent = `${customers.length} de ${state.customers.length} clientes`;
+    $('#list-clientes').innerHTML = customers.length
+      ? customers.map(customerRow).join('')
+      : emptyState('No hay clientes con este filtro.');
   }
 
   /** Pedidos y compras (menú lateral): lo que entró por la web o se apuntó a mano. */
@@ -1326,6 +1619,179 @@
       if (error.message !== 'unauthorized') {
         toast(error.body?.error === 'last_admin' ? 'Debe quedar al menos un administrador activo' : error.body?.message ?? 'No se pudo actualizar');
       }
+    }
+  }
+
+  /*
+   * ==========================================================================
+   *  MI PERFIL (el usuario que tiene la sesión)
+   * ==========================================================================
+   *
+   * El NOMBRE VISIBLE es el que se guarda con cada mensaje que envías, así que es
+   * el nombre que se ve en el chat como autor. La CLAVE se cambia con la actual
+   * delante y el servidor revoca todas las sesiones: por eso, tras cambiarla, se
+   * vuelve a la pantalla de entrada en vez de dejar una sesión muerta en pantalla.
+   */
+
+  /** Firma de lo pintado: si nada cambió no se reescribe encima de lo que se escribe. */
+  let profileSig = null;
+
+  function profileErrorMessage(error) {
+    if (error.body?.error === 'invalid_user') return 'El nombre visible no puede quedar vacío';
+    if (error.body?.error === 'password_mismatch') return 'Las dos contraseñas nuevas no coinciden';
+    if (error.body?.error === 'weak_password') return 'La contraseña nueva necesita al menos 10 caracteres';
+    return error.body?.message ?? 'No se pudo actualizar el perfil';
+  }
+
+  function renderPerfil(force = false) {
+    const box = $('#profile-view');
+    if (!box) return;
+    const user = currentUser();
+    if (!user) {
+      // Sesión con la clave del panel: no hay cuenta personal que configurar.
+      profileSig = null;
+      box.innerHTML = `<div class="card">
+        <p class="card__title">Estás dentro con la clave del panel</p>
+        <p class="card__text">
+          La clave del panel no es una cuenta personal: no tiene un nombre ni una contraseña propios que
+          cambiar. Entra con tu usuario y tu contraseña para tener tu perfil.
+        </p>
+        <button class="btn btn--ghost btn--block" id="profile-relogin" type="button">Cerrar sesión y entrar con usuario</button>
+      </div>`;
+      $('#profile-relogin')?.addEventListener('click', () => $('#logout').click());
+      return;
+    }
+    const sig = [user.id, user.display_name ?? '', user.first_name ?? '', user.last_name ?? '', user.username ?? ''].join('|');
+    if (!force && sig === profileSig) return;
+    profileSig = sig;
+    const name = user.display_name ?? user.username ?? '';
+    box.innerHTML = `
+      <article class="profile-account">
+        <span class="avatar avatar--lg">${escapeHtml(waInitials(name))}</span>
+        <span class="profile-account__body">
+          <strong>${escapeHtml(name)}</strong>
+          <small>${escapeHtml(user.username ?? '')} · ${escapeHtml(roleLabel(user.role))}</small>
+        </span>
+      </article>
+
+      <div class="card">
+        <p class="card__title">Datos personales</p>
+        <p class="card__text">
+          El <strong>nombre visible</strong> es el que aparece en el chat como autor de los mensajes que
+          envías desde el panel.
+        </p>
+        <label class="field">
+          <span class="field__label">Nombre visible</span>
+          <input class="field__input" id="profile-name" value="${escapeHtml(user.display_name ?? '')}" maxlength="120" autocomplete="name" />
+        </label>
+        <label class="field">
+          <span class="field__label">Nombre</span>
+          <input class="field__input" id="profile-first" value="${escapeHtml(user.first_name ?? '')}" maxlength="80" autocomplete="given-name" />
+        </label>
+        <label class="field">
+          <span class="field__label">Apellido</span>
+          <input class="field__input" id="profile-last" value="${escapeHtml(user.last_name ?? '')}" maxlength="80" autocomplete="family-name" />
+        </label>
+        <label class="field">
+          <span class="field__label">Usuario</span>
+          <input class="field__input" id="profile-username" value="${escapeHtml(user.username ?? '')}" disabled />
+        </label>
+        <p class="view__hint">El usuario con el que entras no se cambia desde aquí.</p>
+        <button class="btn btn--primary btn--block" id="profile-save" type="button">Guardar cambios</button>
+      </div>
+
+      <div class="card">
+        <p class="card__title">Contraseña</p>
+        <p class="card__text">
+          Al cambiarla se cierran <strong>todas</strong> tus sesiones (esta también): tendrás que entrar de
+          nuevo con la clave nueva.
+        </p>
+        <label class="field">
+          <span class="field__label">Contraseña actual</span>
+          <input class="field__input" id="profile-current" type="password" autocomplete="current-password" />
+        </label>
+        <label class="field">
+          <span class="field__label">Contraseña nueva</span>
+          <input class="field__input" id="profile-new" type="password" autocomplete="new-password" minlength="10" />
+        </label>
+        <label class="field">
+          <span class="field__label">Repite la contraseña nueva</span>
+          <input class="field__input" id="profile-confirm" type="password" autocomplete="new-password" minlength="10" />
+        </label>
+        <p class="view__hint">Mínimo 10 caracteres.</p>
+        <button class="btn btn--ghost btn--block" id="profile-password" type="button">Cambiar contraseña</button>
+      </div>`;
+
+    $('#profile-save')?.addEventListener('click', async (event) => {
+      const displayName = ($('#profile-name')?.value ?? '').trim();
+      if (!displayName) {
+        toast('El nombre visible no puede quedar vacío');
+        $('#profile-name')?.focus();
+        return;
+      }
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          const result = await api('/api/admin/users/me', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              displayName,
+              firstName: ($('#profile-first')?.value ?? '').trim(),
+              lastName: ($('#profile-last')?.value ?? '').trim(),
+            }),
+          });
+          state.auth = { ...state.auth, user: result.user ?? state.auth?.user ?? null };
+          renderCurrentUser();
+          renderPerfil(true);
+          toast('Perfil actualizado: en el chat aparecerás así');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(profileErrorMessage(error));
+        }
+      });
+    });
+
+    $('#profile-password')?.addEventListener('click', async (event) => {
+      const currentPassword = $('#profile-current')?.value ?? '';
+      const newPassword = $('#profile-new')?.value ?? '';
+      const confirmPassword = $('#profile-confirm')?.value ?? '';
+      // El servidor lo vuelve a comprobar; esto solo evita un viaje inútil.
+      if (!currentPassword || !newPassword) {
+        toast('Rellena la contraseña actual y la nueva');
+        return;
+      }
+      if (newPassword.length < 10) {
+        toast('La contraseña nueva necesita al menos 10 caracteres');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        toast('Las dos contraseñas nuevas no coinciden');
+        return;
+      }
+      await working(event.currentTarget, 'Cambiando…', async () => {
+        try {
+          await api('/api/admin/users/me/password', {
+            method: 'POST',
+            body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+          });
+          // El servidor revocó la sesión: se vuelve a entrar con la clave nueva.
+          state.auth = null;
+          profileSig = null;
+          showLogin('Contraseña cambiada. Entra de nuevo con la clave nueva.');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(profileErrorMessage(error));
+        }
+      });
+    });
+  }
+
+  /** Relee el usuario de la sesión (pudo cambiar en otro dispositivo) y repinta. */
+  async function refreshProfile() {
+    try {
+      const result = await api('/api/admin/auth/me');
+      state.auth = { user: result.user ?? null, legacy: result.legacy === true };
+      renderCurrentUser();
+      renderPerfil(true);
+    } catch (error) {
+      if (error.message !== 'unauthorized') renderPerfil(true);
     }
   }
 
@@ -1769,6 +2235,46 @@
     return (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
   };
 
+  function waDateRange(filter = state.wa.date) {
+    const today = todayISO();
+    if (!filter || filter.mode === 'all') return { mode: 'all', from: '', to: '', label: 'Todas' };
+    if (filter.mode === 'today') return { mode: 'today', from: today, to: today, label: 'Hoy' };
+    if (filter.mode === 'yesterday') {
+      const day = addDaysToISO(today, -1);
+      return { mode: 'yesterday', from: day, to: day, label: 'Ayer' };
+    }
+    if (filter.mode === '7d') return { mode: '7d', from: addDaysToISO(today, -6), to: today, label: 'Últimos 7 días' };
+    if (filter.mode === 'month') return { mode: 'month', from: `${today.slice(0, 7)}-01`, to: today, label: 'Este mes' };
+    if (filter.mode === 'custom') {
+      return {
+        mode: 'custom',
+        from: filter.from || '',
+        to: filter.to || '',
+        label: filter.from && filter.to ? `${filter.from.slice(8, 10)}/${filter.from.slice(5, 7)}–${filter.to.slice(8, 10)}/${filter.to.slice(5, 7)}` : 'Personalizado',
+      };
+    }
+    return { mode: 'all', from: '', to: '', label: 'Todas' };
+  }
+
+  function rowInWaDateRange(row, range = waDateRange()) {
+    if (range.mode === 'all') return true;
+    if (!row.last_message_at) return false;
+    const day = businessDayISO(row.last_message_at);
+    if (range.from && day < range.from) return false;
+    if (range.to && day > range.to) return false;
+    return true;
+  }
+
+  function compareWaRowsRecent(a, b) {
+    const byLast = String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? ''));
+    if (byLast) return byLast;
+    const byUpdated = String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? ''));
+    if (byUpdated) return byUpdated;
+    const byCreated = String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+    if (byCreated) return byCreated;
+    return String(a.id ?? '').localeCompare(String(b.id ?? ''));
+  }
+
   /** Icono y nombre legible de cada tipo de contenido (mismo sistema de iconos). */
   const WA_KIND_ICON = {
     image: ICONS.image,
@@ -1801,12 +2307,43 @@
     PERDIDO: 'Perdido',
   };
 
-  /** Iniciales para el avatar (todavía no hay fotos de perfil). */
+  /** Iniciales para el avatar cuando no hay foto de perfil. */
   const waInitials = (value) => {
     const parts = String(value ?? '').trim().split(/\s+/).filter(Boolean);
     if (!parts.length) return '?';
     return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
   };
+
+  const customerPhotoUrl = (customer) =>
+    [
+      customer?.photo_url,
+      customer?.photoUrl,
+      customer?.avatar_url,
+      customer?.avatarUrl,
+      customer?.profile_picture_url,
+      customer?.profilePictureUrl,
+      customer?.picture_url,
+    ].find((value) => typeof value === 'string' && value.trim())?.trim() ?? '';
+
+  function avatarHtml(customer, label, className = '', options = {}) {
+    const name = label || customerName(customer ?? {}) || 'Cliente';
+    const src = customerPhotoUrl(customer);
+    const cls = ['avatar', className, src ? 'avatar--photo' : ''].filter(Boolean).join(' ');
+    const attrs = options.attrs ? ` ${options.attrs}` : '';
+    const content = src
+      ? `<img src="${escapeHtml(src)}" alt="" loading="${options.loading ?? 'lazy'}" decoding="async" />`
+      : escapeHtml(waInitials(name));
+    return `<span class="${escapeHtml(cls)}"${attrs}>${content}</span>`;
+  }
+
+  function setAvatarContent(node, customer, label) {
+    if (!node) return;
+    const src = customerPhotoUrl(customer);
+    node.classList.toggle('avatar--photo', Boolean(src));
+    node.innerHTML = src
+      ? `<img src="${escapeHtml(src)}" alt="" loading="eager" decoding="async" />`
+      : escapeHtml(waInitials(label || customerName(customer ?? {})));
+  }
 
   /** «Hoy», «Ayer» o la fecha: el separador que ordena el hilo. */
   const waDayLabel = (iso) => {
@@ -1863,6 +2400,8 @@
     if (filter === 'seguimiento') rows = rows.filter((row) => row.next_followup);
     if (filter === 'archivados') rows = rows.filter((row) => row.archived_at);
     if (filter !== 'archivados') rows = rows.filter((row) => !row.archived_at);
+    const dateRange = waDateRange();
+    rows = rows.filter((row) => rowInWaDateRange(row, dateRange));
     if (q) {
       const needle = q.toLowerCase();
       rows = rows.filter((row) => {
@@ -1874,13 +2413,79 @@
           .includes(needle);
       });
     }
-    return rows.sort((a, b) => String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? '')));
+    return rows.sort(compareWaRowsRecent);
+  }
+
+  const WA_DATE_FILTERS = [
+    ['all', 'Todas'],
+    ['today', 'Hoy'],
+    ['yesterday', 'Ayer'],
+    ['7d', 'Últimos 7 días'],
+    ['month', 'Este mes'],
+    ['custom', 'Personalizado'],
+  ];
+
+  function daysBetweenISO(a, b) {
+    const [ay, am, ad] = String(a).split('-').map(Number);
+    const [by, bm, bd] = String(b).split('-').map(Number);
+    return Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86400000);
+  }
+
+  function formatWaTime(date) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: BUSINESS_TIME_ZONE,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(date);
+  }
+
+  function shortWeekday(date) {
+    const label = new Intl.DateTimeFormat('es-DO', { timeZone: BUSINESS_TIME_ZONE, weekday: 'short' })
+      .format(date)
+      .replace('.', '');
+    return label ? label[0].toUpperCase() + label.slice(1) : '';
+  }
+
+  function formatShortDate(day) {
+    const [year, month, date] = String(day).split('-');
+    return `${date}/${month}/${year}`;
+  }
+
+  /** Sello visible de la fila: fecha/hora real del último mensaje en la zona del negocio. */
+  function waLastMessageStamp(iso) {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    const messageDay = businessDayISO(date);
+    const today = todayISO();
+    const diff = daysBetweenISO(today, messageDay);
+    const time = formatWaTime(date);
+    const label =
+      diff === 0
+        ? `Hoy · ${time}`
+        : diff === 1
+          ? `Ayer · ${time}`
+          : diff > 1 && diff < 7
+            ? `${shortWeekday(date)} · ${time}`
+            : formatShortDate(messageDay);
+    return {
+      label,
+      day: messageDay,
+      completo: new Intl.DateTimeFormat('es-DO', {
+        timeZone: BUSINESS_TIME_ZONE,
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        hour12: true,
+      }).format(date),
+    };
   }
 
   /** Una conversación de la lista (nombre o teléfono, nunca un id técnico). */
   function waRow(row) {
     const unread = Number(row.unread_count) || 0;
     const awaiting = waAwaiting(row);
+    const customer = waCustomer(row);
     const last = row.last_message;
     const tipo = last?.type ?? 'text';
     const kind = last && tipo !== 'text' ? WA_KIND_ICON[tipo] ?? '' : '';
@@ -1888,41 +2493,55 @@
       ? tipo === 'text'
         ? String(last.body ?? '').slice(0, 80)
         : WA_KIND_LABEL[tipo] ?? 'Adjunto'
-      : 'Sin mensajes todavía';
+      : 'Sin mensajes';
     const nombre = waDisplayName(row);
-    const followupText = row.next_followup ? fmtDay(row.next_followup.scheduled_at) : null;
-    const commercial = COMMERCIAL_HINTS[row.commercial_state] ?? null;
-    const assigned = row.assigned_display_name_snapshot
-      ? `Atiende ${row.assigned_display_name_snapshot}`
-      : 'Sin asignar';
-    const compactFlags = [assigned, row.has_purchase ? 'Cliente' : commercial, followupText].filter(Boolean).slice(0, 3);
+    /*
+     * En la fila, el seguimiento es una ETIQUETA, no una frase: sin día de la
+     * semana (la fecha completa está dentro del chat) para que la línea de
+     * estado quede pequeña y no robe ancho al nombre.
+     */
+    const followupDay = row.next_followup ? String(row.next_followup.scheduled_at).slice(0, 10) : null;
+    const followupText = followupDay
+      ? `${followupDay < todayISO() ? 'vencido · ' : ''}${followupDay.slice(8, 10)}/${followupDay.slice(5, 7)}`
+      : null;
+    const stage = customerStageOf(row);
+    const activeOrder = row.active_order?.status ? `Pedido · ${statusLabel(row.active_order.status)}` : null;
+    const compactFlags = [customerStageLabel(stage), followupText, activeOrder].filter(Boolean).slice(0, 3);
     const flags =
-      unread || awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length
+      awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length
         ? `<span class="conv__flags">
-            ${unread ? `<span class="conv__unread">${unread}</span>` : ''}
             ${awaiting ? '<span class="conv__await">Pendiente</span>' : ''}
             ${row.status === 'HUMAN_REQUIRED' ? '<span class="conv__await">Necesita una persona</span>' : ''}
             ${compactFlags.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
           </span>`
         : '';
     const selected = state.wa.selected.has(row.id);
+    const sello = waLastMessageStamp(row.last_message_at);
     return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}">
       <button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${unread ? 'conv--unread' : ''}" data-conv="${escapeHtml(
         row.id,
       )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
-        <span class="avatar conv__avatar" aria-hidden="true">${escapeHtml(waInitials(nombre))}</span>
+        ${
+          selected
+            ? `<span class="avatar conv__avatar conv__avatar--sel" aria-hidden="true">${ICONS.check}</span>`
+            : avatarHtml(customer, nombre, 'conv__avatar conv__avatar--profile', {
+                attrs: `data-customer="${escapeHtml(customer?.id ?? '')}" role="button" tabindex="0" aria-label="Ver perfil de ${escapeHtml(nombre)}"`,
+              })
+        }
         <span class="conv__body">
-          <span class="conv__top">
-            <span class="conv__name">${escapeHtml(nombre)}</span>
-            <span class="conv__when">${row.last_message_at ? escapeHtml(fmtWhen(row.last_message_at)) : ''}</span>
-          </span>
+          <span class="conv__name">${escapeHtml(nombre)}</span>
           <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
           ${flags}
         </span>
+        <span class="conv__stamps"${sello ? ` title="${escapeHtml(sello.completo)}"` : ''}>${
+          sello ? `<span class="conv__when">${escapeHtml(sello.label)}</span>` : ''
+        }${unread ? `<span class="conv__unread" aria-label="${unread} mensaje${unread === 1 ? '' : 's'} sin leer">${ICONS.bell}<span>${unread}</span></span>` : ''}</span>
       </button>
-      <button class="conv-select" data-conv-select="${escapeHtml(row.id)}" type="button" aria-pressed="${selected}" aria-label="${
-        selected ? 'Quitar de la selección' : 'Seleccionar conversación'
-      }">${selected ? 'Sel' : ''}</button>
+      <button class="conv__more" data-conv-more="${escapeHtml(row.id)}" type="button" aria-label="Más acciones de la conversación con ${escapeHtml(
+        nombre,
+      )}">
+        <img class="conv__more-icon" src="/admin/icon-more.png" alt="" aria-hidden="true" width="18" height="18" />
+      </button>
     </div>`;
   }
 
@@ -1962,24 +2581,259 @@
     }
   }
 
+  /**
+   * La barra de acciones de la selección. Vive en el sitio de la cabecera de la
+   * lista, así que no hay dos barras compitiendo y el gesto es el de WhatsApp:
+   * se eligen conversaciones y las acciones aparecen arriba.
+   */
   function waBulkBar() {
     const count = state.wa.selected.size;
     if (!count) return '';
     const archived = state.wa.filter === 'archivados';
-    return `<div class="wa-bulk" role="toolbar" aria-label="Acciones masivas">
-      <span>${count} seleccionados</span>
-      <button class="btn btn--ghost btn--sm" data-wa-bulk="mark_read" type="button">Marcar leído</button>
-      <button class="btn btn--ghost btn--sm" data-wa-bulk="${archived ? 'unarchive' : 'archive'}" type="button">${
+    const visibles = waVisibleConversations().length;
+    const todas = visibles > 0 && count >= visibles;
+    return `<div class="wa-bulk" role="toolbar" aria-label="Acciones de las conversaciones seleccionadas">
+      <button class="wa-bulk__x" data-wa-sel-clear="1" type="button" aria-label="Cancelar la selección"><span aria-hidden="true">✕</span></button>
+      <span class="wa-bulk__count">${count} seleccionada${count === 1 ? '' : 's'}</span>
+      <button class="wa-bulk__btn" data-wa-sel-all="1" type="button" title="${
+        todas ? 'Quitar la selección' : 'Seleccionar todas'
+      }" aria-label="${todas ? 'Quitar la selección' : 'Seleccionar todas'}">${ICONS.users}</button>
+      <button class="wa-bulk__btn" data-wa-bulk="mark_read" type="button" title="Marcar como leídas" aria-label="Marcar como leídas">${ICONS.check}</button>
+      <button class="wa-bulk__btn" data-wa-bulk="${archived ? 'unarchive' : 'archive'}" type="button" title="${
         archived ? 'Desarchivar' : 'Archivar'
-      }</button>
-      <button class="btn btn--ghost btn--sm" data-wa-bulk="message_preview" type="button">Mensaje</button>
+      }" aria-label="${archived ? 'Desarchivar' : 'Archivar'}">${ICONS.box}</button>
+      <button class="wa-bulk__btn" data-wa-bulk="message_preview" type="button" title="Mensaje a varios" aria-label="Mensaje a varios">${ICONS.send}</button>
     </div>`;
+  }
+
+  /** Selecciona o quita una conversación (una sola vía, la use quien la use). */
+  function toggleWaSelect(conversationId) {
+    if (state.wa.selected.has(conversationId)) state.wa.selected.delete(conversationId);
+    else state.wa.selected.add(conversationId);
+    renderWaList();
+  }
+
+  /**
+   * Mientras hay selección, la cabecera (buscador y filtros) se retira y su
+   * sitio lo ocupa la barra de acciones. Se hace en un solo sitio, para que
+   * cualquier camino que repinte la lista deje la pantalla coherente.
+   */
+  function renderWaSelectionUi() {
+    const seleccionando = state.wa.selected.size > 0;
+    const barra = $('#wa-sel');
+    if (barra) {
+      barra.hidden = !seleccionando;
+      barra.innerHTML = seleccionando ? waBulkBar() : '';
+    }
+    const head = $('.wa__list-head');
+    if (head) head.hidden = seleccionando;
+    const chips = $('#wa-filters');
+    if (chips) chips.hidden = seleccionando;
+    const box = $('#wa-conversations');
+    if (box) box.classList.toggle('wa__convs--sel', seleccionando);
+  }
+
+  /**
+   * Acciones de UNA conversación sin tener que abrirla: es el «⋯» del final de la
+   * fila. Solo se ofrecen cosas que existen de verdad (el mismo endpoint masivo,
+   * con un solo id) y NINGUNA manda un mensaje por su cuenta.
+   */
+  function openConvMenu(conversationId) {
+    const row = state.conversations.find((candidate) => candidate.id === conversationId);
+    if (!row) return;
+    const customerId = row.customer_id ?? '';
+    const customer = customerId ? customerById(customerId) : null;
+    const unread = Number(row.unread_count) || 0;
+    const archived = Boolean(row.archived_at);
+    const stages = state.customerStages.length
+      ? state.customerStages
+      : [
+          { value: 'PROSPECT', label: 'Prospecto' },
+          { value: 'INTERESTED', label: 'Interesado' },
+          { value: 'CUSTOMER', label: 'Cliente' },
+          { value: 'INACTIVE', label: 'Inactivo' },
+        ];
+    openSheet(
+      customer ? customerName(customer) : waDisplayName(row),
+      `<div class="menu-list">
+        <button class="menu-item" data-conv-act="open" data-conv-id="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.chat}</span>
+          <span><strong>Abrir conversación</strong></span>
+        </button>
+        ${
+          customerId
+            ? `<div class="menu-item menu-item--static">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+                <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(row)))}</small></span>
+              </div>
+              ${stages
+                .map(
+                  (entry) => `<button class="menu-item" data-customer-stage="${escapeHtml(customerId)}" data-stage="${escapeHtml(
+                    entry.value,
+                  )}" type="button"><span></span><span>${escapeHtml(entry.label)}</span></button>`,
+                )
+                .join('')}
+              <button class="menu-item" data-customer-tags="${escapeHtml(customerId)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
+                <span><strong>Etiquetas</strong><small>Administrar etiquetas</small></span>
+              </button>
+              <button class="menu-item" data-followup-new="${escapeHtml(customerId)}" data-conversation="${escapeHtml(
+                conversationId,
+              )}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
+                <span><strong>Seguimiento</strong><small>Crear/ver seguimiento</small></span>
+              </button>`
+            : ''
+        }
+        ${
+          unread
+            ? `<button class="menu-item" data-conv-act="mark_read" data-conv-id="${escapeHtml(conversationId)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
+                <span><strong>Marcar como leída</strong></span>
+              </button>`
+            : ''
+        }
+        <button class="menu-item" data-conv-act="${archived ? 'unarchive' : 'archive'}" data-conv-id="${escapeHtml(
+          conversationId,
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span>
+          <span><strong>${archived ? 'Desarchivar' : 'Archivar'}</strong></span>
+        </button>
+        ${
+          customerId
+            ? `<button class="menu-item" data-scheduled-new="${escapeHtml(customerId)}" data-conversation="${escapeHtml(
+                conversationId,
+              )}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
+                <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
+              </button>
+              <button class="menu-item" data-customer="${escapeHtml(customerId)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+                <span><strong>Abrir ficha</strong></span>
+              </button>`
+            : ''
+        }
+        <button class="menu-item" data-conv-act="select" data-conv-id="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>Seleccionar varias</strong></span>
+        </button>
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  /** Ejecuta una acción del menú «⋯» de una fila (nunca manda nada sola). */
+  function runConvAction(action, conversationId) {
+    closeSheet();
+    if (action === 'open') {
+      selectConversation(conversationId);
+      return;
+    }
+    if (action === 'select') {
+      if (!state.wa.selected.has(conversationId)) state.wa.selected.add(conversationId);
+      renderWaList();
+      return;
+    }
+    runWaBulk(action, [conversationId]);
+  }
+
+  async function changeCustomerStage(customerId, stage) {
+    try {
+      await api(`/api/admin/customers/${encodeURIComponent(customerId)}/stage`, {
+        method: 'POST',
+        body: JSON.stringify({ stage, reason: 'cambio desde panel' }),
+      });
+      closeSheet();
+      toast('Etapa actualizada');
+      await load({ keepTab: true });
+      if (state.wa.selectedId) await selectConversation(state.wa.selectedId);
+      if (state.customerProfile?.customer?.id === customerId) await openCustomer(customerId);
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar la etapa');
+    }
+  }
+
+  function openCustomerStageMenu(customerId) {
+    const customer = customerById(customerId) ?? state.customerProfile?.customer ?? state.wa.chat?.customer ?? null;
+    const stages = state.customerStages.length
+      ? state.customerStages
+      : [
+          { value: 'PROSPECT', label: 'Prospecto' },
+          { value: 'INTERESTED', label: 'Interesado' },
+          { value: 'CUSTOMER', label: 'Cliente' },
+          { value: 'INACTIVE', label: 'Inactivo' },
+        ];
+    openSheet(
+      `Etapa · ${customer ? customerName(customer) : 'Cliente'}`,
+      `<div class="menu-list">
+        ${stages
+          .map(
+            (entry) => `<button class="menu-item" data-customer-stage="${escapeHtml(customerId)}" data-stage="${escapeHtml(
+              entry.value,
+            )}" type="button">
+              <span class="menu-item__icon" aria-hidden="true">${entry.value === customerStageOf(customer) ? ICONS.check : ''}</span>
+              <span><strong>${escapeHtml(entry.label)}</strong></span>
+            </button>`,
+          )
+          .join('')}
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  async function openCustomerTags(customerId) {
+    const customer = customerById(customerId) ?? state.customerProfile?.customer ?? state.wa.chat?.customer ?? null;
+    try {
+      const data = await api(`/api/admin/customers/${encodeURIComponent(customerId)}/tags`);
+      const assigned = new Set((data.tags ?? []).map((tag) => tag.id));
+      openSheet(
+        `Etiquetas · ${customer ? customerName(customer) : 'Cliente'}`,
+        `<div class="menu-list">
+          ${(data.catalog ?? [])
+            .map(
+              (tag) => `<label class="menu-item">
+                <span class="tag" style="border-color:${escapeHtml(tag.color ?? '#64748b')}">${escapeHtml(tag.label)}</span>
+                <span><input type="checkbox" data-tag-toggle="${escapeHtml(tag.id)}" ${assigned.has(tag.id) ? 'checked' : ''} /></span>
+              </label>`,
+            )
+            .join('')}
+        </div>`,
+        { variant: 'menu' },
+      );
+      $$('[data-tag-toggle]').forEach((input) => {
+        input.addEventListener('change', async (event) => {
+          const tagId = event.currentTarget.dataset.tagToggle;
+          try {
+            if (event.currentTarget.checked) {
+              await api(`/api/admin/customers/${encodeURIComponent(customerId)}/tags`, {
+                method: 'POST',
+                body: JSON.stringify({ tagId }),
+              });
+            } else {
+              await api(`/api/admin/customers/${encodeURIComponent(customerId)}/tags?tagId=${encodeURIComponent(tagId)}`, {
+                method: 'DELETE',
+              });
+            }
+            await load({ keepTab: true });
+            if (state.customerProfile?.customer?.id === customerId) await openCustomer(customerId);
+          } catch (error) {
+            event.currentTarget.checked = !event.currentTarget.checked;
+            if (error.message !== 'unauthorized') toast('No se pudo cambiar la etiqueta');
+          }
+        });
+      });
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudieron cargar las etiquetas');
+    }
   }
 
   function renderWaList() {
     const box = $('#wa-conversations');
     const error = $('#wa-error');
     if (!box || !error) return;
+
+    // La barra de selección (si la hay) manda sobre la cabecera, siempre.
+    renderWaSelectionUi();
 
     // Una caída del API NO puede parecer “no hay mensajes”.
     if (state.wa.listError) {
@@ -2003,7 +2857,117 @@
       seguimiento: 'No hay seguimientos pendientes.',
       archivados: 'No hay conversaciones archivadas.',
     }[state.wa.filter] ?? 'No hay conversaciones con este filtro.';
-    box.innerHTML = `${waBulkBar()}${rows.length ? rows.map(waRow).join('') : emptyState(empty)}`;
+    box.innerHTML = rows.length ? rows.map(waRow).join('') : emptyState(empty);
+  }
+
+  function openNewConversationSheet() {
+    $('#sheet-title').textContent = 'Nuevo WhatsApp';
+    $('#sheet-body').innerHTML = `
+      <label class="field">
+        <span class="field__label">Teléfono con WhatsApp</span>
+        <input class="field__input" id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+1 809 555 1234" />
+      </label>
+      <label class="field">
+        <span class="field__label">Nombre del cliente</span>
+        <input class="field__input" id="wa-start-name" autocomplete="name" placeholder="Nombre opcional" />
+      </label>
+      <label class="field">
+        <span class="field__label">Mensaje</span>
+        <textarea class="field__area" id="wa-start-body" rows="4" placeholder="Hola, te escribo de ${NEGOCIO}..."></textarea>
+      </label>
+      <p class="rule">Se abrirá la conversación y el texto quedará listo para revisar. El envío se confirma desde el chat.</p>
+      <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir conversación</button>
+    `;
+    $('#sheet').hidden = false;
+    $('#wa-start-phone')?.focus();
+    $('#wa-start-open').addEventListener('click', async (event) => {
+      const phone = $('#wa-start-phone').value.trim();
+      const name = $('#wa-start-name').value.trim();
+      const body = $('#wa-start-body').value.trim();
+      if (!phone || digits(phone).length < 7) {
+        toast('Escribe un teléfono válido');
+        return;
+      }
+      await working(event.currentTarget, 'Abriendo...', async () => {
+        try {
+          const result = await api('/api/admin/conversations/start', {
+            method: 'POST',
+            body: JSON.stringify({ phone, name, body }),
+          });
+          closeSheet();
+          await refreshWhatsapp();
+          const conversationId = result.conversation?.id;
+          if (!conversationId) {
+            toast('No se pudo abrir la conversación');
+            return;
+          }
+          await selectConversation(conversationId, { draft: body });
+          toast(result.created ? 'Cliente creado' : 'Conversación abierta');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo abrir');
+        }
+      });
+    });
+  }
+
+  function setWaDateFilter(mode, patch = {}) {
+    const next = { mode, from: '', to: '', ...patch };
+    if (next.mode === 'custom') {
+      if (!next.from || !next.to) {
+        toast('Elige desde y hasta');
+        return false;
+      }
+      if (next.from > next.to) {
+        toast('Desde no puede ser mayor que hasta');
+        return false;
+      }
+    }
+    state.wa.date = next;
+    state.wa.selected.clear();
+    state.wa.listSig = null;
+    refreshWhatsapp().catch(() => renderWaList());
+    renderWhatsapp();
+    return true;
+  }
+
+  function openWaDateMenu() {
+    const active = waDateRange();
+    const buttons = WA_DATE_FILTERS.map(([mode, label]) => {
+      if (mode === 'custom') {
+        return `<button class="menu-item" data-wa-date-custom="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${active.mode === mode ? ICONS.check : ICONS.clock}</span>
+          <span><strong>${label}</strong><small>Elegir desde y hasta</small></span>
+        </button>`;
+      }
+      return `<button class="menu-item" data-wa-date="${mode}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${active.mode === mode ? ICONS.check : ''}</span>
+        <span><strong>${label}</strong></span>
+      </button>`;
+    }).join('');
+    openSheet('Filtrar por fecha', `<div class="menu-list">${buttons}</div>`, { variant: 'menu' });
+  }
+
+  function openWaCustomDateSheet() {
+    const current = waDateRange({ mode: 'custom', from: state.wa.date?.from, to: state.wa.date?.to });
+    $('#sheet-title').textContent = 'Rango de conversaciones';
+    $('#sheet-body').innerHTML = `
+      <label class="field">
+        <span class="field__label">Desde</span>
+        <input class="field__input" id="wa-date-from" type="date" value="${escapeHtml(current.from || todayISO())}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Hasta</span>
+        <input class="field__input" id="wa-date-to" type="date" value="${escapeHtml(current.to || todayISO())}" />
+      </label>
+      <p class="rule">El filtro usa la fecha del último mensaje en ${BUSINESS_TIME_ZONE}.</p>
+      <button class="btn btn--primary btn--block" id="wa-date-apply" type="button">Aplicar rango</button>
+    `;
+    $('#sheet').hidden = false;
+    $('#wa-date-apply')?.addEventListener('click', () => {
+      const from = $('#wa-date-from')?.value ?? '';
+      const to = $('#wa-date-to')?.value ?? '';
+      if (setWaDateFilter('custom', { from, to })) closeSheet();
+    });
   }
 
   /**
@@ -2093,9 +3057,13 @@
 
     const { customer, conversation, messages, canSendFreeText } = data;
     $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
+    const headerTags = customerTagsOf(customer).slice(0, 2).map((tag) => tag.label);
     $('#wa-chat-meta').textContent = [
+      customer ? customerStageLabel(customerStageOf(customer)) : null,
       customer?.phone_e164,
       conversation?.assigned_display_name_snapshot ? `Atiende ${conversation.assigned_display_name_snapshot}` : 'Sin asignar',
+      data.nextFollowup ? `Seguimiento ${fmtDay(data.nextFollowup.scheduled_at)}` : null,
+      ...headerTags,
       conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
       customer?.do_not_contact ? 'No contactar' : null,
     ]
@@ -2117,7 +3085,15 @@
     }
 
     const avatar = $('#wa-chat-avatar');
-    if (avatar) avatar.textContent = waInitials((customer?.name ?? '').trim() || customer?.phone_e164);
+    if (avatar) {
+      setAvatarContent(avatar, customer, (customer?.name ?? '').trim() || customer?.phone_e164);
+      avatar.dataset.customer = customer?.id ?? '';
+      avatar.disabled = !customer?.id;
+      avatar.setAttribute(
+        'aria-label',
+        customer?.id ? `Ver perfil de ${((customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente')}` : 'Perfil del cliente',
+      );
+    }
 
     const assignmentActions = conversation?.assigned_user_id
       ? `<div class="assignment-bar">
@@ -2396,12 +3372,24 @@
     viewer.hidden = false;
   }
 
+  function openImageViewer(src, alt = 'Imagen') {
+    const viewer = $('#media-viewer');
+    const image = $('#media-viewer-img');
+    if (!viewer || !image || !src) return;
+    image.src = src;
+    image.alt = alt;
+    viewer.hidden = false;
+  }
+
   function closeViewer() {
     const viewer = $('#media-viewer');
     const image = $('#media-viewer-img');
     if (!viewer) return;
     viewer.hidden = true;
-    if (image) image.removeAttribute('src');
+    if (image) {
+      image.removeAttribute('src');
+      image.alt = 'Imagen del cliente';
+    }
   }
 
   // ------------------------------------------- subida desde el compositor
@@ -2817,7 +3805,7 @@
     state.wa.chat = null;
     state.wa.chatSig = null;
     state.wa.threadError = false;
-    state.wa.draft = '';
+    state.wa.draft = options.draft ?? '';
     setWaView('chat');
     renderWhatsapp();
     await loadWaThread(conversationId, { force: true });
@@ -2881,8 +3869,12 @@
     });
   }
 
-  async function runWaBulk(action) {
-    const ids = [...state.wa.selected];
+  /**
+   * Acciones sobre una o varias conversaciones. `explicitIds` permite lanzarla
+   * para UNA sola fila (el menú «⋯») sin tocar la selección que haya abierta.
+   */
+  async function runWaBulk(action, explicitIds = null) {
+    const ids = explicitIds?.length ? [...explicitIds] : [...state.wa.selected];
     if (!ids.length) return;
     try {
       const result = await api('/api/admin/conversations/bulk', {
@@ -2906,7 +3898,7 @@
         return;
       }
       toast(`${result.processed} procesados${result.failed ? `, ${result.failed} fallaron` : ''}`);
-      state.wa.selected.clear();
+      if (!explicitIds) state.wa.selected.clear();
       await refreshWhatsapp();
     } catch (error) {
       if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar la acción');
@@ -2921,6 +3913,11 @@
     const params = new URLSearchParams();
     params.set('filter', state.wa.filter);
     if (state.wa.q) params.set('q', state.wa.q);
+    const dateRange = waDateRange();
+    if (dateRange.mode !== 'all') {
+      if (dateRange.from) params.set('from', dateRange.from);
+      if (dateRange.to) params.set('to', dateRange.to);
+    }
     const list = await api(`/api/admin/conversations?${params.toString()}`);
     const rows = list.conversations ?? [];
     state.wa.counts = list.counts ?? state.wa.counts;
@@ -2992,18 +3989,312 @@
     state.openId = null;
     state.chat = null;
     state.customerId = customerId;
-    const customer = customerById(customerId);
-    openSheet(customer?.name ?? 'Cliente', '<p class="view__hint">Cargando…</p>');
+    state.customerProfileOrderId = null;
+    state.previousTab = state.tab === 'perfil-cliente' ? state.previousTab : state.tab;
+    const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
+    state.customerProfile = customer ? { customer, totals: {}, purchases: [], followups: [], scheduled: [], loadingBasic: true } : null;
+    state.customerProfileLoading = true;
+    setTab('perfil-cliente');
+    renderCustomerProfile();
     try {
       const profile = await api(`/api/admin/customers/${encodeURIComponent(customerId)}`);
       renderCustomer(profile);
     } catch (error) {
       if (error.message === 'unauthorized') return;
-      openSheet('Cliente', '<p class="rule rule--warn">No se pudo cargar la ficha.</p>');
+      state.customerProfileLoading = false;
+      renderCustomerProfile('<p class="rule rule--warn">No se pudo cargar la ficha.</p>');
     }
   }
 
+  function profileFact(label, value) {
+    const content = value === null || value === undefined || value === '' ? '—' : value;
+    return `<div class="fact"><dt>${escapeHtml(label)}</dt><dd>${content}</dd></div>`;
+  }
+
+  function customerProfileSection(title, html, className = '') {
+    return `<section class="profile-card ${escapeHtml(className)}">
+      <h3>${escapeHtml(title)}</h3>
+      ${html}
+    </section>`;
+  }
+
+  function renderCustomerProfile(errorHtml = '') {
+    renderMobileHeader();
+    const box = $('#customer-profile');
+    if (!box) return;
+    const profile = state.customerProfile;
+    if (!profile?.customer) {
+      box.innerHTML = errorHtml || '<p class="view__hint">Selecciona un cliente para ver su perfil.</p>';
+      return;
+    }
+    const { customer } = profile;
+    const purchases = profile.purchases ?? [];
+    const followups = profile.followups ?? [];
+    const scheduled = profile.scheduled ?? [];
+    const totals = profile.totals ?? {};
+    const conversation = profile.conversation ?? conversationForCustomer(customer.id);
+    const lastMessage = conversation?.last_message;
+    const commercial = profile.commercial_state ?? customer.commercial_state ?? 'NUEVO';
+    const stage = profile.customerStage ?? customerStageOf(customer);
+    const customerTags = customerTagsOf(profile).length ? customerTagsOf(profile) : customerTagsOf(customer);
+    const phone = digits(customer.phone_e164 ?? customer.phone);
+    const lastPurchase = purchases.find((row) => row.status === 'entregado') ?? purchases[0] ?? null;
+    const selectedOrder = purchases.find((row) => row.id === state.customerProfileOrderId) ?? null;
+    const photo = customerPhotoUrl(customer);
+    const tags = [
+      customerStageLabel(stage),
+      customer.do_not_contact ? 'No contactar' : null,
+      ...customerTags.slice(0, 3).map((tag) => tag.label),
+    ].filter(Boolean);
+    const estado = {
+      AUTOMATIC: 'Automático',
+      HUMAN_REQUIRED: 'Necesita una persona',
+      HUMAN_ACTIVE: 'Hablando con el negocio',
+      PAUSED: 'En pausa',
+      CLOSED: 'Cerrado',
+    }[customer.automation_state] ?? customer.automation_state ?? '—';
+
+    const header = `<header class="profile-hero ${photo ? 'profile-hero--photo' : 'profile-hero--fallback'}" ${
+      photo ? `style="--profile-photo:url('${escapeHtml(photo)}')"` : ''
+    }>
+      <button class="profile-hero__media" ${
+        photo ? `data-profile-photo="${escapeHtml(photo)}"` : ''
+      } type="button" aria-label="Ver foto de ${escapeHtml(customerName(customer))}" ${photo ? '' : 'disabled'}>
+        ${photo ? '' : `<span>${escapeHtml(waInitials(customerName(customer)))}</span>`}
+      </button>
+      <div class="profile-hero__main">
+        <h2>${escapeHtml(customerName(customer))}</h2>
+        <p>${escapeHtml(customer.phone_e164 ?? customer.phone ?? 'Sin teléfono')}</p>
+        <div class="profile-tags">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
+      </div>
+    </header>`;
+
+    const personal = customerProfileSection(
+      'Información Personal',
+      `<dl class="facts profile-facts">
+        ${profileFact('Nombre', escapeHtml(customer.name ?? '—'))}
+        ${profileFact('Teléfono', phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(customer.phone_e164 ?? customer.phone ?? phone)}</a>` : '—')}
+        ${profileFact('WhatsApp', customer.phone_e164 ? `<a href="https://wa.me/${escapeHtml(digits(customer.phone_e164))}" target="_blank" rel="noopener noreferrer">${escapeHtml(customer.phone_e164)}</a>` : '—')}
+        ${profileFact('Email', escapeHtml(customer.email ?? '—'))}
+        ${profileFact('Documento/Cédula', escapeHtml(customer.document ?? customer.document_id ?? customer.cedula ?? '—'))}
+        ${profileFact('Dirección', escapeHtml(customer.address ?? customer.direccion ?? '—'))}
+        ${profileFact('Ciudad/Provincia', escapeHtml(customer.city ?? customer.province ?? customer.location ?? '—'))}
+        ${profileFact('Creación', customer.created_at ? escapeHtml(fmtWhen(customer.created_at)) : '—')}
+        ${profileFact('Última actualización', customer.updated_at ? escapeHtml(fmtWhen(customer.updated_at)) : '—')}
+      </dl>`,
+    );
+
+    const stages = state.customerStages.length
+      ? state.customerStages
+      : [
+          { value: 'PROSPECT', label: 'Prospecto' },
+          { value: 'INTERESTED', label: 'Interesado' },
+          { value: 'CUSTOMER', label: 'Cliente' },
+          { value: 'INACTIVE', label: 'Inactivo' },
+        ];
+
+    const stageHtml = customerProfileSection(
+      'Etapa del Cliente',
+      `<label class="field profile-field">
+        <span class="field__label">Etapa</span>
+        <select class="field__select" id="customer-stage">
+          ${stages
+            .map(
+              (value) =>
+                `<option value="${escapeHtml(value.value)}" ${stage === value.value ? 'selected' : ''}>${escapeHtml(value.label)}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <dl class="facts profile-facts">
+        ${profileFact('Etapa actual', escapeHtml(customerStageLabel(stage)))}
+        ${profileFact('Origen de etapa', escapeHtml(customer.customer_stage_source ?? profile.customer_stage_source ?? 'automático'))}
+        ${profileFact('Estado comercial legacy', escapeHtml(commercialLabel(commercial)))}
+        ${profileFact('Origen', escapeHtml(customer.source ?? '—'))}
+        ${profileFact('Campaña/origen', escapeHtml(customer.campaign ?? customer.utm_campaign ?? customer.origin_campaign ?? '—'))}
+      </dl>`,
+    );
+
+    const tagsHtml = customerProfileSection(
+      'Etiquetas',
+      `${
+        customerTags.length
+          ? `<div class="profile-tags">${customerTags.map((tag) => `<span class="tag">${escapeHtml(tag.label)}</span>`).join('')}</div>`
+          : '<p class="view__hint">Sin etiquetas.</p>'
+      }
+      <button class="btn btn--ghost btn--block" data-customer-tags="${escapeHtml(customer.id)}" type="button">Administrar etiquetas</button>`,
+    );
+
+    const commercialHtml = customerProfileSection(
+      'Conversación',
+      `<dl class="facts profile-facts">
+        ${profileFact('Vendedor/asignado', escapeHtml(conversation?.assigned_display_name_snapshot ?? customer.assigned_display_name ?? 'Sin asignar'))}
+        ${profileFact('Estado conversación', escapeHtml(estado))}
+        ${profileFact('Última conversación', conversation?.updated_at ? escapeHtml(fmtWhen(conversation.updated_at)) : '—')}
+        ${profileFact('Último mensaje', escapeHtml(lastMessage?.body ?? (lastMessage?.type ? WA_KIND_LABEL[lastMessage.type] : '—') ?? '—'))}
+        ${profileFact('Mensajes no leídos', escapeHtml(String(conversation?.unread_count ?? 0)))}
+      </dl>`,
+    );
+
+    const commercialSummary = customerProfileSection(
+      'Información Comercial',
+      `<dl class="facts profile-facts">
+        ${profileFact('Interés principal', escapeHtml(customer.product_interest ?? customer.interest ?? lastPurchase?.variant_name ?? '—'))}
+        ${profileFact('Última compra', totals.last_purchase_at ? escapeHtml(fmtWhen(totals.last_purchase_at)) : '—')}
+        ${profileFact('Total comprado', money(totals.total_spent ?? 0))}
+      </dl>`,
+    );
+
+    const historyHtml = customerProfileSection(
+      'Historial',
+      (profile.stageHistory ?? []).length
+        ? `<div class="profile-history">${profile.stageHistory
+            .map(
+              (row) =>
+                `<div><strong>${escapeHtml(customerStageLabel(row.to_stage))}</strong><span>${escapeHtml(
+                  row.timestamp ? fmtWhen(row.timestamp) : 'Sin fecha',
+                )} · ${escapeHtml(row.changed_by_display_name ?? 'Sistema')}${row.reason ? ` · ${escapeHtml(row.reason)}` : ''}</span></div>`,
+            )
+            .join('')}</div>`
+        : '<p class="view__hint">Sin cambios manuales de etapa.</p>',
+    );
+
+    const followupHtml = customerProfileSection(
+      'Seguimiento',
+      `<dl class="facts profile-facts">
+        ${profileFact('Próximo seguimiento', profile.nextFollowup ? escapeHtml(fmtDay(profile.nextFollowup.scheduled_at)) : '—')}
+        ${profileFact('Última gestión', followups[0]?.updated_at ? escapeHtml(fmtWhen(followups[0].updated_at)) : '—')}
+      </dl>
+      ${
+        followups.length
+          ? `<div class="profile-history">${followups
+              .map(
+                (row) =>
+                  `<div><strong>${escapeHtml(fmtDay(row.scheduled_at))}</strong><span>${escapeHtml(
+                    followupLabel(row.type),
+                  )} · ${escapeHtml({ pending: 'pendiente', completed: 'hecho', cancelled: 'cancelado', skipped: 'omitido' }[row.status] ?? row.status)}</span></div>`,
+              )
+              .join('')}</div>`
+          : '<p class="view__hint">Sin historial de seguimiento.</p>'
+      }
+      <label class="field profile-field">
+        <span class="field__label">Notas</span>
+        <textarea class="field__area" id="customer-notes">${escapeHtml(customer.notes ?? '')}</textarea>
+      </label>
+      <button class="btn btn--primary btn--block" id="customer-save" type="button">Guardar notas</button>`,
+    );
+
+    const orderDetail = (row) => `
+      <div class="profile-order-detail">
+        <div class="profile-order-detail__head">
+          <strong>${escapeHtml(row.order_number ?? row.id ?? 'Pedido')}</strong>
+          <button class="btn btn--ghost btn--sm" data-profile-order="" type="button">Volver a la lista</button>
+        </div>
+        <dl class="facts profile-facts">
+          ${profileFact('Estado', escapeHtml(statusLabel(row.status ?? 'nuevo')))}
+          ${profileFact('Fecha', row.received_at ? escapeHtml(fmtWhen(row.received_at)) : '—')}
+          ${profileFact('Monto', money(row.total, row.currency))}
+          ${profileFact('Producto', escapeHtml(row.variant_name ?? '—'))}
+          ${profileFact('Cantidad', escapeHtml(String(row.quantity ?? '—')))}
+          ${profileFact('Referencia', escapeHtml(row.reference ?? row.payment_reference ?? row.order_number ?? row.id ?? '—'))}
+          ${profileFact('Canal', escapeHtml(row.channel ?? row.source ?? '—'))}
+          ${profileFact('Notas del pedido', escapeHtml(row.notes ?? '—'))}
+        </dl>
+        <div class="profile-order-actions">
+          <button class="btn btn--primary btn--sm" data-receipt="${escapeHtml(row.id)}" type="button">Ver factura</button>
+          <button class="btn btn--ghost btn--sm" data-order-edit="${escapeHtml(row.id)}" type="button">Modificar</button>
+        </div>
+      </div>`;
+
+    const orders = customerProfileSection(
+      'Pedidos / Ventas',
+      purchases.length
+        ? `<div class="profile-orders">${purchases
+            .map(
+              (row) => `<article class="profile-order ${selectedOrder?.id === row.id ? 'profile-order--open' : ''}">
+                <div class="profile-order__main">
+                  <button class="profile-order__title" data-profile-order="${escapeHtml(row.id)}" type="button">
+                    <strong>${escapeHtml(row.order_number ?? row.id ?? 'Pedido')}</strong>
+                    <span>${escapeHtml(row.variant_name ?? 'Producto')}</span>
+                  </button>
+                  <span class="tag tag--${escapeHtml(row.status ?? 'nuevo')}">${escapeHtml(statusLabel(row.status ?? 'nuevo'))}</span>
+                </div>
+                <div class="profile-order__meta">
+                  <span>${row.received_at ? escapeHtml(fmtWhen(row.received_at)) : 'Sin fecha'}</span>
+                  <span>${money(row.total, row.currency)}</span>
+                  <span>Ref. ${escapeHtml(row.reference ?? row.payment_reference ?? row.order_number ?? row.id ?? '—')}</span>
+                </div>
+                <div class="profile-order-actions">
+                  <button class="btn btn--ghost btn--sm" data-profile-order="${escapeHtml(row.id)}" type="button">Detalle</button>
+                  <button class="btn btn--ghost btn--sm" data-receipt="${escapeHtml(row.id)}" type="button">Factura</button>
+                </div>
+                ${selectedOrder?.id === row.id ? orderDetail(row) : ''}
+              </article>`,
+            )
+            .join('')}</div>`
+        : '<p class="view__hint">Todavía no tiene pedidos registrados.</p>',
+      'profile-card--wide',
+    );
+
+    const automation = customerProfileSection(
+      'Acciones',
+      `<div class="item__actions">
+        ${phone ? `<a class="btn btn--ghost btn--sm" href="tel:${escapeHtml(phone)}">Llamar</a>` : ''}
+        <button class="btn btn--ghost btn--sm" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversation?.id ?? '',
+        )}" type="button">Programar mensaje</button>
+        ${
+          customer.automation_state === 'PAUSED'
+            ? `<button class="btn btn--ghost btn--sm" data-resume="${escapeHtml(customer.id)}" type="button">Reactivar</button>`
+            : `<button class="btn btn--ghost btn--sm" data-pause="${escapeHtml(customer.id)}" type="button">Pausar</button>`
+        }
+        ${
+          customer.do_not_contact
+            ? `<button class="btn btn--ghost btn--sm" data-optin="${escapeHtml(customer.id)}" type="button">Volver a permitir mensajes</button>`
+            : `<button class="btn btn--danger btn--sm" data-optout="${escapeHtml(customer.id)}" type="button">No contactar nunca más</button>`
+        }
+      </div>`,
+    );
+
+    box.innerHTML = `${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
+      <div class="profile-grid">
+        ${personal}
+        ${stageHtml}
+        ${tagsHtml}
+        ${commercialHtml}
+        ${commercialSummary}
+        ${followupHtml}
+        ${orders}
+        ${historyHtml}
+      </div>
+      <button class="profile-fab" id="profile-actions" type="button" aria-label="Acciones del cliente" title="Acciones del cliente">
+        <span class="ico" aria-hidden="true">${ICONS.spark}</span>
+      </button>`;
+
+    $('#customer-save')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await api(`/api/admin/customers/${encodeURIComponent(customer.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ notes: $('#customer-notes').value }),
+          });
+          toast('Notas guardadas');
+          await load({ keepTab: true });
+          await openCustomer(customer.id);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast('No se pudieron guardar las notas');
+        }
+      });
+    });
+
+    $('#customer-stage')?.addEventListener('change', (event) => changeCustomerStage(customer.id, event.target.value));
+  }
+
   function renderCustomer(profile) {
+    state.customerProfile = profile;
+    state.customerProfileLoading = false;
+    renderCustomerProfile();
+    return;
     const { customer, totals, purchases, nextFollowup, followups, conversation, canSendFreeText } = profile;
     const scheduled = profile.scheduled ?? [];
     const commercial = profile.commercial_state ?? customer.commercial_state ?? 'NUEVO';
@@ -3464,8 +4755,100 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
           <span><strong>Ver cliente</strong></span>
         </button>
+        <button class="menu-item" data-customer-stage-menu="${escapeHtml(customer.id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+          <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(customer)))}</small></span>
+        </button>
+        <button class="menu-item" data-customer-tags="${escapeHtml(customer.id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
+          <span><strong>Etiquetas</strong></span>
+        </button>
       </div>
     `,
+      { variant: 'menu' },
+    );
+  }
+
+  function openClientsActions() {
+    openSheet(
+      'Clientes',
+      `<div class="menu-list">
+        <button class="menu-item" data-purchase="" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+          <span><strong>Registrar compra</strong><small>Para cliente nuevo o existente</small></span>
+        </button>
+        <button class="menu-item" data-new-conversation="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+          <span><strong>Agregar cliente / WhatsApp</strong><small>Crear o buscar por teléfono</small></span>
+        </button>
+        <button class="menu-item" data-tab="pedidos" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span>
+          <span><strong>Ver pedidos</strong><small>Historial comercial completo</small></span>
+        </button>
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  function openProfileActions() {
+    const profile = state.customerProfile;
+    const customer = profile?.customer;
+    if (!customer) return;
+    const conversation = profile.conversation ?? conversationForCustomer(customer.id);
+    const phone = digits(customer.phone_e164 ?? customer.phone);
+    openSheet(
+      customerName(customer),
+      `<div class="menu-list">
+        ${
+          conversation
+            ? `<button class="menu-item" data-chat="${escapeHtml(conversation.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.chat}</span>
+                <span><strong>Volver al chat</strong></span>
+              </button>`
+            : ''
+        }
+        <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversation?.id ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+          <span><strong>Crear pedido</strong></span>
+        </button>
+        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversation?.id ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
+          <span><strong>Programar seguimiento</strong></span>
+        </button>
+        <button class="menu-item" data-customer-stage-menu="${escapeHtml(customer.id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+          <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(customer)))}</small></span>
+        </button>
+        <button class="menu-item" data-customer-tags="${escapeHtml(customer.id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
+          <span><strong>Etiquetas</strong></span>
+        </button>
+        <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversation?.id ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
+          <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
+        </button>
+        ${phone ? `<a class="menu-item" href="tel:${escapeHtml(phone)}">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+          <span><strong>Llamar</strong><small>${escapeHtml(customer.phone_e164 ?? customer.phone ?? '')}</small></span>
+        </a>` : ''}
+        ${
+          customer.automation_state === 'PAUSED'
+            ? `<button class="menu-item" data-resume="${escapeHtml(customer.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.retry}</span>
+                <span><strong>Reactivar</strong></span>
+              </button>`
+            : `<button class="menu-item" data-pause="${escapeHtml(customer.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+                <span><strong>Pausar seguimiento</strong></span>
+              </button>`
+        }
+      </div>`,
       { variant: 'menu' },
     );
   }
@@ -3747,6 +5130,13 @@
       { variantId: catalog[0].id, quantity: 1 },
     ];
     const defaultStatus = order?.status ?? 'nuevo';
+    const methods = state.paymentMethods.length
+      ? state.paymentMethods
+      : [
+          { value: 'CASH', label: 'Efectivo' },
+          { value: 'TRANSFER', label: 'Transferencia' },
+        ];
+    const defaultPayment = order?.payment_method ?? methods[0]?.value ?? 'CASH';
 
     openSheet(
       `${
@@ -3797,6 +5187,19 @@
                 `<option value="${escapeHtml(status.value)}" ${
                   status.value === defaultStatus ? 'selected' : ''
                 }>${escapeHtml(status.label)}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Método de pago</span>
+        <select class="field__select" id="order-payment">
+          ${methods
+            .map(
+              (method) =>
+                `<option value="${escapeHtml(method.value)}" ${
+                  method.value === defaultPayment ? 'selected' : ''
+                }>${escapeHtml(method.label)}</option>`,
             )
             .join('')}
         </select>
@@ -4014,6 +5417,7 @@
                   }
               : null,
             status: $('#order-status').value,
+            paymentMethod: $('#order-payment').value,
             notes: $('#order-notes').value,
           };
           const result = orderId
@@ -4024,6 +5428,7 @@
                   discount: payload.discount,
                   deliveryFee: payload.deliveryFee,
                   deliveryLocation: payload.deliveryLocation,
+                  paymentMethod: payload.paymentMethod,
                   notes: payload.notes,
                 }),
               })
@@ -4432,7 +5837,49 @@
     }`;
   }
 
-  /** Comprobante de compra dentro del CRM + cómo verlo, descargarlo o compartirlo. */
+  async function shareReceiptPdf({ url, receipt }) {
+    const title = `Factura ${receipt.order_number}`;
+    if (navigator.canShare && window.File) {
+      try {
+        const response = await fetch(url, { credentials: 'same-origin' });
+        if (response.ok) {
+          const blob = await response.blob();
+          const file = new File([blob], `${receipt.order_number}-factura.pdf`, { type: 'application/pdf' });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({ title, files: [file] });
+            return;
+          }
+        }
+      } catch {
+        /* Si no puede compartir archivo, se intenta compartir el enlace. */
+      }
+    }
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, url });
+        return;
+      } catch {
+        /* el usuario canceló o el navegador no pudo compartir */
+      }
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function openOrderEditor(orderId) {
+    try {
+      const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
+      openOrderForm({
+        customerId: data.item?.customer_id,
+        conversationId: data.item?.conversation_id ?? '',
+        orderId,
+        order: data.order,
+      });
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo abrir el pedido');
+    }
+  }
+
+  /** Factura de compra dentro del CRM + documento para abrir o compartir. */
   async function openReceipt(orderId) {
     try {
       const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
@@ -4447,9 +5894,9 @@
         )
         .join('');
       openSheet(
-        `Comprobante · ${receipt.order_number}`,
+        `Factura · ${receipt.order_number}`,
         `
-        <div class="receipt">
+        <div class="receipt" aria-label="Comprobante de compra">
           <p class="receipt__brand">${escapeHtml(receipt.business)}</p>
           <p class="receipt__doc">${escapeHtml(receipt.document)}</p>
           <dl class="facts">
@@ -4457,7 +5904,14 @@
             <div class="fact"><dt>Fecha</dt><dd>${escapeHtml(fmtWhen(receipt.date))}</dd></div>
             ${receipt.customer_name ? `<div class="fact"><dt>Cliente</dt><dd>${escapeHtml(receipt.customer_name)}</dd></div>` : ''}
             ${receipt.phone_masked ? `<div class="fact"><dt>Teléfono</dt><dd>${escapeHtml(receipt.phone_masked)}</dd></div>` : ''}
+            ${
+              receipt.payment_method_label
+                ? `<div class="fact"><dt>Método de pago</dt><dd>${escapeHtml(receipt.payment_method_label)}</dd></div>`
+                : ''
+            }
             <div class="fact"><dt>Estado</dt><dd>${escapeHtml(receipt.status_label)}</dd></div>
+            ${receipt.cancelled_at ? `<div class="fact"><dt>Cancelada</dt><dd>${escapeHtml(fmtWhen(receipt.cancelled_at))}</dd></div>` : ''}
+            ${receipt.cancel_reason ? `<div class="fact"><dt>Motivo</dt><dd>${escapeHtml(receipt.cancel_reason)}</dd></div>` : ''}
           </dl>
           <div class="receipt__lines">${lines}</div>
           <div class="receipt__totals">
@@ -4491,29 +5945,28 @@
           <p class="view__hint">${escapeHtml(receipt.thanks)}</p>
           <p class="view__hint">${escapeHtml(receipt.note)}</p>
         </div>
-        <button class="btn btn--primary btn--block" id="receipt-open" type="button">Ver / Imprimir comprobante</button>
-        <button class="btn btn--ghost btn--block" id="receipt-share" type="button">Compartir</button>
+        <div class="receipt-pdf-card" aria-label="Factura lista para compartir">
+          <span class="receipt-pdf-card__icon" aria-hidden="true">${ICONS.doc}</span>
+          <span class="receipt-pdf-card__body">
+            <strong>Factura lista para compartir</strong>
+            <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
+          </span>
+        </div>
+        <button class="btn btn--primary btn--block" id="receipt-open" type="button">Ver factura</button>
+        <button class="btn btn--ghost btn--block" id="receipt-share" type="button">Compartir factura</button>
         <button class="btn btn--ghost btn--block" id="receipt-edit" type="button">Modificar pedido</button>
-        <button class="btn btn--whatsapp btn--block" id="receipt-send" type="button" disabled
-          title="Enviar el comprobante por WhatsApp llega con la fase multimedia (S3)">Enviar comprobante</button>
-        <p class="view__hint">Enviar el comprobante por WhatsApp se activa cuando el CRM pueda enviar documentos.</p>
+        ${
+          isAdmin() && receipt.status !== 'cancelado'
+            ? `<button class="btn btn--danger btn--block" data-sale-cancel="${escapeHtml(orderId)}" type="button">Cancelar venta</button>`
+            : ''
+        }
         `,
       );
 
-      const url = `${app2Base()}/api/admin/orders/${encodeURIComponent(orderId)}/receipt`;
-      $('#receipt-open').addEventListener('click', () => window.open(url, '_blank', 'noopener'));
-      $('#receipt-share').addEventListener('click', async (event) => {
-        // Compartir nativo si el móvil puede; si no, se abre el documento.
-        if (navigator.share) {
-          try {
-            await navigator.share({ title: `Comprobante ${receipt.order_number}`, url });
-            return;
-          } catch {
-            /* el usuario canceló: se abre el documento */
-          }
-        }
-        window.open(url, '_blank', 'noopener');
-      });
+      const receiptUrl = `${app2Base()}/api/admin/orders/${encodeURIComponent(orderId)}/receipt`;
+      const facturaUrl = `${app2Base()}/api/admin/orders/${encodeURIComponent(orderId)}/factura`;
+      $('#receipt-open').addEventListener('click', () => window.open(receiptUrl, '_blank', 'noopener'));
+      $('#receipt-share').addEventListener('click', () => shareReceiptPdf({ url: facturaUrl, receipt }));
       $('#receipt-edit').addEventListener('click', () => {
         openOrderForm({
           customerId: data.item.customer_id,
@@ -4524,6 +5977,57 @@
       });
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo abrir el comprobante');
+    }
+  }
+
+  async function openCancelSale(orderId) {
+    try {
+      const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
+      const order = data.order ?? {};
+      const receipt = data.receipt ?? {};
+      const lines = (order.items ?? receipt.items ?? [])
+        .map((line) => `${line.variantName ?? line.label ?? 'Producto'} ×${line.quantity ?? 1}`)
+        .join(', ');
+      openSheet(
+        `Cancelar venta · ${receipt.order_number ?? order.order_number ?? orderId}`,
+        `
+        <p class="rule rule--warn">Esta acción cancelará la venta y devolverá los productos al inventario.</p>
+        <dl class="facts">
+          <div class="fact"><dt>Cliente</dt><dd>${escapeHtml(receipt.customer_name ?? data.customer?.name ?? '—')}</dd></div>
+          <div class="fact"><dt>Productos</dt><dd>${escapeHtml(lines || '—')}</dd></div>
+          <div class="fact"><dt>Total</dt><dd>${money(receipt.total ?? order.total ?? 0, receipt.currency ?? order.currency)}</dd></div>
+          <div class="fact"><dt>Pago</dt><dd>${escapeHtml(receipt.payment_method_label ?? paymentMethodLabel(order.payment_method))}</dd></div>
+          <div class="fact"><dt>Fecha</dt><dd>${escapeHtml(fmtWhen(receipt.date ?? order.created_at))}</dd></div>
+        </dl>
+        <label class="field">
+          <span class="field__label">Motivo obligatorio</span>
+          <textarea class="field__area" id="sale-cancel-reason" placeholder="Ej.: Cliente anuló el pedido, error de registro…"></textarea>
+        </label>
+        <button class="btn btn--danger btn--block" id="sale-cancel-confirm" type="button">Cancelar venta y devolver inventario</button>
+        `,
+      );
+      $('#sale-cancel-confirm')?.addEventListener('click', async (event) => {
+        const reason = $('#sale-cancel-reason')?.value.trim();
+        if (!reason) {
+          toast('Escribe el motivo de cancelación');
+          return;
+        }
+        await working(event.currentTarget, 'Cancelando…', async () => {
+          try {
+            await api(`/api/admin/orders/${encodeURIComponent(orderId)}/cancel`, {
+              method: 'POST',
+              body: JSON.stringify({ reason }),
+            });
+            toast('Venta cancelada e inventario restaurado');
+            await load({ keepTab: true });
+            await openReceipt(orderId);
+          } catch (error) {
+            if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cancelar la venta');
+          }
+        });
+      });
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo abrir la venta');
     }
   }
 
@@ -4790,6 +6294,7 @@
       `<span class="presence__label">${online ? 'En línea' : 'Sin conexión'}</span>`;
     pill.setAttribute('aria-label', online ? 'Sistema en línea' : 'Sin conexión');
     $('#offline-banner').hidden = online;
+    renderMobileHeader();
     if (online) flushOutbox();
   }
 
@@ -4872,11 +6377,12 @@
   // ------------------------------------------------------------------- tabs
 
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
+    'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Inventario',
     reportes: 'Reportes',
@@ -4884,11 +6390,16 @@
     mensajes: 'Plantillas',
     ajustes: 'Ajustes',
     usuarios: 'Usuarios',
+    perfil: 'Mi perfil',
   };
 
   function setTab(tab, options = {}) {
+    if ((tab === 'usuarios' && !isAdmin()) || (tab === 'ajustes' && !hasPermission('settings.manage')) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
+      tab = 'hoy';
+    }
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
+    if (state.drawer) closeDrawer();
     // El ancho de la bandeja de WhatsApp depende de la pestaña activa (CSS).
     document.body.dataset.tab = tab;
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
@@ -4898,13 +6409,16 @@
     });
     const sub = $('#topbar-sub');
     if (sub) sub.textContent = VIEW_SUBTITLE[tab] ?? 'CRM';
+    renderMobileHeader();
     if (!options.silent) {
       window.scrollTo({ top: 0 });
       // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
       if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
       if (tab === 'productos') loadInventory().catch(() => {});
-      if (tab === 'reportes') loadSalesReport(state.salesReportPeriod).catch(() => {});
+      if (tab === 'reportes' && hasPermission('reports.profit.view')) loadSalesReport(state.salesReportPeriod).catch(() => {});
       if (tab === 'usuarios') loadUsers().catch(() => {});
+      // El perfil se relee del servidor: el nombre pudo cambiar en otro sitio.
+      if (tab === 'perfil') refreshProfile().catch(() => {});
       // Al entrar en Ajustes se refresca lo que cambia con el uso: los números y
       // la traza. Así el negocio ve el efecto de lo que acaba de hacer.
       if (tab === 'ajustes') {
@@ -4946,9 +6460,7 @@
         await load();
       } catch (error) {
         $('#login-error').hidden = false;
-        $('#login-error').textContent =
-          error.body?.message ??
-          (error.message === 'unauthorized' ? 'Usuario o contraseña incorrectos.' : 'No se pudo entrar: no hay conexión con el CRM.');
+        $('#login-error').textContent = loginErrorMessage(error);
       }
     });
 
@@ -4982,11 +6494,10 @@
 
     $('#chips').innerHTML = [
       ['todos', 'Todos'],
-      ['nuevos', 'Sin contactar'],
-      ['pedidos', 'Pedidos'],
-      ['recordatorio', 'Con recordatorio'],
-      ['hoy', 'Para hoy'],
-      ['entregados', 'Entregados'],
+      ['clientes', 'Clientes'],
+      ['interesados', 'Interesados'],
+      ['prospectos', 'Prospectos'],
+      ['seguimiento', 'Seguimiento'],
     ]
       .map(
         ([value, text]) =>
@@ -5021,6 +6532,46 @@
       renderClientes();
     });
 
+    /*
+     * Pulsación larga = seleccionar (el gesto de WhatsApp). Se cancela en cuanto
+     * el dedo o el ratón se mueven, para no secuestrar el desplazamiento de la
+     * lista, y el clic que viene después de la pulsación no vuelve a quitar la
+     * fila (para eso está `waPressFired`).
+     */
+    let waPressTimer = null;
+    let waPressFrom = null;
+    let waPressFired = false;
+    const waPressCancel = () => {
+      if (waPressTimer) clearTimeout(waPressTimer);
+      waPressTimer = null;
+      waPressFrom = null;
+    };
+    document.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest?.('[data-conv-more]') || event.target.closest?.('.conv__more')) return;
+      if (event.target.closest?.('[data-customer]')) return;
+      const row = event.target.closest?.('[data-conv]');
+      if (!row || state.wa.selected.size) return;
+      waPressFired = false;
+      waPressFrom = { x: event.clientX, y: event.clientY, id: row.dataset.conv };
+      if (waPressTimer) clearTimeout(waPressTimer);
+      waPressTimer = setTimeout(() => {
+        waPressTimer = null;
+        const conversationId = waPressFrom?.id;
+        if (!conversationId) return;
+        waPressFired = true;
+        if (!state.wa.selected.has(conversationId)) state.wa.selected.add(conversationId);
+        renderWaList();
+      }, 420);
+    });
+    document.addEventListener('pointermove', (event) => {
+      if (!waPressFrom) return;
+      if (Math.abs(event.clientX - waPressFrom.x) > 12 || Math.abs(event.clientY - waPressFrom.y) > 12) waPressCancel();
+    });
+    document.addEventListener('pointerup', waPressCancel);
+    document.addEventListener('pointercancel', waPressCancel);
+    document.addEventListener('scroll', waPressCancel, true);
+
     document.addEventListener('click', (event) => {
       /*
        * El orden importa: los botones viven DENTRO de tarjetas que también son
@@ -5029,7 +6580,34 @@
        */
       const purchase = event.target.closest('[data-purchase]');
       if (purchase) {
-        openPurchaseForm(purchase.dataset.purchase);
+        openPurchaseForm(purchase.dataset.purchase || null);
+        return;
+      }
+      const stageChange = event.target.closest('[data-customer-stage]');
+      if (stageChange) {
+        changeCustomerStage(stageChange.dataset.customerStage, stageChange.dataset.stage);
+        return;
+      }
+      const tagManage = event.target.closest('[data-customer-tags]');
+      if (tagManage) {
+        openCustomerTags(tagManage.dataset.customerTags);
+        return;
+      }
+      const stageMenu = event.target.closest('[data-customer-stage-menu]');
+      if (stageMenu) {
+        openCustomerStageMenu(stageMenu.dataset.customerStageMenu);
+        return;
+      }
+      if (event.target.closest('[data-new-conversation]')) {
+        closeSheet();
+        setTab('whatsapp');
+        openNewConversationSheet();
+        return;
+      }
+      const tabGo = event.target.closest('[data-tab]');
+      if (tabGo && tabGo.closest('#sheet')) {
+        closeSheet();
+        setTab(tabGo.dataset.tab);
         return;
       }
       /*
@@ -5049,6 +6627,32 @@
       if (event.target.closest('#wa-actions')) {
         const button = event.target.closest('#wa-actions');
         openChatActions(button.dataset.customer, button.dataset.conversation);
+        return;
+      }
+      const dashboardTab = event.target.closest('[data-dashboard-tab]');
+      if (dashboardTab) {
+        setTab(dashboardTab.dataset.dashboardTab);
+        return;
+      }
+      if (event.target.closest('[data-open-drawer]')) {
+        openDrawer();
+        return;
+      }
+      if (event.target.closest('[data-simple-back]')) {
+        if (state.tab === 'perfil-cliente' && state.previousTab && state.previousTab !== 'perfil-cliente') {
+          setTab(state.previousTab);
+        } else {
+          setTab('hoy');
+        }
+        return;
+      }
+      if (event.target.closest('#profile-actions')) {
+        openProfileActions();
+        return;
+      }
+      const profilePhoto = event.target.closest('[data-profile-photo]');
+      if (profilePhoto) {
+        openImageViewer(profilePhoto.dataset.profilePhoto, 'Foto del cliente');
         return;
       }
       if (event.target.closest('[data-conv-take]')) {
@@ -5081,9 +6685,25 @@
         });
         return;
       }
+      const profileOrder = event.target.closest('[data-profile-order]');
+      if (profileOrder) {
+        state.customerProfileOrderId = profileOrder.dataset.profileOrder || null;
+        renderCustomerProfile();
+        return;
+      }
+      const orderEdit = event.target.closest('[data-order-edit]');
+      if (orderEdit) {
+        openOrderEditor(orderEdit.dataset.orderEdit);
+        return;
+      }
       const receipt = event.target.closest('[data-receipt]');
       if (receipt) {
         openReceipt(receipt.dataset.receipt);
+        return;
+      }
+      const saleCancel = event.target.closest('[data-sale-cancel]');
+      if (saleCancel) {
+        openCancelSale(saleCancel.dataset.saleCancel);
         return;
       }
       const scheduledNew = event.target.closest('[data-scheduled-new]');
@@ -5197,6 +6817,10 @@
         openCustomer(customer.dataset.customer);
         return;
       }
+      if (event.target.closest('[data-customer-back]')) {
+        setTab(state.previousTab && state.previousTab !== 'perfil-cliente' ? state.previousTab : 'whatsapp');
+        return;
+      }
       const newFollowup = event.target.closest('[data-followup-new]');
       if (newFollowup) {
         openFollowupForm(newFollowup.dataset.followupNew);
@@ -5252,11 +6876,27 @@
         openChat(chat.dataset.chat, { followupId: chat.dataset.followup ?? null });
         return;
       }
-      const convSelect = event.target.closest('[data-conv-select]');
-      if (convSelect) {
-        const id = convSelect.dataset.convSelect;
-        if (state.wa.selected.has(id)) state.wa.selected.delete(id);
-        else state.wa.selected.add(id);
+      const convMore = event.target.closest('[data-conv-more]');
+      if (convMore) {
+        openConvMenu(convMore.dataset.convMore);
+        return;
+      }
+      const convAct = event.target.closest('[data-conv-act]');
+      if (convAct) {
+        runConvAction(convAct.dataset.convAct, convAct.dataset.convId);
+        return;
+      }
+      if (event.target.closest('[data-wa-sel-clear]')) {
+        state.wa.selected.clear();
+        renderWaList();
+        return;
+      }
+      const selAll = event.target.closest('[data-wa-sel-all]');
+      if (selAll) {
+        const visibles = waVisibleConversations().map((row) => row.id);
+        const todas = visibles.length > 0 && visibles.every((id) => state.wa.selected.has(id));
+        state.wa.selected.clear();
+        if (!todas) visibles.forEach((id) => state.wa.selected.add(id));
         renderWaList();
         return;
       }
@@ -5267,6 +6907,16 @@
       }
       const conv = event.target.closest('[data-conv]');
       if (conv) {
+        // Con una selección abierta, tocar una fila selecciona o quita (el gesto
+        // de WhatsApp): para abrirla se cancela antes con la ✕.
+        if (waPressFired) {
+          waPressFired = false;
+          return;
+        }
+        if (state.wa.selected.size) {
+          toggleWaSelect(conv.dataset.conv);
+          return;
+        }
         selectConversation(conv.dataset.conv);
         return;
       }
@@ -5281,6 +6931,20 @@
       }
       if (event.target.closest('#wa-retry-thread')) {
         if (state.wa.selectedId) loadWaThread(state.wa.selectedId, { force: true });
+        return;
+      }
+      if (event.target.closest('#wa-date-menu')) {
+        openWaDateMenu();
+        return;
+      }
+      const waDate = event.target.closest('[data-wa-date]');
+      if (waDate) {
+        closeSheet();
+        setWaDateFilter(waDate.dataset.waDate);
+        return;
+      }
+      if (event.target.closest('[data-wa-date-custom]')) {
+        openWaCustomDateSheet();
         return;
       }
       const wa = event.target.closest('[data-wa]');
@@ -5329,7 +6993,7 @@
     });
 
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
-    $('#compra-nueva').addEventListener('click', () => openPurchaseForm(null));
+    $('#clientes-acciones').addEventListener('click', () => openClientsActions());
     $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
 
     // Interruptores del plan de postventa (Ajustes): cada día se activa o apaga.
@@ -5406,6 +7070,7 @@
       );
       refreshWhatsapp().catch(() => renderWaList());
     });
+    $('#wa-new-chat').addEventListener('click', () => openNewConversationSheet());
     // En el móvil, ← vuelve a la lista de conversaciones.
     $('#wa-back').addEventListener('click', () => setWaView('list'));
     document.addEventListener('visibilitychange', () => {

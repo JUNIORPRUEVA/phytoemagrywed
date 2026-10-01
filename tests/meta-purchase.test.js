@@ -139,8 +139,8 @@ describe('meta · cuándo se envía una venta', () => {
     expect(saved).toHaveLength(1);
     expect(app.calls).toHaveLength(0);
 
-    await patch(app, 'pedido-1', { status: 'contactado' });
-    await patch(app, 'pedido-1', { status: 'interesado' });
+    expect((await patch(app, 'pedido-1', { status: 'contactado' })).status).toBe(422);
+    expect((await patch(app, 'pedido-1', { status: 'interesado' })).status).toBe(422);
     await patch(app, 'pedido-1', { status: 'confirmado' });
     expect(app.calls).toHaveLength(0);
 

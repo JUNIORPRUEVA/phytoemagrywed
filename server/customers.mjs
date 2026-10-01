@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { classifyIntent, detectHealthConcern, detectHumanRequest, detectOptOut, toE164, toWaId } from './whatsapp.mjs';
 import { addDays, dayIn } from './followups.mjs';
 import { LOCATION_SOURCES, buildLocationDoc, publicLocation } from './locations.mjs';
+import { isCompletedPurchaseStatus } from './orders.mjs';
 
 /** Estados de automatización de una conversación. */
 export const AUTOMATION_STATES = Object.freeze(['AUTOMATIC', 'HUMAN_REQUIRED', 'HUMAN_ACTIVE', 'PAUSED', 'CLOSED']);
@@ -59,6 +60,15 @@ export const COMMERCIAL_STATES = Object.freeze([
 /** Estados que solo puede fijar una persona. */
 export const MANUAL_COMMERCIAL_STATES = Object.freeze(['INTERESADO', 'PERDIDO']);
 
+export const CUSTOMER_STAGES = Object.freeze(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'INACTIVE']);
+
+export const CUSTOMER_STAGE_LABELS = Object.freeze({
+  PROSPECT: 'Prospecto',
+  INTERESTED: 'Interesado',
+  CUSTOMER: 'Cliente',
+  INACTIVE: 'Inactivo',
+});
+
 export const COMMERCIAL_STATE_LABELS = Object.freeze({
   NUEVO: 'Nuevo',
   EN_CONVERSACION: 'En conversación',
@@ -86,7 +96,7 @@ export function deriveCommercialState(input = {}) {
   const manual = String(customer?.commercial_state_manual ?? '').trim();
   if (COMMERCIAL_STATES.includes(manual)) return manual;
 
-  const delivered = purchases.filter((row) => row.status === 'entregado');
+  const delivered = purchases.filter((row) => isCompletedPurchaseStatus(row.status));
   if (delivered.length >= 2) return 'RECOMPRA';
   if (delivered.length === 1) {
     return followups.some((row) => row.status === 'pending') ? 'SEGUIMIENTO' : 'ENTREGADO';
@@ -98,6 +108,34 @@ export function deriveCommercialState(input = {}) {
   return 'NUEVO';
 }
 
+function normalizeCustomerStage(value) {
+  const clean = String(value ?? '').trim().toUpperCase();
+  return CUSTOMER_STAGES.includes(clean) ? clean : null;
+}
+
+/**
+ * Nueva etapa compatible del cliente.
+ *
+ * Regla CUSTOMER documentada:
+ * una compra real es un pedido `order_intent` con estado completado de negocio
+ * (`entregado`).
+ * Es la misma fuente de verdad que `totalsFrom().total_purchases`,
+ * `has_purchase` en la bandeja y los reportes de ventas; un pedido creado,
+ * confirmado, cancelado o perdido NO convierte automáticamente al cliente.
+ *
+ * INTERESTED e INACTIVE son manuales durante esta transición.
+ */
+export function resolveCustomerStage(input = {}) {
+  const purchases = input.purchases ?? [];
+  const totals = input.totals ?? { total_purchases: purchases.filter((row) => isCompletedPurchaseStatus(row.status)).length };
+  if (Number(totals.total_purchases) > 0) {
+    return { stage: 'CUSTOMER', source: 'delivered_purchase', reason: 'pedido_entregado' };
+  }
+  const manual = normalizeCustomerStage(input.customer?.customer_stage_manual);
+  if (manual) return { stage: manual, source: 'manual', reason: `manual:${manual}` };
+  return { stage: 'PROSPECT', source: 'default', reason: 'sin_compra_entregada' };
+}
+
 function newId(prefix) {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
 }
@@ -107,6 +145,25 @@ function short(value, max = 200) {
   if (value === null || value === undefined) return null;
   const clean = String(value).replace(/\s+/g, ' ').trim();
   return clean ? clean.slice(0, max) : null;
+}
+
+function isoOrNow(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString() : new Date().toISOString();
+}
+
+function maxIso(...values) {
+  return values.filter(Boolean).sort().at(-1) ?? null;
+}
+
+function compareConversationsRecent(a, b) {
+  const byLast = String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? ''));
+  if (byLast) return byLast;
+  const byUpdated = String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? ''));
+  if (byUpdated) return byUpdated;
+  const byCreated = String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+  if (byCreated) return byCreated;
+  return String(a.id ?? '').localeCompare(String(b.id ?? ''));
 }
 
 /**
@@ -155,14 +212,33 @@ export function createCustomerService(deps) {
 
   /** Suma el dinero solo de los pedidos ENTREGADOS (una venta es una venta entregada). */
   function totalsFrom(purchases) {
-    const delivered = purchases.filter((row) => row.status === 'entregado');
+    const delivered = purchases.filter((row) => isCompletedPurchaseStatus(row.status));
     return {
       total_purchases: delivered.length,
       total_spent: delivered.reduce((sum, row) => sum + (Number(row.total) || 0), 0),
       last_purchase_at: delivered[0]?.received_at ?? null,
-      open_purchases: purchases.filter((row) => row.status !== 'entregado' && row.status !== 'perdido').length,
+      open_purchases: purchases.filter((row) => !isCompletedPurchaseStatus(row.status) && row.status !== 'perdido').length,
       last_order_at: purchases[0]?.received_at ?? null,
     };
+  }
+
+  async function tagsForCustomers(customerIds) {
+    const ids = new Set(customerIds.filter(Boolean));
+    if (!ids.size) return new Map();
+    const [tagRows, assignments] = await Promise.all([
+      db.list('customer_tags', { limit: 1000 }),
+      db.list('customer_tag_assignments', { limit: 5000 }),
+    ]);
+    const byTag = new Map(tagRows.filter((tag) => tag.active !== false).map((tag) => [tag.id, tag]));
+    const out = new Map([...ids].map((id) => [id, []]));
+    for (const assignment of assignments) {
+      if (!ids.has(assignment.customer_id) || assignment.removed_at) continue;
+      const tag = byTag.get(assignment.tag_id);
+      if (!tag) continue;
+      out.get(assignment.customer_id)?.push(tag);
+    }
+    for (const list of out.values()) list.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    return out;
   }
 
   /** Busca por teléfono normalizado (el identificador fuerte). */
@@ -219,6 +295,24 @@ export function createCustomerService(deps) {
     return out;
   }
 
+  async function stagesFor(customerRows) {
+    const ids = new Set(customerRows.map((row) => row.id));
+    const items = store?.listAdmin ? await store.listAdmin({ limit: 1000 }) : [];
+    const purchasesByCustomer = new Map();
+    for (const row of items) {
+      if (row.type !== 'order_intent' || !row.customer_id || !ids.has(row.customer_id)) continue;
+      const list = purchasesByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      purchasesByCustomer.set(row.customer_id, list);
+    }
+    const out = new Map();
+    for (const customer of customerRows) {
+      const purchases = purchasesByCustomer.get(customer.id) ?? [];
+      out.set(customer.id, resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) }));
+    }
+    return out;
+  }
+
   async function inboxContext(customerRows) {
     const ids = new Set(customerRows.map((row) => row.id));
     const [items, followupRows, messages] = await Promise.all([
@@ -245,18 +339,22 @@ export function createCustomerService(deps) {
       if (!messagesByConversation.has(message.conversation_id)) messagesByConversation.set(message.conversation_id, message);
     }
     const states = new Map();
+    const stages = new Map();
     for (const customer of customerRows) {
+      const purchases = purchasesByCustomer.get(customer.id) ?? [];
       states.set(
         customer.id,
         deriveCommercialState({
           customer,
-          purchases: purchasesByCustomer.get(customer.id) ?? [],
+          purchases,
           followups: followupsByCustomer.get(customer.id) ?? [],
           hasInbound: messages.some((row) => row.customer_id === customer.id && row.direction === 'inbound'),
         }),
       );
+      stages.set(customer.id, resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) }));
     }
-    return { messagesByConversation, purchasesByCustomer, followupsByCustomer, states };
+    const tags = await tagsForCustomers(customerRows.map((row) => row.id));
+    return { messagesByConversation, purchasesByCustomer, followupsByCustomer, states, stages, tags };
   }
 
   return {
@@ -313,6 +411,7 @@ export function createCustomerService(deps) {
         last_purchase_at: null,
         total_purchases: 0,
         total_spent: 0,
+        customer_stage_manual: null,
       };
       const result = await db.insert('customers', customer);
       if (result.duplicate) {
@@ -358,7 +457,20 @@ export function createCustomerService(deps) {
       const scoped = options.limit ? filtered.slice(0, options.limit) : filtered;
       // El estado comercial se DERIVA en cada lectura: nunca queda desincronizado.
       const states = await statesFor(scoped);
-      return scoped.map((row) => ({ ...row, commercial_state: states.get(row.id) ?? 'NUEVO' }));
+      const stages = await stagesFor(scoped);
+      const tags = await tagsForCustomers(scoped.map((row) => row.id));
+      return scoped.map((row) => {
+        const resolved = stages.get(row.id) ?? resolveCustomerStage({ customer: row, purchases: [] });
+        return {
+          ...row,
+          commercial_state: states.get(row.id) ?? 'NUEVO',
+          customerStage: resolved.stage,
+          customer_stage: resolved.stage,
+          customer_stage_source: resolved.source,
+          customer_stage_reason: resolved.reason,
+          tags: tags.get(row.id) ?? [],
+        };
+      });
     },
 
     /** Estado comercial derivado de un cliente (o null si no existe). */
@@ -367,6 +479,13 @@ export function createCustomerService(deps) {
       if (!customer) return null;
       const states = await statesFor([customer]);
       return states.get(customer.id) ?? 'NUEVO';
+    },
+
+    async customerStage(customerId) {
+      const customer = await db.get('customers', customerId);
+      if (!customer) return null;
+      const purchases = await purchasesOf(customerId);
+      return resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) });
     },
 
     /**
@@ -387,6 +506,196 @@ export function createCustomerService(deps) {
       if (!updated) return { ok: false, error: 'not_found' };
       const commercial_state = await this.commercialState(customerId);
       return { ok: true, customer: { ...updated, commercial_state }, commercial_state };
+    },
+
+    async setCustomerStage(customerId, stage, input = {}) {
+      const next = normalizeCustomerStage(stage);
+      if (!next) return { ok: false, error: 'invalid_stage', stages: CUSTOMER_STAGES };
+      const current = await db.get('customers', customerId);
+      if (!current) return { ok: false, error: 'not_found' };
+      const purchases = await purchasesOf(customerId);
+      const totals = totalsFrom(purchases);
+      if (totals.total_purchases > 0 && ['PROSPECT', 'INTERESTED'].includes(next)) {
+        return {
+          ok: false,
+          error: 'completed_purchase_stage_conflict',
+          message: 'El cliente ya tiene una compra completada y no puede volver a Prospecto/Interesado.',
+          stages: CUSTOMER_STAGES,
+        };
+      }
+      const before = resolveCustomerStage({ customer: current, purchases, totals });
+      const now = new Date().toISOString();
+      const updated = await db.update('customers', customerId, {
+        customer_stage_manual: next,
+        updated_at: now,
+      });
+      const after = resolveCustomerStage({ customer: updated, purchases, totals });
+      const history = {
+        id: newId('csh'),
+        customer_id: customerId,
+        from_stage: before.stage,
+        to_stage: after.stage,
+        reason: short(input.reason, 500),
+        changed_by_user_id: input.actor?.id ?? null,
+        changed_by_display_name: input.actor?.display_name ?? null,
+        timestamp: now,
+        created_at: now,
+      };
+      await db.insert('customer_stage_history', history);
+      return { ok: true, customer: { ...updated, customerStage: after.stage, customer_stage: after.stage }, from: before.stage, to: after.stage, history };
+    },
+
+    async clearCustomerStage(customerId, input = {}) {
+      const current = await db.get('customers', customerId);
+      if (!current) return { ok: false, error: 'not_found' };
+      const purchases = await purchasesOf(customerId);
+      const before = resolveCustomerStage({ customer: current, purchases, totals: totalsFrom(purchases) });
+      const now = new Date().toISOString();
+      const updated = await db.update('customers', customerId, { customer_stage_manual: null, updated_at: now });
+      const after = resolveCustomerStage({ customer: updated, purchases, totals: totalsFrom(purchases) });
+      const history = {
+        id: newId('csh'),
+        customer_id: customerId,
+        from_stage: before.stage,
+        to_stage: after.stage,
+        reason: short(input.reason, 500) ?? 'volver_a_automatico',
+        changed_by_user_id: input.actor?.id ?? null,
+        changed_by_display_name: input.actor?.display_name ?? null,
+        timestamp: now,
+        created_at: now,
+      };
+      await db.insert('customer_stage_history', history);
+      return { ok: true, customer: { ...updated, customerStage: after.stage, customer_stage: after.stage }, from: before.stage, to: after.stage, history };
+    },
+
+    async stageHistory(customerId) {
+      const rows = await db.list('customer_stage_history', { by: 'created_at', order: 'desc', limit: 500 });
+      return rows.filter((row) => row.customer_id === customerId);
+    },
+
+    async listTags(options = {}) {
+      const rows = await db.list('customer_tags', { by: 'label', order: 'asc', limit: 1000 });
+      return options.activeOnly === false ? rows : rows.filter((tag) => tag.active !== false);
+    },
+
+    async ensureInitialTags() {
+      const defaults = [
+        ['VIP', '#f59e0b'],
+        ['Recurrente', '#0f766e'],
+        ['No responde', '#64748b'],
+        ['Alta prioridad', '#dc2626'],
+        ['Primera compra', '#2563eb'],
+        ['Recompra', '#7c3aed'],
+        ['Pago contra entrega', '#16a34a'],
+      ];
+      const existing = await db.list('customer_tags', { limit: 1000 });
+      const labels = new Set(existing.map((tag) => String(tag.label ?? '').trim().toLowerCase()));
+      const now = new Date().toISOString();
+      const created = [];
+      for (const [label, color] of defaults) {
+        if (labels.has(label.toLowerCase())) continue;
+        const tag = { id: newId('tag'), label, color, active: true, created_at: now, updated_at: now };
+        await db.insert('customer_tags', tag);
+        created.push(tag);
+      }
+      return created;
+    },
+
+    async createTag(input = {}) {
+      const label = short(input.label, 40);
+      if (!label) return { ok: false, error: 'invalid_tag' };
+      const color = /^#[0-9a-f]{6}$/i.test(String(input.color ?? '')) ? String(input.color) : '#64748b';
+      const now = new Date().toISOString();
+      const tag = { id: newId('tag'), label, color, active: input.active !== false, created_at: now, updated_at: now };
+      const result = await db.insert('customer_tags', tag);
+      if (result.duplicate) return { ok: false, error: 'tag_exists' };
+      return { ok: true, tag };
+    },
+
+    async updateTag(tagId, input = {}) {
+      const current = await db.get('customer_tags', tagId);
+      if (!current) return { ok: false, error: 'not_found' };
+      const patch = { updated_at: new Date().toISOString() };
+      if (input.label !== undefined) {
+        const label = short(input.label, 40);
+        if (!label) return { ok: false, error: 'invalid_tag' };
+        patch.label = label;
+      }
+      if (input.color !== undefined) {
+        if (!/^#[0-9a-f]{6}$/i.test(String(input.color))) return { ok: false, error: 'invalid_color' };
+        patch.color = String(input.color);
+      }
+      if (input.active !== undefined) patch.active = input.active !== false;
+      return { ok: true, tag: await db.update('customer_tags', tagId, patch) };
+    },
+
+    async assignTag(customerId, tagId, input = {}) {
+      const [customer, tag] = await Promise.all([db.get('customers', customerId), db.get('customer_tags', tagId)]);
+      if (!customer) return { ok: false, error: 'customer_not_found' };
+      if (!tag || tag.active === false) return { ok: false, error: 'tag_not_found' };
+      const rows = await db.list('customer_tag_assignments', { limit: 5000 });
+      const existing = rows.find((row) => row.customer_id === customerId && row.tag_id === tagId && !row.removed_at);
+      if (existing) return { ok: true, duplicate: true, assignment: existing, tag };
+      const now = new Date().toISOString();
+      const removed = rows.find((row) => row.customer_id === customerId && row.tag_id === tagId && row.removed_at);
+      if (removed) {
+        const reactivated = await db.update('customer_tag_assignments', removed.id, {
+          removed_at: null,
+          removed_by_user_id: null,
+          removed_by_display_name: null,
+          assigned_by_user_id: input.actor?.id ?? removed.assigned_by_user_id ?? null,
+          assigned_by_display_name: input.actor?.display_name ?? removed.assigned_by_display_name ?? null,
+          updated_at: now,
+        });
+        return { ok: true, duplicate: false, reactivated: true, assignment: reactivated, tag };
+      }
+      const assignment = {
+        id: newId('cta'),
+        customer_id: customerId,
+        tag_id: tagId,
+        assigned_by_user_id: input.actor?.id ?? null,
+        assigned_by_display_name: input.actor?.display_name ?? null,
+        created_at: now,
+        idempotency_key: `customer-tag:${customerId}:${tagId}`,
+      };
+      const result = await db.insert('customer_tag_assignments', assignment);
+      return { ok: true, duplicate: result.duplicate, assignment, tag };
+    },
+
+    async removeTag(customerId, tagId, input = {}) {
+      const rows = await db.list('customer_tag_assignments', { limit: 5000 });
+      const found = rows.find((row) => row.customer_id === customerId && row.tag_id === tagId && !row.removed_at);
+      if (!found) return { ok: true, removed: false };
+      const updated = await db.update('customer_tag_assignments', found.id, {
+        removed_at: new Date().toISOString(),
+        removed_by_user_id: input.actor?.id ?? null,
+        removed_by_display_name: input.actor?.display_name ?? null,
+      });
+      return { ok: true, removed: true, assignment: updated };
+    },
+
+    async tagsForCustomer(customerId) {
+      const tags = await tagsForCustomers([customerId]);
+      return tags.get(customerId) ?? [];
+    },
+
+    async customerStageDryRun(options = {}) {
+      const rows = await db.list('customers', { limit: options.limit ?? 1000 });
+      const stages = await stagesFor(rows);
+      const states = await statesFor(rows);
+      return rows.map((customer) => {
+        const resolved = stages.get(customer.id) ?? resolveCustomerStage({ customer, purchases: [] });
+        return {
+          customerId: customer.id,
+          name: customer.name ?? null,
+          phone_e164: customer.phone_e164 ?? null,
+          commercial_state: states.get(customer.id) ?? 'NUEVO',
+          customerStage: resolved.stage,
+          reason: resolved.reason,
+          source: resolved.source,
+          wouldWrite: false,
+        };
+      });
     },
 
     update(id, patch) {
@@ -452,13 +761,23 @@ export function createCustomerService(deps) {
         const followupList = (context.followupsByCustomer.get(conversation.customer_id) ?? []).sort((a, b) =>
           String(a.scheduled_at).localeCompare(String(b.scheduled_at)),
         );
-        const delivered = purchases.filter((row) => row.status === 'entregado');
+        const delivered = purchases.filter((row) => isCompletedPurchaseStatus(row.status));
         const commercialState = context.states.get(conversation.customer_id) ?? 'NUEVO';
+        const stage = context.stages.get(conversation.customer_id) ?? resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) });
+        const activeOrder = purchases.find((row) => !ORDER_CLOSED.includes(row.status)) ?? null;
         return {
           ...conversation,
           archived_at: conversation.archived_at ?? null,
           deleted_at: conversation.deleted_at ?? null,
-          customer: customer ? { ...customer, commercial_state: commercialState } : null,
+          customer: customer
+            ? {
+                ...customer,
+                commercial_state: commercialState,
+                customerStage: stage.stage,
+                customer_stage: stage.stage,
+                tags: context.tags.get(customer.id) ?? [],
+              }
+            : null,
           last_message: last ? { body: last.body, direction: last.direction, status: last.status, type: last.type ?? 'text', at: last.created_at } : null,
           /*
            * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
@@ -467,14 +786,28 @@ export function createCustomerService(deps) {
            */
           awaiting_reply: last ? last.direction === 'inbound' : false,
           commercial_state: commercialState,
+          customerStage: stage.stage,
+          customer_stage: stage.stage,
+          customer_stage_source: stage.source,
+          customer_stage_reason: stage.reason,
+          tags: customer ? context.tags.get(customer.id) ?? [] : [],
           has_purchase: delivered.length > 0,
           last_purchase_at: delivered[0]?.received_at ?? null,
+          active_order: activeOrder
+            ? {
+                id: activeOrder.id,
+                order_number: activeOrder.order_number ?? null,
+                status: activeOrder.status ?? null,
+              }
+            : null,
           next_followup: followupList[0] ?? null,
           assigned_user_id: conversation.assigned_user_id ?? conversation.assigned_to ?? null,
           assigned_display_name_snapshot: conversation.assigned_display_name_snapshot ?? null,
         };
       });
       const needle = String(options.q ?? '').trim().toLowerCase();
+      const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.from ?? '')) ? String(options.from) : null;
+      const toDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.to ?? '')) ? String(options.to) : null;
       const filtered = items.filter((row) => {
         if (row.deleted_at) return false;
         const archived = Boolean(row.archived_at);
@@ -489,6 +822,12 @@ export function createCustomerService(deps) {
         if (options.filter === 'seguimiento' && !row.next_followup) return false;
         if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
         if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
+        if (fromDay || toDay) {
+          if (!row.last_message_at) return false;
+          const messageDay = dayIn(new Date(row.last_message_at), timeZone);
+          if (fromDay && messageDay < fromDay) return false;
+          if (toDay && messageDay > toDay) return false;
+        }
         if (needle) {
           const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
             .filter(Boolean)
@@ -499,10 +838,10 @@ export function createCustomerService(deps) {
         return true;
       });
       const ordered = filtered.sort((a, b) => {
-        if (options.filter === 'pendientes') return String(a.last_message_at ?? '').localeCompare(String(b.last_message_at ?? ''));
+        if (options.filter === 'pendientes') return compareConversationsRecent(a, b);
         if (options.filter === 'seguimiento') return String(a.next_followup?.scheduled_at ?? '9999').localeCompare(String(b.next_followup?.scheduled_at ?? '9999'));
         if (options.filter === 'clientes' && options.order === 'purchase') return String(b.last_purchase_at ?? '').localeCompare(String(a.last_purchase_at ?? ''));
-        return String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? ''));
+        return compareConversationsRecent(a, b);
       });
       return options.limit ? ordered.slice(0, options.limit) : ordered;
     },
@@ -628,6 +967,7 @@ export function createCustomerService(deps) {
       const intent = classifyIntent(message.body);
 
       const now = new Date().toISOString();
+      const messageAt = isoOrNow(message.receivedAt ?? message.timestamp);
       const doc = {
         id: newId('msg'),
         conversation_id: conversation.id,
@@ -647,8 +987,8 @@ export function createCustomerService(deps) {
         error_code: null,
         error_message: null,
         provider: null,
-        created_at: now,
-        received_at: message.receivedAt ?? now,
+        created_at: messageAt,
+        received_at: messageAt,
         idempotency_key: null,
       };
       await db.insert('wa_messages', doc);
@@ -669,7 +1009,7 @@ export function createCustomerService(deps) {
           messageId: doc.id,
           waMessageId: message.waMessageId,
           idempotencyKey: `loc:wa:${message.waMessageId}`,
-          createdAt: now,
+          createdAt: messageAt,
         });
         if (saved.ok) {
           location = saved.location;
@@ -678,8 +1018,8 @@ export function createCustomerService(deps) {
       }
 
       await db.update('conversations', conversation.id, {
-        last_message_at: now,
-        last_inbound_at: now,
+        last_message_at: maxIso(conversation.last_message_at, messageAt),
+        last_inbound_at: maxIso(conversation.last_inbound_at, messageAt),
         unread_count: Number(conversation.unread_count ?? 0) + 1,
         archived_at: null,
         status: humanRequest || healthConcern ? 'HUMAN_REQUIRED' : conversation.status ?? 'AUTOMATIC',
@@ -687,7 +1027,7 @@ export function createCustomerService(deps) {
       });
 
       /** @type {Record<string, any>} */
-      const customerPatch = { last_contact_at: now, updated_at: now };
+      const customerPatch = { last_contact_at: maxIso(customer.last_contact_at, messageAt), updated_at: now };
       if (optOut) {
         customerPatch.do_not_contact = true;
         customerPatch.whatsapp_opt_out_at = now;
@@ -949,8 +1289,18 @@ export function createCustomerService(deps) {
         followups: followupRows,
         hasInbound: messages.some((row) => row.direction === 'inbound'),
       });
+      const stage = resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) });
+      const tags = await this.tagsForCustomer(customerId);
       return {
-        customer: { ...customer, commercial_state },
+        customer: {
+          ...customer,
+          commercial_state,
+          customerStage: stage.stage,
+          customer_stage: stage.stage,
+          customer_stage_source: stage.source,
+          customer_stage_reason: stage.reason,
+          tags,
+        },
         purchases,
         totals: totalsFrom(purchases),
         conversation,
@@ -963,6 +1313,12 @@ export function createCustomerService(deps) {
         locations: await this.listLocations(customerId, { limit: 20 }),
         lastLocation: (await this.listLocations(customerId, { limit: 1 }))[0] ?? null,
         commercial_state,
+        customerStage: stage.stage,
+        customer_stage: stage.stage,
+        customer_stage_source: stage.source,
+        customer_stage_reason: stage.reason,
+        tags,
+        stageHistory: await this.stageHistory(customerId),
         canSendFreeText: this.canSendFreeText(conversation),
         unread: Number(conversation?.unread_count ?? 0),
       };
@@ -996,7 +1352,7 @@ export function createCustomerService(deps) {
       ]);
       const purchases = store?.listAdmin ? await store.listAdmin({ limit: 1000 }) : [];
       const orders = purchases.filter((row) => row.type === 'order_intent');
-      const delivered = purchases.filter((row) => row.type === 'order_intent' && row.status === 'entregado');
+      const delivered = purchases.filter((row) => row.type === 'order_intent' && isCompletedPurchaseStatus(row.status));
       const withPurchase = new Set(delivered.map((row) => row.customer_id).filter(Boolean));
       const deliveredByCustomer = new Map();
       for (const row of delivered) {

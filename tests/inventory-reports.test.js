@@ -55,6 +55,7 @@ async function deliveredOrder(app, overrides = {}) {
         name: 'Cliente Inventario',
         phone: '8095550101',
         items: [{ variantId: 'capsules_10', quantity: 1 }],
+        paymentMethod: 'CASH',
         status: 'entregado',
         ...overrides,
       }),
@@ -130,6 +131,7 @@ describe('inventario, costo y reportes', () => {
         name: 'Marta Stock',
         phone: '8095550303',
         items: [{ variantId: 'capsules_10', quantity: 1 }],
+        paymentMethod: 'TRANSFER',
         status: 'entregado',
       }),
     });
@@ -146,18 +148,71 @@ describe('inventario, costo y reportes', () => {
     await restock(app, 20);
     const created = await deliveredOrder(app, { name: 'Rosa Reversa', phone: '8095550404' });
 
-    await call(app, `/api/admin/items/${created.item.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'cancelado' }),
+    const first = await call(app, `/api/admin/orders/${created.item.id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'Cliente anuló la compra' }),
     });
-    await call(app, `/api/admin/items/${created.item.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'cancelado' }),
+    const second = await call(app, `/api/admin/orders/${created.item.id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'Intento duplicado' }),
     });
 
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(409);
     const inventory = await json(await call(app, '/api/admin/inventory'));
     expect(inventory.stock).toBe(20);
     expect(inventory.movements.filter((row) => row.type === 'SALE_REVERSAL')).toHaveLength(1);
+  });
+
+  it('exige metodo de pago al registrar ventas', async () => {
+    const app = await newApp();
+    const response = await call(app, '/api/admin/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Pago Requerido',
+        phone: '8095550102',
+        items: [{ variantId: 'capsules_5', quantity: 1 }],
+      }),
+    });
+    const data = await json(response);
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe('payment_method_required');
+    expect(data.methods).toEqual(['CASH', 'TRANSFER']);
+  });
+
+  it('acepta efectivo y transferencia y los reporta sin mezclar caja con inventario', async () => {
+    const app = await newApp();
+    await restock(app, 30);
+
+    const cash = await deliveredOrder(app, { phone: '8095550445', paymentMethod: 'CASH' });
+    const transfer = await deliveredOrder(app, { phone: '8095550446', paymentMethod: 'TRANSFER' });
+
+    expect(cash.order.payment_method).toBe('CASH');
+    expect(transfer.order.payment_method).toBe('TRANSFER');
+    const report = await json(await call(app, '/api/admin/reports/sales?period=hoy'));
+    expect(report.report.sales.map((row) => row.payment_method).sort()).toEqual(['CASH', 'TRANSFER']);
+  });
+
+  it('serializa cancelaciones concurrentes y restaura inventario una sola vez', async () => {
+    const app = await newApp();
+    await restock(app, 20);
+    const created = await deliveredOrder(app, { name: 'Doble Click', phone: '8095550447' });
+
+    const attempts = await Promise.all(
+      ['Primer clic', 'Segundo clic'].map(async (reason) => {
+        const response = await call(app, `/api/admin/orders/${created.item.id}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ reason }),
+        });
+        return { status: response.status, data: await json(response) };
+      }),
+    );
+
+    expect(attempts.map((row) => row.status).sort()).toEqual([200, 409]);
+    const inventory = await json(await call(app, '/api/admin/inventory'));
+    expect(inventory.stock).toBe(20);
+    expect(inventory.movements.filter((row) => row.order_id === created.item.id && row.type === 'SALE_REVERSAL')).toHaveLength(1);
   });
 
   it('calcula costo y utilidad de 30 y 60 capsulas con centavos exactos', async () => {
@@ -242,6 +297,7 @@ describe('inventario, costo y reportes', () => {
             name: 'Concurrente',
             phone,
             items: [{ variantId: 'capsules_7', quantity: 1 }],
+            paymentMethod: 'CASH',
             status: 'entregado',
           }),
         });

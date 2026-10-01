@@ -206,6 +206,27 @@ recordatorios y el aviso de los **mensajes programados que no salieron**.
   seguimiento. Sin atribución inventada.
 - **Auditoría reciente**: quién creó, cambió, entregó o canceló qué.
 
+### Mi perfil (abajo del menú lateral)
+
+Vive en el menú lateral, al final de la parte de abajo (y también se entra tocando el
+bloque con tu nombre, arriba del menú). Cada persona con su propia cuenta puede, sin
+pedirle nada a un administrador:
+
+- **Nombre visible**: es el nombre que viaja con cada mensaje que envía y el que se ve
+  en el chat como autor. Cambiarlo no reescribe los mensajes ya enviados (cada mensaje
+  guarda el nombre de quien lo escribió en ese momento).
+- **Nombre y apellido**, y de paso ver con qué **usuario** entra y su **rol** (el usuario
+  no se cambia desde aquí).
+- **Contraseña**: hay que escribir la actual. Al cambiarla se cierran **todas** las
+  sesiones —esta incluida— y el panel vuelve a la pantalla de entrada. Una contraseña
+  actual equivocada es un dato inválido del formulario (avisa y **sigue dentro**), no una
+  sesión caducada.
+
+Quien entra con la **clave del panel** (la de antes, sin usuario) no tiene perfil: esa
+clave no es una cuenta personal y la página lo dice, con un botón para entrar con
+usuario. Un agente puede cambiar **sus** datos y su clave; los de otra persona solo los
+toca un administrador desde **Usuarios**.
+
 ### Reglas que no se rompen
 
 1. **Nada se envía solo** salvo un mensaje que el negocio programó expresamente, y solo

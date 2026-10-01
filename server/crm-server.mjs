@@ -49,7 +49,7 @@
  *    PHYTO_META_CAPI_ACCESS_TOKEN     token de la API de conversiones (SECRETO)
  *    PHYTO_META_CAPI_TEST_EVENT_CODE  solo UAT; en `APP_ENV=production` se ignora
  *    PHYTO_META_GRAPH_VERSION         versión de la Graph API (por defecto v21.0)
- *    PHYTO_META_PURCHASE_STATUS       estado que representa una VENTA (por defecto `entregado`)
+ *    PHYTO_META_PURCHASE_STATUS       compatibilidad Meta; la compra completada de negocio es `entregado`
  *
  *  WhatsApp Cloud API (ver docs/WHATSAPP_INTEGRATION.md):
  *    META_APP_ID                    ID de la app de Meta (webhook)
@@ -80,10 +80,17 @@ import { fileURLToPath } from 'node:url';
 
 import { buildUserData, createMetaCapi } from './meta-capi.mjs';
 import { createCollections } from './collections.mjs';
-import { createCustomerService, AUTOMATION_STATES, COMMERCIAL_STATES, MANUAL_COMMERCIAL_STATES } from './customers.mjs';
-import { createFollowupEngine, resolveDailyCapsules, resolvePlan } from './followups.mjs';
+import {
+  createCustomerService,
+  AUTOMATION_STATES,
+  COMMERCIAL_STATES,
+  MANUAL_COMMERCIAL_STATES,
+  CUSTOMER_STAGES,
+  CUSTOMER_STAGE_LABELS,
+} from './customers.mjs';
+import { addDays, createFollowupEngine, dayIn, resolveDailyCapsules, resolvePlan } from './followups.mjs';
 import { createAuditLog } from './audit.mjs';
-import { createUserService, SYSTEM_ACTOR } from './users.mjs';
+import { createUserService, SYSTEM_ACTOR, hasPermission, permissionsForRole } from './users.mjs';
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createSettingsService } from './settings.mjs';
@@ -96,11 +103,17 @@ import { createMediaPipeline } from './media-pipeline.mjs';
 import { createMediaRoutes } from './media-routes.mjs';
 import {
   ORDER_STATUS_LABELS,
+  BUSINESS_COMPLETED_PURCHASE_STATUS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHODS,
   buildOrder,
   buildReceipt,
+  isCompletedPurchaseStatus,
   isOrderStatus,
+  normalizePaymentMethod,
   orderOf,
   receiptHtml,
+  receiptPdf,
 } from './orders.mjs';
 import {
   LOCATION_SOURCES,
@@ -111,6 +124,8 @@ import {
   orderLocationSnapshot,
   publicLocation,
 } from './locations.mjs';
+
+const saleCancellationLocks = new Map();
 import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
 import {
   createWhatsAppClient,
@@ -151,11 +166,11 @@ const META_TEST_EVENT_CODE = (process.env.PHYTO_META_CAPI_TEST_EVENT_CODE ?? '')
 const META_GRAPH_VERSION = (process.env.PHYTO_META_GRAPH_VERSION ?? '').trim();
 const APP_ENV = (process.env.APP_ENV ?? 'production').trim();
 /**
- * Estado del CRM que representa una VENTA REAL (dinero cobrado).
+ * Compatibilidad de configuración histórica para Meta.
  *
- * `entregado` es el único que cierra el pedido con cobro: `confirmado` todavía
- * puede caerse (el cliente se arrepiente y no recibe). Si el negocio prefiere
- * otro criterio, se cambia con una variable, sin tocar código.
+ * La fuente de verdad de negocio vive en `isCompletedPurchaseStatus()`:
+ * `entregado` es el único estado que cierra el pedido con cobro. Esta variable
+ * no redefine customerStage, ventas ni inventario.
  */
 const META_PURCHASE_STATUS = (process.env.PHYTO_META_PURCHASE_STATUS ?? 'entregado').trim();
 /** Reintentos automáticos por venta (evita reintentos infinitos). */
@@ -252,6 +267,11 @@ function json(res, status, body, extraHeaders = {}) {
     ...extraHeaders,
   });
   res.end(payload);
+}
+
+function wantsHtml(req) {
+  const accept = String(req.headers.accept ?? '');
+  return accept.includes('text/html') && !accept.includes('application/json');
 }
 
 function cors(res, allowedOrigin) {
@@ -477,6 +497,106 @@ async function ensureInventoryForSale(ctx, item) {
   return { ok: true };
 }
 
+async function withSaleCancellationLock(orderId, work) {
+  const previous = saleCancellationLocks.get(orderId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => current, () => current);
+  saleCancellationLocks.set(orderId, queued);
+  await previous.catch(() => {});
+  try {
+    return await work();
+  } finally {
+    release();
+    if (saleCancellationLocks.get(orderId) === queued) saleCancellationLocks.delete(orderId);
+  }
+}
+
+function paymentMethodLabel(value) {
+  return value ? PAYMENT_METHOD_LABELS[value] ?? value : null;
+}
+
+async function cancelSale(ctx, orderId, input = {}, actor = null) {
+  return withSaleCancellationLock(orderId, async () => {
+    const reason = longText(input.reason, 500);
+    if (!reason) return { ok: false, status: 422, error: 'missing_reason', message: 'Escribe el motivo de cancelación.' };
+
+    const rows = await ctx.store.listAdmin({ limit: 5000 });
+    const current = rows.find((entry) => entry.id === orderId) ?? null;
+    if (!current || current.type !== 'order_intent') return { ok: false, status: 404, error: 'not_found' };
+    const order = orderOf(current);
+    if (!order) return { ok: false, status: 422, error: 'invalid_order' };
+    if (current.status === 'cancelado' || order.cancelled_at || order.inventory_restored_at) {
+      return { ok: false, status: 409, error: 'already_cancelled', message: 'La venta ya fue cancelada.' };
+    }
+    if (!isCompletedPurchaseStatus(current.status)) {
+      return { ok: false, status: 409, error: 'not_delivered_sale', message: 'Solo una venta entregada se cancela por esta ruta.' };
+    }
+
+    const inventory = ctx.inventory ? await ctx.inventory.reverseSale(current, `Cancelación de venta: ${reason}`) : { ok: true };
+    if (!inventory.ok) {
+      return {
+        ok: false,
+        status: inventory.error === 'insufficient_stock' ? 409 : 422,
+        error: inventory.error ?? 'inventory_error',
+        message: 'No se pudo restaurar el inventario.',
+        inventory,
+      };
+    }
+
+    const now = new Date().toISOString();
+    const cancelledOrder = {
+      ...order,
+      status: 'cancelado',
+      cancelled_at: now,
+      cancelled_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
+      cancelled_by_display_name_snapshot: actor?.display_name ?? null,
+      cancel_reason: reason,
+      inventory_restored_at: now,
+      payment_status: 'void',
+      status_history: [...(order.status_history ?? []), { status: 'cancelado', at: now, reason }],
+    };
+    const updated = await ctx.store.update(orderId, {
+      status: 'cancelado',
+      notes: current.notes ?? order.notes ?? null,
+      orderJson: JSON.stringify(cancelledOrder),
+    });
+    if (!updated) return { ok: false, status: 404, error: 'not_found' };
+
+    if (current.customer_id) {
+      await ctx.customers.refreshTotals(current.customer_id);
+    }
+
+    const inventoryLinesRestored = (order.items ?? []).map((line) => ({
+      productId: line.product_id ?? line.variantId ?? 'phytoemagry',
+      variantId: line.variantId ?? null,
+      quantity: Number(line.quantity) || 0,
+      capsules: Number(line.totalCapsules) || 0,
+    }));
+    await ctx.audit?.record({
+      entity: 'sale',
+      entityId: orderId,
+      action: 'sale.cancelled',
+      actor: actor?.display_name ?? null,
+      summary: `Venta ${order.order_number ?? orderId} cancelada`,
+      data: {
+        saleId: orderId,
+        cancelledBy: actor?.id ?? null,
+        cancelledAt: now,
+        reason,
+        paymentMethod: order.payment_method ?? null,
+        total: order.total ?? current.total ?? null,
+        inventoryLinesRestored,
+        inventoryMovementId: inventory.movement?.id ?? null,
+      },
+      idempotencyKey: `sale.cancelled:${orderId}`,
+    });
+    return { ok: true, item: updated, order: cancelledOrder, inventory, inventoryLinesRestored };
+  });
+}
+
 function orderFinancials(order) {
   const lines = order?.items ?? [];
   const productRevenueCents = lines.reduce(
@@ -492,6 +612,79 @@ function orderFinancials(order) {
     product_cost_cents: productCostCents,
     gross_product_profit_cents: productRevenueCents - productCostCents,
   };
+}
+
+const SENSITIVE_FINANCIAL_KEY = /(^|_)(cost|profit|margin)(_|$)|purchaseCost|unitCost|grossProfit|netProfit|inventory_value/i;
+
+function stripSensitiveFinancials(value) {
+  if (Array.isArray(value)) return value.map(stripSensitiveFinancials);
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (SENSITIVE_FINANCIAL_KEY.test(key)) continue;
+    out[key] = stripSensitiveFinancials(item);
+  }
+  return out;
+}
+
+function sanitizeItemForPermissions(item, actor) {
+  if (hasPermission(actor, 'cost.view')) return item;
+  const clean = stripSensitiveFinancials(item);
+  if (typeof clean.order_json === 'string') {
+    try {
+      clean.order_json = JSON.stringify(stripSensitiveFinancials(JSON.parse(clean.order_json)));
+    } catch {
+      clean.order_json = null;
+    }
+  }
+  if (typeof clean.orderJson === 'string') {
+    try {
+      clean.orderJson = JSON.stringify(stripSensitiveFinancials(JSON.parse(clean.orderJson)));
+    } catch {
+      clean.orderJson = null;
+    }
+  }
+  return clean;
+}
+
+function sanitizeOrderForPermissions(order, actor) {
+  return hasPermission(actor, 'cost.view') ? order : stripSensitiveFinancials(order);
+}
+
+function sanitizeInventoryForPermissions(inventory, actor, extra = {}) {
+  const payload = { ...inventory, ...extra };
+  return hasPermission(actor, 'cost.view') ? payload : stripSensitiveFinancials(payload);
+}
+
+function conversationDateRange(query, clock = () => new Date()) {
+  const validDay = (value) => {
+    const textValue = String(value ?? '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(textValue)) return null;
+    const [year, month, date] = textValue.split('-').map(Number);
+    const built = new Date(Date.UTC(year, month - 1, date));
+    return built.toISOString().slice(0, 10) === textValue ? textValue : null;
+  };
+  const today = dayIn(clock(), TIME_ZONE);
+  const requested = String(query.get('date') ?? '').trim().toLowerCase();
+  if (requested && !['today', 'hoy', 'yesterday', 'ayer', '7d', 'last7', 'month', 'mes'].includes(requested)) {
+    return { ok: false, error: 'invalid_date_filter' };
+  }
+  if (query.has('from') && !validDay(query.get('from'))) return { ok: false, error: 'invalid_from' };
+  if (query.has('to') && !validDay(query.get('to'))) return { ok: false, error: 'invalid_to' };
+  let from = validDay(query.get('from'));
+  let to = validDay(query.get('to'));
+  if (requested === 'today' || requested === 'hoy') from = to = today;
+  if (requested === 'yesterday' || requested === 'ayer') from = to = addDays(today, -1);
+  if (requested === '7d' || requested === 'last7') {
+    from = addDays(today, -6);
+    to = today;
+  }
+  if (requested === 'month' || requested === 'mes') {
+    from = `${today.slice(0, 7)}-01`;
+    to = today;
+  }
+  if (from && to && from > to) return { ok: false, error: 'invalid_date_range', from, to };
+  return { ok: true, from, to };
 }
 
 /**
@@ -536,6 +729,17 @@ async function createOrder(ctx, body = {}, actor = null) {
     conversationId = conversation && conversation.customer_id === customer.id ? conversation.id : null;
   }
 
+  const paymentMethod = normalizePaymentMethod(body.paymentMethod ?? body.payment_method);
+  if (!paymentMethod) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'payment_method_required',
+      message: 'Elige un método de pago.',
+      methods: PAYMENT_METHODS,
+    };
+  }
+
   /** @type {{row: any, order: any}} */
   let built;
   /*
@@ -550,6 +754,7 @@ async function createOrder(ctx, body = {}, actor = null) {
   try {
     built = purchaseRow({
       ...body,
+      paymentMethod,
       customerId: customer.id,
       conversationId,
       name: customer.name ?? body.name,
@@ -585,7 +790,7 @@ async function createOrder(ctx, body = {}, actor = null) {
   built.order.updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
   built.row.orderJson = JSON.stringify(built.order);
   // Si el pedido nace ya ENTREGADO, queda registrada también su fecha de entrega.
-  if (status === ctx.purchaseStatus) {
+  if (isCompletedPurchaseStatus(status)) {
     built.order.delivered_at = new Date().toISOString();
     built.row.orderJson = JSON.stringify(built.order);
     const check = await ensureInventoryForSale(ctx, { ...built.row, status, order_json: built.row.orderJson });
@@ -611,6 +816,7 @@ async function createOrder(ctx, body = {}, actor = null) {
       customer_id: customer.id,
       conversation_id: conversationId,
       total: built.order.total,
+      payment_method: paymentMethod,
       status,
       origin: conversationId ? 'conversation' : 'panel',
       created_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
@@ -619,7 +825,7 @@ async function createOrder(ctx, body = {}, actor = null) {
   });
 
   let delivered = null;
-  if (status === ctx.purchaseStatus) {
+  if (isCompletedPurchaseStatus(status)) {
     delivered = await afterPurchaseDelivered(ctx, finalItem);
     await ctx.audit?.record({
       entity: 'order',
@@ -770,7 +976,7 @@ async function retryPendingPurchases(store, metaCapi, log = console.log) {
   const pending = items.filter(
     (item) =>
       item.type === 'order_intent' &&
-      item.status === META_PURCHASE_STATUS &&
+      isCompletedPurchaseStatus(item.status) &&
       !item.meta_purchase_sent_at &&
       Number(item.meta_purchase_attempts ?? 0) < META_PURCHASE_MAX_ATTEMPTS,
   );
@@ -790,7 +996,7 @@ async function retryPendingPurchases(store, metaCapi, log = console.log) {
 async function ensureFollowupsForDelivered(ctx, log = console.log) {
   const items = await ctx.store.listAdmin({ limit: 200 });
   const delivered = items.filter(
-    (item) => item.type === 'order_intent' && item.status === ctx.purchaseStatus && item.customer_id,
+    (item) => item.type === 'order_intent' && isCompletedPurchaseStatus(item.status) && item.customer_id,
   );
   if (delivered.length === 0) return 0;
   let created = 0;
@@ -1364,11 +1570,22 @@ async function handle(req, res, ctx) {
 
   const forbid = (message = 'No tienes permiso para esta acción.') =>
     json(res, 403, { ok: false, error: 'forbidden', message });
+  const can = (permission) => hasPermission(actor, permission);
+  const requirePermission = (permission, message) => {
+    if (can(permission)) return true;
+    forbid(message);
+    return false;
+  };
   const requireAdmin = () => {
-    if (actor?.role === 'ADMIN') return true;
+    if (can('admin.full')) return true;
     forbid();
     return false;
   };
+  const authPayload = () => ({
+    user: currentUser,
+    legacy: Boolean(legacyAuthenticated),
+    permissions: permissionsForRole(actor?.role),
+  });
 
   // ------------------------------------------------------------- el panel
   if ((route === '/api/admin/login' || route === '/api/admin/auth/login') && req.method === 'POST') {
@@ -1405,7 +1622,7 @@ async function handle(req, res, ctx) {
       });
       if (!result.ok) {
         registerLoginFailure(ip);
-        json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Usuario o contraseña incorrectos.' });
+        json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Usuario o contraseña incorrectos.', storage: store.kind });
         return;
       }
       loginAttempts.delete(ip);
@@ -1436,8 +1653,7 @@ async function handle(req, res, ctx) {
       ok: authenticated,
       storage: store.kind,
       timeZone: TIME_ZONE,
-      user: currentUser,
-      legacy: Boolean(legacyAuthenticated),
+      ...authPayload(),
     });
     return;
   }
@@ -1458,10 +1674,12 @@ async function handle(req, res, ctx) {
     if (!['GET', 'HEAD'].includes(req.method ?? 'GET')) {
       const origin = String(req.headers.origin ?? '').trim();
       const host = String(req.headers.host ?? '').trim();
+      const forwardedHost = String(req.headers['x-forwarded-host'] ?? '').trim();
       if (origin) {
         let okOrigin = false;
         try {
-          okOrigin = new URL(origin).host === host;
+          const originHost = new URL(origin).host;
+          okOrigin = [host, forwardedHost].filter(Boolean).includes(originHost);
         } catch {
           okOrigin = false;
         }
@@ -1473,7 +1691,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
-      json(res, 200, { ok: true, user: currentUser, legacy: Boolean(legacyAuthenticated) });
+      json(res, 200, { ok: true, ...authPayload() });
       return;
     }
 
@@ -1497,7 +1715,7 @@ async function handle(req, res, ctx) {
         firstName: body.firstName ?? body.first_name,
         lastName: body.lastName ?? body.last_name,
         displayName: body.displayName ?? body.display_name,
-        role: body.role === 'ADMIN' ? 'ADMIN' : 'AGENT',
+        role: ['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR'].includes(String(body.role)) ? String(body.role) : 'AGENT',
         active: body.active !== false,
         createdBy: actor?.id ?? null,
         actorName: actor?.display_name ?? null,
@@ -1527,11 +1745,71 @@ async function handle(req, res, ctx) {
       }
       const result = await ctx.users.changeOwnPassword(currentUser.id, body.currentPassword, body.newPassword, currentUser);
       if (!result.ok) {
-        json(res, result.error === 'invalid_password' ? 401 : 422, { ok: false, error: result.error });
+        /*
+         * Una contraseña actual equivocada NO es una sesión caducada: 401 haría
+         * que el panel cerrara la sesión y echara a la persona a la pantalla de
+         * entrada. Es un dato inválido del formulario (422).
+         */
+        json(res, 422, {
+          ok: false,
+          error: result.error,
+          message:
+            result.error === 'invalid_password'
+              ? 'La contraseña actual no es correcta.'
+              : 'La contraseña nueva necesita al menos 10 caracteres.',
+        });
         return;
       }
       setSessionCookie(req, res, '');
       json(res, 200, { ok: true });
+      return;
+    }
+
+    /*
+     * MI PERFIL: quien tiene la sesión cambia SUS datos (nombre visible, nombre y
+     * apellido). Es el ÚNICO camino para que un agente toque un usuario — y solo
+     * el suyo: el id sale de la sesión, nunca del cuerpo. Rol, estado y clave no
+     * existen en esta ruta a propósito (nadie se asciende a sí mismo).
+     */
+    if (route === '/api/admin/users/me' && (req.method === 'PATCH' || req.method === 'POST')) {
+      if (!currentUser) {
+        json(res, 409, {
+          ok: false,
+          error: 'legacy_session',
+          message: 'Entra con tu usuario y tu contraseña para tener tu propio perfil.',
+        });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const patch = {};
+      if (body.displayName !== undefined || body.display_name !== undefined) {
+        patch.displayName = body.displayName ?? body.display_name;
+      }
+      if (body.firstName !== undefined || body.first_name !== undefined) {
+        patch.firstName = body.firstName ?? body.first_name;
+      }
+      if (body.lastName !== undefined || body.last_name !== undefined) {
+        patch.lastName = body.lastName ?? body.last_name;
+      }
+      if (!Object.keys(patch).length) {
+        json(res, 422, { ok: false, error: 'nothing_to_update', message: 'No hay nada que cambiar.' });
+        return;
+      }
+      const result = await ctx.users.updateUser(currentUser.id, patch, actor);
+      if (!result.ok) {
+        json(res, result.error === 'not_found' ? 404 : 422, {
+          ok: false,
+          error: result.error,
+          message: result.error === 'invalid_user' ? 'El nombre visible no puede quedar vacío.' : null,
+        });
+        return;
+      }
+      json(res, 200, { ok: true, user: result.user });
       return;
     }
 
@@ -1566,11 +1844,12 @@ async function handle(req, res, ctx) {
 
     // Todo lo que necesita el panel en una sola petición (móvil con mala señal).
     if (route === '/api/admin/data' && req.method === 'GET') {
-      const items = await store.listAdmin({ limit: 500 });
+      const items = (await store.listAdmin({ limit: 500 })).map((item) => sanitizeItemForPermissions(item, actor));
       const messages = await store.messages().list();
       const customerList = await ctx.customers.list({});
       const conversationList = await ctx.customers.listConversations({});
       const conversationCounts = await ctx.customers.conversationCounts();
+      await ctx.customers.ensureInitialTags();
       const buckets = await ctx.followups.buckets();
       const outbound = await ctx.db.list('wa_messages', { limit: 500 });
       const failed = outbound.filter((row) => row.status === 'failed');
@@ -1601,12 +1880,12 @@ async function handle(req, res, ctx) {
           }
         }
       }
-      const inventory = await ctx.inventory.catalog();
+      const inventory = sanitizeInventoryForPermissions(await ctx.inventory.catalog(), actor);
       json(res, 200, {
         ok: true,
         storage: store.kind,
         timeZone: TIME_ZONE,
-        auth: { user: currentUser, legacy: Boolean(legacyAuthenticated) },
+        auth: authPayload(),
         statuses: STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] ?? value })),
         items,
         messages,
@@ -1617,6 +1896,7 @@ async function handle(req, res, ctx) {
           configured: Boolean(ctx.metaCapi?.enabled),
           testEventCode: Boolean(ctx.metaCapi?.hasTestEventCode),
           purchaseStatus: ctx.purchaseStatus,
+          businessCompletedPurchaseStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
           graphVersion: ctx.metaCapi?.graphVersion ?? null,
         },
         // ------------------------------------------------ clientes y WhatsApp
@@ -1639,7 +1919,11 @@ async function handle(req, res, ctx) {
         commercial: {
           states: COMMERCIAL_STATES,
           manual: MANUAL_COMMERCIAL_STATES,
+          deprecated: 'commercial_state se mantiene por compatibilidad; la UI nueva debe usar customerStage.',
         },
+        customerStages: CUSTOMER_STAGES.map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
+        customerTags: await ctx.customers.listTags(),
+        paymentMethods: PAYMENT_METHODS.map((value) => ({ value, label: paymentMethodLabel(value) })),
         // Catálogo, inventario y estado comercial, sin repetir precios ni estados en el panel.
         catalog: inventory.presentations,
         inventory,
@@ -1653,10 +1937,10 @@ async function handle(req, res, ctx) {
           sinResponder: conversationList.filter((row) => row.awaiting_reply === true).length,
           humanoRequerido: conversationList.filter((row) => row.status === 'HUMAN_REQUIRED').length,
           pedidosPendientes: items.filter(
-            (item) => item.type === 'order_intent' && item.status !== 'entregado' && item.status !== 'perdido',
+            (item) => item.type === 'order_intent' && !isCompletedPurchaseStatus(item.status) && item.status !== 'perdido',
           ).length,
           entregadosRecientes: items
-            .filter((item) => item.type === 'order_intent' && item.status === 'entregado')
+            .filter((item) => item.type === 'order_intent' && isCompletedPurchaseStatus(item.status))
             .slice(0, 5),
           mensajesFallidos: failed.length,
           fallidos: failed.slice(0, 5).map((row) => ({
@@ -1720,9 +2004,10 @@ async function handle(req, res, ctx) {
       const stock = await ctx.inventory.stock();
       json(res, 200, {
         ok: true,
-        ...snapshot,
-        current_unit_cost: centsToMoney(snapshot.product.current_unit_cost_cents),
-        movements: stock.movements.slice(-100).reverse(),
+        ...sanitizeInventoryForPermissions(snapshot, actor, {
+          current_unit_cost: centsToMoney(snapshot.product.current_unit_cost_cents),
+          movements: stock.movements.slice(-100).reverse(),
+        }),
       });
       return;
     }
@@ -1794,6 +2079,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/reports/sales' && req.method === 'GET') {
+      if (!requirePermission('reports.profit.view', 'Solo ADMIN puede ver reportes de ganancia.')) return;
       const period = url.searchParams.get('period') ?? 'hoy';
       const report = await ctx.inventory.report({
         period,
@@ -1845,6 +2131,7 @@ async function handle(req, res, ctx) {
   }
 
   if (route.startsWith('/api/admin/items/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      if (!requirePermission('orders.update_operational')) return;
       const id = decodeURIComponent(route.slice('/api/admin/items/'.length));
       /** @type {any} */
       let body = {};
@@ -1853,6 +2140,8 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
+      const beforeRows = await store.listAdmin({ limit: 1000 });
+      const before = beforeRows.find((row) => row.id === id);
       /** @type {Record<string, unknown>} */
       const patch = {};
       if (body.status !== undefined) {
@@ -1867,21 +2156,35 @@ async function handle(req, res, ctx) {
       if (body.nextActionAt !== undefined) patch.nextActionAt = day(body.nextActionAt);
       if (body.contacted) {
         patch.lastContactAt = new Date().toISOString();
-        if (patch.status === undefined) patch.status = 'contactado';
+        if (patch.status === undefined && before?.type !== 'order_intent') patch.status = 'contactado';
       }
       /*
        * Fechas de transición del pedido: se guardan DENTRO del detalle del pedido
        * (no se inventan fechas a posteriori) para poder contar «confirmados del
        * período», «entregados del período» y «cancelados» sin doble conteo.
        */
-      const beforeRows = await store.listAdmin({ limit: 1000 });
-      const before = beforeRows.find((row) => row.id === id);
+      if (before?.type === 'order_intent' && ['contactado', 'interesado'].includes(String(patch.status ?? ''))) {
+        json(res, 422, {
+          ok: false,
+          error: 'legacy_order_status',
+          message: 'Contactado/Interesado son estados de conversación o cliente; no se guardan como estado de pedido.',
+        });
+        return;
+      }
+      if (before?.type === 'order_intent' && patch.status === 'cancelado' && before.status !== 'cancelado') {
+        json(res, 409, {
+          ok: false,
+          error: 'use_sale_cancel',
+          message: 'Cancela ventas desde la acción protegida de ADMIN e indicando motivo.',
+        });
+        return;
+      }
       if (patch.status && before?.type === 'order_intent' && before.status !== patch.status) {
         const order = orderOf(before);
         if (order) {
           const stamp = new Date().toISOString();
           if (patch.status === 'confirmado') order.confirmed_at = stamp;
-          if (patch.status === ctx.purchaseStatus) order.delivered_at = stamp;
+          if (isCompletedPurchaseStatus(patch.status)) order.delivered_at = stamp;
           if (patch.status === 'cancelado') order.cancelled_at = stamp;
           order.status = patch.status;
           order.status_history = [...(order.status_history ?? []), { status: patch.status, at: stamp }];
@@ -1890,7 +2193,7 @@ async function handle(req, res, ctx) {
             actor?.actor_type === 'USER' ? actor.display_name : order.updated_by_display_name_snapshot ?? null;
           patch.orderJson = JSON.stringify(order);
         }
-        if (patch.status === ctx.purchaseStatus) {
+        if (isCompletedPurchaseStatus(patch.status)) {
           const check = await ensureInventoryForSale(ctx, { ...before, status: patch.status, order_json: patch.orderJson ?? before.order_json });
           if (!check.ok) {
             json(res, check.status ?? 409, { ok: false, error: check.error, message: check.message, available: check.available, required: check.required });
@@ -1923,12 +2226,16 @@ async function handle(req, res, ctx) {
        */
       if (
         updated.type === 'order_intent' &&
-        updated.status === ctx.purchaseStatus &&
-        patch.status === ctx.purchaseStatus
+        isCompletedPurchaseStatus(updated.status) &&
+        isCompletedPurchaseStatus(patch.status)
       ) {
         try {
           const delivered = await afterPurchaseDelivered(ctx, updated);
-          json(res, 200, { ok: true, item: delivered.item ?? updated, delivered });
+          json(res, 200, {
+            ok: true,
+            item: sanitizeItemForPermissions(delivered.item ?? updated, actor),
+            delivered: hasPermission(actor, 'cost.view') ? delivered : stripSensitiveFinancials(delivered),
+          });
           return;
         } catch (error) {
           const inventory = /** @type {any} */ (error).inventory ?? null;
@@ -1947,14 +2254,14 @@ async function handle(req, res, ctx) {
       }
       if (
         before?.type === 'order_intent' &&
-        before.status === ctx.purchaseStatus &&
+        isCompletedPurchaseStatus(before.status) &&
         patch.status &&
-        patch.status !== ctx.purchaseStatus &&
+        !isCompletedPurchaseStatus(patch.status) &&
         ['cancelado', 'perdido'].includes(String(patch.status))
       ) {
         await ctx.inventory.reverseSale(before, `Estado ${patch.status}`);
       }
-      json(res, 200, { ok: true, item: updated });
+      json(res, 200, { ok: true, item: sanitizeItemForPermissions(updated, actor) });
       return;
     }
 
@@ -1979,12 +2286,85 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route === '/api/admin/customers/stage-dry-run' && req.method === 'GET') {
+      if (!requirePermission('clients.read')) return;
+      const report = await ctx.customers.customerStageDryRun({ limit: Number(url.searchParams.get('limit') || 1000) });
+      json(res, 200, {
+        ok: true,
+        rule: `CUSTOMER = cliente con al menos un pedido order_intent en estado ${BUSINESS_COMPLETED_PURCHASE_STATUS}; INTERESTED e INACTIVE son manuales mientras no exista compra completada.`,
+        report,
+      });
+      return;
+    }
+
+    if (route === '/api/admin/customer-tags' && req.method === 'GET') {
+      if (!requirePermission('clients.read')) return;
+      await ctx.customers.ensureInitialTags();
+      json(res, 200, { ok: true, tags: await ctx.customers.listTags({ activeOnly: false }) });
+      return;
+    }
+
+    if (route === '/api/admin/customer-tags' && req.method === 'POST') {
+      if (!requirePermission('admin.full', 'Solo ADMIN puede crear etiquetas.')) return;
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.customers.createTag(body);
+      if (!result.ok) {
+        json(res, 422, { ok: false, error: result.error });
+        return;
+      }
+      await ctx.audit?.record({
+        entity: 'customer_tag',
+        entityId: result.tag.id,
+        action: 'customer.tag_created',
+        actor: actor?.display_name ?? null,
+        summary: `Etiqueta creada: ${result.tag.label}`,
+      });
+      json(res, 201, { ok: true, tag: result.tag });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/customer-tags/') && req.method === 'PATCH') {
+      if (!requirePermission('admin.full', 'Solo ADMIN puede editar etiquetas.')) return;
+      const tagId = decodeURIComponent(route.slice('/api/admin/customer-tags/'.length));
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.customers.updateTag(tagId, body);
+      if (!result.ok) {
+        json(res, result.error === 'not_found' ? 404 : 422, { ok: false, error: result.error });
+        return;
+      }
+      await ctx.audit?.record({
+        entity: 'customer_tag',
+        entityId: tagId,
+        action: 'customer.tag_updated',
+        actor: actor?.display_name ?? null,
+        summary: `Etiqueta actualizada: ${result.tag.label}`,
+      });
+      json(res, 200, { ok: true, tag: result.tag });
+      return;
+    }
+
     if (route.startsWith('/api/admin/customers/')) {
       const rest = decodeURIComponent(route.slice('/api/admin/customers/'.length));
       const [customerId, action = ''] = rest.split('/');
       const customer = customerId ? await ctx.customers.get(customerId) : null;
       if (!customer) {
         json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+
+      if (!action && req.method === 'DELETE') {
+        if (!requirePermission('clients.delete', 'Solo ADMIN puede eliminar clientes.')) return;
+        json(res, 501, { ok: false, error: 'not_implemented', message: 'La eliminación definitiva de clientes no está implementada.' });
         return;
       }
 
@@ -2003,6 +2383,110 @@ async function handle(req, res, ctx) {
       if (action === 'locations' && req.method === 'GET') {
         const locations = await ctx.customers.listLocations(customerId, { limit: 100 });
         json(res, 200, { ok: true, customerId, locations });
+        return;
+      }
+
+      if (action === 'stage' && req.method === 'POST') {
+        if (!requirePermission('customer.stage.update')) return;
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const requested = text(body.stage ?? body.customerStage, 30)?.toUpperCase() ?? null;
+        if (requested === 'INACTIVE' && !can('admin.full')) {
+          forbid('Solo ADMIN puede marcar un cliente como inactivo.');
+          return;
+        }
+        const result =
+          body.stage === null || body.customerStage === null
+            ? await ctx.customers.clearCustomerStage(customerId, { reason: body.reason, actor })
+            : await ctx.customers.setCustomerStage(customerId, requested, { reason: body.reason, actor });
+        if (!result.ok) {
+          const status = result.error === 'not_found' ? 404 : result.error === 'completed_purchase_stage_conflict' ? 409 : 422;
+          json(res, status, {
+            ok: false,
+            error: result.error,
+            message: result.message ?? null,
+            stages: result.stages ?? CUSTOMER_STAGES,
+          });
+          return;
+        }
+        await ctx.audit?.record({
+          entity: 'customer',
+          entityId: customerId,
+          action: 'customer.stage_changed',
+          actor: actor?.display_name ?? null,
+          summary: `Etapa: ${result.from} → ${result.to}`,
+          data: {
+            customer_id: customerId,
+            from_stage: result.from,
+            to_stage: result.to,
+            changed_by_user_id: actor?.id ?? null,
+            changed_by_display_name: actor?.display_name ?? null,
+            reason: longText(body.reason, 500),
+            timestamp: result.history.timestamp,
+          },
+        });
+        json(res, 200, { ok: true, customer: result.customer, from: result.from, to: result.to, history: result.history });
+        return;
+      }
+
+      if (action === 'tags' && req.method === 'GET') {
+        if (!requirePermission('clients.read')) return;
+        json(res, 200, { ok: true, customerId, tags: await ctx.customers.tagsForCustomer(customerId), catalog: await ctx.customers.listTags() });
+        return;
+      }
+
+      if (action === 'tags' && req.method === 'POST') {
+        if (!requirePermission('customer.tags.assign')) return;
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const tagId = text(body.tagId ?? body.tag_id, 80);
+        const result = await ctx.customers.assignTag(customerId, tagId, { actor });
+        if (!result.ok) {
+          json(res, result.error === 'tag_not_found' || result.error === 'customer_not_found' ? 404 : 422, { ok: false, error: result.error });
+          return;
+        }
+        await ctx.audit?.record({
+          entity: 'customer',
+          entityId: customerId,
+          action: 'customer.tag_assigned',
+          actor: actor?.display_name ?? null,
+          summary: `Etiqueta asignada: ${result.tag.label}`,
+          data: { customer_id: customerId, tag_id: tagId, label: result.tag.label },
+          idempotencyKey: `audit:customer-tag:${customerId}:${tagId}:assigned`,
+        });
+        json(res, 200, {
+          ok: true,
+          duplicate: result.duplicate,
+          reactivated: result.reactivated === true,
+          tag: result.tag,
+          assignment: result.assignment,
+        });
+        return;
+      }
+
+      if (action === 'tags' && req.method === 'DELETE') {
+        if (!requirePermission('customer.tags.assign')) return;
+        const tagId = text(url.searchParams.get('tagId') ?? url.searchParams.get('tag_id'), 80);
+        const result = await ctx.customers.removeTag(customerId, tagId, { actor });
+        if (result.removed === true) {
+          await ctx.audit?.record({
+            entity: 'customer',
+            entityId: customerId,
+            action: 'customer.tag_removed',
+            actor: actor?.display_name ?? null,
+            summary: `Etiqueta removida: ${tagId}`,
+            data: { customer_id: customerId, tag_id: tagId },
+          });
+        }
+        json(res, 200, { ok: true, removed: result.removed, status: result.removed ? 'removed' : 'not_found' });
         return;
       }
 
@@ -2083,6 +2567,7 @@ async function handle(req, res, ctx) {
     // --------------------------------- compras/pedidos registrados desde el panel
     // El teléfono identifica al cliente: si ya existe, se suma a su historial.
     if (route === '/api/admin/purchases' && req.method === 'POST') {
+      if (!requirePermission('orders.create')) return;
       /** @type {any} */
       let body = {};
       try {
@@ -2096,6 +2581,7 @@ async function handle(req, res, ctx) {
           ok: false,
           error: result.error,
           message: result.message ?? 'Elige un frasco del catálogo.',
+          methods: result.methods,
           available: result.available,
           required: result.required,
         });
@@ -2104,10 +2590,10 @@ async function handle(req, res, ctx) {
       json(res, 201, {
         ok: true,
         duplicate: result.duplicate,
-        item: result.item,
-        order: result.order,
+        item: sanitizeItemForPermissions(result.item, actor),
+        order: sanitizeOrderForPermissions(result.order, actor),
         customer: result.customer,
-        delivered: result.delivered,
+        delivered: hasPermission(actor, 'cost.view') ? result.delivered : stripSensitiveFinancials(result.delivered),
       });
       return;
     }
@@ -2115,6 +2601,7 @@ async function handle(req, res, ctx) {
     // ------------------------------------------------ pedido desde la conversación
     // Mismo camino que la compra a mano, pero puede nacer de un chat y enlazarlo.
     if (route === '/api/admin/orders' && req.method === 'POST') {
+      if (!requirePermission('orders.create')) return;
       /** @type {any} */
       let body = {};
       try {
@@ -2128,6 +2615,7 @@ async function handle(req, res, ctx) {
           ok: false,
           error: result.error,
           message: result.message ?? 'No se pudo crear el pedido.',
+          methods: result.methods,
           available: result.available,
           required: result.required,
         });
@@ -2140,11 +2628,11 @@ async function handle(req, res, ctx) {
       json(res, 201, {
         ok: true,
         duplicate: result.duplicate,
-        item: result.item,
-        order: orderOf(result.item) ?? result.order,
+        item: sanitizeItemForPermissions(result.item, actor),
+        order: sanitizeOrderForPermissions(orderOf(result.item) ?? result.order, actor),
         receipt,
         customer: result.customer,
-        delivered: result.delivered,
+        delivered: hasPermission(actor, 'cost.view') ? result.delivered : stripSensitiveFinancials(result.delivered),
       });
       return;
     }
@@ -2163,7 +2651,22 @@ async function handle(req, res, ctx) {
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
       const receipt = buildReceipt({ order, customer });
 
-      // Documento imprimible/compartible (HTML ligero, sin PDF pesado).
+      // Documento compartible de la factura.
+      if (action === 'factura' || action === 'receipt.pdf' || action === 'receipt-pdf') {
+        const pdf = receiptPdf(receipt, { timeZone: TIME_ZONE });
+        const filename = `${receipt.order_number || orderId}-factura.pdf`;
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-length': pdf.length,
+          'content-disposition': `inline; filename="${filename}"`,
+          'cache-control': 'no-store',
+          'x-robots-tag': 'noindex, nofollow',
+        });
+        res.end(pdf);
+        return;
+      }
+
+      // Documento HTML ligero con acciones móviles (volver + compartir factura).
       if (action === 'receipt') {
         const html = receiptHtml(receipt, { timeZone: TIME_ZONE });
         res.writeHead(200, {
@@ -2176,12 +2679,23 @@ async function handle(req, res, ctx) {
         return;
       }
 
+      if (!action && wantsHtml(req)) {
+        const location = `/api/admin/orders/${encodeURIComponent(orderId)}/receipt`;
+        res.writeHead(302, {
+          location,
+          'cache-control': 'no-store',
+          'x-robots-tag': 'noindex, nofollow',
+        });
+        res.end();
+        return;
+      }
+
       const followupRows = await ctx.db.list('followups', { limit: 2000 });
       json(res, 200, {
         ok: true,
-        item,
-        order,
-        financials: orderFinancials(order),
+        item: sanitizeItemForPermissions(item, actor),
+        order: sanitizeOrderForPermissions(order, actor),
+        ...(can('cost.view') ? { financials: orderFinancials(order) } : {}),
         receipt,
         customer,
         followups: followupRows.filter((row) => row.order_id === orderId || row.purchase_id === orderId),
@@ -2190,8 +2704,36 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route.startsWith('/api/admin/orders/') && req.method === 'POST') {
+      const rest = decodeURIComponent(route.slice('/api/admin/orders/'.length));
+      const [orderId, action = ''] = rest.split('/');
+      if (action === 'cancel') {
+        if (!requirePermission('sales.cancel', 'Solo ADMIN puede cancelar ventas.')) return;
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const result = await cancelSale(ctx, orderId, body, actor);
+        if (!result.ok) {
+          json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message, inventory: result.inventory ?? null });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          item: sanitizeItemForPermissions(result.item, actor),
+          order: sanitizeOrderForPermissions(result.order, actor),
+          inventory: hasPermission(actor, 'cost.view') ? result.inventory : stripSensitiveFinancials(result.inventory),
+          inventoryLinesRestored: result.inventoryLinesRestored,
+        });
+        return;
+      }
+    }
+
     // Modificar un pedido (frascos, descuento, notas, entrega). Recalcula el total.
     if (route.startsWith('/api/admin/orders/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      if (!requirePermission('orders.update_operational')) return;
       const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length));
       const items = await store.listAdmin({ limit: 1000 });
       const item = items.find((entry) => entry.id === orderId) ?? null;
@@ -2234,6 +2776,14 @@ async function handle(req, res, ctx) {
         return;
       }
       const first = totals.items[0];
+      const nextPaymentMethod =
+        body.paymentMethod !== undefined || body.payment_method !== undefined
+          ? normalizePaymentMethod(body.paymentMethod ?? body.payment_method)
+          : current.payment_method ?? null;
+      if ((body.paymentMethod !== undefined || body.payment_method !== undefined) && !nextPaymentMethod) {
+        json(res, 422, { ok: false, error: 'invalid_payment_method', methods: PAYMENT_METHODS });
+        return;
+      }
       const nextOrder = {
         ...current,
         items: totals.items,
@@ -2252,6 +2802,8 @@ async function handle(req, res, ctx) {
           // GPS: se manda la elegida o se conserva la suya (nunca se borra sola).
           location: entrega.provided ? entrega.location : current.delivery?.location ?? null,
         },
+        payment_method: nextPaymentMethod,
+        payment_method_label: paymentMethodLabel(nextPaymentMethod),
         updated_by_user_id: actor?.actor_type === 'USER' ? actor.id : current.updated_by_user_id ?? null,
         updated_by_display_name_snapshot:
           actor?.actor_type === 'USER' ? actor.display_name : current.updated_by_display_name_snapshot ?? null,
@@ -2279,7 +2831,7 @@ async function handle(req, res, ctx) {
         unitPrice: first.unitPrice,
         total: nextOrder.total,
       });
-      if (item.status === ctx.purchaseStatus) {
+      if (isCompletedPurchaseStatus(item.status)) {
         const synced = await ctx.inventory.syncSale(
           { ...updated, order_json: JSON.stringify(nextOrder) },
           nextOrder,
@@ -2318,7 +2870,11 @@ async function handle(req, res, ctx) {
         summary: `Pedido ${nextOrder.order_number} modificado · total ${nextOrder.total}`,
         data: { total: nextOrder.total, items: nextOrder.item_count },
       });
-      json(res, 200, { ok: true, item: updated, order: nextOrder });
+      json(res, 200, {
+        ok: true,
+        item: sanitizeItemForPermissions(updated, actor),
+        order: sanitizeOrderForPermissions(nextOrder, actor),
+      });
       return;
     }
 
@@ -2433,14 +2989,69 @@ async function handle(req, res, ctx) {
       const filter = text(url.searchParams.get('filter'), 30) ?? 'todos';
       const order = text(url.searchParams.get('order'), 30) ?? null;
       const q = text(url.searchParams.get('q'), 120) ?? '';
+      const dateRange = conversationDateRange(url.searchParams, ctx.clock ?? (() => new Date()));
+      if (!dateRange.ok) {
+        json(res, 422, { ok: false, error: dateRange.error, message: 'El rango de fechas no es válido.' });
+        return;
+      }
       const conversations = await ctx.customers.listConversations({
         filter,
         order,
         q,
+        from: dateRange.from,
+        to: dateRange.to,
         currentUserId: actor?.actor_type === 'USER' ? actor.id : null,
       });
       const counts = await ctx.customers.conversationCounts();
-      json(res, 200, { ok: true, conversations, counts, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
+      json(res, 200, { ok: true, conversations, counts, dateRange: { from: dateRange.from, to: dateRange.to }, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
+      return;
+    }
+
+    if (route === '/api/admin/conversations/start' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const phone = text(body.phone, 40);
+      const name = text(body.name, 120);
+      const draft = longText(body.body, 1200);
+      if (!phone) {
+        json(res, 422, { ok: false, error: 'missing_phone', message: 'Escribe el teléfono del cliente.' });
+        return;
+      }
+      const found = await ctx.customers.findOrCreateByPhone({
+        phone,
+        name,
+        source: 'panel_whatsapp',
+        optIn: false,
+      });
+      if (!found.ok || !found.customer) {
+        json(res, 422, { ok: false, error: found.error ?? 'invalid_phone', message: 'Ese teléfono no parece válido.' });
+        return;
+      }
+      const conversation = await ctx.customers.conversationFor(found.customer.id);
+      await ctx.audit?.record({
+        entity: 'conversation',
+        entityId: conversation?.id ?? null,
+        action: found.created ? 'conversation.started' : 'conversation.opened',
+        actor: actor?.display_name ?? null,
+        summary: `Conversación abierta con ${found.customer.name ?? found.customer.phone_e164}`,
+        data: {
+          customer_id: found.customer.id,
+          has_draft: Boolean(draft),
+          created_customer: found.created === true,
+        },
+      });
+      json(res, 200, {
+        ok: true,
+        created: found.created === true,
+        customer: found.customer,
+        conversation,
+        canSendFreeText: ctx.customers.canSendFreeText(conversation),
+      });
       return;
     }
 
@@ -2539,7 +3150,7 @@ async function handle(req, res, ctx) {
           force: action === 'assign' || actor?.role === 'ADMIN',
         });
         if (!result.ok) {
-          json(res, result.error === 'already_assigned' ? 409 : result.error === 'not_owner' ? 403 : 404, {
+          json(res, result.error === 'already_assigned' ? 403 : result.error === 'not_owner' ? 403 : 404, {
             ok: false,
             error: result.error,
             message:
@@ -2577,11 +3188,18 @@ async function handle(req, res, ctx) {
 
       if (action === 'messages' && req.method === 'GET') {
         const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
+        const stage = customer ? await ctx.customers.customerStage(customer.id) : null;
+        const tags = customer ? await ctx.customers.tagsForCustomer(customer.id) : [];
+        const followups = customer ? await ctx.followups.listForCustomer(customer.id) : [];
+        const nextFollowup = followups.find((row) => row.status === 'pending') ?? null;
         json(res, 200, {
           ok: true,
           conversation,
-          customer,
+          customer: customer
+            ? { ...customer, customerStage: stage?.stage ?? 'PROSPECT', customer_stage: stage?.stage ?? 'PROSPECT', tags }
+            : null,
           messages,
+          nextFollowup,
           canSendFreeText: ctx.customers.canSendFreeText(conversation),
           whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) },
         });
@@ -2622,6 +3240,19 @@ async function handle(req, res, ctx) {
        * su propia ruta, con su confirmación y su auditoría.
        */
       if (action === 'location' && req.method === 'POST') {
+        if (!requirePermission('chats.reply')) return;
+        if (
+          conversation.assigned_user_id &&
+          conversation.assigned_user_id !== currentUser?.id &&
+          !can('chats.force_reassign')
+        ) {
+          json(res, 403, {
+            ok: false,
+            error: 'conversation_assigned',
+            message: `Esta conversación ya está asignada a ${conversation.assigned_display_name_snapshot ?? 'otro agente'}.`,
+          });
+          return;
+        }
         /** @type {any} */
         let body = {};
         try {
@@ -2747,6 +3378,19 @@ async function handle(req, res, ctx) {
        *   - fuera de la ventana de 24 h solo se puede mandar una plantilla APROBADA.
        */
       if (action === 'messages' && req.method === 'POST') {
+        if (!requirePermission('chats.reply')) return;
+        if (
+          conversation.assigned_user_id &&
+          conversation.assigned_user_id !== currentUser?.id &&
+          !can('chats.force_reassign')
+        ) {
+          json(res, 403, {
+            ok: false,
+            error: 'conversation_assigned',
+            message: `Esta conversación ya está asignada a ${conversation.assigned_display_name_snapshot ?? 'otro agente'}.`,
+          });
+          return;
+        }
         /** @type {any} */
         let body = {};
         try {
@@ -2985,6 +3629,12 @@ async function handle(req, res, ctx) {
     }
 
     // Decidir una tarea: completar, omitir, cancelar, posponer o cambiar la fecha.
+    if (route.startsWith('/api/admin/followups/') && req.method === 'DELETE') {
+      if (!requirePermission('followups.delete', 'Solo ADMIN puede eliminar seguimientos.')) return;
+      json(res, 501, { ok: false, error: 'not_implemented', message: 'La eliminación definitiva de seguimientos no está implementada.' });
+      return;
+    }
+
     if (route.startsWith('/api/admin/followups/') && (req.method === 'PATCH' || req.method === 'POST')) {
       const rest = decodeURIComponent(route.slice('/api/admin/followups/'.length));
       const [followupId, actionInPath = ''] = rest.split('/');
@@ -3001,6 +3651,7 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
       }
+      if (['skip', 'cancel'].includes(action) && !requirePermission('followups.delete', 'Solo ADMIN puede cancelar u omitir seguimientos.')) return;
       /** @type {any} */
       let followup = null;
       if (action === 'complete') followup = await ctx.followups.complete(followupId, { by: actor?.display_name ?? 'panel', byUserId: actor?.actor_type === 'USER' ? actor.id : null, outcome: 'hecho' });
@@ -3050,6 +3701,7 @@ async function handle(req, res, ctx) {
      * enviar. Así el CRM nunca intenta un envío que WhatsApp va a rechazar.
      */
     if (route === '/api/admin/wa-templates' && req.method === 'POST') {
+      if (!requirePermission('settings.manage')) return;
       /** @type {any} */
       let body = {};
       try {
@@ -3178,12 +3830,14 @@ async function handle(req, res, ctx) {
 
     // ------------------------------------------------------- ajustes del negocio
     if (route === '/api/admin/settings' && req.method === 'GET') {
+      if (!requirePermission('settings.manage')) return;
       json(res, 200, { ok: true, ...(await ctx.settings.snapshot()) });
       return;
     }
 
     // Interruptores del plan de postventa (día 1, 3, 7, 14, 21, 30).
     if (route === '/api/admin/settings/followup' && req.method === 'POST') {
+      if (!requirePermission('settings.manage')) return;
       /** @type {any} */
       let body = {};
       try {
@@ -3346,6 +4000,7 @@ async function handle(req, res, ctx) {
         'precio_unitario',
         'total',
         'moneda',
+        'metodo_pago',
         'origen',
         'recordatorio',
         'notas',
@@ -3353,8 +4008,9 @@ async function handle(req, res, ctx) {
         'meta_venta',
         'meta_enviada',
       ];
-      const lines = rows.map((row) =>
-        [
+      const lines = rows.map((row) => {
+        const order = row.type === 'order_intent' ? orderOf(row) : null;
+        return [
           row.received_at,
           typeLabel(row.type),
           STATUS_LABELS[row.status ?? 'nuevo'] ?? row.status,
@@ -3367,6 +4023,7 @@ async function handle(req, res, ctx) {
           row.unit_price,
           row.total,
           row.currency,
+          paymentMethodLabel(order?.payment_method) ?? '',
           row.source,
           row.next_action_at,
           row.notes,
@@ -3375,8 +4032,8 @@ async function handle(req, res, ctx) {
           row.meta_purchase_sent_at,
         ]
           .map(csvCell)
-          .join(','),
-      );
+          .join(',');
+      });
       const csv = `\uFEFF${[header.join(','), ...lines].join('\r\n')}\r\n`;
       res.writeHead(200, {
         'content-type': 'text/csv; charset=utf-8',
@@ -3433,7 +4090,7 @@ function descripcionMultimedia(mediaStore, storage, whatsappMedia) {
  * @param {string} [config.metaTestEventCode]
  * @param {string} [config.metaGraphVersion]
  * @param {string} [config.appEnv]
- * @param {string} [config.purchaseStatus] estado que representa una venta
+ * @param {string} [config.purchaseStatus] compatibilidad de configuración Meta
  */
 export async function startCrmServer(config = {}) {
   const settings = {
@@ -3561,7 +4218,10 @@ export async function startCrmServer(config = {}) {
   const users = createUserService({ db, audit, clock: config.clock, sessionSeconds: SESSION_SECONDS });
   await users.ensureBootstrapAdmin({
     username: config.bootstrapAdminUser ?? BOOTSTRAP_ADMIN_USER,
-    password: config.bootstrapAdminPassword ?? BOOTSTRAP_ADMIN_PASSWORD,
+    password:
+      config.bootstrapAdminPassword ||
+      BOOTSTRAP_ADMIN_PASSWORD ||
+      ((config.bootstrapAdminUser ?? BOOTSTRAP_ADMIN_USER) ? settings.token : ''),
     firstName: config.bootstrapAdminFirstName ?? 'Ana',
     lastName: config.bootstrapAdminLastName ?? 'Admin',
     displayName: config.bootstrapAdminDisplayName ?? 'Ana Admin',
@@ -3657,6 +4317,7 @@ export async function startCrmServer(config = {}) {
     whatsappVerifyToken: (config.whatsappVerifyToken ?? WHATSAPP_VERIFY_TOKEN).trim(),
     appSecret: (config.metaAppSecret ?? META_APP_SECRET).trim(),
     timeZone: TIME_ZONE,
+    clock: config.clock ?? (() => new Date()),
   };
   ctxRef.current = ctx;
 
@@ -3766,7 +4427,7 @@ export async function startCrmServer(config = {}) {
         metaCapi.enabled
           ? `API de conversiones activa (${metaCapi.graphVersion}${metaCapi.hasTestEventCode ? ', modo prueba' : ''})`
           : 'desactivada (faltan PHYTO_META_PIXEL_ID o PHYTO_META_CAPI_ACCESS_TOKEN)'
-      } · venta = estado "${ctx.purchaseStatus}"`,
+      } · compra completada = estado "${BUSINESS_COMPLETED_PURCHASE_STATUS}"`,
     );
     if (!settings.token) {
       console.warn('[crm] PHYTO_CRM_TOKEN sin definir: guardar funciona, el panel está desactivado.');
@@ -3849,6 +4510,7 @@ export async function startCrmServer(config = {}) {
     media: { store: mediaStore, storage, whatsapp: whatsappMedia, pipeline: mediaPipeline },
     whatsapp,
     purchaseStatus: ctx.purchaseStatus,
+    businessCompletedPurchaseStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
     ctx,
     close,
   };

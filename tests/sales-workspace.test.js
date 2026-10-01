@@ -11,8 +11,9 @@ import path from 'node:path';
 
 import { startCrmServer } from '../server/crm-server.mjs';
 import { AUDIT_ACTIONS } from '../server/audit.mjs';
-import { COMMERCIAL_STATES, deriveCommercialState } from '../server/customers.mjs';
+import { COMMERCIAL_STATES, CUSTOMER_STAGES, deriveCommercialState, resolveCustomerStage } from '../server/customers.mjs';
 import { DEFAULT_TIME_ZONE, dayIn } from '../server/followups.mjs';
+import { isCompletedPurchaseStatus } from '../server/orders.mjs';
 
 const TOKEN = 'clave-s6-123';
 const APP_SECRET = 'secreto-s6';
@@ -159,6 +160,7 @@ describe('estado comercial del cliente (derivado, no inventado)', () => {
         body: JSON.stringify({
           customerId: customer.id,
           items: [{ variantId: 'capsules_10', quantity: 1 }],
+          paymentMethod: 'CASH',
           // Fecha explícita del día de negocio (no la «de ahora mismo» en UTC).
           date: instanteDelDiaDeNegocio(),
         }),
@@ -194,6 +196,140 @@ describe('estado comercial del cliente (derivado, no inventado)', () => {
     });
     profile = await json(await call(`/api/admin/customers/${customer.id}`));
     expect(profile.customer.commercial_state_manual).toBeNull();
+  });
+});
+
+describe('customerStage compatible', () => {
+  it('la función pura no confunde seguimiento ni pedido creado con cliente', () => {
+    expect(CUSTOMER_STAGES).toEqual(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'INACTIVE']);
+    expect(resolveCustomerStage({ customer: {}, purchases: [] })).toMatchObject({ stage: 'PROSPECT' });
+    expect(resolveCustomerStage({ customer: { customer_stage_manual: 'INTERESTED' }, purchases: [] })).toMatchObject({
+      stage: 'INTERESTED',
+      source: 'manual',
+    });
+    expect(resolveCustomerStage({ customer: {}, purchases: [{ type: 'order_intent', status: 'nuevo' }] })).toMatchObject({
+      stage: 'PROSPECT',
+    });
+    expect(resolveCustomerStage({ customer: {}, purchases: [{ type: 'order_intent', status: 'cancelado' }] })).toMatchObject({
+      stage: 'PROSPECT',
+    });
+    expect(resolveCustomerStage({ customer: {}, purchases: [{ type: 'order_intent', status: 'entregado' }] })).toMatchObject({
+      stage: 'CUSTOMER',
+      reason: 'pedido_entregado',
+    });
+    expect(
+      resolveCustomerStage({
+        customer: { customer_stage_manual: 'PROSPECT' },
+        purchases: [{ type: 'order_intent', status: 'entregado' }],
+      }),
+    ).toMatchObject({ stage: 'CUSTOMER', source: 'delivered_purchase' });
+    expect(isCompletedPurchaseStatus('entregado')).toBe(true);
+  });
+
+  it('nuevo cliente → PROSPECT, manual → INTERESTED y compra entregada → CUSTOMER', async () => {
+    await inbound('wamid.S6-STAGE-1', 'Hola, estoy viendo opciones', '18095550616');
+    const customer = await waitForCustomer('+18095550616');
+    expect(customer.customerStage).toBe('PROSPECT');
+
+    const manual = await json(
+      await call(`/api/admin/customers/${customer.id}/stage`, {
+        method: 'POST',
+        body: JSON.stringify({ stage: 'INTERESTED', reason: 'Pidió precios' }),
+      }),
+    );
+    expect(manual.to).toBe('INTERESTED');
+    let profile = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(profile.customerStage).toBe('INTERESTED');
+    expect(profile.stageHistory[0]).toMatchObject({ from_stage: 'PROSPECT', to_stage: 'INTERESTED' });
+
+    await call(`/api/admin/customers/${customer.id}/stage`, {
+      method: 'POST',
+      body: JSON.stringify({ stage: null, reason: 'Volver a automático' }),
+    });
+    profile = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(profile.customerStage).toBe('PROSPECT');
+
+    const order = await json(
+      await call('/api/admin/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerId: customer.id,
+          items: [{ variantId: 'capsules_5', quantity: 1 }],
+          paymentMethod: 'CASH',
+          status: 'entregado',
+          date: instanteDelDiaDeNegocio(),
+        }),
+      }),
+    );
+    expect(order.order.status).toBe('entregado');
+    profile = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(profile.customerStage).toBe('CUSTOMER');
+
+    for (const stage of ['PROSPECT', 'INTERESTED']) {
+      const downgrade = await call(`/api/admin/customers/${customer.id}/stage`, {
+        method: 'POST',
+        body: JSON.stringify({ stage, reason: 'No debe degradar compradores' }),
+      });
+      expect(downgrade.status).toBe(409);
+      expect((await json(downgrade)).error).toBe('completed_purchase_stage_conflict');
+    }
+    profile = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(profile.customerStage).toBe('CUSTOMER');
+
+    await call('/api/admin/followups', {
+      method: 'POST',
+      body: JSON.stringify({ customerId: customer.id, reason: 'Seguimiento vencido', scheduledAt: '2020-01-01' }),
+    });
+    profile = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(profile.customerStage).toBe('CUSTOMER');
+  });
+
+  it('tags múltiples, dry-run y auditoría de etapa funcionan sin migrar clientes', async () => {
+    const customers = await json(await call('/api/admin/customers'));
+    const customer = customers.customers.find((row) => row.phone_e164 === '+18095550616');
+
+    const tags = await json(await call('/api/admin/customer-tags'));
+    expect(tags.tags.map((tag) => tag.label)).toEqual(
+      expect.arrayContaining(['VIP', 'Recurrente', 'No responde', 'Alta prioridad', 'Primera compra', 'Recompra', 'Pago contra entrega']),
+    );
+    const vip = tags.tags.find((tag) => tag.label === 'VIP');
+    const priority = tags.tags.find((tag) => tag.label === 'Alta prioridad');
+
+    await call(`/api/admin/customers/${customer.id}/tags`, { method: 'POST', body: JSON.stringify({ tagId: vip.id }) });
+    await call(`/api/admin/customers/${customer.id}/tags`, { method: 'POST', body: JSON.stringify({ tagId: priority.id }) });
+    let customerTags = await json(await call(`/api/admin/customers/${customer.id}/tags`));
+    expect(customerTags.tags.map((tag) => tag.label).sort()).toEqual(['Alta prioridad', 'VIP']);
+
+    await call(`/api/admin/customers/${customer.id}/tags?tagId=${encodeURIComponent(vip.id)}`, { method: 'DELETE' });
+    customerTags = await json(await call(`/api/admin/customers/${customer.id}/tags`));
+    expect(customerTags.tags.map((tag) => tag.label)).toEqual(['Alta prioridad']);
+
+    const reassign = await json(
+      await call(`/api/admin/customers/${customer.id}/tags`, { method: 'POST', body: JSON.stringify({ tagId: vip.id }) }),
+    );
+    expect(reassign).toMatchObject({ ok: true, duplicate: false });
+    expect(reassign.reactivated).toBe(true);
+    customerTags = await json(await call(`/api/admin/customers/${customer.id}/tags`));
+    expect(customerTags.tags.map((tag) => tag.label).sort()).toEqual(['Alta prioridad', 'VIP']);
+
+    const beforeAudit = await json(await call('/api/admin/audit?entity=customer&limit=200'));
+    const missingRemove = await json(await call(`/api/admin/customers/${customer.id}/tags?tagId=tag-no-existe`, { method: 'DELETE' }));
+    expect(missingRemove).toMatchObject({ ok: true, removed: false, status: 'not_found' });
+    await call(`/api/admin/customers/${customer.id}/tags?tagId=${encodeURIComponent(vip.id)}`, { method: 'DELETE' });
+    const alreadyRemoved = await json(await call(`/api/admin/customers/${customer.id}/tags?tagId=${encodeURIComponent(vip.id)}`, { method: 'DELETE' }));
+    expect(alreadyRemoved).toMatchObject({ ok: true, removed: false, status: 'not_found' });
+    const afterAudit = await json(await call('/api/admin/audit?entity=customer&limit=200'));
+    const removedEventsBefore = beforeAudit.entries.filter((row) => row.action === 'customer.tag_removed').length;
+    const removedEventsAfter = afterAudit.entries.filter((row) => row.action === 'customer.tag_removed').length;
+    expect(removedEventsAfter).toBe(removedEventsBefore + 1);
+
+    const dryRun = await json(await call('/api/admin/customers/stage-dry-run'));
+    const mine = dryRun.report.find((row) => row.customerId === customer.id);
+    expect(mine).toMatchObject({ customerStage: 'CUSTOMER', wouldWrite: false });
+    expect(dryRun.rule).toMatch(/order_intent.*entregado/i);
+
+    const audit = await json(await call('/api/admin/audit?entity=customer'));
+    expect(audit.entries.map((row) => row.action)).toEqual(expect.arrayContaining(['customer.stage_changed', 'customer.tag_assigned', 'customer.tag_removed']));
   });
 });
 

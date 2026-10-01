@@ -15,7 +15,7 @@
  *   funcionando igual y ningún dato anterior se rompe.
  *
  * COMPROBANTE
- *   «Comprobante de compra» (NUNCA «factura fiscal»: no hay integración fiscal).
+ *   «Factura de compra» (NUNCA «factura fiscal»: no hay integración fiscal).
  *   Dos vistas: los datos para pintarlo en el CRM y un HTML ligero e imprimible.
  *   El teléfono se muestra ENMASCARADO. Sin afirmaciones médicas.
  */
@@ -69,9 +69,29 @@ export const ORDER_OPEN_STATUSES = Object.freeze(
   ORDER_STATUSES.filter((status) => !ORDER_CLOSED_STATUSES.includes(status)),
 );
 
+/** Fuente de verdad de negocio: una compra completada es un pedido entregado. */
+export const BUSINESS_COMPLETED_PURCHASE_STATUS = 'entregado';
+
+/** ¿Este estado representa una compra completada para clientes, ventas e inventario? */
+export function isCompletedPurchaseStatus(value) {
+  return String(value ?? '').trim() === BUSINESS_COMPLETED_PURCHASE_STATUS;
+}
+
+export const PAYMENT_METHODS = Object.freeze(['CASH', 'TRANSFER']);
+
+export const PAYMENT_METHOD_LABELS = Object.freeze({
+  CASH: 'Efectivo',
+  TRANSFER: 'Transferencia',
+});
+
 /** ¿Es un estado de pedido válido? */
 export function isOrderStatus(value) {
   return ORDER_STATUSES.includes(String(value ?? '').trim());
+}
+
+export function normalizePaymentMethod(value) {
+  const clean = String(value ?? '').trim().toUpperCase();
+  return PAYMENT_METHODS.includes(clean) ? clean : null;
 }
 
 /** Identificador corto y aleatorio. */
@@ -127,6 +147,7 @@ export function maskPhone(phone) {
  * @param {string} [input.notes]
  * @param {{address?: string, city?: string, note?: string, method?: string}} [input.delivery]
  * @param {string} [input.status]          estado inicial (por defecto `nuevo`)
+ * @param {string} [input.paymentMethod]   CASH | TRANSFER
  * @param {string} [input.date]            fecha ISO del pedido
  * @param {number} [input.deliveryFee]     costo de delivery en RD$ (opcional, >= 0)
  * @param {any}    [input.gpsLocation]     ubicación GPS de entrega (opcional)
@@ -142,6 +163,7 @@ export function buildOrder(input = {}) {
   const id = short(input.id, 80) ?? newId();
   const createdAt = short(input.date, 40) ?? new Date().toISOString();
   const status = isOrderStatus(input.status) ? String(input.status) : 'nuevo';
+  const paymentMethod = normalizePaymentMethod(input.paymentMethod ?? input.payment_method);
   const number = orderNumber(id);
   const first = totals.items[0];
   /*
@@ -182,6 +204,9 @@ export function buildOrder(input = {}) {
     shipping: null,
     notes: long(input.notes, 2000),
     delivery,
+    payment_method: paymentMethod,
+    payment_method_label: paymentMethod ? PAYMENT_METHOD_LABELS[paymentMethod] : null,
+    payment_status: status === 'cancelado' ? 'void' : 'paid',
     status,
     recorded_by: short(input.recordedBy, 60) ?? 'panel',
     created_at: createdAt,
@@ -214,6 +239,8 @@ export function buildOrder(input = {}) {
     items: order.items,
     notes: order.notes,
     delivery,
+    paymentMethod,
+    payment_method: paymentMethod,
     meta: { source: 'order', recordedBy: order.recorded_by },
   };
 
@@ -299,6 +326,9 @@ export function orderOf(item) {
     shipping: null,
     notes: item.notes ?? null,
     delivery: { fee: 0, location: null, address: null, city: item.location ?? null, note: null, method: null, shipping: null },
+    payment_method: item.payment_method ?? null,
+    payment_method_label: item.payment_method ? PAYMENT_METHOD_LABELS[item.payment_method] ?? item.payment_method : null,
+    payment_status: item.status === 'cancelado' ? 'void' : null,
     status: item.status ?? 'nuevo',
     recorded_by: 'histórico',
     created_at: item.received_at ?? null,
@@ -320,7 +350,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
   }));
   return {
     business: businessName,
-    document: 'Comprobante de compra',
+    document: 'Factura de compra',
     order_number: order.order_number,
     date: order.created_at,
     customer_name: customer?.name ?? null,
@@ -345,9 +375,14 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     location: order.delivery?.location ? orderLocationSnapshot(order.delivery.location) : null,
     status: order.status ?? 'nuevo',
     status_label: ORDER_STATUS_LABELS[order.status ?? 'nuevo'] ?? order.status,
+    payment_method: order.payment_method ?? null,
+    payment_method_label: order.payment_method ? PAYMENT_METHOD_LABELS[order.payment_method] ?? order.payment_method : null,
+    payment_status: order.payment_status ?? null,
+    cancelled_at: order.cancelled_at ?? null,
+    cancel_reason: order.cancel_reason ?? null,
     // Agradecimiento neutro: sin promesas, sin plazos y sin nada médico.
     thanks: 'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
-    note: 'Este documento es un comprobante de compra, no una factura fiscal.',
+    note: 'Documento generado por Phytoemagry para confirmar los detalles de tu compra.',
   };
 }
 
@@ -376,16 +411,157 @@ function prettyDate(value, timeZone = 'America/Santo_Domingo') {
   return new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(date);
 }
 
+function pdfText(value) {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7e]/g, (char) => {
+      if (char === '×') return 'x';
+      if (char === '−' || char === '–' || char === '—') return '-';
+      if (char === '•') return '.';
+      return '';
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function pdfEsc(value) {
+  return pdfText(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+}
+
+function pdfLine(text, x, y, size = 11, font = 'F1') {
+  return `BT /${font} ${size} Tf ${x} ${y} Td (${pdfEsc(text)}) Tj ET\n`;
+}
+
+function pdfRule(y) {
+  return `0.78 0.84 0.8 RG 50 ${y} m 545 ${y} l S\n`;
+}
+
 /**
- * HTML ligero e imprimible del comprobante. Es el documento que se comparte o se
- * imprime (y, desde el navegador, se puede guardar como PDF si el negocio quiere).
+ * PDF sencillo de la factura para compartir desde el móvil.
+ * Se mantiene sin dependencias: el PDF contiene texto vectorial y abre en
+ * cualquier visor del navegador.
+ *
+ * @param {ReturnType<typeof buildReceipt>} receipt
+ * @param {{ timeZone?: string }} [options]
+ */
+export function receiptPdf(receipt, options = {}) {
+  const lines = [];
+  let y = 790;
+  lines.push('0.043 0.42 0.31 rg\n');
+  lines.push(pdfLine(receipt.business, 50, y, 22, 'F2'));
+  y -= 24;
+  lines.push('0.38 0.45 0.42 rg\n');
+  lines.push(pdfLine(receipt.document, 50, y, 10, 'F2'));
+  y -= 24;
+  lines.push(pdfRule(y));
+  y -= 22;
+
+  const facts = [
+    ['Pedido', receipt.order_number],
+    ['Fecha', prettyDate(receipt.date, options.timeZone)],
+    receipt.customer_name ? ['Cliente', receipt.customer_name] : null,
+    receipt.phone_masked ? ['Telefono', receipt.phone_masked] : null,
+    receipt.payment_method_label ? ['Pago', receipt.payment_method_label] : null,
+    ['Estado', receipt.status_label],
+  ].filter(Boolean);
+
+  for (const [label, value] of facts) {
+    lines.push('0.38 0.45 0.42 rg\n');
+    lines.push(pdfLine(label, 50, y, 10, 'F1'));
+    lines.push('0.09 0.13 0.11 rg\n');
+    lines.push(pdfLine(value, 170, y, 10, 'F2'));
+    y -= 16;
+  }
+
+  y -= 8;
+  lines.push(pdfRule(y));
+  y -= 20;
+  lines.push('0.38 0.45 0.42 rg\n');
+  lines.push(pdfLine('Detalle', 50, y, 9, 'F2'));
+  lines.push(pdfLine('Cant.', 320, y, 9, 'F2'));
+  lines.push(pdfLine('Precio', 380, y, 9, 'F2'));
+  lines.push(pdfLine('Importe', 470, y, 9, 'F2'));
+  y -= 14;
+  lines.push(pdfRule(y));
+  y -= 18;
+
+  for (const item of receipt.items ?? []) {
+    lines.push('0.09 0.13 0.11 rg\n');
+    lines.push(pdfLine(item.label, 50, y, 10, 'F1'));
+    lines.push(pdfLine(item.quantity, 330, y, 10, 'F1'));
+    lines.push(pdfLine(money(item.unitPrice, receipt.currency), 380, y, 10, 'F1'));
+    lines.push(pdfLine(money(item.subtotal, receipt.currency), 470, y, 10, 'F2'));
+    y -= 18;
+  }
+
+  y -= 8;
+  lines.push(pdfRule(y));
+  y -= 20;
+  const totals = [
+    ['Productos', money(receipt.subtotal, receipt.currency)],
+    receipt.discount ? ['Descuento', `-${money(receipt.discount, receipt.currency)}`] : null,
+    receipt.delivery_fee ? ['Delivery', money(receipt.delivery_fee, receipt.currency)] : null,
+    receipt.shipping ? ['Envio', money(receipt.shipping, receipt.currency)] : null,
+  ].filter(Boolean);
+  for (const [label, value] of totals) {
+    lines.push('0.38 0.45 0.42 rg\n');
+    lines.push(pdfLine(label, 330, y, 10, 'F1'));
+    lines.push('0.09 0.13 0.11 rg\n');
+    lines.push(pdfLine(value, 455, y, 10, 'F2'));
+    y -= 16;
+  }
+  y -= 4;
+  lines.push('0.043 0.42 0.31 rg\n');
+  lines.push(pdfLine('TOTAL', 330, y, 15, 'F2'));
+  lines.push(pdfLine(money(receipt.total, receipt.currency), 455, y, 15, 'F2'));
+
+  y -= 34;
+  if (receipt.has_location) {
+    lines.push('0.38 0.45 0.42 rg\n');
+    lines.push(pdfLine(`Ubicacion de entrega registrada${receipt.location_label ? `: ${receipt.location_label}` : ''}.`, 50, y, 9, 'F1'));
+    y -= 14;
+  }
+  lines.push(pdfLine(receipt.thanks, 50, y, 9, 'F1'));
+  y -= 14;
+  lines.push(pdfLine(receipt.note, 50, y, 9, 'F1'));
+
+  const stream = lines.join('');
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+    `<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}endstream`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index < offsets.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, 'latin1');
+}
+
+/**
+ * HTML ligero e imprimible de la factura. Es el documento que se comparte o se
+ * imprime desde el navegador si el negocio quiere.
  * No lleva dependencias ni imágenes: se abre en cualquier móvil, aunque no haya red.
  *
  * @param {ReturnType<typeof buildReceipt>} receipt
  * @param {{ timeZone?: string }} [options]
  */
 export function receiptHtml(receipt, options = {}) {
-  if (!receipt) return '<!doctype html><title>Comprobante</title><p>Sin datos.</p>';
+  if (!receipt) return '<!doctype html><title>Factura</title><p>Sin datos.</p>';
+  const pdfUrl = `./factura`;
   const rows = receipt.items
     .map(
       (line) => `<tr>
@@ -408,6 +584,12 @@ export function receiptHtml(receipt, options = {}) {
   * { box-sizing: border-box; }
   body { margin: 0; padding: 24px 16px 40px; background: #f2f4f2; color: #16221c;
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .toolbar { position: sticky; top: 0; z-index: 2; max-width: 420px; margin: 0 auto 12px;
+    display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+  .btn { min-height: 42px; display: inline-flex; align-items: center; justify-content: center;
+    padding: 9px 12px; border: 1px solid #dce6e1; border-radius: 12px; background: #fff;
+    color: #0b6b4f; font: inherit; font-weight: 700; text-decoration: none; }
+  .btn--primary { background: #0b6b4f; color: #fff; border-color: #0b6b4f; }
   .sheet { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 16px;
     padding: 24px 20px; box-shadow: 0 10px 30px rgba(16,40,28,.12); }
   .brand { font-size: 22px; font-weight: 800; letter-spacing: .02em; color: #0b6b4f; margin: 0; }
@@ -423,10 +605,14 @@ export function receiptHtml(receipt, options = {}) {
   .totals div { display: flex; justify-content: space-between; font-size: 14px; }
   .totals .grand { font-size: 20px; font-weight: 800; border-top: 2px solid #0b6b4f; padding-top: 10px; margin-top: 6px; color: #0b6b4f; }
   .footer { margin-top: 22px; font-size: 13px; color: #62736b; }
-  @media print { body { background: #fff; padding: 0; } .sheet { box-shadow: none; border-radius: 0; max-width: none; } }
+  @media print { body { background: #fff; padding: 0; } .toolbar { display: none; } .sheet { box-shadow: none; border-radius: 0; max-width: none; } }
 </style>
 </head>
 <body>
+  <nav class="toolbar" aria-label="Acciones del comprobante">
+    <button class="btn" type="button" onclick="history.length > 1 ? history.back() : location.assign('/admin/')">Volver</button>
+    <button class="btn btn--primary" type="button" id="share">Compartir factura</button>
+  </nav>
   <main class="sheet">
     <h1 class="brand">${esc(receipt.business)}</h1>
     <p class="doc">${esc(receipt.document)}</p>
@@ -435,7 +621,10 @@ export function receiptHtml(receipt, options = {}) {
       <dt>Fecha</dt><dd>${esc(prettyDate(receipt.date, options.timeZone))}</dd>
       ${receipt.customer_name ? `<dt>Cliente</dt><dd>${esc(receipt.customer_name)}</dd>` : ''}
       ${receipt.phone_masked ? `<dt>Teléfono</dt><dd>${esc(receipt.phone_masked)}</dd>` : ''}
+      ${receipt.payment_method_label ? `<dt>Pago</dt><dd>${esc(receipt.payment_method_label)}</dd>` : ''}
       <dt>Estado</dt><dd>${esc(receipt.status_label)}</dd>
+      ${receipt.cancelled_at ? `<dt>Anulada</dt><dd>${esc(prettyDate(receipt.cancelled_at, options.timeZone))}</dd>` : ''}
+      ${receipt.cancel_reason ? `<dt>Motivo</dt><dd>${esc(receipt.cancel_reason)}</dd>` : ''}
     </dl>
     <table>
       <thead><tr><th>Detalle</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">Importe</th></tr></thead>
@@ -460,6 +649,18 @@ export function receiptHtml(receipt, options = {}) {
     <p class="footer">${esc(receipt.thanks)}</p>
     <p class="footer">${esc(receipt.note)}</p>
   </main>
+  <script>
+    document.getElementById('share').addEventListener('click', async () => {
+      const url = new URL(${JSON.stringify(pdfUrl)}, location.href).href;
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: document.title, url });
+          return;
+        } catch {}
+      }
+      location.href = url;
+    });
+  </script>
 </body>
 </html>`;
 }

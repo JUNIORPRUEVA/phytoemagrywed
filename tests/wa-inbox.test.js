@@ -15,12 +15,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startCrmServer } from '../server/crm-server.mjs';
+import { addDays, dayIn } from '../server/followups.mjs';
 
 const TOKEN = 'clave-bandeja-inbox';
 const APP_SECRET = 'app-secreto-inbox';
 const WABA = 'WABA1';
 const PHONE_A = '18095550001';
 const PHONE_B = '18095550002';
+const PHONE_C = '18095550003';
 
 let tmpDir;
 let app;
@@ -75,7 +77,7 @@ async function waitFor(check, timeout = 4000) {
 }
 
 /** Mensaje entrante firmado como el que manda Meta. */
-async function inbound(waId, from, body, name = 'Cliente') {
+async function inbound(waId, from, body, name = 'Cliente', timestamp = Math.floor(Date.now() / 1000)) {
   const payload = {
     object: 'whatsapp_business_account',
     entry: [
@@ -87,7 +89,7 @@ async function inbound(waId, from, body, name = 'Cliente') {
             value: {
               contacts: [{ profile: { name }, wa_id: from }],
               messages: [
-                { from, id: waId, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body } },
+                { from, id: waId, timestamp: String(timestamp), type: 'text', text: { body } },
               ],
             },
           },
@@ -107,6 +109,8 @@ async function inbound(waId, from, body, name = 'Cliente') {
 }
 
 const listConversations = async () => (await json(await call('/api/admin/conversations'))).conversations;
+const listConversationsResponse = async (query) => json(await call(`/api/admin/conversations?${query}`));
+const listConversationsQuery = async (query) => (await listConversationsResponse(query)).conversations;
 const adminData = async () => json(await call('/api/admin/data'));
 
 const threadOf = async (id) => json(await call(`/api/admin/conversations/${id}/messages`));
@@ -179,6 +183,103 @@ describe('la lista se ordena por lo más reciente', () => {
     const times = rows.map((row) => String(row.last_message_at ?? ''));
     expect([...times].sort().reverse()).toEqual(times);
   });
+
+  it('filtra por fecha de último mensaje y combina con filtros existentes', async () => {
+    const today = dayIn(new Date(), 'America/Santo_Domingo');
+    const yesterday = addDays(today, -1);
+    await app.collections.update('conversations', conversationA.id, { last_message_at: `${today}T16:00:00.000Z` });
+    await app.collections.update('conversations', conversationB.id, { last_message_at: `${yesterday}T16:00:00.000Z` });
+
+    expect((await listConversationsQuery('date=today')).map((row) => row.id)).toEqual([conversationA.id]);
+    expect((await listConversationsQuery('date=yesterday')).map((row) => row.id)).toEqual([conversationB.id]);
+    expect((await listConversationsQuery('date=7d')).map((row) => row.id)).toEqual([conversationA.id, conversationB.id]);
+    const monthIds = (await listConversationsQuery('date=month')).map((row) => row.id);
+    expect(monthIds).toContain(conversationA.id);
+    if (yesterday.slice(0, 7) === today.slice(0, 7)) expect(monthIds).toContain(conversationB.id);
+    else expect(monthIds).not.toContain(conversationB.id);
+    expect((await listConversationsQuery(`from=${today}&to=${today}`)).map((row) => row.id)).toEqual([conversationA.id]);
+    expect((await listConversationsQuery(`filter=sin-asignar&from=${today}&to=${today}`)).map((row) => row.id)).toEqual([
+      conversationA.id,
+    ]);
+
+    const invalid = await call(`/api/admin/conversations?from=${today}&to=${yesterday}`);
+    expect(invalid.status).toBe(422);
+    expect((await call('/api/admin/conversations?date=foobar')).status).toBe(422);
+    expect((await call('/api/admin/conversations?from=2026-02-31')).status).toBe(422);
+    expect((await call('/api/admin/conversations?to=nope')).status).toBe(422);
+  });
+
+  it('usa el timestamp real de Meta y no retrocede con webhooks fuera de orden', async () => {
+    const newer = Date.UTC(2026, 8, 30, 18, 30, 1) / 1000;
+    const older = Date.UTC(2026, 8, 30, 18, 29, 59) / 1000;
+    expect((await inbound('wamid.C-newer', PHONE_C, 'Mensaje nuevo', 'Cliente C', newer)).status).toBe(200);
+    const conversationC = await waitFor(async () => (await listConversations()).find((row) => row.customer?.phone_e164 === `+${PHONE_C}`));
+    expect(conversationC.last_message_at).toBe('2026-09-30T18:30:01.000Z');
+
+    expect((await inbound('wamid.C-older', PHONE_C, 'Mensaje antiguo retrasado', 'Cliente C', older)).status).toBe(200);
+    await waitFor(async () => (await threadOf(conversationC.id)).messages.length === 2);
+
+    const rows = await listConversations();
+    const row = rows.find((candidate) => candidate.id === conversationC.id);
+    expect(row.last_message_at).toBe('2026-09-30T18:30:01.000Z');
+    expect(row.last_message).toMatchObject({ body: 'Mensaje nuevo', at: '2026-09-30T18:30:01.000Z' });
+  });
+
+  it('respeta los bordes de hoy y ayer en America/Santo_Domingo', async () => {
+    const today = dayIn(new Date(), 'America/Santo_Domingo');
+    const yesterday = addDays(today, -1);
+    const tomorrow = addDays(today, 1);
+    await app.collections.update('conversations', conversationA.id, { last_message_at: `${today}T03:59:59.000Z` });
+    await app.collections.update('conversations', conversationB.id, { last_message_at: `${today}T04:00:00.000Z` });
+
+    expect((await listConversationsQuery('date=yesterday')).map((row) => row.id)).toContain(conversationA.id);
+    expect((await listConversationsQuery('date=today')).map((row) => row.id)).toContain(conversationB.id);
+    expect((await listConversationsQuery('date=today')).map((row) => row.id)).not.toContain(conversationA.id);
+
+    await app.collections.update('conversations', conversationA.id, { last_message_at: `${tomorrow}T03:59:59.000Z` });
+    expect((await listConversationsQuery('date=today')).map((row) => row.id)).toContain(conversationA.id);
+    expect((await listConversationsQuery(`from=${yesterday}&to=${yesterday}`)).map((row) => row.id)).not.toContain(conversationA.id);
+  });
+
+  it('ordena de forma determinista con timestamps iguales y null al final', async () => {
+    const now = new Date().toISOString();
+    const same = '2026-09-29T12:00:00.000Z';
+    const ids = [];
+    for (let index = 0; index < 10; index += 1) {
+      const customer = {
+        id: `cus_sort_${index}`,
+        name: `Orden ${index}`,
+        phone: `18095559${String(index).padStart(3, '0')}`,
+        phone_e164: `+18095559${String(index).padStart(3, '0')}`,
+        source: 'test',
+        created_at: now,
+        updated_at: now,
+      };
+      const conversation = {
+        id: `cnv_sort_${index}`,
+        customer_id: customer.id,
+        channel: 'whatsapp',
+        status: 'AUTOMATIC',
+        assigned_user_id: null,
+        last_message_at: index < 3 ? null : index < 7 ? same : `2026-09-29T12:00:0${index}.000Z`,
+        unread_count: 0,
+        created_at: `2026-09-29T10:00:0${index}.000Z`,
+        updated_at: `2026-09-29T11:00:0${index}.000Z`,
+      };
+      ids.push(conversation.id);
+      await app.collections.insert('customers', customer);
+      await app.collections.insert('conversations', conversation);
+    }
+
+    const rows = (await listConversations()).filter((row) => ids.includes(row.id));
+    expect(rows.at(-1).last_message_at).toBeNull();
+    expect(rows.filter((row) => row.last_message_at === same).map((row) => row.id)).toEqual([
+      'cnv_sort_6',
+      'cnv_sort_5',
+      'cnv_sort_4',
+      'cnv_sort_3',
+    ]);
+  });
 });
 
 describe('"sin responder" es del cliente, no de la insignia de leído', () => {
@@ -235,14 +336,24 @@ describe('archivado y acciones masivas de la bandeja', () => {
   it('Clientes/Compraron usa compra entregada, no cualquier intención', async () => {
     await call('/api/admin/orders', {
       method: 'POST',
-      body: JSON.stringify({ customerId: conversationB.customer_id, items: [{ variantId: 'capsules_5', quantity: 1 }], status: 'nuevo' }),
+      body: JSON.stringify({
+        customerId: conversationB.customer_id,
+        items: [{ variantId: 'capsules_5', quantity: 1 }],
+        paymentMethod: 'CASH',
+        status: 'nuevo',
+      }),
     });
     let clients = await json(await call('/api/admin/conversations?filter=clientes'));
     expect(clients.conversations.map((row) => row.id)).not.toContain(conversationB.id);
 
     await call('/api/admin/orders', {
       method: 'POST',
-      body: JSON.stringify({ customerId: conversationB.customer_id, items: [{ variantId: 'capsules_10', quantity: 1 }], status: 'entregado' }),
+      body: JSON.stringify({
+        customerId: conversationB.customer_id,
+        items: [{ variantId: 'capsules_10', quantity: 1 }],
+        paymentMethod: 'TRANSFER',
+        status: 'entregado',
+      }),
     });
     clients = await json(await call('/api/admin/conversations?filter=clientes'));
     expect(clients.conversations.map((row) => row.id)).toContain(conversationB.id);

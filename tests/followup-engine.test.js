@@ -180,7 +180,14 @@ describe('plan de postventa configurable desde Ajustes', () => {
   it('las tareas automáticas de una venta entregada son IDEMPOTENTES', async () => {
     const response = await call('/api/admin/purchases', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Luis Seguimiento', phone: PHONE, variantId: 'capsules_10', quantity: 1, status: 'entregado' }),
+      body: JSON.stringify({
+        name: 'Luis Seguimiento',
+        phone: PHONE,
+        variantId: 'capsules_10',
+        quantity: 1,
+        paymentMethod: 'CASH',
+        status: 'entregado',
+      }),
     });
     const body = await json(response);
     customerId = body.customer.id;

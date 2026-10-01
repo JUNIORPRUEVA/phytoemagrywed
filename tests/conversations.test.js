@@ -374,7 +374,13 @@ describe('sin WhatsApp configurado el CRM no se rompe', () => {
     const purchase = await fetch(`${other.url}/api/admin/purchases`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: otherCookie },
-      body: JSON.stringify({ phone: '8095558888', variantId: 'capsules_5', quantity: 1, status: 'entregado' }),
+      body: JSON.stringify({
+        phone: '8095558888',
+        variantId: 'capsules_5',
+        quantity: 1,
+        paymentMethod: 'CASH',
+        status: 'entregado',
+      }),
     });
     expect(purchase.status).toBe(201);
 

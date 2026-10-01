@@ -109,7 +109,12 @@ export function proxyToCrm(req, res, url, options = {}) {
         path: `${url.pathname}${url.search}`,
         // El `host` del navegador (localhost:5173) se sustituye por el del CRM:
         // si no, el servidor vería un Host que no es el suyo.
-        headers: { ...req.headers, host: `${host}:${port}` },
+        headers: {
+          ...req.headers,
+          host: `${host}:${port}`,
+          'x-forwarded-host': req.headers.host ?? '',
+          'x-forwarded-proto': 'http',
+        },
       },
       (response) => {
         copyHeaders(res, response.headers);

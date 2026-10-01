@@ -22,6 +22,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { BUSINESS_COMPLETED_PURCHASE_STATUS, isCompletedPurchaseStatus } from './orders.mjs';
 
 /** Tabla de registros (nombre propio: no choca con otras apps del servidor). */
 export const TABLE = 'phytoemagry_items';
@@ -48,7 +49,7 @@ export const STATUSES = [
   'perdido',
 ];
 /** Estados que cierran el seguimiento (no piden recordatorio). */
-export const CLOSED_STATUSES = ['entregado', 'cancelado', 'perdido'];
+export const CLOSED_STATUSES = [BUSINESS_COMPLETED_PURCHASE_STATUS, 'cancelado', 'perdido'];
 
 /** Plantillas iniciales: se pueden editar y borrar desde el panel. */
 export const DEFAULT_MESSAGES = [
@@ -236,10 +237,10 @@ export function computeStats(items, timeZone) {
     hoy: withReminder.filter((item) => item.next_action_at <= today).length,
     atrasados: withReminder.filter((item) => item.next_action_at < today).length,
     pedidos: open.filter((item) => item.type === 'order_intent').length,
-    entregados: items.filter((item) => item.status === 'entregado').length,
+    entregados: items.filter((item) => isCompletedPurchaseStatus(item.status)).length,
     valorAbierto: open.reduce((sum, item) => sum + (Number(item.total) || 0), 0),
     valorCobrado: items
-      .filter((item) => item.status === 'entregado')
+      .filter((item) => isCompletedPurchaseStatus(item.status))
       .reduce((sum, item) => sum + (Number(item.total) || 0), 0),
   };
 }

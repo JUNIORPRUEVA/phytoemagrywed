@@ -40,6 +40,7 @@ let conversationId = '';
 let customerId = '';
 const sentLocations = [];
 let confirmAnswer = true;
+let inboundSeq = 0;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitFor(check, label, timeout = 4000) {
@@ -91,6 +92,8 @@ const whatsapp = {
 
 /** Mensaje entrante firmado (webhook real del CRM). */
 async function inbound(id, node) {
+  inboundSeq += 1;
+  const timestamp = Math.floor(Date.now() / 1000) + inboundSeq;
   const payload = {
     object: 'whatsapp_business_account',
     entry: [
@@ -101,7 +104,7 @@ async function inbound(id, node) {
             field: 'messages',
             value: {
               contacts: [{ profile: { name: 'Ana Ubicación' }, wa_id: PHONE }],
-              messages: [{ from: PHONE, id, timestamp: String(Math.floor(Date.now() / 1000)), ...node }],
+              messages: [{ from: PHONE, id, timestamp: String(timestamp), ...node }],
             },
           },
         ],

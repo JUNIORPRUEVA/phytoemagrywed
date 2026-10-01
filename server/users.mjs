@@ -3,7 +3,70 @@ import { promisify } from 'node:util';
 
 const derive = promisify(pbkdf2);
 
-export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT']);
+export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR']);
+export const ROLE_PERMISSIONS = Object.freeze({
+  ADMIN: Object.freeze(['*']),
+  AGENT: Object.freeze([
+    'clients.read',
+    'clients.update',
+    'customer.stage.update',
+    'customer.tags.assign',
+    'chats.read',
+    'chats.reply',
+    'chats.take_unassigned',
+    'chats.transfer_own',
+    'followups.read',
+    'followups.create',
+    'followups.update',
+    'sales.read',
+    'sales.create',
+    'sales.view_payment_method',
+    'orders.read',
+    'orders.create',
+    'orders.update_operational',
+    'delivery.manage',
+  ]),
+  DELIVERY: Object.freeze([
+    'clients.read',
+    'clients.update',
+    'customer.stage.update',
+    'customer.tags.assign',
+    'chats.read',
+    'chats.reply',
+    'chats.take_unassigned',
+    'chats.transfer_own',
+    'followups.read',
+    'followups.create',
+    'followups.update',
+    'sales.read',
+    'sales.create',
+    'sales.view_payment_method',
+    'orders.read',
+    'orders.create',
+    'orders.update_operational',
+    'delivery.manage',
+  ]),
+  OPERADOR: Object.freeze([
+    'clients.read',
+    'clients.update',
+    'customer.stage.update',
+    'customer.tags.assign',
+    'chats.read',
+    'chats.reply',
+    'chats.take_unassigned',
+    'chats.transfer_own',
+    'followups.read',
+    'followups.create',
+    'followups.update',
+    'sales.read',
+    'sales.create',
+    'sales.view_payment_method',
+    'orders.read',
+    'orders.create',
+    'orders.update_operational',
+    'delivery.manage',
+  ]),
+});
 export const SYSTEM_ACTOR = Object.freeze({
   id: 'SYSTEM',
   role: 'SYSTEM',
@@ -72,6 +135,16 @@ export function sanitizeUser(user) {
   return publicUser(user);
 }
 
+export function permissionsForRole(role) {
+  return ROLE_PERMISSIONS[String(role ?? '').toUpperCase()] ?? [];
+}
+
+export function hasPermission(userOrRole, permission) {
+  const role = typeof userOrRole === 'string' ? userOrRole : userOrRole?.role;
+  const permissions = permissionsForRole(role);
+  return permissions.includes('*') || permissions.includes(permission);
+}
+
 export function actorFromUser(user) {
   if (!user) return null;
   return {
@@ -98,11 +171,27 @@ export function createUserService(deps) {
   }
 
   async function ensureBootstrapAdmin(input = {}) {
-    const users = await db.list('crm_users', { limit: 1 });
-    if (users.length > 0) return { created: false };
     const username = usernameOf(input.username);
     const password = String(input.password ?? '');
     if (!username || !password) return { created: false, reason: 'not_configured' };
+
+    const existing = await byUsername(username);
+    if (existing) {
+      const updated = await updateUser(
+        existing.id,
+        {
+          password,
+          firstName: input.firstName ?? existing.first_name,
+          lastName: input.lastName ?? existing.last_name,
+          displayName: input.displayName ?? existing.display_name,
+          role: 'ADMIN',
+          active: true,
+        },
+        SYSTEM_ACTOR,
+      );
+      return { created: false, updated: updated.ok === true, user: updated.user ?? publicUser(existing) };
+    }
+
     const created = await createUser({
       username,
       password,
@@ -170,7 +259,12 @@ export function createUserService(deps) {
     const update = { updated_at: clock().toISOString() };
     if (patch.firstName !== undefined || patch.first_name !== undefined) update.first_name = short(patch.firstName ?? patch.first_name, 80);
     if (patch.lastName !== undefined || patch.last_name !== undefined) update.last_name = short(patch.lastName ?? patch.last_name, 80);
-    if (patch.displayName !== undefined || patch.display_name !== undefined) update.display_name = short(patch.displayName ?? patch.display_name, 120);
+    if (patch.displayName !== undefined || patch.display_name !== undefined) {
+      // Un nombre visible vacío dejaría el chat y la auditoría sin autor: se rechaza.
+      const displayName = short(patch.displayName ?? patch.display_name, 120);
+      if (!displayName) return { ok: false, error: 'invalid_user' };
+      update.display_name = displayName;
+    }
     if (patch.role !== undefined) update.role = nextRole;
     if (patch.active !== undefined) update.active = nextActive;
     if (patch.password !== undefined) {

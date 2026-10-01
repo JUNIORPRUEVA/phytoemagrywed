@@ -128,26 +128,26 @@ describe('catálogo: UNA sola fuente de precios', () => {
   });
 });
 
-describe('comprobante de compra (no «factura fiscal»)', () => {
+describe('factura de compra (no «factura fiscal»)', () => {
   it('enmascara el teléfono y no afirma nada médico', () => {
     expect(maskPhone('+18095550101')).toBe('+1809••• ••01');
     expect(maskPhone(null)).toBeNull();
     const order = { order_number: 'PE-ABC123', created_at: new Date().toISOString(), items: [], subtotal: 2500, discount: 0, total: 2500, currency: 'DOP', status: 'entregado' };
     const receipt = buildReceipt({ order, customer: { name: 'Ana', phone_e164: '+18095550101' } });
-    expect(receipt.document).toBe('Comprobante de compra');
+    expect(receipt.document).toBe('Factura de compra');
     expect(receipt.phone_masked).toBe('+1809••• ••01');
     expect(receipt.status_label).toBe('Entregado');
     expect(receipt.thanks).toMatch(/gracias/i);
-    // Se llama COMPROBANTE, nunca «factura»: solo se aclara que no es fiscal.
-    expect(receipt.document).toMatch(/comprobante/i);
-    expect(receipt.document).not.toMatch(/factura/i);
-    expect(receipt.note).toMatch(/no una factura fiscal/i);
+    // Se presenta como factura de compra, sin afirmar que sea factura fiscal.
+    expect(receipt.document).toMatch(/factura de compra/i);
+    expect(receipt.document).not.toMatch(/factura fiscal/i);
+    expect(receipt.note).not.toMatch(/factura fiscal/i);
   });
 
   it('el HTML se imprime bien y no filtra el teléfono completo', () => {
-    const order = buildOrder({ items: [{ variantId: 'capsules_10', quantity: 1 }] }).order;
+    const order = buildOrder({ items: [{ variantId: 'capsules_10', quantity: 1 }], paymentMethod: 'CASH' }).order;
     const html = receiptHtml(buildReceipt({ order, customer: { name: 'Ana', phone_e164: '+18095550101' } }));
-    expect(html).toContain('Comprobante de compra');
+    expect(html).toContain('Factura de compra');
     expect(html).toContain('RD$ 2,500');
     expect(html).not.toContain('+18095550101');
     expect(html).toContain('@media print');
@@ -165,12 +165,14 @@ describe('pedido desde la conversación', () => {
         conversationId,
         channel: 'whatsapp',
         items: [{ variantId: 'capsules_10', quantity: 2 }],
+        paymentMethod: 'TRANSFER',
         notes: 'Confirmó por WhatsApp',
       }),
     });
     const body = await json(response);
     expect(response.status).toBe(201);
     expect(body.order.total).toBe(5000);
+    expect(body.order.payment_method).toBe('TRANSFER');
     expect(body.order.order_number).toMatch(/^PE-[0-9A-F]{6}$/);
     expect(body.item.customer_id).toBe(customerId);
     expect(body.item.conversation_id).toBe(conversationId);
@@ -196,7 +198,7 @@ describe('pedido desde la conversación', () => {
     const response = await call(`/api/admin/orders/${orderId}/receipt`);
     const html = await text(response);
     expect(response.headers.get('content-type')).toContain('text/html');
-    expect(html).toContain('Comprobante de compra');
+    expect(html).toContain('Factura de compra');
     expect(html).toContain('PE-');
   });
 
@@ -224,7 +226,7 @@ describe('pedido desde la conversación', () => {
   it('rechaza un frasco que no está en el catálogo', async () => {
     const response = await call('/api/admin/orders', {
       method: 'POST',
-      body: JSON.stringify({ customerId, items: [{ variantId: 'capsules_999', quantity: 1 }] }),
+      body: JSON.stringify({ customerId, items: [{ variantId: 'capsules_999', quantity: 1 }], paymentMethod: 'CASH' }),
     });
     expect(response.status).toBe(422);
     expect((await json(response)).error).toMatch(/invalid_variant/);
@@ -236,7 +238,7 @@ describe('pedido desde la conversación', () => {
     const ajena = conversations.conversations.find((row) => row.customer?.phone_e164 === '+18095550202');
     const response = await call('/api/admin/orders', {
       method: 'POST',
-      body: JSON.stringify({ customerId, conversationId: ajena.id, items: [{ variantId: 'capsules_5', quantity: 1 }] }),
+      body: JSON.stringify({ customerId, conversationId: ajena.id, items: [{ variantId: 'capsules_5', quantity: 1 }], paymentMethod: 'CASH' }),
     });
     const body = await json(response);
     expect(response.status).toBe(201);

@@ -70,6 +70,7 @@ const crearPedido = (fecha) =>
       phone: PHONE,
       name: 'Cliente Frontera',
       items: [{ variantId: 'capsules_10', quantity: 1 }],
+      paymentMethod: 'CASH',
       date: fecha,
     }),
   });

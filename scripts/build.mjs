@@ -44,7 +44,10 @@ const ENV_KEYS = [
  */
 export async function loadEnv(options = {}) {
   const { includeLocal = false } = options;
-  const files = [path.join(ROOT, '.env'), ...(includeLocal ? [path.join(ROOT, '.env.local')] : [])];
+  const files = [
+    path.join(ROOT, '.env'),
+    ...(includeLocal ? [path.join(ROOT, '.env.local'), path.join(ROOT, 'assets', '.env')] : []),
+  ];
   /** @type {Record<string,string>} */
   const parsed = {};
   for (const file of files) {

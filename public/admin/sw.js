@@ -7,15 +7,17 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v3-multiuser';
+const VERSION = 'crm-v8-perfil-usuario';
 const SHELL = [
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',
   '/admin/app.js',
   '/admin/manifest.json',
+  '/admin/logo-phytoemagry.png',
   '/admin/icon-192.png',
   '/admin/icon-512.png',
+  '/admin/icon-maskable-512.png',
   '/admin/apple-touch-icon.png',
 ];
 

@@ -432,6 +432,7 @@ describe('la multimedia no rompe el flujo comercial', () => {
           customerId,
           conversationId,
           items: [{ variantId: 'capsules_10', quantity: 2 }],
+          paymentMethod: 'CASH',
           status: 'entregado',
         }),
       }),

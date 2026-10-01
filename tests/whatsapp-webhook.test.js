@@ -83,7 +83,7 @@ async function waitFor(check, timeout = 4000) {
 }
 
 /** Cuerpo del webhook tal y como lo envía Meta. */
-const inbound = (id, body, from = '18095551234', name = 'Ana Pérez') => ({
+const inbound = (id, body, from = '18095551234', name = 'Ana Pérez', timestamp = Math.floor(Date.now() / 1000)) => ({
   object: 'whatsapp_business_account',
   entry: [
     {
@@ -95,7 +95,7 @@ const inbound = (id, body, from = '18095551234', name = 'Ana Pérez') => ({
             messaging_product: 'whatsapp',
             metadata: { display_phone_number: '18095550000', phone_number_id: 'PN123' },
             contacts: [{ profile: { name }, wa_id: from }],
-            messages: [{ from, id, timestamp: '1760000000', type: 'text', text: { body } }],
+            messages: [{ from, id, timestamp: String(timestamp), type: 'text', text: { body } }],
           },
         },
       ],
@@ -348,7 +348,13 @@ describe('opt-out por WhatsApp (extremo a extremo)', () => {
       '/api/admin/purchases',
       {
         method: 'POST',
-        body: JSON.stringify({ phone: customer.phone_e164, variantId: 'capsules_5', quantity: 1, status: 'entregado' }),
+        body: JSON.stringify({
+          phone: customer.phone_e164,
+          variantId: 'capsules_5',
+          quantity: 1,
+          paymentMethod: 'CASH',
+          status: 'entregado',
+        }),
       },
       cookie,
     );

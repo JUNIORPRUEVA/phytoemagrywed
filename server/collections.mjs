@@ -120,6 +120,17 @@ export const COLLECTIONS = Object.freeze({
   audit: {
     indexed: { entity: 'text', entity_id: 'text', action: 'text', created_at: 'text' },
   },
+  customer_tags: {
+    indexed: { label: 'text', active: 'text', created_at: 'text' },
+    unique: ['label'],
+  },
+  customer_tag_assignments: {
+    indexed: { customer_id: 'text', tag_id: 'text', idempotency_key: 'text', created_at: 'text' },
+    unique: ['idempotency_key'],
+  },
+  customer_stage_history: {
+    indexed: { customer_id: 'text', created_at: 'text' },
+  },
   crm_users: {
     indexed: { username: 'text', role: 'text', active: 'text', created_at: 'text' },
     unique: ['username'],
@@ -188,6 +199,10 @@ function missingColumns(expected, actual) {
   return expected.filter((column) => !actual.includes(column));
 }
 
+function orderDirection(value) {
+  return String(value ?? '').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+}
+
 /** `undefined` nunca debe guardarse: el JSON no lo soporta. */
 function cleanValue(value) {
   if (value === undefined) return null;
@@ -250,6 +265,9 @@ async function createSqliteCollections(db, prefix) {
       actual: actualColumns,
     });
     db.exec(`CREATE INDEX IF NOT EXISTS ${table}_created ON ${table} (id)`);
+    for (const column of Object.keys(schema.indexed)) {
+      db.exec(`CREATE INDEX IF NOT EXISTS ${table}_i_${column} ON ${table} (${column})`);
+    }
     for (const column of schema.unique ?? []) {
       db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${table}_u_${column} ON ${table} (${column}) WHERE ${column} IS NOT NULL`);
     }
@@ -267,6 +285,7 @@ async function createSqliteCollections(db, prefix) {
       ),
       get: db.prepare(`SELECT doc FROM ${table} WHERE id = ?`),
       all: db.prepare(`SELECT doc FROM ${table}`),
+      ordered: new Map(),
       update: db.prepare(`UPDATE ${table} SET doc = ? WHERE id = ?`),
       columnUpdates,
       remove: db.prepare(`DELETE FROM ${table} WHERE id = ?`),
@@ -296,8 +315,19 @@ async function createSqliteCollections(db, prefix) {
       return null;
     },
     async list(name, options = {}) {
-      const docs = statementsFor(name)
-        .all.all()
+      const built = statementsFor(name);
+      const by = String(options.by ?? '');
+      const indexed = Object.prototype.hasOwnProperty.call(schemaOf(name).indexed, by);
+      let statement = built.all;
+      if (indexed) {
+        const key = `${by}:${orderDirection(options.order)}`;
+        if (!built.ordered.has(key)) {
+          built.ordered.set(key, db.prepare(`SELECT doc FROM ${built.table} ORDER BY ${by} ${orderDirection(options.order)}`));
+        }
+        statement = built.ordered.get(key);
+      }
+      const docs = statement
+        .all()
         .map((row) => JSON.parse(row.doc));
       return sortAndLimit(docs, options);
     },
@@ -366,6 +396,9 @@ async function createPostgresCollections(pool, prefix) {
         `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_u_${column} ON ${table} (${column}) WHERE ${column} IS NOT NULL`,
       );
     }
+    for (const column of Object.keys(schema.indexed)) {
+      await pool.query(`CREATE INDEX IF NOT EXISTS ${table}_i_${column} ON ${table} (${column})`);
+    }
     ready.add(name);
   };
 
@@ -401,7 +434,11 @@ async function createPostgresCollections(pool, prefix) {
     },
     async list(name, options = {}) {
       await ensure(name);
-      const result = await pool.query(`SELECT doc FROM ${prefix}${name}`);
+      const by = String(options.by ?? '');
+      const indexed = Object.prototype.hasOwnProperty.call(schemaOf(name).indexed, by);
+      const result = indexed
+        ? await pool.query(`SELECT doc FROM ${prefix}${name} ORDER BY ${by} ${orderDirection(options.order)}`)
+        : await pool.query(`SELECT doc FROM ${prefix}${name}`);
       return sortAndLimit(result.rows.map((row) => row.doc), options);
     },
     async update(name, id, patch) {
