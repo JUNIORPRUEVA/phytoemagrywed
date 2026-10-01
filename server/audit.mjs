@@ -28,9 +28,31 @@ export const AUDIT_ACTIONS = Object.freeze([
   // Recuperación EXCEPCIONAL de un envío ambiguo (SEND_UNKNOWN): quién lo revisó
   // y qué decidió. No es una acción normal del vendedor y queda registrado.
   'message.reconciled',
+  /*
+   * UBICACIONES: enviar una ubicación y COMPARTIRLA con otro chat. Compartir es
+   * una acción sensible (la ubicación puede ser el domicilio de alguien), así que
+   * queda registrada con origen y destino —siempre sin coordenadas—.
+   */
+  'location.sent',
+  'location.shared',
   'customer.status_changed',
   'customer.opt_out',
   'customer.opt_in',
+  /*
+   * RESPUESTAS RÁPIDAS del panel (los textos que el operador reutiliza en el
+   * chat). Se registra el alta, la edición y el borrado, con el NOMBRE como
+   * resumen: el cuerpo del texto no se guarda en la traza (no aporta nada al
+   * rastro y suele ser largo).
+   */
+  'quick_reply_created',
+  'quick_reply_updated',
+  'quick_reply_deleted',
+  'inventory_added',
+  'inventory_adjusted',
+  'inventory_sale',
+  'inventory_sale_reversed',
+  'product_cost_changed',
+  'sale_price_changed',
 ]);
 
 function newId() {

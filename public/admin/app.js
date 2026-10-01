@@ -27,6 +27,9 @@
     followups: null,
     hoy: null,
     catalog: [],
+    inventory: null,
+    salesReport: null,
+    salesReportPeriod: 'hoy',
     whatsapp: null,
     templates: [],
     stats: null,
@@ -100,6 +103,7 @@
     chat: svg('<path d="M21 11.6a8 8 0 0 1-8 8H8.2L3 22.5l1.3-4.4A8 8 0 1 1 21 11.6z"/>'),
     users: svg('<path d="M15.5 20v-1.4a4 4 0 0 0-4-4H7.2a4 4 0 0 0-4 4V20"/><circle cx="9.3" cy="7.6" r="3.1"/><path d="M17.4 15.4a3.9 3.9 0 0 1 2.6 3.7V20M15.8 4.6a3.1 3.1 0 0 1 0 6"/>'),
     box: svg('<path d="M20.5 8.4v7.2L12 20.4l-8.5-4.8V8.4L12 3.6z"/><path d="M3.5 8.4 12 13l8.5-4.6M12 13v7.4"/>'),
+    chart: svg('<path d="M4 19.5h16"/><path d="M7 16v-5M12 16V6.5M17 16v-8"/>'),
     bell: svg('<path d="M18 15.2V10a6 6 0 1 0-12 0v5.2L4 18.6h16z"/><path d="M10 21.4h4"/>'),
     note: svg('<path d="M8 3.5h8a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/><path d="M9.2 8h5.6M9.2 12h5.6M9.2 16h3.4"/>'),
     /* Ajustes = mandos que se deslizan (un engranaje aquí se confundía con el sol de Hoy). */
@@ -244,6 +248,7 @@
           followups: state.followups,
           hoy: state.hoy,
           catalog: state.catalog,
+          inventory: state.inventory,
           whatsapp: state.whatsapp,
           stats: state.stats,
           at: Date.now(),
@@ -340,12 +345,14 @@
       state.messages = data.messages ?? [];
       state.customers = data.customers ?? [];
       state.conversations = data.conversations ?? [];
+      state.wa.counts = data.conversationCounts ?? state.wa.counts;
       for (const row of state.conversations) {
         if (row.last_message?.direction === 'inbound') state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
       }
       state.followups = data.followups ?? null;
       state.hoy = data.hoy ?? null;
       state.catalog = data.catalog ?? [];
+      state.inventory = data.inventory ?? null;
       state.whatsapp = data.whatsapp ?? null;
       state.stats = data.stats ?? null;
       state.statuses = data.statuses ?? [];
@@ -374,6 +381,7 @@
         state.followups = snapshot.followups ?? null;
         state.hoy = snapshot.hoy ?? null;
         state.catalog = snapshot.catalog ?? [];
+        state.inventory = snapshot.inventory ?? null;
         state.whatsapp = snapshot.whatsapp ?? null;
         state.stats = snapshot.stats ?? null;
         state.scheduled = snapshot.scheduled ?? null;
@@ -484,6 +492,9 @@
       total: item?.total ? money(item.total, item.currency) : '',
       negocio: NEGOCIO,
     };
+    // `{telefono}` solo existe si HAY teléfono: sin dato, la variable se queda
+    // escrita tal cual en vez de rellenarse con un «null» o con algo inventado.
+    if (item?.phone) values.telefono = String(item.phone);
     return String(body)
       .replaceAll(/\{(\w+)\}/g, (match, key) => (key in values ? String(values[key]) : match))
       .replace(/\s*\(\s*\)/g, '') // "()" de un dato que no existe
@@ -520,6 +531,8 @@
     renderWhatsapp();
     renderClientes();
     renderPedidos();
+    renderProductos();
+    renderReportes();
     renderSeguimientos();
     renderMensajes();
     renderAjustes();
@@ -529,6 +542,7 @@
 
   const label = (type) => (type === 'order_intent' ? 'Pedido' : 'Contacto');
   const statusLabel = (value) => state.statuses.find((entry) => entry.value === value)?.label ?? value;
+  const moneyCents = (value) => money((Number(value) || 0) / 100);
 
   function renderStats() {
     const hoy = state.hoy ?? {};
@@ -569,6 +583,146 @@
           </button>`,
       )
       .join('');
+  }
+
+  function renderProductos() {
+    const box = $('#inventory-view');
+    if (!box) return;
+    const inv = state.inventory;
+    if (!inv) {
+      box.innerHTML = '<div class="card"><p class="card__text">Cargando inventario…</p></div>';
+      if (!state.inventoryLoading && state.online) loadInventory().catch(() => {});
+      return;
+    }
+    const movements = inv.movements ?? [];
+    box.innerHTML = `
+      <div class="card">
+        <p class="card__title">${escapeHtml(inv.product?.name ?? 'Phytoemagry')}</p>
+        <dl class="facts">
+          <div class="fact"><dt>Stock</dt><dd>${escapeHtml(inv.stock ?? 0)} cápsulas</dd></div>
+          <div class="fact"><dt>Costo vigente</dt><dd>${moneyCents(inv.product?.current_unit_cost_cents ?? 0)} / cápsula</dd></div>
+          <div class="fact"><dt>Valor referencial</dt><dd>${moneyCents(inv.inventory_value_cents ?? 0)}</dd></div>
+          <div class="fact"><dt>Control activo</dt><dd>${inv.initialized ? 'sí' : 'sin inventario inicial'}</dd></div>
+        </dl>
+      </div>
+      <div class="card">
+        <p class="card__title">Presentaciones</p>
+        <dl class="facts">
+          ${(inv.presentations ?? [])
+            .map(
+              (item) => `<div class="fact"><dt>${escapeHtml(item.name)}</dt><dd>${money(item.price)} · ${escapeHtml(
+                item.capsule_quantity,
+              )} cáps. · costo ${moneyCents(item.presentation_cost_cents)}</dd></div>`,
+            )
+            .join('')}
+        </dl>
+      </div>
+      <form class="card" id="inventory-restock">
+        <p class="card__title">Agregar inventario</p>
+        <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
+        <label class="field"><span class="field__label">Costo unitario</span><input class="field__input" name="unitCost" type="number" min="0" step="0.01" value="${escapeHtml(
+          ((inv.product?.current_unit_cost_cents ?? 0) / 100).toFixed(2),
+        )}" required /></label>
+        <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" value="Reposición" /></label>
+        <button class="btn btn--primary btn--block" type="submit">Agregar stock</button>
+      </form>
+      <form class="card" id="inventory-cost">
+        <p class="card__title">Costo vigente</p>
+        <label class="field"><span class="field__label">Costo por cápsula</span><input class="field__input" name="unitCost" type="number" min="0" step="0.01" value="${escapeHtml(
+          ((inv.product?.current_unit_cost_cents ?? 0) / 100).toFixed(2),
+        )}" required /></label>
+        <button class="btn btn--ghost btn--block" type="submit">Actualizar costo</button>
+      </form>
+      <form class="card" id="inventory-adjust">
+        <p class="card__title">Ajuste manual</p>
+        <label class="field"><span class="field__label">Tipo</span><select class="field__select" name="direction"><option value="in">Entrada</option><option value="out">Salida</option></select></label>
+        <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
+        <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" value="Ajuste manual" /></label>
+        <button class="btn btn--ghost btn--block" type="submit">Guardar ajuste</button>
+      </form>
+      <div class="card">
+        <p class="card__title">Movimientos recientes</p>
+        <dl class="facts">
+          ${
+            movements.length
+              ? movements
+                  .slice(0, 12)
+                  .map(
+                    (row) =>
+                      `<div class="fact"><dt>${escapeHtml(fmtWhen(row.created_at))} · ${escapeHtml(row.type)}</dt><dd>${escapeHtml(
+                        row.quantity_delta,
+                      )} cápsulas${row.reason ? ` · ${escapeHtml(row.reason)}` : ''}</dd></div>`,
+                  )
+                  .join('')
+              : '<div class="fact"><dt>Sin movimientos</dt><dd>Agrega inventario para activar control estricto de stock.</dd></div>'
+          }
+        </dl>
+      </div>`;
+  }
+
+  function renderReportes() {
+    const box = $('#sales-report-view');
+    if (!box) return;
+    $('#sales-report-period')
+      ?.querySelectorAll('[data-report-period]')
+      .forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.reportPeriod === state.salesReportPeriod)));
+    const report = state.salesReport;
+    if (!report) {
+      box.innerHTML = '<div class="card"><p class="card__text">Cargando reporte…</p></div>';
+      if (!state.salesReportLoading && state.online) loadSalesReport(state.salesReportPeriod).catch(() => {});
+      return;
+    }
+    const s = report.summary ?? {};
+    box.innerHTML = `
+      <div class="card">
+        <p class="card__title">Utilidad</p>
+        <dl class="facts">
+          <div class="fact"><dt>Ventas entregadas</dt><dd>${escapeHtml(s.orders ?? 0)}</dd></div>
+          <div class="fact"><dt>Ingresos productos</dt><dd>${moneyCents(s.product_revenue_cents)}</dd></div>
+          <div class="fact"><dt>Delivery cobrado</dt><dd>${moneyCents(s.delivery_revenue_cents)}</dd></div>
+          <div class="fact"><dt>Total cobrado</dt><dd>${moneyCents(s.total_collected_cents)}</dd></div>
+          <div class="fact"><dt>Costo producto</dt><dd>${moneyCents(s.product_cost_cents)}</dd></div>
+          <div class="fact"><dt>Utilidad bruta producto</dt><dd>${moneyCents(s.gross_product_profit_cents)}</dd></div>
+          <div class="fact"><dt>Cápsulas vendidas</dt><dd>${escapeHtml(s.capsules_sold ?? 0)}</dd></div>
+        </dl>
+      </div>
+      <div class="card">
+        <p class="card__title">Por presentación</p>
+        <dl class="facts">
+          ${
+            (report.byPresentation ?? []).length
+              ? report.byPresentation
+                  .map(
+                    (row) =>
+                      `<div class="fact"><dt>${escapeHtml(row.presentation)}</dt><dd>${escapeHtml(row.units)} frasco(s) · ${escapeHtml(
+                        row.capsules,
+                      )} cáps. · utilidad ${moneyCents(row.gross_product_profit_cents)}</dd></div>`,
+                  )
+                  .join('')
+              : '<div class="fact"><dt>Sin ventas</dt><dd>No hay entregas en este período.</dd></div>'
+          }
+        </dl>
+      </div>
+      <div class="card">
+        <p class="card__title">Ventas</p>
+        <dl class="facts">
+          ${
+            (report.sales ?? []).length
+              ? report.sales
+                  .slice(0, 20)
+                  .map(
+                    (row) =>
+                      `<div class="fact"><dt>${escapeHtml(row.order_number ?? row.id)} · ${escapeHtml(fmtWhen(row.date))}</dt><dd>${escapeHtml(
+                        row.presentation,
+                      )} · cobrado ${moneyCents(row.total_collected_cents)} · utilidad ${moneyCents(
+                        row.gross_product_profit_cents,
+                      )}</dd></div>`,
+                  )
+                  .join('')
+              : '<div class="fact"><dt>Sin ventas</dt><dd>No hay detalle para mostrar.</dd></div>'
+          }
+        </dl>
+      </div>`;
   }
 
   function itemCard(item) {
@@ -1415,6 +1569,20 @@
           </span>
           <span class="audio__kind" aria-hidden="true">${tipo === 'voice' ? ICONS.mic : ICONS.audio}</span>
         </span>`;
+    } else if (tipo === 'location') {
+      /*
+       * UBICACIÓN: una pieza visual propia (no pasa por multimedia). Si el mensaje
+       * trae coordenadas legibles se puede abrir el mapa y reutilizarla; si no, se
+       * dice sin inventar nada.
+       */
+      soloArchivo = true;
+      cuerpo = message.location
+        ? locationChip(message.location)
+        : `<span class="loc loc--empty">
+             <span class="loc__head"><span class="loc__pin" aria-hidden="true">📍</span>
+               <span class="loc__title">Ubicación compartida</span></span>
+             <span class="loc__meta">No se pudieron leer las coordenadas</span>
+           </span>`;
     } else if (tipo !== 'text' && tipo !== 'button' && tipo !== 'interactive') {
       const falló = media?.status === 'FAILED' || Boolean(media?.errorCode);
       const cargando = Boolean(media) && !mediaListo && !falló;
@@ -1646,7 +1814,7 @@
       </button>
       <button class="conv-select" data-conv-select="${escapeHtml(row.id)}" type="button" aria-pressed="${selected}" aria-label="${
         selected ? 'Quitar de la selección' : 'Seleccionar conversación'
-      }">${selected ? '✓' : ''}</button>
+      }">${selected ? 'Sel' : ''}</button>
     </div>`;
   }
 
@@ -2172,26 +2340,36 @@
   /** Elegir un archivo del teléfono y PREVISUALIZARLO (nunca se envía al elegir). */
   function openAttachSheet(conversationId) {
     if (!conversationId) return;
-    if (!mediaReady()) {
-      openSheet(
-        'Adjuntar',
-        `<p class="rule rule--warn">La multimedia no está activa en el servidor: faltan las variables del
-         almacén de archivos (R2) o las credenciales de WhatsApp. Los mensajes de texto siguen funcionando.</p>`,
-      );
-      return;
-    }
+    /*
+     * Una UBICACIÓN no necesita almacén de archivos: se puede enviar aunque la
+     * multimedia esté apagada. El resto (imagen/audio) sí necesita R2.
+     */
+    const soloUbicacion = !mediaReady();
     openSheet(
       'Adjuntar',
       `
-      <p class="view__hint">Nada se envía al elegir: primero lo ves y después lo mandas.</p>
+      ${
+        soloUbicacion
+          ? `<p class="rule rule--warn">La multimedia no está activa en el servidor: faltan las variables del
+             almacén de archivos (R2) o las credenciales de WhatsApp. Los mensajes de texto y las ubicaciones siguen funcionando.</p>`
+          : '<p class="view__hint">Nada se envía al elegir: primero lo ves y después lo mandas.</p>'
+      }
       <div class="menu-list">
-        <button class="menu-item" id="attach-image" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.image}</span>
-          <span><strong>Imagen</strong><small>JPG, PNG o WebP · hasta 5 MB</small></span>
-        </button>
-        <button class="menu-item" id="attach-audio" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.audio}</span>
-          <span><strong>Audio</strong><small>Un archivo de audio · hasta 16 MB</small></span>
+        ${
+          soloUbicacion
+            ? ''
+            : `<button class="menu-item" id="attach-image" type="button">
+                 <span class="menu-item__icon" aria-hidden="true">${ICONS.image}</span>
+                 <span><strong>Imagen</strong><small>JPG, PNG o WebP · hasta 5 MB</small></span>
+               </button>
+               <button class="menu-item" id="attach-audio" type="button">
+                 <span class="menu-item__icon" aria-hidden="true">${ICONS.audio}</span>
+                 <span><strong>Audio</strong><small>Un archivo de audio · hasta 16 MB</small></span>
+               </button>`
+        }
+        <button class="menu-item" id="attach-location" type="button">
+          <span class="menu-item__icon" aria-hidden="true">📍</span>
+          <span><strong>Ubicación</strong><small>Elegir, previsualizar y confirmar antes de enviar</small></span>
         </button>
       </div>
       <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
@@ -2199,6 +2377,14 @@
       `,
       { variant: 'menu' },
     );
+
+    $('#attach-location').addEventListener('click', () => {
+      const customer = waCustomer(state.conversations.find((row) => row.id === conversationId) ?? {});
+      closeSheet();
+      openSendLocation({ conversationId, customerId: customer?.id ?? null });
+    });
+
+    if (soloUbicacion) return;
 
     const pick = (inputSelector, kind) => {
       const input = $(inputSelector);
@@ -2573,6 +2759,38 @@
     });
   }
 
+  async function runWaBulk(action) {
+    const ids = [...state.wa.selected];
+    if (!ids.length) return;
+    try {
+      const result = await api('/api/admin/conversations/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ action, ids }),
+      });
+      if (action === 'message_preview') {
+        const blocked = result.results.filter((row) => row.reason === 'do_not_contact').length;
+        const free = result.results.filter((row) => row.reason === 'free_text_24h').length;
+        const template = result.results.filter((row) => row.reason === 'template_required').length;
+        openSheet(
+          'Mensaje a varios',
+          `<dl class="facts">
+            <div class="fact"><dt>Seleccionados</dt><dd>${result.selected}</dd></div>
+            <div class="fact"><dt>Elegibles 24 h</dt><dd>${free}</dd></div>
+            <div class="fact"><dt>Requieren plantilla</dt><dd>${template}</dd></div>
+            <div class="fact"><dt>Excluidos no contactar</dt><dd>${blocked}</dd></div>
+          </dl>
+          <p class="rule">Esta vista solo valida destinatarios. No se envía nada desde aquí.</p>`,
+        );
+        return;
+      }
+      toast(`${result.processed} procesados${result.failed ? `, ${result.failed} fallaron` : ''}`);
+      state.wa.selected.clear();
+      await refreshWhatsapp();
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar la acción');
+    }
+  }
+
   /**
    * Refresco ligero (lo usa el botón ⟳ y el sondeo). Solo vuelve a pintar lo que
    * de verdad ha cambiado, para no borrar lo que una persona está escribiendo.
@@ -2780,6 +2998,15 @@
                 .join('')}</div>`
             : '<p class="view__hint">Todavía no tiene pedidos registrados.</p>'
         }
+      </div>
+
+      <!--
+        UBICACIONES del cliente: la última a la vista y el resto bajo «Ver historial».
+        Es una sección discreta, no un sistema de direcciones (§13).
+      -->
+      <div class="field">
+        <span class="field__label">Ubicaciones</span>
+        <div id="customer-locations">${customerLocationsHtml(profile.locations ?? [])}</div>
       </div>
 
       <div class="field">
@@ -3061,7 +3288,7 @@
   const catalogOf = (variantId) => state.catalog.find((entry) => entry.id === variantId) ?? null;
 
   /** Total del pedido calculado con el catálogo del SERVIDOR (no hay precios aquí). */
-  function orderTotals(lines, discount = 0) {
+  function orderTotals(lines, discount = 0, deliveryFee = 0) {
     const items = lines
       .map((line) => {
         const variant = catalogOf(line.variantId);
@@ -3072,7 +3299,9 @@
       .filter(Boolean);
     const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
     const applied = Math.min(Math.max(0, Number(discount) || 0), subtotal);
-    return { items, subtotal, discount: applied, total: subtotal - applied };
+    // El delivery es un importe APARTE (nunca una línea de producto falsa).
+    const fee = Math.max(0, Math.trunc(Number(deliveryFee) || 0));
+    return { items, subtotal, discount: applied, deliveryFee: fee, total: subtotal - applied + fee };
   }
 
   function openChatActions(customerId, conversationId) {
@@ -3087,6 +3316,10 @@
       customerName(customer),
       `
       <div class="menu-list">
+        <button class="menu-item" data-quick-replies="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
+          <span><strong>Respuesta rápida</strong></span>
+        </button>
         <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
@@ -3115,11 +3348,268 @@
     );
   }
 
+  // ---------------------------------------------------- respuestas r?pidas
+  /*
+   * Las respuestas rápidas son los MISMOS textos guardados del panel (una sola
+   * lista, un solo sitio donde viven): aquí se abren desde la conversación, para
+   * no obligar a salir del chat ni a pasar por la pantalla de administración.
+   *
+   * LA REGLA QUE NO SE ROMPE: elegir una respuesta NUNCA envía nada. Solo deja el
+   * texto escrito en el compositor, con el cursor puesto, para que una persona lo
+   * revise, lo cambie (nombre, cantidad, precio…) y pulse Enviar. El envío sigue
+   * pasando por las mismas reglas de siempre: ventana de 24 h, opt-out y
+   * plantillas aprobadas. Una respuesta rápida NO es una plantilla de Meta.
+   */
+  const QR_PREVIEW = 92;
+  let qrQuery = '';
+  let qrMenuId = null;
+
+  /** Orden estable y predecible: el que el negocio fijó con `position`. */
+  const quickRepliesAll = () =>
+    (state.messages ?? [])
+      .slice()
+      .sort((a, b) => (Number(a.position) || 0) - (Number(b.position) || 0));
+
+  const quickReplyById = (id) => (state.messages ?? []).find((row) => row.id === id) ?? null;
+
+  /** Una línea como mucho: el texto largo no cabe en una fila compacta. */
+  const qrPreview = (body) => {
+    const flat = String(body ?? '').replace(/\s+/g, ' ').trim();
+    return flat.length > QR_PREVIEW ? `${flat.slice(0, QR_PREVIEW)}…` : flat;
+  };
+
+  /** Filtra por NOMBRE y por TEXTO: escribir "precio" encuentra lo que habla de precio. */
+  function qrFiltered() {
+    const needle = qrQuery.trim().toLowerCase();
+    const rows = quickRepliesAll();
+    if (!needle) return rows;
+    return rows.filter((row) => `${row.name ?? ''} ${row.body ?? ''}`.toLowerCase().includes(needle));
+  }
+
+  function qrRowHtml(row) {
+    const open = qrMenuId === row.id;
+    const nombre = escapeHtml(row.name ?? '');
+    return `<div class="qr__row${open ? ' qr__row--open' : ''}">
+      <button class="qr__pick" data-qr-insert="${escapeHtml(row.id)}" type="button">
+        <span class="qr__name">${nombre}</span>
+        <span class="qr__text">${escapeHtml(qrPreview(row.body))}</span>
+      </button>
+      <button class="qr__more" data-qr-menu="${escapeHtml(row.id)}" type="button"
+        aria-label="Opciones de ${nombre}" aria-expanded="${open ? 'true' : 'false'}">
+        <span aria-hidden="true">⋯</span>
+      </button>
+      ${
+        open
+          ? `<div class="qr__menu">
+        <button class="qr__menu-item" data-qr-edit="${escapeHtml(row.id)}" type="button">Editar</button>
+        <button class="qr__menu-item qr__menu-item--danger" data-qr-del="${escapeHtml(
+          row.id,
+        )}" type="button">Eliminar</button>
+      </div>`
+          : ''
+      }
+    </div>`;
+  }
+
+  function renderQuickReplies() {
+    const list = $('#qr-list');
+    if (!list) return;
+    const rows = qrFiltered();
+    if (rows.length) {
+      list.innerHTML = rows.map(qrRowHtml).join('');
+      return;
+    }
+    // Vacío de verdad (no hay ninguna) o vacío por la búsqueda: se distinguen.
+    list.innerHTML = (state.messages ?? []).length
+      ? emptyState('Ninguna respuesta coincide con la búsqueda.')
+      : `<div class="qr__empty">
+          <p class="view__hint">Aún no tienes respuestas rápidas.</p>
+          <button class="btn btn--primary btn--sm" data-qr-new type="button">+ Crear la primera</button>
+        </div>`;
+  }
+
+  /** El selector: buscador, lista compacta y el «+» para crear. Nunca sale del chat. */
+  function openQuickReplies({ keep = false } = {}) {
+    if (!keep) {
+      qrQuery = '';
+      qrMenuId = null;
+    }
+    openSheet(
+      'Respuestas rápidas',
+      `<div class="qr">
+        <div class="qr__top">
+          <input class="field__input qr__search" id="qr-search" type="search" autocomplete="off"
+            placeholder="Buscar respuestas" aria-label="Buscar respuestas" value="${escapeHtml(qrQuery)}" />
+          <button class="icon-btn qr__new" data-qr-new type="button" aria-label="Crear respuesta rápida"
+            title="Crear respuesta rápida">${ICONS.plus}</button>
+        </div>
+        <div class="qr__list" id="qr-list"></div>
+      </div>`,
+      { variant: 'menu' },
+    );
+    renderQuickReplies();
+    /*
+     * La lista se pinta AL INSTANTE con lo que hay en memoria y se refresca
+     * detrás: si otra persona creó o borró una respuesta desde otro equipo, aquí
+     * aparece sin recargar la página. Si el refresco falla, se queda la copia que
+     * ya había (abrir el selector nunca puede quedarse en blanco por la red).
+     */
+    api('/api/admin/messages')
+      .then((data) => {
+        if (!Array.isArray(data?.messages)) return;
+        state.messages = data.messages;
+        renderQuickReplies();
+      })
+      .catch(() => {
+        /* sin conexión: la lista que ya estaba se mantiene */
+      });
+    const search = $('#qr-search');
+    search?.addEventListener('input', (event) => {
+      qrQuery = event.target.value ?? '';
+      qrMenuId = null;
+      renderQuickReplies();
+    });
+    /*
+     * En escritorio el foco entra en el buscador (se escribe y se filtra). En
+     * móvil NO se abre el teclado al mirar la lista: el teclado aparece al
+     * elegir la respuesta, que es cuando de verdad hace falta.
+     */
+    if (typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 900px)').matches) search?.focus();
+  }
+
+  /** Alta o edición, dentro de la MISMA hoja: el chat nunca se pierde de vista. */
+  function openQuickReplyForm(id = null) {
+    const row = id ? quickReplyById(id) : null;
+    if (id && !row) {
+      toast('Esa respuesta ya no existe');
+      openQuickReplies();
+      return;
+    }
+    openSheet(
+      row ? 'Editar respuesta' : 'Nueva respuesta',
+      `<label class="field">
+        <span class="field__label">Nombre</span>
+        <input class="field__input" id="qr-name" maxlength="60" value="${escapeHtml(
+          row?.name ?? '',
+        )}" placeholder="Modo de uso" />
+      </label>
+      <label class="field">
+        <span class="field__label">Mensaje</span>
+        <textarea class="field__area" id="qr-body" maxlength="1200" placeholder="Hola {nombre}, …">${escapeHtml(
+          row?.body ?? '',
+        )}</textarea>
+      </label>
+      <p class="view__hint">Variables: {nombre} y {telefono} se rellenan con los datos del cliente de ESTA conversación.</p>
+      <div class="qr__form-actions">
+        <button class="btn btn--ghost" data-qr-back type="button">Cancelar</button>
+        <button class="btn btn--primary" id="qr-save" type="button">${row ? 'Guardar cambios' : 'Crear respuesta'}</button>
+      </div>`,
+      { variant: 'menu' },
+    );
+    $('#qr-name')?.focus();
+    $('#qr-save')?.addEventListener('click', async (event) => {
+      const name = $('#qr-name').value.trim();
+      const texto = $('#qr-body').value.trim();
+      if (!name || !texto) {
+        toast('Hacen falta nombre y mensaje');
+        return;
+      }
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          const result = await api('/api/admin/messages', {
+            method: 'POST',
+            body: JSON.stringify({ id: row?.id, name, body: texto, position: row?.position }),
+          });
+          state.messages = result.messages ?? state.messages;
+          renderMensajes();
+          toast(row ? 'Respuesta actualizada' : 'Respuesta creada');
+          openQuickReplies({ keep: true });
+        } catch {
+          toast('No se pudo guardar la respuesta');
+        }
+      });
+    });
+  }
+
+  /** Borrar: confirmación corta y nada más. No toca mensajes, clientes ni pedidos. */
+  function quickReplyDelete(id) {
+    const row = quickReplyById(id);
+    if (!row) {
+      openQuickReplies();
+      return;
+    }
+    openSheet(
+      'Eliminar respuesta',
+      `<p class="view__hint">¿Eliminar «${escapeHtml(
+        row.name ?? '',
+      )}»? Los mensajes que ya enviaste no se tocan.</p>
+      <div class="qr__form-actions">
+        <button class="btn btn--ghost" data-qr-back type="button">Cancelar</button>
+        <button class="btn btn--danger" id="qr-delete" type="button">Eliminar</button>
+      </div>`,
+      { variant: 'menu' },
+    );
+    $('#qr-delete')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Eliminando…', async () => {
+        try {
+          const result = await api(`/api/admin/messages/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          state.messages = result.messages ?? state.messages;
+          renderMensajes();
+          toast('Respuesta eliminada');
+          openQuickReplies();
+        } catch {
+          toast('No se pudo eliminar la respuesta');
+        }
+      });
+    });
+  }
+
+  /**
+   * Insertar la respuesta en el compositor. NO ENVÍA NADA: escribe el texto y
+   * deja el cursor puesto. Si ya había algo escrito no se pisa nada: se inserta
+   * donde estaba el cursor. El envío lo decide una persona con el botón Enviar.
+   */
+  function insertQuickReply(id) {
+    const row = quickReplyById(id);
+    if (!row) {
+      toast('Esa respuesta ya no existe');
+      closeSheet();
+      return;
+    }
+    const area = $('#wa-text');
+    if (!area) {
+      // Fuera de la ventana de 24 h no hay campo de texto libre (solo plantillas
+      // aprobadas): una respuesta rápida NO puede saltarse esa regla.
+      toast('Ahora mismo solo se pueden enviar plantillas aprobadas');
+      closeSheet();
+      return;
+    }
+    const customer = state.wa?.chat?.customer ?? null;
+    // Solo datos REALES de esta conversación: si no hay teléfono, `{telefono}` se
+    // queda escrita tal cual en vez de rellenarse con algo inventado.
+    const texto = fillTemplate(row.body, { name: customer?.name ?? null, phone: customer?.phone_e164 ?? null });
+    const corte = typeof area.selectionStart === 'number' ? area.selectionStart : area.value.length;
+    const fin = typeof area.selectionEnd === 'number' ? area.selectionEnd : area.value.length;
+    const antes = area.value.slice(0, corte);
+    const despues = area.value.slice(fin);
+    const separador = antes && !antes.endsWith('\n') ? '\n' : '';
+    const escrito = `${antes}${separador}${texto}`;
+    area.value = `${escrito}${despues}`;
+    state.wa.draft = area.value;
+    // Se avisa al compositor como si lo hubiera escrito una persona: así decide
+    // él si toca micrófono o Enviar y ajusta la altura.
+    if (typeof window.Event === 'function') area.dispatchEvent(new window.Event('input'));
+    closeSheet();
+    area.focus();
+    if (typeof area.setSelectionRange === 'function') area.setSelectionRange(escrito.length, escrito.length);
+    toast('Respuesta lista para revisar y enviar');
+  }
+
   /**
    * Formulario de pedido (nuevo o edición). El catálogo y los precios vienen del
    * servidor: el panel solo elige el frasco y la cantidad.
    */
-  function openOrderForm({ customerId, conversationId = '', orderId = null, order = null } = {}) {
+  async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null } = {}) {
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
       : null;
@@ -3128,6 +3618,8 @@
       toast('El catálogo todavía no está disponible');
       return;
     }
+    // Ubicaciones del cliente: se piden antes de pintar para poder ofrecerlas (§9).
+    const customerLocations = customerId ? await fetchCustomerLocations(customerId) : [];
     /** @type {Array<{variantId: string, quantity: number}>} */
     let lines = order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
       { variantId: catalog[0].id, quantity: 1 },
@@ -3164,19 +3656,16 @@
           order?.discount ?? 0
         }" />
       </label>
+      <div class="field">
+        <span class="field__label">Ubicación de entrega (opcional)</span>
+        <div id="order-loc"></div>
+      </div>
       <label class="field">
-        <span class="field__label">Entrega · ciudad</span>
-        <input class="field__input" id="order-city" placeholder="Higüey" value="${escapeHtml(
-          order?.delivery?.city ?? customer?.location ?? '',
-        )}" />
+        <span class="field__label">Costo de delivery (opcional, RD$)</span>
+        <input class="field__input" id="order-fee" type="number" min="0" step="1" value="${
+          order?.delivery_fee ?? order?.delivery?.fee ?? ''
+        }" placeholder="0" />
       </label>
-      <label class="field">
-        <span class="field__label">Entrega · dirección o nota</span>
-        <input class="field__input" id="order-address" placeholder="Calle, referencia o «retira en el negocio»" value="${escapeHtml(
-          order?.delivery?.address ?? '',
-        )}" />
-      </label>
-      <p class="view__hint">El costo de envío se deja pendiente: no se inventa.</p>
       <label class="field">
         <span class="field__label">Estado</span>
         <select class="field__select" id="order-status">
@@ -3241,14 +3730,90 @@
       refreshOrderTotal();
     };
     const refreshOrderTotal = () => {
-      const totals = orderTotals(lines, Number($('#order-discount')?.value) || 0);
+      const totals = orderTotals(
+        lines,
+        Number($('#order-discount')?.value) || 0,
+        Number($('#order-fee')?.value) || 0,
+      );
       const box = $('#order-total');
       if (!box) return;
+      const stock = state.inventory;
+      const strictStock = stock?.initialized === true;
+      const insufficient = strictStock && Number(stock.stock) < Number(totals.totalCapsules);
       box.innerHTML = totals.items.length
-        ? `Subtotal ${money(totals.subtotal)}${totals.discount ? ` · Descuento −${money(totals.discount)}` : ''}
-           · <strong>Total ${money(totals.total)}</strong>`
+        ? `Productos ${money(totals.subtotal)}${totals.discount ? ` · Descuento −${money(totals.discount)}` : ''}${
+            totals.deliveryFee ? ` · Delivery ${money(totals.deliveryFee)}` : ''
+          } · <strong>Total ${money(totals.total)}</strong>${
+            strictStock
+              ? ` · Stock ${escapeHtml(stock.stock)} cápsulas${insufficient ? ' · insuficiente para entregar' : ''}`
+              : ' · Stock sin inicializar'
+          }`
         : 'Elige al menos un frasco del catálogo.';
     };
+
+    /*
+     * UBICACIÓN DE ENTREGA (opcional). Se elige DENTRO del propio formulario, sin
+     * abrir otra hoja: así no se pierde lo que ya estaba escrito (§9, §10, §24).
+     * Nunca se pide el permiso de ubicación al abrir: solo al pulsar el botón.
+     */
+    let chosenLocation = location && locationCoordsOk(location)
+      ? { ...location }
+      : order?.delivery?.location
+        ? { ...order.delivery.location, id: order.delivery.location.source_location_id ?? null }
+        : null;
+    chosenLocation = chosenLocation && locationCoordsOk(chosenLocation) ? chosenLocation : null;
+    const renderLocationBlock = () => {
+      const box = $('#order-loc');
+      if (!box) return;
+      if (chosenLocation) {
+        box.innerHTML = `${locationChip(chosenLocation, { withActions: false })}
+          <button class="btn btn--ghost btn--sm" id="order-loc-clear" type="button">Quitar ubicación</button>`;
+        $('#order-loc-clear').addEventListener('click', () => {
+          chosenLocation = null;
+          renderLocationBlock();
+        });
+        return;
+      }
+      const visible = customerLocations.slice(0, 3);
+      const rest = customerLocations.slice(3);
+      const option = (location) => `
+        <label class="loc-option">
+          <input type="radio" name="order-loc-pick" value="${escapeHtml(location.id)}" />
+          <span class="loc-option__body"><strong>${escapeHtml(locationTitle(location))}</strong>
+          <small>${escapeHtml(locationContext(location).address ?? 'Solo coordenadas')}${
+            location.age_label ? ` · ${escapeHtml(location.age_label)}` : ''
+          }</small></span>
+          ${location.map_url ? `<a class="loc__link" href="${escapeHtml(location.map_url)}" target="_blank" rel="noopener noreferrer">Ver mapa</a>` : ''}
+        </label>`;
+      box.innerHTML = `
+        <p class="view__hint">Puede ir sin ubicación: el pedido se guarda igual.</p>
+        <label class="loc-option">
+          <input type="radio" name="order-loc-pick" value="" checked />
+          <span class="loc-option__body"><strong>Sin ubicación</strong><small>No hace falta dirección ni ciudad.</small></span>
+        </label>
+        ${visible.map(option).join('')}
+        ${rest.length ? `<details class="loc-history"><summary>Ver historial (${rest.length})</summary>${rest.map(option).join('')}</details>` : ''}
+        <button class="btn btn--ghost btn--sm" id="order-loc-current" type="button">Usar la ubicación de este dispositivo</button>`;
+      $('#order-loc-current').addEventListener('click', async (event) => {
+        await working(event.currentTarget, 'Buscando…', async () => {
+          const found = await getBrowserLocation();
+          if (!found.ok) {
+            toast(found.message);
+            return;
+          }
+          chosenLocation = found.location;
+          renderLocationBlock();
+        });
+      });
+      box.addEventListener('change', (event) => {
+        const value = event.target.closest('[name="order-loc-pick"]')?.value ?? '';
+        if (value) {
+          chosenLocation = customerLocations.find((row) => row.id === value) ?? null;
+          renderLocationBlock();
+        }
+      });
+    };
+    renderLocationBlock();
 
     linesBox.addEventListener('change', (event) => {
       const select = event.target.closest('[data-line-variant]');
@@ -3273,12 +3838,25 @@
       renderLines();
     });
     $('#order-discount').addEventListener('input', refreshOrderTotal);
+    $('#order-fee').addEventListener('input', refreshOrderTotal);
     renderLines();
 
     $('#order-save').addEventListener('click', async (event) => {
-      const totals = orderTotals(lines, Number($('#order-discount').value) || 0);
+      const totals = orderTotals(
+        lines,
+        Number($('#order-discount').value) || 0,
+        Number($('#order-fee').value) || 0,
+      );
       if (!totals.items.length) {
         toast('Elige al menos un frasco');
+        return;
+      }
+      if (
+        $('#order-status')?.value === 'entregado' &&
+        state.inventory?.initialized === true &&
+        Number(state.inventory.stock) < Number(totals.totalCapsules)
+      ) {
+        toast(`Stock insuficiente: hay ${state.inventory.stock} cápsulas y el pedido requiere ${totals.totalCapsules}`);
         return;
       }
       const typedPhone = customer ? null : $('#order-phone').value.trim();
@@ -3296,9 +3874,25 @@
             channel: conversationId ? 'whatsapp' : 'panel',
             items: lines,
             discount: Number($('#order-discount').value) || 0,
+            // Delivery OPCIONAL e independiente de la ubicación (§26).
+            deliveryFee: Number($('#order-fee').value) || 0,
+            /*
+             * Ubicación: la elegida (por id si ya existía, o con sus coordenadas
+             * si es la del dispositivo). `null` = «sin ubicación», y es válido.
+             */
+            deliveryLocation: chosenLocation
+              ? chosenLocation.id
+                ? chosenLocation.id
+                : {
+                    latitude: chosenLocation.latitude,
+                    longitude: chosenLocation.longitude,
+                    name: chosenLocation.name ?? null,
+                    address: chosenLocation.address ?? null,
+                    source: chosenLocation.source ?? 'browser_geolocation',
+                  }
+              : null,
             status: $('#order-status').value,
             notes: $('#order-notes').value,
-            delivery: { city: $('#order-city').value, address: $('#order-address').value },
           };
           const result = orderId
             ? await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
@@ -3306,8 +3900,9 @@
                 body: JSON.stringify({
                   items: lines,
                   discount: payload.discount,
+                  deliveryFee: payload.deliveryFee,
+                  deliveryLocation: payload.deliveryLocation,
                   notes: payload.notes,
-                  delivery: payload.delivery,
                 }),
               })
             : await api('/api/admin/orders', { method: 'POST', body: JSON.stringify(payload) });
@@ -3320,6 +3915,399 @@
         }
       });
     });
+  }
+
+  /*
+   * ==========================================================================
+   *  UBICACIONES GPS
+   * ==========================================================================
+   *
+   * Reglas (las mismas que aplica el servidor):
+   *   · la fuente de verdad son las coordenadas; el enlace de mapa se CALCULA;
+   *   · una ubicación no es un archivo: no se sube a ningún sitio, se pinta;
+   *   · nada sale por WhatsApp sin confirmación explícita (§19);
+   *   · compartir con otro chat es una acción aparte, avisada y auditada (§21);
+   *   · el permiso de ubicación del navegador SOLO se pide al pulsar el botón.
+   */
+
+  /** ¿Son coordenadas utilizables? (mismo criterio que el servidor). */
+  const locationCoordsOk = (location) => {
+    const lat = Number(location?.latitude);
+    const lng = Number(location?.longitude);
+    return (
+      Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+    );
+  };
+
+  /** Enlace de mapa a partir de las coordenadas (nunca se guarda una URL). */
+  const locationMapUrl = (location) => {
+    if (!locationCoordsOk(location)) return null;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+      `${Number(location.latitude)},${Number(location.longitude)}`,
+    )}`;
+  };
+
+  /** Título honesto: el nombre si lo hay, si no «Ubicación compartida». */
+  const locationTitle = (location) => String(location?.name ?? '').trim() || 'Ubicación compartida';
+
+  /** Línea de contexto: dirección y de dónde salió (nunca coordenadas crudas). */
+  const locationContext = (location) => {
+    const who = {
+      whatsapp_inbound: 'Compartida por el cliente',
+      whatsapp_outbound: 'Enviada al cliente',
+      browser_geolocation: 'Ubicación de este dispositivo',
+      manual_coordinates: 'Coordenadas escritas a mano',
+      reused_location: 'Reutilizada de otra conversación',
+    }[location?.source];
+    return { address: String(location?.address ?? '').trim() || null, who: who ?? 'Ubicación', age: location?.age_label ?? null };
+  };
+
+  /**
+   * Componente de ubicación: UNA pieza compacta (nada de tarjeta dentro de otra).
+   * Va dentro de la burbuja, así que respeta la alineación de siempre: entrante a
+   * la izquierda, saliente a la derecha (§35).
+   */
+  function locationChip(location, options = {}) {
+    const url = locationMapUrl(location);
+    const { address, who, age } = locationContext(location);
+    const detalle = [address, age ? age.replace('Compartida', 'Compartida') : null].filter(Boolean).join(' · ');
+    return `<span class="loc" data-location="${escapeHtml(location?.id ?? '')}">
+        <span class="loc__head"><span class="loc__pin" aria-hidden="true">📍</span>
+          <span class="loc__title">${escapeHtml(locationTitle(location))}</span></span>
+        ${address ? `<span class="loc__address">${escapeHtml(address)}</span>` : ''}
+        <span class="loc__meta">${escapeHtml(who)}${detalle && !address ? ` · ${escapeHtml(detalle)}` : ''}</span>
+        <span class="loc__actions">
+          ${
+            url
+              ? `<a class="loc__link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Ver en mapa</a>`
+              : '<span class="loc__link loc__link--off">Sin coordenadas legibles</span>'
+          }
+          ${
+            options.withActions !== false
+              ? `<button class="loc__more" type="button" data-loc-menu="${escapeHtml(location?.id ?? '')}" aria-label="Más acciones de la ubicación">⋯</button>`
+              : ''
+          }
+        </span>
+      </span>`;
+  }
+
+  /** Ubicaciones del cliente (historial). Se piden al abrir, nunca se cachean de más. */
+  async function fetchCustomerLocations(customerId) {
+    if (!customerId) return [];
+    try {
+      const data = await api(`/api/admin/customers/${encodeURIComponent(customerId)}/locations`);
+      return Array.isArray(data.locations) ? data.locations : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Todas las ubicaciones del CRM (para poder compartir una entre chats). */
+  async function fetchAllLocations() {
+    const customers = state.customers ?? [];
+    const lists = await Promise.all(customers.slice(0, 50).map((customer) => fetchCustomerLocations(customer.id)));
+    return lists.flat();
+  }
+
+  /** Ubicación actual del dispositivo. SOLO se llama desde un clic (§15). */
+  function getBrowserLocation() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation?.getCurrentPosition) {
+        resolve({ ok: false, error: 'unsupported', message: 'Este navegador no sabe dar la ubicación. Puedes adjuntarla o escribir las coordenadas.' });
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) =>
+          resolve({
+            ok: true,
+            location: {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              name: null,
+              address: null,
+              source: 'browser_geolocation',
+            },
+          }),
+        (error) =>
+          resolve({
+            ok: false,
+            error: error?.code === 1 ? 'denied' : 'unavailable',
+            message:
+              error?.code === 1
+                ? 'No diste permiso para usar la ubicación. El pedido sigue funcionando sin ella.'
+                : 'No pudimos obtener la ubicación del dispositivo. Puedes escribir las coordenadas o seguir sin ella.',
+          }),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      );
+    });
+  }
+
+  /**
+   * Selector de ubicación: lista las del cliente (con su edad) y ofrece la del
+   * dispositivo o escribir coordenadas. Nunca envía nada: solo elige.
+   */
+  async function openLocationPicker({ customerId, conversationId = '', title = 'Ubicación de entrega' }) {
+    const locations = await fetchCustomerLocations(customerId);
+    const opciones = locations.length
+      ? locations
+          .map(
+            (location) => `
+        <label class="loc-option">
+          <input type="radio" name="loc-pick" value="${escapeHtml(location.id)}" />
+          <span class="loc-option__body">
+            <strong>${escapeHtml(locationTitle(location))}</strong>
+            <small>${escapeHtml(locationContext(location).address ?? 'Solo coordenadas')}${
+              location.age_label ? ` · ${escapeHtml(location.age_label)}` : ''
+            }</small>
+          </span>
+          ${
+            location.map_url
+              ? `<a class="loc__link" href="${escapeHtml(location.map_url)}" target="_blank" rel="noopener noreferrer">Ver mapa</a>`
+              : ''
+          }
+        </label>`,
+          )
+          .join('')
+      : `<p class="view__hint">Este cliente todavía no ha compartido ninguna ubicación.</p>`;
+    return new Promise((resolve) => {
+      openSheet(
+        title,
+        `
+        <p class="view__hint">Elegir una ubicación no envía nada: primero se ve y después se confirma.</p>
+        <label class="loc-option">
+          <input type="radio" name="loc-pick" value="" checked />
+          <span class="loc-option__body"><strong>Sin ubicación</strong><small>El pedido se guarda igual.</small></span>
+        </label>
+        ${opciones}
+        ${
+          locations.length > 1
+            ? `<details class="loc-history"><summary>Ver historial completo (${locations.length})</summary>
+                 <p class="view__hint">Las de arriba son todas, de la más reciente a la más antigua.</p></details>`
+            : ''
+        }
+        <button class="btn btn--ghost btn--block" id="loc-current" type="button">Usar la ubicación de este dispositivo</button>
+        <label class="field">
+          <span class="field__label">…o escribir coordenadas (opcional)</span>
+          <span class="loc-coords">
+            <input class="field__input" id="loc-lat" inputmode="decimal" placeholder="Latitud" />
+            <input class="field__input" id="loc-lng" inputmode="decimal" placeholder="Longitud" />
+          </span>
+        </label>
+        <button class="btn btn--primary btn--block" id="loc-ok" type="button">Usar esta ubicación</button>
+        <button class="btn btn--ghost btn--block" id="loc-cancel" type="button">Cancelar</button>
+        `,
+      );
+      const close = (value) => {
+        closeSheet();
+        resolve(value);
+      };
+      $('#loc-cancel').addEventListener('click', () => close({ ok: false, cancelled: true }));
+      $('#loc-current').addEventListener('click', async (event) => {
+        await working(event.currentTarget, 'Buscando…', async () => {
+          const found = await getBrowserLocation();
+          if (!found.ok) {
+            toast(found.message);
+            return;
+          }
+          close({ ok: true, location: found.location });
+        });
+      });
+      $('#loc-ok').addEventListener('click', () => {
+        const chosen = document.querySelector('input[name="loc-pick"]:checked')?.value ?? '';
+        if (chosen) {
+          const found = locations.find((row) => row.id === chosen) ?? null;
+          if (found) {
+            close({ ok: true, location: found });
+            return;
+          }
+        }
+        const lat = Number($('#loc-lat').value);
+        const lng = Number($('#loc-lng').value);
+        const typed = $('#loc-lat').value.trim() !== '' || $('#loc-lng').value.trim() !== '';
+        if (typed) {
+          if (!locationCoordsOk({ latitude: lat, longitude: lng })) {
+            toast('Esas coordenadas no son válidas (latitud −90…90, longitud −180…180).');
+            return;
+          }
+          close({ ok: true, location: { latitude: lat, longitude: lng, name: null, address: null, source: 'manual_coordinates' } });
+          return;
+        }
+        close({ ok: true, location: null });
+      });
+      void conversationId;
+    });
+  }
+
+  /**
+   * ENVIAR UNA UBICACIÓN por WhatsApp: elegir → previsualizar → CONFIRMAR (§18/§19).
+   * El servidor exige `confirmed: true`, así que aquí no hay atajo posible.
+   */
+  async function openSendLocation({ conversationId, customerId }) {
+    const elegida = await openLocationPicker({ customerId, conversationId, title: 'Enviar ubicación' });
+    if (!elegida?.ok || !elegida.location) {
+      if (elegida?.ok) toast('No se eligió ninguna ubicación');
+      return;
+    }
+    const location = elegida.location;
+    const url = locationMapUrl(location);
+    openSheet(
+      'Confirmar envío',
+      `
+      <p class="rule">Vas a enviar esta ubicación al cliente por WhatsApp. No se envía nada hasta que pulses «Enviar ubicación».</p>
+      ${locationChip(location, { withActions: false })}
+      ${url ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Abrir en el mapa</a>` : ''}
+      <button class="btn btn--primary btn--block" id="loc-send" type="button">Enviar ubicación</button>
+      <button class="btn btn--ghost btn--block" id="loc-send-cancel" type="button">Cancelar</button>
+      `,
+    );
+    $('#loc-send-cancel').addEventListener('click', () => closeSheet());
+    $('#loc-send').addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/location`, {
+            method: 'POST',
+            body: JSON.stringify({
+              locationId: location.id ?? undefined,
+              latitude: location.latitude,
+              longitude: location.longitude,
+              name: location.name ?? undefined,
+              address: location.address ?? undefined,
+              source: location.source ?? 'browser_geolocation',
+              confirmed: true,
+              idempotencyKey: uploadKey('loc'),
+            }),
+          });
+          toast('Ubicación enviada');
+          closeSheet();
+          await loadWaThread(conversationId, { force: true });
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar la ubicación');
+        }
+      });
+    });
+  }
+
+  /**
+   * COMPARTIR una ubicación con OTRA conversación (§20/§21).
+   *
+   * Deliberado y avisado: se dice con QUIÉN se comparte y se exige confirmación.
+   * No se copia nada más del cliente original: solo la ubicación.
+   */
+  async function openShareLocation({ locationId, location }) {
+    const destinations = (state.conversations ?? []).filter((row) => row.id && row.customer);
+    if (!destinations.length) {
+      toast('No hay conversaciones con las que compartir');
+      return;
+    }
+    openSheet(
+      'Compartir ubicación',
+      `
+      <p class="rule rule--warn">Esta ubicación puede ser el domicilio de otra persona: solo se comparte la ubicación, nada más del cliente original.</p>
+      ${locationChip(location, { withActions: false })}
+      <label class="field">
+        <span class="field__label">Compartir con</span>
+        <select class="field__select" id="loc-share-to">
+          ${destinations
+            .map(
+              (row) =>
+                `<option value="${escapeHtml(row.id)}">${escapeHtml(waDisplayName(row))}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <p class="view__hint" id="loc-share-warning"></p>
+      <button class="btn btn--primary btn--block" id="loc-share-ok" type="button">Compartir ubicación</button>
+      <button class="btn btn--ghost btn--block" id="loc-share-cancel" type="button">Cancelar</button>
+      `,
+    );
+    const refreshWarning = () => {
+      const row = destinations.find((candidate) => candidate.id === $('#loc-share-to').value) ?? null;
+      $('#loc-share-warning').textContent = row
+        ? `Vas a compartir esta ubicación con ${waDisplayName(row)}.`
+        : 'Elige un destinatario.';
+    };
+    $('#loc-share-to').addEventListener('change', refreshWarning);
+    refreshWarning();
+    $('#loc-share-cancel').addEventListener('click', () => closeSheet());
+    $('#loc-share-ok').addEventListener('click', async (event) => {
+      const destination = $('#loc-share-to').value;
+      const row = destinations.find((candidate) => candidate.id === destination) ?? null;
+      // Confirmación EXPLÍCITA con el nombre del destino (§21).
+      if (!row || !window.confirm(`¿Compartir esta ubicación con ${waDisplayName(row)}?`)) return;
+      await working(event.currentTarget, 'Compartiendo…', async () => {
+        try {
+          await api(`/api/admin/locations/${encodeURIComponent(locationId)}/share`, {
+            method: 'POST',
+            body: JSON.stringify({ conversationId: destination, confirmed: true }),
+          });
+          toast('Ubicación compartida');
+          closeSheet();
+          if (state.wa.selectedId) await loadWaThread(state.wa.selectedId, { force: true });
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo compartir la ubicación');
+        }
+      });
+    });
+  }
+
+  /** Acciones de una ubicación: lo esencial a la vista y el resto en «⋯» (§12). */
+  function openLocationActions({ location, conversationId }) {
+    const url = locationMapUrl(location);
+    openSheet(
+      'Ubicación',
+      `
+      ${locationChip(location, { withActions: false })}
+      ${
+        url
+          ? `<a class="btn btn--primary btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Ver en mapa</a>`
+          : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles.</p>'
+      }
+      <button class="btn btn--ghost btn--block" id="loc-use" type="button">Usar para un pedido</button>
+      <button class="btn btn--ghost btn--block" id="loc-share" type="button">Compartir con otra conversación</button>
+      <button class="btn btn--ghost btn--block" id="loc-close" type="button">Cerrar</button>
+      `,
+    );
+    $('#loc-close').addEventListener('click', () => closeSheet());
+    $('#loc-use').addEventListener('click', () => {
+      const customerId = state.wa.chat?.customer?.id ?? null;
+      closeSheet();
+      if (!customerId) {
+        toast('Abre la conversación del cliente para crearle un pedido');
+        return;
+      }
+      openOrderForm({ customerId, conversationId: conversationId ?? state.wa.selectedId ?? '', location });
+    });
+    $('#loc-share').addEventListener('click', () => {
+      closeSheet();
+      openShareLocation({ locationId: location.id, location });
+    });
+  }
+
+  /** Bloque de ubicaciones del cliente para su ficha (§13). */
+  function customerLocationsHtml(locations) {
+    if (!locations?.length) {
+      return `<p class="view__hint">Todavía no ha compartido ninguna ubicación.</p>`;
+    }
+    const [latest, ...rest] = locations;
+    const row = (location) => `
+      <div class="loc-row">
+        <span class="loc-row__body">
+          <strong>${escapeHtml(locationTitle(location))}</strong>
+          <small>${escapeHtml(locationContext(location).who)}${
+            location.age_label ? ` · ${escapeHtml(location.age_label)}` : ''
+          }</small>
+        </span>
+        ${
+          location.map_url
+            ? `<a class="loc__link" href="${escapeHtml(location.map_url)}" target="_blank" rel="noopener noreferrer">Ver mapa</a>`
+            : ''
+        }
+      </div>`;
+    return `${row(latest)}${
+      rest.length
+        ? `<details class="loc-history"><summary>Ver historial (${rest.length})</summary>${rest.map(row).join('')}</details>`
+        : ''
+    }`;
   }
 
   /** Comprobante de compra dentro del CRM + cómo verlo, descargarlo o compartirlo. */
@@ -3351,8 +4339,13 @@
           </dl>
           <div class="receipt__lines">${lines}</div>
           <div class="receipt__totals">
-            <div><span>Subtotal</span><strong>${money(receipt.subtotal, receipt.currency)}</strong></div>
+            <div><span>Productos</span><strong>${money(receipt.subtotal, receipt.currency)}</strong></div>
             ${receipt.discount ? `<div><span>Descuento</span><strong>−${money(receipt.discount, receipt.currency)}</strong></div>` : ''}
+            ${
+              receipt.delivery_fee
+                ? `<div><span>Delivery</span><strong>${money(receipt.delivery_fee, receipt.currency)}</strong></div>`
+                : ''
+            }
             ${
               receipt.shipping
                 ? `<div><span>Envío</span><strong>${money(receipt.shipping, receipt.currency)}</strong></div>`
@@ -3360,6 +4353,19 @@
             }
             <div class="receipt__grand"><span>TOTAL</span><span>${money(receipt.total, receipt.currency)}</span></div>
           </div>
+          ${
+            receipt.has_location
+              ? `<div class="loc-row">
+                   <span class="loc-row__body"><strong>📍 Ubicación de entrega registrada</strong>
+                   <small>${escapeHtml(receipt.location_label ?? 'Ubicación compartida')}</small></span>
+                   ${
+                     locationMapUrl(receipt.location ?? {})
+                       ? `<a class="loc__link" href="${escapeHtml(locationMapUrl(receipt.location ?? {}))}" target="_blank" rel="noopener noreferrer">Ver ubicación</a>`
+                       : ''
+                   }
+                 </div>`
+              : ''
+          }
           <p class="view__hint">${escapeHtml(receipt.thanks)}</p>
           <p class="view__hint">${escapeHtml(receipt.note)}</p>
         </div>
@@ -3548,6 +4554,50 @@
     renderAjustes();
   }
 
+  async function loadInventory() {
+    state.inventoryLoading = true;
+    try {
+      const data = await api('/api/admin/inventory');
+      state.inventory = data;
+      state.catalog = data.presentations ?? state.catalog;
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo cargar inventario');
+    } finally {
+      state.inventoryLoading = false;
+    }
+    renderProductos();
+  }
+
+  async function loadSalesReport(period = state.salesReportPeriod) {
+    state.salesReportPeriod = period;
+    state.salesReportLoading = true;
+    try {
+      const data = await api(`/api/admin/reports/sales?period=${encodeURIComponent(period)}`);
+      state.salesReport = data.report ?? null;
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast('No se pudo cargar el reporte');
+    } finally {
+      state.salesReportLoading = false;
+    }
+    renderReportes();
+  }
+
+  async function submitInventoryForm(form) {
+    const body = Object.fromEntries(new FormData(form).entries());
+    try {
+      let path = '/api/admin/inventory/restock';
+      if (form.id === 'inventory-cost') path = '/api/admin/inventory/cost';
+      if (form.id === 'inventory-adjust') path = '/api/admin/inventory/adjust';
+      const data = await api(path, { method: 'POST', body: JSON.stringify(body) });
+      state.inventory = data.inventory ?? state.inventory;
+      toast(form.id === 'inventory-cost' ? 'Costo actualizado' : 'Inventario actualizado');
+      await loadInventory();
+      state.salesReport = null;
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar inventario');
+    }
+  }
+
 
   // ------------------------------------------------------------------ PWA
 
@@ -3669,12 +4719,14 @@
   // ------------------------------------------------------------------- tabs
 
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'pedidos', 'seguimientos', 'mensajes', 'ajustes'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
     pedidos: 'Pedidos',
+    productos: 'Inventario',
+    reportes: 'Reportes',
     seguimientos: 'Seguimientos',
     mensajes: 'Plantillas',
     ajustes: 'Ajustes',
@@ -3696,6 +4748,8 @@
       window.scrollTo({ top: 0 });
       // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
       if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
+      if (tab === 'productos') loadInventory().catch(() => {});
+      if (tab === 'reportes') loadSalesReport(state.salesReportPeriod).catch(() => {});
       // Al entrar en Ajustes se refresca lo que cambia con el uso: los números y
       // la traza. Así el negocio ve el efecto de lo que acaba de hacer.
       if (tab === 'ajustes') {
@@ -3735,6 +4789,15 @@
         $('#login-error').textContent =
           error.body?.message ??
           (error.message === 'unauthorized' ? 'La clave no es correcta.' : 'No se pudo entrar: no hay conexión con el CRM.');
+      }
+    });
+
+    document.addEventListener('submit', (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (['inventory-restock', 'inventory-cost', 'inventory-adjust'].includes(form.id)) {
+        event.preventDefault();
+        submitInventoryForm(form);
       }
     });
 
@@ -3797,6 +4860,19 @@
         openPurchaseForm(purchase.dataset.purchase);
         return;
       }
+      /*
+       * Ubicación en el hilo: «⋯» abre sus acciones (ver mapa, usar para un pedido,
+       * compartir). Se busca el mensaje en el hilo ya cargado: la ubicación viaja
+       * con el mensaje, así que no hace falta pedirla otra vez.
+       */
+      const locMenu = event.target.closest('[data-loc-menu]');
+      if (locMenu) {
+        const id = locMenu.dataset.locMenu;
+        const messages = state.wa.chat?.messages ?? [];
+        const found = messages.find((row) => row.location?.id === id)?.location ?? null;
+        if (found) openLocationActions({ location: found, conversationId: state.wa.selectedId });
+        return;
+      }
       // --- acciones comerciales (S4/S5): pedido, comprobante, programar ---
       if (event.target.closest('#wa-actions')) {
         const button = event.target.closest('#wa-actions');
@@ -3834,6 +4910,11 @@
         loadMetrics(metricsChip.dataset.metrics);
         return;
       }
+      const reportChip = event.target.closest('[data-report-period]');
+      if (reportChip) {
+        loadSalesReport(reportChip.dataset.reportPeriod);
+        return;
+      }
       const review = event.target.closest('[data-review]');
       if (review) {
         reconcileMedia(review.dataset.reviewId, review.dataset.review);
@@ -3865,6 +4946,40 @@
       }
       if (event.target.closest('#wa-mic')) {
         openRecorder(state.wa.selectedId);
+        return;
+      }
+      // --------------------------------------------- respuestas rápidas
+      if (event.target.closest('[data-quick-replies]')) {
+        openQuickReplies();
+        return;
+      }
+      if (event.target.closest('[data-qr-new]')) {
+        openQuickReplyForm(null);
+        return;
+      }
+      const qrPick = event.target.closest('[data-qr-insert]');
+      if (qrPick) {
+        insertQuickReply(qrPick.dataset.qrInsert);
+        return;
+      }
+      const qrMore = event.target.closest('[data-qr-menu]');
+      if (qrMore) {
+        qrMenuId = qrMenuId === qrMore.dataset.qrMenu ? null : qrMore.dataset.qrMenu;
+        renderQuickReplies();
+        return;
+      }
+      const qrEdit = event.target.closest('[data-qr-edit]');
+      if (qrEdit) {
+        openQuickReplyForm(qrEdit.dataset.qrEdit);
+        return;
+      }
+      const qrDel = event.target.closest('[data-qr-del]');
+      if (qrDel) {
+        quickReplyDelete(qrDel.dataset.qrDel);
+        return;
+      }
+      if (event.target.closest('[data-qr-back]')) {
+        openQuickReplies();
         return;
       }
       const customer = event.target.closest('[data-customer]');
@@ -3925,6 +5040,19 @@
       const chat = event.target.closest('[data-chat]');
       if (chat) {
         openChat(chat.dataset.chat, { followupId: chat.dataset.followup ?? null });
+        return;
+      }
+      const convSelect = event.target.closest('[data-conv-select]');
+      if (convSelect) {
+        const id = convSelect.dataset.convSelect;
+        if (state.wa.selected.has(id)) state.wa.selected.delete(id);
+        else state.wa.selected.add(id);
+        renderWaList();
+        return;
+      }
+      const bulk = event.target.closest('[data-wa-bulk]');
+      if (bulk) {
+        runWaBulk(bulk.dataset.waBulk);
         return;
       }
       const conv = event.target.closest('[data-conv]');

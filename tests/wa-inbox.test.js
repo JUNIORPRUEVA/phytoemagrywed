@@ -230,3 +230,72 @@ describe('"sin responder" es del cliente, no de la insignia de leído', () => {
     expect(thread.canSendFreeText).toBe(true);
   });
 });
+
+describe('archivado y acciones masivas de la bandeja', () => {
+  it('Clientes/Compraron usa compra entregada, no cualquier intención', async () => {
+    await call('/api/admin/orders', {
+      method: 'POST',
+      body: JSON.stringify({ customerId: conversationB.customer_id, items: [{ variantId: 'capsules_5', quantity: 1 }], status: 'nuevo' }),
+    });
+    let clients = await json(await call('/api/admin/conversations?filter=clientes'));
+    expect(clients.conversations.map((row) => row.id)).not.toContain(conversationB.id);
+
+    await call('/api/admin/orders', {
+      method: 'POST',
+      body: JSON.stringify({ customerId: conversationB.customer_id, items: [{ variantId: 'capsules_10', quantity: 1 }], status: 'entregado' }),
+    });
+    clients = await json(await call('/api/admin/conversations?filter=clientes'));
+    expect(clients.conversations.map((row) => row.id)).toContain(conversationB.id);
+  });
+
+  it('archivar saca la conversación de activos y aparece en Archivados', async () => {
+    const archived = await call(`/api/admin/conversations/${conversationA.id}/archive`, { method: 'POST' });
+    expect(archived.status).toBe(200);
+
+    const active = await json(await call('/api/admin/conversations'));
+    expect(active.conversations.map((row) => row.id)).not.toContain(conversationA.id);
+    expect(active.counts.archivados).toBeGreaterThanOrEqual(1);
+
+    const archivedList = await json(await call('/api/admin/conversations?filter=archivados'));
+    expect(archivedList.conversations.map((row) => row.id)).toContain(conversationA.id);
+  });
+
+  it('un inbound nuevo en archivado lo desarchiva y lo sube con no leído', async () => {
+    await inbound('wamid.A4', PHONE_A, 'Volví por aquí');
+    await waitFor(async () => {
+      const rows = await listConversations();
+      const row = rows.find((candidate) => candidate.id === conversationA.id);
+      return row && !row.archived_at && Number(row.unread_count) > 0 ? row : null;
+    });
+    const rows = await listConversations();
+    expect(rows[0].id).toBe(conversationA.id);
+  });
+
+  it('la acción masiva marca leído y reporta fallos parciales', async () => {
+    const result = await json(
+      await call('/api/admin/conversations/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'mark_read', ids: [conversationA.id, 'cnv_inexistente'] }),
+      }),
+    );
+    expect(result.processed).toBe(1);
+    expect(result.failed).toBe(1);
+
+    const rows = await listConversations();
+    expect(rows.find((row) => row.id === conversationA.id).unread_count).toBe(0);
+  });
+
+  it('mensaje a varios solo valida: excluye opt-out y no envía nada', async () => {
+    await call(`/api/admin/customers/${conversationA.customer_id}/opt-out`, { method: 'POST' });
+    mockWhatsApp.sent.length = 0;
+    const result = await json(
+      await call('/api/admin/conversations/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'message_preview', ids: [conversationA.id, conversationB.id] }),
+      }),
+    );
+    expect(result.results.find((row) => row.id === conversationA.id).reason).toBe('do_not_contact');
+    expect(result.results.find((row) => row.id === conversationB.id).reason).toMatch(/free_text_24h|template_required/);
+    expect(mockWhatsApp.sent).toHaveLength(0);
+  });
+});

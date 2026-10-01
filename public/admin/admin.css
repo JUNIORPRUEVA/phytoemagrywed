@@ -1331,6 +1331,137 @@ body[data-tab='whatsapp'] .content {
   font-size: 12.5px;
 }
 
+/*
+ * RESPUESTAS RÁPIDAS del compositor. Filas limpias separadas por una línea (nada
+ * de tarjetas dentro de tarjetas): la jerarquía y el espaciado hacen el trabajo.
+ */
+.qr {
+  display: grid;
+  gap: 10px;
+}
+
+.qr__top {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.qr__search {
+  min-height: 40px;
+}
+
+/* El «+» es pequeto y discreto: crear es una acción secundaria. */
+.qr__new {
+  width: 38px;
+  height: 38px;
+  border-color: var(--pe-border);
+  color: var(--phyto-primary);
+}
+
+.qr__list {
+  display: grid;
+  min-height: 180px;
+  align-content: start;
+  border-top: 1px solid var(--pe-border);
+}
+
+.qr__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--pe-border);
+}
+
+.qr__row--open {
+  background: var(--phyto-primary-tint);
+}
+
+/* Toda la fila se pulsa; las opciones viven aparte, a la derecha. */
+.qr__pick {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 11px 4px;
+  text-align: left;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.qr__name {
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--text-primary);
+}
+
+.qr__text {
+  color: var(--pe-ink-500);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.qr__more {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: var(--pe-radius);
+  background: none;
+  color: var(--pe-ink-500);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.qr__more:hover,
+.qr__more[aria-expanded='true'] {
+  background: var(--pe-surface);
+  color: var(--text-primary);
+}
+
+.qr__menu {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  padding: 0 4px 10px;
+}
+
+.qr__menu-item {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  background: var(--pe-surface);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.qr__menu-item--danger {
+  color: var(--pe-danger);
+}
+
+.qr__empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 14px 2px;
+}
+
+.qr__form-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 /* Líneas del pedido: frasco + cantidad, con la X para quitarla. */
 .order-line {
   display: grid;
@@ -2118,12 +2249,23 @@ body[data-wa-view='chat'] .float-btn--menu {
   gap: 0;
 }
 
+.conv-wrap {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.conv-wrap--selected {
+  background: rgba(11, 107, 79, 0.075);
+}
+
 .conv {
   grid-template-columns: auto 1fr;
   gap: 2px 10px;
   padding: 11px 14px;
   border: 0;
-  border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -2141,6 +2283,30 @@ body[data-wa-view='chat'] .float-btn--menu {
 
 .conv--pending {
   border-left: 0;
+}
+
+.conv--unread .conv__name {
+  font-weight: 750;
+}
+
+.conv-select {
+  align-self: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 8px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--phyto-primary);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.conv-wrap:hover .conv-select,
+.conv-select[aria-pressed='true'] {
+  border-color: var(--border-soft);
+  background: var(--surface);
 }
 
 .conv__name {
@@ -2769,3 +2935,108 @@ body[data-wa-view='chat'] .float-btn--menu {
     animation: none;
   }
 }
+
+.conv__tag {
+  color: var(--pe-ink-500);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.wa-bulk {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   UBICACIONES GPS (fase GPS + DELIVERY)
+   ==========================================================================
+   Una ubicación es una PIEZA COMPACTA dentro de la burbuja: pin, nombre, la
+   dirección si WhatsApp la manda, y las acciones (ver mapa, y ⋯ para el resto).
+   Nada de tarjeta-dentro-de-tarjeta y nada de coordenadas gigantes en pantalla.
+   Se respeta la alineación de siempre: entrante a la izquierda, saliente a la
+   derecha (la da la burbuja, aquí no se duplica).
+   ========================================================================== */
+.loc {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-tint, rgba(11, 107, 79, 0.06));
+  text-align: left;
+}
+.loc--empty { border-style: dashed; }
+.loc__head { display: flex; align-items: center; gap: 6px; }
+.loc__pin { font-size: 15px; line-height: 1; }
+.loc__title { font-weight: 600; font-size: 14px; }
+.loc__address { font-size: 13px; color: var(--text-secondary); }
+.loc__meta { font-size: 12px; color: var(--text-secondary); }
+.loc__actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; flex-wrap: wrap; }
+.loc__link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pe-brand-700, #0b6b4f);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+.loc__link--off { color: var(--text-secondary); border-bottom: 0; font-weight: 500; }
+.loc__more {
+  margin-left: auto;
+  min-width: 30px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface, #fff);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+
+/* Selector de ubicación (formulario de pedido, envío y compartir) */
+.loc-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  margin-bottom: 8px;
+  background: var(--surface, #fff);
+}
+.loc-option input { flex: 0 0 auto; }
+.loc-option__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.loc-option__body strong { font-size: 14px; }
+.loc-option__body small { font-size: 12px; color: var(--text-secondary); }
+.loc-history { margin: 6px 0 10px; }
+.loc-history summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pe-brand-700, #0b6b4f);
+  padding: 6px 0;
+}
+.loc-coords { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.loc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.loc-row:last-child { border-bottom: 0; }
+.loc-row__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.loc-row__body strong { font-size: 14px; }
+.loc-row__body small { font-size: 12px; color: var(--text-secondary); }

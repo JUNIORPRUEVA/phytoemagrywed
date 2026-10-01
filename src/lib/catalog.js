@@ -72,7 +72,7 @@ function normalizeQuantity(value) {
  * Calcula un pedido a partir de sus líneas.
  *
  * @param {Array<{ variantId: string, quantity?: number, unitPrice?: number }>} [lines]
- * @param {{ discount?: number, product?: any, currency?: string }} [options]
+ * @param {{ discount?: number, deliveryFee?: number, product?: any, currency?: string }} [options]
  * @returns {{
  *   items: Array<{ variantId: string, capsules: number, variantName: string, label: string,
  *                  quantity: number, unitPrice: number, subtotal: number, totalCapsules: number,
@@ -82,6 +82,7 @@ function normalizeQuantity(value) {
  *   totalCapsules: number,
  *   subtotal: number,
  *   discount: number,
+ *   deliveryFee: number,
  *   total: number,
  *   currency: string
  * }}
@@ -122,6 +123,22 @@ export function computeOrderTotals(lines = [], options = {}) {
       ? Math.min(Math.trunc(requestedDiscount), subtotal)
       : 0;
 
+  /*
+   * DELIVERY: importe SEPARADO, nunca una línea de producto falsa. Es opcional
+   * (vacío o 0 = no se cobra) y no puede ser negativo: un delivery negativo sería
+   * un descuento escondido, y eso se pide como descuento. Los precios del catálogo
+   * están en pesos enteros (RD$), así que el delivery sigue la misma convención:
+   * nada de decimales binarios para dinero.
+   */
+  const requestedDelivery = Number(options.deliveryFee);
+  if (options.deliveryFee !== undefined && options.deliveryFee !== null && options.deliveryFee !== '' && !Number.isFinite(requestedDelivery)) {
+    throw new CatalogError('invalid_delivery_fee', 'El costo de delivery no es un número válido.');
+  }
+  if (Number.isFinite(requestedDelivery) && requestedDelivery < 0) {
+    throw new CatalogError('invalid_delivery_fee', 'El costo de delivery no puede ser negativo.');
+  }
+  const deliveryFee = Number.isFinite(requestedDelivery) && requestedDelivery > 0 ? Math.trunc(requestedDelivery) : 0;
+
   return {
     items,
     itemCount: items.length,
@@ -129,7 +146,8 @@ export function computeOrderTotals(lines = [], options = {}) {
     totalCapsules: items.reduce((sum, item) => sum + item.totalCapsules, 0),
     subtotal,
     discount,
-    total: subtotal - discount,
+    deliveryFee,
+    total: subtotal - discount + deliveryFee,
     currency,
   };
 }

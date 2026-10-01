@@ -23,6 +23,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { CATALOG_CURRENCY, CatalogError, computeOrderTotals, findCatalogItem } from '../src/lib/catalog.js';
+import { describeLocation, orderLocationSnapshot } from './locations.mjs';
 
 /**
  * Estados del PEDIDO (no de la conversación).
@@ -127,18 +128,35 @@ export function maskPhone(phone) {
  * @param {{address?: string, city?: string, note?: string, method?: string}} [input.delivery]
  * @param {string} [input.status]          estado inicial (por defecto `nuevo`)
  * @param {string} [input.date]            fecha ISO del pedido
+ * @param {number} [input.deliveryFee]     costo de delivery en RD$ (opcional, >= 0)
+ * @param {any}    [input.gpsLocation]     ubicación GPS de entrega (opcional)
  * @param {string} [input.recordedBy]
  * @param {any}    [input.product]         catálogo alternativo (tests)
  */
 export function buildOrder(input = {}) {
-  const totals = computeOrderTotals(input.items, { discount: input.discount, product: input.product });
+  const totals = computeOrderTotals(input.items, {
+    discount: input.discount,
+    deliveryFee: input.deliveryFee,
+    product: input.product,
+  });
   const id = short(input.id, 80) ?? newId();
   const createdAt = short(input.date, 40) ?? new Date().toISOString();
   const status = isOrderStatus(input.status) ? String(input.status) : 'nuevo';
   const number = orderNumber(id);
   const first = totals.items[0];
+  /*
+   * ENTREGA. Dos cosas independientes a propósito (§26):
+   *   · `location`  → GPS, OPCIONAL. Se guarda un SNAPSHOT inmutable: si el cliente
+   *     manda otra ubicación después, este pedido sigue representando la que se usó.
+   *   · `delivery_fee` → costo de delivery, OPCIONAL e independiente del GPS.
+   * `city`/`address` siguen existiendo para no destruir lo que ya estaba guardado
+   * en pedidos antiguos; el formulario nuevo ya no los pide.
+   */
   const delivery = {
-    // El costo de envío NO se inventa: queda pendiente hasta que el negocio lo sepa.
+    // El costo de envío NO se inventa: si no se indica, es 0 (no se cobra).
+    fee: totals.deliveryFee,
+    // GPS (opcional). OJO: `input.location` es la CIUDAD heredada, no esto.
+    location: input.gpsLocation ? orderLocationSnapshot(input.gpsLocation) : null,
     address: long(input.delivery?.address, 240),
     city: short(input.delivery?.city, 120),
     note: long(input.delivery?.note, 400),
@@ -158,6 +176,7 @@ export function buildOrder(input = {}) {
     total_capsules: totals.totalCapsules,
     subtotal: totals.subtotal,
     discount: totals.discount,
+    delivery_fee: totals.deliveryFee,
     total: totals.total,
     currency: totals.currency,
     shipping: null,
@@ -273,11 +292,13 @@ export function orderOf(item) {
     total_capsules: (Number(item.capsules) || 0) * quantity,
     subtotal: unitPrice * quantity,
     discount: 0,
+    // Pedido anterior a la fase de delivery: no se le inventa un costo.
+    delivery_fee: 0,
     total,
     currency: item.currency ?? CATALOG_CURRENCY,
     shipping: null,
     notes: item.notes ?? null,
-    delivery: { address: null, city: item.location ?? null, note: null, method: null, shipping: null },
+    delivery: { fee: 0, location: null, address: null, city: item.location ?? null, note: null, method: null, shipping: null },
     status: item.status ?? 'nuevo',
     recorded_by: 'histórico',
     created_at: item.received_at ?? null,
@@ -308,9 +329,20 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     items,
     subtotal: Number(order.subtotal) || 0,
     discount: Number(order.discount) || 0,
+    // DELIVERY: solo aparece si se cobró algo (en el comprobante, un «RD$ 0» es ruido).
+    delivery_fee: Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0,
     shipping: order.shipping ?? order.delivery?.shipping ?? null,
     total: Number(order.total) || 0,
     currency: order.currency ?? CATALOG_CURRENCY,
+    /*
+     * UBICACIÓN DE ENTREGA: se dice QUE EXISTE y se puede abrir el mapa, pero el
+     * comprobante NO imprime coordenadas: es un documento que se comparte con el
+     * cliente (y con quien él quiera).
+     */
+    has_location: Boolean(order.delivery?.location),
+    location_label: order.delivery?.location ? describeLocation(order.delivery.location).title : null,
+    location_address: order.delivery?.location ? describeLocation(order.delivery.location).detail : null,
+    location: order.delivery?.location ? orderLocationSnapshot(order.delivery.location) : null,
     status: order.status ?? 'nuevo',
     status_label: ORDER_STATUS_LABELS[order.status ?? 'nuevo'] ?? order.status,
     // Agradecimiento neutro: sin promesas, sin plazos y sin nada médico.
@@ -410,8 +442,9 @@ export function receiptHtml(receipt, options = {}) {
       <tbody>${rows}</tbody>
     </table>
     <div class="totals">
-      <div><span>Subtotal</span><strong>${esc(money(receipt.subtotal, receipt.currency))}</strong></div>
+      <div><span>Productos</span><strong>${esc(money(receipt.subtotal, receipt.currency))}</strong></div>
       ${receipt.discount ? `<div><span>Descuento</span><strong>-${esc(money(receipt.discount, receipt.currency))}</strong></div>` : ''}
+      ${receipt.delivery_fee ? `<div><span>Delivery</span><strong>${esc(money(receipt.delivery_fee, receipt.currency))}</strong></div>` : ''}
       ${
         receipt.shipping
           ? `<div><span>Envío</span><strong>${esc(money(receipt.shipping, receipt.currency))}</strong></div>`
@@ -419,6 +452,11 @@ export function receiptHtml(receipt, options = {}) {
       }
       <div class="grand"><span>TOTAL</span><span>${esc(money(receipt.total, receipt.currency))}</span></div>
     </div>
+    ${
+      receipt.has_location
+        ? `<p class="footer">Ubicación de entrega registrada${receipt.location_label ? `: ${esc(receipt.location_label)}` : ''}. No se imprimen las coordenadas.</p>`
+        : ''
+    }
     <p class="footer">${esc(receipt.thanks)}</p>
     <p class="footer">${esc(receipt.note)}</p>
   </main>

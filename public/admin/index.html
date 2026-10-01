@@ -102,6 +102,12 @@
           <button class="drawer__item" data-tab="pedidos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
           </button>
+          <button class="drawer__item" data-tab="productos" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Productos e inventario
+          </button>
+          <button class="drawer__item" data-tab="reportes" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
+          </button>
           <button class="drawer__item" data-tab="seguimientos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
           </button>
@@ -216,6 +222,25 @@
           <button class="btn btn--primary btn--block" id="compra-nueva-ped" type="button">
             + Registrar compra de un cliente
           </button>
+        </section>
+
+        <!-- PRODUCTOS E INVENTARIO -->
+        <section class="view" id="view-productos" hidden>
+          <h2 class="view__title">Productos e inventario</h2>
+          <div class="list" id="inventory-view"></div>
+        </section>
+
+        <!-- REPORTES -->
+        <section class="view" id="view-reportes" hidden>
+          <h2 class="view__title">Reportes</h2>
+          <div class="chips" id="sales-report-period">
+            <button class="chip" data-report-period="hoy" aria-pressed="true" type="button">Hoy</button>
+            <button class="chip" data-report-period="ayer" type="button">Ayer</button>
+            <button class="chip" data-report-period="7d" type="button">7 días</button>
+            <button class="chip" data-report-period="30d" type="button">30 días</button>
+            <button class="chip" data-report-period="mes" type="button">Mes</button>
+          </div>
+          <div class="list" id="sales-report-view"></div>
         </section>
 
         <!-- SEGUIMIENTOS (menú lateral) -->

@@ -83,6 +83,7 @@ import { createCollections } from './collections.mjs';
 import { createCustomerService, AUTOMATION_STATES, COMMERCIAL_STATES, MANUAL_COMMERCIAL_STATES } from './customers.mjs';
 import { createFollowupEngine, resolveDailyCapsules, resolvePlan } from './followups.mjs';
 import { createAuditLog } from './audit.mjs';
+import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createSettingsService } from './settings.mjs';
 import { createSqlQuery } from './sql-query.mjs';
@@ -100,6 +101,15 @@ import {
   orderOf,
   receiptHtml,
 } from './orders.mjs';
+import {
+  LOCATION_SOURCES,
+  describeLocation,
+  locationAgeLabel,
+  mapUrl,
+  normalizeLocation,
+  orderLocationSnapshot,
+  publicLocation,
+} from './locations.mjs';
 import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
 import {
   createWhatsAppClient,
@@ -369,9 +379,116 @@ function purchaseRow(input) {
 }
 
 function csvCell(value) {
-  if (value === null || value === undefined) return '';
   const raw = String(value);
   return /[",;\n\r]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
+}
+
+/**
+ * Resuelve la ubicación de entrega de un pedido.
+ *
+ * Acepta dos formas, porque hay dos formas de elegirla de verdad:
+ *   · la ID de una ubicación ya guardada (la que mandó el cliente, o una que vio
+ *     el operador en el historial) → se reutiliza ESA fila, no se duplica;
+ *   · coordenadas directas (el dispositivo del operador o escritas a mano).
+ *
+ * Reglas que no se rompen:
+ *   · la ubicación de un cliente NUNCA se puede aplicar al pedido de otro (§9);
+ *   · `null` / `''` / `false` significa «sin ubicación», y es válido (§40);
+ *   · las coordenadas se validan aquí, antes de guardar nada (§32).
+ *
+ * @param {any} ctx
+ * @param {{ customerId?: string|null, body?: any }} input
+ */
+async function resolveOrderLocation(ctx, input) {
+  const body = input?.body ?? {};
+  const reference = body.deliveryLocation ?? body.delivery_location ?? null;
+  if (reference === null || reference === undefined || reference === '' || reference === false) {
+    // «Sin ubicación» EXPLÍCITO: se marca como provisto para poder quitarla al
+    // editar. Distinto de «no me han dicho nada», que conserva la que tenía.
+    return { ok: true, provided: true, location: null };
+  }
+  if (typeof reference === 'string' || typeof reference === 'number') {
+    const stored = await ctx.customers.getLocation(String(reference));
+    if (!stored) return { ok: false, code: 'unknown_location', message: 'Esa ubicación ya no existe.' };
+    if (input.customerId && stored.customer_id && stored.customer_id !== input.customerId) {
+      return {
+        ok: false,
+        code: 'location_from_other_customer',
+        message: 'Esa ubicación es de otro cliente: no se puede usar en este pedido.',
+      };
+    }
+    return { ok: true, provided: true, location: { ...stored, source_location_id: stored.id } };
+  }
+  if (typeof reference === 'object') {
+    const normalized = normalizeLocation(reference);
+    if (!normalized.ok) return { ok: false, code: normalized.code, message: normalized.message };
+    return { ok: true, provided: true, location: normalized.location };
+  }
+  return { ok: false, code: 'invalid_coordinates', message: 'La ubicación de entrega no es válida.' };
+}
+
+/**
+ * Guarda (si hace falta) la ubicación que el operador eligió para un pedido, para
+ * que quede en el historial del cliente con su procedencia.
+ *
+ * @param {any} ctx
+ * @param {{ location: any, customerId: string|null, conversationId?: string|null, orderId: string|null }} input
+ */
+async function rememberOrderLocation(ctx, input) {
+  if (!input.location) return null;
+  const saved = await ctx.customers.saveLocation({
+    location: input.location,
+    customerId: input.customerId,
+    conversationId: input.conversationId ?? null,
+    orderId: input.orderId,
+    // Reutilizar una ubicación existente no crea otra fila: ya está guardada.
+    idempotencyKey: input.location.id
+      ? `loc:reuse:${input.location.id}:${input.orderId ?? 'sin-pedido'}`
+      : `loc:order:${input.orderId ?? newId('pedido')}`,
+  });
+  return saved.ok ? saved.location : null;
+}
+
+/** Identificador aleatorio corto (mismo patrón que el resto del CRM). */
+function newId(prefix) {
+  return `${prefix}_${randomBytes(8).toString('hex')}`;
+}
+
+async function ensureInventoryForSale(ctx, item) {
+  if (!ctx.inventory) return { ok: true };
+  const order = orderOf(item);
+  const required =
+    Number(order?.total_capsules) ||
+    (order?.items ?? []).reduce((sum, line) => sum + (Number(line.totalCapsules) || 0), 0);
+  const stock = await ctx.inventory.stock();
+  if (stock.initialized && stock.current < required) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'insufficient_stock',
+      message: `Stock insuficiente: hay ${stock.current} cápsulas disponibles y este pedido requiere ${required}.`,
+      available: stock.current,
+      required,
+    };
+  }
+  return { ok: true };
+}
+
+function orderFinancials(order) {
+  const lines = order?.items ?? [];
+  const productRevenueCents = lines.reduce(
+    (sum, line) => sum + (Number(line.subtotal_snapshot_cents) || Math.trunc(Number(line.subtotal) || 0) * 100),
+    0,
+  );
+  const productCostCents = lines.reduce((sum, line) => sum + (Number(line.product_cost_snapshot_cents) || 0), 0);
+  const deliveryRevenueCents = Math.trunc(Number(order?.delivery_fee ?? order?.delivery?.fee ?? 0) || 0) * 100;
+  return {
+    product_revenue_cents: productRevenueCents,
+    delivery_revenue_cents: deliveryRevenueCents,
+    total_collected_cents: productRevenueCents + deliveryRevenueCents,
+    product_cost_cents: productCostCents,
+    gross_product_profit_cents: productRevenueCents - productCostCents,
+  };
 }
 
 /**
@@ -418,6 +535,15 @@ async function createOrder(ctx, body = {}) {
 
   /** @type {{row: any, order: any}} */
   let built;
+  /*
+   * UBICACIÓN DE ENTREGA (opcional). Se resuelve ANTES de construir el pedido y
+   * se guarda un snapshot dentro del pedido: si el cliente manda otra ubicación
+   * después, este pedido sigue representando la que se usó (§14).
+   */
+  const entrega = await resolveOrderLocation(ctx, { customerId: customer.id, body });
+  if (!entrega.ok) {
+    return { ok: false, status: 422, error: entrega.code, message: entrega.message };
+  }
   try {
     built = purchaseRow({
       ...body,
@@ -426,6 +552,8 @@ async function createOrder(ctx, body = {}) {
       name: customer.name ?? body.name,
       phone: customer.phone_e164 ?? customer.phone,
       location: customer.location ?? body.location,
+      // GPS: nombre propio para no confundirlo con la ciudad heredada.
+      gpsLocation: entrega.location,
     });
   } catch (error) {
     return {
@@ -435,6 +563,17 @@ async function createOrder(ctx, body = {}) {
       message: 'Elige un frasco del catálogo.',
     };
   }
+  /*
+   * La ubicación elegida queda en el HISTORIAL del cliente con su procedencia
+   * (dispositivo del operador, coordenadas a mano o reutilizada), para poder
+   * elegirla la próxima vez. Reutilizar una que ya existía no duplica filas.
+   */
+  await rememberOrderLocation(ctx, {
+    location: entrega.location,
+    customerId: customer.id,
+    conversationId,
+    orderId: built.row.id,
+  });
 
   const requested = text(body.status, 20);
   const status = requested && isOrderStatus(requested) ? requested : 'nuevo';
@@ -442,6 +581,8 @@ async function createOrder(ctx, body = {}) {
   if (status === ctx.purchaseStatus) {
     built.order.delivered_at = new Date().toISOString();
     built.row.orderJson = JSON.stringify(built.order);
+    const check = await ensureInventoryForSale(ctx, { ...built.row, status, order_json: built.row.orderJson });
+    if (!check.ok) return check;
   }
   const saved = await ctx.store.save(built.row);
   const item = await ctx.store.update(built.row.id, {
@@ -482,7 +623,16 @@ async function createOrder(ctx, body = {}) {
   console.log(
     `[crm] pedido ${built.order.order_number} creado · ${customer.name ?? customer.phone_e164} · estado ${status}`,
   );
-  return { ok: true, duplicate: saved.duplicate === true, item: finalItem, order: built.order, customer, delivered, status };
+  const responseItem = delivered?.item ?? finalItem;
+  return {
+    ok: true,
+    duplicate: saved.duplicate === true,
+    item: responseItem,
+    order: orderOf(responseItem) ?? built.order,
+    customer,
+    delivered,
+    status,
+  };
 }
 
 function typeLabel(type) {
@@ -738,7 +888,22 @@ async function approvedTemplate(ctx, name) {
  */
 export async function afterPurchaseDelivered(ctx, item) {
   /** @type {{meta: any, totals: any, followups: any, nextFollowupAt: string|null}} */
-  const result = { meta: null, totals: null, followups: null, nextFollowupAt: null };
+  const result = { meta: null, totals: null, followups: null, nextFollowupAt: null, inventory: null, item };
+  if (ctx.inventory) {
+    const inventory = await ctx.inventory.recordSale(item);
+    if (!inventory.ok) {
+      const error = Object.assign(new Error(inventory.error ?? 'inventory_error'), { inventory });
+      throw error;
+    }
+    result.inventory = inventory;
+    if (inventory.order) {
+      const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(inventory.order) });
+      if (updated) {
+        item = updated;
+        result.item = updated;
+      }
+    }
+  }
   if (ctx.metaCapi?.enabled && !item.meta_purchase_sent_at) {
     result.meta = await sendPurchaseToMeta({ store: ctx.store, metaCapi: ctx.metaCapi, item, source: 'estado' });
   }
@@ -1217,6 +1382,7 @@ async function handle(req, res, ctx) {
       const messages = await store.messages().list();
       const customerList = await ctx.customers.list({});
       const conversationList = await ctx.customers.listConversations({});
+      const conversationCounts = await ctx.customers.conversationCounts();
       const buckets = await ctx.followups.buckets();
       const outbound = await ctx.db.list('wa_messages', { limit: 500 });
       const failed = outbound.filter((row) => row.status === 'failed');
@@ -1247,6 +1413,7 @@ async function handle(req, res, ctx) {
           }
         }
       }
+      const inventory = await ctx.inventory.catalog();
       json(res, 200, {
         ok: true,
         storage: store.kind,
@@ -1266,6 +1433,7 @@ async function handle(req, res, ctx) {
         // ------------------------------------------------ clientes y WhatsApp
         customers: customerList,
         conversations: conversationList,
+        conversationCounts,
         followups: {
           reference: buckets.reference,
           today: buckets.today,
@@ -1283,8 +1451,9 @@ async function handle(req, res, ctx) {
           states: COMMERCIAL_STATES,
           manual: MANUAL_COMMERCIAL_STATES,
         },
-        // Catálogo y estado comercial, sin repetir precios ni estados en el panel.
-        catalog: CATALOG,
+        // Catálogo, inventario y estado comercial, sin repetir precios ni estados en el panel.
+        catalog: inventory.presentations,
+        inventory,
         orderStatuses: Object.entries(ORDER_STATUS_LABELS).map(([value, label]) => ({ value, label })),
         audit: await ctx.audit.summary(),
         // Pantalla HOY: lo que una persona tiene que mirar al abrir el panel.
@@ -1354,6 +1523,89 @@ async function handle(req, res, ctx) {
         ? String(url.searchParams.get('period'))
         : '30d';
       json(res, 200, { ok: true, metrics: await ctx.customers.metrics({ period }) });
+      return;
+    }
+
+    if (route === '/api/admin/inventory' && req.method === 'GET') {
+      const snapshot = await ctx.inventory.catalog();
+      const stock = await ctx.inventory.stock();
+      json(res, 200, {
+        ok: true,
+        ...snapshot,
+        current_unit_cost: centsToMoney(snapshot.product.current_unit_cost_cents),
+        movements: stock.movements.slice(-100).reverse(),
+      });
+      return;
+    }
+
+    if (route === '/api/admin/inventory/restock' && req.method === 'POST') {
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.inventory.addStock({
+        quantity: body.quantity,
+        unitCost: body.unitCost,
+        reason: longText(body.reason ?? 'Reposición', 300),
+        idempotencyKey: text(body.idempotencyKey, 160),
+      });
+      if (!result.ok) {
+        json(res, result.error === 'insufficient_stock' ? 409 : 422, { ok: false, ...result });
+        return;
+      }
+      json(res, 201, { ok: true, result, inventory: await ctx.inventory.catalog() });
+      return;
+    }
+
+    if (route === '/api/admin/inventory/adjust' && req.method === 'POST') {
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.inventory.adjust({
+        direction: body.direction === 'out' ? 'out' : 'in',
+        quantity: body.quantity,
+        unitCost: body.unitCost,
+        reason: longText(body.reason ?? 'Ajuste manual', 300),
+        idempotencyKey: text(body.idempotencyKey, 160),
+      });
+      if (!result.ok) {
+        json(res, result.error === 'insufficient_stock' ? 409 : 422, { ok: false, ...result });
+        return;
+      }
+      json(res, 200, { ok: true, result, inventory: await ctx.inventory.catalog() });
+      return;
+    }
+
+    if (route === '/api/admin/inventory/cost' && req.method === 'POST') {
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.inventory.updateCost(body.unitCost);
+      if (!result.ok) {
+        json(res, 422, { ok: false, ...result });
+        return;
+      }
+      json(res, 200, { ok: true, product: result.product, inventory: await ctx.inventory.catalog() });
+      return;
+    }
+
+    if (route === '/api/admin/reports/sales' && req.method === 'GET') {
+      const period = url.searchParams.get('period') ?? 'hoy';
+      const report = await ctx.inventory.report({
+        period,
+        from: url.searchParams.get('from') ?? undefined,
+        to: url.searchParams.get('to') ?? undefined,
+        limit: 500,
+      });
+      json(res, 200, { ok: true, report });
       return;
     }
 
@@ -1439,6 +1691,13 @@ async function handle(req, res, ctx) {
           order.status_history = [...(order.status_history ?? []), { status: patch.status, at: stamp }];
           patch.orderJson = JSON.stringify(order);
         }
+        if (patch.status === ctx.purchaseStatus) {
+          const check = await ensureInventoryForSale(ctx, { ...before, status: patch.status, order_json: patch.orderJson ?? before.order_json });
+          if (!check.ok) {
+            json(res, check.status ?? 409, { ok: false, error: check.error, message: check.message, available: check.available, required: check.required });
+            return;
+          }
+        }
       }
       const updated = await store.update(id, patch);
       if (!updated) {
@@ -1467,9 +1726,33 @@ async function handle(req, res, ctx) {
         updated.status === ctx.purchaseStatus &&
         patch.status === ctx.purchaseStatus
       ) {
-        afterPurchaseDelivered(ctx, updated).catch((error) => {
+        try {
+          const delivered = await afterPurchaseDelivered(ctx, updated);
+          json(res, 200, { ok: true, item: delivered.item ?? updated, delivered });
+          return;
+        } catch (error) {
+          const inventory = /** @type {any} */ (error).inventory ?? null;
+          if (inventory?.error === 'insufficient_stock') {
+            json(res, 409, {
+              ok: false,
+              error: 'insufficient_stock',
+              message: `Stock insuficiente: hay ${inventory.available} cápsulas disponibles y este pedido requiere ${inventory.required}.`,
+              available: inventory.available,
+              required: inventory.required,
+            });
+            return;
+          }
           console.error('[crm] venta entregada:', error?.message ?? error);
-        });
+        }
+      }
+      if (
+        before?.type === 'order_intent' &&
+        before.status === ctx.purchaseStatus &&
+        patch.status &&
+        patch.status !== ctx.purchaseStatus &&
+        ['cancelado', 'perdido'].includes(String(patch.status))
+      ) {
+        await ctx.inventory.reverseSale(before, `Estado ${patch.status}`);
       }
       json(res, 200, { ok: true, item: updated });
       return;
@@ -1509,6 +1792,17 @@ async function handle(req, res, ctx) {
       if (!action && req.method === 'GET') {
         const profile = await ctx.customers.profile(customerId);
         json(res, 200, { ok: true, ...profile });
+        return;
+      }
+
+      /*
+       * UBICACIONES del cliente: historial completo con procedencia y edad
+       * («Compartida hoy» / «ayer» / fecha). Es una ruta de ADMINISTRACIÓN: va con
+       * sesión y nunca se expone a nadie sin autenticar.
+       */
+      if (action === 'locations' && req.method === 'GET') {
+        const locations = await ctx.customers.listLocations(customerId, { limit: 100 });
+        json(res, 200, { ok: true, customerId, locations });
         return;
       }
 
@@ -1602,6 +1896,8 @@ async function handle(req, res, ctx) {
           ok: false,
           error: result.error,
           message: result.message ?? 'Elige un frasco del catálogo.',
+          available: result.available,
+          required: result.required,
         });
         return;
       }
@@ -1632,6 +1928,8 @@ async function handle(req, res, ctx) {
           ok: false,
           error: result.error,
           message: result.message ?? 'No se pudo crear el pedido.',
+          available: result.available,
+          required: result.required,
         });
         return;
       }
@@ -1683,6 +1981,7 @@ async function handle(req, res, ctx) {
         ok: true,
         item,
         order,
+        financials: orderFinancials(order),
         receipt,
         customer,
         followups: followupRows.filter((row) => row.order_id === orderId || row.purchase_id === orderId),
@@ -1708,11 +2007,27 @@ async function handle(req, res, ctx) {
         body = {};
       }
       const current = orderOf(item);
+      const currentFirst = current?.items?.[0] ?? null;
+      /*
+       * UBICACIÓN DE ENTREGA: si se manda una, se resuelve y se comprueba que es
+       * de ESE cliente. Si no se manda nada, se CONSERVA la que ya tenía el pedido
+       * (los pedidos antiguos no pierden su dirección/ciudad al editarse).
+       */
+      const entrega =
+        body.deliveryLocation === undefined
+          ? { ok: true, provided: false, location: current.delivery?.location ?? null }
+          : await resolveOrderLocation(ctx, { customerId: current.customer_id ?? item.customer_id, body });
+      if (!entrega.ok) {
+        json(res, 422, { ok: false, error: entrega.code, message: entrega.message });
+        return;
+      }
       /** @type {any} */
       let totals;
       try {
         totals = computeOrderTotals(Array.isArray(body.items) ? body.items : current.items, {
           discount: body.discount !== undefined ? body.discount : current.discount,
+          // El delivery es OPCIONAL e independiente de la ubicación (§26).
+          deliveryFee: body.deliveryFee !== undefined ? body.deliveryFee : current.delivery_fee ?? current.delivery?.fee,
         });
       } catch (error) {
         json(res, 422, { ok: false, error: /** @type {any} */ (error).code ?? 'invalid_order' });
@@ -1727,10 +2042,29 @@ async function handle(req, res, ctx) {
         total_capsules: totals.totalCapsules,
         subtotal: totals.subtotal,
         discount: totals.discount,
+        delivery_fee: totals.deliveryFee,
         total: totals.total,
         notes: body.notes !== undefined ? longText(body.notes, 2000) : current.notes,
-        delivery: body.delivery !== undefined ? { ...current.delivery, ...body.delivery } : current.delivery,
+        delivery: {
+          ...(current.delivery ?? {}),
+          ...(body.delivery !== undefined ? body.delivery : {}),
+          fee: totals.deliveryFee,
+          // GPS: se manda la elegida o se conserva la suya (nunca se borra sola).
+          location: entrega.provided ? entrega.location : current.delivery?.location ?? null,
+        },
       };
+      /*
+       * La ubicación nueva se guarda además en el historial del cliente, para
+       * poder reutilizarla en pedidos siguientes sin volver a pedírsela.
+       */
+      if (entrega.provided && entrega.location) {
+        await rememberOrderLocation(ctx, {
+          location: entrega.location,
+          customerId: nextOrder.customer_id ?? null,
+          conversationId: nextOrder.conversation_id ?? null,
+          orderId,
+        });
+      }
       const updated = await store.update(orderId, {
         notes: nextOrder.notes,
         orderJson: JSON.stringify(nextOrder),
@@ -1742,6 +2076,37 @@ async function handle(req, res, ctx) {
         unitPrice: first.unitPrice,
         total: nextOrder.total,
       });
+      if (item.status === ctx.purchaseStatus) {
+        const synced = await ctx.inventory.syncSale(
+          { ...updated, order_json: JSON.stringify(nextOrder) },
+          nextOrder,
+          current,
+          `Edición de pedido ${nextOrder.order_number ?? orderId}`,
+        );
+        if (!synced.ok) {
+          await store.update(orderId, {
+            notes: current.notes,
+            orderJson: JSON.stringify(current),
+            variantId: currentFirst?.variantId ?? item.variant_id,
+            variantName: currentFirst?.variantName ?? item.variant_name,
+            capsules: currentFirst?.capsules ?? item.capsules,
+            quantity: currentFirst?.quantity ?? item.quantity,
+            unitPrice: currentFirst?.unitPrice ?? item.unit_price,
+            total: current.total ?? item.total,
+          });
+          json(res, synced.error === 'insufficient_stock' ? 409 : 422, {
+            ok: false,
+            error: synced.error,
+            message:
+              synced.error === 'insufficient_stock'
+                ? `Stock insuficiente: hay ${synced.available} cápsulas disponibles y este cambio requiere ${synced.required}.`
+                : 'No se pudo sincronizar inventario.',
+            available: synced.available,
+            required: synced.required,
+          });
+          return;
+        }
+      }
       await ctx.audit?.record({
         entity: 'order',
         entityId: orderId,
@@ -1750,6 +2115,112 @@ async function handle(req, res, ctx) {
         data: { total: nextOrder.total, items: nextOrder.item_count },
       });
       json(res, 200, { ok: true, item: updated, order: nextOrder });
+      return;
+    }
+
+    /*
+     * COMPARTIR UNA UBICACIÓN CON OTRA CONVERSACIÓN.
+     *
+     * Es una acción DELIBERADA y con aviso: la ubicación puede ser el domicilio de
+     * una persona, así que hay que confirmar a quién se le manda (§21). Nunca se
+     * copia nada más del cliente original (ni nombre, ni teléfono, ni pedido):
+     * solo las coordenadas, y la auditoría deja constancia de origen y destino.
+     */
+    if (route.startsWith('/api/admin/locations/') && req.method === 'POST') {
+      const rest = decodeURIComponent(route.slice('/api/admin/locations/'.length));
+      const [locationId, action = ''] = rest.split('/');
+      if (action !== 'share') {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const source = await ctx.customers.getLocation(locationId);
+      if (!source) {
+        json(res, 404, { ok: false, error: 'unknown_location', message: 'Esa ubicación ya no existe.' });
+        return;
+      }
+      const destination = await findConversation(ctx, text(body.conversationId, 80) ?? '');
+      if (!destination) {
+        json(res, 404, { ok: false, error: 'unknown_conversation', message: 'Elige una conversación de destino.' });
+        return;
+      }
+      if (body.confirmed !== true) {
+        json(res, 409, {
+          ok: false,
+          error: 'not_confirmed',
+          message: 'Confirma con quién vas a compartir la ubicación: no se envía nada sin tu confirmación.',
+        });
+        return;
+      }
+      const destinoCustomer = await ctx.customers.get(destination.customer_id);
+      if (destinoCustomer?.do_not_contact || destinoCustomer?.whatsapp_opt_out_at) {
+        json(res, 409, {
+          ok: false,
+          error: 'do_not_contact',
+          message: 'El cliente de destino pidió no recibir mensajes. Respétalo.',
+        });
+        return;
+      }
+      if (!ctx.whatsapp?.enabled) {
+        json(res, 503, {
+          ok: false,
+          error: 'whatsapp_not_configured',
+          message: 'WhatsApp no está configurado en el servidor: la ubicación NO se ha enviado.',
+        });
+        return;
+      }
+      if (!ctx.customers.canSendFreeText(destination)) {
+        json(res, 409, {
+          ok: false,
+          error: 'outside_window',
+          message:
+            'Han pasado más de 24 h desde el último mensaje del cliente de destino: WhatsApp solo permite enviar una plantilla aprobada.',
+        });
+        return;
+      }
+      const compartida = { ...source, source: LOCATION_SOURCES.REUSED_LOCATION };
+      const sendResult = await ctx.whatsapp.sendLocation(destinoCustomer.phone_e164, compartida);
+      const recorded = await ctx.customers.recordOutbound({
+        customer: destinoCustomer,
+        conversation: destination,
+        type: 'location',
+        body: source.address ?? '[ubicación]',
+        location: compartida,
+        waMessageId: sendResult.messageId ?? null,
+        status: sendResult.ok ? 'sent' : 'failed',
+        error: sendResult.ok ? null : sendResult.error,
+        sentBy: 'panel',
+      });
+      await ctx.audit?.record({
+        entity: 'location',
+        entityId: source.id,
+        action: 'location.shared',
+        summary: `Ubicación compartida con ${destinoCustomer.name ?? destinoCustomer.phone_e164}`,
+        data: {
+          location_id: source.id,
+          from_conversation_id: source.conversation_id ?? null,
+          to_conversation_id: destination.id,
+          to_customer_id: destinoCustomer.id,
+          operator: 'panel',
+          ok: sendResult.ok === true,
+        },
+      });
+      if (!sendResult.ok) {
+        json(res, 502, {
+          ok: false,
+          error: 'send_failed',
+          message: sendResult.error?.message ?? 'WhatsApp rechazó la ubicación.',
+          message_record: recorded.message,
+        });
+        return;
+      }
+      json(res, 201, { ok: true, message: recorded.message, location: recorded.location });
       return;
     }
 
@@ -1856,6 +2327,139 @@ async function handle(req, res, ctx) {
           data: { customer_id: conversation.customer_id },
         });
         json(res, 200, { ok: true, conversation: updated });
+        return;
+      }
+
+      /*
+       * ENVIAR UNA UBICACIÓN al cliente.
+       *
+       * Se exige `confirmed: true` (además de un clic humano en el panel): así es
+       * IMPOSIBLE que una ubicación salga sola (§19). Y las reglas son las mismas
+       * que para cualquier mensaje: si el cliente pidió no recibir mensajes se
+       * rechaza, y fuera de la ventana de 24 h también (una ubicación es contenido
+       * libre, no una plantilla).
+       *
+       * La ubicación puede ser la que YA existe (se reutiliza esa fila) o unas
+       * coordenadas nuevas del dispositivo del operador. NUNCA se puede reenviar a
+       * este chat una ubicación que sea de OTRO cliente: eso es «compartir» y tiene
+       * su propia ruta, con su confirmación y su auditoría.
+       */
+      if (action === 'location' && req.method === 'POST') {
+        /** @type {any} */
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        if (body.confirmed !== true) {
+          json(res, 409, {
+            ok: false,
+            error: 'not_confirmed',
+            message: 'Confirma el envío de la ubicación: no se envía nada sin tu confirmación.',
+          });
+          return;
+        }
+        if (customer?.do_not_contact || customer?.whatsapp_opt_out_at) {
+          json(res, 409, {
+            ok: false,
+            error: 'do_not_contact',
+            message: 'Este cliente pidió no recibir mensajes. Respétalo.',
+          });
+          return;
+        }
+        if (!ctx.whatsapp?.enabled) {
+          json(res, 503, {
+            ok: false,
+            error: 'whatsapp_not_configured',
+            message: 'WhatsApp no está configurado en el servidor: la ubicación NO se ha enviado.',
+          });
+          return;
+        }
+        if (!ctx.customers.canSendFreeText(conversation)) {
+          json(res, 409, {
+            ok: false,
+            error: 'outside_window',
+            message:
+              'Han pasado más de 24 h desde el último mensaje del cliente: WhatsApp solo permite enviar una plantilla aprobada.',
+          });
+          return;
+        }
+
+        /** @type {any} */
+        let location = null;
+        const reference = text(body.locationId, 80);
+        if (reference) {
+          const stored = await ctx.customers.getLocation(reference);
+          if (!stored) {
+            json(res, 422, { ok: false, error: 'unknown_location', message: 'Esa ubicación ya no existe.' });
+            return;
+          }
+          if (stored.customer_id && customer?.id && stored.customer_id !== customer.id) {
+            json(res, 422, {
+              ok: false,
+              error: 'location_from_other_customer',
+              message: 'Esa ubicación es de otro cliente. Para compartirla, usa «Compartir ubicación» con confirmación.',
+            });
+            return;
+          }
+          location = stored;
+        } else {
+          const normalized = normalizeLocation({
+            latitude: body.latitude,
+            longitude: body.longitude,
+            name: body.name,
+            address: body.address,
+            source: body.source ?? LOCATION_SOURCES.BROWSER_GEOLOCATION,
+          });
+          if (!normalized.ok) {
+            json(res, 422, { ok: false, error: normalized.code, message: normalized.message });
+            return;
+          }
+          location = normalized.location;
+        }
+
+        const sendResult = await ctx.whatsapp.sendLocation(customer.phone_e164, location);
+        const recorded = await ctx.customers.recordOutbound({
+          customer,
+          conversation,
+          type: 'location',
+          // Sin dirección de verdad, el cuerpo es la etiqueta de siempre (no se inventa nada).
+          body: location.address ?? '[ubicación]',
+          locationId: location.id ?? null,
+          location: location.id ? undefined : location,
+          waMessageId: sendResult.messageId ?? null,
+          status: sendResult.ok ? 'sent' : 'failed',
+          error: sendResult.ok ? null : sendResult.error,
+          idempotencyKey: text(body.idempotencyKey, 120),
+          sentBy: 'panel',
+          meta: { phoneNumberId: ctx.whatsapp.phoneNumberId },
+        });
+        await ctx.customers.markConversationRead(conversation.id);
+        // Auditoría SIN coordenadas: solo qué ubicación, a quién y desde qué chat.
+        await ctx.audit?.record({
+          entity: 'location',
+          entityId: recorded.location?.id ?? location.id ?? null,
+          action: 'location.sent',
+          summary: `Ubicación enviada a ${customer.name ?? customer.phone_e164}`,
+          data: {
+            location_id: recorded.location?.id ?? location.id ?? null,
+            conversation_id: conversation.id,
+            customer_id: customer.id,
+            source: location.source ?? null,
+            ok: sendResult.ok === true,
+          },
+        });
+        if (!sendResult.ok) {
+          json(res, 502, {
+            ok: false,
+            error: 'send_failed',
+            message: sendResult.error?.message ?? 'WhatsApp rechazó la ubicación.',
+            message_record: recorded.message,
+          });
+          return;
+        }
+        json(res, 201, { ok: true, message: recorded.message, location: recorded.location });
         return;
       }
 
@@ -2202,7 +2806,20 @@ async function handle(req, res, ctx) {
       return;
     }
 
-    // Plantillas de TEXTO del panel (las que se copian en el chat).
+    /*
+     * RESPUESTAS RÁPIDAS / plantillas de TEXTO del panel.
+     *
+     * Es UNA sola lista, con un solo sitio donde se guarda: la que ya existía.
+     * Se abre desde la conversación (menú de acciones → Respuesta rápida) para
+     * no obligar a salir del chat, pero los datos son los mismos que edita el
+     * menú lateral. Una respuesta rápida NO es una plantilla de Meta: es texto
+     * que se escribe en el compositor y que una persona envía si quiere.
+     */
+    if (route === '/api/admin/messages' && req.method === 'GET') {
+      json(res, 200, { ok: true, messages: await store.messages().list() });
+      return;
+    }
+
     if (route === '/api/admin/messages' && req.method === 'POST') {
       /** @type {any} */
       let body = {};
@@ -2217,28 +2834,62 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: 'invalid_message', message: 'La plantilla necesita nombre y texto.' });
         return;
       }
+      // Alta o edición: el `id` decide. Al crear se coloca AL FINAL de la lista
+      // (`position` = mayor + 1) para que el orden sea predecible y no se
+      // reordene sola cada vez que alguien añade una respuesta.
+      const current = await store.messages().list();
+      const id = text(body.id, 60) ?? messageId(name);
+      const existing = current.find((row) => row.id === id) ?? null;
       const message = {
-        id: text(body.id, 60) ?? messageId(name),
+        id,
         name,
         body: messageBody,
-        position: Number.isFinite(Number(body.position)) ? Math.trunc(Number(body.position)) : 99,
+        position:
+          existing?.position ??
+          (Number.isFinite(Number(body.position))
+            ? Math.trunc(Number(body.position))
+            : current.reduce((max, row) => Math.max(max, Number(row.position) || 0), 0) + 1),
       };
       await store.messages().save(message);
-      console.log(`[crm] plantilla guardada: ${message.name}`);
+      console.log(`[crm] ${existing ? 'respuesta rápida actualizada' : 'respuesta rápida creada'}: ${message.name}`);
+      // Traza administrativa: quién, qué acción y el NOMBRE. El cuerpo no se
+      // registra (es largo y no aporta nada al rastro comercial).
+      await ctx.audit?.record({
+        entity: 'quick_reply',
+        entityId: message.id,
+        action: existing ? 'quick_reply_updated' : 'quick_reply_created',
+        actor: 'panel',
+        summary: message.name,
+      });
       json(res, 200, { ok: true, message, messages: await store.messages().list() });
       return;
     }
 
     if (route.startsWith('/api/admin/messages/') && req.method === 'DELETE') {
       const id = decodeURIComponent(route.slice('/api/admin/messages/'.length));
+      // Se lee ANTES de borrar para poder dejar constancia de qué se borró.
+      const existing = (await store.messages().list()).find((row) => row.id === id) ?? null;
       await store.messages().remove(id);
+      if (existing) {
+        console.log(`[crm] respuesta rápida borrada: ${existing.name}`);
+        await ctx.audit?.record({
+          entity: 'quick_reply',
+          entityId: id,
+          action: 'quick_reply_deleted',
+          actor: 'panel',
+          summary: existing.name,
+        });
+      }
+      // Borrar un texto guardado NO toca nada más: los mensajes ya enviados
+      // siguen en su conversación y el cliente sigue existiendo.
       json(res, 200, { ok: true, messages: await store.messages().list() });
       return;
     }
 
     // -------------------------------------------------- catálogo (fuente única)
     if (route === '/api/admin/catalog' && req.method === 'GET') {
-      json(res, 200, { ok: true, currency: 'DOP', catalog: CATALOG });
+      const inventory = await ctx.inventory.catalog();
+      json(res, 200, { ok: true, currency: 'DOP', catalog: inventory.presentations, inventory });
       return;
     }
 
@@ -2623,6 +3274,7 @@ export async function startCrmServer(config = {}) {
    * verdad para explicar cualquier número del panel.
    */
   const audit = createAuditLog({ db, clock: config.clock });
+  const inventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
 
   /*
    * La reconciliación de un envío AMBIGUO es una decisión humana excepcional, así
@@ -2701,6 +3353,7 @@ export async function startCrmServer(config = {}) {
     followups,
     customers,
     audit,
+    inventory,
     settings: settingsService,
     scheduler,
     // Multimedia: metadata (BD), binario (R2), Graph y el pipeline que los une.

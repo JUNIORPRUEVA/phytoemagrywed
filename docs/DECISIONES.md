@@ -804,4 +804,43 @@ que compositor, barra inferior y FAB no se pisan entre sí ni tapan el último
 mensaje. Las capturas antes/después quedan fuera del repositorio (herramienta
 local), igual que el CRM de pruebas con dobles que se usó para generarlas.
 
+## 37. Inventario: ledger de cápsulas, costo en centavos y utilidad histórica
+
+El inventario de Phytoemagry queda cerrado como un modelo simple, auditable y
+financieramente consistente:
+
+1. **La fuente de verdad es `inventory_movements`.** El stock actual no vive como
+   un número editable: se reconstruye con `SUM(quantity_delta)`. Los movimientos
+   válidos son `RESTOCK`, `ADJUSTMENT_IN`, `SALE`, `ADJUSTMENT_OUT` y
+   `SALE_REVERSAL`.
+2. **La unidad base es la cápsula.** Las presentaciones comerciales (5, 7, 10,
+   15, 20, 30 y 60 cápsulas) consumen una existencia común. Una venta de 10
+   cápsulas descuenta 10 unidades físicas, no "un stock de frascos de 10".
+3. **El dinero se guarda en centavos enteros.** El costo estándar vigente es
+   `12666` centavos (RD$126.66) por cápsula. No se usa `float` para costo ni
+   utilidad.
+4. **Método de costo:** costo estándar vigente para operaciones futuras +
+   snapshot histórico en ventas completadas. No se implementa FIFO ni promedio
+   ponderado en esta fase, porque la prioridad es que cada venta conserve su
+   utilidad histórica exacta.
+5. **La utilidad histórica usa snapshots, nunca costo actual.** Una venta de 10
+   cápsulas por RD$2,500 guarda costo RD$1,266.60 y utilidad bruta de producto
+   RD$1,233.40. Cambiar después el costo vigente no reescribe esa venta.
+6. **El delivery está separado.** Los reportes muestran venta de productos,
+   delivery cobrado, total cobrado, costo de productos y utilidad bruta de
+   producto; no se asume que el delivery sea margen del producto.
+7. **El stock negativo está bloqueado en backend.** La interfaz puede avisar,
+   pero la regla real vive en el API.
+8. **Idempotencia y reversas:** llegar a `entregado` afecta inventario una vez;
+   cancelar/revertir crea `SALE_REVERSAL` y no borra el `SALE` original.
+9. **Editar un pedido entregado mueve solo el delta.** Cambiar 10→15 descuenta 5
+   adicionales; cambiar 15→7 devuelve 8. No se duplica una salida completa.
+10. **Reportes por fecha usan la zona del negocio:** `America/Santo_Domingo`.
+11. **Escalamiento futuro:** la protección anti-sobregiro actual serializa las
+    operaciones dentro del proceso del CRM. Antes de escalar horizontalmente a
+    varias instancias de Node, debe reemplazarse o reforzarse con transacciones,
+    locks o garantías atómicas a nivel de base de datos. No es un bloqueo para la
+    arquitectura actual de una sola instancia; es un prerrequisito de
+    escalamiento.
+
 

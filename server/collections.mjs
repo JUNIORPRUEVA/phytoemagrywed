@@ -65,6 +65,30 @@ export const COLLECTIONS = Object.freeze({
     },
     unique: ['idempotency_key'],
   },
+  /*
+   * UBICACIONES GPS (`phytoemagry_locations`).
+   *
+   * Una ubicación NO es multimedia: es un dato estructurado (latitud/longitud +
+   * procedencia), así que vive aquí y NO pasa por R2 ni por la tabla de media.
+   *
+   * Se guarda HISTORIAL: si el cliente manda otra ubicación después, la anterior
+   * no se toca (los pedidos viejos siguen apuntando a la suya).
+   *
+   * `idempotency_key` es ÚNICO porque Meta reintenta webhooks: el mismo mensaje
+   * de ubicación dos veces no puede crear dos ubicaciones.
+   */
+  locations: {
+    indexed: {
+      customer_id: 'text',
+      conversation_id: 'text',
+      wa_message_id: 'text',
+      order_id: 'text',
+      source: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key', 'wa_message_id'],
+  },
   content: {
     indexed: { status: 'text', type: 'text', created_at: 'text' },
   },
@@ -99,6 +123,20 @@ export const COLLECTIONS = Object.freeze({
   settings: {
     indexed: { key: 'text', updated_at: 'text' },
     unique: ['key'],
+  },
+  products: {
+    indexed: { product_id: 'text', updated_at: 'text' },
+    unique: ['product_id'],
+  },
+  inventory_movements: {
+    indexed: {
+      product_id: 'text',
+      type: 'text',
+      order_id: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
   },
 });
 

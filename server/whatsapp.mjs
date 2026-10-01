@@ -14,6 +14,7 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+import { cleanText, locationFromInbound, parseCoordinates } from './locations.mjs';
 import { normalizePhone } from './meta-capi.mjs';
 
 /** Versión de la Graph API para WhatsApp (se puede fijar por entorno). */
@@ -237,6 +238,30 @@ export function createWhatsAppClient(options = {}) {
     sendInteractive(to, interactive = {}) {
       return send({ to, type: 'interactive', interactive });
     },
+    /**
+     * UBICACIÓN estática (una sola, no «en vivo»: la Cloud API no permite enviar
+     * live location). Obligatorios `latitude`/`longitude`; `name`/`address` son
+     * opcionales y algunos clientes no los pintan, así que no se inventan.
+     *
+     * NUNCA se envía una URL de mapa: la fuente de verdad son las coordenadas, y
+     * mandar un enlace externo sería regalar la ubicación a un tercero.
+     */
+    async sendLocation(to, location = {}) {
+      const parsed = parseCoordinates(location);
+      if (!parsed.ok) return { ok: false, error: { code: parsed.code, message: parsed.message } };
+      const name = cleanText(location.name, 120);
+      const address = cleanText(location.address, 300);
+      return send({
+        to,
+        type: 'location',
+        location: {
+          latitude: parsed.latitude,
+          longitude: parsed.longitude,
+          ...(name ? { name } : {}),
+          ...(address ? { address } : {}),
+        },
+      });
+    },
     /** Marca como leído (dos ticks azules). No es un mensaje. */
     async markAsRead(messageId) {
       if (!enabled || !messageId) return { ok: false, skipped: true };
@@ -426,9 +451,16 @@ export function normalizeInboundMessage(message, contacts = new Map()) {
   else if (type === 'voice') body = '[nota de voz]';
   else if (type === 'video') body = message?.video?.caption ? String(message.video.caption) : '[video]';
   else if (type === 'document') body = message?.document?.filename ? String(message.document.filename) : '[documento]';
-  else if (type === 'location') body = '[ubicación]';
+  else if (type === 'location') body = message?.location?.address ? String(message.location.address) : '[ubicación]';
   else if (type === 'sticker') body = '[sticker]';
   else body = `[${type}]`;
+
+  /*
+   * UBICACIÓN (`type: 'location'`): se valida en la puerta. NO es multimedia y no
+   * se descarga nada. Si las coordenadas vinieran mal, `location` queda `null` y
+   * se guarda el motivo: nunca se sustituye por un (0,0) que está en el mar.
+   */
+  const inboundLocation = locationFromInbound(message);
 
   return {
     waMessageId: String(message?.id ?? ''),
@@ -440,6 +472,13 @@ export function normalizeInboundMessage(message, contacts = new Map()) {
     buttonId: buttonId || null,
     // Archivo (imagen/audio/…): identificador y datos, sin binario ni URL.
     media: mediaOf(message),
+    /*
+     * UBICACIÓN (type `location`): se valida en la puerta. NO es multimedia y no
+     * se descarga nada. Si las coordenadas vinieran mal, `location` queda `null`
+     * y se guarda el motivo, en vez de mentir con un (0,0) que está en el mar.
+     */
+    location: inboundLocation?.ok ? inboundLocation.location : null,
+    locationError: inboundLocation && !inboundLocation.ok ? inboundLocation.code : null,
     replyToWaId: message?.context?.id ? String(message.context.id) : null,
     timestamp: message?.timestamp ? Number(message.timestamp) : null,
     receivedAt: message?.timestamp ? new Date(Number(message.timestamp) * 1000).toISOString() : new Date().toISOString(),

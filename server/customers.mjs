@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 
 import { classifyIntent, detectHealthConcern, detectHumanRequest, detectOptOut, toE164, toWaId } from './whatsapp.mjs';
 import { addDays, dayIn } from './followups.mjs';
+import { LOCATION_SOURCES, buildLocationDoc, publicLocation } from './locations.mjs';
 
 /** Estados de automatización de una conversación. */
 export const AUTOMATION_STATES = Object.freeze(['AUTOMATIC', 'HUMAN_REQUIRED', 'HUMAN_ACTIVE', 'PAUSED', 'CLOSED']);
@@ -509,9 +510,36 @@ export function createCustomerService(deps) {
        * mensaje se sigue viendo igual.
        */
       const conArchivo = page.filter(
-        (row) => row.type && !['text', 'template', 'button', 'interactive'].includes(row.type),
+        (row) =>
+          row.type &&
+          // Una UBICACIÓN no es un archivo: no tiene media que resolver.
+          row.type !== 'location' &&
+          !['text', 'template', 'button', 'interactive'].includes(row.type),
       );
-      if (!media?.byMessageIds || conArchivo.length === 0) return page;
+      /*
+       * UBICACIONES del hilo: se resuelven en UNA consulta para todos los mensajes
+       * (igual que el media) y se adjuntan a su mensaje para que el panel pinte el
+       * componente con su enlace de mapa. Si no hay ubicaciones, no se consulta nada.
+       */
+      const conUbicacion = page.filter((row) => row.location_id);
+      /** @type {Map<string, any>} */
+      const ubicaciones = new Map();
+      if (conUbicacion.length) {
+        try {
+          const rows = await db.list('locations', { limit: 1000 });
+          const byId = new Map(rows.map((row) => [row.id, row]));
+          for (const row of conUbicacion) {
+            const found = byId.get(row.location_id);
+            if (found) ubicaciones.set(row.id, publicLocation(found));
+          }
+        } catch {
+          /* sin ubicación legible el hilo se ve igual: solo falta el mapa */
+        }
+      }
+      const conUbicaciones = (rows) =>
+        rows.map((row) => (ubicaciones.has(row.id) ? { ...row, location: ubicaciones.get(row.id) } : row));
+
+      if (!media?.byMessageIds || conArchivo.length === 0) return conUbicaciones(page);
       /** @type {Map<string, any>} */
       const byMessage = new Map();
       try {
@@ -520,25 +548,27 @@ export function createCustomerService(deps) {
       } catch {
         /* sin media el hilo se ve igual: solo falta el archivo */
       }
-      return page.map((row) => {
-        const found = byMessage.get(row.id);
-        if (!found) return row;
-        return {
-          ...row,
-          // Solo lo que el navegador necesita: nunca el `object_key` ni el bucket.
-          media: {
-            id: found.id,
-            status: found.status,
-            sendStatus: found.send_status ?? null,
-            mimeType: found.mime_type ?? null,
-            sizeBytes: found.size_bytes ?? null,
-            durationMs: found.duration_ms ?? null,
-            errorCode: found.error_code ?? null,
-            errorMessage: found.error_message ?? null,
-            direction: found.direction,
-          },
-        };
-      });
+      return conUbicaciones(
+        page.map((row) => {
+          const found = byMessage.get(row.id);
+          if (!found) return row;
+          return {
+            ...row,
+            // Solo lo que el navegador necesita: nunca el `object_key` ni el bucket.
+            media: {
+              id: found.id,
+              status: found.status,
+              sendStatus: found.send_status ?? null,
+              mimeType: found.mime_type ?? null,
+              sizeBytes: found.size_bytes ?? null,
+              durationMs: found.duration_ms ?? null,
+              errorCode: found.error_code ?? null,
+              errorMessage: found.error_message ?? null,
+              direction: found.direction,
+            },
+          };
+        }),
+      );
     },
 
     /**
@@ -596,6 +626,30 @@ export function createCustomerService(deps) {
       };
       await db.insert('wa_messages', doc);
 
+      /*
+       * UBICACIÓN (type `location`): NO es un archivo, así que no pasa por
+       * multimedia ni por R2. Se guarda como dato estructurado y queda LIGADA al
+       * mensaje. Es idempotente por `wa_message_id` (Meta reintenta webhooks) y
+       * NUNCA sobrescribe las anteriores: si el cliente manda otra después, las dos
+       * se conservan (los pedidos viejos siguen apuntando a la suya).
+       */
+      let location = null;
+      if (message.location) {
+        const saved = await this.saveLocation({
+          location: message.location,
+          customerId: customer.id,
+          conversationId: conversation.id,
+          messageId: doc.id,
+          waMessageId: message.waMessageId,
+          idempotencyKey: `loc:wa:${message.waMessageId}`,
+          createdAt: now,
+        });
+        if (saved.ok) {
+          location = saved.location;
+          await db.update('wa_messages', doc.id, { location_id: location.id });
+        }
+      }
+
       await db.update('conversations', conversation.id, {
         last_message_at: now,
         last_inbound_at: now,
@@ -625,7 +679,8 @@ export function createCustomerService(deps) {
         duplicate: false,
         customer: { ...customer, ...customerPatch },
         conversation,
-        message: doc,
+        message: { ...doc, location_id: location?.id ?? null },
+        location: location ? publicLocation(location) : null,
         intent,
         optOut,
         humanRequired: humanRequest || healthConcern,
@@ -640,6 +695,24 @@ export function createCustomerService(deps) {
      */
     async recordOutbound(input) {
       const now = new Date().toISOString();
+      /*
+       * UBICACIÓN SALIENTE: si el operador elige una ubicación que YA existe (por
+       * ejemplo la que mandó el cliente), se reutiliza ESA fila —no se duplica—; si
+       * es nueva (su dispositivo o coordenadas a mano) se guarda con su procedencia.
+       */
+      let location = null;
+      if (input.locationId) location = await db.get('locations', input.locationId);
+      if (!location && input.location) {
+        const saved = await this.saveLocation({
+          location: input.location,
+          customerId: input.customer.id,
+          conversationId: input.conversation.id,
+          waMessageId: input.waMessageId ?? null,
+          idempotencyKey: `loc:out:${input.idempotencyKey ?? newId('envio')}`,
+          createdAt: now,
+        });
+        if (saved.ok) location = saved.location;
+      }
       const doc = {
         id: newId('msg'),
         conversation_id: input.conversation.id,
@@ -650,6 +723,7 @@ export function createCustomerService(deps) {
         type: input.type ?? (input.template ? 'template' : 'text'),
         template_name: input.template ?? null,
         body: input.body ?? null,
+        location_id: location?.id ?? null,
         intent: null,
         button_id: null,
         status: input.status ?? 'pending',
@@ -665,7 +739,7 @@ export function createCustomerService(deps) {
         idempotency_key: input.idempotencyKey ?? null,
       };
       const result = await db.insert('wa_messages', doc);
-      if (result.duplicate) return { ok: true, duplicate: true, message: doc };
+      if (result.duplicate) return { ok: true, duplicate: true, message: doc, location: location ? publicLocation(location) : null };
 
       await db.update('conversations', input.conversation.id, {
         last_message_at: now,
@@ -673,7 +747,46 @@ export function createCustomerService(deps) {
         updated_at: now,
       });
       await db.update('customers', input.customer.id, { last_contact_at: now, updated_at: now });
-      return { ok: true, duplicate: false, message: doc };
+      return { ok: true, duplicate: false, message: doc, location: location ? publicLocation(location) : null };
+    },
+
+    /**
+     * Guarda una ubicación (idempotente por `idempotency_key` o `wa_message_id`).
+     *
+     * No hay «actualizar ubicación»: una ubicación es un HECHO con fecha. Si el
+     * cliente manda otra, se guarda otra y las dos quedan en el historial.
+     *
+     * @param {{ location: any, customerId?: string|null, conversationId?: string|null,
+     *           messageId?: string|null, waMessageId?: string|null, orderId?: string|null,
+     *           idempotencyKey?: string|null, createdAt?: string|null }} input
+     */
+    async saveLocation(input) {
+      const built = buildLocationDoc(input);
+      if (!built.ok) return { ok: false, error: built.code, message: built.message };
+      const inserted = await db.insert('locations', built.doc);
+      if (!inserted.duplicate) return { ok: true, duplicate: false, location: inserted.doc };
+      const existing =
+        (built.doc.idempotency_key ? await db.findBy('locations', 'idempotency_key', built.doc.idempotency_key) : null) ??
+        (built.doc.wa_message_id ? await db.findBy('locations', 'wa_message_id', built.doc.wa_message_id) : null) ??
+        built.doc;
+      return { ok: true, duplicate: true, location: existing };
+    },
+
+    /** Una ubicación por id (con sesión: nunca se expone sin autenticar). */
+    async getLocation(id) {
+      if (!id) return null;
+      return db.get('locations', String(id));
+    },
+
+    /**
+     * Historial de ubicaciones de un cliente, de la más reciente a la más antigua.
+     * NUNCA se mezclan ubicaciones de clientes distintos.
+     */
+    async listLocations(customerId, options = {}) {
+      const rows = await db.list('locations', { limit: 2000 });
+      const scoped = customerId ? rows.filter((row) => row.customer_id === customerId) : rows;
+      const ordered = scoped.sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+      return ordered.slice(0, options.limit ?? 50).map(publicLocation);
     },
 
     /**
@@ -784,6 +897,9 @@ export function createCustomerService(deps) {
         nextFollowup,
         supply,
         scheduled,
+        // Ubicaciones del cliente: la última y su historial (§13 Cliente 360).
+        locations: await this.listLocations(customerId, { limit: 20 }),
+        lastLocation: (await this.listLocations(customerId, { limit: 1 }))[0] ?? null,
         commercial_state,
         canSendFreeText: this.canSendFreeText(conversation),
         unread: Number(conversation?.unread_count ?? 0),

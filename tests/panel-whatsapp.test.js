@@ -34,9 +34,12 @@ describe('el panel tiene las secciones nuevas', () => {
   });
 
   it('la bandeja cubre búsqueda, filtros, dos columnas y escritorio/móvil', () => {
-    for (const filter of ['Todos', 'Sin responder', 'No leídos']) expect(app).toContain(`'${filter}'`);
+    for (const filter of ['Todos', 'Nuevos', 'Pendientes', 'Clientes', 'Seguimiento', 'Archivados']) expect(app).toContain(`'${filter}'`);
+    expect(app).toContain('Activar notificaciones');
+    expect(app).toContain('data-wa-bulk');
     expect(css).toContain('.conv--active');
     expect(css).toContain('.conv--pending');
+    expect(css).toContain('.wa-bulk');
     expect(css).toContain("body[data-tab='whatsapp']");
     expect(css).toContain(".wa[data-view='chat'] .wa__list");
   });
