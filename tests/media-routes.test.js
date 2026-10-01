@@ -1098,6 +1098,7 @@ describe.skipIf(!ffmpegInfo().available)('audio no aceptado por WhatsApp: se con
     expect(resultado.convertedTo).toBe('audio/ogg');
     // Lo que se sube a Meta es Ogg con Opus dentro (no el WebM original).
     expect(graph.lastUpload.mimeType).toBe('audio/ogg');
+    expect(graph.lastUpload.filename).toBe('nota.ogg');
     expect(graph.lastUpload.buffer.subarray(0, 4).toString('ascii')).toBe('OggS');
     expect(graph.lastUpload.buffer.includes('OpusHead')).toBe(true);
     // Y lo que queda en R2 es EXACTAMENTE lo que se envió (un mensaje, un archivo).
@@ -1105,6 +1106,47 @@ describe.skipIf(!ffmpegInfo().available)('audio no aceptado por WhatsApp: se con
     expect(guardado.contentType).toBe('audio/ogg');
     expect(guardado.buffer.equals(graph.lastUpload.buffer)).toBe(true);
     expect(guardado.key.endsWith('.ogg')).toBe(true);
+  }, 20000);
+
+  it('un WebM con MIME vacío se identifica por bytes y se sube a Meta con nombre .ogg', async () => {
+    const webm = generar('windows-chrome.webm', ['-c:a', 'libopus', '-b:a', '24k', '-f', 'webm']);
+    const storage = fakeStorage();
+    const graph = fakeGraph({
+      upload: () => {
+        const { filename, mimeType, buffer } = graph.lastUpload;
+        if (mimeType !== 'audio/ogg' || !String(filename ?? '').endsWith('.ogg')) {
+          return {
+            ok: false,
+            status: 400,
+            error: {
+              code: 100,
+              httpStatus: 400,
+              ambiguous: false,
+              message: 'Param file must be a file with one of the following types: audio/aac, audio/mp4, audio/mpeg, audio/amr, audio/ogg, audio/opus',
+            },
+          };
+        }
+        if (!buffer.subarray(0, 4).equals(Buffer.from('OggS')) || !buffer.includes('OpusHead')) {
+          return { ok: false, status: 400, error: { code: 131053, httpStatus: 400, ambiguous: false } };
+        }
+        return { ok: true, mediaId: 'MEDIA_META_AUDIO_OK' };
+      },
+    });
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage, whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(
+      out({ buffer: webm, declaredMime: '', filename: 'nota-de-voz.audio', idempotencyKey: 'audio-empty-mime' }),
+    );
+
+    expect(resultado.ok).toBe(true);
+    expect(resultado.mimeType).toBe('audio/ogg');
+    expect(resultado.convertedTo).toBe('audio/ogg');
+    expect(graph.uploads).toBe(1);
+    expect(graph.lastUpload.mimeType).toBe('audio/ogg');
+    expect(graph.lastUpload.filename).toBe('nota-de-voz.ogg');
+    expect(storage.buffers.at(-1).contentType).toBe('audio/ogg');
+    expect(storage.buffers.at(-1).buffer.equals(graph.lastUpload.buffer)).toBe(true);
+    expect(graph.sends).toBe(1);
   }, 20000);
 
   it('un Ogg con Vorbis también se convierte (Meta solo admite Opus en Ogg)', async () => {

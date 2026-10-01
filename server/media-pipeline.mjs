@@ -15,12 +15,22 @@
  * culpa del almacenamiento.
  */
 import { createHash } from 'node:crypto';
-import { LIMITS, buildObjectKey, isAllowedMime, sniffMime } from './storage.mjs';
+import { ALLOWED_MIME, LIMITS, buildObjectKey, isAllowedMime, sniffMime } from './storage.mjs';
 import { MEDIA_STATUS, SEND_STATUS, UNSAFE_TO_RETRY } from './media.mjs';
 import { normalizeAudio } from './audio-normalize.mjs';
 
 const sha256hex = (buffer) => createHash('sha256').update(buffer).digest('hex');
 const kb = (bytes) => `${Math.round(Number(bytes ?? 0) / 1024)} KB`;
+
+function filenameForMime(filename, mimeType, fallback = 'archivo') {
+  const ext = ALLOWED_MIME[String(mimeType ?? '').toLowerCase()] ?? 'bin';
+  const clean = String(filename ?? '')
+    .replace(/[\\/]/g, '')
+    .replace(/[\r\n"]/g, '')
+    .trim();
+  const base = (clean.replace(/\.[A-Za-z0-9]{1,8}$/, '') || fallback).slice(0, 80);
+  return `${base}.${ext}`;
+}
 
 /** Límite según el tipo de contenido. */
 function limitFor(mediaType) {
@@ -393,7 +403,7 @@ export function createMediaPipeline(deps) {
       const enMeta = await whatsappMedia.uploadMedia({
         buffer: bytesDeArchivo,
         mimeType: mimeDeArchivo,
-        filename: input.filename ?? undefined,
+        filename: filenameForMime(input.filename, mimeDeArchivo, kind === 'audio' ? 'nota-de-voz' : 'archivo'),
       });
       if (!enMeta.ok) {
         // OJO: el archivo SÍ está en R2, así que `status` se queda en STORED. Lo
