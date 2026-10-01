@@ -2080,6 +2080,15 @@
     state.deliveryPollTimer = null;
   }
 
+  function deliveryPollTick() {
+    if (state.tab !== 'delivery' || document.visibilityState !== 'visible') return;
+    refreshDeliveryTracking().catch(() => {});
+  }
+
+  function startDeliveryPollTimer() {
+    if (!state.deliveryPollTimer) state.deliveryPollTimer = setInterval(deliveryPollTick, 8000);
+  }
+
   function startDeliveryEvents() {
     if (state.deliveryEvents || state.deliveryPollTimer || state.tab !== 'delivery') return;
     if (typeof EventSource === 'function') {
@@ -2103,12 +2112,12 @@
       source.onerror = () => {
         source.close();
         state.deliveryEvents = null;
-        if (!state.deliveryPollTimer) state.deliveryPollTimer = setInterval(() => refreshDeliveryTracking().catch(() => {}), 8000);
+        startDeliveryPollTimer();
       };
       state.deliveryEvents = source;
       return;
     }
-    state.deliveryPollTimer = setInterval(() => refreshDeliveryTracking().catch(() => {}), 8000);
+    startDeliveryPollTimer();
   }
 
   function shouldSendDeliveryPoint(point) {

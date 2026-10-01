@@ -135,18 +135,25 @@ describe('el panel llama a los endpoints del CRM', () => {
 });
 
 describe('nada se envía solo', () => {
-  it('los únicos temporizadores son el refresco de la bandeja y el reloj de la grabación, y ninguno envía', () => {
+  it('los temporizadores de refresco/estado no envían mensajes solos', () => {
     // El sondeo de la bandeja (8 s) mantiene la pantalla al día; el contador de
     // la nota de voz (200 ms) SOLO pinta el tiempo y corta al llegar al tope —
-    // nunca envía: el envío lo pulsa siempre una persona. El resto son
-    // `setTimeout` (aviso flotante, espera de Meta).
+    // nunca envía: el envío lo pulsa siempre una persona. Delivery también usa
+    // polling de lectura si SSE no está disponible. El resto son `setTimeout`.
     const intervals = (app.match(/setInterval\([^)]*\)/g) ?? []).sort();
-    expect(intervals).toEqual(['setInterval(tick, 200)', 'setInterval(waPollTick, 8000)']);
+    expect(intervals).toEqual(['setInterval(deliveryPollTick, 8000)', 'setInterval(tick, 200)', 'setInterval(waPollTick, 8000)']);
     const from = app.indexOf('function waPollTick');
     const tick = app.slice(from, from + 900);
     expect(tick).not.toContain('POST');
     expect(tick).not.toContain('/messages');
     expect(app).toMatch(/waPollTick/);
+    const deliveryFrom = app.indexOf('function deliveryPollTick');
+    const deliveryTick = app.slice(deliveryFrom, deliveryFrom + 500);
+    expect(deliveryTick).toContain("state.tab !== 'delivery'");
+    expect(deliveryTick).toContain("document.visibilityState !== 'visible'");
+    expect(deliveryTick).toContain('refreshDeliveryTracking');
+    expect(deliveryTick).not.toContain('POST');
+    expect(deliveryTick).not.toContain('/messages');
     expect(app).not.toMatch(/autoSend|sendAutomatically|scheduleSend/i);
 
     // El reloj de la grabación solo escribe el tiempo en pantalla.
