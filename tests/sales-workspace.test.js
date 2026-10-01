@@ -12,10 +12,22 @@ import path from 'node:path';
 import { startCrmServer } from '../server/crm-server.mjs';
 import { AUDIT_ACTIONS } from '../server/audit.mjs';
 import { COMMERCIAL_STATES, deriveCommercialState } from '../server/customers.mjs';
+import { DEFAULT_TIME_ZONE, dayIn } from '../server/followups.mjs';
 
 const TOKEN = 'clave-s6-123';
 const APP_SECRET = 'secreto-s6';
 const PLAN = [{ key: 'd1', day: 1, type: 'thanks', reason: 'Gracias' }];
+
+/**
+ * Un instante que cae DENTRO del día de negocio (`America/Santo_Domingo`).
+ *
+ * Los pedidos de este archivo se crean con esta fecha a propósito: si se deja
+ * que el servidor los selle con `new Date()` (UTC), entre las 20:00 y las 24:00
+ * de RD la marca cae en el día ISO siguiente y el pedido queda fuera de la
+ * ventana de «hoy» (que es el día del negocio). El test no adivina qué día es
+ * para el negocio: lo calcula con el mismo helper que usa el motor (`dayIn`).
+ */
+const instanteDelDiaDeNegocio = () => `${dayIn(new Date(), DEFAULT_TIME_ZONE)}T12:00:00.000Z`;
 
 const mockWhatsApp = {
   enabled: true,
@@ -144,7 +156,12 @@ describe('estado comercial del cliente (derivado, no inventado)', () => {
     const order = await json(
       await call('/api/admin/orders', {
         method: 'POST',
-        body: JSON.stringify({ customerId: customer.id, items: [{ variantId: 'capsules_10', quantity: 1 }] }),
+        body: JSON.stringify({
+          customerId: customer.id,
+          items: [{ variantId: 'capsules_10', quantity: 1 }],
+          // Fecha explícita del día de negocio (no la «de ahora mismo» en UTC).
+          date: instanteDelDiaDeNegocio(),
+        }),
       }),
     );
     let profile = await json(await call(`/api/admin/customers/${customer.id}`));
@@ -221,9 +238,27 @@ describe('métricas por período (sin doble conteo)', () => {
     const body = await json(await call('/api/admin/metrics?period=hoy'));
     const metrics = body.metrics;
     expect(metrics.period.name).toBe('hoy');
+    // La ventana de «hoy» es la del día de NEGOCIO (America/Santo_Domingo): el
+    // test no la adivina, se la pregunta al servidor y comprueba que es la del
+    // negocio — el mismo día que calcula `dayIn`, no el día UTC.
+    const { startDay, endDay } = metrics.period;
+    expect(endDay).toBe(dayIn(new Date(), DEFAULT_TIME_ZONE));
+    expect(startDay).toBe(endDay);
+    // Los pedidos de este archivo llevan fecha del día de negocio → cuentan hoy.
+    expect(orders.length).toBeGreaterThanOrEqual(1);
     expect(metrics.byPeriod.pedidosCreados).toBe(orders.length);
-    expect(metrics.byPeriod.pedidosEntregados).toBe(delivered.length);
-    expect(metrics.byPeriod.ventas).toBe(delivered.reduce((sum, item) => sum + (Number(item.total) || 0), 0));
+
+    // La fecha de ENTREGA la pone el servidor al cambiar el estado
+    // (`new Date().toISOString()`, en UTC) y NO se puede fijar desde la API: si
+    // esa marca cae en el día ISO siguiente (entre las 20:00 y las 24:00 de RD),
+    // el pedido todavía no entra en el «hoy» del negocio. Lo que se comprueba es
+    // que manda la ventana del servidor y que el importe cuadra con lo contado.
+    const diaDeEntrega = new Date().toISOString().slice(0, 10); // UTC, igual que el servidor
+    const entregadosEnVentana = diaDeEntrega >= startDay && diaDeEntrega <= endDay ? delivered : [];
+    expect(metrics.byPeriod.pedidosEntregados).toBe(entregadosEnVentana.length);
+    expect(metrics.byPeriod.ventas).toBe(
+      entregadosEnVentana.reduce((sum, item) => sum + (Number(item.total) || 0), 0),
+    );
 
     // Pedir lo mismo otra vez no cambia nada (no hay contadores que se sumen).
     const again = await json(await call('/api/admin/metrics?period=hoy'));
@@ -231,13 +266,19 @@ describe('métricas por período (sin doble conteo)', () => {
   });
 
   it('acepta hoy / 7d / 30d y por defecto 30d', async () => {
+    const hoy = await json(await call('/api/admin/metrics?period=hoy'));
     const seven = await json(await call('/api/admin/metrics?period=7d'));
     expect(seven.metrics.period).toMatchObject({ name: '7d', days: 7 });
     const fallback = await json(await call('/api/admin/metrics?period=loquesea'));
     expect(fallback.metrics.period.name).toBe('30d');
     const month = await json(await call('/api/admin/metrics'));
     expect(month.metrics.period.days).toBe(30);
-    expect(month.metrics.byPeriod.pedidosCreados).toBeGreaterThanOrEqual(1);
+    // Todos los pedidos del archivo llevan fecha del día de negocio, así que los
+    // tres períodos (que se solapan) tienen que contar EXACTAMENTE los mismos:
+    // ni doble conteo ni pedidos que se caen por una ventana mal calculada.
+    expect(hoy.metrics.byPeriod.pedidosCreados).toBeGreaterThanOrEqual(1);
+    expect(seven.metrics.byPeriod.pedidosCreados).toBe(hoy.metrics.byPeriod.pedidosCreados);
+    expect(month.metrics.byPeriod.pedidosCreados).toBe(hoy.metrics.byPeriod.pedidosCreados);
     expect(month.metrics.byPeriod.clientesPendientesDeSeguimiento).toBeGreaterThanOrEqual(0);
   });
 });

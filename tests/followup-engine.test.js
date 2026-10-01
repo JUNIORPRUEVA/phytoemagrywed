@@ -22,6 +22,7 @@ import path from 'node:path';
 import { startCrmServer } from '../server/crm-server.mjs';
 import { BLOCK_REASONS, FINAL_SCHEDULED_STATUSES, SCHEDULED_STATUSES } from '../server/scheduler.mjs';
 import { normalizeFollowupSettings } from '../server/settings.mjs';
+import { DEFAULT_TIME_ZONE, dayIn } from '../server/followups.mjs';
 
 const TOKEN = 'clave-s5-123';
 const APP_SECRET = 'secreto-s5';
@@ -31,6 +32,17 @@ const PLAN = [
   { key: 'd3', day: 3, type: 'checkin', reason: '¿Cómo va?' },
   { key: 'd21', day: 21, type: 'education', reason: 'Información' },
 ];
+
+/**
+ * «Hoy» tal y como lo entiende el NEGOCIO (`America/Santo_Domingo`), que es como
+ * lo entiende el servidor — no el día UTC.
+ *
+ * Por qué: entre las 20:00 y las 24:00 de RD el día UTC ya es el siguiente, así
+ * que `new Date().toISOString().slice(0, 10)` manda la tarea al día de MAÑANA y
+ * la pantalla HOY (que usa la zona del negocio) no la ve. El helper es el mismo
+ * que usa el motor (`dayIn`) para que no haya dos definiciones de «hoy».
+ */
+const hoyDelNegocio = () => dayIn(new Date(), DEFAULT_TIME_ZONE);
 
 /** Cliente falso de WhatsApp: anota los envíos y permite forzar un fallo. */
 const mockWhatsApp = {
@@ -200,7 +212,8 @@ describe('seguimiento manual vinculado a la conversación', () => {
         customerId,
         conversationId,
         reason: 'Responder consulta de uso',
-        scheduledAt: new Date().toISOString().slice(0, 10),
+        // Día de NEGOCIO: es lo que hace que la tarea aparezca en HOY.
+        scheduledAt: hoyDelNegocio(),
         idempotencyKey: 'fu:test:consulta',
       }),
     });
@@ -217,7 +230,7 @@ describe('seguimiento manual vinculado a la conversación', () => {
           customerId,
           conversationId,
           reason: 'Responder consulta de uso',
-          scheduledAt: new Date().toISOString().slice(0, 10),
+          scheduledAt: hoyDelNegocio(),
           idempotencyKey: 'fu:test:consulta',
         }),
       }),
