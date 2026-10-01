@@ -15,6 +15,10 @@
   const TAB_KEY = 'pe_crm_tab';
   const WA_NOTIFY_KEY = 'pe_wa_notify';
   const WA_SOUND_KEY = 'pe_wa_sound';
+  const DELIVERY_MAP_VIEW_KEY = 'pe_delivery_map_view';
+  const DELIVERY_TILE_PREFETCH_ENABLED = false;
+  const DELIVERY_TILE_PREFETCH_REASON = 'OSM public tiles allow normal browser/service-worker caching, not automatic area prefetch.';
+  const DELIVERY_TILE_SLOW_MS = 4500;
   const NEGOCIO = 'Phytoemagry';
   const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
 
@@ -45,6 +49,33 @@
     customerTags: [],
     audit: null,
     media: null,
+    deliveryTracking: [],
+    deliveryUsers: [],
+    deliveryOrders: [],
+    notifications: [],
+    push: null,
+    deliveryEvents: null,
+    deliveryPollTimer: null,
+    deliveryWatchId: null,
+    deliveryActiveSessionId: null,
+    deliveryActiveOrderId: null,
+    deliveryLastSentAt: 0,
+    deliveryLastSentPoint: null,
+    deliveryWatchStartedAt: 0,
+    deliveryMap: {
+      map: null,
+      sessionId: null,
+      destinationKey: null,
+      customerMarker: null,
+      deliveryMarker: null,
+      routeLine: null,
+      fitDone: false,
+      autoFollow: true,
+      userPanned: false,
+      tileLoading: 0,
+      tileError: false,
+      slowTimer: null,
+    },
     auth: null,
     users: [],
     metrics: null,
@@ -54,9 +85,10 @@
     customerProfile: null,
     customerProfileLoading: false,
     customerProfileOrderId: null,
-    tab: localStorage.getItem(TAB_KEY) ?? 'hoy',
+    tab: 'hoy',
     filter: 'todos',
     q: '',
+    clientSearchOpen: false,
     openId: null,
     customerId: null,
     chat: null,
@@ -66,6 +98,7 @@
       filter: 'todos',
       date: { mode: 'all', from: '', to: '' },
       q: '',
+      searchOpen: false,
       chat: null,
       draft: '',
       listSig: null,
@@ -84,6 +117,11 @@
     syncedAt: null,
     drawer: false,
   };
+
+  const DELIVERY_MAP_PROVIDER = 'Leaflet';
+  const DELIVERY_TILE_PROVIDER = 'OpenStreetMap';
+  const DELIVERY_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const DELIVERY_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
 
   // ------------------------------------------------------------------ helpers
 
@@ -122,12 +160,16 @@
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
     back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
+    more: svg('<circle cx="12" cy="5" r="1.25"/><circle cx="12" cy="12" r="1.25"/><circle cx="12" cy="19" r="1.25"/>'),
+    search: svg('<circle cx="10.8" cy="10.8" r="5.8"/><path d="m15.2 15.2 4.6 4.6"/>'),
+    calendar: svg('<rect x="4" y="5.4" width="16" height="14.6" rx="2.4"/><path d="M8 3.8v3.4M16 3.8v3.4M4 10h16"/>'),
     plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
     mic: svg('<rect x="9.2" y="2.8" width="5.6" height="10.8" rx="2.8"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.4V21M9.4 21h5.2"/>'),
     send: svg('<path d="M4.6 12 20 4.6l-7.3 15-1.9-6.3z"/><path d="M10.8 13.3 20 4.6"/>'),
     spark: svg('<path d="M11.4 3.6l1.8 4.9 4.9 1.8-4.9 1.8-1.8 4.9-1.8-4.9L4.7 10.3l4.9-1.8z"/><path d="M18.4 15.6l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/>'),
     bag: svg('<path d="M4.6 7.4h14.8l-1.2 11.9a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8z"/><path d="M8.8 7.4V5.8a3.2 3.2 0 0 1 6.4 0v1.6"/>'),
     clock: svg('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3 1.9"/>'),
+    lock: svg('<rect x="5.5" y="10" width="13" height="10" rx="2"/><path d="M8.5 10V7.6a3.5 3.5 0 0 1 7 0V10"/>'),
     person: svg('<circle cx="12" cy="7.9" r="3.9"/><path d="M4.8 20.4c1.3-3.3 4-4.9 7.2-4.9s5.9 1.6 7.2 4.9"/>'),
     userCog: svg('<circle cx="10" cy="7.8" r="3.4"/><path d="M3.8 19.4c1.1-3 3.4-4.5 6.2-4.5 1.1 0 2.1.2 3 .7"/><circle cx="17.6" cy="16.8" r="2.1"/><path d="M17.6 13.5v1M17.6 18.9v1M14.7 15.1l.9.5M19.6 18l.9.5M14.7 18.5l.9-.5M19.6 15.6l.9-.5"/>'),
     image: svg('<rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6"/><circle cx="9" cy="10" r="1.6"/><path d="M3.6 17.2l4.9-4.9 4.4 4.4 2.8-2.7 4.7 4.6"/>'),
@@ -283,6 +325,11 @@
           inventory: state.inventory,
           whatsapp: state.whatsapp,
           stats: state.stats,
+          deliveryTracking: state.deliveryTracking,
+          deliveryUsers: state.deliveryUsers,
+          deliveryOrders: state.deliveryOrders,
+          notifications: state.notifications,
+          push: state.push,
           at: Date.now(),
         }),
       );
@@ -422,6 +469,11 @@
       state.customerTags = data.customerTags ?? [];
       state.audit = data.audit ?? null;
       state.media = data.media ?? null;
+      state.deliveryTracking = data.deliveryTracking ?? [];
+      state.deliveryUsers = data.deliveryUsers ?? [];
+      state.deliveryOrders = data.deliveryOrders ?? [];
+      state.notifications = data.notifications ?? [];
+      state.push = data.push ?? null;
       state.auth = data.auth ?? null;
       state.syncedAt = Date.now();
       saveSnapshot();
@@ -446,6 +498,11 @@
         state.stats = snapshot.stats ?? null;
         state.scheduled = snapshot.scheduled ?? null;
         state.settings = snapshot.settings ?? null;
+        state.deliveryTracking = snapshot.deliveryTracking ?? [];
+        state.deliveryUsers = snapshot.deliveryUsers ?? [];
+        state.deliveryOrders = snapshot.deliveryOrders ?? [];
+        state.notifications = snapshot.notifications ?? [];
+        state.push = snapshot.push ?? null;
         state.orderStatuses = snapshot.orderStatuses ?? [];
         state.paymentMethods = snapshot.paymentMethods ?? [];
         state.customerStages = snapshot.customerStages ?? [];
@@ -594,6 +651,7 @@
     renderHoy();
     renderWhatsapp();
     renderClientes();
+    renderDelivery();
     renderPedidos();
     renderProductos();
     renderReportes();
@@ -650,6 +708,9 @@
     if (!box) return;
     const online = state.online !== false;
     if (state.tab === 'hoy') {
+      const programados = state.scheduled ?? {};
+      const conProblemas = (programados.blocked ?? 0) + (programados.failed ?? 0);
+      const unreadNotifications = (state.notifications ?? []).filter((row) => row.status !== 'read').length;
       box.innerHTML = `<div class="dashboard-head">
         <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú">
           <img class="drawer-menu-icon" src="/admin/icon-menu.png" alt="" aria-hidden="true" width="26" height="26" />
@@ -658,9 +719,69 @@
           <strong>Phytoemagry</strong>
           <span>CRM</span>
         </div>
-        <span class="dashboard-head__status" data-online="${online ? 'true' : 'false'}">
-          <span class="presence__dot" aria-hidden="true"></span>${online ? 'En línea' : 'Sin conexión'}
-        </span>
+        <div class="dashboard-head__actions">
+          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir perfil">${ICONS.person}</button>
+          <button class="dashboard-head__quick ${unreadNotifications ? 'dashboard-head__quick--alert' : ''}" data-dashboard-notifications type="button" aria-label="${
+            unreadNotifications ? `${unreadNotifications} notificación(es)` : 'Sin notificaciones'
+          }">
+            ${ICONS.bell}
+            ${unreadNotifications ? `<span class="dashboard-head__badge">${unreadNotifications > 99 ? '99+' : unreadNotifications}</span>` : ''}
+          </button>
+          <span class="dashboard-head__net" data-online="${online ? 'true' : 'false'}" aria-label="${online ? 'En línea' : 'Sin conexión'}">
+            <span class="presence__dot" aria-hidden="true"></span>
+          </span>
+        </div>
+      </div>`;
+      return;
+    }
+    if (state.tab === 'whatsapp') {
+      const activeDate = state.wa.date?.mode && state.wa.date.mode !== 'all';
+      if (state.wa.searchOpen) {
+        box.innerHTML = `<div class="wa-appbar wa-appbar--search">
+          <button class="wa-appbar__back" data-wa-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
+          <input class="wa-appbar__search" id="wa-appbar-search" type="search" value="${escapeHtml(
+            state.wa.q,
+          )}" placeholder="Buscar conversación" aria-label="Buscar conversación" autocomplete="off" />
+          <button class="wa-appbar__icon" data-wa-search-clear type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button>
+        </div>`;
+        return;
+      }
+      box.innerHTML = `<div class="wa-appbar">
+        <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+        <div class="wa-appbar__title">
+          <strong>WhatsApp</strong>
+          <span>Conversaciones</span>
+        </div>
+        <div class="wa-appbar__actions">
+          <button class="wa-appbar__icon" data-wa-search-open type="button" aria-label="Buscar conversación">${ICONS.search}</button>
+          <button class="wa-appbar__icon" data-wa-date-open type="button" aria-label="Filtrar conversaciones por fecha" aria-pressed="${Boolean(
+            activeDate,
+          )}">${ICONS.calendar}</button>
+        </div>
+      </div>`;
+      return;
+    }
+    if (state.tab === 'clientes') {
+      if (state.clientSearchOpen) {
+        box.innerHTML = `<div class="wa-appbar wa-appbar--search client-appbar client-appbar--search">
+          <button class="wa-appbar__back" data-client-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
+          <input class="wa-appbar__search" id="client-appbar-search" type="search" value="${escapeHtml(
+            state.q,
+          )}" placeholder="Buscar cliente" aria-label="Buscar cliente" autocomplete="off" />
+          <button class="wa-appbar__icon" data-client-search-clear type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button>
+        </div>`;
+        return;
+      }
+      box.innerHTML = `<div class="wa-appbar client-appbar">
+        <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+        <div class="wa-appbar__title">
+          <strong>Clientes</strong>
+          <span>Lista de clientes</span>
+        </div>
+        <div class="wa-appbar__actions">
+          <button class="wa-appbar__icon" data-client-search-open type="button" aria-label="Buscar cliente">${ICONS.search}</button>
+          <button class="wa-appbar__icon" data-client-actions-open type="button" aria-label="Acciones de clientes">${ICONS.plus}</button>
+        </div>
       </div>`;
       return;
     }
@@ -698,8 +819,6 @@
 
   function renderStats() {
     const hoy = state.hoy ?? {};
-    const programados = state.scheduled ?? {};
-    const conProblemas = (programados.blocked ?? 0) + (programados.failed ?? 0);
     /*
      * HOY es un centro OPERATIVO: los contadores son trabajo que hacer ahora
      * (contestar, seguir, resolver un mensaje que no salió), no gráficas. Cada
@@ -722,14 +841,6 @@
         goto: 'seguimientos',
         icon: ICONS.clock,
         tone: 'amber',
-      },
-      {
-        label: 'Mensajes con problemas',
-        value: conProblemas,
-        alert: conProblemas > 0,
-        goto: 'hoy',
-        icon: ICONS.retry,
-        tone: 'red',
       },
       { label: 'Pedidos abiertos', value: hoy.pedidosPendientes ?? 0, goto: 'pedidos', icon: ICONS.box, tone: 'purple' },
     ];
@@ -756,13 +867,24 @@
     }
     const movements = inv.movements ?? [];
     const canSeeCost = hasPermission('cost.view');
+    const stockCapsules = Number(inv.stock ?? 0);
+    const unitCostCents = Number(inv.product?.current_unit_cost_cents ?? 0);
+    const inventoryValueCents = Number(inv.inventory_value_cents ?? stockCapsules * unitCostCents);
     box.innerHTML = `
+      ${
+        canSeeCost
+          ? `<section class="inventory-summary" aria-label="Recuento de inventario">
+              <span class="inventory-summary__label">Invertido en producto</span>
+              <strong class="inventory-summary__value">${moneyCents(inventoryValueCents)}</strong>
+              <span class="inventory-summary__meta">${escapeHtml(stockCapsules)} cápsulas × ${moneyCents(unitCostCents)} por cápsula</span>
+            </section>`
+          : ''
+      }
       <div class="card">
         <p class="card__title">${escapeHtml(inv.product?.name ?? 'Phytoemagry')}</p>
         <dl class="facts">
-          <div class="fact"><dt>Stock</dt><dd>${escapeHtml(inv.stock ?? 0)} cápsulas</dd></div>
-          ${canSeeCost ? `<div class="fact"><dt>Costo vigente</dt><dd>${moneyCents(inv.product?.current_unit_cost_cents ?? 0)} / cápsula</dd></div>` : ''}
-          ${canSeeCost ? `<div class="fact"><dt>Valor referencial</dt><dd>${moneyCents(inv.inventory_value_cents ?? 0)}</dd></div>` : ''}
+          <div class="fact"><dt>Stock</dt><dd>${escapeHtml(stockCapsules)} cápsulas</dd></div>
+          ${canSeeCost ? `<div class="fact"><dt>Costo vigente</dt><dd>${moneyCents(unitCostCents)} / cápsula</dd></div>` : ''}
           <div class="fact"><dt>Control activo</dt><dd>${inv.initialized ? 'sí' : 'sin inventario inicial'}</dd></div>
         </dl>
       </div>
@@ -1375,6 +1497,744 @@
     box.innerHTML = items.length
       ? items.map(itemCard).join('')
       : emptyState('Todavía no hay pedidos registrados.');
+  }
+
+  function itemOrder(item) {
+    const raw = item?.order_json ?? item?.orderJson;
+    if (raw) {
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (parsed) return parsed;
+      } catch {
+        /* cae al resumen desde columnas */
+      }
+    }
+    return item?.type === 'order_intent'
+      ? {
+          id: item.id,
+          order_number: item.order_number ?? item.orderNumber,
+          customer_id: item.customer_id,
+          conversation_id: item.conversation_id,
+          status: item.status,
+          delivery: { location: null, fee: 0 },
+          total: item.total,
+          currency: item.currency,
+        }
+      : null;
+  }
+
+  function deliverySessionForOrder(orderId) {
+    return (state.deliveryTracking ?? []).find((row) => row.order_id === orderId && row.status === 'ACTIVE') ?? null;
+  }
+
+  function deliveryAccuracyMeta(position) {
+    const accuracy = Number(position?.accuracy);
+    if (!Number.isFinite(accuracy)) {
+      return { label: 'Precisión no disponible', short: 'sin precisión', level: 'unknown', warning: '' };
+    }
+    const meters = Math.round(accuracy);
+    if (meters <= 20) return { label: `Buena precisión · ±${meters} m`, short: `±${meters} m`, level: 'good', warning: '' };
+    if (meters <= 50) return { label: `Precisión moderada · ±${meters} m`, short: `±${meters} m`, level: 'moderate', warning: '' };
+    return { label: `Baja precisión GPS · ±${meters} m`, short: `±${meters} m`, level: 'low', warning: 'Baja precisión GPS' };
+  }
+
+  function selectedDeliverySession() {
+    const active = (state.deliveryTracking ?? []).filter((row) => row.status === 'ACTIVE');
+    return active.find((row) => row.id === state.deliveryActiveSessionId) ?? active[0] ?? null;
+  }
+
+  function deliverySessionOrder(session) {
+    if (!session) return null;
+    const match = state.items.find((item) => item.id === session.order_id);
+    return match ? itemOrder(match) : null;
+  }
+
+  function deliveryPopupHtml(title, lines = []) {
+    return `<strong>${escapeHtml(title)}</strong>${lines
+      .filter(Boolean)
+      .map((line) => `<br>${escapeHtml(line)}`)
+      .join('')}`;
+  }
+
+  function deliveryLatLng(point) {
+    const lat = Number(point?.latitude);
+    const lng = Number(point?.longitude);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+  }
+
+  function deliveryMarkerIcon(kind, stale = false) {
+    if (!window.L) return null;
+    return window.L.divIcon({
+      className: `delivery-leaflet-marker delivery-leaflet-marker--${kind}${stale ? ' delivery-leaflet-marker--stale' : ''}`,
+      html: `<span>${kind === 'customer' ? ICONS.pin : ICONS.send}</span>`,
+      iconSize: [38, 38],
+      iconAnchor: [19, 19],
+      popupAnchor: [0, -18],
+    });
+  }
+
+  function resetDeliveryMap() {
+    if (state.deliveryMap.slowTimer) clearTimeout(state.deliveryMap.slowTimer);
+    if (state.deliveryMap.map) state.deliveryMap.map.remove();
+    state.deliveryMap = {
+      map: null,
+      sessionId: null,
+      destinationKey: null,
+      customerMarker: null,
+      deliveryMarker: null,
+      routeLine: null,
+      fitDone: false,
+      autoFollow: true,
+      userPanned: false,
+      tileLoading: 0,
+      tileError: false,
+      slowTimer: null,
+    };
+  }
+
+  function setDeliveryMapNotice(text = '') {
+    const node = $('#delivery-map-notice');
+    if (!node) return;
+    node.textContent = text;
+    node.hidden = !text;
+  }
+
+  function deliveryMapLastView() {
+    try {
+      const value = JSON.parse(localStorage.getItem(DELIVERY_MAP_VIEW_KEY) ?? 'null');
+      if (!value || !Array.isArray(value.center)) return null;
+      const lat = Number(value.center[0]);
+      const lng = Number(value.center[1]);
+      const zoom = Number(value.zoom);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(zoom)) return null;
+      if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || zoom < 1 || zoom > 19) return null;
+      return { center: [lat, lng], zoom };
+    } catch {
+      return null;
+    }
+  }
+
+  function saveDeliveryMapLastView() {
+    const map = state.deliveryMap.map;
+    if (!map) return;
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    if (!center || !Number.isFinite(center.lat) || !Number.isFinite(center.lng) || !Number.isFinite(zoom)) return;
+    try {
+      localStorage.setItem(
+        DELIVERY_MAP_VIEW_KEY,
+        JSON.stringify({
+          center: [Number(center.lat.toFixed(6)), Number(center.lng.toFixed(6))],
+          zoom,
+        }),
+      );
+    } catch {
+      // La vista previa es una mejora de rendimiento; si Storage falla, el tracking sigue.
+    }
+  }
+
+  function startDeliveryTileSlowTimer() {
+    if (state.deliveryMap.slowTimer) clearTimeout(state.deliveryMap.slowTimer);
+    state.deliveryMap.slowTimer = setTimeout(() => {
+      if (state.deliveryMap.tileLoading > 0 && !state.deliveryMap.tileError) {
+        setDeliveryMapNotice('Mapa base lento. El GPS sigue activo.');
+      }
+    }, DELIVERY_TILE_SLOW_MS);
+  }
+
+  function stopDeliveryTileSlowTimer() {
+    if (state.deliveryMap.slowTimer) clearTimeout(state.deliveryMap.slowTimer);
+    state.deliveryMap.slowTimer = null;
+  }
+
+  function maybePrefetchDeliveryTiles(reason) {
+    if (!DELIVERY_TILE_PREFETCH_ENABLED) return { skipped: true, reason: DELIVERY_TILE_PREFETCH_REASON, trigger: reason };
+    return { skipped: true, reason: 'No tile prefetch provider configured.', trigger: reason };
+  }
+
+  function ensureDeliveryMap() {
+    const el = $('#delivery-map');
+    if (!el) return null;
+    if (!window.L) {
+      el.innerHTML = '<div class="delivery-map__fallback">No se pudo cargar el mapa real. Revisa la conexión para Leaflet/OpenStreetMap.</div>';
+      return null;
+    }
+    if (state.deliveryMap.map && state.deliveryMap.map.getContainer?.() === el) return state.deliveryMap.map;
+    if (state.deliveryMap.map) resetDeliveryMap();
+    const map = window.L.map(el, { zoomControl: true, attributionControl: true });
+    const tiles = window.L.tileLayer(DELIVERY_TILE_URL, {
+      maxZoom: 19,
+      attribution: DELIVERY_TILE_ATTRIBUTION,
+    });
+    tiles.on('loading', () => {
+      state.deliveryMap.tileLoading += 1;
+      setDeliveryMapNotice('Cargando mapa…');
+      startDeliveryTileSlowTimer();
+    });
+    tiles.on('load', () => {
+      state.deliveryMap.tileLoading = 0;
+      stopDeliveryTileSlowTimer();
+      if (!state.deliveryMap.tileError) setDeliveryMapNotice('');
+    });
+    tiles.on('tileerror', () => {
+      state.deliveryMap.tileError = true;
+      stopDeliveryTileSlowTimer();
+      setDeliveryMapNotice('Mapa base no disponible');
+    });
+    tiles.addTo(map);
+    map.on('dragstart zoomstart', () => {
+      state.deliveryMap.autoFollow = false;
+      state.deliveryMap.userPanned = true;
+      updateDeliveryFloatingState();
+    });
+    map.on('moveend zoomend', saveDeliveryMapLastView);
+    const lastView = deliveryMapLastView();
+    if (lastView) map.setView(lastView.center, lastView.zoom, { animate: false });
+    else map.setView([18.6157, -68.7071], 13);
+    state.deliveryMap.map = map;
+    maybePrefetchDeliveryTiles('delivery-map-opened');
+    setTimeout(() => map.invalidateSize(), 0);
+    return map;
+  }
+
+  function currentDeliveryLatLngs(session = selectedDeliverySession()) {
+    const order = deliverySessionOrder(session);
+    const destination = deliveryLatLng(session?.destination ?? order?.delivery?.location ?? null);
+    const current = deliveryLatLng(session?.last_position);
+    return { destination, current };
+  }
+
+  function fitDeliveryBounds(session = selectedDeliverySession()) {
+    const map = state.deliveryMap.map;
+    if (!map || !window.L) return;
+    const { destination, current } = currentDeliveryLatLngs(session);
+    const points = [destination, current].filter(Boolean);
+    if (points.length >= 2) map.fitBounds(window.L.latLngBounds(points).pad(0.22), { padding: [34, 96], maxZoom: 17 });
+    else if (points[0]) map.setView(points[0], 16);
+    state.deliveryMap.autoFollow = false;
+    updateDeliveryFloatingState();
+  }
+
+  function centerDelivery(kind) {
+    const map = state.deliveryMap.map;
+    if (!map) return;
+    const { destination, current } = currentDeliveryLatLngs();
+    const target = kind === 'customer' ? destination : current;
+    if (target) map.setView(target, Math.max(map.getZoom(), 16), { animate: true });
+    if (kind === 'driver') state.deliveryMap.autoFollow = true;
+    updateDeliveryFloatingState();
+  }
+
+  function updateDeliveryFloatingState() {
+    const follow = $('#delivery-follow');
+    if (follow) follow.hidden = state.deliveryMap.autoFollow || !selectedDeliverySession()?.last_position;
+  }
+
+  function updateDeliveryStatusPanel(session = selectedDeliverySession()) {
+    const active = (state.deliveryTracking ?? []).filter((row) => row.status === 'ACTIVE');
+    const count = $('#delivery-active-count');
+    if (count) count.textContent = `${active.length} entrega${active.length === 1 ? '' : 's'} activa${active.length === 1 ? '' : 's'} · GPS solo durante entrega.`;
+    const set = (name, value) => {
+      const node = $(`[data-delivery-fact="${name}"]`);
+      if (node) node.textContent = value;
+    };
+    if (!session) {
+      set('delivery', 'Sin entrega activa');
+      set('distance', 'Sin distancia');
+      set('eta', 'Sin ETA');
+      set('gps', 'esperando entrega');
+      set('updated', '—');
+      set('accuracy', '—');
+      set('route', 'Distancia aproximada');
+      return;
+    }
+    const position = session.last_position;
+    const accuracy = deliveryAccuracyMeta(position);
+    const gps = position?.stale ? 'Ubicación desactualizada' : position ? 'GPS activo' : 'esperando posición';
+    set('delivery', session.delivery_user_name ?? 'Delivery');
+    set('distance', session.distance_label ?? 'Sin distancia');
+    set('eta', session.eta_label ?? 'Sin ETA');
+    set('gps', gps);
+    set('updated', position?.recorded_at ? fmtWhen(position.recorded_at) : '—');
+    set('accuracy', accuracy.label);
+    set('route', session.route_provider === 'haversine_fallback' ? 'Distancia aproximada' : 'Ruta');
+    const badge = $('#delivery-accuracy-badge');
+    if (badge) {
+      badge.textContent = position?.stale ? 'Ubicación desactualizada' : accuracy.warning || accuracy.label;
+      badge.dataset.level = position?.stale ? 'stale' : accuracy.level;
+      badge.hidden = !position;
+    }
+  }
+
+  function updateDeliveryMap(session = selectedDeliverySession()) {
+    const map = ensureDeliveryMap();
+    if (!map) return;
+    if (!session) {
+      if (state.deliveryMap.customerMarker) state.deliveryMap.customerMarker.remove();
+      if (state.deliveryMap.deliveryMarker) state.deliveryMap.deliveryMarker.remove();
+      if (state.deliveryMap.routeLine) state.deliveryMap.routeLine.remove();
+      state.deliveryMap.customerMarker = null;
+      state.deliveryMap.deliveryMarker = null;
+      state.deliveryMap.routeLine = null;
+      state.deliveryMap.sessionId = null;
+      state.deliveryMap.destinationKey = null;
+      state.deliveryMap.fitDone = false;
+      updateDeliveryStatusPanel(null);
+      return;
+    }
+    const order = deliverySessionOrder(session);
+    const destination = session.destination ?? order?.delivery?.location ?? null;
+    const destinationLatLng = deliveryLatLng(destination);
+    const currentLatLng = deliveryLatLng(session.last_position);
+    const destinationKey = destinationLatLng ? `${destinationLatLng.join(',')}:${destination?.name ?? ''}:${session.order_id}` : '';
+    const sessionChanged = state.deliveryMap.sessionId !== session.id;
+    if (sessionChanged) {
+      state.deliveryMap.sessionId = session.id;
+      state.deliveryMap.fitDone = false;
+    }
+    if (destinationLatLng && state.deliveryMap.destinationKey !== destinationKey) {
+      if (state.deliveryMap.customerMarker) state.deliveryMap.customerMarker.remove();
+      state.deliveryMap.customerMarker = window.L.marker(destinationLatLng, { icon: deliveryMarkerIcon('customer') })
+        .addTo(map)
+        .bindPopup(
+          deliveryPopupHtml('Cliente', [
+            order?.order_number ?? session.order_id,
+            destination.name ?? null,
+            destination.address ?? null,
+          ]),
+        );
+      state.deliveryMap.destinationKey = destinationKey;
+      maybePrefetchDeliveryTiles('destination-available');
+    }
+    if (currentLatLng) {
+      const accuracy = deliveryAccuracyMeta(session.last_position);
+      const popup = deliveryPopupHtml(session.delivery_user_name ?? 'Delivery', [
+        session.last_position?.recorded_at ? `Última actualización: ${fmtWhen(session.last_position.recorded_at)}` : null,
+        accuracy.label,
+      ]);
+      if (!state.deliveryMap.deliveryMarker) {
+        state.deliveryMap.deliveryMarker = window.L.marker(currentLatLng, {
+          icon: deliveryMarkerIcon('delivery', session.last_position?.stale),
+        })
+          .addTo(map)
+          .bindPopup(popup);
+      } else {
+        state.deliveryMap.deliveryMarker.setLatLng(currentLatLng);
+        state.deliveryMap.deliveryMarker.setIcon(deliveryMarkerIcon('delivery', session.last_position?.stale));
+        state.deliveryMap.deliveryMarker.setPopupContent(popup);
+      }
+      if (state.deliveryMap.autoFollow && state.deliveryMap.fitDone) {
+        map.panTo(currentLatLng, { animate: true, duration: 0.35 });
+      }
+      maybePrefetchDeliveryTiles('delivery-position-available');
+    }
+    if (destinationLatLng && currentLatLng) {
+      const points = [currentLatLng, destinationLatLng];
+      if (!state.deliveryMap.routeLine) {
+        state.deliveryMap.routeLine = window.L.polyline(points, {
+          color: '#0b6b4f',
+          weight: 4,
+          opacity: 0.68,
+          dashArray: '8 8',
+        }).addTo(map);
+      } else {
+        state.deliveryMap.routeLine.setLatLngs(points);
+      }
+      if (!state.deliveryMap.fitDone) {
+        map.fitBounds(window.L.latLngBounds(points).pad(0.25), { animate: false, maxZoom: 16 });
+        state.deliveryMap.fitDone = true;
+      }
+    } else if (destinationLatLng && !state.deliveryMap.fitDone) {
+      map.setView(destinationLatLng, 15);
+      state.deliveryMap.fitDone = true;
+    } else if (currentLatLng && !state.deliveryMap.fitDone) {
+      map.setView(currentLatLng, 15);
+      state.deliveryMap.fitDone = true;
+    }
+    updateDeliveryStatusPanel(session);
+    updateDeliveryFloatingState();
+  }
+
+  function renderDelivery() {
+    const box = $('#delivery-live');
+    if (!box) return;
+    const sessions = state.deliveryTracking ?? [];
+    const isDeliveryRole = currentUser()?.role === 'DELIVERY';
+    const orders = (state.deliveryOrders?.length
+      ? state.deliveryOrders.map((order) => ({ item: { id: order.id, customer_id: order.customer_id, order_number: order.order_number, status: order.status }, order }))
+      : state.items
+          .filter((item) => item.type === 'order_intent')
+          .map((item) => ({ item, order: itemOrder(item) }))
+          .filter(({ order }) => order?.delivery?.location && !['entregado', 'cancelado', 'perdido'].includes(order.status)));
+    const active = sessions.filter((row) => row.status === 'ACTIVE');
+    const selected = active.find((row) => row.id === state.deliveryActiveSessionId) ?? active[0] ?? null;
+    const selectedOrder = selected ? orders.find(({ item }) => item.id === selected.order_id)?.order ?? null : null;
+    state.deliveryActiveSessionId = selected?.id ?? state.deliveryActiveSessionId;
+    box.innerHTML = `
+      <section class="delivery-hero">
+        <div>
+          <h2>Delivery en vivo</h2>
+          <p id="delivery-active-count">${active.length} entrega${active.length === 1 ? '' : 's'} activa${active.length === 1 ? '' : 's'} · GPS solo durante entrega.</p>
+        </div>
+        <div class="item__actions">
+          <button class="btn btn--ghost btn--sm" data-delivery-push type="button">${ICONS.bell} ${escapeHtml(pushPermissionLabel())}</button>
+          <button class="btn btn--ghost btn--sm" data-delivery-refresh type="button">${ICONS.retry} Actualizar</button>
+        </div>
+      </section>
+      <section class="delivery-layout">
+        <div class="delivery-panel">
+          <h3>Mapa</h3>
+          <div class="delivery-map-shell">
+            <div class="delivery-map delivery-map--real" id="delivery-map" aria-label="Mapa real de entrega"></div>
+            <p class="delivery-map-notice" id="delivery-map-notice" hidden></p>
+            <div class="delivery-map-appbar">
+              <button class="icon-btn" data-tab="hoy" type="button" aria-label="Volver">${ICONS.back}</button>
+              <span><strong>Delivery</strong><small>${escapeHtml(selectedOrder?.customer?.name ?? selected?.customer?.name ?? 'Entrega')}</small></span>
+              <button class="icon-btn" data-delivery-refresh type="button" aria-label="Actualizar">${ICONS.retry}</button>
+            </div>
+            <div class="delivery-map-tools" aria-label="Controles del mapa">
+              <button class="icon-btn" data-delivery-center="driver" type="button" aria-label="Centrar en mi ubicación">${ICONS.send}</button>
+              <button class="icon-btn" data-delivery-center="customer" type="button" aria-label="Centrar en cliente">${ICONS.pin}</button>
+              <button class="icon-btn" data-delivery-center="both" type="button" aria-label="Ver delivery y cliente">${ICONS.search}</button>
+              <button class="icon-btn" id="delivery-follow" data-delivery-center="driver" type="button" aria-label="Volver a seguir" hidden>${ICONS.retry}</button>
+            </div>
+            ${
+              selected
+                ? `<div class="delivery-bottom-sheet">
+                    <div>
+                      <strong>${escapeHtml(selectedOrder?.customer?.name ?? selected.customer?.name ?? selected.delivery_user_name ?? 'Entrega')}</strong>
+                      <small><span data-delivery-fact="distance">${escapeHtml(selected.distance_label ?? 'Sin distancia')}</span> · <span data-delivery-fact="eta">${escapeHtml(selected.eta_label ?? 'Sin ETA')}</span> · <span data-delivery-fact="gps">${selected.last_position?.stale ? 'Ubicación desactualizada' : selected.last_position ? 'GPS activo' : 'esperando posición'}</span></small>
+                    </div>
+                    <details>
+                      <summary>Detalles</summary>
+                      <dl class="facts delivery-facts delivery-facts--sheet">
+                        <div class="fact"><dt>Delivery</dt><dd data-delivery-fact="delivery">${escapeHtml(selected.delivery_user_name ?? 'Delivery')}</dd></div>
+                        <div class="fact"><dt>Última actualización</dt><dd data-delivery-fact="updated">${selected.last_position?.recorded_at ? escapeHtml(fmtWhen(selected.last_position.recorded_at)) : '—'}</dd></div>
+                        <div class="fact"><dt>Precisión</dt><dd data-delivery-fact="accuracy">${escapeHtml(deliveryAccuracyMeta(selected.last_position).label)}</dd></div>
+                        <div class="fact"><dt>Ruta</dt><dd data-delivery-fact="route">Distancia aproximada</dd></div>
+                      </dl>
+                    </details>
+                  </div>`
+                : ''
+            }
+            ${
+              selected
+                ? `<button class="btn btn--primary delivery-map-cta" data-delivery-complete="${escapeHtml(selected.id)}" type="button">Marcar entregado</button>`
+                : ''
+            }
+          </div>
+          <div class="delivery-map-meta">
+            <span>${DELIVERY_MAP_PROVIDER} · ${DELIVERY_TILE_PROVIDER}</span>
+            <span>Linea visual: distancia aproximada</span>
+          </div>
+          <p class="delivery-accuracy" id="delivery-accuracy-badge" hidden></p>
+          ${
+            selected
+              ? `<dl class="facts delivery-facts">
+                  <div class="fact"><dt>Delivery</dt><dd data-delivery-fact="delivery">${escapeHtml(selected.delivery_user_name ?? 'Delivery')}</dd></div>
+                  <div class="fact"><dt>Distancia</dt><dd data-delivery-fact="distance">${escapeHtml(selected.distance_label ?? 'Sin distancia')}</dd></div>
+                  <div class="fact"><dt>ETA</dt><dd data-delivery-fact="eta">${escapeHtml(selected.eta_label ?? 'Sin ETA')}</dd></div>
+                  <div class="fact"><dt>GPS</dt><dd data-delivery-fact="gps">${selected.last_position?.stale ? 'Ubicación desactualizada' : selected.last_position ? 'GPS activo' : 'esperando posición'}</dd></div>
+                  <div class="fact"><dt>Última actualización</dt><dd data-delivery-fact="updated">${selected.last_position?.recorded_at ? escapeHtml(fmtWhen(selected.last_position.recorded_at)) : '—'}</dd></div>
+                  <div class="fact"><dt>Precisión</dt><dd data-delivery-fact="accuracy">${escapeHtml(deliveryAccuracyMeta(selected.last_position).label)}</dd></div>
+                  <div class="fact"><dt>Ruta</dt><dd data-delivery-fact="route">Distancia aproximada</dd></div>
+                </dl>
+                <div class="item__actions">
+                  <button class="btn btn--ghost btn--sm" data-delivery-stop="${escapeHtml(selected.id)}" type="button">Detener</button>
+                  <button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(selected.id)}" type="button">Marcar entregado</button>
+                </div>`
+              : '<p class="view__hint">Inicia una entrega de un pedido con ubicación para ver el mapa.</p>'
+          }
+        </div>
+        <div class="delivery-panel">
+          <h3>Pedidos con ubicación${orders.length ? ` (${orders.length})` : ''}</h3>
+          <div class="delivery-orders">
+            ${
+              orders.length
+                ? orders
+                    .map(({ item, order }) => {
+                      const session = deliverySessionForOrder(item.id);
+                      const customer = order.customer ?? customerById(order.customer_id) ?? state.customers.find((row) => row.id === item.customer_id);
+                      const assignedUserId = order.delivery?.delivery_user_id ?? '';
+                      const assignedName = order.delivery?.delivery_user_name_snapshot ?? null;
+                      const assignedToMe = assignedUserId && assignedUserId === currentUser()?.id;
+                      const canAssign = (state.deliveryUsers ?? []).length > 0;
+                      const deliveryStatus = order.delivery_status ?? order.delivery?.delivery_status ?? 'PENDING_CONTACT';
+                      const needsContact = deliveryStatus === 'PENDING_CONTACT';
+                      const canStart = isDeliveryRole ? assignedToMe && !needsContact : true;
+                      return `<article class="delivery-order ${session ? 'delivery-order--active' : ''}">
+                        <div>
+                          <strong>${escapeHtml(order.order_number ?? item.order_number ?? item.id)}</strong>
+                          <p>${escapeHtml(customerName(customer ?? item))} · ${escapeHtml(statusLabel(order.status ?? item.status ?? 'nuevo'))}</p>
+                          <small>${escapeHtml(order.delivery.location.name ?? order.delivery.location.address ?? 'Ubicación de entrega')}${
+                            assignedName ? ` · ${escapeHtml(assignedName)}` : ''
+                          }</small>
+                          <span class="tag delivery-status delivery-status--${escapeHtml(deliveryStatus.toLowerCase())}">${
+                            needsContact ? 'Pendiente de contactar' : deliveryStatus === 'CONTACTED' ? 'Contactado' : deliveryStatus === 'IN_TRANSIT' ? 'En camino' : escapeHtml(deliveryStatus)
+                          }</span>
+                        </div>
+                        ${
+                          session
+                            ? `<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver</button>`
+                            : isDeliveryRole && assignedToMe
+                              ? `<span class="item__actions">
+                                  ${order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
+                                  <button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button" ${canStart ? '' : 'disabled'}>Iniciar entrega</button>
+                                </span>`
+                              : isDeliveryRole
+                                ? '<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>'
+                                : canAssign
+                                  ? `<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(item.id)}" aria-label="Asignar delivery">
+                                      <option value="">${assignedName ? 'Cambiar delivery' : 'Asignar delivery'}</option>
+                                      ${(state.deliveryUsers ?? [])
+                                        .map(
+                                          (user) =>
+                                            `<option value="${escapeHtml(user.id)}" ${
+                                              user.id === assignedUserId ? 'selected' : ''
+                                            }>${escapeHtml(user.display_name ?? user.username ?? 'Delivery')}</option>`,
+                                        )
+                                        .join('')}
+                                    </select></span>`
+                                  : '<button class="btn btn--ghost btn--sm" type="button" disabled>Sin delivery</button>'
+                        }
+                      </article>`;
+                    })
+                    .join('')
+                : emptyState('No hay pedidos abiertos con ubicación de entrega.')
+            }
+          </div>
+        </div>
+      </section>`;
+    setTimeout(() => updateDeliveryMap(selected), 0);
+  }
+
+  function openNotificationsSheet() {
+    $('#sheet-title').textContent = 'Notificaciones';
+    const rows = state.notifications ?? [];
+    $('#sheet-body').innerHTML = rows.length
+      ? `<div class="delivery-orders">
+          ${rows
+            .map(
+              (row) => `<article class="delivery-order ${row.status !== 'read' ? 'delivery-order--active' : ''}">
+                <div>
+                  <strong>${escapeHtml(row.title ?? 'Notificación')}</strong>
+                  <p>${escapeHtml(row.body ?? '')}</p>
+                  <small>${escapeHtml(fmtWhen(row.created_at))}${row.status === 'read' ? ' · leída' : ' · nueva'}</small>
+                </div>
+                ${
+                  row.deep_link
+                    ? `<button class="btn btn--primary btn--sm" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(row.entity_id ?? '')}" type="button">Abrir</button>`
+                    : ''
+                }
+              </article>`,
+            )
+            .join('')}
+        </div>`
+      : emptyState('No hay notificaciones.');
+    $('#sheet').hidden = false;
+  }
+
+  async function openDeliveryOrderFromNotification(notificationId, orderId) {
+    if (notificationId) {
+      await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
+    }
+    if (orderId) {
+      state.deliveryActiveOrderId = orderId;
+      setTab('delivery');
+      await api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}${notificationId ? `?notification=${encodeURIComponent(notificationId)}` : ''}`).catch(() => null);
+      await load({ keepTab: true });
+      setTab('delivery', { silent: true });
+    }
+    closeSheet();
+  }
+
+  function stopDeliveryWatch() {
+    if (state.deliveryWatchId !== null && navigator.geolocation?.clearWatch) {
+      navigator.geolocation.clearWatch(state.deliveryWatchId);
+    }
+    state.deliveryWatchId = null;
+    state.deliveryActiveSessionId = null;
+    state.deliveryLastSentAt = 0;
+    state.deliveryLastSentPoint = null;
+    state.deliveryWatchStartedAt = 0;
+  }
+
+  function applyDeliverySession(session) {
+    if (!session?.id) return;
+    const index = state.deliveryTracking.findIndex((row) => row.id === session.id);
+    if (index >= 0) state.deliveryTracking[index] = session;
+    else state.deliveryTracking.unshift(session);
+  }
+
+  async function refreshDeliveryTracking(options = {}) {
+    const data = await api('/api/admin/delivery-tracking');
+    state.deliveryTracking = data.sessions ?? [];
+    if (options.rebuild || !$('#delivery-map')) renderDelivery();
+    else updateDeliveryMap(selectedDeliverySession());
+  }
+
+  function stopDeliveryEvents() {
+    if (state.deliveryEvents) state.deliveryEvents.close();
+    state.deliveryEvents = null;
+    if (state.deliveryPollTimer) clearInterval(state.deliveryPollTimer);
+    state.deliveryPollTimer = null;
+  }
+
+  function startDeliveryEvents() {
+    if (state.deliveryEvents || state.deliveryPollTimer || state.tab !== 'delivery') return;
+    if (typeof EventSource === 'function') {
+      const source = new EventSource('/api/admin/delivery-tracking/events');
+      source.addEventListener('delivery.tracking_started', (event) => {
+        applyDeliverySession(JSON.parse(event.data).session);
+        renderDelivery();
+      });
+      source.addEventListener('delivery.location_updated', (event) => {
+        applyDeliverySession(JSON.parse(event.data).session);
+        updateDeliveryMap(selectedDeliverySession());
+      });
+      source.addEventListener('delivery.tracking_stopped', (event) => {
+        applyDeliverySession(JSON.parse(event.data).session);
+        renderDelivery();
+      });
+      source.addEventListener('delivery.completed', (event) => {
+        applyDeliverySession(JSON.parse(event.data).session);
+        renderDelivery();
+      });
+      source.onerror = () => {
+        source.close();
+        state.deliveryEvents = null;
+        if (!state.deliveryPollTimer) state.deliveryPollTimer = setInterval(() => refreshDeliveryTracking().catch(() => {}), 8000);
+      };
+      state.deliveryEvents = source;
+      return;
+    }
+    state.deliveryPollTimer = setInterval(() => refreshDeliveryTracking().catch(() => {}), 8000);
+  }
+
+  function shouldSendDeliveryPoint(point) {
+    const now = Date.now();
+    if (!state.deliveryLastSentPoint) return true;
+    if (now - state.deliveryLastSentAt >= 7000) return true;
+    const dx = Number(point.latitude) - Number(state.deliveryLastSentPoint.latitude);
+    const dy = Number(point.longitude) - Number(state.deliveryLastSentPoint.longitude);
+    return Math.sqrt(dx * dx + dy * dy) > 0.00012;
+  }
+
+  async function sendDeliveryPoint(sessionId, coords, options = {}) {
+    const point = {
+      lat: coords.latitude,
+      lng: coords.longitude,
+      accuracy: coords.accuracy,
+      heading: coords.heading,
+      speed: coords.speed,
+      timestamp: new Date().toISOString(),
+    };
+    if (!options.force && !shouldSendDeliveryPoint({ latitude: point.lat, longitude: point.lng })) return;
+    const data = await api(`/api/admin/delivery-tracking/${encodeURIComponent(sessionId)}/location`, {
+      method: 'POST',
+      body: JSON.stringify(point),
+    });
+    state.deliveryLastSentAt = Date.now();
+    state.deliveryLastSentPoint = { latitude: point.lat, longitude: point.lng };
+    applyDeliverySession(data.session);
+    updateDeliveryMap(selectedDeliverySession());
+  }
+
+  function getInitialDeliveryPosition() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation?.getCurrentPosition) {
+        reject(new Error('geolocation_unavailable'));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+    });
+  }
+
+  async function rollbackDeliveryStart({ sessionId, orderId, previousStatus }) {
+    try {
+      await api(`/api/admin/delivery-tracking/${encodeURIComponent(sessionId)}/stop`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (previousStatus && previousStatus !== 'enviado') {
+        await api(`/api/admin/items/${encodeURIComponent(orderId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: previousStatus }),
+        });
+      }
+      await load({ keepTab: true });
+      setTab('delivery', { silent: true });
+    } catch {
+      await refreshDeliveryTracking({ rebuild: true }).catch(() => {});
+    }
+  }
+
+  function startDeliveryWatch(sessionId, rollback = null) {
+    if (!navigator.geolocation?.watchPosition) {
+      toast('Este navegador no puede dar GPS');
+      return;
+    }
+    stopDeliveryWatch();
+    state.deliveryActiveSessionId = sessionId;
+    state.deliveryWatchStartedAt = Date.now();
+    let watchConfirmed = false;
+    state.deliveryWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        watchConfirmed = true;
+        sendDeliveryPoint(sessionId, position.coords).catch((error) => {
+          if (error.message !== 'unauthorized') toast('No se pudo enviar GPS');
+        });
+      },
+      (error) => {
+        const immediate = Date.now() - state.deliveryWatchStartedAt <= 5000 && !watchConfirmed;
+        toast(error?.code === 1 ? 'Permiso de GPS denegado' : 'GPS sin actualización');
+        if (immediate && rollback?.sessionId) {
+          stopDeliveryWatch();
+          rollbackDeliveryStart(rollback).then(() => toast('No se inició la entrega porque el GPS falló.')).catch(() => {});
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 },
+    );
+    toast('GPS activo durante esta entrega');
+  }
+
+  async function startDelivery(orderId) {
+    let initialPosition;
+    try {
+      initialPosition = await getInitialDeliveryPosition();
+    } catch (error) {
+      toast(error?.code === 1 ? 'Necesitas permitir acceso a tu ubicación para iniciar la entrega.' : 'No se pudo obtener tu GPS para iniciar la entrega.');
+      return;
+    }
+    const currentOrder = itemOrder(state.items.find((item) => item.id === orderId));
+    const previousStatus = currentOrder?.status ?? state.items.find((item) => item.id === orderId)?.status ?? 'nuevo';
+    const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/start`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    applyDeliverySession(data.session);
+    try {
+      await sendDeliveryPoint(data.session.id, initialPosition.coords, { force: true });
+    } catch (error) {
+      await rollbackDeliveryStart({ sessionId: data.session.id, orderId, previousStatus });
+      toast(error?.body?.message ?? 'No se pudo iniciar la entrega con GPS válido.');
+      return;
+    }
+    startDeliveryWatch(data.session.id, { sessionId: data.session.id, orderId, previousStatus });
+    await load({ keepTab: true });
+    setTab('delivery', { silent: true });
+  }
+
+  async function stopDelivery(sessionId, complete = false) {
+    const data = await api(`/api/admin/delivery-tracking/${encodeURIComponent(sessionId)}/${complete ? 'complete' : 'stop'}`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    stopDeliveryWatch();
+    applyDeliverySession(data.session);
+    renderDelivery();
+    await load({ keepTab: true });
+    toast(complete ? 'Entrega completada' : 'Tracking detenido');
   }
 
   /** Seguimientos (menú lateral): vencidos, de hoy y los que vienen. */
@@ -2064,6 +2924,19 @@
    */
   async function applyDeepLink(query) {
     const conversationId = query?.get('conv');
+    const orderId = query?.get('order');
+    if (orderId) {
+      state.deliveryActiveOrderId = orderId;
+      setTab('delivery', { silent: true });
+      try {
+        await api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}${query?.get('notification') ? `?notification=${encodeURIComponent(query.get('notification'))}` : ''}`);
+        await load({ keepTab: true });
+        setTab('delivery', { silent: true });
+      } catch {
+        toast('No tienes acceso a ese pedido');
+      }
+      return;
+    }
     if (!conversationId) return;
     try {
       await openChat(conversationId);
@@ -2482,6 +3355,17 @@
   }
 
   /** Una conversación de la lista (nombre o teléfono, nunca un id técnico). */
+  function conversationAssignmentLabel(conversation) {
+    return conversation?.assigned_user_id
+      ? `Atiende ${conversation.assigned_display_name_snapshot ?? 'agente'}`
+      : 'Sin asignar';
+  }
+
+  function conversationAssignmentKind(conversation) {
+    if (!conversation?.assigned_user_id) return 'unassigned';
+    return conversation.assigned_user_id === currentUser()?.id ? 'mine' : 'other';
+  }
+
   function waRow(row) {
     const unread = Number(row.unread_count) || 0;
     const awaiting = waAwaiting(row);
@@ -2506,13 +3390,15 @@
       : null;
     const stage = customerStageOf(row);
     const activeOrder = row.active_order?.status ? `Pedido · ${statusLabel(row.active_order.status)}` : null;
+    const assignment = conversationAssignmentLabel(row);
     const compactFlags = [customerStageLabel(stage), followupText, activeOrder].filter(Boolean).slice(0, 3);
     const flags =
-      awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length
+      awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length || assignment
         ? `<span class="conv__flags">
             ${awaiting ? '<span class="conv__await">Pendiente</span>' : ''}
             ${row.status === 'HUMAN_REQUIRED' ? '<span class="conv__await">Necesita una persona</span>' : ''}
             ${compactFlags.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
+            <span class="conv__assign ${row.assigned_user_id ? '' : 'conv__assign--empty'}">${escapeHtml(assignment)}</span>
           </span>`
         : '';
     const selected = state.wa.selected.has(row.id);
@@ -2926,13 +3812,29 @@
     state.wa.selected.clear();
     state.wa.listSig = null;
     refreshWhatsapp().catch(() => renderWaList());
+    renderMobileHeader();
     renderWhatsapp();
     return true;
   }
 
   function openWaDateMenu() {
     const active = waDateRange();
-    const buttons = WA_DATE_FILTERS.map(([mode, label]) => {
+    const fixedButtons = WA_DATE_FILTERS.slice(0, 3).map(([mode, label]) => {
+      return `<button class="menu-item" data-wa-date="${mode}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${active.mode === mode ? ICONS.check : ''}</span>
+        <span><strong>${label}</strong></span>
+      </button>`;
+    }).join('');
+    const recentButtons = [2, 3, 4, 5].map((offset) => {
+      const day = addDaysToISO(todayISO(), -offset);
+      const label = shortWeekday(new Date(`${day}T12:00:00`));
+      const selected = active.mode === 'custom' && active.from === day && active.to === day;
+      return `<button class="menu-item" data-wa-date-day="${day}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${selected ? ICONS.check : ''}</span>
+        <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(formatShortDate(day))}</small></span>
+      </button>`;
+    }).join('');
+    const rangeButtons = WA_DATE_FILTERS.slice(3).map(([mode, label]) => {
       if (mode === 'custom') {
         return `<button class="menu-item" data-wa-date-custom="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${active.mode === mode ? ICONS.check : ICONS.clock}</span>
@@ -2944,6 +3846,7 @@
         <span><strong>${label}</strong></span>
       </button>`;
     }).join('');
+    const buttons = `${fixedButtons}${recentButtons}${rangeButtons}`;
     openSheet('Filtrar por fecha', `<div class="menu-list">${buttons}</div>`, { variant: 'menu' });
   }
 
@@ -3061,7 +3964,7 @@
     $('#wa-chat-meta').textContent = [
       customer ? customerStageLabel(customerStageOf(customer)) : null,
       customer?.phone_e164,
-      conversation?.assigned_display_name_snapshot ? `Atiende ${conversation.assigned_display_name_snapshot}` : 'Sin asignar',
+      conversationAssignmentLabel(conversation),
       data.nextFollowup ? `Seguimiento ${fmtDay(data.nextFollowup.scheduled_at)}` : null,
       ...headerTags,
       conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
@@ -3082,6 +3985,7 @@
       actions.dataset.customer = customer?.id ?? '';
       actions.dataset.conversation = conversation?.id ?? '';
       actions.disabled = !customer?.id;
+      actions.setAttribute('aria-label', `Acciones de la conversación. ${conversationAssignmentLabel(conversation)}`);
     }
 
     const avatar = $('#wa-chat-avatar');
@@ -3095,22 +3999,7 @@
       );
     }
 
-    const assignmentActions = conversation?.assigned_user_id
-      ? `<div class="assignment-bar">
-          <span>Atiende ${escapeHtml(conversation.assigned_display_name_snapshot ?? 'agente')}</span>
-          ${
-            conversation.assigned_user_id === currentUser()?.id || isAdmin()
-              ? '<button class="btn btn--ghost btn--sm" data-conv-release type="button">Liberar</button>'
-              : ''
-          }
-          ${isAdmin() ? '<button class="btn btn--ghost btn--sm" data-conv-reassign type="button">Reasignar</button>' : ''}
-        </div>`
-      : `<div class="assignment-bar">
-          <span>Sin asignar</span>
-          ${currentUser() ? '<button class="btn btn--primary btn--sm" data-conv-take type="button">Tomar conversación</button>' : ''}
-        </div>`;
-    $('#thread').innerHTML =
-      assignmentActions + (messages.length ? waThreadHtml(messages) : '<p class="view__hint">Todavía no hay mensajes.</p>');
+    $('#thread').innerHTML = messages.length ? waThreadHtml(messages) : '<p class="view__hint">Todavía no hay mensajes.</p>';
 
     $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText });
     const area = $('#wa-text');
@@ -4720,6 +5609,37 @@
   function openChatActions(customerId, conversationId) {
     const customer = customerById(customerId);
     if (!customer) return;
+    const conversation =
+      state.wa.chat?.conversation?.id === conversationId
+        ? state.wa.chat.conversation
+        : state.conversations.find((row) => row.id === conversationId) ?? null;
+    const assignmentKind = conversationAssignmentKind(conversation);
+    const assignedToMe = assignmentKind === 'mine';
+    const assignedToOther = assignmentKind === 'other';
+    const canTake = assignmentKind === 'unassigned' && currentUser() && hasPermission('chats.take_unassigned');
+    const canRelease = conversation?.assigned_user_id && (assignedToMe || isAdmin());
+    const canReassign = Boolean(conversation?.assigned_user_id) && isAdmin();
+    const assignmentMenu = `
+        <div class="menu-item menu-item--static">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span>
+        </div>
+        ${canTake ? `<button class="menu-item" data-conv-take type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
+          <span><strong>Tomar conversación</strong><small>Queda asignada a ti</small></span>
+        </button>` : ''}
+        ${canRelease ? `<button class="menu-item" data-conv-release type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+          <span><strong>Liberar conversación</strong><small>Vuelve a Sin asignar</small></span>
+        </button>` : ''}
+        ${canReassign ? `<button class="menu-item" data-conv-reassign type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>Reasignar</strong><small>Cambiar responsable</small></span>
+        </button>` : ''}
+        ${assignedToOther && !isAdmin() ? `<div class="menu-item menu-item--static">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.lock}</span>
+          <span><strong>Asignada a otra persona</strong><small>Puedes ver la ficha, no tomarla.</small></span>
+        </div>` : ''}`;
     /*
      * Acciones del cliente: icono + título corto, sin párrafos. La única que
      * lleva una nota es la que ENVÍA sola (una plantilla la manda el sistema): no
@@ -4729,6 +5649,7 @@
       customerName(customer),
       `
       <div class="menu-list">
+        ${assignmentMenu}
         <button class="menu-item" data-quick-replies="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Respuesta rápida</strong></span>
@@ -6300,6 +7221,48 @@
 
   let installEvent = null;
 
+  function pushPermissionLabel() {
+    if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) return 'No disponible';
+    if (Notification.permission === 'granted') return 'Activadas';
+    if (Notification.permission === 'denied') return 'Bloqueadas por navegador';
+    return 'Desactivadas';
+  }
+
+  function urlBase64ToUint8Array(value) {
+    const padding = '='.repeat((4 - (value.length % 4)) % 4);
+    const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+  }
+
+  async function enableDeliveryPush() {
+    if (!state.push?.publicKey) {
+      toast('Push no está configurado en el servidor');
+      return;
+    }
+    if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
+      toast('Este navegador no soporta notificaciones push');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      toast(permission === 'denied' ? 'Notificaciones bloqueadas por navegador' : 'No se activaron las notificaciones');
+      renderDelivery();
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(state.push.publicKey),
+    });
+    await api('/api/admin/push-subscriptions', {
+      method: 'POST',
+      body: JSON.stringify(subscription),
+    });
+    toast('Notificaciones de pedidos activadas');
+    renderDelivery();
+  }
+
   function initPwa() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/admin/sw.js', { scope: '/admin/' }).catch(() => {});
@@ -6377,11 +7340,12 @@
   // ------------------------------------------------------------------- tabs
 
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
+    delivery: 'Delivery',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Inventario',
@@ -6396,6 +7360,12 @@
   function setTab(tab, options = {}) {
     if ((tab === 'usuarios' && !isAdmin()) || (tab === 'ajustes' && !hasPermission('settings.manage')) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
       tab = 'hoy';
+    }
+    if (tab !== 'whatsapp') state.wa.searchOpen = false;
+    if (tab !== 'clientes') state.clientSearchOpen = false;
+    if (tab !== 'delivery') {
+      stopDeliveryEvents();
+      resetDeliveryMap();
     }
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
@@ -6414,6 +7384,10 @@
       window.scrollTo({ top: 0 });
       // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
       if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
+      if (tab === 'delivery') {
+        refreshDeliveryTracking().catch(() => {});
+        startDeliveryEvents();
+      }
       if (tab === 'productos') loadInventory().catch(() => {});
       if (tab === 'reportes' && hasPermission('reports.profit.view')) loadSalesReport(state.salesReportPeriod).catch(() => {});
       if (tab === 'usuarios') loadUsers().catch(() => {});
@@ -6632,6 +7606,67 @@
       const dashboardTab = event.target.closest('[data-dashboard-tab]');
       if (dashboardTab) {
         setTab(dashboardTab.dataset.dashboardTab);
+        return;
+      }
+      if (event.target.closest('[data-dashboard-profile]')) {
+        setTab('perfil');
+        return;
+      }
+      if (event.target.closest('[data-dashboard-notifications]')) {
+        openNotificationsSheet();
+        return;
+      }
+      const notificationOpen = event.target.closest('[data-notification-open]');
+      if (notificationOpen) {
+        openDeliveryOrderFromNotification(notificationOpen.dataset.notificationOpen, notificationOpen.dataset.notificationEntity).catch(() =>
+          toast('No se pudo abrir la notificación'),
+        );
+        return;
+      }
+      const deliveryContact = event.target.closest('[data-delivery-contact]');
+      if (deliveryContact) {
+        openChat(deliveryContact.dataset.deliveryContact).catch(() => toast('No se pudo abrir el chat'));
+        return;
+      }
+      const deliveryCenter = event.target.closest('[data-delivery-center]');
+      if (deliveryCenter) {
+        if (deliveryCenter.dataset.deliveryCenter === 'both') fitDeliveryBounds();
+        else centerDelivery(deliveryCenter.dataset.deliveryCenter);
+        return;
+      }
+      if (event.target.closest('[data-delivery-push]')) {
+        enableDeliveryPush().catch(() => toast('No se pudieron activar las notificaciones'));
+        return;
+      }
+      const deliveryStart = event.target.closest('[data-delivery-start]');
+      if (deliveryStart) {
+        startDelivery(deliveryStart.dataset.deliveryStart).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo iniciar entrega');
+        });
+        return;
+      }
+      const deliveryFocus = event.target.closest('[data-delivery-focus]');
+      if (deliveryFocus) {
+        state.deliveryActiveSessionId = deliveryFocus.dataset.deliveryFocus;
+        renderDelivery();
+        return;
+      }
+      const deliveryStop = event.target.closest('[data-delivery-stop]');
+      if (deliveryStop) {
+        stopDelivery(deliveryStop.dataset.deliveryStop, false).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo detener');
+        });
+        return;
+      }
+      const deliveryComplete = event.target.closest('[data-delivery-complete]');
+      if (deliveryComplete) {
+        stopDelivery(deliveryComplete.dataset.deliveryComplete, true).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar');
+        });
+        return;
+      }
+      if (event.target.closest('[data-delivery-refresh]')) {
+        load({ keepTab: true }).catch(() => {});
         return;
       }
       if (event.target.closest('[data-open-drawer]')) {
@@ -6933,6 +7968,66 @@
         if (state.wa.selectedId) loadWaThread(state.wa.selectedId, { force: true });
         return;
       }
+      if (event.target.closest('[data-client-search-open]')) {
+        state.clientSearchOpen = true;
+        renderMobileHeader();
+        requestAnimationFrame(() => $('#client-appbar-search')?.focus());
+        return;
+      }
+      if (event.target.closest('[data-client-search-close]')) {
+        state.clientSearchOpen = false;
+        if (state.q) {
+          state.q = '';
+          const search = $('#search');
+          if (search) search.value = '';
+          renderClientes();
+        }
+        renderMobileHeader();
+        return;
+      }
+      if (event.target.closest('[data-client-search-clear]')) {
+        state.clientSearchOpen = false;
+        state.q = '';
+        const search = $('#search');
+        if (search) search.value = '';
+        renderClientes();
+        renderMobileHeader();
+        return;
+      }
+      if (event.target.closest('[data-client-actions-open]')) {
+        openClientsActions();
+        return;
+      }
+      if (event.target.closest('[data-wa-search-open]')) {
+        state.wa.searchOpen = true;
+        renderMobileHeader();
+        requestAnimationFrame(() => $('#wa-appbar-search')?.focus());
+        return;
+      }
+      if (event.target.closest('[data-wa-search-close]')) {
+        state.wa.searchOpen = false;
+        if (state.wa.q) {
+          state.wa.q = '';
+          const search = $('#wa-search');
+          if (search) search.value = '';
+          refreshWhatsapp().catch(() => renderWaList());
+        }
+        renderMobileHeader();
+        return;
+      }
+      if (event.target.closest('[data-wa-search-clear]')) {
+        state.wa.searchOpen = false;
+        state.wa.q = '';
+        const search = $('#wa-search');
+        if (search) search.value = '';
+        refreshWhatsapp().catch(() => renderWaList());
+        renderMobileHeader();
+        return;
+      }
+      if (event.target.closest('[data-wa-date-open]')) {
+        openWaDateMenu();
+        return;
+      }
       if (event.target.closest('#wa-date-menu')) {
         openWaDateMenu();
         return;
@@ -6941,6 +8036,12 @@
       if (waDate) {
         closeSheet();
         setWaDateFilter(waDate.dataset.waDate);
+        return;
+      }
+      const waDateDay = event.target.closest('[data-wa-date-day]');
+      if (waDateDay) {
+        closeSheet();
+        setWaDateFilter('custom', { from: waDateDay.dataset.waDateDay, to: waDateDay.dataset.waDateDay });
         return;
       }
       if (event.target.closest('[data-wa-date-custom]')) {
@@ -7000,6 +8101,18 @@
     document.addEventListener('change', (event) => {
       const toggle = event.target.closest('[data-plan-toggle]');
       if (toggle) toggleFollowupDay(toggle.dataset.planToggle, toggle.checked);
+      const deliveryAssign = event.target.closest('[data-delivery-assign]');
+      if (deliveryAssign && deliveryAssign.value) {
+        api(`/api/admin/orders/${encodeURIComponent(deliveryAssign.dataset.deliveryAssign)}/delivery/assign`, {
+          method: 'POST',
+          body: JSON.stringify({ deliveryUserId: deliveryAssign.value }),
+        })
+          .then(() => load({ keepTab: true }))
+          .then(() => toast('Delivery asignado'))
+          .catch((error) => {
+            if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo asignar delivery');
+          });
+      }
     });
 
     // Buscar dentro de un audio (el deslizador manda en la reproducción).
@@ -7040,6 +8153,23 @@
       state.wa.q = event.target.value.trim();
       refreshWhatsapp().catch(() => renderWaList());
     });
+    document.addEventListener('input', (event) => {
+      const appSearch = event.target.closest('#wa-appbar-search');
+      if (appSearch) {
+        state.wa.q = appSearch.value.trim();
+        const search = $('#wa-search');
+        if (search && search.value !== state.wa.q) search.value = state.wa.q;
+        refreshWhatsapp().catch(() => renderWaList());
+        return;
+      }
+      const clientSearch = event.target.closest('#client-appbar-search');
+      if (clientSearch) {
+        state.q = clientSearch.value.trim();
+        const search = $('#search');
+        if (search && search.value !== state.q) search.value = state.q;
+        renderClientes();
+      }
+    });
     $('#wa-filters').addEventListener('click', (event) => {
       if (event.target.closest('#wa-notify')) {
         if (typeof Notification === 'undefined') {
@@ -7078,6 +8208,8 @@
     });
 
     $('#logout').addEventListener('click', async () => {
+      stopDeliveryWatch();
+      stopDeliveryEvents();
       await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
       showLogin('Sesión cerrada.');
     });

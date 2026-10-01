@@ -18,6 +18,7 @@
     <meta name="apple-mobile-web-app-title" content="CRM Phyto" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
+    <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/admin/admin.css" />
   </head>
   <body>
@@ -120,18 +121,6 @@
           </button>
         </div>
         <div class="drawer__user" id="drawer-user" hidden></div>
-        <p class="drawer__group drawer__group--primary">Operación</p>
-        <nav class="drawer__nav drawer__nav--primary">
-          <button class="drawer__item" data-tab="hoy" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
-          </button>
-          <button class="drawer__item" data-tab="whatsapp" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>WhatsApp
-          </button>
-          <button class="drawer__item" data-tab="clientes" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
-          </button>
-        </nav>
         <p class="drawer__group">Gestión</p>
         <nav class="drawer__nav">
           <button class="drawer__item" data-tab="pedidos" type="button">
@@ -148,6 +137,21 @@
           </button>
           <button class="drawer__item" data-tab="mensajes" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
+          </button>
+        </nav>
+        <p class="drawer__group drawer__group--primary">Operación</p>
+        <nav class="drawer__nav drawer__nav--primary">
+          <button class="drawer__item" data-tab="hoy" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
+          </button>
+          <button class="drawer__item" data-tab="whatsapp" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>WhatsApp
+          </button>
+          <button class="drawer__item" data-tab="clientes" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
+          </button>
+          <button class="drawer__item" data-tab="delivery" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Delivery
           </button>
         </nav>
         <div class="drawer__foot">
@@ -231,24 +235,18 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
-              </div>
-              <div class="thread thread--wa chat-bg" id="thread"></div>
-              <!--
-                Acciones del cliente: botón flotante, separado del «+» del
-                compositor (que adjunta) y sin tapar mensajes, compositor ni barra.
-              -->
-              <div class="wa__fab-row">
                 <button
-                  class="wa-fab"
+                  class="wa__chat-menu"
                   id="wa-actions"
                   type="button"
-                  aria-label="Acciones del cliente"
-                  title="Acciones del cliente"
+                  aria-label="Acciones de la conversación"
+                  title="Acciones de la conversación"
                   disabled
                 >
-                  <span class="ico" aria-hidden="true" data-icon="spark"></span>
+                  <span class="ico" aria-hidden="true" data-icon="more"></span>
                 </button>
               </div>
+              <div class="thread thread--wa chat-bg" id="thread"></div>
               <div class="wa__composer" id="wa-composer"></div>
             </div>
 
@@ -275,6 +273,11 @@
             <span class="ico" aria-hidden="true" data-icon="plus"></span>
           </button>
           <div class="list" id="list-clientes"></div>
+        </section>
+
+        <!-- DELIVERY EN TIEMPO REAL -->
+        <section class="view" id="view-delivery" hidden>
+          <div class="delivery-live" id="delivery-live"></div>
         </section>
 
         <!-- PERFIL DEL CLIENTE -->
@@ -479,6 +482,7 @@
 
     <div class="toast" id="toast" hidden></div>
 
+    <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/app.js" defer></script>
   </body>
 </html>

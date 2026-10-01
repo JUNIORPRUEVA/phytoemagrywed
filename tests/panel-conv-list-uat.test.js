@@ -261,7 +261,7 @@ describe('la fila de la lista', () => {
     const row = $(`[data-conv="${ids.luis}"]`);
     const tags = [...row.querySelectorAll('.conv__tag')].map((tag) => tag.textContent);
     expect(tags).toContain('Prospecto');
-    expect(tags).not.toContain('Sin asignar');
+    expect(row.querySelector('.conv__assign--empty').textContent).toBe('Sin asignar');
     for (const tag of tags) expect(tag).not.toMatch(/,/);
   });
 

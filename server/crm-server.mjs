@@ -77,6 +77,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import webpush from 'web-push';
 
 import { buildUserData, createMetaCapi } from './meta-capi.mjs';
 import { createCollections } from './collections.mjs';
@@ -124,6 +125,15 @@ import {
   orderLocationSnapshot,
   publicLocation,
 } from './locations.mjs';
+import {
+  ACTIVE_TRACKING_STATUS,
+  buildSession as buildTrackingSession,
+  orderDestination,
+  publicTrackingSession,
+  shouldStorePoint,
+  suspiciousJump,
+  validateLocationUpdate,
+} from './delivery-tracking.mjs';
 
 const saleCancellationLocks = new Map();
 import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
@@ -155,6 +165,20 @@ const BOOTSTRAP_ADMIN_USER = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_USER ?? '').
 const BOOTSTRAP_ADMIN_PASSWORD = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_PASSWORD ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
 const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
+const WEB_PUSH_PUBLIC_KEY = (process.env.PHYTO_WEB_PUSH_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? '').trim();
+const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.env.VAPID_PRIVATE_KEY ?? '').trim();
+const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT ?? 'mailto:admin@phytoemagry.local').trim();
+if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
+  webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
+}
+const DELIVERY_OPERATIONAL_STATUSES = Object.freeze({
+  PENDING_CONTACT: 'PENDING_CONTACT',
+  CONTACTED: 'CONTACTED',
+  READY_FOR_DELIVERY: 'READY_FOR_DELIVERY',
+  IN_TRANSIT: 'IN_TRANSIT',
+  DELIVERED: 'DELIVERED',
+  CANCELLED: 'CANCELLED',
+});
 
 // ------------------------------------------------------------------- Meta CAPI
 /** ID del píxel/dataset. Es público (el navegador lo lleva en el HTML). */
@@ -472,6 +496,389 @@ async function rememberOrderLocation(ctx, input) {
   return saved.ok ? saved.location : null;
 }
 
+async function findOrderItem(store, orderId) {
+  const items = await store.listAdmin({ limit: 5000 });
+  const item = items.find((entry) => entry.id === orderId) ?? null;
+  return item?.type === 'order_intent' ? item : null;
+}
+
+async function updateOrderStatus(store, item, status, actor = null) {
+  const current = orderOf(item);
+  if (!current) return null;
+  const next = {
+    ...current,
+    status,
+    updated_by_user_id: actor?.actor_type === 'USER' ? actor.id : current.updated_by_user_id ?? null,
+    updated_by_display_name_snapshot:
+      actor?.actor_type === 'USER' ? actor.display_name : current.updated_by_display_name_snapshot ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const updated = await store.update(item.id, { status, orderJson: JSON.stringify(next) });
+  return { item: updated, order: orderOf(updated) ?? next };
+}
+
+function canReadTracking(actor, session) {
+  return hasPermission(actor, 'delivery.location.read_all') || session.delivery_user_id === actor?.id;
+}
+
+function canUpdateTracking(actor, session) {
+  return hasPermission(actor, 'delivery.tracking.manage_all') || session.delivery_user_id === actor?.id;
+}
+
+async function publicSessionWithOrder(ctx, session) {
+  const item = await findOrderItem(ctx.store, session.order_id);
+  const order = orderOf(item);
+  const customer = order?.customer_id ? await ctx.customers.get(order.customer_id) : null;
+  return {
+    ...publicTrackingSession(session, { destination: session.destination ?? orderDestination(order) }),
+    order: order
+      ? {
+          id: order.id,
+          order_number: order.order_number,
+          status: order.status,
+          total: order.total,
+          customer_id: order.customer_id,
+          conversation_id: order.conversation_id,
+        }
+      : null,
+    customer: customer
+      ? {
+          id: customer.id,
+          name: customer.name,
+          phone_e164: customer.phone_e164,
+        }
+      : null,
+  };
+}
+
+async function emitDeliveryEvent(ctx, type, session) {
+  if (!ctx.deliveryEventClients?.size || !session) return;
+  const payload = await publicSessionWithOrder(ctx, session);
+  const event = `event: ${type}\ndata: ${JSON.stringify({ ok: true, type, session: payload })}\n\n`;
+  for (const client of [...ctx.deliveryEventClients]) {
+    if (!canReadTracking(client.actor, session)) continue;
+    try {
+      client.res.write(event);
+    } catch {
+      ctx.deliveryEventClients.delete(client);
+    }
+  }
+}
+
+async function listVisibleTracking(ctx, actor) {
+  const rows = await ctx.db.list('delivery_tracking_sessions', { by: 'started_at', order: 'desc', limit: 500 });
+  const visible = rows.filter((row) => canReadTracking(actor, row));
+  const out = [];
+  for (const row of visible) out.push(await publicSessionWithOrder(ctx, row));
+  return out;
+}
+
+async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null) {
+  const current = orderOf(item);
+  if (!current) return null;
+  const previousUserId = text(current.delivery?.delivery_user_id, 80);
+  const sameDelivery = previousUserId && previousUserId === deliveryUser?.id;
+  const assignmentVersion = sameDelivery
+    ? Number(current.delivery?.delivery_assignment_version ?? 1)
+    : Number(current.delivery?.delivery_assignment_version ?? 0) + 1;
+  const status =
+    previousUserId && previousUserId !== deliveryUser?.id
+      ? DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT
+      : current.delivery?.delivery_status ?? DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT;
+  const next = {
+    ...current,
+    delivery: {
+      ...(current.delivery ?? {}),
+      delivery_user_id: deliveryUser?.id ?? null,
+      delivery_user_name_snapshot: deliveryUser?.display_name ?? null,
+      delivery_assigned_at: deliveryUser ? ctx.clock().toISOString() : null,
+      delivery_assigned_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
+      delivery_status: status,
+      delivery_contacted_at: previousUserId && previousUserId !== deliveryUser?.id ? null : current.delivery?.delivery_contacted_at ?? null,
+      delivery_assignment_version: assignmentVersion,
+      delivery_previous_user_id: previousUserId && previousUserId !== deliveryUser?.id ? previousUserId : current.delivery?.delivery_previous_user_id ?? null,
+    },
+    updated_at: ctx.clock().toISOString(),
+  };
+  const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+  const order = orderOf(updated) ?? next;
+  await ctx.audit?.record({
+    entity: 'order',
+    entityId: item.id,
+    action: previousUserId && previousUserId !== deliveryUser?.id ? 'order.delivery_reassigned' : 'order.delivery_assigned',
+    actor: actor?.display_name ?? null,
+    summary: `Delivery asignado a ${deliveryUser?.display_name ?? 'sin asignar'}`,
+    data: {
+      previous_delivery_user_id: previousUserId ?? null,
+      delivery_user_id: deliveryUser?.id ?? null,
+      assignment_version: assignmentVersion,
+    },
+    idempotencyKey: `delivery-assignment-audit:${item.id}:${deliveryUser?.id ?? 'none'}:${assignmentVersion}`,
+  });
+  if (deliveryUser && !sameDelivery) {
+    await createDeliveryAssignmentNotification(ctx, { item: updated, order, deliveryUser, actor, reassigned: Boolean(previousUserId && previousUserId !== deliveryUser.id) });
+  }
+  return { item: updated, order };
+}
+
+function deliveryStatusOf(order) {
+  return order?.delivery?.delivery_status ?? DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT;
+}
+
+function canOpenDeliveryOrder(actor, order) {
+  return hasPermission(actor, 'delivery.tracking.manage_all') || order?.delivery?.delivery_user_id === actor?.id;
+}
+
+function orderDeliveryDeepLink(orderId) {
+  return `/admin/?v=delivery&order=${encodeURIComponent(orderId)}`;
+}
+
+function publicDeliveryOrder(item, order, customer = null, conversation = null) {
+  return {
+    id: item.id,
+    order_id: item.id,
+    order_number: order?.order_number ?? item.order_number ?? item.id,
+    status: order?.status ?? item.status ?? 'nuevo',
+    total: order?.total ?? item.total ?? null,
+    currency: order?.currency ?? item.currency ?? 'DOP',
+    payment_method: order?.payment_method ?? null,
+    payment_method_label: order?.payment_method_label ?? null,
+    items: order?.items ?? [],
+    notes: order?.notes ?? item.notes ?? null,
+    customer_id: order?.customer_id ?? item.customer_id ?? null,
+    conversation_id: order?.conversation_id ?? item.conversation_id ?? conversation?.id ?? null,
+    customer: customer
+      ? { id: customer.id, name: customer.name, phone_e164: customer.phone_e164 }
+      : { id: order?.customer_id ?? item.customer_id ?? null, name: item.name ?? null, phone_e164: item.phone ?? null },
+    delivery: order?.delivery ?? {},
+    delivery_status: deliveryStatusOf(order),
+    deep_link: orderDeliveryDeepLink(item.id),
+  };
+}
+
+async function visibleDeliveryOrders(ctx, actor) {
+  const items = await ctx.store.listAdmin({ limit: 5000 });
+  const orders = [];
+  for (const item of items.filter((row) => row.type === 'order_intent')) {
+    const order = orderOf(item);
+    if (!order?.delivery?.location) continue;
+    if (['entregado', 'cancelado', 'perdido'].includes(order.status)) continue;
+    if (!canOpenDeliveryOrder(actor, order)) continue;
+    const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
+    const conversation = order.conversation_id ? await findConversation(ctx, order.conversation_id) : null;
+    orders.push(publicDeliveryOrder(item, order, customer, conversation));
+  }
+  return orders;
+}
+
+async function createUserNotification(ctx, input) {
+  const at = ctx.clock().toISOString();
+  const doc = {
+    id: newId('not'),
+    recipient_user_id: input.recipientUserId,
+    type: input.type,
+    title: input.title,
+    body: input.body,
+    entity_type: input.entityType ?? null,
+    entity_id: input.entityId ?? null,
+    deep_link: input.deepLink ?? null,
+    data: input.data ?? null,
+    status: 'unread',
+    read_at: null,
+    created_at: at,
+    updated_at: at,
+    idempotency_key: input.idempotencyKey ?? null,
+  };
+  const result = await ctx.db.insert('user_notifications', doc);
+  return result.duplicate ? { duplicate: true, notification: await ctx.db.findBy('user_notifications', 'idempotency_key', doc.idempotency_key) } : { duplicate: false, notification: result.doc };
+}
+
+async function listUserNotifications(ctx, actor, options = {}) {
+  if (!actor?.id) return [];
+  const rows = await ctx.db.list('user_notifications', { by: 'created_at', order: 'desc', limit: options.limit ?? 100 });
+  return rows
+    .filter((row) => hasPermission(actor, 'delivery.tracking.manage_all') || row.recipient_user_id === actor.id)
+    .map((row) => ({
+      id: row.id,
+      type: row.type,
+      title: row.title,
+      body: row.body,
+      entity_type: row.entity_type,
+      entity_id: row.entity_id,
+      deep_link: row.deep_link,
+      data: row.data ?? null,
+      status: row.status,
+      read_at: row.read_at ?? null,
+      created_at: row.created_at,
+    }));
+}
+
+async function sendPushForNotification(ctx, notification) {
+  const subscriptions = (await ctx.db.list('push_subscriptions', { limit: 1000 })).filter(
+    (row) => row.user_id === notification.recipient_user_id && row.active !== false,
+  );
+  const payload = JSON.stringify({
+    title: notification.title,
+    body: notification.body,
+    notificationId: notification.id,
+    orderId: notification.entity_id,
+    deepLink: notification.deep_link,
+    type: notification.type,
+  });
+  for (const subscription of subscriptions) {
+    const key = `push:${notification.id}:${subscription.endpoint}`;
+    const existing = await ctx.db.findBy('push_jobs', 'idempotency_key', key);
+    if (existing) continue;
+    let status = 'not_configured';
+    let error = null;
+    if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
+      try {
+        await webpush.sendNotification(
+          {
+            endpoint: subscription.endpoint,
+            keys: subscription.keys ?? {},
+          },
+          payload,
+        );
+        status = 'sent';
+        await ctx.db.update('push_subscriptions', subscription.id, { last_used_at: ctx.clock().toISOString(), active: true });
+      } catch (err) {
+        status = err?.statusCode === 404 || err?.statusCode === 410 ? 'expired' : 'failed';
+        error = { statusCode: err?.statusCode ?? null, message: err?.message ?? 'push_failed' };
+        if (status === 'expired') await ctx.db.update('push_subscriptions', subscription.id, { active: false, disabled_at: ctx.clock().toISOString(), last_error: error });
+      }
+    }
+    await ctx.db.insert('push_jobs', {
+      id: newId('psh'),
+      notification_id: notification.id,
+      user_id: notification.recipient_user_id,
+      endpoint: subscription.endpoint,
+      status,
+      error,
+      idempotency_key: key,
+      created_at: ctx.clock().toISOString(),
+      updated_at: ctx.clock().toISOString(),
+    });
+  }
+}
+
+async function createDeliveryAssignmentNotification(ctx, { item, order, deliveryUser, actor, reassigned = false }) {
+  const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
+  const version = order.delivery?.delivery_assignment_version ?? 1;
+  const title = reassigned ? 'Pedido reasignado para entregar' : 'Nuevo pedido para entregar';
+  const body = `${customer?.name ?? item.name ?? 'Cliente'} · Pendiente de contactar`;
+  const created = await createUserNotification(ctx, {
+    recipientUserId: deliveryUser.id,
+    type: reassigned ? 'DELIVERY_ORDER_REASSIGNED' : 'DELIVERY_ORDER_ASSIGNED',
+    title,
+    body,
+    entityType: 'order',
+    entityId: item.id,
+    deepLink: orderDeliveryDeepLink(item.id),
+    data: {
+      order_id: item.id,
+      order_number: order.order_number ?? item.order_number ?? null,
+      customer_name: customer?.name ?? item.name ?? null,
+      delivery_status: deliveryStatusOf(order),
+      assignment_version: version,
+      assigned_by_user_id: actor?.id ?? null,
+    },
+    idempotencyKey: `delivery-order-assigned:${item.id}:${deliveryUser.id}:${version}`,
+  });
+  if (created.notification && !created.duplicate) await sendPushForNotification(ctx, created.notification);
+  return created.notification;
+}
+
+async function notifyDeliveryOrderCancelled(ctx, item, order, actor = null) {
+  const deliveryUserId = order?.delivery?.delivery_user_id;
+  if (!deliveryUserId) return null;
+  const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
+  const created = await createUserNotification(ctx, {
+    recipientUserId: deliveryUserId,
+    type: 'DELIVERY_ORDER_CANCELLED',
+    title: 'Pedido cancelado',
+    body: `${customer?.name ?? item.name ?? 'Cliente'} · Ya no debes entregar este pedido`,
+    entityType: 'order',
+    entityId: item.id,
+    deepLink: orderDeliveryDeepLink(item.id),
+    data: {
+      order_id: item.id,
+      order_number: order.order_number ?? item.order_number ?? null,
+      delivery_status: DELIVERY_OPERATIONAL_STATUSES.CANCELLED,
+      cancelled_by_user_id: actor?.id ?? null,
+    },
+    idempotencyKey: `delivery-order-cancelled:${item.id}:${deliveryUserId}`,
+  });
+  if (created.notification && !created.duplicate) await sendPushForNotification(ctx, created.notification);
+  return created.notification;
+}
+
+function deliveryIdentityHeader(user) {
+  const name = text(user?.display_name, 120) ?? 'Delivery';
+  return `*${name} · Delivery*`;
+}
+
+function messageNeedsDeliveryIdentity(order, actor) {
+  if (!order || actor?.role !== 'DELIVERY') return false;
+  if (order.delivery?.delivery_user_id !== actor.id) return false;
+  return order.delivery?.delivery_contacted_by_user_id !== actor.id;
+}
+
+function withDeliveryIdentity(body, actor) {
+  const header = deliveryIdentityHeader(actor);
+  const clean = longText(body, 1200) ?? '';
+  if (clean.trim().startsWith(header)) return clean;
+  return `${header}\n${clean}`.slice(0, 1200);
+}
+
+async function deliveryOrderForConversation(ctx, conversation, actor) {
+  if (!conversation?.id || actor?.role !== 'DELIVERY') return null;
+  const items = await ctx.store.listAdmin({ limit: 5000 });
+  const candidates = [];
+  for (const item of items.filter((row) => row.type === 'order_intent' && row.conversation_id === conversation.id)) {
+    const order = orderOf(item);
+    if (order?.delivery?.delivery_user_id === actor.id && !['entregado', 'cancelado', 'perdido'].includes(order.status)) {
+      candidates.push({ item, order });
+    }
+  }
+  return (
+    candidates.sort((a, b) => {
+      const date = String(b.order.created_at ?? b.item.received_at ?? '').localeCompare(String(a.order.created_at ?? a.item.received_at ?? ''));
+      if (date !== 0) return date;
+      const pendingA = deliveryStatusOf(a.order) === DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT ? 1 : 0;
+      const pendingB = deliveryStatusOf(b.order) === DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT ? 1 : 0;
+      return pendingB - pendingA;
+    })[0] ?? null
+  );
+}
+
+async function markDeliveryContacted(ctx, item, order, actor) {
+  if (!item || !order || actor?.role !== 'DELIVERY' || order.delivery?.delivery_user_id !== actor.id) return null;
+  if (order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.CONTACTED && order.delivery?.delivery_contacted_by_user_id === actor.id) return order;
+  const next = {
+    ...order,
+    delivery: {
+      ...(order.delivery ?? {}),
+      delivery_status: DELIVERY_OPERATIONAL_STATUSES.CONTACTED,
+      delivery_contacted_at: ctx.clock().toISOString(),
+      delivery_contacted_by_user_id: actor.id,
+      delivery_contacted_by_display_name_snapshot: actor.display_name ?? null,
+    },
+    updated_at: ctx.clock().toISOString(),
+  };
+  const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+  await ctx.audit?.record({
+    entity: 'order',
+    entityId: item.id,
+    action: 'order.delivery_contacted',
+    actor: actor.display_name ?? null,
+    summary: 'Delivery contactó al cliente',
+    data: { delivery_user_id: actor.id, conversation_id: order.conversation_id ?? null },
+    idempotencyKey: `delivery-contacted:${item.id}:${actor.id}:${order.delivery?.delivery_assignment_version ?? 1}`,
+  });
+  return orderOf(updated) ?? next;
+}
+
 /** Identificador aleatorio corto (mismo patrón que el resto del CRM). */
 function newId(prefix) {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
@@ -593,6 +1000,18 @@ async function cancelSale(ctx, orderId, input = {}, actor = null) {
       },
       idempotencyKey: `sale.cancelled:${orderId}`,
     });
+    if (cancelledOrder.delivery?.delivery_user_id) {
+      const deliveryCancelledOrder = {
+        ...cancelledOrder,
+        delivery: {
+          ...(cancelledOrder.delivery ?? {}),
+          delivery_status: DELIVERY_OPERATIONAL_STATUSES.CANCELLED,
+        },
+      };
+      await ctx.store.update(orderId, { orderJson: JSON.stringify(deliveryCancelledOrder) });
+      await notifyDeliveryOrderCancelled(ctx, updated, deliveryCancelledOrder, actor);
+      return { ok: true, item: updated, order: deliveryCancelledOrder, inventory, inventoryLinesRestored };
+    }
     return { ok: true, item: updated, order: cancelledOrder, inventory, inventoryLinesRestored };
   });
 }
@@ -1923,6 +2342,14 @@ async function handle(req, res, ctx) {
         },
         customerStages: CUSTOMER_STAGES.map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
         customerTags: await ctx.customers.listTags(),
+        deliveryTracking: await listVisibleTracking(ctx, actor),
+        deliveryOrders: await visibleDeliveryOrders(ctx, actor),
+        deliveryUsers: can('delivery.tracking.manage_all') ? (await ctx.users.listUsers()).filter((user) => user.role === 'DELIVERY' && user.active !== false) : [],
+        notifications: await listUserNotifications(ctx, actor),
+        push: {
+          publicKey: WEB_PUSH_PUBLIC_KEY || null,
+          configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
+        },
         paymentMethods: PAYMENT_METHODS.map((value) => ({ value, label: paymentMethodLabel(value) })),
         // Catálogo, inventario y estado comercial, sin repetir precios ni estados en el panel.
         catalog: inventory.presentations,
@@ -2633,6 +3060,375 @@ async function handle(req, res, ctx) {
         receipt,
         customer: result.customer,
         delivered: hasPermission(actor, 'cost.view') ? result.delivered : stripSensitiveFinancials(result.delivered),
+      });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-tracking' && req.method === 'GET') {
+      if (!requirePermission('delivery.location.read_own')) return;
+      const sessions = await listVisibleTracking(ctx, actor);
+      json(res, 200, { ok: true, sessions });
+      return;
+    }
+
+    if (route === '/api/admin/notifications' && req.method === 'GET') {
+      const notifications = await listUserNotifications(ctx, actor);
+      json(res, 200, {
+        ok: true,
+        notifications,
+        unread: notifications.filter((row) => row.status !== 'read').length,
+      });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/notifications/') && route.endsWith('/read') && req.method === 'POST') {
+      const id = decodeURIComponent(route.slice('/api/admin/notifications/'.length, -'/read'.length));
+      const current = await ctx.db.get('user_notifications', id);
+      if (!current) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      if (!hasPermission(actor, 'delivery.tracking.manage_all') && current.recipient_user_id !== actor?.id) {
+        forbid();
+        return;
+      }
+      const updated = await ctx.db.update('user_notifications', id, {
+        status: 'read',
+        read_at: current.read_at ?? ctx.clock().toISOString(),
+        updated_at: ctx.clock().toISOString(),
+      });
+      json(res, 200, { ok: true, notification: updated });
+      return;
+    }
+
+    if (route === '/api/admin/push-subscriptions' && req.method === 'POST') {
+      if (!currentUser) {
+        forbid();
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const endpoint = text(body.endpoint ?? body.subscription?.endpoint, 600);
+      const keys = body.keys ?? body.subscription?.keys ?? null;
+      if (!endpoint || !keys?.p256dh || !keys?.auth) {
+        json(res, 422, { ok: false, error: 'invalid_subscription', message: 'Subscription inválida.' });
+        return;
+      }
+      const existing = await ctx.db.findBy('push_subscriptions', 'endpoint', endpoint);
+      const doc = {
+        user_id: currentUser.id,
+        endpoint,
+        keys: { p256dh: String(keys.p256dh), auth: String(keys.auth) },
+        active: true,
+        user_agent: text(req.headers['user-agent'], 240),
+        last_used_at: ctx.clock().toISOString(),
+        updated_at: ctx.clock().toISOString(),
+      };
+      const subscription = existing
+        ? await ctx.db.update('push_subscriptions', existing.id, doc)
+        : (await ctx.db.insert('push_subscriptions', { id: newId('sub'), ...doc, created_at: ctx.clock().toISOString() })).doc;
+      json(res, 200, { ok: true, subscription: { id: subscription.id, active: subscription.active }, publicKey: WEB_PUSH_PUBLIC_KEY || null });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/delivery/orders/') && req.method === 'GET') {
+      const orderId = decodeURIComponent(route.slice('/api/admin/delivery/orders/'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      if (!canOpenDeliveryOrder(actor, order)) {
+        forbid();
+        return;
+      }
+      const customer = order?.customer_id ? await ctx.customers.get(order.customer_id) : null;
+      const conversation = order?.conversation_id ? await findConversation(ctx, order.conversation_id) : null;
+      const notificationId = url.searchParams.get('notification');
+      if (notificationId) {
+        const note = await ctx.db.get('user_notifications', notificationId);
+        if (note && (note.recipient_user_id === actor?.id || hasPermission(actor, 'delivery.tracking.manage_all'))) {
+          await ctx.db.update('user_notifications', note.id, { status: 'read', read_at: note.read_at ?? ctx.clock().toISOString(), updated_at: ctx.clock().toISOString() });
+        }
+      }
+      json(res, 200, { ok: true, order: publicDeliveryOrder(item, order, customer, conversation) });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-tracking/events' && req.method === 'GET') {
+      if (!requirePermission('delivery.location.read_own')) return;
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+      });
+      const client = { res, actor };
+      ctx.deliveryEventClients.add(client);
+      res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(`event: heartbeat\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+        } catch {
+          clearInterval(heartbeat);
+          ctx.deliveryEventClients.delete(client);
+        }
+      }, 25_000);
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        ctx.deliveryEventClients.delete(client);
+      });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/delivery-tracking/')) {
+      const rest = decodeURIComponent(route.slice('/api/admin/delivery-tracking/'.length));
+      const [sessionId, action = ''] = rest.split('/');
+      const session = await ctx.db.get('delivery_tracking_sessions', sessionId);
+      if (!session) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      if (req.method === 'GET' && !action) {
+        if (!canReadTracking(actor, session)) {
+          forbid();
+          return;
+        }
+        const points = canReadTracking(actor, session)
+          ? await ctx.db.list('delivery_location_points', { by: 'recorded_at', order: 'desc', limit: 100 })
+          : [];
+        json(res, 200, {
+          ok: true,
+          session: await publicSessionWithOrder(ctx, session),
+          points: points
+            .filter((point) => point.tracking_session_id === session.id)
+            .map((point) => ({
+              latitude: point.latitude,
+              longitude: point.longitude,
+              accuracy: point.accuracy ?? null,
+              heading: point.heading ?? null,
+              speed: point.speed ?? null,
+              recorded_at: point.recorded_at,
+              suspicious_location: point.suspicious_location === true,
+            })),
+        });
+        return;
+      }
+      if (req.method === 'POST' && action === 'location') {
+        if (!canUpdateTracking(actor, session)) {
+          forbid();
+          return;
+        }
+        if (!requirePermission('delivery.location.update_own')) return;
+        if (session.status !== ACTIVE_TRACKING_STATUS) {
+          json(res, 409, { ok: false, error: 'tracking_not_active', message: 'La entrega no está activa.' });
+          return;
+        }
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const valid = validateLocationUpdate(body, { now: ctx.clock() });
+        if (!valid.ok) {
+          json(res, 422, { ok: false, error: valid.code, message: valid.message });
+          return;
+        }
+        const previous =
+          session.last_latitude !== null && session.last_longitude !== null
+            ? {
+                latitude: Number(session.last_latitude),
+                longitude: Number(session.last_longitude),
+                recorded_at: session.last_position_at ?? session.updated_at ?? session.started_at,
+              }
+            : null;
+        const suspicious = suspiciousJump(previous, valid.point);
+        const updated = await ctx.db.update('delivery_tracking_sessions', session.id, {
+          last_latitude: valid.point.latitude,
+          last_longitude: valid.point.longitude,
+          last_accuracy: valid.point.accuracy,
+          last_heading: valid.point.heading,
+          last_speed: valid.point.speed,
+          last_position_at: valid.point.recorded_at,
+          updated_at: ctx.clock().toISOString(),
+          suspicious_location: suspicious,
+        });
+        if (shouldStorePoint(previous, valid.point)) {
+          await ctx.db.insert('delivery_location_points', {
+            id: newId('dlp'),
+            tracking_session_id: session.id,
+            delivery_user_id: session.delivery_user_id,
+            order_id: session.order_id,
+            latitude: valid.point.latitude,
+            longitude: valid.point.longitude,
+            accuracy: valid.point.accuracy,
+            heading: valid.point.heading,
+            speed: valid.point.speed,
+            suspicious_location: suspicious,
+            recorded_at: valid.point.recorded_at,
+            created_at: ctx.clock().toISOString(),
+          });
+        }
+        await emitDeliveryEvent(ctx, 'delivery.location_updated', updated);
+        json(res, 200, { ok: true, session: await publicSessionWithOrder(ctx, updated) });
+        return;
+      }
+      if (req.method === 'POST' && (action === 'stop' || action === 'complete')) {
+        if (!canUpdateTracking(actor, session)) {
+          forbid();
+          return;
+        }
+        const required = action === 'complete' ? 'delivery.tracking.stop' : 'delivery.tracking.stop';
+        if (!requirePermission(required)) return;
+        const status = action === 'complete' ? 'COMPLETED' : 'CANCELLED';
+        const ended = await ctx.db.update('delivery_tracking_sessions', session.id, {
+          status,
+          ended_at: ctx.clock().toISOString(),
+          updated_at: ctx.clock().toISOString(),
+        });
+        let order = null;
+        if (action === 'complete') {
+          const item = await findOrderItem(store, session.order_id);
+          if (item) {
+            const updatedStatus = await updateOrderStatus(store, item, BUSINESS_COMPLETED_PURCHASE_STATUS, actor);
+            order = updatedStatus?.order ?? null;
+            if (order) {
+              order = {
+                ...order,
+                delivery: {
+                  ...(order.delivery ?? {}),
+                  delivery_status: DELIVERY_OPERATIONAL_STATUSES.DELIVERED,
+                },
+                updated_at: ctx.clock().toISOString(),
+              };
+              await store.update(item.id, { orderJson: JSON.stringify(order) });
+            }
+          }
+        }
+        await emitDeliveryEvent(ctx, action === 'complete' ? 'delivery.completed' : 'delivery.tracking_stopped', ended);
+        json(res, 200, { ok: true, session: await publicSessionWithOrder(ctx, ended), order });
+        return;
+      }
+    }
+
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/assign') && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.manage_all', 'Solo ADMIN puede asignar delivery.')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/assign'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const deliveryUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
+      const deliveryUser = deliveryUserId ? await ctx.users.get(deliveryUserId) : null;
+      if (!deliveryUser || deliveryUser.role !== 'DELIVERY') {
+        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un usuario DELIVERY.' });
+        return;
+      }
+      const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor);
+      json(res, 200, { ok: true, order: assigned.order, deliveryUser });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/start') && req.method === 'POST') {
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/start'.length));
+      const canStartOwn = can('delivery.tracking.start');
+      const canManageAll = can('delivery.tracking.manage_all');
+      if (!canStartOwn && !canManageAll) {
+        forbid();
+        return;
+      }
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      const destination = orderDestination(order);
+      if (!destination) {
+        json(res, 422, { ok: false, error: 'missing_destination', message: 'El pedido no tiene ubicación de entrega.' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const requestedUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
+      const assignedUserId = text(order.delivery?.delivery_user_id, 80);
+      const deliveryUser =
+        canManageAll && requestedUserId ? await ctx.users.get(requestedUserId) : currentUser;
+      if (!deliveryUser || deliveryUser.role !== 'DELIVERY') {
+        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un usuario DELIVERY.' });
+        return;
+      }
+      if (assignedUserId && deliveryUser.id !== assignedUserId && !canManageAll) {
+        forbid('Este pedido está asignado a otro delivery.');
+        return;
+      }
+      if (!assignedUserId && !canManageAll) {
+        json(res, 409, { ok: false, error: 'delivery_not_assigned', message: 'Un ADMIN debe asignar este pedido antes de iniciar entrega.' });
+        return;
+      }
+      if (!canManageAll && deliveryStatusOf(order) === DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT) {
+        json(res, 409, {
+          ok: false,
+          error: 'delivery_contact_required',
+          message: 'Primero contacta al cliente y confirma la entrega.',
+        });
+        return;
+      }
+      if (!canManageAll && deliveryUser.id !== actor?.id) {
+        forbid();
+        return;
+      }
+      const existing = (await ctx.db.list('delivery_tracking_sessions', { limit: 1000 })).find(
+        (row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS,
+      );
+      if (existing) {
+        if (!canReadTracking(actor, existing)) {
+          forbid();
+          return;
+        }
+        json(res, 200, { ok: true, duplicate: true, session: await publicSessionWithOrder(ctx, existing) });
+        return;
+      }
+      let effectiveOrder = order;
+      if (!assignedUserId || assignedUserId !== deliveryUser.id) {
+        effectiveOrder = (await assignDeliveryToOrder(ctx, item, deliveryUser, actor))?.order ?? order;
+      }
+      if (effectiveOrder.delivery?.delivery_status !== DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) {
+        effectiveOrder = {
+          ...effectiveOrder,
+          delivery: {
+            ...(effectiveOrder.delivery ?? {}),
+            delivery_status: DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT,
+          },
+          updated_at: ctx.clock().toISOString(),
+        };
+        await ctx.store.update(orderId, { orderJson: JSON.stringify(effectiveOrder) });
+      }
+      const session = buildTrackingSession({ orderId, deliveryUser, order: effectiveOrder, now: ctx.clock() });
+      const inserted = await ctx.db.insert('delivery_tracking_sessions', session);
+      const freshItem = await findOrderItem(store, orderId);
+      const statusUpdate = effectiveOrder.status === 'entregado' || !freshItem ? null : await updateOrderStatus(store, freshItem, 'enviado', actor);
+      await emitDeliveryEvent(ctx, 'delivery.tracking_started', inserted.doc);
+      json(res, 201, {
+        ok: true,
+        session: await publicSessionWithOrder(ctx, inserted.doc),
+        order: statusUpdate?.order ?? order,
       });
       return;
     }
@@ -3398,9 +4194,9 @@ async function handle(req, res, ctx) {
         } catch {
           body = {};
         }
-        const messageBody = longText(body.body, 1200);
+        const rawMessageBody = longText(body.body, 1200);
         const templateName = text(body.template, 60);
-        if (!messageBody && !templateName) {
+        if (!rawMessageBody && !templateName) {
           json(res, 422, { ok: false, error: 'empty_message', message: 'Escribe el mensaje.' });
           return;
         }
@@ -3448,6 +4244,12 @@ async function handle(req, res, ctx) {
           });
           return;
         }
+
+        const deliveryOrderContext = await deliveryOrderForConversation(ctx, conversation, actor);
+        const messageBody =
+          !template && deliveryOrderContext && messageNeedsDeliveryIdentity(deliveryOrderContext.order, actor)
+            ? withDeliveryIdentity(rawMessageBody, actor)
+            : rawMessageBody;
 
         const sendResult = template
           ? await ctx.whatsapp.sendTemplate(customer.phone_e164, {
@@ -3510,6 +4312,10 @@ async function handle(req, res, ctx) {
           meta: { phoneNumberId: ctx.whatsapp.phoneNumberId },
           ...messageActorFields(actor),
         });
+        let deliveryOrder = null;
+        if (!template && deliveryOrderContext) {
+          deliveryOrder = await markDeliveryContacted(ctx, deliveryOrderContext.item, deliveryOrderContext.order, actor);
+        }
         await ctx.customers.markConversationRead(conversation.id);
         // Una persona acaba de escribir: la conversación pasa a manos humanas.
         await ctx.customers.setAutomationState(customer.id, 'HUMAN_ACTIVE');
@@ -3548,6 +4354,7 @@ async function handle(req, res, ctx) {
           message: recorded.message,
           duplicate: recorded.duplicate === true,
           followup,
+          deliveryOrder,
         });
         return;
       }
@@ -4316,6 +5123,7 @@ export async function startCrmServer(config = {}) {
     whatsappWebhookUrl: (config.whatsappWebhookUrl ?? WHATSAPP_WEBHOOK_URL).trim(),
     whatsappVerifyToken: (config.whatsappVerifyToken ?? WHATSAPP_VERIFY_TOKEN).trim(),
     appSecret: (config.metaAppSecret ?? META_APP_SECRET).trim(),
+    deliveryEventClients: new Set(),
     timeZone: TIME_ZONE,
     clock: config.clock ?? (() => new Date()),
   };

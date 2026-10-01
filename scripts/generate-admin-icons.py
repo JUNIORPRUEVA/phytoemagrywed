@@ -15,13 +15,44 @@ Salida (se sirven desde /admin/, junto a la app):
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "public" / "admin"
 SOURCE = OUT_DIR / "logo-phytoemagry.png"
 
 BRAND_DARK = (7, 61, 46)  # --pe-brand-900
-WHITE = (255, 255, 255)
+
+
+def square_crop(source: Image.Image, zoom: float = 0.76, y_bias: float = -0.04) -> Image.Image:
+    """Recorta el centro para que el launcher se vea lleno y no como medallón."""
+    bbox = source.getchannel("A").getbbox() or source.getbbox()
+    image = source.crop(bbox)
+    side = int(min(image.size) * zoom)
+    x = (image.width - side) // 2
+    y = (image.height - side) // 2 + int(image.height * y_bias)
+    y = max(0, min(image.height - side, y))
+    return image.crop((x, y, x + side, y + side))
+
+
+def cover(source: Image.Image, size: int, *, maskable: bool = False) -> Image.Image:
+    """Compone un icono cuadrado, lleno, sin aro blanco ni transparencia."""
+    crop = square_crop(source, zoom=0.7 if maskable else 0.76, y_bias=-0.03 if maskable else -0.04)
+
+    background = crop.copy()
+    background.thumbnail((size, size), Image.Resampling.LANCZOS)
+    background = background.resize((size, size), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(size * 0.035))
+    base = Image.new("RGBA", (size, size), BRAND_DARK + (255,))
+    base.alpha_composite(background)
+
+    draw = ImageDraw.Draw(base, "RGBA")
+    draw.rectangle((0, 0, size, size), fill=(7, 61, 46, 22))
+
+    foreground = crop.copy()
+    padding = int(size * (0.1 if maskable else 0.0))
+    box_size = size - padding * 2
+    foreground = foreground.resize((box_size, box_size), Image.Resampling.LANCZOS)
+    base.alpha_composite(foreground, (padding, padding))
+    return base
 
 
 def contain(source: Image.Image, size: int, padding_ratio: float) -> Image.Image:
@@ -37,29 +68,11 @@ def contain(source: Image.Image, size: int, padding_ratio: float) -> Image.Image
     return canvas
 
 
-def brand_backplate(size: int, radius_ratio: float = 0.24) -> Image.Image:
-    """Fondo sólido para plataformas que no respetan transparencia (iOS)."""
-    image = Image.new("RGBA", (size, size), WHITE + (255,))
-    draw = ImageDraw.Draw(image)
-    inset = int(size * 0.04)
-    draw.rounded_rectangle(
-        (inset, inset, size - inset - 1, size - inset - 1),
-        radius=int(size * radius_ratio),
-        fill=WHITE + (255,),
-        outline=BRAND_DARK + (32,),
-        width=max(1, size // 96),
-    )
-    return image
-
-
 def draw_icon(source: Image.Image, size: int, *, maskable: bool = False, apple: bool = False) -> Image.Image:
-    padding = 0.18 if maskable else 0.04
-    logo = contain(source, size, padding)
-    if not apple:
-        return logo
-    image = brand_backplate(size)
-    image.alpha_composite(contain(source, size, 0.08))
-    return image.convert("RGB")
+    image = cover(source, size, maskable=maskable)
+    if apple:
+        return image.convert("RGB")
+    return image
 
 
 def main() -> None:

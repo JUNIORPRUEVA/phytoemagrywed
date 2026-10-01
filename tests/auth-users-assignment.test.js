@@ -441,6 +441,28 @@ describe('multiusuario, auth y asignación', () => {
     expect(outbound.actor_type).toBe('USER');
   });
 
+  it('ADMIN responde un chat ajeno sin cambiar automáticamente la asignación', async () => {
+    const assigned = await request(`/api/admin/conversations/${conversation.id}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: pedro.id }),
+    });
+    expect(assigned.status).toBe(200);
+
+    const response = await request(`/api/admin/conversations/${conversation.id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body: 'Ana responde sin reasignar.' }),
+    }, adminCookie);
+    expect(response.status).toBe(200);
+    const sentBody = await body(response);
+    expect(sentBody.message.sent_by_user_id).toBeTruthy();
+    expect(sentBody.message.sent_by_display_name_snapshot).toBe('Ana Admin');
+
+    const data = await body(await request('/api/admin/data', {}, adminCookie));
+    const latest = data.conversations.find((row) => row.id === conversation.id);
+    expect(latest.assigned_user_id).toBe(pedro.id);
+    expect(latest.assigned_display_name_snapshot).toBe('Pedro');
+  });
+
   /*
    * MI PERFIL. Dos promesas del producto que se prueban aquí:
    *   1. el nombre visible es el que viaja con cada mensaje (el que se ve en el

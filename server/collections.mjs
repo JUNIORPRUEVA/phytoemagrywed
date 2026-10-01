@@ -157,6 +157,60 @@ export const COLLECTIONS = Object.freeze({
     },
     unique: ['idempotency_key'],
   },
+  delivery_tracking_sessions: {
+    indexed: {
+      order_id: 'text',
+      delivery_user_id: 'text',
+      status: 'text',
+      started_at: 'text',
+      ended_at: 'text',
+      last_position_at: 'text',
+      created_at: 'text',
+    },
+  },
+  delivery_location_points: {
+    indexed: {
+      tracking_session_id: 'text',
+      delivery_user_id: 'text',
+      order_id: 'text',
+      recorded_at: 'text',
+      suspicious_location: 'text',
+    },
+  },
+  user_notifications: {
+    indexed: {
+      recipient_user_id: 'text',
+      type: 'text',
+      status: 'text',
+      read_at: 'text',
+      entity_type: 'text',
+      entity_id: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  push_subscriptions: {
+    indexed: {
+      user_id: 'text',
+      endpoint: 'text',
+      active: 'text',
+      created_at: 'text',
+      last_used_at: 'text',
+    },
+    unique: ['endpoint'],
+  },
+  push_jobs: {
+    indexed: {
+      notification_id: 'text',
+      user_id: 'text',
+      endpoint: 'text',
+      status: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
 });
 
 /** Nombres reales de colección (valida contra la definición). */

@@ -45,6 +45,10 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'orders.create',
     'orders.update_operational',
     'delivery.manage',
+    'delivery.location.read_own',
+    'delivery.location.update_own',
+    'delivery.tracking.start',
+    'delivery.tracking.stop',
   ]),
   OPERADOR: Object.freeze([
     'clients.read',

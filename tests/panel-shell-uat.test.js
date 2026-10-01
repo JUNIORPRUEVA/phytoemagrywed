@@ -66,6 +66,18 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/\.tab--center \.tab__icon \{[^}]*margin-top: 0/);
   });
 
+  it('Delivery aparece en el drawer móvil sin duplicar Hoy, WhatsApp y Clientes', () => {
+    expect(html).toContain('<button class="drawer__item" data-tab="delivery" type="button">');
+    expect(html.indexOf('<p class="drawer__group">Gestión</p>')).toBeLessThan(
+      html.indexOf('<p class="drawer__group drawer__group--primary">Operación</p>'),
+    );
+    expect(css).toMatch(/@media \(max-width: 979px\) \{[\s\S]*?\.drawer__group--primary,\n\s+\.drawer__nav--primary \{\n\s+display: grid;/);
+    expect(css).toContain(".drawer__nav--primary .drawer__item:not([data-tab='delivery'])");
+    expect(css).toMatch(/\.drawer__nav--primary \.drawer__item:not\(\[data-tab='delivery'\]\) \{\n\s+display: none;/);
+    expect(css).toMatch(/\.drawer \{[\s\S]*?display: flex;\n\s+flex-direction: column;/);
+    expect(css).toMatch(/\.drawer__foot \{[\s\S]*?margin-top: auto;/);
+  });
+
   it('los iconos son UN sistema (SVG), no emojis mezclados', () => {
     expect(app).toContain('const ICONS = {');
     expect(app).toContain('function paintIcons');
@@ -200,19 +212,19 @@ describe('compositor y acciones del cliente', () => {
     expect(app).toContain('if (!canSendFreeText) {');
   });
 
-  it('las acciones del cliente son un botón flotante, no un botón gigante', () => {
+  it('las acciones del chat viven en el header, no como bloque flotante sobre el hilo', () => {
     expect(waHtml).not.toContain('id="compra-nueva-wa"');
     expect(app).not.toContain('compra-nueva-wa');
-    expect(waHtml).toContain('class="wa__fab-row"');
-    expect(waHtml).toContain('class="wa-fab"');
+    expect(waHtml).not.toContain('class="wa__fab-row"');
+    expect(waHtml).not.toContain('class="wa-fab"');
+    expect(waHtml).toContain('class="wa__chat-menu"');
     expect(waHtml).toContain('id="wa-actions"');
-    // El hueco del FAB lo reserva el propio hilo: nunca tapa el último mensaje.
-    expect(css).toMatch(/\.thread \{[\s\S]*?padding: 12px 12px 56px;/);
-    expect(css).toMatch(/\.wa__fab-row \{\n\s+position: relative;\n\s+height: 0;/);
+    expect(css).toMatch(/\.thread \{[\s\S]*?padding: 12px;/);
+    expect(css).toContain('.wa__chat-menu');
   });
 
   it('el menú de acciones lleva las cuatro acciones, con cliente ya elegido', () => {
-    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatActions') + 2200);
+    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatActions') + 5200);
     for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente']) {
       expect(menu).toContain(accion);
     }
