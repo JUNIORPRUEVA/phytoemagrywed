@@ -49,6 +49,11 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
+# La puerta de calidad (`npm run verify`) cubre normalización real de audio.
+# Runtime ya instala ffmpeg; build también debe tenerlo para no publicar una
+# imagen que no haya probado la ruta exacta de WebM/M4A -> Ogg/Opus.
+RUN apk add --no-cache ffmpeg
+
 # Dependencias primero: si no cambian, Docker reutiliza esta capa (build rápido).
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
