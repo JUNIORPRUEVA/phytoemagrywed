@@ -446,7 +446,8 @@ describe('UAT del panel con multimedia', () => {
     await waitFor(() => !$('#rec-send').hidden && !$('#rec-send').disabled, 'listo para enviar', 8000);
     click('#rec-send');
     await waitFor(() => sends === antes + 1, 'la nota de voz enviada', 8000);
-    expect($('#sheet').hidden).toBe(true);
+    // El envío llega al servidor antes de que el panel cierre la hoja: se espera.
+    await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar', 8000);
   }, 30000);
 
   it('si el navegador graba en webm, se envía convertido (y sin conversor, NO se finge compatibilidad)', async () => {
@@ -468,16 +469,71 @@ describe('UAT del panel con multimedia', () => {
       expect(aviso).toMatch(/ogg\/opus/i);
       click('#rec-send');
       await waitFor(() => sends === antes + 1, 'la nota webm enviada convertida', 8000);
-      expect($('#sheet').hidden).toBe(true);
+      await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar', 8000);
     } else {
-      // Sin conversor: se puede oír, pero no enviar. Y se dice por qué.
+      // Sin conversor: se puede oír, pero no enviar. Y se dice la causa real.
       expect($('#rec-send').disabled).toBe(true);
-      expect(aviso).toMatch(/no acepta/i);
+      expect(aviso).toMatch(/ffmpeg|no acepta/i);
       click('#rec-send');
       expect(sends).toBe(antes);
       click('#rec-reset');
     }
     FakeRecorder.mimeType = 'audio/ogg;codecs=opus';
+  }, 30000);
+
+  it('adjuntar un audio cuando el navegador NO dice el tipo (Windows): se envía igual', async () => {
+    // El caso que dejaba al vendedor sin poder mandar nada: en Windows un .m4a o
+    // un .amr llegan con `type` VACÍO, y el panel deshabilitaba «Enviar» por eso
+    // — aunque el servidor sí lo acepta (él mira los BYTES, no la etiqueta).
+    const antes = sends;
+    click($('#wa-attach'));
+    await waitFor(() => $('#attach-audio'), 'la hoja de adjuntar');
+    const m4a = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypM4A '), Buffer.alloc(60, 7)]);
+    const file = new FakeFile([m4a], 'nota-de-voz.m4a', { type: '' });
+    pickFile('#attach-audio', '#attach-audio-input', file);
+
+    const enviar = await waitFor(() => $('#attach-send'), 'la previsualización del audio');
+    // Se puede enviar: decide el servidor, no el navegador.
+    expect(enviar.disabled).toBe(false);
+    expect($('#sheet').textContent).toMatch(/comprobará el servidor/i);
+    expect(sends).toBe(antes); // elegir NO envía
+
+    click('#attach-send');
+    await waitFor(() => sends === antes + 1, 'el audio adjunto enviado');
+    await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar');
+  }, 30000);
+
+  it('adjuntar un M4A (Chrome lo llama «audio/x-m4a»): se envía igual', async () => {
+    // Comprobado en un navegador REAL: Chrome reporta `audio/x-m4a` para un .m4a.
+    // Ese tipo no está en la lista de WhatsApp y no hay que convertir nada (por
+    // dentro es audio/mp4), así que el que decide es el SERVIDOR, que mira los
+    // bytes. Antes el panel se fiaba de la etiqueta y dejaba el botón muerto.
+    const antes = sends;
+    click($('#wa-attach'));
+    await waitFor(() => $('#attach-audio'), 'la hoja de adjuntar');
+    const m4a = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypM4A '), Buffer.alloc(60, 3)]);
+    const file = new FakeFile([m4a], 'nota.m4a', { type: 'audio/x-m4a' });
+    pickFile('#attach-audio', '#attach-audio-input', file);
+
+    const enviar = await waitFor(() => $('#attach-send'), 'la previsualización del M4A');
+    expect(enviar.disabled).toBe(false);
+    click('#attach-send');
+    await waitFor(() => sends === antes + 1, 'el M4A adjunto enviado');
+    await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar');
+  }, 30000);
+
+  it('adjuntar una imagen cuando el navegador NO dice el tipo: se envía igual', async () => {
+    const antes = sends;
+    click($('#wa-attach'));
+    await waitFor(() => $('#attach-image'), 'la hoja de adjuntar');
+    const file = new FakeFile([png()], 'frasco.webp', { type: '' });
+    pickFile('#attach-image', '#attach-image-input', file);
+
+    const enviar = await waitFor(() => $('#attach-send'), 'la previsualización de la imagen');
+    expect(enviar.disabled).toBe(false);
+    click('#attach-send');
+    await waitFor(() => sends === antes + 1, 'la imagen adjunta enviada');
+    await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar');
   }, 30000);
 
   it('un envío ambiguo no se reintenta desde el chat y aparece en Ajustes', async () => {

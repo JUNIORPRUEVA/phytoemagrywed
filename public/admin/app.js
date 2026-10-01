@@ -2097,17 +2097,36 @@
   function openMediaPreview({ conversationId, kind, file, key, durationMs }) {
     const objectUrl = URL.createObjectURL(file);
     const mime = String(file.type || '').split(';')[0].trim();
+    /*
+     * ¿SE PUEDE ENVIAR? Lo decide el SERVIDOR, no el navegador.
+     *
+     * El servidor mira los BYTES (`sniffMime`) y es la única puerta de verdad; el
+     * navegador, en cambio, muchas veces NO sabe qué tipo es un archivo: en
+     * Windows un `.m4a` o un `.amr` llegan con `type` vacío. Bloquear aquí por lo
+     * que dice el navegador dejaba al vendedor sin poder mandar un audio válido
+     * (el botón se quedaba gris y no pasaba NADA al pulsarlo).
+     *
+     * Por eso solo se bloquea el caso que SÍ se conoce y no tiene arreglo posible
+     * en el servidor: un WebM (lo que graba Windows) sin conversor instalado.
+     * Todo lo demás se envía y, si no vale, el servidor lo dice con su mensaje.
+     */
     const seConvierte = kind === 'audio' && audioConvertible(mime) && puedeConvertirAudio();
-    const puedeEnviar = kind === 'image' ? mime.startsWith('image/') : audioSendable(mime) || seConvierte;
-    const aviso = !puedeEnviar
-      ? kind === 'audio'
-        ? `<p class="rule rule--warn">Tu navegador grabó el audio en <strong>${escapeHtml(mime || 'un formato desconocido')}</strong>,
-             que WhatsApp todavía no acepta. Puedes oírlo aquí, pero para enviarlo adjunta un audio en OGG o M4A.</p>`
-        : `<p class="rule rule--warn">Ese archivo no parece una imagen (${escapeHtml(mime || 'tipo desconocido')}).</p>`
+    const audioSinSalida = kind === 'audio' && audioConvertible(mime) && !puedeConvertirAudio();
+    const puedeEnviar = !audioSinSalida;
+    const aviso = audioSinSalida
+      ? `<p class="rule rule--warn">Este audio está en <strong>${escapeHtml(mime)}</strong> y el servidor no tiene el
+         conversor instalado (falta <strong>ffmpeg</strong>). Puedes oírlo aquí, pero para enviarlo adjunta un audio
+         en <strong>M4A, MP3, AAC, AMR u OGG/Opus</strong> (esos no necesitan conversión).</p>`
       : seConvierte
         ? `<p class="view__hint">WhatsApp no acepta <strong>${escapeHtml(mime)}</strong>: se enviará convertido a
              <strong>OGG/Opus</strong> (voz, mono). No tienes que hacer nada.</p>`
-        : '';
+        : kind === 'audio' && !mime
+          ? `<p class="view__hint">El navegador no dice de qué tipo es este archivo: lo comprobará el servidor
+               por su contenido al enviarlo (si no vale, te lo dirá sin enviar nada).</p>`
+          : kind === 'image' && mime && !mime.startsWith('image/')
+            ? `<p class="view__hint">El navegador dice <strong>${escapeHtml(mime)}</strong>: el servidor lo comprobará
+                 por su contenido al enviarlo.</p>`
+            : '';
     openSheet(
       kind === 'image' ? 'Enviar imagen' : 'Enviar audio',
       `
@@ -2266,11 +2285,18 @@
          */
         const seConvierte = audioConvertible(realType) && puedeConvertirAudio();
         if (!audioSendable(realType) && !seConvierte) {
+          // No se finge compatibilidad: si el servidor no sabe convertirlo, no se
+          // puede mandar. Y se dice la causa REAL (falta el conversor), no se
+          // culpa al formato a secas: así se arregla de verdad (instalar ffmpeg).
           $('#rec-send').disabled = true;
           preview.insertAdjacentHTML(
             'beforeend',
-            `<p class="rule rule--warn">Tu navegador grabó en <strong>${escapeHtml(realType || 'un formato desconocido')}</strong>,
-             que WhatsApp todavía no acepta. Puedes oírlo y borrarlo, o adjuntar un audio en OGG o M4A.</p>`,
+            audioConvertible(realType)
+              ? `<p class="rule rule--warn">El servidor no tiene el conversor instalado (falta <strong>ffmpeg</strong>),
+                 y este navegador graba en <strong>${escapeHtml(realType)}</strong>. Mientras no se instale, adjunta un
+                 audio en <strong>M4A, MP3, AAC, AMR u OGG/Opus</strong> con «Adjuntar un audio en su lugar».</p>`
+              : `<p class="rule rule--warn">Tu navegador grabó en <strong>${escapeHtml(realType || 'un formato desconocido')}</strong>,
+                 que WhatsApp todavía no acepta. Puedes oírlo y borrarlo, o adjuntar un audio en OGG, M4A o MP3.</p>`,
           );
         } else {
           $('#rec-send').disabled = false;
