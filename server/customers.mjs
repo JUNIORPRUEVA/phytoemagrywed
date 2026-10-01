@@ -126,6 +126,23 @@ export function createCustomerService(deps) {
   const media = deps.media ?? null;
   const timeZone = deps.timeZone ?? 'America/Santo_Domingo';
   const clock = deps.clock ?? (() => new Date());
+  const assignmentLocks = new Map();
+
+  async function withConversationLock(conversationId, fn) {
+    const previous = assignmentLocks.get(conversationId) ?? Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => {
+      release = resolve;
+    });
+    assignmentLocks.set(conversationId, previous.then(() => current, () => current));
+    await previous.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (assignmentLocks.get(conversationId) === current) assignmentLocks.delete(conversationId);
+    }
+  }
 
   /** Pedidos de un cliente (filtra en memoria: el CRM maneja cientos, no millones). */
   async function purchasesOf(customerId) {
@@ -309,6 +326,8 @@ export function createCustomerService(deps) {
         channel: 'whatsapp',
         status: 'AUTOMATIC',
         assigned_to: null,
+        assigned_user_id: null,
+        assigned_display_name_snapshot: null,
         last_message_at: null,
         last_inbound_at: null,
         unread_count: 0,
@@ -402,6 +421,8 @@ export function createCustomerService(deps) {
         channel: 'whatsapp',
         status: 'AUTOMATIC',
         assigned_to: null,
+        assigned_user_id: null,
+        assigned_display_name_snapshot: null,
         last_message_at: null,
         last_inbound_at: null,
         unread_count: 0,
@@ -449,6 +470,8 @@ export function createCustomerService(deps) {
           has_purchase: delivered.length > 0,
           last_purchase_at: delivered[0]?.received_at ?? null,
           next_followup: followupList[0] ?? null,
+          assigned_user_id: conversation.assigned_user_id ?? conversation.assigned_to ?? null,
+          assigned_display_name_snapshot: conversation.assigned_display_name_snapshot ?? null,
         };
       });
       const needle = String(options.q ?? '').trim().toLowerCase();
@@ -464,6 +487,8 @@ export function createCustomerService(deps) {
         if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
         if (options.filter === 'clientes' && row.has_purchase !== true) return false;
         if (options.filter === 'seguimiento' && !row.next_followup) return false;
+        if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
+        if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
         if (needle) {
           const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
             .filter(Boolean)
@@ -492,6 +517,8 @@ export function createCustomerService(deps) {
         pendientes: active.filter((row) => row.awaiting_reply === true).length,
         clientes: active.filter((row) => row.has_purchase === true).length,
         seguimiento: active.filter((row) => row.next_followup).length,
+        mios: 0,
+        sin_asignar: active.filter((row) => !row.assigned_user_id).length,
         archivados: rows.length,
         unread_total: all.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
       };
@@ -691,7 +718,7 @@ export function createCustomerService(deps) {
     /**
      * Registra un mensaje SALIENTE (lo envía el panel con una persona delante).
      *
-     * @param {{ customer: any, conversation: any, body?: string|null, template?: string|null, waMessageId?: string|null, status?: string, error?: any, sentBy?: string|null, idempotencyKey?: string|null, meta?: Record<string, any>|null }} input
+     * @param {{ customer: any, conversation: any, body?: string|null, template?: string|null, waMessageId?: string|null, status?: string, error?: any, sentBy?: string|null, sentByUserId?: string|null, sentByDisplayName?: string|null, actorType?: string|null, idempotencyKey?: string|null, meta?: Record<string, any>|null }} input
      */
     async recordOutbound(input) {
       const now = new Date().toISOString();
@@ -735,6 +762,9 @@ export function createCustomerService(deps) {
         error_message: input.error ? short(input.error.message, 200) : null,
         provider: input.meta ?? null,
         sent_by: input.sentBy ?? 'panel',
+        sent_by_user_id: input.sentByUserId ?? null,
+        sent_by_display_name_snapshot: input.sentByDisplayName ?? null,
+        actor_type: input.actorType ?? (input.sentByUserId ? 'USER' : input.sentBy === 'system' ? 'SYSTEM' : 'LEGACY'),
         created_at: now,
         idempotency_key: input.idempotencyKey ?? null,
       };
@@ -820,6 +850,38 @@ export function createCustomerService(deps) {
       return db.update('conversations', conversationId, {
         archived_at: archived ? new Date().toISOString() : null,
         updated_at: new Date().toISOString(),
+      });
+    },
+
+    async assignConversation(conversationId, input = {}) {
+      return withConversationLock(conversationId, async () => {
+        const current = await db.get('conversations', conversationId);
+        if (!current) return { ok: false, error: 'not_found' };
+        const now = new Date().toISOString();
+        const oldUserId = current.assigned_user_id ?? current.assigned_to ?? null;
+        const newUserId = input.userId ?? null;
+        if (input.mode === 'take' && oldUserId && oldUserId !== newUserId) {
+          return {
+            ok: false,
+            error: 'already_assigned',
+            assigned_user_id: oldUserId,
+            assigned_display_name_snapshot: current.assigned_display_name_snapshot ?? null,
+          };
+        }
+        if (input.mode === 'release' && oldUserId && newUserId && oldUserId !== newUserId && input.force !== true) {
+          return { ok: false, error: 'not_owner', assigned_user_id: oldUserId };
+        }
+        const patch = {
+          assigned_to: newUserId,
+          assigned_user_id: newUserId,
+          assigned_display_name_snapshot: input.displayName ?? null,
+          assigned_at: newUserId ? now : null,
+          assigned_by_user_id: input.byUserId ?? null,
+          assigned_by_display_name_snapshot: input.byDisplayName ?? null,
+          updated_at: now,
+        };
+        const updated = await db.update('conversations', conversationId, patch);
+        return { ok: true, conversation: updated, old_user_id: oldUserId, new_user_id: newUserId };
       });
     },
 

@@ -182,7 +182,9 @@ export function createInventoryService(deps) {
       unit_cost_cents: unitCostCents,
       order_id: input.orderId ?? null,
       reason: input.reason ?? null,
-      created_by: input.actor ?? 'panel',
+      created_by: input.actor ?? input.actorName ?? 'panel',
+      created_by_user_id: input.createdBy ?? null,
+      created_by_display_name_snapshot: input.actorName ?? null,
       created_at: now,
       idempotency_key: input.idempotencyKey ?? null,
     };
@@ -192,6 +194,7 @@ export function createInventoryService(deps) {
       entity: 'inventory',
       entityId: doc.id,
       action: movementAction(type),
+      actor: input.actorName ?? input.actor ?? null,
       summary: `${type} ${delta} cápsulas`,
       data: { product_id: PRODUCT_ID, quantity_delta: delta, order_id: doc.order_id },
       idempotencyKey: `audit:${doc.id}`,
@@ -203,7 +206,7 @@ export function createInventoryService(deps) {
     return withInventoryLock(() => addMovementUnlocked(input));
   }
 
-  async function updateCost(value) {
+  async function updateCost(value, actor = {}) {
     const cents = moneyToCents(value);
     if (cents === null) return { ok: false, error: 'invalid_unit_cost' };
     const current = await settings();
@@ -212,6 +215,7 @@ export function createInventoryService(deps) {
       entity: 'inventory',
       entityId: PRODUCT_ID,
       action: 'product_cost_changed',
+      actor: actor.actorName ?? null,
       summary: `Costo cápsula ${centsToMoney(current.current_unit_cost_cents)} → ${centsToMoney(cents)}`,
       data: { from: current.current_unit_cost_cents, to: cents },
     });
@@ -258,6 +262,8 @@ export function createInventoryService(deps) {
           unitCostCents: 0,
           orderId: item.id,
           reason: reason ?? `Venta ${wantedOrder?.order_number ?? item.id}`,
+          createdBy: wantedOrder?.created_by_user_id ?? wantedOrder?.updated_by_user_id ?? null,
+          actorName: wantedOrder?.created_by_display_name_snapshot ?? wantedOrder?.updated_by_display_name_snapshot ?? null,
           idempotencyKey: revision === 1 && delta > 0 ? `inv:sale:${item.id}` : `inv:sale-sync:${item.id}:${revision}:${targetCapsules}`,
         });
       }
@@ -382,6 +388,8 @@ export function createInventoryService(deps) {
         unitCostCents: moneyToCents(input.unitCost) ?? DEFAULT_UNIT_COST_CENTS,
         reason: input.reason ?? 'Reposición',
         idempotencyKey: input.idempotencyKey ?? null,
+        createdBy: input.createdBy ?? null,
+        actorName: input.actorName ?? null,
       }),
     adjust: (input) =>
       addMovement({
@@ -390,6 +398,8 @@ export function createInventoryService(deps) {
         unitCostCents: moneyToCents(input.unitCost) ?? DEFAULT_UNIT_COST_CENTS,
         reason: input.reason,
         idempotencyKey: input.idempotencyKey ?? null,
+        createdBy: input.createdBy ?? null,
+        actorName: input.actorName ?? null,
       }),
     updateCost,
     snapshotOrder,

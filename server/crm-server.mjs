@@ -83,6 +83,7 @@ import { createCollections } from './collections.mjs';
 import { createCustomerService, AUTOMATION_STATES, COMMERCIAL_STATES, MANUAL_COMMERCIAL_STATES } from './customers.mjs';
 import { createFollowupEngine, resolveDailyCapsules, resolvePlan } from './followups.mjs';
 import { createAuditLog } from './audit.mjs';
+import { createUserService, SYSTEM_ACTOR } from './users.mjs';
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createSettingsService } from './settings.mjs';
@@ -135,6 +136,8 @@ const HOST = process.env.PHYTO_CRM_HOST ?? '127.0.0.1';
 const DATA_FILE = path.resolve(process.env.PHYTO_CRM_DATA ?? path.join('data', 'phytoemagry.sqlite'));
 const DATABASE_URL = (process.env.PHYTO_CRM_DATABASE_URL ?? '').trim();
 const TOKEN = (process.env.PHYTO_CRM_TOKEN ?? '').trim();
+const BOOTSTRAP_ADMIN_USER = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_USER ?? '').trim();
+const BOOTSTRAP_ADMIN_PASSWORD = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_PASSWORD ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
 const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
 
@@ -503,7 +506,7 @@ function orderFinancials(order) {
  * @param {any} ctx
  * @param {any} body
  */
-async function createOrder(ctx, body = {}) {
+async function createOrder(ctx, body = {}, actor = null) {
   /** @type {any} */
   let customer = null;
   const customerId = text(body.customerId, 80);
@@ -577,6 +580,10 @@ async function createOrder(ctx, body = {}) {
 
   const requested = text(body.status, 20);
   const status = requested && isOrderStatus(requested) ? requested : 'nuevo';
+  built.order.created_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
+  built.order.created_by_display_name_snapshot = actor?.actor_type === 'USER' ? actor.display_name : null;
+  built.order.updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
+  built.row.orderJson = JSON.stringify(built.order);
   // Si el pedido nace ya ENTREGADO, queda registrada también su fecha de entrega.
   if (status === ctx.purchaseStatus) {
     built.order.delivered_at = new Date().toISOString();
@@ -590,6 +597,8 @@ async function createOrder(ctx, body = {}) {
     notes: built.order.notes,
     customerId: customer.id,
     conversationId,
+    createdByUserId: actor?.actor_type === 'USER' ? actor.id : null,
+    createdByDisplayNameSnapshot: actor?.actor_type === 'USER' ? actor.display_name : null,
   });
   const finalItem = item ?? built.row;
 
@@ -604,6 +613,7 @@ async function createOrder(ctx, body = {}) {
       total: built.order.total,
       status,
       origin: conversationId ? 'conversation' : 'panel',
+      created_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
     },
     idempotencyKey: `order.created:${built.row.id}`,
   });
@@ -637,6 +647,22 @@ async function createOrder(ctx, body = {}) {
 
 function typeLabel(type) {
   return type === 'order_intent' ? 'Pedido' : 'Contacto';
+}
+
+function messageActorFields(actor) {
+  if (!actor) return { sentBy: 'panel', sentByUserId: null, sentByDisplayName: null, actorType: 'LEGACY' };
+  if (actor.actor_type === 'USER') {
+    return {
+      sentBy: actor.display_name,
+      sentByUserId: actor.id,
+      sentByDisplayName: actor.display_name,
+      actorType: 'USER',
+    };
+  }
+  if (actor.actor_type === 'SYSTEM') {
+    return { sentBy: 'system', sentByUserId: null, sentByDisplayName: 'Sistema', actorType: 'SYSTEM' };
+  }
+  return { sentBy: 'panel', sentByUserId: null, sentByDisplayName: actor.display_name ?? null, actorType: 'LEGACY' };
 }
 
 // ------------------------------------------------------------------ Meta CAPI
@@ -1084,6 +1110,10 @@ function signSession(expiresAt, secret) {
   return createHmac('sha256', secret).update(`admin:${expiresAt}`).digest('base64url');
 }
 
+function signUserSession(sessionId, userId, expiresAt, secret) {
+  return createHmac('sha256', secret).update(`user:${sessionId}:${userId}:${expiresAt}`).digest('base64url');
+}
+
 function createSessionValue(secret) {
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
   return `${expiresAt}.${signSession(expiresAt, secret)}`;
@@ -1095,6 +1125,22 @@ function sessionValid(value, secret) {
   const expiresAt = Number.parseInt(rawExpires ?? '', 10);
   if (!Number.isFinite(expiresAt) || expiresAt * 1000 < Date.now()) return false;
   return tokenOk(signature, signSession(expiresAt, secret));
+}
+
+function createUserSessionValue(session, secret) {
+  const expiresAt = Math.floor(Date.parse(session.expires_at) / 1000);
+  const signature = signUserSession(session.id, session.user_id, expiresAt, secret);
+  return `v2.${session.id}.${session.user_id}.${expiresAt}.${signature}`;
+}
+
+function parseUserSessionValue(value, secret) {
+  if (!secret || typeof value !== 'string' || !value.startsWith('v2.')) return null;
+  const [, sessionId, userId, rawExpires, signature] = value.split('.');
+  const expiresAt = Number.parseInt(rawExpires ?? '', 10);
+  if (!sessionId || !userId || !Number.isFinite(expiresAt) || expiresAt * 1000 < Date.now()) return null;
+  const expected = signUserSession(sessionId, userId, expiresAt, secret);
+  if (!tokenOk(signature, expected)) return null;
+  return { sessionId, userId, expiresAt };
 }
 
 function readCookie(req, name) {
@@ -1304,10 +1350,28 @@ async function handle(req, res, ctx) {
     return;
   }
 
-  const authenticated = sessionValid(readCookie(req, COOKIE), token);
+  const cookieValue = readCookie(req, COOKIE);
+  const parsedUserSession = parseUserSessionValue(cookieValue, token);
+  const sessionIdentity = parsedUserSession ? await ctx.users.sessionUser(parsedUserSession.sessionId) : null;
+  const legacyAuthenticated = !sessionIdentity && sessionValid(cookieValue, token);
+  const authenticated = Boolean(sessionIdentity || legacyAuthenticated);
+  const currentUser = sessionIdentity?.user ?? null;
+  const actor = currentUser
+    ? { id: currentUser.id, role: currentUser.role, display_name: currentUser.display_name, actor_type: 'USER' }
+    : legacyAuthenticated
+      ? { id: 'LEGACY_PANEL', role: 'ADMIN', display_name: 'Panel legacy', actor_type: 'LEGACY' }
+      : null;
+
+  const forbid = (message = 'No tienes permiso para esta acción.') =>
+    json(res, 403, { ok: false, error: 'forbidden', message });
+  const requireAdmin = () => {
+    if (actor?.role === 'ADMIN') return true;
+    forbid();
+    return false;
+  };
 
   // ------------------------------------------------------------- el panel
-  if (route === '/api/admin/login' && req.method === 'POST') {
+  if ((route === '/api/admin/login' || route === '/api/admin/auth/login') && req.method === 'POST') {
     const ip = String(req.headers['x-real-ip'] ?? req.socket.remoteAddress ?? '?');
     if (!loginAllowed(ip)) {
       json(res, 429, {
@@ -1332,6 +1396,23 @@ async function handle(req, res, ctx) {
       });
       return;
     }
+    if (body.username !== undefined || body.password !== undefined) {
+      const result = await ctx.users.login({
+        username: body.username,
+        password: body.password,
+        ip,
+        userAgent: String(req.headers['user-agent'] ?? ''),
+      });
+      if (!result.ok) {
+        registerLoginFailure(ip);
+        json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Usuario o contraseña incorrectos.' });
+        return;
+      }
+      loginAttempts.delete(ip);
+      setSessionCookie(req, res, createUserSessionValue(result.session, token));
+      json(res, 200, { ok: true, storage: store.kind, user: result.user });
+      return;
+    }
     if (!tokenOk(text(body.token, 200) ?? '', token)) {
       registerLoginFailure(ip);
       json(res, 401, { ok: false, error: 'invalid_token', message: 'La clave no es correcta.' });
@@ -1343,14 +1424,21 @@ async function handle(req, res, ctx) {
     return;
   }
 
-  if (route === '/api/admin/logout' && req.method === 'POST') {
+  if ((route === '/api/admin/logout' || route === '/api/admin/auth/logout') && req.method === 'POST') {
+    if (sessionIdentity?.session?.id) await ctx.users.revokeSession(sessionIdentity.session.id, currentUser);
     setSessionCookie(req, res, '');
     json(res, 200, { ok: true });
     return;
   }
 
   if (route === '/api/admin/session') {
-    json(res, 200, { ok: authenticated, storage: store.kind, timeZone: TIME_ZONE });
+    json(res, 200, {
+      ok: authenticated,
+      storage: store.kind,
+      timeZone: TIME_ZONE,
+      user: currentUser,
+      legacy: Boolean(legacyAuthenticated),
+    });
     return;
   }
 
@@ -1365,6 +1453,106 @@ async function handle(req, res, ctx) {
     }
     if (!authenticated) {
       json(res, 401, { ok: false, error: 'unauthorized', message: 'Entra con tu clave.' });
+      return;
+    }
+    if (!['GET', 'HEAD'].includes(req.method ?? 'GET')) {
+      const origin = String(req.headers.origin ?? '').trim();
+      const host = String(req.headers.host ?? '').trim();
+      if (origin) {
+        let okOrigin = false;
+        try {
+          okOrigin = new URL(origin).host === host;
+        } catch {
+          okOrigin = false;
+        }
+        if (!okOrigin) {
+          json(res, 403, { ok: false, error: 'csrf', message: 'Origen no permitido.' });
+          return;
+        }
+      }
+    }
+
+    if (route === '/api/admin/auth/me' && req.method === 'GET') {
+      json(res, 200, { ok: true, user: currentUser, legacy: Boolean(legacyAuthenticated) });
+      return;
+    }
+
+    if (route === '/api/admin/users' && req.method === 'GET') {
+      if (!requireAdmin()) return;
+      json(res, 200, { ok: true, users: await ctx.users.listUsers() });
+      return;
+    }
+
+    if (route === '/api/admin/users' && req.method === 'POST') {
+      if (!requireAdmin()) return;
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.users.createUser({
+        username: body.username ?? body.email,
+        password: body.password,
+        firstName: body.firstName ?? body.first_name,
+        lastName: body.lastName ?? body.last_name,
+        displayName: body.displayName ?? body.display_name,
+        role: body.role === 'ADMIN' ? 'ADMIN' : 'AGENT',
+        active: body.active !== false,
+        createdBy: actor?.id ?? null,
+        actorName: actor?.display_name ?? null,
+      });
+      if (!result.ok) {
+        json(res, result.error === 'duplicate_user' ? 409 : 422, { ok: false, error: result.error });
+        return;
+      }
+      json(res, 201, { ok: true, user: result.user });
+      return;
+    }
+
+    if (route === '/api/admin/users/me/password' && req.method === 'POST') {
+      if (!currentUser) {
+        json(res, 409, { ok: false, error: 'legacy_session', message: 'Entra con usuario y contraseña para cambiar tu clave.' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      if (body.newPassword !== body.confirmPassword) {
+        json(res, 422, { ok: false, error: 'password_mismatch' });
+        return;
+      }
+      const result = await ctx.users.changeOwnPassword(currentUser.id, body.currentPassword, body.newPassword, currentUser);
+      if (!result.ok) {
+        json(res, result.error === 'invalid_password' ? 401 : 422, { ok: false, error: result.error });
+        return;
+      }
+      setSessionCookie(req, res, '');
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/users/') && (req.method === 'PATCH' || req.method === 'POST')) {
+      if (!requireAdmin()) return;
+      const userId = decodeURIComponent(route.slice('/api/admin/users/'.length));
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.users.updateUser(userId, body, actor);
+      if (!result.ok) {
+        json(res, result.error === 'last_admin' ? 409 : result.error === 'not_found' ? 404 : 422, {
+          ok: false,
+          error: result.error,
+        });
+        return;
+      }
+      json(res, 200, { ok: true, user: result.user });
       return;
     }
 
@@ -1418,6 +1606,7 @@ async function handle(req, res, ctx) {
         ok: true,
         storage: store.kind,
         timeZone: TIME_ZONE,
+        auth: { user: currentUser, legacy: Boolean(legacyAuthenticated) },
         statuses: STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] ?? value })),
         items,
         messages,
@@ -1539,6 +1728,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/inventory/restock' && req.method === 'POST') {
+      if (!requireAdmin()) return;
       let body = {};
       try {
         body = await readJsonBody(req);
@@ -1550,6 +1740,8 @@ async function handle(req, res, ctx) {
         unitCost: body.unitCost,
         reason: longText(body.reason ?? 'Reposición', 300),
         idempotencyKey: text(body.idempotencyKey, 160),
+        createdBy: actor?.id ?? null,
+        actorName: actor?.display_name ?? null,
       });
       if (!result.ok) {
         json(res, result.error === 'insufficient_stock' ? 409 : 422, { ok: false, ...result });
@@ -1560,6 +1752,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/inventory/adjust' && req.method === 'POST') {
+      if (!requireAdmin()) return;
       let body = {};
       try {
         body = await readJsonBody(req);
@@ -1572,6 +1765,8 @@ async function handle(req, res, ctx) {
         unitCost: body.unitCost,
         reason: longText(body.reason ?? 'Ajuste manual', 300),
         idempotencyKey: text(body.idempotencyKey, 160),
+        createdBy: actor?.id ?? null,
+        actorName: actor?.display_name ?? null,
       });
       if (!result.ok) {
         json(res, result.error === 'insufficient_stock' ? 409 : 422, { ok: false, ...result });
@@ -1582,13 +1777,14 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/inventory/cost' && req.method === 'POST') {
+      if (!requireAdmin()) return;
       let body = {};
       try {
         body = await readJsonBody(req);
       } catch {
         body = {};
       }
-      const result = await ctx.inventory.updateCost(body.unitCost);
+      const result = await ctx.inventory.updateCost(body.unitCost, { actorName: actor?.display_name ?? null });
       if (!result.ok) {
         json(res, 422, { ok: false, ...result });
         return;
@@ -1689,6 +1885,9 @@ async function handle(req, res, ctx) {
           if (patch.status === 'cancelado') order.cancelled_at = stamp;
           order.status = patch.status;
           order.status_history = [...(order.status_history ?? []), { status: patch.status, at: stamp }];
+          order.updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : order.updated_by_user_id ?? null;
+          order.updated_by_display_name_snapshot =
+            actor?.actor_type === 'USER' ? actor.display_name : order.updated_by_display_name_snapshot ?? null;
           patch.orderJson = JSON.stringify(order);
         }
         if (patch.status === ctx.purchaseStatus) {
@@ -1709,6 +1908,7 @@ async function handle(req, res, ctx) {
           entity: before.type === 'order_intent' ? 'order' : 'item',
           entityId: id,
           action: patch.status === 'cancelado' ? 'order.cancelled' : 'order.status_changed',
+          actor: actor?.display_name ?? null,
           summary: `Estado: ${before.status ?? 'nuevo'} → ${patch.status}`,
           data: { from: before.status ?? null, to: patch.status },
           idempotencyKey: `status:${id}:${before.status ?? 'nuevo'}:${patch.status}`,
@@ -1890,7 +2090,7 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
-      const result = await createOrder(ctx, body);
+      const result = await createOrder(ctx, body, actor);
       if (!result.ok) {
         json(res, result.status ?? 422, {
           ok: false,
@@ -1922,7 +2122,7 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
-      const result = await createOrder(ctx, body);
+      const result = await createOrder(ctx, body, actor);
       if (!result.ok) {
         json(res, result.status ?? 422, {
           ok: false,
@@ -2052,6 +2252,9 @@ async function handle(req, res, ctx) {
           // GPS: se manda la elegida o se conserva la suya (nunca se borra sola).
           location: entrega.provided ? entrega.location : current.delivery?.location ?? null,
         },
+        updated_by_user_id: actor?.actor_type === 'USER' ? actor.id : current.updated_by_user_id ?? null,
+        updated_by_display_name_snapshot:
+          actor?.actor_type === 'USER' ? actor.display_name : current.updated_by_display_name_snapshot ?? null,
       };
       /*
        * La ubicación nueva se guarda además en el historial del cliente, para
@@ -2111,6 +2314,7 @@ async function handle(req, res, ctx) {
         entity: 'order',
         entityId: orderId,
         action: 'order.updated',
+        actor: actor?.display_name ?? null,
         summary: `Pedido ${nextOrder.order_number} modificado · total ${nextOrder.total}`,
         data: { total: nextOrder.total, items: nextOrder.item_count },
       });
@@ -2186,17 +2390,17 @@ async function handle(req, res, ctx) {
       }
       const compartida = { ...source, source: LOCATION_SOURCES.REUSED_LOCATION };
       const sendResult = await ctx.whatsapp.sendLocation(destinoCustomer.phone_e164, compartida);
-      const recorded = await ctx.customers.recordOutbound({
-        customer: destinoCustomer,
-        conversation: destination,
-        type: 'location',
-        body: source.address ?? '[ubicación]',
-        location: compartida,
-        waMessageId: sendResult.messageId ?? null,
-        status: sendResult.ok ? 'sent' : 'failed',
-        error: sendResult.ok ? null : sendResult.error,
-        sentBy: 'panel',
-      });
+        const recorded = await ctx.customers.recordOutbound({
+          customer: destinoCustomer,
+          conversation: destination,
+          type: 'location',
+          body: source.address ?? '[ubicación]',
+          location: compartida,
+          waMessageId: sendResult.messageId ?? null,
+          status: sendResult.ok ? 'sent' : 'failed',
+          error: sendResult.ok ? null : sendResult.error,
+          ...messageActorFields(actor),
+        });
       await ctx.audit?.record({
         entity: 'location',
         entityId: source.id,
@@ -2207,7 +2411,7 @@ async function handle(req, res, ctx) {
           from_conversation_id: source.conversation_id ?? null,
           to_conversation_id: destination.id,
           to_customer_id: destinoCustomer.id,
-          operator: 'panel',
+          operator: actor?.display_name ?? 'panel',
           ok: sendResult.ok === true,
         },
       });
@@ -2229,7 +2433,12 @@ async function handle(req, res, ctx) {
       const filter = text(url.searchParams.get('filter'), 30) ?? 'todos';
       const order = text(url.searchParams.get('order'), 30) ?? null;
       const q = text(url.searchParams.get('q'), 120) ?? '';
-      const conversations = await ctx.customers.listConversations({ filter, order, q });
+      const conversations = await ctx.customers.listConversations({
+        filter,
+        order,
+        q,
+        currentUserId: actor?.actor_type === 'USER' ? actor.id : null,
+      });
       const counts = await ctx.customers.conversationCounts();
       json(res, 200, { ok: true, conversations, counts, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
       return;
@@ -2297,6 +2506,74 @@ async function handle(req, res, ctx) {
         return;
       }
       const customer = await ctx.customers.get(conversation.customer_id);
+
+      if (['take', 'release', 'assign'].includes(action) && req.method === 'POST') {
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        if (!currentUser && action !== 'assign') {
+          json(res, 409, { ok: false, error: 'legacy_session', message: 'Entra con usuario para asignarte conversaciones.' });
+          return;
+        }
+        if (action === 'assign' && !requireAdmin()) return;
+        const targetUserId =
+          action === 'release'
+            ? null
+            : action === 'take'
+              ? currentUser.id
+              : text(body.userId, 80) ?? null;
+        const targetUser = targetUserId ? await ctx.users.get(targetUserId) : null;
+        if (targetUserId && (!targetUser || targetUser.active === false)) {
+          json(res, 422, { ok: false, error: 'unknown_user' });
+          return;
+        }
+        const result = await ctx.customers.assignConversation(conversation.id, {
+          mode: action,
+          userId: targetUserId,
+          displayName: targetUser?.display_name ?? null,
+          byUserId: actor?.actor_type === 'USER' ? actor.id : null,
+          byDisplayName: actor?.display_name ?? null,
+          force: action === 'assign' || actor?.role === 'ADMIN',
+        });
+        if (!result.ok) {
+          json(res, result.error === 'already_assigned' ? 409 : result.error === 'not_owner' ? 403 : 404, {
+            ok: false,
+            error: result.error,
+            message:
+              result.error === 'already_assigned'
+                ? `Esta conversación ya fue asignada a ${result.assigned_display_name_snapshot ?? 'otro agente'}.`
+                : 'No se pudo cambiar la asignación.',
+            assigned_user_id: result.assigned_user_id ?? null,
+          });
+          return;
+        }
+        const auditAction =
+          action === 'release'
+            ? 'conversation_released'
+            : result.old_user_id && result.old_user_id !== result.new_user_id
+              ? 'conversation_reassigned'
+              : 'conversation_assigned';
+        await ctx.audit?.record({
+          entity: 'conversation',
+          entityId: conversation.id,
+          action: auditAction,
+          actor: actor?.display_name ?? null,
+          summary:
+            action === 'release'
+              ? 'Conversación liberada'
+              : `Conversación asignada a ${targetUser?.display_name ?? 'sin asignar'}`,
+          data: {
+            old_user_id: result.old_user_id ?? null,
+            new_user_id: result.new_user_id ?? null,
+            changed_by: actor?.id ?? null,
+          },
+        });
+        json(res, 200, { ok: true, conversation: result.conversation });
+        return;
+      }
 
       if (action === 'messages' && req.method === 'GET') {
         const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
@@ -2432,7 +2709,7 @@ async function handle(req, res, ctx) {
           status: sendResult.ok ? 'sent' : 'failed',
           error: sendResult.ok ? null : sendResult.error,
           idempotencyKey: text(body.idempotencyKey, 120),
-          sentBy: 'panel',
+          ...messageActorFields(actor),
           meta: { phoneNumberId: ctx.whatsapp.phoneNumberId },
         });
         await ctx.customers.markConversationRead(conversation.id);
@@ -2553,16 +2830,17 @@ async function handle(req, res, ctx) {
             conversation,
             body: template ? null : messageBody,
             template: template?.name ?? null,
-            status: 'failed',
-            error: sendResult.error ?? { message: sendResult.reason ?? 'error' },
-            idempotencyKey: text(body.idempotencyKey, 120),
-            sentBy: 'panel',
+          status: 'failed',
+          error: sendResult.error ?? { message: sendResult.reason ?? 'error' },
+          idempotencyKey: text(body.idempotencyKey, 120),
+            ...messageActorFields(actor),
           });
           console.error(`[crm] WhatsApp rechazó un mensaje a ${customer.id}: ${sendResult.error?.message ?? 'error'}`);
           await ctx.audit?.record({
             entity: 'message',
             entityId: recorded.message?.id ?? null,
             action: 'message.failed',
+            actor: actor?.display_name ?? null,
             summary: `Mensaje a ${customer.id} rechazado: ${sendResult.error?.message ?? 'error'}`,
             data: { customer_id: customer.id, template: template?.name ?? null },
           });
@@ -2586,7 +2864,7 @@ async function handle(req, res, ctx) {
           idempotencyKey: text(body.idempotencyKey, 120),
           // Solo datos públicos del envío: nunca el token ni la cabecera.
           meta: { phoneNumberId: ctx.whatsapp.phoneNumberId },
-          sentBy: 'panel',
+          ...messageActorFields(actor),
         });
         await ctx.customers.markConversationRead(conversation.id);
         // Una persona acaba de escribir: la conversación pasa a manos humanas.
@@ -2596,6 +2874,7 @@ async function handle(req, res, ctx) {
         const followup = followupId
           ? await ctx.followups.complete(followupId, {
               by: 'panel',
+              byUserId: actor?.actor_type === 'USER' ? actor.id : null,
               messageId: recorded.message?.id ?? null,
               outcome: 'enviado',
             })
@@ -2615,6 +2894,7 @@ async function handle(req, res, ctx) {
           entity: 'message',
           entityId: recorded.message?.id ?? null,
           action: 'message.sent',
+          actor: actor?.display_name ?? null,
           summary: `Mensaje a ${customer.name ?? customer.phone_e164}${template ? ` (plantilla ${template.name})` : ''}`,
           data: { customer_id: customer.id, followup_id: followupId ?? null },
           idempotencyKey: recorded.message?.id ? `message.sent:${recorded.message.id}` : null,
@@ -2683,6 +2963,9 @@ async function handle(req, res, ctx) {
         reason: longText(body.reason, 200) ?? 'Seguimiento manual',
         scheduledAt: day(body.scheduledAt) ?? undefined,
         template: text(body.template, 60) ?? null,
+        assignedUserId: text(body.assignedUserId, 80) ?? (actor?.actor_type === 'USER' ? actor.id : null),
+        createdByUserId: actor?.actor_type === 'USER' ? actor.id : null,
+        createdByDisplayName: actor?.actor_type === 'USER' ? actor.display_name : null,
         idempotencyKey: text(body.idempotencyKey, 120) ?? null,
       });
       await ctx.audit?.record({
@@ -2720,7 +3003,7 @@ async function handle(req, res, ctx) {
       }
       /** @type {any} */
       let followup = null;
-      if (action === 'complete') followup = await ctx.followups.complete(followupId, { by: 'panel', outcome: 'hecho' });
+      if (action === 'complete') followup = await ctx.followups.complete(followupId, { by: actor?.display_name ?? 'panel', byUserId: actor?.actor_type === 'USER' ? actor.id : null, outcome: 'hecho' });
       else if (action === 'skip') followup = await ctx.followups.skip(followupId, { reason: text(body.reason, 200) });
       else if (action === 'cancel') followup = await ctx.followups.cancel(followupId, { reason: text(body.reason, 200) });
       else if (action === 'postpone') followup = await ctx.followups.postpone(followupId, { days: body.days, date: body.date });
@@ -2960,7 +3243,8 @@ async function handle(req, res, ctx) {
         type: body.type === 'template' ? 'template' : 'text',
         text: body.text,
         template: body.template,
-        createdBy: 'panel',
+        createdBy: actor?.display_name ?? 'panel',
+        scheduledByUserId: actor?.actor_type === 'USER' ? actor.id : null,
         idempotencyKey: text(body.idempotencyKey, 120) ?? null,
       });
       if (!result.ok) {
@@ -3274,6 +3558,14 @@ export async function startCrmServer(config = {}) {
    * verdad para explicar cualquier número del panel.
    */
   const audit = createAuditLog({ db, clock: config.clock });
+  const users = createUserService({ db, audit, clock: config.clock, sessionSeconds: SESSION_SECONDS });
+  await users.ensureBootstrapAdmin({
+    username: config.bootstrapAdminUser ?? BOOTSTRAP_ADMIN_USER,
+    password: config.bootstrapAdminPassword ?? BOOTSTRAP_ADMIN_PASSWORD,
+    firstName: config.bootstrapAdminFirstName ?? 'Ana',
+    lastName: config.bootstrapAdminLastName ?? 'Admin',
+    displayName: config.bootstrapAdminDisplayName ?? 'Ana Admin',
+  });
   const inventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
 
   /*
@@ -3353,6 +3645,7 @@ export async function startCrmServer(config = {}) {
     followups,
     customers,
     audit,
+    users,
     inventory,
     settings: settingsService,
     scheduler,
@@ -3381,7 +3674,10 @@ export async function startCrmServer(config = {}) {
           mediaStore,
           storage,
           pipeline: mediaPipeline,
-          isAuthorized: (req) => sessionValid(readCookie(req, COOKIE), settings.token),
+          isAuthorized: (req) => {
+            const value = readCookie(req, COOKIE);
+            return Boolean(parseUserSessionValue(value, settings.token) || sessionValid(value, settings.token));
+          },
           resolveConversation: async (conversationId) => {
             const conversation = await findConversation(ctx, conversationId);
             if (!conversation) return null;
@@ -3389,6 +3685,19 @@ export async function startCrmServer(config = {}) {
             return customer ? { conversation, customer } : null;
           },
           persistOutbound: async (input) => {
+            const mediaCookie = readCookie(input.req, COOKIE);
+            const mediaSession = parseUserSessionValue(mediaCookie, settings.token);
+            const mediaIdentity = mediaSession ? await users.sessionUser(mediaSession.sessionId) : null;
+            const mediaActor = mediaIdentity?.user
+              ? {
+                  id: mediaIdentity.user.id,
+                  role: mediaIdentity.user.role,
+                  display_name: mediaIdentity.user.display_name,
+                  actor_type: 'USER',
+                }
+              : sessionValid(mediaCookie, settings.token)
+                ? { id: 'LEGACY_PANEL', role: 'ADMIN', display_name: 'Panel legacy', actor_type: 'LEGACY' }
+                : null;
             const recorded = await ctx.customers.recordOutbound({
               customer: input.customer,
               conversation: input.conversation,
@@ -3397,7 +3706,7 @@ export async function startCrmServer(config = {}) {
               status: 'sent',
               waMessageId: input.waMessageId ?? null,
               idempotencyKey: input.idempotencyKey ?? null,
-              sentBy: 'panel',
+              ...messageActorFields(mediaActor),
               meta: { phoneNumberId: ctx.whatsapp?.phoneNumberId ?? null },
             });
             /*

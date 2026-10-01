@@ -266,6 +266,7 @@ export function createFollowupEngine(deps) {
         status: 'completed',
         completed_at: new Date().toISOString(),
         completed_by: patch.by ?? 'panel',
+        completed_by_user_id: patch.byUserId ?? null,
         message_id: patch.messageId ?? null,
         outcome: patch.outcome ?? null,
       });
@@ -334,6 +335,9 @@ export function createFollowupEngine(deps) {
         origin: input.origin ?? 'manual',
         attempts: 0,
         last_error: null,
+        assigned_user_id: input.assignedUserId ?? null,
+        created_by_user_id: input.createdByUserId ?? null,
+        created_by_display_name_snapshot: input.createdByDisplayName ?? null,
         created_at: new Date().toISOString(),
         idempotency_key: input.idempotencyKey ?? `fu:manual:${newId('k')}`,
       };

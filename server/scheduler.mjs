@@ -180,6 +180,8 @@ export function createScheduler(deps) {
         error_code: null,
         error_message: null,
         created_by: short(input.createdBy, 60) ?? 'panel',
+        scheduled_by_user_id: short(input.scheduledByUserId, 80),
+        scheduled_by_display_name_snapshot: short(input.createdBy, 120),
         created_at: clock().toISOString(),
         idempotency_key: short(input.idempotencyKey, 120) ?? `sm:${id}`,
       };
@@ -369,7 +371,9 @@ export function createScheduler(deps) {
           status: 'failed',
           error: sendResult?.error ?? { message: sendResult?.reason ?? 'error' },
           idempotencyKey: current.idempotency_key,
-          sentBy: 'scheduler',
+          sentBy: 'system',
+          sentByDisplayName: 'Sistema',
+          actorType: 'SYSTEM',
         });
         const failed = await db.update('scheduled_messages', doc.id, {
           status: 'FAILED',
@@ -398,7 +402,9 @@ export function createScheduler(deps) {
         status: 'sent',
         idempotencyKey: current.idempotency_key,
         meta: { phoneNumberId: whatsapp.phoneNumberId },
-        sentBy: 'scheduler',
+        sentBy: 'system',
+        sentByDisplayName: 'Sistema',
+        actorType: 'SYSTEM',
       });
       const sent = await db.update('scheduled_messages', doc.id, {
         status: 'SENT',

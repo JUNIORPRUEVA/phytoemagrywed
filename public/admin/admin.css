@@ -109,6 +109,11 @@ code {
   margin: 18px 0 6px;
 }
 
+.login__title span {
+  font-size: 0.95rem;
+  letter-spacing: 0;
+}
+
 .login__text,
 .login__hint {
   color: var(--pe-ink-500);
@@ -1027,6 +1032,27 @@ body[data-tab='whatsapp'] .content {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-secondary);
+}
+
+.drawer__user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.drawer__user strong,
+.drawer__user small {
+  display: block;
+}
+
+.drawer__user small {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
 }
 
 .drawer__nav {
@@ -2482,6 +2508,25 @@ body[data-wa-view='chat'] .float-btn--menu {
   font-size: 10.5px;
   color: rgba(74, 90, 82, 0.9);
   text-align: right;
+}
+
+.assignment-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px auto 12px;
+  max-width: min(680px, calc(100% - 20px));
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.assignment-bar .btn {
+  flex: 0 0 auto;
 }
 
 .bubble--in .bubble__meta {

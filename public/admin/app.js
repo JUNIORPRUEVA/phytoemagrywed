@@ -41,6 +41,8 @@
     orderStatuses: [],
     audit: null,
     media: null,
+    auth: null,
+    users: [],
     metrics: null,
     metricsPeriod: '30d',
     orderId: null,
@@ -316,7 +318,7 @@
     $('#login').hidden = false;
     $('#login-error').hidden = !message;
     $('#login-error').textContent = message;
-    $('#login-token').focus({ preventScroll: true });
+    ($('#login-username') ?? $('#login-token')).focus({ preventScroll: true });
   }
 
   function showApp() {
@@ -329,6 +331,7 @@
     try {
       const response = await fetch('/api/admin/session', { credentials: 'same-origin' });
       const body = await response.json().catch(() => ({}));
+      if (body.ok) state.auth = { user: body.user ?? null, legacy: body.legacy === true };
       return Boolean(body.ok);
     } catch {
       // Sin red no se puede preguntar: no significa que la sesión no valga.
@@ -363,6 +366,7 @@
       state.orderStatuses = data.orderStatuses ?? [];
       state.audit = data.audit ?? null;
       state.media = data.media ?? null;
+      state.auth = data.auth ?? null;
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
@@ -536,6 +540,8 @@
     renderSeguimientos();
     renderMensajes();
     renderAjustes();
+    renderCurrentUser();
+    renderUsuarios();
     updateBadge();
     renderOutboxBanner();
   }
@@ -543,6 +549,26 @@
   const label = (type) => (type === 'order_intent' ? 'Pedido' : 'Contacto');
   const statusLabel = (value) => state.statuses.find((entry) => entry.value === value)?.label ?? value;
   const moneyCents = (value) => money((Number(value) || 0) / 100);
+
+  const currentUser = () => state.auth?.user ?? null;
+  const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
+  const roleLabel = (role) => (role === 'ADMIN' ? 'Administrador' : role === 'AGENT' ? 'Agente' : 'Sesión');
+
+  function renderCurrentUser() {
+    const user = currentUser();
+    const box = $('#drawer-user');
+    if (box) {
+      const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : '');
+      box.hidden = !name;
+      box.innerHTML = name
+        ? `<span class="avatar avatar--sm">${escapeHtml(waInitials(name))}</span>
+           <span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(roleLabel(user?.role ?? 'ADMIN'))}</small></span>`
+        : '';
+    }
+    $$('[data-admin-only]').forEach((node) => {
+      node.hidden = !isAdmin();
+    });
+  }
 
   function renderStats() {
     const hoy = state.hoy ?? {};
@@ -1246,6 +1272,63 @@
       .join('');
   }
 
+  function renderUsuarios() {
+    const box = $('#users-view');
+    if (!box) return;
+    if (!isAdmin()) {
+      box.innerHTML = emptyState('Esta sección es solo para administradores.');
+      return;
+    }
+    if (!state.users?.length) {
+      box.innerHTML = '<div class="card"><p class="card__text">Cargando usuarios…</p></div>';
+      if (!state.usersLoading && state.online) loadUsers().catch(() => {});
+      return;
+    }
+    box.innerHTML = state.users
+      .map(
+        (user) => `<article class="item">
+          <p class="item__name">${escapeHtml(user.display_name)}</p>
+          <p class="item__meta">${escapeHtml(user.username)} · ${escapeHtml(roleLabel(user.role))} · ${
+            user.active === false ? 'Inactivo' : 'Activo'
+          }${user.last_login_at ? ` · último acceso ${escapeHtml(fmtWhen(user.last_login_at))}` : ''}</p>
+          <div class="item__actions">
+            <button class="btn btn--ghost btn--sm" data-user-role="${escapeHtml(user.id)}" data-role="${
+              user.role === 'ADMIN' ? 'AGENT' : 'ADMIN'
+            }" type="button">${user.role === 'ADMIN' ? 'Hacer agente' : 'Hacer admin'}</button>
+            <button class="btn btn--ghost btn--sm" data-user-active="${escapeHtml(user.id)}" data-active="${
+              user.active === false ? 'true' : 'false'
+            }" type="button">${user.active === false ? 'Activar' : 'Desactivar'}</button>
+            <button class="btn btn--ghost btn--sm" data-user-password="${escapeHtml(user.id)}" type="button">Reset contraseña</button>
+          </div>
+        </article>`,
+      )
+      .join('');
+  }
+
+  async function loadUsers() {
+    if (!isAdmin()) return;
+    state.usersLoading = true;
+    try {
+      const result = await api('/api/admin/users');
+      state.users = result.users ?? [];
+      renderUsuarios();
+    } finally {
+      state.usersLoading = false;
+    }
+  }
+
+  async function updateUser(id, patch) {
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      await loadUsers();
+      toast('Usuario actualizado');
+    } catch (error) {
+      if (error.message !== 'unauthorized') {
+        toast(error.body?.error === 'last_admin' ? 'Debe quedar al menos un administrador activo' : error.body?.message ?? 'No se pudo actualizar');
+      }
+    }
+  }
+
   /**
    * Reconcilia un envío ambiguo: es la ÚNICA salida y la decide una persona que
    * ya miró WhatsApp. No llama a Meta; solo corrige el estado local y queda en la
@@ -1526,7 +1609,7 @@
   /** Un mensaje del hilo. Se distingue QUIÉN escribió: cliente, negocio o el sistema. */
   function bubble(message, grouped = false) {
     const inbound = message.direction === 'inbound';
-    const auto = !inbound && message.sent_by !== 'panel';
+    const auto = !inbound && message.actor_type === 'SYSTEM';
     // El cliente ve “Enviando / Enviado / Entregado / Leído / Fallido”, como en WhatsApp.
     const estado = inbound ? '' : WA_STATUS[message.status] ?? '';
     const media = message.media ?? null;
@@ -1609,10 +1692,15 @@
     } else {
       cuerpo = escapeHtml(message.body ?? '');
     }
+    const who = inbound
+      ? 'Cliente'
+      : message.actor_type === 'SYSTEM'
+        ? 'Sistema'
+        : message.sent_by_display_name_snapshot || (message.sent_by && message.sent_by !== 'panel' ? message.sent_by : '');
     return `<div class="bubble bubble--${inbound ? 'in' : 'out'} ${auto ? 'bubble--auto' : ''} ${
       message.status === 'failed' ? 'bubble--failed' : ''
     } ${grouped ? 'bubble--grouped' : ''} ${soloArchivo ? 'bubble--media' : ''}">
-        ${auto ? '<span class="bubble__who">Automatización</span>' : ''}
+        ${who && !grouped ? `<span class="bubble__who">${escapeHtml(who)}</span>` : ''}
         ${cuerpo}
         <span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
           estado ? ` · ${escapeHtml(estado)}` : ''
@@ -1630,6 +1718,8 @@
 
   const WA_FILTERS = [
     ['todos', 'Todos'],
+    ['mios', 'Míos'],
+    ['sin-asignar', 'Sin asignar'],
     ['no-leidos', 'Nuevos'],
     ['pendientes', 'Pendientes'],
     ['clientes', 'Clientes'],
@@ -1641,6 +1731,8 @@
     const counts = state.wa.counts ?? {};
     return {
       todos: counts.todos,
+      mios: state.conversations.filter((row) => row.assigned_user_id === currentUser()?.id).length,
+      'sin-asignar': counts.sin_asignar ?? state.conversations.filter((row) => !row.assigned_user_id).length,
       'no-leidos': counts.no_leidos,
       pendientes: counts.pendientes,
       clientes: counts.clientes,
@@ -1752,6 +1844,8 @@
   function waVisibleConversations() {
     const { filter, q } = state.wa;
     let rows = state.conversations.slice();
+    if (filter === 'mios') rows = rows.filter((row) => row.assigned_user_id === currentUser()?.id);
+    if (filter === 'sin-asignar') rows = rows.filter((row) => !row.assigned_user_id);
     if (filter === 'pendientes') rows = rows.filter(waAwaiting);
     if (filter === 'no-leidos') rows = rows.filter((row) => Number(row.unread_count) > 0);
     if (filter === 'clientes') rows = rows.filter((row) => row.has_purchase === true);
@@ -1787,7 +1881,10 @@
     const nombre = waDisplayName(row);
     const followupText = row.next_followup ? fmtDay(row.next_followup.scheduled_at) : null;
     const commercial = COMMERCIAL_HINTS[row.commercial_state] ?? null;
-    const compactFlags = [row.has_purchase ? 'Cliente' : commercial, followupText].filter(Boolean).slice(0, 2);
+    const assigned = row.assigned_display_name_snapshot
+      ? `Atiende ${row.assigned_display_name_snapshot}`
+      : 'Sin asignar';
+    const compactFlags = [assigned, row.has_purchase ? 'Cliente' : commercial, followupText].filter(Boolean).slice(0, 3);
     const flags =
       unread || awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length
         ? `<span class="conv__flags">
@@ -1987,6 +2084,7 @@
     $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
     $('#wa-chat-meta').textContent = [
       customer?.phone_e164,
+      conversation?.assigned_display_name_snapshot ? `Atiende ${conversation.assigned_display_name_snapshot}` : 'Sin asignar',
       conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
       customer?.do_not_contact ? 'No contactar' : null,
     ]
@@ -2010,9 +2108,22 @@
     const avatar = $('#wa-chat-avatar');
     if (avatar) avatar.textContent = waInitials((customer?.name ?? '').trim() || customer?.phone_e164);
 
-    $('#thread').innerHTML = messages.length
-      ? waThreadHtml(messages)
-      : '<p class="view__hint">Todavía no hay mensajes.</p>';
+    const assignmentActions = conversation?.assigned_user_id
+      ? `<div class="assignment-bar">
+          <span>Atiende ${escapeHtml(conversation.assigned_display_name_snapshot ?? 'agente')}</span>
+          ${
+            conversation.assigned_user_id === currentUser()?.id || isAdmin()
+              ? '<button class="btn btn--ghost btn--sm" data-conv-release type="button">Liberar</button>'
+              : ''
+          }
+          ${isAdmin() ? '<button class="btn btn--ghost btn--sm" data-conv-reassign type="button">Reasignar</button>' : ''}
+        </div>`
+      : `<div class="assignment-bar">
+          <span>Sin asignar</span>
+          ${currentUser() ? '<button class="btn btn--primary btn--sm" data-conv-take type="button">Tomar conversación</button>' : ''}
+        </div>`;
+    $('#thread').innerHTML =
+      assignmentActions + (messages.length ? waThreadHtml(messages) : '<p class="view__hint">Todavía no hay mensajes.</p>');
 
     $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText });
     const area = $('#wa-text');
@@ -4554,6 +4665,37 @@
     renderAjustes();
   }
 
+  async function assignCurrentConversation(action, userId = null) {
+    const conversationId = state.wa.selectedId;
+    if (!conversationId) return;
+    const path =
+      action === 'take'
+        ? `/api/admin/conversations/${encodeURIComponent(conversationId)}/take`
+        : action === 'release'
+          ? `/api/admin/conversations/${encodeURIComponent(conversationId)}/release`
+          : `/api/admin/conversations/${encodeURIComponent(conversationId)}/assign`;
+    try {
+      await api(path, {
+        method: 'POST',
+        body: JSON.stringify(userId ? { userId } : {}),
+      });
+      await refreshWhatsapp();
+      await loadWaThread(conversationId, { force: true });
+      toast(action === 'take' ? 'Conversación tomada' : action === 'release' ? 'Conversación liberada' : 'Conversación reasignada');
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar la asignación');
+    }
+  }
+
+  function chooseUserId() {
+    const agents = (state.users ?? []).filter((user) => user.active !== false);
+    if (!agents.length) return null;
+    const menu = agents.map((user, index) => `${index + 1}. ${user.display_name} (${roleLabel(user.role)})`).join('\n');
+    const raw = window.prompt(`Reasignar a:\n${menu}`);
+    const index = Number.parseInt(raw ?? '', 10) - 1;
+    return agents[index]?.id ?? null;
+  }
+
   async function loadInventory() {
     state.inventoryLoading = true;
     try {
@@ -4719,7 +4861,7 @@
   // ------------------------------------------------------------------- tabs
 
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -4730,6 +4872,7 @@
     seguimientos: 'Seguimientos',
     mensajes: 'Plantillas',
     ajustes: 'Ajustes',
+    usuarios: 'Usuarios',
   };
 
   function setTab(tab, options = {}) {
@@ -4750,6 +4893,7 @@
       if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
       if (tab === 'productos') loadInventory().catch(() => {});
       if (tab === 'reportes') loadSalesReport(state.salesReportPeriod).catch(() => {});
+      if (tab === 'usuarios') loadUsers().catch(() => {});
       // Al entrar en Ajustes se refresca lo que cambia con el uso: los números y
       // la traza. Así el negocio ve el efecto de lo que acaba de hacer.
       if (tab === 'ajustes') {
@@ -4777,18 +4921,23 @@
 
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
-      const token = $('#login-token').value.trim();
-      if (!token) return;
+      const username = $('#login-username')?.value.trim() ?? '';
+      const password = $('#login-password')?.value ?? '';
+      const token = $('#login-token')?.value.trim() ?? '';
+      if (!token && (!username || !password)) return;
       try {
-        await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ token }) });
-        $('#login-token').value = '';
+        const payload = token ? { token } : { username, password };
+        const result = await api('/api/admin/login', { method: 'POST', body: JSON.stringify(payload) });
+        state.auth = { user: result.user ?? null, legacy: Boolean(token) };
+        if ($('#login-token')) $('#login-token').value = '';
+        if ($('#login-password')) $('#login-password').value = '';
         showApp();
         await load();
       } catch (error) {
         $('#login-error').hidden = false;
         $('#login-error').textContent =
           error.body?.message ??
-          (error.message === 'unauthorized' ? 'La clave no es correcta.' : 'No se pudo entrar: no hay conexión con el CRM.');
+          (error.message === 'unauthorized' ? 'Usuario o contraseña incorrectos.' : 'No se pudo entrar: no hay conexión con el CRM.');
       }
     });
 
@@ -4798,6 +4947,18 @@
       if (['inventory-restock', 'inventory-cost', 'inventory-adjust'].includes(form.id)) {
         event.preventDefault();
         submitInventoryForm(form);
+      }
+      if (form.id === 'user-create') {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(form).entries());
+        working(form.querySelector('button[type="submit"]'), 'Creando…', async () => {
+          await api('/api/admin/users', { method: 'POST', body: JSON.stringify(data) });
+          form.reset();
+          await loadUsers();
+          toast('Usuario creado');
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.error === 'weak_password' ? 'La contraseña debe tener mínimo 10 caracteres' : error.body?.message ?? 'No se pudo crear');
+        });
       }
     });
 
@@ -4879,6 +5040,28 @@
         openChatActions(button.dataset.customer, button.dataset.conversation);
         return;
       }
+      if (event.target.closest('[data-conv-take]')) {
+        assignCurrentConversation('take');
+        return;
+      }
+      if (event.target.closest('[data-conv-release]')) {
+        assignCurrentConversation('release');
+        return;
+      }
+      if (event.target.closest('[data-conv-reassign]')) {
+        if (!state.users?.length) {
+          loadUsers()
+            .then(() => {
+              const userId = chooseUserId();
+              if (userId) assignCurrentConversation('assign', userId);
+            })
+            .catch(() => toast('No se pudieron cargar usuarios'));
+        } else {
+          const userId = chooseUserId();
+          if (userId) assignCurrentConversation('assign', userId);
+        }
+        return;
+      }
       const orderNew = event.target.closest('[data-order-new]');
       if (orderNew) {
         openOrderForm({
@@ -4918,6 +5101,22 @@
       const review = event.target.closest('[data-review]');
       if (review) {
         reconcileMedia(review.dataset.reviewId, review.dataset.review);
+        return;
+      }
+      const role = event.target.closest('[data-user-role]');
+      if (role) {
+        updateUser(role.dataset.userRole, { role: role.dataset.role });
+        return;
+      }
+      const active = event.target.closest('[data-user-active]');
+      if (active) {
+        updateUser(active.dataset.userActive, { active: active.dataset.active === 'true' });
+        return;
+      }
+      const password = event.target.closest('[data-user-password]');
+      if (password) {
+        const next = window.prompt('Nueva contraseña temporal (mínimo 10 caracteres)');
+        if (next) updateUser(password.dataset.userPassword, { password: next });
         return;
       }
       // ---------------------------------------------- multimedia (S3)

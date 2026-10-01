@@ -310,6 +310,7 @@ export function createMediaRoutes(deps) {
           waMessageId: resultado.waMessageId,
           caption,
           idempotencyKey,
+          req,
         })
       : { ok: true };
     return json(res, 200, {

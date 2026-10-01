@@ -66,7 +66,9 @@ const $$ = (selector) => [...dom.window.document.querySelectorAll(selector)];
 const click = (element) => {
   const target = typeof element === 'string' ? $(element) : element;
   if (!target) throw new Error(`no existe el elemento para pulsar: ${element}`);
+  if (target.disabled === true) return false;
   target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  return true;
 };
 const setValue = (selector, value) => {
   const input = typeof selector === 'string' ? $(selector) : selector;
@@ -166,7 +168,9 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación en la bandeja');
     click(row);
     await waitFor(() => $('#wa-actions')?.dataset?.customer, 'la conversación abierta');
-
+    // Mientras la conversación carga, el panel deja el botón «⋯» deshabilitado
+    // (no se piden acciones sin datos) y un botón gris no se puede pulsar.
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     const menu = $('#sheet-body').innerHTML;
     for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente']) {
@@ -206,6 +210,7 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
   });
 
   it('programa un mensaje (no es un seguimiento: lo intentará el sistema)', async () => {
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     click('[data-scheduled-new]');
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');

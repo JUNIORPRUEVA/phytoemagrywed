@@ -27,7 +27,7 @@ export const COLLECTIONS = Object.freeze({
     unique: ['phone_e164'],
   },
   conversations: {
-    indexed: { customer_id: 'text', status: 'text', last_message_at: 'text', created_at: 'text' },
+    indexed: { customer_id: 'text', status: 'text', assigned_user_id: 'text', last_message_at: 'text', created_at: 'text' },
   },
   /*
    * MENSAJES REALES DE WHATSAPP — la tabla física es `${prefijo}wa_messages`
@@ -50,6 +50,7 @@ export const COLLECTIONS = Object.freeze({
       idempotency_key: 'text',
       direction: 'text',
       status: 'text',
+      sent_by_user_id: 'text',
       created_at: 'text',
     },
     unique: ['wa_message_id', 'idempotency_key'],
@@ -119,6 +120,13 @@ export const COLLECTIONS = Object.freeze({
   audit: {
     indexed: { entity: 'text', entity_id: 'text', action: 'text', created_at: 'text' },
   },
+  crm_users: {
+    indexed: { username: 'text', role: 'text', active: 'text', created_at: 'text' },
+    unique: ['username'],
+  },
+  crm_sessions: {
+    indexed: { user_id: 'text', expires_at: 'text', revoked_at: 'text', created_at: 'text' },
+  },
   /* AJUSTES del negocio (plan de seguimiento, etc.). Un documento por clave. */
   settings: {
     indexed: { key: 'text', updated_at: 'text' },
@@ -176,6 +184,10 @@ function assertTableShape({ collection, table, expected, actual }) {
   );
 }
 
+function missingColumns(expected, actual) {
+  return expected.filter((column) => !actual.includes(column));
+}
+
 /** `undefined` nunca debe guardarse: el JSON no lo soporta. */
 function cleanValue(value) {
   if (value === undefined) return null;
@@ -223,11 +235,19 @@ async function createSqliteCollections(db, prefix) {
     db.exec(
       `CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY, doc TEXT NOT NULL${indexColumns ? `, ${indexColumns}` : ''})`,
     );
+    let actualColumns = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((row) => row.name);
+    if (actualColumns.includes('id') && actualColumns.includes('doc')) {
+      for (const column of missingColumns(expectedColumns(name), actualColumns)) {
+        const type = schema.indexed[column];
+        if (type) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+      actualColumns = db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((row) => row.name);
+    }
     assertTableShape({
       collection: name,
       table,
       expected: expectedColumns(name),
-      actual: db.prepare('SELECT name FROM pragma_table_info(?)').all(table).map((row) => row.name),
+      actual: actualColumns,
     });
     db.exec(`CREATE INDEX IF NOT EXISTS ${table}_created ON ${table} (id)`);
     for (const column of schema.unique ?? []) {
@@ -317,16 +337,29 @@ async function createPostgresCollections(pool, prefix) {
     await pool.query(
       `CREATE TABLE IF NOT EXISTS ${table} (id text PRIMARY KEY, doc jsonb NOT NULL${indexColumns ? `, ${indexColumns}` : ''})`,
     );
-    const existing = await pool.query(
+    let existing = await pool.query(
       `SELECT attname AS column_name FROM pg_catalog.pg_attribute
         WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped`,
       [table],
     );
+    let actualColumns = existing.rows.map((row) => row.column_name);
+    if (actualColumns.includes('id') && actualColumns.includes('doc')) {
+      for (const column of missingColumns(expectedColumns(name), actualColumns)) {
+        const type = schema.indexed[column];
+        if (type) await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`);
+      }
+      existing = await pool.query(
+        `SELECT attname AS column_name FROM pg_catalog.pg_attribute
+          WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped`,
+        [table],
+      );
+      actualColumns = existing.rows.map((row) => row.column_name);
+    }
     assertTableShape({
       collection: name,
       table,
       expected: expectedColumns(name),
-      actual: existing.rows.map((row) => row.column_name),
+      actual: actualColumns,
     });
     for (const column of schema.unique ?? []) {
       await pool.query(

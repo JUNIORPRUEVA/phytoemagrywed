@@ -54,10 +54,17 @@ async function waitFor(check, label, timeout = 4000) {
 
 const $ = (selector) => dom.window.document.querySelector(selector);
 const $$ = (selector) => [...dom.window.document.querySelectorAll(selector)];
+/**
+ * Pulsa como un NAVEGADOR de verdad: devuelve `false` y no hace NADA si el
+ * control está deshabilitado (`dispatchEvent` sí dispararía el listener de un
+ * botón gris, que es justo lo que un dedo no puede hacer).
+ */
 const click = (element) => {
   const target = typeof element === 'string' ? $(element) : element;
   if (!target) throw new Error(`no existe el elemento: ${element}`);
+  if (target.disabled === true) return false;
   target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  return true;
 };
 
 const whatsapp = {
@@ -246,6 +253,9 @@ describe('componente de ubicación en el chat', () => {
 describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () => {
   it('el formulario ya no pide ciudad ni dirección y deja el total sin delivery', async () => {
     // El pedido se crea desde «Acciones del cliente», como en el panel real.
+    // El botón «⋯» está deshabilitado mientras la conversación carga: se espera
+    // a que esté listo antes de pulsarlo (un botón gris no hace nada).
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado', 8000);
     click($('#wa-actions'));
     await waitFor(() => $(`[data-order-new="${customerId}"]`), 'las acciones del cliente', 8000);
     click(`[data-order-new="${customerId}"]`);

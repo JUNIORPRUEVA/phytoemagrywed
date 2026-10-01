@@ -843,4 +843,59 @@ financieramente consistente:
     arquitectura actual de una sola instancia; es un prerrequisito de
     escalamiento.
 
+## 38. CRM multiusuario: usuarios, sesiones, roles y asignación de conversaciones
+
+Modelo anterior:
+
+- El panel se protegía con una clave compartida `PHYTO_CRM_TOKEN`.
+- `POST /api/admin/login` cambiaba esa clave por una cookie `pe_crm` HttpOnly,
+  SameSite=Strict, firmada con HMAC y sin tabla de sesiones.
+- Todas las rutas `/api/admin/*` dependían de esa cookie. No existían usuarios
+  persistentes, roles, responsable de conversación ni identidad real por agente.
+- El enlace legacy `/panel?token=...` y las rutas `/api/crm/items?token=...`
+  siguen existiendo para transición y scripts internos, pero ya no son el modelo
+  recomendado para operación diaria.
+
+Modelo nuevo:
+
+1. La fuente de usuarios es `crm_users`.
+2. Los roles válidos son `ADMIN` y `AGENT`.
+3. Las sesiones de usuario viven en `crm_sessions`; la cookie `pe_crm` contiene
+   un identificador firmado y revocable.
+4. El primer administrador se crea solo por bootstrap controlado con
+   `PHYTO_CRM_BOOTSTRAP_ADMIN_USER` y `PHYTO_CRM_BOOTSTRAP_ADMIN_PASSWORD` o
+   configuración equivalente en tests/arranque. No hay credenciales hardcodeadas.
+5. Las contraseñas se guardan como PBKDF2-HMAC-SHA256 con sal aleatoria e
+   iteraciones altas usando `node:crypto`. No se devuelve `password_hash` al
+   navegador.
+6. El login nuevo acepta usuario/correo + contraseña en
+   `/api/admin/auth/login` y conserva `/api/admin/login` como alias.
+   `/api/admin/auth/logout` revoca sesión.
+7. El token compartido legacy sigue funcionando temporalmente como sesión ADMIN
+   legacy para no romper operación ni tests existentes, pero los agentes ya no
+   deben compartirlo.
+8. El backend valida permisos: administración de usuarios e inventario
+   manual/costo requieren ADMIN. Un AGENT no puede crear usuarios ni cambiar
+   roles.
+9. Se protege el último ADMIN activo: no se puede desactivar ni bajar de rol si
+   no queda otro administrador activo.
+10. Los mensajes outbound guardan `sent_by_user_id`,
+    `sent_by_display_name_snapshot` y `actor_type`. Los mensajes automáticos del
+    scheduler usan `SYSTEM`.
+11. La firma visible al cliente queda apagada por defecto: el body enviado a Meta
+    no se modifica con el nombre del agente.
+12. Las conversaciones guardan `assigned_user_id`, snapshot del nombre,
+    `assigned_at` y quién hizo el cambio. La unidad de asignación sigue siendo
+    la conversación, no cada mensaje.
+13. "Tomar conversación" está serializado por conversación dentro de la instancia
+    actual: si dos agentes compiten, uno gana y el otro recibe conflicto con el
+    agente asignado. Antes de escalar a varias réplicas, esta garantía debe
+    migrar a una operación condicional/transacción en base de datos.
+14. Los pedidos guardan autoría dentro de `order_json` (`created_by_user_id`,
+    snapshot y `updated_by_user_id`) sin tocar snapshots financieros.
+15. Seguimientos y mensajes programados guardan quién los creó/programó, mientras
+    la ejecución automática se atribuye a `SYSTEM`.
+16. El service worker del panel sube a `crm-v3-multiuser` para limpiar shell viejo
+    y forzar actualización de login/UI.
+
 

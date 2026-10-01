@@ -53,6 +53,17 @@ export const AUDIT_ACTIONS = Object.freeze([
   'inventory_sale_reversed',
   'product_cost_changed',
   'sale_price_changed',
+  'user_created',
+  'user_updated',
+  'user_disabled',
+  'user_role_changed',
+  'password_changed',
+  'login_success',
+  'login_failure',
+  'logout',
+  'conversation_assigned',
+  'conversation_reassigned',
+  'conversation_released',
 ]);
 
 function newId() {

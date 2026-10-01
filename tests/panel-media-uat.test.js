@@ -111,10 +111,22 @@ async function waitFor(check, label, timeout = 3000) {
 }
 const $ = (selector) => dom.window.document.querySelector(selector);
 const $$ = (selector) => [...dom.window.document.querySelectorAll(selector)];
+/**
+ * Pulsa como un NAVEGADOR de verdad: devuelve `false` y no hace NADA si el
+ * control está deshabilitado.
+ *
+ * `dispatchEvent` sí dispara el listener de un botón gris (el atributo
+ * `disabled` bloquea la activación REAL del usuario, no un evento fabricado), y
+ * eso convertía «comprobar que un botón gris no envía» en un envío de verdad:
+ * el mensaje salía por detrás y desbarataba la CUENTA de envíos del test
+ * siguiente (que esperaba un envío exacto y veía dos).
+ */
 const click = (element) => {
   const target = typeof element === 'string' ? $(element) : element;
   if (!target) throw new Error(`no existe el elemento: ${element}`);
+  if (target.disabled === true) return false;
   target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  return true;
 };
 
 /**
@@ -474,7 +486,10 @@ describe('UAT del panel con multimedia', () => {
       // Sin conversor: se puede oír, pero no enviar. Y se dice la causa real.
       expect($('#rec-send').disabled).toBe(true);
       expect(aviso).toMatch(/ffmpeg|no acepta/i);
-      click('#rec-send');
+      // Un botón gris NO se puede pulsar (como en el navegador): aunque el
+      // vendedor insista, no sale nada — ni ahora ni un momento después.
+      expect(click('#rec-send')).toBe(false);
+      await sleep(250);
       expect(sends).toBe(antes);
       click('#rec-reset');
     }
@@ -579,6 +594,11 @@ describe('UAT del panel con multimedia', () => {
     const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación');
     click(row);
     await waitFor(() => $('#wa-actions')?.dataset?.customer, 'el chat abierto');
+    // El botón «⋯» no basta con que conserve el atributo del render anterior:
+    // mientras la conversación carga, el panel lo deja DESHABILITADO (para no
+    // pedir acciones sin datos) y un botón gris no se puede pulsar. Se espera a
+    // que esté listo de verdad — que es lo que necesita el vendedor.
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     const menu = $('#sheet-body').innerHTML;
     for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente']) {

@@ -24,22 +24,42 @@
     <!-- ------------------------------------------------------------- ENTRAR -->
     <main id="login" class="login" hidden>
       <img class="login__logo" src="/admin/icon-192.png" alt="" width="72" height="72" />
-      <h1 class="login__title">Panel de Phytoemagry</h1>
+      <h1 class="login__title">PHYTOEMAGRY<br /><span>CRM</span></h1>
       <p class="login__text">
-        Escribe la clave del panel (la que está en el servidor como <code>PHYTO_CRM_TOKEN</code>).
-        Se queda guardada en este dispositivo.
+        Entra con tu usuario del equipo.
       </p>
       <form id="login-form" class="login__form" autocomplete="on">
         <label class="field">
-          <span class="field__label">Clave</span>
+          <span class="field__label">Usuario/correo</span>
+          <input
+            class="field__input"
+            id="login-username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            placeholder="ana@phytoemagry"
+          />
+        </label>
+        <label class="field">
+          <span class="field__label">Contraseña</span>
+          <input
+            class="field__input"
+            id="login-password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Tu contraseña"
+          />
+        </label>
+        <label class="field field--legacy" hidden>
+          <span class="field__label">Clave legacy</span>
           <input
             class="field__input"
             id="login-token"
             name="token"
             type="password"
             autocomplete="current-password"
-            required
-            placeholder="Pega aquí tu clave"
+            placeholder="Clave temporal"
           />
         </label>
         <p class="login__error" id="login-error" role="alert" hidden></p>
@@ -85,6 +105,7 @@
             <span class="ico" aria-hidden="true" data-icon="close"></span>
           </button>
         </div>
+        <div class="drawer__user" id="drawer-user" hidden></div>
         <p class="drawer__group">Operación</p>
         <nav class="drawer__nav">
           <button class="drawer__item" data-tab="hoy" type="button">
@@ -116,6 +137,9 @@
           </button>
           <button class="drawer__item" data-tab="ajustes" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
+          </button>
+          <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
+            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Usuarios
           </button>
         </nav>
         <p class="drawer__group">Sesión</p>
@@ -325,6 +349,37 @@
           </div>
           <button class="btn btn--danger btn--block" id="logout" type="button">Cerrar sesión</button>
           <p class="view__hint" id="build-info"></p>
+        </section>
+
+        <!-- USUARIOS -->
+        <section class="view" id="view-usuarios" hidden>
+          <h2 class="view__title">Usuarios</h2>
+          <div class="card">
+            <p class="card__title">Crear usuario</p>
+            <form class="grid-form" id="user-create">
+              <label class="field">
+                <span class="field__label">Nombre visible</span>
+                <input class="field__input" name="displayName" autocomplete="name" required />
+              </label>
+              <label class="field">
+                <span class="field__label">Usuario/correo</span>
+                <input class="field__input" name="username" autocomplete="username" required />
+              </label>
+              <label class="field">
+                <span class="field__label">Rol</span>
+                <select class="field__select" name="role">
+                  <option value="AGENT">Agente</option>
+                  <option value="ADMIN">Administrador</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field__label">Contraseña inicial</span>
+                <input class="field__input" name="password" type="password" autocomplete="new-password" required minlength="10" />
+              </label>
+              <button class="btn btn--primary btn--block" type="submit">Crear usuario</button>
+            </form>
+          </div>
+          <div class="list" id="users-view"></div>
         </section>
       </main>
 
