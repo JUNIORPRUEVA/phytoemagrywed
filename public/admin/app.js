@@ -13,6 +13,8 @@
   const SNAPSHOT_KEY = 'pe_crm_snapshot';
   const OUTBOX_KEY = 'pe_crm_outbox';
   const TAB_KEY = 'pe_crm_tab';
+  const WA_NOTIFY_KEY = 'pe_wa_notify';
+  const WA_SOUND_KEY = 'pe_wa_sound';
   const NEGOCIO = 'Phytoemagry';
 
   /** Estado en memoria del panel. */
@@ -54,6 +56,11 @@
       draft: '',
       listSig: null,
       chatSig: null,
+      counts: null,
+      selected: new Set(),
+      notify: localStorage.getItem(WA_NOTIFY_KEY) === '1',
+      sound: localStorage.getItem(WA_SOUND_KEY) === '1',
+      seenMessages: new Set(),
       loadingFor: null,
       followupId: null,
       listError: false,
@@ -333,6 +340,9 @@
       state.messages = data.messages ?? [];
       state.customers = data.customers ?? [];
       state.conversations = data.conversations ?? [];
+      for (const row of state.conversations) {
+        if (row.last_message?.direction === 'inbound') state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
+      }
       state.followups = data.followups ?? null;
       state.hoy = data.hoy ?? null;
       state.catalog = data.catalog ?? [];
@@ -358,6 +368,9 @@
         state.messages = snapshot.messages ?? [];
         state.customers = snapshot.customers ?? [];
         state.conversations = snapshot.conversations ?? [];
+        for (const row of state.conversations) {
+          if (row.last_message?.direction === 'inbound') state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
+        }
         state.followups = snapshot.followups ?? null;
         state.hoy = snapshot.hoy ?? null;
         state.catalog = snapshot.catalog ?? [];
@@ -830,11 +843,20 @@
     const filters = $('#wa-filters');
     if (filters) {
       filters.innerHTML = WA_FILTERS.map(
-        ([value, text]) =>
+        ([value, text]) => {
+          const count = waFilterCount(value);
+          const label = Number.isFinite(Number(count)) && Number(count) > 0 ? `${text} ${count}` : text;
+          return (
           `<button class="chip" data-wa-filter="${value}" aria-pressed="${
             value === state.wa.filter
-          }" type="button">${text}</button>`,
-      ).join('');
+          }" type="button">${label}</button>`
+          );
+        },
+      ).join('') + `<button class="chip" id="wa-notify" type="button">${
+        state.wa.notify ? 'Notificaciones activas' : 'Activar notificaciones'
+      }</button><button class="chip" id="wa-sound" aria-pressed="${state.wa.sound}" type="button">Sonido ${
+        state.wa.sound ? 'sí' : 'no'
+      }</button>`;
     }
     const search = $('#wa-search');
     if (search && search.value !== state.wa.q) search.value = state.wa.q;
@@ -1440,9 +1462,24 @@
 
   const WA_FILTERS = [
     ['todos', 'Todos'],
-    ['sin-responder', 'Sin responder'],
-    ['no-leidos', 'No leídos'],
+    ['no-leidos', 'Nuevos'],
+    ['pendientes', 'Pendientes'],
+    ['clientes', 'Clientes'],
+    ['seguimiento', 'Seguimiento'],
+    ['archivados', 'Archivados'],
   ];
+
+  const waFilterCount = (value) => {
+    const counts = state.wa.counts ?? {};
+    return {
+      todos: counts.todos,
+      'no-leidos': counts.no_leidos,
+      pendientes: counts.pendientes,
+      clientes: counts.clientes,
+      seguimiento: counts.seguimiento,
+      archivados: counts.archivados,
+    }[value];
+  };
 
   /** Lo que ve una persona: nunca el `wa_message_id`. */
   const WA_STATUS = {
@@ -1479,6 +1516,18 @@
     video: 'Video',
     sticker: 'Sticker',
     location: 'Ubicación',
+  };
+
+  const COMMERCIAL_HINTS = {
+    NUEVO: 'Prospecto',
+    EN_CONVERSACION: 'Prospecto',
+    INTERESADO: 'Interesado',
+    PEDIDO_CREADO: 'Pedido',
+    CONFIRMADO: 'Confirmado',
+    ENTREGADO: 'Cliente',
+    SEGUIMIENTO: 'Seguimiento',
+    RECOMPRA: 'Cliente',
+    PERDIDO: 'Perdido',
   };
 
   /** Iniciales para el avatar (todavía no hay fotos de perfil). */
@@ -1535,8 +1584,12 @@
   function waVisibleConversations() {
     const { filter, q } = state.wa;
     let rows = state.conversations.slice();
-    if (filter === 'sin-responder') rows = rows.filter(waAwaiting);
+    if (filter === 'pendientes') rows = rows.filter(waAwaiting);
     if (filter === 'no-leidos') rows = rows.filter((row) => Number(row.unread_count) > 0);
+    if (filter === 'clientes') rows = rows.filter((row) => row.has_purchase === true);
+    if (filter === 'seguimiento') rows = rows.filter((row) => row.next_followup);
+    if (filter === 'archivados') rows = rows.filter((row) => row.archived_at);
+    if (filter !== 'archivados') rows = rows.filter((row) => !row.archived_at);
     if (q) {
       const needle = q.toLowerCase();
       rows = rows.filter((row) => {
@@ -1564,17 +1617,23 @@
         : WA_KIND_LABEL[tipo] ?? 'Adjunto'
       : 'Sin mensajes todavía';
     const nombre = waDisplayName(row);
+    const followupText = row.next_followup ? fmtDay(row.next_followup.scheduled_at) : null;
+    const commercial = COMMERCIAL_HINTS[row.commercial_state] ?? null;
+    const compactFlags = [row.has_purchase ? 'Cliente' : commercial, followupText].filter(Boolean).slice(0, 2);
     const flags =
-      unread || awaiting || row.status === 'HUMAN_REQUIRED'
+      unread || awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length
         ? `<span class="conv__flags">
             ${unread ? `<span class="conv__unread">${unread}</span>` : ''}
-            ${awaiting ? '<span class="conv__await">Sin responder</span>' : ''}
+            ${awaiting ? '<span class="conv__await">Pendiente</span>' : ''}
             ${row.status === 'HUMAN_REQUIRED' ? '<span class="conv__await">Necesita una persona</span>' : ''}
+            ${compactFlags.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
           </span>`
         : '';
-    return `<button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''}" data-conv="${escapeHtml(
-      row.id,
-    )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
+    const selected = state.wa.selected.has(row.id);
+    return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}">
+      <button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${unread ? 'conv--unread' : ''}" data-conv="${escapeHtml(
+        row.id,
+      )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
         <span class="avatar conv__avatar" aria-hidden="true">${escapeHtml(waInitials(nombre))}</span>
         <span class="conv__body">
           <span class="conv__top">
@@ -1584,7 +1643,61 @@
           <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
           ${flags}
         </span>
-      </button>`;
+      </button>
+      <button class="conv-select" data-conv-select="${escapeHtml(row.id)}" type="button" aria-pressed="${selected}" aria-label="${
+        selected ? 'Quitar de la selección' : 'Seleccionar conversación'
+      }">${selected ? '✓' : ''}</button>
+    </div>`;
+  }
+
+  function playNewMessageSound() {
+    if (!state.wa.sound) return;
+    try {
+      const audio = new AudioContext();
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.frequency.value = 740;
+      gain.gain.value = 0.025;
+      osc.connect(gain);
+      gain.connect(audio.destination);
+      osc.start();
+      osc.stop(audio.currentTime + 0.08);
+      setTimeout(() => audio.close().catch(() => {}), 180);
+    } catch {
+      /* sin audio: no pasa nada */
+    }
+  }
+
+  function notifyNewInbound(row) {
+    if (!row?.last_message || row.last_message.direction !== 'inbound') return;
+    const messageKey = `${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`;
+    if (state.wa.seenMessages.has(messageKey)) return;
+    state.wa.seenMessages.add(messageKey);
+    toast(`Nuevo mensaje de ${waDisplayName(row)}`);
+    playNewMessageSound();
+    if (
+      state.wa.notify &&
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted' &&
+      (document.visibilityState !== 'visible' || state.tab !== 'whatsapp')
+    ) {
+      const text = row.last_message.type === 'text' ? String(row.last_message.body ?? '').slice(0, 80) : WA_KIND_LABEL[row.last_message.type] ?? 'Nuevo mensaje';
+      new Notification(NEGOCIO, { body: `${waDisplayName(row)}: ${text}`, tag: `wa-${row.id}`, silent: !state.wa.sound });
+    }
+  }
+
+  function waBulkBar() {
+    const count = state.wa.selected.size;
+    if (!count) return '';
+    const archived = state.wa.filter === 'archivados';
+    return `<div class="wa-bulk" role="toolbar" aria-label="Acciones masivas">
+      <span>${count} seleccionados</span>
+      <button class="btn btn--ghost btn--sm" data-wa-bulk="mark_read" type="button">Marcar leído</button>
+      <button class="btn btn--ghost btn--sm" data-wa-bulk="${archived ? 'unarchive' : 'archive'}" type="button">${
+        archived ? 'Desarchivar' : 'Archivar'
+      }</button>
+      <button class="btn btn--ghost btn--sm" data-wa-bulk="message_preview" type="button">Mensaje</button>
+    </div>`;
   }
 
   function renderWaList() {
@@ -1607,7 +1720,14 @@
       return;
     }
     const rows = waVisibleConversations();
-    box.innerHTML = rows.length ? rows.map(waRow).join('') : emptyState('No hay conversaciones con este filtro.');
+    const empty = {
+      'no-leidos': 'No tienes mensajes nuevos.',
+      pendientes: 'No tienes mensajes pendientes.',
+      clientes: 'Todavía no hay clientes con compra entregada en esta vista.',
+      seguimiento: 'No hay seguimientos pendientes.',
+      archivados: 'No hay conversaciones archivadas.',
+    }[state.wa.filter] ?? 'No hay conversaciones con este filtro.';
+    box.innerHTML = `${waBulkBar()}${rows.length ? rows.map(waRow).join('') : emptyState(empty)}`;
   }
 
   /**
@@ -2458,15 +2578,37 @@
    * de verdad ha cambiado, para no borrar lo que una persona está escribiendo.
    */
   async function refreshWhatsapp() {
-    const list = await api('/api/admin/conversations');
+    const params = new URLSearchParams();
+    params.set('filter', state.wa.filter);
+    if (state.wa.q) params.set('q', state.wa.q);
+    const list = await api(`/api/admin/conversations?${params.toString()}`);
     const rows = list.conversations ?? [];
+    state.wa.counts = list.counts ?? state.wa.counts;
     const listSig = JSON.stringify(
-      rows.map((row) => [row.id, row.unread_count, row.last_message_at, row.status, row.awaiting_reply === true]),
+      rows.map((row) => [
+        row.id,
+        row.unread_count,
+        row.last_message_at,
+        row.status,
+        row.awaiting_reply === true,
+        row.archived_at ?? '',
+        row.has_purchase === true,
+        row.next_followup?.scheduled_at ?? '',
+      ]),
     );
     if (listSig !== state.wa.listSig) {
+      const previousKeys = new Set(
+        state.conversations.map((row) => `${row.id}:${row.last_message?.at ?? row.last_message_at ?? ''}`),
+      );
       state.wa.listSig = listSig;
       state.conversations = rows;
       state.wa.listError = false;
+      for (const row of rows) {
+        const key = `${row.id}:${row.last_message?.at ?? row.last_message_at ?? ''}`;
+        if (!previousKeys.has(key)) notifyNewInbound(row);
+      }
+      renderWhatsapp();
+    } else {
       renderWaList();
     }
 

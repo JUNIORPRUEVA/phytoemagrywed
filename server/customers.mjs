@@ -201,6 +201,46 @@ export function createCustomerService(deps) {
     return out;
   }
 
+  async function inboxContext(customerRows) {
+    const ids = new Set(customerRows.map((row) => row.id));
+    const [items, followupRows, messages] = await Promise.all([
+      store?.listAdmin ? store.listAdmin({ limit: 1000 }) : Promise.resolve([]),
+      db.list('followups', { limit: 2000 }),
+      db.list('wa_messages', { by: 'created_at', order: 'desc', limit: 5000 }),
+    ]);
+    const purchasesByCustomer = new Map();
+    const followupsByCustomer = new Map();
+    const messagesByConversation = new Map();
+    for (const row of items) {
+      if (row.type !== 'order_intent' || !row.customer_id || !ids.has(row.customer_id)) continue;
+      const list = purchasesByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      purchasesByCustomer.set(row.customer_id, list);
+    }
+    for (const row of followupRows) {
+      if (row.status !== 'pending' || !ids.has(row.customer_id)) continue;
+      const list = followupsByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      followupsByCustomer.set(row.customer_id, list);
+    }
+    for (const message of messages) {
+      if (!messagesByConversation.has(message.conversation_id)) messagesByConversation.set(message.conversation_id, message);
+    }
+    const states = new Map();
+    for (const customer of customerRows) {
+      states.set(
+        customer.id,
+        deriveCommercialState({
+          customer,
+          purchases: purchasesByCustomer.get(customer.id) ?? [],
+          followups: followupsByCustomer.get(customer.id) ?? [],
+          hasInbound: messages.some((row) => row.customer_id === customer.id && row.direction === 'inbound'),
+        }),
+      );
+    }
+    return { messagesByConversation, purchasesByCustomer, followupsByCustomer, states };
+  }
+
   return {
     /** Teléfono normalizado a E.164 (o null si no identifica a nadie). */
     normalizePhone: toE164,
@@ -382,12 +422,21 @@ export function createCustomerService(deps) {
         db.list('wa_messages', { by: 'created_at', order: 'desc', limit: 500 }),
       ]);
       const byCustomer = new Map(customers.map((row) => [row.id, row]));
+      const context = await inboxContext(customers);
       const items = conversations.map((conversation) => {
         const customer = byCustomer.get(conversation.customer_id) ?? null;
-        const last = messages.find((message) => message.conversation_id === conversation.id) ?? null;
+        const last = context.messagesByConversation.get(conversation.id) ?? messages.find((message) => message.conversation_id === conversation.id) ?? null;
+        const purchases = context.purchasesByCustomer.get(conversation.customer_id) ?? [];
+        const followupList = (context.followupsByCustomer.get(conversation.customer_id) ?? []).sort((a, b) =>
+          String(a.scheduled_at).localeCompare(String(b.scheduled_at)),
+        );
+        const delivered = purchases.filter((row) => row.status === 'entregado');
+        const commercialState = context.states.get(conversation.customer_id) ?? 'NUEVO';
         return {
           ...conversation,
-          customer,
+          archived_at: conversation.archived_at ?? null,
+          deleted_at: conversation.deleted_at ?? null,
+          customer: customer ? { ...customer, commercial_state: commercialState } : null,
           last_message: last ? { body: last.body, direction: last.direction, status: last.status, type: last.type ?? 'text', at: last.created_at } : null,
           /*
            * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
@@ -395,9 +444,56 @@ export function createCustomerService(deps) {
            * como leída la conversación: solo cuando el negocio contesta.
            */
           awaiting_reply: last ? last.direction === 'inbound' : false,
+          commercial_state: commercialState,
+          has_purchase: delivered.length > 0,
+          last_purchase_at: delivered[0]?.received_at ?? null,
+          next_followup: followupList[0] ?? null,
         };
       });
-      return options.limit ? items.slice(0, options.limit) : items;
+      const needle = String(options.q ?? '').trim().toLowerCase();
+      const filtered = items.filter((row) => {
+        if (row.deleted_at) return false;
+        const archived = Boolean(row.archived_at);
+        if (options.filter === 'archivados') {
+          if (!archived) return false;
+        } else if (archived) {
+          return false;
+        }
+        if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
+        if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
+        if (options.filter === 'clientes' && row.has_purchase !== true) return false;
+        if (options.filter === 'seguimiento' && !row.next_followup) return false;
+        if (needle) {
+          const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          if (!haystack.includes(needle)) return false;
+        }
+        return true;
+      });
+      const ordered = filtered.sort((a, b) => {
+        if (options.filter === 'pendientes') return String(a.last_message_at ?? '').localeCompare(String(b.last_message_at ?? ''));
+        if (options.filter === 'seguimiento') return String(a.next_followup?.scheduled_at ?? '9999').localeCompare(String(b.next_followup?.scheduled_at ?? '9999'));
+        if (options.filter === 'clientes' && options.order === 'purchase') return String(b.last_purchase_at ?? '').localeCompare(String(a.last_purchase_at ?? ''));
+        return String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? ''));
+      });
+      return options.limit ? ordered.slice(0, options.limit) : ordered;
+    },
+
+    async conversationCounts() {
+      const rows = await this.listConversations({ filter: 'archivados' });
+      const active = await this.listConversations({});
+      const all = active.concat(rows);
+      return {
+        todos: active.length,
+        no_leidos: active.filter((row) => Number(row.unread_count) > 0).length,
+        pendientes: active.filter((row) => row.awaiting_reply === true).length,
+        clientes: active.filter((row) => row.has_purchase === true).length,
+        seguimiento: active.filter((row) => row.next_followup).length,
+        archivados: rows.length,
+        unread_total: all.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
+      };
     },
 
     /** Mensajes de una conversación, del más antiguo al más nuevo. */
@@ -504,6 +600,7 @@ export function createCustomerService(deps) {
         last_message_at: now,
         last_inbound_at: now,
         unread_count: Number(conversation.unread_count ?? 0) + 1,
+        archived_at: null,
         status: humanRequest || healthConcern ? 'HUMAN_REQUIRED' : conversation.status ?? 'AUTOMATIC',
         updated_at: now,
       });
@@ -604,6 +701,13 @@ export function createCustomerService(deps) {
     /** Marca la conversación como leída (la insignia del panel). */
     async markConversationRead(conversationId) {
       return db.update('conversations', conversationId, { unread_count: 0, updated_at: new Date().toISOString() });
+    },
+
+    async archiveConversation(conversationId, archived = true) {
+      return db.update('conversations', conversationId, {
+        archived_at: archived ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      });
     },
 
     /** Cambia el estado de automatización (humano, pausa, cierre). */

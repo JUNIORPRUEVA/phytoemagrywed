@@ -1755,8 +1755,65 @@ async function handle(req, res, ctx) {
 
     // ------------------------------------------------------------- bandeja
     if (route === '/api/admin/conversations' && req.method === 'GET') {
-      const conversations = await ctx.customers.listConversations({});
-      json(res, 200, { ok: true, conversations, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
+      const filter = text(url.searchParams.get('filter'), 30) ?? 'todos';
+      const order = text(url.searchParams.get('order'), 30) ?? null;
+      const q = text(url.searchParams.get('q'), 120) ?? '';
+      const conversations = await ctx.customers.listConversations({ filter, order, q });
+      const counts = await ctx.customers.conversationCounts();
+      json(res, 200, { ok: true, conversations, counts, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
+      return;
+    }
+
+    if (route === '/api/admin/conversations/bulk' && req.method === 'POST') {
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const action = text(body.action, 40);
+      const ids = Array.isArray(body.ids) ? body.ids.map((id) => text(id, 80)).filter(Boolean).slice(0, 100) : [];
+      if (!ids.length || !['mark_read', 'archive', 'unarchive', 'message_preview'].includes(action)) {
+        json(res, 422, { ok: false, error: 'invalid_bulk_action' });
+        return;
+      }
+      const results = [];
+      for (const id of ids) {
+        const conversation = await findConversation(ctx, id);
+        if (!conversation) {
+          results.push({ id, ok: false, error: 'not_found' });
+          continue;
+        }
+        if (action === 'mark_read') {
+          const updated = await ctx.customers.markConversationRead(id);
+          results.push({ id, ok: Boolean(updated) });
+          continue;
+        }
+        if (action === 'archive' || action === 'unarchive') {
+          const updated = await ctx.customers.archiveConversation(id, action === 'archive');
+          results.push({ id, ok: Boolean(updated) });
+          continue;
+        }
+        const customer = await ctx.customers.get(conversation.customer_id);
+        const canSendFreeText = ctx.customers.canSendFreeText(conversation);
+        results.push({
+          id,
+          ok: true,
+          eligible: customer?.do_not_contact || customer?.whatsapp_opt_out_at ? false : true,
+          reason: customer?.do_not_contact || customer?.whatsapp_opt_out_at ? 'do_not_contact' : canSendFreeText ? 'free_text_24h' : 'template_required',
+          customer_id: customer?.id ?? null,
+          phone_e164: customer?.phone_e164 ?? null,
+        });
+      }
+      json(res, 200, {
+        ok: true,
+        action,
+        selected: ids.length,
+        processed: results.filter((row) => row.ok).length,
+        failed: results.filter((row) => !row.ok).length,
+        results,
+      });
       return;
     }
 
@@ -1785,6 +1842,19 @@ async function handle(req, res, ctx) {
 
       if (action === 'read' && req.method === 'POST') {
         const updated = await ctx.customers.markConversationRead(conversation.id);
+        json(res, 200, { ok: true, conversation: updated });
+        return;
+      }
+
+      if ((action === 'archive' || action === 'unarchive') && req.method === 'POST') {
+        const updated = await ctx.customers.archiveConversation(conversation.id, action === 'archive');
+        await ctx.audit?.record({
+          entity: 'conversation',
+          entityId: conversation.id,
+          action: action === 'archive' ? 'conversation.archived' : 'conversation.unarchived',
+          summary: action === 'archive' ? 'Conversación archivada' : 'Conversación desarchivada',
+          data: { customer_id: conversation.customer_id },
+        });
         json(res, 200, { ok: true, conversation: updated });
         return;
       }
