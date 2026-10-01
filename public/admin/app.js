@@ -4036,16 +4036,37 @@
      */
     $('#wa-search').addEventListener('input', (event) => {
       state.wa.q = event.target.value.trim();
-      renderWaList();
+      refreshWhatsapp().catch(() => renderWaList());
     });
     $('#wa-filters').addEventListener('click', (event) => {
+      if (event.target.closest('#wa-notify')) {
+        if (typeof Notification === 'undefined') {
+          toast('Este navegador no soporta notificaciones');
+          return;
+        }
+        Notification.requestPermission().then((permission) => {
+          state.wa.notify = permission === 'granted';
+          localStorage.setItem(WA_NOTIFY_KEY, state.wa.notify ? '1' : '0');
+          renderWhatsapp();
+          toast(state.wa.notify ? 'Notificaciones activadas' : 'No se activaron las notificaciones');
+        });
+        return;
+      }
+      if (event.target.closest('#wa-sound')) {
+        state.wa.sound = !state.wa.sound;
+        localStorage.setItem(WA_SOUND_KEY, state.wa.sound ? '1' : '0');
+        renderWhatsapp();
+        if (state.wa.sound) playNewMessageSound();
+        return;
+      }
       const chip = event.target.closest('[data-wa-filter]');
       if (!chip) return;
       state.wa.filter = chip.dataset.waFilter;
+      state.wa.selected.clear();
       $$('[data-wa-filter]').forEach((button) =>
         button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),
       );
-      renderWaList();
+      refreshWhatsapp().catch(() => renderWaList());
     });
     // En el móvil, ← vuelve a la lista de conversaciones.
     $('#wa-back').addEventListener('click', () => setWaView('list'));
