@@ -1855,6 +1855,19 @@
   /** ¿Ese audio se puede enviar a WhatsApp hoy? (si no, se dice, no se finge) */
   const audioSendable = (mime) => AUDIO_MIME_OK.includes(String(mime ?? '').split(';')[0].trim());
 
+  /**
+   * Formatos que WhatsApp NO acepta tal cual pero que el SERVIDOR sabe convertir a
+   * OGG/Opus antes de enviarlos (`server/audio-normalize.mjs`).
+   *
+   * Es el caso de Windows: el navegador graba en WebM, así que rechazarlo en el
+   * panel era rechazar el audio de media plantilla. El servidor lo convierte.
+   */
+  const AUDIO_CONVERTIBLE = ['audio/webm', 'audio/wav', 'audio/x-wav'];
+  const audioConvertible = (mime) =>
+    AUDIO_CONVERTIBLE.includes(String(mime ?? '').split(';')[0].trim().toLowerCase());
+  /** ¿Este servidor puede convertir? Lo dice `/api/admin/data` (`media.audioNormalize`). */
+  const puedeConvertirAudio = () => state.media?.audioNormalize === true;
+
   // ------------------------------------------------- reproductor de audio
   /*
    * Un solo elemento de audio para toda la conversación: así, al reproducir otro,
@@ -2084,13 +2097,17 @@
   function openMediaPreview({ conversationId, kind, file, key, durationMs }) {
     const objectUrl = URL.createObjectURL(file);
     const mime = String(file.type || '').split(';')[0].trim();
-    const puedeEnviar = kind === 'image' ? mime.startsWith('image/') : audioSendable(mime);
+    const seConvierte = kind === 'audio' && audioConvertible(mime) && puedeConvertirAudio();
+    const puedeEnviar = kind === 'image' ? mime.startsWith('image/') : audioSendable(mime) || seConvierte;
     const aviso = !puedeEnviar
       ? kind === 'audio'
         ? `<p class="rule rule--warn">Tu navegador grabó el audio en <strong>${escapeHtml(mime || 'un formato desconocido')}</strong>,
              que WhatsApp todavía no acepta. Puedes oírlo aquí, pero para enviarlo adjunta un audio en OGG o M4A.</p>`
         : `<p class="rule rule--warn">Ese archivo no parece una imagen (${escapeHtml(mime || 'tipo desconocido')}).</p>`
-      : '';
+      : seConvierte
+        ? `<p class="view__hint">WhatsApp no acepta <strong>${escapeHtml(mime)}</strong>: se enviará convertido a
+             <strong>OGG/Opus</strong> (voz, mono). No tienes que hacer nada.</p>`
+        : '';
     openSheet(
       kind === 'image' ? 'Enviar imagen' : 'Enviar audio',
       `
@@ -2239,9 +2256,16 @@
         $('#rec-stop').hidden = true;
         $('#rec-reset').hidden = false;
         $('#rec-send').hidden = false;
-        // Si el navegador grabó en un formato que Meta no acepta, se dice AQUÍ y no
-        // se deja enviar: prometer compatibilidad sin comprobarla no es aceptable.
-        if (!audioSendable(realType)) {
+        /*
+         * Si el navegador grabó en un formato que WhatsApp no acepta, hay dos
+         * verdades distintas y no se mezclan:
+         *   · el servidor sabe convertirlo → se puede enviar, y se dice que se
+         *     convierte a OGG/Opus;
+         *   · no sabe → no se deja enviar y se explica qué adjuntar.
+         * Prometer compatibilidad sin comprobarla no es aceptable en ningún caso.
+         */
+        const seConvierte = audioConvertible(realType) && puedeConvertirAudio();
+        if (!audioSendable(realType) && !seConvierte) {
           $('#rec-send').disabled = true;
           preview.insertAdjacentHTML(
             'beforeend',
@@ -2250,6 +2274,13 @@
           );
         } else {
           $('#rec-send').disabled = false;
+          if (!audioSendable(realType)) {
+            preview.insertAdjacentHTML(
+              'beforeend',
+              `<p class="view__hint">Grabado en <strong>${escapeHtml(realType)}</strong>: al enviarlo se convierte a
+               <strong>OGG/Opus</strong>.</p>`,
+            );
+          }
         }
         stopStream();
       };

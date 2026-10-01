@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto';
 import { LIMITS, buildObjectKey, isAllowedMime, sniffMime } from './storage.mjs';
 import { MEDIA_STATUS, SEND_STATUS, UNSAFE_TO_RETRY } from './media.mjs';
+import { normalizeAudio } from './audio-normalize.mjs';
 
 const sha256hex = (buffer) => createHash('sha256').update(buffer).digest('hex');
 const kb = (bytes) => `${Math.round(Number(bytes ?? 0) / 1024)} KB`;
@@ -261,7 +262,7 @@ export function createMediaPipeline(deps) {
     }
 
     // 2) Validación real del contenido: ni R2 ni Meta, solo bytes.
-    const valido = validateBinary(input.buffer, { declaredMime: input.declaredMime, expect: kind });
+    let valido = validateBinary(input.buffer, { declaredMime: input.declaredMime, expect: kind });
     if (!valido.ok) {
       if (row) {
         await mediaStore.recordFailure(row.id, {
@@ -272,12 +273,55 @@ export function createMediaPipeline(deps) {
       return { ok: false, error: { code: valido.code, message: valido.message } };
     }
 
+    /*
+     * 2 bis) AUDIO: dejarlo en un formato que WhatsApp acepte, ANTES de guardarlo
+     *        y de subirlo.
+     *
+     *        El navegador en Windows graba en WebM (que Meta rechaza con un 400) y
+     *        un .ogg de fuera puede llevar Vorbis (Meta solo acepta Opus dentro de
+     *        Ogg). Se convierte aquí, en un solo sitio, para que lo que queda en R2
+     *        sea EXACTAMENTE lo que viaja a Meta: un mensaje, un archivo.
+     *
+     *        Si no se puede convertir, se dice con un código claro y NO se marca
+     *        nada como enviado.
+     */
+    let bytesDeArchivo = input.buffer;
+    let mimeDeArchivo = valido.mimeType;
+    let conversion = null;
+    if (kind === 'audio') {
+      const normalizado = await normalizeAudio({
+        buffer: input.buffer,
+        mimeType: valido.mimeType,
+        filename: input.filename ?? null,
+      });
+      if (!normalizado.ok) {
+        if (row) {
+          await mediaStore.recordFailure(row.id, {
+            provider: 'local', operation: 'normalize', safeCode: normalizado.error.code,
+            status: MEDIA_STATUS.FAILED, sendStatus: SEND_STATUS.FAILED,
+          });
+        }
+        log(`[media] AUDIO_NORMALIZE fallo=${normalizado.error.code} mime=${valido.mimeType}`);
+        return { ok: false, error: normalizado.error };
+      }
+      bytesDeArchivo = normalizado.buffer;
+      mimeDeArchivo = normalizado.mimeType;
+      valido = { ok: true, mimeType: normalizado.mimeType };
+      conversion = normalizado.converted ? normalizado : null;
+      if (conversion) {
+        log(
+          `[media] AUDIO_NORMALIZE motivo=${conversion.reason} mimeIn=${conversion.inMime} codecIn=${conversion.codec ?? 'n/d'}` +
+            ` bytesIn=${conversion.sizeIn} bytesOut=${bytesDeArchivo.length} mimeOut=${mimeDeArchivo} codecOut=opus`,
+        );
+      }
+    }
+
     // 3) La fila: es la prueba escrita de que hay una intención de envío.
     if (!row) {
       const creada = await mediaStore.create({
         messageId: input.messageId ?? (key ? `out_${key}` : `out_${Date.now().toString(36)}`),
         mediaType: kind,
-        mimeType: valido.mimeType,
+        mimeType: mimeDeArchivo,
         originalFilename: input.filename ?? null,
         direction: 'outbound',
         status: MEDIA_STATUS.UPLOADING,
@@ -294,8 +338,11 @@ export function createMediaPipeline(deps) {
       }
     }
 
-    // 4) R2. Si el archivo ya estaba guardado (caída justo después), no se repite.
-    const huella = sha256hex(input.buffer);
+    // 4) R2. Si el archivo ya estaba guardado (caída justo después), no se repite
+    //    — salvo que la normalización lo haya cambiado: entonces se REESCRIBE el
+    //    mismo objeto, porque lo que hay en el almacén tiene que ser lo que se
+    //    envió (nunca dos versiones distintas del mismo mensaje).
+    const huella = sha256hex(bytesDeArchivo);
     // La clave se ancla a la fecha de creación de la operación y al hash del
     // contenido: un reintento escribe en el MISMO objeto (no deja huérfanos).
     const creadoEn = row.created_at ? new Date(row.created_at) : now();
@@ -304,11 +351,11 @@ export function createMediaPipeline(deps) {
       at: Number.isNaN(creadoEn.getTime()) ? now() : creadoEn,
       conversationId: input.conversationId,
       messageId: row.message_id,
-      mime: valido.mimeType,
+      mime: mimeDeArchivo,
       token: huella.slice(0, 32),
     });
-    if (!row.object_key) {
-      const subida = await storage.put(objectKey, input.buffer, valido.mimeType);
+    if (!row.object_key || conversion) {
+      const subida = await storage.put(objectKey, bytesDeArchivo, mimeDeArchivo);
       if (!subida.ok) {
         // Ni se envió nada ni se contactó con Meta: reintentar es inocuo.
         const marcado = await mediaStore.recordFailure(row.id, {
@@ -328,7 +375,8 @@ export function createMediaPipeline(deps) {
         objectKey: subida.objectKey ?? objectKey,
         bucket: storage.bucket,
         storageProvider: storage.provider,
-        sizeBytes: input.buffer.length,
+        mimeType: mimeDeArchivo,
+        sizeBytes: bytesDeArchivo.length,
         sha256: huella,
       })).media;
     } else if (row.send_status !== SEND_STATUS.READY_TO_SEND) {
@@ -343,8 +391,8 @@ export function createMediaPipeline(deps) {
     let metaMediaId = row.wa_media_id;
     if (!metaMediaId) {
       const enMeta = await whatsappMedia.uploadMedia({
-        buffer: input.buffer,
-        mimeType: valido.mimeType,
+        buffer: bytesDeArchivo,
+        mimeType: mimeDeArchivo,
         filename: input.filename ?? undefined,
       });
       if (!enMeta.ok) {
@@ -358,6 +406,12 @@ export function createMediaPipeline(deps) {
           status: MEDIA_STATUS.STORED, sendStatus: SEND_STATUS.FAILED,
         });
         log(`[media] Meta no aceptó el archivo de ${row.id}: ${enMeta.error?.code}`);
+        if (kind === 'audio') {
+          log(
+            `[media] AUDIO_UPLOAD mime=${mimeDeArchivo} bytes=${bytesDeArchivo.length} metaStatus=${enMeta.status ?? 0}` +
+              ` errorCode=${enMeta.error?.code ?? 'n/d'} errorSubcode=${enMeta.error?.subcode ?? 'n/d'}`,
+          );
+        }
         return { ok: false, error: enMeta.error, media: marcado.media };
       }
       metaMediaId = enMeta.mediaId;
@@ -382,6 +436,12 @@ export function createMediaPipeline(deps) {
 
     if (!envio.ok) {
       const error = envio.error ?? {};
+      if (kind === 'audio') {
+        log(
+          `[media] AUDIO_SEND status=${envio.status ?? 0} ok=no errorCode=${error.code ?? 'n/d'}` +
+            ` errorSubcode=${error.subcode ?? 'n/d'} ambiguo=${error.ambiguous === true}`,
+        );
+      }
       const ambiguoElError = error.ambiguous === true || !error.code;
       if (ambiguoElError) {
         // Meta pudo recibirlo. No se reintenta: se marca y lo decide una persona.
@@ -426,13 +486,20 @@ export function createMediaPipeline(deps) {
       errorAt: null,
       safeCode: null,
     });
+    if (kind === 'audio') {
+      log(
+        `[media] AUDIO_SEND status=${envio.status ?? 200} ok=si messageId=${String(envio.waMessageId ?? '').slice(0, 6)}***` +
+          ` mime=${mimeDeArchivo} bytes=${bytesDeArchivo.length} convertido=${conversion ? 'si' : 'no'}`,
+      );
+    }
     return {
       ok: true,
       waMessageId: envio.waMessageId,
       metaMediaId,
       objectKey,
-      mimeType: valido.mimeType,
-      sizeBytes: input.buffer.length,
+      mimeType: mimeDeArchivo,
+      sizeBytes: bytesDeArchivo.length,
+      convertedTo: conversion ? mimeDeArchivo : null,
       mediaType: kind,
       mediaId: enviado.media?.id ?? row.id,
     };

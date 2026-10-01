@@ -92,7 +92,12 @@ RUN npm ci --omit=dev --no-audit --no-fund
 FROM node:22-alpine AS runtime
 
 # nginx sirve la web (estática, rápida) y delante del API que guarda los datos.
-RUN apk add --no-cache nginx
+#
+# ffmpeg: es lo ÚNICO que convierte a OGG/Opus un audio que WhatsApp no acepta
+# (el navegador en Windows graba en WebM, y un .ogg de fuera puede llevar Vorbis).
+# Sin él, el CRM sigue funcionando pero no puede normalizar el audio: el panel lo
+# detecta y lo dice en pantalla (`media.audioNormalize`). Ver server/audio-normalize.mjs.
+RUN apk add --no-cache nginx ffmpeg
 
 # Puerto de escucha de la web. 80 por defecto para `docker run -p 8080:80`.
 # Los paneles (Easypanel, Dokploy, Coolify...) suelen definir `PORT` en tiempo de

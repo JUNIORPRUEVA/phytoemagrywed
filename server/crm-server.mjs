@@ -87,6 +87,7 @@ import { createScheduler } from './scheduler.mjs';
 import { createSettingsService } from './settings.mjs';
 import { createSqlQuery } from './sql-query.mjs';
 import { createMediaStore, MEDIA_STATUS, SEND_STATUS } from './media.mjs';
+import { ffmpegInfo } from './audio-normalize.mjs';
 import { createStorageService } from './storage.mjs';
 import { createWhatsAppMedia } from './whatsapp-media.mjs';
 import { createMediaPipeline } from './media-pipeline.mjs';
@@ -1332,6 +1333,12 @@ async function handle(req, res, ctx) {
           graphConfigured: Boolean(ctx.media?.whatsapp?.enabled),
           imageLimitMb: 5,
           audioLimitMb: 16,
+          /*
+           * ¿Este servidor puede convertir audio (WebM/Vorbis → Ogg/Opus) antes de
+           * enviarlo? El panel lo necesita para decidir si ofrece el envío de una
+           * nota grabada en WebM o si tiene que pedir otro formato.
+           */
+          audioNormalize: ffmpegInfo().available,
           needsReview: mediaNeedsReview.length,
           review: mediaNeedsReview,
         },

@@ -7,12 +7,17 @@
  * muere a mitad, dónde se exige intervención humana y qué NO se filtra nunca
  * (bucket, `object_key`, tokens, URL de Graph, texto crudo del proveedor).
  */
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { createWhatsAppMedia } from '../server/whatsapp-media.mjs';
 import { createMediaPipeline, resumeActionFor, validateBinary } from '../server/media-pipeline.mjs';
 import { createMediaRoutes } from '../server/media-routes.mjs';
 import { MEDIA_STATUS, SEND_STATUS } from '../server/media.mjs';
+import { ffmpegInfo } from '../server/audio-normalize.mjs';
 
 /** PNG mínimo válido (cabecera real) y un Ogg de mentira: el sniffing es lo que decide. */
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
@@ -167,8 +172,10 @@ const fakeStorage = (overrides = {}) => ({
   provider: 's3',
   bucket: 'phyto-media',
   calls: [],
+  buffers: [],
   async put(key, buffer, contentType) {
     this.calls.push(['put', key, contentType]);
+    this.buffers.push({ key, contentType, buffer });
     return { ok: true, objectKey: key, size: buffer.length };
   },
   async get(key) {
@@ -192,8 +199,9 @@ function fakeGraph({ upload = {}, send = {}, ...rest } = {}) {
     uploadResult: upload,
     sendResult: send,
     ...rest,
-    async uploadMedia() {
+    async uploadMedia(input) {
       graph.uploads += 1;
+      graph.lastUpload = input ? { mimeType: input.mimeType, buffer: input.buffer, filename: input.filename } : null;
       if (typeof graph.uploadResult === 'function') return graph.uploadResult();
       return { ok: true, mediaId: 'MEDIA_META_1', ...(graph.uploadResult ?? {}) };
     },
@@ -1046,4 +1054,126 @@ describe('rutas de media', () => {
     expect(handled).toBe(false);
     expect(res.status).toBe(0);
   });
+});
+
+/* --------------------------------------------------- AUDIO: normalización */
+
+/**
+ * Un audio que WhatsApp NO acepta (WebM del navegador, o un Ogg con Vorbis)
+ * tiene que convertirse ANTES de guardarlo y de subirlo — no después, y desde
+ * luego no se manda como está para que Meta lo rechace.
+ *
+ * Estos tests necesitan ffmpeg de verdad (es el conversor), así que se saltan si
+ * la máquina no lo tiene. Las reglas de decisión están en
+ * `tests/audio-normalize.test.js`, que no depende de ffmpeg.
+ */
+describe.skipIf(!ffmpegInfo().available)('audio no aceptado por WhatsApp: se convierte antes de enviarlo', () => {
+  const tmpAudio = mkdtempSync(path.join(os.tmpdir(), 'phyto-media-audio-'));
+  const generar = (nombre, args) => {
+    const salida = path.join(tmpAudio, nombre);
+    const run = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=0.4', ...args, salida], { encoding: 'utf8' });
+    if (run.status !== 0) throw new Error(`ffmpeg falló: ${run.stderr}`);
+    return readFileSync(salida);
+  };
+  afterAll(() => rmSync(tmpAudio, { recursive: true, force: true }));
+
+  const out = (extra = {}) => ({
+    direction: 'audio',
+    to: '18095551234',
+    conversationId: 'cnv_1',
+    messageId: 'msg_audio_1',
+    ...extra,
+  });
+
+  it('un WebM grabado en el navegador se guarda y se sube como Ogg/Opus', async () => {
+    const webm = generar('nota.webm', ['-c:a', 'libopus', '-b:a', '24k', '-f', 'webm']);
+    const storage = fakeStorage();
+    const graph = fakeGraph();
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage, whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(out({ buffer: webm, declaredMime: 'audio/webm', filename: 'nota.webm' }));
+
+    expect(resultado.ok).toBe(true);
+    expect(resultado.mimeType).toBe('audio/ogg');
+    expect(resultado.convertedTo).toBe('audio/ogg');
+    // Lo que se sube a Meta es Ogg con Opus dentro (no el WebM original).
+    expect(graph.lastUpload.mimeType).toBe('audio/ogg');
+    expect(graph.lastUpload.buffer.subarray(0, 4).toString('ascii')).toBe('OggS');
+    expect(graph.lastUpload.buffer.includes('OpusHead')).toBe(true);
+    // Y lo que queda en R2 es EXACTAMENTE lo que se envió (un mensaje, un archivo).
+    const guardado = storage.buffers.at(-1);
+    expect(guardado.contentType).toBe('audio/ogg');
+    expect(guardado.buffer.equals(graph.lastUpload.buffer)).toBe(true);
+    expect(guardado.key.endsWith('.ogg')).toBe(true);
+  }, 20000);
+
+  it('un Ogg con Vorbis también se convierte (Meta solo admite Opus en Ogg)', async () => {
+    const vorbis = generar('voz.ogg', ['-c:a', 'libvorbis', '-b:a', '64k']);
+    const graph = fakeGraph();
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage: fakeStorage(), whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(out({ buffer: vorbis, declaredMime: 'audio/ogg', filename: 'voz.ogg' }));
+
+    expect(resultado.ok).toBe(true);
+    expect(graph.lastUpload.mimeType).toBe('audio/ogg');
+    expect(graph.lastUpload.buffer.includes('OpusHead')).toBe(true);
+  }, 20000);
+
+  it('un audio que Meta ya acepta NO se toca (ni se convierte ni se reescribe)', async () => {
+    const mp3 = generar('tono.mp3', ['-c:a', 'libmp3lame', '-b:a', '64k']);
+    const graph = fakeGraph();
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage: fakeStorage(), whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(out({ buffer: mp3, declaredMime: 'audio/mpeg', filename: 'tono.mp3' }));
+
+    expect(resultado.ok).toBe(true);
+    expect(resultado.convertedTo).toBe(null);
+    expect(graph.lastUpload.mimeType).toBe('audio/mpeg');
+    expect(graph.lastUpload.buffer.equals(mp3)).toBe(true);
+  }, 20000);
+
+  it('si la conversión falla, NO se envía nada y se marca el fallo con un código claro', async () => {
+    const roto = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(200, 5)]); // WebM con basura
+    const graph = fakeGraph();
+    const storage = fakeStorage();
+    const store = fakeMediaStore();
+    const pipeline = createMediaPipeline({ mediaStore: store, storage, whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(out({ buffer: roto, declaredMime: 'audio/webm', filename: 'roto.webm' }));
+
+    expect(resultado.ok).toBe(false);
+    expect(['convert_failed', 'convert_timeout', 'convert_empty']).toContain(resultado.error.code);
+    expect(graph.uploads).toBe(0);
+    expect(graph.sends).toBe(0);
+    expect(storage.calls.filter(([accion]) => accion === 'put')).toHaveLength(0);
+    // No había operación previa, así que no hay fila que marcar: no se inventa ninguna.
+    expect(store.rows).toHaveLength(0);
+  }, 20000);
+
+  it('si la operación YA existía (reintento), el fallo de conversión queda escrito', async () => {
+    const roto = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(200, 5)]);
+    const store = fakeMediaStore([
+      {
+        id: 'mrd_prev',
+        message_id: 'out_k1',
+        media_type: 'audio',
+        direction: 'outbound',
+        idempotency_key: 'k1',
+        status: MEDIA_STATUS.UPLOADING,
+        send_status: SEND_STATUS.PREPARING,
+      },
+    ]);
+    const graph = fakeGraph();
+    const pipeline = createMediaPipeline({ mediaStore: store, storage: fakeStorage(), whatsappMedia: graph });
+
+    const resultado = await pipeline.processOutbound(
+      out({ buffer: roto, declaredMime: 'audio/webm', filename: 'roto.webm', idempotencyKey: 'k1' }),
+    );
+
+    expect(resultado.ok).toBe(false);
+    expect(graph.uploads).toBe(0);
+    expect(graph.sends).toBe(0);
+    expect(store.rows[0].send_status).toBe(SEND_STATUS.FAILED);
+    expect(store.rows[0].safe_code).toContain('convert_');
+  }, 20000);
 });

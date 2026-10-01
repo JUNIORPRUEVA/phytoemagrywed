@@ -36,6 +36,14 @@ export const ALLOWED_MIME = Object.freeze({
   'audio/amr': 'amr',
   'audio/ogg': 'ogg',
   'audio/opus': 'opus',
+  /*
+   * Estos dos NO los acepta WhatsApp, pero SÍ se aceptan aquí para poder
+   * convertirlos antes de enviarlos (`server/audio-normalize.mjs`). El navegador
+   * en Windows graba en WebM, así que rechazarlos en la puerta era rechazar el
+   * audio de media plantilla.
+   */
+  'audio/webm': 'webm',
+  'audio/wav': 'wav',
   'application/pdf': 'pdf',
 });
 
@@ -62,6 +70,7 @@ export function sniffMime(buffer) {
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
   if (b.slice(0, 4).toString('ascii') === 'RIFF' && b.slice(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (b.slice(0, 4).toString('ascii') === 'RIFF' && b.slice(8, 12).toString('ascii') === 'WAVE') return 'audio/wav';
   if (b.slice(0, 4).toString('ascii') === 'OggS') return 'audio/ogg';
   if (b.slice(0, 3).toString('ascii') === 'ID3') return 'audio/mpeg';
   if (b.slice(0, 4).toString('ascii') === 'fLaC') return null; // FLAC: no lo acepta Meta
@@ -69,7 +78,7 @@ export function sniffMime(buffer) {
     const brand = b.slice(8, 12).toString('ascii');
     return brand.startsWith('M4A') || brand.startsWith('mp4') ? 'audio/mp4' : 'audio/mp4';
   }
-  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return null; // webm/matroska
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'audio/webm'; // webm/matroska: se convierte
   if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return 'audio/mpeg';
   if (b.slice(0, 5).toString('ascii') === '%PDF-') return 'application/pdf';
   return null;

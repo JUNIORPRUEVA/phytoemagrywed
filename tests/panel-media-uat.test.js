@@ -94,6 +94,8 @@ let app;
 let dom;
 let cookie = '';
 let conversationId = '';
+// ¿El servidor trae conversor de audio (ffmpeg)? El panel decide con este dato.
+let audioNormalize = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Menos que el tiempo máximo del propio test: así, cuando algo no llega, el
@@ -269,6 +271,7 @@ beforeAll(async () => {
   cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
   const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
   conversationId = data.conversations[0].id;
+  audioNormalize = data.media?.audioNormalize === true;
 
   // Panel real en un DOM, apuntando a este CRM.
   dom = new JSDOM(readFileSync(path.join(ADMIN_DIR, 'index.html'), 'utf8'), {
@@ -446,7 +449,7 @@ describe('UAT del panel con multimedia', () => {
     expect($('#sheet').hidden).toBe(true);
   }, 30000);
 
-  it('si el navegador graba en webm, NO se finge compatibilidad con Meta', async () => {
+  it('si el navegador graba en webm, se envía convertido (y sin conversor, NO se finge compatibilidad)', async () => {
     FakeRecorder.mimeType = 'audio/webm;codecs=opus';
     const antes = sends;
     click($('#wa-mic'));
@@ -455,13 +458,25 @@ describe('UAT del panel con multimedia', () => {
     await waitFor(() => !$('#rec-stop').hidden, 'grabando', 8000);
     click('#rec-stop');
     await waitFor(() => !$('#rec-send').hidden, 'la previsualización', 8000);
-    // Se puede oír, pero no enviar: se dice por qué.
-    expect($('#rec-send').disabled).toBe(true);
-    expect($('#rec-preview').textContent).toMatch(/webm/i);
-    expect($('#rec-preview').textContent).toMatch(/no acepta/i);
-    click('#rec-send');
-    expect(sends).toBe(antes);
-    click('#rec-reset');
+    // En ambos casos se avisa de que es WebM (el usuario no tiene que adivinar).
+    const aviso = $('#rec-preview').textContent;
+    expect(aviso).toMatch(/webm/i);
+
+    if (audioNormalize) {
+      // El CRM convierte a OGG/Opus al enviar: se puede enviar y se explica.
+      expect($('#rec-send').disabled).toBe(false);
+      expect(aviso).toMatch(/ogg\/opus/i);
+      click('#rec-send');
+      await waitFor(() => sends === antes + 1, 'la nota webm enviada convertida', 8000);
+      expect($('#sheet').hidden).toBe(true);
+    } else {
+      // Sin conversor: se puede oír, pero no enviar. Y se dice por qué.
+      expect($('#rec-send').disabled).toBe(true);
+      expect(aviso).toMatch(/no acepta/i);
+      click('#rec-send');
+      expect(sends).toBe(antes);
+      click('#rec-reset');
+    }
     FakeRecorder.mimeType = 'audio/ogg;codecs=opus';
   }, 30000);
 

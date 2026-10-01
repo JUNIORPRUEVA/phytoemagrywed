@@ -229,8 +229,11 @@ describe('tipos aceptados y contenido real', () => {
     expect(sniffMime(Buffer.from('OggS________', 'ascii'))).toBe('audio/ogg');
     // Un HTML disfrazado de imagen no cuela.
     expect(sniffMime(Buffer.from('<html><script>alert(1)</script>', 'utf8'))).toBe(null);
-    // webm (lo que graba Chrome) tampoco es aceptado por Meta: se detecta y se descarta.
-    expect(sniffMime(Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0]))).toBe(null);
+    // webm (lo que graba Chrome en Windows) SÍ se reconoce: no vale para Meta
+    // tal cual, pero identificarlo permite convertirlo a OGG/Opus al enviarlo.
+    expect(sniffMime(Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0]))).toBe('audio/webm');
+    // wav (RIFF/WAVE) también se reconoce por el mismo motivo.
+    expect(sniffMime(Buffer.from('RIFF____WAVEfmt ', 'ascii'))).toBe('audio/wav');
     expect(sniffMime(Buffer.from('cualquier cosa', 'utf8'))).toBe(null);
   });
 });

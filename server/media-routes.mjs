@@ -89,6 +89,13 @@ const errorAmable = {
   not_configured: 'WhatsApp no está configurado.',
   key_conflict: 'Esa operación ya estaba en curso.',
   send_failed: 'No se pudo enviar el archivo.',
+  // Conversión de audio (ver `server/audio-normalize.mjs`): se explica QUÉ pasa y
+  // qué hacer, en vez de dejar al usuario con un «Meta rechazó el audio».
+  converter_missing:
+    'WhatsApp no acepta este formato de audio y este servidor no tiene conversor. Prueba con OGG/Opus, M4A o MP3.',
+  convert_failed: 'No se pudo convertir el audio a un formato que WhatsApp acepte. Prueba con otra grabación.',
+  convert_timeout: 'La conversión del audio tardó demasiado. Prueba con una nota más corta.',
+  convert_empty: 'La conversión salió vacía: el audio no tiene sonido aprovechable.',
 };
 
 /**
