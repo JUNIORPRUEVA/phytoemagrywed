@@ -34,4 +34,13 @@ describe('Hoy notification UX', () => {
     expect(handler).toContain('openNotificationsSheet();');
     expect(css).toMatch(/\.sheet\s*\{[^}]*z-index:\s*900;/s);
   });
+
+  it('los iconos del appbar de Hoy quedan clicables por encima de capas decorativas', () => {
+    expect(css).toMatch(/\.dashboard-head::after\s*\{[^}]*pointer-events:\s*none;/s);
+    expect(css).toMatch(/body\[data-tab='hoy'\]\s+\.mobile-header\s*\{[^}]*z-index:\s*0;[^}]*pointer-events:\s*none;/s);
+    expect(css).toMatch(/body\[data-tab='hoy'\]\s+\.dashboard-head\s*\{[^}]*pointer-events:\s*none;/s);
+    expect(css).toMatch(/body\[data-tab='hoy'\]\s+\.dashboard-head__menu\s*\{[^}]*pointer-events:\s*auto;/s);
+    expect(css).toMatch(/body\[data-tab='hoy'\]\s+\.dashboard-head__actions\s*\{[^}]*z-index:\s*5;/s);
+    expect(css).toMatch(/body\[data-tab='hoy'\]\s+\.dashboard-head__quick\s*\{[^}]*pointer-events:\s*auto;/s);
+  });
 });

@@ -356,6 +356,7 @@ code {
     linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 62%);
   border-radius: 38% 62% 48% 52%;
   transform: rotate(-22deg);
+  pointer-events: none;
 }
 
 .dashboard-head__menu {
@@ -5089,6 +5090,8 @@ body:not([data-tab='hoy']) .dashboard-head {
 
 /* Refinamiento final Dashboard: degradado integrado, sin tarjeta ni copia extra. */
 body[data-tab='hoy'] .mobile-header {
+  position: relative;
+  z-index: 0;
   min-height: 332px;
   margin: 0;
   padding: 0;
@@ -5097,9 +5100,11 @@ body[data-tab='hoy'] .mobile-header {
     radial-gradient(circle at 80% 18%, rgba(33, 214, 184, 0.66), transparent 31%),
     radial-gradient(circle at 8% 88%, rgba(255, 255, 255, 0.92), transparent 42%),
     linear-gradient(155deg, #005f53 0%, #07856f 34%, #31d0aa 62%, #f5fbfb 100%);
+  pointer-events: none;
 }
 
 body[data-tab='hoy'] .dashboard-head {
+  pointer-events: none;
   min-height: 92px;
   margin: 0;
   padding: calc(8px + env(safe-area-inset-top, 0px)) 18px 8px;
@@ -5118,6 +5123,7 @@ body[data-tab='hoy'] .dashboard-head::after {
 }
 
 body[data-tab='hoy'] .dashboard-head__menu {
+  pointer-events: auto;
   width: 54px;
   height: 54px;
   border-radius: 16px;
@@ -5149,6 +5155,15 @@ body[data-tab='hoy'] .dashboard-head__title small {
 body[data-tab='hoy'] .dashboard-head__status {
   padding: 9px 12px;
   font-size: 0.82rem;
+}
+
+body[data-tab='hoy'] .dashboard-head__actions {
+  position: relative;
+  z-index: 5;
+}
+
+body[data-tab='hoy'] .dashboard-head__quick {
+  pointer-events: auto;
 }
 
 body[data-tab='hoy'] .content {
