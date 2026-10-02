@@ -146,7 +146,7 @@ import {
 
 const saleCancellationLocks = new Map();
 const orderTransitionLocks = new Map();
-import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
+import { catalogItems, computeOrderTotals, findCatalogItem } from '../src/lib/catalog.js';
 import {
   createWhatsAppClient,
   parseWebhook,
@@ -2406,6 +2406,53 @@ function renderTemplateBody(body, parameters) {
 }
 
 /**
+ * PREFERENCIAS DE PEDIDO de un cliente.
+ *
+ * Es lo que pidió el negocio: guardar aparte lo que se repite en CADA pedido
+ * (frasco, cantidad, forma de pago, ubicación de entrega y una nota de
+ * preferencia) para que la próxima vez solo haya que confirmar la cantidad.
+ * No envía nada, no toca precios y no inventa: lo que no viene, no se guarda.
+ *
+ * @param {unknown} value
+ * @param {Array<{id: string}>} [customerLocations] ubicaciones REALES del cliente
+ * @returns {object|null|undefined} limpio · `null` para BORRAR · `undefined` = no vale (422)
+ */
+function normalizeOrderPrefs(value, customerLocations = []) {
+  if (value === null || value === '') return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const variantId = text(value.variantId ?? value.variant_id, 60);
+  // El frasco tiene que existir en el catálogo: nada de ids inventados.
+  if (variantId && !findCatalogItem(variantId)) return undefined;
+
+  const cruda = value.quantity ?? value.cantidad;
+  const quantity =
+    cruda === undefined || cruda === null || cruda === '' ? null : Math.trunc(Number(cruda));
+  if (quantity !== null && (!Number.isFinite(quantity) || quantity < 1 || quantity > 500)) return undefined;
+
+  const paymentMethod = text(value.paymentMethod ?? value.payment_method, 20)?.toUpperCase() ?? null;
+  if (paymentMethod && !PAYMENT_METHODS.includes(paymentMethod)) return undefined;
+
+  const locationId = text(value.locationId ?? value.location_id, 80);
+  // La ubicación de entrega tiene que ser una que el CRM ya tenga de ese cliente.
+  if (locationId && !customerLocations.some((row) => row.id === locationId)) return undefined;
+
+  const note = longText(value.note ?? value.nota, 300);
+  const limpio = {
+    variant_id: variantId ?? null,
+    quantity: quantity ?? null,
+    payment_method: paymentMethod ?? null,
+    location_id: locationId ?? null,
+    note: note ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const vacio =
+    !limpio.variant_id && !limpio.quantity && !limpio.payment_method && !limpio.location_id && !limpio.note;
+  // Sin nada dentro no son preferencias: se borran (null), no se guarda un hueco.
+  return vacio ? null : limpio;
+}
+
+/**
  * Texto que va DENTRO de una variable de plantilla.
  *
  * Meta no admite saltos de línea, tabuladores ni espacios repetidos dentro de una
@@ -4232,6 +4279,25 @@ async function handle(req, res, ctx) {
             return;
           }
           patch.photo_url = limpia;
+        }
+        /*
+         * PREFERENCIAS DE PEDIDO: el frasco, la cantidad, la forma de pago, la
+         * ubicación de entrega y una nota, guardados CON el cliente para que el
+         * próximo pedido venga ya relleno (solo se confirma la cantidad).
+         */
+        if (body.orderPrefs !== undefined || body.order_prefs !== undefined) {
+          const pedidas = body.orderPrefs !== undefined ? body.orderPrefs : body.order_prefs;
+          const limpias = normalizeOrderPrefs(pedidas, await ctx.customers.listLocations(customerId, { limit: 100 }));
+          if (limpias === undefined) {
+            json(res, 422, {
+              ok: false,
+              error: 'invalid_order_prefs',
+              message:
+                'Esas preferencias no valen: revisa el frasco (debe existir en el catálogo), la cantidad, la forma de pago y la ubicación (debe ser una del cliente).',
+            });
+            return;
+          }
+          patch.orderPrefs = limpias;
         }
         // Estado comercial A MANO (INTERESADO / PERDIDO). Con `null` vuelve al derivado.
         if (body.commercialState !== undefined) {

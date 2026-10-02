@@ -161,6 +161,22 @@ async function adminJson(route, options = {}) {
   return { response, body };
 }
 
+/**
+ * El pedido COMPLETO de un ítem del panel.
+ *
+ * `/api/admin/data` trae el resumen plano (variant_id, quantity, total…) y el
+ * detalle del pedido dentro de `order_json`, que es de donde lo lee el panel
+ * (`itemOrder`). Igual que en la app: si el detalle no está, se cae al resumen.
+ */
+function orderOfItem(item) {
+  try {
+    const parsed = JSON.parse(item?.order_json ?? item?.orderJson ?? '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function startConversation(phone, name, body = '') {
   const result = await adminJson('/api/admin/conversations/start', {
     method: 'POST',
@@ -218,6 +234,23 @@ async function approveLocationTemplateForUat() {
     }),
   });
   if (result.response.status !== 200) throw new Error(`no se pudo aprobar la plantilla de ubicación: ${JSON.stringify(result.body)}`);
+}
+
+/** La plantilla con la que se le pide al cliente CONFIRMAR su pedido. */
+async function approveOrderConfirmTemplateForUat() {
+  const result = await adminJson('/api/admin/wa-templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'phyto_confirmacion_pedido_v1',
+      friendlyName: 'Confirmación de pedido',
+      status: 'APPROVED',
+      body: 'Hola {{1}}, recibimos tu pedido {{2}} correctamente. Total: {{3}} Forma de pago: {{4}} Por favor confirma que los datos de tu pedido son correctos.',
+      variables: ['customer_name', 'order_number', 'total', 'payment_method'],
+      metaTemplateId: 'tpl-uat-confirm',
+      lastSyncedAt: new Date().toISOString(),
+    }),
+  });
+  if (result.response.status !== 200) throw new Error(`no se pudo aprobar la plantilla de confirmación: ${JSON.stringify(result.body)}`);
 }
 
 beforeAll(async () => {
@@ -795,6 +828,124 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     expect($('#wa-template-fields').textContent).not.toContain('todavía no tiene pedidos');
     closeSheetForUat();
   }, 40000);
+});
+
+describe('preferencias del pedido del cliente', () => {
+  /*
+   * Lo que pidió el negocio: guardar aparte lo que se repite (frasco, cantidad,
+   * pago, ubicación de entrega y una nota) para que un pedido nuevo se cree
+   * confirmando solo la cantidad; y ver cuántas compras y cuánto ha invertido.
+   */
+  it('la ficha guarda las preferencias y el pedido nuevo viene ya relleno', async () => {
+    const luis = (await conversations()).find((row) => row.id === ids.luis);
+
+    // 1) En la ficha del cliente se guardan sus preferencias (como lo haría una persona).
+    click(`[data-conv="${ids.luis}"]`);
+    await waitFor(() => $('#wa-chat-avatar'), 'el chat de Luis', 9000);
+    click('#wa-chat-avatar');
+    await waitFor(() => $('#prefs-save'), 'la sección de preferencias en la ficha', 9000);
+    // La ficha se pinta dos veces (lo que ya sabe y luego lo que confirma el
+    // servidor): se espera a la segunda para no escribir sobre un render viejo.
+    await waitFor(
+      () => !$('#customer-profile').textContent.includes('Todavía no tiene pedidos registrados'),
+      'la ficha completa del cliente',
+      9000,
+    );
+    expect($('#customer-profile').textContent).toContain('Preferencias del pedido');
+    expect($('#customer-profile').textContent).toContain('Compras');
+
+    $('#prefs-variant').value = 'capsules_15';
+    $('#prefs-quantity').value = '3';
+    $('#prefs-payment').value = 'TRANSFER';
+    $('#prefs-note').value = 'Entregar después de las 5 pm';
+    click('#prefs-save');
+
+    const prefs = await waitFor(async () => {
+      const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+      const cliente = (data.customers ?? []).find((row) => row.id === luis.customer_id);
+      return cliente?.orderPrefs?.quantity === 3 ? cliente.orderPrefs : null;
+    }, 'las preferencias guardadas en el servidor', 9000);
+    expect(prefs.variant_id).toBe('capsules_15');
+    expect(prefs.payment_method).toBe('TRANSFER');
+    expect(prefs.note).toContain('5 pm');
+
+    // 2) Crear pedido: el formulario ya viene con «lo de siempre».
+    click('.drawer__item[data-tab="whatsapp"]');
+    const fila = await waitFor(() => $(`[data-conv="${ids.luis}"]`), 'la fila de Luis', 9000);
+    click(fila);
+    // El chat se repinta al llegar sus mensajes: se espera al chat pintado
+    // (nombre incluido) para no pulsar el «⋯» de un render que ya no está.
+    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
+    if (!$('#sheet-body [data-order-new]')) {
+      click('#wa-actions');
+      await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
+    }
+    click('#sheet-body [data-order-new]');
+
+    const variante = await waitFor(() => $('#order-lines select'), 'el formulario de pedido', 9000);
+    expect(variante.value).toBe('capsules_15');
+    expect($('#order-lines [data-line-qty="0"]').value).toBe('3');
+    expect($('#order-payment').value).toBe('TRANSFER');
+    expect($('#sheet-body').textContent).toContain('Lo de siempre');
+    expect($('#order-save-prefs')).not.toBeNull();
+
+    // Solo se confirma la cantidad.
+    const cantidad = $('#order-lines [data-line-qty="0"]');
+    cantidad.value = '2';
+    cantidad.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    click('#order-save');
+    await waitFor(() => /Comprobante|Pedido/.test($('#sheet-body').innerHTML), 'el comprobante del pedido', 9000);
+    closeSheetForUat();
+
+    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+    const pedidos = datos.items.filter((item) => item.type === 'order_intent' && item.customer_id === luis.customer_id);
+    expect(pedidos.length).toBe(2);
+    const nuevo = pedidos.find((item) => item.variant_id === 'capsules_15');
+    expect(Number(nuevo.quantity)).toBe(2);
+    expect(orderOfItem(nuevo).payment_method).toBe('TRANSFER');
+    // «Lo de siempre» NO se pisó con la cantidad de este pedido (la casilla venía sin marcar).
+    const cliente = datos.customers.find((row) => row.id === luis.customer_id);
+    expect(Number(cliente.orderPrefs.quantity)).toBe(3);
+  }, 60000);
+});
+
+describe('pedir al cliente que confirme su pedido', () => {
+  it('«Pedir confirmación» trae la plantilla del pedido con TODOS sus datos', async () => {
+    await approveOrderConfirmTemplateForUat();
+    click('#wa-actions');
+    await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
+    click('#sheet-body [data-wa-confirm-order]');
+    await waitFor(() => $('#wa-template-fields [data-wa-var="4"]'), 'los huecos de la confirmación', 9000);
+
+    // Los datos NO se escriben a mano: salen del pedido real más reciente.
+    const luis = (await conversations()).find((row) => row.id === ids.luis);
+    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+    const ultimo = datos.items
+      .filter((item) => item.type === 'order_intent' && item.customer_id === luis.customer_id)
+      .sort((a, b) => String(b.received_at ?? '').localeCompare(String(a.received_at ?? '')))[0];
+    expect(ultimo).toBeTruthy();
+
+    expect($('#wa-template').value).toBe('phyto_confirmacion_pedido_v1');
+    expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Luis Lista');
+    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe(ultimo.order_number);
+    // El total va como lo pinta todo el CRM («DOP 3,500»): se compara el importe.
+    const importe = (valor) => Number(String(valor).replace(/[^\d.]/g, ''));
+    expect(importe($('#wa-template-fields [data-wa-var="3"]').value)).toBe(Number(ultimo.total));
+    const pago = orderOfItem(ultimo).payment_method;
+    expect($('#wa-template-fields [data-wa-var="4"]').value).toBe({ CASH: 'Efectivo', TRANSFER: 'Transferencia' }[pago]);
+    // Ni un hueco sin rellenar: el mensaje se lee entero antes de enviarlo.
+    expect($('#wa-template-preview').textContent).not.toContain('⟨falta');
+
+    const campos = [1, 2, 3, 4].map((slot) => $(`#wa-template-fields [data-wa-var="${slot}"]`).value);
+    const antes = whatsapp.sent.length;
+    click('#sheet-body #wa-send-template');
+    await waitFor(() => whatsapp.sent.length === antes + 1, 'la confirmación enviada', 9000);
+    const enviado = whatsapp.sent.at(-1);
+    expect(enviado.template.name).toBe('phyto_confirmacion_pedido_v1');
+    // Lo que se envía es EXACTAMENTE lo que se revisó en pantalla.
+    const textos = enviado.template.components[0].parameters.map((parameter) => parameter.text);
+    expect(textos).toEqual(campos);
+  }, 30000);
 });
 
 describe('la foto del cliente', () => {

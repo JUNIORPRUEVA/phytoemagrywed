@@ -1220,6 +1220,83 @@
       .filter((item) => item.customer_id === customerId && item.type === 'order_intent')
       .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)));
 
+  /** «¿Cuál es el pedido más reciente?», con el MISMO criterio que el servidor. */
+  const orderRecency = (item) => String(item?.updated_at ?? item?.created_at ?? item?.received_at ?? '');
+  const ordersNewestFirst = (rows) =>
+    rows.slice().sort((a, b) => orderRecency(b).localeCompare(orderRecency(a)));
+
+  const orderPaymentMethodOf = (item) => itemOrder(item)?.payment_method ?? item?.payment_method ?? null;
+  const orderTotalOf = (item) => {
+    const order = itemOrder(item) ?? {};
+    const total = order.total ?? item?.total ?? null;
+    return total === null || total === undefined || total === ''
+      ? ''
+      : money(total, order.currency ?? item?.currency);
+  };
+
+  /**
+   * PREFERENCIAS DE PEDIDO del cliente: lo que se repite en CADA pedido (frasco,
+   * cantidad, forma de pago, ubicación de entrega y una nota).
+   *
+   * Si el negocio las guardó, mandan. Si no, se deducen del ÚLTIMO pedido: así el
+   * formulario viene relleno desde el primer día, sin configurar nada.
+   */
+  function customerOrderPrefs(customerId) {
+    const customer = customerById(customerId) ?? null;
+    const guardadas = customer?.orderPrefs ?? customer?.order_prefs ?? null;
+    const ultimo = ordersNewestFirst(ordersForCustomer(customerId))[0] ?? null;
+    return {
+      variant_id: guardadas?.variant_id ?? ultimo?.variant_id ?? null,
+      quantity: Number(guardadas?.quantity ?? ultimo?.quantity ?? 0) || null,
+      payment_method: guardadas?.payment_method ?? orderPaymentMethodOf(ultimo),
+      location_id: guardadas?.location_id ?? null,
+      note: guardadas?.note ?? null,
+      saved: Boolean(guardadas),
+    };
+  }
+
+  /** Una línea con lo que el CRM reutilizará de este cliente. */
+  function orderPrefsSummary(prefs, locations = []) {
+    if (!prefs) return '';
+    const variante = (state.catalog ?? []).find((row) => row.id === prefs.variant_id);
+    return [
+      variante ? `${variante.label}${prefs.quantity ? ` ×${prefs.quantity}` : ''}` : null,
+      prefs.payment_method ? paymentMethodLabel(prefs.payment_method) : null,
+      prefs.location_id ? locationTitle(locations.find((row) => row.id === prefs.location_id)) : null,
+      prefs.note ? `«${prefs.note}»` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  /**
+   * Ubicación de entrega que el CRM da por buena: la guardada en las preferencias
+   * y, si no, la del último pedido; y si tampoco, la última que COMPARTIÓ el
+   * cliente (nunca una que le hayamos enviado nosotros).
+   */
+  function preferredDeliveryLocation(customerId, locations = []) {
+    const prefs = customerOrderPrefs(customerId);
+    if (prefs.location_id) {
+      const guardada = locations.find((row) => row.id === prefs.location_id);
+      if (guardada) return guardada;
+    }
+    const ultimo = ordersNewestFirst(ordersForCustomer(customerId))[0] ?? null;
+    const delPedido = ultimo ? itemOrder(ultimo)?.delivery?.location?.source_location_id ?? null : null;
+    return (
+      (delPedido ? locations.find((row) => row.id === delPedido) : null) ??
+      locations.find((row) => String(row.source ?? '') === 'whatsapp_inbound') ??
+      null
+    );
+  }
+
+  /** Compras del cliente: cuántas, cuánto ha invertido y cuál fue la última. */
+  function customerPurchaseStats(customerId) {
+    const orders = ordersForCustomer(customerId);
+    const delivered = orders.filter((row) => row.status === 'entregado');
+    const invested = delivered.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+    return { orders, count: orders.length, delivered: delivered.length, invested, last: ordersNewestFirst(orders)[0] ?? null };
+  }
+
   function customerSalesSummary(customer) {
     const orders = ordersForCustomer(customer.id);
     const delivered = orders.filter((row) => row.status === 'entregado');
@@ -4387,7 +4464,7 @@
       ? delCliente.filter((item) => item.conversation_id === conversationId)
       : [];
     const pool = deLaConversacion.length ? deLaConversacion : delCliente;
-    return pool.slice().sort((a, b) => String(b.received_at ?? '').localeCompare(String(a.received_at ?? '')))[0] ?? null;
+    return ordersNewestFirst(pool)[0] ?? null;
   }
 
   /** Número de pedido tal como lo conoce el CRM (nunca inventado). */
@@ -4405,11 +4482,16 @@
    */
   function waTemplateAutoValues(customer, conversationId = null) {
     const nombre = (customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
+    const order = orderForConversation(customer?.id ?? null, conversationId);
     return {
       customer_name: nombre,
       nombre,
       phone: customer?.phone_e164 ?? '',
-      order_number: orderNumberOf(orderForConversation(customer?.id ?? null, conversationId)),
+      order_number: orderNumberOf(order),
+      // El total y la forma de pago salen del MISMO pedido: así la plantilla de
+      // confirmación llega completa y sin que nadie tenga que copiar cifras.
+      total: order ? orderTotalOf(order) : '',
+      payment_method: order ? paymentMethodLabel(orderPaymentMethodOf(order)) : '',
     };
   }
 
@@ -4448,6 +4530,8 @@
   const WA_FREE_VAR_KEYS = ['mensaje', 'texto', 'mensaje_libre', 'libre', 'personalizado'];
   /** Plantilla aprobada con la que se pide la ubicación al cliente. */
   const LOCATION_TEMPLATE = 'phyto_ubicacion_entrega_v1';
+  /** Plantilla con la que se le pide al cliente confirmar SU pedido. */
+  const ORDER_CONFIRM_TEMPLATE = 'phyto_confirmacion_pedido_v1';
   function waTemplateFreeSlot(template) {
     const index = waTemplateHuecos(template).findIndex((key) =>
       WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase()),
@@ -5901,6 +5985,82 @@
         </div>
       </div>`;
 
+    /*
+     * PREFERENCIAS Y COMPRAS DEL CLIENTE.
+     *
+     * Se guardan APARTE los datos que se repiten en cada pedido (frasco, cantidad,
+     * forma de pago, ubicación de entrega y una nota) y se ven las compras hechas:
+     * así el próximo pedido solo necesita confirmar la cantidad.
+     */
+    const prefs = customerOrderPrefs(customer.id);
+    const stats = customerPurchaseStats(customer.id);
+    const ubicaciones = profile.locations ?? [];
+    const entregaPreferida = preferredDeliveryLocation(customer.id, ubicaciones);
+    const prefsSection = customerProfileSection(
+      'Preferencias del pedido',
+      `<p class="view__hint">Lo que se repite en cada pedido. Al crear uno nuevo, el formulario ya viene con esto: solo confirmas la cantidad.</p>
+       <label class="field">
+         <span class="field__label">Frasco de siempre</span>
+         <select class="field__select" id="prefs-variant">
+           <option value="">Sin preferencia</option>
+           ${(state.catalog ?? [])
+             .map(
+               (variant) =>
+                 `<option value="${escapeHtml(variant.id)}" ${variant.id === prefs.variant_id ? 'selected' : ''}>${escapeHtml(
+                   variant.label,
+                 )} · ${money(variant.price, variant.currency)}</option>`,
+             )
+             .join('')}
+         </select>
+       </label>
+       <label class="field">
+         <span class="field__label">Cantidad de siempre</span>
+         <input class="field__input" id="prefs-quantity" type="number" min="1" step="1" value="${prefs.quantity ?? 1}" />
+       </label>
+       <label class="field">
+         <span class="field__label">Forma de pago</span>
+         <select class="field__select" id="prefs-payment">
+           <option value="">Sin preferencia</option>
+           ${(state.paymentMethods ?? [])
+             .map(
+               (method) =>
+                 `<option value="${escapeHtml(method.value)}" ${method.value === prefs.payment_method ? 'selected' : ''}>${escapeHtml(
+                   method.label,
+                 )}</option>`,
+             )
+             .join('')}
+         </select>
+       </label>
+       <label class="field">
+         <span class="field__label">Ubicación de entrega</span>
+         <select class="field__select" id="prefs-location">
+           <option value="">Sin preferencia</option>
+           ${ubicaciones
+             .map(
+               (row) =>
+                 `<option value="${escapeHtml(row.id)}" ${
+                   row.id === (prefs.location_id ?? entregaPreferida?.id ?? '') ? 'selected' : ''
+                 }>${escapeHtml(locationTitle(row))}</option>`,
+             )
+             .join('')}
+         </select>
+       </label>
+       <label class="field">
+         <span class="field__label">Nota de preferencia</span>
+         <input class="field__input" id="prefs-note" value="${escapeHtml(prefs.note ?? '')}"
+           placeholder="Entrega después de las 5 pm, preguntar por…" />
+       </label>
+       <div class="profile-order-actions">
+         <button class="btn btn--primary btn--sm" id="prefs-save" type="button">Guardar preferencias</button>
+       </div>
+       <dl class="facts profile-facts">
+         ${profileFact('Compras', stats.count ? `${stats.count} (${stats.delivered} entregadas)` : 'Ninguna todavía')}
+         ${profileFact('Invertido', stats.invested ? money(stats.invested) : '—')}
+         ${profileFact('Última compra', stats.last?.received_at ? escapeHtml(fmtWhen(stats.last.received_at)) : '—')}
+         ${profileFact('Entrega de siempre', entregaPreferida ? escapeHtml(locationTitle(entregaPreferida)) : '—')}
+       </dl>`,
+    );
+
     const orders = customerProfileSection(
       'Pedidos / Ventas',
       purchases.length
@@ -5955,6 +6115,7 @@
     box.innerHTML = `${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
       <div class="profile-grid">
         ${personal}
+        ${prefsSection}
         ${stageHtml}
         ${tagsHtml}
         ${commercialHtml}
@@ -6014,6 +6175,32 @@
       } catch (error) {
         if (error.message !== 'unauthorized') toast('No se pudo quitar la foto');
       }
+    });
+
+    // Preferencias del pedido: se guardan con el cliente y las usa el formulario
+    // de pedido para venir ya relleno.
+    $('#prefs-save')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await api(`/api/admin/customers/${encodeURIComponent(customer.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              orderPrefs: {
+                variantId: $('#prefs-variant').value || null,
+                quantity: Number($('#prefs-quantity').value) || null,
+                paymentMethod: $('#prefs-payment').value || null,
+                locationId: $('#prefs-location').value || null,
+                note: $('#prefs-note').value.trim() || null,
+              },
+            }),
+          });
+          toast('Preferencias guardadas');
+          await load({ keepTab: true });
+          await openCustomer(customer.id);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudieron guardar las preferencias');
+        }
+      });
     });
   }
 
@@ -6507,6 +6694,10 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.pin}</span>
           <span><strong>Pedir ubicación</strong><small>Plantilla «Solicitar ubicación»</small></span>
         </button>
+        <button class="menu-item" data-wa-confirm-order="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.check}</span>
+          <span><strong>Pedir confirmación</strong><small>Plantilla del pedido, con sus datos</small></span>
+        </button>
         <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
@@ -6900,9 +7091,18 @@
     }
     // Ubicaciones del cliente: se piden antes de pintar para poder ofrecerlas (§9).
     const customerLocations = customerId ? await fetchCustomerLocations(customerId) : [];
+    /*
+     * PREFERENCIAS DEL CLIENTE: frasco, cantidad, forma de pago y ubicación de
+     * entrega. Con esto el formulario ya viene relleno y lo único que se confirma
+     * es la cantidad, que es lo que cambia de un pedido a otro.
+     */
+    const prefs = customerId ? customerOrderPrefs(customerId) : null;
+    const prefsLine = customerId ? orderPrefsSummary(prefs, customerLocations) : '';
+    const prefsVariant =
+      prefs?.variant_id && catalog.some((variant) => variant.id === prefs.variant_id) ? prefs.variant_id : null;
     /** @type {Array<{variantId: string, quantity: number}>} */
     let lines = order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
-      { variantId: catalog[0].id, quantity: 1 },
+      { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
     ];
     const defaultStatus = order?.status ?? 'nuevo';
     const methods = state.paymentMethods.length
@@ -6911,7 +7111,10 @@
           { value: 'CASH', label: 'Efectivo' },
           { value: 'TRANSFER', label: 'Transferencia' },
         ];
-    const defaultPayment = order?.payment_method ?? methods[0]?.value ?? 'CASH';
+    const prefsPayment = methods.some((method) => method.value === prefs?.payment_method)
+      ? prefs.payment_method
+      : null;
+    const defaultPayment = order?.payment_method ?? prefsPayment ?? methods[0]?.value ?? 'CASH';
     const sourceConversation = conversationId ? state.conversations.find((row) => row.id === conversationId) ?? state.wa.chat?.conversation ?? null : null;
     const defaultSource = order?.source ?? (sourceConversation?.source === 'META_ADS' ? 'META_ADS' : conversationId ? 'WHATSAPP' : 'MANUAL');
     const defaultCampaign =
@@ -6949,9 +7152,24 @@
                <input class="field__input" id="order-name" placeholder="Nombre del cliente" />
              </label>`
       }
+      ${
+        customer
+          ? `<div class="order-prefs">
+              ${
+                prefsLine
+                  ? `<p class="view__hint"><strong>Lo de siempre:</strong> ${escapeHtml(prefsLine)}</p>`
+                  : '<p class="view__hint">Sin preferencias guardadas todavía: se toman los datos del último pedido.</p>'
+              }
+              <label class="loc-option">
+                <input type="checkbox" id="order-save-prefs" ${prefs?.saved ? '' : 'checked'} />
+                <span class="loc-option__body"><strong>Guardar estos datos como sus preferencias</strong>
+                <small>Frasco, cantidad, pago y ubicación para el próximo pedido.</small></span>
+              </label>
+            </div>`
+          : ''
+      }
       <div id="order-lines"></div>
-      <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
-      <label class="field">
+      <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>      <label class="field">
         <span class="field__label">Origen de la venta</span>
         <select class="field__select" id="order-source">
           ${['META_ADS', 'ORGANIC', 'REFERRAL', 'WHATSAPP', 'MANUAL', 'OTHER']
@@ -7104,13 +7322,22 @@
       ? { ...location }
       : order?.delivery?.location
         ? { ...order.delivery.location, id: order.delivery.location.source_location_id ?? null }
-        : null;
+        : customerId
+          ? preferredDeliveryLocation(customerId, customerLocations)
+          : null;
     chosenLocation = chosenLocation && locationCoordsOk(chosenLocation) ? chosenLocation : null;
     const renderLocationBlock = () => {
       const box = $('#order-loc');
       if (!box) return;
       if (chosenLocation) {
+        /*
+         * La ubicación viene puesta (la de siempre), pero SIEMPRE con su edad a la
+         * vista: un punto compartido hace meses puede estar ya caducado, y eso el
+         * operador tiene que poder verlo antes de confirmar el pedido.
+         */
+        const edad = locationContext(chosenLocation).age;
         box.innerHTML = `${locationChip(chosenLocation, { withActions: false })}
+          ${edad ? `<p class="view__hint">${escapeHtml(edad)}. Si este pedido va a otro sitio, quítala y elige otra.</p>` : ''}
           <button class="btn btn--ghost btn--sm" id="order-loc-clear" type="button">Quitar ubicación</button>`;
         $('#order-loc-clear').addEventListener('click', () => {
           chosenLocation = null;
@@ -7267,6 +7494,27 @@
               })
             : await api('/api/admin/orders', { method: 'POST', body: JSON.stringify(payload) });
           const savedId = orderId ?? result.item?.id;
+          /*
+           * GUARDAR LAS PREFERENCIAS: lo que se acaba de usar pasa a ser «lo de
+           * siempre» de este cliente (frasco, cantidad, pago y ubicación), para
+           * que el próximo pedido venga ya relleno. Si falla, el pedido YA está
+           * guardado: no se rompe nada.
+           */
+          if (customer?.id && $('#order-save-prefs')?.checked && lines.length) {
+            const previas = customerOrderPrefs(customer.id);
+            await api(`/api/admin/customers/${encodeURIComponent(customer.id)}`, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                orderPrefs: {
+                  variantId: lines[0].variantId,
+                  quantity: Math.max(1, Number(lines[0].quantity) || 1),
+                  paymentMethod: $('#order-payment').value,
+                  locationId: chosenLocation?.id ?? null,
+                  note: previas.note ?? null,
+                },
+              }),
+            }).catch(() => {});
+          }
           toast(orderId ? 'Pedido actualizado' : `Pedido ${result.order?.order_number ?? ''} guardado`);
           await load({ keepTab: true });
           if (savedId) await openReceipt(savedId);
@@ -8988,6 +9236,12 @@
       }
       if (event.target.closest('[data-wa-ask-location]')) {
         askForLocation();
+        return;
+      }
+      if (event.target.closest('[data-wa-confirm-order]')) {
+        // Confirmación del pedido: los datos (número, total, pago) van puestos
+        // solos, así el cliente solo tiene que decir «sí» o corregir algo.
+        openWaTemplateSheet({ templateName: ORDER_CONFIRM_TEMPLATE });
         return;
       }
       // --------------------------------------------- respuestas rápidas

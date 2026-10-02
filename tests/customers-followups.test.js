@@ -282,3 +282,111 @@ describe('no contactar', () => {
     expect((await json(back)).customer.do_not_contact).toBe(false);
   });
 });
+
+/**
+ * PREFERENCIAS DE PEDIDO del cliente.
+ *
+ * Lo que se repite en cada pedido (frasco, cantidad, forma de pago y nota) se
+ * guarda CON el cliente para que el próximo pedido solo tenga que confirmar la
+ * cantidad. Estas pruebas fijan la frontera: lo que no existe no se guarda.
+ */
+describe('preferencias de pedido del cliente', () => {
+  const clienteLuis = async () => {
+    const data = await json(await call('/api/admin/customers'));
+    return data.customers.find((row) => row.phone_e164 === '+18095551234');
+  };
+
+  it('se guardan con el cliente y sobreviven al siguiente pedido', async () => {
+    const customer = await clienteLuis();
+    const response = await call(`/api/admin/customers/${customer.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        orderPrefs: {
+          variantId: 'capsules_15',
+          quantity: 3,
+          paymentMethod: 'TRANSFER',
+          note: 'Entregar después de las 5 pm',
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = await json(response);
+    expect(body.customer.orderPrefs).toMatchObject({
+      variant_id: 'capsules_15',
+      quantity: 3,
+      payment_method: 'TRANSFER',
+      location_id: null,
+    });
+    expect(body.customer.orderPrefs.note).toContain('5 pm');
+    expect(body.customer.orderPrefs.updated_at).toBeTruthy();
+
+    // Y se leen tal cual en el perfil 360 (que es de donde los toma el panel).
+    const profile = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(profile.customer.orderPrefs.quantity).toBe(3);
+
+    // Un pedido nuevo NO pisa las preferencias por su cuenta.
+    const venta = await buy({
+      phone: '+1 (809) 555-1234',
+      variantId: 'capsules_5',
+      quantity: 1,
+      status: 'confirmado',
+      date: new Date().toISOString(),
+    });
+    expect(venta.status).toBe(201);
+    const despues = await json(await call(`/api/admin/customers/${customer.id}`));
+    expect(despues.customer.orderPrefs.quantity).toBe(3);
+    expect(despues.customer.orderPrefs.variant_id).toBe('capsules_15');
+  });
+
+  it('lo que no existe no se guarda: frasco, cantidad, pago y ubicación se validan', async () => {
+    const customer = await clienteLuis();
+    const antes = (await json(await call(`/api/admin/customers/${customer.id}`))).customer.orderPrefs;
+
+    const malos = [
+      { variantId: 'frasco-inventado', quantity: 1 },
+      { variantId: 'capsules_10', quantity: 0 },
+      { variantId: 'capsules_10', quantity: 99999 },
+      { variantId: 'capsules_10', quantity: 1, paymentMethod: 'BITCOIN' },
+      // Una ubicación que no es de ESTE cliente tampoco vale.
+      { variantId: 'capsules_10', quantity: 1, locationId: 'loc_inventada' },
+    ];
+    for (const malo of malos) {
+      const response = await call(`/api/admin/customers/${customer.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ orderPrefs: malo }),
+      });
+      expect(response.status).toBe(422);
+      expect((await json(response)).error).toBe('invalid_order_prefs');
+    }
+
+    // Ni una de las intentonas cambió lo que había guardado.
+    const despues = (await json(await call(`/api/admin/customers/${customer.id}`))).customer.orderPrefs;
+    expect(despues).toEqual(antes);
+  });
+
+  it('se pueden borrar con `null` (y sin nada dentro no se guarda un hueco)', async () => {
+    const customer = await clienteLuis();
+    const vacias = await call(`/api/admin/customers/${customer.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ orderPrefs: { variantId: '', quantity: null, paymentMethod: null, note: '   ' } }),
+    });
+    expect(vacias.status).toBe(200);
+    // Sin nada dentro son preferencias VACÍAS: se guardan como null, no como hueco.
+    expect((await json(vacias)).customer.orderPrefs).toBe(null);
+
+    const puestas = await call(`/api/admin/customers/${customer.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ orderPrefs: { variantId: 'capsules_30', quantity: 2, paymentMethod: 'CASH' } }),
+    });
+    expect((await json(puestas)).customer.orderPrefs.variant_id).toBe('capsules_30');
+
+    const borradas = await call(`/api/admin/customers/${customer.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ orderPrefs: null }),
+    });
+    const sinPreferencias = await json(borradas);
+    expect(sinPreferencias.customer.orderPrefs).toBe(null);
+    // Y lo demás del cliente sigue intacto.
+    expect(sinPreferencias.customer.phone_e164).toBe('+18095551234');
+  });
+});

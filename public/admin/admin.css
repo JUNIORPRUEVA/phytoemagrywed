@@ -1136,6 +1136,27 @@ body[data-tab='hoy'] .stat__label {
   margin-top: 10px;
 }
 
+/*
+ * PREFERENCIAS DEL PEDIDO dentro del formulario: lo que el CRM reutiliza del
+ * cliente (frasco, cantidad, pago, ubicación) y el interruptor para guardarlo.
+ */
+.order-prefs {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--radius-sm);
+  background: var(--pe-surface-alt);
+}
+
+.order-prefs .view__hint {
+  margin: 0 0 6px;
+}
+
+.order-prefs .loc-option {
+  margin: 0;
+  padding: 4px 0;
+}
+
 /* Foto del cliente: la pone el equipo (WhatsApp no la da por su API). */
 .profile-photo-actions {
   display: flex;

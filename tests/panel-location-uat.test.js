@@ -265,10 +265,12 @@ describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () =
     await waitFor(() => $('#order-fee'), 'el formulario de pedido', 8000);
     expect($('#order-city')).toBe(null);
     expect($('#order-address')).toBe(null);
-    // La ubicación compartida se ofrece, con su edad.
-    expect($('#order-loc').textContent).toMatch(/Sin ubicación/);
+    // La ubicación que el cliente YA compartió viene puesta («la de siempre»),
+    // con su edad, para que el pedido casi no haya que tocarlo. Y se puede quitar:
+    // el pedido se guarda igual sin ubicación.
     expect($('#order-loc').textContent).toMatch(/Casa/);
     expect($('#order-loc').textContent).toMatch(/Compartida hoy/);
+    expect($('#order-loc-clear')).not.toBe(null);
     // Total de 10 cápsulas (RD$2,500) sin delivery.
     expect($('#order-total').textContent).toContain('1,250');
   }, 20000);
@@ -281,6 +283,11 @@ describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () =
   }, 20000);
 
   it('guardar sin ubicación funciona (y manda deliveryLocation null)', async () => {
+    // La ubicación venía puesta («la de siempre»): se quita a mano y el pedido se
+    // guarda igual. Es el caso de un pedido que no se entrega en ese punto.
+    click('#order-loc-clear');
+    await waitFor(() => $('#order-loc').textContent.includes('Sin ubicación'), 'la opción sin ubicación', 8000);
+
     let payload = null;
     const original = dom.window.fetch;
     dom.window.fetch = async (input, init = {}) => {
