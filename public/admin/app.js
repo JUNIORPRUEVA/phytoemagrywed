@@ -4289,6 +4289,45 @@
     </section>`;
   }
 
+  /** Texto que el CRM ya sabe poner en cada hueco de una plantilla. */
+  function waTemplateAutoValues(customer) {
+    const nombre = (customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
+    return { customer_name: nombre, nombre, phone: customer?.phone_e164 ?? '' };
+  }
+
+  /**
+   * Huecos de una plantilla (`{{1}}`, `{{2}}`…), alineados con el cuerpo REAL que
+   * hay en Meta. Es el mismo criterio que usa el servidor para enviarla.
+   */
+  function waTemplateHuecos(template) {
+    const declaradas = Array.isArray(template?.variables)
+      ? template.variables.map((row) => String(row ?? '').trim())
+      : [];
+    const huecos = (String(template?.body ?? '').match(/\{\{\s*\d+\s*\}\}/g) ?? []).length;
+    return Array.from({ length: huecos }, (_, index) => declaradas[index] || `param_${index + 1}`);
+  }
+
+  const WA_VAR_LABELS = {
+    customer_name: 'Nombre del cliente',
+    nombre: 'Nombre del cliente',
+    order_number: 'Nº de pedido',
+    total: 'Total',
+    payment_method: 'Forma de pago',
+    delivery_display_name: 'Delivery',
+  };
+  const waVariableLabel = (key, index) => WA_VAR_LABELS[key] ?? `Texto {{${index + 1}}}`;
+  const waVariablePlaceholder = (key) => (WA_VAR_LABELS[key] ? '' : 'Escribe aquí lo que quieras decir…');
+
+  /** Cómo queda el mensaje con los huecos ya rellenos: lo que se va a enviar. */
+  function waRenderTemplatePreview(template, values) {
+    let texto = String(template?.body ?? '');
+    waTemplateHuecos(template).forEach((_, index) => {
+      const valor = String(values[index] ?? '').trim();
+      if (valor) texto = texto.replace(new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'), valor);
+    });
+    return texto;
+  }
+
   function waTemplateSheetHtml() {
     const approved = (state.templates ?? []).filter(waTemplateApproved);
     if (!approved.length) {
@@ -4303,8 +4342,53 @@
             .join('')}
         </select>
       </label>
+      <div id="wa-template-fields"></div>
+      <label class="field">
+        <span class="field__label">Mensaje que se enviará</span>
+        <p class="wa-template-preview" id="wa-template-preview"></p>
+      </label>
       <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>
-      <p class="rule">Enviar una plantilla no abre la ventana de 24 h. La ventana se abre cuando el cliente responde.</p>`;
+      <p class="rule">Para escribir a alguien por primera vez WhatsApp solo admite una plantilla aprobada: el texto fijo no se puede cambiar, pero los huecos sí. Escribe ahí lo que quieras decirle.</p>`;
+  }
+
+  /**
+   * Rellena los huecos de la plantilla elegida: los que el CRM ya conoce (el nombre
+   * del cliente) vienen puestos y se pueden corregir, y los demás se escriben aquí.
+   * Así el operador pone SU mensaje dentro de la plantilla, que es lo único que
+   * WhatsApp permite fuera de la ventana de 24 h.
+   */
+  function renderWaTemplateFields() {
+    const fields = $('#wa-template-fields');
+    if (!fields) return;
+    const template = (state.templates ?? []).find((row) => row.name === $('#wa-template')?.value) ?? null;
+    const auto = waTemplateAutoValues(state.wa.chat?.customer ?? null);
+    const huecos = waTemplateHuecos(template);
+    state.wa.templateValues = {};
+    fields.innerHTML = huecos.length
+      ? huecos
+          .map(
+            (key, index) => `<label class="field">
+        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}</span>
+        <input class="field__input" type="text" data-wa-var="${index + 1}" value="${escapeHtml(auto[key] ?? '')}"
+          placeholder="${escapeHtml(waVariablePlaceholder(key))}" />
+      </label>`,
+          )
+          .join('')
+      : '<p class="rule">Esta plantilla no tiene huecos: se envía tal cual está.</p>';
+    const recoger = () => {
+      const values = {};
+      for (const input of $$('#wa-template-fields [data-wa-var]')) {
+        values[Number(input.dataset.waVar) - 1] = input.value.trim();
+      }
+      state.wa.templateValues = values;
+      return values;
+    };
+    const pintar = () => {
+      const preview = $('#wa-template-preview');
+      if (preview) preview.textContent = waRenderTemplatePreview(template, recoger());
+    };
+    $$('#wa-template-fields [data-wa-var]').forEach((input) => input.addEventListener('input', pintar));
+    pintar();
   }
 
   async function openWaTemplateSheet() {
@@ -4316,8 +4400,17 @@
       /* Si falla la consulta, se usa la última lista conocida y la hoja lo explica. */
     }
     $('#sheet-body').innerHTML = waTemplateSheetHtml();
+    renderWaTemplateFields();
+    $('#wa-template')?.addEventListener('change', renderWaTemplateFields);
     $('#wa-send-template')?.addEventListener('click', async (event) => {
-      const sent = await sendWaMessage({ template: $('#wa-template')?.value || null }, event.currentTarget);
+      // Solo viajan los huecos RELLENOS: el resto los completa el servidor como
+      // siempre (nombre del cliente, datos del pedido).
+      const values = state.wa.templateValues ?? {};
+      const templateValues = {};
+      for (const [index, value] of Object.entries(values)) {
+        if (String(value ?? '').trim()) templateValues[Number(index) + 1] = String(value).trim();
+      }
+      const sent = await sendWaMessage({ template: $('#wa-template')?.value || null, templateValues }, event.currentTarget);
       if (sent) closeSheet();
     });
   }

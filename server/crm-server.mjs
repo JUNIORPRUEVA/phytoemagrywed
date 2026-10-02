@@ -2390,6 +2390,20 @@ function renderTemplateBody(body, parameters) {
   return rendered || null;
 }
 
+/**
+ * Texto que va DENTRO de una variable de plantilla.
+ *
+ * Meta no admite saltos de línea, tabuladores ni espacios repetidos dentro de una
+ * variable: si el operador escribe un mensaje de varias líneas, WhatsApp rechaza
+ * el envío. Se aplana a UNA línea antes de mandarlo (y se recorta al límite).
+ */
+function sanitizeTemplateParameter(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 900);
+}
+
 function orderTotalText(order, item) {
   const total = order?.total ?? item?.total ?? null;
   if (total === null || total === undefined || total === '') return null;
@@ -2417,7 +2431,7 @@ async function findTemplateOrderContext(ctx, { customer, conversation, orderId }
   );
 }
 
-async function resolveTemplatePayload(ctx, { template, customer, conversation, orderId }) {
+async function resolveTemplatePayload(ctx, { template, customer, conversation, orderId, provided = null }) {
   // Sin el texto real de Meta no se sabe cuántos (ni cuáles) parámetros espera:
   // mandar una suposición es exactamente el error 132000 de WhatsApp.
   if (!String(template?.body ?? '').trim()) {
@@ -2431,7 +2445,16 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
   }
   const variables = templateVariables(template);
   const placeholderCount = templatePlaceholderCount(template?.body);
-  const requiresOrder = template?.required_context === 'order' || variables.some((key) => ['order_number', 'total', 'payment_method', 'delivery_display_name'].includes(key));
+  /** ¿Lo escribió la persona en el panel? (manda sobre lo automático) */
+  const escrito = (index) => {
+    const value = provided?.[String(index + 1)] ?? provided?.[index + 1] ?? null;
+    return value !== null && value !== undefined && String(value).trim() !== '';
+  };
+  // Con TODOS los huecos escritos a mano no hay que buscar ningún pedido.
+  const todoEscrito = variables.length > 0 && variables.every((_, index) => escrito(index));
+  const requiresOrder =
+    !todoEscrito &&
+    (template?.required_context === 'order' || variables.some((key) => ['order_number', 'total', 'payment_method', 'delivery_display_name'].includes(key)));
   const context = requiresOrder ? await findTemplateOrderContext(ctx, { customer, conversation, orderId }) : null;
   if (requiresOrder && !context) {
     return { ok: false, status: 422, error: 'missing_order', message: 'Falta seleccionar un pedido para completar esta plantilla.' };
@@ -2450,11 +2473,21 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
     payment_method: order?.payment_method_label ?? paymentMethodLabel(order?.payment_method ?? item?.payment_method) ?? null,
     delivery_display_name: deliveryName,
   };
-  if (variables.includes('delivery_display_name') && !values.delivery_display_name) {
+  if (variables.includes('delivery_display_name') && !values.delivery_display_name && !escrito(variables.indexOf('delivery_display_name'))) {
     return { ok: false, status: 422, error: 'missing_delivery', message: 'Este pedido no tiene delivery asignado para completar esta plantilla.' };
   }
   const missing = [];
   const parameters = variables.map((key, index) => {
+    /*
+     * Lo que ESCRIBIÓ la persona manda sobre lo automático: es la única forma de
+     * poner un mensaje propio fuera de la ventana de 24 h (WhatsApp solo deja
+     * texto libre dentro de una plantilla aprobada, en sus huecos). Los huecos sin
+     * escribir se rellenan como siempre (nombre del cliente, datos del pedido).
+     */
+    const written = provided?.[String(index + 1)] ?? provided?.[index + 1] ?? null;
+    if (written !== null && written !== undefined && String(written).trim() !== '') {
+      return { type: 'text', text: sanitizeTemplateParameter(written) };
+    }
     const value = values[key] ?? (key.startsWith('param_') && index === 0 ? values.customer_name : null);
     if (value === null || value === undefined || value === '') missing.push(key);
     return { type: 'text', text: String(value ?? '') };
@@ -5585,6 +5618,7 @@ async function handle(req, res, ctx) {
               customer,
               conversation,
               orderId: text(body.orderId ?? body.order_id, 80),
+              provided: body.templateValues && typeof body.templateValues === 'object' && !Array.isArray(body.templateValues) ? body.templateValues : null,
             })
           : null;
         if (templatePayload && !templatePayload.ok) {

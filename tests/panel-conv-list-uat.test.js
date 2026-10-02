@@ -505,6 +505,28 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     );
   }, 15000);
 
+  it('el contenido de la plantilla se escribe en el panel (huecos + vista previa)', async () => {
+    click('[data-wa-filter="todos"]');
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'estado esperando respuesta');
+    click('#wa-open-template');
+    const hueco = await waitFor(() => $('#wa-template-fields [data-wa-var="1"]'), 'los huecos de la plantilla', 9000);
+    // El nombre del cliente viene puesto y se ve el mensaje tal como se enviará.
+    expect(hueco.value).toBe('Cliente UX Nuevo');
+    expect($('#wa-template-preview').textContent).toBe('Hola Cliente UX Nuevo, ¿cómo va todo?');
+
+    const antes = whatsapp.sent.length;
+    hueco.value = 'Vecino';
+    hueco.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    expect($('#wa-template-preview').textContent).toBe('Hola Vecino, ¿cómo va todo?');
+
+    click('#sheet-body #wa-send-template');
+    await waitFor(() => whatsapp.sent.length === antes + 1, 'la plantilla con el texto escrito', 9000);
+    expect(whatsapp.sent.at(-1).template.components).toEqual([
+      { type: 'body', parameters: [{ type: 'text', text: 'Vecino' }] },
+    ]);
+    await waitFor(() => $('#thread').textContent.includes('Hola Vecino'), 'el texto escrito en el hilo', 9000);
+  }, 30000);
+
   it('quick reply inbound abre OPEN_WINDOW sin recargar manualmente', async () => {
     await inbound('18095550666', 'wamid.UX-BUTTON-1', {
       type: 'button',

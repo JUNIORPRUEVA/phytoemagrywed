@@ -420,6 +420,80 @@ describe('plantillas oficiales', () => {
     expect(mockWhatsApp.sent).toHaveLength(0);
   });
 
+  it('deja ESCRIBIR el contenido de los huecos de la plantilla', async () => {
+    // Fuera de la ventana de 24 h WhatsApp solo admite plantillas: lo único que se
+    // puede redactar es el contenido de sus huecos.
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'phyto_uat_escribible',
+        status: 'approved',
+        language: 'es',
+        body: 'Hola {{1}}, {{2}} Cualquier cosa, respóndenos por aquí.',
+        variables: ['customer_name', 'mensaje'],
+      }),
+    });
+    mockWhatsApp.sent.length = 0;
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/messages`,
+      { method: 'POST', body: JSON.stringify({ template: 'phyto_uat_escribible', templateValues: { 1: 'Ana', 2: 'tu pedido\nsalió hoy' } }) },
+      cookie,
+    );
+    expect(response.status).toBe(200);
+    const data = await json(response);
+    // Los saltos de línea se aplanan: Meta NO los admite dentro de una variable.
+    expect(mockWhatsApp.sent.at(-1).template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Ana' },
+          { type: 'text', text: 'tu pedido salió hoy' },
+        ],
+      },
+    ]);
+    expect(data.message.body).toBe('Hola Ana, tu pedido salió hoy Cualquier cosa, respóndenos por aquí.');
+  });
+
+  it('con los datos de un pedido escritos a mano no hace falta buscar el pedido', async () => {
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'phyto_confirmacion_pedido_v1', status: 'approved' }),
+    });
+    mockWhatsApp.sent.length = 0;
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          template: 'phyto_confirmacion_pedido_v1',
+          templateValues: { 1: 'Ana', 2: 'PE-123', 3: 'RD$1,500', 4: 'Transferencia' },
+        }),
+      },
+      cookie,
+    );
+    expect(response.status).toBe(200);
+    expect(mockWhatsApp.sent.at(-1).template.components[0].parameters.map((row) => row.text)).toEqual([
+      'Ana',
+      'PE-123',
+      'RD$1,500',
+      'Transferencia',
+    ]);
+  });
+
+  it('si el hueco no se escribe, se rellena como siempre (nombre del cliente)', async () => {
+    mockWhatsApp.sent.length = 0;
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/messages`,
+      { method: 'POST', body: JSON.stringify({ template: 'phyto_uat_escribible', templateValues: { 2: 'nos vemos pronto' } }) },
+      cookie,
+    );
+    expect(response.status).toBe(200);
+    expect(mockWhatsApp.sent.at(-1).template.components[0].parameters.map((row) => row.text)).toEqual([
+      'Ana WhatsApp',
+      'nos vemos pronto',
+    ]);
+  });
+
 });
 
 describe('enviar un seguimiento lo marca como hecho', () => {
@@ -445,7 +519,9 @@ describe('enviar un seguimiento lo marca como hecho', () => {
 describe('ficha completa de una plantilla', () => {
   it('trae los campos que necesita Meta, sin inventarse ninguno', async () => {
     const data = await json(await call('/api/admin/wa-templates'));
-    const template = data.templates.find((row) => row.meta_template_id === null) ?? data.templates[0];
+    // La plantilla SIN registrar en Meta y sin aprobar: no puede ser enviable.
+    const template =
+      data.templates.find((row) => row.meta_template_id === null && row.status === 'pending_approval') ?? data.templates[0];
     for (const field of ['name', 'language', 'category', 'status', 'body', 'variables', 'buttons']) {
       expect(template).toHaveProperty(field);
     }

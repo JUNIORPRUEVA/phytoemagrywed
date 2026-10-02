@@ -4244,6 +4244,23 @@ body[data-wa-view='chat'] .float-btn--menu {
   border-color: #bfe6ce;
 }
 
+/*
+ * Vista previa del mensaje de una plantilla: se ven los huecos ya rellenos, tal
+ * como se van a enviar por WhatsApp (el texto fijo de la plantilla no cambia).
+ */
+.wa-template-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius);
+  background: var(--pe-surface-alt);
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--pe-ink-900);
+  min-height: 42px;
+}
+
 .wa-state strong {
   display: block;
   font-size: 13px;
