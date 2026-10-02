@@ -11,16 +11,17 @@ const TOKEN = 'clave-inventario-123';
 const apps = [];
 const dirs = [];
 
-async function newApp() {
+async function startInventoryApp({ dataFile, clock } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'phyto-inv-'));
   dirs.push(dir);
   const app = await startCrmServer({
     port: 0,
     host: '127.0.0.1',
-    dataFile: path.join(dir, 'inventory.sqlite'),
+    dataFile: dataFile ?? path.join(dir, 'inventory.sqlite'),
     token: TOKEN,
     quiet: true,
     schedulerEnabled: false,
+    ...(clock ? { clock } : {}),
   });
   const login = await fetch(`${app.url}/api/admin/login`, {
     method: 'POST',
@@ -30,6 +31,10 @@ async function newApp() {
   app.cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
   apps.push(app);
   return app;
+}
+
+async function newApp() {
+  return startInventoryApp();
 }
 
 const call = (app, route, options = {}) =>
@@ -310,5 +315,99 @@ describe('inventario, costo y reportes', () => {
     const inventory = await json(await call(app, '/api/admin/inventory'));
     expect(inventory.stock).toBe(3);
     expect(inventory.movements.filter((row) => row.type === 'SALE')).toHaveLength(1);
+  });
+
+  it('stock agregado manualmente persiste reinicio y cambio de día sin movimientos nuevos', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'phyto-inv-restart-'));
+    dirs.push(dir);
+    const dataFile = path.join(dir, 'inventory.sqlite');
+    let now = new Date('2026-10-01T23:50:00.000Z');
+    const clock = () => now;
+    const first = await startInventoryApp({ dataFile, clock });
+    await restock(first, 10, '126.66', 'Carga manual día 1');
+    expect((await json(await call(first, '/api/admin/inventory'))).stock).toBe(10);
+    await first.close();
+    apps.splice(apps.indexOf(first), 1);
+
+    now = new Date('2026-10-02T08:00:00.000Z');
+    const second = await startInventoryApp({ dataFile, clock });
+    const inventory = await json(await call(second, '/api/admin/inventory'));
+    expect(inventory.stock).toBe(10);
+    expect(inventory.movements).toHaveLength(1);
+  });
+
+  it('GET de dashboard, inventario y reportes no modifica stock ni ledger', async () => {
+    const app = await newApp();
+    await restock(app, 25);
+    const before = await json(await call(app, '/api/admin/inventory'));
+
+    await call(app, '/api/admin/data');
+    await call(app, '/api/admin/inventory');
+    await call(app, '/api/admin/reports/sales?period=hoy');
+    await call(app, '/api/admin/inventory/reconcile');
+
+    const after = await json(await call(app, '/api/admin/inventory'));
+    expect(after.stock).toBe(before.stock);
+    expect(after.movements).toHaveLength(before.movements.length);
+  });
+
+  it('recuento físico 10→8 crea COUNT_ADJUSTMENT -2 con before/after y no borra historial', async () => {
+    const app = await newApp();
+    await restock(app, 10);
+    const response = await call(app, '/api/admin/inventory/count', {
+      method: 'POST',
+      body: JSON.stringify({ countedQuantity: 8, reason: 'Conteo de cierre' }),
+    });
+    expect(response.status).toBe(200);
+
+    const inventory = await json(await call(app, '/api/admin/inventory'));
+    expect(inventory.stock).toBe(8);
+    expect(inventory.movements).toHaveLength(2);
+    const count = inventory.movements.find((row) => row.type === 'COUNT_ADJUSTMENT');
+    expect(count).toMatchObject({
+      quantity_delta: -2,
+      quantity_before: 10,
+      quantity_after: 8,
+      expected_quantity: 10,
+      counted_quantity: 8,
+      reason: 'Conteo de cierre',
+    });
+  });
+
+  it('payload inválido no convierte stock faltante/null en 0', async () => {
+    const app = await newApp();
+    await restock(app, 12);
+    const badAdjust = await call(app, '/api/admin/inventory/adjust', {
+      method: 'POST',
+      body: JSON.stringify({ direction: 'out', reason: 'payload incompleto' }),
+    });
+    const badCount = await call(app, '/api/admin/inventory/count', {
+      method: 'POST',
+      body: JSON.stringify({ countedQuantity: null, reason: 'payload incompleto' }),
+    });
+
+    expect(badAdjust.status).toBe(422);
+    expect(badCount.status).toBe(422);
+    const inventory = await json(await call(app, '/api/admin/inventory'));
+    expect(inventory.stock).toBe(12);
+    expect(inventory.movements).toHaveLength(1);
+  });
+
+  it('endpoint de conciliación read-only reporta MATCH y balances de ledger', async () => {
+    const app = await newApp();
+    await restock(app, 20);
+    await deliveredOrder(app, { phone: '8095550909', items: [{ variantId: 'capsules_5', quantity: 1 }] });
+    const response = await call(app, '/api/admin/inventory/reconcile');
+    expect(response.status).toBe(200);
+    const data = await json(response);
+    expect(data.reconciliation.totals).toMatchObject({ products: 1, match: 1, mismatch: 0, negative: 0, ledger_without_product: 0 });
+    expect(data.reconciliation.products[0]).toMatchObject({
+      productId: 'phytoemagry',
+      storedStock: 15,
+      ledgerStock: 15,
+      difference: 0,
+      status: 'MATCH',
+    });
+    expect(data.reconciliation.products[0].movementsWithBalance).toBe(2);
   });
 });

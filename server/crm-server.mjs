@@ -2684,6 +2684,12 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route === '/api/admin/inventory/reconcile' && req.method === 'GET') {
+      if (!requireAdmin()) return;
+      json(res, 200, { ok: true, reconciliation: await ctx.inventory.reconcileInventory() });
+      return;
+    }
+
     if (route === '/api/admin/inventory/restock' && req.method === 'POST') {
       if (!requireAdmin()) return;
       let body = {};
@@ -2721,6 +2727,29 @@ async function handle(req, res, ctx) {
         quantity: body.quantity,
         unitCost: body.unitCost,
         reason: longText(body.reason ?? 'Ajuste manual', 300),
+        idempotencyKey: text(body.idempotencyKey, 160),
+        createdBy: actor?.id ?? null,
+        actorName: actor?.display_name ?? null,
+      });
+      if (!result.ok) {
+        json(res, result.error === 'insufficient_stock' ? 409 : 422, { ok: false, ...result });
+        return;
+      }
+      json(res, 200, { ok: true, result, inventory: await ctx.inventory.catalog() });
+      return;
+    }
+
+    if (route === '/api/admin/inventory/count' && req.method === 'POST') {
+      if (!requireAdmin()) return;
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await ctx.inventory.countStock({
+        countedQuantity: body.countedQuantity ?? body.quantity,
+        reason: longText(body.reason ?? 'Recuento físico', 300),
         idempotencyKey: text(body.idempotencyKey, 160),
         createdBy: actor?.id ?? null,
         actorName: actor?.display_name ?? null,

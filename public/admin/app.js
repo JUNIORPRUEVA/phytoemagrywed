@@ -984,6 +984,12 @@
         <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
         <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" value="Ajuste manual" /></label>
         <button class="btn btn--ghost btn--block" type="submit">Guardar ajuste</button>
+      </form>
+      <form class="card" id="inventory-count">
+        <p class="card__title">Recuento físico</p>
+        <label class="field"><span class="field__label">Cápsulas contadas</span><input class="field__input" name="countedQuantity" type="number" min="0" step="1" required /></label>
+        <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" value="Recuento físico" /></label>
+        <button class="btn btn--ghost btn--block" type="submit">Guardar recuento</button>
       </form>`
           : ''
       }
@@ -7328,6 +7334,7 @@
       let path = '/api/admin/inventory/restock';
       if (form.id === 'inventory-cost') path = '/api/admin/inventory/cost';
       if (form.id === 'inventory-adjust') path = '/api/admin/inventory/adjust';
+      if (form.id === 'inventory-count') path = '/api/admin/inventory/count';
       const data = await api(path, { method: 'POST', body: JSON.stringify(body) });
       state.inventory = data.inventory ?? state.inventory;
       toast(form.id === 'inventory-cost' ? 'Costo actualizado' : 'Inventario actualizado');
@@ -7607,7 +7614,7 @@
     document.addEventListener('submit', (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
-      if (['inventory-restock', 'inventory-cost', 'inventory-adjust'].includes(form.id)) {
+      if (['inventory-restock', 'inventory-cost', 'inventory-adjust', 'inventory-count'].includes(form.id)) {
         event.preventDefault();
         submitInventoryForm(form);
       }

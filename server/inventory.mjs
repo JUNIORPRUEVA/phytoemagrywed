@@ -8,7 +8,7 @@ export const PRODUCT_ID = 'phytoemagry';
 export const BASE_UNIT = 'capsule';
 export const DEFAULT_UNIT_COST_CENTS = 12666;
 
-const MOVEMENT_TYPES = new Set(['INITIAL', 'RESTOCK', 'SALE', 'SALE_REVERSAL', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT']);
+const MOVEMENT_TYPES = new Set(['INITIAL', 'RESTOCK', 'SALE', 'SALE_REVERSAL', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT', 'COUNT_ADJUSTMENT']);
 
 function newId(prefix) {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
@@ -40,7 +40,16 @@ function positiveInt(value) {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
 
-function movementQuantity(type, quantity) {
+function nonNegativeInt(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;
+}
+
+function movementQuantity(type, quantity, input = {}) {
+  if (type === 'COUNT_ADJUSTMENT') {
+    const delta = Number(input.quantityDelta);
+    return Number.isFinite(delta) ? Math.trunc(delta) : null;
+  }
   return ['SALE', 'ADJUSTMENT_OUT'].includes(type) ? -Math.abs(quantity) : Math.abs(quantity);
 }
 
@@ -49,6 +58,10 @@ function movementAction(type) {
   if (type === 'SALE_REVERSAL') return 'inventory_sale_reversed';
   if (type === 'RESTOCK' || type === 'INITIAL') return 'inventory_added';
   return 'inventory_adjusted';
+}
+
+function stockFromRows(rows) {
+  return rows.reduce((sum, row) => sum + (Number(row.quantity_delta) || 0), 0);
 }
 
 function rangeFor(period, now, timeZone, query = {}) {
@@ -157,20 +170,23 @@ export function createInventoryService(deps) {
 
   async function stock() {
     const rows = await movements();
-    const current = rows.reduce((sum, row) => sum + (Number(row.quantity_delta) || 0), 0);
+    const current = stockFromRows(rows);
     return { current, initialized: rows.length > 0, movements: rows };
   }
 
   async function addMovementUnlocked(input) {
     const type = String(input.type ?? '').trim();
     if (!MOVEMENT_TYPES.has(type)) return { ok: false, error: 'invalid_type' };
-    const quantity = positiveInt(input.quantity);
+    const quantity = type === 'COUNT_ADJUSTMENT' ? Math.abs(Number(input.quantityDelta) || 0) : positiveInt(input.quantity);
     if (!quantity) return { ok: false, error: 'invalid_quantity' };
     const unitCostCents = input.unitCostCents ?? (await settings()).current_unit_cost_cents;
     if (!Number.isInteger(unitCostCents) || unitCostCents < 0) return { ok: false, error: 'invalid_unit_cost' };
-    const delta = movementQuantity(type, quantity);
+    const delta = movementQuantity(type, quantity, input);
+    if (!Number.isInteger(delta) || delta === 0) return { ok: false, error: 'invalid_quantity' };
     const current = await stock();
-    if (current.current + delta < 0) {
+    const quantityBefore = current.current;
+    const quantityAfter = quantityBefore + delta;
+    if (quantityAfter < 0) {
       return { ok: false, error: 'insufficient_stock', available: current.current, required: Math.abs(delta) };
     }
     const now = clock().toISOString();
@@ -179,9 +195,15 @@ export function createInventoryService(deps) {
       product_id: PRODUCT_ID,
       type,
       quantity_delta: delta,
+      quantity_before: quantityBefore,
+      quantity_after: quantityAfter,
       unit_cost_cents: unitCostCents,
       order_id: input.orderId ?? null,
+      reference_type: input.referenceType ?? (input.orderId ? 'order' : null),
+      reference_id: input.referenceId ?? input.orderId ?? null,
       reason: input.reason ?? null,
+      expected_quantity: input.expectedQuantity ?? null,
+      counted_quantity: input.countedQuantity ?? null,
       created_by: input.actor ?? input.actorName ?? 'panel',
       created_by_user_id: input.createdBy ?? null,
       created_by_display_name_snapshot: input.actorName ?? null,
@@ -289,6 +311,96 @@ export function createInventoryService(deps) {
     return syncSale(item, { ...(orderOf(item) ?? {}), items: [], total_capsules: 0 }, orderOf(item), reason, {
       persistOrder: false,
     });
+  }
+
+  async function countStock(input = {}) {
+    const counted = nonNegativeInt(input.countedQuantity ?? input.quantity ?? input.counted);
+    if (counted === null) return { ok: false, error: 'invalid_quantity' };
+    return withInventoryLock(async () => {
+      const current = await stock();
+      const delta = counted - current.current;
+      if (delta === 0) {
+        return {
+          ok: true,
+          skipped: true,
+          current: current.current,
+          counted,
+          difference: 0,
+          movement: null,
+        };
+      }
+      return addMovementUnlocked({
+        type: 'COUNT_ADJUSTMENT',
+        quantityDelta: delta,
+        unitCostCents: moneyToCents(input.unitCost) ?? (await settings()).current_unit_cost_cents,
+        reason: input.reason ?? 'Recuento físico',
+        expectedQuantity: current.current,
+        countedQuantity: counted,
+        referenceType: 'inventory_count',
+        referenceId: input.referenceId ?? null,
+        idempotencyKey: input.idempotencyKey ?? null,
+        createdBy: input.createdBy ?? null,
+        actorName: input.actorName ?? null,
+      });
+    });
+  }
+
+  async function reconcileInventory() {
+    const [product, rows] = await Promise.all([settings(), movements()]);
+    const ledgerStock = stockFromRows(rows);
+    const storedStock = ledgerStock;
+    let expectedBefore = 0;
+    const broken = [];
+    let withBalance = 0;
+    let withoutBalance = 0;
+    for (const row of rows) {
+      const delta = Number(row.quantity_delta) || 0;
+      if (Number.isInteger(row.quantity_before) && Number.isInteger(row.quantity_after)) {
+        withBalance += 1;
+        if (row.quantity_before !== expectedBefore || row.quantity_after !== row.quantity_before + delta) {
+          broken.push({
+            movement_id: row.id,
+            type: row.type,
+            expected_before: expectedBefore,
+            quantity_before: row.quantity_before,
+            quantity_delta: delta,
+            quantity_after: row.quantity_after,
+          });
+        }
+        expectedBefore = row.quantity_after;
+      } else {
+        withoutBalance += 1;
+        expectedBefore += delta;
+      }
+    }
+    const difference = storedStock - ledgerStock;
+    const negative = ledgerStock < 0;
+    const status = difference === 0 && broken.length === 0 && !negative ? 'MATCH' : 'MISMATCH';
+    return {
+      generated_at: clock().toISOString(),
+      totals: {
+        products: 1,
+        match: status === 'MATCH' ? 1 : 0,
+        mismatch: status === 'MATCH' ? 0 : 1,
+        negative: negative ? 1 : 0,
+        without_ledger: rows.length === 0 ? 1 : 0,
+        ledger_without_product: 0,
+      },
+      products: [
+        {
+          productId: PRODUCT_ID,
+          productName: product.name,
+          storedStock,
+          ledgerStock,
+          difference,
+          status,
+          movements: rows.length,
+          movementsWithBalance: withBalance,
+          legacyMovementsWithoutBalance: withoutBalance,
+          brokenMovements: broken,
+        },
+      ],
+    };
   }
 
   async function report(options = {}) {
@@ -403,6 +515,8 @@ export function createInventoryService(deps) {
         createdBy: input.createdBy ?? null,
         actorName: input.actorName ?? null,
       }),
+    countStock,
+    reconcileInventory,
     updateCost,
     snapshotOrder,
     recordSale,
