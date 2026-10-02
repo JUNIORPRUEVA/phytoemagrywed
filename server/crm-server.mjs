@@ -117,6 +117,15 @@ import {
   receiptPdf,
 } from './orders.mjs';
 import {
+  SOURCE_LABELS,
+  captureMetaReferral,
+  hasAutomaticMetaEvidence,
+  manualAttribution,
+  orderAttributionSnapshot,
+  readOrderAttribution,
+  sourceFromAttribution,
+} from './sales-attribution.mjs';
+import {
   LOCATION_SOURCES,
   describeLocation,
   locationAgeLabel,
@@ -380,6 +389,15 @@ function toRow(payload) {
   }
   const customer = payload.customer ?? {};
   const number = (value) => (Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : null);
+  const sourceEvidence = sourceFromAttribution(payload.attribution ?? payload.meta_attribution ?? null);
+  const saleSource = sourceEvidence?.source ?? (payload.sale_source ? manualAttribution(payload).source : null);
+  const sourceOrigin = sourceEvidence?.source_origin ?? (saleSource ? manualAttribution(payload).source_origin : null);
+  const storedPayload = {
+    ...payload,
+    ...(saleSource ? { sale_source: saleSource } : {}),
+    ...(sourceOrigin ? { source_origin: sourceOrigin } : {}),
+    ...(sourceEvidence?.source === 'META_ADS' && payload.attribution ? { meta_attribution: payload.attribution } : {}),
+  };
 
   return {
     id: text(payload.id, 80) ?? randomBytes(16).toString('hex'),
@@ -397,7 +415,7 @@ function toRow(payload) {
     currency: text(payload.currency, 8) ?? text(payload.product?.currency, 8),
     source: text(payload.source, 40),
     sessionId: text(payload.sessionId, 80),
-    payload: JSON.stringify(payload),
+    payload: JSON.stringify(storedPayload),
   };
 }
 
@@ -721,9 +739,11 @@ async function sendPushForNotification(ctx, notification) {
     title: notification.title,
     body: notification.body,
     notificationId: notification.id,
-    orderId: notification.entity_id,
+    orderId: notification.entity_type === 'order' ? notification.entity_id : null,
+    conversationId: notification.entity_type === 'conversation' ? notification.entity_id : notification.data?.conversation_id ?? null,
     deepLink: notification.deep_link,
     type: notification.type,
+    vibrate: notification.data?.vibrate ?? null,
   });
   for (const subscription of subscriptions) {
     const key = `push:${notification.id}:${subscription.endpoint}`;
@@ -760,6 +780,71 @@ async function sendPushForNotification(ctx, notification) {
       updated_at: ctx.clock().toISOString(),
     });
   }
+}
+
+function whatsappDeepLink(conversationId) {
+  return `/admin/?v=whatsapp&conversation=${encodeURIComponent(conversationId)}`;
+}
+
+function notificationSafeName(customer, fallback = 'Cliente') {
+  return String(customer?.name ?? customer?.phone_e164 ?? customer?.phone ?? fallback).replace(/\s+/g, ' ').trim().slice(0, 80) || fallback;
+}
+
+function whatsappMessagePreview(message) {
+  const type = String(message?.type ?? 'text').toLowerCase();
+  if (type === 'image') return 'Foto';
+  if (type === 'audio' || type === 'voice') return 'Nota de voz';
+  if (type === 'video') return 'Video';
+  if (type === 'location') return 'Ubicación';
+  if (type === 'document') return 'Documento';
+  if (type === 'sticker') return 'Sticker';
+  const clean = String(message?.body ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean ? clean.slice(0, 120) : 'Nuevo mensaje';
+}
+
+async function whatsappNotificationRecipients(ctx, conversation) {
+  if (!conversation?.id) return [];
+  const users = (await ctx.users.listUsers()).filter((user) => user.active !== false && hasPermission(user, 'chats.read'));
+  if (conversation.assigned_user_id) {
+    return users.filter((user) => user.id === conversation.assigned_user_id);
+  }
+  return users.filter((user) => user.role === 'ADMIN' || hasPermission(user, 'chats.take_unassigned'));
+}
+
+async function notifyWhatsappInboundMessage(ctx, result) {
+  const conversation = result.conversation?.id ? (await findConversation(ctx, result.conversation.id)) ?? result.conversation : result.conversation;
+  const message = result.message;
+  if (!conversation?.id || !message?.wa_message_id || message.direction !== 'inbound') return [];
+  const customer = result.customer ?? (conversation.customer_id ? await ctx.customers.get(conversation.customer_id) : null);
+  const recipients = await whatsappNotificationRecipients(ctx, conversation);
+  const customerName = notificationSafeName(customer, 'Cliente');
+  const created = [];
+  for (const user of recipients) {
+    const note = await createUserNotification(ctx, {
+      recipientUserId: user.id,
+      type: 'WHATSAPP_MESSAGE_RECEIVED',
+      title: `Nuevo mensaje · ${customerName}`,
+      body: whatsappMessagePreview(message),
+      entityType: 'conversation',
+      entityId: conversation.id,
+      deepLink: whatsappDeepLink(conversation.id),
+      data: {
+        conversation_id: conversation.id,
+        customer_id: customer?.id ?? conversation.customer_id ?? null,
+        message_id: message.id,
+        wa_message_id: message.wa_message_id,
+        vibrate: [150, 80, 150],
+      },
+      idempotencyKey: `whatsapp-inbound:${message.wa_message_id}:${user.id}`,
+    });
+    if (note.notification && !note.duplicate) {
+      await sendPushForNotification(ctx, note.notification);
+      created.push(note.notification);
+    }
+  }
+  return created;
 }
 
 async function createDeliveryAssignmentNotification(ctx, { item, order, deliveryUser, actor, reassigned = false }) {
@@ -1142,10 +1227,12 @@ async function createOrder(ctx, body = {}, actor = null) {
   }
 
   // La conversación solo se enlaza si es DE ESE cliente (nunca se cruza a otro).
+  let conversation = null;
   let conversationId = text(body.conversationId, 80);
   if (conversationId) {
-    const conversation = await ctx.db.get('conversations', conversationId);
+    conversation = await ctx.db.get('conversations', conversationId);
     conversationId = conversation && conversation.customer_id === customer.id ? conversation.id : null;
+    if (!conversationId) conversation = null;
   }
 
   const paymentMethod = normalizePaymentMethod(body.paymentMethod ?? body.payment_method);
@@ -1170,6 +1257,17 @@ async function createOrder(ctx, body = {}, actor = null) {
   if (!entrega.ok) {
     return { ok: false, status: 422, error: entrega.code, message: entrega.message };
   }
+  const manual = manualAttribution(body, actor);
+  const automatic = conversation?.meta_attribution ? sourceFromAttribution(conversation.meta_attribution) : null;
+  const attribution = automatic && !body.source && !body.saleSource && !body.orderSource ? automatic : manual;
+  const snapshot = orderAttributionSnapshot({
+    source: attribution.source,
+    source_origin: attribution.source_origin,
+    meta_attribution: automatic
+      ? conversation.meta_attribution
+      : manual.meta_attribution ?? (attribution.source === 'META_ADS' ? null : undefined),
+  });
+
   try {
     built = purchaseRow({
       ...body,
@@ -1179,6 +1277,9 @@ async function createOrder(ctx, body = {}, actor = null) {
       name: customer.name ?? body.name,
       phone: customer.phone_e164 ?? customer.phone,
       location: customer.location ?? body.location,
+      source: snapshot.source,
+      sourceOrigin: snapshot.source_origin,
+      metaAttributionSnapshot: snapshot.meta_attribution_snapshot,
       // GPS: nombre propio para no confundirlo con la ciudad heredada.
       gpsLocation: entrega.location,
     });
@@ -1226,6 +1327,14 @@ async function createOrder(ctx, body = {}, actor = null) {
   });
   const finalItem = item ?? built.row;
 
+  if (!customer.acquisition_source && snapshot.source) {
+    customer = (await ctx.customers.update(customer.id, {
+      acquisition_source: snapshot.source,
+      acquisition_source_origin: snapshot.source_origin,
+      acquisition_meta_attribution: snapshot.source === 'META_ADS' ? snapshot.meta_attribution_snapshot : null,
+    })) ?? customer;
+  }
+
   await ctx.audit?.record({
     entity: 'order',
     entityId: built.row.id,
@@ -1238,6 +1347,8 @@ async function createOrder(ctx, body = {}, actor = null) {
       payment_method: paymentMethod,
       status,
       origin: conversationId ? 'conversation' : 'panel',
+      source: snapshot.source,
+      source_origin: snapshot.source_origin,
       created_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
     },
     idempotencyKey: `order.created:${built.row.id}`,
@@ -1305,6 +1416,69 @@ function parsePayload(item) {
   }
 }
 
+function revenueBySourceReport(items = []) {
+  const groups = new Map();
+  const ensure = (source) => {
+    const key = SOURCE_LABELS[source] ? source : 'OTHER';
+    if (!groups.has(key)) {
+      groups.set(key, {
+        source: key,
+        label: SOURCE_LABELS[key] ?? key,
+        orders: 0,
+        completed_sales: 0,
+        revenue: 0,
+        average_ticket: 0,
+        attributed_to_meta: 0,
+        manually_marked_meta: 0,
+      });
+    }
+    return groups.get(key);
+  };
+  for (const source of Object.keys(SOURCE_LABELS)) ensure(source);
+  const metaCampaigns = new Map();
+  const addBreakdown = (kind, id, row) => {
+    if (!id) return;
+    const key = `${kind}:${id}`;
+    const current = metaCampaigns.get(key) ?? { kind, id, sales: 0, revenue: 0 };
+    current.sales += 1;
+    current.revenue += Number(row.total) || 0;
+    metaCampaigns.set(key, current);
+  };
+  for (const row of items.filter((item) => item.type === 'order_intent')) {
+    const attr = readOrderAttribution(row);
+    const group = ensure(attr.source);
+    group.orders += 1;
+    const completed = isCompletedPurchaseStatus(row.status);
+    if (completed) {
+      group.completed_sales += 1;
+      group.revenue += Number(row.total) || 0;
+      if (attr.source === 'META_ADS' && attr.source_origin === 'AUTO') group.attributed_to_meta += 1;
+      if (attr.source === 'META_ADS' && attr.source_origin === 'MANUAL') group.manually_marked_meta += 1;
+      const meta = attr.meta_attribution_snapshot ?? {};
+      addBreakdown('campaign', meta.campaign_id ?? meta.utm_campaign, row);
+      addBreakdown('adset', meta.adset_id, row);
+      addBreakdown('ad', meta.ad_id ?? meta.utm_content, row);
+    }
+  }
+  const sources = [...groups.values()].map((group) => ({
+    ...group,
+    average_ticket: group.completed_sales ? Math.round(group.revenue / group.completed_sales) : 0,
+  }));
+  const metaRevenue = groups.get('META_ADS')?.revenue ?? 0;
+  return {
+    sources,
+    meta: {
+      attributed_revenue: metaRevenue,
+      ad_spend: null,
+      roas: null,
+      roas_status: 'WAITING_FOR_AD_SPEND',
+      breakdown_available: metaCampaigns.size > 0,
+      breakdown: [...metaCampaigns.values()].sort((a, b) => b.revenue - a.revenue),
+    },
+    rule: 'Interno: se agrupa por order.source; ingresos solo de pedidos con estado entregado. Meta decide su atribución publicitaria con su propia configuración.',
+  };
+}
+
 /**
  * `event_id` de la venta. Es el MISMO para siempre: si se reintenta, Meta
  * deduplica en lugar de contar dos compras.
@@ -1325,9 +1499,10 @@ export function purchaseEventId(item) {
  * @param {any} input.store
  * @param {any} input.metaCapi
  * @param {any} input.item
+ * @param {any} [input.audit]
  * @param {string} [input.source] motivo (diagnóstico)
  */
-export async function sendPurchaseToMeta({ store, metaCapi, item, source = 'estado' }) {
+export async function sendPurchaseToMeta({ store, metaCapi, item, audit = null, source = 'estado' }) {
   if (!metaCapi?.enabled) return { ok: false, skipped: true, reason: 'not_configured' };
   // Idempotencia: si ya se envió, no se vuelve a enviar jamás.
   if (item.meta_purchase_sent_at) return { ok: false, skipped: true, reason: 'already_sent' };
@@ -1336,6 +1511,19 @@ export async function sendPurchaseToMeta({ store, metaCapi, item, source = 'esta
   const payload = parsePayload(item);
   const attribution = payload.attribution ?? {};
   const attempts = Number(item.meta_purchase_attempts ?? 0);
+  await audit?.record({
+    entity: 'order',
+    entityId: item.id,
+    action: 'meta.purchase_queued',
+    summary: `Purchase ${eventId} en cola para Meta`,
+    data: { order_id: item.id, event_id: eventId, attempt: attempts + 1, source },
+    idempotencyKey: `meta.purchase_queued:${item.id}:${attempts + 1}`,
+  });
+  await store.update(item.id, {
+    metaPurchaseEventId: eventId,
+    metaPurchaseStatus: 'pending',
+    metaPurchaseError: null,
+  });
   const result = await metaCapi.sendPurchase({
     eventId,
     orderId: item.id,
@@ -1363,6 +1551,21 @@ export async function sendPurchaseToMeta({ store, metaCapi, item, source = 'esta
   });
 
   const tag = result.ok ? 'enviada' : result.skipped ? 'no configurada' : 'falló';
+  await audit?.record({
+    entity: 'order',
+    entityId: item.id,
+    action: result.ok ? 'meta.purchase_sent' : 'meta.purchase_failed',
+    summary: result.ok ? `Purchase ${eventId} enviado a Meta` : `Purchase ${eventId} falló en Meta`,
+    data: {
+      order_id: item.id,
+      event_id: eventId,
+      attempt: attempts + 1,
+      status: result.status ?? null,
+      error: result.ok ? null : result.error ?? null,
+      response: result.response ?? null,
+    },
+    idempotencyKey: `meta.purchase_${result.ok ? 'sent' : 'failed'}:${item.id}:${attempts + 1}`,
+  });
   console.log(
     `[crm] venta a Meta (${source}): ${tag}${item.id ? ` · pedido ${item.id}` : ''}` +
       (result.ok || result.skipped ? '' : ` · ${describeMetaFailure(result)}`),
@@ -1389,7 +1592,7 @@ function describeMetaFailure(result) {
  * Se ejecuta al arrancar, con un tope de intentos por venta: no hay bucles
  * infinitos y nunca reenvía algo que ya se envió.
  */
-async function retryPendingPurchases(store, metaCapi, log = console.log) {
+async function retryPendingPurchases(store, metaCapi, log = console.log, audit = null) {
   if (!metaCapi?.enabled || !store?.listAdmin) return;
   const items = await store.listAdmin({ limit: 200 });
   const pending = items.filter(
@@ -1402,7 +1605,7 @@ async function retryPendingPurchases(store, metaCapi, log = console.log) {
   if (pending.length === 0) return;
   log(`[crm] Meta: reintentando ${pending.length} venta(s) pendiente(s)`);
   for (const item of pending.slice(0, 10)) {
-    await sendPurchaseToMeta({ store, metaCapi, item, source: 'reintento' });
+    await sendPurchaseToMeta({ store, metaCapi, item, audit, source: 'reintento' });
   }
 }
 
@@ -1556,7 +1759,7 @@ export async function afterPurchaseDelivered(ctx, item) {
     }
   }
   if (ctx.metaCapi?.enabled && !item.meta_purchase_sent_at) {
-    result.meta = await sendPurchaseToMeta({ store: ctx.store, metaCapi: ctx.metaCapi, item, source: 'estado' });
+    result.meta = await sendPurchaseToMeta({ store: ctx.store, metaCapi: ctx.metaCapi, item, audit: ctx.audit, source: 'estado' });
   }
   const customerId = item.customer_id ?? null;
   if (!customerId) return result; // pedido sin cliente enlazado (llegó sin teléfono)
@@ -1628,6 +1831,41 @@ export async function processWebhookPayload(ctx, body) {
     const result = await ctx.customers.recordInbound({ waMessage: inbound });
     if (result.duplicate) continue;
     stored.push(result);
+    const metaAttribution = captureMetaReferral(inbound, inbound.receivedAt);
+    if (metaAttribution && hasAutomaticMetaEvidence(metaAttribution)) {
+      if (result.conversation?.id) {
+        await ctx.db.update('conversations', result.conversation.id, {
+          source: 'META_ADS',
+          source_origin: 'AUTO',
+          meta_attribution: metaAttribution,
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (result.customer?.id && !result.customer.acquisition_source) {
+        await ctx.customers.update(result.customer.id, {
+          acquisition_source: 'META_ADS',
+          acquisition_source_origin: 'AUTO',
+          acquisition_meta_attribution: metaAttribution,
+        });
+      }
+      await ctx.audit?.record({
+        entity: 'conversation',
+        entityId: result.conversation?.id ?? result.message?.conversation_id ?? inbound.waMessageId,
+        action: 'conversation.meta_attribution_detected',
+        summary: 'Conversación atribuida automáticamente a Meta Ads',
+        data: {
+          customer_id: result.customer?.id ?? null,
+          wa_message_id: inbound.waMessageId,
+          evidence: Object.keys(metaAttribution).filter((key) => key !== 'referral_payload'),
+        },
+        idempotencyKey: `conversation.meta-attribution:${inbound.waMessageId}`,
+      });
+    }
+    try {
+      await notifyWhatsappInboundMessage(ctx, result);
+    } catch (error) {
+      console.error('[crm] notificación WhatsApp:', error?.message ?? error);
+    }
     const who = result.customer?.name ?? result.customer?.phone_e164 ?? inbound.fromE164;
     console.log(
       `[crm] WhatsApp entrante de ${who} · intención ${result.intent}` +
@@ -2309,6 +2547,7 @@ async function handle(req, res, ctx) {
         items,
         messages,
         stats: computeStats(items, TIME_ZONE),
+        salesAttribution: revenueBySourceReport(items),
         pendientes: dueToday(items, TIME_ZONE).map((item) => item.id),
         // Estado de Meta SIN secretos: el panel solo necesita saber si está activo.
         meta: {
@@ -2423,6 +2662,12 @@ async function handle(req, res, ctx) {
         ? String(url.searchParams.get('period'))
         : '30d';
       json(res, 200, { ok: true, metrics: await ctx.customers.metrics({ period }) });
+      return;
+    }
+
+    if (route === '/api/admin/reports/sales-by-source' && req.method === 'GET') {
+      const rows = await store.listAdmin({ limit: 5000 });
+      json(res, 200, { ok: true, report: revenueBySourceReport(rows) });
       return;
     }
 
@@ -2545,7 +2790,7 @@ async function handle(req, res, ctx) {
       json(res, 409, { ok: false, error: 'not_an_order', message: 'Solo se envía la venta de un pedido.' });
       return;
     }
-    const result = await sendPurchaseToMeta({ store, metaCapi: ctx.metaCapi, item, source: 'manual' });
+    const result = await sendPurchaseToMeta({ store, metaCapi: ctx.metaCapi, item, audit: ctx.audit, source: 'manual' });
     json(res, result.ok ? 200 : result.skipped ? 409 : 502, {
       ok: result.ok,
       skipped: result.skipped ?? false,
@@ -2581,6 +2826,48 @@ async function handle(req, res, ctx) {
       }
       if (body.notes !== undefined) patch.notes = longText(body.notes, 2000);
       if (body.nextActionAt !== undefined) patch.nextActionAt = day(body.nextActionAt);
+      if (before?.type === 'order_intent' && (body.source !== undefined || body.saleSource !== undefined || body.orderSource !== undefined)) {
+        const currentOrder = orderOf(before);
+        if (!currentOrder) {
+          json(res, 422, { ok: false, error: 'invalid_order' });
+          return;
+        }
+        const previousAttribution = readOrderAttribution(currentOrder);
+        const manual = manualAttribution(body, actor);
+        const nextAttribution = orderAttributionSnapshot({
+          source: manual.source,
+          source_origin: 'MANUAL',
+          meta_attribution: manual.meta_attribution ?? currentOrder.meta_attribution_snapshot ?? null,
+        });
+        currentOrder.source = nextAttribution.source;
+        currentOrder.source_origin = nextAttribution.source_origin;
+        currentOrder.meta_attribution_snapshot = nextAttribution.meta_attribution_snapshot;
+        currentOrder.source_updated_at = new Date().toISOString();
+        currentOrder.source_updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
+        currentOrder.source_updated_by_display_name_snapshot = actor?.display_name ?? null;
+        patch.orderJson = JSON.stringify(currentOrder);
+        patch.payload = JSON.stringify({
+          ...parsePayload(before),
+          sale_source: nextAttribution.source,
+          source_origin: nextAttribution.source_origin,
+          meta_attribution: nextAttribution.meta_attribution_snapshot,
+        });
+        await ctx.audit?.record({
+          entity: 'order',
+          entityId: id,
+          action: 'order.source_changed',
+          actor: actor?.display_name ?? null,
+          summary: `Origen: ${previousAttribution.source_label} → ${nextAttribution.source_label}`,
+          data: {
+            order_id: id,
+            from_source: previousAttribution.source,
+            to_source: nextAttribution.source,
+            changed_by: actor?.display_name ?? null,
+            reason: longText(body.reason ?? body.sourceReason ?? body.source_note ?? '', 500),
+          },
+          idempotencyKey: `order.source:${id}:${previousAttribution.source}:${nextAttribution.source}:${Date.now()}`,
+        });
+      }
       if (body.contacted) {
         patch.lastContactAt = new Date().toISOString();
         if (patch.status === undefined && before?.type !== 'order_intent') patch.status = 'contactado';
@@ -5261,7 +5548,7 @@ export async function startCrmServer(config = {}) {
   }
 
   // Reintento de ventas pendientes en segundo plano: no retrasa el arranque.
-  retryPendingPurchases(store, metaCapi).catch(() => {});
+  retryPendingPurchases(store, metaCapi, console.log, audit).catch(() => {});
   // Y se asegura de que las ventas entregadas tengan su plan de seguimiento.
   ensureFollowupsForDelivered(ctx).catch(() => {});
 

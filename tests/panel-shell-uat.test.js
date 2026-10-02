@@ -212,15 +212,15 @@ describe('compositor y acciones del cliente', () => {
     expect(app).toContain('if (!canSendFreeText) {');
   });
 
-  it('las acciones del chat viven en el header, no como bloque flotante sobre el hilo', () => {
+  it('las acciones del chat son un botón flotante inferior, sin tarjeta grande', () => {
     expect(waHtml).not.toContain('id="compra-nueva-wa"');
     expect(app).not.toContain('compra-nueva-wa');
-    expect(waHtml).not.toContain('class="wa__fab-row"');
-    expect(waHtml).not.toContain('class="wa-fab"');
-    expect(waHtml).toContain('class="wa__chat-menu"');
+    expect(waHtml).toContain('class="wa__fab-row"');
+    expect(waHtml).toContain('class="wa-fab"');
+    expect(waHtml).not.toContain('class="wa__chat-menu"');
     expect(waHtml).toContain('id="wa-actions"');
-    expect(css).toMatch(/\.thread \{[\s\S]*?padding: 12px;/);
-    expect(css).toContain('.wa__chat-menu');
+    expect(css).toMatch(/\.thread \{[\s\S]*?padding: 12px 12px 56px;/);
+    expect(css).toMatch(/\.wa__fab-row \{\n\s+position: relative;\n\s+height: 0;/);
   });
 
   it('el menú de acciones lleva las cuatro acciones, con cliente ya elegido', () => {

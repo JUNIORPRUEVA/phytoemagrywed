@@ -15,6 +15,7 @@
   const TAB_KEY = 'pe_crm_tab';
   const WA_NOTIFY_KEY = 'pe_wa_notify';
   const WA_SOUND_KEY = 'pe_wa_sound';
+  const NOTICE_DISMISSED_KEY = 'pe_notice_dismissed';
   const DELIVERY_MAP_VIEW_KEY = 'pe_delivery_map_view';
   const DELIVERY_TILE_PREFETCH_ENABLED = false;
   const DELIVERY_TILE_PREFETCH_REASON = 'OSM public tiles allow normal browser/service-worker caching, not automatic area prefetch.';
@@ -694,9 +695,75 @@
         ? 'Delivery'
         : role === 'OPERADOR'
           ? 'Operador'
-          : role === 'AGENT'
-            ? 'Agente'
-            : 'Sesión';
+            : role === 'AGENT'
+              ? 'Agente'
+              : 'Sesión';
+
+  function readDismissedNotices() {
+    try {
+      const list = JSON.parse(localStorage.getItem(NOTICE_DISMISSED_KEY) ?? '[]');
+      return new Set(Array.isArray(list) ? list : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  function writeDismissedNotices(list) {
+    try {
+      localStorage.setItem(NOTICE_DISMISSED_KEY, JSON.stringify([...list].slice(-200)));
+    } catch {
+      /* Si Storage falla, solo se pierde el descarte visual. */
+    }
+  }
+
+  function dismissNotice(key) {
+    const list = readDismissedNotices();
+    list.add(key);
+    writeDismissedNotices(list);
+    renderMobileHeader();
+    renderHoy();
+    openNotificationsSheet();
+  }
+
+  function localNoticeRows() {
+    const dismissed = readDismissedNotices();
+    const rows = [];
+    const failedCount = Number(state.hoy?.mensajesFallidos ?? 0);
+    if (failedCount > 0) {
+      const key = `wa-failed:${failedCount}`;
+      if (!dismissed.has(key)) {
+        rows.push({
+          key,
+          title: `WhatsApp rechazó ${failedCount} mensaje${failedCount === 1 ? '' : 's'}`,
+          body: 'Revisa el número y vuelve a intentarlo desde la conversación.',
+          meta: 'WhatsApp',
+          tone: 'warn',
+        });
+      }
+    }
+    for (const row of state.scheduled?.problems ?? []) {
+      const key = `scheduled-problem:${row.id}:${row.status}:${row.error_message ?? row.blocked_message ?? ''}`;
+      if (dismissed.has(key)) continue;
+      const customer = customerById(row.customer_id);
+      const conversation = conversationForCustomer(row.customer_id);
+      rows.push({
+        key,
+        title: row.status === 'BLOCKED' ? 'Mensaje programado bloqueado' : 'Mensaje programado falló',
+        body:
+          row.status === 'BLOCKED'
+            ? row.blocked_message ?? 'No se pudo enviar automáticamente.'
+            : row.error_message ?? 'WhatsApp rechazó el envío.',
+        meta: `${customer?.name ?? customer?.phone_e164 ?? 'Cliente'} · ${fmtDay(String(row.scheduled_at).slice(0, 10))}`,
+        tone: 'warn',
+        conversationId: conversation?.id ?? '',
+        scheduledId: row.id,
+      });
+    }
+    return rows;
+  }
+
+  const unreadNotificationCount = () =>
+    (state.notifications ?? []).filter((row) => row.status !== 'read').length + localNoticeRows().length;
 
   function currentViewTitle() {
     if (state.tab === 'perfil-cliente' && state.customerProfile?.customer) return customerName(state.customerProfile.customer);
@@ -706,11 +773,8 @@
   function renderMobileHeader() {
     const box = $('#mobile-header');
     if (!box) return;
-    const online = state.online !== false;
     if (state.tab === 'hoy') {
-      const programados = state.scheduled ?? {};
-      const conProblemas = (programados.blocked ?? 0) + (programados.failed ?? 0);
-      const unreadNotifications = (state.notifications ?? []).filter((row) => row.status !== 'read').length;
+      const unreadNotifications = unreadNotificationCount();
       box.innerHTML = `<div class="dashboard-head">
         <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú">
           <img class="drawer-menu-icon" src="/admin/icon-menu.png" alt="" aria-hidden="true" width="26" height="26" />
@@ -727,9 +791,6 @@
             ${ICONS.bell}
             ${unreadNotifications ? `<span class="dashboard-head__badge">${unreadNotifications > 99 ? '99+' : unreadNotifications}</span>` : ''}
           </button>
-          <span class="dashboard-head__net" data-online="${online ? 'true' : 'false'}" aria-label="${online ? 'En línea' : 'Sin conexión'}">
-            <span class="presence__dot" aria-hidden="true"></span>
-          </span>
         </div>
       </div>`;
       return;
@@ -780,7 +841,6 @@
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-client-search-open type="button" aria-label="Buscar cliente">${ICONS.search}</button>
-          <button class="wa-appbar__icon" data-client-actions-open type="button" aria-label="Acciones de clientes">${ICONS.plus}</button>
         </div>
       </div>`;
       return;
@@ -1180,35 +1240,6 @@
       </article>`;
   }
 
-  /** Un mensaje programado que NO salió: dice por qué y qué puede hacer una persona. */
-  function scheduledProblemCard(row) {
-    const customer = customerById(row.customer_id);
-    const conversation = conversationForCustomer(row.customer_id);
-    const motivo =
-      row.status === 'BLOCKED'
-        ? row.blocked_message ?? 'Bloqueado'
-        : `Error: ${row.error_message ?? 'no se pudo enviar'}`;
-    return `<article class="item item--hoy">
-        <div class="item__top">
-          <div>
-            <p class="item__name">${escapeHtml(customer?.name ?? customer?.phone_e164 ?? 'Cliente')}</p>
-            <span class="tag tag--recordatorio">${row.status === 'BLOCKED' ? 'Bloqueado' : 'Falló'}</span>
-            <span class="tag">${escapeHtml(fmtDay(String(row.scheduled_at).slice(0, 10)))}</span>
-          </div>
-        </div>
-        <p class="item__meta">${escapeHtml(String(row.text ?? row.template ?? '').slice(0, 90))}</p>
-        <p class="item__meta">${escapeHtml(motivo)}</p>
-        <div class="item__actions">
-          ${
-            conversation
-              ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(conversation.id)}" type="button">Escribir ahora</button>`
-              : ''
-          }
-          <button class="btn btn--ghost btn--sm" data-scheduled-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>
-        </div>
-      </article>`;
-  }
-
   /** Tarjeta de una conversación de WhatsApp. */
   function conversationCard(row) {
     const customer = row.customer ?? customerById(row.customer_id);
@@ -1316,18 +1347,6 @@
         : '',
       pedidosAbiertos.length
         ? section('Pedidos sin cerrar', pedidosAbiertos.length, pedidosAbiertos.slice(0, 5).map(itemCard).join(''))
-        : '',
-      hoy.mensajesFallidos
-        ? `<h2 class="view__title">Mensajes que no salieron (${hoy.mensajesFallidos})</h2>
-           <p class="rule rule--warn">WhatsApp los rechazó. Revisa el número y vuelve a intentarlo desde la conversación.</p>`
-        : '',
-      // Mensajes programados BLOQUEADOS o fallidos: son trabajo para una persona.
-      state.scheduled?.problems?.length
-        ? section(
-            'Mensajes programados con problemas',
-            state.scheduled.problems.length,
-            state.scheduled.problems.map(scheduledProblemCard).join(''),
-          )
         : '',
     ]
       .filter(Boolean)
@@ -1888,7 +1907,7 @@
             <div class="delivery-map delivery-map--real" id="delivery-map" aria-label="Mapa real de entrega"></div>
             <p class="delivery-map-notice" id="delivery-map-notice" hidden></p>
             <div class="delivery-map-appbar">
-              <button class="icon-btn" data-tab="hoy" type="button" aria-label="Volver">${ICONS.back}</button>
+              <button class="icon-btn" data-simple-back type="button" aria-label="Volver">${ICONS.back}</button>
               <span><strong>Delivery</strong><small>${escapeHtml(selectedOrder?.customer?.name ?? selected?.customer?.name ?? 'Entrega')}</small></span>
               <button class="icon-btn" data-delivery-refresh type="button" aria-label="Actualizar">${ICONS.retry}</button>
             </div>
@@ -2011,24 +2030,40 @@
   function openNotificationsSheet() {
     $('#sheet-title').textContent = 'Notificaciones';
     const rows = state.notifications ?? [];
-    $('#sheet-body').innerHTML = rows.length
+    const localRows = localNoticeRows();
+    const html = [
+      ...localRows.map(
+        (row) => `<article class="delivery-order delivery-order--active">
+          <div>
+            <strong>${escapeHtml(row.title)}</strong>
+            <p>${escapeHtml(row.body)}</p>
+            <small>${escapeHtml(row.meta ?? 'Pendiente')}</small>
+          </div>
+          <div class="item__actions">
+            ${row.conversationId ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(row.conversationId)}" type="button">Abrir chat</button>` : ''}
+            ${row.scheduledId ? `<button class="btn btn--ghost btn--sm" data-scheduled-cancel="${escapeHtml(row.scheduledId)}" type="button">Cancelar</button>` : ''}
+            <button class="btn btn--ghost btn--sm" data-notice-dismiss="${escapeHtml(row.key)}" type="button">Entendido</button>
+          </div>
+        </article>`,
+      ),
+      ...rows.map(
+        (row) => `<article class="delivery-order ${row.status !== 'read' ? 'delivery-order--active' : ''}">
+          <div>
+            <strong>${escapeHtml(row.title ?? 'Notificación')}</strong>
+            <p>${escapeHtml(row.body ?? '')}</p>
+            <small>${escapeHtml(fmtWhen(row.created_at))}${row.status === 'read' ? ' · leída' : ' · nueva'}</small>
+          </div>
+          ${
+            row.deep_link
+              ? `<button class="btn btn--primary btn--sm" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(row.entity_id ?? '')}" type="button">Abrir</button>`
+              : ''
+          }
+        </article>`,
+      ),
+    ].join('');
+    $('#sheet-body').innerHTML = html
       ? `<div class="delivery-orders">
-          ${rows
-            .map(
-              (row) => `<article class="delivery-order ${row.status !== 'read' ? 'delivery-order--active' : ''}">
-                <div>
-                  <strong>${escapeHtml(row.title ?? 'Notificación')}</strong>
-                  <p>${escapeHtml(row.body ?? '')}</p>
-                  <small>${escapeHtml(fmtWhen(row.created_at))}${row.status === 'read' ? ' · leída' : ' · nueva'}</small>
-                </div>
-                ${
-                  row.deep_link
-                    ? `<button class="btn btn--primary btn--sm" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(row.entity_id ?? '')}" type="button">Abrir</button>`
-                    : ''
-                }
-              </article>`,
-            )
-            .join('')}
+          ${html}
         </div>`
       : emptyState('No hay notificaciones.');
     $('#sheet').hidden = false;
@@ -2046,6 +2081,30 @@
       setTab('delivery', { silent: true });
     }
     closeSheet();
+  }
+
+  async function openNotificationTarget(notificationId, entityId) {
+    const row = state.notifications.find((candidate) => candidate.id === notificationId) ?? null;
+    if (row?.entity_type === 'conversation' || row?.data?.conversation_id) {
+      if (notificationId) {
+        await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
+      }
+      const conversationId = row.entity_id || row.data?.conversation_id;
+      await openChat(conversationId);
+      await load({ keepTab: true }).catch(() => {});
+      closeSheet();
+      return;
+    }
+    if (row?.deep_link) {
+      if (notificationId) {
+        await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
+      }
+      await applyDeepLink(new URL(row.deep_link, location.origin).searchParams);
+      await load({ keepTab: true }).catch(() => {});
+      closeSheet();
+      return;
+    }
+    await openDeliveryOrderFromNotification(notificationId, entityId);
   }
 
   function stopDeliveryWatch() {
@@ -2932,7 +2991,7 @@
    * compartir un chat concreto con otra persona del negocio.
    */
   async function applyDeepLink(query) {
-    const conversationId = query?.get('conv');
+    const conversationId = query?.get('conversation') || query?.get('conv');
     const orderId = query?.get('order');
     if (orderId) {
       state.deliveryActiveOrderId = orderId;
@@ -3375,6 +3434,37 @@
     return conversation.assigned_user_id === currentUser()?.id ? 'mine' : 'other';
   }
 
+  function assignmentMenuHtml(conversation, options = {}) {
+    const conversationId = conversation?.id ?? options.conversationId ?? '';
+    const assignmentKind = conversationAssignmentKind(conversation);
+    const assignedToMe = assignmentKind === 'mine';
+    const assignedToOther = assignmentKind === 'other';
+    const canTake = assignmentKind === 'unassigned' && currentUser() && hasPermission('chats.take_unassigned');
+    const canRelease = conversation?.assigned_user_id && (assignedToMe || isAdmin());
+    const canReassign = Boolean(conversation?.assigned_user_id) && isAdmin();
+    return `
+        <div class="menu-item menu-item--static">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span>
+        </div>
+        ${canTake ? `<button class="menu-item" data-conv-take="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
+          <span><strong>Tomar conversación</strong><small>Queda asignada a ti</small></span>
+        </button>` : ''}
+        ${canRelease ? `<button class="menu-item" data-conv-release="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+          <span><strong>Liberar conversación</strong><small>Vuelve a Sin asignar</small></span>
+        </button>` : ''}
+        ${canReassign ? `<button class="menu-item" data-conv-reassign="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>Reasignar / transferir</strong><small>Pasar a otro agente</small></span>
+        </button>` : ''}
+        ${assignedToOther && !isAdmin() ? `<div class="menu-item menu-item--static">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.lock}</span>
+          <span><strong>Asignada a otra persona</strong><small>Puedes ver la ficha, no tomarla.</small></span>
+        </div>` : ''}`;
+  }
+
   function waRow(row) {
     const unread = Number(row.unread_count) || 0;
     const awaiting = waAwaiting(row);
@@ -3442,20 +3532,24 @@
 
   function playNewMessageSound() {
     if (!state.wa.sound) return;
-    try {
-      const audio = new AudioContext();
-      const osc = audio.createOscillator();
-      const gain = audio.createGain();
-      osc.frequency.value = 740;
-      gain.gain.value = 0.025;
-      osc.connect(gain);
-      gain.connect(audio.destination);
-      osc.start();
-      osc.stop(audio.currentTime + 0.08);
-      setTimeout(() => audio.close().catch(() => {}), 180);
-    } catch {
-      /* sin audio: no pasa nada */
-    }
+    const asset = new Audio('/admin/assets/sounds/message-notification.wav');
+    asset.volume = 0.42;
+    asset.play().catch(() => {
+      try {
+        const audio = new AudioContext();
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.frequency.value = 740;
+        gain.gain.value = 0.025;
+        osc.connect(gain);
+        gain.connect(audio.destination);
+        osc.start();
+        osc.stop(audio.currentTime + 0.08);
+        setTimeout(() => audio.close().catch(() => {}), 180);
+      } catch {
+        /* sin audio: no pasa nada */
+      }
+    });
   }
 
   function notifyNewInbound(row) {
@@ -3465,15 +3559,6 @@
     state.wa.seenMessages.add(messageKey);
     toast(`Nuevo mensaje de ${waDisplayName(row)}`);
     playNewMessageSound();
-    if (
-      state.wa.notify &&
-      typeof Notification !== 'undefined' &&
-      Notification.permission === 'granted' &&
-      (document.visibilityState !== 'visible' || state.tab !== 'whatsapp')
-    ) {
-      const text = row.last_message.type === 'text' ? String(row.last_message.body ?? '').slice(0, 80) : WA_KIND_LABEL[row.last_message.type] ?? 'Nuevo mensaje';
-      new Notification(NEGOCIO, { body: `${waDisplayName(row)}: ${text}`, tag: `wa-${row.id}`, silent: !state.wa.sound });
-    }
   }
 
   /**
@@ -3555,6 +3640,7 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.chat}</span>
           <span><strong>Abrir conversación</strong></span>
         </button>
+        ${assignmentMenuHtml(row, { conversationId })}
         ${
           customerId
             ? `<div class="menu-item menu-item--static">
@@ -5096,6 +5182,8 @@
           ${profileFact('Cantidad', escapeHtml(String(row.quantity ?? '—')))}
           ${profileFact('Referencia', escapeHtml(row.reference ?? row.payment_reference ?? row.order_number ?? row.id ?? '—'))}
           ${profileFact('Canal', escapeHtml(row.channel ?? row.source ?? '—'))}
+          ${profileFact('Origen', escapeHtml(sourceLabel(orderSourceOf(row))))}
+          ${profileFact('Atribución', escapeHtml(sourceOriginLabel(orderSourceOriginOf(row), { ...row, ...orderJsonOf(row) })))}
           ${profileFact('Notas del pedido', escapeHtml(row.notes ?? '—'))}
         </dl>
         <div class="profile-order-actions">
@@ -5120,6 +5208,7 @@
                 <div class="profile-order__meta">
                   <span>${row.received_at ? escapeHtml(fmtWhen(row.received_at)) : 'Sin fecha'}</span>
                   <span>${money(row.total, row.currency)}</span>
+                  <span>${escapeHtml(sourceLabel(orderSourceOf(row)))}</span>
                   <span>Ref. ${escapeHtml(row.reference ?? row.payment_reference ?? row.order_number ?? row.id ?? '—')}</span>
                 </div>
                 <div class="profile-order-actions">
@@ -5594,6 +5683,39 @@
   };
   const commercialLabel = (value) => COMMERCIAL_LABELS[value] ?? value ?? '—';
   const orderStatusLabel = (value) => state.orderStatuses.find((entry) => entry.value === value)?.label ?? value;
+  const SOURCE_LABELS = {
+    META_ADS: 'Facebook / Instagram Ads',
+    ORGANIC: 'Orgánico',
+    REFERRAL: 'Referido',
+    WHATSAPP: 'WhatsApp',
+    MANUAL: 'Tienda / Manual',
+    STORE: 'Tienda',
+    OTHER: 'Otro',
+  };
+  const normalizeSourceValue = (value) => {
+    const clean = String(value ?? '').trim().toUpperCase();
+    if (clean === 'FACEBOOK' || clean === 'INSTAGRAM' || clean === 'META') return 'META_ADS';
+    if (clean === 'ORGANICO') return 'ORGANIC';
+    if (clean === 'REFERIDO') return 'REFERRAL';
+    if (clean === 'OTRO') return 'OTHER';
+    return clean;
+  };
+  const sourceLabel = (value) => SOURCE_LABELS[normalizeSourceValue(value)] ?? value ?? '—';
+  const orderJsonOf = (row) => {
+    try {
+      return typeof row?.order_json === 'string' ? JSON.parse(row.order_json) : row?.orderJson ? JSON.parse(row.orderJson) : {};
+    } catch {
+      return {};
+    }
+  };
+  const orderSourceOf = (row) => orderJsonOf(row).source ?? row?.sale_source ?? row?.source;
+  const orderSourceOriginOf = (row) => orderJsonOf(row).source_origin ?? row?.source_origin;
+  const sourceOriginLabel = (value, order = {}) =>
+    value === 'AUTO'
+      ? 'Detectado automáticamente'
+      : order.source_updated_by_display_name_snapshot || order.created_by_display_name_snapshot
+        ? `Marcado manualmente por ${order.source_updated_by_display_name_snapshot ?? order.created_by_display_name_snapshot}`
+        : 'Marcado manualmente';
   const customerName = (customer) => (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
 
   const catalogOf = (variantId) => state.catalog.find((entry) => entry.id === variantId) ?? null;
@@ -5622,33 +5744,7 @@
       state.wa.chat?.conversation?.id === conversationId
         ? state.wa.chat.conversation
         : state.conversations.find((row) => row.id === conversationId) ?? null;
-    const assignmentKind = conversationAssignmentKind(conversation);
-    const assignedToMe = assignmentKind === 'mine';
-    const assignedToOther = assignmentKind === 'other';
-    const canTake = assignmentKind === 'unassigned' && currentUser() && hasPermission('chats.take_unassigned');
-    const canRelease = conversation?.assigned_user_id && (assignedToMe || isAdmin());
-    const canReassign = Boolean(conversation?.assigned_user_id) && isAdmin();
-    const assignmentMenu = `
-        <div class="menu-item menu-item--static">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
-          <span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span>
-        </div>
-        ${canTake ? `<button class="menu-item" data-conv-take type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
-          <span><strong>Tomar conversación</strong><small>Queda asignada a ti</small></span>
-        </button>` : ''}
-        ${canRelease ? `<button class="menu-item" data-conv-release type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
-          <span><strong>Liberar conversación</strong><small>Vuelve a Sin asignar</small></span>
-        </button>` : ''}
-        ${canReassign ? `<button class="menu-item" data-conv-reassign type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
-          <span><strong>Reasignar</strong><small>Cambiar responsable</small></span>
-        </button>` : ''}
-        ${assignedToOther && !isAdmin() ? `<div class="menu-item menu-item--static">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.lock}</span>
-          <span><strong>Asignada a otra persona</strong><small>Puedes ver la ficha, no tomarla.</small></span>
-        </div>` : ''}`;
+    const assignmentMenu = assignmentMenuHtml(conversation, { conversationId });
     /*
      * Acciones del cliente: icono + título corto, sin párrafos. La única que
      * lleva una nota es la que ENVÍA sola (una plantilla la manda el sistema): no
@@ -6045,6 +6141,7 @@
    * servidor: el panel solo elige el frasco y la cantidad.
    */
   async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null } = {}) {
+    // Si no hay cliente, el formulario pinta id="order-phone"; desde chat, customer ? '' evita pedirlo.
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
       : null;
@@ -6067,6 +6164,20 @@
           { value: 'TRANSFER', label: 'Transferencia' },
         ];
     const defaultPayment = order?.payment_method ?? methods[0]?.value ?? 'CASH';
+    const sourceConversation = conversationId ? state.conversations.find((row) => row.id === conversationId) ?? state.wa.chat?.conversation ?? null : null;
+    const defaultSource = order?.source ?? (sourceConversation?.source === 'META_ADS' ? 'META_ADS' : conversationId ? 'WHATSAPP' : 'MANUAL');
+    const defaultCampaign =
+      order?.meta_attribution_snapshot?.utm_campaign ??
+      order?.meta_attribution_snapshot?.campaign_id ??
+      sourceConversation?.meta_attribution?.utm_campaign ??
+      sourceConversation?.meta_attribution?.campaign_id ??
+      '';
+    const defaultAd =
+      order?.meta_attribution_snapshot?.utm_content ??
+      order?.meta_attribution_snapshot?.ad_id ??
+      sourceConversation?.meta_attribution?.utm_content ??
+      sourceConversation?.meta_attribution?.ad_id ??
+      '';
 
     openSheet(
       `${
@@ -6092,6 +6203,31 @@
       }
       <div id="order-lines"></div>
       <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+      <label class="field">
+        <span class="field__label">Origen de la venta</span>
+        <select class="field__select" id="order-source">
+          ${['META_ADS', 'ORGANIC', 'REFERRAL', 'WHATSAPP', 'MANUAL', 'OTHER']
+            .map(
+              (value) =>
+                `<option value="${escapeHtml(value)}" ${value === defaultSource ? 'selected' : ''}>${escapeHtml(sourceLabel(value))}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <div id="order-source-meta">
+        <label class="field">
+          <span class="field__label">Campaña (opcional)</span>
+          <input class="field__input" id="order-source-campaign" value="${escapeHtml(defaultCampaign)}" placeholder="Nombre o ID si existe" />
+        </label>
+        <label class="field">
+          <span class="field__label">Anuncio (opcional)</span>
+          <input class="field__input" id="order-source-ad" value="${escapeHtml(defaultAd)}" placeholder="Nombre o ID si existe" />
+        </label>
+        <label class="field">
+          <span class="field__label">Nota de origen (opcional)</span>
+          <input class="field__input" id="order-source-note" value="${escapeHtml(order?.meta_attribution_snapshot?.note ?? '')}" />
+        </label>
+      </div>
       <label class="field">
         <span class="field__label">Descuento (opcional, RD$)</span>
         <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${
@@ -6294,6 +6430,12 @@
     });
     $('#order-discount').addEventListener('input', refreshOrderTotal);
     $('#order-fee').addEventListener('input', refreshOrderTotal);
+    const refreshSourceFields = () => {
+      const box = $('#order-source-meta');
+      if (box) box.hidden = $('#order-source')?.value !== 'META_ADS';
+    };
+    $('#order-source')?.addEventListener('change', refreshSourceFields);
+    refreshSourceFields();
     renderLines();
 
     $('#order-save').addEventListener('click', async (event) => {
@@ -6348,6 +6490,10 @@
               : null,
             status: $('#order-status').value,
             paymentMethod: $('#order-payment').value,
+            source: $('#order-source').value,
+            utm_campaign: $('#order-source-campaign')?.value.trim() || undefined,
+            utm_content: $('#order-source-ad')?.value.trim() || undefined,
+            source_note: $('#order-source-note')?.value.trim() || undefined,
             notes: $('#order-notes').value,
           };
           const result = orderId
@@ -6359,6 +6505,10 @@
                   deliveryFee: payload.deliveryFee,
                   deliveryLocation: payload.deliveryLocation,
                   paymentMethod: payload.paymentMethod,
+                  source: payload.source,
+                  utm_campaign: payload.utm_campaign,
+                  utm_content: payload.utm_content,
+                  source_note: payload.source_note,
                   notes: payload.notes,
                 }),
               })
@@ -6814,6 +6964,7 @@
     try {
       const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
       const receipt = data.receipt;
+      const order = data.order ?? {};
       const lines = (receipt.items ?? [])
         .map(
           (line) => `<div class="receipt-line">
@@ -6840,6 +6991,8 @@
                 : ''
             }
             <div class="fact"><dt>Estado</dt><dd>${escapeHtml(receipt.status_label)}</dd></div>
+            <div class="fact"><dt>Origen</dt><dd>${escapeHtml(sourceLabel(order.source))}</dd></div>
+            <div class="fact"><dt>Atribución</dt><dd>${escapeHtml(sourceOriginLabel(order.source_origin, order))}</dd></div>
             ${receipt.cancelled_at ? `<div class="fact"><dt>Cancelada</dt><dd>${escapeHtml(fmtWhen(receipt.cancelled_at))}</dd></div>` : ''}
             ${receipt.cancel_reason ? `<div class="fact"><dt>Motivo</dt><dd>${escapeHtml(receipt.cancel_reason)}</dd></div>` : ''}
           </dl>
@@ -7110,8 +7263,7 @@
     renderAjustes();
   }
 
-  async function assignCurrentConversation(action, userId = null) {
-    const conversationId = state.wa.selectedId;
+  async function assignCurrentConversation(action, userId = null, conversationId = state.wa.selectedId) {
     if (!conversationId) return;
     const path =
       action === 'take'
@@ -7125,8 +7277,9 @@
         body: JSON.stringify(userId ? { userId } : {}),
       });
       await refreshWhatsapp();
-      await loadWaThread(conversationId, { force: true });
+      if (state.wa.selectedId === conversationId) await loadWaThread(conversationId, { force: true });
       toast(action === 'take' ? 'Conversación tomada' : action === 'release' ? 'Conversación liberada' : 'Conversación reasignada');
+      closeSheet();
     } catch (error) {
       if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar la asignación');
     }
@@ -7244,20 +7397,20 @@
     return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
   }
 
-  async function enableDeliveryPush() {
+  async function enableCrmPush() {
     if (!state.push?.publicKey) {
       toast('Push no está configurado en el servidor');
-      return;
+      return false;
     }
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
       toast('Este navegador no soporta notificaciones push');
-      return;
+      return false;
     }
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
       toast(permission === 'denied' ? 'Notificaciones bloqueadas por navegador' : 'No se activaron las notificaciones');
       renderDelivery();
-      return;
+      return false;
     }
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.subscribe({
@@ -7268,8 +7421,9 @@
       method: 'POST',
       body: JSON.stringify(subscription),
     });
-    toast('Notificaciones de pedidos activadas');
+    toast('Notificaciones activadas');
     renderDelivery();
+    return true;
   }
 
   function initPwa() {
@@ -7370,7 +7524,10 @@
     if ((tab === 'usuarios' && !isAdmin()) || (tab === 'ajustes' && !hasPermission('settings.manage')) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
       tab = 'hoy';
     }
-    if (tab !== 'whatsapp') state.wa.searchOpen = false;
+    if (tab !== 'whatsapp') {
+      state.wa.searchOpen = false;
+      delete document.body.dataset.waView;
+    }
     if (tab !== 'clientes') state.clientSearchOpen = false;
     if (tab !== 'delivery') {
       stopDeliveryEvents();
@@ -7625,9 +7782,14 @@
         openNotificationsSheet();
         return;
       }
+      const noticeDismiss = event.target.closest('[data-notice-dismiss]');
+      if (noticeDismiss) {
+        dismissNotice(noticeDismiss.dataset.noticeDismiss);
+        return;
+      }
       const notificationOpen = event.target.closest('[data-notification-open]');
       if (notificationOpen) {
-        openDeliveryOrderFromNotification(notificationOpen.dataset.notificationOpen, notificationOpen.dataset.notificationEntity).catch(() =>
+        openNotificationTarget(notificationOpen.dataset.notificationOpen, notificationOpen.dataset.notificationEntity).catch(() =>
           toast('No se pudo abrir la notificación'),
         );
         return;
@@ -7644,7 +7806,7 @@
         return;
       }
       if (event.target.closest('[data-delivery-push]')) {
-        enableDeliveryPush().catch(() => toast('No se pudieron activar las notificaciones'));
+        enableCrmPush().catch(() => toast('No se pudieron activar las notificaciones'));
         return;
       }
       const deliveryStart = event.target.closest('[data-delivery-start]');
@@ -7699,25 +7861,29 @@
         openImageViewer(profilePhoto.dataset.profilePhoto, 'Foto del cliente');
         return;
       }
-      if (event.target.closest('[data-conv-take]')) {
-        assignCurrentConversation('take');
+      const convTake = event.target.closest('[data-conv-take]');
+      if (convTake) {
+        assignCurrentConversation('take', null, convTake.dataset.convTake || state.wa.selectedId);
         return;
       }
-      if (event.target.closest('[data-conv-release]')) {
-        assignCurrentConversation('release');
+      const convRelease = event.target.closest('[data-conv-release]');
+      if (convRelease) {
+        assignCurrentConversation('release', null, convRelease.dataset.convRelease || state.wa.selectedId);
         return;
       }
-      if (event.target.closest('[data-conv-reassign]')) {
+      const convReassign = event.target.closest('[data-conv-reassign]');
+      if (convReassign) {
+        const targetConversationId = convReassign.dataset.convReassign || state.wa.selectedId;
         if (!state.users?.length) {
           loadUsers()
             .then(() => {
               const userId = chooseUserId();
-              if (userId) assignCurrentConversation('assign', userId);
+              if (userId) assignCurrentConversation('assign', userId, targetConversationId);
             })
             .catch(() => toast('No se pudieron cargar usuarios'));
         } else {
           const userId = chooseUserId();
-          if (userId) assignCurrentConversation('assign', userId);
+          if (userId) assignCurrentConversation('assign', userId, targetConversationId);
         }
         return;
       }
@@ -8181,16 +8347,13 @@
     });
     $('#wa-filters').addEventListener('click', (event) => {
       if (event.target.closest('#wa-notify')) {
-        if (typeof Notification === 'undefined') {
-          toast('Este navegador no soporta notificaciones');
-          return;
-        }
-        Notification.requestPermission().then((permission) => {
-          state.wa.notify = permission === 'granted';
+        enableCrmPush()
+          .then((enabled) => {
+          state.wa.notify = enabled === true;
           localStorage.setItem(WA_NOTIFY_KEY, state.wa.notify ? '1' : '0');
           renderWhatsapp();
-          toast(state.wa.notify ? 'Notificaciones activadas' : 'No se activaron las notificaciones');
-        });
+          })
+          .catch(() => toast('No se pudieron activar las notificaciones'));
         return;
       }
       if (event.target.closest('#wa-sound')) {

@@ -152,6 +152,9 @@ export function maskPhone(phone) {
  * @param {number} [input.deliveryFee]     costo de delivery en RD$ (opcional, >= 0)
  * @param {any}    [input.gpsLocation]     ubicación GPS de entrega (opcional)
  * @param {string} [input.recordedBy]
+ * @param {string} [input.source]
+ * @param {string} [input.sourceOrigin]
+ * @param {any}    [input.metaAttributionSnapshot]
  * @param {any}    [input.product]         catálogo alternativo (tests)
  */
 export function buildOrder(input = {}) {
@@ -188,7 +191,9 @@ export function buildOrder(input = {}) {
   const order = {
     id,
     order_number: number,
-    source: 'manual',
+    source: short(input.source, 40) ?? (input.channel === 'whatsapp' ? 'WHATSAPP' : 'MANUAL'),
+    source_origin: short(input.sourceOrigin ?? input.source_origin, 20) ?? 'MANUAL',
+    meta_attribution_snapshot: input.metaAttributionSnapshot ?? input.meta_attribution_snapshot ?? null,
     channel: short(input.channel, 40) ?? 'panel',
     customer_id: short(input.customerId, 80),
     conversation_id: short(input.conversationId, 80),
@@ -219,6 +224,9 @@ export function buildOrder(input = {}) {
     id,
     createdAt,
     source: order.channel === 'whatsapp' ? 'whatsapp' : 'manual',
+    sale_source: order.source,
+    source_origin: order.source_origin,
+    meta_attribution: order.meta_attribution_snapshot,
     channel: order.channel,
     recordedBy: order.recorded_by,
     orderNumber: number,

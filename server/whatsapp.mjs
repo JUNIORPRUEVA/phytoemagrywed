@@ -480,6 +480,7 @@ export function normalizeInboundMessage(message, contacts = new Map()) {
     location: inboundLocation?.ok ? inboundLocation.location : null,
     locationError: inboundLocation && !inboundLocation.ok ? inboundLocation.code : null,
     replyToWaId: message?.context?.id ? String(message.context.id) : null,
+    referral: message?.referral && typeof message.referral === 'object' ? message.referral : null,
     timestamp: message?.timestamp ? Number(message.timestamp) : null,
     receivedAt: message?.timestamp ? new Date(Number(message.timestamp) * 1000).toISOString() : new Date().toISOString(),
   };

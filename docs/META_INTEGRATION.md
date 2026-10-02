@@ -157,6 +157,40 @@ Se guarda con el pedido y sobrevive a todo el flujo:
 `fbclid`, `gclid`, `ttclid`, `msclkid`, **`_fbc`**, **`_fbp`**, URL de llegada,
 referrer y fecha (first-touch 90 días + last-touch de la sesión).
 
+### Atribución de ventas en CRM
+
+El CRM separa tres conceptos:
+
+- `customer.acquisition_source`: origen de adquisición del cliente. Se completa
+  una vez si estaba vacío.
+- `order.source`: origen comercial de esa venta concreta.
+- `order.source_origin`: `AUTO` si hubo evidencia técnica real, `MANUAL` si lo
+  marcó una persona.
+
+Valores actuales: `META_ADS`, `ORGANIC`, `REFERRAL`, `MANUAL`, `WHATSAPP`,
+`STORE`, `OTHER`.
+
+Click-to-WhatsApp: el webhook conserva `message.referral` cuando Meta lo envía y
+solo marca `META_ADS + AUTO` si existe evidencia real como `ctwa_clid`,
+`ad_id`, `campaign_id`, `adset_id`, `fbclid`, `_fbc` o payload de `referral`.
+Un mensaje normal de WhatsApp no se atribuye a Meta Ads por sí solo.
+
+Pedido desde chat: si la conversación tiene atribución automática, el pedido
+guarda un snapshot inmutable en `order.meta_attribution_snapshot`. Si luego se
+corrige el cliente o la conversación, el pedido conserva su origen original.
+
+Pedido manual: el panel permite elegir “Origen de la venta”. Si se selecciona
+Facebook / Instagram Ads, campaña, anuncio y nota son opcionales; no se exige
+inventar `ad_id` ni `campaign_id`.
+
+Correcciones: `PATCH /api/admin/items/:id` puede cambiar `source` para pedidos
+con permiso de actualización de pedidos y registra `order.source_changed`.
+
+Reporte: `GET /api/admin/reports/sales-by-source` devuelve pedidos, ventas
+entregadas, ingresos y ticket promedio por origen. El bloque Meta distingue
+ventas `AUTO` (evidencia real) de `MANUAL` (marcadas por usuario). ROAS queda en
+`WAITING_FOR_AD_SPEND` hasta integrar gasto publicitario real.
+
 - `_fbc` / `_fbp` se leen de las cookies reales de Meta. Si `_fbc` no está pero
   hay `fbclid` en la URL, se construye con el formato oficial
   (`fb.1.<milisegundos>.<fbclid>`).
@@ -191,6 +225,8 @@ referrer y fecha (first-touch 90 días + last-touch de la sesión).
 4. `GET /api/health`: estado del almacén (sin datos personales).
 5. `GET /api/admin/data`: bloque `meta` → `{ configured, testEventCode,
    purchaseStatus, graphVersion }` (sin credenciales).
+6. `GET /api/admin/reports/sales-by-source`: ventas por origen y desglose Meta
+   solo con IDs/campañas realmente persistidas.
 
 ---
 

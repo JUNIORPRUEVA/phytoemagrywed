@@ -3841,8 +3841,8 @@ body[data-wa-view='chat'] .float-btn--menu {
 
 /* ---------------------------------------------------------------- el hilo */
 /*
- * El hilo se queda con TODO el alto que sobra. Las acciones viven en el header,
- * así que no necesita reservar hueco para controles flotantes.
+ * El hilo se queda con TODO el alto que sobra. El relleno de abajo reserva el
+ * sitio del botón flotante de acciones para que nunca tape el último mensaje.
  */
 .thread {
   display: grid;
@@ -3851,7 +3851,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   flex: 1;
   min-height: 0;
   max-height: none;
-  padding: 12px;
+  padding: 12px 12px 56px;
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -6557,9 +6557,6 @@ body[data-wa-view='chat'] .mobile-header {
     height: 32px;
   }
 
-  body[data-tab='clientes'] .client-fab {
-    display: none;
-  }
 }
 
 /* Ajuste móvil: Hoy entra primero, con lista más fina y más pantalla útil. */

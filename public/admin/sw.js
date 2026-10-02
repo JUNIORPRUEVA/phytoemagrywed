@@ -25,6 +25,7 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-icon-2x.png',
   '/admin/vendor/leaflet/images/marker-icon.png',
   '/admin/vendor/leaflet/images/marker-shadow.png',
+  '/admin/assets/sounds/message-notification.wav',
   '/admin/logo-phytoemagry.png',
   '/admin/icon-192.png',
   '/admin/icon-512.png',
@@ -175,18 +176,26 @@ self.addEventListener('push', (event) => {
     payload = {};
   }
   const title = payload.title || 'Phytoemagry';
-  const deepLink = payload.deepLink || (payload.orderId ? `/admin/?v=delivery&order=${encodeURIComponent(payload.orderId)}` : '/admin/?v=delivery');
+  const deepLink =
+    payload.deepLink ||
+    (payload.conversationId
+      ? `/admin/?v=whatsapp&conversation=${encodeURIComponent(payload.conversationId)}`
+      : payload.orderId
+        ? `/admin/?v=delivery&order=${encodeURIComponent(payload.orderId)}`
+        : '/admin/');
   event.waitUntil(
     self.registration.showNotification(title, {
       body: payload.body || 'Tienes una actualización en el CRM.',
-      tag: payload.notificationId || payload.orderId || 'phyto-delivery',
+      tag: payload.notificationId || payload.conversationId || payload.orderId || 'phyto-crm',
       data: {
         deepLink,
         orderId: payload.orderId || null,
+        conversationId: payload.conversationId || null,
         notificationId: payload.notificationId || null,
       },
       icon: '/admin/icon-192.png',
       badge: '/admin/icon-192.png',
+      vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
     }),
   );
 });
