@@ -295,9 +295,11 @@ describe('seguridad y reglas que siguen vigentes', () => {
 
   it('la respuesta rápida no se salta la ventana de 24 h ni el opt-out', async () => {
     const app = readFileSync(path.join(process.cwd(), 'public', 'admin', 'app.js'), 'utf8');
-    // Fuera de la ventana el compositor NO tiene campo de texto (solo plantillas),
-    // así que insertar avisa en vez de colar un texto libre.
-    expect(app).toContain('Ahora mismo solo se pueden enviar plantillas aprobadas');
+    // Fuera de la ventana SÍ hay dónde escribir, pero enviar no manda texto libre:
+    // lo escrito viaja al hueco libre de una plantilla aprobada y se revisa antes.
+    expect(app).toContain('function waClosedComposerHtml');
+    expect(app).toContain('openWaTemplateSheet();');
+    expect(app).toContain('No se puede escribir en esta conversación');
     expect(app).toContain('La ventana de atención de 24 horas terminó.');
     expect(app).toContain('Este cliente pidió no recibir mensajes.');
     // Y el envío sigue saliendo del mismo sitio de siempre.

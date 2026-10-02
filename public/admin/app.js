@@ -3541,6 +3541,64 @@
       : escapeHtml(waInitials(label || customerName(customer ?? {})));
   }
 
+  /*
+   * FOTO DEL CLIENTE.
+   *
+   * WhatsApp no entrega la foto de perfil de los contactos por su API (solo el
+   * nombre), así que la foto la pone el equipo: se elige del teléfono, el panel
+   * la reduce a 192 px y se guarda con el cliente. A partir de ahí aparece en la
+   * lista, en la cabecera del chat y en su ficha.
+   */
+  const CUSTOMER_PHOTO_MAX_PX = 192;
+  const CUSTOMER_PHOTO_MAX_CHARS = 140000;
+
+  /** Reduce la imagen elegida antes de subirla (y avisa si no se puede). */
+  function reduceCustomerPhoto(file) {
+    return new Promise((resolve) => {
+      const lector = new FileReader();
+      lector.onerror = () => resolve(null);
+      lector.onload = () => {
+        const dataUrl = String(lector.result ?? '');
+        const pequena = dataUrl.length <= CUSTOMER_PHOTO_MAX_CHARS ? dataUrl : null;
+        let contexto = null;
+        try {
+          const lienzo = document.createElement('canvas');
+          contexto = lienzo.getContext ? lienzo.getContext('2d') : null;
+        } catch {
+          contexto = null;
+        }
+        // Sin lienzo (navegador viejo o entorno de pruebas) se sube tal cual si cabe.
+        if (!contexto || typeof Image !== 'function') return resolve(pequena);
+        const imagen = new Image();
+        imagen.onerror = () => resolve(null);
+        imagen.onload = () => {
+          const lado = Math.max(imagen.width, imagen.height) || 1;
+          const escala = Math.min(1, CUSTOMER_PHOTO_MAX_PX / lado);
+          const lienzo = document.createElement('canvas');
+          lienzo.width = Math.max(1, Math.round(imagen.width * escala));
+          lienzo.height = Math.max(1, Math.round(imagen.height * escala));
+          const ctx = lienzo.getContext('2d');
+          if (!ctx) return resolve(pequena);
+          ctx.drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+          const reducida = lienzo.toDataURL('image/jpeg', 0.82);
+          resolve(reducida.length <= CUSTOMER_PHOTO_MAX_CHARS ? reducida : null);
+        };
+        imagen.src = dataUrl;
+      };
+      lector.readAsDataURL(file);
+    });
+  }
+
+  /** Guarda (o borra, con `null`) la foto del cliente y repinta la ficha. */
+  async function saveCustomerPhoto(customerId, photoUrl) {
+    await api(`/api/admin/customers/${encodeURIComponent(customerId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ photo_url: photoUrl }),
+    });
+    await load({ keepTab: true });
+    await openCustomer(customerId);
+  }
+
   /** «Hoy», «Ayer» o la fecha: el separador que ordena el hilo. */
   const waDayLabel = (iso) => {
     const date = new Date(iso);
@@ -4319,6 +4377,27 @@
   };
   const waVariableLabel = (key, index) => WA_VAR_LABELS[key] ?? `Texto {{${index + 1}}}`;
   const waVariablePlaceholder = (key) => (WA_VAR_LABELS[key] ? '' : 'Escribe aquí lo que quieras decir…');
+  /*
+   * HUECO LIBRE de una plantilla.
+   *
+   * Fuera de la ventana de 24 h WhatsApp solo admite plantillas aprobadas y su
+   * texto fijo NO se puede cambiar; sus huecos, sí. Escribiendo en el hueco que
+   * el CRM declara libre (`variables: ['customer_name', 'mensaje']`), el mensaje
+   * sale con las palabras del operador.
+   */
+  const WA_FREE_VAR_KEYS = ['mensaje', 'texto', 'mensaje_libre', 'libre', 'personalizado'];
+  function waTemplateFreeSlot(template) {
+    const index = waTemplateHuecos(template).findIndex((key) =>
+      WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase()),
+    );
+    return index === -1 ? null : index;
+  }
+  /** Plantilla aprobada que admite un mensaje escrito a mano (la de «hello world»). */
+  function waPersonalTemplate() {
+    return (
+      (state.templates ?? []).filter(waTemplateApproved).find((template) => waTemplateFreeSlot(template) !== null) ?? null
+    );
+  }
 
   /** Cómo queda el mensaje con los huecos ya rellenos: lo que se va a enviar. */
   function waRenderTemplatePreview(template, values) {
@@ -4330,17 +4409,23 @@
     return texto;
   }
 
-  function waTemplateSheetHtml() {
+  function waTemplateSheetHtml(prefill = {}) {
     const approved = (state.templates ?? []).filter(waTemplateApproved);
     if (!approved.length) {
       return `<p class="rule rule--warn">No hay plantillas aprobadas sincronizadas.</p>
         <p class="view__hint">Ve a Ajustes > WhatsApp y pulsa Sincronizar con Meta.</p>`;
     }
+    const elegida = approved.find((template) => template.name === prefill.templateName) ?? approved[0];
     return `<label class="field">
         <span class="field__label">Plantilla aprobada</span>
         <select class="field__select" id="wa-template">
           ${approved
-            .map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(waTemplateLabel(template))}</option>`)
+            .map(
+              (template) =>
+                `<option value="${escapeHtml(template.name)}"${template.name === elegida.name ? ' selected' : ''}>${escapeHtml(
+                  waTemplateLabel(template),
+                )}</option>`,
+            )
             .join('')}
         </select>
       </label>
@@ -4359,22 +4444,26 @@
    * Así el operador pone SU mensaje dentro de la plantilla, que es lo único que
    * WhatsApp permite fuera de la ventana de 24 h.
    */
-  function renderWaTemplateFields() {
+  function renderWaTemplateFields(prefill = {}) {
     const fields = $('#wa-template-fields');
     if (!fields) return;
     const template = (state.templates ?? []).find((row) => row.name === $('#wa-template')?.value) ?? null;
     const auto = waTemplateAutoValues(state.wa.chat?.customer ?? null);
     const huecos = waTemplateHuecos(template);
+    const libre = waTemplateFreeSlot(template);
     state.wa.templateValues = {};
     fields.innerHTML = huecos.length
       ? huecos
-          .map(
-            (key, index) => `<label class="field">
-        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}</span>
-        <input class="field__input" type="text" data-wa-var="${index + 1}" value="${escapeHtml(auto[key] ?? '')}"
-          placeholder="${escapeHtml(waVariablePlaceholder(key))}" />
-      </label>`,
-          )
+          .map((key, index) => {
+            // El hueco libre arranca con lo que se escribió en el compositor.
+            const esLibre = index === libre;
+            const valor = esLibre && prefill.freeText ? prefill.freeText : (auto[key] ?? '');
+            return `<label class="field">
+        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}${esLibre ? ' · lo escribes tú' : ''}</span>
+        <input class="field__input" type="text" data-wa-var="${index + 1}" value="${escapeHtml(valor)}"
+          placeholder="${escapeHtml(esLibre ? 'Escribe aquí lo que quieras decirle…' : waVariablePlaceholder(key))}" />
+      </label>`;
+          })
           .join('')
       : '<p class="rule">Esta plantilla no tiene huecos: se envía tal cual está.</p>';
     const recoger = () => {
@@ -4391,9 +4480,20 @@
     };
     $$('#wa-template-fields [data-wa-var]').forEach((input) => input.addEventListener('input', pintar));
     pintar();
+    // Si el texto venía del compositor, el cursor ya está donde hay que escribir.
+    if (prefill.freeText && libre !== null) $$('#wa-template-fields [data-wa-var]')[libre]?.focus();
   }
 
+  /**
+   * Hoja de envío de plantilla.
+   *
+   * Si en el compositor había un mensaje escrito, se lleva DIRECTO al hueco libre
+   * de la plantilla que lo admite: escribir y usar plantilla pasan a ser un solo
+   * gesto (escribir → Enviar → Enviar plantilla), en vez de tener que copiar el
+   * texto a mano en un hueco.
+   */
   async function openWaTemplateSheet() {
+    const borrador = String(state.wa.draft ?? '').trim();
     openSheet('Enviar plantilla', '<p class="view__hint">Cargando plantillas aprobadas…</p>');
     try {
       const result = await api('/api/admin/wa-templates?sync=stale');
@@ -4401,9 +4501,18 @@
     } catch {
       /* Si falla la consulta, se usa la última lista conocida y la hoja lo explica. */
     }
-    $('#sheet-body').innerHTML = waTemplateSheetHtml();
-    renderWaTemplateFields();
-    $('#wa-template')?.addEventListener('change', renderWaTemplateFields);
+    const personal = waPersonalTemplate();
+    const prefill = borrador && personal ? { templateName: personal.name, freeText: borrador } : {};
+    if (borrador && !personal) {
+      prefill.nota =
+        'Ninguna plantilla aprobada admite texto propio ahora mismo: elige una plantilla y rellena sus huecos a mano.';
+    }
+    $('#sheet-body').innerHTML = waTemplateSheetHtml(prefill);
+    if (prefill.nota) $('#sheet-body').insertAdjacentHTML('afterbegin', `<p class="rule rule--warn">${escapeHtml(prefill.nota)}</p>`);
+    renderWaTemplateFields(prefill);
+    // Al cambiar de plantilla se mantiene el texto que se había escrito: es lo que
+    // la persona quiere decir, y solo cambia la plantilla que lo transporta.
+    $('#wa-template')?.addEventListener('change', () => renderWaTemplateFields({ freeText: borrador }));
     $('#wa-send-template')?.addEventListener('click', async (event) => {
       // Solo viajan los huecos RELLENOS: el resto los completa el servidor como
       // siempre (nombre del cliente, datos del pedido).
@@ -4417,6 +4526,29 @@
     });
   }
 
+  /**
+   * Compositor de la VENTANA CERRADA (primer contacto y >24 h).
+   *
+   * Se escribe igual que en una conversación normal; al pulsar enviar, el texto
+   * viaja al hueco libre de la plantilla aprobada y se ve el mensaje final antes
+   * de mandarlo. Sin adjuntos: WhatsApp tampoco los admite fuera de la ventana.
+   */
+  function waClosedComposerHtml() {
+    const personal = waPersonalTemplate();
+    const aviso = personal
+      ? `Lo que escribas se envía dentro de la plantilla «${escapeHtml(waTemplateLabel(personal))}».`
+      : 'Fuera de la ventana de 24 h WhatsApp solo admite plantillas aprobadas: elige una para poder escribir.';
+    return `<div class="composer-bar">
+        <textarea id="wa-text" rows="1" placeholder="Escribe lo que quieras decirle…"
+          aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
+        <span class="composer-end">
+          <button class="composer-btn composer-btn--send" id="wa-send" type="button"
+            aria-label="Enviar con plantilla">${ICONS.send}</button>
+        </span>
+      </div>
+      <p class="composer-rule">${aviso} Nada se envía solo.</p>`;
+  }
+
   function waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate = null }) {
     const wa = state.whatsapp ?? {};
     if (!wa.configured) {
@@ -4426,7 +4558,9 @@
       return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      return waContactStateHtml(contactState, customer, lastTemplate);
+      // El aviso dice POR QUÉ no se escribe libre, y debajo sigue habiendo dónde
+      // escribir: el texto entra en el hueco libre de una plantilla aprobada.
+      return `${waContactStateHtml(contactState, customer, lastTemplate)}${waClosedComposerHtml()}`;
     }
     const puedeAdjuntar = state.media?.enabled === true;
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
@@ -4584,9 +4718,18 @@
     }
 
     $('#wa-send')?.addEventListener('click', (event) => {
-      const body = $('#wa-text').value.trim();
+      const body = ($('#wa-text')?.value ?? '').trim();
       if (!body) {
         toast('Escribe el mensaje');
+        return;
+      }
+      /*
+       * Fuera de la ventana de 24 h no existe el mensaje libre: lo escrito se
+       * lleva al hueco libre de la plantilla y se revisa antes de enviar. Un solo
+       * camino para «escribir» y «usar plantilla».
+       */
+      if (!canSendFreeText) {
+        openWaTemplateSheet();
         return;
       }
       sendWaMessage({ body }, event.currentTarget);
@@ -5503,7 +5646,13 @@
         <h2>${escapeHtml(customerName(customer))}</h2>
         <p>${escapeHtml(customer.phone_e164 ?? customer.phone ?? 'Sin teléfono')}</p>
         <div class="profile-tags">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
+        <div class="profile-photo-actions">
+          <button class="btn btn--ghost btn--sm" id="customer-photo-pick" type="button">${photo ? 'Cambiar foto' : 'Poner foto'}</button>
+          ${photo ? '<button class="btn btn--ghost btn--sm" id="customer-photo-clear" type="button">Quitar foto</button>' : ''}
+        </div>
+        ${photo ? '' : '<p class="profile-photo-hint">WhatsApp no entrega la foto de perfil de los contactos: si la pones aquí, se ve en la lista, en el chat y en la ficha.</p>'}
       </div>
+      <input class="profile-photo-file" id="customer-photo-file" type="file" accept="image/png,image/jpeg,image/webp" />
     </header>`;
 
     const personal = customerProfileSection(
@@ -5728,6 +5877,37 @@
     });
 
     $('#customer-stage')?.addEventListener('change', (event) => changeCustomerStage(customer.id, event.target.value));
+
+    // Foto del cliente: elegir del teléfono, reducirla y guardarla con el cliente.
+    $('#customer-photo-pick')?.addEventListener('click', () => $('#customer-photo-file')?.click());
+    $('#customer-photo-file')?.addEventListener('change', async (event) => {
+      const archivo = event.target.files?.[0];
+      if (!archivo) return;
+      if (archivo.size > 6 * 1024 * 1024) {
+        toast('Esa imagen pesa demasiado: usa una de menos de 6 MB');
+        return;
+      }
+      const foto = await reduceCustomerPhoto(archivo);
+      if (!foto) {
+        toast('No se pudo preparar esa imagen: prueba con otra más pequeña');
+        return;
+      }
+      try {
+        await saveCustomerPhoto(customer.id, foto);
+        toast('Foto guardada');
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar la foto');
+      }
+    });
+    $('#customer-photo-clear')?.addEventListener('click', async () => {
+      if (!window.confirm('¿Quitar la foto de este cliente?')) return;
+      try {
+        await saveCustomerPhoto(customer.id, null);
+        toast('Foto quitada');
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast('No se pudo quitar la foto');
+      }
+    });
   }
 
   function renderCustomer(profile) {
@@ -6562,9 +6742,9 @@
     }
     const area = $('#wa-text');
     if (!area) {
-      // Fuera de la ventana de 24 h no hay campo de texto libre (solo plantillas
-      // aprobadas): una respuesta rápida NO puede saltarse esa regla.
-      toast('Ahora mismo solo se pueden enviar plantillas aprobadas');
+      // Sin compositor (cliente «no contactar» o WhatsApp sin configurar) no hay
+      // ningún sitio donde colocar el texto: se avisa y no se inventa nada.
+      toast('No se puede escribir en esta conversación');
       closeSheet();
       return;
     }

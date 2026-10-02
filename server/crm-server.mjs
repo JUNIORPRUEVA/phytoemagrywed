@@ -345,14 +345,14 @@ function cors(res, allowedOrigin) {
 }
 
 /** Lee el cuerpo con tope de tamaño. @returns {Promise<any>} */
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let size = 0;
     /** @type {Buffer[]} */
     const chunks = [];
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(Object.assign(new Error('body_too_large'), { status: 413 }));
         req.destroy();
         return;
@@ -2419,6 +2419,34 @@ function sanitizeTemplateParameter(value) {
     .slice(0, 900);
 }
 
+/**
+ * Foto del cliente.
+ *
+ * WhatsApp NO entrega la foto de perfil de los contactos por su API: el webhook
+ * de mensajes solo trae `contacts[].profile.name`, `/{phone-number-id}/contacts`
+ * no existe y el wa_id del cliente no es un nodo de Graph (las tres cosas están
+ * comprobadas contra la Graph API). Así que la foto la pone el equipo desde el
+ * panel y vive con el cliente: aparece en la lista, en la cabecera del chat y en
+ * su ficha. Se acepta una imagen pequeña en `data:` (el panel la reduce a 192 px
+ * antes de mandarla) o una dirección https.
+ *
+ * @returns {string|null|undefined} lista para guardar · `null` para BORRARLA ·
+ *   `undefined` si lo recibido no vale (el llamador responde 422).
+ */
+const CUSTOMER_PHOTO_LIMIT = 140000;
+/** La foto viaja en el cuerpo del PATCH: esa ruta admite más que el resto. */
+const CUSTOMER_PHOTO_BODY_BYTES = 256 * 1024;
+function normalizeCustomerPhoto(value) {
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string') return undefined;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (raw.length > CUSTOMER_PHOTO_LIMIT) return undefined;
+  if (/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(raw)) return raw;
+  if (raw.length <= 600 && /^https:\/\/[^\s"'<>]+$/.test(raw)) return raw;
+  return undefined;
+}
+
 function orderTotalText(order, item) {
   const total = order?.total ?? item?.total ?? null;
   if (total === null || total === undefined || total === '') return null;
@@ -4176,7 +4204,8 @@ async function handle(req, res, ctx) {
         /** @type {any} */
         let body = {};
         try {
-          body = await readJsonBody(req);
+          // La foto del cliente puede ocupar bastante más que un pedido normal.
+          body = await readJsonBody(req, CUSTOMER_PHOTO_BODY_BYTES);
         } catch {
           body = {};
         }
@@ -4185,6 +4214,25 @@ async function handle(req, res, ctx) {
         if (body.name !== undefined) patch.name = text(body.name, 120);
         if (body.location !== undefined) patch.location = text(body.location, 120);
         if (body.notes !== undefined) patch.notes = longText(body.notes, 2000);
+        /*
+         * Foto del cliente: WhatsApp no la entrega nunca (su API no expone la
+         * foto de perfil de los contactos), así que la sube el equipo y se
+         * queda guardada con el cliente. `null` la quita.
+         */
+        if (body.photo_url !== undefined || body.photoUrl !== undefined) {
+          // Ojo con `??`: al BORRAR la foto llega `null` a propósito.
+          const recibida = body.photo_url !== undefined ? body.photo_url : body.photoUrl;
+          const limpia = normalizeCustomerPhoto(recibida);
+          if (limpia === undefined) {
+            json(res, 422, {
+              ok: false,
+              error: 'invalid_photo',
+              message: 'La foto no vale: usa una imagen JPG, PNG o WebP pequeña, o una dirección https.',
+            });
+            return;
+          }
+          patch.photo_url = limpia;
+        }
         // Estado comercial A MANO (INTERESADO / PERDIDO). Con `null` vuelve al derivado.
         if (body.commercialState !== undefined) {
           const result = await ctx.customers.setCommercialState(customerId, body.commercialState);

@@ -186,6 +186,23 @@ async function approveTemplateForUat() {
   if (result.response.status !== 200) throw new Error(`no se pudo aprobar plantilla: ${JSON.stringify(result.body)}`);
 }
 
+/** La plantilla que admite un mensaje escrito a mano (hueco libre declarado). */
+async function approvePersonalTemplateForUat() {
+  const result = await adminJson('/api/admin/wa-templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'phyto_mensaje_personalizado_v1',
+      friendlyName: 'Mensaje personalizado',
+      status: 'APPROVED',
+      body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
+      variables: ['customer_name', 'mensaje'],
+      metaTemplateId: 'tpl-uat-personal',
+      lastSyncedAt: new Date().toISOString(),
+    }),
+  });
+  if (result.response.status !== 200) throw new Error(`no se pudo aprobar plantilla libre: ${JSON.stringify(result.body)}`);
+}
+
 beforeAll(async () => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), 'phyto-uat-conv-'));
   app = await startCrmServer({
@@ -463,7 +480,7 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     await waitFor(() => $('#sheet-body #wa-send-template'), 'selector con plantilla aprobada');
   }, 12000);
 
-  it('después de enviar template queda WAITING_CUSTOMER_REPLY, cierra hoja y no habilita texto libre', async () => {
+  it('después de enviar template queda WAITING_CUSTOMER_REPLY y el texto va dentro de una plantilla', async () => {
     const before = whatsapp.sent.length;
     click('#sheet-body #wa-send-template');
     await waitFor(() => $('#sheet').hidden === true, 'selector de plantilla cerrado tras enviar', 9000);
@@ -478,7 +495,11 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     // burbuja y el estado lo dicen sin prometer una entrega que no se confirmó.
     expect($('#wa-composer').textContent).toContain('sin confirmar');
     expect($('#thread').textContent).toContain('Enviado · sin confirmar');
-    expect($('#wa-text')).toBeNull();
+    // Hay dónde escribir (lo escrito viaja dentro de una plantilla), pero NO es
+    // texto libre: ni adjuntos ni notas de voz fuera de la ventana de 24 h.
+    expect($('#wa-text')).not.toBeNull();
+    expect($('#wa-mic')).toBeNull();
+    expect($('#wa-attach')).toBeNull();
     expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
     expect(uxConversationId).toBeTruthy();
   }, 12000);
@@ -495,7 +516,7 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     });
     await app.collections.update('conversations', uxConversationId, { updated_at: new Date().toISOString() });
     await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'sigue esperando');
-    expect($('#wa-text')).toBeNull();
+    expect($('#wa-send')).not.toBeNull();
     // Con la entrega YA confirmada por Meta, el estado deja de decir «sin confirmar».
     click('[data-wa-filter="todos"]');
     await waitFor(
@@ -533,7 +554,9 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
       button: { text: 'Continuar', payload: 'continuar' },
     });
     click('[data-wa-filter="todos"]');
-    await waitFor(() => $('#wa-text'), 'composer libre tras quick reply inbound', 9000);
+    // El compositor LIBRE se reconoce por el botón de adjuntar (que fuera de la
+    // ventana no existe): el campo de texto está en los dos casos.
+    await waitFor(() => $('#wa-attach'), 'composer libre tras quick reply inbound', 9000);
     expect($('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]')).toBeNull();
     expect($('#wa-composer').textContent).not.toContain('Esperando respuesta');
   }, 12000);
@@ -577,6 +600,165 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     whatsapp.failWith = null;
     expect(uxConversationId).toBeTruthy();
   }, 12000);
+});
+
+describe('escribir el mensaje de un chat nuevo (fuera de la ventana de 24 h)', () => {
+  /*
+   * Lo que se pidió: al abrir una conversación por primera vez, escribir en el
+   * compositor y que ESE texto salga dentro de la plantilla aprobada, sin tener
+   * que copiarlo a mano en un hueco.
+   */
+  it('lo escrito entra en el hueco libre de la plantilla y se revisa antes de enviar', async () => {
+    await approvePersonalTemplateForUat();
+    click('#wa-new-chat');
+    $('#wa-start-phone').value = '18095550888';
+    $('#wa-start-name').value = 'Cliente Escribe';
+    $('#wa-start-body').value = '';
+    click('#wa-start-open');
+    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Cliente Escribe'), 'chat nuevo abierto', 9000);
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT', 9000);
+
+    const area = await waitFor(() => $('#wa-text'), 'el compositor del chat nuevo', 9000);
+    expect($('#wa-composer').textContent).toContain('Mensaje personalizado');
+    expect($('#wa-composer').textContent).toContain('Nada se envía solo');
+    area.value = 'Tu pedido ya salió para tu dirección.';
+    area.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+
+    const antes = whatsapp.sent.length;
+    click('#wa-send');
+    const libre = await waitFor(() => $('#wa-template-fields [data-wa-var="2"]'), 'el hueco libre de la plantilla', 9000);
+    // La plantilla con hueco libre viene elegida y el texto ya está dentro.
+    expect($('#wa-template').value).toBe('phyto_mensaje_personalizado_v1');
+    expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Cliente Escribe');
+    expect(libre.value).toBe('Tu pedido ya salió para tu dirección.');
+    expect($('#wa-template-preview').textContent).toContain('Tu pedido ya salió para tu dirección.');
+    // Abrir la hoja NO ha enviado nada.
+    expect(whatsapp.sent.length).toBe(antes);
+
+    click('#sheet-body #wa-send-template');
+    await waitFor(() => whatsapp.sent.length === antes + 1, 'la plantilla con el mensaje escrito', 9000);
+    const enviado = whatsapp.sent.at(-1);
+    expect(enviado.to).toBe('+18095550888');
+    expect(enviado.template.name).toBe('phyto_mensaje_personalizado_v1');
+    expect(enviado.template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Cliente Escribe' },
+          { type: 'text', text: 'Tu pedido ya salió para tu dirección.' },
+        ],
+      },
+    ]);
+    await waitFor(
+      () => $('#thread').textContent.includes('Tu pedido ya salió para tu dirección.'),
+      'el mensaje final en el hilo',
+      9000,
+    );
+    expect($('#sheet').hidden).toBe(true);
+  }, 40000);
+
+  it('sin nada escrito no se inventa texto: la hoja solo trae lo que el CRM ya sabe', async () => {
+    click('#wa-open-template');
+    const nombre = await waitFor(
+      () => $('#wa-template-fields [data-wa-var="1"]'),
+      'los huecos de la plantilla por defecto',
+      9000,
+    );
+    expect($('#wa-template').value).toBe('phyto_followup_checkin');
+    expect(nombre.value).toBe('Cliente Escribe');
+    // Esa plantilla no declara hueco libre: nadie le mete un mensaje a la fuerza.
+    expect($('#wa-template-fields [data-wa-var="2"]')).toBeNull();
+    expect($('#wa-template-preview').textContent).toBe('Hola Cliente Escribe, ¿cómo va todo?');
+    closeSheetForUat();
+  });
+});
+
+/** Cierra la hoja desde el propio panel (el mismo botón que usa una persona). */
+function closeSheetForUat() {
+  click('[data-close-sheet]');
+}
+
+describe('la foto del cliente', () => {
+  /*
+   * WhatsApp NO entrega la foto de perfil de los contactos por su API (el webhook
+   * solo trae `profile.name` y el wa_id del cliente no es un nodo de Graph), así
+   * que la foto la pone el equipo: se guarda con el cliente y se ve en toda la
+   * interfaz (lista, cabecera del chat y ficha).
+   */
+  const FOTO =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  let clienteAna = '';
+
+  const clienteDe = async (phone) => {
+    const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+    const soloDigitos = (value) => String(value ?? '').replace(/\D/g, '');
+    return (data.customers ?? []).find((row) => soloDigitos(row.phone_e164) === phone) ?? null;
+  };
+
+  it('se guarda con el cliente y la API valida lo que recibe', async () => {
+    clienteAna = (await clienteDe(PHONES.ana))?.id ?? '';
+    expect(clienteAna).toBeTruthy();
+
+    // Ni una URL de script ni un "data:" enorme: 422 y la ficha no cambia.
+    const basura = await adminJson(`/api/admin/customers/${clienteAna}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ photo_url: 'javascript:alert(1)' }),
+    });
+    expect(basura.response.status).toBe(422);
+    expect(basura.body.error).toBe('invalid_photo');
+
+    const enorme = await adminJson(`/api/admin/customers/${clienteAna}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ photo_url: `data:image/png;base64,${'A'.repeat(150000)}` }),
+    });
+    expect(enorme.response.status).toBe(422);
+    expect((await clienteDe(PHONES.ana))?.photo_url ?? null).toBe(null);
+
+    const buena = await adminJson(`/api/admin/customers/${clienteAna}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ photo_url: FOTO }),
+    });
+    expect(buena.response.status).toBe(200);
+    expect((await clienteDe(PHONES.ana))?.photo_url).toBe(FOTO);
+  });
+
+  it('aparece en la lista, en la cabecera del chat y en la ficha del cliente', async () => {
+    click('[data-wa-filter="todos"]');
+    const enLista = await waitFor(
+      () => $(`[data-conv="${ids.ana}"] .conv__avatar img`),
+      'el avatar con foto en la lista',
+      9000,
+    );
+    expect(enLista.getAttribute('src')).toBe(FOTO);
+
+    click(`[data-conv="${ids.ana}"]`);
+    const enCabecera = await waitFor(() => $('#wa-chat-avatar img'), 'la foto en la cabecera del chat', 9000);
+    expect(enCabecera.getAttribute('src')).toBe(FOTO);
+
+    click('#wa-chat-avatar');
+    // La ficha se pinta dos veces (lo que ya sabemos y luego lo que confirma el
+    // servidor): se espera a la segunda, que es la que trae la foto.
+    const cambiar = await waitFor(
+      () => ($('#customer-photo-pick')?.textContent.includes('Cambiar foto') ? $('#customer-photo-pick') : null),
+      'los controles de foto en la ficha',
+      9000,
+    );
+    expect(cambiar.textContent).toContain('Cambiar foto');
+    expect($('#customer-photo-clear')).not.toBeNull();
+    expect($('#customer-photo-file').getAttribute('accept')).toContain('image/');
+    const hero = $('.profile-hero');
+    expect(hero.className).toContain('profile-hero--photo');
+    expect(hero.getAttribute('style')).toContain(FOTO.slice(0, 40));
+  }, 15000);
+
+  it('se puede quitar y vuelven las iniciales', async () => {
+    const quitada = await adminJson(`/api/admin/customers/${clienteAna}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ photo_url: null }),
+    });
+    expect(quitada.response.status).toBe(200);
+    expect((await clienteDe(PHONES.ana))?.photo_url ?? null).toBe(null);
+  });
 });
 
 describe('la lista que se pinta es la nueva', () => {

@@ -1127,6 +1127,33 @@ body[data-tab='hoy'] .stat__label {
   margin-top: 10px;
 }
 
+/* Foto del cliente: la pone el equipo (WhatsApp no la da por su API). */
+.profile-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.profile-photo-hint {
+  margin: 8px 0 0;
+  max-width: 52ch;
+  color: var(--pe-ink-500);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+/* El campo de archivo no se ve, pero sigue siendo un control real: en iPhone un
+   `display:none` puede impedir que se abra el selector de fotos. */
+.profile-photo-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .profile-hero__actions,
 .profile-card .item__actions {
   display: flex;
