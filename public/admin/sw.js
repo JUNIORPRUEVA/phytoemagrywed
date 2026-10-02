@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v12-entrega-sin-confirmar';
+const VERSION = 'crm-v13-entrega-y-sondeo-seguro';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 600;

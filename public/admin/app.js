@@ -126,8 +126,25 @@
 
   // ------------------------------------------------------------------ helpers
 
-  const $ = (selector, root = document) => root.querySelector(selector);
-  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+  /*
+   * `document` deja de existir cuando la página se descarga (o cuando un UAT
+   * cierra la ventana con sondeos todavía en vuelo). Sin documento no hay nada
+   * que pintar: se devuelve null/[] y el trabajo tardío termina en paz en vez de
+   * reventar con «Cannot read properties of undefined (reading 'querySelector')».
+   */
+  const $ = (selector, root) =>
+    (root ?? (typeof document === 'undefined' ? null : document))?.querySelector(selector) ?? null;
+  const $$ = (selector, root) => {
+    const scope = root ?? (typeof document === 'undefined' ? null : document);
+    return scope?.querySelectorAll ? [...scope.querySelectorAll(selector)] : [];
+  };
+
+  /**
+   * ¿Sigue existiendo la página? Una petición en vuelo puede resolverse DESPUÉS
+   * de descargarse la pestaña (o de que un UAT cierre la ventana): entonces no
+   * hay nada que pintar y seguir renderizando solo produce errores invisibles.
+   */
+  const domAlive = () => typeof document !== 'undefined' && Boolean(document?.body);
 
   const escapeHtml = (value) =>
     String(value ?? '')
@@ -258,6 +275,7 @@
   let toastTimer = null;
   function toast(message) {
     const box = $('#toast');
+    if (!box) return; // sin documento (página cerrándose) no hay nada que avisar
     box.textContent = message;
     box.hidden = false;
     clearTimeout(toastTimer);
@@ -5230,6 +5248,7 @@
       if (dateRange.to) params.set('to', dateRange.to);
     }
     const list = await api(`/api/admin/conversations?${params.toString()}`);
+    if (!domAlive()) return; // la pestaña se cerró mientras respondía el CRM
     const rows = list.conversations ?? [];
     state.wa.counts = list.counts ?? state.wa.counts;
     const listSig = JSON.stringify(
@@ -5263,6 +5282,7 @@
     const conversationId = state.wa.selectedId;
     if (!conversationId) return;
     const data = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`);
+    if (!domAlive()) return; // la pestaña se cerró mientras respondía el CRM
     if (state.wa.selectedId !== conversationId) return;
     const sig = waThreadSig(data);
     if (sig === state.wa.chatSig) return;
@@ -5276,7 +5296,9 @@
 
   /** Un solo temporizador para todo el panel: nada de timers huérfanos. */
   function waPollTick() {
-    if ($('#app')?.hidden) return; // con la sesión cerrada (o el panel oculto) no se sondea
+    const panel = $('#app');
+    // Sin panel (sesión cerrada, pestaña oculta o DOM ya destruido) no se sondea.
+    if (!panel || panel.hidden) return;
     if (state.tab !== 'whatsapp') return; // fuera de la pestaña no se gasta red
     if (document.visibilityState !== 'visible') return; // ni con la app en segundo plano
     if (waPolling) return; // ni dos peticiones a la vez

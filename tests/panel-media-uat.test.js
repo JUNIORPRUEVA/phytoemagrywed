@@ -110,9 +110,17 @@ let conversationId = '';
 let audioNormalize = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/*
+ * Presupuesto del ARRANQUE. En un CI con pocas CPU el arranque (jsdom + eval del
+ * panel + login + abrir la conversación) tarda más que en local: con 3 s de
+ * margen el build de Docker se caía por un «timeout esperando: el hilo con
+ * archivos» que no era un fallo del producto.
+ */
+const BOOT_TIMEOUT = Number(process.env.PHYTO_UAT_BOOT_TIMEOUT ?? 20000);
 // Menos que el tiempo máximo del propio test: así, cuando algo no llega, el
 // error dice QUÉ se estaba esperando en vez de un "test timed out" pelado.
-async function waitFor(check, label, timeout = 3000) {
+// 8 s (y no 3) porque el CI va con la CPU compartida.
+async function waitFor(check, label, timeout = 8000) {
   const start = Date.now();
   for (;;) {
     const value = await check();
@@ -332,15 +340,15 @@ beforeAll(async () => {
   win.document.dispatchEvent(new win.Event('DOMContentLoaded', { bubbles: true }));
 
   // Entrar y abrir la conversación con los archivos.
-  await waitFor(() => !$('#login').hidden || !$('#app').hidden, 'el acceso');
+  await waitFor(() => !$('#login').hidden || !$('#app').hidden, 'el acceso', BOOT_TIMEOUT);
   $('#login-token').value = TOKEN;
   $('#login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-  await waitFor(() => !$('#app').hidden, 'el panel');
+  await waitFor(() => !$('#app').hidden, 'el panel', BOOT_TIMEOUT);
   click('[data-tab="whatsapp"]');
-  const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación');
+  const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación', BOOT_TIMEOUT);
   click(row);
-  await waitFor(() => $$('#thread .bubble').length >= 3, 'el hilo con archivos');
-});
+  await waitFor(() => $$('#thread .bubble').length >= 3, 'el hilo con archivos', BOOT_TIMEOUT);
+}, 90000);
 
 afterAll(async () => {
   dom?.window?.close();
@@ -350,7 +358,7 @@ afterAll(async () => {
 
 describe('UAT del panel con multimedia', () => {
   it('la imagen entrante se ve como miniatura y se abre en el visor', async () => {
-    const thumb = await waitFor(() => $('[data-media-view]'), 'la miniatura');
+    const thumb = await waitFor(() => $('[data-media-view]'), 'la miniatura', BOOT_TIMEOUT);
     const img = thumb.querySelector('img');
     expect(img.src).toContain('/api/admin/media/');
     // Nada de enlaces al almacén: solo el endpoint privado del CRM.
@@ -362,10 +370,10 @@ describe('UAT del panel con multimedia', () => {
     expect($('#media-viewer-img').src).toContain('/api/admin/media/');
     click('#media-viewer-close');
     expect($('#media-viewer').hidden).toBe(true);
-  });
+  }, 30000);
 
   it('el audio entrante tiene reproductor propio y NO suena solo', async () => {
-    const player = await waitFor(() => $('[data-audio]'), 'el reproductor');
+    const player = await waitFor(() => $('[data-audio]'), 'el reproductor', BOOT_TIMEOUT);
     expect(player.querySelector('[data-audio-total]')).toBeTruthy();
     // Sin autoplay: no se ha creado ningún elemento de audio hasta pulsar.
     expect(FakeAudio.instances).toHaveLength(0);
@@ -400,7 +408,7 @@ describe('UAT del panel con multimedia', () => {
     expect(player.querySelector('[data-audio-play]').getAttribute('aria-label')).toBe('Reproducir');
     expect($('#toast').textContent).toBe('No se pudo reproducir el audio');
     FakeAudio.failPlay = false;
-  });
+  }, 30000);
 
   it('adjuntar una imagen: previsualiza, se puede cancelar y NO se envía al elegir', async () => {
     const antes = sends;
@@ -437,7 +445,7 @@ describe('UAT del panel con multimedia', () => {
     await waitFor(() => $$('#thread .bubble--out').some((b) => b.textContent.includes('Te mando el frasco')), 'el mensaje en el hilo');
     const saliente = $$('#thread .bubble--out').find((b) => b.textContent.includes('Te mando el frasco'));
     expect(saliente.querySelector('[data-media-view]')).toBeTruthy();
-  });
+  }, 30000);
 
   it('grabar una nota de voz: detener NO envía, y se puede previsualizar antes', async () => {
     const antes = sends;
@@ -626,5 +634,5 @@ describe('UAT del panel con multimedia', () => {
     }, 'el comprobante');
     expect(title).toMatch(/PE-/);
     expect($('#sheet-body').innerHTML).toContain('Comprobante');
-  });
+  }, 30000);
 });
