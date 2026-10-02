@@ -4468,12 +4468,29 @@ async function handle(req, res, ctx) {
       });
       const push = notification.notification ? await sendPushForNotification(ctx, notification.notification) : null;
       const status = await pushStatusForUser(ctx, ownerUserId);
+      /*
+       * El mensaje dice lo que PASÓ, no lo que se intentó: «sent» significa que el
+       * servicio de push del teléfono aceptó el aviso. Con `subscriptions: 1` pero
+       * `sent: 0` (llaves ausentes, endpoint caducado o rechazo) el panel necesita
+       * saberlo para poder explicarlo en vez de dar la prueba por buena.
+       */
+      const resumen = !push || !push.subscriptions
+        ? 'Este usuario no tiene un teléfono registrado para push.'
+        : push.sent > 0
+          ? `Prueba enviada al teléfono (${push.sent}).`
+          : push.notConfigured > 0
+            ? 'El servidor no tiene llaves push: no se envió nada.'
+            : push.expired > 0
+              ? 'El teléfono registrado ya no acepta avisos: hay que registrarlo otra vez.'
+              : push.failed > 0
+                ? 'El servicio de push rechazó el envío.'
+                : 'No se envió nada: el teléfono ya había recibido esta prueba.';
       json(res, push?.subscriptions ? 200 : 409, {
-        ok: Boolean(push?.subscriptions),
+        ok: Boolean(push?.sent),
         notification: notification.notification ? { id: notification.notification.id } : null,
         push,
         status,
-        message: push?.subscriptions ? 'Prueba enviada al teléfono.' : 'Este usuario no tiene un teléfono registrado para push.',
+        message: resumen,
       });
       return;
     }

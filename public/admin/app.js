@@ -2121,6 +2121,21 @@
     setTimeout(() => updateDeliveryMap(selected), 0);
   }
 
+  /** Cómo se lee el último envío (y el resultado de la última prueba, si la hay). */
+  const PUSH_JOB_LABEL = {
+    sent: 'enviado',
+    failed: 'falló',
+    expired: 'el teléfono ya no acepta avisos',
+    not_configured: 'sin llaves en el servidor',
+    skipped: 'ya enviado antes',
+  };
+
+  function pushLastLine(job, resultado) {
+    if (resultado) return `Servidor: ${resultado.servidor} · ${resultado.local}`;
+    if (!job) return 'Sin pruebas recientes · pulsa Probar';
+    return `Último envío: ${PUSH_JOB_LABEL[job.status] ?? job.status} · ${fmtWhen(job.created_at)}`;
+  }
+
   function openNotificationsSheet() {
     $('#sheet-title').textContent = 'Notificaciones';
     const rows = state.notifications ?? [];
@@ -2128,6 +2143,7 @@
     const pushPermission = pushPermissionLabel();
     const pushActive = Number(state.push?.activeSubscriptions ?? 0) > 0 || state.push?.subscribed === true;
     const lastPushJob = state.push?.recentJobs?.[0] ?? null;
+    const resultado = state.pushResult ?? null;
     /*
      * El estado tiene que decir QUÉ hacer. «Teléfono sin conectar · Activadas» se
      * leía como si estuviera todo bien cuando en realidad este teléfono no estaba
@@ -2142,50 +2158,58 @@
           : pushPermission === 'No disponible'
             ? 'Este navegador no admite push (en iPhone hay que añadir el panel a la pantalla de inicio)'
             : `Teléfono sin conectar · ${pushPermission}`;
-    const pushCard = `<article class="delivery-order ${pushActive ? '' : 'delivery-order--active'}">
-      <div>
+    /*
+     * Fila compacta: en esta lista el contenido manda y los botones son pequeños.
+     * «Probar» manda la prueba real desde el servidor Y muestra un aviso en este
+     * teléfono, así el resultado se ve aquí (antes no pasaba nada visible).
+     */
+    const pushCard = `<article class="notice notice--push">
+      <div class="notice__main">
         <strong>Notificaciones del teléfono</strong>
         <p>${escapeHtml(pushStatusText)}</p>
-        <small>${escapeHtml(lastPushJob ? `Último envío: ${lastPushJob.status}` : 'Sin pruebas recientes')}</small>
+        <small data-push-result>${escapeHtml(pushLastLine(lastPushJob, resultado))}</small>
       </div>
-      <div class="item__actions">
-        <button class="btn btn--ghost btn--sm" data-push-enable type="button">${pushActive ? 'Revisar' : 'Activar'}</button>
-        <button class="btn btn--primary btn--sm" data-push-test type="button" ${pushActive ? '' : 'disabled'}>Probar</button>
+      <div class="notice__actions">
+        <button class="btn btn--primary btn--xs" data-push-test type="button">Probar</button>
+        <button class="btn btn--ghost btn--xs" data-push-enable type="button">${pushActive ? 'Revisar' : 'Activar'}</button>
       </div>
     </article>`;
     const html = [
       pushCard,
+      resultado
+        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa los avisos de Chrome en los ajustes del teléfono y quita el ahorro de batería.</p>'
+        : '',
       ...localRows.map(
-        (row) => `<article class="delivery-order delivery-order--active">
-          <div>
+        (row) => `<article class="notice notice--nueva">
+          <div class="notice__main">
             <strong>${escapeHtml(row.title)}</strong>
             <p>${escapeHtml(row.body)}</p>
             <small>${escapeHtml(row.meta ?? 'Pendiente')}</small>
           </div>
-          <div class="item__actions">
-            ${row.conversationId ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(row.conversationId)}" type="button">Abrir chat</button>` : ''}
-            ${row.scheduledId ? `<button class="btn btn--ghost btn--sm" data-scheduled-cancel="${escapeHtml(row.scheduledId)}" type="button">Cancelar</button>` : ''}
-            <button class="btn btn--ghost btn--sm" data-notice-dismiss="${escapeHtml(row.key)}" type="button">Entendido</button>
+          <div class="notice__actions">
+            ${row.conversationId ? `<button class="btn btn--whatsapp btn--xs" data-chat="${escapeHtml(row.conversationId)}" type="button">Abrir</button>` : ''}
+            ${row.scheduledId ? `<button class="btn btn--ghost btn--xs" data-scheduled-cancel="${escapeHtml(row.scheduledId)}" type="button">Cancelar</button>` : ''}
+            <button class="btn btn--ghost btn--xs" data-notice-dismiss="${escapeHtml(row.key)}" type="button">Entendido</button>
           </div>
         </article>`,
       ),
       ...rows.map(
-        (row) => `<article class="delivery-order ${row.status !== 'read' ? 'delivery-order--active' : ''}">
-          <div>
+        (row) => `<article class="notice ${row.status !== 'read' ? 'notice--nueva' : ''}">
+          <div class="notice__main">
             <strong>${escapeHtml(row.title ?? 'Notificación')}</strong>
             <p>${escapeHtml(row.body ?? '')}</p>
             <small>${escapeHtml(fmtWhen(row.created_at))}${row.status === 'read' ? ' · leída' : ' · nueva'}</small>
           </div>
           ${
             row.deep_link
-              ? `<button class="btn btn--primary btn--sm" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(row.entity_id ?? '')}" type="button">Abrir</button>`
+              ? `<div class="notice__actions"><button class="btn btn--primary btn--xs" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(row.entity_id ?? '')}" type="button">Abrir</button></div>`
               : ''
           }
         </article>`,
       ),
     ].join('');
     $('#sheet-body').innerHTML = html
-      ? `<div class="delivery-orders">
+      ? `<div class="notice-list">
           ${html}
         </div>`
       : emptyState('No hay notificaciones.');
@@ -8159,7 +8183,15 @@
       renderDelivery();
       return false;
     }
-    const registration = await navigator.serviceWorker.ready;
+    /*
+     * Con tope de tiempo: si el service worker no llega a activarse, esto se
+     * quedaba esperando PARA SIEMPRE y el botón parecía no hacer nada.
+     */
+    const registration = await withTimeout(navigator.serviceWorker.ready, 8000);
+    if (!registration) {
+      if (!options.quiet) toast('El panel no terminó de instalarse en este teléfono: cierra y vuelve a abrirlo');
+      return false;
+    }
     const applicationServerKey = urlBase64ToUint8Array(state.push.publicKey);
     let subscription = await registration.pushManager.getSubscription();
     if (subscription?.options?.applicationServerKey && !samePushKey(subscription.options.applicationServerKey, applicationServerKey)) {
@@ -8187,6 +8219,10 @@
   async function enableCrmPush() {
     const enabled = await syncCrmPushSubscription({ requestPermission: true });
     if (enabled) await refreshPushStatus().catch(() => null);
+    // El resultado se queda escrito en la hoja: pulsar no puede quedarse sin respuesta.
+    state.pushResult = enabled
+      ? { servidor: 'Teléfono registrado', local: 'listo para recibir avisos', at: new Date().toISOString() }
+      : { servidor: 'Este teléfono no quedó registrado', local: pushPermissionLabel().toLowerCase(), at: new Date().toISOString() };
     return enabled;
   }
 
@@ -8197,6 +8233,76 @@
         if (enabled) refreshPushStatus().catch(() => null);
       })
       .catch(() => {});
+  }
+
+  /** Promesa con tope de tiempo: si el panel no termina de instalarse, se DICE. */
+  const withTimeout = (promise, ms) =>
+    Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(null), ms))]);
+
+  /**
+   * Aviso LOCAL en este dispositivo (sin servidor ni push).
+   *
+   * Sirve para separar dos fallos que se ven igual desde fuera: «el servidor no
+   * mandó nada» y «el teléfono no está mostrando los avisos del CRM».
+   */
+  async function showLocalPushTest() {
+    try {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+      const registration = await withTimeout(navigator.serviceWorker.ready, 8000);
+      if (!registration?.showNotification) return false;
+      await registration.showNotification('Prueba en este teléfono', {
+        body: 'Si ves este aviso, este teléfono muestra los avisos del CRM.',
+        tag: 'phyto-push-test-local',
+        icon: '/admin/icon-192.png',
+        badge: '/admin/icon-192.png',
+        data: { deepLink: '/admin/?v=hoy' },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * PRUEBA de notificaciones, de verdad y con resultado a la vista.
+   *
+   *   1. deja ESTE teléfono registrado (si no hay registro, no hay a dónde
+   *      mandar el aviso) y pide al servidor la prueba real por push;
+   *   2. muestra además un aviso LOCAL, para saber si el que falla es el envío
+   *      o el teléfono;
+   *   3. deja el resultado escrito en la hoja (antes, si el botón estaba
+   *      deshabilitado o el service worker no arrancaba, no pasaba NADA).
+   */
+  async function testCrmPush() {
+    const registrado = await syncCrmPushSubscription({ requestPermission: true, quiet: true });
+    let servidor = 'El servidor no pudo enviar la prueba';
+    try {
+      const data = await api('/api/admin/push-subscriptions/test', { method: 'POST', body: '{}' });
+      state.push = data.status ?? state.push;
+      const push = data.push ?? {};
+      if (push.notConfigured > 0) servidor = 'El servidor no tiene llaves push: no salió nada';
+      else if (push.sent > 0) servidor = `Enviado desde el servidor a ${push.sent} teléfono${push.sent === 1 ? '' : 's'}`;
+      else if (push.expired > 0) servidor = 'El teléfono registrado ya no acepta avisos: pulsa Activar';
+      else if (push.failed > 0) servidor = 'El servicio de push rechazó el envío';
+      else servidor = data.message ?? 'El servidor no tiene un teléfono registrado';
+    } catch (error) {
+      servidor = error.body?.message ?? 'El servidor no pudo enviar la prueba';
+    }
+    const local = registrado ? await showLocalPushTest() : false;
+    state.pushResult = {
+      servidor,
+      local: local
+        ? 'aviso mostrado aquí'
+        : registrado
+          ? 'este teléfono no mostró el aviso'
+          : 'este teléfono no quedó registrado',
+      at: new Date().toISOString(),
+    };
+    toast(`${servidor} · ${state.pushResult.local}`);
+    // La prueba ya está creada en el CRM: se refresca para que aparezca aquí mismo.
+    await load({ keepTab: true }).catch(() => {});
+    openNotificationsSheet();
+    return state.pushResult;
   }
 
   function initPwa() {
@@ -8561,20 +8667,12 @@
       }
       if (event.target.closest('[data-push-enable]')) {
         enableCrmPush()
-          .then(() => {
-            openNotificationsSheet();
-          })
+          .then(() => openNotificationsSheet())
           .catch((error) => toast(error.body?.message ?? 'No se pudieron activar las notificaciones'));
         return;
       }
       if (event.target.closest('[data-push-test]')) {
-        api('/api/admin/push-subscriptions/test', { method: 'POST', body: '{}' })
-          .then(async (data) => {
-            state.push = data.status ?? state.push;
-            toast(data.message ?? 'Prueba enviada al teléfono');
-            openNotificationsSheet();
-          })
-          .catch((error) => toast(error.body?.message ?? 'No se pudo enviar la prueba push'));
+        testCrmPush().catch((error) => toast(error.body?.message ?? 'No se pudo probar las notificaciones'));
         return;
       }
       const noticeDismiss = event.target.closest('[data-notice-dismiss]');
