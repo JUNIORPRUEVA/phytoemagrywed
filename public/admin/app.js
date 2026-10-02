@@ -2128,11 +2128,20 @@
     const pushPermission = pushPermissionLabel();
     const pushActive = Number(state.push?.activeSubscriptions ?? 0) > 0 || state.push?.subscribed === true;
     const lastPushJob = state.push?.recentJobs?.[0] ?? null;
+    /*
+     * El estado tiene que decir QUÉ hacer. «Teléfono sin conectar · Activadas» se
+     * leía como si estuviera todo bien cuando en realidad este teléfono no estaba
+     * registrado: sin registro el servidor no tiene a dónde mandar el aviso.
+     */
     const pushStatusText = !state.push?.configured
-      ? 'Servidor sin llaves push'
+      ? 'El servidor no tiene llaves push configuradas'
       : pushActive
         ? `Teléfono conectado · ${pushPermission}`
-        : `Teléfono sin conectar · ${pushPermission}`;
+        : pushPermission === 'Activadas'
+          ? 'Teléfono sin conectar: pulsa Activar para recibir los avisos aquí'
+          : pushPermission === 'No disponible'
+            ? 'Este navegador no admite push (en iPhone hay que añadir el panel a la pantalla de inicio)'
+            : `Teléfono sin conectar · ${pushPermission}`;
     const pushCard = `<article class="delivery-order ${pushActive ? '' : 'delivery-order--active'}">
       <div>
         <strong>Notificaciones del teléfono</strong>
@@ -8280,7 +8289,7 @@
           .then(() => {
             openNotificationsSheet();
           })
-          .catch(() => toast('No se pudieron activar las notificaciones'));
+          .catch((error) => toast(error.body?.message ?? 'No se pudieron activar las notificaciones'));
         return;
       }
       if (event.target.closest('[data-push-test]')) {

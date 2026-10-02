@@ -208,6 +208,38 @@ describe('WhatsApp inbound message notifications', () => {
     expect(jobs.some((row) => row.notification_id === body.notification.id)).toBe(true);
   });
 
+  it('con la CLAVE del panel el teléfono también queda registrado (antes el push se perdía)', async () => {
+    /*
+     * El panel se usa con la clave: esa sesión queda como `Panel legacy` y NO
+     * tiene usuario, así que el POST devolvía 403 y el teléfono no se registraba
+     * nunca (en producción: `activeSubscriptions: 0` con el panel en uso, o sea
+     * cero notificaciones push). Ahora se apunta al admin del panel.
+     */
+    const legacyLogin = await request('/api/admin/login', { method: 'POST', body: JSON.stringify({ token: TOKEN }) }, '');
+    expect(legacyLogin.status).toBe(200);
+    const legacyCookie = (legacyLogin.headers.get('set-cookie') ?? '').split(';')[0];
+
+    const saved = await request(
+      '/api/admin/push-subscriptions',
+      {
+        method: 'POST',
+        body: JSON.stringify({ endpoint: 'https://push.example/clave', keys: { p256dh: 'p256dh', auth: 'auth' } }),
+      },
+      legacyCookie,
+    );
+    expect(saved.status).toBe(200);
+
+    const status = await json(await request('/api/admin/push-status', {}, legacyCookie));
+    expect(status.push.activeSubscriptions).toBeGreaterThanOrEqual(1);
+    expect(status.push.subscriptions.some((row) => row.endpoint.includes('clave'))).toBe(true);
+
+    // Y el aviso de un mensaje entrante SÍ llega a intentarse en ese teléfono.
+    await inbound({ id: 'wamid.NOTIFY-CLAVE', from: '18095550188', name: 'Cliente Clave', body: 'Hola desde la clave del panel' });
+    await waitFor(async () => (await rawNotifications()).some((row) => row.data?.wa_message_id === 'wamid.NOTIFY-CLAVE'));
+    const jobs = await app.collections.list('push_jobs', { limit: 200 });
+    expect(jobs.some((row) => String(row.endpoint).includes('clave'))).toBe(true);
+  });
+
   it('es idempotente por wamid y no notifica callbacks de estado', async () => {
     await inbound({ id: 'wamid.NOTIFY-DUP', from: '18095550112', body: 'Mensaje único' });
     await waitFor(async () => (await notifications()).some((row) => row.data?.wa_message_id === 'wamid.NOTIFY-DUP'));

@@ -205,6 +205,9 @@ const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.
 const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT ?? 'mailto:admin@phytoemagry.local').trim();
 if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
   webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
+  console.log('[push] Web Push configurado (llaves VAPID presentes).');
+} else {
+  console.log('[push] Web Push DESACTIVADO: faltan PHYTO_WEB_PUSH_PUBLIC_KEY / PHYTO_WEB_PUSH_PRIVATE_KEY.');
 }
 const DELIVERY_OPERATIONAL_STATUSES = Object.freeze({
   PENDING_CONTACT: 'PENDING_CONTACT',
@@ -852,7 +855,42 @@ function pushEndpointSummary(endpoint) {
   }
 }
 
+/**
+ * A QUÉ usuario se le apunta el push de esta sesión.
+ *
+ * El panel se puede abrir con la CLAVE del panel (el actor queda como
+ * `Panel legacy`): esa sesión manda como ADMIN pero NO tiene usuario. Al guardar
+ * la suscripción se exigía `currentUser`, así que la clave recibía 403, el
+ * teléfono no quedaba registrado NUNCA y no llegaba ni una notificación push
+ * (verificado en producción: `activeSubscriptions: 0` con el panel en uso).
+ *
+ * Se resuelve el dueño real: el admin de bootstrap (el dueño del panel) o, si no
+ * está, el primer ADMIN activo. Así la suscripción casa con las notificaciones
+ * que se crean para los administradores y el teléfono vuelve a recibirlas.
+ *
+ * @param {any} ctx
+ * @param {{ id?: string|null, role?: string|null, actor_type?: string|null }} actor
+ */
+async function pushOwnerUserId(ctx, actor) {
+  if (actor?.actor_type === 'USER' && actor.id) return actor.id;
+  if (actor?.actor_type !== 'LEGACY') return null;
+  const admins = (await ctx.users.listUsers()).filter((user) => user.active !== false && user.role === 'ADMIN');
+  const preferred =
+    (BOOTSTRAP_ADMIN_USER ? admins.find((user) => user.username === BOOTSTRAP_ADMIN_USER) : null) ?? admins[0] ?? null;
+  return preferred?.id ?? null;
+}
+
 async function pushStatusForUser(ctx, userId) {
+  if (!userId) {
+    return {
+      configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
+      publicKey: WEB_PUSH_PUBLIC_KEY || null,
+      activeSubscriptions: 0,
+      inactiveSubscriptions: 0,
+      subscriptions: [],
+      recentJobs: [],
+    };
+  }
   const subscriptions = (await ctx.db.list('push_subscriptions', { by: 'updated_at', order: 'desc', limit: 1000 })).filter((row) => row.user_id === userId);
   const jobs = (await ctx.db.list('push_jobs', { by: 'created_at', order: 'desc', limit: 200 })).filter((row) => row.user_id === userId).slice(0, 20);
   return {
@@ -3400,7 +3438,7 @@ async function handle(req, res, ctx) {
         deliveryOrders: await visibleDeliveryOrders(ctx, actor),
         deliveryUsers: can('delivery.tracking.manage_all') ? (await ctx.users.listUsers()).filter((user) => user.role === 'DELIVERY' && user.active !== false) : [],
         notifications: await listUserNotifications(ctx, actor),
-        push: await pushStatusForUser(ctx, actor.id),
+        push: await pushStatusForUser(ctx, await pushOwnerUserId(ctx, actor)),
         paymentMethods: PAYMENT_METHODS.map((value) => ({ value, label: paymentMethodLabel(value) })),
         // Catálogo, inventario y estado comercial, sin repetir precios ni estados en el panel.
         catalog: inventory.presentations,
@@ -4271,8 +4309,14 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/push-subscriptions' && req.method === 'POST') {
-      if (!currentUser) {
-        forbid();
+      const ownerUserId = await pushOwnerUserId(ctx, actor);
+      if (!ownerUserId) {
+        json(res, 409, {
+          ok: false,
+          error: 'no_push_owner',
+          message:
+            'No hay un administrador activo al que asociar este teléfono. Crea un usuario ADMIN o entra con usuario y contraseña para activar las notificaciones.',
+        });
         return;
       }
       let body = {};
@@ -4289,7 +4333,7 @@ async function handle(req, res, ctx) {
       }
       const existing = await ctx.db.findBy('push_subscriptions', 'endpoint', endpoint);
       const doc = {
-        user_id: currentUser.id,
+        user_id: ownerUserId,
         endpoint,
         keys: { p256dh: String(keys.p256dh), auth: String(keys.auth) },
         active: true,
@@ -4305,32 +4349,29 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/push-status' && req.method === 'GET') {
-      if (!currentUser) {
-        forbid();
-        return;
-      }
-      json(res, 200, { ok: true, push: await pushStatusForUser(ctx, currentUser.id) });
+      json(res, 200, { ok: true, push: await pushStatusForUser(ctx, await pushOwnerUserId(ctx, actor)) });
       return;
     }
 
     if (route === '/api/admin/push-subscriptions/test' && req.method === 'POST') {
-      if (!currentUser) {
-        forbid();
+      const ownerUserId = await pushOwnerUserId(ctx, actor);
+      if (!ownerUserId) {
+        json(res, 409, { ok: false, error: 'no_push_owner', message: 'No hay un administrador activo al que asociar este teléfono.' });
         return;
       }
       const notification = await createUserNotification(ctx, {
-        recipientUserId: currentUser.id,
+        recipientUserId: ownerUserId,
         type: 'PUSH_TEST',
         title: 'Prueba de notificaciones',
         body: 'Si ves esto en el teléfono, este dispositivo está conectado.',
         entityType: 'system',
-        entityId: currentUser.id,
+        entityId: ownerUserId,
         deepLink: '/admin/?v=hoy',
         data: { vibrate: [120, 60, 120] },
-        idempotencyKey: `push-test:${currentUser.id}:${ctx.clock().toISOString()}:${randomBytes(4).toString('hex')}`,
+        idempotencyKey: `push-test:${ownerUserId}:${ctx.clock().toISOString()}:${randomBytes(4).toString('hex')}`,
       });
       const push = notification.notification ? await sendPushForNotification(ctx, notification.notification) : null;
-      const status = await pushStatusForUser(ctx, currentUser.id);
+      const status = await pushStatusForUser(ctx, ownerUserId);
       json(res, push?.subscriptions ? 200 : 409, {
         ok: Boolean(push?.subscriptions),
         notification: notification.notification ? { id: notification.notification.id } : null,
