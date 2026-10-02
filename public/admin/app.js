@@ -1145,6 +1145,7 @@
           <span class="item__when">${escapeHtml(fmtWhen(item.received_at))}</span>
         </div>
         <p class="item__meta">
+          ${item.order_number ? `${escapeHtml(item.order_number)} · ` : ''}
           ${item.variant_name ? `${escapeHtml(item.variant_name)}${item.quantity ? ` ×${item.quantity}` : ''} · ` : ''}
           ${item.total ? `${money(item.total, item.currency)} · ` : ''}
           ${item.phone ? escapeHtml(item.phone) : 'sin teléfono'}
@@ -4371,10 +4372,45 @@
     </section>`;
   }
 
-  /** Texto que el CRM ya sabe poner en cada hueco de una plantilla. */
-  function waTemplateAutoValues(customer) {
+  /**
+   * Pedido con el que el CRM completa una plantilla: el de ESTA conversación y,
+   * si no hay, el último del cliente. Es el mismo criterio que usa el servidor.
+   */
+  function orderForConversation(customerId, conversationId = null) {
+    const orders = (state.items ?? []).filter((item) => item.type === 'order_intent');
+    const delCliente = orders.filter(
+      (item) =>
+        (conversationId && item.conversation_id === conversationId) ||
+        (customerId && item.customer_id === customerId),
+    );
+    const deLaConversacion = conversationId
+      ? delCliente.filter((item) => item.conversation_id === conversationId)
+      : [];
+    const pool = deLaConversacion.length ? deLaConversacion : delCliente;
+    return pool.slice().sort((a, b) => String(b.received_at ?? '').localeCompare(String(a.received_at ?? '')))[0] ?? null;
+  }
+
+  /** Número de pedido tal como lo conoce el CRM (nunca inventado). */
+  function orderNumberOf(item) {
+    if (!item) return '';
+    const order = itemOrder(item) ?? {};
+    return String(order.order_number ?? item.order_number ?? order.id ?? item.id ?? '').trim();
+  }
+
+  /**
+   * Texto que el CRM ya sabe poner en cada hueco de una plantilla.
+   *
+   * El número de pedido sale SOLO del pedido real de esta conversación (o del
+   * último del cliente): nadie tiene que saberse el número de la factura.
+   */
+  function waTemplateAutoValues(customer, conversationId = null) {
     const nombre = (customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
-    return { customer_name: nombre, nombre, phone: customer?.phone_e164 ?? '' };
+    return {
+      customer_name: nombre,
+      nombre,
+      phone: customer?.phone_e164 ?? '',
+      order_number: orderNumberOf(orderForConversation(customer?.id ?? null, conversationId)),
+    };
   }
 
   /**
@@ -4428,9 +4464,12 @@
   /** Cómo queda el mensaje con los huecos ya rellenos: lo que se va a enviar. */
   function waRenderTemplatePreview(template, values) {
     let texto = String(template?.body ?? '');
-    waTemplateHuecos(template).forEach((_, index) => {
+    waTemplateHuecos(template).forEach((key, index) => {
       const valor = String(values[index] ?? '').trim();
-      if (valor) texto = texto.replace(new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'), valor);
+      // Un hueco vacío se ve COMO hueco (con lo que falta), no como un `{{2}}`
+      // que parece un error: si el CRM no lo sabe, hay que escribirlo.
+      const relleno = valor || `⟨falta ${waVariableLabel(key, index)}⟩`;
+      texto = texto.replace(new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'), relleno);
     });
     return texto;
   }
@@ -4461,7 +4500,7 @@
         <p class="wa-template-preview" id="wa-template-preview"></p>
       </label>
       <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>
-      <p class="rule">Para escribir a alguien por primera vez WhatsApp solo admite una plantilla aprobada: el texto fijo no se puede cambiar, pero los huecos sí. Escribe ahí lo que quieras decirle.</p>`;
+      <p class="rule">Para escribir a alguien por primera vez WhatsApp solo admite una plantilla aprobada: el texto fijo no se puede cambiar, pero los huecos sí. El número del pedido se pone solo con el pedido de esta conversación.</p>`;
   }
 
   /**
@@ -4474,9 +4513,11 @@
     const fields = $('#wa-template-fields');
     if (!fields) return;
     const template = (state.templates ?? []).find((row) => row.name === $('#wa-template')?.value) ?? null;
-    const auto = waTemplateAutoValues(state.wa.chat?.customer ?? null);
+    const auto = waTemplateAutoValues(state.wa.chat?.customer ?? null, state.wa.selectedId ?? null);
     const huecos = waTemplateHuecos(template);
     const libre = waTemplateFreeSlot(template);
+    const pidePedido = huecos.some((key) => String(key ?? '').trim().toLowerCase() === 'order_number');
+    const sinPedido = pidePedido && !auto.order_number;
     state.wa.templateValues = {};
     fields.innerHTML = huecos.length
       ? huecos
@@ -4492,6 +4533,13 @@
           })
           .join('')
       : '<p class="rule">Esta plantilla no tiene huecos: se envía tal cual está.</p>';
+    if (sinPedido) {
+      // Simple y honesto: si no hay pedido, se dice qué falta y cómo resolverlo.
+      fields.insertAdjacentHTML(
+        'beforeend',
+        '<p class="rule rule--warn">Este cliente todavía no tiene pedidos y esta plantilla nombra su número. Crea el pedido (⋯ → Crear pedido) o escribe un número para enviarla.</p>',
+      );
+    }
     const recoger = () => {
       const values = {};
       for (const input of $$('#wa-template-fields [data-wa-var]')) {

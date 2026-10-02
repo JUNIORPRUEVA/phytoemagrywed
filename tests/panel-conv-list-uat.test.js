@@ -735,7 +735,11 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     expect($('#wa-template').value).toBe('phyto_ubicacion_entrega_v1');
     // El nombre lo pone el CRM; el número de pedido se escribe aquí.
     expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Luis Lista');
-    expect($('#wa-template-preview').textContent).toContain('necesitamos confirmar la ubicación');
+    // Sin pedidos todavía, el hueco se ve COMO hueco (no como un `{{2}}` roto) y
+    // la hoja dice qué falta y cómo resolverlo.
+    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe('');
+    expect($('#wa-template-preview').textContent).toContain('⟨falta Nº de pedido⟩');
+    expect($('#wa-template-fields').textContent).toContain('todavía no tiene pedidos');
 
     const antes = whatsapp.sent.length;
     pedido.value = 'PED-1042';
@@ -755,6 +759,42 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
       },
     ]);
   }, 30000);
+
+  it('el número de pedido se rellena SOLO con el pedido real de esa conversación', async () => {
+    // El pedido se crea DESDE el panel, como lo hace una persona.
+    click('#wa-actions');
+    await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
+    click('#sheet-body [data-order-new]');
+    const variante = await waitFor(() => $('#order-lines select'), 'el formulario de pedido', 9000);
+    variante.value = 'capsules_10';
+    variante.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    variante.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    click('#order-save');
+    await waitFor(
+      () => /Comprobante|Pedido/.test($('#sheet-body').innerHTML),
+      'el comprobante del pedido',
+      9000,
+    );
+    closeSheetForUat();
+
+    // El número real, tal como lo guardó el servidor.
+    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+    const numero = datos.items.find(
+      (item) => item.type === 'order_intent' && item.conversation_id === ids.luis,
+    )?.order_number;
+    expect(numero).toBeTruthy();
+
+    click('#wa-actions');
+    await waitFor(() => $('#sheet-body [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
+    click('#sheet-body [data-wa-ask-location]');
+
+    const campo = await waitFor(() => $('#wa-template-fields [data-wa-var="2"]'), 'el hueco del pedido', 9000);
+    // Nadie tiene que saberse el número de la factura: viene puesto.
+    expect(campo.value).toBe(numero);
+    expect($('#wa-template-preview').textContent).toContain(numero);
+    expect($('#wa-template-fields').textContent).not.toContain('todavía no tiene pedidos');
+    closeSheetForUat();
+  }, 40000);
 });
 
 describe('la foto del cliente', () => {
