@@ -2278,15 +2278,70 @@ async function approvedTemplate(ctx, name) {
   return { ok: true, template: found };
 }
 
+/**
+ * Refresca UNA plantilla desde Meta si su copia local está vieja.
+ *
+ * Solo actúa sobre plantillas que vienen de Meta (`source: 'meta'` o con
+ * `meta_template_id`): las registradas a mano en el CRM no se tocan. Si Meta no
+ * responde (o la plantilla ya no está allí) se sigue con la copia local, para no
+ * bloquear un envío legítimo por un fallo puntual de la Graph API.
+ *
+ * @param {any} ctx
+ * @param {string|null} name
+ */
+async function refreshTemplateFromMeta(ctx, name) {
+  if (!ctx.whatsapp?.listTemplates || !name) return null;
+  const local = (await ctx.db.findBy('wa_templates', 'name', name)) ?? null;
+  if (!local) return null;
+  if (local.source !== 'meta' && !local.meta_template_id) return null;
+  const syncedAt = Date.parse(local.last_template_sync_at ?? local.last_synced_at ?? '');
+  if (syncedAt && Date.now() - syncedAt < WA_TEMPLATE_STALE_MS) return local;
+  const metaResult = await ctx.whatsapp.listTemplates().catch(() => null);
+  if (!metaResult?.ok) return local;
+  const meta = (metaResult.templates ?? []).find((row) => String(row?.name ?? '') === name);
+  if (!meta) return local;
+  const components = Array.isArray(meta.components) ? meta.components : [];
+  const status = normalizeTemplateStatus(meta.status);
+  const now = new Date().toISOString();
+  const patch = {
+    body: templateBodyFromComponents(components) ?? local.body ?? null,
+    buttons: templateButtonsFromComponents(components),
+    components,
+    language: text(meta.language, 20) ?? local.language ?? 'es',
+    category: text(meta.category, 30) ?? local.category ?? 'UTILITY',
+    status,
+    sendable: templateSendable(status),
+    meta_template_id: text(meta.id, 80) ?? local.meta_template_id ?? null,
+    quality_score: meta.quality_score ?? local.quality_score ?? null,
+    last_synced_at: now,
+    last_template_sync_at: now,
+    source: 'meta',
+    updated_at: now,
+  };
+  return (await ctx.db.update('wa_templates', local.id, patch)) ?? { ...local, ...patch };
+}
+
 function templatePlaceholderCount(body) {
   const matches = String(body ?? '').match(/\{\{\s*\d+\s*\}\}/g);
   return matches ? matches.length : 0;
 }
 
+/**
+ * Nombres de los parámetros, ALINEADOS con los marcadores REALES del cuerpo.
+ *
+ * Manda el cuerpo que hay en Meta (`Hola {{1}}…`): la lista de `variables` solo
+ * aporta la etiqueta de cada hueco. Antes, una lista de nombres vieja decidía
+ * CUÁNTOS parámetros se mandaban; si el negocio editaba la plantilla en Meta y
+ * la copia local se quedaba atrás, se enviaba otro número y WhatsApp lo
+ * rechazaba con «132000 Number of parameters does not match…».
+ */
 function templateVariables(template) {
-  if (Array.isArray(template?.variables) && template.variables.length) return template.variables.map((entry) => String(entry ?? '').trim()).filter(Boolean);
+  const declared = Array.isArray(template?.variables)
+    ? template.variables.map((entry) => String(entry ?? '').trim())
+    : [];
   const count = templatePlaceholderCount(template?.body);
-  return Array.from({ length: count }, (_, index) => `param_${index + 1}`);
+  if (!count) return [];
+  return Array.from({ length: count }, (_, index) => declared[index] || `param_${index + 1}`);
 }
 
 function renderTemplateBody(body, parameters) {
@@ -2325,6 +2380,17 @@ async function findTemplateOrderContext(ctx, { customer, conversation, orderId }
 }
 
 async function resolveTemplatePayload(ctx, { template, customer, conversation, orderId }) {
+  // Sin el texto real de Meta no se sabe cuántos (ni cuáles) parámetros espera:
+  // mandar una suposición es exactamente el error 132000 de WhatsApp.
+  if (!String(template?.body ?? '').trim()) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'template_body_missing',
+      message:
+        'No tenemos el texto de esta plantilla tal como está en Meta. Pulsa «Sincronizar con Meta» y vuelve a intentarlo.',
+    };
+  }
   const variables = templateVariables(template);
   const placeholderCount = templatePlaceholderCount(template?.body);
   const requiresOrder = template?.required_context === 'order' || variables.some((key) => ['order_number', 'total', 'payment_method', 'delivery_display_name'].includes(key));
@@ -5438,6 +5504,10 @@ async function handle(req, res, ctx) {
         /** @type {any} */
         let template = null;
         if (templateName) {
+          // La copia local puede haberse quedado vieja porque el negocio editó la
+          // plantilla en Meta: se refresca ESA plantilla antes de decidir, o se
+          // envía un número de parámetros que Meta ya no espera (error 132000).
+          await refreshTemplateFromMeta(ctx, templateName);
           const check = await approvedTemplate(ctx, templateName);
           if (!check.ok) {
             json(res, 409, {
@@ -5514,6 +5584,9 @@ async function handle(req, res, ctx) {
             status: 'failed',
             error: sendResult.error ?? { message: sendResult.reason ?? 'error' },
             idempotencyKey: text(body.idempotencyKey, 120),
+            // A quién iba también cuando falla: es lo primero que se mira al
+            // investigar un «no le llegó».
+            meta: { phoneNumberId: ctx.whatsapp.phoneNumberId, to: customer.phone_e164 || null },
             ...messageActorFields(actor),
           });
           console.error(`[crm] WhatsApp rechazó un mensaje a ${customer.id}: ${sendResult.error?.message ?? 'error'}`);
@@ -5543,10 +5616,16 @@ async function handle(req, res, ctx) {
           waMessageId: sendResult.messageId ?? null,
           status: 'sent',
           idempotencyKey: text(body.idempotencyKey, 120),
-          // Solo datos públicos del envío: nunca el token ni la cabecera.
+          // Solo datos públicos del envío: nunca el token ni la cabecera. El
+          // destinatario se guarda para poder auditar a quién salió de verdad.
           meta: template
-            ? { phoneNumberId: ctx.whatsapp.phoneNumberId, template: template.name, language: template.language ?? 'es' }
-            : { phoneNumberId: ctx.whatsapp.phoneNumberId },
+            ? {
+                phoneNumberId: ctx.whatsapp.phoneNumberId,
+                to: customer.phone_e164 || null,
+                template: template.name,
+                language: template.language ?? 'es',
+              }
+            : { phoneNumberId: ctx.whatsapp.phoneNumberId, to: customer.phone_e164 || null },
           ...messageActorFields(actor),
         });
         let deliveryOrder = null;

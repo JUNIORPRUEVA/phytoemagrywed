@@ -3162,8 +3162,17 @@
   function bubble(message, grouped = false) {
     const inbound = message.direction === 'inbound';
     const auto = !inbound && message.actor_type === 'SYSTEM';
-    // El cliente ve “Enviando / Enviado / Entregado / Leído / Fallido”, como en WhatsApp.
-    const estado = inbound ? '' : WA_STATUS[message.status] ?? '';
+    /*
+     * El cliente ve “Enviando / Enviado / Entregado / Leído / Fallido”, como en
+     * WhatsApp. OJO: `sent` solo significa que WhatsApp ACEPTÓ el mensaje, no que
+     * le haya llegado al cliente; en una plantilla (el primer contacto) se dice
+     * «sin confirmar» para no prometer una entrega que Meta no ha confirmado.
+     */
+    const estado = inbound
+      ? ''
+      : isTemplateMessage(message) && message.status === 'sent'
+        ? 'Enviado · sin confirmar'
+        : WA_STATUS[message.status] ?? '';
     const media = message.media ?? null;
     const tipo = message.type ?? 'text';
     const mediaSrc = media?.id ? mediaUrl(media.id) : null;
@@ -3334,6 +3343,7 @@
     WAITING_CUSTOMER_REPLY: 'WAITING_CUSTOMER_REPLY',
     OPEN_WINDOW: 'OPEN_WINDOW',
     CLOSED_WINDOW: 'CLOSED_WINDOW',
+    TEMPLATE_FAILED: 'TEMPLATE_FAILED',
   };
 
   const isInboundMessage = (message) => message?.direction === 'inbound';
@@ -3352,6 +3362,20 @@
     const canSendFreeText = input.canSendFreeText === true;
     if (canSendFreeText) return CONTACT_STATE.OPEN_WINDOW;
     const lastInbound = lastMessageWhere(messages, isInboundMessage);
+    const lastOutbound = lastMessageWhere(messages, (message) => message?.direction === 'outbound');
+    /*
+     * WhatsApp rechazó la última plantilla (p. ej. el número no tiene WhatsApp):
+     * se DICE, no se disimula con un «inicia la conversación» como si no se
+     * hubiera intentado nada. El motivo lo pinta el propio estado.
+     */
+    if (
+      lastOutbound &&
+      isTemplateMessage(lastOutbound) &&
+      lastOutbound.status === 'failed' &&
+      (!lastInbound || new Date(lastOutbound.created_at) > new Date(lastInbound.created_at))
+    ) {
+      return CONTACT_STATE.TEMPLATE_FAILED;
+    }
     const lastSentTemplate = lastMessageWhere(
       messages,
       (message) => message?.direction === 'outbound' && isTemplateMessage(message) && isSentTemplateStatus(message.status),
@@ -4178,8 +4202,16 @@
    * El compositor. Respeta la regla de las 24 h que aplica el servidor: dentro
    * de la ventana se escribe libre; fuera, solo plantillas APROBADAS de verdad.
    */
-  function waContactStateHtml(contactState, customer) {
+  function waContactStateHtml(contactState, customer, lastTemplate = null) {
     const name = (customer?.name ?? '').trim() || customer?.phone_e164 || 'el cliente';
+    /*
+     * «Enviado» NO es «entregado»: WhatsApp devuelve `sent` en cuanto acepta el
+     * mensaje, y solo confirma la entrega con `delivered`/`read`. El estado lo
+     * dice tal cual para que nadie dé por hecho que el cliente lo recibió.
+     */
+    const entregada = ['delivered', 'read'].includes(String(lastTemplate?.status ?? '').toLowerCase());
+    const motivoFallo = waFriendlyTemplateError(lastTemplate);
+    const codeFallo = lastTemplate?.error_code ? ` · #${lastTemplate.error_code}` : '';
     const copy = {
       [CONTACT_STATE.NEW_CONTACT]: {
         title: 'Iniciar conversación',
@@ -4189,11 +4221,20 @@
         tone: 'info',
       },
       [CONTACT_STATE.WAITING_CUSTOMER_REPLY]: {
-        title: 'Plantilla enviada correctamente',
+        title: entregada ? 'Plantilla entregada' : 'Plantilla enviada · sin confirmar',
         body: `Esperando respuesta de ${name} para continuar la conversación.`,
-        detail: 'Cuando el cliente responda, podrás escribir mensajes normales durante la ventana de atención.',
+        detail: entregada
+          ? 'Cuando el cliente responda, podrás escribir mensajes normales durante la ventana de atención.'
+          : 'WhatsApp todavía no confirma la entrega. Si el cliente no responde, comprueba que su número tenga WhatsApp.',
         cta: 'Enviar otra plantilla',
-        tone: 'ok',
+        tone: entregada ? 'ok' : 'info',
+      },
+      [CONTACT_STATE.TEMPLATE_FAILED]: {
+        title: 'La plantilla no se entregó',
+        body: `WhatsApp rechazó el último envío a ${name}.`,
+        detail: `${motivoFallo}${codeFallo}`,
+        cta: 'Intentar otra vez',
+        tone: 'warn',
       },
       [CONTACT_STATE.CLOSED_WINDOW]: {
         title: 'Ventana de atención finalizada',
@@ -4254,7 +4295,7 @@
     });
   }
 
-  function waComposerHtml({ customer, canSendFreeText, contactState }) {
+  function waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate = null }) {
     const wa = state.whatsapp ?? {};
     if (!wa.configured) {
       return '<p class="rule rule--warn">WhatsApp no está configurado en el servidor: se reciben mensajes, pero no se pueden enviar.</p>';
@@ -4263,7 +4304,7 @@
       return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      return waContactStateHtml(contactState, customer);
+      return waContactStateHtml(contactState, customer, lastTemplate);
     }
     const puedeAdjuntar = state.media?.enabled === true;
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
@@ -4369,7 +4410,15 @@
         : '<p class="view__hint">Todavía no hay mensajes.</p>';
     $('#thread').innerHTML = messages.length ? waThreadHtml(messages) : emptyThread;
 
-    $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText, contactState });
+    $('#wa-composer').innerHTML = waComposerHtml({
+      customer,
+      canSendFreeText,
+      contactState,
+      lastTemplate: lastMessageWhere(
+        messages,
+        (message) => message?.direction === 'outbound' && isTemplateMessage(message),
+      ),
+    });
     const area = $('#wa-text');
     if (area) {
       area.value = state.wa.draft ?? '';

@@ -6,6 +6,12 @@ import vm from 'node:vm';
 
 const SW_PATH = path.join(process.cwd(), 'public', 'admin', 'sw.js');
 const ORIGIN = 'https://crm.example';
+/**
+ * Nombre REAL de la caché de tiles. Se deriva de la VERSION del propio service
+ * worker: subirla (obligatorio al tocar el armazón del panel) dejaba antes este
+ * test en rojo por una cadena escrita a mano.
+ */
+const TILE_CACHE = `${/const VERSION = '([^']+)'/.exec(readFileSync(SW_PATH, 'utf8'))?.[1] ?? 'sin-version'}-tiles`;
 
 let handlers;
 let stores;
@@ -118,7 +124,7 @@ describe('delivery map service worker cache', () => {
   it('con cache hit no espera red lenta para pintar el tile', async () => {
     const url = 'https://b.tile.openstreetmap.org/16/19165/28882.png';
     await (await tileRequest(url)).text();
-    stores.get('crm-v11-delivery-map-fast-tiles').set(url, new Response('cached-now'));
+    stores.get(TILE_CACHE).set(url, new Response('cached-now'));
     networkMode = 'offline';
 
     const second = await tileRequest(url);

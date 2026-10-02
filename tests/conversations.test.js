@@ -29,9 +29,11 @@ const mockWhatsApp = {
   graphVersion: 'v21.0',
   phoneNumberId: 'PN123',
   businessAccountId: 'WABA1',
-  sent: [],
   read: [],
+  sent: [],
   failWith: null,
+  // Texto con el que Meta responde hoy (permite simular una edición en Meta).
+  bodyOverride: null,
   async sendText(to, body, options) {
     if (mockWhatsApp.failWith) return { ok: false, status: 400, error: mockWhatsApp.failWith };
     mockWhatsApp.sent.push({ to, body, options, type: 'text' });
@@ -54,7 +56,10 @@ const mockWhatsApp = {
           status: 'APPROVED',
           quality_score: { score: 'UNKNOWN' },
           components: [
-            { type: 'BODY', text: 'Hola {{1}}, ¿cómo te ha ido con tu pedido?' },
+            // `bodyOverride` simula que el negocio EDITÓ la plantilla en Meta:
+            // el CRM tiene que refrescarla antes de enviar, no mandar el número
+            // de parámetros de la copia vieja (error 132000 de WhatsApp).
+            { type: 'BODY', text: mockWhatsApp.bodyOverride ?? 'Hola {{1}}, ¿cómo te ha ido con tu pedido?' },
             { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Continuar' }] },
           ],
         },
@@ -338,6 +343,81 @@ describe('plantillas oficiales', () => {
     );
     expect(response.status).toBe(200);
     await app.collections.update('conversations', conversationId, { last_inbound_at: new Date().toISOString() });
+  });
+
+  it('refresca la plantilla desde Meta antes de enviar (número de parámetros al día)', async () => {
+    // La copia local es vieja y en Meta la plantilla ya no tiene la variable:
+    // antes se enviaba 1 parámetro y WhatsApp lo rechazaba con 132000.
+    await app.collections.update('wa_templates', 'tpl_phyto_seguimiento_cliente_v1', {
+      last_template_sync_at: '2020-01-01T00:00:00.000Z',
+      last_synced_at: '2020-01-01T00:00:00.000Z',
+    });
+    mockWhatsApp.bodyOverride = 'Hola, ¿cómo te ha ido con tu pedido?';
+    mockWhatsApp.sent.length = 0;
+    try {
+      const response = await call(
+        `/api/admin/conversations/${conversationId}/messages`,
+        { method: 'POST', body: JSON.stringify({ template: 'phyto_seguimiento_cliente_v1' }) },
+        cookie,
+      );
+      expect(response.status).toBe(200);
+      const data = await json(response);
+      expect(data.message.body).toBe('Hola, ¿cómo te ha ido con tu pedido?');
+      expect(mockWhatsApp.sent.at(-1).template.components).toEqual([]);
+      // La copia local queda al día, con el cuerpo real de Meta.
+      const templates = await json(await call('/api/admin/wa-templates'));
+      const local = templates.templates.find((row) => row.name === 'phyto_seguimiento_cliente_v1');
+      expect(local.body).toBe('Hola, ¿cómo te ha ido con tu pedido?');
+    } finally {
+      mockWhatsApp.bodyOverride = null;
+    }
+  });
+
+  it('manda un parámetro por cada hueco REAL del cuerpo de Meta', async () => {
+    const saved = await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'phyto_uat_dos_huecos',
+        status: 'approved',
+        language: 'es',
+        body: 'Hola {{1}}, te escribe {{2}}.',
+        variables: ['customer_name', 'nombre'],
+      }),
+    });
+    expect(saved.status).toBe(200);
+    mockWhatsApp.sent.length = 0;
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/messages`,
+      { method: 'POST', body: JSON.stringify({ template: 'phyto_uat_dos_huecos' }) },
+      cookie,
+    );
+    expect(response.status).toBe(200);
+    expect(mockWhatsApp.sent.at(-1).template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Ana WhatsApp' },
+          { type: 'text', text: 'Ana WhatsApp' },
+        ],
+      },
+    ]);
+  });
+
+  it('sin el texto real de la plantilla NO se inventan parámetros', async () => {
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'phyto_uat_sin_texto', status: 'approved', language: 'es' }),
+    });
+    mockWhatsApp.sent.length = 0;
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/messages`,
+      { method: 'POST', body: JSON.stringify({ template: 'phyto_uat_sin_texto' }) },
+      cookie,
+    );
+    expect(response.status).toBe(422);
+    const data = await json(response);
+    expect(data.error).toBe('template_body_missing');
+    expect(mockWhatsApp.sent).toHaveLength(0);
   });
 
 });

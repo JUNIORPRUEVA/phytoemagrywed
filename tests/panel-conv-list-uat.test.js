@@ -474,6 +474,10 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     ]);
     expect($('#thread').textContent).toContain('Hola Cliente UX Nuevo');
     expect($('#wa-composer').textContent).toContain('Esperando respuesta de Cliente UX Nuevo');
+    // «Enviado» no es «entregado»: WhatsApp solo aceptó el mensaje, así que la
+    // burbuja y el estado lo dicen sin prometer una entrega que no se confirmó.
+    expect($('#wa-composer').textContent).toContain('sin confirmar');
+    expect($('#thread').textContent).toContain('Enviado · sin confirmar');
     expect($('#wa-text')).toBeNull();
     expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
     expect(uxConversationId).toBeTruthy();
@@ -492,7 +496,14 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     await app.collections.update('conversations', uxConversationId, { updated_at: new Date().toISOString() });
     await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'sigue esperando');
     expect($('#wa-text')).toBeNull();
-  }, 12000);
+    // Con la entrega YA confirmada por Meta, el estado deja de decir «sin confirmar».
+    click('[data-wa-filter="todos"]');
+    await waitFor(
+      () => $('#wa-composer')?.textContent.includes('Plantilla entregada'),
+      'estado de entrega confirmada',
+      9000,
+    );
+  }, 15000);
 
   it('quick reply inbound abre OPEN_WINDOW sin recargar manualmente', async () => {
     await inbound('18095550666', 'wamid.UX-BUTTON-1', {
@@ -536,6 +547,11 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     expect($('#thread .template-fail').textContent).toContain('faltan o sobran datos requeridos');
     expect($('#thread .template-fail').textContent).toContain('#132000');
     expect($('#thread .template-fail').textContent).not.toContain('Archivo recibido');
+    // El compositor dice que NO se entregó (y por qué) en vez de fingir que no
+    // se intentó nada.
+    expect($('#wa-composer [data-wa-contact-state="TEMPLATE_FAILED"]')).toBeTruthy();
+    expect($('#wa-composer').textContent).toContain('La plantilla no se entregó');
+    expect($('#wa-composer').textContent).toContain('faltan o sobran datos requeridos');
     whatsapp.failWith = null;
     expect(uxConversationId).toBeTruthy();
   }, 12000);
