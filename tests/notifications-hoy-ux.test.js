@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../public/admin/app.js', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../public/admin/admin.css', import.meta.url), 'utf8');
 
 describe('Hoy notification UX', () => {
   it('no muestra problemas de WhatsApp como bloque fijo en la lista de Hoy', () => {
@@ -26,5 +27,11 @@ describe('Hoy notification UX', () => {
     expect(header).toContain('data-dashboard-profile');
     expect(header).toContain('data-dashboard-notifications');
     expect(header).not.toContain('dashboard-head__net');
+  });
+
+  it('la campana de Hoy abre una hoja modal visible por encima del appbar', () => {
+    const handler = app.slice(app.indexOf("event.target.closest('[data-dashboard-notifications]')"), app.indexOf("const noticeDismiss"));
+    expect(handler).toContain('openNotificationsSheet();');
+    expect(css).toMatch(/\.sheet\s*\{[^}]*z-index:\s*900;/s);
   });
 });

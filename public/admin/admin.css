@@ -944,7 +944,7 @@ body[data-tab='hoy'] .stat__label {
 .sheet {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 900;
 }
 
 .sheet__backdrop {
