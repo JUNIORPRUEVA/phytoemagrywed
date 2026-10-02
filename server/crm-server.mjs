@@ -145,6 +145,7 @@ import {
 } from './delivery-tracking.mjs';
 
 const saleCancellationLocks = new Map();
+const orderTransitionLocks = new Map();
 import { catalogItems, computeOrderTotals } from '../src/lib/catalog.js';
 import {
   createWhatsAppClient,
@@ -164,6 +165,31 @@ import {
   messageId,
   text,
 } from './stores.mjs';
+
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function loadServerEnv() {
+  if (process.env.NODE_ENV === 'test') return;
+  const envFile = path.join(PROJECT_ROOT, '.env');
+  if (!existsSync(envFile)) return;
+  try {
+    for (const rawLine of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const index = line.indexOf('=');
+      if (index <= 0) continue;
+      const key = line.slice(0, index).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key] !== undefined) continue;
+      let value = line.slice(index + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+      process.env[key] = value;
+    }
+  } catch {
+    /* El entorno real sigue mandando; un .env ilegible solo deja variables sin cargar. */
+  }
+}
+
+loadServerEnv();
 
 const PORT = Number.parseInt(process.env.PHYTO_CRM_PORT ?? '8787', 10);
 const HOST = process.env.PHYTO_CRM_HOST ?? '127.0.0.1';
@@ -679,7 +705,6 @@ async function visibleDeliveryOrders(ctx, actor) {
   const orders = [];
   for (const item of items.filter((row) => row.type === 'order_intent')) {
     const order = orderOf(item);
-    if (!order?.delivery?.location) continue;
     if (['entregado', 'cancelado', 'perdido'].includes(order.status)) continue;
     if (!canOpenDeliveryOrder(actor, order)) continue;
     const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
@@ -687,6 +712,23 @@ async function visibleDeliveryOrders(ctx, actor) {
     orders.push(publicDeliveryOrder(item, order, customer, conversation));
   }
   return orders;
+}
+
+async function closeActiveTrackingForOrder(ctx, orderId, status, actor = null) {
+  const sessions = await ctx.db.list('delivery_tracking_sessions', { limit: 1000 });
+  const active = sessions.filter((row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS);
+  const closed = [];
+  for (const session of active) {
+    const updated = await ctx.db.update('delivery_tracking_sessions', session.id, {
+      status,
+      ended_at: session.ended_at ?? ctx.clock().toISOString(),
+      updated_at: ctx.clock().toISOString(),
+      closed_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
+    });
+    closed.push(updated);
+    await emitDeliveryEvent(ctx, status === 'COMPLETED' ? 'delivery.completed' : 'delivery.tracking_stopped', updated);
+  }
+  return closed;
 }
 
 async function createUserNotification(ctx, input) {
@@ -735,6 +777,16 @@ async function sendPushForNotification(ctx, notification) {
   const subscriptions = (await ctx.db.list('push_subscriptions', { limit: 1000 })).filter(
     (row) => row.user_id === notification.recipient_user_id && row.active !== false,
   );
+  const summary = {
+    configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
+    subscriptions: subscriptions.length,
+    attempted: 0,
+    sent: 0,
+    failed: 0,
+    expired: 0,
+    notConfigured: 0,
+    skipped: 0,
+  };
   const payload = JSON.stringify({
     title: notification.title,
     body: notification.body,
@@ -748,7 +800,11 @@ async function sendPushForNotification(ctx, notification) {
   for (const subscription of subscriptions) {
     const key = `push:${notification.id}:${subscription.endpoint}`;
     const existing = await ctx.db.findBy('push_jobs', 'idempotency_key', key);
-    if (existing) continue;
+    if (existing) {
+      summary.skipped += 1;
+      continue;
+    }
+    summary.attempted += 1;
     let status = 'not_configured';
     let error = null;
     if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
@@ -768,6 +824,10 @@ async function sendPushForNotification(ctx, notification) {
         if (status === 'expired') await ctx.db.update('push_subscriptions', subscription.id, { active: false, disabled_at: ctx.clock().toISOString(), last_error: error });
       }
     }
+    if (status === 'sent') summary.sent += 1;
+    else if (status === 'expired') summary.expired += 1;
+    else if (status === 'not_configured') summary.notConfigured += 1;
+    else summary.failed += 1;
     await ctx.db.insert('push_jobs', {
       id: newId('psh'),
       notification_id: notification.id,
@@ -780,6 +840,43 @@ async function sendPushForNotification(ctx, notification) {
       updated_at: ctx.clock().toISOString(),
     });
   }
+  return summary;
+}
+
+function pushEndpointSummary(endpoint) {
+  try {
+    const url = new URL(endpoint);
+    return `${url.hostname}…${String(endpoint).slice(-10)}`;
+  } catch {
+    return `endpoint…${String(endpoint ?? '').slice(-10)}`;
+  }
+}
+
+async function pushStatusForUser(ctx, userId) {
+  const subscriptions = (await ctx.db.list('push_subscriptions', { by: 'updated_at', order: 'desc', limit: 1000 })).filter((row) => row.user_id === userId);
+  const jobs = (await ctx.db.list('push_jobs', { by: 'created_at', order: 'desc', limit: 200 })).filter((row) => row.user_id === userId).slice(0, 20);
+  return {
+    configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
+    publicKey: WEB_PUSH_PUBLIC_KEY || null,
+    activeSubscriptions: subscriptions.filter((row) => row.active !== false).length,
+    inactiveSubscriptions: subscriptions.filter((row) => row.active === false).length,
+    subscriptions: subscriptions.slice(0, 5).map((row) => ({
+      id: row.id,
+      active: row.active !== false,
+      endpoint: pushEndpointSummary(row.endpoint),
+      user_agent: row.user_agent ?? null,
+      last_used_at: row.last_used_at ?? null,
+      last_error: row.last_error ?? null,
+      updated_at: row.updated_at,
+    })),
+    recentJobs: jobs.map((row) => ({
+      id: row.id,
+      notification_id: row.notification_id,
+      status: row.status,
+      error: row.error ?? null,
+      created_at: row.created_at,
+    })),
+  };
 }
 
 function whatsappDeepLink(conversationId) {
@@ -808,7 +905,7 @@ async function whatsappNotificationRecipients(ctx, conversation) {
   if (!conversation?.id) return [];
   const users = (await ctx.users.listUsers()).filter((user) => user.active !== false && hasPermission(user, 'chats.read'));
   if (conversation.assigned_user_id) {
-    return users.filter((user) => user.id === conversation.assigned_user_id);
+    return users.filter((user) => user.id === conversation.assigned_user_id || user.role === 'ADMIN');
   }
   return users.filter((user) => user.role === 'ADMIN' || hasPermission(user, 'chats.take_unassigned'));
 }
@@ -1006,8 +1103,343 @@ async function withSaleCancellationLock(orderId, work) {
   }
 }
 
+async function withOrderTransitionLock(orderId, work) {
+  const previous = orderTransitionLocks.get(orderId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(() => current, () => current);
+  orderTransitionLocks.set(orderId, queued);
+  await previous.catch(() => {});
+  try {
+    return await work();
+  } finally {
+    release();
+    if (orderTransitionLocks.get(orderId) === queued) orderTransitionLocks.delete(orderId);
+  }
+}
+
 function paymentMethodLabel(value) {
   return value ? PAYMENT_METHOD_LABELS[value] ?? value : null;
+}
+
+function statusLabel(value) {
+  return value ? ORDER_STATUS_LABELS[value] ?? String(value) : '—';
+}
+
+function manualReason(value) {
+  const clean = longText(value, 500);
+  if (!clean) return null;
+  if (clean.length < 6) return null;
+  if (/^[\W_]+$/u.test(clean)) return null;
+  if (/^(ok|okay|bien|listo|na|n\/a)$/i.test(clean)) return null;
+  return clean;
+}
+
+function orderOperationalStatus(order, item = null, activeSessions = []) {
+  const status = String(order?.status ?? item?.status ?? '').trim();
+  if (status === 'cancelado' || status === 'perdido') return 'CANCELADO';
+  if (isCompletedPurchaseStatus(status)) return 'ENTREGADO';
+  if (activeSessions.length || status === 'enviado' || order?.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) return 'EN_CAMINO';
+  return 'PENDIENTE';
+}
+
+async function activeTrackingSessionsForOrder(ctx, orderId) {
+  const sessions = await ctx.db.list('delivery_tracking_sessions', { limit: 1000 });
+  return sessions.filter((row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS);
+}
+
+async function validateOrderOperationalIntegrity(ctx, orderId) {
+  const item = await findOrderItem(ctx.store, orderId);
+  if (!item) return { status: 'INVALID', valid: false, reasons: ['order_not_found'] };
+  const order = orderOf(item);
+  if (!order) return { status: 'INVALID', valid: false, reasons: ['invalid_order_json'] };
+  const activeSessions = await activeTrackingSessionsForOrder(ctx, orderId);
+  const operationalStatus = orderOperationalStatus(order, item, activeSessions);
+  const reasons = [];
+  if (operationalStatus === 'PENDIENTE' && activeSessions.length) reasons.push('pending_has_active_tracking');
+  if (operationalStatus === 'EN_CAMINO') {
+    if (!order.delivery?.delivery_user_id) reasons.push('in_transit_missing_delivery_assignment');
+    if (!orderDestination(order)) reasons.push('in_transit_missing_destination');
+    if (!activeSessions.length) reasons.push('in_transit_missing_active_tracking');
+  }
+  if (operationalStatus === 'ENTREGADO') {
+    if (activeSessions.length) reasons.push('delivered_has_active_tracking');
+    if (!order.delivered_at) reasons.push('delivered_missing_delivered_at');
+    if (!order.delivered_by_user_id && !order.delivery?.delivery_delivered_by_user_id) reasons.push('delivered_missing_delivered_by');
+    if (ctx.inventory) {
+      const stock = await ctx.inventory.stock();
+      const saleMovements = stock.movements.filter((row) => row.order_id === orderId && row.type === 'SALE');
+      if (!saleMovements.length) reasons.push('delivered_missing_inventory_sale');
+      if (saleMovements.length > 1 && !stock.movements.some((row) => row.order_id === orderId && row.type === 'SALE_REVERSAL')) {
+        reasons.push('delivered_multiple_inventory_sales');
+      }
+    }
+  }
+  if (operationalStatus === 'CANCELADO' && activeSessions.length) reasons.push('cancelled_has_active_tracking');
+  return {
+    status: reasons.length ? 'INVALID' : 'VALID',
+    valid: reasons.length === 0,
+    reasons,
+    operationalStatus,
+    orderId,
+  };
+}
+
+async function orderTimeline(ctx, orderId, order = null) {
+  const auditRows = await ctx.audit?.list?.({ entity: 'order', entityId: orderId, limit: 100 }) ?? [];
+  const rows = [];
+  if (order?.created_at) {
+    rows.push({
+      type: 'created',
+      label: 'Pedido creado',
+      at: order.created_at,
+      by: order.created_by_display_name_snapshot ?? null,
+      reason: null,
+    });
+  }
+  for (const row of order?.status_history ?? []) {
+    rows.push({
+      type: 'status',
+      label: `Estado cambiado a ${statusLabel(row.status)}`,
+      at: row.at,
+      by: row.by ?? null,
+      reason: row.reason ?? null,
+      source: row.source ?? null,
+    });
+  }
+  for (const row of auditRows) {
+    const data = row.data ?? {};
+    const label =
+      row.action === 'order.delivery_assigned' || row.action === 'order.delivery_reassigned'
+        ? 'Delivery asignado'
+        : row.action === 'order.status_changed' && data.source === 'MANUAL_ADMIN'
+          ? `Estado cambiado de ${statusLabel(data.previous_status)} a ${statusLabel(data.new_status)}`
+          : row.action === 'order.cancelled' && data.source === 'MANUAL_ADMIN'
+            ? `Estado cambiado de ${statusLabel(data.previous_status)} a Cancelado`
+            : row.action === 'order.status_changed'
+              ? `Estado cambiado a ${statusLabel(data.new_status)}`
+              : row.summary;
+    if (!label) continue;
+    rows.push({
+      type: row.action,
+      label,
+      at: row.created_at,
+      by: row.actor ?? null,
+      reason: data.reason ?? null,
+      source: data.source ?? null,
+    });
+  }
+  const seen = new Set();
+  return rows
+    .filter((row) => row.at)
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)))
+    .filter((row) => {
+      const key = `${row.type}:${row.label}:${row.at}:${row.reason ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+async function auditOrderStatusTransition(ctx, input) {
+  await ctx.audit?.record({
+    entity: 'order',
+    entityId: input.orderId,
+    action: input.newStatus === 'cancelado' ? 'order.cancelled' : 'order.status_changed',
+    actor: input.actor?.display_name ?? null,
+    summary: `Estado: ${input.previousStatus ?? 'nuevo'} → ${input.newStatus}`,
+    data: {
+      order_id: input.orderId,
+      previous_status: input.previousStatus ?? null,
+      new_status: input.newStatus,
+      changed_by: input.actor?.id ?? null,
+      reason: input.reason ?? null,
+      changed_at: input.changedAt,
+      source: input.source ?? 'SYSTEM',
+    },
+    idempotencyKey: input.idempotencyKey ?? `order.status:${input.orderId}:${input.previousStatus ?? 'nuevo'}:${input.newStatus}:${input.source ?? 'SYSTEM'}`,
+  });
+}
+
+async function markOrderDelivered(ctx, item, actor = null, options = {}) {
+  const beforeStatus = item.status ?? orderOf(item)?.status ?? 'nuevo';
+  const alreadyDelivered = isCompletedPurchaseStatus(beforeStatus);
+  const updatedStatus = alreadyDelivered
+    ? { item, order: orderOf(item) }
+    : await updateOrderStatus(ctx.store, item, BUSINESS_COMPLETED_PURCHASE_STATUS, actor);
+  const delivered = updatedStatus?.item && !updatedStatus.item.inventory_deducted_at ? await afterPurchaseDelivered(ctx, updatedStatus.item) : { item: updatedStatus?.item };
+  const deliveredItem = delivered.item ?? updatedStatus?.item ?? item;
+  let order = orderOf(deliveredItem) ?? updatedStatus?.order ?? orderOf(item);
+  if (order) {
+    const at = ctx.clock().toISOString();
+    order = {
+      ...order,
+      status: BUSINESS_COMPLETED_PURCHASE_STATUS,
+      delivered_at: order.delivered_at ?? at,
+      delivered_by_user_id: actor?.actor_type === 'USER' ? actor.id : order.delivered_by_user_id ?? null,
+      delivered_by_display_name_snapshot: actor?.display_name ?? order.delivered_by_display_name_snapshot ?? null,
+      delivery: {
+        ...(order.delivery ?? {}),
+        delivery_status: DELIVERY_OPERATIONAL_STATUSES.DELIVERED,
+        delivery_delivered_at: order.delivery?.delivery_delivered_at ?? at,
+        delivery_delivered_by_user_id: actor?.actor_type === 'USER' ? actor.id : order.delivery?.delivery_delivered_by_user_id ?? null,
+        delivery_delivered_by_display_name_snapshot: actor?.display_name ?? order.delivery?.delivery_delivered_by_display_name_snapshot ?? null,
+      },
+      status_history: [
+        ...(order.status_history ?? []),
+        ...(alreadyDelivered
+          ? []
+          : [{ status: BUSINESS_COMPLETED_PURCHASE_STATUS, at, reason: options.reason ?? null, source: options.source ?? 'SYSTEM' }]),
+      ],
+      updated_at: at,
+    };
+    const persisted = await ctx.store.update(item.id, {
+      status: BUSINESS_COMPLETED_PURCHASE_STATUS,
+      orderJson: JSON.stringify(order),
+    });
+    if (persisted) {
+      delivered.item = persisted;
+      order = orderOf(persisted) ?? order;
+    }
+  }
+  await closeActiveTrackingForOrder(ctx, item.id, 'COMPLETED', actor);
+  return { ok: true, item: delivered.item ?? deliveredItem, order, delivered, duplicate: alreadyDelivered };
+}
+
+async function cancelOpenOrder(ctx, item, reason, actor = null, source = 'MANUAL_ADMIN') {
+  const order = orderOf(item);
+  if (!order) return { ok: false, status: 422, error: 'invalid_order' };
+  const at = ctx.clock().toISOString();
+  const cancelledOrder = {
+    ...order,
+    status: 'cancelado',
+    cancelled_at: order.cancelled_at ?? at,
+    cancelled_by_user_id: actor?.actor_type === 'USER' ? actor.id : order.cancelled_by_user_id ?? null,
+    cancelled_by_display_name_snapshot: actor?.display_name ?? order.cancelled_by_display_name_snapshot ?? null,
+    cancel_reason: reason,
+    delivery: {
+      ...(order.delivery ?? {}),
+      delivery_status: DELIVERY_OPERATIONAL_STATUSES.CANCELLED,
+    },
+    status_history: [...(order.status_history ?? []), { status: 'cancelado', at, reason, source }],
+    updated_at: at,
+  };
+  const updated = await ctx.store.update(item.id, { status: 'cancelado', orderJson: JSON.stringify(cancelledOrder) });
+  await closeActiveTrackingForOrder(ctx, item.id, 'CANCELLED', actor);
+  if (updated?.customer_id) await ctx.customers.refreshTotals(updated.customer_id);
+  if (cancelledOrder.delivery?.delivery_user_id) await notifyDeliveryOrderCancelled(ctx, updated ?? item, cancelledOrder, actor);
+  return { ok: true, item: updated ?? item, order: cancelledOrder };
+}
+
+async function transitionOrderStatus(ctx, input) {
+  return withOrderTransitionLock(input.orderId, async () => {
+    const target = String(input.targetStatus ?? '').trim().toUpperCase();
+    const reason = input.source === 'MANUAL_ADMIN' ? manualReason(input.reason) : longText(input.reason, 500);
+    if (input.source === 'MANUAL_ADMIN' && !reason) {
+      return { ok: false, status: 422, error: 'invalid_reason', message: 'Escribe un motivo claro de al menos 6 caracteres.' };
+    }
+    const item = await findOrderItem(ctx.store, input.orderId);
+    if (!item) return { ok: false, status: 404, error: 'not_found' };
+    const order = orderOf(item);
+    if (!order) return { ok: false, status: 422, error: 'invalid_order' };
+    const expected = text(input.expectedStatus, 30);
+    if (expected && expected !== item.status && expected !== order.status && expected !== orderOperationalStatus(order, item)) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'stale_order_status',
+        message: 'El pedido cambió de estado. Actualiza e inténtalo nuevamente.',
+        currentStatus: item.status,
+      };
+    }
+    const activeSessions = await activeTrackingSessionsForOrder(ctx, item.id);
+    const previousOperational = orderOperationalStatus(order, item, activeSessions);
+    const previousStatus = item.status ?? order.status ?? 'nuevo';
+    if (previousOperational === target) {
+      return { ok: true, duplicate: true, item, order, integrity: await validateOrderOperationalIntegrity(ctx, item.id) };
+    }
+    if (isCompletedPurchaseStatus(previousStatus) && target !== 'ENTREGADO') {
+      return {
+        ok: false,
+        status: 409,
+        error: 'delivered_reversal_required',
+        message: 'Una venta entregada no puede volver de estado con un cambio simple. Usa una reversión protegida.',
+      };
+    }
+
+    let result = null;
+    if (target === 'PENDIENTE') {
+      if (activeSessions.length) {
+        return { ok: false, status: 409, error: 'active_tracking_exists', message: 'No se puede volver a Pendiente con tracking activo.' };
+      }
+      const at = ctx.clock().toISOString();
+      const pendingOrder = {
+        ...order,
+        status: 'nuevo',
+        delivery: {
+          ...(order.delivery ?? {}),
+          delivery_status: order.delivery?.delivery_user_id ? DELIVERY_OPERATIONAL_STATUSES.READY_FOR_DELIVERY : DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT,
+        },
+        status_history: [...(order.status_history ?? []), { status: 'nuevo', at, reason, source: input.source ?? 'SYSTEM' }],
+        updated_at: at,
+      };
+      const updated = await ctx.store.update(item.id, { status: 'nuevo', orderJson: JSON.stringify(pendingOrder) });
+      result = { ok: true, item: updated, order: pendingOrder };
+    } else if (target === 'EN_CAMINO') {
+      if (!order.delivery?.delivery_user_id) {
+        return { ok: false, status: 409, error: 'delivery_not_assigned', message: 'Asigna un delivery antes de marcar En camino.' };
+      }
+      if (!orderDestination(order)) {
+        return { ok: false, status: 422, error: 'missing_destination', message: 'El pedido no tiene ubicación de entrega.' };
+      }
+      if (!activeSessions.length) {
+        return { ok: false, status: 409, error: 'active_tracking_required', message: 'No se puede marcar En camino sin una entrega activa.' };
+      }
+      const at = ctx.clock().toISOString();
+      const inTransitOrder = {
+        ...order,
+        status: 'enviado',
+        delivery: { ...(order.delivery ?? {}), delivery_status: DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT },
+        status_history: [...(order.status_history ?? []), { status: 'enviado', at, reason, source: input.source ?? 'SYSTEM' }],
+        updated_at: at,
+      };
+      const updated = await ctx.store.update(item.id, { status: 'enviado', orderJson: JSON.stringify(inTransitOrder) });
+      result = { ok: true, item: updated, order: inTransitOrder };
+    } else if (target === 'ENTREGADO') {
+      if (!isCompletedPurchaseStatus(item.status)) {
+        const check = await ensureInventoryForSale(ctx, { ...item, status: BUSINESS_COMPLETED_PURCHASE_STATUS });
+        if (!check.ok) return check;
+      }
+      result = await markOrderDelivered(ctx, item, input.actor, { reason, source: input.source ?? 'SYSTEM' });
+    } else if (target === 'CANCELADO') {
+      if (isCompletedPurchaseStatus(item.status)) {
+        return {
+          ok: false,
+          status: 409,
+          error: 'delivered_reversal_required',
+          message: 'Una venta entregada no puede cancelarse con un cambio simple. Usa una reversión protegida.',
+        };
+      }
+      result = await cancelOpenOrder(ctx, item, reason, input.actor, input.source ?? 'SYSTEM');
+    } else {
+      return { ok: false, status: 422, error: 'invalid_status', message: 'Estado no permitido.' };
+    }
+
+    const changedAt = ctx.clock().toISOString();
+    await auditOrderStatusTransition(ctx, {
+      orderId: item.id,
+      previousStatus,
+      newStatus: result.order?.status ?? result.item?.status,
+      actor: input.actor,
+      reason,
+      changedAt,
+      source: input.source ?? 'SYSTEM',
+      idempotencyKey: `order.status:${item.id}:${previousStatus}:${target}:${input.source ?? 'SYSTEM'}:${changedAt}`,
+    });
+    return { ...result, integrity: await validateOrderOperationalIntegrity(ctx, item.id) };
+  });
 }
 
 async function cancelSale(ctx, orderId, input = {}, actor = null) {
@@ -1094,9 +1526,11 @@ async function cancelSale(ctx, orderId, input = {}, actor = null) {
         },
       };
       await ctx.store.update(orderId, { orderJson: JSON.stringify(deliveryCancelledOrder) });
+      await closeActiveTrackingForOrder(ctx, orderId, 'CANCELLED', actor);
       await notifyDeliveryOrderCancelled(ctx, updated, deliveryCancelledOrder, actor);
       return { ok: true, item: updated, order: deliveryCancelledOrder, inventory, inventoryLinesRestored };
     }
+    await closeActiveTrackingForOrder(ctx, orderId, 'CANCELLED', actor);
     return { ok: true, item: updated, order: cancelledOrder, inventory, inventoryLinesRestored };
   });
 }
@@ -1647,7 +2081,83 @@ async function ensureFollowupsForDelivered(ctx, log = console.log) {
  */
 const WA_TEMPLATE_SEED = [
   {
+    name: 'phyto_seguimiento_cliente_v1',
+    friendly_name: 'Seguimiento al cliente',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, te escribimos de Phytoemagry para dar seguimiento a tu solicitud. Si deseas continuar, estamos disponibles para ayudarte.',
+    variables: ['customer_name'],
+    buttons: [],
+  },
+  {
+    name: 'phyto_confirmacion_pedido_v1',
+    friendly_name: 'Confirmación de pedido',
+    group: 'PEDIDOS',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, recibimos tu pedido {{2}} correctamente.\n\nTotal: {{3}}\nForma de pago: {{4}}\n\nPor favor confirma que los datos de tu pedido son correctos.',
+    variables: ['customer_name', 'order_number', 'total', 'payment_method'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: 'phyto_delivery_asignado_v1',
+    friendly_name: 'Delivery asignado',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, tu pedido {{2}} ya tiene delivery asignado.\n\n*{{3}} · Delivery* será la persona encargada de coordinar tu entrega.',
+    variables: ['customer_name', 'order_number', 'delivery_display_name'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: 'phyto_ubicacion_entrega_v1',
+    friendly_name: 'Solicitar ubicación',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, necesitamos confirmar la ubicación donde deseas recibir tu pedido {{2}}.',
+    variables: ['customer_name', 'order_number'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: 'phyto_pedido_listo_v1',
+    friendly_name: 'Pedido listo',
+    group: 'PEDIDOS',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, tu pedido {{2}} está listo para coordinar la entrega.',
+    variables: ['customer_name', 'order_number'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: 'phyto_recompra_cliente_v1',
+    friendly_name: 'Recompra',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, esperamos que todo vaya bien con tu compra anterior de Phytoemagry.',
+    variables: ['customer_name'],
+    buttons: [],
+  },
+  {
+    name: 'phyto_retomar_pedido_v1',
+    friendly_name: 'Retomar pedido',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, queremos confirmar si deseas continuar con el pedido que dejaste pendiente.',
+    variables: ['customer_name'],
+    buttons: [],
+  },
+  {
     name: 'phyto_purchase_thanks',
+    friendly_name: 'Gracias por compra',
+    group: 'LEGACY',
     category: 'UTILITY',
     language: 'es',
     body: 'Gracias por tu compra. Si tienes alguna duda sobre cómo usarlo, respóndenos por aquí.',
@@ -1656,35 +2166,69 @@ const WA_TEMPLATE_SEED = [
   },
   {
     name: 'phyto_followup_checkin',
+    friendly_name: 'Seguimiento legacy',
+    group: 'LEGACY',
     category: 'UTILITY',
     language: 'es',
     body: 'Hola {{1}}, ¿cómo te ha ido con tu pedido? Si necesitas algo, escríbenos por aquí.',
-    variables: ['nombre'],
+    variables: ['customer_name'],
     buttons: [],
   },
   {
     name: 'phyto_weekly_education',
+    friendly_name: 'Educación semanal legacy',
+    group: 'LEGACY',
     category: 'MARKETING',
     language: 'es',
     body: 'Hola {{1}}, te compartimos información aprobada sobre el producto y su forma de uso.',
-    variables: ['nombre'],
+    variables: ['customer_name'],
     buttons: [],
   },
   {
     name: 'phyto_reorder_reminder',
+    friendly_name: 'Recordatorio recompra legacy',
+    group: 'LEGACY',
     category: 'MARKETING',
     language: 'es',
     body: 'Hola {{1}}, por si te sirve: se acerca el final de tu frasco. ¿Te ayudamos con el siguiente?',
-    variables: ['nombre'],
+    variables: ['customer_name'],
     buttons: [],
   },
 ];
+
+const WA_TEMPLATE_STALE_MS = 10 * 60 * 1000;
+
+function normalizeTemplateStatus(value) {
+  const normalized = String(value ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (!normalized || normalized === 'PENDING' || normalized === 'PENDING_APPROVAL' || normalized === 'IN_REVIEW') return 'PENDING';
+  if (normalized === 'APPROVED' || normalized === 'ACTIVE') return 'APPROVED';
+  if (normalized === 'REJECTED') return 'REJECTED';
+  if (normalized === 'PAUSED') return 'PAUSED';
+  if (normalized === 'DISABLED') return 'DISABLED';
+  if (normalized === 'LOCAL_ONLY') return 'LOCAL_ONLY';
+  if (normalized === 'NOT_FOUND_IN_META') return 'NOT_FOUND_IN_META';
+  return normalized;
+}
+
+function templateSendable(status) {
+  return normalizeTemplateStatus(status) === 'APPROVED';
+}
+
+function templateBodyFromComponents(components = []) {
+  return components.find((component) => String(component?.type ?? '').toUpperCase() === 'BODY')?.text ?? null;
+}
+
+function templateButtonsFromComponents(components = []) {
+  const buttons = components.find((component) => String(component?.type ?? '').toUpperCase() === 'BUTTONS')?.buttons;
+  return Array.isArray(buttons) ? buttons : [];
+}
 
 /**
  * Plantillas del plan + las guardadas en la base de datos, sin duplicar nombres.
  * Las nuevas se registran como `pending_approval` (la verdad de Meta manda).
  */
-async function listWaTemplates(ctx) {
+async function listWaTemplates(ctx, options = {}) {
+  if (options.syncIfStale) await syncWaTemplatesIfStale(ctx);
   const stored = await ctx.db.list('wa_templates', { limit: 200 });
   const known = new Map(stored.map((row) => [row.name, row]));
   /** @type {any[]} */
@@ -1698,16 +2242,22 @@ async function listWaTemplates(ctx) {
     const doc = {
       id: `tpl_${seed.name}`,
       name: seed.name,
+      friendly_name: seed.friendly_name ?? seed.name,
+      group: seed.group ?? 'LEGACY',
       category: seed.category,
       language: seed.language,
       body: seed.body,
       variables: seed.variables,
       buttons: seed.buttons ?? [],
+      required_context: seed.required_context ?? 'none',
       status: 'pending_approval',
       sendable: false,
       // Datos que solo puede rellenar Meta cuando la plantilla se registre allí.
-      meta_template_id: null,
+      meta_template_id: seed.meta_template_id ?? null,
       last_synced_at: null,
+      last_template_sync_at: null,
+      components: [],
+      quality_score: null,
       source: 'crm',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1724,8 +2274,207 @@ async function approvedTemplate(ctx, name) {
   const templates = await listWaTemplates(ctx);
   const found = templates.find((row) => row.name === name) ?? null;
   if (!found) return { ok: false, reason: 'unknown_template' };
-  if (found.status !== 'approved') return { ok: false, reason: 'template_not_approved', template: found };
+  if (!templateSendable(found.status) || found.sendable !== true) return { ok: false, reason: 'template_not_approved', template: found };
   return { ok: true, template: found };
+}
+
+function templatePlaceholderCount(body) {
+  const matches = String(body ?? '').match(/\{\{\s*\d+\s*\}\}/g);
+  return matches ? matches.length : 0;
+}
+
+function templateVariables(template) {
+  if (Array.isArray(template?.variables) && template.variables.length) return template.variables.map((entry) => String(entry ?? '').trim()).filter(Boolean);
+  const count = templatePlaceholderCount(template?.body);
+  return Array.from({ length: count }, (_, index) => `param_${index + 1}`);
+}
+
+function renderTemplateBody(body, parameters) {
+  let rendered = String(body ?? '');
+  parameters.forEach((parameter, index) => {
+    rendered = rendered.replace(new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'), parameter.text);
+  });
+  return rendered || null;
+}
+
+function orderTotalText(order, item) {
+  const total = order?.total ?? item?.total ?? null;
+  if (total === null || total === undefined || total === '') return null;
+  const currency = order?.currency ?? item?.currency ?? 'DOP';
+  return `${total} ${currency}`;
+}
+
+async function findTemplateOrderContext(ctx, { customer, conversation, orderId }) {
+  const items = await ctx.store.listAdmin({ limit: 5000 });
+  const candidates = items
+    .filter((item) => item.type === 'order_intent')
+    .map((item) => ({ item, order: orderOf(item) }))
+    .filter(({ item, order }) => {
+      if (!order) return false;
+      if (orderId) return item.id === orderId || order.id === orderId || order.order_number === orderId;
+      if (conversation?.id && (order.conversation_id === conversation.id || item.conversation_id === conversation.id)) return true;
+      return customer?.id && (order.customer_id === customer.id || item.customer_id === customer.id);
+    });
+  return (
+    candidates.sort((a, b) => {
+      const bDate = String(b.order.updated_at ?? b.order.created_at ?? b.item.received_at ?? '');
+      const aDate = String(a.order.updated_at ?? a.order.created_at ?? a.item.received_at ?? '');
+      return bDate.localeCompare(aDate);
+    })[0] ?? null
+  );
+}
+
+async function resolveTemplatePayload(ctx, { template, customer, conversation, orderId }) {
+  const variables = templateVariables(template);
+  const placeholderCount = templatePlaceholderCount(template?.body);
+  const requiresOrder = template?.required_context === 'order' || variables.some((key) => ['order_number', 'total', 'payment_method', 'delivery_display_name'].includes(key));
+  const context = requiresOrder ? await findTemplateOrderContext(ctx, { customer, conversation, orderId }) : null;
+  if (requiresOrder && !context) {
+    return { ok: false, status: 422, error: 'missing_order', message: 'Falta seleccionar un pedido para completar esta plantilla.' };
+  }
+  const { item = null, order = null } = context ?? {};
+  const deliveryName =
+    order?.delivery?.delivery_user_name_snapshot ??
+    order?.delivery?.delivery_assigned_by_display_name_snapshot ??
+    item?.delivery_display_name ??
+    null;
+  const values = {
+    customer_name: customer?.name || customer?.phone_e164 || 'cliente',
+    nombre: customer?.name || customer?.phone_e164 || 'cliente',
+    order_number: order?.order_number ?? item?.order_number ?? item?.id ?? null,
+    total: orderTotalText(order, item),
+    payment_method: order?.payment_method_label ?? paymentMethodLabel(order?.payment_method ?? item?.payment_method) ?? null,
+    delivery_display_name: deliveryName,
+  };
+  if (variables.includes('delivery_display_name') && !values.delivery_display_name) {
+    return { ok: false, status: 422, error: 'missing_delivery', message: 'Este pedido no tiene delivery asignado para completar esta plantilla.' };
+  }
+  const missing = [];
+  const parameters = variables.map((key, index) => {
+    const value = values[key] ?? (key.startsWith('param_') && index === 0 ? values.customer_name : null);
+    if (value === null || value === undefined || value === '') missing.push(key);
+    return { type: 'text', text: String(value ?? '') };
+  });
+  if (missing.length) {
+    return { ok: false, status: 422, error: 'missing_template_data', message: 'Faltan datos para completar la plantilla.', missing };
+  }
+  if (parameters.length !== placeholderCount) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'template_parameter_mismatch',
+      message: `La plantilla espera ${placeholderCount} parámetro(s), pero el CRM tiene ${parameters.length}. Sincroniza la plantilla con Meta.`,
+    };
+  }
+  return {
+    ok: true,
+    body: renderTemplateBody(template?.body, parameters),
+    components: parameters.length ? [{ type: 'body', parameters }] : [],
+  };
+}
+
+async function syncWaTemplatesIfStale(ctx) {
+  if (!ctx.whatsapp?.listTemplates) return null;
+  const templates = await ctx.db.list('wa_templates', { limit: 200 });
+  const newest = templates
+    .map((row) => Date.parse(row.last_template_sync_at ?? row.last_synced_at ?? ''))
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+  if (newest && Date.now() - newest < WA_TEMPLATE_STALE_MS) return null;
+  return syncWhatsAppTemplatesFromMeta(ctx);
+}
+
+export async function syncWhatsAppTemplatesFromMeta(ctx) {
+  if (!ctx.whatsapp?.listTemplates) {
+    return { ok: false, error: 'whatsapp_not_configured', message: 'WhatsApp no está configurado para consultar Meta.' };
+  }
+  await listWaTemplates(ctx, { syncIfStale: false });
+  const metaResult = await ctx.whatsapp.listTemplates();
+  if (!metaResult.ok) {
+    console.error('[crm] Meta templates sync falló:', {
+      status: metaResult.status ?? metaResult.error?.status ?? null,
+      code: metaResult.error?.code ?? null,
+      type: metaResult.error?.type ?? null,
+      message: metaResult.error?.message ?? metaResult.reason ?? 'error',
+    });
+    return { ok: false, error: 'meta_sync_failed', detail: metaResult.error ?? { reason: metaResult.reason ?? 'error' } };
+  }
+  const now = new Date().toISOString();
+  const local = await ctx.db.list('wa_templates', { limit: 500 });
+  const byMetaId = new Map(local.filter((row) => row.meta_template_id).map((row) => [String(row.meta_template_id), row]));
+  const byNameLanguage = new Map(local.map((row) => [`${row.name}:${row.language ?? ''}`, row]));
+  const seenIds = new Set();
+  const seenNames = new Set();
+  let approved = 0;
+  let pending = 0;
+  let rejected = 0;
+  let updated = 0;
+  /** @type {any[]} */
+  const synced = [];
+  for (const meta of metaResult.templates ?? []) {
+    const name = text(meta.name, 80);
+    if (!name) continue;
+    const language = text(meta.language, 20) ?? 'es';
+    const seed = WA_TEMPLATE_SEED.find((row) => row.name === name) ?? null;
+    const status = normalizeTemplateStatus(meta.status);
+    const sendable = templateSendable(status);
+    if (status === 'APPROVED') approved += 1;
+    else if (status === 'REJECTED') rejected += 1;
+    else pending += 1;
+    const components = Array.isArray(meta.components) ? meta.components : [];
+    const existing = byMetaId.get(String(meta.id ?? '')) ?? byNameLanguage.get(`${name}:${language}`) ?? byNameLanguage.get(`${name}:`) ?? null;
+    const doc = {
+      id: existing?.id ?? `tpl_${name}`,
+      name,
+      friendly_name: existing?.friendly_name ?? seed?.friendly_name ?? name,
+      group: existing?.group ?? seed?.group ?? 'OTRAS',
+      category: text(meta.category, 30) ?? existing?.category ?? seed?.category ?? 'UTILITY',
+      language,
+      body: templateBodyFromComponents(components) ?? existing?.body ?? seed?.body ?? null,
+      variables: Array.isArray(existing?.variables) && existing.variables.length ? existing.variables : seed?.variables ?? [],
+      buttons: templateButtonsFromComponents(components),
+      components,
+      required_context: existing?.required_context ?? seed?.required_context ?? 'none',
+      status,
+      sendable,
+      meta_template_id: text(meta.id, 80) ?? existing?.meta_template_id ?? null,
+      quality_score: meta.quality_score ?? null,
+      last_synced_at: now,
+      last_template_sync_at: now,
+      source: 'meta',
+      created_at: existing?.created_at ?? now,
+      updated_at: now,
+    };
+    if (existing) await ctx.db.update('wa_templates', existing.id, doc);
+    else await ctx.db.insert('wa_templates', doc);
+    if (doc.meta_template_id) seenIds.add(String(doc.meta_template_id));
+    seenNames.add(doc.name);
+    updated += 1;
+    synced.push(doc);
+  }
+  for (const row of local) {
+    const wasSeen = (row.meta_template_id && seenIds.has(String(row.meta_template_id))) || seenNames.has(row.name);
+    if (wasSeen) continue;
+    await ctx.db.update('wa_templates', row.id, {
+      ...row,
+      status: row.source === 'meta' ? 'not_found_in_meta' : 'pending_approval',
+      sendable: false,
+      last_template_sync_at: now,
+      updated_at: now,
+    });
+  }
+  return {
+    ok: true,
+    foundFromMeta: synced.length,
+    found: synced.length,
+    approved,
+    pending,
+    rejected,
+    updated,
+    requestId: metaResult.requestId ?? null,
+    templates: synced,
+    syncedAt: now,
+  };
 }
 
 /**
@@ -2585,10 +3334,7 @@ async function handle(req, res, ctx) {
         deliveryOrders: await visibleDeliveryOrders(ctx, actor),
         deliveryUsers: can('delivery.tracking.manage_all') ? (await ctx.users.listUsers()).filter((user) => user.role === 'DELIVERY' && user.active !== false) : [],
         notifications: await listUserNotifications(ctx, actor),
-        push: {
-          publicKey: WEB_PUSH_PUBLIC_KEY || null,
-          configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
-        },
+        push: await pushStatusForUser(ctx, actor.id),
         paymentMethods: PAYMENT_METHODS.map((value) => ({ value, label: paymentMethodLabel(value) })),
         // Catálogo, inventario y estado comercial, sin repetir precios ni estados en el panel.
         catalog: inventory.presentations,
@@ -2915,10 +3661,50 @@ async function handle(req, res, ctx) {
         return;
       }
       if (before?.type === 'order_intent' && patch.status === 'cancelado' && before.status !== 'cancelado') {
-        json(res, 409, {
-          ok: false,
-          error: 'use_sale_cancel',
-          message: 'Cancela ventas desde la acción protegida de ADMIN e indicando motivo.',
+        const result = await transitionOrderStatus(ctx, {
+          orderId: id,
+          targetStatus: 'CANCELADO',
+          expectedStatus: before.status,
+          reason: patch.reason ?? 'Cambio de estado legacy',
+          actor,
+          source: 'SYSTEM',
+        });
+        if (!result.ok) {
+          json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message });
+          return;
+        }
+        json(res, 200, { ok: true, item: sanitizeItemForPermissions(result.item, actor), order: sanitizeOrderForPermissions(result.order, actor) });
+        return;
+      }
+      if (
+        before?.type === 'order_intent' &&
+        patch.status &&
+        before.status !== patch.status &&
+        ['nuevo', 'enviado', 'entregado'].includes(String(patch.status))
+      ) {
+        const result = await transitionOrderStatus(ctx, {
+          orderId: id,
+          targetStatus: patch.status === 'entregado' ? 'ENTREGADO' : patch.status === 'enviado' ? 'EN_CAMINO' : 'PENDIENTE',
+          expectedStatus: before.status,
+          reason: patch.reason ?? 'Cambio de estado legacy',
+          actor,
+          source: 'SYSTEM',
+        });
+        if (!result.ok) {
+          json(res, result.status ?? 422, {
+            ok: false,
+            error: result.error,
+            message: result.message,
+            available: result.available,
+            required: result.required,
+          });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          item: sanitizeItemForPermissions(result.item, actor),
+          order: sanitizeOrderForPermissions(result.order, actor),
+          delivered: hasPermission(actor, 'cost.view') ? result.delivered : stripSensitiveFinancials(result.delivered),
         });
         return;
       }
@@ -2974,6 +3760,7 @@ async function handle(req, res, ctx) {
       ) {
         try {
           const delivered = await afterPurchaseDelivered(ctx, updated);
+          await closeActiveTrackingForOrder(ctx, updated.id, 'COMPLETED', actor);
           json(res, 200, {
             ok: true,
             item: sanitizeItemForPermissions(delivered.item ?? updated, actor),
@@ -3451,6 +4238,43 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route === '/api/admin/push-status' && req.method === 'GET') {
+      if (!currentUser) {
+        forbid();
+        return;
+      }
+      json(res, 200, { ok: true, push: await pushStatusForUser(ctx, currentUser.id) });
+      return;
+    }
+
+    if (route === '/api/admin/push-subscriptions/test' && req.method === 'POST') {
+      if (!currentUser) {
+        forbid();
+        return;
+      }
+      const notification = await createUserNotification(ctx, {
+        recipientUserId: currentUser.id,
+        type: 'PUSH_TEST',
+        title: 'Prueba de notificaciones',
+        body: 'Si ves esto en el teléfono, este dispositivo está conectado.',
+        entityType: 'system',
+        entityId: currentUser.id,
+        deepLink: '/admin/?v=hoy',
+        data: { vibrate: [120, 60, 120] },
+        idempotencyKey: `push-test:${currentUser.id}:${ctx.clock().toISOString()}:${randomBytes(4).toString('hex')}`,
+      });
+      const push = notification.notification ? await sendPushForNotification(ctx, notification.notification) : null;
+      const status = await pushStatusForUser(ctx, currentUser.id);
+      json(res, push?.subscriptions ? 200 : 409, {
+        ok: Boolean(push?.subscriptions),
+        notification: notification.notification ? { id: notification.notification.id } : null,
+        push,
+        status,
+        message: push?.subscriptions ? 'Prueba enviada al teléfono.' : 'Este usuario no tiene un teléfono registrado para push.',
+      });
+      return;
+    }
+
     if (route.startsWith('/api/admin/delivery/orders/') && req.method === 'GET') {
       const orderId = decodeURIComponent(route.slice('/api/admin/delivery/orders/'.length));
       const item = await findOrderItem(store, orderId);
@@ -3601,6 +4425,30 @@ async function handle(req, res, ctx) {
         }
         const required = action === 'complete' ? 'delivery.tracking.stop' : 'delivery.tracking.stop';
         if (!requirePermission(required)) return;
+        if (action === 'complete' && session.status === 'COMPLETED') {
+          const item = await findOrderItem(store, session.order_id);
+          json(res, 200, {
+            ok: true,
+            duplicate: true,
+            session: await publicSessionWithOrder(ctx, session),
+            order: item ? orderOf(item) : null,
+          });
+          return;
+        }
+        if (action === 'stop' && session.status !== ACTIVE_TRACKING_STATUS) {
+          json(res, 200, { ok: true, duplicate: true, session: await publicSessionWithOrder(ctx, session) });
+          return;
+        }
+        if (action === 'complete') {
+          const item = await findOrderItem(store, session.order_id);
+          if (item && !isCompletedPurchaseStatus(item.status)) {
+            const check = await ensureInventoryForSale(ctx, { ...item, status: BUSINESS_COMPLETED_PURCHASE_STATUS });
+            if (!check.ok) {
+              json(res, check.status ?? 409, { ok: false, error: check.error, message: check.message, available: check.available, required: check.required });
+              return;
+            }
+          }
+        }
         const status = action === 'complete' ? 'COMPLETED' : 'CANCELLED';
         const ended = await ctx.db.update('delivery_tracking_sessions', session.id, {
           status,
@@ -3611,18 +4459,19 @@ async function handle(req, res, ctx) {
         if (action === 'complete') {
           const item = await findOrderItem(store, session.order_id);
           if (item) {
-            const updatedStatus = await updateOrderStatus(store, item, BUSINESS_COMPLETED_PURCHASE_STATUS, actor);
-            order = updatedStatus?.order ?? null;
-            if (order) {
-              order = {
-                ...order,
-                delivery: {
-                  ...(order.delivery ?? {}),
-                  delivery_status: DELIVERY_OPERATIONAL_STATUSES.DELIVERED,
-                },
-                updated_at: ctx.clock().toISOString(),
-              };
-              await store.update(item.id, { orderJson: JSON.stringify(order) });
+            const delivered = await markOrderDelivered(ctx, item, actor, { source: 'DELIVERY_ACTION' });
+            order = delivered.order ?? null;
+            if (!delivered.duplicate) {
+              await auditOrderStatusTransition(ctx, {
+                orderId: item.id,
+                previousStatus: item.status ?? null,
+                newStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
+                actor,
+                reason: 'Entrega completada por delivery',
+                changedAt: ctx.clock().toISOString(),
+                source: 'DELIVERY_ACTION',
+                idempotencyKey: `order.status:${item.id}:delivery-complete:${session.id}`,
+              });
             }
           }
         }
@@ -3671,6 +4520,10 @@ async function handle(req, res, ctx) {
         return;
       }
       const order = orderOf(item);
+      if (['entregado', 'cancelado', 'perdido'].includes(order?.status)) {
+        json(res, 409, { ok: false, error: 'order_closed', message: 'Este pedido ya está cerrado.' });
+        return;
+      }
       const destination = orderDestination(order);
       if (!destination) {
         json(res, 422, { ok: false, error: 'missing_destination', message: 'El pedido no tiene ubicación de entrega.' });
@@ -3696,14 +4549,6 @@ async function handle(req, res, ctx) {
       }
       if (!assignedUserId && !canManageAll) {
         json(res, 409, { ok: false, error: 'delivery_not_assigned', message: 'Un ADMIN debe asignar este pedido antes de iniciar entrega.' });
-        return;
-      }
-      if (!canManageAll && deliveryStatusOf(order) === DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT) {
-        json(res, 409, {
-          ok: false,
-          error: 'delivery_contact_required',
-          message: 'Primero contacta al cliente y confirma la entrega.',
-        });
         return;
       }
       if (!canManageAll && deliveryUser.id !== actor?.id) {
@@ -3740,6 +4585,18 @@ async function handle(req, res, ctx) {
       const inserted = await ctx.db.insert('delivery_tracking_sessions', session);
       const freshItem = await findOrderItem(store, orderId);
       const statusUpdate = effectiveOrder.status === 'entregado' || !freshItem ? null : await updateOrderStatus(store, freshItem, 'enviado', actor);
+      if (statusUpdate?.item) {
+        await auditOrderStatusTransition(ctx, {
+          orderId,
+          previousStatus: freshItem.status ?? null,
+          newStatus: 'enviado',
+          actor,
+          reason: 'Entrega iniciada',
+          changedAt: ctx.clock().toISOString(),
+          source: 'DELIVERY_ACTION',
+          idempotencyKey: `order.status:${orderId}:delivery-start:${inserted.doc.id}`,
+        });
+      }
       await emitDeliveryEvent(ctx, 'delivery.tracking_started', inserted.doc);
       json(res, 201, {
         ok: true,
@@ -3762,6 +4619,10 @@ async function handle(req, res, ctx) {
       const order = orderOf(item);
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
       const receipt = buildReceipt({ order, customer });
+      if (action === 'integrity') {
+        json(res, 200, { ok: true, integrity: await validateOrderOperationalIntegrity(ctx, orderId) });
+        return;
+      }
 
       // Documento compartible de la factura.
       if (action === 'factura' || action === 'receipt.pdf' || action === 'receipt-pdf') {
@@ -3810,8 +4671,49 @@ async function handle(req, res, ctx) {
         ...(can('cost.view') ? { financials: orderFinancials(order) } : {}),
         receipt,
         customer,
+        integrity: await validateOrderOperationalIntegrity(ctx, orderId),
+        timeline: await orderTimeline(ctx, orderId, order),
         followups: followupRows.filter((row) => row.order_id === orderId || row.purchase_id === orderId),
         scheduled: (await ctx.scheduler.list()).filter((row) => row.order_id === orderId),
+      });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/status') && req.method === 'PATCH') {
+      if (!requirePermission('orders.change_status', 'Solo ADMIN puede cambiar el estado manualmente.')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/status'.length));
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await transitionOrderStatus(ctx, {
+        orderId,
+        targetStatus: body.status,
+        expectedStatus: body.expectedStatus ?? body.expected_status,
+        reason: body.reason,
+        actor,
+        source: 'MANUAL_ADMIN',
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 422, {
+          ok: false,
+          error: result.error,
+          message: result.message,
+          currentStatus: result.currentStatus,
+          available: result.available,
+          required: result.required,
+        });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        duplicate: result.duplicate === true,
+        item: sanitizeItemForPermissions(result.item, actor),
+        order: sanitizeOrderForPermissions(result.order, actor),
+        delivered: hasPermission(actor, 'cost.view') ? result.delivered : stripSensitiveFinancials(result.delivered),
+        integrity: result.integrity,
       });
       return;
     }
@@ -4566,12 +5468,29 @@ async function handle(req, res, ctx) {
           !template && deliveryOrderContext && messageNeedsDeliveryIdentity(deliveryOrderContext.order, actor)
             ? withDeliveryIdentity(rawMessageBody, actor)
             : rawMessageBody;
+        const templatePayload = template
+          ? await resolveTemplatePayload(ctx, {
+              template,
+              customer,
+              conversation,
+              orderId: text(body.orderId ?? body.order_id, 80),
+            })
+          : null;
+        if (templatePayload && !templatePayload.ok) {
+          json(res, templatePayload.status ?? 422, {
+            ok: false,
+            error: templatePayload.error,
+            message: templatePayload.message,
+            missing: templatePayload.missing ?? undefined,
+          });
+          return;
+        }
 
         const sendResult = template
           ? await ctx.whatsapp.sendTemplate(customer.phone_e164, {
               name: template.name,
               language: template.language ?? 'es',
-              components: [],
+              components: templatePayload.components,
             })
           : await ctx.whatsapp.sendText(customer.phone_e164, messageBody, {
               previewUrl: body.previewUrl === true,
@@ -4590,11 +5509,11 @@ async function handle(req, res, ctx) {
           const recorded = await ctx.customers.recordOutbound({
             customer,
             conversation,
-            body: template ? null : messageBody,
+            body: template ? templatePayload.body : messageBody,
             template: template?.name ?? null,
-          status: 'failed',
-          error: sendResult.error ?? { message: sendResult.reason ?? 'error' },
-          idempotencyKey: text(body.idempotencyKey, 120),
+            status: 'failed',
+            error: sendResult.error ?? { message: sendResult.reason ?? 'error' },
+            idempotencyKey: text(body.idempotencyKey, 120),
             ...messageActorFields(actor),
           });
           console.error(`[crm] WhatsApp rechazó un mensaje a ${customer.id}: ${sendResult.error?.message ?? 'error'}`);
@@ -4619,13 +5538,15 @@ async function handle(req, res, ctx) {
         const recorded = await ctx.customers.recordOutbound({
           customer,
           conversation,
-          body: template ? null : messageBody,
+          body: template ? templatePayload.body : messageBody,
           template: template?.name ?? null,
           waMessageId: sendResult.messageId ?? null,
           status: 'sent',
           idempotencyKey: text(body.idempotencyKey, 120),
           // Solo datos públicos del envío: nunca el token ni la cabecera.
-          meta: { phoneNumberId: ctx.whatsapp.phoneNumberId },
+          meta: template
+            ? { phoneNumberId: ctx.whatsapp.phoneNumberId, template: template.name, language: template.language ?? 'es' }
+            : { phoneNumberId: ctx.whatsapp.phoneNumberId },
           ...messageActorFields(actor),
         });
         let deliveryOrder = null;
@@ -4814,7 +5735,25 @@ async function handle(req, res, ctx) {
 
     // ------------------------------------------------------- plantillas oficiales
     if (route === '/api/admin/wa-templates' && req.method === 'GET') {
+      const sync = url.searchParams.get('sync');
+      if (sync === '1' || sync === 'true' || sync === 'stale') await syncWaTemplatesIfStale(ctx);
       json(res, 200, { ok: true, templates: await listWaTemplates(ctx) });
+      return;
+    }
+
+    if (route === '/api/admin/wa-templates/sync' && req.method === 'POST') {
+      if (!requirePermission('settings.manage')) return;
+      const result = await syncWhatsAppTemplatesFromMeta(ctx);
+      if (!result.ok) {
+        json(res, 502, {
+          ok: false,
+          error: result.error ?? 'meta_sync_failed',
+          message: result.detail?.message ?? result.message ?? 'No se pudo consultar Meta. Revisa la configuración de WhatsApp.',
+          detail: result.detail ?? null,
+        });
+        return;
+      }
+      json(res, 200, { ok: true, sync: result, templates: await listWaTemplates(ctx) });
       return;
     }
 
@@ -4837,23 +5776,28 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: 'invalid_name' });
         return;
       }
-      const allowed = ['pending_approval', 'approved', 'rejected', 'disabled'];
-      const status = allowed.includes(text(body.status, 30)) ? text(body.status, 30) : 'pending_approval';
+      const status = normalizeTemplateStatus(text(body.status, 30) ?? 'PENDING');
       const existing = await ctx.db.findBy('wa_templates', 'name', name);
       const doc = {
         id: existing?.id ?? `tpl_${name}`,
         name,
+        friendly_name: text(body.friendlyName ?? body.friendly_name, 80) ?? existing?.friendly_name ?? name,
+        group: text(body.group, 30) ?? existing?.group ?? 'OTRAS',
         category: text(body.category, 30) ?? existing?.category ?? 'MARKETING',
         language: text(body.language, 10) ?? existing?.language ?? 'es',
         body: longText(body.body, 1024) ?? existing?.body ?? null,
         variables: Array.isArray(body.variables) ? body.variables.slice(0, 10) : existing?.variables ?? [],
         buttons: Array.isArray(body.buttons) ? body.buttons.slice(0, 5) : existing?.buttons ?? [],
+        components: Array.isArray(body.components) ? body.components : existing?.components ?? [],
+        required_context: text(body.requiredContext ?? body.required_context, 30) ?? existing?.required_context ?? 'none',
         status,
-        sendable: status === 'approved',
+        sendable: templateSendable(status),
         // Identificador y fecha que solo pueden venir de Meta (los rellena el
         // negocio a mano tras registrarla allí). Aquí nunca se inventan.
         meta_template_id: text(body.metaTemplateId, 80) ?? existing?.meta_template_id ?? null,
         last_synced_at: text(body.lastSyncedAt, 40) ?? existing?.last_synced_at ?? null,
+        last_template_sync_at: text(body.lastTemplateSyncAt, 40) ?? existing?.last_template_sync_at ?? null,
+        quality_score: body.qualityScore ?? body.quality_score ?? existing?.quality_score ?? null,
         source: existing?.source ?? 'crm',
         created_at: existing?.created_at ?? new Date().toISOString(),
         updated_at: new Date().toISOString(),

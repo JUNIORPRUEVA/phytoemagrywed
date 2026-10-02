@@ -2713,6 +2713,33 @@ body[data-tab='whatsapp'] .content {
   font-size: 0.78rem;
 }
 
+.order-timeline {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.order-timeline__item {
+  display: grid;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 3px solid rgba(11, 107, 79, 0.2);
+}
+
+.order-timeline__item strong {
+  color: var(--pe-ink-900);
+  font-size: 0.9rem;
+}
+
+.order-timeline__item small,
+.order-timeline__item span {
+  color: var(--pe-ink-500);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 /* Interruptores del plan de postventa. */
 .toggles {
   display: grid;
@@ -4195,6 +4222,103 @@ body[data-wa-view='chat'] .float-btn--menu {
   border-top: 1px solid var(--border-soft);
 }
 
+.wa-state {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(14, 27, 22, 0.04);
+}
+
+.wa-state--warn {
+  background: #fff7e8;
+  border-color: #f3d5a6;
+}
+
+.wa-state--ok {
+  background: #edf9f2;
+  border-color: #bfe6ce;
+}
+
+.wa-state strong {
+  display: block;
+  font-size: 13px;
+  color: var(--pe-ink-900);
+}
+
+.wa-state p,
+.wa-state small {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--pe-ink-600);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.wa-empty {
+  display: grid;
+  gap: 4px;
+  max-width: 320px;
+  margin: auto;
+  padding: 16px;
+  text-align: center;
+  color: var(--pe-ink-600);
+}
+
+.wa-empty strong {
+  color: var(--pe-ink-900);
+}
+
+.template-chip {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(13, 129, 67, 0.1);
+  color: var(--phyto-primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.template-fail {
+  display: grid;
+  gap: 4px;
+}
+
+.template-fail strong {
+  color: #8f1d1d;
+}
+
+.template-fail span,
+.template-fail small {
+  color: var(--pe-ink-600);
+}
+
+.template-fail code {
+  width: fit-content;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: rgba(143, 29, 29, 0.08);
+  color: #8f1d1d;
+  font-size: 11px;
+}
+
+@media (max-width: 560px) {
+  .wa-state {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wa-state .btn {
+    width: 100%;
+  }
+}
+
 .composer-bar {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -4600,6 +4724,64 @@ body[data-wa-view='chat'] .float-btn--menu {
   padding: 6px 0;
 }
 .loc-coords { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.mini-table th,
+.mini-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.template-preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface-muted, #f8fafc);
+}
+
+.template-preview__title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.template-preview__tech {
+  margin: 0;
+  color: var(--muted, #64748b);
+  font-size: 0.82rem;
+}
+
+.template-preview__body {
+  margin: 0;
+  white-space: normal;
+}
+
+.template-preview__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.template-preview__button {
+  padding: 6px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.84rem;
+}
 .loc-row {
   display: flex;
   align-items: center;
@@ -6077,12 +6259,22 @@ body[data-wa-view='chat'] .mobile-header {
   background: rgba(11, 107, 79, 0.07);
 }
 
+.delivery-order--en_camino {
+  border-color: rgba(27, 116, 228, 0.22);
+  background: rgba(27, 116, 228, 0.06);
+}
+
+.delivery-order--entregado {
+  opacity: 0.88;
+}
+
 .delivery-status {
   display: inline-flex;
   width: fit-content;
   margin-top: 6px;
 }
 
+.delivery-status--pendiente,
 .delivery-status--pending_contact {
   border-color: rgba(185, 28, 28, 0.18);
   background: rgba(185, 28, 28, 0.08);
@@ -6100,6 +6292,24 @@ body[data-wa-view='chat'] .mobile-header {
   border-color: rgba(27, 116, 228, 0.18);
   background: rgba(27, 116, 228, 0.08);
   color: #1b4f9c;
+}
+
+.delivery-status--en_camino {
+  border-color: rgba(27, 116, 228, 0.18);
+  background: rgba(27, 116, 228, 0.08);
+  color: #1b4f9c;
+}
+
+.delivery-status--entregado {
+  border-color: rgba(11, 107, 79, 0.2);
+  background: rgba(11, 107, 79, 0.1);
+  color: #075e45;
+}
+
+.delivery-status--cancelado {
+  border-color: rgba(79, 84, 92, 0.18);
+  background: rgba(79, 84, 92, 0.08);
+  color: #4b5563;
 }
 
 .delivery-order p,
@@ -6122,6 +6332,24 @@ body[data-wa-view='chat'] .mobile-header {
   padding: 5px 28px 5px 9px;
   border-radius: 10px;
   font-size: 0.78rem;
+}
+
+@media (max-width: 640px) {
+  .delivery-order {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .delivery-order .item__actions {
+    width: 100%;
+  }
+
+  .delivery-order .item__actions .btn,
+  .delivery-assign,
+  .delivery-assign .field__select {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 @media (min-width: 980px) {

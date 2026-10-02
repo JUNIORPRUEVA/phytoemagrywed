@@ -9,6 +9,6 @@ export default defineConfig({
   },
   // En tests el entorno inyectado es determinista (vacío): no depende de `.env`.
   define: {
-    __PHYTO_ENV__: '({})',
+    __PHYTO_ENV__: '{}',
   },
 });

@@ -24,6 +24,17 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('Necesitas permitir acceso a tu ubicación para iniciar la entrega.');
   });
 
+  it('muestra solo estados operativos simples en el panel de delivery', () => {
+    expect(app).toContain('function getOrderOperationalStatus');
+    expect(app).toContain("return 'PENDIENTE'");
+    expect(app).toContain("return 'EN_CAMINO'");
+    expect(app).toContain("return 'ENTREGADO'");
+    expect(app).toContain("return 'CANCELADO'");
+    expect(app).toContain('Falta ubicación de entrega');
+    expect(app).toContain('No hay pedidos abiertos para delivery.');
+    expect(app).not.toContain('No hay pedidos abiertos con ubicación de entrega.');
+  });
+
   it('tiene rollback operativo si watchPosition falla al arrancar', () => {
     expect(app).toContain('async function rollbackDeliveryStart');
     expect(app).toContain('/delivery-tracking/${encodeURIComponent(sessionId)}/stop');

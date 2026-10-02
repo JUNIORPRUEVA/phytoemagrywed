@@ -234,6 +234,46 @@ export function createWhatsAppClient(options = {}) {
         },
       });
     },
+    /** Lista plantillas reales del WABA en Meta. Es read-only y no expone tokens. */
+    async listTemplates(options = {}) {
+      if (!enabled || !businessAccountId) return { ok: false, skipped: true, reason: 'not_configured' };
+      const fields = encodeURIComponent(
+        String(options.fields ?? 'name,id,language,category,status,quality_score,components'),
+      );
+      const limit = Number.isFinite(Number(options.limit)) ? Math.max(1, Math.min(250, Number(options.limit))) : 250;
+      try {
+        const response = await fetchImpl(
+          `https://graph.facebook.com/${graphVersion}/${businessAccountId}/message_templates?fields=${fields}&limit=${limit}`,
+          {
+            headers: { authorization: `Bearer ${accessToken}` },
+            signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined,
+          },
+        );
+        const text = await response.text();
+        /** @type {any} */
+        let parsed = null;
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch {
+          parsed = null;
+        }
+        if (!response.ok || parsed?.error) {
+          return {
+            ok: false,
+            status: response.status,
+            error: sanitizeMetaError(parsed?.error ?? { message: text }, accessToken, response.status),
+          };
+        }
+        return {
+          ok: true,
+          status: response.status,
+          requestId: response.headers?.get?.('x-fb-request-id') ?? null,
+          templates: Array.isArray(parsed?.data) ? parsed.data : [],
+        };
+      } catch (error) {
+        return { ok: false, error: sanitizeMetaError(error, accessToken) };
+      }
+    },
     /** Botones de respuesta rápida (requiere plantilla o ventana abierta). */
     sendInteractive(to, interactive = {}) {
       return send({ to, type: 'interactive', interactive });

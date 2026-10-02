@@ -56,12 +56,18 @@ const whatsapp = {
   phoneNumberId: 'PN-UAT-CONV',
   businessAccountId: 'WABA1',
   sent: [],
+  failWith: null,
   async sendText(to, body) {
-    whatsapp.sent.push({ to, body });
+    if (whatsapp.failWith) return { ok: false, status: 400, error: whatsapp.failWith };
+    const messageId = `wamid.TXT${whatsapp.sent.length + 1}`;
+    whatsapp.sent.push({ to, body, messageId });
     return { ok: true, status: 200, messageId: `wamid.TXT${whatsapp.sent.length}` };
   },
-  async sendTemplate() {
-    return { ok: true, status: 200, messageId: 'wamid.TPL1' };
+  async sendTemplate(to, template) {
+    if (whatsapp.failWith) return { ok: false, status: 400, error: whatsapp.failWith };
+    const messageId = `wamid.TPL${whatsapp.sent.length + 1}`;
+    whatsapp.sent.push({ to, template, messageId });
+    return { ok: true, status: 200, messageId: `wamid.TPL${whatsapp.sent.length}` };
   },
   async downloadMedia() {
     return { ok: true, buffer: png(), mimeType: 'image/png' };
@@ -86,6 +92,7 @@ let app;
 let dom;
 let cookie = '';
 const ids = {};
+let uxConversationId = '';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitFor(check, label, timeout = 6000) {
@@ -143,6 +150,40 @@ async function conversations(filter = '') {
   const query = filter ? `?filter=${encodeURIComponent(filter)}` : '';
   const response = await fetch(`${app.url}/api/admin/conversations${query}`, { headers: { cookie } });
   return (await response.json()).conversations ?? [];
+}
+
+async function adminJson(route, options = {}) {
+  const response = await fetch(`${app.url}${route}`, {
+    ...options,
+    headers: { 'content-type': 'application/json', cookie, ...(options.headers ?? {}) },
+  });
+  const body = await response.json().catch(() => ({}));
+  return { response, body };
+}
+
+async function startConversation(phone, name, body = '') {
+  const result = await adminJson('/api/admin/conversations/start', {
+    method: 'POST',
+    body: JSON.stringify({ phone, name, body }),
+  });
+  if (result.response.status !== 200) throw new Error(`no se pudo iniciar conversación: ${JSON.stringify(result.body)}`);
+  return result.body;
+}
+
+async function approveTemplateForUat() {
+  const result = await adminJson('/api/admin/wa-templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'phyto_followup_checkin',
+      friendlyName: 'Seguimiento al cliente',
+      status: 'APPROVED',
+      body: 'Hola {{1}}, ¿cómo va todo?',
+      variables: ['customer_name'],
+      metaTemplateId: 'tpl-uat-followup',
+      lastSyncedAt: new Date().toISOString(),
+    }),
+  });
+  if (result.response.status !== 200) throw new Error(`no se pudo aprobar plantilla: ${JSON.stringify(result.body)}`);
 }
 
 beforeAll(async () => {
@@ -397,6 +438,107 @@ describe('nuevo chat desde la lista de WhatsApp', () => {
     expect(row.querySelector('.conv__preview').textContent).toContain('Sin mensajes');
     expect(row.querySelector('.conv__when')).toBeNull();
   });
+});
+
+describe('UX de ventana 24 h y plantillas en el chat', () => {
+  it('chat vacío muestra NEW_CONTACT y abre selector compacto en hoja', async () => {
+    click('#wa-new-chat');
+    $('#wa-start-phone').value = '18095550666';
+    $('#wa-start-name').value = 'Cliente UX Nuevo';
+    $('#wa-start-body').value = '';
+    click('#wa-start-open');
+    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Cliente UX Nuevo'), 'chat nuevo abierto', 9000);
+    const row = (await conversations()).find((candidate) => candidate.customer?.name === 'Cliente UX Nuevo');
+    uxConversationId = row.id;
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT');
+    expect($('#thread').textContent).toContain('Todavía no has iniciado una conversación');
+    expect($('#wa-composer').textContent).toContain('Iniciar conversación');
+    expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
+    await approveTemplateForUat();
+    await click('[data-wa-filter="todos"]');
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT recargado');
+    click('#wa-open-template');
+    expect($('#sheet').hidden).toBe(false);
+    expect($('#sheet-title').textContent).toBe('Enviar plantilla');
+    await waitFor(() => $('#sheet-body #wa-send-template'), 'selector con plantilla aprobada');
+  }, 12000);
+
+  it('después de enviar template queda WAITING_CUSTOMER_REPLY, cierra hoja y no habilita texto libre', async () => {
+    const before = whatsapp.sent.length;
+    click('#sheet-body #wa-send-template');
+    await waitFor(() => $('#sheet').hidden === true, 'selector de plantilla cerrado tras enviar', 9000);
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'estado esperando respuesta');
+    expect(whatsapp.sent.length).toBe(before + 1);
+    expect(whatsapp.sent.at(-1).template.components).toEqual([
+      { type: 'body', parameters: [{ type: 'text', text: 'Cliente UX Nuevo' }] },
+    ]);
+    expect($('#thread').textContent).toContain('Hola Cliente UX Nuevo');
+    expect($('#wa-composer').textContent).toContain('Esperando respuesta de Cliente UX Nuevo');
+    expect($('#wa-text')).toBeNull();
+    expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
+    expect(uxConversationId).toBeTruthy();
+  }, 12000);
+
+  it('template delivered/read sin inbound sigue WAITING_CUSTOMER_REPLY', async () => {
+    const messageId = whatsapp.sent.at(-1)?.messageId ?? 'wamid.TPL1';
+    const message = (await app.collections.list('wa_messages', { limit: 1000 })).find((row) => row.wa_message_id === messageId);
+    expect(message).toBeTruthy();
+    await app.collections.update('wa_messages', message.id, {
+      ...message,
+      status: 'read',
+      delivered_at: new Date().toISOString(),
+      read_at: new Date().toISOString(),
+    });
+    await app.collections.update('conversations', uxConversationId, { updated_at: new Date().toISOString() });
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'sigue esperando');
+    expect($('#wa-text')).toBeNull();
+  }, 12000);
+
+  it('quick reply inbound abre OPEN_WINDOW sin recargar manualmente', async () => {
+    await inbound('18095550666', 'wamid.UX-BUTTON-1', {
+      type: 'button',
+      button: { text: 'Continuar', payload: 'continuar' },
+    });
+    click('[data-wa-filter="todos"]');
+    await waitFor(() => $('#wa-text'), 'composer libre tras quick reply inbound', 9000);
+    expect($('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]')).toBeNull();
+    expect($('#wa-composer').textContent).not.toContain('Esperando respuesta');
+  }, 12000);
+
+  it('con ventana expirada muestra CLOSED_WINDOW, no NEW_CONTACT', async () => {
+    const phone = '18095550777';
+    NOMBRES[phone] = 'Cliente UX Expirado';
+    await inbound(phone, 'wamid.UX-OLD-1', {
+      timestamp: String(Math.floor((Date.now() - 3 * 86400000) / 1000)),
+      type: 'text',
+      text: { body: 'Hola, escribí hace días' },
+    });
+    click('[data-wa-filter="todos"]');
+    const row = await waitFor(
+      () => [...$$('[data-conv]')].find((candidate) => candidate.textContent.includes('Cliente UX Expirado')),
+      'fila expirada',
+      9000,
+    );
+    click(row);
+    await waitFor(() => $('#wa-composer [data-wa-contact-state="CLOSED_WINDOW"]'), 'estado ventana cerrada', 9000);
+    expect($('#wa-composer').textContent).toContain('Ventana de atención finalizada');
+    expect($('#wa-composer').textContent).toContain('La ventana de atención de 24 horas terminó');
+  }, 12000);
+
+  it('template fallido renderiza tarjeta amigable y mapea #132000', async () => {
+    whatsapp.failWith = { status: 400, code: 132000, message: 'Number of parameters does not match the expected number of params' };
+    click('#wa-open-template');
+    await waitFor(() => $('#sheet-body #wa-send-template'), 'selector con plantilla aprobada');
+    click('#sheet-body #wa-send-template');
+    await waitFor(() => $('#thread .template-fail'), 'tarjeta de plantilla fallida', 9000);
+    expect($('#thread .template-fail').textContent).toContain('Plantilla no enviada');
+    expect($('#thread .template-fail').textContent).toContain('Seguimiento al cliente');
+    expect($('#thread .template-fail').textContent).toContain('faltan o sobran datos requeridos');
+    expect($('#thread .template-fail').textContent).toContain('#132000');
+    expect($('#thread .template-fail').textContent).not.toContain('Archivo recibido');
+    whatsapp.failWith = null;
+    expect(uxConversationId).toBeTruthy();
+  }, 12000);
 });
 
 describe('la lista que se pinta es la nueva', () => {

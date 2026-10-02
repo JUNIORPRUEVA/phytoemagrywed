@@ -42,6 +42,41 @@ const mockWhatsApp = {
     mockWhatsApp.sent.push({ to, template, type: 'template' });
     return { ok: true, status: 200, messageId: `wamid.TPL${mockWhatsApp.sent.length}` };
   },
+  async listTemplates() {
+    return {
+      ok: true,
+      templates: [
+        {
+          id: '1114256411040683',
+          name: 'phyto_seguimiento_cliente_v1',
+          language: 'es',
+          category: 'UTILITY',
+          status: 'APPROVED',
+          quality_score: { score: 'UNKNOWN' },
+          components: [
+            { type: 'BODY', text: 'Hola {{1}}, ¿cómo te ha ido con tu pedido?' },
+            { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Continuar' }] },
+          ],
+        },
+        {
+          id: '2222222222222222',
+          name: 'phyto_template_pending_uat',
+          language: 'es',
+          category: 'MARKETING',
+          status: 'PENDING',
+          components: [{ type: 'BODY', text: 'Pendiente {{1}}' }],
+        },
+        {
+          id: '3333333333333333',
+          name: 'phyto_template_rejected_uat',
+          language: 'es',
+          category: 'MARKETING',
+          status: 'REJECTED',
+          components: [{ type: 'BODY', text: 'Rechazada {{1}}' }],
+        },
+      ],
+    };
+  },
   async sendInteractive() {
     return { ok: false, skipped: true };
   },
@@ -267,20 +302,44 @@ describe('plantillas oficiales', () => {
     const body = await json(sent);
     expect(body.message.type).toBe('template');
     expect(body.message.template_name).toBe('phyto_followup_checkin');
-    expect(mockWhatsApp.sent[0]).toMatchObject({ type: 'template' });
+    expect(body.message.body).toContain('Ana WhatsApp');
+    expect(mockWhatsApp.sent[0]).toMatchObject({
+      type: 'template',
+      template: {
+        name: 'phyto_followup_checkin',
+        components: [{ type: 'body', parameters: [{ type: 'text', text: 'Ana WhatsApp' }] }],
+      },
+    });
   });
 
-  it('una plantilla aprobada sí sale fuera de la ventana de 24 h', async () => {
+  it('envía a Meta los parámetros exactos de una plantilla sincronizada', async () => {
+    await call('/api/admin/wa-templates/sync', { method: 'POST', body: '{}' });
+    mockWhatsApp.sent.length = 0;
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/messages`,
+      { method: 'POST', body: JSON.stringify({ template: 'phyto_seguimiento_cliente_v1' }) },
+      cookie,
+    );
+    expect(response.status).toBe(200);
+    const data = await json(response);
+    expect(data.message.body).toBe('Hola Ana WhatsApp, ¿cómo te ha ido con tu pedido?');
+    expect(mockWhatsApp.sent[0].template.components).toEqual([
+      { type: 'body', parameters: [{ type: 'text', text: 'Ana WhatsApp' }] },
+    ]);
+  });
+
+  it('una plantilla aprobada en Meta sí sale fuera de la ventana de 24 h', async () => {
     const old = new Date(Date.now() - 8 * 86400000).toISOString();
     await app.collections.update('conversations', conversationId, { last_inbound_at: old });
     const response = await call(
       `/api/admin/conversations/${conversationId}/messages`,
-      { method: 'POST', body: JSON.stringify({ template: 'phyto_followup_checkin' }) },
+      { method: 'POST', body: JSON.stringify({ template: 'phyto_seguimiento_cliente_v1' }) },
       cookie,
     );
     expect(response.status).toBe(200);
     await app.collections.update('conversations', conversationId, { last_inbound_at: new Date().toISOString() });
   });
+
 });
 
 describe('enviar un seguimiento lo marca como hecho', () => {
@@ -306,11 +365,10 @@ describe('enviar un seguimiento lo marca como hecho', () => {
 describe('ficha completa de una plantilla', () => {
   it('trae los campos que necesita Meta, sin inventarse ninguno', async () => {
     const data = await json(await call('/api/admin/wa-templates'));
-    const template = data.templates[0];
+    const template = data.templates.find((row) => row.meta_template_id === null) ?? data.templates[0];
     for (const field of ['name', 'language', 'category', 'status', 'body', 'variables', 'buttons']) {
       expect(template).toHaveProperty(field);
     }
-    // Estos dos SOLO pueden venir de Meta: nacen vacíos y no se inventan.
     expect(template).toHaveProperty('meta_template_id', null);
     expect(template).toHaveProperty('last_synced_at', null);
     expect(template.sendable).toBe(false);
@@ -332,6 +390,28 @@ describe('ficha completa de una plantilla', () => {
     expect(saved.template.last_synced_at).toBe('2026-09-29T10:00:00.000Z');
     expect(saved.template.buttons).toHaveLength(1);
     expect(saved.template.sendable).toBe(true);
+  });
+
+  it('sincroniza estados de Meta con fixtures deterministas', async () => {
+    const response = await call('/api/admin/wa-templates/sync', { method: 'POST', body: '{}' });
+    expect(response.status).toBe(200);
+    const data = await json(response);
+    const byName = new Map(data.templates.map((template) => [template.name, template]));
+    expect(byName.get('phyto_seguimiento_cliente_v1')).toMatchObject({
+      status: 'APPROVED',
+      sendable: true,
+      meta_template_id: '1114256411040683',
+    });
+    expect(byName.get('phyto_template_pending_uat')).toMatchObject({
+      status: 'PENDING',
+      sendable: false,
+      meta_template_id: '2222222222222222',
+    });
+    expect(byName.get('phyto_template_rejected_uat')).toMatchObject({
+      status: 'REJECTED',
+      sendable: false,
+      meta_template_id: '3333333333333333',
+    });
   });
 });
 

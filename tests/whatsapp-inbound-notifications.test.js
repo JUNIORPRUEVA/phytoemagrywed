@@ -172,6 +172,9 @@ describe('WhatsApp inbound message notifications', () => {
       method: 'POST',
       body: JSON.stringify({ endpoint: 'https://push.example/admin', keys: { p256dh: 'p256dh', auth: 'auth' } }),
     });
+    const status = await json(await request('/api/admin/push-status'));
+    expect(status.push.activeSubscriptions).toBe(1);
+    expect(status.push.subscriptions[0].endpoint).toContain('push.example');
     await inbound({ id: 'wamid.NOTIFY-TXT-1', from: '18095550111', name: 'María Pérez', body: 'Hola, quisiera confirmar si mi pedido sale hoy completo por favor' });
     const rows = await waitFor(async () => {
       const list = await notifications();
@@ -189,6 +192,20 @@ describe('WhatsApp inbound message notifications', () => {
     const adminNote = raw.find((row) => row.recipient_user_id !== maria.id && row.recipient_user_id !== pedro.id);
     const jobs = await app.collections.list('push_jobs', { limit: 100 });
     expect(jobs.some((row) => row.notification_id === adminNote?.id)).toBe(true);
+  });
+
+  it('permite disparar una prueba push del teléfono registrado', async () => {
+    await request('/api/admin/push-subscriptions', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint: 'https://push.example/admin-test', keys: { p256dh: 'p256dh', auth: 'auth' } }),
+    });
+    const response = await request('/api/admin/push-subscriptions/test', { method: 'POST', body: '{}' });
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.push.subscriptions).toBeGreaterThanOrEqual(1);
+    expect(body.status.activeSubscriptions).toBeGreaterThanOrEqual(1);
+    const jobs = await app.collections.list('push_jobs', { limit: 100 });
+    expect(jobs.some((row) => row.notification_id === body.notification.id)).toBe(true);
   });
 
   it('es idempotente por wamid y no notifica callbacks de estado', async () => {
@@ -213,7 +230,11 @@ describe('WhatsApp inbound message notifications', () => {
     expect(rows.find((row) => row.data?.wa_message_id === 'wamid.NOTIFY-LOC')?.body).not.toContain('Calle privada');
   });
 
-  it('si está asignada, solo notifica al responsable y protege la notificación por RBAC', async () => {
+  it('si está asignada, notifica al responsable y admins, no a otros agentes', async () => {
+    await request('/api/admin/push-subscriptions', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint: 'https://push.example/admin-assigned', keys: { p256dh: 'p256dh', auth: 'auth' } }),
+    });
     await inbound({ id: 'wamid.NOTIFY-ASSIGN-1', from: '18095550116', body: 'Primero asignar' });
     const conversation = await waitFor(() => conversationForPhone('18095550116'));
     const assigned = await request(`/api/admin/conversations/${conversation.id}/assign`, {
@@ -223,8 +244,13 @@ describe('WhatsApp inbound message notifications', () => {
     expect(assigned.status).toBe(200);
     await inbound({ id: 'wamid.NOTIFY-ASSIGN-2', from: '18095550116', body: 'Necesito ayuda con mi compra' });
     await waitFor(async () => (await notifications(mariaCookie)).some((row) => row.data?.wa_message_id === 'wamid.NOTIFY-ASSIGN-2'));
+    expect((await notifications(adminCookie)).some((row) => row.data?.wa_message_id === 'wamid.NOTIFY-ASSIGN-2')).toBe(true);
     expect((await notifications(mariaCookie)).some((row) => row.data?.wa_message_id === 'wamid.NOTIFY-ASSIGN-2')).toBe(true);
     expect((await notifications(pedroCookie)).some((row) => row.data?.wa_message_id === 'wamid.NOTIFY-ASSIGN-2')).toBe(false);
+    const raw = (await rawNotifications()).filter((row) => row.data?.wa_message_id === 'wamid.NOTIFY-ASSIGN-2');
+    const adminNote = raw.find((row) => row.recipient_user_id !== maria.id && row.recipient_user_id !== pedro.id);
+    const jobs = await app.collections.list('push_jobs', { limit: 200 });
+    expect(jobs.some((row) => row.notification_id === adminNote?.id && row.user_id === adminNote?.recipient_user_id)).toBe(true);
   });
 
   it('no crea notificación por mensajes outbound propios', async () => {
@@ -256,6 +282,11 @@ describe('WhatsApp notification frontend wiring', () => {
     const appJs = readFileSync(path.join(process.cwd(), 'public/admin/app.js'), 'utf8');
     expect(appJs).toContain("query?.get('conversation') || query?.get('conv')");
     expect(appJs).toContain('async function enableCrmPush()');
+    expect(appJs).toContain('registration.pushManager.getSubscription()');
+    expect(appJs).toContain('/api/admin/push-status');
+    expect(appJs).toContain('/api/admin/push-subscriptions/test');
+    expect(appJs).toContain('data-push-enable');
+    expect(appJs).toContain('data-push-test');
     expect(appJs).toContain("event.target.closest('#wa-notify')");
     expect(appJs).toContain('enableCrmPush()');
     expect(appJs).toContain("new Audio('/admin/assets/sounds/message-notification.wav')");

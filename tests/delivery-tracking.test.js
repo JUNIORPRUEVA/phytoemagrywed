@@ -55,6 +55,15 @@ async function createOrder() {
   return json(response);
 }
 
+async function restock(quantity = 100) {
+  const response = await request('/api/admin/inventory/restock', {
+    method: 'POST',
+    body: JSON.stringify({ quantity, unitCost: '126.66', reason: 'Inventario inicial delivery' }),
+  });
+  expect(response.status).toBe(201);
+  return json(response);
+}
+
 beforeAll(async () => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), 'phyto-delivery-tracking-'));
   app = await startCrmServer({
@@ -100,17 +109,11 @@ describe('delivery tracking realtime API', () => {
     });
     expect(assigned.status).toBe(200);
 
-    const stillBlocked = await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie);
-    expect(stillBlocked.status).toBe(409);
-    expect((await json(stillBlocked)).error).toBe('delivery_contact_required');
-
-    const startedByAdmin = await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
-      method: 'POST',
-      body: JSON.stringify({ deliveryUserId: delivery.id }),
-    });
-    expect(startedByAdmin.status).toBe(201);
-    const body = await json(startedByAdmin);
+    const startedByDelivery = await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie);
+    expect(startedByDelivery.status).toBe(201);
+    const body = await json(startedByDelivery);
     expect(body.session.delivery_user_id).toBe(delivery.id);
+    expect(body.order.status).toBe('enviado');
   });
 
   it('ADMIN inicia tracking para un DELIVERY y el pedido pasa a enviado', async () => {
@@ -209,6 +212,7 @@ describe('delivery tracking realtime API', () => {
   });
 
   it('completar entrega cierra tracking y marca el pedido entregado', async () => {
+    await restock(100);
     const order = await createOrder();
     const start = await json(await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
       method: 'POST',
@@ -219,5 +223,169 @@ describe('delivery tracking realtime API', () => {
     const body = await json(complete);
     expect(body.session.status).toBe('COMPLETED');
     expect(body.order.status).toBe('entregado');
+    expect(body.order.delivered_at).toBeTruthy();
+    expect(body.order.delivery.delivery_status).toBe('DELIVERED');
+
+    const duplicate = await request(`/api/admin/delivery-tracking/${start.session.id}/complete`, { method: 'POST', body: '{}' }, deliveryCookie);
+    expect(duplicate.status).toBe(200);
+    expect((await json(duplicate)).duplicate).toBe(true);
+
+    const inventory = await json(await request('/api/admin/inventory'));
+    const movements = inventory.movements.filter((row) => row.order_id === order.item.id && row.type === 'SALE');
+    expect(movements).toHaveLength(1);
+    expect(inventory.stock).toBe(90);
+  });
+
+  it('ADMIN cambia manualmente pendiente a cancelado con motivo, auditoría e integridad válida', async () => {
+    const order = await createOrder();
+    const response = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'PENDIENTE', reason: 'Cliente desistió del pedido' }),
+    });
+    expect(response.status).toBe(200);
+    const body = await json(response);
+    expect(body.order.status).toBe('cancelado');
+    expect(body.integrity.status).toBe('VALID');
+
+    const detail = await json(await request(`/api/admin/orders/${order.item.id}`));
+    expect(detail.timeline.some((row) => row.reason === 'Cliente desistió del pedido')).toBe(true);
+
+    const audit = await json(await request(`/api/admin/audit?entity=order&entityId=${encodeURIComponent(order.item.id)}`));
+    const manual = audit.entries.find((row) => row.data?.source === 'MANUAL_ADMIN');
+    expect(manual).toBeTruthy();
+    expect(manual.data).toMatchObject({
+      previous_status: 'nuevo',
+      new_status: 'cancelado',
+      reason: 'Cliente desistió del pedido',
+      source: 'MANUAL_ADMIN',
+    });
+  });
+
+  it('bloquea motivo débil, no admin y estado obsoleto', async () => {
+    const order = await createOrder();
+    const weak = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'PENDIENTE', reason: 'ok' }),
+    });
+    expect(weak.status).toBe(422);
+    expect((await json(weak)).error).toBe('invalid_reason');
+
+    const forbidden = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'PENDIENTE', reason: 'Cliente no recibirá' }),
+    }, deliveryCookie);
+    expect(forbidden.status).toBe(403);
+
+    const stale = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'EN_CAMINO', reason: 'Pantalla vieja abierta' }),
+    });
+    expect(stale.status).toBe(409);
+    expect((await json(stale)).error).toBe('stale_order_status');
+  });
+
+  it('no permite marcar En camino sin tracking activo', async () => {
+    const order = await createOrder();
+    await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    const blocked = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'EN_CAMINO', expectedStatus: 'PENDIENTE', reason: 'Intento manual sin sesión activa' }),
+    });
+    expect(blocked.status).toBe(409);
+    expect((await json(blocked)).error).toBe('active_tracking_required');
+  });
+
+  it('ADMIN marca Entregado con lógica central: cierra tracking, inventario/postventa una vez y bloquea reversión simple', async () => {
+    await restock(100);
+    const beforeInventory = await json(await request('/api/admin/inventory'));
+    const order = await createOrder();
+    const start = await json(await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    }));
+
+    const delivered = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'ENTREGADO', expectedStatus: 'EN_CAMINO', reason: 'Entrega verificada por administración' }),
+    });
+    expect(delivered.status).toBe(200);
+    const deliveredBody = await json(delivered);
+    expect(deliveredBody.order.status).toBe('entregado');
+    expect(deliveredBody.order.delivered_at).toBeTruthy();
+    expect(deliveredBody.order.delivery.delivery_status).toBe('DELIVERED');
+    expect(deliveredBody.integrity.status).toBe('VALID');
+
+    const session = await json(await request(`/api/admin/delivery-tracking/${start.session.id}`));
+    expect(session.session.status).toBe('COMPLETED');
+
+    const duplicate = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'ENTREGADO', expectedStatus: 'ENTREGADO', reason: 'Doble click controlado' }),
+    });
+    expect(duplicate.status).toBe(200);
+    expect((await json(duplicate)).duplicate).toBe(true);
+
+    const inventory = await json(await request('/api/admin/inventory'));
+    expect(inventory.movements.filter((row) => row.order_id === order.item.id && row.type === 'SALE')).toHaveLength(1);
+    expect(inventory.stock).toBe(Number(beforeInventory.stock) - 10);
+
+    const detail = await json(await request(`/api/admin/orders/${order.item.id}`));
+    expect(detail.followups.filter((row) => row.status === 'pending')).toHaveLength(6);
+    const report = await json(await request('/api/admin/reports/sales?period=hoy'));
+    expect(report.report.summary.orders).toBeGreaterThanOrEqual(1);
+
+    const backToPending = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'PENDIENTE', expectedStatus: 'ENTREGADO', reason: 'Intento de reversión simple' }),
+    });
+    expect(backToPending.status).toBe(409);
+    expect((await json(backToPending)).error).toBe('delivered_reversal_required');
+
+    const backToCancelled = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'ENTREGADO', reason: 'Intento de cancelar entrega' }),
+    });
+    expect(backToCancelled.status).toBe(409);
+    expect((await json(backToCancelled)).error).toBe('delivered_reversal_required');
+  });
+
+  it('ADMIN cancela un pedido en camino y cierra tracking activo', async () => {
+    const order = await createOrder();
+    const start = await json(await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    }));
+    const cancelled = await request(`/api/admin/orders/${order.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'EN_CAMINO', reason: 'Cliente canceló durante la ruta' }),
+    });
+    expect(cancelled.status).toBe(200);
+    const body = await json(cancelled);
+    expect(body.order.status).toBe('cancelado');
+    expect(body.integrity.status).toBe('VALID');
+
+    const session = await json(await request(`/api/admin/delivery-tracking/${start.session.id}`));
+    expect(session.session.status).toBe('CANCELLED');
+  });
+
+  it('cambios concurrentes: una transición gana y la otra recibe 409 por estado obsoleto', async () => {
+    await restock(100);
+    const order = await createOrder();
+    await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    const payload = { status: 'ENTREGADO', expectedStatus: 'EN_CAMINO', reason: 'Confirmación simultánea de entrega' };
+    const [a, b] = await Promise.all([
+      request(`/api/admin/orders/${order.item.id}/status`, { method: 'PATCH', body: JSON.stringify(payload) }),
+      request(`/api/admin/orders/${order.item.id}/status`, { method: 'PATCH', body: JSON.stringify(payload) }),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    const inventory = await json(await request('/api/admin/inventory'));
+    expect(inventory.movements.filter((row) => row.order_id === order.item.id && row.type === 'SALE')).toHaveLength(1);
   });
 });

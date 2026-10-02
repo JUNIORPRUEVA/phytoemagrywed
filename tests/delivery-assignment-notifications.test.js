@@ -162,16 +162,13 @@ describe('delivery assignment notifications and contact flow', () => {
     expect(allowed.status).toBe(200);
   });
 
-  it('delivery no inicia antes de contactar; tras WhatsApp exitoso pasa a CONTACTED e inicia tracking', async () => {
+  it('delivery asignado puede iniciar sin WhatsApp; el primer mensaje solo marca CONTACTED', async () => {
     mockWhatsApp.sent = [];
     const order = await createOrder();
     await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     });
-    const blocked = await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie);
-    expect(blocked.status).toBe(409);
-    expect((await json(blocked)).error).toBe('delivery_contact_required');
 
     const first = await request(`/api/admin/conversations/${conversationId}/messages`, {
       method: 'POST',

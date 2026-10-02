@@ -476,9 +476,11 @@
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
       state.auth = data.auth ?? null;
+      state.templates = (await api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }))).templates ?? [];
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
+      autoSyncCrmPush();
       if (!options.keepTab) await flushOutbox();
     } catch (error) {
       if (error.message === 'unauthorized') return;
@@ -623,6 +625,11 @@
       .trim();
   }
 
+  const waTemplateStatus = (template) => String(template?.status ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const waTemplateApproved = (template) => waTemplateStatus(template) === 'APPROVED' && template?.sendable === true;
+  const waTemplateLabel = (template) => template?.friendly_name || template?.friendlyName || template?.name || 'Plantilla';
+  const waTemplateMetaSynced = (template) => template?.source === 'meta' || Boolean(template?.last_synced_at);
+
   function whatsappUrl(item, body) {
     const phone = digits(item.phone);
     const text = encodeURIComponent(fillTemplate(body, item));
@@ -706,6 +713,22 @@
     } catch {
       return new Set();
     }
+  }
+
+  async function syncWaTemplates(button = null) {
+    await working(button, 'Sincronizando…', async () => {
+      try {
+        const result = await api('/api/admin/wa-templates/sync', { method: 'POST', body: JSON.stringify({}) });
+        state.templates = result.templates ?? state.templates;
+        renderAjustes();
+        const sync = result.sync ?? {};
+        toast(`${sync.foundFromMeta ?? sync.found ?? 0} en Meta · ${sync.approved ?? 0} aprobadas`);
+      } catch (error) {
+        if (error.message !== 'unauthorized') {
+          toast(error.body?.message ?? 'No se pudo consultar Meta. Revisa la configuración de WhatsApp.');
+        }
+      }
+    });
   }
 
   function writeDismissedNotices(list) {
@@ -1552,6 +1575,45 @@
     return (state.deliveryTracking ?? []).find((row) => row.order_id === orderId && row.status === 'ACTIVE') ?? null;
   }
 
+  function getOrderOperationalStatus(order, session = null) {
+    const status = String(order?.status ?? '').trim();
+    if (status === 'cancelado' || status === 'perdido') return 'CANCELADO';
+    if (status === 'entregado') return 'ENTREGADO';
+    if (session?.status === 'ACTIVE' || status === 'enviado' || order?.delivery?.delivery_status === 'IN_TRANSIT') return 'EN_CAMINO';
+    return 'PENDIENTE';
+  }
+
+  function operationalStatusLabel(value) {
+    return {
+      PENDIENTE: 'Pendiente',
+      EN_CAMINO: 'En camino',
+      ENTREGADO: 'Entregado',
+      CANCELADO: 'Cancelado',
+    }[value] ?? 'Pendiente';
+  }
+
+  function manualOrderStatusOptions(current) {
+    return [
+      ['PENDIENTE', 'Pendiente'],
+      ['EN_CAMINO', 'En camino'],
+      ['ENTREGADO', 'Entregado'],
+      ['CANCELADO', 'Cancelado'],
+    ]
+      .map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${label}</option>`)
+      .join('');
+  }
+
+  function deliveryGpsLabel(session) {
+    const position = session?.last_position;
+    if (!session || session.status !== 'ACTIVE') return '';
+    if (!position) return 'GPS activo · esperando posición';
+    const accuracy = Number(position.accuracy);
+    const age = position.recorded_at ? fmtWhen(position.recorded_at) : 'sin hora';
+    if (position.stale) return `Ubicación sin actualizar · ${age}`;
+    if (Number.isFinite(accuracy) && accuracy > 80) return `GPS débil · ±${Math.round(accuracy)} m`;
+    return `GPS activo · ${age}`;
+  }
+
   function deliveryAccuracyMeta(position) {
     const accuracy = Number(position?.accuracy);
     if (!Number.isFinite(accuracy)) {
@@ -1972,7 +2034,7 @@
           }
         </div>
         <div class="delivery-panel">
-          <h3>Pedidos con ubicación${orders.length ? ` (${orders.length})` : ''}</h3>
+          <h3>Pedidos${orders.length ? ` (${orders.length})` : ''}</h3>
           <div class="delivery-orders">
             ${
               orders.length
@@ -1984,31 +2046,37 @@
                       const assignedName = order.delivery?.delivery_user_name_snapshot ?? null;
                       const assignedToMe = assignedUserId && assignedUserId === currentUser()?.id;
                       const canAssign = (state.deliveryUsers ?? []).length > 0;
-                      const deliveryStatus = order.delivery_status ?? order.delivery?.delivery_status ?? 'PENDING_CONTACT';
-                      const needsContact = deliveryStatus === 'PENDING_CONTACT';
-                      const canStart = isDeliveryRole ? assignedToMe && !needsContact : true;
-                      return `<article class="delivery-order ${session ? 'delivery-order--active' : ''}">
+                      const operational = getOrderOperationalStatus(order, session);
+                      const hasDestination = Boolean(deliveryLatLng(order.delivery?.location));
+                      const gps = deliveryGpsLabel(session);
+                      const summary = (order.items ?? [])
+                        .map((line) => `${line.quantity ?? 1} ${line.name ?? line.variantName ?? 'producto'}`)
+                        .join(', ');
+                      const canStart = operational === 'PENDIENTE' && hasDestination && (isDeliveryRole ? assignedToMe : true);
+                      const canReassign = canAssign && operational === 'PENDIENTE' && !session;
+                      return `<article class="delivery-order delivery-order--${escapeHtml(operational.toLowerCase())}">
                         <div>
-                          <strong>${escapeHtml(order.order_number ?? item.order_number ?? item.id)}</strong>
-                          <p>${escapeHtml(customerName(customer ?? item))} · ${escapeHtml(statusLabel(order.status ?? item.status ?? 'nuevo'))}</p>
-                          <small>${escapeHtml(order.delivery.location.name ?? order.delivery.location.address ?? 'Ubicación de entrega')}${
-                            assignedName ? ` · ${escapeHtml(assignedName)}` : ''
-                          }</small>
-                          <span class="tag delivery-status delivery-status--${escapeHtml(deliveryStatus.toLowerCase())}">${
-                            needsContact ? 'Pendiente de contactar' : deliveryStatus === 'CONTACTED' ? 'Contactado' : deliveryStatus === 'IN_TRANSIT' ? 'En camino' : escapeHtml(deliveryStatus)
-                          }</span>
+                          <strong>${escapeHtml(customerName(customer ?? item))}</strong>
+                          <p>${escapeHtml(order.order_number ?? item.order_number ?? item.id)} · ${escapeHtml(summary || 'Pedido')}</p>
+                          <small>${escapeHtml(money(order.total ?? item.total ?? 0))} · Delivery: ${escapeHtml(assignedName || 'Sin asignar')}</small>
+                          <span class="tag delivery-status delivery-status--${escapeHtml(operational.toLowerCase())}">${escapeHtml(operationalStatusLabel(operational))}</span>
+                          <small>${hasDestination ? escapeHtml(order.delivery.location.name ?? order.delivery.location.address ?? 'Ubicación de entrega') : 'Falta ubicación de entrega'}</small>
+                          ${gps ? `<small>${escapeHtml(gps)}</small>` : ''}
                         </div>
                         ${
-                          session
-                            ? `<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver</button>`
+                          operational === 'EN_CAMINO' && session
+                            ? `<span class="item__actions">
+                                <button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver mapa</button>
+                                ${isDeliveryRole && assignedToMe ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button>` : ''}
+                              </span>`
                             : isDeliveryRole && assignedToMe
                               ? `<span class="item__actions">
-                                  ${order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
+                                  ${!hasDestination && order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Solicitar ubicación</button>` : order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
                                   <button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button" ${canStart ? '' : 'disabled'}>Iniciar entrega</button>
                                 </span>`
                               : isDeliveryRole
                                 ? '<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>'
-                                : canAssign
+                                : canReassign
                                   ? `<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(item.id)}" aria-label="Asignar delivery">
                                       <option value="">${assignedName ? 'Cambiar delivery' : 'Asignar delivery'}</option>
                                       ${(state.deliveryUsers ?? [])
@@ -2020,12 +2088,14 @@
                                         )
                                         .join('')}
                                     </select></span>`
-                                  : '<button class="btn btn--ghost btn--sm" type="button" disabled>Sin delivery</button>'
+                                  : `<span class="item__actions">
+                                      ${session ? `<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver mapa</button>` : `<button class="btn btn--ghost btn--sm" data-order-open="${escapeHtml(item.id)}" type="button">Abrir</button>`}
+                                    </span>`
                         }
                       </article>`;
                     })
                     .join('')
-                : emptyState('No hay pedidos abiertos con ubicación de entrega.')
+                : emptyState('No hay pedidos abiertos para delivery.')
             }
           </div>
         </div>
@@ -2037,7 +2107,27 @@
     $('#sheet-title').textContent = 'Notificaciones';
     const rows = state.notifications ?? [];
     const localRows = localNoticeRows();
+    const pushPermission = pushPermissionLabel();
+    const pushActive = Number(state.push?.activeSubscriptions ?? 0) > 0 || state.push?.subscribed === true;
+    const lastPushJob = state.push?.recentJobs?.[0] ?? null;
+    const pushStatusText = !state.push?.configured
+      ? 'Servidor sin llaves push'
+      : pushActive
+        ? `Teléfono conectado · ${pushPermission}`
+        : `Teléfono sin conectar · ${pushPermission}`;
+    const pushCard = `<article class="delivery-order ${pushActive ? '' : 'delivery-order--active'}">
+      <div>
+        <strong>Notificaciones del teléfono</strong>
+        <p>${escapeHtml(pushStatusText)}</p>
+        <small>${escapeHtml(lastPushJob ? `Último envío: ${lastPushJob.status}` : 'Sin pruebas recientes')}</small>
+      </div>
+      <div class="item__actions">
+        <button class="btn btn--ghost btn--sm" data-push-enable type="button">${pushActive ? 'Revisar' : 'Activar'}</button>
+        <button class="btn btn--primary btn--sm" data-push-test type="button" ${pushActive ? '' : 'disabled'}>Probar</button>
+      </div>
+    </article>`;
     const html = [
+      pushCard,
       ...localRows.map(
         (row) => `<article class="delivery-order delivery-order--active">
           <div>
@@ -2388,6 +2478,55 @@
       : `<p class="card__text">Todavía no está conectado. Puedes registrar clientes y compras, pero no
          enviar ni recibir mensajes. Hacen falta WHATSAPP_PHONE_NUMBER_ID y WHATSAPP_ACCESS_TOKEN en el
          servidor (ver docs/WHATSAPP_INTEGRATION.md).</p>`;
+    const templates = state.templates ?? [];
+    const metaTemplates = templates.filter(waTemplateMetaSynced);
+    const approvedCount = metaTemplates.filter(waTemplateApproved).length;
+    const localOnlyCount = templates.filter((template) => !waTemplateMetaSynced(template)).length;
+    const lastSync = templates
+      .map((template) => template.last_template_sync_at || template.last_synced_at)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+    const metaStatusLabel = (status) =>
+      ({
+        approved: 'Aprobada',
+        pending: 'Pendiente',
+        pending_approval: 'Pendiente',
+        rejected: 'Rechazada',
+        paused: 'Pausada',
+        disabled: 'Desactivada',
+        local_only: 'Solo local',
+        not_found_in_meta: 'No existe en Meta',
+      }[String(status ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_')] ?? status ?? '—');
+    $('#wa-templates-config').innerHTML = `<div class="item__actions">
+        <button class="btn btn--primary" id="wa-sync-templates" type="button">Sincronizar con Meta</button>
+      </div>
+      <dl class="facts">
+        <div class="fact"><dt>Encontradas en Meta</dt><dd>${metaTemplates.length}</dd></div>
+        <div class="fact"><dt>Aprobadas</dt><dd>${approvedCount}</dd></div>
+        <div class="fact"><dt>Solo locales</dt><dd>${localOnlyCount}</dd></div>
+        <div class="fact"><dt>Último sync</dt><dd>${escapeHtml(lastSync ? new Date(lastSync).toLocaleString('es-DO') : '—')}</dd></div>
+      </dl>
+      ${
+        templates.length
+          ? `<div class="table-wrap"><table class="mini-table">
+              <thead><tr><th>Nombre</th><th>Técnico</th><th>Categoría</th><th>Idioma</th><th>Estado Meta</th><th>Sendable</th><th>Botones</th></tr></thead>
+              <tbody>${templates
+                .map(
+                  (template) => `<tr>
+                    <td>${escapeHtml(waTemplateLabel(template))}</td>
+                    <td><code>${escapeHtml(template.name)}</code></td>
+                    <td>${escapeHtml(template.category ?? '—')}</td>
+                    <td>${escapeHtml(template.language ?? '—')}</td>
+                    <td>${escapeHtml(metaStatusLabel(template.status))}</td>
+                    <td>${template.sendable === true ? 'Sí' : 'No'}</td>
+                    <td>${escapeHtml((template.buttons ?? []).map((button) => button.text ?? button.title).filter(Boolean).join(', ') || '—')}</td>
+                  </tr>`,
+                )
+                .join('')}</tbody>
+            </table></div>`
+          : '<p class="view__hint">Sin plantillas sincronizadas todavía.</p>'
+      }`;
     $('#build-info').textContent = `${state.items.length} registros · ${
       state.online ? 'en línea' : 'sin conexión'
     } · v2`;
@@ -3044,7 +3183,16 @@
      * burbuja hace de marco para la imagen + el pie de foto.
      */
     let soloArchivo = false;
-    if (tipo === 'image' && mediaSrc && mediaListo) {
+    const templateName = message.template_name ? waTemplateLabel((state.templates ?? []).find((template) => template.name === message.template_name) ?? { name: message.template_name }) : null;
+    if (isTemplateMessage(message) && message.status === 'failed') {
+      const friendly = waFriendlyTemplateError(message);
+      cuerpo = `<span class="template-fail">
+        <strong>Plantilla no enviada</strong>
+        ${templateName ? `<span>${escapeHtml(templateName)}</span>` : ''}
+        <small>${escapeHtml(friendly)}</small>
+        ${message.error_code ? `<code>#${escapeHtml(message.error_code)}</code>` : ''}
+      </span>`;
+    } else if (tipo === 'image' && mediaSrc && mediaListo) {
       soloArchivo = !message.body;
       cuerpo = `<button class="media-thumb" data-media-view="${escapeHtml(media.id)}" type="button" aria-label="Ver la imagen en grande"><img src="${escapeHtml(mediaSrc)}" alt="Imagen del cliente" loading="lazy" decoding="async" /></button>`;
       if (message.body) cuerpo += `<span class="media-caption">${escapeHtml(message.body)}</span>`;
@@ -3103,6 +3251,9 @@
       if (message.body && message.body !== `[${tipo}]`) cuerpo += escapeHtml(message.body);
     } else {
       cuerpo = escapeHtml(message.body ?? '');
+      if (isTemplateMessage(message) && templateName) {
+        cuerpo += `<span class="template-chip">${escapeHtml(templateName)}</span>`;
+      }
     }
     const who = inbound
       ? 'Cliente'
@@ -3117,9 +3268,12 @@
      * dejaba el mensaje "suelto" en medio de la burbuja.
      */
     const quien = who && !grouped ? `<span class="bubble__who">${escapeHtml(who)}</span>` : '';
+    const label = isTemplateMessage(message) && message.status !== 'failed' ? (templateName ? templateName : 'Plantilla') : null;
     const hora = `<span class="bubble__meta">${escapeHtml(fmtWhen(message.created_at))}${
+      label ? ` · ${escapeHtml(label)}` : ''
+    }${
       estado ? ` · ${escapeHtml(estado)}` : ''
-    }${message.error_message ? ` · ${escapeHtml(message.error_message)}` : ''}</span>`;
+    }${message.error_message && !isTemplateMessage(message) ? ` · ${escapeHtml(message.error_message)}` : ''}</span>`;
     const clases = [
       `bubble bubble--${inbound ? 'in' : 'out'}`,
       auto ? 'bubble--auto' : '',
@@ -3167,13 +3321,57 @@
 
   /** Lo que ve una persona: nunca el `wa_message_id`. */
   const WA_STATUS = {
-    pending: 'Enviando',
-    queued: 'Enviando',
+    pending: 'Preparando',
+    queued: 'Preparando',
     sent: 'Enviado',
     delivered: 'Entregado',
     read: 'Leído',
     failed: 'Fallido',
   };
+
+  const CONTACT_STATE = {
+    NEW_CONTACT: 'NEW_CONTACT',
+    WAITING_CUSTOMER_REPLY: 'WAITING_CUSTOMER_REPLY',
+    OPEN_WINDOW: 'OPEN_WINDOW',
+    CLOSED_WINDOW: 'CLOSED_WINDOW',
+  };
+
+  const isInboundMessage = (message) => message?.direction === 'inbound';
+  const isTemplateMessage = (message) => message?.type === 'template' || Boolean(message?.template_name);
+  const isSentTemplateStatus = (status) => ['sent', 'delivered', 'read'].includes(String(status ?? '').toLowerCase());
+
+  function lastMessageWhere(messages, check) {
+    for (let index = (messages ?? []).length - 1; index >= 0; index -= 1) {
+      if (check(messages[index])) return messages[index];
+    }
+    return null;
+  }
+
+  function getConversationContactState(input = {}) {
+    const messages = input.messages ?? input.conversation?.messages ?? [];
+    const canSendFreeText = input.canSendFreeText === true;
+    if (canSendFreeText) return CONTACT_STATE.OPEN_WINDOW;
+    const lastInbound = lastMessageWhere(messages, isInboundMessage);
+    const lastSentTemplate = lastMessageWhere(
+      messages,
+      (message) => message?.direction === 'outbound' && isTemplateMessage(message) && isSentTemplateStatus(message.status),
+    );
+    if (lastSentTemplate && (!lastInbound || new Date(lastSentTemplate.created_at) > new Date(lastInbound.created_at))) {
+      return CONTACT_STATE.WAITING_CUSTOMER_REPLY;
+    }
+    if (!lastInbound && !messages.length) return CONTACT_STATE.NEW_CONTACT;
+    if (!lastInbound && messages.every((message) => message?.direction !== 'inbound')) return CONTACT_STATE.NEW_CONTACT;
+    return CONTACT_STATE.CLOSED_WINDOW;
+  }
+
+  function waFriendlyTemplateError(message) {
+    const text = String(message?.error_message ?? '');
+    const code = String(message?.error_code ?? '');
+    if (code === '132000' || /Number of parameters does not match/i.test(text)) {
+      return 'Esta plantilla no pudo enviarse porque faltan o sobran datos requeridos.';
+    }
+    return text || 'WhatsApp rechazó el envío de la plantilla.';
+  }
 
   const waAwaiting = (row) => row.awaiting_reply === true;
   const waCustomer = (row) => row.customer ?? customerById(row.customer_id);
@@ -3325,6 +3523,7 @@
   const waThreadSig = (data) => {
     const messages = data?.messages ?? [];
     const last = messages[messages.length - 1];
+    const contactState = getConversationContactState(data);
     return [
       messages.length,
       last?.id ?? '',
@@ -3332,6 +3531,7 @@
       last?.delivered_at ?? '',
       last?.read_at ?? '',
       data?.canSendFreeText ? 1 : 0,
+      contactState,
     ].join('|');
   };
 
@@ -3978,7 +4178,83 @@
    * El compositor. Respeta la regla de las 24 h que aplica el servidor: dentro
    * de la ventana se escribe libre; fuera, solo plantillas APROBADAS de verdad.
    */
-  function waComposerHtml({ customer, canSendFreeText }) {
+  function waContactStateHtml(contactState, customer) {
+    const name = (customer?.name ?? '').trim() || customer?.phone_e164 || 'el cliente';
+    const copy = {
+      [CONTACT_STATE.NEW_CONTACT]: {
+        title: 'Iniciar conversación',
+        body: 'Para contactar a este cliente por primera vez, envía una plantilla aprobada.',
+        detail: 'Usa una plantilla aprobada para enviar el primer mensaje.',
+        cta: 'Enviar plantilla',
+        tone: 'info',
+      },
+      [CONTACT_STATE.WAITING_CUSTOMER_REPLY]: {
+        title: 'Plantilla enviada correctamente',
+        body: `Esperando respuesta de ${name} para continuar la conversación.`,
+        detail: 'Cuando el cliente responda, podrás escribir mensajes normales durante la ventana de atención.',
+        cta: 'Enviar otra plantilla',
+        tone: 'ok',
+      },
+      [CONTACT_STATE.CLOSED_WINDOW]: {
+        title: 'Ventana de atención finalizada',
+        body: 'La ventana de atención de 24 horas terminó.',
+        detail: 'Para volver a contactar al cliente, envía una plantilla aprobada.',
+        cta: 'Enviar plantilla',
+        tone: 'warn',
+      },
+      [CONTACT_STATE.OPEN_WINDOW]: {
+        title: 'Conversación activa',
+        body: 'Puedes escribir mensajes normales mientras la ventana de atención esté activa.',
+        detail: '',
+        cta: '',
+        tone: 'ok',
+      },
+    }[contactState];
+    if (!copy || contactState === CONTACT_STATE.OPEN_WINDOW) return '';
+    return `<section class="wa-state wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}">
+      <div>
+        <strong>${escapeHtml(copy.title)}</strong>
+        <p>${escapeHtml(copy.body)}</p>
+        ${copy.detail ? `<small>${escapeHtml(copy.detail)}</small>` : ''}
+      </div>
+      <button class="btn btn--whatsapp btn--sm" id="wa-open-template" type="button">${escapeHtml(copy.cta)}</button>
+    </section>`;
+  }
+
+  function waTemplateSheetHtml() {
+    const approved = (state.templates ?? []).filter(waTemplateApproved);
+    if (!approved.length) {
+      return `<p class="rule rule--warn">No hay plantillas aprobadas sincronizadas.</p>
+        <p class="view__hint">Ve a Ajustes > WhatsApp y pulsa Sincronizar con Meta.</p>`;
+    }
+    return `<label class="field">
+        <span class="field__label">Plantilla aprobada</span>
+        <select class="field__select" id="wa-template">
+          ${approved
+            .map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(waTemplateLabel(template))}</option>`)
+            .join('')}
+        </select>
+      </label>
+      <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>
+      <p class="rule">Enviar una plantilla no abre la ventana de 24 h. La ventana se abre cuando el cliente responde.</p>`;
+  }
+
+  async function openWaTemplateSheet() {
+    openSheet('Enviar plantilla', '<p class="view__hint">Cargando plantillas aprobadas…</p>');
+    try {
+      const result = await api('/api/admin/wa-templates?sync=stale');
+      state.templates = result.templates ?? state.templates;
+    } catch {
+      /* Si falla la consulta, se usa la última lista conocida y la hoja lo explica. */
+    }
+    $('#sheet-body').innerHTML = waTemplateSheetHtml();
+    $('#wa-send-template')?.addEventListener('click', async (event) => {
+      const sent = await sendWaMessage({ template: $('#wa-template')?.value || null }, event.currentTarget);
+      if (sent) closeSheet();
+    });
+  }
+
+  function waComposerHtml({ customer, canSendFreeText, contactState }) {
     const wa = state.whatsapp ?? {};
     if (!wa.configured) {
       return '<p class="rule rule--warn">WhatsApp no está configurado en el servidor: se reciben mensajes, pero no se pueden enviar.</p>';
@@ -3987,21 +4263,7 @@
       return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      const approved = (state.templates ?? []).filter((template) => template.sendable);
-      if (!approved.length) {
-        return `<p class="rule rule--warn">La ventana de atención de 24 horas terminó. Para contactar nuevamente al cliente debes utilizar una plantilla aprobada.</p>
-          <p class="view__hint">Todavía no tienes ninguna plantilla aprobada en Meta.</p>`;
-      }
-      return `<p class="rule rule--warn">La ventana de atención de 24 horas terminó. Para contactar nuevamente al cliente debes utilizar una plantilla aprobada.</p>
-        <label class="field">
-          <span class="field__label">Usar plantilla</span>
-          <select class="field__select" id="wa-template">
-            ${approved
-              .map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)}</option>`)
-              .join('')}
-          </select>
-        </label>
-        <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>`;
+      return waContactStateHtml(contactState, customer);
     }
     const puedeAdjuntar = state.media?.enabled === true;
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
@@ -4060,6 +4322,7 @@
     }
 
     const { customer, conversation, messages, canSendFreeText } = data;
+    const contactState = getConversationContactState(data);
     $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
     const headerTags = customerTagsOf(customer).slice(0, 2).map((tag) => tag.label);
     $('#wa-chat-meta').textContent = [
@@ -4100,9 +4363,13 @@
       );
     }
 
-    $('#thread').innerHTML = messages.length ? waThreadHtml(messages) : '<p class="view__hint">Todavía no hay mensajes.</p>';
+    const emptyThread =
+      contactState === CONTACT_STATE.NEW_CONTACT
+        ? '<div class="wa-empty"><strong>Todavía no has iniciado una conversación con este cliente.</strong><span>Usa una plantilla aprobada para enviar el primer mensaje.</span></div>'
+        : '<p class="view__hint">Todavía no hay mensajes.</p>';
+    $('#thread').innerHTML = messages.length ? waThreadHtml(messages) : emptyThread;
 
-    $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText });
+    $('#wa-composer').innerHTML = waComposerHtml({ customer, canSendFreeText, contactState });
     const area = $('#wa-text');
     if (area) {
       area.value = state.wa.draft ?? '';
@@ -4153,9 +4420,7 @@
       }
       sendWaMessage({ body }, event.currentTarget);
     });
-    $('#wa-send-template')?.addEventListener('click', (event) =>
-      sendWaMessage({ template: $('#wa-template').value || null }, event.currentTarget),
-    );
+    $('#wa-open-template')?.addEventListener('click', () => openWaTemplateSheet());
   }
 
   // ------------------------------------------------------------- MULTIMEDIA
@@ -4808,7 +5073,7 @@
     try {
       const [data, templates] = await Promise.all([
         api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`),
-        api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] })),
+        api('/api/admin/wa-templates?sync=stale').catch(() => ({ templates: state.templates ?? [] })),
       ]);
       if (state.wa.selectedId !== conversationId) return; // se cambió mientras cargaba
       state.templates = templates.templates ?? [];
@@ -4836,7 +5101,8 @@
   /** Envío MANUAL: solo se llama desde el botón Enviar. */
   async function sendWaMessage(payload, button) {
     const conversationId = state.wa.selectedId;
-    if (!conversationId) return;
+    if (!conversationId) return false;
+    let ok = false;
     await working(button, 'Enviando…', async () => {
       try {
         await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
@@ -4850,13 +5116,19 @@
         await load({ keepTab: true });
         await loadWaThread(conversationId, { force: true });
         if (followupId) toast('Seguimiento marcado como hecho');
+        ok = true;
       } catch (error) {
         if (error.message !== 'unauthorized') {
+          if (error.body?.message_record) {
+            await loadWaThread(conversationId, { force: true });
+            if (payload.template && !$('#sheet')?.hidden) closeSheet();
+          }
           // El servidor explica la regla (24 h, no contactar, plantilla sin aprobar).
           toast(error.body?.message ?? 'No se pudo enviar');
         }
       }
     });
+    return ok;
   }
 
   /**
@@ -6250,7 +6522,7 @@
           order?.delivery_fee ?? order?.delivery?.fee ?? ''
         }" placeholder="0" />
       </label>
-      <label class="field">
+      <label class="field" ${orderId ? 'hidden' : ''}>
         <span class="field__label">Estado</span>
         <select class="field__select" id="order-status">
           ${(state.orderStatuses ?? [])
@@ -6263,6 +6535,11 @@
             .join('')}
         </select>
       </label>
+      ${
+        orderId
+          ? '<p class="view__hint">El estado del pedido se cambia desde “Cambiar estado”, con motivo y auditoría.</p>'
+          : ''
+      }
       <label class="field">
         <span class="field__label">Método de pago</span>
         <select class="field__select" id="order-payment">
@@ -6971,6 +7248,9 @@
       const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
       const receipt = data.receipt;
       const order = data.order ?? {};
+      const integrity = data.integrity ?? {};
+      const timeline = data.timeline ?? [];
+      const operational = integrity.operationalStatus ?? getOrderOperationalStatus(order);
       const lines = (receipt.items ?? [])
         .map(
           (line) => `<div class="receipt-line">
@@ -7002,6 +7282,21 @@
             ${receipt.cancelled_at ? `<div class="fact"><dt>Cancelada</dt><dd>${escapeHtml(fmtWhen(receipt.cancelled_at))}</dd></div>` : ''}
             ${receipt.cancel_reason ? `<div class="fact"><dt>Motivo</dt><dd>${escapeHtml(receipt.cancel_reason)}</dd></div>` : ''}
           </dl>
+          ${
+            timeline.length
+              ? `<div class="order-timeline" aria-label="Timeline del pedido">
+                  ${timeline
+                    .map(
+                      (row) => `<div class="order-timeline__item">
+                        <strong>${escapeHtml(row.label ?? 'Movimiento')}</strong>
+                        <small>${escapeHtml(fmtWhen(row.at))}${row.by ? ` · ${escapeHtml(row.by)}` : ''}</small>
+                        ${row.reason ? `<span>Motivo: ${escapeHtml(row.reason)}</span>` : ''}
+                      </div>`,
+                    )
+                    .join('')}
+                </div>`
+              : ''
+          }
           <div class="receipt__lines">${lines}</div>
           <div class="receipt__totals">
             <div><span>Productos</span><strong>${money(receipt.subtotal, receipt.currency)}</strong></div>
@@ -7045,6 +7340,11 @@
         <button class="btn btn--ghost btn--block" id="receipt-share" type="button">Compartir factura</button>
         <button class="btn btn--ghost btn--block" id="receipt-edit" type="button">Modificar pedido</button>
         ${
+          isAdmin()
+            ? `<button class="btn btn--ghost btn--block" data-order-status-change="${escapeHtml(orderId)}" data-order-status-current="${escapeHtml(operational)}" type="button">Cambiar estado</button>`
+            : ''
+        }
+        ${
           isAdmin() && receipt.status !== 'cancelado'
             ? `<button class="btn btn--danger btn--block" data-sale-cancel="${escapeHtml(orderId)}" type="button">Cancelar venta</button>`
             : ''
@@ -7064,9 +7364,75 @@
           order: data.order,
         });
       });
+      $('[data-order-status-change]')?.addEventListener('click', () => openOrderStatusSheet(orderId, { order, integrity }));
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo abrir el comprobante');
     }
+  }
+
+  async function openOrderStatusSheet(orderId, context = {}) {
+    const order = context.order ?? {};
+    const current = context.integrity?.operationalStatus ?? getOrderOperationalStatus(order);
+    openSheet(
+      `Cambiar estado · ${escapeHtml(order.order_number ?? orderId)}`,
+      `
+      <dl class="facts">
+        <div class="fact"><dt>Estado actual</dt><dd>${escapeHtml(operationalStatusLabel(current))}</dd></div>
+        <div class="fact"><dt>Pedido</dt><dd>${escapeHtml(order.order_number ?? orderId)}</dd></div>
+      </dl>
+      <label class="field">
+        <span class="field__label">Cambiar a</span>
+        <select class="field__select" id="manual-order-status">${manualOrderStatusOptions(current)}</select>
+      </label>
+      <label class="field">
+        <span class="field__label">Motivo obligatorio</span>
+        <textarea class="field__area" id="manual-order-reason" placeholder="Ej.: Cliente confirmó por llamada, error de captura, entrega verificada…"></textarea>
+      </label>
+      <p class="rule" id="manual-order-impact">El cambio quedará auditado con tu usuario.</p>
+      <button class="btn btn--primary btn--block" id="manual-order-confirm" type="button">Confirmar cambio</button>
+      `,
+    );
+    const updateImpact = () => {
+      const target = $('#manual-order-status')?.value ?? current;
+      const text =
+        target === 'ENTREGADO'
+          ? 'Confirmar cerrará tracking activo, actualizará inventario, postventa y Meta Purchase una sola vez.'
+          : target === 'CANCELADO'
+            ? 'Confirmar cerrará cualquier tracking activo y el pedido no contará como venta entregada.'
+            : target === 'EN_CAMINO'
+              ? 'Solo se permite si ya existe una entrega activa con tracking. No se inventará tracking.'
+              : 'Solo se permite si no existe tracking activo. No revierte ventas entregadas.';
+      const box = $('#manual-order-impact');
+      if (box) box.textContent = text;
+    };
+    $('#manual-order-status')?.addEventListener('change', updateImpact);
+    updateImpact();
+    $('#manual-order-confirm')?.addEventListener('click', async (event) => {
+      const target = $('#manual-order-status')?.value ?? '';
+      const reason = $('#manual-order-reason')?.value.trim() ?? '';
+      if (reason.length < 6 || /^[\W_]+$/u.test(reason) || /^(ok|okay|bien|listo|na|n\/a)$/i.test(reason)) {
+        toast('Escribe un motivo claro');
+        return;
+      }
+      if (['ENTREGADO', 'CANCELADO'].includes(target)) {
+        const label = operationalStatusLabel(target);
+        const ok = window.confirm(`¿Confirmas marcar este pedido como ${label}? Este cambio quedará auditado.`);
+        if (!ok) return;
+      }
+      await working(event.currentTarget, 'Cambiando…', async () => {
+        try {
+          await api(`/api/admin/orders/${encodeURIComponent(orderId)}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: target, reason, expectedStatus: current }),
+          });
+          toast('Estado actualizado');
+          await load({ keepTab: true });
+          await openReceipt(orderId);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar el estado');
+        }
+      });
+    });
   }
 
   async function openCancelSale(orderId) {
@@ -7130,7 +7496,7 @@
   function openScheduledForm({ customerId, conversationId = '', orderId = '' } = {}) {
     const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
     if (!customer) return;
-    const approved = (state.templates ?? []).filter((template) => template.sendable === true);
+    const approved = (state.templates ?? []).filter(waTemplateApproved);
     const dentroDeVentana = state.wa.chat?.customer?.id === customerId ? state.wa.chat?.canSendFreeText !== false : null;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -7165,7 +7531,7 @@
                <span class="field__label">O usar una plantilla aprobada</span>
                <select class="field__select" id="sch-template">
                  <option value="">— texto de arriba —</option>
-                 ${approved.map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)}</option>`).join('')}
+                 ${approved.map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(waTemplateLabel(template))}</option>`).join('')}
                </select>
              </label>`
           : `<p class="view__hint">No hay plantillas aprobadas en Meta: fuera de la ventana de 24 h el mensaje quedará bloqueado.</p>`
@@ -7404,33 +7770,78 @@
     return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
   }
 
-  async function enableCrmPush() {
+  function samePushKey(current, expected) {
+    if (!current) return true;
+    const left = new Uint8Array(current);
+    if (left.length !== expected.length) return false;
+    return left.every((value, index) => value === expected[index]);
+  }
+
+  async function refreshPushStatus() {
+    const data = await api('/api/admin/push-status');
+    state.push = data.push ?? state.push;
+    saveSnapshot();
+    return state.push;
+  }
+
+  async function syncCrmPushSubscription(options = {}) {
+    const requestPermission = options.requestPermission !== false;
     if (!state.push?.publicKey) {
-      toast('Push no está configurado en el servidor');
+      if (!options.quiet) toast('Push no está configurado en el servidor');
       return false;
     }
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
-      toast('Este navegador no soporta notificaciones push');
+      if (!options.quiet) toast('Este navegador no soporta notificaciones push');
       return false;
     }
-    const permission = await Notification.requestPermission();
+    let permission = Notification.permission;
     if (permission !== 'granted') {
-      toast(permission === 'denied' ? 'Notificaciones bloqueadas por navegador' : 'No se activaron las notificaciones');
+      if (!requestPermission) return false;
+      permission = await Notification.requestPermission();
+    }
+    if (permission !== 'granted') {
+      if (!options.quiet) toast(permission === 'denied' ? 'Notificaciones bloqueadas por navegador' : 'No se activaron las notificaciones');
       renderDelivery();
       return false;
     }
     const registration = await navigator.serviceWorker.ready;
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(state.push.publicKey),
-    });
+    const applicationServerKey = urlBase64ToUint8Array(state.push.publicKey);
+    let subscription = await registration.pushManager.getSubscription();
+    if (subscription?.options?.applicationServerKey && !samePushKey(subscription.options.applicationServerKey, applicationServerKey)) {
+      await subscription.unsubscribe().catch(() => {});
+      subscription = null;
+    }
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+    }
     await api('/api/admin/push-subscriptions', {
       method: 'POST',
       body: JSON.stringify(subscription),
     });
-    toast('Notificaciones activadas');
+    state.push = { ...state.push, subscribed: true, activeSubscriptions: Math.max(1, Number(state.push?.activeSubscriptions ?? 0)) };
+    state.wa.notify = true;
+    localStorage.setItem(WA_NOTIFY_KEY, '1');
+    if (!options.quiet) toast('Notificaciones activadas');
     renderDelivery();
     return true;
+  }
+
+  async function enableCrmPush() {
+    const enabled = await syncCrmPushSubscription({ requestPermission: true });
+    if (enabled) await refreshPushStatus().catch(() => null);
+    return enabled;
+  }
+
+  function autoSyncCrmPush() {
+    if (!state.push?.publicKey || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    syncCrmPushSubscription({ requestPermission: false, quiet: true })
+      .then((enabled) => {
+        if (enabled) refreshPushStatus().catch(() => null);
+      })
+      .catch(() => {});
   }
 
   function initPwa() {
@@ -7725,6 +8136,10 @@
        * táctiles. Si se comprobara `data-chat` primero, pulsar "Registrar compra"
        * abriría el chat en vez de la compra.
        */
+      if (event.target.closest('#wa-sync-templates')) {
+        syncWaTemplates(event.target.closest('#wa-sync-templates'));
+        return;
+      }
       const purchase = event.target.closest('[data-purchase]');
       if (purchase) {
         openPurchaseForm(purchase.dataset.purchase || null);
@@ -7787,6 +8202,24 @@
       }
       if (event.target.closest('[data-dashboard-notifications]')) {
         openNotificationsSheet();
+        return;
+      }
+      if (event.target.closest('[data-push-enable]')) {
+        enableCrmPush()
+          .then(() => {
+            openNotificationsSheet();
+          })
+          .catch(() => toast('No se pudieron activar las notificaciones'));
+        return;
+      }
+      if (event.target.closest('[data-push-test]')) {
+        api('/api/admin/push-subscriptions/test', { method: 'POST', body: '{}' })
+          .then(async (data) => {
+            state.push = data.status ?? state.push;
+            toast(data.message ?? 'Prueba enviada al teléfono');
+            openNotificationsSheet();
+          })
+          .catch((error) => toast(error.body?.message ?? 'No se pudo enviar la prueba push'));
         return;
       }
       const noticeDismiss = event.target.closest('[data-notice-dismiss]');
@@ -7911,6 +8344,11 @@
       const orderEdit = event.target.closest('[data-order-edit]');
       if (orderEdit) {
         openOrderEditor(orderEdit.dataset.orderEdit);
+        return;
+      }
+      const orderOpen = event.target.closest('[data-order-open]');
+      if (orderOpen) {
+        openReceipt(orderOpen.dataset.orderOpen);
         return;
       }
       const receipt = event.target.closest('[data-receipt]');
