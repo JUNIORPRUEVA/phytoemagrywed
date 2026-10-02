@@ -4310,6 +4310,8 @@
   const WA_VAR_LABELS = {
     customer_name: 'Nombre del cliente',
     nombre: 'Nombre del cliente',
+    mensaje: 'Tu mensaje',
+    texto: 'Tu mensaje',
     order_number: 'Nº de pedido',
     total: 'Total',
     payment_method: 'Forma de pago',

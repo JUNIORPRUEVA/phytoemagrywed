@@ -2232,6 +2232,21 @@ const WA_TEMPLATE_SEED = [
     variables: ['customer_name'],
     buttons: [],
   },
+  {
+    /*
+     * Plantilla con un hueco LIBRE (`{{2}}`): es la única forma de escribir un
+     * mensaje propio fuera de la ventana de 24 h, porque WhatsApp solo admite
+     * plantillas aprobadas. Ese hueco se redacta desde el panel.
+     */
+    name: 'phyto_mensaje_personalizado_v1',
+    friendly_name: 'Mensaje personalizado',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
+    variables: ['customer_name', 'mensaje'],
+    buttons: [],
+  },
 ];
 
 const WA_TEMPLATE_STALE_MS = 10 * 60 * 1000;
