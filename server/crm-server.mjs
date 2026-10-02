@@ -43,9 +43,6 @@
  *    PHYTO_ADMIN_DIR         carpeta de la app del panel (por defecto: dist/admin)
  *    PHYTO_CRM_ALLOWED_ORIGIN  CORS, solo si la web vive en otro dominio
  *    PHYTO_CRM_TZ            zona horaria del negocio (por defecto America/Santo_Domingo)
- *    PHYTO_CRM_NO_SCHEDULER=1  NO arranca el bucle de mensajes programados (para
- *                            correr en local contra la base de producción: los
- *                            programados se guardan, pero los envía producción)
  *
  *  Meta (ver docs/META_INTEGRATION.md):
  *    PHYTO_META_PIXEL_ID              ID del píxel/dataset (público)
@@ -203,13 +200,6 @@ const BOOTSTRAP_ADMIN_USER = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_USER ?? '').
 const BOOTSTRAP_ADMIN_PASSWORD = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_PASSWORD ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
 const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
-/*
- * Una segunda instancia del CRM sobre la MISMA base (típicamente: trabajar en
- * local contra la base de producción) no puede quedarse con el bucle de mensajes
- * programados: los mandaría dos veces. Con esto el mensaje se guarda igual, pero
- * solo lo envía el CRM de producción.
- */
-const NO_SCHEDULER = process.env.PHYTO_CRM_NO_SCHEDULER === '1';
 const WEB_PUSH_PUBLIC_KEY = (process.env.PHYTO_WEB_PUSH_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? '').trim();
 const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.env.VAPID_PRIVATE_KEY ?? '').trim();
 const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT ?? 'mailto:admin@phytoemagry.local').trim();
@@ -6775,15 +6765,9 @@ export async function startCrmServer(config = {}) {
    * de la base de datos y lo intenta cuando le toca. Con `schedulerIntervalMs: 0`
    * no arranca nada (los tests llaman a `tick()` a mano).
    */
-  const schedulerInterval = NO_SCHEDULER
-    ? 0
-    : (config.schedulerIntervalMs ?? (config.schedulerEnabled === false ? 0 : 30_000));
+  const schedulerInterval =
+    config.schedulerIntervalMs ?? (config.schedulerEnabled === false ? 0 : 30_000);
   const stopScheduler = scheduler.start({ intervalMs: schedulerInterval });
-  if (NO_SCHEDULER && !settings.quiet) {
-    console.log(
-      '[crm] mensajes programados: bucle DESACTIVADO (PHYTO_CRM_NO_SCHEDULER=1) · se guardan, pero los envía el CRM que sí lo tiene encendido',
-    );
-  }
   if (schedulerInterval && !settings.quiet) {
     console.log(
       `[crm] mensajes programados: scheduler cada ${Math.round(schedulerInterval / 1000)}s · el trabajo vive en la base de datos (sobrevive reinicios)`,
