@@ -203,6 +203,23 @@ async function approvePersonalTemplateForUat() {
   if (result.response.status !== 200) throw new Error(`no se pudo aprobar plantilla libre: ${JSON.stringify(result.body)}`);
 }
 
+/** La plantilla con la que se PIDE la ubicación al cliente. */
+async function approveLocationTemplateForUat() {
+  const result = await adminJson('/api/admin/wa-templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'phyto_ubicacion_entrega_v1',
+      friendlyName: 'Solicitar ubicación',
+      status: 'APPROVED',
+      body: 'Hola {{1}}, necesitamos confirmar la ubicación donde deseas recibir tu pedido {{2}}.',
+      variables: ['customer_name', 'order_number'],
+      metaTemplateId: 'tpl-uat-location',
+      lastSyncedAt: new Date().toISOString(),
+    }),
+  });
+  if (result.response.status !== 200) throw new Error(`no se pudo aprobar la plantilla de ubicación: ${JSON.stringify(result.body)}`);
+}
+
 beforeAll(async () => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), 'phyto-uat-conv-'));
   app = await startCrmServer({
@@ -677,6 +694,68 @@ describe('escribir el mensaje de un chat nuevo (fuera de la ventana de 24 h)', (
 function closeSheetForUat() {
   click('[data-close-sheet]');
 }
+
+describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
+  /*
+   * Lo que se preguntó: desde el chat, ¿dónde se elige una plantilla? ¿y cómo se
+   * pide la ubicación? Antes, con la ventana abierta, no había NINGUNA entrada.
+   */
+  it('el botón del compositor y el menú ⋯ abren las plantillas aprobadas', async () => {
+    await approveLocationTemplateForUat();
+    click(`[data-conv="${ids.luis}"]`);
+    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
+
+    // Botón del compositor (el chat tiene la ventana de 24 h abierta).
+    expect(click('#wa-template-open')).toBe(true);
+    await waitFor(() => $('#sheet-body #wa-send-template'), 'la hoja de plantillas', 9000);
+    const opciones = $$('#wa-template option').map((option) => option.value);
+    expect(opciones).toContain('phyto_ubicacion_entrega_v1');
+    expect(opciones).toContain('phyto_followup_checkin');
+    closeSheetForUat();
+
+    // Y el menú de acciones del chat lleva a lo mismo.
+    click('#wa-actions');
+    await waitFor(() => $('#sheet-body [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
+    expect($('#sheet-body [data-wa-ask-location]')).not.toBeNull();
+    expect($('#sheet-body').textContent).toContain('Pedir ubicación');
+  }, 30000);
+
+  it('«Pedir ubicación» abre LA plantilla correcta y se envía con los datos escritos', async () => {
+    // El menú puede haberse cerrado con la hoja anterior: se vuelve a abrir.
+    if (!$('#sheet-body [data-wa-ask-location]')) {
+      click('#wa-actions');
+      await waitFor(() => $('#sheet-body [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
+    }
+    click('#sheet-body [data-wa-ask-location]');
+    const pedido = await waitFor(
+      () => $('#wa-template-fields [data-wa-var="2"]'),
+      'los huecos de la plantilla de ubicación',
+      9000,
+    );
+    expect($('#wa-template').value).toBe('phyto_ubicacion_entrega_v1');
+    // El nombre lo pone el CRM; el número de pedido se escribe aquí.
+    expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Luis Lista');
+    expect($('#wa-template-preview').textContent).toContain('necesitamos confirmar la ubicación');
+
+    const antes = whatsapp.sent.length;
+    pedido.value = 'PED-1042';
+    pedido.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    expect($('#wa-template-preview').textContent).toContain('pedido PED-1042');
+
+    click('#sheet-body #wa-send-template');
+    await waitFor(() => whatsapp.sent.length === antes + 1, 'la plantilla de ubicación enviada', 9000);
+    expect(whatsapp.sent.at(-1).template.name).toBe('phyto_ubicacion_entrega_v1');
+    expect(whatsapp.sent.at(-1).template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Luis Lista' },
+          { type: 'text', text: 'PED-1042' },
+        ],
+      },
+    ]);
+  }, 30000);
+});
 
 describe('la foto del cliente', () => {
   /*

@@ -2089,7 +2089,7 @@
                               </span>`
                             : isDeliveryRole && assignedToMe
                               ? `<span class="item__actions">
-                                  ${!hasDestination && order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Solicitar ubicación</button>` : order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
+                                  ${!hasDestination && order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" data-delivery-ask="location" type="button">Solicitar ubicación</button>` : order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
                                   <button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button" ${canStart ? '' : 'disabled'}>Iniciar entrega</button>
                                 </span>`
                               : isDeliveryRole
@@ -4410,6 +4410,8 @@
    * sale con las palabras del operador.
    */
   const WA_FREE_VAR_KEYS = ['mensaje', 'texto', 'mensaje_libre', 'libre', 'personalizado'];
+  /** Plantilla aprobada con la que se pide la ubicación al cliente. */
+  const LOCATION_TEMPLATE = 'phyto_ubicacion_entrega_v1';
   function waTemplateFreeSlot(template) {
     const index = waTemplateHuecos(template).findIndex((key) =>
       WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase()),
@@ -4516,7 +4518,7 @@
    * gesto (escribir → Enviar → Enviar plantilla), en vez de tener que copiar el
    * texto a mano en un hueco.
    */
-  async function openWaTemplateSheet() {
+  async function openWaTemplateSheet(options = {}) {
     const borrador = String(state.wa.draft ?? '').trim();
     openSheet('Enviar plantilla', '<p class="view__hint">Cargando plantillas aprobadas…</p>');
     try {
@@ -4525,9 +4527,19 @@
     } catch {
       /* Si falla la consulta, se usa la última lista conocida y la hoja lo explica. */
     }
+    const aprobadas = (state.templates ?? []).filter(waTemplateApproved);
     const personal = waPersonalTemplate();
-    const prefill = borrador && personal ? { templateName: personal.name, freeText: borrador } : {};
-    if (borrador && !personal) {
+    const prefill = { freeText: borrador };
+    if (options.templateName) {
+      // Se pidió una plantilla concreta (p. ej. «Solicitar ubicación»).
+      prefill.templateName = options.templateName;
+      if (!aprobadas.some((template) => template.name === options.templateName)) {
+        prefill.nota = `La plantilla «${options.templateName}» no está aprobada o no está sincronizada: elige otra o pulsa Sincronizar con Meta en Ajustes.`;
+      }
+    } else if (borrador && personal) {
+      prefill.templateName = personal.name;
+    }
+    if (borrador && !personal && !options.templateName) {
       prefill.nota =
         'Ninguna plantilla aprobada admite texto propio ahora mismo: elige una plantilla y rellena sus huecos a mano.';
     }
@@ -4548,6 +4560,17 @@
       const sent = await sendWaMessage({ template: $('#wa-template')?.value || null, templateValues }, event.currentTarget);
       if (sent) closeSheet();
     });
+  }
+
+  /**
+   * PEDIR LA UBICACIÓN desde el chat.
+   *
+   * WhatsApp solo deja texto libre dentro de la ventana de 24 h; para pedirla
+   * siempre se usa la plantilla aprobada «Solicitar ubicación», que se abre ya
+   * elegida (el nombre del cliente y el número de pedido los pone el CRM).
+   */
+  function askForLocation() {
+    return openWaTemplateSheet({ templateName: LOCATION_TEMPLATE });
   }
 
   /**
@@ -4594,10 +4617,14 @@
      * cambio de uno a otro no mueve nada de sitio.
      */
     return `<div class="composer-bar">
-        <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio"
-          title="${
-            puedeAdjuntar ? 'Adjuntar imagen o audio' : 'Adjuntar: la multimedia no está activa en el servidor'
-          }">${ICONS.plus}</button>
+        <span class="composer-left">
+          <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio"
+            title="${
+              puedeAdjuntar ? 'Adjuntar imagen o audio' : 'Adjuntar: la multimedia no está activa en el servidor'
+            }">${ICONS.plus}</button>
+          <button class="composer-btn" id="wa-template-open" type="button" aria-label="Enviar plantilla"
+            title="Enviar una plantilla aprobada (puedes escribir sus huecos)">${ICONS.note}</button>
+        </span>
         <textarea id="wa-text" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
         <span class="composer-end">
           <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
@@ -5402,6 +5429,14 @@
     setWaView('chat');
     renderWhatsapp();
     await loadWaThread(conversationId, { force: true });
+    /*
+     * Se puede pedir que, al abrir el chat, quede abierta una plantilla concreta:
+     * así «Solicitar ubicación» (por ejemplo desde el delivery) deja el aviso
+     * listo para enviar sin tener que buscarlo.
+     */
+    if (options.openTemplate && state.wa.selectedId === conversationId) {
+      await openWaTemplateSheet({ templateName: options.openTemplate });
+    }
   }
 
   async function loadWaThread(conversationId, options = {}) {
@@ -6415,6 +6450,14 @@
         <button class="menu-item" data-quick-replies="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Respuesta rápida</strong></span>
+        </button>
+        <button class="menu-item" data-wa-template="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
+          <span><strong>Enviar plantilla</strong><small>Elige entre las aprobadas</small></span>
+        </button>
+        <button class="menu-item" data-wa-ask-location="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.pin}</span>
+          <span><strong>Pedir ubicación</strong><small>Plantilla «Solicitar ubicación»</small></span>
         </button>
         <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
@@ -8689,7 +8732,10 @@
       }
       const deliveryContact = event.target.closest('[data-delivery-contact]');
       if (deliveryContact) {
-        openChat(deliveryContact.dataset.deliveryContact).catch(() => toast('No se pudo abrir el chat'));
+        // «Solicitar ubicación» deja además el aviso listo para enviar.
+        const opciones =
+          deliveryContact.dataset.deliveryAsk === 'location' ? { openTemplate: LOCATION_TEMPLATE } : {};
+        openChat(deliveryContact.dataset.deliveryContact, opciones).catch(() => toast('No se pudo abrir el chat'));
         return;
       }
       const deliveryCenter = event.target.closest('[data-delivery-center]');
@@ -8884,6 +8930,16 @@
       }
       if (event.target.closest('#wa-mic')) {
         openRecorder(state.wa.selectedId);
+        return;
+      }
+      // Enviar una plantilla desde el chat: el botón del compositor y la entrada
+      // del menú ⋯ hacen lo mismo (elegir plantilla y rellenar sus huecos).
+      if (event.target.closest('#wa-template-open') || event.target.closest('[data-wa-template]')) {
+        openWaTemplateSheet();
+        return;
+      }
+      if (event.target.closest('[data-wa-ask-location]')) {
+        askForLocation();
         return;
       }
       // --------------------------------------------- respuestas rápidas

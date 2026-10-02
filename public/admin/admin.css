@@ -4407,6 +4407,13 @@ body[data-wa-view='chat'] .float-btn--menu {
   cursor: pointer;
 }
 
+/* Adjuntar y plantillas comparten la casilla de la izquierda del compositor. */
+.composer-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .composer-btn:hover {
   background: var(--surface-muted);
   color: var(--phyto-primary);
