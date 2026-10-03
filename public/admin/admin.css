@@ -2013,6 +2013,58 @@ body[data-tab='whatsapp'] .content {
   font-size: 0.9rem;
 }
 
+/*
+ * CONVERSACIÓN BLINDADA: no está a tu nombre. Ni hilo ni compositor: se explica y
+ * se ofrece pedirla. El candado es el mismo del resto del panel.
+ */
+.wa-locked {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 420px;
+  margin: 32px auto;
+  padding: 22px 18px;
+  border: 1px solid rgba(11, 107, 79, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+  text-align: center;
+}
+
+.wa-locked__icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: rgba(11, 107, 79, 0.08);
+  color: var(--phyto-primary);
+}
+
+.wa-locked__icon .svg {
+  width: 24px;
+  height: 24px;
+}
+
+.wa-locked strong {
+  font-size: 1rem;
+}
+
+.wa-locked p {
+  margin: 0;
+  color: var(--pe-ink-700, #46554f);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.wa-locked .btn {
+  width: 100%;
+}
+
+.wa-locked__pie {
+  color: var(--pe-ink-500) !important;
+  font-size: 0.8rem !important;
+}
+
 /* Una conversación de la lista: se toca entera. */
 .conv {
   display: grid;
@@ -2292,6 +2344,17 @@ body[data-tab='whatsapp'] .content {
 .drawer__item:hover,
 .drawer__item:focus-visible {
   background: var(--surface-muted);
+}
+
+/* Un enlace del menú (Ir a la web): se ve como los demás, sin subrayado. */
+.drawer__item--link {
+  text-decoration: none;
+}
+
+.drawer__out {
+  margin-left: auto;
+  color: var(--pe-ink-500, #6b7a75);
+  font-size: 0.95rem;
 }
 
 .drawer__item[aria-current='true'] {
@@ -3628,64 +3691,72 @@ body[data-wa-view='chat'] .float-btn--menu {
  */
 .wa__convs {
   gap: 0;
-  /* El botón de agregar cliente es una fila MÁS de la lista (ocupa su sitio). */
-  padding-bottom: 12px;
+  /* Aire al final para que el botón flotante no tape la última conversación. */
+  padding-bottom: 96px;
 }
 
 /*
- * AGREGAR CLIENTE va DENTRO de la tarjeta, como última fila de la lista: ocupa su
- * propio sitio (antes flotaba encima y tapaba la última conversación) y se ve que
- * forma parte de la lista, no un botón suelto encima.
+ * AGREGAR CLIENTE: botón FLOTANTE, redondo, solo el icono (estilo AppSheet), en
+ * la esquina de abajo a la derecha. Flota sobre la lista en el móvil y dentro de
+ * la tarjeta en el escritorio.
  */
 .wa-new-chat {
-  justify-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  min-height: 52px;
-  margin: 2px 8px 8px;
-  padding: 0 14px;
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--pe-tabbar) + 16px + env(safe-area-inset-bottom, 0px));
+  z-index: 35;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
   border: 1px solid rgba(11, 107, 79, 0.18);
-  border-radius: 14px;
-  background: rgba(11, 107, 79, 0.055);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
   color: var(--phyto-primary);
-  font: inherit;
-  font-weight: 700;
+  box-shadow: 0 14px 30px rgba(7, 61, 46, 0.18);
+  backdrop-filter: blur(10px);
   cursor: pointer;
   touch-action: manipulation;
   transition:
+    transform var(--pe-motion) var(--pe-ease),
     background var(--pe-motion) var(--pe-ease),
-    transform var(--pe-motion) var(--pe-ease);
+    box-shadow var(--pe-motion) var(--pe-ease);
 }
 
 .wa-new-chat:hover,
 .wa-new-chat:focus-visible {
-  background: rgba(11, 107, 79, 0.1);
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.24);
 }
 
 .wa-new-chat:active {
-  transform: scale(0.99);
+  transform: scale(0.94);
 }
 
 .wa-new-chat__icon {
   display: block;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   object-fit: contain;
 }
 
-.wa-new-chat__label {
-  font-size: 0.95rem;
-}
-
-/*
- * Con una selección abierta, agregar cliente sobra (estás eligiendo, no creando).
- * Ya no hace falta apartarlo al ABRIR un chat: vive dentro de la lista, así que
- * desaparece con ella en el móvil y en el escritorio sigue a mano.
- */
+/* Con un chat abierto (móvil) o una selección abierta, el botón se aparta. */
+.wa[data-view='chat'] .wa-new-chat,
 .wa__convs--sel + .wa-new-chat {
   display: none;
+}
+
+@media (min-width: 720px) {
+  .wa__list {
+    position: relative;
+  }
+
+  .wa-new-chat {
+    position: absolute;
+    right: 22px;
+    bottom: 22px;
+  }
 }
 
 .conv-wrap {
@@ -6564,16 +6635,21 @@ body[data-wa-view='chat'] .mobile-header {
 
   body[data-tab='whatsapp'] .wa__convs {
     position: relative;
-    /* El botón de agregar cliente es una fila más: aquí solo queda su respiro. */
-    padding-bottom: 6px;
+    /* Aire para el botón flotante y la barra de abajo. */
+    padding-bottom: calc(var(--pe-tabbar) + 34px + env(safe-area-inset-bottom, 0px));
   }
 
-  /*
-   * En el móvil el botón va al final de la lista, dentro de la tarjeta, y se aparta
-   * de la barra de abajo (antes era un flotante que tapaba la última conversación).
-   */
-  body[data-tab='whatsapp'] .wa-new-chat {
-    margin: 2px 8px calc(var(--pe-tabbar) + 16px + env(safe-area-inset-bottom, 0px));
+  /* Un velo suave al final de la lista: el botón flotante no pisa una fila. */
+  body[data-tab='whatsapp'][data-wa-view='list'] .wa__list::after {
+    content: '';
+    position: fixed;
+    right: 0;
+    bottom: calc(var(--pe-tabbar) + env(safe-area-inset-bottom, 0px));
+    left: 0;
+    z-index: 3;
+    height: 34px;
+    background: linear-gradient(0deg, rgba(245, 251, 251, 0.98), rgba(245, 251, 251, 0));
+    pointer-events: none;
   }
 
   body[data-tab='whatsapp'] .conv-wrap {

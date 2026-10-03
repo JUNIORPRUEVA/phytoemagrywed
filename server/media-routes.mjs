@@ -249,7 +249,12 @@ export function createMediaRoutes(deps) {
     if (typeof deps.resolveConversation !== 'function') {
       return json(res, 501, { ok: false, error: 'not_configured' });
     }
-    const contexto = await deps.resolveConversation(conversationId);
+    /*
+     * La conversación se resuelve CON la petición: el servidor necesita saber
+     * quién la pide para no mandar archivos a una conversación que no es suya
+     * (misma regla que el texto).
+     */
+    const contexto = await deps.resolveConversation(conversationId, req);
     if (!contexto?.conversation || !contexto?.customer) {
       return json(res, 404, { ok: false, error: 'not_found' });
     }

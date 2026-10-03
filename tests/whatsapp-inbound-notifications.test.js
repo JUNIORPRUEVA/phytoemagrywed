@@ -180,7 +180,12 @@ describe('WhatsApp inbound message notifications', () => {
       const list = await notifications();
       return list.filter((row) => row.type === 'WHATSAPP_MESSAGE_RECEIVED' && row.data?.wa_message_id === 'wamid.NOTIFY-TXT-1');
     });
-    expect(rows.length).toBeGreaterThanOrEqual(3);
+    /*
+     * A una conversación SIN ASIGNAR solo se avisa a ADMINISTRACIÓN: nadie más
+     * puede atendería (los agentes ya no se asignan conversaciones solos; las
+     * piden), así que avisarles sería mandarles a una pantalla bloqueada.
+     */
+    expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0]).toMatchObject({
       title: 'Nuevo mensaje · María Pérez',
       body: 'Hola, quisiera confirmar si mi pedido sale hoy completo por favor',

@@ -123,12 +123,17 @@ describe('Mi perfil', () => {
     expect($('#drawer-user')?.textContent).toContain('Ana Perfil');
   });
 
-  it('«Perfil» está al final de la parte de abajo del menú', () => {
+  it('«Perfil» está al final de las pantallas del menú (y después va «Ir a la web»)', () => {
     const items = $$('.drawer__nav--bottom .drawer__item');
     expect(items.length).toBeGreaterThanOrEqual(2);
-    const ultimo = items.at(-1);
+    // La última PANTALLA es el perfil; después solo queda el enlace a la tienda.
+    const pantallas = items.filter((item) => item.dataset.tab);
+    const ultimo = pantallas.at(-1);
     expect(ultimo.dataset.tab).toBe('perfil');
     expect(ultimo.textContent).toContain('Perfil');
+    const enlace = items.at(-1);
+    expect(enlace.id).toBe('drawer-web');
+    expect(enlace.getAttribute('href')).toBe('/');
   });
 
   it('el bloque del usuario del menú también lleva al perfil', async () => {

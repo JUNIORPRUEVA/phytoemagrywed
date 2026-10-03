@@ -1131,8 +1131,85 @@ async function deliveryOrderForConversation(ctx, conversation, actor) {
   );
 }
 
-async function markDeliveryContacted(ctx, item, order, actor) {
-  if (!item || !order || !canDeliver(actor) || order.delivery?.delivery_user_id !== actor.id) return null;
+/**
+ * QUÉ PUEDE ABRIR ESTE USUARIO, resuelto de UNA pasada.
+ *
+ * Se calcula así (y no conversación a conversación) porque la lista de
+ * conversaciones y la de seguimientos lo preguntan muchas veces seguidas:
+ *
+ *   - administración (o la clave del panel) → todo;
+ *   - si no: las conversaciones ASIGNADAS a él, más las de los pedidos que él
+ *     lleva repartiendo (el repartidor tiene que poder hablar con su cliente).
+ *
+ * @param {any} ctx
+ * @param {any} actor
+ * @returns {Promise<{all: boolean, conversationIds: Set<string>|null, customerIds: Set<string>|null}>}
+ */
+async function conversationAccess(ctx, actor) {
+  if (hasPermission(actor, 'chats.force_reassign') || !actor?.id || actor.actor_type !== 'USER') {
+    return { all: true, conversationIds: null, customerIds: null };
+  }
+  const conversations = await ctx.db.list('conversations', { limit: 5000 });
+  const conversationIds = new Set();
+  for (const conversation of conversations) {
+    if (conversation.assigned_user_id === actor.id) conversationIds.add(conversation.id);
+  }
+  const rows = await ctx.store.listAdmin({ limit: 5000 });
+  for (const item of rows) {
+    if (item.type !== 'order_intent' || !item.conversation_id) continue;
+    const order = orderOf(item);
+    if (['entregado', 'cancelado', 'perdido'].includes(String(order?.status ?? ''))) continue;
+    if (order?.delivery?.delivery_user_id === actor.id) conversationIds.add(item.conversation_id);
+  }
+  const customerIds = new Set();
+  for (const conversation of conversations) {
+    if (conversationIds.has(conversation.id)) customerIds.add(conversation.customer_id);
+  }
+  return { all: false, conversationIds, customerIds };
+}
+
+/**
+ * LA REGLA DE ORO: ¿puede este usuario ABRIR esta conversación?
+ *
+ * El negocio lo pidió BLINDADO: un agente (o repartidor) que no administra solo
+ * entra en lo que es SUYO. Lo demás se sigue viendo en la LISTA (nombre y último
+ * mensaje, como en WhatsApp), pero el contenido —hilo, seguimientos, escribir—
+ * necesita que alguien se lo asigne. Y para eso está la solicitud, que avisa a
+ * administración.
+ *
+ * @param {any} ctx
+ * @param {any} actor
+ * @param {any} conversation
+ */
+async function canOpenConversation(ctx, actor, conversation) {
+  if (!conversation) return false;
+  const access = await conversationAccess(ctx, actor);
+  return access.all || access.conversationIds.has(conversation.id);
+}
+
+/** ¿Puede este usuario trabajar con ese cliente (seguimientos, tareas)? */
+async function canWorkWithCustomer(ctx, actor, customerId) {
+  if (!customerId) return false;
+  const access = await conversationAccess(ctx, actor);
+  return access.all || access.customerIds.has(customerId);
+}
+
+/** Respuesta única cuando la conversación no es suya. */
+function denyConversation(res, json, conversation) {
+  const assigned = conversation?.assigned_display_name_snapshot ?? null;
+  json(res, 403, {
+    ok: false,
+    error: 'not_your_conversation',
+    message: assigned
+      ? `Esta conversación está al frente de ${assigned}. Pide que te la asignen para verla y contestar.`
+      : 'Esta conversación todavía no está asignada a ti. Pide que te la asignen para verla y contestar.',
+    assigned_user_id: conversation?.assigned_user_id ?? null,
+    assigned_display_name: assigned,
+  });
+  return true;
+}
+
+async function markDeliveryContacted(ctx, item, order, actor) {  if (!item || !order || !canDeliver(actor) || order.delivery?.delivery_user_id !== actor.id) return null;
   if (order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.CONTACTED && order.delivery?.delivery_contacted_by_user_id === actor.id) return order;
   const next = {
     ...order,
@@ -5627,10 +5704,19 @@ async function handle(req, res, ctx) {
         return;
       }
       const results = [];
+      const puedeVerTodo = hasPermission(actor, 'chats.force_reassign');
       for (const id of ids) {
         const conversation = await findConversation(ctx, id);
         if (!conversation) {
           results.push({ id, ok: false, error: 'not_found' });
+          continue;
+        }
+        /*
+         * En lote también manda la regla: lo que no es tuyo no se marca leído, no
+         * se archiva y no se le manda nada (antes se podía tocar lo ajeno de golpe).
+         */
+        if (!puedeVerTodo && !(await canOpenConversation(ctx, actor, conversation))) {
+          results.push({ id, ok: false, error: 'not_your_conversation' });
           continue;
         }
         if (action === 'mark_read') {
@@ -5675,6 +5761,54 @@ async function handle(req, res, ctx) {
       }
       const customer = await ctx.customers.get(conversation.customer_id);
 
+      /*
+       * SOLICITAR QUE ME LA ASIGNEN. Un agente no se asigna conversaciones solo
+       * (eso lo pidió el negocio expresamente): pide, y la petición le llega a
+       * administración con su aviso y su enlace directo.
+       */
+      if (action === 'assignment-request' && req.method === 'POST') {
+        if (!currentUser) {
+          json(res, 409, { ok: false, error: 'legacy_session', message: 'La clave del panel ya puede asignar: no hace falta pedirlo.' });
+          return;
+        }
+        if (conversation.assigned_user_id === currentUser.id) {
+          json(res, 409, { ok: false, error: 'already_yours', message: 'Esa conversación ya está a tu nombre.' });
+          return;
+        }
+        const nombre = text(customer?.name, 120) ?? text(customer?.phone_e164, 40) ?? 'un cliente';
+        const alFrente = conversation.assigned_display_name_snapshot ?? null;
+        const admins = (await ctx.users.listUsers()).filter((user) => user.role === 'ADMIN' && user.active !== false);
+        // Una petición por persona y por día: si administración no la atiende, se
+        // puede volver a pedir mañana sin llenar el aviso de ruido.
+        const hoy = dayIn(ctx.clock(), TIME_ZONE);
+        for (const admin of admins) {
+          const creada = await createUserNotification(ctx, {
+            recipientUserId: admin.id,
+            type: 'CONVERSATION_ASSIGNMENT_REQUESTED',
+            title: `Piden una conversación · ${nombre}`,
+            body: `${actor?.display_name ?? 'Un agente'} pide que le asignes la conversación de ${nombre}${
+              alFrente ? ` (ahora la lleva ${alFrente})` : ' (sin asignar)'
+            }.`,
+            entityType: 'conversation',
+            entityId: conversation.id,
+            deepLink: `/admin/?v=whatsapp&conversation=${encodeURIComponent(conversation.id)}`,
+            data: { customer_id: conversation.customer_id, requested_by_user_id: actor.id, assigned_user_id: conversation.assigned_user_id ?? null },
+            idempotencyKey: `conv-request:${conversation.id}:${actor.id}:${hoy}`,
+          });
+          if (!creada.duplicate) await sendPushForNotification(ctx, creada.notification);
+        }
+        await ctx.audit?.record({
+          entity: 'conversation',
+          entityId: conversation.id,
+          action: 'conversation.assignment_requested',
+          actor: actor?.display_name ?? null,
+          summary: `Pide que le asignen la conversación de ${nombre}`,
+          data: { requested_by_user_id: actor?.id ?? null, assigned_user_id: conversation.assigned_user_id ?? null },
+        });
+        json(res, 202, { ok: true, requested: true, notified: admins.length });
+        return;
+      }
+
       if (['take', 'release', 'assign'].includes(action) && req.method === 'POST') {
         let body = {};
         try {
@@ -5686,6 +5820,12 @@ async function handle(req, res, ctx) {
           json(res, 409, { ok: false, error: 'legacy_session', message: 'Entra con usuario para asignarte conversaciones.' });
           return;
         }
+        /*
+         * NADIE SE ASIGNA NADA SOLO. `take` (ponerse al frente uno mismo) es de
+         * administración: un agente lo PIDE (`assignment-request`) y espera. Así el
+         * responsable de una conversación no depende de quién llegue primero.
+         */
+        if (action === 'take' && !requirePermission('chats.take_unassigned', 'Nadie se asigna conversaciones solo: pide que te la asignen.')) return;
         if (action === 'assign' && !requireAdmin()) return;
         const targetUserId =
           action === 'release'
@@ -5744,6 +5884,11 @@ async function handle(req, res, ctx) {
       }
 
       if (action === 'messages' && req.method === 'GET') {
+        // El hilo es de quien la tiene al frente (o de administración).
+        if (!(await canOpenConversation(ctx, actor, conversation))) {
+          denyConversation(res, json, conversation);
+          return;
+        }
         const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
         const stage = customer ? await ctx.customers.customerStage(customer.id) : null;
         const tags = customer ? await ctx.customers.tagsForCustomer(customer.id) : [];
@@ -5764,6 +5909,10 @@ async function handle(req, res, ctx) {
       }
 
       if (action === 'read' && req.method === 'POST') {
+        if (!(await canOpenConversation(ctx, actor, conversation))) {
+          denyConversation(res, json, conversation);
+          return;
+        }
         const updated = await ctx.customers.markConversationRead(conversation.id);
         json(res, 200, { ok: true, conversation: updated });
         return;
@@ -5936,6 +6085,15 @@ async function handle(req, res, ctx) {
        */
       if (action === 'messages' && req.method === 'POST') {
         if (!requirePermission('chats.reply')) return;
+        /*
+         * BLINDADO: sin la conversación asignada no se contesta. Antes valía con
+         * que estuviera SIN asignar (cualquiera podía responder y nadie sabía de
+         * quién era); ahora el que quiere atenderla la PIDE y administración decide.
+         */
+        if (!(await canOpenConversation(ctx, actor, conversation))) {
+          denyConversation(res, json, conversation);
+          return;
+        }
         if (
           conversation.assigned_user_id &&
           conversation.assigned_user_id !== currentUser?.id &&
@@ -6161,14 +6319,24 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/followups' && req.method === 'GET') {
       const buckets = await ctx.followups.buckets();
       const customers = await ctx.customers.list({});
+      /*
+       * BLINDADO: un agente no ve los seguimientos de un cliente cuya conversación
+       * no lleva él (eran visibles para todo el equipo, con el nombre del cliente y
+       * el motivo de la tarea). Administración los sigue viendo todos.
+       */
+      const acceso = await conversationAccess(ctx, actor);
+      const soloMios = (rows) =>
+        acceso.all
+          ? rows
+          : rows.filter((row) => acceso.customerIds.has(row.customer_id) || row.assigned_user_id === actor?.id);
       json(res, 200, {
         ok: true,
         reference: buckets.reference,
-        today: withCustomer(buckets.today, customers),
-        overdue: withCustomer(buckets.overdue, customers),
-        upcoming: withCustomer(buckets.upcoming, customers),
-        completed: withCustomer(buckets.completed.slice(-30), customers),
-        cancelled: withCustomer(buckets.cancelled.slice(-30), customers),
+        today: withCustomer(soloMios(buckets.today), customers),
+        overdue: withCustomer(soloMios(buckets.overdue), customers),
+        upcoming: withCustomer(soloMios(buckets.upcoming), customers),
+        completed: withCustomer(soloMios(buckets.completed.slice(-30)), customers),
+        cancelled: withCustomer(soloMios(buckets.cancelled.slice(-30)), customers),
         summary: await ctx.followups.summary(),
         // Plan EFECTIVO (el de Ajustes, ya filtrado) + el plan base para editar.
         plan: await ctx.followups.planNow(),
@@ -6191,6 +6359,15 @@ async function handle(req, res, ctx) {
       const customer = body.customerId ? await ctx.customers.get(text(body.customerId, 80) ?? '') : null;
       if (!customer) {
         json(res, 422, { ok: false, error: 'unknown_customer' });
+        return;
+      }
+      // Un seguimiento es trabajo de alguien: solo lo crea quien lleva ese cliente.
+      if (!(await canWorkWithCustomer(ctx, actor, customer.id))) {
+        json(res, 403, {
+          ok: false,
+          error: 'not_your_customer',
+          message: 'Ese cliente no está asignado a ti: pide que te lo asignen para programarle seguimientos.',
+        });
         return;
       }
       // La tarea puede colgar de la conversación y del pedido de los que nace.
@@ -6250,6 +6427,15 @@ async function handle(req, res, ctx) {
       const current = await ctx.db.get('followups', followupId);
       if (!current) {
         json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      // Decidir una tarea (completar, posponer…) es de quien lleva ese cliente.
+      if (!(await canWorkWithCustomer(ctx, actor, current.customer_id))) {
+        json(res, 403, {
+          ok: false,
+          error: 'not_your_customer',
+          message: 'Ese seguimiento es de un cliente que no llevas tú.',
+        });
         return;
       }
       if (['skip', 'cancel'].includes(action) && !requirePermission('followups.delete', 'Solo ADMIN puede cancelar u omitir seguimientos.')) return;
@@ -6963,6 +7149,30 @@ export async function startCrmServer(config = {}) {
   ctxRef.current = ctx;
   chatEventsRef.current = (info) => emitChatEvent(ctx, info);
 
+  /**
+   * Quién firma una petición de multimedia: la MISMA sesión que el resto del panel
+   * (cookie de usuario o la clave vieja, que equivale a administración). Sirve para
+   * aplicar a los archivos la misma regla que al texto: sin la conversación
+   * asignada no se manda nada.
+   */
+  async function mediaActorFromRequest(req) {
+    if (!req) return null;
+    const value = readCookie(req, COOKIE);
+    const session = parseUserSessionValue(value, settings.token);
+    const identity = session ? await users.sessionUser(session.sessionId) : null;
+    if (identity?.user) {
+      return {
+        id: identity.user.id,
+        role: identity.user.role,
+        display_name: identity.user.display_name,
+        actor_type: 'USER',
+      };
+    }
+    return sessionValid(value, settings.token)
+      ? { id: 'LEGACY_PANEL', role: 'ADMIN', display_name: 'Panel legacy', actor_type: 'LEGACY' }
+      : null;
+  }
+
   /*
    * RUTAS DE MULTIMEDIA (S3) — se registran con el MISMO guard de sesión que el
    * resto de `/api/admin/*`. Sin sesión no se sirve ni un byte, y la respuesta
@@ -6981,26 +7191,20 @@ export async function startCrmServer(config = {}) {
             const value = readCookie(req, COOKIE);
             return Boolean(parseUserSessionValue(value, settings.token) || sessionValid(value, settings.token));
           },
-          resolveConversation: async (conversationId) => {
+          resolveConversation: async (conversationId, req = null) => {
             const conversation = await findConversation(ctx, conversationId);
             if (!conversation) return null;
+            /*
+             * La MISMA regla que el texto: sin la conversación asignada no se manda
+             * ni una foto ni un audio. Se resuelve como «no existe» para no dar
+             * pistas de lo ajeno, pero no se envía nada.
+             */
+            if (!(await canOpenConversation(ctx, mediaActorFromRequest(req), conversation))) return null;
             const customer = await ctx.customers.get(conversation.customer_id);
             return customer ? { conversation, customer } : null;
           },
           persistOutbound: async (input) => {
-            const mediaCookie = readCookie(input.req, COOKIE);
-            const mediaSession = parseUserSessionValue(mediaCookie, settings.token);
-            const mediaIdentity = mediaSession ? await users.sessionUser(mediaSession.sessionId) : null;
-            const mediaActor = mediaIdentity?.user
-              ? {
-                  id: mediaIdentity.user.id,
-                  role: mediaIdentity.user.role,
-                  display_name: mediaIdentity.user.display_name,
-                  actor_type: 'USER',
-                }
-              : sessionValid(mediaCookie, settings.token)
-                ? { id: 'LEGACY_PANEL', role: 'ADMIN', display_name: 'Panel legacy', actor_type: 'LEGACY' }
-                : null;
+            const mediaActor = mediaActorFromRequest(input.req);
             const recorded = await ctx.customers.recordOutbound({
               customer: input.customer,
               conversation: input.conversation,

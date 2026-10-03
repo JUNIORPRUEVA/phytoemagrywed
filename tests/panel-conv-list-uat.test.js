@@ -1100,14 +1100,15 @@ describe('la lista que se pinta es la nueva', () => {
     expect(css).toContain('.wa__list-head[hidden]');
     expect(css).toContain('.wa__convs--sel .conv__more');
     /*
-     * La lista se lee: sin foto en la fila, la fila ENTERA es la tarjeta (el «⋯»
-     * queda dentro, con su fondo) y agregar cliente es la última fila de la lista,
-     * dentro de la tarjeta, en vez de un flotante que tapaba la última conversación.
+     * La lista se lee: sin foto en la fila y la fila ENTERA es la tarjeta (el «⋯»
+     * queda dentro, con su fondo). Agregar cliente es un botón FLOTANTE redondo,
+     * solo el icono (estilo AppSheet), en la esquina.
      */
     expect(app_js).not.toContain('conv__avatar--profile');
     expect(css).toContain('.conv-wrap:has(.conv--active)');
-    expect(css).toContain('.wa-new-chat__label');
-    expect(css).not.toContain('.wa-new-chat {\n  position: fixed');
+    expect(css).toContain('.wa-new-chat');
+    expect(css).toContain('position: fixed');
+    expect(html).not.toContain('wa-new-chat__label');
     expect(css).toContain('.wa-bulk__btn');
     expect(app_js).toContain('wa-bulk__btn');
   });

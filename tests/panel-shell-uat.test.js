@@ -93,6 +93,24 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/\.drawer__foot \{[\s\S]*?margin-top: auto;/);
   });
 
+  it('el menú lleva a la web de la tienda con un enlace de verdad', () => {
+    /*
+     * «Ir a la web»: la raíz del MISMO dominio donde vive el panel es la tienda
+     * (`phytoemagryrd.lat/`). Tiene que ser un enlace real (`<a href>`), no un
+     * botón que llame a una función, y abrirse en otra pestaña para no perder el
+     * panel abierto.
+     */
+    const enlace = html.match(/<a[^>]*id="drawer-web"[\s\S]*?<\/a>/);
+    expect(enlace).toBeTruthy();
+    expect(enlace[0]).toContain('href="/"');
+    expect(enlace[0]).toContain('target="_blank"');
+    expect(enlace[0]).toContain('rel="noopener noreferrer"');
+    expect(enlace[0]).toContain('Ir a la web');
+    // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
+    expect(app).toContain('web: svg(');
+    expect(css).toContain('.drawer__item--link');
+  });
+
   it('los iconos son UN sistema (SVG), no emojis mezclados', () => {
     expect(app).toContain('const ICONS = {');
     expect(app).toContain('function paintIcons');

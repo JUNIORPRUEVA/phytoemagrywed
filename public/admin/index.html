@@ -176,6 +176,21 @@
             <button class="drawer__item" data-tab="perfil" type="button">
               <span class="drawer__icon" aria-hidden="true" data-icon="person"></span>Perfil
             </button>
+            <!--
+              IR A LA WEB: enlace de verdad a la tienda (`/`, el mismo dominio donde
+              vive el panel). Abre en otra pestaña para no perder el panel abierto; en
+              el teléfono, la app instalada abre el navegador con la web.
+            -->
+            <a
+              class="drawer__item drawer__item--link"
+              id="drawer-web"
+              href="/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Ir a la web
+              <span class="drawer__out" aria-hidden="true">↗</span>
+            </a>
           </nav>
           <button class="btn btn--danger btn--block" id="logout-drawer" type="button">Cerrar sesión</button>
         </div>
@@ -220,12 +235,11 @@
               <div class="wa__error" id="wa-error" hidden></div>
               <div class="wa__convs" id="wa-conversations"></div>
               <!--
-                Agregar un cliente: es la ÚLTIMA fila de la lista y vive DENTRO de la
-                tarjeta. Antes flotaba encima de las conversaciones y tapaba la última.
+                Agregar un cliente: botón FLOTANTE en la esquina (estilo AppSheet),
+                como el resto de acciones rápidas.
               -->
               <button class="wa-new-chat" id="wa-new-chat" type="button" aria-label="Agregar cliente para WhatsApp" title="Agregar cliente">
-                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="22" height="22" />
-                <span class="wa-new-chat__label">Agregar cliente</span>
+                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="28" height="28" />
               </button>
             </div>
 

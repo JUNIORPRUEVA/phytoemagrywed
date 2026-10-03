@@ -172,6 +172,8 @@
       followupId: null,
       listError: false,
       threadError: false,
+      /* Conversación que no es suya: se explica y se ofrece PEDIRLA (no se abre). */
+      locked: null,
     },
     online: navigator.onLine,
     syncedAt: null,
@@ -362,6 +364,8 @@
     /* Ojo abierto y ojo tachado: ver / ocultar la contraseña que se está escribiendo. */
     eye: svg('<path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.9"/>'),
     eyeOff: svg('<path d="M4.4 8.4C3.3 9.7 2.8 12 2.8 12S6.4 18.2 12 18.2c1.5 0 2.8-.4 4-1M9.2 6.2A7.6 7.6 0 0 1 12 5.8c5.6 0 9.2 6.2 9.2 6.2a17 17 0 0 1-3 3.6"/><path d="M4.6 4.6l14.8 14.8"/><path d="M9.9 9.9a2.9 2.9 0 0 0 4.2 4.2"/>'),
+    /* «Ir a la web»: el globo del menú, para la tienda. */
+    web: svg('<circle cx="12" cy="12" r="8.6"/><path d="M3.6 9.5h16.8M3.6 14.5h16.8"/><path d="M12 3.4c2.2 2.4 3.3 5.3 3.3 8.6s-1.1 6.2-3.3 8.6c-2.2-2.4-3.3-5.3-3.3-8.6S9.8 5.8 12 3.4z"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -4251,7 +4255,12 @@
     const me = currentUser();
     const kind = conversationAssignmentKind(conversation);
     const mine = kind === 'mine';
-    const canTake = Boolean(me) && !mine && (kind === 'unassigned' || isAdmin());
+    /*
+     * NADIE SE ASIGNA CONVERSACIONES SOLO (lo pidió el negocio): «Asignármela a mí»
+     * es de administración. Un agente la PIDE y espera; administración decide.
+     */
+    const canTake = Boolean(me) && !mine && isAdmin();
+    const canRequest = Boolean(me) && !mine && !isAdmin();
     const canRelease = Boolean(conversation.assigned_user_id) && (mine || isAdmin());
     // La lista del equipo la pide quien puede administrar (si no, sobra la llamada).
     if (isAdmin() && !(state.users ?? []).length) await loadUsers().catch(() => {});
@@ -4280,6 +4289,14 @@
         }
         ${agents.map(agentRow).join('')}
         ${
+          canRequest
+            ? `<button class="menu-item" data-conv-ask-assign="${escapeHtml(id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bell}</span>
+          <span><strong>Solicitar que me la asignen</strong><small>Avisa a administración: asignar no me toca a mí</small></span>
+        </button>`
+            : ''
+        }
+        ${
           canRelease
             ? `<button class="menu-item" data-conv-release="${escapeHtml(id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
@@ -4289,7 +4306,7 @@
         }
       </div>
       ${
-        !canTake && !agents.length && !canRelease
+        !canTake && !canRequest && !agents.length && !canRelease
           ? '<p class="rule rule--warn">Tu usuario no puede cambiar el responsable de esta conversación.</p>'
           : ''
       }`,
@@ -5207,6 +5224,48 @@
 
     const data = state.wa.chat;
     if (!data) {
+      /*
+       * BLINDADA: la conversación no está a su nombre. Ni hilo, ni compositor, ni
+       * acciones: se dice por qué y se ofrece PEDIRLA (que es lo que puede hacer).
+       * El servidor, además, no daría ni un mensaje.
+       */
+      const bloqueo = state.wa.locked;
+      if (bloqueo && bloqueo.conversationId === state.wa.selectedId) {
+        const fila = state.conversations.find((row) => row.id === bloqueo.conversationId) ?? null;
+        const cliente = fila ? waCustomer(fila) : null;
+        const nombreBloqueada = (cliente?.name ?? '').trim() || cliente?.phone_e164 || 'Conversación';
+        $('#wa-chat-name').textContent = nombreBloqueada;
+        $('#wa-chat-meta').textContent = bloqueo.assignedName
+          ? `Al frente de ${bloqueo.assignedName}`
+          : 'Sin asignar';
+        const avatarBloqueada = $('#wa-chat-avatar');
+        if (avatarBloqueada) {
+          setAvatarContent(avatarBloqueada, cliente, nombreBloqueada);
+          avatarBloqueada.disabled = true;
+          avatarBloqueada.dataset.customer = '';
+        }
+        const accionesBloqueadas = $('#wa-actions');
+        if (accionesBloqueadas) {
+          accionesBloqueadas.disabled = true;
+          accionesBloqueadas.dataset.customer = '';
+          accionesBloqueadas.dataset.conversation = '';
+        }
+        $('#thread').innerHTML = `
+          <div class="wa-locked">
+            <span class="wa-locked__icon" aria-hidden="true">${ICONS.lock}</span>
+            <strong>Esta conversación no está a tu nombre</strong>
+            <p>${escapeHtml(bloqueo.message)}</p>
+            <button class="btn btn--primary btn--block" id="wa-ask-assign" data-wa-ask-assign="${escapeHtml(
+              bloqueo.conversationId,
+            )}" type="button">Solicitar que me la asignen</button>
+            <p class="wa-locked__pie">Administración recibe el aviso con el enlace a esta conversación.</p>
+          </div>`;
+        $('#wa-composer').innerHTML = '';
+        $('#wa-ask-assign')?.addEventListener('click', (event) =>
+          requestConversationAssignment(bloqueo.conversationId, event.currentTarget),
+        );
+        return;
+      }
       $('#wa-chat-name').textContent = 'Conversación';
       $('#wa-chat-meta').textContent = '';
       $('#thread').innerHTML = '<p class="view__hint">Cargando…</p>';
@@ -5976,6 +6035,7 @@
     state.wa.chat = null;
     state.wa.chatSig = null;
     state.wa.threadError = false;
+    state.wa.locked = null;
     state.wa.draft = options.draft ?? '';
     setWaView('chat');
     renderWhatsapp();
@@ -11450,6 +11510,11 @@
       const convAssign = event.target.closest('[data-conv-assign]');
       if (convAssign) {
         openAssignSheet(convAssign.dataset.convAssign || state.wa.selectedId);
+        return;
+      }
+      const convAskAssign = event.target.closest('[data-conv-ask-assign]');
+      if (convAskAssign) {
+        requestConversationAssignment(convAskAssign.dataset.convAskAssign, convAskAssign);
         return;
       }
       const convAssignMe = event.target.closest('[data-conv-assign-me]');

@@ -1176,3 +1176,56 @@ el problema no era WhatsApp: era NUESTRA tubería.
 6. **El aviso NO lleva el texto del mensaje**: solo de qué conversación es y qué
    cambió. Quien escucha, si tiene permiso, pide el hilo; así el canal no se
    convierte en una vía para ver contenido ajeno.
+
+## 46. Blindaje: el agente solo entra en lo suyo (y pide lo que no es suyo)
+
+El negocio lo pidió con estas palabras: «el agente no admin no debería poder ver los
+seguimientos de un cliente que no es asignado… la conversación sí puede verla, pero no
+puede enviar mensaje… que pueda SOLICITAR que se le asigne, pero que él solo no lo pueda
+hacer». Y remató: «asegúrate de esto, que quede blindado». No es una regla de la
+pantalla: es una regla del servidor, porque una pantalla se puede saltar con dos líneas
+en la consola del navegador.
+
+1. **La LISTA sí, el CONTENIDO no.** Un agente sigue viendo la lista de chats como en
+   WhatsApp (nombre y último mensaje), pero al abrir el hilo de una conversación que no
+   lleva recibe `403 not_your_conversation` con un motivo legible («Esta conversación
+   está al frente de Pedro. Pide que te la asignen para verla y contestar») y el panel
+   pinta el bloqueo en vez del compositor. El bloqueo está en el servidor, en todos los
+   caminos: leer el hilo, marcar leído, escribir, mandar ubicación, subir un adjunto
+   (`media-routes.mjs` resuelve la conversación con el mismo guarda) y las acciones EN
+   LOTE (marcar leído / archivar de golpe responde `not_your_conversation` por id).
+2. **NADIE se auto-asigna.** El permiso `chats.take_unassigned` se quitó de `AGENT`,
+   `DELIVERY` y `OPERADOR`: solo administración (`chats.force_reassign`) reparte. Se
+   corrigió además una herencia del diseño anterior por la que un agente podía contestar
+   una conversación SIN asignar («está libre, es de todos»): eso ya no existe.
+3. **Se PIDE, y administración se entera.** Nuevo `POST /api/admin/conversations/:id/
+   assignment-request`: a la tercera persona no le sirve de nada (409 `already_yours`),
+   avisa a cada ADMIN activo con una notificación interna (tipo
+   `CONVERSATION_ASSIGNMENT_REQUESTED`, con enlace directo a esa conversación), escribe
+   auditoría y responde 202. **Una petición por persona, por conversación y por día**
+   (clave de idempotencia) para que el aviso no se convierta en ruido. Pedir NO asigna:
+   la conversación se queda como estaba hasta que administración decide.
+4. **El repartidor sigue pudiendo hablar con SU cliente.** El acceso no es solo «lo
+   asignado a mí»: también entran las conversaciones de los pedidos que llevo
+   repartiendo (y no están entregados/cancelados/perdidos). Sin eso, el flujo del
+   delivery —que ya existe y está probado— se rompería al blindar el chat.
+5. **Seguimientos de un cliente ajeno: invisibles.** `GET /api/admin/followups` filtra
+   los cubos por los clientes a los que tengo acceso (o las tareas que llevo yo), y
+   crear/decidir un seguimiento de un cliente que no llevo responde `403
+   not_your_customer`. Antes, cualquier agente veía el nombre del cliente, el motivo y
+   la fecha de las tareas de todo el equipo.
+6. **Blindado con pruebas, no con buena voluntad.** `tests/agent-privacy.test.js`
+   levanta el servidor de verdad con DOS agentes y tres conversaciones (una de cada
+   agente y una sin asignar) y comprueba el listado visible, los 403 del hilo/leído/
+   envío/lote, que el aviso llega a administración y no cambia la asignación, que los
+   seguimientos ajenos no aparecen ni se pueden crear, y —lo más importante— que en
+   cuanto administración asigna, el agente lee y contesta sin estorbos. Ese archivo
+   destapó además un error real: el 403 del hilo explotaba en un 500 (`json()` se
+   llamaba con dos argumentos); ahora se ve el rechazo con su motivo.
+7. **Y el «Agregar cliente» vuelve a flotar**, estilo AppSheet, sobre la lista (con su
+   margen para no tapar la última fila). Se probó con la lista pequeña: el hueco de
+   abajo se reserva con `padding-bottom`, y en escritorio el botón se pega dentro del
+   panel. El enlace **«Ir a la web»** vive al final del menú (`href="/"`, pestaña nueva,
+   `rel="noopener noreferrer"`): desde el panel se salta a la tienda sin romper la
+   sesión del CRM.
+
