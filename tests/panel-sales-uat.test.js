@@ -185,6 +185,27 @@ beforeAll(async () => {
     }),
   });
 
+  /*
+   * UN PEDIDO SIN CLIENTE: es lo que llega de la web cuando el registro entra sin
+   * teléfono (y lo que dejan las pruebas). No tiene `customer_id` ni número de pedido,
+   * así que sus acciones de cliente no se pueden ofrecer: el menú debe DECIRLO.
+   */
+  await fetch(`${app.url}/api/crm`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'pedido-sin-cliente',
+      type: 'order_intent',
+      name: 'UAT Sin Cliente',
+      source: 'checkout',
+      status: 'nuevo',
+      variantName: '5 cápsulas',
+      quantity: 1,
+      total: 1250,
+      createdAt: new Date().toISOString(),
+    }),
+  });
+
   // El panel real, en un DOM, apuntando al CRM que acaba de arrancar.
   const html = readFileSync(path.join(ADMIN_DIR, 'index.html'), 'utf8');
   dom = new JSDOM(html, {
@@ -524,6 +545,35 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(programado.order_id ?? null).not.toBe(undefined);
   });
 
+  it('un pedido sin cliente lo dice en vez de esconder las acciones', async () => {
+    click('[data-tab="pedidos"]');
+    const fila = await waitFor(
+      () =>
+        $$('#list-pedidos .order-row').find((row) =>
+          row.querySelector('.order-row__name')?.textContent.includes('UAT Sin Cliente'),
+        ) ?? null,
+      'el pedido sin cliente',
+    );
+    click(fila);
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del pedido');
+    // La ficha dice DÓNDE están las acciones (antes había que adivinarlo).
+    expect($('#sheet-body').textContent).toContain('abajo a la derecha');
+    click(fab);
+    const menu = await waitFor(
+      () => ($('#sheet-body .menu-list') ? $('#sheet-body') : null),
+      'el menú de acciones',
+    );
+    for (const label of ['Programar seguimiento', 'Programar mensaje al cliente']) {
+      const boton = [...menu.querySelectorAll('.menu-item')].find((row) => row.textContent.includes(label));
+      expect(boton).toBeTruthy();
+      // Se ve, pero apagado y con el motivo: no hay cliente al que programarle nada.
+      expect(boton.disabled).toBe(true);
+      expect(boton.textContent).toContain('no hay a quién avisar');
+    }
+    click('[data-close-sheet]');
+    await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+  });
+
   it('los filtros de estado se cuentan y filtran de verdad', async () => {
     expect($$('#pedidos-filtros .chip')).toHaveLength(5);
     const total = (await pedidos()).length;
@@ -590,9 +640,12 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     await waitFor(() => $('#loc-attach'), 'las acciones de la ubicación');
     click('#loc-attach');
 
-    // Solo se ofrecen los pedidos VIVOS (ni entregados ni cancelados).
+    // Solo se ofrecen los pedidos VIVOS de ESE cliente (ni entregados ni cancelados).
+    const cliente = (await datos()).customers.find((candidate) => candidate.phone_e164 === `+${PHONE}`);
     const opcion = await waitFor(() => $('[data-order-attach-loc]'), 'la lista de pedidos abiertos');
-    const vivos = (await pedidos()).filter((item) => !['entregado', 'perdido'].includes(item.status));
+    const vivos = (await pedidos()).filter(
+      (item) => item.customer_id === cliente.id && !['entregado', 'perdido'].includes(item.status),
+    );
     expect($$('[data-order-attach-loc]')).toHaveLength(vivos.length);
 
     const ordenId = opcion.dataset.orderAttachLoc;
@@ -608,7 +661,6 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(ubicacion.latitude).toBeCloseTo(LUGAR.latitude, 3);
     expect(ubicacion.longitude).toBeCloseTo(LUGAR.longitude, 3);
     // Y queda en el historial del cliente para el próximo pedido.
-    const cliente = (await datos()).customers.find((candidate) => candidate.phone_e164 === `+${PHONE}`);
     const guardadas = await (
       await fetch(`${app.url}/api/admin/customers/${cliente.id}/locations`, { headers: { cookie } })
     ).json();

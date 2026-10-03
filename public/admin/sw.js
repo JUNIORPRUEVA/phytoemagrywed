@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v24-zoom-real-por-zona';
+const VERSION = 'crm-v25-acciones-del-pedido';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;

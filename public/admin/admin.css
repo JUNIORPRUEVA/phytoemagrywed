@@ -3438,6 +3438,14 @@ body {
   border-radius: 12px;
 }
 
+/* Lo que no se puede hacer se ve apagado (y su nota dice por qué). */
+.menu-item--off,
+.menu-item--off:hover {
+  background: transparent;
+  opacity: 0.55;
+  cursor: default;
+}
+
 .menu-item__icon {
   display: grid;
   place-items: center;

@@ -1072,3 +1072,15 @@ ficha del cliente y en el chat, lejos del pedido que se acaba de entregar.
    persona (sale en HOY cuando vence); el mensaje programado lo intenta mandar el
    sistema, y si la ventana de WhatsApp no lo permite queda registrado para que alguien
    lo vea. No se mezclan en un solo botón.
+5. **La ficha dice DÓNDE están las acciones** (una línea: «Factura, delivery, cliente,
+   seguimiento y mensajes: en el botón ✦, abajo a la derecha»). Un botón flotante con
+   solo un icono no se descubre solo: primero se dice una vez, luego ya se sabe.
+6. **Si no hay cliente, se dice; no se esconde.** Los pedidos que entran de la web sin
+   teléfono (y los de prueba) llegan sin `customer_id`, y entonces no hay a quién
+   programarle un seguimiento ni un mensaje. Antes esas dos opciones simplemente
+   DESAPARECÍAN del menú (parecía roto). Ahora se ven **apagadas** con el motivo
+   («Este pedido no trae teléfono ni cliente: no hay a quién avisar»).
+7. El cliente del pedido se busca con `customerIdForItem()`: el del pedido, si no el de
+   su **conversación**, y si no por **teléfono** entre los clientes que el panel conoce.
+   Así un pedido antiguo o de la web sigue teniendo «Ver cliente», seguimiento y mensaje
+   programado.

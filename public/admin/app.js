@@ -1350,8 +1350,31 @@
   // ------------------------------------------- clientes, WhatsApp, seguimiento
 
   const customerById = (id) => state.customers.find((row) => row.id === id) ?? null;
+
   const conversationForCustomer = (customerId) =>
     state.conversations.find((row) => row.customer_id === customerId) ?? null;
+
+  /**
+   * El cliente de un pedido.
+   *
+   * El pedido lo trae casi siempre, pero los pedidos que llegan por la web pueden
+   * no traerlo (o venir de una prueba sin teléfono): se busca por su conversación y,
+   * si no, por el teléfono entre los clientes que el panel ya conoce. Sin esto, un
+   * pedido sin `customer_id` se quedaba sin las acciones de cliente (ver ficha,
+   * seguimiento, mensaje programado) sin decir por qué.
+   */
+  function customerIdForItem(item) {
+    if (!item) return null;
+    if (item.customer_id) return item.customer_id;
+    const conversacion = (state.conversations ?? []).find((row) => row.id === item.conversation_id);
+    if (conversacion?.customer_id) return conversacion.customer_id;
+    const phone = digits(item.phone);
+    if (!phone) return null;
+    const cliente = (state.customers ?? []).find(
+      (row) => digits(row.phone_e164) === phone || digits(row.phone) === phone,
+    );
+    return cliente?.id ?? null;
+  }
 
   /** Todas las tareas pendientes (vencidas + hoy + próximas), de la más cercana a la más lejana. */
   const pendingFollowups = () =>
@@ -3344,6 +3367,12 @@
       <button class="btn btn--primary btn--block" id="sheet-save" type="button">Guardar notas</button>
 
       ${metaBlock(item)}
+
+      ${
+        item.type === 'order_intent'
+          ? `<p class="view__hint">Factura, delivery, cliente, seguimiento y mensajes: en el botón <strong>✦</strong>, abajo a la derecha.</p>`
+          : ''
+      }
 
       ${sheetFabHtml(`data-item="${escapeHtml(item.id)}"`)}
     `;
@@ -9886,6 +9915,10 @@
         <span><strong>${escapeHtml(accion.label)}</strong>${
           accion.note ? `<small>${escapeHtml(accion.note)}</small>` : ''
         }</span>`;
+      // Lo que NO se puede hacer se enseña apagado y con el motivo: nada desaparece sin decir por qué.
+      if (accion.disabled) {
+        return `<button class="menu-item menu-item--off" type="button" disabled>${cuerpo}</button>`;
+      }
       if (accion.href) return `<a class="menu-item" href="${escapeHtml(accion.href)}">${cuerpo}</a>`;
       const attrs = Object.entries(accion.data ?? {})
         .map(([clave, valor]) => `${clave}="${escapeHtml(String(valor))}"`)
@@ -9907,7 +9940,8 @@
     if (!item) return;
     const phone = digits(item.phone);
     const esPedido = item.type === 'order_intent';
-    const conversacionId = conversationForCustomer(item.customer_id)?.id ?? '';
+    const clienteId = customerIdForItem(item);
+    const conversacionId = conversationForCustomer(clienteId)?.id ?? item.conversation_id ?? '';
     const estado = orderOperational(item);
     /*
      * Con el pedido YA ENTREGADO es cuando toca el seguimiento: se dice arriba, para
@@ -9919,6 +9953,16 @@
         : '';
     // El seguimiento y el mensaje programado se ligan al pedido desde el que se crean.
     const enganche = { 'data-conversation': conversacionId, 'data-order-id': item.id };
+    /*
+     * Sin cliente (pedidos de la web que llegaron sin teléfono, o pruebas) no hay a quién
+     * programarle nada: en vez de esconder las dos acciones, se enseña el motivo. Un menú
+     * al que le faltan opciones sin explicación parece un menú roto.
+     */
+    const sinCliente = esPedido && !clienteId
+      ? item.phone
+        ? 'Falta vincular al cliente de este pedido'
+        : 'Este pedido no trae teléfono ni cliente: no hay a quién avisar'
+      : '';
     openSheetActionMenu({
       title: item.order_number ?? item.name ?? 'Acciones',
       nota,
@@ -9940,26 +9984,30 @@
               data: { 'data-order-delivery': item.id },
             }
           : null,
-        item.customer_id
-          ? { icon: ICONS.person, label: 'Ver cliente', note: 'Su ficha completa', data: { 'data-customer': item.customer_id } }
+        clienteId
+          ? { icon: ICONS.person, label: 'Ver cliente', note: 'Su ficha completa', data: { 'data-customer': clienteId } }
           : null,
         { icon: ICONS.chat, label: 'Escribir por WhatsApp', note: 'Plantilla o mensaje libre', data: { 'data-item-wa': item.id } },
-        item.customer_id
+        clienteId
           ? {
               icon: ICONS.clock,
               label: 'Programar seguimiento',
               note: 'Una tarea para el equipo: hablar con este cliente',
-              data: { 'data-followup-new': item.customer_id, ...enganche },
+              data: { 'data-followup-new': clienteId, ...enganche },
             }
-          : null,
-        item.customer_id
+          : sinCliente
+            ? { icon: ICONS.clock, label: 'Programar seguimiento', note: sinCliente, disabled: true }
+            : null,
+        clienteId
           ? {
               icon: ICONS.send,
               label: 'Programar mensaje al cliente',
               note: 'Lo envía el sistema el día y la hora que elijas',
-              data: { 'data-scheduled-new': item.customer_id, ...enganche },
+              data: { 'data-scheduled-new': clienteId, ...enganche },
             }
-          : null,
+          : sinCliente
+            ? { icon: ICONS.send, label: 'Programar mensaje al cliente', note: sinCliente, disabled: true }
+            : null,
         phone ? { icon: ICONS.phone, label: 'Llamar', note: item.phone, href: `tel:${phone}` } : null,
       ].filter(Boolean),
     });
