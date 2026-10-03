@@ -7,10 +7,10 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v22-mapa-unificado';
+const VERSION = 'crm-v23-satelite';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
-const MAX_TILE_ENTRIES = 600;
+const MAX_TILE_ENTRIES = 1200;
 const TILE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const SHELL = [
   '/admin/',
@@ -54,8 +54,19 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-function isOsmTile(url) {
-  return /^https:\/\/[abc]\.tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(url.href);
+/**
+ * Tiles del mapa que SÍ se cachean (los "visitados", para que el mapa vuelva a
+ * pintarse sin datos). Solo estos proveedores, y siempre pidiendo la imagen real:
+ *   - OpenStreetMap (el mapa dibujado),
+ *   - Esri World Imagery / World Transportation (la foto de satélite y sus calles).
+ * Cualquier otro dominio pasa de largo: no se cachea lo que no se conoce.
+ */
+function isMapTile(url) {
+  if (/^https:\/\/[abc]\.tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(url.href)) return true;
+  return (
+    url.origin === 'https://server.arcgisonline.com' &&
+    /^\/ArcGIS\/rest\/services\/(World_Imagery|Reference\/World_Transportation)\/MapServer\/tile\/\d+\/\d+\/\d+$/.test(url.pathname)
+  );
 }
 
 async function tileMeta() {
@@ -125,7 +136,7 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  if (isOsmTile(url)) {
+  if (isMapTile(url)) {
     event.respondWith(tileResponse(request, event));
     return;
   }

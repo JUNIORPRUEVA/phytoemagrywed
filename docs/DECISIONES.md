@@ -898,4 +898,50 @@ Modelo nuevo:
 16. El service worker del panel sube a `crm-v3-multiuser` para limpiar shell viejo
     y forzar actualización de login/UI.
 
+## 39. El mapa enseña el TERRENO (imagen de satélite), no solo el dibujo de calles
+
+**Pedido del negocio:** «que se pueda ver lo más cerca posible, estilo tierra, que
+se puedan ver las casas… necesito lo mejor que se pueda».
+
+1. **La capa base por defecto es imagen real (foto aérea/satélite), no un dibujo.**
+   Lo que responde a «ver la tierra» es una fotografía del terreno: casas, patios,
+   caminos y vegetación. El mapa dibujado de calles queda como opción (pesa mucho
+   menos y va mejor con datos móviles malos).
+2. **Proveedor: Esri World Imagery** (`server.arcgisonline.com`, imágenes
+   Maxar/DigitalGlobe). Motivos: no necesita llave ni cuota, cubre República
+   Dominicana con imagen de alta resolución y es la misma familia de imágenes que
+   usan otros mapas grandes. No se usan tiles de Google: sus términos de uso lo
+   prohíben fuera de su propio SDK/API.
+3. **Hasta dónde se puede acercar se MIDIÓ tile a tile** (2026-10-02), no se
+   supuso: Higüey y alrededores tienen imagen propia hasta el nivel de zoom 18;
+   Santo Domingo, Bávaro y Punta Cana hasta el 19; el 20 ya no existe en RD. Por
+   eso la capa de satélite fija `maxNativeZoom: 18` — si se pidieran tiles del 19
+   en Higüey llegarían vacíos (gris) — y permite ampliar hasta el 20 estirando la
+   imagen del 18.
+4. **Cuando se pasa del detalle real se DICE**: «Satélite: ampliado (la imagen de
+   esta zona llega al nivel 18)». Acercarse más se puede, pero la foto no gana
+   detalle y el panel no lo finge. Es la misma regla que con las distancias («en
+   línea recta») o los ETA.
+5. **Calles y nombres van en una capa aparte y transparente** encima de la foto
+   (Esri World Transportation), y se pueden apagar. Una foto sola no dice dónde
+   está qué; el dibujo solo tampoco enseña el terreno. Juntas sí.
+6. **Cambiar de capa no rehace el mapa**: se quita la capa de imagen y se pone la
+   nueva, así los pedidos, las ubicaciones, la medición y la entrega en vivo
+   siguen donde estaban. La elección (satélite/calles, con o sin nombres) se
+   recuerda en el teléfono.
+7. **Coste de datos:** cada tile pesa entre 10 y 25 KB en RD. Se piden solo cuando
+   el mapa está quieto (`updateWhenIdle`, sin pedir durante el pellizco), se
+   mantienen 3 pantallas de margen (`keepBuffer`) y el service worker guarda los
+   que ya se visitaron (1200 tiles, 14 días) para que el mapa vuelva a pintarse
+   sin cobertura. Nunca se precargan zonas por adelantado: cachear lo visitado
+   está permitido, descargar por adelantado no.
+8. **Atribución visible y obligatoria:** «Imágenes © Esri, Maxar, Earthstar
+   Geographics» y «Calles y nombres © Esri» (u «© OpenStreetMap contributors»).
+   El CSS la aparta de los botones flotantes, pero no la tapa.
+9. **Si el negocio quiere más resolución todavía** (nivel 19-20 real en ciudades,
+   o imágenes de fecha concreta), el siguiente paso es un proveedor con llave
+   (Mapbox/MapTiler, planes de pago): añadir uno es una entrada más en la tabla
+   `MAP_BASE_LAYERS` de `public/admin/app.js`. Lo que no se hará es prometer
+   detalle que la fuente no tiene.
+
 

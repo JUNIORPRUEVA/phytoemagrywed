@@ -98,11 +98,32 @@ describe('delivery tracking frontend UAT guards', () => {
   });
 
   it('separa fallo de tiles del tracking realtime', () => {
-    expect(app).toContain("tiles.on('tileerror'");
-    expect(app).toContain('Mapa base no disponible');
+    expect(app).toContain("layer.on('tileerror'");
+    expect(app).toContain('no disponible');
     expect(app).toContain('Mapa base lento. El GPS sigue activo.');
     expect(app).toContain('DELIVERY_TILE_SLOW_MS = 4500');
     expect(app).toContain('state.deliveryMap.deliveryMarker.setLatLng(currentLatLng)');
+  });
+
+  it('enseña el TERRENO con imagen real (satélite) y deja elegir la capa', () => {
+    // Foto aérea de verdad (Esri/Maxar): es lo que pidió el negocio para ver las
+    // casas, los patios y los caminos.
+    expect(app).toContain("'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'");
+    expect(app).toContain("const MAP_DEFAULT_BASE = 'satelite'");
+    expect(app).toContain('Imágenes &copy; Esri');
+    // En RD la imagen propia llega al nivel 18 (19 en Santo Domingo/Bávaro) y a
+    // partir de ahí se AMPLÍA avisando, sin fingir detalle que no existe.
+    expect(app).toContain('maxNativeZoom: 18');
+    expect(app).toContain('maxZoom: 20');
+    expect(app).toMatch(/ampliado \(la imagen de esta zona llega al nivel/);
+    // Los nombres y las calles van encima de la foto, y se pueden apagar.
+    expect(app).toContain('World_Transportation');
+    expect(app).toContain('function toggleOrdersMapLabels');
+    expect(app).toContain('data-map-base="${clave}"');
+    expect(app).toContain("const MAPS_BASE_KEY = 'pe_orders_map_base'");
+    // Y el mapa dibujado de siempre sigue disponible (pesa mucho menos).
+    expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+    expect(app).toContain('&copy; OpenStreetMap contributors');
   });
 
   it('restaura la última vista del mapa sin guardar datos sensibles', () => {
@@ -120,10 +141,10 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(saveBlock).not.toMatch(/address|phone|nombre|name:/);
   });
 
-  it('mantiene prefetch automático de OSM desactivado por política del proveedor', () => {
+  it('mantiene prefetch automático de tiles desactivado por política del proveedor', () => {
     expect(app).toContain('const DELIVERY_TILE_PREFETCH_ENABLED = false');
     expect(app).toContain('function maybePrefetchDeliveryTiles');
-    expect(app).toContain('OSM public tiles allow normal browser/service-worker caching, not automatic area prefetch.');
+    expect(app).toContain('allows automatic area prefetch');
     expect(app).toContain("maybePrefetchDeliveryTiles('destination-available')");
     expect(app).toContain("maybePrefetchDeliveryTiles('delivery-position-available')");
   });

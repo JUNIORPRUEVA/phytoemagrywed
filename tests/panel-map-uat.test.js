@@ -364,7 +364,11 @@ describe('el mapa se abre DENTRO de la app', () => {
     expect(fake.calls.maps.length).toBeGreaterThanOrEqual(mapasAntes);
     expect(marcador.coords[0]).toBeCloseTo(L1.latitude, 4);
     expect(marcador.coords[1]).toBeCloseTo(L1.longitude, 4);
-    expect(fake.calls.tiles.at(-1).url).toContain('tile.openstreetmap.org');
+    // La capa base es la imagen de satélite (lo que pide el negocio: ver la tierra)
+    // y encima van las calles y los nombres.
+    const capas = fake.calls.tiles.map((capa) => capa.url);
+    expect(capas.some((url) => url.includes('World_Imagery'))).toBe(true);
+    expect(capas.some((url) => url.includes('World_Transportation'))).toBe(true);
     // La ficha del punto, con la medición desde el GPS a un toque.
     expect($('#sheet-title').textContent).toBe('Ubicación');
     expect($('#sheet-body').textContent).toContain('El mapa está centrado en este punto');
@@ -513,5 +517,43 @@ describe('pantalla «Mapa de pedidos»', () => {
     expect(lista.at(-1).textContent).toContain('Beto Mapa');
     expect(lista[0].textContent).toMatch(/[\d.,]+ m/);
     expect(lista.at(-1).textContent).toMatch(/\d+ km/);
+  }, 30000);
+
+  it('deja elegir cómo se ve el terreno: satélite (foto real) o mapa de calles', async () => {
+    click('#mapa-acciones');
+    const satelite = await waitFor(() => $('[data-map-base="satelite"]'), 'la opción de satélite');
+    // Por defecto: imagen real del terreno, que es lo que se pidió para ver las casas.
+    expect(satelite.getAttribute('aria-pressed')).toBe('true');
+    expect(satelite.textContent).toContain('Satélite');
+    expect(fake.calls.tiles.some((capa) => capa.url.includes('World_Imagery'))).toBe(true);
+    // Las calles y los nombres van encima de la foto y se pueden apagar.
+    expect($('[data-map-layer="labels"]')).toBeTruthy();
+
+    // Cambiar al mapa dibujado: se cambia la capa SIN rehacer el mapa.
+    const mapasAntes = fake.calls.maps.length;
+    const capasAntes = fake.calls.tiles.length;
+    click($('[data-map-base="calles"]'));
+    await waitFor(() => fake.calls.tiles.length > capasAntes, 'la capa de calles');
+    expect(fake.calls.tiles.at(-1).url).toContain('tile.openstreetmap.org');
+    expect(fake.calls.maps.length).toBe(mapasAntes);
+    expect(dom.window.localStorage.getItem('pe_orders_map_base')).toBe('calles');
+    expect($('[data-map-base="calles"]').getAttribute('aria-pressed')).toBe('true');
+    expect($('#mapa-estado').textContent).toContain('mapa (calles)');
+
+    // Y volver al satélite, que es lo que se recuerda para la próxima vez.
+    click($('[data-map-base="satelite"]'));
+    await waitFor(() => dom.window.localStorage.getItem('pe_orders_map_base') === 'satelite', 'volver al satélite');
+    // La foto primero y las calles y nombres encima (ese es el orden de las capas).
+    const ultimas = fake.calls.tiles.slice(-2).map((capa) => capa.url);
+    expect(ultimas[0]).toContain('World_Imagery');
+    expect(ultimas[1]).toContain('World_Transportation');
+    expect(fake.calls.maps.length).toBe(mapasAntes);
+
+    // Y se puede apagar: la foto se queda sola (y el gusto se recuerda).
+    click($('[data-map-layer="labels"]'));
+    await waitFor(() => dom.window.localStorage.getItem('pe_orders_map_labels') === '0', 'apagar las etiquetas');
+    await waitFor(() => $('[data-map-layer="labels"]')?.textContent.includes('Poner calles'), 'la fila al revés');
+    click($('[data-map-layer="labels"]'));
+    await waitFor(() => dom.window.localStorage.getItem('pe_orders_map_labels') === '1', 'volver a encenderlas');
   }, 30000);
 });

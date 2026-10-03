@@ -142,15 +142,38 @@ describe('delivery map service worker cache', () => {
 
   it('declara límite y vencimiento de cache de tiles', () => {
     const sw = readFileSync(SW_PATH, 'utf8');
-    expect(sw).toContain('const MAX_TILE_ENTRIES = 600');
+    // El límite existe y es razonable para un teléfono (ni 100 ni 100.000).
+    const limite = Number(/const MAX_TILE_ENTRIES = (\d+)/.exec(sw)?.[1] ?? 0);
+    expect(limite).toBeGreaterThan(400);
+    expect(limite).toBeLessThan(4000);
     expect(sw).toContain('const TILE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000');
     expect(sw).toContain('trimTileCache');
     expect(sw).toContain('now - entry.at > TILE_MAX_AGE_MS');
+  });
+
+  it('cachea también la imagen de satélite (Esri) y sus calles', async () => {
+    const imagen = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/17/61047/49112';
+    const calles =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/17/61047/49112';
+    const primera = await tileRequest(imagen);
+    expect(await (await primera).text()).toBe('tile-1');
+    const segunda = await tileRequest(calles);
+    expect(await (await segunda).text()).toBe('tile-2');
+    // Y en la segunda vuelta, sin cobertura, la foto sale de la caché igual.
+    networkCalls = [];
+    networkMode = 'offline';
+    const repetida = await tileRequest(imagen);
+    expect(await (await repetida).text()).toBe('tile-1');
+    await Promise.all(backgroundTasks);
+    // La foto se pintó desde la caché: lo único que se intenta es refrescarla por detrás.
+    expect(networkCalls).toEqual([imagen]);
   });
 
   it('no intercepta proveedores desconocidos como tile cache', async () => {
     const response = await tileRequest('https://tiles.example/16/1/1.png');
     expect(response).toBeNull();
     expect(networkCalls).toEqual([]);
+    // Y tampoco otros servicios de Esri que no son tiles de mapa.
+    expect(await tileRequest('https://server.arcgisonline.com/ArcGIS/rest/services/Other/MapServer/tile/17/1/1')).toBeNull();
   });
 });

@@ -25,7 +25,8 @@
   const MAPS_CACHE_KEY = 'pe_orders_map_points';
   const MAPS_POLL_MS = 15000;
   const DELIVERY_TILE_PREFETCH_ENABLED = false;
-  const DELIVERY_TILE_PREFETCH_REASON = 'OSM public tiles allow normal browser/service-worker caching, not automatic area prefetch.';
+  const DELIVERY_TILE_PREFETCH_REASON =
+    'Neither the OSM nor the Esri tile service allows automatic area prefetch; caching visited tiles is fine.';
   const DELIVERY_TILE_SLOW_MS = 4500;
   const NEGOCIO = 'Phytoemagry';
   const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
@@ -96,7 +97,13 @@
       updatedAt: null,
       pollTimer: null,
       panelOpen: false,
-      layers: { orders: true, locations: true, live: true },
+      layers: { orders: true, locations: true, live: true, labels: mapLabelsPref() },
+      baseLayer: null,
+      // Se resuelve al montar el mapa (`ordersMapBaseKey`): la elección se recuerda.
+      base: null,
+      labelLayer: null,
+      labelReady: false,
+      zoomHint: '',
     },
     deliveryMap: {
       sessionId: null,
@@ -154,9 +161,73 @@
   };
 
   const DELIVERY_MAP_PROVIDER = 'Leaflet';
-  const DELIVERY_TILE_PROVIDER = 'OpenStreetMap';
-  const DELIVERY_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const DELIVERY_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+  /*
+   * CÓMO SE VE EL TERRENO (capas base del mapa).
+   *
+   * Lo que pidió el negocio es VER LA TIERRA: las casas, los patios, los caminos.
+   * Eso es imagen de satélite/foto aérea, y la que mejor cubre República Dominicana
+   * SIN llave ni cuota es la de Esri (imágenes Maxar/DigitalGlobe, las mismas que
+   * usan otros mapas grandes). Comprobado tile a tile (2026-10-02):
+   *
+   *   - Higüey y alrededores: imagen propia hasta el nivel de zoom 18.
+   *   - Santo Domingo, Bávaro y Punta Cana: hasta el 19.
+   *   - El nivel 20 ya NO tiene imagen en RD: se AMPLÍA la del 18 y se avisa en
+   *     la pantalla (más cerca se ve, pero no gana detalle, y no se inventa).
+   *
+   * Las etiquetas de calles y nombres van en una capa APARTE y transparente encima
+   * de la foto (si no, la imagen sola no dice dónde está qué). Y el mapa dibujado
+   * de toda la vida (OpenStreetMap) sigue estando para quien lo prefiera: pesa
+   * mucho menos y va mejor con datos móviles malos.
+   */
+  const MAPS_BASE_KEY = 'pe_orders_map_base';
+  const MAPS_LABELS_KEY = 'pe_orders_map_labels';
+  /**
+   * ¿Calles y nombres encima de la foto? Por defecto sí (una foto sola no dice
+   * dónde está qué), pero se recuerda si el negocio los apagó a propósito.
+   * Se lee con la cadena a pelo: `state` se crea ANTES que estas constantes.
+   */
+  function mapLabelsPref() {
+    try {
+      return localStorage.getItem('pe_orders_map_labels') !== '0';
+    } catch {
+      return true;
+    }
+  }
+  const MAP_BASE_LAYERS = {
+    satelite: {
+      label: 'Satélite',
+      detail: 'Foto real del terreno: se ven las casas, los patios y los caminos',
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Imágenes &copy; Esri, Maxar, Earthstar Geographics',
+      provider: 'Esri World Imagery',
+      maxNativeZoom: 18,
+      maxZoom: 20,
+      labels: true,
+    },
+    calles: {
+      label: 'Mapa (calles)',
+      detail: 'Dibujo de calles y nombres: más ligero para datos móviles',
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors',
+      provider: 'OpenStreetMap',
+      maxNativeZoom: 19,
+      maxZoom: 20,
+      labels: false,
+    },
+  };
+  const MAP_DEFAULT_BASE = 'satelite';
+  /** Calles y nombres ENCIMA de la foto (capa transparente del mismo proveedor). */
+  const MAP_LABEL_LAYER = {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Calles y nombres &copy; Esri',
+    maxNativeZoom: 18,
+    maxZoom: 20,
+  };
+  /*
+   * El navegador pide los tiles de uno en uno; esto los pide por lotes y solo
+   * cuando el mapa está quieto (mover el dedo no dispara 40 peticiones).
+   */
+  const MAP_TILE_TUNING = { keepBuffer: 3, updateWhenIdle: true, updateWhenZooming: false, crossOrigin: true };
 
   // ------------------------------------------------------------------ helpers
 
@@ -2101,9 +2172,45 @@
         <span class="menu-item__icon">${icono}</span>
         <span><strong>${titulo}</strong><small>${texto}</small></span>
       </button>`;
+    /*
+     * CÓMO SE VE EL TERRENO: satélite (foto real) o el mapa dibujado de siempre.
+     * Es lo primero que se toca cuando el negocio quiere «ver la tierra».
+     */
+    const base = ordersMapBaseConfig();
+    const baseRow = (clave) => {
+      const config = MAP_BASE_LAYERS[clave];
+      const elegida = state.ordersMap.base === clave;
+      return `
+      <button class="menu-item" data-map-base="${clave}" type="button" aria-pressed="${String(elegida)}">
+        <span class="menu-item__icon">${clave === 'satelite' ? ICONS.pin : ICONS.search}</span>
+        <span><strong>${config.label}${elegida ? ' ✓' : ''}</strong><small>${config.detail}</small></span>
+      </button>`;
+    };
     openSheet(
       'Acciones del mapa',
       `
+      <p class="view__hint">Cómo se ve el terreno</p>
+      <div class="menu-list">
+        ${baseRow('satelite')}
+        ${baseRow('calles')}
+        ${
+          base.labels
+            ? capa(
+                'labels',
+                ICONS.search,
+                capas.labels ? 'Quitar calles y nombres' : 'Poner calles y nombres',
+                'Calles, barrios y nombres de sitios encima de la foto',
+              )
+            : ''
+        }
+      </div>
+      <p class="view__hint">Qué se ve en el mapa</p>
+      <div class="menu-list">
+        ${capa('orders', ICONS.box, 'Pedidos con ubicación', 'Dónde hay que entregar')}
+        ${capa('locations', ICONS.pin, 'Ubicaciones de clientes', 'Los puntos que han mandado por WhatsApp')}
+        ${capa('live', ICONS.send, 'Entregas en vivo', 'El GPS del repartidor mientras reparte')}
+      </div>
+      <p class="view__hint">Herramientas</p>
       <div class="menu-list">
         ${fila('lista', ICONS.box, 'Pedidos y ubicaciones', 'Abre la lista (con distancias y acciones)')}
         ${fila(
@@ -2117,12 +2224,6 @@
         ${fila('ajustar', ICONS.search, 'Ver todo', 'Encuadra todos los puntos del mapa')}
         ${activas.length ? fila('seguir', ICONS.retry, 'Seguir la entrega en vivo', `${activas.length} en camino: centra en el repartidor`) : ''}
         ${fila('actualizar', ICONS.retry, 'Actualizar ahora', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
-      </div>
-      <p class="view__hint">Qué se ve en el mapa</p>
-      <div class="menu-list">
-        ${capa('orders', ICONS.box, 'Pedidos con ubicación', 'Dónde hay que entregar')}
-        ${capa('locations', ICONS.pin, 'Ubicaciones de clientes', 'Los puntos que han mandado por WhatsApp')}
-        ${capa('live', ICONS.send, 'Entregas en vivo', 'El GPS del repartidor mientras reparte')}
       </div>
       <button class="btn btn--ghost btn--block" data-delivery-push type="button">${ICONS.bell} ${escapeHtml(pushPermissionLabel())}</button>
       <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
@@ -8296,30 +8397,15 @@
     if (state.ordersMap.map) resetOrdersMap();
     const map = window.L.map(el, { zoomControl: true, attributionControl: true });
     /*
-     * Tiles de OpenStreetMap con su aviso honesto: si el mapa base tarda o falla,
-     * se dice en la propia pantalla (el GPS de las entregas sigue funcionando).
+     * La capa base (satélite o mapa) con su aviso honesto: si los tiles tardan o
+     * fallan se dice en la propia pantalla, y el GPS de las entregas sigue igual.
      */
-    const tiles = window.L.tileLayer(DELIVERY_TILE_URL, { maxZoom: 19, attribution: DELIVERY_TILE_ATTRIBUTION });
-    tiles.on('loading', () => {
-      state.deliveryMap.tileLoading += 1;
-      setDeliveryMapNotice('Cargando mapa…');
-      startDeliveryTileSlowTimer();
-    });
-    tiles.on('load', () => {
-      state.deliveryMap.tileLoading = 0;
-      stopDeliveryTileSlowTimer();
-      if (!state.deliveryMap.tileError && !state.ordersMap.measuring && !state.ordersMap.focus) setDeliveryMapNotice('');
-    });
-    tiles.on('tileerror', () => {
-      state.deliveryMap.tileError = true;
-      stopDeliveryTileSlowTimer();
-      setDeliveryMapNotice('Mapa base no disponible');
-    });
-    tiles.addTo(map);
+    addOrdersMapBase(map);
     maybePrefetchDeliveryTiles('map-opened');
     const vista = ordersMapSavedView();
     map.setView(vista?.center ?? [18.6157, -68.7071], vista?.zoom ?? 12);
     map.on('moveend zoomend', saveOrdersMapView);
+    map.on('zoomend', updateOrdersMapZoomHint);
     map.on('click', (event) => ordersMapMapClick(event.latlng));
     // Al moverlo a mano se deja de seguir al repartidor (como en cualquier mapa).
     map.on('dragstart zoomstart', () => {
@@ -8336,6 +8422,166 @@
 
   function ensureDeliveryMap() {
     return ensureOrdersMap();
+  }
+
+  // ------------------------------------------------------- capas base del mapa
+
+  /** Qué capa base está elegida (se recuerda en el teléfono). */
+  function ordersMapBaseKey() {
+    try {
+      const guardada = localStorage.getItem(MAPS_BASE_KEY);
+      if (guardada && MAP_BASE_LAYERS[guardada]) return guardada;
+    } catch {
+      /* sin almacén se usa la de por defecto */
+    }
+    return MAP_DEFAULT_BASE;
+  }
+
+  const ordersMapBaseConfig = (key = state.ordersMap.base) => MAP_BASE_LAYERS[key] ?? MAP_BASE_LAYERS[MAP_DEFAULT_BASE];
+
+  /**
+   * Pinta la capa base elegida (y sus etiquetas) sobre el mapa.
+   *
+   * No se recrea el mapa: se quita la capa de imagen y se pone la nueva, así los
+   * marcadores, la medición y la entrega en vivo siguen donde estaban.
+   */
+  function addOrdersMapBase(map) {
+    if (!map || !window.L) return;
+    state.ordersMap.base = ordersMapBaseKey();
+    const config = ordersMapBaseConfig();
+    state.ordersMap.baseLayer?.remove();
+    state.ordersMap.labelLayer?.remove();
+    state.ordersMap.labelLayer = null;
+    state.ordersMap.labelReady = false;
+    const capa = window.L.tileLayer(config.url, {
+      ...MAP_TILE_TUNING,
+      maxNativeZoom: config.maxNativeZoom,
+      maxZoom: config.maxZoom,
+      attribution: config.attribution,
+    });
+    /*
+     * Por debajo van los marcadores: la foto es el fondo, nunca tapa un pin.
+     */
+    capa.setZIndex?.(1);
+    watchOrdersMapTiles(capa, `${config.label} no disponible`);
+    capa.addTo(map);
+    state.ordersMap.baseLayer = capa;
+    if (config.labels && state.ordersMap.layers.labels) {
+      const etiquetas = window.L.tileLayer(MAP_LABEL_LAYER.url, {
+        ...MAP_TILE_TUNING,
+        maxNativeZoom: MAP_LABEL_LAYER.maxNativeZoom,
+        maxZoom: MAP_LABEL_LAYER.maxZoom,
+        attribution: MAP_LABEL_LAYER.attribution,
+        pane: 'overlayPane',
+      });
+      etiquetas.setZIndex?.(4);
+      watchOrdersMapTiles(etiquetas, '');
+      etiquetas.addTo(map);
+      state.ordersMap.labelLayer = etiquetas;
+      state.ordersMap.labelReady = true;
+    }
+    map.attributionControl?.setPrefix?.('');
+    updateOrdersMapZoomHint();
+    return capa;
+  }
+
+  /**
+   * Un solo sitio para los avisos de los tiles: cargando, cargó, falló.
+   *
+   * `avisoFallo` vacío significa «no molestes con el fallo de esta capa» (las
+   * etiquetas pueden faltar sin que el mapa deje de servir).
+   */
+  function watchOrdersMapTiles(layer, avisoFallo) {
+    layer.on('loading', () => {
+      state.deliveryMap.tileLoading += 1;
+      setDeliveryMapNotice('Cargando el mapa…');
+      startDeliveryTileSlowTimer();
+    });
+    layer.on('load', () => {
+      state.deliveryMap.tileLoading = Math.max(0, state.deliveryMap.tileLoading - 1);
+      stopDeliveryTileSlowTimer();
+      if (!state.deliveryMap.tileError && !state.ordersMap.measuring && !state.ordersMap.focus) {
+        setDeliveryMapNotice(state.ordersMap.zoomHint ?? '');
+      }
+    });
+    layer.on('tileerror', () => {
+      state.deliveryMap.tileError = true;
+      stopDeliveryTileSlowTimer();
+      if (avisoFallo) setDeliveryMapNotice(avisoFallo);
+    });
+  }
+
+  /**
+   * «Ampliado»: cuando se pasa del zoom con imagen propia se dice, porque a partir
+   * de ahí la foto se estira y se ve más grande pero NO más nítida. Prometer
+   * detalle que no existe es justo lo que no se hace en este panel.
+   */
+  function updateOrdersMapZoomHint() {
+    const map = state.ordersMap.map;
+    const config = ordersMapBaseConfig();
+    const anterior = state.ordersMap.zoomHint;
+    if (!map || !config) return;
+    const zoom = map.getZoom();
+    state.ordersMap.zoomHint =
+      zoom > config.maxNativeZoom
+        ? `${config.label}: ampliado (la imagen de esta zona llega al nivel ${config.maxNativeZoom})`
+        : '';
+    if (state.ordersMap.zoomHint !== anterior && !state.ordersMap.measuring) {
+      setDeliveryMapNotice(state.ordersMap.zoomHint ?? '');
+    }
+    const estado = $('#mapa-estado');
+    if (estado) estado.textContent = ordersMapStatusText();
+  }
+
+  /** Cambiar de capa base: se recuerda y el mapa la pinta al momento. */
+  function setOrdersMapBase(key) {
+    if (!MAP_BASE_LAYERS[key] || key === state.ordersMap.base) return;
+    state.ordersMap.base = key;
+    try {
+      localStorage.setItem(MAPS_BASE_KEY, key);
+    } catch {
+      /* la elección es una comodidad: sin almacén se queda en memoria */
+    }
+    state.deliveryMap.tileError = false;
+    state.deliveryMap.tileLoading = 0;
+    setDeliveryMapNotice('');
+    addOrdersMapBase(state.ordersMap.map ?? ensureOrdersMap());
+    renderOrdersMap();
+    toast(
+      key === 'satelite'
+        ? 'Satélite: foto real del terreno (se ven las casas). Acérquese todo lo que quiera: al pasar del nivel 18 se amplía'
+        : 'Mapa de calles: más ligero para cuando la señal es mala',
+    );
+  }
+
+  /** Encender y apagar las calles y los nombres sobre la foto. */
+  function toggleOrdersMapLabels(force = null) {
+    const activo = force === null ? !state.ordersMap.layers.labels : force;
+    state.ordersMap.layers.labels = activo;
+    try {
+      localStorage.setItem(MAPS_LABELS_KEY, activo ? '1' : '0');
+    } catch {
+      /* se queda en memoria */
+    }
+    const map = state.ordersMap.map;
+    if (!map || !window.L) return;
+    if (activo && !state.ordersMap.labelLayer && ordersMapBaseConfig().labels) {
+      const etiquetas = window.L.tileLayer(MAP_LABEL_LAYER.url, {
+        ...MAP_TILE_TUNING,
+        maxNativeZoom: MAP_LABEL_LAYER.maxNativeZoom,
+        maxZoom: MAP_LABEL_LAYER.maxZoom,
+        attribution: MAP_LABEL_LAYER.attribution,
+      });
+      etiquetas.setZIndex?.(4);
+      watchOrdersMapTiles(etiquetas, '');
+      etiquetas.addTo(map);
+      state.ordersMap.labelLayer = etiquetas;
+      return;
+    }
+    if (!activo && state.ordersMap.labelLayer) {
+      state.ordersMap.labelLayer.remove();
+      state.ordersMap.labelLayer = null;
+    }
   }
 
   function resetOrdersMap() {
@@ -8366,6 +8612,13 @@
     state.focusMarker = null;
     state.ordersMap.focusMarker = null;
     state.ordersMap.fitted = false;
+    // Las capas de imagen se van con el mapa: aquí solo se olvidan las referencias.
+    state.ordersMap.baseLayer = null;
+    state.ordersMap.labelLayer = null;
+    state.ordersMap.labelReady = false;
+    state.ordersMap.zoomHint = '';
+    state.deliveryMap.tileLoading = 0;
+    state.deliveryMap.tileError = false;
   }
 
   function addOrdersMapRefMarker() {
@@ -8491,8 +8744,11 @@
     box.classList.toggle('map-view--measuring', activo);
     const nota = $('#orders-map-notice');
     if (nota) {
-      nota.hidden = !activo;
-      nota.textContent = activo ? 'Toca dos puntos para medir la distancia (línea recta).' : '';
+      // Al salir de medir, el aviso vuelve a lo que tocaba (por ejemplo, si el
+      // zoom está en modo ampliado, se recuerda).
+      const reposo = state.ordersMap.zoomHint ?? '';
+      nota.hidden = !activo && !reposo;
+      nota.textContent = activo ? 'Toca dos puntos para medir la distancia (línea recta).' : reposo;
     }
   }
 
@@ -8620,12 +8876,16 @@
     const pedidos = puntos.filter((point) => point.kind === 'order').length;
     const ubicaciones = puntos.length - pedidos;
     const activas = (state.deliveryTracking ?? []).filter((row) => row.status === 'ACTIVE').length;
+    const base = ordersMapBaseConfig();
     const partes = [
       `${pedidos} pedido${pedidos === 1 ? '' : 's'}`,
       `${ubicaciones} ubicaci${ubicaciones === 1 ? 'ón' : 'ones'}`,
     ];
     if (activas) partes.push(`${activas} entrega${activas === 1 ? '' : 's'} en vivo`);
     if (state.ordersMap.refPoint) partes.push('distancias desde tu punto');
+    // Con qué se está mirando el terreno (satélite o calles) y si está ampliado.
+    if (base) partes.push(base.label.toLowerCase());
+    if (state.ordersMap.zoomHint) partes.push('ampliado');
     if (state.ordersMap.loading) partes.push('actualizando…');
     else if (state.ordersMap.error) partes.push('sin conexión: se ve lo último guardado');
     else if (state.ordersMap.updatedAt) partes.push(`visto ${fmtWhen(state.ordersMap.updatedAt)}`);
@@ -9880,9 +10140,21 @@
         }
         return;
       }
+      const mapBase = event.target.closest('[data-map-base]');
+      if (mapBase) {
+        setOrdersMapBase(mapBase.dataset.mapBase);
+        openMapActions(); // la hoja se repinta con la capa elegida marcada
+        return;
+      }
       const mapLayer = event.target.closest('[data-map-layer]');
       if (mapLayer) {
         const nombre = mapLayer.dataset.mapLayer;
+        if (nombre === 'labels') {
+          // Las calles y los nombres van ENCIMA de la foto: se encienden y apagan.
+          toggleOrdersMapLabels();
+          openMapActions();
+          return;
+        }
         if (nombre in state.ordersMap.layers) state.ordersMap.layers[nombre] = !state.ordersMap.layers[nombre];
         state.ordersMap.fitted = false;
         renderOrdersMap();
