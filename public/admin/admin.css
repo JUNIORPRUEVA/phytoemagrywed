@@ -1003,6 +1003,48 @@ body[data-tab='hoy'] .stat__label {
   gap: 14px;
 }
 
+/*
+ * BOTÓN FLOTANTE DE ACCIONES DE LA HOJA.
+ *
+ * La ficha del pedido (y su factura) tenían una columna de botones que las
+ * llenaba de ruido: Ver cliente, Ver factura, Pasar a un delivery, Llamar,
+ * Escribir por WhatsApp, Modificar, Cancelar… Ahora viven dentro de este botón,
+ * siempre en el mismo sitio. Va por encima de la hoja (z-index 900) y, como está
+ * dentro de ella, desaparece al cerrarla.
+ */
+.sheet-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  z-index: 950;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(11, 107, 79, 0.18);
+  border-radius: 16px;
+  background: var(--phyto-primary);
+  color: #fff;
+  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.25);
+  cursor: pointer;
+}
+
+.sheet-fab .svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.4;
+}
+
+.sheet-fab:hover,
+.sheet-fab:focus-visible {
+  background: var(--phyto-primary-dark);
+}
+
+/* Con acciones flotantes, el final de la hoja no queda debajo del botón. */
+.sheet__body:has(.sheet-fab) {
+  padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px));
+}
+
 .facts {
   display: grid;
   gap: 6px;

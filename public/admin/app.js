@@ -145,6 +145,8 @@
     clientSearchOpen: false,
     // Filtro de la lista de pedidos, por ESTADO OPERATIVO (pendiente, en camino…).
     pedidosFilter: 'todo',
+    // Datos de la factura abierta (los usa el menú de su botón flotante).
+    receiptContext: null,
     openId: null,
     customerId: null,
     chat: null,
@@ -354,6 +356,7 @@
        distintos no pueden compartir el mismo dibujo. */
     check: svg('<path d="M5 12.6l4.4 4.4L19 6.8"/>'),
     checkCircle: svg('<circle cx="12" cy="12" r="8.6"/><path d="M8.3 12.2l2.6 2.6 4.8-5.1"/>'),
+    phone: svg('<path d="M6.4 3.6h3.1l1.5 3.6-2 1.5a11.7 11.7 0 0 0 5.8 5.8l1.5-2 3.6 1.5v3.1a1.7 1.7 0 0 1-1.9 1.7A15.9 15.9 0 0 1 4.7 5.5 1.7 1.7 0 0 1 6.4 3.6Z"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -3340,32 +3343,11 @@
       </label>
       <button class="btn btn--primary btn--block" id="sheet-save" type="button">Guardar notas</button>
 
-      <div class="field">
-        <span class="field__label">Mensaje de WhatsApp</span>
-        <select class="field__select" id="sheet-template">
-          ${state.messages
-            .map((message) => `<option value="${escapeHtml(message.id)}">${escapeHtml(message.name)}</option>`)
-            .join('')}
-        </select>
-        <p class="view__hint" id="sheet-preview"></p>
-        <button class="btn btn--whatsapp btn--block" id="sheet-wa" type="button">Escribir por WhatsApp</button>
-      </div>
-
       ${metaBlock(item)}
 
-      ${
-        item.type === 'order_intent'
-          ? `<button class="btn btn--ghost btn--block" data-receipt="${escapeHtml(item.id)}" type="button">Ver factura</button>
-             <button class="btn btn--primary btn--block" data-order-delivery="${escapeHtml(
-               item.id,
-             )}" type="button">Pasar a un delivery</button>`
-          : ''
-      }
-      ${item.customer_id ? `<button class="btn btn--ghost btn--block" data-customer="${escapeHtml(item.customer_id)}" type="button">Ver cliente</button>` : ''}
-      ${phone ? `<a class="btn btn--ghost btn--block" href="tel:${escapeHtml(phone)}">Llamar</a>` : ''}
+      ${sheetFabHtml(`data-item="${escapeHtml(item.id)}"`)}
     `;
     $('#sheet').hidden = false;
-    updatePreview();
 
     $('#sheet-meta')?.addEventListener('click', async () => {
       const button = $('#sheet-meta');
@@ -3391,11 +3373,6 @@
     $('#sheet-save').addEventListener('click', () => {
       patchItem(item.id, { notes: $('#sheet-notes').value }, 'Notas guardadas');
     });
-    $('#sheet-template').addEventListener('change', updatePreview);
-    $('#sheet-wa').addEventListener('click', () => {
-      const message = state.messages.find((entry) => entry.id === $('#sheet-template').value);
-      openWhatsApp(item, message?.body ?? 'Hola {nombre}, te escribo de {negocio}.');
-    });
     $$('[data-remind]', $('#sheet')).forEach((button) => {
       button.addEventListener('click', () => {
         const days = button.dataset.remind;
@@ -3403,13 +3380,6 @@
         patchItem(item.id, { nextActionAt: value }, value ? `Recordatorio: ${fmtDay(value)}` : 'Recordatorio quitado');
       });
     });
-  }
-
-  function updatePreview() {
-    const item = state.items.find((candidate) => candidate.id === state.openId);
-    const message = state.messages.find((entry) => entry.id === $('#sheet-template')?.value);
-    const preview = $('#sheet-preview');
-    if (preview && message && item) preview.textContent = fillTemplate(message.body, item);
   }
 
   /**
@@ -9815,51 +9785,11 @@
             <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
           </span>
         </div>
-        <button class="btn btn--primary btn--block" id="receipt-open" type="button">Ver factura</button>
-        <button class="btn btn--ghost btn--block" id="receipt-share" type="button">Compartir factura</button>
-        ${
-          // Pasar el pedido al reparto se hace AQUI: es justo lo que se quiere
-          // hacer al terminar de crearlo, sin ir a buscarlo al mapa.
-          hasPermission('delivery.tracking.manage_all') && receipt.status !== 'entregado' && receipt.status !== 'cancelado'
-            ? `<button class="btn btn--primary btn--block" data-order-delivery="${escapeHtml(
-                orderId,
-              )}" type="button">Pasar a un delivery</button>`
-            : ''
-        }
-        ${
-          data.item?.customer_id
-            ? `<button class="btn btn--ghost btn--block" data-customer="${escapeHtml(
-                data.item.customer_id,
-              )}" type="button">Ver cliente</button>`
-            : ''
-        }
-        <button class="btn btn--ghost btn--block" id="receipt-edit" type="button">Modificar pedido</button>
-        ${
-          isAdmin()
-            ? `<button class="btn btn--ghost btn--block" data-order-status-change="${escapeHtml(orderId)}" data-order-status-current="${escapeHtml(operational)}" type="button">Cambiar estado</button>`
-            : ''
-        }
-        ${
-          isAdmin() && receipt.status !== 'cancelado'
-            ? `<button class="btn btn--danger btn--block" data-sale-cancel="${escapeHtml(orderId)}" type="button">Cancelar venta</button>`
-            : ''
-        }
+        ${sheetFabHtml(`data-receipt-actions="${escapeHtml(orderId)}"`)}
         `,
       );
-
-      const receiptUrl = `${app2Base()}/api/admin/orders/${encodeURIComponent(orderId)}/receipt`;
-      const facturaUrl = `${app2Base()}/api/admin/orders/${encodeURIComponent(orderId)}/factura`;
-      $('#receipt-open').addEventListener('click', () => window.open(receiptUrl, '_blank', 'noopener'));
-      $('#receipt-share').addEventListener('click', () => shareReceiptPdf({ url: facturaUrl, receipt }));
-      $('#receipt-edit').addEventListener('click', () => {
-        openOrderForm({
-          customerId: data.item.customer_id,
-          conversationId: data.item.conversation_id ?? '',
-          orderId,
-          order: data.order,
-        });
-      });
-      $('[data-order-status-change]')?.addEventListener('click', () => openOrderStatusSheet(orderId, { order, integrity }));
+      // El menú de la factura necesita sus datos: se guardan con la hoja abierta.
+      state.receiptContext = { orderId, order, receipt, item: data.item ?? null };
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo abrir el comprobante');
     }
@@ -9870,10 +9800,10 @@
    *
    * Estaba SOLO en el mapa (una lista desplegable dentro de la fila del punto) y
    * desde el pedido no había forma de encontrarlo: se creaba un pedido y no se
-   * sabía cómo pasarlo al reparto. Ahora es una acción del propio pedido, en su
-   * ficha y en la factura que se abre al guardarlo, con los repartidores a la
-   * vista. El servidor solo lo permite a quien puede gestionar el reparto
-   * (`delivery.tracking.manage_all`): si no, la lista de repartidores llega vacía.
+   * sabía cómo pasarlo al reparto. Ahora es una acción del propio pedido, dentro
+   * de su botón flotante de acciones. El servidor solo lo permite a quien puede
+   * gestionar el reparto (`delivery.tracking.manage_all`): si no, la lista de
+   * repartidores llega vacía.
    */
   async function openDeliveryAssignSheet({ orderId, order = null }) {
     const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
@@ -9928,6 +9858,142 @@
       } catch (error) {
         if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo asignar el delivery');
       }
+    });
+  }
+
+  /**
+   * BOTÓN FLOTANTE DE ACCIONES DE UNA HOJA.
+   *
+   * La ficha del pedido (y su factura) tenían una columna de botones que las
+   * llenaba de ruido: Ver cliente, Ver factura, Pasar a un delivery, Llamar,
+   * Escribir por WhatsApp, Modificar, Cancelar… Ahora TODO eso vive dentro de un
+   * botón flotante: lo que se lee es la ficha, y las acciones están a un toque,
+   * siempre en el mismo sitio.
+   */
+  const sheetFabHtml = (attrs = '') =>
+    `<button class="sheet-fab" data-sheet-actions ${attrs} type="button" aria-label="Acciones">${ICONS.spark}</button>`;
+
+  /**
+   * Menú de acciones (dentro del botón flotante).
+   *
+   * `data` son atributos `data-*` que ya sabe atender el panel (la misma acción
+   * de siempre, ahora dentro del menú) y `href` para lo que de verdad es un
+   * enlace, como llamar por teléfono.
+   */
+  function openSheetActionMenu({ title = 'Acciones', acciones = [] } = {}) {
+    const fila = (accion) => {
+      const cuerpo = `<span class="menu-item__icon" aria-hidden="true">${accion.icon ?? ''}</span>
+        <span><strong>${escapeHtml(accion.label)}</strong>${
+          accion.note ? `<small>${escapeHtml(accion.note)}</small>` : ''
+        }</span>`;
+      if (accion.href) return `<a class="menu-item" href="${escapeHtml(accion.href)}">${cuerpo}</a>`;
+      const attrs = Object.entries(accion.data ?? {})
+        .map(([clave, valor]) => `${clave}="${escapeHtml(String(valor))}"`)
+        .join(' ');
+      return `<button class="menu-item" type="button" ${attrs}>${cuerpo}</button>`;
+    };
+    openSheet(title, `<div class="menu-list">${acciones.map(fila).join('')}</div>`, { variant: 'menu' });
+  }
+
+  /** Las acciones del pedido, todas dentro de su botón flotante. */
+  function openOrderActionsMenu(itemId) {
+    const item = state.items.find((candidate) => candidate.id === itemId) ?? null;
+    if (!item) return;
+    const phone = digits(item.phone);
+    const esPedido = item.type === 'order_intent';
+    openSheetActionMenu({
+      title: item.order_number ?? item.name ?? 'Acciones',
+      acciones: [
+        { icon: ICONS.chevron, label: 'Volver a la ficha', data: { 'data-open': item.id } },
+        esPedido
+          ? {
+              icon: ICONS.doc,
+              label: 'Ver factura',
+              note: 'Comprobante con detalle y total',
+              data: { 'data-receipt': item.id },
+            }
+          : null,
+        esPedido && hasPermission('delivery.tracking.manage_all')
+          ? {
+              icon: ICONS.send,
+              label: 'Pasar a un delivery',
+              note: 'El repartidor lo verá en su panorama',
+              data: { 'data-order-delivery': item.id },
+            }
+          : null,
+        item.customer_id
+          ? { icon: ICONS.person, label: 'Ver cliente', note: 'Su ficha completa', data: { 'data-customer': item.customer_id } }
+          : null,
+        { icon: ICONS.chat, label: 'Escribir por WhatsApp', note: 'Plantilla o mensaje libre', data: { 'data-item-wa': item.id } },
+        phone ? { icon: ICONS.phone, label: 'Llamar', note: item.phone, href: `tel:${phone}` } : null,
+      ].filter(Boolean),
+    });
+  }
+
+  /** Escribir por WhatsApp: elegir la plantilla, ver el mensaje final y enviarlo. */
+  function openItemWhatsAppSheet(itemId) {
+    const item = state.items.find((candidate) => candidate.id === itemId) ?? null;
+    if (!item) return;
+    const mensajes = state.messages ?? [];
+    openSheet(
+      `Escribir a ${item.name ?? 'el cliente'}`,
+      `<label class="field">
+        <span class="field__label">Mensaje</span>
+        <select class="field__select" id="wa-item-template">
+          ${mensajes
+            .map((message) => `<option value="${escapeHtml(message.id)}">${escapeHtml(message.name)}</option>`)
+            .join('')}
+        </select>
+      </label>
+      <p class="view__hint" id="wa-item-preview"></p>
+      <button class="btn btn--whatsapp btn--block" id="wa-item-send" type="button">Escribir por WhatsApp</button>`,
+    );
+    const pintar = () => {
+      const message = mensajes.find((entry) => entry.id === $('#wa-item-template')?.value);
+      const preview = $('#wa-item-preview');
+      if (preview) preview.textContent = message ? fillTemplate(message.body, item) : '';
+    };
+    $('#wa-item-template')?.addEventListener('change', pintar);
+    pintar();
+    $('#wa-item-send')?.addEventListener('click', () => {
+      const message = mensajes.find((entry) => entry.id === $('#wa-item-template')?.value);
+      openWhatsApp(item, message?.body ?? 'Hola {nombre}, te escribo de {negocio}.');
+    });
+  }
+
+  /** Las acciones de la factura, también dentro de su botón flotante. */
+  function openReceiptActionsMenu(ctx) {
+    const { orderId, order = {}, receipt = {}, item = null } = ctx ?? {};
+    if (!orderId) return;
+    const operational = getOrderOperationalStatus(order);
+    const abierto = receipt.status !== 'entregado' && receipt.status !== 'cancelado';
+    openSheetActionMenu({
+      title: receipt.order_number ? `Factura · ${receipt.order_number}` : 'Factura',
+      acciones: [
+        { icon: ICONS.doc, label: 'Ver factura', note: 'Documento para imprimir', data: { 'data-receipt-open': orderId } },
+        {
+          icon: ICONS.send,
+          label: 'Compartir factura',
+          note: 'PDF por WhatsApp o donde quieras',
+          data: { 'data-receipt-share': orderId },
+        },
+        hasPermission('delivery.tracking.manage_all') && abierto
+          ? { icon: ICONS.send, label: 'Pasar a un delivery', data: { 'data-order-delivery': orderId } }
+          : null,
+        item?.customer_id ? { icon: ICONS.person, label: 'Ver cliente', data: { 'data-customer': item.customer_id } } : null,
+        { icon: ICONS.note, label: 'Modificar pedido', data: { 'data-order-edit': orderId } },
+        isAdmin()
+          ? {
+              icon: ICONS.check,
+              label: 'Cambiar estado',
+              note: operationalStatusLabel(operational),
+              data: { 'data-order-status-change': orderId, 'data-order-status-current': operational },
+            }
+          : null,
+        isAdmin() && receipt.status !== 'cancelado'
+          ? { icon: ICONS.close, label: 'Cancelar venta', data: { 'data-sale-cancel': orderId } }
+          : null,
+      ].filter(Boolean),
     });
   }
 
@@ -11136,6 +11202,38 @@
         attachLocationToOrder(attachLoc.dataset.orderAttachLoc, attachLoc.dataset.attachLocation, attachLoc);
         return;
       }
+      const sheetActions = event.target.closest('[data-sheet-actions]');
+      if (sheetActions) {
+        // El botón flotante sabe de qué es la hoja abierta: el ítem o la factura.
+        if (sheetActions.dataset.item) openOrderActionsMenu(sheetActions.dataset.item);
+        else if (sheetActions.dataset.receiptActions) openReceiptActionsMenu(state.receiptContext);
+        return;
+      }
+      const itemWa = event.target.closest('[data-item-wa]');
+      if (itemWa) {
+        openItemWhatsAppSheet(itemWa.dataset.itemWa);
+        return;
+      }
+      const receiptOpen = event.target.closest('[data-receipt-open]');
+      if (receiptOpen) {
+        window.open(
+          `${app2Base()}/api/admin/orders/${encodeURIComponent(receiptOpen.dataset.receiptOpen)}/receipt`,
+          '_blank',
+          'noopener',
+        );
+        return;
+      }
+      const receiptShare = event.target.closest('[data-receipt-share]');
+      if (receiptShare) {
+        const receipt = state.receiptContext?.receipt ?? null;
+        if (receipt) {
+          shareReceiptPdf({
+            url: `${app2Base()}/api/admin/orders/${encodeURIComponent(receiptShare.dataset.receiptShare)}/factura`,
+            receipt,
+          });
+        }
+        return;
+      }
       const orderDelivery = event.target.closest('[data-order-delivery]');
       if (orderDelivery) {
         const id = orderDelivery.dataset.orderDelivery;
@@ -11165,6 +11263,14 @@
       const receipt = event.target.closest('[data-receipt]');
       if (receipt) {
         openReceipt(receipt.dataset.receipt);
+        return;
+      }
+      const orderStatusChange = event.target.closest('[data-order-status-change]');
+      if (orderStatusChange) {
+        openOrderStatusSheet(orderStatusChange.dataset.orderStatusChange, {
+          order: state.receiptContext?.order ?? {},
+          integrity: { operationalStatus: orderStatusChange.dataset.orderStatusCurrent },
+        });
         return;
       }
       const saleCancel = event.target.closest('[data-sale-cancel]');

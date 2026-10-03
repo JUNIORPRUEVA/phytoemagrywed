@@ -399,12 +399,21 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const texto = $('#sheet-body').textContent;
     expect(texto).toMatch(/Atendido por/);
     expect(texto).toMatch(/PE-/);
-    // Los botones que se piden DENTRO del pedido, con su nombre claro.
-    expect(texto).toContain('Ver cliente');
-    expect(texto).toContain('Ver factura');
-    expect(texto).toContain('Pasar a un delivery');
-    // Y el botón del cliente lleva a su ficha de verdad (con su id).
-    const boton = $('#sheet-body [data-customer]');
+    /*
+     * LA HOJA SE LEE, NO SE LLENA DE BOTONES: las acciones están en el botón
+     * flotante, y dentro están todas.
+     */
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante de acciones');
+    expect($('#sheet-body [data-order-delivery]')).toBe(null);
+    expect($('#sheet-body [data-receipt]')).toBe(null);
+    click(fab);
+    const menu = await waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'el menú de acciones');
+    for (const accion of ['Ver cliente', 'Ver factura', 'Pasar a un delivery', 'Escribir por WhatsApp', 'Volver a la ficha']) {
+      expect(menu.textContent).toContain(accion);
+    }
+
+    // Y «Ver cliente» abre su ficha de verdad (con el id del cliente del pedido).
+    const boton = $('[data-customer]');
     expect(boton?.dataset.customer).toBeTruthy();
     click(boton);
     await waitFor(() => $('#customer-profile .profile-hero'), 'el perfil del cliente');
@@ -414,16 +423,21 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     await waitFor(() => $('#list-pedidos .order-row'), 'la lista otra vez');
   });
 
-  it('el comprobante del pedido trae «Ver cliente» y «Pasar a un delivery»', async () => {
+  it('la factura del pedido lleva sus acciones en el botón flotante', async () => {
     // La factura es lo que se abre al guardar un pedido: ahí se pasa al reparto.
     click('#list-pedidos .order-row');
-    const verFactura = await waitFor(() => $('#sheet-body [data-receipt]'), 'el botón de ver factura');
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante de la ficha');
+    click(fab);
+    const verFactura = await waitFor(() => $('[data-receipt]'), 'la acción de ver factura');
     click(verFactura);
-    // El comprobante es OTRA hoja (título «Factura · PE-…» y su botón de ver factura).
-    const comprobante = await waitFor(() => ($('#receipt-open') ? $('#sheet-body') : null), 'el comprobante del pedido');
-    expect($('#sheet-title').textContent).toContain('Factura');
-    expect(comprobante.textContent).toContain('Ver cliente');
-    expect(comprobante.textContent).toContain('Pasar a un delivery');
+    await waitFor(() => ($('#sheet-title')?.textContent?.startsWith('Factura') ? true : null), 'el comprobante');
+
+    const fabFactura = await waitFor(() => $('#sheet-body [data-receipt-actions]'), 'el botón flotante de la factura');
+    click(fabFactura);
+    const menu = await waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'las acciones de la factura');
+    for (const accion of ['Ver factura', 'Compartir factura', 'Pasar a un delivery', 'Ver cliente', 'Modificar pedido']) {
+      expect(menu.textContent).toContain(accion);
+    }
     click('[data-close-sheet]');
   });
 
@@ -438,7 +452,9 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(sinReparto.length).toBeGreaterThan(0);
 
     click(sinReparto[0]);
-    const abrir = await waitFor(() => $('#sheet-body [data-order-delivery]'), 'la acción de pasar a delivery');
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del pedido');
+    click(fab);
+    const abrir = await waitFor(() => $('[data-order-delivery]'), 'la acción de pasar a delivery');
     click(abrir);
 
     // La hoja lista al repartidor (creado en esta suite con rol DELIVERY).

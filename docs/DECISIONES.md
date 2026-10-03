@@ -1028,4 +1028,25 @@ Lo que pidió el negocio, punto por punto, y por qué se hizo así.
    toque del mapa (Leaflet no deja pasar el clic del marcador), así que el punto trae
    su propia acción.
 
+## 41. Las hojas se LEEN: las acciones van en un botón flotante de la hoja
+
+La ficha del pedido tenía seis botones seguidos (Ver factura, Pasar a un delivery, Ver
+cliente, Escribir por WhatsApp, Llamar, Guardar notas) y la factura ocho (Ver factura,
+Compartir, Pasar a un delivery, Ver cliente, Modificar, Cambiar estado, Cancelar…). Lo
+que se lee es lo importante; las acciones son otra cosa.
+
+1. **Un botón flotante dentro de la hoja** (`.sheet-fab`, arriba a la derecha abajo, por
+   encima de la hoja) abre el **menú de acciones**: `openSheetActionMenu()` recibe la
+   lista y pinta icono + título + nota. En la ficha y en la factura.
+2. **Nada se pierde**: cada opción usa el MISMO atributo que usaba el botón anterior
+   (`data-receipt`, `data-order-delivery`, `data-customer`, `data-order-edit`,
+   `data-order-status-change`, `data-sale-cancel`), así que la acción y su auditoría son
+   idénticas. Lo que es un enlace de verdad (Llamar) se pinta como `<a href="tel:…">`.
+3. La ficha del pedido queda con **un solo botón**: "Guardar notas" (es del formulario).
+   El menú incluye "Volver a la ficha" para no perderse al cambiar de hoja.
+4. La hoja del comprobante guarda sus datos en `state.receiptContext` mientras está
+   abierta: el menú de la factura los necesita (para compartir el PDF o cambiar estado).
+5. Con acciones flotantes, el final de la hoja se aparta para que el botón no tape el
+   último dato (`.sheet__body:has(.sheet-fab)`).
+
 

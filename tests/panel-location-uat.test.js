@@ -344,8 +344,14 @@ describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () =
      * El panel sigue con su trabajo (recarga y comprobante) después de responder:
      * se espera a que termine antes de seguir, o el comprobante se abriría encima
      * del siguiente paso (carrera del propio test, no del producto).
+     * El comprobante se reconoce por su título: sus acciones viven ahora en el
+     * botón flotante de la hoja.
      */
-    await waitFor(() => $('#receipt-open'), 'el comprobante del pedido', 8000);
+    await waitFor(
+      () => ($('#sheet-title')?.textContent?.startsWith('Factura') ? true : null),
+      'el comprobante del pedido',
+      8000,
+    );
     $('#sheet').hidden = true;
   }, 20000);
 });
