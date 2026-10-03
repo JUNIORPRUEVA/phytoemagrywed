@@ -1228,4 +1228,26 @@ en la consola del navegador.
    panel. El enlace **«Ir a la web»** vive al final del menú (`href="/"`, pestaña nueva,
    `rel="noopener noreferrer"`): desde el panel se salta a la tienda sin romper la
    sesión del CRM.
+8. **Lo que destapó la prueba del PANEL** (entrando con un usuario AGENTE de verdad,
+   usuario y contraseña, contra el servidor de verdad). Tres cosas que la pantalla
+   llamaba y no existían o no hacían nada, y que ahora sí:
+   - **`requestConversationAssignment` no estaba definida** (el botón «Solicitar que me
+     la asignen» llamaba a una función inexistente): se escribió, con estado «Avisando…»,
+     aviso al terminar y refresco de la lista.
+   - **Nadie marcaba el bloqueo**: la pantalla sabía pintar «esta conversación no está a
+     tu nombre», pero el 403 del servidor caía en el `catch` genérico y salía un «No
+     pudimos cargar esta conversación · Reintentar», que era una mentira. Ahora el 403
+     `not_your_conversation` se reconoce por su código y pinta el bloqueo con el motivo
+     que manda el servidor.
+   - **El «⋯» de la lista no ofrecía pedirla**: solo salía dentro de la hoja de
+     asignación, que un agente no puede abrir. Ahora el menú de la conversación incluye
+     «Solicitar que me la asignen» para quien no administra (y sigue sin ofrecer «Tomar»
+     ni «Reasignar», que son de administración).
+   Además se corrigió una carrera real del hilo: una petición que salía ANTES (un
+   refresco de fondo) podía aterrizar DESPUÉS del envío y borrar de la pantalla el
+   mensaje recién escrito. Cada carga del hilo lleva ahora un número (`state.wa.threadSeq`)
+   y las respuestas viejas se descartan. `tests/panel-blindaje-uat.test.js` deja todo eso
+   comprobado de punta a punta: la lista entera visible, el bloqueo con su botón, la
+   ausencia total de compositor y de envíos, el aviso a administración sin cambio de
+   asignación, y el chat funcionando en cuanto administración asigna.
 

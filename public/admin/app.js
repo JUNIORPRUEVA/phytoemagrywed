@@ -169,6 +169,13 @@
       sound: localStorage.getItem(WA_SOUND_KEY) === '1',
       seenMessages: new Set(),
       loadingFor: null,
+      /*
+       * Número de la última carga del hilo pedida. Una respuesta que vuelva con
+       * un número viejo se DESCARTA: si no, una petición que salió antes (un
+       * refresco de fondo) podía aterrizar después del envío y borrar de la
+       * pantalla el mensaje recién escrito.
+       */
+      threadSeq: 0,
       followupId: null,
       listError: false,
       threadError: false,
@@ -4210,6 +4217,13 @@
     const canRelease = conversation?.assigned_user_id && (assignedToMe || isAdmin());
     const canReassign = Boolean(conversation?.assigned_user_id) && isAdmin();
     /*
+     * PEDIRLA ES LO QUE PUEDE HACER QUIEN NO ADMINISTRA. Desde la lista (aquí) y
+     * desde el propio chat bloqueado: pedir avisa a administración y no cambia
+     * nada por sí solo. Si no estuviera aquí, un agente no tendría forma de pedir
+     * una conversación que le interesa sin abrirla antes.
+     */
+    const canAsk = Boolean(currentUser()) && !isAdmin() && !assignedToMe;
+    /*
      * LA PRIMERA FILA ES LA QUE ASIGNA: dice quién atiende y al pulsarla se elige
      * responsable (a mí o a otra persona). Antes era un cartel que no hacía nada.
      */
@@ -4223,6 +4237,14 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
           <span><strong>Tomar conversación</strong><small>Queda asignada a ti</small></span>
         </button>` : ''}
+        ${
+          canAsk
+            ? `<button class="menu-item" data-conv-ask-assign="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bell}</span>
+          <span><strong>Solicitar que me la asignen</strong><small>Avisa a administración: asignar no me toca a mí</small></span>
+        </button>`
+            : ''
+        }
         ${canRelease ? `<button class="menu-item" data-conv-release="${escapeHtml(conversationId)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
           <span><strong>Liberar conversación</strong><small>Vuelve a Sin asignar</small></span>
@@ -6054,11 +6076,14 @@
     // Evita peticiones duplicadas de la misma conversación.
     if (!options.force && state.wa.loadingFor === conversationId) return;
     state.wa.loadingFor = conversationId;
+    const secuencia = (state.wa.threadSeq = (state.wa.threadSeq ?? 0) + 1);
     try {
       const [data, templates] = await Promise.all([
         api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`),
         api('/api/admin/wa-templates?sync=stale').catch(() => ({ templates: state.templates ?? [] })),
       ]);
+      // Se cambió de conversación o alguien pidió una carga más nueva: esta sobra.
+      if (secuencia !== state.wa.threadSeq) return;
       if (state.wa.selectedId !== conversationId) return; // se cambió mientras cargaba
       state.templates = templates.templates ?? [];
       state.wa.chat = data;
@@ -6074,7 +6099,25 @@
       }
     } catch (error) {
       if (error.message === 'unauthorized') return;
+      if (secuencia !== state.wa.threadSeq) return;
       state.wa.chat = null;
+      /*
+       * BLINDADA: un 403 del servidor NO es «no pudimos cargar». Es que la
+       * conversación no está a nombre de quien mira (ni de nadie). En vez de un
+       * error con «Reintentar» —que sería mentira— se deja dicho el motivo y se
+       * ofrece lo único que ese usuario puede hacer: PEDIRLA.
+       */
+      if (error.body?.error === 'not_your_conversation') {
+        state.wa.locked = {
+          conversationId,
+          message: error.body.message ?? 'Esta conversación no está a tu nombre. Pide que te la asignen.',
+          assignedName: error.body.assigned_display_name ?? null,
+        };
+        state.wa.threadError = false;
+        renderWaChat();
+        return;
+      }
+      state.wa.locked = null;
       state.wa.threadError = true;
       renderWaChat();
     } finally {
@@ -10640,6 +10683,42 @@
       closeSheet();
     } catch (error) {
       if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar la asignación');
+    }
+  }
+
+  /**
+   * PEDIR UNA CONVERSACIÓN QUE NO ES MÍA.
+   *
+   * El negocio lo pidió BLINDADO: un agente no se asigna conversaciones solo.
+   * Lo que puede hacer es PEDIRLA, y administración recibe el aviso con el enlace
+   * directo a este chat. Pedir no cambia nada: el servidor contesta 202 y la
+   * conversación sigue como estaba hasta que administración decida.
+   *
+   * Está aquí porque la usa el chat bloqueado (botón «Solicitar que me la
+   * asignen») y el menú «⋯» de la lista.
+   */
+  async function requestConversationAssignment(conversationId, button = null) {
+    if (!conversationId) return;
+    try {
+      const result = await working(button, 'Avisando…', () =>
+        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/assignment-request`, {
+          method: 'POST',
+          body: '{}',
+        }),
+      );
+      closeSheet();
+      toast(
+        Number(result?.notified) > 1
+          ? 'Pedido enviado: administración recibió el aviso'
+          : 'Pedido enviado a administración',
+      );
+    } catch (error) {
+      if (error.message !== 'unauthorized') {
+        // Si ya es suya (o entró con la clave del panel) el servidor lo dice con
+        // su motivo: se enseña tal cual y se refresca para que la pantalla cuadre.
+        toast(error.body?.message ?? 'No se pudo enviar el pedido');
+        await refreshWhatsapp().catch(() => {});
+      }
     }
   }
 

@@ -32,13 +32,17 @@ describe('WhatsApp assignment UX', () => {
 
   it('el menú de conversación decide acciones según asignación y rol', () => {
     const start = app.indexOf('function assignmentMenuHtml');
-    const menu = app.slice(start, start + 2800);
+    // Hasta la función siguiente: así el trozo no se queda corto al crecer.
+    const siguiente = app.indexOf('\n  function ', start + 10);
+    const menu = app.slice(start, siguiente > start ? siguiente : start + 4200);
     expect(app).toContain('function assignmentMenuHtml');
     expect(app).toContain('const assignmentMenu = assignmentMenuHtml(conversation, { conversationId });');
     expect(menu).toContain('Tomar conversación');
     expect(menu).toContain('Liberar conversación');
     expect(menu).toContain('Reasignar / transferir');
     expect(menu).toContain('Asignada a otra persona');
+    // Y lo que puede hacer quien NO administra: pedirla (no asignársela).
+    expect(menu).toContain('Solicitar que me la asignen');
     expect(menu).toContain("hasPermission('chats.take_unassigned')");
     expect(menu).toContain('assignedToMe || isAdmin()');
     expect(menu).toContain('isAdmin()');
