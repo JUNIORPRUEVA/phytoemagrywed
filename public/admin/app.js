@@ -3784,6 +3784,12 @@
 
   /** Lo que ve una persona: nunca el `wa_message_id`. */
   const WA_STATUS = {
+    /*
+     * `sending` NO existe en el servidor: es la burbuja que se pinta al instante
+     * mientras viaja el envío, para que escribir se sienta inmediato. Al
+     * confirmarse se sustituye por el mensaje real.
+     */
+    sending: 'Enviando…',
     pending: 'Preparando',
     queued: 'Preparando',
     sent: 'Enviado',
@@ -6016,11 +6022,45 @@
     }
   }
 
+  /** Deja a la vista lo último del hilo (se usa al pintar un envío recién hecho). */
+  function scrollThreadToEnd() {
+    const thread = $('#thread');
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  }
+
   /** Envío MANUAL: solo se llama desde el botón Enviar. */
   async function sendWaMessage(payload, button) {
     const conversationId = state.wa.selectedId;
     if (!conversationId) return false;
     let ok = false;
+    /*
+     * BURBUJA AL INSTANTE. Antes el mensaje aparecía cuando terminaba TODO: el
+     * viaje al servidor, el envío a WhatsApp y una recarga completa del panel
+     * (`/api/admin/data`), que es lo que hacía que se sintiera lento. Ahora se
+     * pinta ya con «Enviando…», y al confirmar el servidor se sustituye por el
+     * mensaje de verdad (con su id y su estado). Si falla, se quita y se avisa.
+     */
+    const provisional = {
+      id: `local_${Date.now()}`,
+      conversation_id: conversationId,
+      direction: 'outbound',
+      type: payload.template ? 'template' : 'text',
+      template_name: payload.template ?? null,
+      body: payload.body ?? (payload.template ? 'Plantilla' : ''),
+      status: 'sending',
+      created_at: new Date().toISOString(),
+      sent_by_display_name_snapshot: currentUser()?.display_name ?? null,
+      actor_type: currentUser() ? 'USER' : 'LEGACY',
+      local: true,
+    };
+    const thread = state.wa.chat;
+    const conHilo = thread?.conversation?.id === conversationId && Array.isArray(thread.messages);
+    if (conHilo) {
+      thread.messages.push(provisional);
+      state.wa.chatSig = waThreadSig(thread);
+      renderWaChat();
+      scrollThreadToEnd();
+    }
     await working(button, 'Enviando…', async () => {
       try {
         await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
@@ -6028,14 +6068,25 @@
           body: JSON.stringify(payload),
         });
         state.wa.draft = '';
-        toast('Mensaje enviado');
         const followupId = state.wa.followupId;
         state.wa.followupId = null;
-        await load({ keepTab: true });
+        toast('Mensaje enviado');
+        /*
+         * El hilo de verdad (con el mensaje ya guardado) y, SIN BLOQUEAR, la lista
+         * al día. Antes aquí se llamaba a `load()`, que vuelve a pedir TODOS los
+         * datos del panel: eso era medio segundo de espera después de cada envío.
+         */
         await loadWaThread(conversationId, { force: true });
+        refreshWhatsapp().catch(() => {});
         if (followupId) toast('Seguimiento marcado como hecho');
         ok = true;
       } catch (error) {
+        // El mensaje no salió: la burbuja provisional no puede quedarse.
+        if (conHilo) {
+          thread.messages = thread.messages.filter((message) => message.id !== provisional.id);
+          state.wa.chatSig = waThreadSig(thread);
+          renderWaChat();
+        }
         if (error.message !== 'unauthorized') {
           if (error.body?.message_record) {
             await loadWaThread(conversationId, { force: true });
@@ -6144,6 +6195,76 @@
   }
 
   let waPolling = false;
+
+  /*
+   * ==========================================================================
+   *  CANAL EN VIVO DEL CHAT (SSE)
+   * ==========================================================================
+   *
+   * Antes, un mensaje que entraba podía tardar hasta 8 s en verse: lo que tarda
+   * el sondeo. Con este canal el SERVIDOR avisa en cuanto guarda el mensaje (o
+   * cambia su estado: entregado, leído) y la pantalla se actualiza sola.
+   *
+   * El sondeo SIGUE puesto como red de seguridad: si el navegador no soporta
+   * `EventSource`, la sesión caduca o la conexión se cae, todo funciona igual
+   * (solo que más lento). Es el mismo patrón que ya usa el mapa de entregas.
+   */
+  let waEvents = null;
+  let waEventTimer = null;
+
+  function stopWhatsappEvents() {
+    if (waEvents) waEvents.close();
+    waEvents = null;
+    if (waEventTimer) clearTimeout(waEventTimer);
+    waEventTimer = null;
+  }
+
+  /*
+   * Un aviso no se atiende solo: si entran cinco mensajes seguidos (o el cliente
+   * manda texto y ubicación), se refresca UNA vez. Los avisos se agrupan 250 ms.
+   */
+  function scheduleWhatsappRefresh(delay = 250) {
+    if (waEventTimer) return;
+    waEventTimer = setTimeout(() => {
+      waEventTimer = null;
+      /*
+       * Se refresca mientras la pestaña de WhatsApp esté abierta, aunque la app
+       * esté en segundo plano: un aviso del servidor es justo el momento en el que
+       * interesa tener la pantalla (y el sonido/insignia) al día. El que ahorra
+       * red en segundo plano es el SONDEO, que sí se calla cuando no se ve.
+       */
+      if (state.tab !== 'whatsapp') return;
+      if (waPolling) {
+        // Hay un refresco en vuelo: se reintenta en un momento (si no, el aviso
+        // se perdería y habría que esperar al próximo sondeo).
+        scheduleWhatsappRefresh(600);
+        return;
+      }
+      waPolling = true;
+      refreshWhatsapp()
+        .catch(() => {})
+        .finally(() => {
+          waPolling = false;
+        });
+    }, delay);
+  }
+
+  function startWhatsappEvents() {
+    if (waEvents || state.tab !== 'whatsapp') return;
+    if (typeof EventSource !== 'function') return; // sin SSE: manda el sondeo
+    const source = new EventSource('/api/admin/whatsapp/events');
+    source.addEventListener('wa.message', () => scheduleWhatsappRefresh());
+    source.addEventListener('wa.status', () => scheduleWhatsappRefresh());
+    /*
+     * No se cierra a la primera: `EventSource` reintenta solo (también si la app
+     * estuvo en segundo plano). Si el navegador lo da por cerrado, se suelta y al
+     * volver a la pestaña se abre otro; mientras, el sondeo cubre.
+     */
+    source.onerror = () => {
+      if (source.readyState === 2) waEvents = null;
+    };
+    waEvents = source;
+  }
 
   /** Un solo temporizador para todo el panel: nada de timers huérfanos. */
   function waPollTick() {
@@ -10836,6 +10957,8 @@
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     if (state.drawer) closeDrawer();
+    // Fuera de WhatsApp no se mantiene el canal en vivo (ni gastos de más).
+    if (tab !== 'whatsapp') stopWhatsappEvents();
     // El ancho de la bandeja de WhatsApp depende de la pestaña activa (CSS).
     document.body.dataset.tab = tab;
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
@@ -10848,8 +10971,12 @@
     renderMobileHeader();
     if (!options.silent) {
       window.scrollTo({ top: 0 });
-      // Al entrar en WhatsApp se refresca una vez; el sondeo sigue después.
-      if (tab === 'whatsapp') refreshWhatsapp().catch(() => {});
+      // Al entrar en WhatsApp se refresca una vez y se abre el canal EN VIVO; el
+      // sondeo sigue después como red de seguridad.
+      if (tab === 'whatsapp') {
+        refreshWhatsapp().catch(() => {});
+        startWhatsappEvents();
+      }
       if (tab === 'delivery') {
         refreshDeliveryTracking().catch(() => {});
         startDeliveryEvents();
@@ -11950,15 +12077,22 @@
       refreshWhatsapp().catch(() => renderWaList());
     });
     $('#wa-new-chat').addEventListener('click', () => openNewConversationSheet());
+
     // En el móvil, ← vuelve a la lista de conversaciones.
     $('#wa-back').addEventListener('click', () => setWaView('list'));
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') waPollTick();
+      if (document.visibilityState === 'visible') {
+        waPollTick();
+        // La pestaña vuelve a estar delante: se asegura el canal en vivo (el
+        // navegador suele haberlo mantenido, pero puede haberse caído).
+        startWhatsappEvents();
+      }
     });
 
     $('#logout').addEventListener('click', async () => {
       stopDeliveryWatch();
       stopDeliveryEvents();
+      stopWhatsappEvents();
       await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
       showLogin('Sesión cerrada.');
     });

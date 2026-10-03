@@ -185,6 +185,27 @@ export function createCustomerService(deps) {
   const clock = deps.clock ?? (() => new Date());
   const assignmentLocks = new Map();
 
+  /**
+   * Aviso de «aquí ha pasado algo en el chat».
+   *
+   * Lo usa el servidor para EMPUJAR el cambio al panel por SSE en vez de que el
+   * panel lo descubra sondeando cada 8 segundos. Es un AVISO, no un paso del
+   * proceso: si el gancho no existe o falla, el mensaje queda guardado igual y el
+   * sondeo acaba enterándose. Por eso se llama sin `await`.
+   *
+   * @param {{ type: string, conversationId?: string|null, customerId?: string|null,
+   *           direction?: string|null, message?: any, status?: string|null }} info
+   */
+  function notifyChat(info) {
+    const hook = deps.onMessage;
+    if (typeof hook !== 'function') return;
+    try {
+      Promise.resolve(hook(info)).catch(() => {});
+    } catch {
+      /* Un aviso roto no puede tumbar el guardado de un mensaje real. */
+    }
+  }
+
   async function withConversationLock(conversationId, fn) {
     const previous = assignmentLocks.get(conversationId) ?? Promise.resolve();
     let release;
@@ -1041,6 +1062,15 @@ export function createCustomerService(deps) {
       // Un opt-out manda: se cancelan los seguimientos de marketing pendientes.
       const cancelled = optOut && followups ? await followups.cancelMarketingFor(customer.id, 'opt_out') : [];
 
+      // Aviso EN VIVO: el panel pinta el mensaje sin esperar al sondeo de 8 s.
+      notifyChat({
+        type: 'message',
+        conversationId: conversation.id,
+        customerId: customer.id,
+        direction: 'inbound',
+        message: { ...doc, location_id: location?.id ?? null },
+      });
+
       return {
         ok: true,
         duplicate: false,
@@ -1117,6 +1147,14 @@ export function createCustomerService(deps) {
         updated_at: now,
       });
       await db.update('customers', input.customer.id, { last_contact_at: now, updated_at: now });
+      // Aviso EN VIVO: quien tenga el chat abierto (o la lista) lo ve al instante.
+      notifyChat({
+        type: 'message',
+        conversationId: input.conversation.id,
+        customerId: input.customer.id,
+        direction: 'outbound',
+        message: doc,
+      });
       return { ok: true, duplicate: false, message: doc, location: location ? publicLocation(location) : null };
     },
 
@@ -1178,6 +1216,17 @@ export function createCustomerService(deps) {
         patch.error_message = short(input.errorMessage, 200);
       }
       const updated = await db.update('wa_messages', message.id, patch);
+      // Los ticks («entregado», «leído») también viajan en vivo.
+      if (updated?.status !== message.status) {
+        notifyChat({
+          type: 'status',
+          conversationId: message.conversation_id ?? null,
+          customerId: message.customer_id ?? null,
+          direction: 'outbound',
+          status: updated?.status ?? input.status,
+          message: updated,
+        });
+      }
       return { ok: true, message: updated, changed: updated?.status !== message.status };
     },
 

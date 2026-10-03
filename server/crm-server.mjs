@@ -604,8 +604,47 @@ async function publicSessionWithOrder(ctx, session) {
   };
 }
 
-async function emitDeliveryEvent(ctx, type, session) {
-  if (!ctx.deliveryEventClients?.size || !session) return;
+/**
+ * AVISO EN VIVO DEL CHAT (SSE).
+ *
+ * El panel escucha en `/api/admin/whatsapp/events` y así ve un mensaje recién
+ * guardado en cuanto pasa, en vez de esperar al sondeo de 8 segundos. Es lo mismo
+ * que ya hace el mapa de entregas: un canal por sesión abierta y, si el
+ * navegador no lo soporta, el sondeo sigue ahí como red de seguridad.
+ *
+ * El aviso lleva SOLO lo mínimo (de qué conversación es y qué ha cambiado): quien
+ * escucha ya tiene permiso para pedir el hilo, así que no se envía contenido a
+ * quien no debería verlo. Y sin `await`: avisar no puede frenar el guardado.
+ *
+ * @param {any} ctx
+ * @param {{ type: string, conversationId?: string|null, customerId?: string|null,
+ *           direction?: string|null, status?: string|null, message?: any }} info
+ */
+function emitChatEvent(ctx, info) {
+  const clients = ctx?.chatEventClients;
+  if (!clients?.size || !info?.conversationId) return;
+  const event = info.type === 'status' ? 'wa.status' : 'wa.message';
+  const payload = {
+    ok: true,
+    type: info.type,
+    conversationId: info.conversationId,
+    customerId: info.customerId ?? null,
+    direction: info.direction ?? null,
+    status: info.status ?? info.message?.status ?? null,
+    messageId: info.message?.id ?? null,
+    at: info.message?.created_at ?? new Date().toISOString(),
+  };
+  const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of [...clients]) {
+    try {
+      client.res.write(frame);
+    } catch {
+      clients.delete(client);
+    }
+  }
+}
+
+async function emitDeliveryEvent(ctx, type, session) {  if (!ctx.deliveryEventClients?.size || !session) return;
   const payload = await publicSessionWithOrder(ctx, session);
   const event = `event: ${type}\ndata: ${JSON.stringify({ ok: true, type, session: payload })}\n\n`;
   for (const client of [...ctx.deliveryEventClients]) {
@@ -4649,6 +4688,37 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route === '/api/admin/whatsapp/events' && req.method === 'GET') {
+      if (!can('chats.read')) {
+        forbid();
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+        // Sin esto, nginx guarda la respuesta en búfer y los avisos llegan tarde
+        // (o no llegan): justo lo contrario de lo que se busca aquí.
+        'x-accel-buffering': 'no',
+      });
+      const client = { res, actor };
+      ctx.chatEventClients.add(client);
+      res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(`event: heartbeat\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+        } catch {
+          clearInterval(heartbeat);
+          ctx.chatEventClients.delete(client);
+        }
+      }, 25_000);
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        ctx.chatEventClients.delete(client);
+      });
+      return;
+    }
+
     if (route === '/api/admin/delivery-tracking/events' && req.method === 'GET') {
       if (!requirePermission('delivery.location.read_own')) return;
       res.writeHead(200, {
@@ -6818,12 +6888,21 @@ export async function startCrmServer(config = {}) {
   const schedulerRef = { current: null };
   /** @type {{ current: any }} */
   const ctxRef = { current: null };
+  /**
+   * Aviso en vivo del chat: el servicio de clientes llama a este gancho cuando
+   * guarda un mensaje. Se resuelve por referencia diferida porque `ctx` se crea
+   * después del servicio.
+   */
+  /** @type {{ current: ((info: any) => void)|null }} */
+  const chatEventsRef = { current: null };
   const customers = createCustomerService({
     db,
     store,
     followups,
     timeZone: TIME_ZONE,
     clock: config.clock,
+    // Aviso EN VIVO al panel (SSE) de cada mensaje guardado.
+    onMessage: (info) => chatEventsRef.current?.(info),
     // El hilo de la conversación necesita el estado de cada archivo (imagen/audio)
     // para poder pintarlo: se consulta en UNA sola vez por hilo.
     media: mediaStore,
@@ -6871,10 +6950,18 @@ export async function startCrmServer(config = {}) {
     whatsappVerifyToken: (config.whatsappVerifyToken ?? WHATSAPP_VERIFY_TOKEN).trim(),
     appSecret: (config.metaAppSecret ?? META_APP_SECRET).trim(),
     deliveryEventClients: new Set(),
+    /*
+     * Sesiones que escuchan el chat EN VIVO (SSE). Vive en MEMORIA del proceso:
+     * hay UNA instancia de Node (nginx y Node en el mismo contenedor), así que no
+     * hace falta un bus compartido tipo Redis. Si algún día hubiera varias
+     * instancias, este es el único sitio que habría que cambiar.
+     */
+    chatEventClients: new Set(),
     timeZone: TIME_ZONE,
     clock: config.clock ?? (() => new Date()),
   };
   ctxRef.current = ctx;
+  chatEventsRef.current = (info) => emitChatEvent(ctx, info);
 
   /*
    * RUTAS DE MULTIMEDIA (S3) — se registran con el MISMO guard de sesión que el

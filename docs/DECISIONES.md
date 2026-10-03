@@ -1137,3 +1137,42 @@ columna aparte que parecía fuera de la fila.
    que se ha quitado). En el móvil se aparta de la barra de abajo con su margen.
    Solo se aparta al **seleccionar** varias conversaciones: ahí no se está creando
    nada. Al abrir un chat se queda: en el escritorio la lista sigue a la vista.
+
+## 45. El chat va EN VIVO (y por qué NO hizo falta Redis)
+
+El negocio lo dijo claro: enviar o recibir un mensaje tardaba demasiado. Medido,
+el problema no era WhatsApp: era NUESTRA tubería.
+
+1. **Recibir: el servidor EMPUJA, el panel no pregunta.** El panel sondeaba cada
+   8 s, así que un mensaje entrante podía tardar hasta 8 s en aparecer. Ahora el
+   servidor abre `GET /api/admin/whatsapp/events` (SSE) por sesión y AVISA en
+   cuanto guarda un mensaje (`wa.message`) o cambia su estado (`wa.status`: enviado,
+   entregado, leído). El sondeo SIGUE puesto como red de seguridad (navegador sin
+   `EventSource`, sesión caída, móvil en segundo plano): si el canal no está, todo
+   funciona igual, solo que más lento.
+2. **nginx NO puede guardar eso en búfer.** Con `proxy_buffering` por defecto,
+   nginx acumula la respuesta del proxy y los avisos llegan tarde o no llegan —
+   justo el síntoma que se estaba viendo (y que también afectaba al mapa de
+   entregas). Las DOS copias de la config (`nginx/phytoemagry.conf` y el heredoc
+   del `Dockerfile`, que un test obliga a mantener iguales) llevan ahora
+   `proxy_buffering off`, `proxy_cache off`, `gzip off` y `proxy_read_timeout 1h`
+   en `/api/`, y el servidor manda además `X-Accel-Buffering: no`.
+3. **Enviar: la burbuja sale AL INSTANTE.** Antes, al pulsar Enviar el panel
+   esperaba al viaje al servidor, al envío a Meta y a una recarga COMPLETA del
+   panel (`/api/admin/data`). Ahora se pinta la burbuja con «Enviando…» y, cuando
+   el servidor confirma, se sustituye por el mensaje de verdad; si falla, se quita
+   y se avisa. La lista se pone al día sin bloquear.
+4. **MEDIDO con el servidor de verdad** (doble de WhatsApp, sin red a Meta):
+   entrante webhook → aviso en pantalla: 2-7 ms (peor caso, media 4 ms); envío →
+   respuesta del POST: 3-4 ms. Con Meta de por medio, el POST suma lo que tarde
+   Meta, pero la burbuja ya está en pantalla.
+5. **¿Redis? No hace falta.** Redis sirve para compartir estado entre VARIOS
+   procesos (varias instancias de Node, colas de trabajo entre máquinas). Aquí hay
+   UNA instancia de Node en el contenedor (con nginx delante), así que el canal
+   vive en memoria del proceso (`ctx.chatEventClients`) y ahorra un servicio más
+   que mantener, pagar y vigilar. Si algún día hubiera varias instancias o un
+   worker aparte, el único sitio a cambiar es `emitChatEvent()`: publicaría en un
+   bus (Redis pub/sub) en vez de escribir directo a las conexiones.
+6. **El aviso NO lleva el texto del mensaje**: solo de qué conversación es y qué
+   cambió. Quien escucha, si tiene permiso, pide el hilo; así el canal no se
+   convierte en una vía para ver contenido ajeno.

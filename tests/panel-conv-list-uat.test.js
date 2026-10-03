@@ -115,6 +115,15 @@ const click = (element) => {
   return true;
 };
 
+/** Escribe en un campo como una persona: valor + evento `input`. */
+function setValue(selector, value) {
+  const input = typeof selector === 'string' ? $(selector) : selector;
+  if (!input) throw new Error(`no existe el campo: ${selector}`);
+  input.value = value;
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  return input;
+}
+
 /** Mensaje entrante firmado (webhook real del CRM). */
 async function inbound(phone, id, node) {
   const payload = {
@@ -315,6 +324,31 @@ beforeAll(async () => {
   win.scrollTo = () => {};
   win.confirm = () => true;
   win.alert = () => {};
+  /*
+   * DOBLE DE `EventSource`: jsdom no lo trae y el panel abre con él el canal en
+   * vivo del chat. Aquí se guardan las conexiones y sus manejadores para poder
+   * simular un aviso del servidor desde el test.
+   */
+  win.__eventSources = [];
+  win.EventSource = class EventSourceFalso {
+    constructor(url) {
+      this.url = String(url);
+      this.listeners = new Map();
+      this.closed = false;
+      this.readyState = 1;
+      win.__eventSources.push(this);
+    }
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+    close() {
+      this.closed = true;
+      this.readyState = 2;
+    }
+    emit(type, payload = {}) {
+      this.listeners.get(type)?.({ data: JSON.stringify(payload) });
+    }
+  };
   win.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, `${app.url}/admin/`).toString();
     const headers = { ...(init.headers ?? {}) };
@@ -1085,5 +1119,56 @@ describe('la lista que se pinta es la nueva', () => {
     expect(css).toContain('.wa-new-chat');
     // El idioma de siempre: lo que se envía solo se dice, no se esconde.
     expect(app_js).toContain('data-wa-bulk');
+  });
+});
+
+describe('el chat va EN VIVO (sin esperar al sondeo de 8 s)', () => {
+  it('abre el canal del servidor y refresca la pantalla al recibir un aviso', async () => {
+    click('[data-tab="whatsapp"]');
+    const canal = await waitFor(
+      () => dom.window.__eventSources.at(-1) ?? null,
+      'el canal en vivo del chat',
+      8000,
+    );
+    expect(canal.url).toBe('/api/admin/whatsapp/events');
+
+    /*
+     * Se cuentan las peticiones de la LISTA: el aviso del servidor tiene que
+     * provocar el refresco por sí solo (sin esperar a los 8 s del sondeo).
+     */
+    const win = dom.window;
+    const original = win.fetch;
+    let listas = 0;
+    win.fetch = (input, init) => {
+      const url = String(typeof input === 'string' ? input : input.url);
+      if (url.includes('/api/admin/conversations?')) listas += 1;
+      return original(input, init);
+    };
+    try {
+      canal.emit('wa.message', { conversationId: ids.ana, direction: 'inbound', at: new Date().toISOString() });
+      await waitFor(() => listas > 0, 'el refresco que dispara el aviso', 4000);
+    } finally {
+      win.fetch = original;
+    }
+  });
+
+  it('al enviar, la burbuja sale AL INSTANTE y después se confirma', async () => {
+    click(`[data-conv="${ids.luis}"]`);
+    await waitFor(() => $('#wa-text'), 'el compositor de la conversación');
+    const antes = whatsapp.sent.length;
+    setValue('#wa-text', 'Te lo llevo hoy mismo');
+    click('#wa-send');
+
+    // SIN esperar a nadie: el mensaje ya está en el hilo diciendo que se envía.
+    expect($('#thread').textContent).toContain('Te lo llevo hoy mismo');
+    expect($('#thread').textContent).toContain('Enviando');
+
+    // Cuando el servidor confirma, la provisional se sustituye (no se duplica).
+    await waitFor(() => whatsapp.sent.length === antes + 1, 'el envío real al servidor', 8000);
+    await waitFor(() => !$('#thread').textContent.includes('Enviando'), 'la confirmación del envío', 8000);
+    const burbujas = [...$$('#thread .bubble')].filter((bubble) =>
+      bubble.textContent.includes('Te lo llevo hoy mismo'),
+    );
+    expect(burbujas).toHaveLength(1);
   });
 });
