@@ -161,6 +161,30 @@ beforeAll(async () => {
   });
   await inbound('wamid.UATPANEL1', 'Hola, quiero 3 frascos de 10 cápsulas');
 
+  /*
+   * UN REPARTIDOR DE VERDAD. El servidor solo admite usuarios con rol DELIVERY
+   * para pasarle un pedido, y la lista de repartidores viaja en `/api/admin/data`:
+   * se crea ANTES de que el panel cargue, para que la vea desde el principio.
+   */
+  const loginAdmin = await fetch(`${app.url}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: TOKEN }),
+  });
+  await fetch(`${app.url}/api/admin/users`, {
+    method: 'POST',
+    headers: {
+      cookie: loginAdmin.headers.get('set-cookie').split(';')[0],
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      username: 'reparto@phyto.local',
+      password: 'Reparto-12345',
+      displayName: 'Reparto UAT',
+      role: 'DELIVERY',
+    }),
+  });
+
   // El panel real, en un DOM, apuntando al CRM que acaba de arrancar.
   const html = readFileSync(path.join(ADMIN_DIR, 'index.html'), 'utf8');
   dom = new JSDOM(html, {
@@ -374,9 +398,12 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const ficha = await waitFor(() => $('#sheet-body')?.textContent?.includes('Atendido por'), 'la ficha del pedido');
     const texto = $('#sheet-body').textContent;
     expect(texto).toMatch(/Atendido por/);
-    expect(texto).toContain('Abrir la ficha del cliente');
     expect(texto).toMatch(/PE-/);
-    // Y el botón lleva a la ficha de verdad (con el id del cliente del pedido).
+    // Los botones que se piden DENTRO del pedido, con su nombre claro.
+    expect(texto).toContain('Ver cliente');
+    expect(texto).toContain('Ver factura');
+    expect(texto).toContain('Pasar a un delivery');
+    // Y el botón del cliente lleva a su ficha de verdad (con su id).
     const boton = $('#sheet-body [data-customer]');
     expect(boton?.dataset.customer).toBeTruthy();
     click(boton);
@@ -385,6 +412,48 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     // Volver a Pedidos para no dejar la pantalla cambiada.
     click('[data-tab="pedidos"]');
     await waitFor(() => $('#list-pedidos .order-row'), 'la lista otra vez');
+  });
+
+  it('el comprobante del pedido trae «Ver cliente» y «Pasar a un delivery»', async () => {
+    // La factura es lo que se abre al guardar un pedido: ahí se pasa al reparto.
+    click('#list-pedidos .order-row');
+    const verFactura = await waitFor(() => $('#sheet-body [data-receipt]'), 'el botón de ver factura');
+    click(verFactura);
+    // El comprobante es OTRA hoja (título «Factura · PE-…» y su botón de ver factura).
+    const comprobante = await waitFor(() => ($('#receipt-open') ? $('#sheet-body') : null), 'el comprobante del pedido');
+    expect($('#sheet-title').textContent).toContain('Factura');
+    expect(comprobante.textContent).toContain('Ver cliente');
+    expect(comprobante.textContent).toContain('Pasar a un delivery');
+    click('[data-close-sheet]');
+  });
+
+  it('desde el pedido se pasa a un delivery de verdad', async () => {
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-row'), 'la lista de pedidos');
+
+    // La lista AVISA de qué pedidos no tienen repartidor: era el dato que faltaba.
+    const sinReparto = $$('#list-pedidos .order-row').filter((fila) =>
+      fila.querySelector('.order-row__ref')?.textContent.includes('sin delivery'),
+    );
+    expect(sinReparto.length).toBeGreaterThan(0);
+
+    click(sinReparto[0]);
+    const abrir = await waitFor(() => $('#sheet-body [data-order-delivery]'), 'la acción de pasar a delivery');
+    click(abrir);
+
+    // La hoja lista al repartidor (creado en esta suite con rol DELIVERY).
+    const repartidor = await waitFor(() => $('[data-order-delivery-user]'), 'la lista de repartidores');
+    expect($('#sheet-body').textContent).toContain('Reparto UAT');
+
+    const ordenId = repartidor.dataset.orderId;
+    click(repartidor);
+    await esperar(async () => {
+      const item = (await pedidos()).find((candidate) => candidate.id === ordenId);
+      return ordenDe(item)?.delivery?.delivery_user_id ?? null;
+    }, 'el pedido pasado a delivery');
+
+    const item = (await pedidos()).find((candidate) => candidate.id === ordenId);
+    expect(ordenDe(item).delivery.delivery_user_name_snapshot).toBe('Reparto UAT');
   });
 
   it('los filtros de estado se cuentan y filtran de verdad', async () => {

@@ -1821,12 +1821,25 @@
     const estado = orderOperational(item);
     const order = itemOrder(item) ?? {};
     const agente = orderAgent(item);
+    const entregado = ['ENTREGADO', 'CANCELADO'].includes(estado);
+    const repartidor = order.delivery?.delivery_user_name_snapshot ?? null;
     const meta = [
       item.order_number ?? order.order_number ?? null,
       item.variant_name ? `${item.variant_name}${item.quantity ? ` ×${item.quantity}` : ''}` : null,
       orderTotalOf(item) || null,
     ].filter(Boolean);
-    const referencia = [item.phone ?? null, `Atendido por ${agente.label}`].filter(Boolean).join(' · ');
+    /*
+     * La referencia dice quién es el cliente (teléfono), quién atiende y si el
+     * pedido TODAVÍA NO tiene repartidor: es el dato que se necesita para pasarlo
+     * a delivery, y hasta ahora había que adivinarlo mirando el mapa.
+     */
+    const referencia = [
+      item.phone ?? null,
+      `Atendido por ${agente.label}`,
+      entregado ? null : repartidor ? `Delivery ${repartidor}` : 'sin delivery',
+    ]
+      .filter(Boolean)
+      .join(' · ');
     return `<button class="order-row order-row--${escapeHtml(
       estado.toLowerCase(),
     )}" data-open="${escapeHtml(item.id)}" type="button">
@@ -3276,9 +3289,7 @@
         }
         ${
           item.customer_id
-            ? `<div class="fact"><dt>Cliente</dt><dd><button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(
-                item.customer_id,
-              )}" type="button">Abrir la ficha del cliente</button></dd></div>`
+            ? `<div class="fact"><dt>Cliente</dt><dd>${escapeHtml(item.name ?? 'Sin nombre')}</dd></div>`
             : ''
         }
         ${item.phone ? `<div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(item.phone)}</a></dd></div>` : ''}
@@ -3342,6 +3353,15 @@
 
       ${metaBlock(item)}
 
+      ${
+        item.type === 'order_intent'
+          ? `<button class="btn btn--ghost btn--block" data-receipt="${escapeHtml(item.id)}" type="button">Ver factura</button>
+             <button class="btn btn--primary btn--block" data-order-delivery="${escapeHtml(
+               item.id,
+             )}" type="button">Pasar a un delivery</button>`
+          : ''
+      }
+      ${item.customer_id ? `<button class="btn btn--ghost btn--block" data-customer="${escapeHtml(item.customer_id)}" type="button">Ver cliente</button>` : ''}
       ${phone ? `<a class="btn btn--ghost btn--block" href="tel:${escapeHtml(phone)}">Llamar</a>` : ''}
     `;
     $('#sheet').hidden = false;
@@ -9797,6 +9817,22 @@
         </div>
         <button class="btn btn--primary btn--block" id="receipt-open" type="button">Ver factura</button>
         <button class="btn btn--ghost btn--block" id="receipt-share" type="button">Compartir factura</button>
+        ${
+          // Pasar el pedido al reparto se hace AQUI: es justo lo que se quiere
+          // hacer al terminar de crearlo, sin ir a buscarlo al mapa.
+          hasPermission('delivery.tracking.manage_all') && receipt.status !== 'entregado' && receipt.status !== 'cancelado'
+            ? `<button class="btn btn--primary btn--block" data-order-delivery="${escapeHtml(
+                orderId,
+              )}" type="button">Pasar a un delivery</button>`
+            : ''
+        }
+        ${
+          data.item?.customer_id
+            ? `<button class="btn btn--ghost btn--block" data-customer="${escapeHtml(
+                data.item.customer_id,
+              )}" type="button">Ver cliente</button>`
+            : ''
+        }
         <button class="btn btn--ghost btn--block" id="receipt-edit" type="button">Modificar pedido</button>
         ${
           isAdmin()
@@ -9827,6 +9863,72 @@
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo abrir el comprobante');
     }
+  }
+
+  /**
+   * PASAR UN PEDIDO A UN DELIVERY.
+   *
+   * Estaba SOLO en el mapa (una lista desplegable dentro de la fila del punto) y
+   * desde el pedido no había forma de encontrarlo: se creaba un pedido y no se
+   * sabía cómo pasarlo al reparto. Ahora es una acción del propio pedido, en su
+   * ficha y en la factura que se abre al guardarlo, con los repartidores a la
+   * vista. El servidor solo lo permite a quien puede gestionar el reparto
+   * (`delivery.tracking.manage_all`): si no, la lista de repartidores llega vacía.
+   */
+  async function openDeliveryAssignSheet({ orderId, order = null }) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    const actual = order ?? (item ? itemOrder(item) : {}) ?? {};
+    const entrega = actual?.delivery ?? {};
+    const asignadoId = entrega.delivery_user_id ?? '';
+    const asignadoNombre = entrega.delivery_user_name_snapshot ?? null;
+    const repartidores = (state.deliveryUsers ?? []).filter((user) => user.active !== false);
+    const fila = (user) =>
+      `<button class="menu-item" data-order-delivery-user="${escapeHtml(user.id)}" data-order-id="${escapeHtml(
+        orderId,
+      )}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${user.id === asignadoId ? ICONS.checkCircle : ICONS.send}</span>
+        <span><strong>${escapeHtml(user.display_name ?? user.username ?? 'Delivery')}</strong><small>${
+          user.id === asignadoId ? 'lo lleva ahora' : escapeHtml(roleLabel(user.role))
+        }</small></span>
+      </button>`;
+    openSheet(
+      'Pasar a un delivery',
+      `
+      ${
+        asignadoNombre
+          ? `<p class="view__hint">Ahora lo lleva <strong>${escapeHtml(asignadoNombre)}</strong>. Al elegir otro, el pedido cambia de repartidor (queda auditado).</p>`
+          : '<p class="view__hint">El repartidor verá el pedido en su panorama y podrá iniciar la entrega con su GPS.</p>'
+      }
+      <div class="menu-list">
+        ${
+          repartidores.length
+            ? repartidores.map(fila).join('')
+            : `<p class="rule rule--warn">No hay usuarios con rol Delivery. Se crean en «Usuarios» (menú lateral) y vuelven a aparecer aquí.</p>`
+        }
+      </div>
+      <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
+      `,
+      { variant: 'menu' },
+    );
+  }
+
+  /** Asigna el pedido a un repartidor (el MISMO endpoint que usa el mapa). */
+  async function assignOrderToDelivery(orderId, deliveryUserId, button) {
+    if (!orderId || !deliveryUserId) return;
+    await working(button, 'Asignando…', async () => {
+      try {
+        await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/assign`, {
+          method: 'POST',
+          body: JSON.stringify({ deliveryUserId }),
+        });
+        toast('Pedido pasado a delivery');
+        closeSheet();
+        await load({ keepTab: true });
+        if (state.openId === orderId) renderSheet();
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo asignar el delivery');
+      }
+    });
   }
 
   async function openOrderStatusSheet(orderId, context = {}) {
@@ -11032,6 +11134,22 @@
       const attachLoc = event.target.closest('[data-order-attach-loc]');
       if (attachLoc) {
         attachLocationToOrder(attachLoc.dataset.orderAttachLoc, attachLoc.dataset.attachLocation, attachLoc);
+        return;
+      }
+      const orderDelivery = event.target.closest('[data-order-delivery]');
+      if (orderDelivery) {
+        const id = orderDelivery.dataset.orderDelivery;
+        const item = state.items.find((candidate) => candidate.id === id) ?? null;
+        openDeliveryAssignSheet({ orderId: id, order: item ? itemOrder(item) : null });
+        return;
+      }
+      const orderDeliveryUser = event.target.closest('[data-order-delivery-user]');
+      if (orderDeliveryUser) {
+        assignOrderToDelivery(
+          orderDeliveryUser.dataset.orderId,
+          orderDeliveryUser.dataset.orderDeliveryUser,
+          orderDeliveryUser,
+        );
         return;
       }
       const orderEdit = event.target.closest('[data-order-edit]');
