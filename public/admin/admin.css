@@ -5268,12 +5268,13 @@ body[data-tab='hoy'] .view__title {
 }
 
 @media (max-width: 979px) {
+  /*
+   * HOY / WhatsApp / Clientes ya están en la barra de abajo: en el menú del móvil
+   * se quitan (con su título) para no repetir lo mismo dos veces y dejar el menú
+   * ordenado: Ventas · Seguimiento · Sistema.
+   */
   .drawer__group--primary,
   .drawer__nav--primary {
-    display: grid;
-  }
-
-  .drawer__nav--primary .drawer__item:not([data-tab='delivery']) {
     display: none;
   }
 
@@ -5308,9 +5309,13 @@ body[data-tab='hoy'] .view__title {
 }
 
 @media (min-width: 980px) {
+  /*
+   * En escritorio el menú enseña TODO, separado por secciones: Operación ·
+   * Ventas · Seguimiento · Sistema.
+   */
   .drawer__group--primary,
   .drawer__nav--primary {
-    display: grid;
+    display: block;
   }
 
   .stats {
@@ -6049,217 +6054,6 @@ body[data-wa-view='chat'] .mobile-header {
   }
 }
 
-/* ----------------------------------------------------------- DELIVERY LIVE */
-.delivery-live {
-  display: grid;
-  gap: 12px;
-}
-
-.delivery-hero,
-.delivery-panel,
-.delivery-order {
-  border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 8px 24px rgba(14, 27, 22, 0.06);
-}
-
-.delivery-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
-}
-
-.delivery-hero h2,
-.delivery-panel h3 {
-  margin: 0;
-  color: var(--phyto-primary-dark);
-}
-
-.delivery-hero p {
-  margin: 3px 0 0;
-  color: var(--pe-ink-500);
-  font-size: 0.85rem;
-}
-
-.delivery-layout {
-  display: grid;
-  gap: 12px;
-}
-
-.delivery-panel {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-}
-
-.delivery-map {
-  position: relative;
-  min-height: 320px;
-  overflow: hidden;
-  border: 1px solid rgba(11, 107, 79, 0.12);
-  border-radius: 14px;
-  background:
-    linear-gradient(135deg, rgba(11, 107, 79, 0.08), transparent 42%),
-    linear-gradient(180deg, #f6fbf8, #eaf4ef);
-}
-
-.delivery-map-shell {
-  position: relative;
-  min-height: 320px;
-  overflow: hidden;
-  border-radius: 14px;
-}
-
-.delivery-map-shell .delivery-map {
-  min-height: 100%;
-  border-radius: 14px;
-}
-
-.delivery-map--real {
-  isolation: isolate;
-}
-
-.delivery-map-notice {
-  position: absolute;
-  top: 72px;
-  left: 50%;
-  z-index: 420;
-  max-width: calc(100% - 32px);
-  margin: 0;
-  padding: 7px 11px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--phyto-primary-dark);
-  font-size: 0.78rem;
-  font-weight: 800;
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.14);
-  transform: translateX(-50%);
-}
-
-.delivery-map-appbar,
-.delivery-map-tools,
-.delivery-bottom-sheet,
-.delivery-map-cta {
-  position: absolute;
-  z-index: 430;
-}
-
-.delivery-map-appbar {
-  top: 12px;
-  right: 12px;
-  left: 12px;
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 38px;
-  align-items: center;
-  gap: 8px;
-  padding: 6px;
-  border: 1px solid rgba(11, 107, 79, 0.12);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 12px 26px rgba(7, 61, 46, 0.12);
-}
-
-.delivery-map-appbar span {
-  display: grid;
-  min-width: 0;
-}
-
-.delivery-map-appbar strong,
-.delivery-map-appbar small,
-.delivery-bottom-sheet strong,
-.delivery-bottom-sheet small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.delivery-map-appbar small,
-.delivery-bottom-sheet small {
-  color: var(--pe-ink-500);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.delivery-map-tools {
-  right: 12px;
-  top: 92px;
-  display: grid;
-  gap: 8px;
-}
-
-.delivery-map-tools .icon-btn,
-.delivery-map-appbar .icon-btn {
-  width: 38px;
-  height: 38px;
-  border-color: rgba(11, 107, 79, 0.14);
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--phyto-primary-dark);
-  box-shadow: 0 10px 22px rgba(7, 61, 46, 0.14);
-  backdrop-filter: blur(10px);
-}
-
-.delivery-bottom-sheet {
-  right: 12px;
-  bottom: 76px;
-  left: 12px;
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid rgba(11, 107, 79, 0.12);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.93);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.16);
-}
-
-.delivery-bottom-sheet summary {
-  cursor: pointer;
-  color: var(--phyto-primary);
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-
-.delivery-facts--sheet {
-  margin-top: 8px;
-}
-
-.delivery-map-cta {
-  right: 12px;
-  bottom: 16px;
-  left: 12px;
-  min-height: 48px;
-  box-shadow: 0 14px 34px rgba(11, 107, 79, 0.24);
-}
-
-.delivery-map .leaflet-control-attribution {
-  font-size: 10px;
-}
-
-.delivery-map__fallback {
-  display: grid;
-  min-height: 320px;
-  place-items: center;
-  padding: 18px;
-  color: var(--pe-ink-500);
-  font-weight: 700;
-  text-align: center;
-}
-
-.delivery-map-meta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 6px;
-  color: var(--pe-ink-500);
-  font-size: 0.73rem;
-  font-weight: 700;
-}
-
 .delivery-accuracy {
   margin: 0;
   padding: 7px 9px;
@@ -6311,71 +6105,6 @@ body[data-wa-view='chat'] .mobile-header {
 
 .delivery-leaflet-marker--stale {
   background: #d08c00;
-}
-
-.delivery-map--empty {
-  display: grid;
-  place-items: center;
-  color: var(--pe-ink-500);
-  font-weight: 700;
-}
-
-.delivery-map__grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(11, 107, 79, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(11, 107, 79, 0.08) 1px, transparent 1px);
-  background-size: 36px 36px;
-}
-
-.delivery-map__marker {
-  position: absolute;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 3px solid #fff;
-  border-radius: 50%;
-  color: #fff;
-  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.2);
-  transform: translate(-50%, -50%);
-  transition: left 260ms ease, top 260ms ease;
-}
-
-.delivery-map__marker .svg {
-  width: 18px;
-  height: 18px;
-}
-
-.delivery-map__marker--customer {
-  background: #0b6b4f;
-}
-
-.delivery-map__marker--driver {
-  background: #1b74e4;
-}
-
-.delivery-map__marker--stale {
-  background: #d08c00;
-}
-
-.delivery-map__route {
-  position: absolute;
-  z-index: 1;
-  min-width: 2px;
-  min-height: 2px;
-  border-top: 3px dashed rgba(27, 116, 228, 0.62);
-}
-
-.delivery-facts {
-  margin: 0;
-}
-
-.delivery-orders {
-  display: grid;
-  gap: 8px;
 }
 
 /*
@@ -6459,28 +6188,6 @@ body[data-wa-view='chat'] .mobile-header {
   line-height: 1.3;
 }
 
-.delivery-order {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-}
-
-.delivery-order--active {
-  border-color: rgba(11, 107, 79, 0.28);
-  background: rgba(11, 107, 79, 0.07);
-}
-
-.delivery-order--en_camino {
-  border-color: rgba(27, 116, 228, 0.22);
-  background: rgba(27, 116, 228, 0.06);
-}
-
-.delivery-order--entregado {
-  opacity: 0.88;
-}
-
 .delivery-status {
   display: inline-flex;
   width: fit-content;
@@ -6525,16 +6232,6 @@ body[data-wa-view='chat'] .mobile-header {
   color: #4b5563;
 }
 
-.delivery-order p,
-.delivery-order small {
-  display: block;
-  overflow: hidden;
-  margin: 2px 0 0;
-  color: var(--pe-ink-500);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .delivery-assign {
   min-width: 142px;
 }
@@ -6548,107 +6245,10 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 @media (max-width: 640px) {
-  .delivery-order {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
-  }
-
-  .delivery-order .item__actions {
-    width: 100%;
-  }
-
-  .delivery-order .item__actions .btn,
   .delivery-assign,
   .delivery-assign .field__select {
     width: 100%;
     max-width: none;
-  }
-}
-
-@media (min-width: 980px) {
-  .delivery-layout {
-    grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-    align-items: start;
-  }
-}
-
-@media (max-width: 979px) {
-  body[data-tab='delivery'] {
-    background: #eef6f1;
-  }
-
-  body[data-tab='delivery'] .mobile-header,
-  body[data-tab='delivery'] .topbar,
-  body[data-tab='delivery'] .tabs {
-    display: none !important;
-  }
-
-  body[data-tab='delivery'] .content {
-    height: 100dvh;
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-  }
-
-  body[data-tab='delivery'] #view-delivery {
-    height: 100dvh;
-    padding: 0;
-  }
-
-  body[data-tab='delivery'] .delivery-live,
-  body[data-tab='delivery'] .delivery-layout,
-  body[data-tab='delivery'] .delivery-panel:first-child,
-  body[data-tab='delivery'] .delivery-map-shell {
-    height: 100dvh;
-  }
-
-  body[data-tab='delivery'] .delivery-hero,
-  body[data-tab='delivery'] .delivery-panel:first-child > h3,
-  body[data-tab='delivery'] .delivery-panel:first-child > .delivery-map-meta,
-  body[data-tab='delivery'] .delivery-panel:first-child > .delivery-accuracy,
-  body[data-tab='delivery'] .delivery-panel:first-child > .delivery-facts,
-  body[data-tab='delivery'] .delivery-panel:first-child > .item__actions,
-  body[data-tab='delivery'] .delivery-panel:nth-child(2) {
-    display: none;
-  }
-
-  body[data-tab='delivery'] .delivery-panel {
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .delivery-map {
-    min-height: 100dvh;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .delivery-layout {
-    gap: 0;
-  }
-
-  .delivery-map-shell,
-  .delivery-map-shell .delivery-map {
-    border-radius: 0;
-  }
-
-  .delivery-map-appbar {
-    top: calc(8px + env(safe-area-inset-top, 0px));
-  }
-
-  .delivery-map-tools {
-    top: calc(88px + env(safe-area-inset-top, 0px));
-  }
-
-  .delivery-bottom-sheet {
-    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .delivery-map-cta {
-    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -7581,28 +7181,41 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 
-/* ============================ MAPAS DE UBICACIONES =========================
+/* ============================= MAPA Y ENTREGAS =============================
  *
- * Dos sitios donde se ven ubicaciones, con el mismo lenguaje:
- *   - la hoja «mapa aquí dentro» (una ubicación, desde el chat, la ficha o la
- *     factura), y
- *   - la pantalla «Mapa de pedidos» (todos los puntos, con distancias).
- * El mapa se pinta en la app: nunca se sale a otra pestaña para ver un punto.
+ * UNA sola pantalla para todo lo que es mapa: los pedidos, las ubicaciones
+ * guardadas y la entrega en vivo (antes era otra pantalla aparte, «Delivery»).
+ * El mapa manda; lo demás flota encima:
+ *   - `.map-appbar`   barra de arriba (volver · título · actualizar),
+ *   - `.map-live`     la entrega seleccionada, flotando abajo a la izquierda,
+ *   - `.map-fab`      el botón redondo de acciones (medir, mi ubicación, capas…),
+ *   - `.map-panel`    la lista con los filtros: a la vista en escritorio, panel
+ *                     que entra y sale desde el botón en el teléfono.
+ * En el móvil el mapa es a pantalla completa (alto de la ventana menos la barra
+ * de abajo) y lleva los márgenes seguros de iOS/Android.
  */
-.map-view {
+.map-stage {
   position: relative;
-  min-height: 240px;
-  margin: 4px 0 2px;
+  min-height: 380px;
   overflow: hidden;
   border: 1px solid rgba(11, 107, 79, 0.12);
-  border-radius: 14px;
+  border-radius: 16px;
   background:
     linear-gradient(135deg, rgba(11, 107, 79, 0.08), transparent 42%),
     linear-gradient(180deg, #f6fbf8, #eaf4ef);
 }
 
+.map-view {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  min-height: 240px;
+  background: transparent;
+}
+
 .map-view--full {
-  min-height: 46dvh;
+  height: 100%;
+  min-height: 0;
 }
 
 .map-view--measuring {
@@ -7611,19 +7224,33 @@ body[data-wa-view='chat'] .mobile-header {
   outline-offset: -3px;
 }
 
-.map-shell {
-  position: relative;
-  margin-bottom: 8px;
-  overflow: hidden;
-  border-radius: 14px;
+/*
+ * Los controles de Leaflet (zoom y atribución) se apartan de las esquinas donde
+ * viven los botones flotantes: el zoom y la atribución se quedan justo debajo de
+ * la barra de arriba, que es el único hueco libre que no tapa ni el botón de
+ * acciones (abajo a la derecha) ni la tarjeta de la entrega (abajo a la
+ * izquierda). La atribución de OpenStreetMap tiene que seguir VIÉNDOSE.
+ */
+.map-view--full .leaflet-top.leaflet-left {
+  top: 72px;
+}
+
+.map-view--full .leaflet-bottom.leaflet-right {
+  top: 72px;
+  bottom: auto;
 }
 
 .map-notice {
   position: absolute;
-  top: 10px;
+  top: 116px;
   left: 50%;
-  z-index: 420;
-  max-width: calc(100% - 24px);
+  z-index: 1180;
+  /*
+   * El aviso va centrado y con sitio a los lados: así nunca se monta encima del
+   * zoom de Leaflet (que vive abajo a la izquierda de la barra) por estrecho que
+   * sea el teléfono.
+   */
+  max-width: min(340px, calc(100% - 108px));
   margin: 0;
   padding: 7px 11px;
   border-radius: 999px;
@@ -7635,41 +7262,176 @@ body[data-wa-view='chat'] .mobile-header {
   transform: translateX(-50%);
 }
 
-.map-tools {
+/* Barra de arriba: flota sobre el mapa, no empuja nada. */
+.map-appbar {
+  position: absolute;
+  inset: 10px 10px auto 10px;
+  z-index: 1160;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 12px 28px rgba(7, 61, 46, 0.18);
+  backdrop-filter: blur(8px);
 }
 
-.map-tools .btn {
+.map-appbar__title {
+  display: grid;
   flex: 1 1 auto;
+  gap: 1px;
+  min-width: 0;
 }
 
-.map-tools .btn[aria-pressed='true'] {
-  border-color: var(--phyto-primary, #0b6b4f);
-  background: var(--phyto-primary-tint, rgba(11, 107, 79, 0.1));
+.map-appbar__title strong {
+  overflow: hidden;
   color: var(--phyto-primary-dark, #07402f);
+  font-size: 0.95rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.map-status {
-  margin: 0 0 8px;
+.map-appbar__title small {
+  overflow: hidden;
+  color: var(--pe-ink-500, #5b6b64);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* La entrega en vivo: tarjeta flotante abajo, dejando sitio al botón. */
+.map-live {
+  position: absolute;
+  right: 74px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 1160;
+  display: grid;
+  gap: 8px;
+  max-height: 52%;
+  padding: 11px 12px;
+  overflow-y: auto;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 34px rgba(7, 61, 46, 0.2);
+  backdrop-filter: blur(8px);
+}
+
+.map-live__head {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.map-live__head strong {
+  color: var(--phyto-primary-dark, #07402f);
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.map-live__head small {
   color: var(--pe-ink-500, #5b6b64);
   font-size: 0.76rem;
   font-weight: 700;
 }
 
-.map-actions {
+.map-live__tools {
+  display: flex;
+  gap: 6px;
+}
+
+.map-live__more > summary {
+  color: var(--phyto-primary-dark, #07402f);
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.map-live__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.map-live__actions .btn {
+  flex: 1 1 auto;
+}
+
+/* El botón flotante de acciones del mapa. */
+.map-fab {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 1170;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--phyto-primary, #0b6b4f);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 14px 30px rgba(7, 61, 46, 0.34);
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.map-fab:active {
+  transform: scale(0.95);
+}
+
+.map-fab[aria-pressed='true'] {
+  background: var(--phyto-primary-dark, #07402f);
+}
+
+.map-fab .ico {
+  font-size: 1.35rem;
+}
+
+/* Velo del panel de la lista (solo móvil). */
+.map-scrim {
+  display: none;
+}
+
+/*
+ * Con una hoja abierta (las acciones, una ubicación, una factura…) el botón
+ * flotante sobra por encima: se aparta mientras se esté decidiendo algo.
+ */
+body:has(> #sheet:not([hidden])) .map-fab {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.map-panel {
   display: grid;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(11, 107, 79, 0.1);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.map-panel__handle {
+  display: none;
+}
+
+.map-status {
+  margin: 0;
+  color: var(--pe-ink-500, #5b6b64);
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 
 .map-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
   gap: 8px;
+  align-items: center;
   padding: 10px 12px;
   border: 1px solid var(--border-soft, rgba(14, 27, 22, 0.08));
   border-radius: 12px;
@@ -7678,6 +7440,11 @@ body[data-wa-view='chat'] .mobile-header {
 
 .map-item--order {
   border-left: 4px solid var(--phyto-primary, #0b6b4f);
+}
+
+.map-item--live {
+  border-left-color: #1b74e4;
+  background: linear-gradient(90deg, rgba(27, 116, 228, 0.08), #fff 62%);
 }
 
 .map-item + .map-item {
@@ -7708,6 +7475,12 @@ body[data-wa-view='chat'] .mobile-header {
   color: var(--phyto-primary-dark, #07402f);
 }
 
+.map-item__gps {
+  color: #1b74e4;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
 .map-item__actions {
   display: flex;
   gap: 6px;
@@ -7732,7 +7505,12 @@ body[data-wa-view='chat'] .mobile-header {
   margin-top: 6px;
 }
 
-/* Marcadores propios: el punto de referencia y los de medición. */
+/* Marcadores propios: el que miramos, el mío y los de medición. */
+.delivery-leaflet-marker--focus {
+  background: #0b6b4f;
+  box-shadow: 0 0 0 6px rgba(11, 107, 79, 0.22);
+}
+
 .delivery-leaflet-marker--me {
   background: #d08c00;
 }
@@ -7741,7 +7519,7 @@ body[data-wa-view='chat'] .mobile-header {
   background: #1b74e4;
 }
 
-/* La hoja del mapa necesita sitio: el mapa manda, los botones acompañan. */
+/* Las hojas que abre el mapa necesitan sitio: el mapa manda. */
 .sheet[data-variant='map'] .sheet__panel {
   max-height: 92dvh;
 }
@@ -7751,9 +7529,148 @@ body[data-wa-view='chat'] .mobile-header {
   gap: 8px;
 }
 
-@media (min-width: 720px) {
+@media (max-width: 979px) {
+  /*
+   * El mapa, a pantalla completa: fuera la cabecera del móvil (la barra flotante
+   * ya dice dónde estamos y cómo volver) y a ocupar toda la ventana menos la
+   * barra de abajo.
+   */
+  body[data-tab='mapa'] .mobile-header {
+    display: none;
+  }
+
+  body[data-tab='mapa'] .content {
+    max-width: none;
+    padding: 0;
+  }
+
+  /*
+   * El hueco que el panel reserva abajo para la barra fija no hace falta aquí:
+   * el mapa YA mide exactamente la ventana menos la barra. Sin esto quedaban
+   * 20px de sobra y la pantalla se podía desplazar (el mapa se movía solo).
+   */
+  body[data-tab='mapa'] .app {
+    padding-bottom: 0;
+  }
+
+  .view--map {
+    padding: 0;
+  }
+
+  .map-stage {
+    min-height: 0;
+    height: calc(100dvh - var(--pe-tabbar, 58px) - env(safe-area-inset-bottom, 0px));
+    border: 0;
+    border-radius: 0;
+  }
+
   .map-view--full {
-    min-height: 420px;
+    border-radius: 0;
+  }
+
+  .map-appbar {
+    inset: calc(8px + env(safe-area-inset-top, 0px)) 8px auto 8px;
+    padding: 6px 8px;
+  }
+
+  .map-live {
+    right: 70px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    left: 8px;
+    max-height: 46%;
+  }
+
+  .map-fab {
+    right: 12px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    width: 58px;
+    height: 58px;
+  }
+
+  /* La lista entra y sale como panel desde el botón de acciones. */
+  .map-panel {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1300;
+    gap: 10px;
+    max-height: 78dvh;
+    margin: 0;
+    padding: 6px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    border: 0;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -18px 44px rgba(7, 61, 46, 0.26);
+    transform: translateY(104%);
+    transition: transform 220ms ease;
+  }
+
+  .map-panel__handle {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+
+  .map-panel__handle span {
+    width: 46px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(14, 27, 22, 0.18);
+  }
+
+  .map-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1290;
+    display: block;
+    background: rgba(7, 61, 46, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+  }
+
+  body[data-map-panel='open'] .map-panel {
+    transform: none;
+  }
+
+  body[data-map-panel='open'] .map-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Con la lista abierta el botón no pinta nada: se aparta. */
+  body[data-map-panel='open'] .map-fab {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .map-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /*
+   * Los filtros, en dos filas dentro del panel: en una sola fila «De hoy» se
+   * quedaba fuera de la pantalla y había que adivinar que se podía deslizar.
+   */
+  .map-panel .chips {
+    flex-wrap: wrap;
+  }
+
+  .map-item__actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (min-width: 980px) {
+  .map-stage {
+    min-height: 460px;
+    height: 62dvh;
   }
 }
 

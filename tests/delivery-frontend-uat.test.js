@@ -30,8 +30,14 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain("return 'EN_CAMINO'");
     expect(app).toContain("return 'ENTREGADO'");
     expect(app).toContain("return 'CANCELADO'");
-    expect(app).toContain('Falta ubicación de entrega');
-    expect(app).toContain('No hay pedidos abiertos para delivery.');
+    /*
+     * La lista de entregas es ahora la lista del mapa: cuando no hay nada que
+     * enseñar lo dice claro, y una entrega en curso sin punto de entrega pide la
+     * ubicación (antes eso era un texto aparte en la pantalla de Delivery).
+     */
+    expect(app).toContain('Todavía no hay puntos guardados');
+    expect(app).toContain('Ninguna entrega en curso ahora mismo.');
+    expect(app).toContain('Solicitar ubicación');
     expect(app).not.toContain('No hay pedidos abiertos con ubicación de entrega.');
   });
 
@@ -56,22 +62,34 @@ describe('delivery tracking frontend UAT guards', () => {
     const eventBlock = app.slice(eventStart, eventEnd);
     expect(eventBlock).toContain('updateDeliveryMap');
     expect(eventBlock).not.toContain('renderDelivery()');
+    // Ni el repintado de la pantalla entera del mapa: el GPS llega cada pocos
+    // segundos y rehacer la lista en cada punto la haría parpadear.
+    expect(eventBlock).not.toContain('renderOrdersMap()');
     expect(app).toContain('state.deliveryMap.deliveryMarker.setLatLng(currentLatLng)');
   });
 
-  it('crea una sola instancia de mapa y reutiliza marcadores de cliente/delivery', () => {
-    expect(app).toContain('if (state.deliveryMap.map && state.deliveryMap.map.getContainer?.() === el) return state.deliveryMap.map;');
+  it('usa UN solo mapa de Leaflet para la pantalla unificada', () => {
+    // Una sola llamada a window.L.map en todo el panel: si aparece otra, es que
+    // alguien volvió a crear un mapa aparte (lo que había antes con Delivery).
+    expect(app.match(/window\.L\.map\(/g)).toHaveLength(1);
+    expect(app).toContain('if (state.ordersMap.map && state.ordersMap.map.getContainer?.() === el) return state.ordersMap.map;');
+    expect(app).toContain('function ensureDeliveryMap() {\r\n    return ensureOrdersMap();');
     expect(app).toContain('state.deliveryMap.customerMarker = window.L.marker');
     expect(app).toContain('state.deliveryMap.deliveryMarker = window.L.marker');
     expect(app).toContain('state.deliveryMap.deliveryMarker.setLatLng(currentLatLng)');
     expect(app).toContain('state.deliveryMap.routeLine.setLatLngs(points)');
   });
 
-  it('tiene controles flotantes, bottom sheet, fit bounds y auto-follow', () => {
-    expect(app).toContain('delivery-map-appbar');
-    expect(app).toContain('delivery-map-tools');
-    expect(app).toContain('delivery-bottom-sheet');
-    expect(app).toContain('delivery-map-cta');
+  it('tiene controles flotantes, lista plegable, fit bounds y auto-follow', () => {
+    // Los botones del mapa flotan sobre él (antes eran una barra y unos pies de
+    // página propios de la pantalla de Delivery).
+    expect(html).toContain('class="map-appbar"');
+    expect(html).toContain('class="map-fab"');
+    expect(html).toContain('class="map-live"');
+    expect(html).toContain('class="map-panel"');
+    expect(html).toContain('class="map-scrim"');
+    expect(app).toContain('function openMapActions');
+    expect(app).toContain('function toggleMapPanel');
     expect(app).toContain('function fitDeliveryBounds');
     expect(app).toContain('function centerDelivery');
     expect(app).toContain("map.on('dragstart zoomstart'");
@@ -88,13 +106,18 @@ describe('delivery tracking frontend UAT guards', () => {
   });
 
   it('restaura la última vista del mapa sin guardar datos sensibles', () => {
-    expect(app).toContain("const DELIVERY_MAP_VIEW_KEY = 'pe_delivery_map_view'");
-    expect(app).toContain('function deliveryMapLastView');
-    expect(app).toContain('function saveDeliveryMapLastView');
-    expect(app).toContain("map.on('moveend zoomend', saveDeliveryMapLastView)");
+    expect(app).toContain("const MAPS_VIEW_KEY = 'pe_orders_map_view'");
+    expect(app).toContain('function ordersMapSavedView');
+    expect(app).toContain('function saveOrdersMapView');
+    expect(app).toContain("map.on('moveend zoomend', saveOrdersMapView)");
     expect(app).toContain('localStorage.setItem(');
     expect(app).toContain('center: [Number(center.lat.toFixed(6)), Number(center.lng.toFixed(6))]');
-    expect(app).toContain('if (lastView) map.setView(lastView.center, lastView.zoom, { animate: false })');
+    expect(app).toContain('map.setView(vista?.center ?? [18.6157, -68.7071], vista?.zoom ?? 12)');
+    // Solo centro y zoom: ni direcciones ni teléfonos del cliente en el almacén.
+    const saveStart = app.indexOf('function saveOrdersMapView');
+    const saveBlock = app.slice(saveStart, saveStart + 900);
+    expect(saveBlock).toContain('zoom })');
+    expect(saveBlock).not.toMatch(/address|phone|nombre|name:/);
   });
 
   it('mantiene prefetch automático de OSM desactivado por política del proveedor', () => {

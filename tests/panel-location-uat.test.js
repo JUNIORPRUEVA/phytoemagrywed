@@ -242,13 +242,22 @@ describe('componente de ubicación en el chat', () => {
     expect($$('#thread .loc .loc')).toHaveLength(0);
 
     click(accion);
-    const lienzo = await waitFor(() => $('#map-viewer'), 'el mapa dentro de la app');
+    /*
+     * Se abre LA PANTALLA DEL MAPA (la única que hay: mapa y entregas), centrada
+     * en el punto y con su ficha de acciones encima. Nada de pestañas nuevas.
+     */
+    await waitFor(() => !$('#view-mapa').hidden, 'la pantalla del mapa');
+    const lienzo = await waitFor(() => $('#orders-map'), 'el mapa dentro de la app');
     expect(dom.window.__abrioPestana).toBeUndefined();
     expect($('#sheet-title').textContent).toBe('Casa');
-    expect($('#map-viewer-hint').textContent).toContain('sin salir del panel');
-    // En jsdom no hay Leaflet: el hueco del mapa lo dice en vez de quedarse mudo.
-    expect(lienzo.textContent).toContain('No se pudo cargar el mapa');
+    expect($('#sheet-body').textContent).toContain('El mapa está centrado en este punto');
+    // En jsdom no hay Leaflet: el aviso de la pantalla lo dice en vez de quedarse mudo.
+    const aviso = await waitFor(() => ($('#orders-map-notice')?.textContent ? $('#orders-map-notice') : null), 'el aviso del mapa');
+    expect(aviso.textContent).toContain('No se pudo cargar el mapa');
+    expect(aviso.hidden).toBe(false);
+    expect(lienzo).toBeTruthy();
     // Y los botones para lo de siempre siguen ahí, dentro de la misma hoja.
+    expect($('#sheet-body').textContent).toContain('¿A qué distancia estoy?');
     expect($('#sheet-body').textContent).toContain('Usar para un pedido');
     expect($('#sheet-body').textContent).toContain('Compartir con otra conversación');
     // La hoja se cierra y el hilo sigue donde estaba.

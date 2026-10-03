@@ -92,6 +92,9 @@ function createFakeLeaflet() {
       return this;
     },
     remove() {},
+    on() {
+      return this;
+    },
     bindPopup() {
       return this;
     },
@@ -332,45 +335,64 @@ async function abrirChatAna() {
 }
 
 describe('el mapa se abre DENTRO de la app', () => {
-  it('la hoja de ubicación dibuja el mapa aquí mismo (sin pestaña nueva)', async () => {
+  it('la hoja de ubicación lleva a LA pantalla del mapa (sin pestaña nueva)', async () => {
     await abrirChatAna();
     const chip = $$('#thread .loc').find((node) => node.textContent.includes('Casa'));
     click(chip.querySelector('[data-loc-menu]'));
     await waitFor(() => $('#loc-map'), 'la hoja de la ubicación');
 
     // La opción principal es el mapa de la app: el enlace externo queda detrás.
-    expect($('#sheet-body').textContent).toContain('Ver el mapa aquí dentro');
+    expect($('#sheet-body').textContent).toContain('Ver el mapa');
     expect($('#sheet-body').textContent).toContain('Abrir en Google Maps');
 
     const mapasAntes = fake.calls.maps.length;
     const marcadoresAntes = fake.calls.markers.length;
     click('#loc-map');
-    const lienzo = await waitFor(() => $('#map-viewer'), 'el mapa dentro de la app');
+
+    // UNA pantalla de mapa: el punto queda centrado y con su ficha encima.
+    await waitFor(() => !$('#view-mapa').hidden && $('#orders-map'), 'la pantalla del mapa');
+    const marcador = await waitFor(() => {
+      const creados = fake.calls.markers.slice(marcadoresAntes);
+      return creados.find((m) => Math.abs(m.coords[0] - L1.latitude) < 0.001) ?? null;
+    }, 'el marcador de la ubicación');
 
     expect(dom.window.__abrioPestana).toBeUndefined();
-    expect(lienzo.id).toBe('map-viewer');
-    expect(fake.calls.maps.length).toBe(mapasAntes + 1);
-    // El mapa se centra en las coordenadas exactas que mandó el cliente.
-    const marcador = fake.calls.markers.slice(marcadoresAntes).at(-1);
+    // Un solo mapa en toda la app: el contenedor es siempre el mismo.
+    expect(fake.calls.maps.map((el) => el.id ?? '')).toEqual(
+      fake.calls.maps.map(() => 'orders-map'),
+    );
+    expect(fake.calls.maps.length).toBeGreaterThanOrEqual(mapasAntes);
     expect(marcador.coords[0]).toBeCloseTo(L1.latitude, 4);
     expect(marcador.coords[1]).toBeCloseTo(L1.longitude, 4);
     expect(fake.calls.tiles.at(-1).url).toContain('tile.openstreetmap.org');
-    expect($('#map-viewer-hint').textContent).toContain('sin salir del panel');
+    // La ficha del punto, con la medición desde el GPS a un toque.
+    expect($('#sheet-title').textContent).toBe('Ubicación');
+    expect($('#sheet-body').textContent).toContain('El mapa está centrado en este punto');
+    expect($('#sheet-body').textContent).toContain('¿A qué distancia estoy?');
   }, 30000);
 
-  it('«¿A qué distancia estoy?» mide desde el GPS con una línea en el mapa', async () => {
-    const lineasAntes = fake.calls.polylines.length;
-    click('#map-viewer-measure');
-    const aviso = await waitFor(
-      () => ($('#map-viewer-hint').textContent.includes('línea recta') ? $('#map-viewer-hint') : null),
-      'la distancia medida',
-    );
-    // Unos 0,4 km: se dice en metros, no con un número crudo.
-    expect(aviso.textContent).toMatch(/Estás a \d+ m\./);
-    expect(fake.calls.polylines.length).toBe(lineasAntes + 1);
-    const linea = fake.calls.polylines.at(-1);
-    expect(linea.coords[0][0]).toBeCloseTo(MIO.latitude, 4);
-    expect(linea.coords[1][0]).toBeCloseTo(L1.latitude, 4);
+  it('«¿A qué distancia estoy?» fija el GPS y deja las distancias en la lista', async () => {
+    const boton = await waitFor(() => $('#sheet-body [data-map-action="aqui"]'), 'el botón de medir desde el GPS');
+    const marcadoresAntes = fake.calls.markers.length;
+    click(boton);
+
+    // Mi punto de referencia se dibuja en el mapa, en las coordenadas del GPS.
+    const yo = await waitFor(() => {
+      const creados = fake.calls.markers.slice(marcadoresAntes);
+      return creados.find((m) => String(m.options?.icon?.className ?? '').includes('--me')) ?? null;
+    }, 'el marcador de mi ubicación');
+    expect(yo.coords[0]).toBeCloseTo(MIO.latitude, 4);
+    expect(yo.coords[1]).toBeCloseTo(MIO.longitude, 4);
+
+    // Y la lista dice A CUÁNTO está la Casa de Ana: unos 400 m (no un decimal crudo).
+    const fila = await waitFor(() => {
+      const items = $$('#mapa-lista .map-item');
+      return items.find((item) => item.textContent.includes('Ana Mapa') && /\d{3} m/.test(item.textContent)) ?? null;
+    }, 'la distancia medida en la lista');
+    expect(fila).toBeTruthy();
+    expect($('#mapa-estado').textContent).toContain('distancias desde tu punto');
+    // La hoja se cierra sola: el mapa se queda a la vista, con su lista debajo.
+    expect($('#sheet').hidden).toBe(true);
   }, 30000);
 
   it('la factura del pedido abre su ubicación en el mapa de la app', async () => {
@@ -384,8 +406,9 @@ describe('el mapa se abre DENTRO de la app', () => {
     expect(abrir.textContent).toContain('Ver en el mapa');
     const antes = fake.calls.maps.length;
     click(abrir);
-    await waitFor(() => $('#map-viewer'), 'el mapa del pedido');
+    await waitFor(() => !$('#view-mapa').hidden && $('#orders-map'), 'la pantalla del mapa del pedido');
     expect(fake.calls.maps.length).toBe(antes + 1);
+    expect(fake.calls.maps.at(-1).id).toBe('orders-map');
     expect($('#sheet-title').textContent).toContain('Ubicación del pedido');
   }, 30000);
 });
@@ -418,30 +441,37 @@ describe('pantalla «Mapa de pedidos»', () => {
 
     // Filtro «Pedidos»: solo lo que hay que entregar.
     click('[data-map-filter="pedidos"]');
-    await waitFor(() => $$('#mapa-lista .map-item').every((fila) => fila.textContent.includes('Pedido')), 'el filtro de pedidos');
+    await waitFor(() => {
+      const items = $$('#mapa-lista .map-item');
+      return items.length === 1 && items[0].classList.contains('map-item--order') ? items : null;
+    }, 'el filtro de pedidos');
     expect($$('#mapa-lista .map-item')).toHaveLength(1);
+    expect($$('#mapa-lista .map-item')[0].textContent).toContain('Ana Mapa');
 
     // Filtro «Ubicaciones»: solo los puntos que mandaron los clientes.
     click('[data-map-filter="ubicaciones"]');
     const soloUbicaciones = await waitFor(() => {
       const items = $$('#mapa-lista .map-item');
-      return items.length === 1 && items.every((fila) => fila.textContent.includes('Ubicación del cliente')) ? items : null;
+      return items.length === 1 && !items[0].classList.contains('map-item--order') ? items : null;
     }, 'el filtro de ubicaciones');
-    expect(soloUbicaciones).toHaveLength(1);
+    expect(soloUbicaciones[0].textContent).toContain('Ubicación del cliente');
 
     // «De hoy»: los dos puntos son de hoy (recién llegados).
     click('[data-map-filter="hoy"]');
     await waitFor(() => $$('#mapa-lista .map-item').length >= 1, 'el filtro de hoy');
-    // Y «Ver todo» encuadra los puntos visibles.
+    // Y «Ver todo» encuadra los puntos visibles (ahora vive en el botón flotante).
     const encuadresAntes = fake.calls.fits.length;
-    click('#mapa-ajustar');
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="ajustar"]'), 'la acción de encuadrar'));
     expect(fake.calls.fits.length).toBeGreaterThan(encuadresAntes);
     click('[data-map-filter="todo"]');
   }, 30000);
 
   it('mide la distancia entre dos puntos que se tocan en el mapa', async () => {
-    click('#mapa-medir');
-    expect($('#mapa-medir').getAttribute('aria-pressed')).toBe('true');
+    // Medir es una acción del botón flotante, no una barra de botones fija.
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="medir"]'), 'la acción de medir'));
+    expect($('#mapa-acciones').getAttribute('aria-pressed')).toBe('true');
     expect($('#orders-map-notice').textContent).toContain('Toca dos puntos');
 
     /*
@@ -464,12 +494,15 @@ describe('pantalla «Mapa de pedidos»', () => {
     const linea = fake.calls.polylines.at(-1);
     expect(linea.coords[0][0]).toBeCloseTo(L1.latitude, 4);
     expect(linea.coords[1][0]).toBeCloseTo(CERCA.latitude, 4);
-    click('#mapa-medir'); // se apaga el modo medir
-    expect($('#mapa-medir').getAttribute('aria-pressed')).toBe('false');
+    // Se apaga desde el mismo botón flotante.
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="medir"]'), 'la acción de terminar de medir'));
+    expect($('#mapa-acciones').getAttribute('aria-pressed')).toBe('false');
   }, 30000);
 
   it('con «Mi ubicación» las distancias salen ordenadas de la más cercana', async () => {
-    click('#mapa-aqui');
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="aqui"]'), 'la acción de mi ubicación'));
     const lista = await waitFor(() => {
       const items = $$('#mapa-lista .map-item');
       return items.length && items.every((fila) => /·\s*[\d.,]+ (m|km)/.test(fila.textContent)) ? items : null;

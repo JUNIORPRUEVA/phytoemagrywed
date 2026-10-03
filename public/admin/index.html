@@ -121,27 +121,8 @@
           </button>
         </div>
         <div class="drawer__user" id="drawer-user" hidden></div>
-        <p class="drawer__group">Gestión</p>
-        <nav class="drawer__nav">
-          <button class="drawer__item" data-tab="pedidos" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
-          </button>
-          <button class="drawer__item" data-tab="mapa" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa de pedidos
-          </button>
-          <button class="drawer__item" data-tab="productos" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
-          </button>
-          <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
-            <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
-          </button>
-          <button class="drawer__item" data-tab="seguimientos" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
-          </button>
-          <button class="drawer__item" data-tab="mensajes" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
-          </button>
-        </nav>
+
+        <!-- Operación: el día a día (en el móvil vive en la barra de abajo). -->
         <p class="drawer__group drawer__group--primary">Operación</p>
         <nav class="drawer__nav drawer__nav--primary">
           <button class="drawer__item" data-tab="hoy" type="button">
@@ -153,11 +134,38 @@
           <button class="drawer__item" data-tab="clientes" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
           </button>
-          <button class="drawer__item" data-tab="delivery" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Delivery
+        </nav>
+
+        <!-- Ventas: lo que se vende y a dónde va. -->
+        <p class="drawer__group">Ventas</p>
+        <nav class="drawer__nav">
+          <button class="drawer__item" data-tab="pedidos" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
+          </button>
+          <button class="drawer__item" data-tab="mapa" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
+          </button>
+          <button class="drawer__item" data-tab="productos" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
+          </button>
+          <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
+            <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
           </button>
         </nav>
+
+        <!-- Seguimiento: hablar con quien ya es cliente. -->
+        <p class="drawer__group">Seguimiento</p>
+        <nav class="drawer__nav">
+          <button class="drawer__item" data-tab="seguimientos" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
+          </button>
+          <button class="drawer__item" data-tab="mensajes" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
+          </button>
+        </nav>
+
         <div class="drawer__foot">
+          <p class="drawer__group">Sistema</p>
           <nav class="drawer__nav drawer__nav--bottom">
             <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
               <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
@@ -280,41 +288,58 @@
           <div class="list" id="list-clientes"></div>
         </section>
 
-        <!-- DELIVERY EN TIEMPO REAL -->
-        <section class="view" id="view-delivery" hidden>
-          <div class="delivery-live" id="delivery-live"></div>
-        </section>
-
         <!--
-          MAPA DE PEDIDOS: todos los pedidos con entrega y todas las ubicaciones que
-          han mandado los clientes, en un solo mapa. Se refresca solo cuando llega
-          una ubicación nueva y sabe medir distancias. El mapa se abre AQUÍ DENTRO:
-          nunca te saca a otra pestaña.
+          MAPA Y ENTREGAS — UNA sola pantalla para todo lo que es un mapa.
+
+          Aquí viven JUNTOS: los pedidos con ubicación de entrega, las ubicaciones
+          que han mandado los clientes y el seguimiento en vivo de las entregas
+          (GPS del repartidor, distancia y ETA). Antes eran dos vistas («Delivery»
+          y «Mapa de pedidos») y obligaban a saltar de una a otra.
+
+          En el teléfono el mapa ocupa la pantalla completa y los controles FLOTAN
+          encima: barra de arriba, tarjeta de la entrega en vivo y el botón de
+          acciones (medir distancia, mi ubicación, ver todo, capas, la lista…).
+          La lista de pedidos y ubicaciones se abre como panel desde ese botón.
         -->
         <section class="view view--map" id="view-mapa" hidden>
-          <h2 class="view__title">Mapa de pedidos</h2>
-          <p class="view__hint">
-            Todos los puntos que han mandado los clientes y la ubicación de entrega de cada pedido. Quedan
-            guardados solos, así que se pueden volver a abrir cuando haga falta.
-          </p>
-          <div class="chips" id="mapa-filtros">
-            <button class="chip" data-map-filter="todo" aria-pressed="true" type="button">Todo</button>
-            <button class="chip" data-map-filter="pedidos" type="button">Pedidos</button>
-            <button class="chip" data-map-filter="ubicaciones" type="button">Ubicaciones</button>
-            <button class="chip" data-map-filter="hoy" type="button">De hoy</button>
-          </div>
-          <div class="map-shell">
-            <div class="map-view map-view--full" id="orders-map" aria-label="Mapa con los pedidos y las ubicaciones de los clientes"></div>
+          <div class="map-stage" id="mapa-stage">
+            <div class="map-view map-view--full" id="orders-map" aria-label="Mapa de pedidos, ubicaciones y entregas en vivo"></div>
             <p class="map-notice" id="orders-map-notice" hidden></p>
+            <div class="map-appbar">
+              <button class="icon-btn" data-simple-back type="button" aria-label="Volver">
+                <span class="ico" aria-hidden="true" data-icon="back"></span>
+              </button>
+              <span class="map-appbar__title">
+                <strong id="mapa-titulo">Mapa y entregas</strong>
+                <small id="mapa-sub">Pedidos, ubicaciones y GPS en vivo</small>
+              </span>
+              <button class="icon-btn" id="mapa-actualizar" type="button" aria-label="Actualizar ahora">
+                <span class="ico" aria-hidden="true" data-icon="retry"></span>
+              </button>
+            </div>
+            <!-- Entrega seleccionada: lo esencial, flotando sobre el mapa. -->
+            <div class="map-live" id="mapa-live" hidden></div>
+            <button class="map-fab" id="mapa-acciones" type="button" aria-label="Acciones del mapa" title="Acciones del mapa">
+              <span class="ico" aria-hidden="true" data-icon="spark"></span>
+            </button>
+            <!-- Velo del panel de la lista (solo móvil): tocarlo lo cierra. -->
+            <div class="map-scrim" id="mapa-scrim"></div>
           </div>
-          <div class="map-tools">
-            <button class="btn btn--ghost btn--sm" id="mapa-medir" aria-pressed="false" type="button">Medir distancia</button>
-            <button class="btn btn--ghost btn--sm" id="mapa-aqui" type="button">Mi ubicación</button>
-            <button class="btn btn--ghost btn--sm" id="mapa-ajustar" type="button">Ver todo</button>
-            <button class="btn btn--ghost btn--sm" id="mapa-actualizar" type="button">Actualizar</button>
+
+          <div class="map-panel" id="mapa-panel">
+            <button class="map-panel__handle" id="mapa-panel-handle" type="button" aria-label="Cerrar la lista">
+              <span aria-hidden="true"></span>
+            </button>
+            <div class="chips" id="mapa-filtros">
+              <button class="chip" data-map-filter="todo" aria-pressed="true" type="button">Todo</button>
+              <button class="chip" data-map-filter="pedidos" type="button">Pedidos</button>
+              <button class="chip" data-map-filter="envivo" type="button">En vivo</button>
+              <button class="chip" data-map-filter="ubicaciones" type="button">Ubicaciones</button>
+              <button class="chip" data-map-filter="hoy" type="button">De hoy</button>
+            </div>
+            <p class="map-status" id="mapa-estado"></p>
+            <div class="list" id="mapa-lista"></div>
           </div>
-          <p class="map-status" id="mapa-estado"></p>
-          <div class="list" id="mapa-lista"></div>
         </section>
 
         <!-- PERFIL DEL CLIENTE -->

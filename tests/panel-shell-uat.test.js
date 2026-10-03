@@ -66,14 +66,29 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/\.tab--center \.tab__icon \{[^}]*margin-top: 0/);
   });
 
-  it('Delivery aparece en el drawer móvil sin duplicar Hoy, WhatsApp y Clientes', () => {
-    expect(html).toContain('<button class="drawer__item" data-tab="delivery" type="button">');
-    expect(html.indexOf('<p class="drawer__group">Gestión</p>')).toBeLessThan(
-      html.indexOf('<p class="drawer__group drawer__group--primary">Operación</p>'),
+  it('el drawer está ordenado por secciones y el mapa va en Ventas', () => {
+    // Cuatro bloques con su título, en el orden en que se trabaja: primero el día
+    // a día, luego lo que se vende, luego a quién se sigue y al final el sistema.
+    for (const grupo of ['Ventas', 'Seguimiento', 'Sistema']) {
+      expect(html).toContain(`<p class="drawer__group">${grupo}</p>`);
+    }
+    expect(html).toContain('<p class="drawer__group drawer__group--primary">Operación</p>');
+    const posicion = (texto) => html.indexOf(texto);
+    expect(posicion('>Operación</p>')).toBeLessThan(posicion('>Ventas</p>'));
+    expect(posicion('>Ventas</p>')).toBeLessThan(posicion('>Seguimiento</p>'));
+    expect(posicion('>Seguimiento</p>')).toBeLessThan(posicion('>Sistema</p>'));
+    // El mapa y las entregas son UNA entrada del menú (antes había dos pantallas).
+    expect(html).toContain('<button class="drawer__item" data-tab="mapa" type="button">');
+    expect(html).toContain('Mapa y entregas');
+    expect(html).not.toContain('data-tab="delivery"');
+    expect(html).toContain('id="view-mapa"');
+    expect(html).not.toContain('id="view-delivery"');
+    // En el móvil, el bloque de Operación no se repite en el menú: ya está abajo.
+    expect(css).toMatch(
+      /@media \(max-width: 979px\) \{[\s\S]*?\.drawer__group--primary,\n\s+\.drawer__nav--primary \{\n\s+display: none;/,
     );
-    expect(css).toMatch(/@media \(max-width: 979px\) \{[\s\S]*?\.drawer__group--primary,\n\s+\.drawer__nav--primary \{\n\s+display: grid;/);
-    expect(css).toContain(".drawer__nav--primary .drawer__item:not([data-tab='delivery'])");
-    expect(css).toMatch(/\.drawer__nav--primary \.drawer__item:not\(\[data-tab='delivery'\]\) \{\n\s+display: none;/);
+    expect(css).toMatch(/@media \(min-width: 980px\) \{[\s\S]*?\.drawer__group--primary,\n\s+\.drawer__nav--primary \{\n\s+display: block;/);
+    expect(css).not.toContain(".drawer__nav--primary .drawer__item:not([data-tab='delivery'])");
     expect(css).toMatch(/\.drawer \{[\s\S]*?display: flex;\n\s+flex-direction: column;/);
     expect(css).toMatch(/\.drawer__foot \{[\s\S]*?margin-top: auto;/);
   });

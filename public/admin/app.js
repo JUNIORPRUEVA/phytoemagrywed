@@ -16,7 +16,6 @@
   const WA_NOTIFY_KEY = 'pe_wa_notify';
   const WA_SOUND_KEY = 'pe_wa_sound';
   const NOTICE_DISMISSED_KEY = 'pe_notice_dismissed';
-  const DELIVERY_MAP_VIEW_KEY = 'pe_delivery_map_view';
   /*
    * MAPA DE PEDIDOS: la última vista del mapa y los últimos puntos vistos se
    * guardan en el teléfono. Así el mapa se pinta AL INSTANTE al abrir la pantalla
@@ -71,8 +70,35 @@
     deliveryLastSentAt: 0,
     deliveryLastSentPoint: null,
     deliveryWatchStartedAt: 0,
-    deliveryMap: {
+    /*
+     * EL MAPA ES UNO SOLO (pantalla «Mapa y entregas»).
+     *
+     * `ordersMap` manda: su instancia de Leaflet, los puntos de pedidos y
+     * ubicaciones guardadas, la medición de distancias y el punto de referencia.
+     * `deliveryMap` son los marcadores EN VIVO (repartidor, destino y la línea
+     * entre ambos) que se dibujan SOBRE ese mismo mapa: así una entrega en curso,
+     * los pedidos y las ubicaciones se ven juntos sin cambiar de pantalla.
+     */
+    ordersMap: {
       map: null,
+      markers: new Map(),
+      filter: 'todo',
+      measuring: false,
+      measurePoints: [],
+      measureLine: null,
+      measureMarkers: [],
+      refPoint: null,
+      refMarker: null,
+      focus: null,
+      fitted: false,
+      loading: false,
+      error: false,
+      updatedAt: null,
+      pollTimer: null,
+      panelOpen: false,
+      layers: { orders: true, locations: true, live: true },
+    },
+    deliveryMap: {
       sessionId: null,
       destinationKey: null,
       customerMarker: null,
@@ -84,29 +110,6 @@
       tileLoading: 0,
       tileError: false,
       slowTimer: null,
-    },
-    /*
-     * MAPA DENTRO DE LA APP (una ubicación) y MAPA DE PEDIDOS (todos los puntos).
-     * Van por separado: la hoja puede abrirse desde cualquier sitio sin perder el
-     * mapa grande que está detrás.
-     */
-    viewerMap: { map: null, key: null, marker: null, line: null, meMarker: null },
-    ordersMap: {
-      map: null,
-      layer: null,
-      markers: new Map(),
-      points: [],
-      signature: null,
-      filter: 'todo',
-      measuring: false,
-      measurePoints: [],
-      measureLine: null,
-      refPoint: null,
-      fitted: false,
-      loading: false,
-      error: false,
-      updatedAt: null,
-      pollTimer: null,
     },
     auth: null,
     users: [],
@@ -709,7 +712,6 @@
     renderHoy();
     renderWhatsapp();
     renderClientes();
-    renderDelivery();
     renderOrdersMap();
     renderPedidos();
     renderProductos();
@@ -1790,10 +1792,12 @@
   }
 
   function resetDeliveryMap() {
+    // El mapa es uno solo: aquí solo se limpia la capa EN VIVO (repartidor y ruta).
     if (state.deliveryMap.slowTimer) clearTimeout(state.deliveryMap.slowTimer);
-    if (state.deliveryMap.map) state.deliveryMap.map.remove();
+    state.deliveryMap.customerMarker?.remove();
+    state.deliveryMap.deliveryMarker?.remove();
+    state.deliveryMap.routeLine?.remove();
     state.deliveryMap = {
-      map: null,
       sessionId: null,
       destinationKey: null,
       customerMarker: null,
@@ -1809,44 +1813,11 @@
   }
 
   function setDeliveryMapNotice(text = '') {
-    const node = $('#delivery-map-notice');
+    // Un solo mapa, un solo aviso: el de la pantalla «Mapa y entregas».
+    const node = $('#orders-map-notice');
     if (!node) return;
     node.textContent = text;
     node.hidden = !text;
-  }
-
-  function deliveryMapLastView() {
-    try {
-      const value = JSON.parse(localStorage.getItem(DELIVERY_MAP_VIEW_KEY) ?? 'null');
-      if (!value || !Array.isArray(value.center)) return null;
-      const lat = Number(value.center[0]);
-      const lng = Number(value.center[1]);
-      const zoom = Number(value.zoom);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(zoom)) return null;
-      if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || zoom < 1 || zoom > 19) return null;
-      return { center: [lat, lng], zoom };
-    } catch {
-      return null;
-    }
-  }
-
-  function saveDeliveryMapLastView() {
-    const map = state.deliveryMap.map;
-    if (!map) return;
-    const center = map.getCenter();
-    const zoom = map.getZoom();
-    if (!center || !Number.isFinite(center.lat) || !Number.isFinite(center.lng) || !Number.isFinite(zoom)) return;
-    try {
-      localStorage.setItem(
-        DELIVERY_MAP_VIEW_KEY,
-        JSON.stringify({
-          center: [Number(center.lat.toFixed(6)), Number(center.lng.toFixed(6))],
-          zoom,
-        }),
-      );
-    } catch {
-      // La vista previa es una mejora de rendimiento; si Storage falla, el tracking sigue.
-    }
   }
 
   function startDeliveryTileSlowTimer() {
@@ -1868,51 +1839,6 @@
     return { skipped: true, reason: 'No tile prefetch provider configured.', trigger: reason };
   }
 
-  function ensureDeliveryMap() {
-    const el = $('#delivery-map');
-    if (!el) return null;
-    if (!window.L) {
-      el.innerHTML = '<div class="delivery-map__fallback">No se pudo cargar el mapa real. Revisa la conexión para Leaflet/OpenStreetMap.</div>';
-      return null;
-    }
-    if (state.deliveryMap.map && state.deliveryMap.map.getContainer?.() === el) return state.deliveryMap.map;
-    if (state.deliveryMap.map) resetDeliveryMap();
-    const map = window.L.map(el, { zoomControl: true, attributionControl: true });
-    const tiles = window.L.tileLayer(DELIVERY_TILE_URL, {
-      maxZoom: 19,
-      attribution: DELIVERY_TILE_ATTRIBUTION,
-    });
-    tiles.on('loading', () => {
-      state.deliveryMap.tileLoading += 1;
-      setDeliveryMapNotice('Cargando mapa…');
-      startDeliveryTileSlowTimer();
-    });
-    tiles.on('load', () => {
-      state.deliveryMap.tileLoading = 0;
-      stopDeliveryTileSlowTimer();
-      if (!state.deliveryMap.tileError) setDeliveryMapNotice('');
-    });
-    tiles.on('tileerror', () => {
-      state.deliveryMap.tileError = true;
-      stopDeliveryTileSlowTimer();
-      setDeliveryMapNotice('Mapa base no disponible');
-    });
-    tiles.addTo(map);
-    map.on('dragstart zoomstart', () => {
-      state.deliveryMap.autoFollow = false;
-      state.deliveryMap.userPanned = true;
-      updateDeliveryFloatingState();
-    });
-    map.on('moveend zoomend', saveDeliveryMapLastView);
-    const lastView = deliveryMapLastView();
-    if (lastView) map.setView(lastView.center, lastView.zoom, { animate: false });
-    else map.setView([18.6157, -68.7071], 13);
-    state.deliveryMap.map = map;
-    maybePrefetchDeliveryTiles('delivery-map-opened');
-    setTimeout(() => map.invalidateSize(), 0);
-    return map;
-  }
-
   function currentDeliveryLatLngs(session = selectedDeliverySession()) {
     const order = deliverySessionOrder(session);
     const destination = deliveryLatLng(session?.destination ?? order?.delivery?.location ?? null);
@@ -1921,7 +1847,7 @@
   }
 
   function fitDeliveryBounds(session = selectedDeliverySession()) {
-    const map = state.deliveryMap.map;
+    const map = state.ordersMap.map;
     if (!map || !window.L) return;
     const { destination, current } = currentDeliveryLatLngs(session);
     const points = [destination, current].filter(Boolean);
@@ -1932,7 +1858,7 @@
   }
 
   function centerDelivery(kind) {
-    const map = state.deliveryMap.map;
+    const map = state.ordersMap.map;
     if (!map) return;
     const { destination, current } = currentDeliveryLatLngs();
     const target = kind === 'customer' ? destination : current;
@@ -2071,165 +1997,137 @@
     updateDeliveryFloatingState();
   }
 
-  function renderDelivery() {
-    const box = $('#delivery-live');
+  /**
+   * LA ENTREGA EN VIVO, FLOTANDO SOBRE EL MAPA.
+   *
+   * Es la tarjeta de la entrega seleccionada: quién la lleva, a cuánto está, en
+   * cuánto llega y con qué precisión, más las acciones de siempre (centrar,
+   * seguir, detener, marcar entregado). Antes esto era una pantalla entera
+   * («Delivery»); ahora es una tarjeta dentro de la pantalla única del mapa, así
+   * que se ve la entrega Y los pedidos Y las ubicaciones a la vez.
+   */
+  function renderMapLive() {
+    const box = $('#mapa-live');
     if (!box) return;
-    const sessions = state.deliveryTracking ?? [];
-    const isDeliveryRole = currentUser()?.role === 'DELIVERY';
-    const orders = (state.deliveryOrders?.length
-      ? state.deliveryOrders.map((order) => ({ item: { id: order.id, customer_id: order.customer_id, order_number: order.order_number, status: order.status }, order }))
-      : state.items
-          .filter((item) => item.type === 'order_intent')
-          .map((item) => ({ item, order: itemOrder(item) }))
-          .filter(({ order }) => order?.delivery?.location && !['entregado', 'cancelado', 'perdido'].includes(order.status)));
-    const active = sessions.filter((row) => row.status === 'ACTIVE');
-    const selected = active.find((row) => row.id === state.deliveryActiveSessionId) ?? active[0] ?? null;
-    const selectedOrder = selected ? orders.find(({ item }) => item.id === selected.order_id)?.order ?? null : null;
+    const active = (state.deliveryTracking ?? []).filter((row) => row.status === 'ACTIVE');
+    const selected = selectedDeliverySession();
     state.deliveryActiveSessionId = selected?.id ?? state.deliveryActiveSessionId;
+    const sub = $('#mapa-sub');
+    if (sub) {
+      sub.textContent = active.length
+        ? `${active.length} entrega${active.length === 1 ? '' : 's'} en vivo · GPS solo durante la entrega`
+        : 'Pedidos, ubicaciones y GPS en vivo';
+    }
+    if (!selected) {
+      box.hidden = true;
+      box.innerHTML = '';
+      updateDeliveryStatusPanel(null);
+      updateDeliveryMap(null);
+      return;
+    }
+    const order = deliverySessionOrder(selected);
+    const nombre = order?.customer?.name ?? selected.customer?.name ?? selected.delivery_user_name ?? 'Entrega';
+    box.hidden = false;
     box.innerHTML = `
-      <section class="delivery-hero">
-        <div>
-          <h2>Delivery en vivo</h2>
-          <p id="delivery-active-count">${active.length} entrega${active.length === 1 ? '' : 's'} activa${active.length === 1 ? '' : 's'} · GPS solo durante entrega.</p>
-        </div>
-        <div class="item__actions">
-          <button class="btn btn--ghost btn--sm" data-delivery-push type="button">${ICONS.bell} ${escapeHtml(pushPermissionLabel())}</button>
-          <button class="btn btn--ghost btn--sm" data-delivery-refresh type="button">${ICONS.retry} Actualizar</button>
-        </div>
-      </section>
-      <section class="delivery-layout">
-        <div class="delivery-panel">
-          <h3>Mapa</h3>
-          <div class="delivery-map-shell">
-            <div class="delivery-map delivery-map--real" id="delivery-map" aria-label="Mapa real de entrega"></div>
-            <p class="delivery-map-notice" id="delivery-map-notice" hidden></p>
-            <div class="delivery-map-appbar">
-              <button class="icon-btn" data-simple-back type="button" aria-label="Volver">${ICONS.back}</button>
-              <span><strong>Delivery</strong><small>${escapeHtml(selectedOrder?.customer?.name ?? selected?.customer?.name ?? 'Entrega')}</small></span>
-              <button class="icon-btn" data-delivery-refresh type="button" aria-label="Actualizar">${ICONS.retry}</button>
-            </div>
-            <div class="delivery-map-tools" aria-label="Controles del mapa">
-              <button class="icon-btn" data-delivery-center="driver" type="button" aria-label="Centrar en mi ubicación">${ICONS.send}</button>
-              <button class="icon-btn" data-delivery-center="customer" type="button" aria-label="Centrar en cliente">${ICONS.pin}</button>
-              <button class="icon-btn" data-delivery-center="both" type="button" aria-label="Ver delivery y cliente">${ICONS.search}</button>
-              <button class="icon-btn" id="delivery-follow" data-delivery-center="driver" type="button" aria-label="Volver a seguir" hidden>${ICONS.retry}</button>
-            </div>
-            ${
-              selected
-                ? `<div class="delivery-bottom-sheet">
-                    <div>
-                      <strong>${escapeHtml(selectedOrder?.customer?.name ?? selected.customer?.name ?? selected.delivery_user_name ?? 'Entrega')}</strong>
-                      <small><span data-delivery-fact="distance">${escapeHtml(selected.distance_label ?? 'Sin distancia')}</span> · <span data-delivery-fact="eta">${escapeHtml(selected.eta_label ?? 'Sin ETA')}</span> · <span data-delivery-fact="gps">${selected.last_position?.stale ? 'Ubicación desactualizada' : selected.last_position ? 'GPS activo' : 'esperando posición'}</span></small>
-                    </div>
-                    <details>
-                      <summary>Detalles</summary>
-                      <dl class="facts delivery-facts delivery-facts--sheet">
-                        <div class="fact"><dt>Delivery</dt><dd data-delivery-fact="delivery">${escapeHtml(selected.delivery_user_name ?? 'Delivery')}</dd></div>
-                        <div class="fact"><dt>Última actualización</dt><dd data-delivery-fact="updated">${selected.last_position?.recorded_at ? escapeHtml(fmtWhen(selected.last_position.recorded_at)) : '—'}</dd></div>
-                        <div class="fact"><dt>Precisión</dt><dd data-delivery-fact="accuracy">${escapeHtml(deliveryAccuracyMeta(selected.last_position).label)}</dd></div>
-                        <div class="fact"><dt>Ruta</dt><dd data-delivery-fact="route">Distancia aproximada</dd></div>
-                      </dl>
-                    </details>
-                  </div>`
-                : ''
-            }
-            ${
-              selected
-                ? `<button class="btn btn--primary delivery-map-cta" data-delivery-complete="${escapeHtml(selected.id)}" type="button">Marcar entregado</button>`
-                : ''
-            }
-          </div>
-          <div class="delivery-map-meta">
-            <span>${DELIVERY_MAP_PROVIDER} · ${DELIVERY_TILE_PROVIDER}</span>
-            <span>Linea visual: distancia aproximada</span>
-          </div>
-          <p class="delivery-accuracy" id="delivery-accuracy-badge" hidden></p>
-          ${
-            selected
-              ? `<dl class="facts delivery-facts">
-                  <div class="fact"><dt>Delivery</dt><dd data-delivery-fact="delivery">${escapeHtml(selected.delivery_user_name ?? 'Delivery')}</dd></div>
-                  <div class="fact"><dt>Distancia</dt><dd data-delivery-fact="distance">${escapeHtml(selected.distance_label ?? 'Sin distancia')}</dd></div>
-                  <div class="fact"><dt>ETA</dt><dd data-delivery-fact="eta">${escapeHtml(selected.eta_label ?? 'Sin ETA')}</dd></div>
-                  <div class="fact"><dt>GPS</dt><dd data-delivery-fact="gps">${selected.last_position?.stale ? 'Ubicación desactualizada' : selected.last_position ? 'GPS activo' : 'esperando posición'}</dd></div>
-                  <div class="fact"><dt>Última actualización</dt><dd data-delivery-fact="updated">${selected.last_position?.recorded_at ? escapeHtml(fmtWhen(selected.last_position.recorded_at)) : '—'}</dd></div>
-                  <div class="fact"><dt>Precisión</dt><dd data-delivery-fact="accuracy">${escapeHtml(deliveryAccuracyMeta(selected.last_position).label)}</dd></div>
-                  <div class="fact"><dt>Ruta</dt><dd data-delivery-fact="route">Distancia aproximada</dd></div>
-                </dl>
-                <div class="item__actions">
-                  <button class="btn btn--ghost btn--sm" data-delivery-stop="${escapeHtml(selected.id)}" type="button">Detener</button>
-                  <button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(selected.id)}" type="button">Marcar entregado</button>
-                </div>`
-              : '<p class="view__hint">Inicia una entrega de un pedido con ubicación para ver el mapa.</p>'
-          }
-        </div>
-        <div class="delivery-panel">
-          <h3>Pedidos${orders.length ? ` (${orders.length})` : ''}</h3>
-          <div class="delivery-orders">
-            ${
-              orders.length
-                ? orders
-                    .map(({ item, order }) => {
-                      const session = deliverySessionForOrder(item.id);
-                      const customer = order.customer ?? customerById(order.customer_id) ?? state.customers.find((row) => row.id === item.customer_id);
-                      const assignedUserId = order.delivery?.delivery_user_id ?? '';
-                      const assignedName = order.delivery?.delivery_user_name_snapshot ?? null;
-                      const assignedToMe = assignedUserId && assignedUserId === currentUser()?.id;
-                      const canAssign = (state.deliveryUsers ?? []).length > 0;
-                      const operational = getOrderOperationalStatus(order, session);
-                      const hasDestination = Boolean(deliveryLatLng(order.delivery?.location));
-                      const gps = deliveryGpsLabel(session);
-                      const summary = (order.items ?? [])
-                        .map((line) => `${line.quantity ?? 1} ${line.name ?? line.variantName ?? 'producto'}`)
-                        .join(', ');
-                      const canStart = operational === 'PENDIENTE' && hasDestination && (isDeliveryRole ? assignedToMe : true);
-                      const canReassign = canAssign && operational === 'PENDIENTE' && !session;
-                      return `<article class="delivery-order delivery-order--${escapeHtml(operational.toLowerCase())}">
-                        <div>
-                          <strong>${escapeHtml(customerName(customer ?? item))}</strong>
-                          <p>${escapeHtml(order.order_number ?? item.order_number ?? item.id)} · ${escapeHtml(summary || 'Pedido')}</p>
-                          <small>${escapeHtml(money(order.total ?? item.total ?? 0))} · Delivery: ${escapeHtml(assignedName || 'Sin asignar')}</small>
-                          <span class="tag delivery-status delivery-status--${escapeHtml(operational.toLowerCase())}">${escapeHtml(operationalStatusLabel(operational))}</span>
-                          <small>${hasDestination ? escapeHtml(order.delivery.location.name ?? order.delivery.location.address ?? 'Ubicación de entrega') : 'Falta ubicación de entrega'}</small>
-                          ${gps ? `<small>${escapeHtml(gps)}</small>` : ''}
-                        </div>
-                        ${
-                          operational === 'EN_CAMINO' && session
-                            ? `<span class="item__actions">
-                                <button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver mapa</button>
-                                ${isDeliveryRole && assignedToMe ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button>` : ''}
-                              </span>`
-                            : isDeliveryRole && assignedToMe
-                              ? `<span class="item__actions">
-                                  ${!hasDestination && order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" data-delivery-ask="location" type="button">Solicitar ubicación</button>` : order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
-                                  <button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button" ${canStart ? '' : 'disabled'}>Iniciar entrega</button>
-                                </span>`
-                              : isDeliveryRole
-                                ? '<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>'
-                                : canReassign
-                                  ? `<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(item.id)}" aria-label="Asignar delivery">
-                                      <option value="">${assignedName ? 'Cambiar delivery' : 'Asignar delivery'}</option>
-                                      ${(state.deliveryUsers ?? [])
-                                        .map(
-                                          (user) =>
-                                            `<option value="${escapeHtml(user.id)}" ${
-                                              user.id === assignedUserId ? 'selected' : ''
-                                            }>${escapeHtml(user.display_name ?? user.username ?? 'Delivery')}</option>`,
-                                        )
-                                        .join('')}
-                                    </select></span>`
-                                  : `<span class="item__actions">
-                                      ${session ? `<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver mapa</button>` : `<button class="btn btn--ghost btn--sm" data-order-open="${escapeHtml(item.id)}" type="button">Abrir</button>`}
-                                    </span>`
-                        }
-                      </article>`;
-                    })
-                    .join('')
-                : emptyState('No hay pedidos abiertos para delivery.')
-            }
-          </div>
-        </div>
-      </section>`;
+      <div class="map-live__head">
+        <strong>${escapeHtml(nombre)}</strong>
+        <small>
+          <span data-delivery-fact="distance">${escapeHtml(selected.distance_label ?? 'Sin distancia')}</span> ·
+          <span data-delivery-fact="eta">${escapeHtml(selected.eta_label ?? 'Sin ETA')}</span> ·
+          <span data-delivery-fact="gps">${escapeHtml(deliveryGpsLabel(selected) || 'esperando posición')}</span>
+        </small>
+      </div>
+      <div class="map-live__tools">
+        <button class="icon-btn" data-delivery-center="driver" type="button" aria-label="Centrar en el repartidor">${ICONS.send}</button>
+        <button class="icon-btn" data-delivery-center="customer" type="button" aria-label="Centrar en el cliente">${ICONS.pin}</button>
+        <button class="icon-btn" data-delivery-center="both" type="button" aria-label="Ver repartidor y cliente">${ICONS.search}</button>
+        <button class="icon-btn" id="delivery-follow" data-delivery-center="driver" type="button" aria-label="Volver a seguir" hidden>${ICONS.retry}</button>
+      </div>
+      <details class="map-live__more">
+        <summary>Detalles</summary>
+        <dl class="facts">
+          <div class="fact"><dt>Delivery</dt><dd data-delivery-fact="delivery">${escapeHtml(selected.delivery_user_name ?? 'Delivery')}</dd></div>
+          <div class="fact"><dt>Última señal</dt><dd data-delivery-fact="updated">—</dd></div>
+          <div class="fact"><dt>Precisión</dt><dd data-delivery-fact="accuracy">—</dd></div>
+          <div class="fact"><dt>Línea del mapa</dt><dd data-delivery-fact="route">Distancia aproximada</dd></div>
+        </dl>
+      </details>
+      <p class="delivery-accuracy" id="delivery-accuracy-badge" hidden></p>
+      <div class="map-live__actions">
+        <button class="btn btn--ghost btn--sm" data-delivery-stop="${escapeHtml(selected.id)}" type="button">Detener</button>
+        <button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(selected.id)}" type="button">Marcar entregado</button>
+      </div>`;
+    updateDeliveryStatusPanel(selected);
     setTimeout(() => updateDeliveryMap(selected), 0);
+  }
+
+  const esPantallaMovil = () => window.matchMedia?.('(max-width: 979px)')?.matches === true;
+
+  /**
+   * LA LISTA DEBAJO DEL MAPA.
+   *
+   * En el teléfono el mapa ocupa la pantalla completa, así que la lista entra y
+   * sale como panel desde el botón flotante. En pantalla grande ya está a la
+   * vista: el botón simplemente baja hasta ella.
+   */
+  function toggleMapPanel(force = null) {
+    const abierto = force === null ? !state.ordersMap.panelOpen : force;
+    state.ordersMap.panelOpen = abierto && esPantallaMovil();
+    document.body.dataset.mapPanel = state.ordersMap.panelOpen ? 'open' : 'closed';
+    const panel = $('#mapa-panel');
+    if (!state.ordersMap.panelOpen && panel && typeof panel.scrollIntoView === 'function') {
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  /**
+   * ACCIONES DEL MAPA (el botón flotante).
+   *
+   * Todo lo que se hace desde aquí, en un solo sitio: la lista, medir distancias,
+   * ir a tu ubicación, encuadrar, seguir la entrega en vivo, actualizar y las
+   * capas que se ven. Es lo que pidió el negocio para el móvil: el mapa limpio y
+   * los botones flotando.
+   */
+  function openMapActions() {
+    const activas = (state.deliveryTracking ?? []).filter((row) => row.status === 'ACTIVE');
+    const capas = state.ordersMap.layers;
+    const fila = (accion, icono, titulo, texto, extra = '') => `
+      <button class="menu-item" data-map-action="${accion}" type="button" ${extra}>
+        <span class="menu-item__icon">${icono}</span>
+        <span><strong>${titulo}</strong><small>${texto}</small></span>
+      </button>`;
+    const capa = (nombre, icono, titulo, texto) => `
+      <button class="menu-item" data-map-layer="${nombre}" type="button" aria-pressed="${String(capas[nombre] === true)}">
+        <span class="menu-item__icon">${icono}</span>
+        <span><strong>${titulo}</strong><small>${texto}</small></span>
+      </button>`;
+    openSheet(
+      'Acciones del mapa',
+      `
+      <div class="menu-list">
+        ${fila('lista', ICONS.box, 'Pedidos y ubicaciones', 'Abre la lista (con distancias y acciones)')}
+        ${fila(
+          'medir',
+          ICONS.pin,
+          state.ordersMap.measuring ? 'Terminar de medir' : 'Medir distancia',
+          'Toca dos puntos y te digo a cuánto están (línea recta)',
+          `aria-pressed="${String(state.ordersMap.measuring)}"`,
+        )}
+        ${fila('aqui', ICONS.send, 'Ir a mi ubicación', 'Fija tu punto y ordena todo por cercanía')}
+        ${fila('ajustar', ICONS.search, 'Ver todo', 'Encuadra todos los puntos del mapa')}
+        ${activas.length ? fila('seguir', ICONS.retry, 'Seguir la entrega en vivo', `${activas.length} en camino: centra en el repartidor`) : ''}
+        ${fila('actualizar', ICONS.retry, 'Actualizar ahora', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
+      </div>
+      <p class="view__hint">Qué se ve en el mapa</p>
+      <div class="menu-list">
+        ${capa('orders', ICONS.box, 'Pedidos con ubicación', 'Dónde hay que entregar')}
+        ${capa('locations', ICONS.pin, 'Ubicaciones de clientes', 'Los puntos que han mandado por WhatsApp')}
+        ${capa('live', ICONS.send, 'Entregas en vivo', 'El GPS del repartidor mientras reparte')}
+      </div>
+      <button class="btn btn--ghost btn--block" data-delivery-push type="button">${ICONS.bell} ${escapeHtml(pushPermissionLabel())}</button>
+      <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
+      `,
+    );
   }
 
   /** Cómo se lee el último envío (y el resultado de la última prueba, si la hay). */
@@ -2386,8 +2284,13 @@
   async function refreshDeliveryTracking(options = {}) {
     const data = await api('/api/admin/delivery-tracking');
     state.deliveryTracking = data.sessions ?? [];
-    if (options.rebuild || !$('#delivery-map')) renderDelivery();
-    else updateDeliveryMap(selectedDeliverySession());
+    // Sin mapa creado todavía (o si se pide) se repinta la pantalla entera; con el
+    // mapa vivo basta con mover la capa EN VIVO (nada de parpadeos cada 8 s).
+    if (options.rebuild || !state.ordersMap.map) renderOrdersMap();
+    else {
+      renderMapLive();
+      updateDeliveryMap(selectedDeliverySession());
+    }
   }
 
   function stopDeliveryEvents() {
@@ -2398,7 +2301,7 @@
   }
 
   function deliveryPollTick() {
-    if (state.tab !== 'delivery' || document.visibilityState !== 'visible') return;
+    if (state.tab !== 'mapa' || document.visibilityState !== 'visible') return;
     refreshDeliveryTracking().catch(() => {});
   }
 
@@ -2407,24 +2310,26 @@
   }
 
   function startDeliveryEvents() {
-    if (state.deliveryEvents || state.deliveryPollTimer || state.tab !== 'delivery') return;
+    if (state.deliveryEvents || state.deliveryPollTimer || state.tab !== 'mapa') return;
     if (typeof EventSource === 'function') {
       const source = new EventSource('/api/admin/delivery-tracking/events');
       source.addEventListener('delivery.tracking_started', (event) => {
         applyDeliverySession(JSON.parse(event.data).session);
-        renderDelivery();
+        renderOrdersMap();
       });
       source.addEventListener('delivery.location_updated', (event) => {
+        // Solo se mueve el marcador del repartidor: repintar toda la pantalla en
+        // cada punto del GPS haría parpadear el mapa.
         applyDeliverySession(JSON.parse(event.data).session);
         updateDeliveryMap(selectedDeliverySession());
       });
       source.addEventListener('delivery.tracking_stopped', (event) => {
         applyDeliverySession(JSON.parse(event.data).session);
-        renderDelivery();
+        renderOrdersMap();
       });
       source.addEventListener('delivery.completed', (event) => {
         applyDeliverySession(JSON.parse(event.data).session);
-        renderDelivery();
+        renderOrdersMap();
       });
       source.onerror = () => {
         source.close();
@@ -2558,7 +2463,7 @@
     });
     stopDeliveryWatch();
     applyDeliverySession(data.session);
-    renderDelivery();
+    renderOrdersMap();
     await load({ keepTab: true });
     toast(complete ? 'Entrega completada' : 'Tracking detenido');
   }
@@ -7619,11 +7524,14 @@
         <span class="loc__meta">${escapeHtml(who)}${detalle && !address ? ` · ${escapeHtml(detalle)}` : ''}</span>
         <span class="loc__actions">
           ${
-            url
+            url && options.withMap !== false
               ? `<button class="loc__link" data-open-map="${mapLocationAttr(location)}" data-map-title="${escapeHtml(
                   locationTitle(location),
                 )}" type="button">Ver en mapa</button>`
-              : '<span class="loc__link loc__link--off">Sin coordenadas legibles</span>'
+              : ''
+          }
+          ${
+            !url && options.withMap !== false ? '<span class="loc__link loc__link--off">Sin coordenadas legibles</span>' : ''
           }
           ${
             options.withActions !== false
@@ -7945,7 +7853,7 @@
       ${locationChip(location, { withActions: false })}
       ${
         dibujable
-          ? '<button class="btn btn--primary btn--block" id="loc-map" type="button">Ver el mapa aquí dentro</button>'
+          ? '<button class="btn btn--primary btn--block" id="loc-map" type="button">Ver el mapa</button>'
           : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles.</p>'
       }
       <button class="btn btn--ghost btn--block" id="loc-use" type="button">Usar para un pedido</button>
@@ -7960,7 +7868,8 @@
     );
     $('#loc-close').addEventListener('click', () => closeSheet());
     $('#loc-map')?.addEventListener('click', () => {
-      openMapViewer({ location, title: 'Ubicación', conversationId: conversationId ?? state.wa.selectedId ?? '' });
+      closeSheet();
+      openMapScreen({ location, title: 'Ubicación', conversationId: conversationId ?? state.wa.selectedId ?? '' });
     });
     $('#loc-use').addEventListener('click', () => {
       const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
@@ -8035,7 +7944,15 @@
   function mapMarkerIcon(kind) {
     if (!window.L) return null;
     const clase =
-      kind === 'order' ? 'delivery' : kind === 'me' ? 'me' : kind === 'measure' ? 'measure' : 'customer';
+      kind === 'order'
+        ? 'delivery'
+        : kind === 'me'
+          ? 'me'
+          : kind === 'measure'
+            ? 'measure'
+            : kind === 'focus'
+              ? 'focus'
+              : 'customer';
     return window.L.divIcon({
       className: `delivery-leaflet-marker delivery-leaflet-marker--${clase}`,
       html: `<span>${kind === 'order' ? ICONS.box : ICONS.pin}</span>`,
@@ -8075,95 +7992,78 @@
     }
   }
 
-  // ------------------------------------------------------- mapa dentro de la app
-
-  /** Leaflet no se limpia solo al reemplazar el HTML de la hoja: hay que quitarlo. */
-  function destroyViewerMap() {
-    if (state.viewerMap?.map) {
-      try {
-        state.viewerMap.map.remove();
-      } catch {
-        /* el contenedor ya no estaba: no hay nada que desmontar */
-      }
-    }
-    state.viewerMap = { map: null, key: null, marker: null, line: null, meMarker: null };
-  }
+  // --------------------------------------------------------------- el mapa único
 
   /**
-   * UNA UBICACIÓN, EN GRANDE Y AQUÍ DENTRO.
+   * ABRIR UNA UBICACIÓN = IR A LA PANTALLA DEL MAPA, centrada en ese punto.
    *
-   * Enseña el punto en un mapa de la propia app y deja hacer lo de siempre con
-   * una ubicación: usarla para un pedido, compartirla con otra conversación y
-   * medir a qué distancia estás (con el GPS del teléfono, solo al pulsar).
+   * Antes esto abría una hoja con su PROPIO mapa (dos mapas distintos en la app).
+   * Ahora hay una sola pantalla de mapa y este atajo la usa: deja el mapa grande
+   * centrado en el punto, con su ficha de acciones encima. Cualquier cosa que
+   * necesite un mapa (el chat, la ficha, la factura) pasa por aquí.
    */
-  function openMapViewer({ location, title = 'Ubicación', conversationId = '', onUse = null }) {
+  function openMapScreen({ location = null, title = 'Ubicación', conversationId = '', onUse = null } = {}) {
     const coords = mapLatLng(location);
-    const url = locationMapUrl(location);
-    destroyViewerMap();
-    // Si había otra hoja con trabajo vivo (una grabadora, por ejemplo), se cierra
-    // bien antes de reemplazarla: su limpieza se quedaría sin dueño.
+    destroySheetWork();
+    state.previousTab = state.tab === 'mapa' ? state.previousTab : state.tab;
+    if (coords) state.ordersMap.focus = { location, title, conversationId, onUse };
+    setTab('mapa');
+    renderOrdersMap();
+    if (coords) focusOrdersMapPoint({ latitude: coords[0], longitude: coords[1], location, title });
+    if (location) openMapPointSheet({ location, title, conversationId, onUse });
+  }
+
+  /** Si había otra hoja con trabajo vivo (una grabadora), se cierra bien. */
+  function destroySheetWork() {
     try {
       closeSheetCleanup?.();
     } catch {
-      /* la limpieza nunca puede impedir abrir el mapa */
+      /* la limpieza de la hoja anterior nunca puede impedir abrir el mapa */
     }
     closeSheetCleanup = null;
+  }
+
+  /** Centra el mapa en un punto (y lo marca) sin abrir nada. */
+  function focusOrdersMapPoint({ latitude, longitude, location = null, title = '' }) {
+    const map = state.ordersMap.map ?? ensureOrdersMap();
+    if (!map || !window.L) return;
+    if (state.ordersMap.focusMarker) state.ordersMap.focusMarker.remove();
+    state.ordersMap.focusMarker = window.L
+      .marker([latitude, longitude], { icon: mapMarkerIcon('focus') })
+      .addTo(map)
+      .bindPopup(`<strong>${escapeHtml(title || locationTitle(location))}</strong>`)
+      .openPopup();
+    map.setView([latitude, longitude], Math.max(map.getZoom(), 16), { animate: false });
+    state.ordersMap.autoFollow = false;
+  }
+
+  /** La ficha del punto enfocado: qué es y qué se puede hacer con él. */
+  function openMapPointSheet({ location, title = 'Ubicación', conversationId = '', onUse = null }) {
+    const url = locationMapUrl(location);
     openSheet(
       title,
       `
-      ${locationChip(location, { withActions: false })}
-      ${
-        coords
-          ? '<div class="map-view" id="map-viewer" aria-label="Mapa de la ubicación"></div>'
-          : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles: no hay nada que dibujar.</p>'
-      }
-      <p class="view__hint" id="map-viewer-hint">${
-        coords ? 'El mapa se abre aquí, sin salir del panel.' : ''
-      }</p>
+      ${locationChip(location, { withActions: false, withMap: false })}
+      <p class="view__hint">El mapa está centrado en este punto, aquí detrás.</p>
       <div class="map-actions">
-        ${
-          coords
-            ? '<button class="btn btn--ghost btn--block" id="map-viewer-measure" type="button">¿A qué distancia estoy?</button>'
-            : ''
-        }
-        <button class="btn btn--ghost btn--block" id="map-viewer-use" type="button">Usar para un pedido</button>
-        <button class="btn btn--ghost btn--block" id="map-viewer-share" type="button">Compartir con otra conversación</button>
+        <button class="btn btn--ghost btn--block" data-map-action="aqui" type="button">¿A qué distancia estoy?</button>
+        <button class="btn btn--ghost btn--block" id="map-point-use" type="button">Usar para un pedido</button>
+        <button class="btn btn--ghost btn--block" id="map-point-share" type="button">Compartir con otra conversación</button>
         ${
           url
             ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>`
             : ''
         }
-        <button class="btn btn--primary btn--block" id="map-viewer-close" type="button">Cerrar</button>
+        <button class="btn btn--primary btn--block" data-close-sheet type="button">Cerrar</button>
       </div>
       `,
-      { variant: 'map' },
     );
-
-    if (coords) {
-      const el = $('#map-viewer');
-      if (window.L && el) {
-        const map = window.L.map(el, { zoomControl: true, attributionControl: true }).setView(coords, 16);
-        window.L
-          .tileLayer(DELIVERY_TILE_URL, { maxZoom: 19, attribution: DELIVERY_TILE_ATTRIBUTION })
-          .addTo(map);
-        const marker = window.L.marker(coords, { icon: mapMarkerIcon('location') }).addTo(map);
-        marker.bindPopup(`<strong>${escapeHtml(locationTitle(location))}</strong>`);
-        state.viewerMap = { map, key: location?.id ?? null, marker, line: null, meMarker: null };
-        // El contenedor acaba de aparecer: Leaflet mide mal hasta que se recalcula.
-        setTimeout(() => map.invalidateSize(), 0);
-      } else if (el) {
-        el.innerHTML =
-          '<div class="delivery-map__fallback">No se pudo cargar el mapa (Leaflet no está disponible ahora mismo).</div>';
-      }
-    }
-
-    $('#map-viewer-close')?.addEventListener('click', () => closeSheet());
-    $('#map-viewer-use')?.addEventListener('click', () => {
+    $('#map-point-use')?.addEventListener('click', () => {
       if (typeof onUse === 'function') {
         onUse();
         return;
       }
-      const customerId = state.wa.chat?.customer?.id ?? (location?.customer_id ?? null);
+      const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
       if (!customerId) {
         toast('Abre la conversación o la ficha del cliente para crearle un pedido');
         return;
@@ -8171,41 +8071,14 @@
       closeSheet();
       openOrderForm({ customerId, conversationId: conversationId || state.wa.selectedId || '', location });
     });
-    $('#map-viewer-share')?.addEventListener('click', () => {
+    $('#map-point-share')?.addEventListener('click', () => {
       if (!location?.id) {
         toast('Esta ubicación no está guardada: no se puede compartir');
         return;
       }
+      closeSheet();
       openShareLocation({ locationId: location.id, location });
     });
-    $('#map-viewer-measure')?.addEventListener('click', async (event) => {
-      await working(event.currentTarget, 'Buscando…', async () => {
-        const found = await getBrowserLocation();
-        if (!found.ok) {
-          toast(found.message);
-          return;
-        }
-        const mios = mapLatLng(found.location);
-        const map = state.viewerMap.map;
-        if (!mios || !map || !window.L) return;
-        if (state.viewerMap.meMarker) state.viewerMap.meMarker.remove();
-        if (state.viewerMap.line) state.viewerMap.line.remove();
-        state.viewerMap.meMarker = window.L
-          .marker(mios, { icon: mapMarkerIcon('me') })
-          .addTo(map)
-          .bindPopup('Estás aquí');
-        state.viewerMap.line = window.L
-          .polyline([mios, coords], { color: '#0b6b4f', weight: 3, dashArray: '6 8' })
-          .addTo(map);
-        map.fitBounds(window.L.latLngBounds([mios, coords]).pad(0.3), { padding: [30, 30] });
-        const metros = metersBetween({ latitude: mios[0], longitude: mios[1] }, location);
-        const hint = $('#map-viewer-hint');
-        if (hint) {
-          hint.textContent = `Estás a ${fmtDistance(metros)}. Es la distancia en línea recta, no la de la carretera.`;
-        }
-      });
-    });
-    closeSheetCleanup = destroyViewerMap;
   }
 
   // ---------------------------------------------------------- mapa de pedidos
@@ -8286,9 +8159,16 @@
       // Quien va a recibir el pedido: sin el nombre, un mapa de pedidos no sirve
       // para repartir nada.
       const cliente = (state.customers ?? []).find((row) => row.id === (item.customer_id ?? order?.customer_id)) ?? null;
+      // La entrega EN CURSO de ese pedido (si la hay) viaja con el punto: así la
+      // lista del mapa enseña el GPS, la distancia y las acciones de la entrega.
+      const session = deliverySessionForOrder(item.id);
       puntos.push({
         key: clave,
         kind: 'order',
+        item,
+        order,
+        session,
+        operational: getOrderOperationalStatus(order, session),
         orderId: item.id,
         orderNumber: order?.order_number ?? item.order_number ?? null,
         status: order?.status ?? item.status ?? null,
@@ -8337,22 +8217,32 @@
     return puntos;
   }
 
-  const MAPS_FILTER_LABEL = { todo: 'Todo', pedidos: 'Pedidos', ubicaciones: 'Ubicaciones', hoy: 'De hoy' };
+  const MAPS_FILTER_LABEL = { todo: 'Todo', pedidos: 'Pedidos', envivo: 'En vivo', ubicaciones: 'Ubicaciones', hoy: 'De hoy' };
+
+  /** ¿Ese pedido tiene una entrega EN CURSO ahora mismo? */
+  function orderHasLiveSession(orderId) {
+    return (state.deliveryTracking ?? []).some((row) => row.order_id === orderId && row.status === 'ACTIVE');
+  }
 
   function ordersMapVisiblePoints() {
     const puntos = ordersMapPoints();
+    const capas = state.ordersMap.layers ?? { orders: true, locations: true, live: true };
+    const visibles = puntos.filter(
+      (point) => (point.kind === 'order' ? capas.orders : capas.locations),
+    );
     const filtro = state.ordersMap.filter ?? 'todo';
-    if (filtro === 'pedidos') return puntos.filter((point) => point.kind === 'order');
-    if (filtro === 'ubicaciones') return puntos.filter((point) => point.kind === 'location');
+    if (filtro === 'pedidos') return visibles.filter((point) => point.kind === 'order');
+    if (filtro === 'ubicaciones') return visibles.filter((point) => point.kind === 'location');
+    if (filtro === 'envivo') return visibles.filter((point) => point.kind === 'order' && orderHasLiveSession(point.orderId));
     if (filtro === 'hoy') {
       const arranque = new Date();
       arranque.setHours(0, 0, 0, 0);
-      return puntos.filter((point) => {
+      return visibles.filter((point) => {
         const cuando = Date.parse(point.at ?? '');
         return Number.isFinite(cuando) && cuando >= arranque.getTime();
       });
     }
-    return puntos;
+    return visibles;
   }
 
   /** Distancia de un punto al punto de referencia (si hay uno fijado). */
@@ -8383,23 +8273,69 @@
       .join('')}<span class="map-popup__actions">${acciones}</span></div>`;
   }
 
-  /** Crea el mapa la PRIMERA vez (solo cuando la pantalla está a la vista). */
+  /**
+   * EL MAPA DE LA PANTALLA (uno solo para todo).
+   *
+   * Antes había DOS instancias de Leaflet (la de Delivery y la del mapa de
+   * pedidos). Ahora hay una y las entregas en vivo se dibujan ENCIMA: mismos
+   * tiles, misma caché, un solo sitio donde mirar. `ensureDeliveryMap` sigue
+   * existiendo porque es el nombre que usan los controles de entrega: devuelve
+   * EXACTAMENTE este mismo mapa.
+   */
   function ensureOrdersMap() {
     const el = $('#orders-map');
+    /*
+     * Sin Leaflet (o con la pantalla sin montar) no hay mapa posible: se dice en
+     * el propio aviso de la pantalla en vez de dejar un hueco mudo. La lista de
+     * pedidos y ubicaciones sigue funcionando igual, con sus distancias.
+     */
+    if (el && !window.L) setDeliveryMapNotice('No se pudo cargar el mapa');
     if (!el || !window.L) return null;
     if (el.closest('[hidden]')) return null; // la pantalla no está abierta: no se gasta memoria
     if (state.ordersMap.map && state.ordersMap.map.getContainer?.() === el) return state.ordersMap.map;
     if (state.ordersMap.map) resetOrdersMap();
     const map = window.L.map(el, { zoomControl: true, attributionControl: true });
-    window.L.tileLayer(DELIVERY_TILE_URL, { maxZoom: 19, attribution: DELIVERY_TILE_ATTRIBUTION }).addTo(map);
+    /*
+     * Tiles de OpenStreetMap con su aviso honesto: si el mapa base tarda o falla,
+     * se dice en la propia pantalla (el GPS de las entregas sigue funcionando).
+     */
+    const tiles = window.L.tileLayer(DELIVERY_TILE_URL, { maxZoom: 19, attribution: DELIVERY_TILE_ATTRIBUTION });
+    tiles.on('loading', () => {
+      state.deliveryMap.tileLoading += 1;
+      setDeliveryMapNotice('Cargando mapa…');
+      startDeliveryTileSlowTimer();
+    });
+    tiles.on('load', () => {
+      state.deliveryMap.tileLoading = 0;
+      stopDeliveryTileSlowTimer();
+      if (!state.deliveryMap.tileError && !state.ordersMap.measuring && !state.ordersMap.focus) setDeliveryMapNotice('');
+    });
+    tiles.on('tileerror', () => {
+      state.deliveryMap.tileError = true;
+      stopDeliveryTileSlowTimer();
+      setDeliveryMapNotice('Mapa base no disponible');
+    });
+    tiles.addTo(map);
+    maybePrefetchDeliveryTiles('map-opened');
     const vista = ordersMapSavedView();
     map.setView(vista?.center ?? [18.6157, -68.7071], vista?.zoom ?? 12);
     map.on('moveend zoomend', saveOrdersMapView);
     map.on('click', (event) => ordersMapMapClick(event.latlng));
+    // Al moverlo a mano se deja de seguir al repartidor (como en cualquier mapa).
+    map.on('dragstart zoomstart', () => {
+      state.deliveryMap.autoFollow = false;
+      state.deliveryMap.userPanned = true;
+      updateDeliveryFloatingState();
+    });
+    // El aviso del mapa (tiles lentos, medición…) vive en la propia pantalla.
     if (state.ordersMap.refPoint) addOrdersMapRefMarker();
     state.ordersMap.map = map;
     setTimeout(() => map.invalidateSize(), 0);
     return map;
+  }
+
+  function ensureDeliveryMap() {
+    return ensureOrdersMap();
   }
 
   function resetOrdersMap() {
@@ -8407,6 +8343,16 @@
     state.ordersMap.measureLine?.remove();
     state.ordersMap.measureLine = null;
     state.ordersMap.measurePoints = [];
+    for (const marker of state.ordersMap.measureMarkers ?? []) marker.remove();
+    state.ordersMap.measureMarkers = [];
+    for (const marker of [state.deliveryMap.customerMarker, state.deliveryMap.deliveryMarker]) marker?.remove();
+    state.deliveryMap.customerMarker = null;
+    state.deliveryMap.deliveryMarker = null;
+    state.deliveryMap.routeLine?.remove();
+    state.deliveryMap.routeLine = null;
+    state.deliveryMap.sessionId = null;
+    state.deliveryMap.destinationKey = null;
+    state.deliveryMap.fitDone = false;
     if (state.ordersMap.map) {
       try {
         state.ordersMap.map.remove();
@@ -8417,6 +8363,8 @@
     state.ordersMap.map = null;
     state.ordersMap.markers = new Map();
     state.ordersMap.refMarker = null;
+    state.focusMarker = null;
+    state.ordersMap.focusMarker = null;
     state.ordersMap.fitted = false;
   }
 
@@ -8538,8 +8486,8 @@
     state.ordersMap.measureLine = null;
     for (const marker of state.ordersMap.measureMarkers ?? []) marker.remove();
     state.ordersMap.measureMarkers = [];
-    const boton = $('#mapa-medir');
-    if (boton) boton.setAttribute('aria-pressed', String(activo));
+    // El botón flotante se queda marcado mientras se está midiendo.
+    $('#mapa-acciones')?.setAttribute('aria-pressed', String(activo));
     box.classList.toggle('map-view--measuring', activo);
     const nota = $('#orders-map-notice');
     if (nota) {
@@ -8556,11 +8504,71 @@
         toast(found.message);
         return;
       }
+      closeSheet();
       state.ordersMap.refPoint = found.location;
       addOrdersMapRefMarker();
       renderOrdersMap();
       toast('Punto de referencia fijado: las distancias salen de aquí');
     });
+  }
+
+  /**
+   * LO QUE SE PUEDE HACER CON UN PEDIDO, EN LA LISTA DEL MAPA.
+   *
+   * Es la misma lista de acciones que tenía la vista de Delivery (asignar,
+   * iniciar, entregado, contactar), que ahora vive dentro del mapa: una sola
+   * pantalla para mirar dónde está todo y para mover la entrega.
+   */
+  function mapOrderActionsHtml(point) {
+    const item = point.item;
+    const order = point.order ?? {};
+    const session = point.session;
+    const operational = point.operational ?? 'PENDIENTE';
+    const isDeliveryRole = currentUser()?.role === 'DELIVERY';
+    const assignedUserId = order.delivery?.delivery_user_id ?? '';
+    const assignedName = order.delivery?.delivery_user_name_snapshot ?? null;
+    const assignedToMe = Boolean(assignedUserId) && assignedUserId === currentUser()?.id;
+    const canAssign = (state.deliveryUsers ?? []).length > 0;
+    const hasDestination = Boolean(deliveryLatLng(order.delivery?.location));
+    const canStart = operational === 'PENDIENTE' && hasDestination && (isDeliveryRole ? assignedToMe : true);
+    const chat = point.conversationId
+      ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>`
+      : '';
+    const centro = `<button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>`;
+    if (operational === 'EN_CAMINO' && session) {
+      return `${chat}<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver en vivo</button>${
+        isDeliveryRole && assignedToMe
+          ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button>`
+          : ''
+      }`;
+    }
+    if (isDeliveryRole && assignedToMe) {
+      const contactar = !hasDestination && point.conversationId
+        ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(point.conversationId)}" data-delivery-ask="location" type="button">Solicitar ubicación</button>`
+        : point.conversationId
+          ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(point.conversationId)}" type="button">Contactar</button>`
+          : '';
+      return `${contactar}<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button" ${
+        canStart ? '' : 'disabled'
+      }>Iniciar entrega</button>`;
+    }
+    if (isDeliveryRole) return `${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>`;
+    if (canAssign && operational === 'PENDIENTE' && !session) {
+      return `${chat}<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(
+        item.id,
+      )}" aria-label="Asignar delivery">
+        <option value="">${assignedName ? 'Cambiar delivery' : 'Asignar delivery'}</option>
+        ${(state.deliveryUsers ?? [])
+          .map(
+            (user) =>
+              `<option value="${escapeHtml(user.id)}" ${user.id === assignedUserId ? 'selected' : ''}>${escapeHtml(
+                user.display_name ?? user.username ?? 'Delivery',
+              )}</option>`,
+          )
+          .join('')}
+      </select></span>`;
+    }
+    return `${chat}${centro}`;
   }
 
   /** La lista de puntos (con su distancia si hay punto de referencia). */
@@ -8570,7 +8578,9 @@
       return `<p class="view__hint">${
         state.ordersMap.loading
           ? 'Buscando ubicaciones…'
-          : 'Todavía no hay ubicaciones guardadas. Cuando un cliente mande la suya por WhatsApp aparecerá aquí sola.'
+          : state.ordersMap.filter === 'envivo'
+            ? 'Ninguna entrega en curso ahora mismo.'
+            : 'Todavía no hay puntos guardados. Cuando un cliente mande su ubicación por WhatsApp aparecerá aquí sola.'
       }</p>`;
     }
     const conDistancia = puntos
@@ -8581,35 +8591,40 @@
           : a.meters - b.meters,
       );
     return conDistancia
-      .map(
-        ({ point, meters }) => `<article class="map-item ${point.kind === 'order' ? 'map-item--order' : ''}">
+      .map(({ point, meters }) => {
+        const esPedido = point.kind === 'order';
+        const vivo = esPedido && Boolean(point.session);
+        const gps = vivo ? deliveryGpsLabel(point.session) : '';
+        return `<article class="map-item ${esPedido ? 'map-item--order' : ''}${vivo ? ' map-item--live' : ''}">
           <button class="map-item__main" data-map-open="${escapeHtml(point.key)}" type="button">
             <strong>${escapeHtml(point.title)}</strong>
             <small>${escapeHtml(point.detail || point.address || 'Ubicación')}</small>
             <small class="map-item__meta">${
-              point.kind === 'order' ? 'Pedido' : 'Ubicación del cliente'
-            } · ${escapeHtml(mapWhen(point.at))}${
-              meters !== null ? ` · <b>${escapeHtml(fmtDistance(meters))}</b>` : ''
-            }</small>
+              esPedido
+                ? `<span class="tag delivery-status delivery-status--${escapeHtml(
+                    (point.operational ?? 'PENDIENTE').toLowerCase(),
+                  )}">${escapeHtml(operationalStatusLabel(point.operational ?? 'PENDIENTE'))}</span>`
+                : 'Ubicación del cliente'
+            } · ${escapeHtml(mapWhen(point.at))}${meters !== null ? ` · <b>${escapeHtml(fmtDistance(meters))}</b>` : ''}</small>
+            ${gps ? `<small class="map-item__gps">${escapeHtml(gps)}</small>` : ''}
           </button>
-          <div class="map-item__actions">
-            ${point.conversationId ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>` : ''}
-            <button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>
-          </div>
-        </article>`,
-      )
+          <div class="map-item__actions">${esPedido ? mapOrderActionsHtml(point) : `${point.conversationId ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>` : ''}<button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>`}</div>
+        </article>`;
+      })
       .join('');
   }
 
-  /** Estado del mapa: cuántos puntos y cuándo se miró por última vez. */
+  /** Estado del mapa: cuántos puntos, entregas en vivo y cuándo se miró. */
   function ordersMapStatusText() {
     const puntos = ordersMapVisiblePoints();
     const pedidos = puntos.filter((point) => point.kind === 'order').length;
     const ubicaciones = puntos.length - pedidos;
+    const activas = (state.deliveryTracking ?? []).filter((row) => row.status === 'ACTIVE').length;
     const partes = [
       `${pedidos} pedido${pedidos === 1 ? '' : 's'}`,
       `${ubicaciones} ubicaci${ubicaciones === 1 ? 'ón' : 'ones'}`,
     ];
+    if (activas) partes.push(`${activas} entrega${activas === 1 ? '' : 's'} en vivo`);
     if (state.ordersMap.refPoint) partes.push('distancias desde tu punto');
     if (state.ordersMap.loading) partes.push('actualizando…');
     else if (state.ordersMap.error) partes.push('sin conexión: se ve lo último guardado');
@@ -8617,7 +8632,7 @@
     return partes.join(' · ');
   }
 
-  /** Pantalla «Mapa de pedidos»: filtros, mapa, herramientas y lista. */
+  /** Pantalla «Mapa y entregas»: filtros, mapa, entrega en vivo y lista. */
   function renderOrdersMap() {
     const box = $('#orders-map');
     if (!box) return;
@@ -8628,6 +8643,7 @@
     if (estado) estado.textContent = ordersMapStatusText();
     const lista = $('#mapa-lista');
     if (lista) lista.innerHTML = ordersMapListHtml();
+    renderMapLive();
     syncOrdersMapMarkers();
   }
 
@@ -8676,16 +8692,17 @@
     state.ordersMap.pollTimer = null;
   }
 
-  /** Un punto de la lista abre SU mapa aquí dentro. */
+  /** Un punto de la lista abre SU mapa (la pantalla única) centrado en él. */
   function openOrdersMapPoint(key) {
     const point = ordersMapPoints().find((entry) => entry.key === key);
     if (!point) return;
-    openMapViewer({
+    openMapScreen({
       location: point.location ?? {
         latitude: point.latitude,
         longitude: point.longitude,
         address: point.address,
         source: point.kind === 'order' ? 'order_delivery' : undefined,
+        customer_id: point.customerId ?? null,
       },
       title: point.kind === 'order' ? `Pedido ${point.title}` : `Ubicación de ${point.title}`,
       conversationId: point.conversationId ?? '',
@@ -9331,7 +9348,7 @@
     }
     if (permission !== 'granted') {
       if (!options.quiet) toast(permission === 'denied' ? 'Notificaciones bloqueadas por navegador' : 'No se activaron las notificaciones');
-      renderDelivery();
+      renderMapLive();
       return false;
     }
     /*
@@ -9363,7 +9380,7 @@
     state.wa.notify = true;
     localStorage.setItem(WA_NOTIFY_KEY, '1');
     if (!options.quiet) toast('Notificaciones activadas');
-    renderDelivery();
+    renderMapLive();
     return true;
   }
 
@@ -9533,13 +9550,12 @@
   // ------------------------------------------------------------------- tabs
 
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
-    delivery: 'Delivery',
-    mapa: 'Mapa de pedidos',
+    mapa: 'Mapa y entregas',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Inventario',
@@ -9560,12 +9576,14 @@
       delete document.body.dataset.waView;
     }
     if (tab !== 'clientes') state.clientSearchOpen = false;
-    if (tab !== 'delivery') {
+    // Fuera del mapa no se sigue nada: ni GPS en vivo ni sondeos ni el mapa vivo.
+    if (tab !== 'mapa') {
+      stopOrdersMapPoll();
       stopDeliveryEvents();
-      resetDeliveryMap();
+      resetOrdersMap();
+      delete document.body.dataset.mapPanel;
+      state.ordersMap.panelOpen = false;
     }
-    // El sondeo del mapa solo vive mientras la pantalla del mapa está abierta.
-    if (tab !== 'mapa') stopOrdersMapPoll();
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     if (state.drawer) closeDrawer();
@@ -9602,11 +9620,12 @@
       }
     }
     /*
-     * MAPA DE PEDIDOS: se carga SIEMPRE al entrar, también con enlace directo
+     * MAPA Y ENTREGAS: se carga SIEMPRE al entrar, también con enlace directo
      * (`?v=mapa`, que entra sin refrescar nada más). Primero se pinta AL INSTANTE
      * lo último visto (guardado en el teléfono) y detrás piden los datos de
      * verdad: con mala señal se ve algo útil desde el primer segundo, y con buena
-     * señal se corrige solo. El sondeo sigue mientras la pantalla esté abierta.
+     * señal se corrige solo. El sondeo y el GPS en vivo siguen mientras la
+     * pantalla esté abierta.
      */
     if (tab === 'mapa') {
       if (!state.ordersMap.locations?.length) state.ordersMap.locations = mapCachedLocations();
@@ -9614,6 +9633,8 @@
       renderOrdersMap();
       refreshOrdersMap({ full: !options.silent }).catch(() => {});
       startOrdersMapPoll();
+      refreshDeliveryTracking().catch(() => {});
+      startDeliveryEvents();
     }
   }
 
@@ -9797,30 +9818,80 @@
         openChat(mapChat.dataset.mapChat);
         return;
       }
-      // Cualquier ubicación guardada en un atributo abre SU mapa aquí dentro.
+      // Cualquier ubicación guardada en un atributo abre el mapa centrado en ella.
       const anyMap = event.target.closest('[data-open-map]');
       if (anyMap) {
-        openMapViewer({
+        openMapScreen({
           location: mapLocationFromAttr(anyMap.dataset.openMap),
           title: anyMap.dataset.mapTitle || 'Ubicación',
           conversationId: anyMap.dataset.mapConversation || '',
         });
         return;
       }
-      if (event.target.closest('#mapa-medir')) {
-        ordersMapToggleMeasure();
+      /*
+       * ACCIONES DEL MAPA (botón flotante, panel y capas). El mapa es una sola
+       * pantalla: sus herramientas viven en el botón flotante, no en una barra.
+       */
+      if (event.target.closest('#mapa-acciones')) {
+        openMapActions();
         return;
       }
-      if (event.target.closest('#mapa-aqui')) {
-        ordersMapUseMyLocation(event.target.closest('#mapa-aqui'));
+      if (event.target.closest('#mapa-panel-handle') || event.target.closest('#mapa-scrim')) {
+        toggleMapPanel(false);
         return;
       }
-      if (event.target.closest('#mapa-ajustar')) {
-        fitOrdersMap();
+      const mapAction = event.target.closest('[data-map-action]');
+      if (mapAction) {
+        const accion = mapAction.dataset.mapAction;
+        if (accion === 'lista') {
+          closeSheet();
+          toggleMapPanel();
+          return;
+        }
+        if (accion === 'medir') {
+          closeSheet();
+          ordersMapToggleMeasure();
+          return;
+        }
+        if (accion === 'aqui') {
+          ordersMapUseMyLocation(mapAction);
+          return;
+        }
+        if (accion === 'ajustar') {
+          closeSheet();
+          fitOrdersMap();
+          return;
+        }
+        if (accion === 'seguir') {
+          closeSheet();
+          state.deliveryMap.autoFollow = true;
+          state.deliveryActiveSessionId =
+            (state.deliveryTracking ?? []).find((row) => row.status === 'ACTIVE')?.id ?? state.deliveryActiveSessionId;
+          state.ordersMap.fitted = false;
+          renderOrdersMap();
+          fitDeliveryBounds();
+          return;
+        }
+        if (accion === 'actualizar') {
+          closeSheet();
+          refreshOrdersMap({ full: true }).catch(() => {});
+          refreshDeliveryTracking({ rebuild: true }).catch(() => {});
+          return;
+        }
+        return;
+      }
+      const mapLayer = event.target.closest('[data-map-layer]');
+      if (mapLayer) {
+        const nombre = mapLayer.dataset.mapLayer;
+        if (nombre in state.ordersMap.layers) state.ordersMap.layers[nombre] = !state.ordersMap.layers[nombre];
+        state.ordersMap.fitted = false;
+        renderOrdersMap();
+        openMapActions(); // la hoja se repinta con el estado nuevo de las capas
         return;
       }
       if (event.target.closest('#mapa-actualizar')) {
         refreshOrdersMap({ full: true }).catch(() => {});
+        refreshDeliveryTracking({ rebuild: true }).catch(() => {});
         return;
       }
       const purchase = event.target.closest('[data-purchase]');
@@ -9937,7 +10008,10 @@
       const deliveryFocus = event.target.closest('[data-delivery-focus]');
       if (deliveryFocus) {
         state.deliveryActiveSessionId = deliveryFocus.dataset.deliveryFocus;
-        renderDelivery();
+        state.ordersMap.fitted = false;
+        state.deliveryMap.autoFollow = true;
+        renderOrdersMap();
+        fitDeliveryBounds();
         return;
       }
       const deliveryStop = event.target.closest('[data-delivery-stop]');
@@ -9963,8 +10037,8 @@
         return;
       }
       if (event.target.closest('[data-simple-back]')) {
-        if (state.tab === 'perfil-cliente' && state.previousTab && state.previousTab !== 'perfil-cliente') {
-          setTab(state.previousTab);
+        if (state.tab === 'perfil-cliente' || state.tab === 'mapa') {
+          setTab(state.previousTab && state.previousTab !== state.tab ? state.previousTab : 'hoy');
         } else {
           setTab('hoy');
         }

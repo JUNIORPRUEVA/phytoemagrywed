@@ -164,7 +164,7 @@ describe('nada se envía solo', () => {
     expect(app).toMatch(/waPollTick/);
     const deliveryFrom = app.indexOf('function deliveryPollTick');
     const deliveryTick = app.slice(deliveryFrom, deliveryFrom + 500);
-    expect(deliveryTick).toContain("state.tab !== 'delivery'");
+    expect(deliveryTick).toContain("state.tab !== 'mapa'");
     expect(deliveryTick).toContain("document.visibilityState !== 'visible'");
     expect(deliveryTick).toContain('refreshDeliveryTracking');
     expect(deliveryTick).not.toContain('POST');
