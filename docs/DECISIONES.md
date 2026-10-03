@@ -1084,3 +1084,31 @@ ficha del cliente y en el chat, lejos del pedido que se acaba de entregar.
    su **conversación**, y si no por **teléfono** entre los clientes que el panel conoce.
    Así un pedido antiguo o de la web sigue teniendo «Ver cliente», seguimiento y mensaje
    programado.
+
+## 43. Usuarios: contraseña de seis con ojo, y el agente es quien reparte
+
+Dos cosas del día a día, dichas por el negocio: crear una cuenta costaba una pelea
+con la contraseña, y al pasar un pedido a delivery no quedaba claro A QUIÉN se le
+estaba pasando.
+
+1. **Seis caracteres, no diez.** La regla vive en el SERVIDOR (`MIN_PASSWORD_LENGTH`)
+   y viaja al panel en `/api/admin/data`: el panel no adivina el mínimo, lo enseña
+   (y así no pueden desincronizarse). Se crea la cuenta con el cliente delante.
+2. **Un OJO para ver lo que se escribe**, en el alta de usuario y también al
+   RESETEAR una contraseña (que antes era un `window.prompt` a ciegas, sin poder
+   mirar nada). El botón solo cambia el `type` del campo: la clave no se copia a
+   ningún sitio.
+3. **Ajustar el rol es elegir de verdad**: Agente, Repartidor, Operador y
+   Administrador (antes solo se podía crear Agente o Administrador, y los usuarios
+   de reparto había que crearlos por API).
+4. **EL AGENTE ES QUIEN REPARTE.** El negocio no tiene un equipo de reparto aparte:
+   el pedido se le pasa a un AGENTE y ese agente lo entrega. Por eso:
+   - la lista de «Pasar a un delivery» son los **agentes activos** (y los usuarios
+     con rol DELIVERY de siempre); un ADMINISTRADOR no aparece: gestiona, no reparte;
+   - el servidor acepta `AGENT` o `DELIVERY` al asignar y al arrancar la entrega
+     (`canDeliver()`), y rechaza a un admin con `invalid_delivery_user`;
+   - el agente recibe los permisos de reparto **propios** (`delivery.location.*_own`,
+     `delivery.tracking.start/stop`): sin ellos podría recibir el pedido pero no
+     arrancar la entrega ni compartir su ubicación, que es justo lo que hace falta;
+   - en el mapa, «el repartidor» de un pedido es el agente asignado (no el rol):
+     el que asigna ve los mandos de asignar, el agente asignado ve «Iniciar entrega».

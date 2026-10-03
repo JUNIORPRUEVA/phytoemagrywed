@@ -919,6 +919,48 @@ body[data-tab='hoy'] .stat__label {
   resize: vertical;
 }
 
+/* ------------------------------------------------- CONTRASEÑA CON OJO */
+.pass {
+  position: relative;
+  display: block;
+}
+
+.pass .field__input {
+  padding-right: 50px;
+}
+
+.pass__eye {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--phyto-primary);
+  cursor: pointer;
+}
+
+.pass__eye:hover,
+.pass__eye[aria-pressed='true'] {
+  background: var(--phyto-primary-tint);
+}
+
+.pass__eye .svg {
+  width: 20px;
+  height: 20px;
+}
+
+.field__hint {
+  font-size: 0.78rem;
+  color: var(--pe-ink-500, #6b7a75);
+}
+
 .chips {
   display: flex;
   gap: 8px;

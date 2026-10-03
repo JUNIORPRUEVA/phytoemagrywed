@@ -496,13 +496,27 @@
               <label class="field">
                 <span class="field__label">Rol</span>
                 <select class="field__select" name="role">
-                  <option value="AGENT">Agente</option>
+                  <option value="AGENT">Agente (también puede entregar un pedido)</option>
+                  <option value="DELIVERY">Repartidor (solo entregas)</option>
+                  <option value="OPERADOR">Operador</option>
                   <option value="ADMIN">Administrador</option>
                 </select>
+                <span class="field__hint">Un pedido se le pasa a un AGENTE y ese agente lo entrega. El administrador gestiona; no reparte.</span>
               </label>
               <label class="field">
                 <span class="field__label">Contraseña inicial</span>
-                <input class="field__input" name="password" type="password" autocomplete="new-password" required minlength="10" />
+                <span class="pass">
+                  <input
+                    class="field__input"
+                    name="password"
+                    type="password"
+                    autocomplete="new-password"
+                    required
+                    minlength="6"
+                  />
+                  <button class="pass__eye" type="button" data-pass-eye aria-label="Ver la contraseña" aria-pressed="false" data-icon="eye"></button>
+                </span>
+                <span class="field__hint">Mínimo 6 caracteres.</span>
               </label>
               <button class="btn btn--primary btn--block" type="submit">Crear usuario</button>
             </form>

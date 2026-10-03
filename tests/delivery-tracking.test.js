@@ -116,6 +116,51 @@ describe('delivery tracking realtime API', () => {
     expect(body.order.status).toBe('enviado');
   });
 
+  it('el pedido se le pasa a un AGENTE (no admin) y es él quien lo entrega', async () => {
+    // El negocio no tiene un equipo de reparto aparte: reparte un agente.
+    const agente = (
+      await json(
+        await request('/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: 'agente-reparto@phyto.local',
+            password: 'Agente-12345',
+            displayName: 'Agente Reparto',
+            role: 'AGENT',
+          }),
+        }),
+      )
+    ).user;
+    expect(agente.role).toBe('AGENT');
+    const agenteCookie = (await login('agente-reparto@phyto.local', 'Agente-12345')).cookie;
+
+    const order = await createOrder();
+    const assigned = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: agente.id }),
+    });
+    expect(assigned.status).toBe(200);
+    expect((await json(assigned)).order.delivery.delivery_user_id).toBe(agente.id);
+
+    // El agente asignado sí puede arrancar SU entrega (permisos de reparto propios).
+    const started = await request(
+      `/api/admin/orders/${order.item.id}/delivery/start`,
+      { method: 'POST', body: '{}' },
+      agenteCookie,
+    );
+    expect(started.status).toBe(201);
+    expect((await json(started)).session.delivery_user_id).toBe(agente.id);
+
+    // Un administrador NO reparte: no se puede poner como delivery.
+    const adminId = (await json(await request('/api/admin/users'))).users.find((user) => user.role === 'ADMIN').id;
+    const comoAdmin = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: adminId }),
+    });
+    expect(comoAdmin.status).toBe(422);
+    expect((await json(comoAdmin)).error).toBe('invalid_delivery_user');
+  });
+
   it('ADMIN inicia tracking para un DELIVERY y el pedido pasa a enviado', async () => {
     const order = await createOrder();
     const response = await request(`/api/admin/orders/${order.item.id}/delivery/start`, {

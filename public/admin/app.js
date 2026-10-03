@@ -60,6 +60,8 @@
     media: null,
     deliveryTracking: [],
     deliveryUsers: [],
+    /* Largo mínimo de contraseña: lo manda el servidor para que la regla sea UNA. */
+    minPasswordLength: 6,
     deliveryOrders: [],
     notifications: [],
     push: null,
@@ -357,6 +359,9 @@
     check: svg('<path d="M5 12.6l4.4 4.4L19 6.8"/>'),
     checkCircle: svg('<circle cx="12" cy="12" r="8.6"/><path d="M8.3 12.2l2.6 2.6 4.8-5.1"/>'),
     phone: svg('<path d="M6.4 3.6h3.1l1.5 3.6-2 1.5a11.7 11.7 0 0 0 5.8 5.8l1.5-2 3.6 1.5v3.1a1.7 1.7 0 0 1-1.9 1.7A15.9 15.9 0 0 1 4.7 5.5 1.7 1.7 0 0 1 6.4 3.6Z"/>'),
+    /* Ojo abierto y ojo tachado: ver / ocultar la contraseña que se está escribiendo. */
+    eye: svg('<path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.9"/>'),
+    eyeOff: svg('<path d="M4.4 8.4C3.3 9.7 2.8 12 2.8 12S6.4 18.2 12 18.2c1.5 0 2.8-.4 4-1M9.2 6.2A7.6 7.6 0 0 1 12 5.8c5.6 0 9.2 6.2 9.2 6.2a17 17 0 0 1-3 3.6"/><path d="M4.6 4.6l14.8 14.8"/><path d="M9.9 9.9a2.9 2.9 0 0 0 4.2 4.2"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -646,6 +651,7 @@
       state.media = data.media ?? null;
       state.deliveryTracking = data.deliveryTracking ?? [];
       state.deliveryUsers = data.deliveryUsers ?? [];
+      state.minPasswordLength = Number(data.minPasswordLength) > 0 ? Number(data.minPasswordLength) : 6;
       state.deliveryOrders = data.deliveryOrders ?? [];
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
@@ -3010,6 +3016,87 @@
       .join('');
   }
 
+  /**
+   * Largo mínimo de contraseña (lo manda el servidor en `/api/admin/data`).
+   *
+   * El negocio pidió SEIS caracteres: se escribe en el mostrador, con el cliente
+   * delante, y diez era una pelea. La regla de verdad está en el servidor; esto
+   * solo la enseña y evita un viaje inútil.
+   */
+  const minPass = () => (Number(state.minPasswordLength) > 0 ? Number(state.minPasswordLength) : 6);
+
+  /**
+   * Campo de contraseña CON OJO.
+   *
+   * Escribir una clave a ciegas y no poder mirarla es lo que hace que la gente
+   * repita el mismo error dos veces. El botón solo cambia el `type` del campo
+   * que está justo encima: no copia la clave a ningún sitio.
+   */
+  function passFieldHtml({
+    id = '',
+    name = '',
+    label = '',
+    value = '',
+    autocomplete = 'new-password',
+    hint = '',
+    required = false,
+  } = {}) {
+    return `<label class="field">
+      <span class="field__label">${escapeHtml(label)}</span>
+      <span class="pass">
+        <input class="field__input" ${name ? `name="${escapeHtml(name)}" ` : ''}${
+          id ? `id="${escapeHtml(id)}" ` : ''
+        }type="password" value="${escapeHtml(value)}" autocomplete="${escapeHtml(
+          autocomplete,
+        )}" ${required ? 'required ' : ''}minlength="${minPass()}" />
+        <button class="pass__eye" type="button" data-pass-eye aria-label="Ver la contraseña" aria-pressed="false">${
+          ICONS.eye
+        }</button>
+      </span>
+      ${hint ? `<span class="field__hint">${escapeHtml(hint)}</span>` : ''}
+    </label>`;
+  }
+
+  /** Contraseña nueva de un usuario: hoja de verdad, con su ojo (antes era un `prompt` a ciegas). */
+  function openUserPasswordSheet(userId, nombre) {
+    openSheet(
+      `Nueva contraseña · ${nombre}`,
+      `
+      <p class="view__hint">Al guardarla se cierran las sesiones abiertas de esta cuenta.</p>
+      ${passFieldHtml({
+        id: 'user-pass-new',
+        label: 'Contraseña',
+        autocomplete: 'new-password',
+        hint: `Mínimo ${minPass()} caracteres.`,
+      })}
+      <button class="btn btn--primary btn--block" id="user-pass-save" type="button">Guardar contraseña</button>
+      `,
+    );
+    $('#user-pass-save')?.addEventListener('click', async (event) => {
+      const value = $('#user-pass-new')?.value ?? '';
+      if (value.length < minPass()) {
+        toast(`La contraseña necesita al menos ${minPass()} caracteres`);
+        $('#user-pass-new')?.focus();
+        return;
+      }
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await api(`/api/admin/users/${encodeURIComponent(userId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ password: value }),
+          });
+          await loadUsers();
+          closeSheet();
+          toast('Contraseña actualizada');
+        } catch (error) {
+          if (error.message !== 'unauthorized') {
+            toast(error.body?.error === 'weak_password' ? `Mínimo ${minPass()} caracteres` : error.body?.message ?? 'No se pudo guardar');
+          }
+        }
+      });
+    });
+  }
+
   function renderUsuarios() {
     const box = $('#users-view');
     if (!box) return;
@@ -3084,7 +3171,7 @@
   function profileErrorMessage(error) {
     if (error.body?.error === 'invalid_user') return 'El nombre visible no puede quedar vacío';
     if (error.body?.error === 'password_mismatch') return 'Las dos contraseñas nuevas no coinciden';
-    if (error.body?.error === 'weak_password') return 'La contraseña nueva necesita al menos 10 caracteres';
+    if (error.body?.error === 'weak_password') return `La contraseña nueva necesita al menos ${minPass()} caracteres`;
     return error.body?.message ?? 'No se pudo actualizar el perfil';
   }
 
@@ -3153,17 +3240,14 @@
         </p>
         <label class="field">
           <span class="field__label">Contraseña actual</span>
-          <input class="field__input" id="profile-current" type="password" autocomplete="current-password" />
+          <span class="pass">
+            <input class="field__input" id="profile-current" type="password" autocomplete="current-password" />
+            <button class="pass__eye" type="button" data-pass-eye aria-label="Ver la contraseña" aria-pressed="false">${ICONS.eye}</button>
+          </span>
         </label>
-        <label class="field">
-          <span class="field__label">Contraseña nueva</span>
-          <input class="field__input" id="profile-new" type="password" autocomplete="new-password" minlength="10" />
-        </label>
-        <label class="field">
-          <span class="field__label">Repite la contraseña nueva</span>
-          <input class="field__input" id="profile-confirm" type="password" autocomplete="new-password" minlength="10" />
-        </label>
-        <p class="view__hint">Mínimo 10 caracteres.</p>
+        ${passFieldHtml({ id: 'profile-new', label: 'Contraseña nueva', autocomplete: 'new-password' })}
+        ${passFieldHtml({ id: 'profile-confirm', label: 'Repite la contraseña nueva', autocomplete: 'new-password' })}
+        <p class="view__hint">Mínimo ${minPass()} caracteres.</p>
         <button class="btn btn--ghost btn--block" id="profile-password" type="button">Cambiar contraseña</button>
       </div>`;
 
@@ -3203,8 +3287,8 @@
         toast('Rellena la contraseña actual y la nueva');
         return;
       }
-      if (newPassword.length < 10) {
-        toast('La contraseña nueva necesita al menos 10 caracteres');
+      if (newPassword.length < minPass()) {
+        toast(`La contraseña nueva necesita al menos ${minPass()} caracteres`);
         return;
       }
       if (newPassword !== confirmPassword) {
@@ -9445,25 +9529,32 @@
     const order = point.order ?? {};
     const session = point.session;
     const operational = point.operational ?? 'PENDIENTE';
-    const isDeliveryRole = currentUser()?.role === 'DELIVERY';
+    /*
+     * QUIÉN ES «EL REPARTIDOR» AQUÍ: un agente (o repartidor) que NO gestiona el
+     * reparto. El pedido se le pasa a un agente y ese agente lo entrega; el que
+     * asigna (ADMIN, `delivery.tracking.manage_all`) no reparte, organiza.
+     */
+    const esRepartidor =
+      ['AGENT', 'DELIVERY'].includes(String(currentUser()?.role ?? '').toUpperCase()) &&
+      !hasPermission('delivery.tracking.manage_all');
     const assignedUserId = order.delivery?.delivery_user_id ?? '';
     const assignedName = order.delivery?.delivery_user_name_snapshot ?? null;
     const assignedToMe = Boolean(assignedUserId) && assignedUserId === currentUser()?.id;
     const canAssign = (state.deliveryUsers ?? []).length > 0;
     const hasDestination = Boolean(deliveryLatLng(order.delivery?.location));
-    const canStart = operational === 'PENDIENTE' && hasDestination && (isDeliveryRole ? assignedToMe : true);
+    const canStart = operational === 'PENDIENTE' && hasDestination && (esRepartidor ? assignedToMe : true);
     const chat = point.conversationId
       ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>`
       : '';
     const centro = `<button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>`;
     if (operational === 'EN_CAMINO' && session) {
       return `${chat}<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver en vivo</button>${
-        isDeliveryRole && assignedToMe
+        esRepartidor && assignedToMe
           ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button>`
           : ''
       }`;
     }
-    if (isDeliveryRole && assignedToMe) {
+    if (esRepartidor && assignedToMe) {
       const contactar = !hasDestination && point.conversationId
         ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(point.conversationId)}" data-delivery-ask="location" type="button">Solicitar ubicación</button>`
         : point.conversationId
@@ -9473,12 +9564,12 @@
         canStart ? '' : 'disabled'
       }>Iniciar entrega</button>`;
     }
-    if (isDeliveryRole) return `${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>`;
+    if (esRepartidor) return `${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>`;
     if (canAssign && operational === 'PENDIENTE' && !session) {
       return `${chat}<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(
         item.id,
-      )}" aria-label="Asignar delivery">
-        <option value="">${assignedName ? 'Cambiar delivery' : 'Asignar delivery'}</option>
+      )}" aria-label="Asignar a un agente">
+        <option value="">${assignedName ? 'Cambiar de agente' : 'Asignar a un agente'}</option>
         ${(state.deliveryUsers ?? [])
           .map(
             (user) =>
@@ -9855,14 +9946,14 @@
       `
       ${
         asignadoNombre
-          ? `<p class="view__hint">Ahora lo lleva <strong>${escapeHtml(asignadoNombre)}</strong>. Al elegir otro, el pedido cambia de repartidor (queda auditado).</p>`
-          : '<p class="view__hint">El repartidor verá el pedido en su panorama y podrá iniciar la entrega con su GPS.</p>'
+          ? `<p class="view__hint">Ahora lo lleva <strong>${escapeHtml(asignadoNombre)}</strong>. Al elegir otro, el pedido cambia de agente (queda auditado).</p>`
+          : '<p class="view__hint">Elige el <strong>agente</strong> que va a hacer la entrega: es quien lo lleva, marca la entrega y comparte su ubicación mientras reparte.</p>'
       }
       <div class="menu-list">
         ${
           repartidores.length
             ? repartidores.map(fila).join('')
-            : `<p class="rule rule--warn">No hay usuarios con rol Delivery. Se crean en «Usuarios» (menú lateral) y vuelven a aparecer aquí.</p>`
+            : `<p class="rule rule--warn">No hay agentes activos. Se crean en «Usuarios» (menú lateral) y vuelven a aparecer aquí.</p>`
         }
       </div>
       <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
@@ -9980,7 +10071,7 @@
           ? {
               icon: ICONS.send,
               label: 'Pasar a un delivery',
-              note: 'El repartidor lo verá en su panorama',
+              note: 'Elige el agente que lo lleva',
               data: { 'data-order-delivery': item.id },
             }
           : null,
@@ -10842,7 +10933,7 @@
           await loadUsers();
           toast('Usuario creado');
         }).catch((error) => {
-          if (error.message !== 'unauthorized') toast(error.body?.error === 'weak_password' ? 'La contraseña debe tener mínimo 10 caracteres' : error.body?.message ?? 'No se pudo crear');
+          if (error.message !== 'unauthorized') toast(error.body?.error === 'weak_password' ? `La contraseña debe tener mínimo ${minPass()} caracteres` : error.body?.message ?? 'No se pudo crear');
         });
       }
     });
@@ -11402,8 +11493,24 @@
       }
       const password = event.target.closest('[data-user-password]');
       if (password) {
-        const next = window.prompt('Nueva contraseña temporal (mínimo 10 caracteres)');
-        if (next) updateUser(password.dataset.userPassword, { password: next });
+        const usuario = (state.users ?? []).find((row) => row.id === password.dataset.userPassword);
+        openUserPasswordSheet(
+          password.dataset.userPassword,
+          usuario?.display_name ?? usuario?.username ?? 'Usuario',
+        );
+        return;
+      }
+      // El ojo de cualquier campo de contraseña: solo cambia el `type` del campo de al lado.
+      const passEye = event.target.closest('[data-pass-eye]');
+      if (passEye) {
+        const input = passEye.closest('.pass')?.querySelector('input');
+        if (!input) return;
+        const ver = input.type === 'password';
+        input.type = ver ? 'text' : 'password';
+        passEye.setAttribute('aria-pressed', String(ver));
+        passEye.setAttribute('aria-label', ver ? 'Ocultar la contraseña' : 'Ver la contraseña');
+        passEye.innerHTML = ver ? ICONS.eyeOff : ICONS.eye;
+        input.focus();
         return;
       }
       // ---------------------------------------------- multimedia (S3)

@@ -251,6 +251,26 @@ describe('multiusuario, auth y asignación', () => {
     expect(delivery.role).toBe('DELIVERY');
   });
 
+  it('la contraseña mínima son 6 caracteres (y el servidor dice cuál es el mínimo)', async () => {
+    // El negocio pidió seis: se crea la cuenta con el cliente delante.
+    const corta = await request('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'corta@phyto.local', password: '12345', displayName: 'Corta', role: 'AGENT' }),
+    });
+    expect(corta.status).toBe(422);
+    expect((await body(corta)).error).toBe('weak_password');
+
+    const justa = await request('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'seis@phyto.local', password: '123456', displayName: 'Seis', role: 'AGENT' }),
+    });
+    expect(justa.status).toBe(201);
+    // Y esa cuenta entra de verdad con su contraseña de seis.
+    expect((await login('seis@phyto.local', '123456')).body.user.username).toBe('seis@phyto.local');
+    // El panel no adivina el mínimo: lo lee de los datos.
+    expect((await body(await request('/api/admin/data'))).minPasswordLength).toBe(6);
+  });
+
   it('AGENT no administra usuarios y el último ADMIN queda protegido', async () => {
     const loginMaria = await login('maria@phyto.local', AGENT_PASS);
     mariaCookie = loginMaria.cookie;

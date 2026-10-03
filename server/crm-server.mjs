@@ -91,7 +91,13 @@ import {
 } from './customers.mjs';
 import { addDays, createFollowupEngine, dayIn, resolveDailyCapsules, resolvePlan } from './followups.mjs';
 import { createAuditLog } from './audit.mjs';
-import { createUserService, SYSTEM_ACTOR, hasPermission, permissionsForRole } from './users.mjs';
+import {
+  createUserService,
+  SYSTEM_ACTOR,
+  hasPermission,
+  permissionsForRole,
+  MIN_PASSWORD_LENGTH,
+} from './users.mjs';
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createScheduler } from './scheduler.mjs';
 import { createSettingsService } from './settings.mjs';
@@ -1038,8 +1044,22 @@ function deliveryIdentityHeader(user) {
   return `*${name} · Delivery*`;
 }
 
+/**
+ * ¿Quién puede llevar un pedido en mano?
+ *
+ * El negocio no tiene un equipo de reparto aparte: el pedido se le pasa a un
+ * AGENTE y ese agente lo entrega (por eso el agente también tiene los permisos
+ * de reparto «propios»). «DELIVERY» sigue valiendo para las cuentas que ya
+ * existen con ese rol. Un administrador NO se pone a repartir: gestiona.
+ */
+const DELIVERY_CAPABLE_ROLES = Object.freeze(['AGENT', 'DELIVERY']);
+
+function canDeliver(user) {
+  return DELIVERY_CAPABLE_ROLES.includes(String(user?.role ?? '').toUpperCase());
+}
+
 function messageNeedsDeliveryIdentity(order, actor) {
-  if (!order || actor?.role !== 'DELIVERY') return false;
+  if (!order || !canDeliver(actor)) return false;
   if (order.delivery?.delivery_user_id !== actor.id) return false;
   return order.delivery?.delivery_contacted_by_user_id !== actor.id;
 }
@@ -1052,7 +1072,7 @@ function withDeliveryIdentity(body, actor) {
 }
 
 async function deliveryOrderForConversation(ctx, conversation, actor) {
-  if (!conversation?.id || actor?.role !== 'DELIVERY') return null;
+  if (!conversation?.id || !canDeliver(actor)) return null;
   const items = await ctx.store.listAdmin({ limit: 5000 });
   const candidates = [];
   for (const item of items.filter((row) => row.type === 'order_intent' && row.conversation_id === conversation.id)) {
@@ -1073,7 +1093,7 @@ async function deliveryOrderForConversation(ctx, conversation, actor) {
 }
 
 async function markDeliveryContacted(ctx, item, order, actor) {
-  if (!item || !order || actor?.role !== 'DELIVERY' || order.delivery?.delivery_user_id !== actor.id) return null;
+  if (!item || !order || !canDeliver(actor) || order.delivery?.delivery_user_id !== actor.id) return null;
   if (order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.CONTACTED && order.delivery?.delivery_contacted_by_user_id === actor.id) return order;
   const next = {
     ...order,
@@ -3428,7 +3448,7 @@ async function handle(req, res, ctx) {
           message:
             result.error === 'invalid_password'
               ? 'La contraseña actual no es correcta.'
-              : 'La contraseña nueva necesita al menos 10 caracteres.',
+              : `La contraseña nueva necesita al menos ${MIN_PASSWORD_LENGTH} caracteres.`,
         });
         return;
       }
@@ -3598,7 +3618,11 @@ async function handle(req, res, ctx) {
         customerTags: await ctx.customers.listTags(),
         deliveryTracking: await listVisibleTracking(ctx, actor),
         deliveryOrders: await visibleDeliveryOrders(ctx, actor),
-        deliveryUsers: can('delivery.tracking.manage_all') ? (await ctx.users.listUsers()).filter((user) => user.role === 'DELIVERY' && user.active !== false) : [],
+        deliveryUsers: can('delivery.tracking.manage_all')
+          ? (await ctx.users.listUsers()).filter((user) => canDeliver(user) && user.active !== false)
+          : [],
+        // La regla de la contraseña vive en el servidor: el panel solo la enseña.
+        minPasswordLength: MIN_PASSWORD_LENGTH,
         notifications: await listUserNotifications(ctx, actor),
         push: await pushStatusForUser(ctx, await pushOwnerUserId(ctx, actor)),
         paymentMethods: PAYMENT_METHODS.map((value) => ({ value, label: paymentMethodLabel(value) })),
@@ -4822,8 +4846,8 @@ async function handle(req, res, ctx) {
       }
       const deliveryUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
       const deliveryUser = deliveryUserId ? await ctx.users.get(deliveryUserId) : null;
-      if (!deliveryUser || deliveryUser.role !== 'DELIVERY') {
-        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un usuario DELIVERY.' });
+      if (!deliveryUser || !canDeliver(deliveryUser)) {
+        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' });
         return;
       }
       const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor);
@@ -4864,8 +4888,8 @@ async function handle(req, res, ctx) {
       const assignedUserId = text(order.delivery?.delivery_user_id, 80);
       const deliveryUser =
         canManageAll && requestedUserId ? await ctx.users.get(requestedUserId) : currentUser;
-      if (!deliveryUser || deliveryUser.role !== 'DELIVERY') {
-        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un usuario DELIVERY.' });
+      if (!deliveryUser || !canDeliver(deliveryUser)) {
+        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' });
         return;
       }
       if (assignedUserId && deliveryUser.id !== assignedUserId && !canManageAll) {

@@ -4,6 +4,15 @@ import { promisify } from 'node:util';
 const derive = promisify(pbkdf2);
 
 export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR']);
+
+/**
+ * Largo mínimo de una contraseña.
+ *
+ * Seis caracteres es lo que pidió el negocio para poder crear cuentas rápido en
+ * mostrador. El panel lo enseña tal cual (`data.minPasswordLength`), así que la
+ * regla vive en UN solo sitio y no se puede quedar desincronizada.
+ */
+export const MIN_PASSWORD_LENGTH = 6;
 export const ROLE_PERMISSIONS = Object.freeze({
   ADMIN: Object.freeze(['*']),
   AGENT: Object.freeze([
@@ -25,6 +34,16 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'orders.create',
     'orders.update_operational',
     'delivery.manage',
+    /*
+     * UN AGENTE TAMBIÉN REPARTE: el negocio no tiene repartidores aparte, el
+     * pedido se le pasa a un agente y ese agente lo entrega. Sin estos permisos
+     * «propios» podría recibir el pedido pero no arrancar la entrega ni compartir
+     * su ubicación, que es justo lo que hace falta para entregarlo.
+     */
+    'delivery.location.read_own',
+    'delivery.location.update_own',
+    'delivery.tracking.start',
+    'delivery.tracking.stop',
   ]),
   DELIVERY: Object.freeze([
     'clients.read',
@@ -109,7 +128,7 @@ function publicUser(user) {
 
 async function hashPassword(password) {
   const value = String(password ?? '');
-  if (value.length < 10) return { ok: false, error: 'weak_password' };
+  if (value.length < MIN_PASSWORD_LENGTH) return { ok: false, error: 'weak_password' };
   const salt = randomBytes(16).toString('base64url');
   const key = await derive(value, salt, PASSWORD_ITERATIONS, PASSWORD_KEYLEN, PASSWORD_DIGEST);
   return {
