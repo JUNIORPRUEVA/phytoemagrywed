@@ -10,7 +10,9 @@ describe('WhatsApp assignment UX', () => {
   it('no pinta controles grandes de asignación dentro del hilo', () => {
     expect(app).not.toContain('assignment-bar');
     expect(css).not.toContain('.assignment-bar');
-    expect(app).toContain("$('#thread').innerHTML = messages.length ? waThreadHtml(messages)");
+    // El hilo se pinta del servidor + los mensajes que aún no ha confirmado.
+    expect(app).toContain("$('#thread').innerHTML = hilo.length ? waThreadHtml(hilo) : emptyThread");
+    expect(app).toContain('const hilo = conPendientes(conversation, messages);');
   });
 
   it('muestra el responsable en header y lista de forma compacta', () => {

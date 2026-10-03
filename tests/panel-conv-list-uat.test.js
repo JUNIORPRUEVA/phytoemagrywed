@@ -1157,6 +1157,32 @@ describe('el chat va EN VIVO (sin esperar al sondeo de 8 s)', () => {
     click(`[data-conv="${ids.luis}"]`);
     await waitFor(() => $('#wa-text'), 'el compositor de la conversación');
     const antes = whatsapp.sent.length;
+    /*
+     * Se anotan TODAS las peticiones que salen durante el envío: si la prueba
+     * falla, el mensaje del fallo dice qué contestó el servidor (y qué avisó la
+     * pantalla) en vez de dejar adivinando.
+     */
+    const win = dom.window;
+    const original = win.fetch;
+    const registro = [];
+    win.fetch = async (input, init = {}) => {
+      const url = String(typeof input === 'string' ? input : input.url);
+      const response = await original(input, init);
+      const texto = await response.text();
+      registro.push({
+        method: (init.method ?? 'GET').toUpperCase(),
+        url: url.replace(/^https?:\/\/[^/]+/, ''),
+        status: response.status,
+        cuerpo: String(texto).slice(0, 200),
+      });
+      return {
+        ok: response.ok,
+        status: response.status,
+        headers: response.headers,
+        text: async () => texto,
+        json: async () => JSON.parse(texto),
+      };
+    };
     setValue('#wa-text', 'Te lo llevo hoy mismo');
     click('#wa-send');
 
@@ -1164,12 +1190,82 @@ describe('el chat va EN VIVO (sin esperar al sondeo de 8 s)', () => {
     expect($('#thread').textContent).toContain('Te lo llevo hoy mismo');
     expect($('#thread').textContent).toContain('Enviando');
 
-    // Cuando el servidor confirma, la provisional se sustituye (no se duplica).
-    await waitFor(() => whatsapp.sent.length === antes + 1, 'el envío real al servidor', 8000);
-    await waitFor(() => !$('#thread').textContent.includes('Enviando'), 'la confirmación del envío', 8000);
-    const burbujas = [...$$('#thread .bubble')].filter((bubble) =>
-      bubble.textContent.includes('Te lo llevo hoy mismo'),
-    );
-    expect(burbujas).toHaveLength(1);
+    try {
+      // Cuando el servidor confirma, la provisional se sustituye (no se duplica).
+      await waitFor(() => whatsapp.sent.length === antes + 1, 'el envío real al servidor', 8000);
+      await waitFor(() => !$('#thread').textContent.includes('Enviando'), 'la confirmación del envío', 8000);
+      const burbujas = [...$$('#thread .bubble')].filter((bubble) =>
+        bubble.textContent.includes('Te lo llevo hoy mismo'),
+      );
+      expect(
+        burbujas,
+        `hilo: ${$('#thread').textContent.replace(/\s+/g, ' ').slice(0, 200)} | aviso: ${$('#toast').textContent} | peticiones: ${JSON.stringify(registro.slice(-6))}`,
+      ).toHaveLength(1);
+    } finally {
+      win.fetch = original;
+    }
+  });
+
+  /*
+   * LA CARRERA DE VERDAD (y la que se veía en producción): un refresco de fondo
+   * —el aviso del servidor, el sondeo— sale ANTES del envío y vuelve DESPUÉS, con
+   * la foto del hilo de antes. Si esa respuesta manda, el mensaje recién enviado
+   * desaparece de la pantalla («aparece, se va y vuelve»).
+   *
+   * Aquí se provoca a propósito y de forma determinista: la lectura del hilo se
+   * retrasa, y la respuesta del envío TAMBIÉN (el servidor ya lo guardó, pero la
+   * pantalla se entera tarde). Así la lectura vieja aterriza con el envío aún en
+   * el aire, que es el hueco exacto.
+   */
+  it('un refresco LENTO que llega mientras el mensaje sale no se lleva la burbuja', async () => {
+    click(`[data-conv="${ids.luis}"]`);
+    await waitFor(() => $('#wa-text'), 'el compositor de la conversación');
+
+    const win = dom.window;
+    const original = win.fetch;
+    let hiloRetrasado = false;
+    let postRetrasado = false;
+    win.fetch = async (input, init = {}) => {
+      const url = String(typeof input === 'string' ? input : input.url);
+      const method = (init.method ?? 'GET').toUpperCase();
+      const esHilo = method === 'GET' && /\/api\/admin\/conversations\/[^/]+\/messages$/.test(url);
+      const esEnvio = method === 'POST' && /\/api\/admin\/conversations\/[^/]+\/messages$/.test(url);
+      if (esHilo && !hiloRetrasado) {
+        hiloRetrasado = true;
+        await sleep(300); // sale AHORA (sin el mensaje) y vuelve tarde
+      }
+      if (esEnvio && !postRetrasado) {
+        postRetrasado = true;
+        const respuesta = await original(input, init); // el servidor YA lo guardó…
+        await sleep(450); // …pero la pantalla se entera 450 ms después
+        return respuesta;
+      }
+      return original(input, init);
+    };
+    try {
+      // El aviso del servidor arranca un refresco que se quedará en el aire…
+      const canal = win.__eventSources.at(-1);
+      canal.emit('wa.message', { conversationId: ids.luis, direction: 'inbound', at: new Date().toISOString() });
+      await sleep(280);
+
+      // …y el mensaje sale mientras esa lectura vieja viene de camino.
+      whatsapp.sent.length = 0;
+      setValue('#wa-text', 'Llego en media hora');
+      click('#wa-send');
+      await waitFor(() => whatsapp.sent.length === 1, 'el envío real', 8000);
+      await waitFor(() => !$('#thread').textContent.includes('Enviando'), 'la confirmación del envío', 8000);
+
+      // Y al final hay UNA sola burbuja con el mensaje (ni dos, ni ninguna).
+      const burbujas = [...$$('#thread .bubble')].filter((bubble) =>
+        bubble.textContent.includes('Llego en media hora'),
+      );
+      expect(
+        burbujas,
+        `hilo: ${$('#thread').textContent.replace(/\s+/g, ' ').slice(0, 240)}`,
+      ).toHaveLength(1);
+      expect($('#thread').textContent).not.toContain('Cargando');
+    } finally {
+      win.fetch = original;
+    }
   });
 });

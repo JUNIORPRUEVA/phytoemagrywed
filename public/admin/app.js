@@ -170,6 +170,17 @@
       seenMessages: new Set(),
       loadingFor: null,
       /*
+       * LO QUE ACABAS DE ENVIAR NO DESAPARECE: los mensajes que aún no ha
+       * confirmado el servidor viven AQUÍ, fuera del hilo que trae el servidor
+       * (`chat.messages`). Se pintan al final hasta que el servidor los confirma.
+       *
+       * Antes se metían DENTRO del hilo y cualquier refresco que llegara con
+       * datos anteriores al envío borraba la burbuja: el mensaje aparecía, se iba
+       * y volvía. Y si el refresco tocaba la campana del sondeo (o el aviso del
+       * servidor), se quedaba borrado delante del cliente.
+       */
+      pending: [],
+      /*
        * Número de la última carga del hilo pedida. Una respuesta que vuelva con
        * un número viejo se DESCARTA: si no, una petición que salió antes (un
        * refresco de fondo) podía aterrizar después del envío y borrar de la
@@ -4069,6 +4080,33 @@
   };
 
   /** Hilo completo: separadores por día y agrupación de mensajes seguidos. */
+  /**
+   * El hilo que se pinta: lo del servidor + los mensajes que aún no ha confirmado.
+   *
+   * Los pendientes se pintan AL FINAL (son los últimos: acabas de enviarlos) y
+   * desaparecen solos en cuanto el servidor devuelve ese mensaje con su `id`
+   * (`confirmed_id`), para no verlo dos veces.
+   */
+  function conPendientes(conversation, messages) {
+    const lista = Array.isArray(messages) ? messages : [];
+    const pendientes = (state.wa.pending ?? []).filter(
+      (row) =>
+        row.conversation_id === conversation?.id &&
+        !(row.confirmed_id && lista.some((message) => message.id === row.confirmed_id)),
+    );
+    return pendientes.length ? [...lista, ...pendientes] : lista;
+  }
+
+  /** Añade un mensaje a la lista de pendientes (sin duplicar el id). */
+  function agregarPendiente(mensaje) {
+    state.wa.pending = [...(state.wa.pending ?? []).filter((row) => row.id !== mensaje.id), mensaje];
+  }
+
+  /** Quita un pendiente: el servidor ya lo confirmó (o lo rechazó). */
+  function quitarPendiente(id) {
+    state.wa.pending = (state.wa.pending ?? []).filter((row) => row.id !== id);
+  }
+
   function waThreadHtml(messages) {
     let html = '';
     let lastDay = '';
@@ -5303,6 +5341,12 @@
 
     const { customer, conversation, messages, canSendFreeText } = data;
     const contactState = getConversationContactState(data);
+    /*
+     * El hilo que se pinta = lo que tiene el servidor + lo que acabas de enviar y
+     * aún no está confirmado (`state.wa.pending`). En cuanto el servidor devuelve
+     * el mensaje con su `id`, el pendiente deja de pintarse (no se duplica).
+     */
+    const hilo = conPendientes(conversation, messages);
     $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
     const headerTags = customerTagsOf(customer).slice(0, 2).map((tag) => tag.label);
     $('#wa-chat-meta').textContent = [
@@ -5347,7 +5391,7 @@
       contactState === CONTACT_STATE.NEW_CONTACT
         ? '<div class="wa-empty"><strong>Todavía no has iniciado una conversación con este cliente.</strong><span>Usa una plantilla aprobada para enviar el primer mensaje.</span></div>'
         : '<p class="view__hint">Todavía no hay mensajes.</p>';
-    $('#thread').innerHTML = messages.length ? waThreadHtml(messages) : emptyThread;
+    $('#thread').innerHTML = hilo.length ? waThreadHtml(hilo) : emptyThread;
 
     $('#wa-composer').innerHTML = waComposerHtml({
       customer,
@@ -6159,20 +6203,25 @@
     const thread = state.wa.chat;
     const conHilo = thread?.conversation?.id === conversationId && Array.isArray(thread.messages);
     if (conHilo) {
-      thread.messages.push(provisional);
-      state.wa.chatSig = waThreadSig(thread);
+      agregarPendiente(provisional);
       renderWaChat();
       scrollThreadToEnd();
     }
     await working(button, 'Enviando…', async () => {
       try {
-        await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+        const resultado = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
         state.wa.draft = '';
         const followupId = state.wa.followupId;
         state.wa.followupId = null;
+        /*
+         * El servidor ya lo guardó: se apunta su `id` REAL en el pendiente. Desde
+         * ese momento, si el hilo ya lo trae, el pendiente deja de pintarse (no se
+         * ve dos veces) y la recarga de abajo lo sustituye sin parpadeo.
+         */
+        provisional.confirmed_id = resultado?.message?.id ?? null;
         toast('Mensaje enviado');
         /*
          * El hilo de verdad (con el mensaje ya guardado) y, SIN BLOQUEAR, la lista
@@ -6180,16 +6229,15 @@
          * datos del panel: eso era medio segundo de espera después de cada envío.
          */
         await loadWaThread(conversationId, { force: true });
+        // Ya está en el hilo del servidor: el pendiente sobra.
+        quitarPendiente(provisional.id);
         refreshWhatsapp().catch(() => {});
         if (followupId) toast('Seguimiento marcado como hecho');
         ok = true;
       } catch (error) {
         // El mensaje no salió: la burbuja provisional no puede quedarse.
-        if (conHilo) {
-          thread.messages = thread.messages.filter((message) => message.id !== provisional.id);
-          state.wa.chatSig = waThreadSig(thread);
-          renderWaChat();
-        }
+        quitarPendiente(provisional.id);
+        if (conHilo) renderWaChat();
         if (error.message !== 'unauthorized') {
           if (error.body?.message_record) {
             await loadWaThread(conversationId, { force: true });
@@ -6286,9 +6334,18 @@
 
     const conversationId = state.wa.selectedId;
     if (!conversationId) return;
+    /*
+     * El mismo cuidado que en `loadWaThread`: si mientras llegaba esta respuesta
+     * se pidió una carga MÁS NUEVA (por ejemplo el envío acaba de recargar el
+     * hilo), lo que trae esta petición es información de antes y se tira. Sin
+     * esto, un refresco de fondo que salió antes del envío podía aterrizar
+     * después y borrar de la pantalla el mensaje recién escrito.
+     */
+    const secuencia = state.wa.threadSeq;
     const data = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`);
     if (!domAlive()) return; // la pestaña se cerró mientras respondía el CRM
     if (state.wa.selectedId !== conversationId) return;
+    if (secuencia !== state.wa.threadSeq) return;
     const sig = waThreadSig(data);
     if (sig === state.wa.chatSig) return;
     state.wa.chatSig = sig;

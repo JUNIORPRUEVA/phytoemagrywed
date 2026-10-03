@@ -238,3 +238,22 @@ toca un administrador desde **Usuarios**.
    (`idempotency_key` única + recuperación de trabajos interrumpidos).
 4. El precio sale de UNA fuente (`src/config/product.config.js` → `src/lib/catalog.js`).
 5. Los pedidos antiguos (una sola línea, sin detalle) siguen leyéndose igual.
+6. **Cada agente entra en lo suyo, y lo que no es suyo lo PIDE.** Nadie se asigna una
+   conversación por su cuenta: se **pide** desde el propio chat bloqueado o desde el menú
+   «⋯» de la fila, y administración recibe el aviso con el enlace a esa conversación.
+7. **Los seguimientos de un cliente que no llevas no se ven** ni se pueden programar para
+   él: eso también es trabajo de quien lo tiene asignado.
+
+### Quién puede ver y contestar cada conversación
+
+| Rol | La lista de chats | El hilo y el compositor | Asignar |
+| --- | --- | --- | --- |
+| **Administrador** | Toda | Toda | A cualquiera, y liberar |
+| **Agente / Operador** | Toda (nombre y último mensaje, como en WhatsApp) | Solo las que lleva él (más las de los pedidos que está repartiendo) | **No**: las **pide** |
+| **Repartidor** | Toda | Las de los pedidos que lleva (para avisar de la entrega) | **No**: las **pide** |
+
+Lo que no es tuyo se ve **en la lista**, pero al abrirlo el panel no enseña ni un mensaje:
+dice quién la tiene y ofrece **«Solicitar que me la asignen»** (avisa a administración y no
+cambia nada por sí solo). La regla la impone el **servidor**, no la pantalla, así que no
+se puede saltar desde el navegador. En cuanto administración la asigna, el chat funciona
+con normalidad para esa persona.

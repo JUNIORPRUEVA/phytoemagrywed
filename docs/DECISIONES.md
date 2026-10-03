@@ -1243,11 +1243,31 @@ en la consola del navegador.
      asignación, que un agente no puede abrir. Ahora el menú de la conversación incluye
      «Solicitar que me la asignen» para quien no administra (y sigue sin ofrecer «Tomar»
      ni «Reasignar», que son de administración).
-   Además se corrigió una carrera real del hilo: una petición que salía ANTES (un
-   refresco de fondo) podía aterrizar DESPUÉS del envío y borrar de la pantalla el
-   mensaje recién escrito. Cada carga del hilo lleva ahora un número (`state.wa.threadSeq`)
-   y las respuestas viejas se descartan. `tests/panel-blindaje-uat.test.js` deja todo eso
-   comprobado de punta a punta: la lista entera visible, el bloqueo con su botón, la
-   ausencia total de compositor y de envíos, el aviso a administración sin cambio de
-   asignación, y el chat funcionando en cuanto administración asigna.
+   Además se corrigió una carrera real del hilo. El síntoma: **el mensaje recién
+   enviado aparecía, se iba y volvía**. La causa no era el envío, era un refresco de
+   fondo (el aviso del servidor o el sondeo) que salía ANTES del envío y volvía
+   DESPUÉS con la foto anterior del hilo; al pintarla, la burbuja provisional
+   —que vivía DENTRO de `chat.messages`— desaparecía de la pantalla hasta que el
+   servidor confirmaba. Se arregló por dos vías, porque son dos problemas distintos:
+   1. La burbuja que aún no está confirmada vive **aparte** del hilo del servidor
+      (`state.wa.pending`) y se pinta al final del hilo. Cualquier refresco, por viejo
+      que sea, ya no puede llevársela: en cuanto el servidor devuelve el mensaje con su
+      `id` real (`confirmed_id`), el pendiente deja de pintarse (no se ve dos veces) y
+      se retira al recargar. Esto además quita el parpadeo de «Enviando…».
+   2. Cada carga del hilo lleva un número (`state.wa.threadSeq`) y **los dos** caminos
+      que pisan el hilo (`loadWaThread` y el refresco de la lista) descartan las
+      respuestas viejas: un refresco no puede revertir datos más nuevos (estados,
+      no leídos, el propio mensaje).
+
+   Se descubrió porque una prueba empezó a fallar de forma **intermitente** (~1 de cada
+   3 vueltas, solo al correr toda la batería en paralelo: con la máquina cargada, los
+   tiempos largos hacen que el refresco llegue en mitad del envío). Ahora hay una prueba
+   que lo provoca A PROPÓSITO y de forma determinista —retrasa la lectura del hilo Y la
+   respuesta del envío, de modo que la lectura vieja aterriza con el envío aún en el
+   aire— y se comprobó que **falla con el código anterior y pasa con este**: un arreglo
+   de una carrera sin esa comprobación no vale nada. `tests/panel-blindaje-uat.test.js`
+   deja todo lo demás comprobado de punta a punta: la lista entera visible, el bloqueo
+   con su botón, la ausencia total de compositor y de envíos, el aviso a administración
+   sin cambio de asignación, y el chat funcionando en cuanto administración asigna.
+
 
