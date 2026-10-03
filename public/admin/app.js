@@ -17,6 +17,14 @@
   const WA_SOUND_KEY = 'pe_wa_sound';
   const NOTICE_DISMISSED_KEY = 'pe_notice_dismissed';
   const DELIVERY_MAP_VIEW_KEY = 'pe_delivery_map_view';
+  /*
+   * MAPA DE PEDIDOS: la última vista del mapa y los últimos puntos vistos se
+   * guardan en el teléfono. Así el mapa se pinta AL INSTANTE al abrir la pantalla
+   * (aunque la señal sea mala) y se refresca solo cuando llega la respuesta.
+   */
+  const MAPS_VIEW_KEY = 'pe_orders_map_view';
+  const MAPS_CACHE_KEY = 'pe_orders_map_points';
+  const MAPS_POLL_MS = 15000;
   const DELIVERY_TILE_PREFETCH_ENABLED = false;
   const DELIVERY_TILE_PREFETCH_REASON = 'OSM public tiles allow normal browser/service-worker caching, not automatic area prefetch.';
   const DELIVERY_TILE_SLOW_MS = 4500;
@@ -76,6 +84,29 @@
       tileLoading: 0,
       tileError: false,
       slowTimer: null,
+    },
+    /*
+     * MAPA DENTRO DE LA APP (una ubicación) y MAPA DE PEDIDOS (todos los puntos).
+     * Van por separado: la hoja puede abrirse desde cualquier sitio sin perder el
+     * mapa grande que está detrás.
+     */
+    viewerMap: { map: null, key: null, marker: null, line: null, meMarker: null },
+    ordersMap: {
+      map: null,
+      layer: null,
+      markers: new Map(),
+      points: [],
+      signature: null,
+      filter: 'todo',
+      measuring: false,
+      measurePoints: [],
+      measureLine: null,
+      refPoint: null,
+      fitted: false,
+      loading: false,
+      error: false,
+      updatedAt: null,
+      pollTimer: null,
     },
     auth: null,
     users: [],
@@ -178,7 +209,8 @@
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
     back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
-    more: svg('<circle cx="12" cy="5" r="1.25"/><circle cx="12" cy="12" r="1.25"/><circle cx="12" cy="19" r="1.25"/>'),
+    /* «⋮» de verdad: tres puntos RELLENOS (con trazo quedaban huecos y no se veían). */
+    more: svg('<circle cx="12" cy="5.2" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="18.8" r="1.9" fill="currentColor" stroke="none"/>'),
     search: svg('<circle cx="10.8" cy="10.8" r="5.8"/><path d="m15.2 15.2 4.6 4.6"/>'),
     calendar: svg('<rect x="4" y="5.4" width="16" height="14.6" rx="2.4"/><path d="M8 3.8v3.4M16 3.8v3.4M4 10h16"/>'),
     plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
@@ -678,6 +710,7 @@
     renderWhatsapp();
     renderClientes();
     renderDelivery();
+    renderOrdersMap();
     renderPedidos();
     renderProductos();
     renderReportes();
@@ -7587,12 +7620,14 @@
         <span class="loc__actions">
           ${
             url
-              ? `<a class="loc__link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Ver en mapa</a>`
+              ? `<button class="loc__link" data-open-map="${mapLocationAttr(location)}" data-map-title="${escapeHtml(
+                  locationTitle(location),
+                )}" type="button">Ver en mapa</button>`
               : '<span class="loc__link loc__link--off">Sin coordenadas legibles</span>'
           }
           ${
             options.withActions !== false
-              ? `<button class="loc__more" type="button" data-loc-menu="${escapeHtml(location?.id ?? '')}" aria-label="Más acciones de la ubicación">⋯</button>`
+              ? `<button class="loc__more" type="button" data-loc-menu="${escapeHtml(location?.id ?? '')}" aria-label="Más acciones de la ubicación">${ICONS.more}</button>`
               : ''
           }
         </span>
@@ -7800,6 +7835,11 @@
    *
    * Deliberado y avisado: se dice con QUIÉN se comparte y se exige confirmación.
    * No se copia nada más del cliente original: solo la ubicación.
+   *
+   * Y SIEMPRE SE PUEDE. Dentro de la ventana de 24 h viaja como ubicación de
+   * WhatsApp; fuera de ella WhatsApp ya no deja mandar ubicaciones, así que se
+   * manda una plantilla aprobada con el enlace del mapa dentro. El panel dice
+   * antes de enviar cuál de las dos cosas va a pasar.
    */
   async function openShareLocation({ locationId, location }) {
     const destinations = (state.conversations ?? []).filter((row) => row.id && row.customer);
@@ -7807,6 +7847,11 @@
       toast('No hay conversaciones con las que compartir');
       return;
     }
+    // La ventana de 24 h se calcula con el último mensaje QUE ESCRIBIÓ el cliente.
+    const ventanaAbierta = (row) => {
+      const ultimo = Date.parse(row?.last_inbound_at ?? '');
+      return Number.isFinite(ultimo) && Date.now() - ultimo < 24 * 60 * 60 * 1000;
+    };
     openSheet(
       'Compartir ubicación',
       `
@@ -7818,7 +7863,9 @@
           ${destinations
             .map(
               (row) =>
-                `<option value="${escapeHtml(row.id)}">${escapeHtml(waDisplayName(row))}</option>`,
+                `<option value="${escapeHtml(row.id)}">${escapeHtml(waDisplayName(row))} · ${
+                  ventanaAbierta(row) ? 'puede recibir la ubicación' : 'por plantilla (24 h cerradas)'
+                }</option>`,
             )
             .join('')}
         </select>
@@ -7828,31 +7875,61 @@
       <button class="btn btn--ghost btn--block" id="loc-share-cancel" type="button">Cancelar</button>
       `,
     );
+    const destinoElegido = () => destinations.find((candidate) => candidate.id === $('#loc-share-to').value) ?? null;
     const refreshWarning = () => {
-      const row = destinations.find((candidate) => candidate.id === $('#loc-share-to').value) ?? null;
-      $('#loc-share-warning').textContent = row
-        ? `Vas a compartir esta ubicación con ${waDisplayName(row)}.`
-        : 'Elige un destinatario.';
+      const row = destinoElegido();
+      const boton = $('#loc-share-ok');
+      const aviso = $('#loc-share-warning');
+      if (!row) {
+        if (aviso) aviso.textContent = 'Elige un destinatario.';
+        return;
+      }
+      const dentro = ventanaAbierta(row);
+      if (boton) boton.textContent = dentro ? 'Compartir ubicación' : 'Enviar por plantilla (enlace del mapa)';
+      if (aviso) {
+        aviso.textContent = dentro
+          ? `Vas a compartir esta ubicación con ${waDisplayName(row)}. La recibirá como ubicación de WhatsApp.`
+          : `${waDisplayName(row)} no ha escrito en las últimas 24 h: WhatsApp ya no deja enviar ubicaciones. Se le mandará una plantilla aprobada con el ENLACE del mapa.`;
+      }
     };
     $('#loc-share-to').addEventListener('change', refreshWarning);
     refreshWarning();
     $('#loc-share-cancel').addEventListener('click', () => closeSheet());
     $('#loc-share-ok').addEventListener('click', async (event) => {
-      const destination = $('#loc-share-to').value;
-      const row = destinations.find((candidate) => candidate.id === destination) ?? null;
+      const row = destinoElegido();
+      const destination = row?.id ?? '';
       // Confirmación EXPLÍCITA con el nombre del destino (§21).
       if (!row || !window.confirm(`¿Compartir esta ubicación con ${waDisplayName(row)}?`)) return;
+      const dentro = ventanaAbierta(row);
       await working(event.currentTarget, 'Compartiendo…', async () => {
         try {
-          await api(`/api/admin/locations/${encodeURIComponent(locationId)}/share`, {
+          const result = await api(`/api/admin/locations/${encodeURIComponent(locationId)}/share`, {
             method: 'POST',
-            body: JSON.stringify({ conversationId: destination, confirmed: true }),
+            body: JSON.stringify({
+              conversationId: destination,
+              confirmed: true,
+              mode: dentro ? 'location' : 'template',
+            }),
           });
-          toast('Ubicación compartida');
+          toast(result?.mode === 'template' ? 'Ubicación enviada por plantilla (enlace del mapa)' : 'Ubicación compartida');
           closeSheet();
           if (state.wa.selectedId) await loadWaThread(state.wa.selectedId, { force: true });
         } catch (error) {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo compartir la ubicación');
+          if (error.message === 'unauthorized') return;
+          /*
+           * La ventana pudo cerrarse entre la comprobación y el envío: el servidor
+           * lo dice y aquí se cambia el botón para mandarlo por plantilla, en vez
+           * de dejar al operador con un «no se pudo».
+           */
+          if (error.body?.canUseTemplate) {
+            const boton = $('#loc-share-ok');
+            if (boton) boton.textContent = 'Enviar por plantilla (enlace del mapa)';
+            const aviso = $('#loc-share-warning');
+            if (aviso) aviso.textContent = error.body.message;
+            toast('Se puede mandar por plantilla: pulsa otra vez para enviarla con el enlace');
+            return;
+          }
+          toast(error.body?.message ?? 'No se pudo compartir la ubicación');
         }
       });
     });
@@ -7861,23 +7938,32 @@
   /** Acciones de una ubicación: lo esencial a la vista y el resto en «⋯» (§12). */
   function openLocationActions({ location, conversationId }) {
     const url = locationMapUrl(location);
+    const dibujable = Boolean(mapLatLng(location));
     openSheet(
       'Ubicación',
       `
       ${locationChip(location, { withActions: false })}
       ${
-        url
-          ? `<a class="btn btn--primary btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Ver en mapa</a>`
+        dibujable
+          ? '<button class="btn btn--primary btn--block" id="loc-map" type="button">Ver el mapa aquí dentro</button>'
           : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles.</p>'
       }
       <button class="btn btn--ghost btn--block" id="loc-use" type="button">Usar para un pedido</button>
       <button class="btn btn--ghost btn--block" id="loc-share" type="button">Compartir con otra conversación</button>
+      ${
+        url
+          ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>`
+          : ''
+      }
       <button class="btn btn--ghost btn--block" id="loc-close" type="button">Cerrar</button>
       `,
     );
     $('#loc-close').addEventListener('click', () => closeSheet());
+    $('#loc-map')?.addEventListener('click', () => {
+      openMapViewer({ location, title: 'Ubicación', conversationId: conversationId ?? state.wa.selectedId ?? '' });
+    });
     $('#loc-use').addEventListener('click', () => {
-      const customerId = state.wa.chat?.customer?.id ?? null;
+      const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
       closeSheet();
       if (!customerId) {
         toast('Abre la conversación del cliente para crearle un pedido');
@@ -7889,6 +7975,730 @@
       closeSheet();
       openShareLocation({ locationId: location.id, location });
     });
+  }
+
+  /*
+   * ============================ MAPAS DE UBICACIONES ==========================
+   *
+   * Lo que pidió el negocio, en tres piezas que van juntas:
+   *
+   *   1. EL MAPA SE ABRE AQUÍ DENTRO. Ver dónde está un cliente no puede sacarte
+   *      del panel: la ubicación se dibuja en la propia app (misma hoja, mismo
+   *      lenguaje visual que el mapa de reparto). Google Maps queda como enlace
+   *      secundario, para compartir o para el navegador de siempre.
+   *   2. LOS PUNTOS SE GUARDAN SOLOS. Cada ubicación que manda un cliente por
+   *      WhatsApp queda guardada con su cliente y con su conversación (eso ya lo
+   *      hacía el CRM), así que un pedido y su mapa se pueden volver a abrir
+   *      siempre, sin depender del chat.
+   *   3. «MAPA DE PEDIDOS»: una pantalla con TODOS los pedidos y TODAS las
+   *      ubicaciones de los clientes, que se refresca sola cuando llega una
+   *      ubicación nueva y sabe medir distancias.
+   */
+
+  /** Coordenadas numéricas de cualquier punto (ubicación, pedido o marcador). */
+  function mapLatLng(point) {
+    const lat = Number(point?.latitude ?? point?.lat);
+    const lng = Number(point?.longitude ?? point?.lng);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+  }
+
+  /**
+   * Distancia en METROS entre dos puntos (línea recta, fórmula del haversine).
+   *
+   * Es la distancia REAL en línea recta, no la de la carretera: el panel lo dice
+   * tal cual donde la enseña, porque prometer «12 min en coche» sin un servicio
+   * de rutas sería inventarse un dato.
+   */
+  function metersBetween(a, b) {
+    const uno = mapLatLng(a);
+    const dos = mapLatLng(b);
+    if (!uno || !dos) return null;
+    const radio = 6371000;
+    const rad = (grados) => (grados * Math.PI) / 180;
+    const dLat = rad(dos[0] - uno[0]);
+    const dLng = rad(dos[1] - uno[1]);
+    const h =
+      Math.sin(dLat / 2) ** 2 + Math.cos(rad(uno[0])) * Math.cos(rad(dos[0])) * Math.sin(dLng / 2) ** 2;
+    return 2 * radio * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  /** «850 m» / «12,4 km»: la distancia se lee como se habla, no como un decimal. */
+  function fmtDistance(meters) {
+    const value = Number(meters);
+    if (!Number.isFinite(value)) return '';
+    if (value < 1000) return `${Math.round(value)} m`;
+    const km = value / 1000;
+    return `${km < 10 ? km.toFixed(1).replace('.', ',') : String(Math.round(km))} km`;
+  }
+
+  /** Marcador del mapa: mismo lenguaje visual que el mapa del reparto. */
+  function mapMarkerIcon(kind) {
+    if (!window.L) return null;
+    const clase =
+      kind === 'order' ? 'delivery' : kind === 'me' ? 'me' : kind === 'measure' ? 'measure' : 'customer';
+    return window.L.divIcon({
+      className: `delivery-leaflet-marker delivery-leaflet-marker--${clase}`,
+      html: `<span>${kind === 'order' ? ICONS.box : ICONS.pin}</span>`,
+      iconSize: [38, 38],
+      iconAnchor: [19, 19],
+      popupAnchor: [0, -18],
+    });
+  }
+
+  /** «hace un rato» de un punto, sin inventarse fechas. */
+  const mapWhen = (value) => (value ? fmtWhen(value) : 'sin fecha');
+
+  /**
+   * Ubicación «viajera» dentro de un atributo: así cualquier hoja (la factura, la
+   * ficha, el chat) puede abrir el mapa AQUÍ DENTRO sin volver a pedir los datos.
+   */
+  function mapLocationAttr(location) {
+    if (!mapLatLng(location)) return '';
+    return escapeHtml(
+      JSON.stringify({
+        id: location.id ?? null,
+        latitude: Number(location.latitude),
+        longitude: Number(location.longitude),
+        name: location.name ?? null,
+        address: location.address ?? null,
+        source: location.source ?? null,
+        customer_id: location.customer_id ?? null,
+      }),
+    );
+  }
+
+  function mapLocationFromAttr(value) {
+    try {
+      return JSON.parse(value ?? '');
+    } catch {
+      return null;
+    }
+  }
+
+  // ------------------------------------------------------- mapa dentro de la app
+
+  /** Leaflet no se limpia solo al reemplazar el HTML de la hoja: hay que quitarlo. */
+  function destroyViewerMap() {
+    if (state.viewerMap?.map) {
+      try {
+        state.viewerMap.map.remove();
+      } catch {
+        /* el contenedor ya no estaba: no hay nada que desmontar */
+      }
+    }
+    state.viewerMap = { map: null, key: null, marker: null, line: null, meMarker: null };
+  }
+
+  /**
+   * UNA UBICACIÓN, EN GRANDE Y AQUÍ DENTRO.
+   *
+   * Enseña el punto en un mapa de la propia app y deja hacer lo de siempre con
+   * una ubicación: usarla para un pedido, compartirla con otra conversación y
+   * medir a qué distancia estás (con el GPS del teléfono, solo al pulsar).
+   */
+  function openMapViewer({ location, title = 'Ubicación', conversationId = '', onUse = null }) {
+    const coords = mapLatLng(location);
+    const url = locationMapUrl(location);
+    destroyViewerMap();
+    // Si había otra hoja con trabajo vivo (una grabadora, por ejemplo), se cierra
+    // bien antes de reemplazarla: su limpieza se quedaría sin dueño.
+    try {
+      closeSheetCleanup?.();
+    } catch {
+      /* la limpieza nunca puede impedir abrir el mapa */
+    }
+    closeSheetCleanup = null;
+    openSheet(
+      title,
+      `
+      ${locationChip(location, { withActions: false })}
+      ${
+        coords
+          ? '<div class="map-view" id="map-viewer" aria-label="Mapa de la ubicación"></div>'
+          : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles: no hay nada que dibujar.</p>'
+      }
+      <p class="view__hint" id="map-viewer-hint">${
+        coords ? 'El mapa se abre aquí, sin salir del panel.' : ''
+      }</p>
+      <div class="map-actions">
+        ${
+          coords
+            ? '<button class="btn btn--ghost btn--block" id="map-viewer-measure" type="button">¿A qué distancia estoy?</button>'
+            : ''
+        }
+        <button class="btn btn--ghost btn--block" id="map-viewer-use" type="button">Usar para un pedido</button>
+        <button class="btn btn--ghost btn--block" id="map-viewer-share" type="button">Compartir con otra conversación</button>
+        ${
+          url
+            ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>`
+            : ''
+        }
+        <button class="btn btn--primary btn--block" id="map-viewer-close" type="button">Cerrar</button>
+      </div>
+      `,
+      { variant: 'map' },
+    );
+
+    if (coords) {
+      const el = $('#map-viewer');
+      if (window.L && el) {
+        const map = window.L.map(el, { zoomControl: true, attributionControl: true }).setView(coords, 16);
+        window.L
+          .tileLayer(DELIVERY_TILE_URL, { maxZoom: 19, attribution: DELIVERY_TILE_ATTRIBUTION })
+          .addTo(map);
+        const marker = window.L.marker(coords, { icon: mapMarkerIcon('location') }).addTo(map);
+        marker.bindPopup(`<strong>${escapeHtml(locationTitle(location))}</strong>`);
+        state.viewerMap = { map, key: location?.id ?? null, marker, line: null, meMarker: null };
+        // El contenedor acaba de aparecer: Leaflet mide mal hasta que se recalcula.
+        setTimeout(() => map.invalidateSize(), 0);
+      } else if (el) {
+        el.innerHTML =
+          '<div class="delivery-map__fallback">No se pudo cargar el mapa (Leaflet no está disponible ahora mismo).</div>';
+      }
+    }
+
+    $('#map-viewer-close')?.addEventListener('click', () => closeSheet());
+    $('#map-viewer-use')?.addEventListener('click', () => {
+      if (typeof onUse === 'function') {
+        onUse();
+        return;
+      }
+      const customerId = state.wa.chat?.customer?.id ?? (location?.customer_id ?? null);
+      if (!customerId) {
+        toast('Abre la conversación o la ficha del cliente para crearle un pedido');
+        return;
+      }
+      closeSheet();
+      openOrderForm({ customerId, conversationId: conversationId || state.wa.selectedId || '', location });
+    });
+    $('#map-viewer-share')?.addEventListener('click', () => {
+      if (!location?.id) {
+        toast('Esta ubicación no está guardada: no se puede compartir');
+        return;
+      }
+      openShareLocation({ locationId: location.id, location });
+    });
+    $('#map-viewer-measure')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Buscando…', async () => {
+        const found = await getBrowserLocation();
+        if (!found.ok) {
+          toast(found.message);
+          return;
+        }
+        const mios = mapLatLng(found.location);
+        const map = state.viewerMap.map;
+        if (!mios || !map || !window.L) return;
+        if (state.viewerMap.meMarker) state.viewerMap.meMarker.remove();
+        if (state.viewerMap.line) state.viewerMap.line.remove();
+        state.viewerMap.meMarker = window.L
+          .marker(mios, { icon: mapMarkerIcon('me') })
+          .addTo(map)
+          .bindPopup('Estás aquí');
+        state.viewerMap.line = window.L
+          .polyline([mios, coords], { color: '#0b6b4f', weight: 3, dashArray: '6 8' })
+          .addTo(map);
+        map.fitBounds(window.L.latLngBounds([mios, coords]).pad(0.3), { padding: [30, 30] });
+        const metros = metersBetween({ latitude: mios[0], longitude: mios[1] }, location);
+        const hint = $('#map-viewer-hint');
+        if (hint) {
+          hint.textContent = `Estás a ${fmtDistance(metros)}. Es la distancia en línea recta, no la de la carretera.`;
+        }
+      });
+    });
+    closeSheetCleanup = destroyViewerMap;
+  }
+
+  // ---------------------------------------------------------- mapa de pedidos
+
+  /** Última vista del mapa (para volver donde estabas, igual que en reparto). */
+  function ordersMapSavedView() {
+    try {
+      const value = JSON.parse(localStorage.getItem(MAPS_VIEW_KEY) ?? 'null');
+      const lat = Number(value?.center?.[0]);
+      const lng = Number(value?.center?.[1]);
+      const zoom = Number(value?.zoom);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(zoom)) return null;
+      if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || zoom < 1 || zoom > 19) return null;
+      return { center: [lat, lng], zoom };
+    } catch {
+      return null;
+    }
+  }
+
+  function saveOrdersMapView() {
+    const map = state.ordersMap.map;
+    if (!map) return;
+    try {
+      const center = map.getCenter();
+      const zoom = map.getZoom();
+      if (!Number.isFinite(center?.lat) || !Number.isFinite(zoom)) return;
+      localStorage.setItem(
+        MAPS_VIEW_KEY,
+        JSON.stringify({ center: [Number(center.lat.toFixed(6)), Number(center.lng.toFixed(6))], zoom }),
+      );
+    } catch {
+      /* la vista es una comodidad: si Storage falla, el mapa sigue */
+    }
+  }
+
+  function mapCachedLocations() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(MAPS_CACHE_KEY) ?? 'null');
+      return Array.isArray(raw?.locations) ? raw.locations : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function cacheMapLocations(locations) {
+    try {
+      localStorage.setItem(
+        MAPS_CACHE_KEY,
+        JSON.stringify({ at: new Date().toISOString(), locations: locations.slice(0, 300) }),
+      );
+    } catch {
+      /* sin caché se sigue igual: solo se pierde el pintado instantáneo */
+    }
+  }
+
+  /**
+   * TODOS los puntos: la ubicación de entrega de cada pedido y cada ubicación que
+   * ha mandado un cliente. Se deduplica por clave para que un pedido con la misma
+   * ubicación del cliente no salga dos veces.
+   */
+  function ordersMapPoints() {
+    const puntos = [];
+    const vistos = new Set();
+    /** El mismo punto dos veces (el pedido y la ubicación guardada) estorba: se marca. */
+    const puntosDePedido = new Set();
+    const clavePunto = (customerId, lat, lng) => `${customerId ?? ''}:${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
+    for (const item of state.items ?? []) {
+      if (item.type !== 'order_intent') continue;
+      const order = itemOrder(item);
+      const location = order?.delivery?.location ?? null;
+      const coords = mapLatLng(location);
+      if (!coords) continue;
+      const clave = `order:${item.id}`;
+      vistos.add(clave);
+      puntosDePedido.add(clavePunto(item.customer_id ?? order?.customer_id, coords[0], coords[1]));
+      const variante = order?.items?.[0]?.variant_name ?? order?.items?.[0]?.variantName ?? item.variant_name ?? '';
+      const cantidad = Number(order?.items?.[0]?.quantity ?? item.quantity ?? 1);
+      // Quien va a recibir el pedido: sin el nombre, un mapa de pedidos no sirve
+      // para repartir nada.
+      const cliente = (state.customers ?? []).find((row) => row.id === (item.customer_id ?? order?.customer_id)) ?? null;
+      puntos.push({
+        key: clave,
+        kind: 'order',
+        orderId: item.id,
+        orderNumber: order?.order_number ?? item.order_number ?? null,
+        status: order?.status ?? item.status ?? null,
+        customerId: item.customer_id ?? order?.customer_id ?? null,
+        conversationId: order?.conversation_id ?? item.conversation_id ?? null,
+        location,
+        latitude: coords[0],
+        longitude: coords[1],
+        at: order?.created_at ?? item.received_at ?? null,
+        title: order?.order_number ?? item.order_number ?? 'Pedido',
+        detail: [
+          cliente ? customerName(cliente) : null,
+          variante ? `${variante} × ${cantidad}` : null,
+          money(order?.total ?? item.total, order?.currency ?? item.currency),
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        address: location?.address ?? null,
+      });
+    }
+    for (const location of state.ordersMap.locations ?? []) {
+      const coords = mapLatLng(location);
+      if (!coords) continue;
+      // El punto ya está puesto por un pedido (la misma entrega): no se repite.
+      if (vistos.has(`order:${location.order_id}`)) continue;
+      if (puntosDePedido.has(clavePunto(location.customer_id, coords[0], coords[1]))) continue;
+      vistos.add(`loc:${location.id}`);
+      puntos.push({
+        key: `loc:${location.id}`,
+        kind: 'location',
+        locationId: location.id,
+        location,
+        customerId: location.customer_id ?? null,
+        conversationId: location.conversation_id ?? null,
+        orderId: location.order_id ?? null,
+        latitude: coords[0],
+        longitude: coords[1],
+        at: location.created_at ?? null,
+        title: location.customer_name ?? locationTitle(location),
+        detail: [locationTitle(location), location.age_label ?? mapWhen(location.created_at)]
+          .filter(Boolean)
+          .join(' · '),
+        address: location.address ?? null,
+      });
+    }
+    return puntos;
+  }
+
+  const MAPS_FILTER_LABEL = { todo: 'Todo', pedidos: 'Pedidos', ubicaciones: 'Ubicaciones', hoy: 'De hoy' };
+
+  function ordersMapVisiblePoints() {
+    const puntos = ordersMapPoints();
+    const filtro = state.ordersMap.filter ?? 'todo';
+    if (filtro === 'pedidos') return puntos.filter((point) => point.kind === 'order');
+    if (filtro === 'ubicaciones') return puntos.filter((point) => point.kind === 'location');
+    if (filtro === 'hoy') {
+      const arranque = new Date();
+      arranque.setHours(0, 0, 0, 0);
+      return puntos.filter((point) => {
+        const cuando = Date.parse(point.at ?? '');
+        return Number.isFinite(cuando) && cuando >= arranque.getTime();
+      });
+    }
+    return puntos;
+  }
+
+  /** Distancia de un punto al punto de referencia (si hay uno fijado). */
+  function ordersMapDistance(point) {
+    if (!state.ordersMap.refPoint) return null;
+    return metersBetween(state.ordersMap.refPoint, point);
+  }
+
+  function ordersMapPopup(point) {
+    const meters = ordersMapDistance(point);
+    const partes = [
+      `<strong>${escapeHtml(point.title)}</strong>`,
+      point.detail ? escapeHtml(point.detail) : '',
+      point.address ? escapeHtml(point.address) : '',
+      point.at ? escapeHtml(mapWhen(point.at)) : '',
+      meters !== null ? `A ${escapeHtml(fmtDistance(meters))} de ti (línea recta)` : '',
+    ].filter(Boolean);
+    const acciones = [
+      `<button class="btn btn--ghost btn--sm" data-map-open="${escapeHtml(point.key)}" type="button">Ver aquí dentro</button>`,
+      point.conversationId
+        ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Abrir el chat</button>`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('');
+    return `<div class="map-popup">${partes
+      .map((linea) => `<span class="map-popup__line">${linea}</span>`)
+      .join('')}<span class="map-popup__actions">${acciones}</span></div>`;
+  }
+
+  /** Crea el mapa la PRIMERA vez (solo cuando la pantalla está a la vista). */
+  function ensureOrdersMap() {
+    const el = $('#orders-map');
+    if (!el || !window.L) return null;
+    if (el.closest('[hidden]')) return null; // la pantalla no está abierta: no se gasta memoria
+    if (state.ordersMap.map && state.ordersMap.map.getContainer?.() === el) return state.ordersMap.map;
+    if (state.ordersMap.map) resetOrdersMap();
+    const map = window.L.map(el, { zoomControl: true, attributionControl: true });
+    window.L.tileLayer(DELIVERY_TILE_URL, { maxZoom: 19, attribution: DELIVERY_TILE_ATTRIBUTION }).addTo(map);
+    const vista = ordersMapSavedView();
+    map.setView(vista?.center ?? [18.6157, -68.7071], vista?.zoom ?? 12);
+    map.on('moveend zoomend', saveOrdersMapView);
+    map.on('click', (event) => ordersMapMapClick(event.latlng));
+    if (state.ordersMap.refPoint) addOrdersMapRefMarker();
+    state.ordersMap.map = map;
+    setTimeout(() => map.invalidateSize(), 0);
+    return map;
+  }
+
+  function resetOrdersMap() {
+    for (const marker of state.ordersMap.markers.values()) marker.remove();
+    state.ordersMap.measureLine?.remove();
+    state.ordersMap.measureLine = null;
+    state.ordersMap.measurePoints = [];
+    if (state.ordersMap.map) {
+      try {
+        state.ordersMap.map.remove();
+      } catch {
+        /* ya estaba fuera del DOM */
+      }
+    }
+    state.ordersMap.map = null;
+    state.ordersMap.markers = new Map();
+    state.ordersMap.refMarker = null;
+    state.ordersMap.fitted = false;
+  }
+
+  function addOrdersMapRefMarker() {
+    const map = state.ordersMap.map;
+    const coords = mapLatLng(state.ordersMap.refPoint);
+    if (!map || !coords || !window.L) return;
+    state.ordersMap.refMarker?.remove();
+    state.ordersMap.refMarker = window.L
+      .marker(coords, { icon: mapMarkerIcon('me') })
+      .addTo(map)
+      .bindPopup('Tu ubicación (punto de referencia)');
+  }
+
+  /** Pinta los marcadores SIN recrear el mapa (así no parpadea al refrescar). */
+  function syncOrdersMapMarkers() {
+    const visibles = ordersMapVisiblePoints();
+    const map = state.ordersMap.map ?? ensureOrdersMap();
+    if (!map || !window.L) return;
+    const vivos = new Set();
+    for (const point of visibles) {
+      vivos.add(point.key);
+      const existente = state.ordersMap.markers.get(point.key);
+      const html = ordersMapPopup(point);
+      if (existente) {
+        existente.setLatLng([point.latitude, point.longitude]);
+        existente.setPopupContent(html);
+        continue;
+      }
+      const marker = window.L
+        .marker([point.latitude, point.longitude], {
+          icon: mapMarkerIcon(point.kind),
+          title: point.title,
+        })
+        .addTo(map)
+        .bindPopup(html);
+      state.ordersMap.markers.set(point.key, marker);
+    }
+    for (const [key, marker] of [...state.ordersMap.markers]) {
+      if (vivos.has(key)) continue;
+      marker.remove();
+      state.ordersMap.markers.delete(key);
+    }
+    if (!state.ordersMap.fitted && visibles.length) {
+      fitOrdersMap();
+      state.ordersMap.fitted = true;
+    }
+  }
+
+  /** «Ver todo»: encuadra TODOS los puntos visibles de una vez. */
+  function fitOrdersMap() {
+    const map = state.ordersMap.map;
+    const puntos = ordersMapVisiblePoints().map((point) => [point.latitude, point.longitude]);
+    if (state.ordersMap.refPoint) {
+      const mios = mapLatLng(state.ordersMap.refPoint);
+      if (mios) puntos.push(mios);
+    }
+    if (!map || !window.L || !puntos.length) return;
+    if (puntos.length === 1) map.setView(puntos[0], 15);
+    else map.fitBounds(window.L.latLngBounds(puntos).pad(0.18), { padding: [30, 30], maxZoom: 16 });
+  }
+
+  /** Un toque en el mapa: en modo «medir» cada toque es un punto de la medición. */
+  function ordersMapMapClick(latlng) {
+    if (!state.ordersMap.measuring || !latlng || !window.L) return;
+    const punto = { latitude: latlng.lat, longitude: latlng.lng };
+    state.ordersMap.measurePoints.push(punto);
+    if (state.ordersMap.measurePoints.length > 2) {
+      state.ordersMap.measurePoints = state.ordersMap.measurePoints.slice(-2);
+      for (const marker of state.ordersMap.measureMarkers ?? []) marker.remove();
+      state.ordersMap.measureMarkers = [];
+      state.ordersMap.measureLine?.remove();
+      state.ordersMap.measureLine = null;
+    }
+    const map = state.ordersMap.map;
+    state.ordersMap.measureMarkers = state.ordersMap.measureMarkers ?? [];
+    state.ordersMap.measureMarkers.push(
+      window.L.circleMarker([punto.latitude, punto.longitude], {
+        radius: 7,
+        color: '#0b6b4f',
+        weight: 3,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+      }).addTo(map),
+    );
+    const [uno, dos] = state.ordersMap.measurePoints;
+    const nota = $('#orders-map-notice');
+    if (uno && dos) {
+      state.ordersMap.measureLine?.remove();
+      state.ordersMap.measureLine = window.L
+        .polyline(
+          [
+            [uno.latitude, uno.longitude],
+            [dos.latitude, dos.longitude],
+          ],
+          { color: '#0b6b4f', weight: 3, dashArray: '6 8' },
+        )
+        .addTo(map);
+      const metros = metersBetween(uno, dos);
+      if (nota) {
+        nota.textContent = `Distancia: ${fmtDistance(metros)} en línea recta.`;
+        nota.hidden = false;
+      }
+      return;
+    }
+    if (nota) {
+      nota.textContent = 'Toca el segundo punto en el mapa.';
+      nota.hidden = false;
+    }
+  }
+
+  function ordersMapToggleMeasure(force = null) {
+    const box = $('#orders-map');
+    if (!box) return;
+    const activo = force === null ? !state.ordersMap.measuring : force;
+    state.ordersMap.measuring = activo;
+    state.ordersMap.measurePoints = [];
+    state.ordersMap.measureLine?.remove();
+    state.ordersMap.measureLine = null;
+    for (const marker of state.ordersMap.measureMarkers ?? []) marker.remove();
+    state.ordersMap.measureMarkers = [];
+    const boton = $('#mapa-medir');
+    if (boton) boton.setAttribute('aria-pressed', String(activo));
+    box.classList.toggle('map-view--measuring', activo);
+    const nota = $('#orders-map-notice');
+    if (nota) {
+      nota.hidden = !activo;
+      nota.textContent = activo ? 'Toca dos puntos para medir la distancia (línea recta).' : '';
+    }
+  }
+
+  /** «Mi ubicación»: punto de referencia del GPS, solo al pulsar el botón. */
+  async function ordersMapUseMyLocation(button) {
+    await working(button, 'Buscando…', async () => {
+      const found = await getBrowserLocation();
+      if (!found.ok) {
+        toast(found.message);
+        return;
+      }
+      state.ordersMap.refPoint = found.location;
+      addOrdersMapRefMarker();
+      renderOrdersMap();
+      toast('Punto de referencia fijado: las distancias salen de aquí');
+    });
+  }
+
+  /** La lista de puntos (con su distancia si hay punto de referencia). */
+  function ordersMapListHtml() {
+    const puntos = ordersMapVisiblePoints();
+    if (!puntos.length) {
+      return `<p class="view__hint">${
+        state.ordersMap.loading
+          ? 'Buscando ubicaciones…'
+          : 'Todavía no hay ubicaciones guardadas. Cuando un cliente mande la suya por WhatsApp aparecerá aquí sola.'
+      }</p>`;
+    }
+    const conDistancia = puntos
+      .map((point) => ({ point, meters: ordersMapDistance(point) }))
+      .sort((a, b) =>
+        a.meters === null || b.meters === null
+          ? String(b.point.at ?? '').localeCompare(String(a.point.at ?? ''))
+          : a.meters - b.meters,
+      );
+    return conDistancia
+      .map(
+        ({ point, meters }) => `<article class="map-item ${point.kind === 'order' ? 'map-item--order' : ''}">
+          <button class="map-item__main" data-map-open="${escapeHtml(point.key)}" type="button">
+            <strong>${escapeHtml(point.title)}</strong>
+            <small>${escapeHtml(point.detail || point.address || 'Ubicación')}</small>
+            <small class="map-item__meta">${
+              point.kind === 'order' ? 'Pedido' : 'Ubicación del cliente'
+            } · ${escapeHtml(mapWhen(point.at))}${
+              meters !== null ? ` · <b>${escapeHtml(fmtDistance(meters))}</b>` : ''
+            }</small>
+          </button>
+          <div class="map-item__actions">
+            ${point.conversationId ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>` : ''}
+            <button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>
+          </div>
+        </article>`,
+      )
+      .join('');
+  }
+
+  /** Estado del mapa: cuántos puntos y cuándo se miró por última vez. */
+  function ordersMapStatusText() {
+    const puntos = ordersMapVisiblePoints();
+    const pedidos = puntos.filter((point) => point.kind === 'order').length;
+    const ubicaciones = puntos.length - pedidos;
+    const partes = [
+      `${pedidos} pedido${pedidos === 1 ? '' : 's'}`,
+      `${ubicaciones} ubicaci${ubicaciones === 1 ? 'ón' : 'ones'}`,
+    ];
+    if (state.ordersMap.refPoint) partes.push('distancias desde tu punto');
+    if (state.ordersMap.loading) partes.push('actualizando…');
+    else if (state.ordersMap.error) partes.push('sin conexión: se ve lo último guardado');
+    else if (state.ordersMap.updatedAt) partes.push(`visto ${fmtWhen(state.ordersMap.updatedAt)}`);
+    return partes.join(' · ');
+  }
+
+  /** Pantalla «Mapa de pedidos»: filtros, mapa, herramientas y lista. */
+  function renderOrdersMap() {
+    const box = $('#orders-map');
+    if (!box) return;
+    $$('[data-map-filter]').forEach((chip) =>
+      chip.setAttribute('aria-pressed', String(chip.dataset.mapFilter === state.ordersMap.filter)),
+    );
+    const estado = $('#mapa-estado');
+    if (estado) estado.textContent = ordersMapStatusText();
+    const lista = $('#mapa-lista');
+    if (lista) lista.innerHTML = ordersMapListHtml();
+    syncOrdersMapMarkers();
+  }
+
+  /**
+   * Trae los puntos guardados y (si se pide) los datos del negocio.
+   *
+   * `full` se usa al ENTRAR en la pantalla —un pedido nuevo de la web tiene que
+   * salir—; el refresco automático solo mira ubicaciones, que es lo que cambia
+   * solo cuando un cliente comparte su punto.
+   */
+  async function refreshOrdersMap({ full = false, silent = false } = {}) {
+    if (!silent) {
+      state.ordersMap.loading = true;
+      renderOrdersMap();
+    }
+    try {
+      if (full) await load({ keepTab: true });
+      const data = await api('/api/admin/locations?limit=500');
+      state.ordersMap.locations = data.locations ?? [];
+      state.ordersMap.error = false;
+      state.ordersMap.updatedAt = new Date().toISOString();
+      cacheMapLocations(state.ordersMap.locations);
+      state.ordersMap.fitted = state.ordersMap.fitted && state.ordersMap.markers.size > 0;
+    } catch (error) {
+      if (error.message === 'unauthorized') return;
+      state.ordersMap.error = true;
+    } finally {
+      state.ordersMap.loading = false;
+      renderOrdersMap();
+    }
+  }
+
+  /** Sondeo de la pantalla: una ubicación que acaba de llegar sale sola. */
+  function startOrdersMapPoll() {
+    if (state.ordersMap.pollTimer) return;
+    state.ordersMap.pollTimer = setInterval(() => {
+      if (state.tab !== 'mapa') return;
+      if (document.visibilityState !== 'visible') return;
+      if (state.ordersMap.loading) return;
+      refreshOrdersMap({ silent: true }).catch(() => {});
+    }, MAPS_POLL_MS);
+  }
+
+  function stopOrdersMapPoll() {
+    if (state.ordersMap.pollTimer) clearInterval(state.ordersMap.pollTimer);
+    state.ordersMap.pollTimer = null;
+  }
+
+  /** Un punto de la lista abre SU mapa aquí dentro. */
+  function openOrdersMapPoint(key) {
+    const point = ordersMapPoints().find((entry) => entry.key === key);
+    if (!point) return;
+    openMapViewer({
+      location: point.location ?? {
+        latitude: point.latitude,
+        longitude: point.longitude,
+        address: point.address,
+        source: point.kind === 'order' ? 'order_delivery' : undefined,
+      },
+      title: point.kind === 'order' ? `Pedido ${point.title}` : `Ubicación de ${point.title}`,
+      conversationId: point.conversationId ?? '',
+    });
+  }
+
+  /** Centra el mapa en un punto sin abrir nada (para no perder el contexto). */
+  function centerOrdersMapPoint(key) {
+    const point = ordersMapPoints().find((entry) => entry.key === key);
+    const map = state.ordersMap.map ?? ensureOrdersMap();
+    if (!point || !map) return;
+    map.setView([point.latitude, point.longitude], Math.max(map.getZoom(), 15), { animate: true });
+    state.ordersMap.markers.get(key)?.openPopup();
   }
 
   /** Bloque de ubicaciones del cliente para su ficha (§13). */
@@ -8037,8 +8847,10 @@
                    <span class="loc-row__body"><strong>📍 Ubicación de entrega registrada</strong>
                    <small>${escapeHtml(receipt.location_label ?? 'Ubicación compartida')}</small></span>
                    ${
-                     locationMapUrl(receipt.location ?? {})
-                       ? `<a class="loc__link" href="${escapeHtml(locationMapUrl(receipt.location ?? {}))}" target="_blank" rel="noopener noreferrer">Ver ubicación</a>`
+                     mapLatLng(receipt.location ?? {})
+                       ? `<button class="btn btn--ghost btn--sm" data-open-map="${mapLocationAttr(receipt.location)}" data-map-title="Ubicación del pedido ${escapeHtml(
+                           receipt.order_number,
+                         )}" type="button">Ver en el mapa</button>`
                        : ''
                    }
                  </div>`
@@ -8721,12 +9533,13 @@
   // ------------------------------------------------------------------- tabs
 
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
     delivery: 'Delivery',
+    mapa: 'Mapa de pedidos',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Inventario',
@@ -8751,6 +9564,8 @@
       stopDeliveryEvents();
       resetDeliveryMap();
     }
+    // El sondeo del mapa solo vive mientras la pantalla del mapa está abierta.
+    if (tab !== 'mapa') stopOrdersMapPoll();
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     if (state.drawer) closeDrawer();
@@ -8785,6 +9600,20 @@
         state.auditLoading = true;
         loadAuditEntries();
       }
+    }
+    /*
+     * MAPA DE PEDIDOS: se carga SIEMPRE al entrar, también con enlace directo
+     * (`?v=mapa`, que entra sin refrescar nada más). Primero se pinta AL INSTANTE
+     * lo último visto (guardado en el teléfono) y detrás piden los datos de
+     * verdad: con mala señal se ve algo útil desde el primer segundo, y con buena
+     * señal se corrige solo. El sondeo sigue mientras la pantalla esté abierta.
+     */
+    if (tab === 'mapa') {
+      if (!state.ordersMap.locations?.length) state.ordersMap.locations = mapCachedLocations();
+      state.ordersMap.fitted = false;
+      renderOrdersMap();
+      refreshOrdersMap({ full: !options.silent }).catch(() => {});
+      startOrdersMapPoll();
     }
   }
 
@@ -8938,6 +9767,60 @@
        */
       if (event.target.closest('#wa-sync-templates')) {
         syncWaTemplates(event.target.closest('#wa-sync-templates'));
+        return;
+      }
+      /*
+       * MAPA DE PEDIDOS: filtros, herramientas y puntos. Va PRIMERO porque estos
+       * botones viven dentro de tarjetas y de ventanas del mapa, que también son
+       * táctiles; si se comprobara otra cosa antes, el toque haría lo de detrás.
+       */
+      const mapFilter = event.target.closest('[data-map-filter]');
+      if (mapFilter) {
+        state.ordersMap.filter = mapFilter.dataset.mapFilter || 'todo';
+        state.ordersMap.fitted = false;
+        renderOrdersMap();
+        return;
+      }
+      const mapOpen = event.target.closest('[data-map-open]');
+      if (mapOpen) {
+        openOrdersMapPoint(mapOpen.dataset.mapOpen);
+        return;
+      }
+      const mapCenter = event.target.closest('[data-map-center]');
+      if (mapCenter) {
+        centerOrdersMapPoint(mapCenter.dataset.mapCenter);
+        return;
+      }
+      const mapChat = event.target.closest('[data-map-chat]');
+      if (mapChat) {
+        closeSheet();
+        openChat(mapChat.dataset.mapChat);
+        return;
+      }
+      // Cualquier ubicación guardada en un atributo abre SU mapa aquí dentro.
+      const anyMap = event.target.closest('[data-open-map]');
+      if (anyMap) {
+        openMapViewer({
+          location: mapLocationFromAttr(anyMap.dataset.openMap),
+          title: anyMap.dataset.mapTitle || 'Ubicación',
+          conversationId: anyMap.dataset.mapConversation || '',
+        });
+        return;
+      }
+      if (event.target.closest('#mapa-medir')) {
+        ordersMapToggleMeasure();
+        return;
+      }
+      if (event.target.closest('#mapa-aqui')) {
+        ordersMapUseMyLocation(event.target.closest('#mapa-aqui'));
+        return;
+      }
+      if (event.target.closest('#mapa-ajustar')) {
+        fitOrdersMap();
+        return;
+      }
+      if (event.target.closest('#mapa-actualizar')) {
+        refreshOrdersMap({ full: true }).catch(() => {});
         return;
       }
       const purchase = event.target.closest('[data-purchase]');

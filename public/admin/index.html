@@ -126,6 +126,9 @@
           <button class="drawer__item" data-tab="pedidos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
           </button>
+          <button class="drawer__item" data-tab="mapa" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa de pedidos
+          </button>
           <button class="drawer__item" data-tab="productos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
           </button>
@@ -280,6 +283,38 @@
         <!-- DELIVERY EN TIEMPO REAL -->
         <section class="view" id="view-delivery" hidden>
           <div class="delivery-live" id="delivery-live"></div>
+        </section>
+
+        <!--
+          MAPA DE PEDIDOS: todos los pedidos con entrega y todas las ubicaciones que
+          han mandado los clientes, en un solo mapa. Se refresca solo cuando llega
+          una ubicación nueva y sabe medir distancias. El mapa se abre AQUÍ DENTRO:
+          nunca te saca a otra pestaña.
+        -->
+        <section class="view view--map" id="view-mapa" hidden>
+          <h2 class="view__title">Mapa de pedidos</h2>
+          <p class="view__hint">
+            Todos los puntos que han mandado los clientes y la ubicación de entrega de cada pedido. Quedan
+            guardados solos, así que se pueden volver a abrir cuando haga falta.
+          </p>
+          <div class="chips" id="mapa-filtros">
+            <button class="chip" data-map-filter="todo" aria-pressed="true" type="button">Todo</button>
+            <button class="chip" data-map-filter="pedidos" type="button">Pedidos</button>
+            <button class="chip" data-map-filter="ubicaciones" type="button">Ubicaciones</button>
+            <button class="chip" data-map-filter="hoy" type="button">De hoy</button>
+          </div>
+          <div class="map-shell">
+            <div class="map-view map-view--full" id="orders-map" aria-label="Mapa con los pedidos y las ubicaciones de los clientes"></div>
+            <p class="map-notice" id="orders-map-notice" hidden></p>
+          </div>
+          <div class="map-tools">
+            <button class="btn btn--ghost btn--sm" id="mapa-medir" aria-pressed="false" type="button">Medir distancia</button>
+            <button class="btn btn--ghost btn--sm" id="mapa-aqui" type="button">Mi ubicación</button>
+            <button class="btn btn--ghost btn--sm" id="mapa-ajustar" type="button">Ver todo</button>
+            <button class="btn btn--ghost btn--sm" id="mapa-actualizar" type="button">Actualizar</button>
+          </div>
+          <p class="map-status" id="mapa-estado"></p>
+          <div class="list" id="mapa-lista"></div>
         </section>
 
         <!-- PERFIL DEL CLIENTE -->

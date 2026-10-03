@@ -662,6 +662,108 @@ describe('enviar una ubicación por WhatsApp', () => {
     expect(JSON.stringify(shared)).not.toContain('18.6157');
   });
 
+  it('TODAS las ubicaciones salen en una sola petición, con su cliente (Mapa de pedidos)', async () => {
+    const app = await newApp();
+    await inbound(app, 'wamid.TODAS-1', locationNode(L1), PHONE_A);
+    await inbound(app, 'wamid.TODAS-2', locationNode(L2), PHONE_B);
+
+    const todas = await json(await call(app, '/api/admin/locations?limit=100'));
+    expect(todas.locations).toHaveLength(2);
+    // Cada punto viene con su cliente: el mapa no tiene que cruzar nada.
+    for (const row of todas.locations) {
+      expect(row.customer_name).toBeTruthy();
+      expect(row.age_label).toBeTruthy();
+      expect(Number.isFinite(Number(row.latitude))).toBe(true);
+    }
+    expect(todas.locations.map((row) => row.customer_name).sort()).toEqual(
+      ['Cliente 0101', 'Cliente 0102'].sort(),
+    );
+    // Y de la más nueva a la más vieja (lo primero es lo último que pasó).
+    expect(Date.parse(todas.locations[0].created_at)).toBeGreaterThanOrEqual(
+      Date.parse(todas.locations[1].created_at),
+    );
+
+    // Sin sesión no se ve NADA: la ruta va con la cookie de administración.
+    const sinSesion = await fetch(`${app.url}/api/admin/locations`);
+    expect(sinSesion.status).toBe(401);
+  });
+
+  it('fuera de la ventana de 24 h la ubicación se comparte por plantilla con el enlace del mapa', async () => {
+    const app = await newApp();
+    await inbound(app, 'wamid.PLANT-1', locationNode(L1), PHONE_A);
+    const origen = await customerWithPhone(app, PHONE_A);
+    const { locations } = await json(await call(app, `/api/admin/customers/${origen.id}/locations`));
+
+    await inbound(app, 'wamid.PLANT-2', { type: 'text', text: { body: 'Hola' } }, PHONE_B);
+    const conversations = await json(await call(app, '/api/admin/conversations'));
+    const destino = conversations.conversations.find((row) => row.customer?.phone_e164 === `+${PHONE_B}`);
+
+    // La plantilla con hueco libre, aprobada como lo estaría en Meta.
+    const plantilla = await call(app, '/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'phyto_mensaje_personalizado_v1',
+        status: 'APPROVED',
+        body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
+        variables: ['customer_name', 'mensaje'],
+        metaTemplateId: 'tpl-loc-personal',
+        lastSyncedAt: new Date().toISOString(),
+      }),
+    });
+    expect(plantilla.status).toBe(200);
+
+    // El destino lleva 3 días sin escribir: la ventana de 24 h está cerrada.
+    await app.collections.update('conversations', destino.id, {
+      last_inbound_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+    });
+
+    // 1) Por ubicación nativa NO se puede: WhatsApp no lo permite. Se dice y se
+    //    ofrece la alternativa, en vez de dejar al operador sin salida.
+    const nativa = await call(app, `/api/admin/locations/${locations[0].id}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: destino.id, confirmed: true }),
+    });
+    expect(nativa.status).toBe(409);
+    const aviso = await json(nativa);
+    expect(aviso.error).toBe('outside_window');
+    expect(aviso.canUseTemplate).toBe(true);
+    expect(app.sentLocations).toHaveLength(0);
+
+    // 2) Por plantilla SÍ: viaja el enlace del mapa dentro del hueco libre.
+    const porPlantilla = await call(app, `/api/admin/locations/${locations[0].id}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: destino.id, confirmed: true, mode: 'template' }),
+    });
+    expect(porPlantilla.status).toBe(201);
+    expect((await json(porPlantilla)).mode).toBe('template');
+    expect(app.sentLocations).toHaveLength(0);
+    const enviado = app.sentMessages.at(-1);
+    expect(enviado.to).toBe(`+${PHONE_B}`);
+    expect(enviado.template.name).toBe('phyto_mensaje_personalizado_v1');
+    const textos = enviado.template.components[0].parameters.map((parameter) => parameter.text);
+    expect(textos.join(' ')).toContain('google.com/maps');
+    expect(textos[0]).toContain('Cliente 0102');
+
+    // El punto queda GUARDADO y el mapa de pedidos lo ve sin volver al chat. Una
+    // ubicación es un HECHO de quien la compartió: se reutiliza ESA fila (no se
+    // duplica el domicilio de nadie en otro cliente).
+    const todas = await json(await call(app, '/api/admin/locations?limit=100'));
+    const delPunto = todas.locations.filter((row) => Number(row.latitude) === L1.latitude);
+    expect(delPunto).toHaveLength(1);
+    expect(delPunto[0].customer_id).toBe(origen.id);
+
+    // Y queda en el hilo del destino (enlazado al punto), con la auditoría del modo.
+    const thread = await json(await call(app, `/api/admin/conversations/${destino.id}/messages`));
+    const saliente = thread.messages.find((row) => row.direction === 'outbound');
+    expect(saliente.type).toBe('template');
+    expect(Boolean(saliente.location_id ?? saliente.location?.id)).toBe(true);
+    const audit = await json(await call(app, '/api/admin/audit?entity=location'));
+    const shared = audit.entries.find((row) => row.action === 'location.shared');
+    expect(shared.data.mode).toBe('template');
+    // Las coordenadas NUNCA se escriben en la auditoría.
+    expect(JSON.stringify(shared)).not.toContain('18.6157');
+  });
+
   it('no se envía a un cliente que pidió no recibir mensajes', async () => {
     const app = await newApp();
     await inbound(app, 'wamid.OPT-1', { type: 'text', text: { body: 'No me escriban más' } });

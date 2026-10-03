@@ -139,9 +139,24 @@ describe('nada se envía solo', () => {
     // El sondeo de la bandeja (8 s) mantiene la pantalla al día; el contador de
     // la nota de voz (200 ms) SOLO pinta el tiempo y corta al llegar al tope —
     // nunca envía: el envío lo pulsa siempre una persona. Delivery también usa
-    // polling de lectura si SSE no está disponible. El resto son `setTimeout`.
+    // polling de lectura si SSE no está disponible, y el mapa de pedidos refresca
+    // las ubicaciones (lectura) para que una ubicación recién llegada salga sola.
+    // El resto son `setTimeout`.
     const intervals = (app.match(/setInterval\([^)]*\)/g) ?? []).sort();
-    expect(intervals).toEqual(['setInterval(deliveryPollTick, 8000)', 'setInterval(tick, 200)', 'setInterval(waPollTick, 8000)']);
+    expect(intervals).toEqual([
+      'setInterval(()',
+      'setInterval(deliveryPollTick, 8000)',
+      'setInterval(tick, 200)',
+      'setInterval(waPollTick, 8000)',
+    ]);
+    // El sondeo del mapa: fuera de su pantalla no corre, y solo LEE.
+    const mapaFrom = app.indexOf('function startOrdersMapPoll');
+    const mapaPoll = app.slice(mapaFrom, mapaFrom + 400);
+    expect(mapaPoll).toContain("state.tab !== 'mapa'");
+    expect(mapaPoll).toContain("document.visibilityState !== 'visible'");
+    expect(mapaPoll).toContain('refreshOrdersMap');
+    expect(mapaPoll).not.toContain('POST');
+    expect(mapaPoll).not.toContain('/messages');
     const from = app.indexOf('function waPollTick');
     const tick = app.slice(from, from + 900);
     expect(tick).not.toContain('POST');

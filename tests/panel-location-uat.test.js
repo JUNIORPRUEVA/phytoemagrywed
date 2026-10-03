@@ -39,6 +39,7 @@ let cookie = '';
 let conversationId = '';
 let customerId = '';
 const sentLocations = [];
+const sentTemplates = [];
 let confirmAnswer = true;
 let inboundSeq = 0;
 
@@ -78,8 +79,9 @@ const whatsapp = {
     whatsapp.sent.push({ to, body });
     return { ok: true, status: 200, messageId: `wamid.TXT${whatsapp.sent.length}` };
   },
-  async sendTemplate() {
-    return { ok: true, status: 200, messageId: 'wamid.TPL1' };
+  async sendTemplate(to, template) {
+    sentTemplates.push({ to, template });
+    return { ok: true, status: 200, messageId: `wamid.TPL${sentTemplates.length}` };
   },
   async sendLocation(to, location) {
     sentLocations.push({ to, location });
@@ -176,6 +178,11 @@ beforeAll(async () => {
   win.scrollTo = () => {};
   win.confirm = () => confirmAnswer;
   win.alert = () => {};
+  // Vigila que NADA de esto abra una pestaña nueva: el mapa se abre en la app.
+  win.open = () => {
+    win.__abrioPestana = true;
+    return null;
+  };
   win.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, `${app.url}/admin/`).toString();
     const headers = { ...(init.headers ?? {}) };
@@ -212,20 +219,41 @@ describe('componente de ubicación en el chat', () => {
   /** El componente de la ubicación que dice 'Casa' (hay otro con nombre raro). */
   const chipCasa = () => $$('#thread .loc').find((node) => node.textContent.includes('Casa')) ?? null;
 
-  it('se ve como una pieza compacta con enlace de mapa calculado', async () => {
+  it('se ve como una pieza compacta y «Ver en mapa» abre el mapa AQUÍ DENTRO', async () => {
     await openChat();
     const chip = await waitFor(chipCasa, 'el componente de ubicación de Casa');
     expect(chip.textContent).toContain('Casa');
     expect(chip.textContent).toContain(L1.address);
     expect(chip.textContent).toMatch(/Compartida por el cliente/i);
-    const link = chip.querySelector('.loc__link');
-    expect(link.getAttribute('href')).toBe(
-      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${L1.latitude},${L1.longitude}`)}`,
-    );
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toContain('noopener');
+    /*
+     * La acción del chip es un BOTÓN: abre el mapa dentro del panel. Antes era un
+     * enlace a Google Maps que sacaba al navegador (y hacía perder el hilo).
+     */
+    const accion = chip.querySelector('.loc__link');
+    expect(accion.tagName).toBe('BUTTON');
+    expect(chip.querySelectorAll('a[target="_blank"]')).toHaveLength(0);
+    // Lleva las coordenadas EXACTAS que mandó el cliente: no hay que volver a pedirlas.
+    expect(JSON.parse(accion.dataset.openMap)).toMatchObject({
+      latitude: L1.latitude,
+      longitude: L1.longitude,
+      name: L1.name,
+    });
     // Un solo componente: nada de tarjeta dentro de tarjeta.
     expect($$('#thread .loc .loc')).toHaveLength(0);
+
+    click(accion);
+    const lienzo = await waitFor(() => $('#map-viewer'), 'el mapa dentro de la app');
+    expect(dom.window.__abrioPestana).toBeUndefined();
+    expect($('#sheet-title').textContent).toBe('Casa');
+    expect($('#map-viewer-hint').textContent).toContain('sin salir del panel');
+    // En jsdom no hay Leaflet: el hueco del mapa lo dice en vez de quedarse mudo.
+    expect(lienzo.textContent).toContain('No se pudo cargar el mapa');
+    // Y los botones para lo de siempre siguen ahí, dentro de la misma hoja.
+    expect($('#sheet-body').textContent).toContain('Usar para un pedido');
+    expect($('#sheet-body').textContent).toContain('Compartir con otra conversación');
+    // La hoja se cierra y el hilo sigue donde estaba.
+    click('[data-close-sheet]');
+    expect($('#sheet').hidden).toBe(true);
   });
 
   it('respeta la alineación del mensaje (entrante a la izquierda)', async () => {
@@ -414,4 +442,73 @@ describe('compartir una ubicación con otro chat', () => {
     await waitFor(() => sentLocations.length > before, 'la ubicación compartida', 8000);
     expect(sentLocations.at(-1).location.latitude).toBeCloseTo(L1.latitude, 4);
   }, 20000);
+
+  it('con la ventana del destino CERRADA, se comparte por plantilla con el enlace del mapa', async () => {
+    /*
+     * Un cliente que nunca ha escrito: WhatsApp no deja mandarle una ubicación,
+     * así que el panel tiene que ofrecer la única vía legítima (una plantilla
+     * aprobada con el enlace) y decir que es eso lo que va a pasar.
+     */
+    const nuevo = await fetch(`${app.url}/api/admin/conversations/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ phone: '18095550999', name: 'Sin Ventana', body: '' }),
+    });
+    expect(nuevo.status).toBe(200);
+    const destino = (await nuevo.json()).conversation;
+
+    // La plantilla con hueco libre, aprobada como estaría en Meta.
+    const plantilla = await fetch(`${app.url}/api/admin/wa-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        name: 'phyto_mensaje_personalizado_v1',
+        status: 'APPROVED',
+        body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
+        variables: ['customer_name', 'mensaje'],
+        metaTemplateId: 'tpl-uat-personal',
+        lastSyncedAt: new Date().toISOString(),
+      }),
+    });
+    expect(plantilla.status).toBe(200);
+
+    /*
+     * El panel recarga la bandeja al entrar en WhatsApp: se espera a que la
+     * conversación nueva esté EN LA LISTA (el selector de destino se arma con lo
+     * que el panel conoce en ese momento).
+     */
+    click('.drawer__item[data-tab="clientes"]');
+    click('.drawer__item[data-tab="whatsapp"]');
+    await waitFor(() => $(`[data-conv="${destino.id}"]`), 'la conversación nueva en la lista', 12000);
+    click(`[data-conv="${conversationId}"]`);
+    await waitFor(() => $$('#thread .loc').length > 0, 'el hilo con la ubicación');
+    const chip = $$('#thread .loc').find((node) => node.textContent.includes('Casa'));
+    click(chip.querySelector('[data-loc-menu]'));
+    await waitFor(() => $('#loc-share'), 'las acciones de la ubicación');
+    click('#loc-share');
+    const select = await waitFor(() => $('#loc-share-to'), 'el selector de destino');
+
+    // El destino dice en la propia lista por dónde puede recibirla.
+    expect(select.textContent).toContain('por plantilla (24 h cerradas)');
+    select.value = destino.id;
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+
+    const boton = $('#loc-share-ok');
+    expect(boton.textContent).toContain('por plantilla');
+    expect($('#loc-share-warning').textContent).toContain('ENLACE del mapa');
+
+    const antesLoc = sentLocations.length;
+    const antesTpl = sentTemplates.length;
+    click('#loc-share-ok');
+    await waitFor(() => sentTemplates.length === antesTpl + 1, 'la plantilla con el enlace', 8000);
+    // NUNCA se intenta la ubicación nativa fuera de la ventana: WhatsApp la rechaza.
+    expect(sentLocations.length).toBe(antesLoc);
+    const enviado = sentTemplates.at(-1);
+    expect(enviado.to).toBe('+18095550999');
+    expect(enviado.template.name).toBe('phyto_mensaje_personalizado_v1');
+    const textos = enviado.template.components[0].parameters.map((parameter) => parameter.text);
+    expect(textos[0]).toBe('Sin Ventana');
+    expect(textos[1]).toContain('google.com/maps');
+    expect(textos[1]).toContain(`${L1.latitude}`);
+  }, 30000);
 });

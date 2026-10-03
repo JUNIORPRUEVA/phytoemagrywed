@@ -2332,6 +2332,45 @@ async function approvedTemplate(ctx, name) {
 }
 
 /**
+ * HUECO LIBRE (`mensaje`, `texto`, …): el parámetro donde el negocio escribe su
+ * propio texto. Es la ÚNICA forma de mandar un mensaje redactado fuera de la
+ * ventana de 24 h, porque WhatsApp solo admite plantillas aprobadas.
+ */
+const TEMPLATE_FREE_TEXT_KEYS = Object.freeze(['mensaje', 'texto', 'mensaje_libre', 'libre', 'personalizado']);
+
+/**
+ * Enlace público del punto.
+ *
+ * Un enlace se abre en CUALQUIER teléfono: sirve para compartir una ubicación
+ * dentro de una plantilla (fuera de la ventana no se puede mandar la ubicación
+ * nativa de WhatsApp). Nunca inventa coordenadas: sin lat/lng devuelve `null`.
+ */
+function locationMapsLink(location) {
+  const lat = Number(location?.latitude);
+  const lng = Number(location?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+}
+
+/**
+ * La plantilla APROBADA que tiene hueco libre (si la hay).
+ *
+ * Se elige por lo que DECLARA, no por la posición del hueco: si el negocio
+ * reordena los parámetros en Meta, esto sigue funcionando.
+ */
+async function freeTextTemplate(ctx) {
+  const templates = await listWaTemplates(ctx, { syncIfStale: true });
+  return (
+    templates.find(
+      (row) =>
+        templateSendable(row.status) &&
+        row.sendable === true &&
+        (row.variables ?? []).some((key) => TEMPLATE_FREE_TEXT_KEYS.includes(String(key).toLowerCase())),
+    ) ?? null
+  );
+}
+
+/**
  * Refresca UNA plantilla desde Meta si su copia local está vieja.
  *
  * Solo actúa sobre plantillas que vienen de Meta (`source: 'meta'` o con
@@ -5179,6 +5218,42 @@ async function handle(req, res, ctx) {
     }
 
     /*
+     * TODAS LAS UBICACIONES EN UNA SOLA PETICIÓN.
+     *
+     * La pantalla «Mapa de pedidos» necesita TODOS los puntos de una vez. Pedirlos
+     * cliente por cliente (lo que hacía el panel con `fetchAllLocations`) eran
+     * decenas de viajes sobre red móvil y el mapa tardaba en pintarse. Cada punto
+     * sale ya con el nombre del cliente y el número del pedido si lo tiene, para
+     * que el panel no tenga que cruzar nada.
+     */
+    if (route === '/api/admin/locations' && req.method === 'GET') {
+      const limite = Math.min(Math.max(Number(url.searchParams.get('limit')) || 500, 1), 2000);
+      const locations = await ctx.customers.listLocations(null, { limit: limite });
+      const customerList = await ctx.customers.list({});
+      const clientePorId = new Map(customerList.map((row) => [row.id, row]));
+      /** @type {Map<string, any>} */
+      const pedidoPorId = new Map();
+      for (const item of await store.listAdmin({ limit: 5000 })) {
+        if (item.type === 'order_intent') pedidoPorId.set(item.id, item);
+      }
+      json(res, 200, {
+        ok: true,
+        locations: locations.map((location) => {
+          const customer = clientePorId.get(location.customer_id) ?? null;
+          const pedido = location.order_id ? pedidoPorId.get(location.order_id) ?? null : null;
+          return {
+            ...location,
+            customer_name: customer?.name ?? null,
+            customer_phone: customer?.phone_e164 ?? customer?.phone ?? null,
+            customer_stage: customer?.customerStage ?? customer?.customer_stage ?? null,
+            order_number: pedido?.order_number ?? null,
+          };
+        }),
+      });
+      return;
+    }
+
+    /*
      * COMPARTIR UNA UBICACIÓN CON OTRA CONVERSACIÓN.
      *
      * Es una acción DELIBERADA y con aviso: la ubicación puede ser el domicilio de
@@ -5235,28 +5310,114 @@ async function handle(req, res, ctx) {
         });
         return;
       }
-      if (!ctx.customers.canSendFreeText(destination)) {
+      /*
+       * CÓMO VIAJA LA UBICACIÓN.
+       *
+       * Dentro de la ventana de 24 h se manda la ubicación NATIVA de WhatsApp (el
+       * cliente la abre en el mapa del chat, que es lo natural).
+       *
+       * Fuera de la ventana WhatsApp NO deja mandar ubicaciones: solo plantillas
+       * aprobadas. Entonces se manda la plantilla con hueco libre y dentro va el
+       * ENLACE del mapa. Es la única forma legítima de compartirla, y el panel lo
+       * dice antes de enviar: nunca se finge que se compartió.
+       */
+      const dentroDeVentana = ctx.customers.canSendFreeText(destination);
+      /*
+       * El modo lo elige quien envía. Sin modo, se intenta la ubicación NATIVA (lo
+       * natural y lo que el cliente ve como ubicación): si la ventana está cerrada
+       * se responde con `canUseTemplate` para que el panel lo ofrezca, en vez de
+       * mandar por su cuenta algo distinto de lo que se pidió.
+       */
+      const modo = text(body.mode, 20) === 'template' ? 'template' : 'location';
+      if (modo === 'location' && !dentroDeVentana) {
         json(res, 409, {
           ok: false,
           error: 'outside_window',
+          canUseTemplate: true,
           message:
-            'Han pasado más de 24 h desde el último mensaje del cliente de destino: WhatsApp solo permite enviar una plantilla aprobada.',
+            'Han pasado más de 24 h desde el último mensaje del cliente de destino: WhatsApp ya no deja enviar la ubicación. Puedes mandarla por plantilla, con el enlace del mapa.',
         });
         return;
       }
       const compartida = { ...source, source: LOCATION_SOURCES.REUSED_LOCATION };
-      const sendResult = await ctx.whatsapp.sendLocation(destinoCustomer.phone_e164, compartida);
-        const recorded = await ctx.customers.recordOutbound({
+      /** @type {{ok: boolean, messageId?: string|null, error?: any, plantilla?: any, cuerpo: string, tipo: string}} */
+      let envio = { ok: false, cuerpo: '', tipo: 'location' };
+      if (modo === 'template') {
+        const enlace = locationMapsLink(compartida);
+        if (!enlace) {
+          json(res, 422, {
+            ok: false,
+            error: 'location_without_coordinates',
+            message: 'Esta ubicación no trae coordenadas legibles: no hay enlace que mandar.',
+          });
+          return;
+        }
+        const plantilla = await freeTextTemplate(ctx);
+        if (!plantilla) {
+          json(res, 409, {
+            ok: false,
+            error: 'no_template_with_free_slot',
+            message:
+              'No hay ninguna plantilla APROBADA con un hueco de texto libre para mandar el enlace. Regístrala en Meta (o edita el nombre del hueco) y pulsa «Sincronizar con Meta».',
+          });
+          return;
+        }
+        const payload = await resolveTemplatePayload(ctx, {
+          template: plantilla,
           customer: destinoCustomer,
           conversation: destination,
-          type: 'location',
-          body: source.address ?? '[ubicación]',
-          location: compartida,
-          waMessageId: sendResult.messageId ?? null,
-          status: sendResult.ok ? 'sent' : 'failed',
-          error: sendResult.ok ? null : sendResult.error,
-          ...messageActorFields(actor),
+          provided: {
+            1: destinoCustomer.name || destinoCustomer.phone_e164,
+            2: `Te compartimos la ubicación de entrega: ${enlace}`,
+          },
         });
+        if (!payload.ok) {
+          json(res, payload.status ?? 422, {
+            ok: false,
+            error: payload.error,
+            message: payload.message,
+            missing: payload.missing ?? undefined,
+          });
+          return;
+        }
+        const result = await ctx.whatsapp.sendTemplate(destinoCustomer.phone_e164, {
+          name: plantilla.name,
+          language: plantilla.language ?? 'es',
+          components: payload.components,
+        });
+        envio = {
+          ok: result.ok === true,
+          messageId: result.messageId ?? null,
+          error: result.error ?? (result.ok ? null : { message: result.reason ?? 'error' }),
+          plantilla,
+          cuerpo: payload.body ?? enlace,
+          tipo: 'template',
+        };
+      } else {
+        const result = await ctx.whatsapp.sendLocation(destinoCustomer.phone_e164, compartida);
+        envio = {
+          ok: result.ok === true,
+          messageId: result.messageId ?? null,
+          error: result.error ?? (result.ok ? null : { message: result.reason ?? 'error' }),
+          cuerpo: source.address ?? '[ubicación]',
+          tipo: 'location',
+        };
+      }
+      const recorded = await ctx.customers.recordOutbound({
+        customer: destinoCustomer,
+        conversation: destination,
+        type: envio.tipo,
+        // Tanto la ubicación como el enlace dejan el punto guardado en el destino:
+        // así el mapa de pedidos lo ve sin volver a mirar el chat.
+        location: compartida,
+        template: envio.plantilla?.name ?? null,
+        body: envio.cuerpo,
+        waMessageId: envio.messageId,
+        status: envio.ok ? 'sent' : 'failed',
+        error: envio.ok ? null : envio.error,
+        meta: { phoneNumberId: ctx.whatsapp.phoneNumberId, to: destinoCustomer.phone_e164 || null },
+        ...messageActorFields(actor),
+      });
       await ctx.audit?.record({
         entity: 'location',
         entityId: source.id,
@@ -5267,20 +5428,22 @@ async function handle(req, res, ctx) {
           from_conversation_id: source.conversation_id ?? null,
           to_conversation_id: destination.id,
           to_customer_id: destinoCustomer.id,
+          mode: modo,
+          template: envio.plantilla?.name ?? null,
           operator: actor?.display_name ?? 'panel',
-          ok: sendResult.ok === true,
+          ok: envio.ok === true,
         },
       });
-      if (!sendResult.ok) {
+      if (!envio.ok) {
         json(res, 502, {
           ok: false,
           error: 'send_failed',
-          message: sendResult.error?.message ?? 'WhatsApp rechazó la ubicación.',
+          message: envio.error?.message ?? 'WhatsApp rechazó la ubicación.',
           message_record: recorded.message,
         });
         return;
       }
-      json(res, 201, { ok: true, message: recorded.message, location: recorded.location });
+      json(res, 201, { ok: true, mode: modo, message: recorded.message, location: recorded.location });
       return;
     }
 

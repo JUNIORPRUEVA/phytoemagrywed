@@ -4745,22 +4745,58 @@ body[data-wa-view='chat'] .float-btn--menu {
 .loc {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 190px;
+  gap: 7px;
+  min-width: 178px;
   max-width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border-soft);
-  background: var(--surface-tint, rgba(11, 107, 79, 0.06));
+  padding: 11px 12px;
+  border: 1px solid rgba(11, 107, 79, 0.14);
+  border-radius: 14px;
+  background: linear-gradient(150deg, #ffffff 0%, #f1f8f5 100%);
+  box-shadow: 0 6px 16px rgba(7, 61, 46, 0.07);
   text-align: left;
 }
-.loc--empty { border-style: dashed; }
-.loc__head { display: flex; align-items: center; gap: 6px; }
-.loc__pin { font-size: 15px; line-height: 1; }
-.loc__title { font-weight: 600; font-size: 14px; }
-.loc__address { font-size: 13px; color: var(--text-secondary); }
-.loc__meta { font-size: 12px; color: var(--text-secondary); }
-.loc__actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; flex-wrap: wrap; }
+.loc--empty {
+  border-style: dashed;
+  background: var(--surface, #fff);
+  box-shadow: none;
+}
+.loc__head { display: flex; align-items: center; gap: 8px; }
+.loc__pin {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(11, 107, 79, 0.1);
+  font-size: 14px;
+  line-height: 1;
+}
+.loc__title { font-weight: 650; font-size: 14px; letter-spacing: -0.01em; }
+.loc__address { font-size: 12.5px; color: var(--text-secondary); }
+.loc__meta { font-size: 11.5px; color: var(--text-secondary); }
+/*
+ * Las DOS acciones del chip miden lo mismo (44 px) y se pulsan con el pulgar:
+ * «Ver en mapa» a la izquierda y el «⋮» vertical a la derecha. Fuera del chip,
+ * `.loc__link` sigue siendo el enlace discreto de las listas y los formularios.
+ */
+.loc__actions { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
+.loc__actions .loc__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(11, 107, 79, 0.09);
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--pe-brand-700, #0b6b4f);
+  text-decoration: none;
+  touch-action: manipulation;
+}
+.loc__actions .loc__link:hover { background: rgba(11, 107, 79, 0.16); }
+.loc__actions .loc__link:active { transform: scale(0.97); }
 .loc__link {
   font-size: 13px;
   font-weight: 600;
@@ -4769,17 +4805,32 @@ body[data-wa-view='chat'] .float-btn--menu {
   border-bottom: 1px solid currentColor;
 }
 .loc__link--off { color: var(--text-secondary); border-bottom: 0; font-weight: 500; }
-.loc__more {
-  margin-left: auto;
-  min-width: 30px;
-  min-height: 28px;
-  border-radius: 999px;
-  border: 1px solid var(--border-soft);
-  background: var(--surface, #fff);
-  font-size: 15px;
-  line-height: 1;
+.loc__actions .loc__link--off {
+  background: transparent;
+  border: 1px dashed var(--border-soft);
   color: var(--text-secondary);
+  font-weight: 500;
 }
+.loc__more {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin-left: auto;
+  border: 1px solid rgba(11, 107, 79, 0.16);
+  border-radius: 50%;
+  background: var(--surface, #fff);
+  color: var(--pe-brand-700, #0b6b4f);
+  box-shadow: 0 2px 6px rgba(7, 61, 46, 0.06);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 160ms ease, transform 160ms ease;
+}
+.loc__more .svg { width: 20px; height: 20px; }
+.loc__more:hover { background: rgba(223, 238, 232, 0.55); }
+.loc__more:active { transform: scale(0.94); }
 
 /* Selector de ubicación (formulario de pedido, envío y compartir) */
 .loc-option {
@@ -7527,4 +7578,191 @@ body[data-wa-view='chat'] .mobile-header {
     margin-top: 10px;
     padding-top: 14px;
   }
+}
+
+
+/* ============================ MAPAS DE UBICACIONES =========================
+ *
+ * Dos sitios donde se ven ubicaciones, con el mismo lenguaje:
+ *   - la hoja «mapa aquí dentro» (una ubicación, desde el chat, la ficha o la
+ *     factura), y
+ *   - la pantalla «Mapa de pedidos» (todos los puntos, con distancias).
+ * El mapa se pinta en la app: nunca se sale a otra pestaña para ver un punto.
+ */
+.map-view {
+  position: relative;
+  min-height: 240px;
+  margin: 4px 0 2px;
+  overflow: hidden;
+  border: 1px solid rgba(11, 107, 79, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(11, 107, 79, 0.08), transparent 42%),
+    linear-gradient(180deg, #f6fbf8, #eaf4ef);
+}
+
+.map-view--full {
+  min-height: 46dvh;
+}
+
+.map-view--measuring {
+  cursor: crosshair;
+  outline: 2px dashed rgba(11, 107, 79, 0.35);
+  outline-offset: -3px;
+}
+
+.map-shell {
+  position: relative;
+  margin-bottom: 8px;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.map-notice {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 420;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--phyto-primary-dark, #07402f);
+  font-size: 0.78rem;
+  font-weight: 800;
+  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.14);
+  transform: translateX(-50%);
+}
+
+.map-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.map-tools .btn {
+  flex: 1 1 auto;
+}
+
+.map-tools .btn[aria-pressed='true'] {
+  border-color: var(--phyto-primary, #0b6b4f);
+  background: var(--phyto-primary-tint, rgba(11, 107, 79, 0.1));
+  color: var(--phyto-primary-dark, #07402f);
+}
+
+.map-status {
+  margin: 0 0 8px;
+  color: var(--pe-ink-500, #5b6b64);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.map-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.map-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft, rgba(14, 27, 22, 0.08));
+  border-radius: 12px;
+  background: #fff;
+}
+
+.map-item--order {
+  border-left: 4px solid var(--phyto-primary, #0b6b4f);
+}
+
+.map-item + .map-item {
+  margin-top: 6px;
+}
+
+.map-item__main {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+
+.map-item__main strong {
+  font-size: 0.94rem;
+  font-weight: 800;
+}
+
+.map-item__main small {
+  color: var(--pe-ink-500, #5b6b64);
+  font-size: 0.76rem;
+}
+
+.map-item__meta b {
+  color: var(--phyto-primary-dark, #07402f);
+}
+
+.map-item__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.map-popup {
+  display: grid;
+  gap: 2px;
+  min-width: 190px;
+}
+
+.map-popup__line {
+  display: block;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.map-popup__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* Marcadores propios: el punto de referencia y los de medición. */
+.delivery-leaflet-marker--me {
+  background: #d08c00;
+}
+
+.delivery-leaflet-marker--measure {
+  background: #1b74e4;
+}
+
+/* La hoja del mapa necesita sitio: el mapa manda, los botones acompañan. */
+.sheet[data-variant='map'] .sheet__panel {
+  max-height: 92dvh;
+}
+
+.sheet[data-variant='map'] .sheet__body {
+  display: grid;
+  gap: 8px;
+}
+
+@media (min-width: 720px) {
+  .map-view--full {
+    min-height: 420px;
+  }
+}
+
+/*
+ * «Ver en mapa» del componente de ubicación es un BOTÓN: abre el mapa DENTRO de
+ * la app (antes era un enlace a Google Maps que sacaba al navegador). Fuera del
+ * chip, `.loc__link` sigue siendo el enlace discreto de listas y formularios.
+ */
+.loc__actions button.loc__link {
+  font-family: inherit;
+  cursor: pointer;
 }
