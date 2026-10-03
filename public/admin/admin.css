@@ -3621,96 +3621,128 @@ body[data-wa-view='chat'] .float-btn--menu {
 }
 
 /*
- * Cada conversación es una FILA, no una tarjeta: línea fina de separación, sin
- * borde alrededor y sin chips de más. Lo que importa (nombre, último mensaje,
- * hora) se lee de un vistazo.
+ * Cada conversación es una FILA que va de lado a lado de la tarjeta, con un
+ * espacio pequeño a cada lado: línea fina de separación, sin borde alrededor y
+ * sin chips de más. Lo que importa (nombre, último mensaje, hora) se lee de un
+ * vistazo y nada se come el sitio.
  */
 .wa__convs {
   gap: 0;
-  padding-bottom: 96px;
+  /* El botón de agregar cliente es una fila MÁS de la lista (ocupa su sitio). */
+  padding-bottom: 12px;
 }
 
+/*
+ * AGREGAR CLIENTE va DENTRO de la tarjeta, como última fila de la lista: ocupa su
+ * propio sitio (antes flotaba encima y tapaba la última conversación) y se ve que
+ * forma parte de la lista, no un botón suelto encima.
+ */
 .wa-new-chat {
-  position: fixed;
-  right: 16px;
-  bottom: calc(var(--pe-tabbar) + 16px + env(safe-area-inset-bottom, 0px));
-  z-index: 35;
-  display: grid;
-  place-items: center;
-  width: 54px;
-  height: 54px;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 52px;
+  margin: 2px 8px 8px;
+  padding: 0 14px;
   border: 1px solid rgba(11, 107, 79, 0.18);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.96);
+  border-radius: 14px;
+  background: rgba(11, 107, 79, 0.055);
   color: var(--phyto-primary);
-  box-shadow: 0 14px 30px rgba(7, 61, 46, 0.18);
-  backdrop-filter: blur(10px);
+  font: inherit;
+  font-weight: 700;
   cursor: pointer;
   touch-action: manipulation;
   transition:
-    transform var(--pe-motion) var(--pe-ease),
     background var(--pe-motion) var(--pe-ease),
-    box-shadow var(--pe-motion) var(--pe-ease);
+    transform var(--pe-motion) var(--pe-ease);
 }
 
 .wa-new-chat:hover,
 .wa-new-chat:focus-visible {
-  background: #fff;
-  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.24);
+  background: rgba(11, 107, 79, 0.1);
 }
 
 .wa-new-chat:active {
-  transform: scale(0.94);
+  transform: scale(0.99);
 }
 
 .wa-new-chat__icon {
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
 }
 
-.wa[data-view='chat'] .wa-new-chat,
-.wa__convs--sel + .wa-new-chat {
-  display: none;
+.wa-new-chat__label {
+  font-size: 0.95rem;
 }
 
-@media (min-width: 720px) {
-  .wa__list {
-    position: relative;
-  }
-
-  .wa-new-chat {
-    position: absolute;
-    right: 22px;
-    bottom: 22px;
-  }
+/*
+ * Con una selección abierta, agregar cliente sobra (estás eligiendo, no creando).
+ * Ya no hace falta apartarlo al ABRIR un chat: vive dentro de la lista, así que
+ * desaparece con ella en el móvil y en el escritorio sigue a mano.
+ */
+.wa__convs--sel + .wa-new-chat {
+  display: none;
 }
 
 .conv-wrap {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-columns: minmax(0, 1fr) 30px;
   align-items: stretch;
   border-bottom: 1px solid var(--border-soft);
+}
+
+/*
+ * LA TARJETA ES LA FILA ENTERA. Antes se resaltaba solo la parte del texto y el
+ * «⋯» quedaba en una columna aparte, como en un pasillo: parecía fuera de la fila.
+ * Ahora el fondo, el paso del dedo y la marca de la conversación abierta cubren
+ * también ese botón.
+ */
+.conv-wrap:hover {
+  background: rgba(11, 107, 79, 0.045);
 }
 
 .conv-wrap--selected {
   background: rgba(11, 107, 79, 0.075);
 }
 
+.conv-wrap:has(.conv--active) {
+  background: rgba(11, 107, 79, 0.08);
+}
+
+/* La marca de la conversación abierta, pegada al borde izquierdo de la fila. */
+.conv-wrap:has(.conv--active)::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--phyto-primary);
+}
+
 /*
- * Fila FINA: avatar pequeño, nombre y último mensaje, y a la derecha los sellos
- * de tiempo. Nada de tarjetas dentro de tarjetas: una línea de separación.
+ * Fila FINA y SIN FOTO: nombre y último mensaje, y a la derecha los sellos de
+ * tiempo. La foto no dejaba leer y se llevaba el mejor sitio de la fila; el único
+ * cuadro de la izquierda vuelve al SELECCIONAR (con el visto).
  */
 .conv {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 0 12px;
-  padding: 9px 10px 9px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 10px;
+  padding: 10px 6px 10px 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* Con la marca de selección, la izquierda recupera su hueco y el texto se corre. */
+.conv:has(.conv__avatar) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 /* Tres líneas con aire justo: la fila entera no llega a 62 px. */
@@ -3719,14 +3751,12 @@ body[data-wa-view='chat'] .float-btn--menu {
   line-height: 1.25;
 }
 
-.conv:hover {
-  background: rgba(11, 107, 79, 0.045);
-}
-
+/* El fondo lo pinta la fila entera (`.conv-wrap`): aquí no hay que repetirlo. */
+.conv:hover,
 .conv--active,
 .conv--active:hover {
-  background: rgba(11, 107, 79, 0.08);
-  box-shadow: inset 3px 0 0 var(--phyto-primary);
+  background: transparent;
+  box-shadow: none;
 }
 
 .conv--pending {
@@ -3745,7 +3775,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   place-items: center;
   width: 30px;
   height: 40px;
-  margin-right: 3px;
+  margin-right: 0;
   padding: 0;
   border: 0;
   border-radius: 10px;
@@ -3774,28 +3804,19 @@ body[data-wa-view='chat'] .float-btn--menu {
   visibility: hidden;
 }
 
+/* La marca de SELECCIÓN: un visto pequeño, no una foto. */
 .conv__avatar {
   grid-row: auto;
-  width: 42px;
-  height: 42px;
-  font-size: 13px;
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
   font-weight: 800;
-  box-shadow: 0 7px 18px rgba(7, 61, 46, 0.1);
-}
-
-.conv__avatar--profile {
-  cursor: pointer;
-}
-
-.conv__avatar--profile:hover,
-.conv__avatar--profile:focus-visible {
-  outline: 2px solid rgba(11, 107, 79, 0.28);
-  outline-offset: 2px;
+  box-shadow: none;
 }
 
 .conv__avatar .svg {
-  width: 20px;
-  height: 20px;
+  width: 15px;
+  height: 15px;
 }
 
 .conv__avatar--sel {
@@ -6543,35 +6564,32 @@ body[data-wa-view='chat'] .mobile-header {
 
   body[data-tab='whatsapp'] .wa__convs {
     position: relative;
-    padding-bottom: calc(var(--pe-tabbar) + 34px + env(safe-area-inset-bottom, 0px));
+    /* El botón de agregar cliente es una fila más: aquí solo queda su respiro. */
+    padding-bottom: 6px;
   }
 
-  body[data-tab='whatsapp'][data-wa-view='list'] .wa__list::after {
-    content: '';
-    position: fixed;
-    right: 0;
-    bottom: calc(var(--pe-tabbar) + env(safe-area-inset-bottom, 0px));
-    left: 0;
-    z-index: 3;
-    height: 34px;
-    background: linear-gradient(0deg, rgba(245, 251, 251, 0.98), rgba(245, 251, 251, 0));
-    pointer-events: none;
+  /*
+   * En el móvil el botón va al final de la lista, dentro de la tarjeta, y se aparta
+   * de la barra de abajo (antes era un flotante que tapaba la última conversación).
+   */
+  body[data-tab='whatsapp'] .wa-new-chat {
+    margin: 2px 8px calc(var(--pe-tabbar) + 16px + env(safe-area-inset-bottom, 0px));
   }
 
   body[data-tab='whatsapp'] .conv-wrap {
-    grid-template-columns: minmax(0, 1fr) 38px;
+    grid-template-columns: minmax(0, 1fr) 34px;
   }
 
   body[data-tab='whatsapp'] .conv {
-    gap: 0 12px;
-    min-height: 64px;
-    padding: 9px 8px 9px 14px;
+    gap: 0 10px;
+    min-height: 60px;
+    padding: 10px 6px 10px 12px;
   }
 
   body[data-tab='whatsapp'] .conv__avatar {
-    width: 48px;
-    height: 48px;
-    font-size: 14px;
+    width: 26px;
+    height: 26px;
+    font-size: 11px;
   }
 
   body[data-tab='whatsapp'] .conv__name {
@@ -6589,9 +6607,9 @@ body[data-wa-view='chat'] .mobile-header {
   }
 
   body[data-tab='whatsapp'] .conv__more {
-    width: 36px;
+    width: 34px;
     height: 44px;
-    margin-right: 2px;
+    margin-right: 0;
     color: #111827;
     opacity: 1;
   }

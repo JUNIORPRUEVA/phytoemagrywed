@@ -998,14 +998,15 @@ describe('la foto del cliente', () => {
     expect((await clienteDe(PHONES.ana))?.photo_url).toBe(FOTO);
   });
 
-  it('aparece en la lista, en la cabecera del chat y en la ficha del cliente', async () => {
+  it('la foto aparece en la cabecera del chat y en la ficha, NO en la lista', async () => {
     click('[data-wa-filter="todos"]');
-    const enLista = await waitFor(
-      () => $(`[data-conv="${ids.ana}"] .conv__avatar img`),
-      'el avatar con foto en la lista',
-      9000,
-    );
-    expect(enLista.getAttribute('src')).toBe(FOTO);
+    await waitFor(() => $(`[data-conv="${ids.ana}"]`), 'la fila de la conversación', 9000);
+    /*
+     * La lista YA NO pinta fotos: lo que se lee es el nombre y lo último que dijo,
+     * y el cuadro de la izquierda solo vuelve al SELECCIONAR (con el visto). La foto
+     * vive donde de verdad se mira: la cabecera del chat y la ficha del cliente.
+     */
+    expect($(`[data-conv="${ids.ana}"] .conv__avatar`)).toBeNull();
 
     click(`[data-conv="${ids.ana}"]`);
     const enCabecera = await waitFor(() => $('#wa-chat-avatar img'), 'la foto en la cabecera del chat', 9000);
@@ -1064,6 +1065,15 @@ describe('la lista que se pinta es la nueva', () => {
     expect(app_js).toContain('America/Santo_Domingo');
     expect(css).toContain('.wa__list-head[hidden]');
     expect(css).toContain('.wa__convs--sel .conv__more');
+    /*
+     * La lista se lee: sin foto en la fila, la fila ENTERA es la tarjeta (el «⋯»
+     * queda dentro, con su fondo) y agregar cliente es la última fila de la lista,
+     * dentro de la tarjeta, en vez de un flotante que tapaba la última conversación.
+     */
+    expect(app_js).not.toContain('conv__avatar--profile');
+    expect(css).toContain('.conv-wrap:has(.conv--active)');
+    expect(css).toContain('.wa-new-chat__label');
+    expect(css).not.toContain('.wa-new-chat {\n  position: fixed');
     expect(css).toContain('.wa-bulk__btn');
     expect(app_js).toContain('wa-bulk__btn');
   });

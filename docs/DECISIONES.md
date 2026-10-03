@@ -1112,3 +1112,28 @@ estaba pasando.
      arrancar la entrega ni compartir su ubicación, que es justo lo que hace falta;
    - en el mapa, «el repartidor» de un pedido es el agente asignado (no el rol):
      el que asigna ve los mandos de asignar, el agente asignado ve «Iniciar entrega».
+
+## 44. La lista de chats se lee: sin foto, de lado a lado y el «⋯» dentro de la fila
+
+La lista de conversaciones tenía tres cosas que estorbaban: una foto por fila, el
+botón de agregar cliente flotando encima de las conversaciones, y el «⋯» en una
+columna aparte que parecía fuera de la fila.
+
+1. **Fuera la foto de la fila.** En una fila de bandeja la foto no aporta (no deja
+   leer y se lleva el mejor sitio): lo que se lee es el **nombre** y **lo último que
+   dijo**. El cuadro de la izquierda solo vuelve al **seleccionar** (con el visto),
+   que es la única razón para tener algo ahí. La foto sigue donde de verdad se mira:
+   la **cabecera del chat** y la **ficha del cliente**.
+2. **LA TARJETA ES LA FILA ENTERA.** El fondo, el paso del dedo y la marca de la
+   conversación abierta se pintan en `.conv-wrap` (toda la fila, incluido el «⋯»),
+   no solo en la parte del texto: `:has(.conv--active)` da la marca verde del borde
+   izquierdo. El «⋯» ya no vive en un pasillo aparte.
+3. **De lado a lado, con un espacio pequeño**: 12 px a la izquierda y 6 a la derecha,
+   línea fina de separación, sin cajas dentro de cajas. El ancho de la columna del
+   «⋯» baja de 34 a 30 px (34 en móvil) y los sellos de hora quedan pegados al filo.
+4. **Agregar cliente es la ÚLTIMA FILA de la lista, dentro de la tarjeta**, con su
+   texto («Agregar cliente») y su sitio reservado: antes era un flotante que tapaba
+   la última conversación (y en el móvil había hasta un degradado para disimularlo,
+   que se ha quitado). En el móvil se aparta de la barra de abajo con su margen.
+   Solo se aparta al **seleccionar** varias conversaciones: ahí no se está creando
+   nada. Al abrir un chat se queda: en el escritorio la lista sigue a la vista.

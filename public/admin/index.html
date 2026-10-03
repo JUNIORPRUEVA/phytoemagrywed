@@ -219,8 +219,13 @@
               <div class="chips" id="wa-filters"></div>
               <div class="wa__error" id="wa-error" hidden></div>
               <div class="wa__convs" id="wa-conversations"></div>
+              <!--
+                Agregar un cliente: es la ÚLTIMA fila de la lista y vive DENTRO de la
+                tarjeta. Antes flotaba encima de las conversaciones y tapaba la última.
+              -->
               <button class="wa-new-chat" id="wa-new-chat" type="button" aria-label="Agregar cliente para WhatsApp" title="Agregar cliente">
-                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="26" height="26" />
+                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="22" height="22" />
+                <span class="wa-new-chat__label">Agregar cliente</span>
               </button>
             </div>
 

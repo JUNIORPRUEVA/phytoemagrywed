@@ -4333,11 +4333,15 @@
         row.id,
       )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
         ${
+          /*
+           * SIN FOTO EN LA LISTA: lo que se lee es el nombre y lo último que dijo.
+           * El cuadro de la izquierda solo vuelve al SELECCIONAR (con el visto), que
+           * es la única razón para tener algo ahí; la foto vive en la cabecera del
+           * chat y en la ficha del cliente, que es donde de verdad se mira.
+           */
           selected
             ? `<span class="avatar conv__avatar conv__avatar--sel" aria-hidden="true">${ICONS.check}</span>`
-            : avatarHtml(customer, nombre, 'conv__avatar conv__avatar--profile', {
-                attrs: `data-customer="${escapeHtml(customer?.id ?? '')}" role="button" tabindex="0" aria-label="Ver perfil de ${escapeHtml(nombre)}"`,
-              })
+            : ''
         }
         <span class="conv__body">
           <span class="conv__name">${escapeHtml(nombre)}</span>
