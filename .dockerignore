@@ -35,6 +35,7 @@ assets
 docs
 *.md
 .playwright-mcp
+.tmp
 lighthouse-*.json
 
 # Editor
