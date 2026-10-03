@@ -1523,7 +1523,8 @@ body[data-tab='hoy'] .stat__label {
   height: 17px;
 }
 
-.client-fab {
+.client-fab,
+.list-fab {
   position: fixed;
   right: 18px;
   bottom: calc(var(--pe-tabbar) + 18px + env(safe-area-inset-bottom, 0px));
@@ -1540,14 +1541,17 @@ body[data-tab='hoy'] .stat__label {
   cursor: pointer;
 }
 
-.client-fab .svg {
+.client-fab .svg,
+.list-fab .svg {
   width: 24px;
   height: 24px;
   stroke-width: 2.4;
 }
 
 .client-fab:hover,
-.client-fab:focus-visible {
+.client-fab:focus-visible,
+.list-fab:hover,
+.list-fab:focus-visible {
   background: var(--phyto-primary-dark);
 }
 
@@ -3468,7 +3472,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 /* ------------------------------------------------------------ lista (filas) */
 .wa__list-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: var(--space-3) 12px 0 60px;
 }
@@ -3497,42 +3501,6 @@ body[data-wa-view='chat'] .float-btn--menu {
   min-width: 0;
 }
 
-.wa-date {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 86px;
-  max-width: 132px;
-  min-height: 42px;
-  padding: 0 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--pe-ink-700);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.wa-date[aria-pressed='true'] {
-  border-color: rgba(11, 107, 79, 0.22);
-  background: rgba(11, 107, 79, 0.08);
-  color: var(--phyto-primary);
-}
-
-.wa-date__icon .svg {
-  width: 15px;
-  height: 15px;
-}
-
-.wa-date__text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chips {
   padding: 8px 12px 0;
 }
@@ -3548,6 +3516,16 @@ body[data-wa-view='chat'] .float-btn--menu {
 .chip[aria-pressed='true'] {
   background: var(--phyto-primary);
   border-color: var(--phyto-primary);
+}
+
+/*
+ * El filtro de fecha es un CHIP de la lista (ya no un icono con reloj pegado al
+ * buscador). Se marca un poco más que los demás porque no cuenta conversaciones:
+ * cambia CUÁLES se ven, y cuando hay un rango puesto se pone verde con el resto.
+ */
+.chip--date {
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 /*
@@ -7682,4 +7660,110 @@ body:has(> #sheet:not([hidden])) .map-fab {
 .loc__actions button.loc__link {
   font-family: inherit;
   cursor: pointer;
+}
+
+/* ==========================================================================
+   PEDIDOS Y COMPRAS — lista compacta
+   --------------------------------------------------------------------------
+   Una fila por pedido y DOS líneas: quién y cuándo arriba; número, frasco, total,
+   teléfono y estado abajo. Sin botones grandes dentro de la lista (viven en la
+   ficha, que se abre tocando la fila) y sin repetir el nombre de la pantalla. El
+   filo izquierdo lleva el color del estado, así se lee de un vistazo.
+   ========================================================================== */
+.list--orders {
+  padding: 0 10px calc(var(--pe-tabbar) + 92px);
+}
+
+.order-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.order-row:hover,
+.order-row:focus-visible {
+  border-color: rgba(11, 107, 79, 0.24);
+}
+
+.order-row__top,
+.order-row__bottom {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.order-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.94rem;
+  font-weight: 700;
+  color: var(--pe-ink-900);
+}
+
+.order-row__when {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--pe-ink-500);
+}
+
+.order-row__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  color: var(--pe-ink-500);
+}
+
+.order-row__status {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(11, 107, 79, 0.09);
+  color: var(--phyto-primary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.order-row--pendiente {
+  border-left-color: #d8a600;
+}
+
+.order-row--en_camino {
+  border-left-color: #1957e0;
+}
+
+.order-row--entregado {
+  border-left-color: var(--phyto-primary);
+}
+
+.order-row--cancelado {
+  border-left-color: #b23b3b;
+  opacity: 0.72;
+}
+
+/* Lista corta de pedidos dentro del aviso de pedido ya abierto. */
+.rule__list {
+  margin: 6px 0 8px;
+  padding-left: 16px;
+  font-size: 0.8rem;
+}
+
+@media (min-width: 720px) {
+  .list--orders {
+    padding: 0 0 96px;
+  }
 }

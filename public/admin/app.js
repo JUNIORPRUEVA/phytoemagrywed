@@ -136,6 +136,8 @@
     filter: 'todos',
     q: '',
     clientSearchOpen: false,
+    // Filtro de la lista de pedidos, por ESTADO OPERATIVO (pendiente, en camino…).
+    pedidosFilter: 'todo',
     openId: null,
     customerId: null,
     chat: null,
@@ -981,7 +983,6 @@
       return;
     }
     if (state.tab === 'whatsapp') {
-      const activeDate = state.wa.date?.mode && state.wa.date.mode !== 'all';
       if (state.wa.searchOpen) {
         box.innerHTML = `<div class="wa-appbar wa-appbar--search">
           <button class="wa-appbar__back" data-wa-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
@@ -1000,9 +1001,6 @@
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-wa-search-open type="button" aria-label="Buscar conversación">${ICONS.search}</button>
-          <button class="wa-appbar__icon" data-wa-date-open type="button" aria-label="Filtrar conversaciones por fecha" aria-pressed="${Boolean(
-            activeDate,
-          )}">${ICONS.calendar}</button>
         </div>
       </div>`;
       return;
@@ -1364,6 +1362,20 @@
       .filter((item) => item.customer_id === customerId && item.type === 'order_intent')
       .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)));
 
+  /**
+   * PEDIDOS VIVOS del cliente: ni entregados ni cancelados.
+   *
+   * Se usa para las dos cosas que pide el negocio: avisar de que ya tiene un
+   * pedido abierto antes de crearle otro, y saber a cuáles se les puede colgar un
+   * dato nuevo (por ejemplo la ubicación que acaba de mandar).
+   */
+  function liveOrdersForCustomer(customerId) {
+    return ordersNewestFirst(ordersForCustomer(customerId)).filter((item) => {
+      const estado = getOrderOperationalStatus(itemOrder(item), deliverySessionForOrder(item.id));
+      return estado !== 'ENTREGADO' && estado !== 'CANCELADO';
+    });
+  }
+
   /** «¿Cuál es el pedido más reciente?», con el MISMO criterio que el servidor. */
   const orderRecency = (item) => String(item?.updated_at ?? item?.created_at ?? item?.received_at ?? '');
   const ordersNewestFirst = (rows) =>
@@ -1654,14 +1666,10 @@
         state.wa.notify ? 'Notificaciones activas' : 'Activar notificaciones'
       }</button><button class="chip" id="wa-sound" aria-pressed="${state.wa.sound}" type="button">Sonido ${
         state.wa.sound ? 'sí' : 'no'
-      }</button>`;
+      }</button>${waDateChipHtml()}`;
     }
     const search = $('#wa-search');
     if (search && search.value !== state.wa.q) search.value = state.wa.q;
-    const dateLabel = $('#wa-date-label');
-    if (dateLabel) dateLabel.textContent = waDateRange().label;
-    const dateButton = $('#wa-date-menu');
-    if (dateButton) dateButton.setAttribute('aria-pressed', String(state.wa.date?.mode && state.wa.date.mode !== 'all'));
 
     renderWaList();
     renderWaChat();
@@ -1777,14 +1785,82 @@
       : emptyState('No hay clientes con este filtro.');
   }
 
+  /** Los filtros de la lista de pedidos, con el estado operativo (no el técnico). */
+  const ORDER_FILTERS = [
+    ['todo', 'Todo'],
+    ['pendiente', 'Pendientes'],
+    ['en-camino', 'En camino'],
+    ['entregado', 'Entregados'],
+    ['cancelado', 'Cancelados'],
+  ];
+
+  /** «en-camino» (URL) → «EN_CAMINO» (estado operativo). */
+  const orderFilterValue = (filter) => String(filter ?? '').replace(/-/g, '_').toUpperCase();
+
+  /** Estado operativo ya resuelto del pedido (una sola vez por fila). */
+  const orderOperational = (item) =>
+    getOrderOperationalStatus(itemOrder(item), deliverySessionForOrder(item.id));
+
+  /**
+   * UNA FILA DE PEDIDO: dos líneas y nada más.
+   *
+   * De un vistazo: quién, cuánto y en qué estado. Los botones grandes (WhatsApp,
+   * comprobante, ficha) viven en la ficha del pedido, que se abre tocando la fila:
+   * en una lista larga, eso es la diferencia entre leerla y no leerla.
+   */
+  function orderRow(item) {
+    const estado = orderOperational(item);
+    const order = itemOrder(item) ?? {};
+    const meta = [
+      item.order_number ?? order.order_number ?? null,
+      item.variant_name ? `${item.variant_name}${item.quantity ? ` ×${item.quantity}` : ''}` : null,
+      orderTotalOf(item) || null,
+      item.phone ?? null,
+    ].filter(Boolean);
+    return `<button class="order-row order-row--${escapeHtml(
+      estado.toLowerCase(),
+    )}" data-open="${escapeHtml(item.id)}" type="button">
+      <span class="order-row__top">
+        <strong class="order-row__name">${escapeHtml(item.name ?? 'Sin nombre')}</strong>
+        <span class="order-row__when">${escapeHtml(fmtWhen(item.received_at))}</span>
+      </span>
+      <span class="order-row__bottom">
+        <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
+        <span class="order-row__status">${escapeHtml(operationalStatusLabel(estado))}</span>
+      </span>
+    </button>`;
+  }
+
   /** Pedidos y compras (menú lateral): lo que entró por la web o se apuntó a mano. */
   function renderPedidos() {
     const box = $('#list-pedidos');
     if (!box) return;
-    const items = applyOutbox(state.items.filter((item) => item.type === 'order_intent'));
-    box.innerHTML = items.length
-      ? items.map(itemCard).join('')
-      : emptyState('Todavía no hay pedidos registrados.');
+    const items = ordersNewestFirst(applyOutbox(state.items.filter((item) => item.type === 'order_intent')));
+    const filter = state.pedidosFilter ?? 'todo';
+    const byFilter = (value) =>
+      value === 'todo' ? items : items.filter((item) => orderOperational(item) === orderFilterValue(value));
+    const visibles = byFilter(filter);
+    // Cada chip lleva su cuenta: se ve cuántos hay sin abrir el filtro.
+    $$('#pedidos-filtros [data-order-filter]').forEach((chip) => {
+      const value = chip.dataset.orderFilter;
+      const total = byFilter(value).length;
+      const base = ORDER_FILTERS.find(([known]) => known === value)?.[1] ?? 'Pedidos';
+      chip.textContent = total ? `${base} ${total}` : base;
+      chip.setAttribute('aria-pressed', String(value === filter));
+    });
+    const count = $('#pedidos-count');
+    if (count) {
+      count.textContent = !items.length
+        ? ''
+        : visibles.length === items.length
+          ? `${items.length} ${items.length === 1 ? 'pedido' : 'pedidos'}`
+          : `${visibles.length} de ${items.length} pedidos`;
+    }
+    box.innerHTML = visibles.length
+      ? visibles.map(orderRow).join('')
+      : emptyState(
+          items.length ? 'Ningún pedido con ese estado.' : 'Todavía no hay pedidos registrados.',
+        );
   }
 
   function itemOrder(item) {
@@ -3635,6 +3711,21 @@
     return { mode: 'all', from: '', to: '', label: 'Todas' };
   }
 
+  /*
+   * EL FILTRO DE FECHA ES UN CHIP MÁS de la lista (no un botón con reloj pegado
+   * al buscador): enseña el rango activo y se cambia desde el mismo sitio que el
+   * resto de filtros, igual en el móvil que en el escritorio. Cuando no hay
+   * ninguno puesto dice «Fecha», para no confundirse con el chip «Todos».
+   */
+  const waDateChipHtml = () => {
+    const active = waDateRange();
+    return `<button class="chip chip--date" data-wa-date-open type="button" aria-pressed="${Boolean(
+      active.mode !== 'all',
+    )}" aria-label="Filtrar conversaciones por fecha">${escapeHtml(
+      active.mode === 'all' ? 'Fecha' : active.label,
+    )}</button>`;
+  };
+
   function rowInWaDateRange(row, range = waDateRange()) {
     if (range.mode === 'all') return true;
     if (!row.last_message_at) return false;
@@ -3940,11 +4031,16 @@
     const canTake = assignmentKind === 'unassigned' && currentUser() && hasPermission('chats.take_unassigned');
     const canRelease = conversation?.assigned_user_id && (assignedToMe || isAdmin());
     const canReassign = Boolean(conversation?.assigned_user_id) && isAdmin();
+    /*
+     * LA PRIMERA FILA ES LA QUE ASIGNA: dice quién atiende y al pulsarla se elige
+     * responsable (a mí o a otra persona). Antes era un cartel que no hacía nada.
+     */
+    const canChooseResponsible = Boolean(currentUser()) && (canTake || isAdmin());
+    const assignmentRow = canChooseResponsible
+      ? `<button class="menu-item" data-conv-assign="${escapeHtml(conversationId)}" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span><span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Asignar a una persona</small></span></button>`
+      : `<div class="menu-item menu-item--static"><span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span><span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span></div>`;
     return `
-        <div class="menu-item menu-item--static">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
-          <span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span>
-        </div>
+        ${assignmentRow}
         ${canTake ? `<button class="menu-item" data-conv-take="${escapeHtml(conversationId)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
           <span><strong>Tomar conversación</strong><small>Queda asignada a ti</small></span>
@@ -3961,6 +4057,70 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.lock}</span>
           <span><strong>Asignada a otra persona</strong><small>Puedes ver la ficha, no tomarla.</small></span>
         </div>` : ''}`;
+  }
+
+  /**
+   * ELEGIR RESPONSABLE: «Asignármela a mí» primero (un toque), luego el equipo y,
+   * al final, dejarla sin asignar. El servidor recibe lo mismo de siempre
+   * (`take` / `assign` / `release`): aquí solo cambia CÓMO se elige.
+   */
+  async function openAssignSheet(conversationId) {
+    const id = conversationId || state.wa.selectedId || '';
+    const conversation =
+      state.wa.chat?.conversation?.id === id
+        ? state.wa.chat.conversation
+        : state.conversations.find((row) => row.id === id) ?? null;
+    if (!conversation) {
+      toast('No pudimos leer esa conversación');
+      return;
+    }
+    const me = currentUser();
+    const kind = conversationAssignmentKind(conversation);
+    const mine = kind === 'mine';
+    const canTake = Boolean(me) && !mine && (kind === 'unassigned' || isAdmin());
+    const canRelease = Boolean(conversation.assigned_user_id) && (mine || isAdmin());
+    // La lista del equipo la pide quien puede administrar (si no, sobra la llamada).
+    if (isAdmin() && !(state.users ?? []).length) await loadUsers().catch(() => {});
+    const agents = isAdmin() ? (state.users ?? []).filter((user) => user.active !== false) : [];
+    const agentRow = (user) => {
+      const current = conversation.assigned_user_id === user.id;
+      return `<button class="menu-item" data-conv-assign-user="${escapeHtml(user.id)}" data-conversation="${escapeHtml(
+        id,
+      )}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${current ? ICONS.checkCircle : ''}</span>
+        <span><strong>${escapeHtml(user.display_name ?? 'Agente')}</strong><small>${escapeHtml(
+          roleLabel(user.role),
+        )}${current ? ' · al frente ahora' : ''}</small></span>
+      </button>`;
+    };
+    openSheet(
+      'Asignar conversación',
+      `<div class="menu-list">
+        ${
+          canTake
+            ? `<button class="menu-item" data-conv-assign-me="${escapeHtml(id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
+          <span><strong>Asignármela a mí</strong><small>${escapeHtml(me?.display_name ?? 'Yo')} queda al frente</small></span>
+        </button>`
+            : ''
+        }
+        ${agents.map(agentRow).join('')}
+        ${
+          canRelease
+            ? `<button class="menu-item" data-conv-release="${escapeHtml(id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+          <span><strong>Dejarla sin asignar</strong><small>Que la tome quien pueda</small></span>
+        </button>`
+            : ''
+        }
+      </div>
+      ${
+        !canTake && !agents.length && !canRelease
+          ? '<p class="rule rule--warn">Tu usuario no puede cambiar el responsable de esta conversación.</p>'
+          : ''
+      }`,
+      { variant: 'menu' },
+    );
   }
 
   function waRow(row) {
@@ -7210,6 +7370,38 @@
       sourceConversation?.meta_attribution?.utm_content ??
       sourceConversation?.meta_attribution?.ad_id ??
       '';
+    /*
+     * ¿YA TIENE UN PEDIDO ABIERTO? Se enseña ANTES de nada: un cliente con un
+     * pedido en camino que hace otro suele ser un error (o una recompra que hay
+     * que decidir), y descubrirlo después de guardar ya es tarde. El pedido no se
+     * guarda hasta marcar la casilla.
+     */
+    const liveOrders = customer && !orderId ? liveOrdersForCustomer(customer.id) : [];
+    const liveOrdersBlock = liveOrders.length
+      ? `<div class="rule rule--warn" id="order-open-warning">
+          <strong>${escapeHtml(customerName(customer))} ya tiene ${
+            liveOrders.length === 1 ? 'un pedido sin cerrar' : `${liveOrders.length} pedidos sin cerrar`
+          }.</strong>
+          <ul class="rule__list">
+            ${liveOrders
+              .slice(0, 3)
+              .map(
+                (item) =>
+                  `<li>${escapeHtml(item.order_number ?? item.id)} · ${escapeHtml(
+                    statusLabel(item.status ?? 'nuevo'),
+                  )}${orderTotalOf(item) ? ` · ${escapeHtml(orderTotalOf(item))}` : ''}${
+                    item.received_at ? ` · ${escapeHtml(fmtWhen(item.received_at))}` : ''
+                  }</li>`,
+              )
+              .join('')}
+          </ul>
+          <label class="loc-option">
+            <input type="checkbox" id="order-open-ack" />
+            <span class="loc-option__body"><strong>Sí, es un pedido nuevo</strong>
+            <small>El anterior sigue abierto y se gestiona aparte.</small></span>
+          </label>
+        </div>`
+      : '';
 
     openSheet(
       `${
@@ -7220,6 +7412,7 @@
             : 'Pedido para un cliente nuevo'
       }`,
       `
+      ${liveOrdersBlock}
       ${
         customer
           ? ''
@@ -7500,6 +7693,14 @@
     renderLines();
 
     $('#order-save').addEventListener('click', async (event) => {
+      /*
+       * El aviso de pedido abierto se confirma AQUÍ (no solo se enseña): sin
+       * marcar la casilla no se guarda. Es la diferencia entre avisar y evitar.
+       */
+      if (liveOrders.length && $('#order-open-ack')?.checked !== true) {
+        toast(`Confirma que es un pedido nuevo: ${customerName(customer)} ya tiene uno abierto`);
+        return;
+      }
       const totals = orderTotals(
         lines,
         Number($('#order-discount').value) || 0,
@@ -8000,6 +8201,7 @@
           : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles.</p>'
       }
       <button class="btn btn--ghost btn--block" id="loc-use" type="button">Usar para un pedido</button>
+      <button class="btn btn--ghost btn--block" id="loc-attach" type="button">Agregar a un pedido abierto</button>
       <button class="btn btn--ghost btn--block" id="loc-share" type="button">Compartir con otra conversación</button>
       ${
         url
@@ -8023,9 +8225,72 @@
       }
       openOrderForm({ customerId, conversationId: conversationId ?? state.wa.selectedId ?? '', location });
     });
+    $('#loc-attach')?.addEventListener('click', () => {
+      const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
+      closeSheet();
+      openAttachLocationToOrder({ location, customerId });
+    });
     $('#loc-share').addEventListener('click', () => {
       closeSheet();
       openShareLocation({ locationId: location.id, location });
+    });
+  }
+
+  /**
+   * COLGAR UN DATO (la ubicación) DE UN PEDIDO QUE YA EXISTE.
+   *
+   * El cliente manda la ubicación después de pedir, o la corrige: hay que poder
+   * ponérsela al pedido que YA está en marcha, sin crear otro. Solo se ofrecen los
+   * pedidos vivos (ni entregados ni cancelados): cambiar la dirección de un pedido
+   * ya entregado sería reescribir la historia.
+   */
+  function openAttachLocationToOrder({ location, customerId }) {
+    const id = customerId ?? location?.customer_id ?? state.wa.chat?.customer?.id ?? null;
+    const pedidos = id ? liveOrdersForCustomer(id) : [];
+    if (!pedidos.length) {
+      toast('Ese cliente no tiene pedidos sin cerrar: créale uno con «Usar para un pedido»');
+      return;
+    }
+    openSheet(
+      'Agregar a un pedido',
+      `
+      ${locationChip(location, { withActions: false })}
+      <div class="menu-list">
+        ${pedidos
+          .map(function (item) {
+            const conUbicacion = Boolean(itemOrder(item)?.delivery?.location);
+            return `<button class="menu-item" data-order-attach-loc="${escapeHtml(
+              item.id,
+            )}" data-attach-location="${escapeHtml(location?.id ?? '')}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+          <span><strong>${escapeHtml(item.order_number ?? item.id)}</strong><small>${escapeHtml(
+            statusLabel(item.status ?? 'nuevo'),
+          )}${orderTotalOf(item) ? ` · ${escapeHtml(orderTotalOf(item))}` : ''} · ${
+            conUbicacion ? 'ya tiene ubicación (se reemplaza)' : 'sin ubicación'
+          }</small></span>
+        </button>`;
+          })
+          .join('')}
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  /** Pone la ubicación en el pedido elegido: PATCH del pedido, sin crear otro. */
+  async function attachLocationToOrder(orderId, locationId, button) {
+    if (!orderId || !locationId) return;
+    await working(button, 'Agregando…', async () => {
+      try {
+        await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ deliveryLocation: locationId }),
+        });
+        toast('Ubicación agregada al pedido');
+        closeSheet();
+        await load({ keepTab: true });
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo agregar la ubicación');
+      }
     });
   }
 
@@ -9738,15 +10003,6 @@
     }
   }
 
-  function chooseUserId() {
-    const agents = (state.users ?? []).filter((user) => user.active !== false);
-    if (!agents.length) return null;
-    const menu = agents.map((user, index) => `${index + 1}. ${user.display_name} (${roleLabel(user.role)})`).join('\n');
-    const raw = window.prompt(`Reasignar a:\n${menu}`);
-    const index = Number.parseInt(raw ?? '', 10) - 1;
-    return agents[index]?.id ?? null;
-  }
-
   async function loadInventory() {
     state.inventoryLoading = true;
     try {
@@ -10599,6 +10855,25 @@
         openImageViewer(profilePhoto.dataset.profilePhoto, 'Foto del cliente');
         return;
       }
+      const convAssign = event.target.closest('[data-conv-assign]');
+      if (convAssign) {
+        openAssignSheet(convAssign.dataset.convAssign || state.wa.selectedId);
+        return;
+      }
+      const convAssignMe = event.target.closest('[data-conv-assign-me]');
+      if (convAssignMe) {
+        assignCurrentConversation('take', null, convAssignMe.dataset.convAssignMe || state.wa.selectedId);
+        return;
+      }
+      const convAssignUser = event.target.closest('[data-conv-assign-user]');
+      if (convAssignUser) {
+        assignCurrentConversation(
+          'assign',
+          convAssignUser.dataset.convAssignUser,
+          convAssignUser.dataset.conversation || state.wa.selectedId,
+        );
+        return;
+      }
       const convTake = event.target.closest('[data-conv-take]');
       if (convTake) {
         assignCurrentConversation('take', null, convTake.dataset.convTake || state.wa.selectedId);
@@ -10611,18 +10886,8 @@
       }
       const convReassign = event.target.closest('[data-conv-reassign]');
       if (convReassign) {
-        const targetConversationId = convReassign.dataset.convReassign || state.wa.selectedId;
-        if (!state.users?.length) {
-          loadUsers()
-            .then(() => {
-              const userId = chooseUserId();
-              if (userId) assignCurrentConversation('assign', userId, targetConversationId);
-            })
-            .catch(() => toast('No se pudieron cargar usuarios'));
-        } else {
-          const userId = chooseUserId();
-          if (userId) assignCurrentConversation('assign', userId, targetConversationId);
-        }
+        // Reasignar es la MISMA hoja de asignación: se elige persona, sin adivinar.
+        openAssignSheet(convReassign.dataset.convReassign || state.wa.selectedId);
         return;
       }
       const orderNew = event.target.closest('[data-order-new]');
@@ -10637,6 +10902,17 @@
       if (profileOrder) {
         state.customerProfileOrderId = profileOrder.dataset.profileOrder || null;
         renderCustomerProfile();
+        return;
+      }
+      const orderFilter = event.target.closest('[data-order-filter]');
+      if (orderFilter) {
+        state.pedidosFilter = orderFilter.dataset.orderFilter;
+        renderPedidos();
+        return;
+      }
+      const attachLoc = event.target.closest('[data-order-attach-loc]');
+      if (attachLoc) {
+        attachLocationToOrder(attachLoc.dataset.orderAttachLoc, attachLoc.dataset.attachLocation, attachLoc);
         return;
       }
       const orderEdit = event.target.closest('[data-order-edit]');

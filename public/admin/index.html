@@ -215,10 +215,6 @@
                   aria-label="Buscar conversación"
                   autocomplete="off"
                 />
-                <button class="wa-date" id="wa-date-menu" type="button" aria-label="Filtrar conversaciones por fecha">
-                  <span class="wa-date__icon" aria-hidden="true" data-icon="clock"></span>
-                  <span class="wa-date__text" id="wa-date-label">Todas</span>
-                </button>
               </div>
               <div class="chips" id="wa-filters"></div>
               <div class="wa__error" id="wa-error" hidden></div>
@@ -347,13 +343,32 @@
           <div id="customer-profile"></div>
         </section>
 
-        <!-- PEDIDOS Y COMPRAS (menú lateral) -->
+        <!--
+          PEDIDOS Y COMPRAS (menú lateral).
+
+          Una FILA por pedido, de dos líneas y sin botones dentro: el nombre de la
+          pantalla ya está en la barra de arriba, así que aquí NO se repite. Se
+          filtra por estado operativo y el alta vive en el botón cuadrado
+          flotante, igual que en Clientes.
+        -->
         <section class="view" id="view-pedidos" hidden>
-          <h2 class="view__title">Pedidos y compras</h2>
-          <p class="view__hint">Todo lo que ha entrado por la web o lo has apuntado tú. Una compra es un hecho, no un mensaje.</p>
-          <div class="list" id="list-pedidos"></div>
-          <button class="btn btn--primary btn--block" id="compra-nueva-ped" type="button">
-            + Registrar compra de un cliente
+          <div class="chips" id="pedidos-filtros">
+            <button class="chip" data-order-filter="todo" aria-pressed="true" type="button">Todo</button>
+            <button class="chip" data-order-filter="pendiente" type="button">Pendientes</button>
+            <button class="chip" data-order-filter="en-camino" type="button">En camino</button>
+            <button class="chip" data-order-filter="entregado" type="button">Entregados</button>
+            <button class="chip" data-order-filter="cancelado" type="button">Cancelados</button>
+          </div>
+          <p class="view__count" id="pedidos-count"></p>
+          <div class="list list--orders" id="list-pedidos"></div>
+          <button
+            class="client-fab list-fab"
+            id="compra-nueva-ped"
+            type="button"
+            aria-label="Registrar compra de un cliente"
+            title="Registrar compra"
+          >
+            <span class="ico" aria-hidden="true" data-icon="plus"></span>
           </button>
         </section>
 

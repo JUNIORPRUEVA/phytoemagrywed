@@ -893,6 +893,12 @@ describe('preferencias del pedido del cliente', () => {
     const cantidad = $('#order-lines [data-line-qty="0"]');
     cantidad.value = '2';
     cantidad.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    /*
+     * Luis YA tiene un pedido abierto, así que el panel avisa y exige confirmar
+     * que este es otro de verdad: sin marcar la casilla no se guarda nada.
+     */
+    expect($('#order-open-warning')?.textContent).toMatch(/ya tiene un pedido sin cerrar/);
+    $('#order-open-ack').checked = true;
     click('#order-save');
     await waitFor(() => /Comprobante|Pedido/.test($('#sheet-body').innerHTML), 'el comprobante del pedido', 9000);
     closeSheetForUat();
@@ -1045,7 +1051,15 @@ describe('la lista que se pinta es la nueva', () => {
   it('el CSS sostiene la fila fina, los sellos de tiempo y el cambio de cabecera', () => {
     expect(css).toContain('.conv__more');
     expect(css).toContain('.conv__stamps');
-    expect(css).toContain('.wa-date');
+    /*
+     * El filtro de fecha dejó de ser un icono con reloj pegado al buscador: es un
+     * CHIP más de la lista, que enseña el rango activo y se cambia desde el mismo
+     * sitio en el móvil y en el escritorio.
+     */
+    expect(css).toContain('.chip--date');
+    expect(app_js).toContain('waDateChipHtml');
+    expect(html).not.toContain('id="wa-date-menu"');
+    expect(css).not.toContain('.wa-date__text');
     expect(app_js).toContain('data-wa-date');
     expect(app_js).toContain('America/Santo_Domingo');
     expect(css).toContain('.wa__list-head[hidden]');

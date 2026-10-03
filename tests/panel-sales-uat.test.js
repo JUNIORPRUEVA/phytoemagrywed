@@ -105,6 +105,48 @@ async function inbound(id, body) {
   await sleep(250);
 }
 
+/** Ubicación entrante tal y como la manda WhatsApp (`type: location`). */
+async function inboundLocation(id, coords) {
+  const payload = {
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        id: 'WABA1',
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              contacts: [{ profile: { name: 'Ana UAT' }, wa_id: PHONE }],
+              messages: [
+                {
+                  from: PHONE,
+                  id,
+                  timestamp: String(Math.floor(Date.now() / 1000)),
+                  type: 'location',
+                  location: {
+                    latitude: coords.latitude,
+                    longitude: coords.longitude,
+                    ...(coords.name ? { name: coords.name } : {}),
+                    ...(coords.address ? { address: coords.address } : {}),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const raw = JSON.stringify(payload);
+  const signature = `sha256=${createHmac('sha256', APP_SECRET).update(raw).digest('hex')}`;
+  await fetch(`${app.url}/api/webhooks/whatsapp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature },
+    body: raw,
+  });
+  await sleep(250);
+}
+
 beforeAll(async () => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), 'phyto-uat-'));
   app = await startCrmServer({
@@ -269,5 +311,151 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
       return html.includes('order.') ? html : null;
     }, 'la auditoría');
     expect(audit).toContain('order.created');
+  });
+});
+
+describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', () => {
+  const LUGAR = { latitude: 18.6157, longitude: -68.7071, name: 'Casa UAT', address: 'Calle Principal 12, Higüey' };
+
+  const datos = async () => (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+  const pedidos = async () => (await datos()).items.filter((item) => item.type === 'order_intent');
+  const ordenDe = (item) => {
+    const raw = item?.order_json ?? item?.orderJson;
+    if (!raw) return null;
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch {
+      return null;
+    }
+  };
+  const esperar = async (check, label, timeout = 6000) => {
+    const start = Date.now();
+    for (;;) {
+      const value = await check();
+      if (value) return value;
+      if (Date.now() - start > timeout) throw new Error(`timeout esperando: ${label}`);
+      await sleep(50);
+    }
+  };
+  const abrirPedidoDeAna = async () => {
+    click('[data-tab="whatsapp"]');
+    const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación en la bandeja');
+    click(row);
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
+    click('#wa-actions');
+    click('[data-order-new]');
+    return waitFor(() => $('#order-lines'), 'el formulario de pedido');
+  };
+
+  it('la lista de pedidos es una fila por pedido, sin repetir el título ni botones dentro', async () => {
+    click('[data-tab="pedidos"]');
+    const fila = await waitFor(() => $('#list-pedidos .order-row'), 'una fila de pedido');
+    /*
+     * El nombre de la pantalla ya está en la barra de arriba: aquí NO se repite
+     * (antes había un «Pedidos y compras» + un párrafo explicando qué era).
+     */
+    expect($('#view-pedidos').querySelector('h2')).toBe(null);
+    // Dos líneas: quién y cuándo arriba; datos y estado abajo.
+    expect(fila.querySelector('.order-row__name').textContent.trim()).toBeTruthy();
+    expect(fila.querySelector('.order-row__when')).toBeTruthy();
+    expect(fila.querySelector('.order-row__meta').textContent).toMatch(/PE-/);
+    expect(fila.querySelector('.order-row__status').textContent).toMatch(
+      /Pendiente|En camino|Entregado|Cancelado/,
+    );
+    // Nada de botones dentro de la fila: las acciones viven en la ficha.
+    expect(fila.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('los filtros de estado se cuentan y filtran de verdad', async () => {
+    expect($$('#pedidos-filtros .chip')).toHaveLength(5);
+    const total = (await pedidos()).length;
+    expect($('#pedidos-filtros [data-order-filter="todo"]').textContent).toContain(String(total));
+
+    click('[data-order-filter="entregado"]');
+    const vacio = await waitFor(
+      () => ($('#list-pedidos').textContent.includes('Ningún pedido con ese estado') ? true : null),
+      'el vacío del filtro',
+    );
+    expect(vacio).toBe(true);
+
+    click('[data-order-filter="pendiente"]');
+    const pendientes = await waitFor(() => $$('#list-pedidos .order-row'), 'las filas pendientes');
+    expect(pendientes.length).toBeGreaterThan(0);
+    expect($('#pedidos-count').textContent).toMatch(/\d+ pedido/);
+    // Los pedidos que NO están entregados son los que el filtro deja pasar.
+    const vivos = (await pedidos()).filter((item) => !['entregado', 'perdido'].includes(item.status));
+    expect(pendientes.length).toBeLessThanOrEqual(vivos.length);
+
+    click('[data-order-filter="todo"]');
+    await waitFor(() => $$('#list-pedidos .order-row').length >= total, 'la lista completa');
+    expect($('#pedidos-count').textContent).toContain(String(total));
+  });
+
+  it('el alta vive en un botón cuadrado flotante, no en una barra ancha al pie', async () => {
+    const fab = $('#compra-nueva-ped');
+    expect(fab.classList.contains('list-fab')).toBe(true);
+    // Solo el icono: sin texto de botón grande.
+    expect(fab.textContent.trim()).toBe('');
+    click(fab);
+    await waitFor(() => $('#order-lines'), 'el formulario de pedido');
+    click('[data-close-sheet]');
+    await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+  });
+
+  it('avisa de que ya hay un pedido abierto y NO lo guarda sin confirmar', async () => {
+    const antes = (await pedidos()).length;
+    await abrirPedidoDeAna();
+    const aviso = await waitFor(() => $('#order-open-warning'), 'el aviso de pedido abierto');
+    expect(aviso.textContent).toMatch(/ya tiene un pedido sin cerrar/);
+    expect(aviso.textContent).toMatch(/PE-/);
+
+    click('#order-save');
+    await sleep(200);
+    // Sigue abierto (no se guardó) y el servidor no tiene un pedido más.
+    expect($('#order-open-warning')).toBeTruthy();
+    expect((await pedidos()).length).toBe(antes);
+
+    // Con la confirmación marcada, el pedido nuevo sí se guarda.
+    $('#order-open-ack').checked = true;
+    click('#order-save');
+    await esperar(async () => (await pedidos()).length === antes + 1, 'el pedido nuevo guardado');
+    click('[data-close-sheet]');
+  });
+
+  it('la ubicación que manda el cliente se puede agregar al pedido abierto', async () => {
+    await inboundLocation('wamid.UATLOC1', LUGAR);
+    click('[data-tab="whatsapp"]');
+    const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación en la bandeja');
+    click(row);
+    const mas = await waitFor(() => $('#thread [data-loc-menu]'), 'la ubicación dentro del hilo');
+    click(mas);
+    await waitFor(() => $('#loc-attach'), 'las acciones de la ubicación');
+    click('#loc-attach');
+
+    // Solo se ofrecen los pedidos VIVOS (ni entregados ni cancelados).
+    const opcion = await waitFor(() => $('[data-order-attach-loc]'), 'la lista de pedidos abiertos');
+    const vivos = (await pedidos()).filter((item) => !['entregado', 'perdido'].includes(item.status));
+    expect($$('[data-order-attach-loc]')).toHaveLength(vivos.length);
+
+    const ordenId = opcion.dataset.orderAttachLoc;
+    click(opcion);
+    await esperar(async () => {
+      const item = (await pedidos()).find((candidate) => candidate.id === ordenId);
+      const ubicacion = ordenDe(item)?.delivery?.location ?? null;
+      return ubicacion && Number.isFinite(Number(ubicacion.latitude));
+    }, 'la ubicación guardada en el pedido');
+
+    const item = (await pedidos()).find((candidate) => candidate.id === ordenId);
+    const ubicacion = ordenDe(item).delivery.location;
+    expect(ubicacion.latitude).toBeCloseTo(LUGAR.latitude, 3);
+    expect(ubicacion.longitude).toBeCloseTo(LUGAR.longitude, 3);
+    // Y queda en el historial del cliente para el próximo pedido.
+    const cliente = (await datos()).customers.find((candidate) => candidate.phone_e164 === `+${PHONE}`);
+    const guardadas = await (
+      await fetch(`${app.url}/api/admin/customers/${cliente.id}/locations`, { headers: { cookie } })
+    ).json();
+    expect(
+      guardadas.locations.some((candidate) => Math.abs(Number(candidate.latitude) - LUGAR.latitude) < 0.001),
+    ).toBe(true);
   });
 });

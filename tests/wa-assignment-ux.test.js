@@ -52,4 +52,20 @@ describe('WhatsApp assignment UX', () => {
     expect(app).toContain("data-conv-reassign=\"${escapeHtml(conversationId)}\"");
     expect(app).toContain('assignCurrentConversation(action, userId = null, conversationId = state.wa.selectedId)');
   });
+
+  it('la primera fila del menú ASIGNA: a mí o a otra persona del equipo', () => {
+    // La fila que dice quién atiende es la que abre la elección de responsable.
+    expect(app).toContain('data-conv-assign="${escapeHtml(conversationId)}"');
+    expect(app).toContain('function openAssignSheet');
+    expect(app).toContain('Asignármela a mí');
+    expect(app).toContain('data-conv-assign-me="${escapeHtml(id)}"');
+    expect(app).toContain('data-conv-assign-user="${escapeHtml(user.id)}"');
+    expect(app).toContain(
+      "assignCurrentConversation('take', null, convAssignMe.dataset.convAssignMe || state.wa.selectedId)",
+    );
+    // Pasar la conversación a otra persona usa la MISMA hoja (nada de adivinar).
+    expect(app).toContain('openAssignSheet(convReassign.dataset.convReassign || state.wa.selectedId)');
+    expect(app).not.toContain('Reasignar a:');
+    expect(css).toContain('.menu-item');
+  });
 });
