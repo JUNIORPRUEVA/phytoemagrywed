@@ -111,11 +111,6 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain("'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'");
     expect(app).toContain("const MAP_DEFAULT_BASE = 'satelite'");
     expect(app).toContain('Imágenes &copy; Esri');
-    // En RD la imagen propia llega al nivel 18 (19 en Santo Domingo/Bávaro) y a
-    // partir de ahí se AMPLÍA avisando, sin fingir detalle que no existe.
-    expect(app).toContain('maxNativeZoom: 18');
-    expect(app).toContain('maxZoom: 20');
-    expect(app).toMatch(/ampliado \(la imagen de esta zona llega al nivel/);
     // Los nombres y las calles van encima de la foto, y se pueden apagar.
     expect(app).toContain('World_Transportation');
     expect(app).toContain('function toggleOrdersMapLabels');
@@ -124,6 +119,26 @@ describe('delivery tracking frontend UAT guards', () => {
     // Y el mapa dibujado de siempre sigue disponible (pesa mucho menos).
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('&copy; OpenStreetMap contributors');
+  });
+
+  it('usa el MÁXIMO nivel de imagen REAL de cada zona, sin inventar detalle', () => {
+    // El techo por defecto es el 18 (medido: hay imagen propia en las 20 zonas de
+    // RD comprobadas) y solo sube a 19 si se COMPRUEBA que ese nivel trae foto.
+    expect(app).toContain('const MAP_NATIVE_DEFAULT_ZOOM = 18');
+    expect(app).toContain('const MAP_NATIVE_MAX_ZOOM = 19');
+    expect(app).toContain('function probeOrdersMapNative');
+    expect(app).toContain('function ordersMapNativeZoom');
+    // El relleno de "sin imagen" de Esri pesa 2.521 B (el mismo en todo el país) y
+    // la foto real más pequeña medida en RD, 5.462 B: el umbral va en medio.
+    expect(app).toContain('const MAP_MIN_REAL_TILE_BYTES = 4000');
+    // La comprobación se recuerda por zona (celda) y caduca: la imagen cambia.
+    expect(app).toContain("const MAP_NATIVE_STORE_KEY = 'pe_map_native_zoom'");
+    expect(app).toContain('const MAP_NATIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000');
+    // Nunca se pide el nivel 20: no existe en RD (sería mosaico gris).
+    expect(app).toContain('tileUrlFor(config.url, MAP_NATIVE_MAX_ZOOM, centro.lat, centro.lng)');
+    // Y al pasar del techo real se avisa: es ampliación, no más detalle.
+    expect(app).toMatch(/ampliado \(aquí la imagen real llega al nivel/);
+    expect(app).toContain('más cerca no gana detalle');
   });
 
   it('restaura la última vista del mapa sin guardar datos sensibles', () => {

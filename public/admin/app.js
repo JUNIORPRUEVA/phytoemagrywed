@@ -101,6 +101,11 @@
       baseLayer: null,
       // Se resuelve al montar el mapa (`ordersMapBaseKey`): la elección se recuerda.
       base: null,
+      // Techo de imagen real de la zona que se está mirando, y la comprobación en curso.
+      nativeZoom: null,
+      zone: null,
+      probing: null,
+      probeTimer: null,
       labelLayer: null,
       labelReady: false,
       zoomHint: '',
@@ -203,6 +208,11 @@
       maxNativeZoom: 18,
       maxZoom: 20,
       labels: true,
+      /*
+       * Este proveedor sirve unos niveles en unas zonas y en otras no: el techo se
+       * COMPRUEBA por zona (`probeOrdersMapNative`) en vez de darlo por hecho.
+       */
+      probe: true,
     },
     calles: {
       label: 'Mapa (calles)',
@@ -213,6 +223,7 @@
       maxNativeZoom: 19,
       maxZoom: 20,
       labels: false,
+      probe: false,
     },
   };
   const MAP_DEFAULT_BASE = 'satelite';
@@ -228,6 +239,33 @@
    * cuando el mapa está quieto (mover el dedo no dispara 40 peticiones).
    */
   const MAP_TILE_TUNING = { keepBuffer: 3, updateWhenIdle: true, updateWhenZooming: false, crossOrigin: true };
+
+  /*
+   * TECHO REAL DE LA IMAGEN, ZONA POR ZONA (sin inventar un píxel).
+   *
+   * Medido tile a tile el 2026-10-02 sobre Esri World Imagery:
+   *
+   *   - El nivel 18 tiene imagen propia en las 20 zonas de RD comprobadas.
+   *   - El nivel 19 solo la tiene en algunas (Verón, Bávaro, Punta Cana, Santo
+   *     Domingo y Santiago) y NO en otras (Higüey, La Romana, Puerto Plata…).
+   *   - Donde no la tiene, en vez de dar error el servidor devuelve SIEMPRE el
+   *     mismo PNG gris de 2.521 bytes (sha 1660d86a87f5, idéntico en todo el país
+   *     y también en z20) con HTTP 200: Leaflet no se entera (no hay `tileerror`)
+   *     y el mapa se pondría gris si se pidiera ese nivel.
+   *
+   * Por eso el techo por defecto es 18 (seguro en todo el país) y se SUBE a 19
+   * solo después de comprobar, una vez por zona, que el tile del 19 es imagen de
+   * verdad (más de 4 KB, cuando el relleno pesa 2,5 KB y la foto real más pequeña
+   * medida pesa 5,4 KB). Y z20 no se pide nunca: no existe en ninguna zona medida.
+   * Más allá del techo, acercarse está permitido pero es AMPLIACIÓN, y se dice.
+   */
+  const MAP_IMAGE_ZONE_ZOOM = 15; // celda de comprobación (~1,2 km): la imagen cambia por zona, no por calle
+  const MAP_MIN_REAL_TILE_BYTES = 4000; // relleno 2.521 B · foto real más pequeña medida 5.462 B
+  const MAP_NATIVE_DEFAULT_ZOOM = 18; // techo seguro sin dato (imagen real garantizada)
+  const MAP_NATIVE_MAX_ZOOM = 19; // techo comprobable en RD (el 20 no existe)
+  const MAP_NATIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // la imagen cambia con los años: se vuelve a comprobar
+  const MAP_NATIVE_STORE_KEY = 'pe_map_native_zoom';
+  const MAP_NATIVE_STORE_MAX = 300; // zonas recordadas a la vez
 
   // ------------------------------------------------------------------ helpers
 
@@ -2180,10 +2218,14 @@
     const baseRow = (clave) => {
       const config = MAP_BASE_LAYERS[clave];
       const elegida = state.ordersMap.base === clave;
+      const nativo = config.probe ? ordersMapNativeZoom(ordersMapCenterOf(state.ordersMap.map)) : config.maxNativeZoom;
+      const detalle = config.probe
+        ? `${config.detail}. Aquí hay imagen real hasta el nivel ${nativo}`
+        : config.detail;
       return `
       <button class="menu-item" data-map-base="${clave}" type="button" aria-pressed="${String(elegida)}">
         <span class="menu-item__icon">${clave === 'satelite' ? ICONS.pin : ICONS.search}</span>
-        <span><strong>${config.label}${elegida ? ' ✓' : ''}</strong><small>${config.detail}</small></span>
+        <span><strong>${config.label}${elegida ? ' ✓' : ''}</strong><small>${detalle}</small></span>
       </button>`;
     };
     openSheet(
@@ -8395,17 +8437,40 @@
     if (el.closest('[hidden]')) return null; // la pantalla no está abierta: no se gasta memoria
     if (state.ordersMap.map && state.ordersMap.map.getContainer?.() === el) return state.ordersMap.map;
     if (state.ordersMap.map) resetOrdersMap();
-    const map = window.L.map(el, { zoomControl: true, attributionControl: true });
+    /*
+     * Si el contenedor quedó a medio montar por un error anterior (p. ej. al
+     * añadir la capa), Leaflet se niega a inicializarlo otra vez («Map container is
+     * already initialized») y la pantalla se quedaba muerta para siempre. Se limpia
+     * la marca y se reintenta UNA vez: un fallo puntual no puede matar el mapa.
+     */
+    const crearMapa = () => window.L.map(el, { zoomControl: true, attributionControl: true });
+    let map;
+    try {
+      map = crearMapa();
+    } catch {
+      try {
+        delete el._leaflet_id;
+      } catch {
+        /* el contenedor no admite la limpieza */
+      }
+      map = crearMapa();
+    }
     /*
      * La capa base (satélite o mapa) con su aviso honesto: si los tiles tardan o
      * fallan se dice en la propia pantalla, y el GPS de las entregas sigue igual.
+     * La VISTA se fija antes de montar la capa: así la capa ya sabe en qué zona
+     * está (el techo de imagen real se decide por zona) y no se le pregunta el
+     * centro a un mapa que todavía no tiene vista.
      */
-    addOrdersMapBase(map);
-    maybePrefetchDeliveryTiles('map-opened');
     const vista = ordersMapSavedView();
     map.setView(vista?.center ?? [18.6157, -68.7071], vista?.zoom ?? 12);
+    maybePrefetchDeliveryTiles('map-opened');
+    addOrdersMapBase(map);
     map.on('moveend zoomend', saveOrdersMapView);
     map.on('zoomend', updateOrdersMapZoomHint);
+    // Al parar de mover (o al acercarse) se comprueba el techo de la zona si es nueva.
+    map.on('moveend', maybeProbeOrdersMapNative);
+    map.on('zoomend', maybeProbeOrdersMapNative);
     map.on('click', (event) => ordersMapMapClick(event.latlng));
     // Al moverlo a mano se deja de seguir al repartidor (como en cualquier mapa).
     map.on('dragstart zoomstart', () => {
@@ -8417,6 +8482,8 @@
     if (state.ordersMap.refPoint) addOrdersMapRefMarker();
     state.ordersMap.map = map;
     setTimeout(() => map.invalidateSize(), 0);
+    // Primera comprobación de la zona que se abre (un tile, y ya).
+    if (state.ordersMap.baseLayer?.options?.maxNativeZoom === MAP_NATIVE_DEFAULT_ZOOM) maybeProbeOrdersMapNative();
     return map;
   }
 
@@ -8439,6 +8506,194 @@
 
   const ordersMapBaseConfig = (key = state.ordersMap.base) => MAP_BASE_LAYERS[key] ?? MAP_BASE_LAYERS[MAP_DEFAULT_BASE];
 
+  // ------------------------------------------- techo real de imagen, zona por zona
+
+  /** Coordenadas -> tile (fórmula estándar de teselas web). */
+  const tileX = (lng, z) => Math.floor(((Number(lng) + 180) / 360) * 2 ** z);
+  const tileY = (lat, z) => {
+    const rad = (Number(lat) * Math.PI) / 180;
+    return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * 2 ** z);
+  };
+
+  /** Rellena una plantilla de tesela sin depender de las tripas de Leaflet. */
+  function tileUrlFor(template, z, lat, lng) {
+    return String(template)
+      .replace('{s}', 'a')
+      .replace('{z}', String(z))
+      .replace('{x}', String(tileX(lng, z)))
+      .replace('{y}', String(tileY(lat, z)));
+  }
+
+  /** Clave de la zona (celda) donde cae un punto. */
+  const ordersMapZoneKey = (lat, lng) =>
+    `${MAP_IMAGE_ZONE_ZOOM}/${tileX(lng, MAP_IMAGE_ZONE_ZOOM)}/${tileY(lat, MAP_IMAGE_ZONE_ZOOM)}`;
+
+  /**
+   * Centro del mapa SIN reventar.
+   *
+   * Leaflet lanza «Set map center and zoom first» si se le pide el centro antes de
+   * fijar la vista, y eso pasa justo mientras se monta la capa base. Sin centro no
+   * hay zona que comprobar: se devuelve null y el techo se queda en el seguro.
+   */
+  function ordersMapCenterOf(map) {
+    try {
+      const centro = map?.getCenter?.();
+      if (Number.isFinite(Number(centro?.lat)) && Number.isFinite(Number(centro?.lng))) return centro;
+    } catch {
+      /* el mapa todavía no tiene vista */
+    }
+    return null;
+  }
+
+  /** Techo de imagen real ya comprobado en otras visitas (celda -> nivel). */
+  function ordersMapNativeStore() {
+    try {
+      const crudo = JSON.parse(localStorage.getItem(MAP_NATIVE_STORE_KEY) ?? 'null');
+      return crudo && typeof crudo === 'object' ? crudo : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function ordersMapNativeRemember(clave, zoom) {
+    try {
+      const store = ordersMapNativeStore();
+      store[clave] = { z: zoom, at: new Date().toISOString() };
+      const recortado = Object.entries(store).slice(-MAP_NATIVE_STORE_MAX);
+      localStorage.setItem(MAP_NATIVE_STORE_KEY, JSON.stringify(Object.fromEntries(recortado)));
+    } catch {
+      /* sin almacén se comprueba otra vez y ya está */
+    }
+  }
+
+  function ordersMapNativeSaved(clave) {
+    const guardado = ordersMapNativeStore()[clave];
+    if (!guardado || !Number.isFinite(Number(guardado.z))) return null;
+    const edad = Date.now() - Date.parse(guardado.at ?? 0);
+    if (!Number.isFinite(edad) || edad > MAP_NATIVE_TTL_MS) return null;
+    return Number(guardado.z);
+  }
+
+  /**
+   * Hasta qué nivel el mapa tiene IMAGEN REAL en la zona que se está mirando.
+   *
+   * Nunca devuelve más de lo comprobado: sin dato, el techo seguro (18, que tiene
+   * imagen en todo el país). Con dato, lo que se midió en esa celda.
+   */
+  function ordersMapNativeZoom(punto = null) {
+    const config = ordersMapBaseConfig();
+    if (!config.probe) return config.maxNativeZoom;
+    const centro = punto ?? ordersMapCenterOf(state.ordersMap.map);
+    if (!centro || !Number.isFinite(Number(centro.lat)) || !Number.isFinite(Number(centro.lng))) {
+      return state.ordersMap.nativeZoom ?? MAP_NATIVE_DEFAULT_ZOOM;
+    }
+    const clave = ordersMapZoneKey(centro.lat, centro.lng);
+    const guardado = ordersMapNativeSaved(clave);
+    if (guardado !== null) return Math.min(guardado, MAP_NATIVE_MAX_ZOOM);
+    // La zona que se está mirando ya se comprobó en esta sesión.
+    if (state.ordersMap.nativeZoom !== null && state.ordersMap.zone === clave) return state.ordersMap.nativeZoom;
+    /*
+     * Zona NUEVA sin comprobar: se usa el techo seguro (18, que tiene imagen real en
+     * todo el país) hasta que responda la comprobación. Al revés —heredar el 19 de la
+     * zona anterior— el mapa pediría tiles del 19 en un sitio que no los tiene y se
+     * vería el mosaico gris un instante. Primero imagen real; el 19, si toca.
+     */
+    return MAP_NATIVE_DEFAULT_ZOOM;
+  }
+
+  /**
+   * COMPROBAR EL TECHO DE LA ZONA: se pide UN tile del nivel 19 del centro que se
+   * está mirando y se mira si es foto o el relleno de "aquí no hay imagen".
+   *
+   * Una vez por zona (y por mes, que la imagen cambia con los años). Si la foto
+   * existe, el techo sube a 19 y el mapa se repinta con esa capa; si no, se queda
+   * en 18 y el aviso lo dirá al acercarse. Nunca se sube el techo por optimismo.
+   */
+  async function probeOrdersMapNative() {
+    const config = ordersMapBaseConfig();
+    const map = state.ordersMap.map;
+    if (!config.probe || !map || state.tab !== 'mapa') return null;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+    const centro = ordersMapCenterOf(map);
+    if (!centro) return null;
+    const clave = ordersMapZoneKey(centro.lat, centro.lng);
+    if (state.ordersMap.probing === clave) return null; // ya hay una comprobación en vuelo
+    const guardado = ordersMapNativeSaved(clave);
+    if (guardado !== null) return guardado;
+    state.ordersMap.probing = clave;
+    try {
+      const res = await fetch(tileUrlFor(config.url, MAP_NATIVE_MAX_ZOOM, centro.lat, centro.lng));
+      if (!res?.ok) return null;
+      const cuerpo =
+        typeof res.arrayBuffer === 'function' ? await res.arrayBuffer() : await res.blob?.();
+      const bytes = Number(cuerpo?.byteLength ?? cuerpo?.size ?? 0);
+      // El relleno de "sin imagen" pesa 2,5 KB y es SIEMPRE el mismo archivo; una
+      // foto real, como poco 5,4 KB. Por debajo del umbral, ese nivel no existe.
+      const nivel = bytes >= MAP_MIN_REAL_TILE_BYTES ? MAP_NATIVE_MAX_ZOOM : MAP_NATIVE_DEFAULT_ZOOM;
+      ordersMapNativeRemember(clave, nivel);
+      if (state.tab !== 'mapa' || !state.ordersMap.map) return nivel;
+      const aplicado = Number(state.ordersMap.baseLayer?.options?.maxNativeZoom ?? 0);
+      state.ordersMap.nativeZoom = nivel;
+      state.ordersMap.zone = clave;
+      // Si el techo de ESTA zona no es el que está puesto (sube o baja), se repinta
+      // la capa de imagen: así se aprovecha el 19 donde lo hay y se deja de pedir
+      // donde no (que es lo que sacaba el mosaico gris).
+      if (nivel !== aplicado) {
+        addOrdersMapBase(state.ordersMap.map);
+      }
+      updateOrdersMapZoomHint();
+      return nivel;
+    } catch {
+      // Sin red no se decide nada: el techo seguro se queda como está.
+      return null;
+    } finally {
+      if (state.ordersMap.probing === clave) state.ordersMap.probing = null;
+    }
+  }
+
+  /** Comprobar como mucho una vez por zona, y solo cuando el mapa está quieto. */
+  function maybeProbeOrdersMapNative() {
+    const config = ordersMapBaseConfig();
+    if (!config.probe) return;
+    const map = state.ordersMap.map;
+    if (!map) return;
+    const centro = ordersMapCenterOf(map);
+    if (!centro) return;
+    /*
+     * Lo primero: que la capa esté al techo que toca AHORA. Si se acaba de entrar
+     * en una zona sin comprobar, baja al techo seguro (18) mientras se comprueba; si
+     * no, el mapa pediría tiles del 19 en un sitio que no los tiene y se vería el
+     * mosaico gris un instante.
+     */
+    syncOrdersMapNativeCeiling();
+    const clave = ordersMapZoneKey(centro.lat, centro.lng);
+    if (ordersMapNativeSaved(clave) !== null) return;
+    if (state.ordersMap.probing === clave) return;
+    if (state.ordersMap.probeTimer) clearTimeout(state.ordersMap.probeTimer);
+    // Un respiro muy corto: si el operador está moviendo el mapa, no se comprueba
+    // cada paso, pero la respuesta llega antes de que se note el techo conservador.
+    state.ordersMap.probeTimer = setTimeout(() => {
+      state.ordersMap.probeTimer = null;
+      probeOrdersMapNative().catch(() => {});
+    }, 250);
+  }
+
+  /**
+   * Poner la capa de imagen en el techo que toca AHORA MISMO.
+   *
+   * Se llama al mover el mapa: si la zona es nueva, baja al techo seguro mientras
+   * responde la comprobación (nunca se piden niveles a ciegas).
+   */
+  function syncOrdersMapNativeCeiling() {
+    const config = ordersMapBaseConfig();
+    const map = state.ordersMap.map;
+    const capa = state.ordersMap.baseLayer;
+    if (!config.probe || !map || !capa) return;
+    const aplicado = Number(capa.options?.maxNativeZoom ?? 0);
+    const toca = ordersMapNativeZoom(ordersMapCenterOf(map));
+    if (toca !== aplicado) addOrdersMapBase(map);
+  }
+
   /**
    * Pinta la capa base elegida (y sus etiquetas) sobre el mapa.
    *
@@ -8449,13 +8704,16 @@
     if (!map || !window.L) return;
     state.ordersMap.base = ordersMapBaseKey();
     const config = ordersMapBaseConfig();
+    /* El techo no es una constante: es lo que se ha comprobado en ESTA zona. */
+    const nativo = config.probe ? ordersMapNativeZoom(ordersMapCenterOf(map)) : config.maxNativeZoom;
+    state.ordersMap.nativeZoom = config.probe ? nativo : null;
     state.ordersMap.baseLayer?.remove();
     state.ordersMap.labelLayer?.remove();
     state.ordersMap.labelLayer = null;
     state.ordersMap.labelReady = false;
     const capa = window.L.tileLayer(config.url, {
       ...MAP_TILE_TUNING,
-      maxNativeZoom: config.maxNativeZoom,
+      maxNativeZoom: nativo,
       maxZoom: config.maxZoom,
       attribution: config.attribution,
     });
@@ -8522,9 +8780,12 @@
     const anterior = state.ordersMap.zoomHint;
     if (!map || !config) return;
     const zoom = map.getZoom();
+    // El techo es el de ESTA zona (medido), no una constante: donde no hay z19
+    // real nunca se dice que lo hay, y donde sí, no se avisa de ampliación.
+    const nativo = config.probe ? ordersMapNativeZoom(ordersMapCenterOf(map)) : config.maxNativeZoom;
     state.ordersMap.zoomHint =
-      zoom > config.maxNativeZoom
-        ? `${config.label}: ampliado (la imagen de esta zona llega al nivel ${config.maxNativeZoom})`
+      zoom > nativo
+        ? `${config.label}: ampliado (aquí la imagen real llega al nivel ${nativo}; más cerca no gana detalle)`
         : '';
     if (state.ordersMap.zoomHint !== anterior && !state.ordersMap.measuring) {
       setDeliveryMapNotice(state.ordersMap.zoomHint ?? '');
@@ -8547,9 +8808,10 @@
     setDeliveryMapNotice('');
     addOrdersMapBase(state.ordersMap.map ?? ensureOrdersMap());
     renderOrdersMap();
+    maybeProbeOrdersMapNative();
     toast(
       key === 'satelite'
-        ? 'Satélite: foto real del terreno (se ven las casas). Acérquese todo lo que quiera: al pasar del nivel 18 se amplía'
+        ? 'Satélite: foto real del terreno. Se comprueba sola hasta qué nivel hay imagen de verdad en cada zona'
         : 'Mapa de calles: más ligero para cuando la señal es mala',
     );
   }
@@ -8617,6 +8879,12 @@
     state.ordersMap.labelLayer = null;
     state.ordersMap.labelReady = false;
     state.ordersMap.zoomHint = '';
+    // La comprobación de la zona es del mapa que se está desmontando.
+    state.ordersMap.nativeZoom = null;
+    state.ordersMap.zone = null;
+    state.ordersMap.probing = null;
+    if (state.ordersMap.probeTimer) clearTimeout(state.ordersMap.probeTimer);
+    state.ordersMap.probeTimer = null;
     state.deliveryMap.tileLoading = 0;
     state.deliveryMap.tileError = false;
   }
@@ -8883,8 +9151,14 @@
     ];
     if (activas) partes.push(`${activas} entrega${activas === 1 ? '' : 's'} en vivo`);
     if (state.ordersMap.refPoint) partes.push('distancias desde tu punto');
-    // Con qué se está mirando el terreno (satélite o calles) y si está ampliado.
-    if (base) partes.push(base.label.toLowerCase());
+    /*
+     * Con qué se está mirando el terreno y hasta qué nivel hay FOTO REAL aquí: el
+     * operador ve de un vistazo si puede acercarse más o si ya está ampliando.
+     */
+    if (base) {
+      const nativo = base.probe ? ordersMapNativeZoom(ordersMapCenterOf(state.ordersMap.map)) : base.maxNativeZoom;
+      partes.push(base.probe ? `${base.label.toLowerCase()} (imagen z${nativo})` : base.label.toLowerCase());
+    }
     if (state.ordersMap.zoomHint) partes.push('ampliado');
     if (state.ordersMap.loading) partes.push('actualizando…');
     else if (state.ordersMap.error) partes.push('sin conexión: se ve lo último guardado');

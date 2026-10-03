@@ -17,7 +17,7 @@
  * pide: así se comprueba QUÉ se dibuja (coordenadas, marcadores, líneas y
  * distancias) sin depender de la red ni de los tiles de OpenStreetMap.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -39,6 +39,22 @@ const L2 = { latitude: 18.4861, longitude: -69.9312, name: 'Trabajo', address: '
 const CERCA = { latitude: 18.6257, longitude: -68.7071 };
 /** Dónde está el operador según el GPS de mentira (a un paso de L1). */
 const MIO = { latitude: 18.618, longitude: -68.71 };
+/**
+ * Zonas REALES auditadas el 2026-10-02, con el peso del tile de nivel 19 que
+ * devuelve Esri en cada una (el relleno de "sin imagen" pesa 2.521 B, idéntico en
+ * todo el país, y la foto real más pequeña encontrada en RD pesa 5.462 B).
+ */
+const ZONAS_AUDITADAS = {
+  higuey: { lat: 18.6157, lng: -68.7071, bytesZ19: 2521, nativo: 18 },
+  veron: { lat: 18.6244, lng: -68.4344, bytesZ19: 7394, nativo: 19 },
+  bavaro: { lat: 18.6857, lng: -68.4526, bytesZ19: 10195, nativo: 19 },
+  puntaCana: { lat: 18.5820, lng: -68.4050, bytesZ19: 5462, nativo: 19 },
+  santoDomingo: { lat: 18.4861, lng: -69.9312, bytesZ19: 18684, nativo: 19 },
+};
+/** El umbral que usa el panel para decir "este tile es imagen de verdad". */
+const MINIMO_REAL = Number(
+  /const MAP_MIN_REAL_TILE_BYTES = (\d+)/.exec(readFileSync(path.join(ADMIN_DIR, 'app.js'), 'utf8'))?.[1] ?? 0,
+);
 
 let tmpDir;
 let app;
@@ -46,6 +62,13 @@ let dom;
 let cookie = '';
 let fake;
 let ordenId = '';
+/*
+ * Peso que se le da al tile del nivel 19 en las pruebas: por defecto 2.521 B, que
+ * es el relleno de "aquí no hay imagen" (el caso de Higüey). Poniéndolo en 12.000
+ * se simula una zona CON imagen real en el nivel 19 (el caso de Bávaro).
+ */
+let tileZ19Bytes = 2521;
+const tileRequests = [];
 const ids = {};
 const sentLocations = [];
 const sentTemplates = [];
@@ -112,6 +135,13 @@ function createFakeLeaflet() {
   const L = {
     map(container, options) {
       const handlers = {};
+      /*
+       * Leaflet admite VARIOS manejadores por evento ('moveend' lo usan la vista
+       * guardada y la comprobación del techo de imagen). El doble guarda el
+       * último en `handlers` (para las pruebas antiguas) y TODOS en `listeners`,
+       * que es lo que dispara `fire()`.
+       */
+      const listeners = {};
       const map = node({
         container,
         options,
@@ -121,8 +151,19 @@ function createFakeLeaflet() {
           return map;
         },
         getContainer: () => container,
-        getZoom: () => map.zoom ?? 12,
-        getCenter: () => ({ lat: map.center?.[0] ?? 18.6, lng: map.center?.[1] ?? -68.7 }),
+        /*
+         * Como el Leaflet de verdad: sin vista fijada, preguntar por el centro o el
+         * zoom LANZA («Set map center and zoom first»). Si el doble fuera benévolo,
+         * un error real de orden al montar el mapa pasaría desapercibido.
+         */
+        getZoom() {
+          if (map.zoom === undefined) throw new Error('Set map center and zoom first.');
+          return map.zoom;
+        },
+        getCenter() {
+          if (map.center === undefined) throw new Error('Set map center and zoom first.');
+          return { lat: map.center[0], lng: map.center[1] };
+        },
         fitBounds(bounds) {
           calls.fits.push(bounds?.points ?? []);
           return map;
@@ -130,9 +171,14 @@ function createFakeLeaflet() {
         invalidateSize() {},
         on(event, handler) {
           handlers[event] = handler;
+          for (const nombre of String(event).split(' ')) (listeners[nombre] ??= []).push(handler);
           return map;
         },
+        fire(nombre, evento = {}) {
+          return (listeners[nombre] ?? []).map((fn) => fn(evento));
+        },
         handlers,
+        listeners,
       });
       calls.maps.push(container);
       calls.instances.push(map);
@@ -300,6 +346,25 @@ beforeAll(async () => {
   };
   win.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, `${app.url}/admin/`).toString();
+    /*
+     * Los tiles del mapa NO salen a la red en las pruebas: se simula el PESO del
+     * archivo, que es lo que distingue la foto real del relleno de "sin imagen".
+     * (Medido de verdad: el relleno de Esri pesa 2.521 B en todo el país; la foto
+     * real más pequeña que existe en RD pesa 5.462 B.)
+     */
+    if (/\/tile\/\d+\/\d+\/\d+$/.test(url)) {
+      const z = Number(url.match(/\/tile\/(\d+)\//)?.[1] ?? 0);
+      const bytes = z >= 19 ? tileZ19Bytes : 20000;
+      tileRequests.push({ url, z, bytes });
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => new ArrayBuffer(bytes),
+        blob: async () => ({ size: bytes }),
+        text: async () => '',
+      };
+    }
     const headers = { ...(init.headers ?? {}) };
     if (cookie) headers.cookie = cookie;
     const response = await fetch(url, { ...init, headers });
@@ -324,6 +389,34 @@ afterAll(async () => {
   await app?.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
+
+/** El mapa real que montó el panel (el último que se creó sobre su contenedor). */
+const mapaUat = () => fake.calls.instances.filter((inst) => inst.container?.id === 'orders-map').at(-1);
+
+/** La capa de imagen que está puesta ahora mismo. */
+const capaSatelite = () => fake.calls.tiles.filter((capa) => capa.url.includes('World_Imagery')).at(-1);
+
+/** Limpia lo que el panel recuerda de zonas anteriores: cada prueba parte de cero. */
+function olvidarZonas() {
+  dom.window.localStorage.removeItem('pe_map_native_zoom');
+}
+
+/**
+ * Coloca el mapa en una zona (como si el operador la mirara) y espera a que el
+ * panel compruebe el techo de imagen de esa zona (deja 600 ms de respiro antes).
+ */
+async function irAZona(zona, zoom = 18) {
+  const mapa = mapaUat();
+  mapa.setView([zona.lat, zona.lng], zoom);
+  mapa.fire('moveend');
+  await sleep(1000);
+}
+
+/** Abre la pantalla del mapa desde el menú lateral. */
+async function abrirMapa() {
+  click('.drawer__item[data-tab="mapa"]');
+  await waitFor(() => $('#orders-map') && mapaUat(), 'el mapa');
+}
 
 /** Abre el chat de Ana y espera al hilo con la ubicación. */
 async function abrirChatAna() {
@@ -555,5 +648,162 @@ describe('pantalla «Mapa de pedidos»', () => {
     await waitFor(() => $('[data-map-layer="labels"]')?.textContent.includes('Poner calles'), 'la fila al revés');
     click($('[data-map-layer="labels"]'));
     await waitFor(() => dom.window.localStorage.getItem('pe_orders_map_labels') === '1', 'volver a encenderlas');
+  }, 30000);
+});
+
+/**
+ * TECHO DE IMAGEN REAL, ZONA POR ZONA.
+ *
+ * Esri sirve el nivel 19 en unas zonas y en otras no, y donde no lo tiene devuelve
+ * un PNG gris de 2.521 B con HTTP 200 (no da error: Leaflet no se enteraría y el
+ * mapa saldría gris). Estas pruebas fijan el comportamiento con los pesos REALES
+ * medidos en la auditoría del 2026-10-02, y comprueban que nunca se toma un tile
+ * de relleno (ni una simple ampliación) por resolución real.
+ */
+describe('techo de imagen real por zona', () => {
+  beforeEach(() => {
+    // El registro de peticiones de tiles es de la prueba que empieza, no de antes.
+    tileRequests.length = 0;
+  });
+
+  it('el umbral de «imagen real» está por encima del relleno y por debajo de la foto más pequeña', () => {
+    // Medido: el relleno de Esri pesa 2.521 B (el mismo archivo en todo el país y
+    // también en z20) y la foto real más pequeña encontrada en RD pesa 5.462 B.
+    expect(MINIMO_REAL).toBeGreaterThan(2521);
+    expect(MINIMO_REAL).toBeLessThan(5462);
+    // Y el techo comprobable es el 19: el nivel 20 no existe en ninguna zona medida.
+    expect(ZONAS_AUDITADAS.higuey.nativo).toBe(18);
+    expect(ZONAS_AUDITADAS.bavaro.nativo).toBe(19);
+  });
+
+  it('Higüey: aquí la imagen real llega al nivel 18 y NO se finge el 19', async () => {
+    tileZ19Bytes = ZONAS_AUDITADAS.higuey.bytesZ19; // el relleno medido en Higüey
+    olvidarZonas();
+    await abrirMapa();
+    tileRequests.length = 0;
+
+    await irAZona(ZONAS_AUDITADAS.higuey);
+
+    // Se comprobó la zona pidiendo UN tile del 19, ni uno más.
+    const pedidos = tileRequests.filter((t) => t.z === 19);
+    expect(pedidos).toHaveLength(1);
+    expect(pedidos[0].bytes).toBe(2521);
+
+    // Y el techo se queda donde toca: 18 (nada de z19 gris).
+    expect(capaSatelite().options.maxNativeZoom).toBe(18);
+    expect($('#mapa-estado').textContent).toContain('imagen z18');
+
+    // Acercarse más se puede, pero se DICE que ya no hay más detalle real.
+    mapaUat().setView([ZONAS_AUDITADAS.higuey.lat, ZONAS_AUDITADAS.higuey.lng], 20);
+    mapaUat().fire('zoomend');
+    expect($('#orders-map-notice').hidden).toBe(false);
+    expect($('#orders-map-notice').textContent).toContain('ampliado');
+    expect($('#orders-map-notice').textContent).toContain('nivel 18');
+    expect($('#orders-map-notice').textContent).toContain('no gana detalle');
+    // Y la capa sigue sin pedir el nivel 20 (que no existe): máximo 18 nativo.
+    expect(capaSatelite().options.maxNativeZoom).toBe(18);
+  }, 30000);
+
+  it('Bávaro y Santo Domingo: donde SÍ hay nivel 19 real, el mapa lo aprovecha solo', async () => {
+    for (const zona of [ZONAS_AUDITADAS.bavaro, ZONAS_AUDITADAS.santoDomingo]) {
+      tileZ19Bytes = zona.bytesZ19; // el peso real medido en esa zona
+      olvidarZonas();
+      await irAZona(zona);
+
+      expect(capaSatelite().options.maxNativeZoom).toBe(19);
+      expect(capaSatelite().options.maxZoom).toBe(20);
+      expect(capaSatelite().options.maxZoom).toBeGreaterThan(19);
+      expect($('#mapa-estado').textContent).toContain('imagen z19');
+
+      // En z19 no hay aviso: es detalle de verdad, no ampliación.
+      mapaUat().setView([zona.lat, zona.lng], 19);
+      mapaUat().fire('zoomend');
+      expect($('#orders-map-notice').hidden).toBe(true);
+      expect($('#orders-map-notice').textContent).not.toContain('ampliado');
+
+      // En z20 sí se avisa (el 20 no existe en RD): ahí ya se amplía.
+      mapaUat().setView([zona.lat, zona.lng], 20);
+      mapaUat().fire('zoomend');
+      expect($('#orders-map-notice').textContent).toContain('nivel 19');
+    }
+  }, 30000);
+
+  it('en una zona SIN comprobar no se hereda el techo de la anterior (nada de gris)', async () => {
+    // Bávaro: comprobado con 19 real (y el mapa queda con ese techo puesto).
+    tileZ19Bytes = ZONAS_AUDITADAS.bavaro.bytesZ19;
+    olvidarZonas();
+    await irAZona(ZONAS_AUDITADAS.bavaro);
+    expect(capaSatelite().options.maxNativeZoom).toBe(19);
+
+    // Zona nueva sin comprobar: mientras no se sepa, el techo es el SEGURO (18), que
+    // tiene imagen real en todo el país. Heredar el 19 de la zona anterior haría que
+    // el mapa pidiera tiles del 19 donde no hay: el mosaico gris que se veía.
+    olvidarZonas();
+    mapaUat().setView([ZONAS_AUDITADAS.veron.lat, ZONAS_AUDITADAS.veron.lng], 19);
+    mapaUat().fire('zoomend');
+    expect($('#orders-map-notice').textContent).toContain('nivel 18');
+    expect($('#orders-map-notice').textContent).not.toContain('nivel 19');
+    expect(capaSatelite().options.maxNativeZoom).toBe(18);
+
+    // Y cuando la comprobación responde (Verón sí tiene 19), sube sola.
+    await sleep(1400);
+    expect(capaSatelite().options.maxNativeZoom).toBe(19);
+    expect($('#orders-map-notice').hidden).toBe(true);
+  }, 30000);
+
+  it('Verón (foto real pequeña, 7,4 KB) sube a z19; 3 KB de duda se quedan en z18', async () => {
+    // Verón tiene imagen real de nivel 19 y es la más pequeña medida: entra por poco.
+    tileZ19Bytes = ZONAS_AUDITADAS.veron.bytesZ19;
+    olvidarZonas();
+    await irAZona(ZONAS_AUDITADAS.veron);
+    expect(capaSatelite().options.maxNativeZoom).toBe(19);
+
+    // Ante la duda (3 KB, entre el relleno y la foto) NO se sube el techo: prefiero
+    // ver la imagen buena del 18 que un mosaico gris.
+    tileZ19Bytes = 3000;
+    olvidarZonas();
+    await irAZona(ZONAS_AUDITADAS.puntaCana);
+    expect(capaSatelite().options.maxNativeZoom).toBe(18);
+    expect($('#mapa-estado').textContent).toContain('imagen z18');
+  }, 30000);
+
+  it('no vuelve a comprobar la misma zona ni pide nunca el nivel 20', async () => {    tileZ19Bytes = ZONAS_AUDITADAS.higuey.bytesZ19;
+    olvidarZonas();
+    await irAZona(ZONAS_AUDITADAS.higuey);
+    expect(tileRequests.filter((t) => t.z === 19)).toHaveLength(1);
+
+    // La segunda vez ya está recordada: ni un tile más.
+    tileRequests.length = 0;
+    await irAZona(ZONAS_AUDITADAS.higuey);
+    expect(tileRequests).toHaveLength(0);
+    // Y en ningún momento se pide el 20 (no existe en RD).
+    expect(tileRequests.filter((t) => t.z >= 20)).toHaveLength(0);
+    // La zona queda RECORDADA como lo que se midió (18), nunca como 19.
+    const guardado = JSON.parse(dom.window.localStorage.getItem('pe_map_native_zoom') ?? '{}');
+    const niveles = Object.values(guardado).map((entrada) => entrada.z);
+    expect(niveles).toContain(18);
+    expect(niveles).not.toContain(19);
+  }, 30000);
+
+  it('cambiar de zoom o medir no altera el techo ni rompe nada del mapa', async () => {
+    tileZ19Bytes = ZONAS_AUDITADAS.bavaro.bytesZ19;
+    olvidarZonas();
+    await irAZona(ZONAS_AUDITADAS.bavaro);
+    const marcadoresAntes = fake.calls.markers.length;
+    const mapaAntes = fake.calls.maps.length;
+
+    // Zoom, medir y volver a mirar: el mapa es el mismo y los pines siguen ahí.
+    mapaUat().setView([ZONAS_AUDITADAS.bavaro.lat, ZONAS_AUDITADAS.bavaro.lng], 19);
+    mapaUat().fire('zoomend');
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="medir"]'), 'la acción de medir'));
+    mapaUat().fire('click', { latlng: { lat: ZONAS_AUDITADAS.bavaro.lat, lng: ZONAS_AUDITADAS.bavaro.lng } });
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="medir"]'), 'terminar de medir'));
+
+    expect(fake.calls.maps.length).toBe(mapaAntes);
+    expect(fake.calls.markers.length).toBeGreaterThanOrEqual(marcadoresAntes);
+    expect(capaSatelite().options.maxNativeZoom).toBe(19);
+    expect($$('#mapa-lista .map-item').length).toBeGreaterThan(0);
   }, 30000);
 });

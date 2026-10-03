@@ -944,4 +944,41 @@ se puedan ver las casas… necesito lo mejor que se pueda».
    `MAP_BASE_LAYERS` de `public/admin/app.js`. Lo que no se hará es prometer
    detalle que la fuente no tiene.
 
+### 39.1 El techo de zoom se COMPRUEBA por zona (no se supone)
+
+Auditoría medida tile a tile el 2026-10-02 (20 zonas de RD, z15-z21):
+
+1. El nivel **18** tiene imagen propia en **las 20 zonas** comprobadas. El **19**
+   solo en algunas (Verón, Bávaro, Punta Cana, Santo Domingo, Santiago) y **no**
+   en otras (Higüey, La Romana, Puerto Plata, Samaná, Nagua, San Pedro, Barahona,
+   San Juan, Monte Cristi). El **20 no existe** en RD.
+2. Donde el 19 no existe, Esri **no da error**: devuelve siempre el mismo PNG gris
+   de **2.521 bytes** (sha `1660d86a87f5`, idéntico en todo el país y también en
+   z20) con **HTTP 200**. Leaflet no se entera (no hay `tileerror`) y el mapa
+   saldría gris. Ese relleno se detecta por **peso**: la foto real más pequeña
+   medida en RD pesa **5.462 B**, así que el umbral queda en **4.000 B**.
+3. Por eso el techo por defecto es **18** (seguro en todo el país) y **sube a 19
+   solo tras comprobar** la zona: al parar el mapa se pide UN tile del 19 del
+   centro que se está mirando y se mira si es foto. Si lo es, se repinta la capa
+   con `maxNativeZoom: 19`; si no, se queda en 18.
+4. La comprobación se guarda **por celda** (z15, ≈1,2 km) en el teléfono, con
+   caducidad de **30 días** (la imagen cambia con los años) y un tope de 300
+   zonas. Como mínimo una petición por zona nueva; ninguna si ya se sabe.
+5. **Nunca** se pide el nivel 20 para ver si hay imagen: no existe en RD.
+6. **En una zona sin comprobar se usa el techo SEGURO (18)**, no el que tuviera la
+   zona anterior: al entrar en un sitio cuyo techo real es menor, heredar el 19 hacía
+   que el mapa pidiera ese nivel durante un instante y se viera el mosaico gris (se
+   vio en la UAT, y se corrigió). Si la comprobación luego dice que hay 19, la capa
+   se repinta sola y se aprovecha.
+7. Al pasar del techo real se sigue avisando en pantalla («ampliado… más cerca no
+   gana detalle»), y ahora el aviso dice el nivel **de esa zona**, no una constante.
+8. Nada de esto toca marcadores, mediciones, GPS, rutas ni la entrega en vivo:
+   solo se cambia la capa de imagen, que se rehace sin recrear el mapa. Además, la
+   capa base ya no pregunta por el centro del mapa antes de fijar la vista (Leaflet
+   lanza «Set map center and zoom first» y dejaba la pantalla muerta); lo detectó la
+   UAT en navegador.
+9. Pruebas: `tests/panel-map-uat.test.js` fija el comportamiento con los **pesos
+   reales medidos** (2.521 B relleno · 7.394 B Verón · 10.195 B Bávaro · 18.684 B
+   Santo Domingo) y comprueba que un tile dudoso (3 KB) **no** sube el techo.
+
 
