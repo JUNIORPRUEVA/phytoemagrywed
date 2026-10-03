@@ -2,8 +2,14 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-const app = readFileSync(new URL('../public/admin/app.js', import.meta.url), 'utf8');
-const html = readFileSync(new URL('../public/admin/index.html', import.meta.url), 'utf8');
+/*
+ * El texto se normaliza a LF antes de comparar: el repositorio guarda LF
+ * (`.gitattributes`, `* text=auto eol=lf`) y el contenedor recibe LF, pero una
+ * copia editada en Windows puede tener CRLF. Sin esto, una comparación podía
+ * pasar en Windows y tumbar el build en el servidor (`npm run verify`).
+ */
+const app = readFileSync(new URL('../public/admin/app.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+const html = readFileSync(new URL('../public/admin/index.html', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
 describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
@@ -73,7 +79,7 @@ describe('delivery tracking frontend UAT guards', () => {
     // alguien volvió a crear un mapa aparte (lo que había antes con Delivery).
     expect(app.match(/window\.L\.map\(/g)).toHaveLength(1);
     expect(app).toContain('if (state.ordersMap.map && state.ordersMap.map.getContainer?.() === el) return state.ordersMap.map;');
-    expect(app).toContain('function ensureDeliveryMap() {\r\n    return ensureOrdersMap();');
+    expect(app).toContain('function ensureDeliveryMap() {\n    return ensureOrdersMap();');
     expect(app).toContain('state.deliveryMap.customerMarker = window.L.marker');
     expect(app).toContain('state.deliveryMap.deliveryMarker = window.L.marker');
     expect(app).toContain('state.deliveryMap.deliveryMarker.setLatLng(currentLatLng)');
