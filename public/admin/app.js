@@ -9880,7 +9880,7 @@
    * de siempre, ahora dentro del menú) y `href` para lo que de verdad es un
    * enlace, como llamar por teléfono.
    */
-  function openSheetActionMenu({ title = 'Acciones', acciones = [] } = {}) {
+  function openSheetActionMenu({ title = 'Acciones', nota = '', acciones = [] } = {}) {
     const fila = (accion) => {
       const cuerpo = `<span class="menu-item__icon" aria-hidden="true">${accion.icon ?? ''}</span>
         <span><strong>${escapeHtml(accion.label)}</strong>${
@@ -9892,7 +9892,13 @@
         .join(' ');
       return `<button class="menu-item" type="button" ${attrs}>${cuerpo}</button>`;
     };
-    openSheet(title, `<div class="menu-list">${acciones.map(fila).join('')}</div>`, { variant: 'menu' });
+    openSheet(
+      title,
+      `${nota ? `<p class="view__hint">${escapeHtml(nota)}</p>` : ''}<div class="menu-list">${acciones
+        .map(fila)
+        .join('')}</div>`,
+      { variant: 'menu' },
+    );
   }
 
   /** Las acciones del pedido, todas dentro de su botón flotante. */
@@ -9901,8 +9907,21 @@
     if (!item) return;
     const phone = digits(item.phone);
     const esPedido = item.type === 'order_intent';
+    const conversacionId = conversationForCustomer(item.customer_id)?.id ?? '';
+    const estado = orderOperational(item);
+    /*
+     * Con el pedido YA ENTREGADO es cuando toca el seguimiento: se dice arriba, para
+     * que las dos acciones de abajo (seguimiento y mensaje) no se pasen por alto.
+     */
+    const nota =
+      esPedido && estado === 'ENTREGADO'
+        ? 'Pedido entregado: buen momento para el seguimiento. Programa una tarea para el equipo o un mensaje al cliente.'
+        : '';
+    // El seguimiento y el mensaje programado se ligan al pedido desde el que se crean.
+    const enganche = { 'data-conversation': conversacionId, 'data-order-id': item.id };
     openSheetActionMenu({
       title: item.order_number ?? item.name ?? 'Acciones',
+      nota,
       acciones: [
         { icon: ICONS.chevron, label: 'Volver a la ficha', data: { 'data-open': item.id } },
         esPedido
@@ -9925,6 +9944,22 @@
           ? { icon: ICONS.person, label: 'Ver cliente', note: 'Su ficha completa', data: { 'data-customer': item.customer_id } }
           : null,
         { icon: ICONS.chat, label: 'Escribir por WhatsApp', note: 'Plantilla o mensaje libre', data: { 'data-item-wa': item.id } },
+        item.customer_id
+          ? {
+              icon: ICONS.clock,
+              label: 'Programar seguimiento',
+              note: 'Una tarea para el equipo: hablar con este cliente',
+              data: { 'data-followup-new': item.customer_id, ...enganche },
+            }
+          : null,
+        item.customer_id
+          ? {
+              icon: ICONS.send,
+              label: 'Programar mensaje al cliente',
+              note: 'Lo envía el sistema el día y la hora que elijas',
+              data: { 'data-scheduled-new': item.customer_id, ...enganche },
+            }
+          : null,
         phone ? { icon: ICONS.phone, label: 'Llamar', note: item.phone, href: `tel:${phone}` } : null,
       ].filter(Boolean),
     });
@@ -11283,6 +11318,7 @@
         openScheduledForm({
           customerId: scheduledNew.dataset.scheduledNew,
           conversationId: scheduledNew.dataset.conversation ?? '',
+          orderId: scheduledNew.dataset.orderId ?? '',
         });
         return;
       }
@@ -11411,7 +11447,11 @@
       }
       const newFollowup = event.target.closest('[data-followup-new]');
       if (newFollowup) {
-        openFollowupForm(newFollowup.dataset.followupNew);
+        openFollowupForm({
+          customerId: newFollowup.dataset.followupNew,
+          conversationId: newFollowup.dataset.conversation ?? '',
+          orderId: newFollowup.dataset.orderId ?? '',
+        });
         return;
       }
       const done = event.target.closest('[data-followup-done]');

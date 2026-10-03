@@ -1050,3 +1050,25 @@ que se lee es lo importante; las acciones son otra cosa.
    último dato (`.sheet__body:has(.sheet-fab)`).
 
 
+
+## 42. Desde el pedido se programa el seguimiento y el mensaje al cliente
+
+El pedido se cierra y ahí empieza lo de después: recordarle a alguien del equipo que
+hable con ese cliente y, si toca, mandarle un mensaje un día concreto. Eso vivía en la
+ficha del cliente y en el chat, lejos del pedido que se acaba de entregar.
+
+1. **Las dos acciones están en el botón flotante del pedido**: "Programar seguimiento"
+   (una TAREA para el equipo, con motivo y fecha) y "Programar mensaje al cliente" (lo
+   intenta enviar el SISTEMA el día y la hora elegidos). No se inventó nada: son los
+   formularios que ya existían (`openFollowupForm`, `openScheduledForm`), abiertos desde
+   el pedido.
+2. **El seguimiento y el mensaje quedan ligados al pedido** desde el que se crean: el
+   menú manda `data-order-id` y los dos formularios lo guardan (`order_id`), además del
+   cliente y la conversación. Así se puede reconstruir de qué pedido salió.
+3. **Con el pedido ENTREGADO el menú lo dice**: una nota arriba ("Pedido entregado: buen
+   momento para el seguimiento…") porque es justo el momento en el que toca. El aviso no
+   aparece en pendientes: ahí no es postventa, es trabajo por hacer.
+4. La distinción importante: **seguimiento ≠ mensaje**. El seguimiento es para una
+   persona (sale en HOY cuando vence); el mensaje programado lo intenta mandar el
+   sistema, y si la ventana de WhatsApp no lo permite queda registrado para que alguien
+   lo vea. No se mezclan en un solo botón.

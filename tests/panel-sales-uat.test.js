@@ -472,6 +472,58 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(ordenDe(item).delivery.delivery_user_name_snapshot).toBe('Reparto UAT');
   });
 
+  it('desde el pedido se programa un seguimiento y un mensaje al cliente', async () => {
+    const abrirMenu = async (fila) => {
+      click(fila);
+      const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del pedido');
+      click(fab);
+      return waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'el menú de acciones');
+    };
+
+    click('[data-tab="pedidos"]');
+    const filas = await waitFor(() => $$('#list-pedidos .order-row'), 'la lista de pedidos');
+
+    // 1) SEGUIMIENTO: una tarea para el equipo, ligada al pedido.
+    const menu = await abrirMenu(filas[0]);
+    for (const opcion of ['Programar seguimiento', 'Programar mensaje al cliente']) {
+      expect(menu.textContent).toContain(opcion);
+    }
+    click($('[data-followup-new]'));
+    const guardar = await waitFor(() => $('#fu-save'), 'el formulario de seguimiento');
+    setValue('#fu-motivo', 'Seguimiento postventa');
+    setValue('#fu-reason', 'Preguntarle si le fue bien');
+    click(guardar);
+    const seguimiento = await esperar(async () => {
+      const data = await datos();
+      const todos = [
+        ...(data.followups?.overdue ?? []),
+        ...(data.followups?.today ?? []),
+        ...(data.followups?.upcoming ?? []),
+      ];
+      return todos.find((row) => String(row.reason ?? '').includes('Preguntarle si le fue bien')) ?? null;
+    }, 'el seguimiento guardado');
+    // Queda ligado al pedido desde el que se creó y al cliente.
+    expect(seguimiento.order_id).toBeTruthy();
+    expect(seguimiento.customer_id).toBeTruthy();
+
+    // 2) MENSAJE PROGRAMADO: lo envía el sistema el día y la hora elegidos.
+    click($$('#list-pedidos .order-row')[0]);
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante otra vez');
+    click(fab);
+    click(await waitFor(() => $('[data-scheduled-new]'), 'la acción de programar mensaje'));
+    await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
+    setValue('#sch-text', 'Hola Ana, ¿cómo te fue con el pedido?');
+    click('#sch-save');
+    const programado = await esperar(async () => {
+      const data = await (await fetch(`${app.url}/api/admin/scheduled`, { headers: { cookie } })).json();
+      return (
+        (data.scheduled ?? []).find((row) => row.text === 'Hola Ana, ¿cómo te fue con el pedido?') ?? null
+      );
+    }, 'el mensaje programado');
+    expect(programado.status).toBe('SCHEDULED');
+    expect(programado.order_id ?? null).not.toBe(undefined);
+  });
+
   it('los filtros de estado se cuentan y filtran de verdad', async () => {
     expect($$('#pedidos-filtros .chip')).toHaveLength(5);
     const total = (await pedidos()).length;
@@ -563,5 +615,55 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(
       guardadas.locations.some((candidate) => Math.abs(Number(candidate.latitude) - LUGAR.latitude) < 0.001),
     ).toBe(true);
+  });
+
+  /*
+   * Va al final: deja un pedido ENTREGADO (el test de filtros espera que todavía no haya
+   * ninguno). El camino es el real del panel: factura → cambiar estado → motivo.
+   */
+  it('con el pedido ENTREGADO el menú lo dice y ofrece el seguimiento', async () => {
+    dom.window.confirm = () => true;
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-row'), 'la lista de pedidos');
+
+    // 1) Llevar el primer pedido a ENTREGADO desde el propio panel.
+    click($$('#list-pedidos .order-row')[0]);
+    const fabFicha = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del pedido');
+    click(fabFicha);
+    click(await waitFor(() => $('[data-receipt]'), 'la acción de ver la factura'));
+    const fabFactura = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante de la factura');
+    click(fabFactura);
+    click(await waitFor(() => $('[data-order-status-change]'), 'la acción de cambiar estado'));
+    await waitFor(() => $('#manual-order-confirm'), 'el formulario de cambio de estado');
+    setValue('#manual-order-status', 'ENTREGADO');
+    setValue('#manual-order-reason', 'Cliente confirmó la entrega por llamada');
+    click('#manual-order-confirm');
+    const entregado = await esperar(
+      async () => (await pedidos()).find((item) => item.status === 'entregado') ?? null,
+      'el pedido entregado en el CRM',
+    );
+    click('[data-close-sheet]');
+    await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+
+    // 2) La fila ya entregada y su menú: aviso de postventa + las dos acciones.
+    const fila = await waitFor(
+      () =>
+        $$('#list-pedidos .order-row').find((row) =>
+          row.querySelector('.order-row__meta')?.textContent.includes(entregado.order_number),
+        ) ?? null,
+      'la fila del pedido entregado',
+    );
+    click(fila);
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del entregado');
+    click(fab);
+    const menu = await waitFor(
+      () => ($('#sheet-body .menu-list') ? $('#sheet-body') : null),
+      'el menú del pedido entregado',
+    );
+    expect(menu.textContent).toContain('Pedido entregado');
+    expect(menu.textContent).toContain('Programar seguimiento');
+    expect(menu.textContent).toContain('Programar mensaje al cliente');
+    click('[data-close-sheet]');
+    await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
   });
 });
