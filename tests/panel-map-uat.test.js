@@ -110,28 +110,41 @@ const click = (element) => {
  */
 function createFakeLeaflet() {
   const calls = { maps: [], instances: [], markers: [], polylines: [], circles: [], fits: [], tiles: [], clicks: [] };
-  const node = (extra = {}) => ({
-    addTo() {
-      return this;
-    },
-    remove() {},
-    on() {
-      return this;
-    },
-    bindPopup() {
-      return this;
-    },
-    setPopupContent() {
-      return this;
-    },
-    setLatLng() {
-      return this;
-    },
-    openPopup() {
-      return this;
-    },
-    ...extra,
-  });
+  const node = (extra = {}) => {
+    /*
+     * Cada nodo (capa, marcador, línea) guarda sus manejadores y se pueden
+     * DISPARAR desde la prueba con `fire()`. Hace falta de verdad: la distancia
+     * medida se borraba cuando la capa de teselas avisaba de que estaba cargando.
+     */
+    const listeners = {};
+    return {
+      addTo() {
+        return this;
+      },
+      remove() {},
+      on(event, handler) {
+        for (const nombre of String(event).split(' ')) (listeners[nombre] ??= []).push(handler);
+        return this;
+      },
+      fire(nombre, evento = {}) {
+        return (listeners[nombre] ?? []).map((fn) => fn(evento));
+      },
+      bindPopup() {
+        return this;
+      },
+      setPopupContent() {
+        return this;
+      },
+      setLatLng() {
+        return this;
+      },
+      openPopup() {
+        return this;
+      },
+      listeners,
+      ...extra,
+    };
+  };
   const L = {
     map(container, options) {
       const handlers = {};
@@ -185,8 +198,11 @@ function createFakeLeaflet() {
       return map;
     },
     tileLayer(url, options) {
-      calls.tiles.push({ url, options });
-      return node();
+      const layer = node();
+      // La capa se guarda TAMBIÉN en el registro: así la prueba puede disparar
+      // 'loading'/'load' como hace el navegador de verdad.
+      calls.tiles.push({ url, options, layer });
+      return layer;
     },
     marker(coords, options) {
       calls.markers.push({ coords, options });
@@ -402,10 +418,23 @@ function olvidarZonas() {
 }
 
 /**
+ * Apaga el modo «medir» si quedó encendido. El aviso del mapa es UNO y tiene
+ * prioridad (medición > ampliado > teselas): para leer el aviso del zoom hay que
+ * estar midiendo, no. Deja la prueba independiente de las anteriores.
+ */
+function dejarDeMedir() {
+  if ($('#mapa-acciones')?.getAttribute('aria-pressed') !== 'true') return;
+  click('#mapa-acciones');
+  const boton = $('[data-map-action="medir"]');
+  if (boton) click(boton);
+}
+
+/**
  * Coloca el mapa en una zona (como si el operador la mirara) y espera a que el
  * panel compruebe el techo de imagen de esa zona (deja 600 ms de respiro antes).
  */
 async function irAZona(zona, zoom = 18) {
+  dejarDeMedir();
   const mapa = mapaUat();
   mapa.setView([zona.lat, zona.lng], zoom);
   mapa.fire('moveend');
@@ -582,11 +611,14 @@ describe('pantalla «Mapa de pedidos»', () => {
     mapa.handlers.click({ latlng: { lat: CERCA.latitude, lng: CERCA.longitude } });
 
     const aviso = await waitFor(
-      () => (/Distancia: [\d.,]+ (m|km)/.test($('#orders-map-notice').textContent) ? $('#orders-map-notice') : null),
+      () => (/Distancia [\d.,]+ (m|km) en línea recta/.test($('#orders-map-notice').textContent) ? $('#orders-map-notice') : null),
       'la distancia medida en el mapa',
     );
     // L1 y CERCA están a ~1,11 km en línea recta (0.01° de latitud).
-    expect(aviso.textContent).toMatch(/Distancia: 1,1 km en línea recta/);
+    expect(aviso.textContent).toMatch(/Distancia 1,1 km en línea recta/);
+    // Además de la distancia, el TIEMPO estimado con la velocidad a la vista
+    // (1,1 km a 25 km/h ≈ 3 min). Se dice de dónde sale el número, no se promete.
+    expect(aviso.textContent).toMatch(/unos 3 min a 25 km\/h/);
     expect(fake.calls.polylines.length).toBeGreaterThan(0);
     const linea = fake.calls.polylines.at(-1);
     expect(linea.coords[0][0]).toBeCloseTo(L1.latitude, 4);
@@ -595,6 +627,61 @@ describe('pantalla «Mapa de pedidos»', () => {
     click('#mapa-acciones');
     click(await waitFor(() => $('[data-map-action="medir"]'), 'la acción de terminar de medir'));
     expect($('#mapa-acciones').getAttribute('aria-pressed')).toBe('false');
+  }, 30000);
+
+  it('la distancia medida NO se borra cuando el mapa carga teselas (fallo real)', async () => {
+    /*
+     * Lo que pasaba: se tocaban los dos puntos, la distancia se calculaba… y la
+     * capa de satélite avisaba de que estaba cargando TESELAS, que escribe en el
+     * mismo aviso. El número desaparecía y parecía que «medir» no medía nada.
+     */
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="medir"]'), 'la acción de medir'));
+    const mapa = mapaUat();
+    mapa.handlers.click({ latlng: { lat: L1.latitude, lng: L1.longitude } });
+    mapa.handlers.click({ latlng: { lat: CERCA.latitude, lng: CERCA.longitude } });
+    expect($('#orders-map-notice').textContent).toMatch(/Distancia 1,1 km/);
+
+    const capa = capaSatelite();
+    capa.layer.fire('loading');
+    expect($('#orders-map-notice').textContent).toMatch(/Distancia 1,1 km/);
+    capa.layer.fire('load');
+    expect($('#orders-map-notice').textContent).toMatch(/Distancia 1,1 km/);
+
+    // Y al terminar de medir, el aviso vuelve a ser el del mapa (aquí, sin ampliar).
+    click('#mapa-acciones');
+    click(await waitFor(() => $('[data-map-action="medir"]'), 'la acción de terminar de medir'));
+    expect($('#orders-map-notice').textContent).not.toMatch(/Distancia/);
+  }, 30000);
+
+  it('también se mide DESDE un punto conocido (el pin no deja pasar el toque)', async () => {
+    /*
+     * El gesto que de verdad se usa es «¿a cuánto está este cliente?». Tocar el pin
+     * para medir NO siempre cuenta como toque del mapa (Leaflet no deja pasar el
+     * clic del marcador), así que el punto trae su propia acción: se abre el punto
+     * desde la lista, como cuando se abre su globo, y se mide desde él.
+     */
+    const fila = await waitFor(() => $('#mapa-lista [data-map-open]'), 'un punto de la lista');
+    click(fila);
+    const boton = await waitFor(() => $('#map-point-measure'), 'la acción de medir desde el punto');
+    click(boton);
+
+    // El punto entra en la medición y el mapa pide el segundo.
+    expect($('#mapa-acciones').getAttribute('aria-pressed')).toBe('true');
+    expect($('#orders-map-notice').textContent).toContain('segundo punto');
+
+    // El segundo toque, sobre el mapa: distancia y tiempo estimado.
+    const mapa = mapaUat();
+    mapa.handlers.click({ latlng: { lat: L1.latitude + 0.02, lng: L1.longitude } });
+    const aviso = await waitFor(
+      () =>
+        /Distancia [\d.,]+ km en línea recta/.test($('#orders-map-notice').textContent)
+          ? $('#orders-map-notice')
+          : null,
+      'la distancia medida desde el punto',
+    );
+    expect(aviso.textContent).toMatch(/unos \d+ min a 25 km\/h/);
+    dejarDeMedir();
   }, 30000);
 
   it('con «Mi ubicación» las distancias salen ordenadas de la más cercana', async () => {

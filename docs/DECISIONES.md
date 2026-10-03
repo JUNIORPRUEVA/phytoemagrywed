@@ -981,4 +981,51 @@ Auditoría medida tile a tile el 2026-10-02 (20 zonas de RD, z15-z21):
    reales medidos** (2.521 B relleno · 7.394 B Verón · 10.195 B Bávaro · 18.684 B
    Santo Domingo) y comprueba que un tile dudoso (3 KB) **no** sube el techo.
 
+## 40. Los pedidos y los chats, con lo que faltaba a mano (y el mapa que no medía)
+
+Lo que pidió el negocio, punto por punto, y por qué se hizo así.
+
+1. **La barra de arriba de Pedidos se queda fija** (`position: sticky` en móvil, igual
+   que Clientes). Con una lista larga, tener que subir para volver atrás no se acepta.
+2. **Fuera el icono con reloj de la lista de conversaciones** (y el calendario de la
+   barra de arriba): el filtro de fecha es ahora **un chip más** de la lista, que
+   enseña el rango puesto ("Hoy", "Ayer"…) y se cambia desde el mismo sitio en el
+   móvil y en el escritorio. No se pierde ninguna función: se quita una redundancia.
+3. **La primera fila del menú flotante del chat ASIGNA.** Antes era un cartel que
+   decía "Sin asignar" y no hacía nada. Ahora abre "Asignármela a mí" (un toque), la
+   lista del equipo (para quien administra) y "Dejarla sin asignar". "Reasignar /
+   transferir" usa la MISMA hoja: se acabó el cuadro de diálogo del navegador pidiendo
+   un número.
+4. **Un cliente con un pedido sin cerrar AVISA antes de crearle otro.** El formulario
+   lo dice con el número, el estado, el total y cuándo entró, y **no guarda** hasta
+   marcar "Sí, es un pedido nuevo". Entregado y cancelado no cuentan: eso ya terminó.
+   Es lo que evita el pedido duplicado de verdad, el que se descubre tarde.
+5. **Un dato que llega por el chat se puede colgar de un pedido que ya existe.** La
+   ubicación tiene "Agregar a un pedido abierto": lista SOLO los pedidos vivos, hace
+   un `PATCH` de ese pedido (sin crear otro) y la ubicación queda además en el
+   historial del cliente para el próximo pedido. Cambiar la dirección de un pedido ya
+   entregado NO se ofrece: sería reescribir la historia.
+6. **La lista de pedidos es una fila por pedido**: cliente, cuándo, número, frasco,
+   total y estado, más una línea corta con el **teléfono y quién lo atendió**
+   ("Atendido por …" o "Sin asignar"). Sin botones dentro y sin repetir el nombre de
+   la pantalla (ya está en la barra de arriba). Se filtra por estado operativo (Todo,
+   Pendientes, En camino, Entregados, Cancelados) con la cuenta en cada chip, y el alta
+   vive en un **botón cuadrado flotante**, no en una barra ancha al pie. La ficha del
+   pedido dice **Pedido, Atendido por, Pedido creado por, Teléfono** y trae un botón
+   para abrir la ficha del cliente.
+7. **El mapa SÍ medía, pero la distancia se borraba sola.** Fallo real encontrado en
+   el navegador: se tocaban los dos puntos, el número se calculaba… y la capa de
+   satélite avisaba de que estaba cargando TESELAS en el mismo aviso, así que la
+   distancia desaparecía y parecía que "medir" no medía nada. El aviso del mapa es UNO
+   y ahora tiene **orden de prioridad** (medición > ampliado > estado del mapa),
+   guardado en el estado: la carga de teselas ya no puede tapar un resultado. Lo cubre
+   `tests/panel-map-uat.test.js` disparando `loading`/`load` en la capa de teselas.
+8. **La medición dice también el tiempo**: "Distancia 666 m en línea recta · unos 2 min
+   a 25 km/h". La velocidad supuesta se dice a la vista porque la distancia es en línea
+   recta y la ruta real por carretera es igual o más larga: el número es un **piso**,
+   no una promesa. Y se puede medir **desde un punto conocido** ("Medir desde aquí" en
+   el globo del pin y en su ficha): tocar el pin para medir no siempre cuenta como
+   toque del mapa (Leaflet no deja pasar el clic del marcador), así que el punto trae
+   su propia acción.
+
 

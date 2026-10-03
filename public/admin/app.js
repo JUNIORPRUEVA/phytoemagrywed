@@ -88,6 +88,13 @@
       measurePoints: [],
       measureLine: null,
       measureMarkers: [],
+      /*
+       * EL AVISO DEL MAPA ES UNO SOLO, así que cada cosa que quiere hablar guarda
+       * su texto y `refreshOrdersMapNotice()` decide cuál se ve (por prioridad).
+       * `measureText` es el resultado de medir: lo que la persona acaba de pedir.
+       */
+      measureText: '',
+      noticeText: '',
       refPoint: null,
       refMarker: null,
       focus: null,
@@ -1802,21 +1809,24 @@
     getOrderOperationalStatus(itemOrder(item), deliverySessionForOrder(item.id));
 
   /**
-   * UNA FILA DE PEDIDO: dos líneas y nada más.
+   * UNA FILA DE PEDIDO: dos líneas de datos y una tercera corta con el contacto y
+   * quién lo atiende.
    *
-   * De un vistazo: quién, cuánto y en qué estado. Los botones grandes (WhatsApp,
-   * comprobante, ficha) viven en la ficha del pedido, que se abre tocando la fila:
-   * en una lista larga, eso es la diferencia entre leerla y no leerla.
+   * De un vistazo: quién es el cliente (nombre y teléfono), cuánto y en qué estado,
+   * y quién lo atendió. Los botones grandes (WhatsApp, comprobante, ficha) viven en
+   * la ficha del pedido, que se abre tocando la fila: en una lista larga, eso es la
+   * diferencia entre leerla y no leerla.
    */
   function orderRow(item) {
     const estado = orderOperational(item);
     const order = itemOrder(item) ?? {};
+    const agente = orderAgent(item);
     const meta = [
       item.order_number ?? order.order_number ?? null,
       item.variant_name ? `${item.variant_name}${item.quantity ? ` ×${item.quantity}` : ''}` : null,
       orderTotalOf(item) || null,
-      item.phone ?? null,
     ].filter(Boolean);
+    const referencia = [item.phone ?? null, `Atendido por ${agente.label}`].filter(Boolean).join(' · ');
     return `<button class="order-row order-row--${escapeHtml(
       estado.toLowerCase(),
     )}" data-open="${escapeHtml(item.id)}" type="button">
@@ -1828,10 +1838,28 @@
         <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
         <span class="order-row__status">${escapeHtml(operationalStatusLabel(estado))}</span>
       </span>
+      <span class="order-row__ref">${escapeHtml(referencia)}</span>
     </button>`;
   }
 
   /** Pedidos y compras (menú lateral): lo que entró por la web o se apuntó a mano. */
+  /**
+   * QUIÉN ATENDIÓ EL PEDIDO.
+   *
+   * Lo dicen los datos del propio pedido (quien lo creó y quien lo tocó por última
+   * vez) y, si no hay nada, la conversación que lo atiende. No se inventa nada: sin
+   * datos se dice «Sin asignar», que es justo lo que hay que ver para repartir el
+   * trabajo.
+   */
+  function orderAgent(item) {
+    const order = itemOrder(item) ?? {};
+    const conversacion = item?.customer_id ? conversationForCustomer(item.customer_id) : null;
+    const asignado = conversacion?.assigned_display_name_snapshot ?? null;
+    const creador = order.created_by_display_name_snapshot ?? null;
+    const ultimo = order.updated_by_display_name_snapshot ?? null;
+    return { asignado, creador, ultimo, label: asignado ?? ultimo ?? creador ?? 'Sin asignar' };
+  }
+
   function renderPedidos() {
     const box = $('#list-pedidos');
     if (!box) return;
@@ -1997,12 +2025,31 @@
     };
   }
 
-  function setDeliveryMapNotice(text = '') {
-    // Un solo mapa, un solo aviso: el de la pantalla «Mapa y entregas».
+  /**
+   * EL AVISO DEL MAPA, CON ORDEN DE PRIORIDAD.
+   *
+   * Por el mismo sitio quieren hablar tres cosas: la MEDICIÓN (lo que la persona
+   * acaba de pedir), el aviso de AMPLIACIÓN y lo que va diciendo la carga de
+   * teselas. Sin un orden explícito, la carga de teselas BORRABA la distancia
+   * recién medida: se tocaban los dos puntos y el número no aparecía (fallo real,
+   * visto en el navegador con el mapa de satélite, que carga teselas a cada rato).
+   *
+   *   1) medición  →  2) ampliado  →  3) estado del mapa (cargando, lento, falló)
+   */
+  function refreshOrdersMapNotice() {
     const node = $('#orders-map-notice');
     if (!node) return;
-    node.textContent = text;
-    node.hidden = !text;
+    const medido = state.ordersMap.measuring ? state.ordersMap.measureText : '';
+    const texto = medido || state.ordersMap.zoomHint || state.ordersMap.noticeText || '';
+    node.textContent = texto;
+    node.hidden = !texto;
+  }
+
+  /** Aviso de ESTADO del mapa (cargando, lento, falló): el de menor prioridad. */
+  function setDeliveryMapNotice(text = '') {
+    // Un solo mapa, un solo aviso: el de la pantalla «Mapa y entregas».
+    state.ordersMap.noticeText = text ?? '';
+    refreshOrdersMapNotice();
   }
 
   function startDeliveryTileSlowTimer() {
@@ -3216,6 +3263,24 @@
       </div>
 
       <dl class="facts">
+        ${item.order_number ? `<div class="fact"><dt>Pedido</dt><dd>${escapeHtml(item.order_number)}</dd></div>` : ''}
+        ${
+          item.type === 'order_intent'
+            ? `<div class="fact"><dt>Atendido por</dt><dd>${escapeHtml(orderAgent(item).label)}</dd></div>`
+            : ''
+        }
+        ${
+          item.type === 'order_intent' && orderAgent(item).creador && orderAgent(item).creador !== orderAgent(item).label
+            ? `<div class="fact"><dt>Pedido creado por</dt><dd>${escapeHtml(orderAgent(item).creador)}</dd></div>`
+            : ''
+        }
+        ${
+          item.customer_id
+            ? `<div class="fact"><dt>Cliente</dt><dd><button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(
+                item.customer_id,
+              )}" type="button">Abrir la ficha del cliente</button></dd></div>`
+            : ''
+        }
         ${item.phone ? `<div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(item.phone)}</a></dd></div>` : ''}
         ${item.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(item.location)}</dd></div>` : ''}
         ${item.variant_name ? `<div class="fact"><dt>Frasco</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
@@ -8348,6 +8413,29 @@
     return `${km < 10 ? km.toFixed(1).replace('.', ',') : String(Math.round(km))} km`;
   }
 
+  /**
+   * TIEMPO ESTIMADO de viaje, a partir de la distancia EN LÍNEA RECTA.
+   *
+   * Se calcula con una velocidad media A LA VISTA (25 km/h, una moto por ciudad) y
+   * se dice cuál es: prometer «12 min» sin decir de dónde sale sería inventarse un
+   * dato. La ruta real por carretera siempre es igual o más larga (y por tanto
+   * más lenta) que la línea recta, así que el número es un PISO, no una promesa.
+   */
+  const MAP_AVG_SPEED_KMH = 25;
+
+  function fmtEta(meters, speedKmh = MAP_AVG_SPEED_KMH) {
+    const distancia = Number(meters);
+    const velocidad = Number(speedKmh);
+    if (!Number.isFinite(distancia) || !Number.isFinite(velocidad) || velocidad <= 0) return '';
+    const minutos = (distancia / 1000 / velocidad) * 60;
+    if (!Number.isFinite(minutos)) return '';
+    if (minutos < 1) return 'menos de 1 min';
+    if (minutos < 60) return `${Math.max(1, Math.round(minutos))} min`;
+    const horas = Math.floor(minutos / 60);
+    const resto = Math.round(minutos % 60);
+    return resto ? `${horas} h ${resto} min` : `${horas} h`;
+  }
+
   /** Marcador del mapa: mismo lenguaje visual que el mapa del reparto. */
   function mapMarkerIcon(kind) {
     if (!window.L) return null;
@@ -8455,6 +8543,7 @@
       <p class="view__hint">El mapa está centrado en este punto, aquí detrás.</p>
       <div class="map-actions">
         <button class="btn btn--ghost btn--block" data-map-action="aqui" type="button">¿A qué distancia estoy?</button>
+        <button class="btn btn--ghost btn--block" id="map-point-measure" type="button">Medir distancia desde aquí</button>
         <button class="btn btn--ghost btn--block" id="map-point-use" type="button">Usar para un pedido</button>
         <button class="btn btn--ghost btn--block" id="map-point-share" type="button">Compartir con otra conversación</button>
         ${
@@ -8466,6 +8555,10 @@
       </div>
       `,
     );
+    $('#map-point-measure')?.addEventListener('click', () => {
+      closeSheet();
+      ordersMapMeasureTo(location);
+    });
     $('#map-point-use')?.addEventListener('click', () => {
       if (typeof onUse === 'function') {
         onUse();
@@ -8666,10 +8759,11 @@
       point.detail ? escapeHtml(point.detail) : '',
       point.address ? escapeHtml(point.address) : '',
       point.at ? escapeHtml(mapWhen(point.at)) : '',
-      meters !== null ? `A ${escapeHtml(fmtDistance(meters))} de ti (línea recta)` : '',
+      meters !== null ? `A ${escapeHtml(fmtDistance(meters))} de ti (línea recta, unos ${escapeHtml(fmtEta(meters))})` : '',
     ].filter(Boolean);
     const acciones = [
       `<button class="btn btn--ghost btn--sm" data-map-open="${escapeHtml(point.key)}" type="button">Ver aquí dentro</button>`,
+      `<button class="btn btn--ghost btn--sm" data-map-measure-point="${escapeHtml(point.key)}" type="button">Medir desde aquí</button>`,
       point.conversationId
         ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Abrir el chat</button>`
         : '',
@@ -9023,9 +9117,9 @@
     layer.on('load', () => {
       state.deliveryMap.tileLoading = Math.max(0, state.deliveryMap.tileLoading - 1);
       stopDeliveryTileSlowTimer();
-      if (!state.deliveryMap.tileError && !state.ordersMap.measuring && !state.ordersMap.focus) {
-        setDeliveryMapNotice(state.ordersMap.zoomHint ?? '');
-      }
+      // Se limpia el aviso de carga y `refreshOrdersMapNotice()` decide: si hay una
+      // medición o un aviso de ampliación, se siguen viendo ellos.
+      if (!state.deliveryMap.tileError) setDeliveryMapNotice('');
     });
     layer.on('tileerror', () => {
       state.deliveryMap.tileError = true;
@@ -9052,9 +9146,7 @@
       zoom > nativo
         ? `${config.label}: ampliado (aquí la imagen real llega al nivel ${nativo}; más cerca no gana detalle)`
         : '';
-    if (state.ordersMap.zoomHint !== anterior && !state.ordersMap.measuring) {
-      setDeliveryMapNotice(state.ordersMap.zoomHint ?? '');
-    }
+    if (state.ordersMap.zoomHint !== anterior) refreshOrdersMapNotice();
     const estado = $('#mapa-estado');
     if (estado) estado.textContent = ordersMapStatusText();
   }
@@ -9237,7 +9329,6 @@
       }).addTo(map),
     );
     const [uno, dos] = state.ordersMap.measurePoints;
-    const nota = $('#orders-map-notice');
     if (uno && dos) {
       state.ordersMap.measureLine?.remove();
       state.ordersMap.measureLine = window.L
@@ -9250,16 +9341,37 @@
         )
         .addTo(map);
       const metros = metersBetween(uno, dos);
-      if (nota) {
-        nota.textContent = `Distancia: ${fmtDistance(metros)} en línea recta.`;
-        nota.hidden = false;
-      }
+      /*
+       * El resultado se guarda en el estado (no solo se pinta): así la carga de
+       * teselas no lo borra y sigue a la vista mientras se mira el mapa.
+       */
+      state.ordersMap.measureText = `Distancia ${fmtDistance(metros)} en línea recta · unos ${fmtEta(
+        metros,
+      )} a ${MAP_AVG_SPEED_KMH} km/h`;
+      refreshOrdersMapNotice();
       return;
     }
-    if (nota) {
-      nota.textContent = 'Toca el segundo punto en el mapa.';
-      nota.hidden = false;
+    state.ordersMap.measureText = 'Toca el segundo punto en el mapa.';
+    refreshOrdersMapNotice();
+  }
+
+  /**
+   * «MEDIR DESDE AQUÍ»: mete las coordenadas de un punto YA conocido en la
+   * medición.
+   *
+   * Es el gesto que de verdad se usa («¿a cuánto está este cliente?»): tocar el
+   * pin para medir NO siempre cuenta como toque del mapa (Leaflet no deja pasar el
+   * clic del marcador), así que el punto trae su propia acción, en el globo y en su
+   * ficha.
+   */
+  function ordersMapMeasureTo(point) {
+    const coords = mapLatLng(point);
+    if (!coords) {
+      toast('Ese punto no trae coordenadas');
+      return;
     }
+    if (!state.ordersMap.measuring) ordersMapToggleMeasure(true);
+    ordersMapMapClick({ lat: coords[0], lng: coords[1] });
   }
 
   function ordersMapToggleMeasure(force = null) {
@@ -9268,6 +9380,7 @@
     const activo = force === null ? !state.ordersMap.measuring : force;
     state.ordersMap.measuring = activo;
     state.ordersMap.measurePoints = [];
+    state.ordersMap.measureText = '';
     state.ordersMap.measureLine?.remove();
     state.ordersMap.measureLine = null;
     for (const marker of state.ordersMap.measureMarkers ?? []) marker.remove();
@@ -9275,13 +9388,13 @@
     // El botón flotante se queda marcado mientras se está midiendo.
     $('#mapa-acciones')?.setAttribute('aria-pressed', String(activo));
     box.classList.toggle('map-view--measuring', activo);
-    const nota = $('#orders-map-notice');
-    if (nota) {
-      // Al salir de medir, el aviso vuelve a lo que tocaba (por ejemplo, si el
-      // zoom está en modo ampliado, se recuerda).
-      const reposo = state.ordersMap.zoomHint ?? '';
-      nota.hidden = !activo && !reposo;
-      nota.textContent = activo ? 'Toca dos puntos para medir la distancia (línea recta).' : reposo;
+    state.ordersMap.measureText = activo ? 'Toca dos puntos para medir la distancia (línea recta).' : '';
+    refreshOrdersMapNotice();
+    // Al salir de medir, el aviso vuelve a lo que tocaba (por ejemplo, si el zoom
+    // está en modo ampliado, se recuerda).
+    if (!activo) {
+      const estado = $('#mapa-estado');
+      if (estado) estado.textContent = ordersMapStatusText();
     }
   }
 
@@ -10668,6 +10781,12 @@
           refreshDeliveryTracking({ rebuild: true }).catch(() => {});
           return;
         }
+        return;
+      }
+      const measurePoint = event.target.closest('[data-map-measure-point]');
+      if (measurePoint) {
+        const punto = ordersMapVisiblePoints().find((row) => row.key === measurePoint.dataset.mapMeasurePoint) ?? null;
+        if (punto) ordersMapMeasureTo(punto);
         return;
       }
       const mapBase = event.target.closest('[data-map-base]');

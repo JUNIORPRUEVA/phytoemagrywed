@@ -52,4 +52,13 @@ describe('mobile navigation and floating actions', () => {
     expect(css).toContain('.client-fab');
     expect(css).not.toContain("body[data-tab='clientes'] .client-fab {\n    display: none;");
   });
+
+  it('la barra de arriba de Pedidos se queda fija (no se va con el scroll)', () => {
+    const plano = css.replaceAll('\r\n', '\n');
+    // Igual que Clientes: pegada arriba, con fondo translúcido para que se lea
+    // por encima de la lista al desplazarse.
+    expect(plano).toMatch(/body\[data-tab='pedidos'\] \.mobile-header \{[^}]*?position: sticky;\n\s+top: 0;/);
+    expect(plano).toMatch(/body\[data-tab='pedidos'\] \.mobile-header \{[\s\S]*?backdrop-filter: blur\(14px\);/);
+    expect(plano).toMatch(/body\[data-tab='pedidos'\] #view-pedidos \{\n\s+padding-top: 0;/);
+  });
 });

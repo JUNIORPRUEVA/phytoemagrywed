@@ -6514,6 +6514,22 @@ body[data-wa-view='chat'] .mobile-header {
     max-width: 94px;
   }
 
+  body[data-tab='pedidos'] .mobile-header {
+    /*
+     * En la lista de pedidos la barra de arriba NO se va con el scroll: con 40
+     * pedidos hay que poder volver atrás y ver en qué pantalla estás sin subir.
+     */
+    position: sticky;
+    top: 0;
+    z-index: 42;
+    background: rgba(248, 252, 250, 0.9);
+    backdrop-filter: blur(14px);
+  }
+
+  body[data-tab='pedidos'] #view-pedidos {
+    padding-top: 0;
+  }
+
   body[data-tab='clientes'] .mobile-header {
     position: sticky;
     top: 0;
@@ -7725,6 +7741,19 @@ body:has(> #sheet:not([hidden])) .map-fab {
   white-space: nowrap;
   font-size: 0.76rem;
   color: var(--pe-ink-500);
+}
+
+/*
+ * Tercera línea, corta: el teléfono del cliente y quién lo atendió. Los dos datos
+ * que se piden al repartir el trabajo y que antes no aparecían por ningún lado.
+ */
+.order-row__ref {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.71rem;
+  color: var(--pe-ink-500);
+  opacity: 0.92;
 }
 
 .order-row__status {

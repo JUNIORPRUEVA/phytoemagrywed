@@ -362,8 +362,29 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(fila.querySelector('.order-row__status').textContent).toMatch(
       /Pendiente|En camino|Entregado|Cancelado/,
     );
+    // La referencia del cliente (teléfono) y QUIÉN ATENDIÓ, en su línea corta.
+    expect(fila.querySelector('.order-row__ref').textContent).toContain('+18095559191');
+    expect(fila.querySelector('.order-row__ref').textContent).toMatch(/Atendido por .+/);
     // Nada de botones dentro de la fila: las acciones viven en la ficha.
     expect(fila.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('la ficha del pedido dice el cliente, quién lo atendió y quién lo creó', async () => {
+    click('#list-pedidos .order-row');
+    const ficha = await waitFor(() => $('#sheet-body')?.textContent?.includes('Atendido por'), 'la ficha del pedido');
+    const texto = $('#sheet-body').textContent;
+    expect(texto).toMatch(/Atendido por/);
+    expect(texto).toContain('Abrir la ficha del cliente');
+    expect(texto).toMatch(/PE-/);
+    // Y el botón lleva a la ficha de verdad (con el id del cliente del pedido).
+    const boton = $('#sheet-body [data-customer]');
+    expect(boton?.dataset.customer).toBeTruthy();
+    click(boton);
+    await waitFor(() => $('#customer-profile .profile-hero'), 'el perfil del cliente');
+    expect(ficha).toBeTruthy();
+    // Volver a Pedidos para no dejar la pantalla cambiada.
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-row'), 'la lista otra vez');
   });
 
   it('los filtros de estado se cuentan y filtran de verdad', async () => {
