@@ -450,10 +450,10 @@
     return label;
   };
 
-  const money = (value, currency = 'DOP') =>
+  const money = (value, currency) =>
     value === null || value === undefined
       ? '—'
-      : `${currency} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 0 }).format(value)}`;
+      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 0 }).format(value)}`;
 
   const digits = (phone) => String(phone ?? '').replace(/\D/g, '');
 

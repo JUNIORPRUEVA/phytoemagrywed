@@ -8185,3 +8185,34 @@ body:has(> #sheet:not([hidden])) .map-fab {
   line-height: 1;
   cursor: pointer;
 }
+
+/* ==========================================================================
+   iPHONE (y móviles con notch o isla dinámica)
+   ==========================================================================
+   En un iPhone la barra de estado empuja la cabecera hacia abajo
+   (`env(safe-area-inset-top)`), pero el contenido de Hoy se subía una cantidad
+   FIJA (`margin-top: -198px`): las tarjetas de resumen acababan montadas ENCIMA
+   del título «Phytoemagry CRM» y del botón de menú. Aquí el contenido baja
+   exactamente lo mismo que bajó la cabecera, y la altura descuenta además la
+   franja de abajo (el indicador de inicio) para que la lista no quede debajo de
+   la barra de navegación.
+   En Android sin notch, o en el ordenador, esos valores son 0: no cambia nada.
+   Va al FINAL porque es la última palabra sobre `.content` en móvil.
+   ========================================================================== */
+@media (max-width: 979px) {
+  body[data-tab='hoy'] .content {
+    --dash-content-top: calc(72px + env(safe-area-inset-top, 0px));
+    margin-top: calc(-198px + env(safe-area-inset-top, 0px));
+    height: calc(100dvh - var(--dash-content-top) - 8px - env(safe-area-inset-bottom, 0px));
+  }
+
+  /*
+   * La lista ya termina por encima de la barra de navegación (el alto de
+   * arriba lo descuenta), así que no necesita reservar otra vez toda la barra:
+   * antes quedaba un hueco vacío de ~90 px al final. Con 14 px la última
+   * tarjeta se ve entera y la página queda compacta.
+   */
+  body[data-tab='hoy'] #list-hoy {
+    padding-bottom: 14px;
+  }
+}
