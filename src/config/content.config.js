@@ -247,7 +247,7 @@ export const contentConfig = {
     steps: [
       { title: 'Elige tu frasco', text: 'Mira la información del producto y el precio de cada frasco.' },
       { title: 'Pulsa Comprar o WhatsApp', text: 'Elige la cantidad de frascos o escríbenos directamente.' },
-      { title: 'Confirma tu pedido', text: 'Te pedimos solo tu nombre, teléfono y ubicación.' },
+      { title: 'Confirma tu pedido', text: 'Te pedimos tu nombre y seguimos por WhatsApp: ahí confirmamos el pedido.' },
       { title: 'Coordinamos pago y entrega', text: 'Confirmamos disponibilidad, forma de pago y entrega.' },
     ],
     note: 'No se realiza ningún cobro en esta página.',
@@ -270,7 +270,8 @@ export const contentConfig = {
       price: {
         question: '¿Cuál es el precio?',
         /** {prices} = "Frasco de 5 cápsulas: RD$1,250 · Frasco de 10 cápsulas: RD$2,500 · …" */
-        answer: 'Estos son los precios por frasco: {prices}. El precio final se confirma por WhatsApp al coordinar tu pedido.',
+        answer:
+          'Estos son los precios por frasco: {prices}. El precio de cada frasco es el que ves aquí; el total de tu pedido (con el envío, si lo hubiera) se te confirma por WhatsApp ANTES de cerrar nada.',
       },
       quantity: {
         question: '¿Puedo pedir más de un frasco?',
@@ -284,8 +285,16 @@ export const contentConfig = {
       },
       delivery: {
         question: '¿Cómo se coordina la entrega?',
-        /** {areas} (si hay zonas configuradas) o texto neutral de coordinación. */
-        answer: 'Al confirmar tu pedido coordinamos el pago y la entrega por WhatsApp.{areas}',
+        /**
+         * {areas} (si hay zonas configuradas) o nada.
+         *
+         * Sin zonas ni formas de pago configuradas, la respuesta NO se queda en
+         * «se coordina por WhatsApp»: dice QUÉ pasa y qué NO se le va a pedir
+         * (tarjeta, cuenta, transferencia sin confirmar). Es lo que frena a quien
+         * no conoce el negocio, y no hace falta inventar ningún dato.
+         */
+        answer:
+          'Nos escribes con tu frasco y tu zona; por WhatsApp te confirmamos la disponibilidad, cómo llega tu pedido y las formas de pago, con el total por delante. En esta página no se realiza ningún cobro ni se piden datos de tarjeta.{areas}',
       },
     },
     /**
@@ -302,7 +311,17 @@ export const contentConfig = {
       {
         question: '¿Cómo realizo mi pedido?',
         answer:
-          'Elige tu frasco en la sección “Elige tu frasco”, pulsa “Comprar / Consultar”, deja tu nombre, teléfono y ubicación, y confirma. Continuamos por WhatsApp para coordinar el pago y la entrega. En esta página no se realiza ningún cobro.',
+          'Elige tu frasco, pulsa “Comprar / Consultar” y escribe tu nombre: se abre WhatsApp con tu pedido ya escrito (frasco, cantidad y total). Ahí confirmamos disponibilidad, pago y entrega, y te decimos el total antes de pagar. En esta página no se realiza ningún cobro.',
+      },
+      {
+        question: '¿Cómo puedo pagar?',
+        answer:
+          'Las formas de pago se confirman por WhatsApp al coordinar tu pedido, con el total por delante. En esta página no se realiza ningún cobro ni se piden datos de tarjeta.',
+      },
+      {
+        question: '¿Necesito crear una cuenta?',
+        answer:
+          'No. No hay registro ni contraseñas: eliges tu frasco, dejas tu nombre y sigues por WhatsApp. El pedido se atiende en el mismo chat donde escribes.',
       },
     ],
   },

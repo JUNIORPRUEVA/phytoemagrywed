@@ -96,8 +96,16 @@ describe('landing con los 7 frascos reales', () => {
   it('la página ligera no repite el proceso en un bloque de pasos', () => {
     expect(doc.querySelector('#como-comprar')).toBeNull();
     const faq = doc.querySelector('.pe-faq');
-    // 4 preguntas generadas con datos reales + la de cómo pedir.
-    expect(faq.querySelectorAll('details')).toHaveLength(5);
+    /*
+     * 4 preguntas generadas con datos reales (frascos, precio, cantidad, entrega)
+     * + 3 fijas del proceso: cómo pedir, cómo pagar y si hace falta cuenta. Las
+     * tres últimas quitan las dudas que frenan a quien no conoce el negocio.
+     */
+    expect(faq.querySelectorAll('details')).toHaveLength(7);
+    const texto = faq.textContent;
+    expect(texto).toContain('¿Cómo puedo pagar?');
+    expect(texto).toContain('ni se piden datos de tarjeta');
+    expect(texto).toContain('¿Necesito crear una cuenta?');
   });
 
   it('renderiza los 7 frascos con su precio exacto', () => {
