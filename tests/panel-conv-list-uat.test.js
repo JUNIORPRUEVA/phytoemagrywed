@@ -767,24 +767,29 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
    * Lo que se preguntó: desde el chat, ¿dónde se elige una plantilla? ¿y cómo se
    * pide la ubicación? Antes, con la ventana abierta, no había NINGUNA entrada.
    */
-  it('el botón del compositor y el menú ⋯ abren las plantillas aprobadas', async () => {
+  it('el menú ⋯ abre las plantillas aprobadas (sin botón repetido en el compositor)', async () => {
     await approveLocationTemplateForUat();
     click(`[data-conv="${ids.luis}"]`);
     await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
 
-    // Botón del compositor (el chat tiene la ventana de 24 h abierta).
-    expect(click('#wa-template-open')).toBe(true);
+    /*
+     * El icono de plantilla del compositor se QUITÓ: estaba repetido con esta
+     * misma entrada del menú de acciones del chat.
+     */
+    expect($('#wa-template-open')).toBeNull();
+
+    click('#wa-actions');
+    await waitFor(() => $('#sheet-body [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
+    expect($('#sheet-body [data-wa-ask-location]')).not.toBeNull();
+    expect($('#sheet-body').textContent).toContain('Pedir ubicación');
+    expect($('#sheet-body').textContent).toContain('Mensajes');
+
+    click('#sheet-body [data-wa-template]');
     await waitFor(() => $('#sheet-body #wa-send-template'), 'la hoja de plantillas', 9000);
     const opciones = $$('#wa-template option').map((option) => option.value);
     expect(opciones).toContain('phyto_ubicacion_entrega_v1');
     expect(opciones).toContain('phyto_followup_checkin');
     closeSheetForUat();
-
-    // Y el menú de acciones del chat lleva a lo mismo.
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
-    expect($('#sheet-body [data-wa-ask-location]')).not.toBeNull();
-    expect($('#sheet-body').textContent).toContain('Pedir ubicación');
   }, 30000);
 
   it('«Pedir ubicación» abre LA plantilla correcta y se envía con los datos escritos', async () => {

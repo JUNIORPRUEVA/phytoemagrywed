@@ -8216,3 +8216,42 @@ body:has(> #sheet:not([hidden])) .map-fab {
     padding-bottom: 14px;
   }
 }
+
+/* ------------------------------------------------- MENÚ DEL CHAT, ORDENADO */
+/*
+ * Etiqueta de grupo dentro de un menú (Mensajes, Seguimiento, Cliente…). Separa
+ * sin llenar la lista de tarjetas: la jerarquía la hace el texto.
+ */
+.menu-list__label {
+  margin: 14px 0 2px;
+  padding: 0 12px;
+  color: var(--pe-ink-500);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.menu-list__label:first-child {
+  margin-top: 0;
+}
+
+/*
+ * La ACCIÓN PRINCIPAL del menú del chat (crear el pedido) va primero y
+ * destacada, para que no se confunda con el resto de la lista.
+ */
+.menu-item--primary {
+  min-height: 60px;
+  border-radius: 14px;
+  border-color: rgba(11, 107, 79, 0.22);
+  background: linear-gradient(135deg, var(--phyto-primary-tint), var(--phyto-primary-soft));
+}
+
+.menu-item--primary:hover,
+.menu-item--primary:focus-visible {
+  background: linear-gradient(135deg, var(--phyto-primary-soft), #cfe4da);
+}
+
+.menu-item--primary .menu-item__icon {
+  color: var(--phyto-primary-dark);
+}

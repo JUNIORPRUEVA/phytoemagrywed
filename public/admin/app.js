@@ -5252,6 +5252,9 @@
      * Un solo compositor: adjuntar · campo · (audio | enviar), todo dentro de la
      * misma superficie. El micro y el envío viven en la MISMA casilla, así que el
      * cambio de uno a otro no mueve nada de sitio.
+     *
+     * «Enviar plantilla» NO va aquí a la izquierda: esa acción ya está en el menú
+     * de acciones del chat (el botón flotante), y repetir el icono solo confundía.
      */
     return `<div class="composer-bar">
         <span class="composer-left">
@@ -5259,8 +5262,6 @@
             title="${
               puedeAdjuntar ? 'Adjuntar imagen o audio' : 'Adjuntar: la multimedia no está activa en el servidor'
             }">${ICONS.plus}</button>
-          <button class="composer-btn" id="wa-template-open" type="button" aria-label="Enviar plantilla"
-            title="Enviar una plantilla aprobada (puedes escribir sus huecos)">${ICONS.note}</button>
         </span>
         <textarea id="wa-text" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
         <span class="composer-end">
@@ -5276,6 +5277,24 @@
         </span>
       </div>
       <p class="composer-rule">Enter envía · Shift+Enter salto de línea · Nada se envía solo.</p>`;
+  }
+
+  /**
+   * Ajusta el compositor al contenido: la altura del campo (hasta 132 px) y el
+   * cambio entre micro y Enviar. NO crea ni destruye nada, así que el campo puede
+   * quedarse tal cual (con su texto y su foco) mientras llegan mensajes.
+   */
+  function adjustWaComposer() {
+    const area = $('#wa-text');
+    if (!area) return;
+    area.style.height = 'auto';
+    area.style.height = `${Math.min(area.scrollHeight, 132)}px`;
+    // Sin texto: micrófono. Con texto: Enviar. (El envío nunca es automático.)
+    const vacio = !area.value.trim();
+    const mic = $('#wa-mic');
+    const send = $('#wa-send');
+    if (mic) mic.hidden = !vacio;
+    if (send) send.hidden = vacio;
   }
 
   function renderWaChat() {
@@ -5330,6 +5349,7 @@
             <p class="wa-locked__pie">Administración recibe el aviso con el enlace a esta conversación.</p>
           </div>`;
         $('#wa-composer').innerHTML = '';
+        state.wa.composerHtml = null;
         $('#wa-ask-assign')?.addEventListener('click', (event) =>
           requestConversationAssignment(bloqueo.conversationId, event.currentTarget),
         );
@@ -5342,6 +5362,7 @@
         ? `<p class="rule rule--warn">No pudimos cargar esta conversación.</p>
            <button class="btn btn--ghost btn--block" id="wa-retry-thread" type="button">Reintentar</button>`
         : '';
+      state.wa.composerHtml = null;
       // Mientras no hay datos no se puede pedir ninguna acción comercial.
       const actionsLoading = $('#wa-actions');
       if (actionsLoading) actionsLoading.disabled = true;
@@ -5402,40 +5423,55 @@
         : '<p class="view__hint">Todavía no hay mensajes.</p>';
     $('#thread').innerHTML = hilo.length ? waThreadHtml(hilo) : emptyThread;
 
-    $('#wa-composer').innerHTML = waComposerHtml({
-      customer,
-      canSendFreeText,
-      contactState,
-      lastTemplate: lastMessageWhere(
-        messages,
-        (message) => message?.direction === 'outbound' && isTemplateMessage(message),
-      ),
-    });
-    const area = $('#wa-text');
-    if (area) {
-      area.value = state.wa.draft ?? '';
-      const adjust = () => {
-        area.style.height = 'auto';
-        area.style.height = `${Math.min(area.scrollHeight, 132)}px`;
-        // Sin texto: micrófono. Con texto: Enviar. (El envío nunca es automático.)
-        const vacio = !area.value.trim();
-        const mic = $('#wa-mic');
-        const send = $('#wa-send');
-        if (mic) mic.hidden = !vacio;
-        if (send) send.hidden = vacio;
-      };
-      area.addEventListener('input', () => {
-        state.wa.draft = area.value;
-        adjust();
-      });
-      area.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          $('#wa-send')?.click();
+    /*
+     * El compositor NO se reescribe si no cambia. Antes, cada mensaje nuevo (o
+     * cada refresco de la lista) sustituía el campo entero: en el móvil eso
+     * cerraba el teclado y hacía «desaparecer» lo que se estaba escribiendo.
+     * Ahora se compara el HTML que TOCA pintar y solo se toca el DOM cuando de
+     * verdad cambia (otra ventana, otro estado, otra plantilla…).
+     */
+    const lastTemplate = lastMessageWhere(
+      messages,
+      (message) => message?.direction === 'outbound' && isTemplateMessage(message),
+    );
+    const composerHtml = waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate });
+    if (composerHtml !== state.wa.composerHtml) {
+      state.wa.composerHtml = composerHtml;
+      $('#wa-composer').innerHTML = composerHtml;
+      const area = $('#wa-text');
+      if (area) {
+        area.value = state.wa.draft ?? '';
+        area.addEventListener('input', () => {
+          state.wa.draft = area.value;
+          adjustWaComposer();
+        });
+        area.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            $('#wa-send')?.click();
+          }
+        });
+      }
+      $('#wa-send')?.addEventListener('click', (event) => {
+        const body = ($('#wa-text')?.value ?? '').trim();
+        if (!body) {
+          toast('Escribe el mensaje');
+          return;
         }
+        /*
+         * Fuera de la ventana de 24 h no existe el mensaje libre: lo escrito se
+         * lleva al hueco libre de la plantilla y se revisa antes de enviar. Un
+         * solo camino para «escribir» y «usar plantilla».
+         */
+        if (!canSendFreeText) {
+          openWaTemplateSheet();
+          return;
+        }
+        sendWaMessage({ body }, event.currentTarget);
       });
-      adjust();
+      $('#wa-open-template')?.addEventListener('click', () => openWaTemplateSheet());
     }
+    adjustWaComposer();
     /*
      * Abrir una conversación tiene que dejar a la vista lo ÚLTIMO. Las imágenes
      * entran con `loading="lazy"` y crecen cuando llegan, así que se vuelve al
@@ -5452,25 +5488,6 @@
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(irAlFinal);
       $$('img', thread).forEach((img) => img.addEventListener('load', irAlFinal, { once: true }));
     }
-
-    $('#wa-send')?.addEventListener('click', (event) => {
-      const body = ($('#wa-text')?.value ?? '').trim();
-      if (!body) {
-        toast('Escribe el mensaje');
-        return;
-      }
-      /*
-       * Fuera de la ventana de 24 h no existe el mensaje libre: lo escrito se
-       * lleva al hueco libre de la plantilla y se revisa antes de enviar. Un solo
-       * camino para «escribir» y «usar plantilla».
-       */
-      if (!canSendFreeText) {
-        openWaTemplateSheet();
-        return;
-      }
-      sendWaMessage({ body }, event.currentTarget);
-    });
-    $('#wa-open-template')?.addEventListener('click', () => openWaTemplateSheet());
   }
 
   // ------------------------------------------------------------- MULTIMEDIA
@@ -6223,6 +6240,15 @@
           body: JSON.stringify(payload),
         });
         state.wa.draft = '';
+        /*
+         * El campo de texto se vacía A MANO: el compositor ya no se repinta en
+         * cada refresco, así que no basta con borrar el borrador.
+         */
+        const compositor = $('#wa-text');
+        if (compositor) {
+          compositor.value = '';
+          adjustWaComposer();
+        }
         const followupId = state.wa.followupId;
         state.wa.followupId = null;
         /*
@@ -7374,17 +7400,28 @@
       state.wa.chat?.conversation?.id === conversationId
         ? state.wa.chat.conversation
         : state.conversations.find((row) => row.id === conversationId) ?? null;
-    const assignmentMenu = assignmentMenuHtml(conversation, { conversationId });
     /*
-     * Acciones del cliente: icono + título corto, sin párrafos. La única que
-     * lleva una nota es la que ENVÍA sola (una plantilla la manda el sistema): no
-     * se puede confundir con una tarea para una persona.
+     * MENÚ DEL CHAT, ordenado por lo que se HACE (no por cómo está hecho el CRM):
+     *
+     *   1. La acción principal va PRIMERO y destacada: crear el pedido.
+     *   2. Mensajes: escribir, plantilla, ubicación, confirmación.
+     *   3. Seguimiento: la tarea o el aviso que manda el sistema.
+     *   4. Cliente: ficha, etapa, etiquetas.
+     *   5. La CONVERSACIÓN en un SUBMENÚ (asignar, tomar, liberar, transferir):
+     *      antes esos cinco botones vivían aquí dentro y tapaban lo importante.
      */
     openSheet(
       customerName(customer),
       `
       <div class="menu-list">
-        ${assignmentMenu}
+        <button class="menu-item menu-item--primary" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+          <span><strong>Crear pedido</strong><small>Con lo que ya hablaron, listo para confirmar</small></span>
+        </button>
+
+        <p class="menu-list__label">Mensajes</p>
         <button class="menu-item" data-quick-replies="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Respuesta rápida</strong></span>
@@ -7401,17 +7438,13 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.check}</span>
           <span><strong>Pedir confirmación</strong><small>Plantilla del pedido, con sus datos</small></span>
         </button>
-        <button class="menu-item" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
-          <span><strong>Crear pedido</strong></span>
-        </button>
+
+        <p class="menu-list__label">Seguimiento</p>
         <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
-          <span><strong>Programar seguimiento</strong></span>
+          <span><strong>Programar seguimiento</strong><small>Tarea para una persona</small></span>
         </button>
         <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
@@ -7419,9 +7452,11 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
           <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
         </button>
+
+        <p class="menu-list__label">Cliente</p>
         <button class="menu-item" data-customer="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-          <span><strong>Ver cliente</strong></span>
+          <span><strong>Ver cliente</strong><small>Ficha 360: compras, chat y seguimiento</small></span>
         </button>
         <button class="menu-item" data-customer-stage-menu="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
@@ -7431,8 +7466,36 @@
           <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
           <span><strong>Etiquetas</strong></span>
         </button>
+
+        <p class="menu-list__label">Conversación</p>
+        <button class="menu-item" data-chat-assign-menu="${escapeHtml(conversationId ?? '')}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>Asignación</strong><small>${escapeHtml(
+            conversationAssignmentLabel(conversation),
+          )} · tomar, liberar o pasar</small></span>
+        </button>
       </div>
     `,
+      { variant: 'menu' },
+    );
+  }
+
+  /**
+   * SUBMENÚ «Conversación»: asignar, tomar, liberar o transferir. Vive aparte
+   * para que el menú del chat no se llene con cinco botones de lo mismo.
+   */
+  function openChatAssignMenu(conversationId = state.wa.selectedId || '') {
+    const id = conversationId || state.wa.selectedId || '';
+    const conversation =
+      state.wa.chat?.conversation?.id === id
+        ? state.wa.chat.conversation
+        : state.conversations.find((row) => row.id === id) ?? null;
+    const assignmentMenu = assignmentMenuHtml(conversation, { conversationId });
+    openSheet(
+      'Conversación',
+      `<div class="menu-list">
+        ${assignmentMenu}
+      </div>`,
       { variant: 'menu' },
     );
   }
@@ -11805,6 +11868,11 @@
         openImageViewer(profilePhoto.dataset.profilePhoto, 'Foto del cliente');
         return;
       }
+      const chatAssignMenu = event.target.closest('[data-chat-assign-menu]');
+      if (chatAssignMenu) {
+        openChatAssignMenu(chatAssignMenu.dataset.chatAssignMenu || state.wa.selectedId);
+        return;
+      }
       const convAssign = event.target.closest('[data-conv-assign]');
       if (convAssign) {
         openAssignSheet(convAssign.dataset.convAssign || state.wa.selectedId);
@@ -12035,9 +12103,9 @@
         openRecorder(state.wa.selectedId);
         return;
       }
-      // Enviar una plantilla desde el chat: el botón del compositor y la entrada
-      // del menú ⋯ hacen lo mismo (elegir plantilla y rellenar sus huecos).
-      if (event.target.closest('#wa-template-open') || event.target.closest('[data-wa-template]')) {
+      // Enviar una plantilla desde el chat: UNA sola entrada, la del menú de
+      // acciones (el icono repetido que había en el compositor se quitó).
+      if (event.target.closest('[data-wa-template]')) {
         openWaTemplateSheet();
         return;
       }
