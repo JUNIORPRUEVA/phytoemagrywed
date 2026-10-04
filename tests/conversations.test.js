@@ -273,6 +273,147 @@ describe('envío manual (con una persona delante)', () => {
   });
 });
 
+/*
+ * PEDIR CONFIRMACIÓN DEL PEDIDO.
+ *
+ * Lo que se protege aquí es lo que no puede fallar: el mensaje sale del pedido
+ * REAL (no de una plantilla genérica ni del navegador) y JAMÁS se le manda a un
+ * cliente el pedido de otro. El servidor comprueba cliente → conversación →
+ * pedido antes de enseñar el texto y antes de enviarlo.
+ */
+describe('pedir confirmación del pedido (el pedido real, sin plantilla)', () => {
+  const OTRO_TELEFONO = '18095558888';
+  let pedidoAna = '';
+  let pedidoOtro = '';
+  let conversacionOtro = '';
+
+  beforeAll(async () => {
+    // Se reabre la ventana de 24 h (una prueba anterior la cerró a propósito).
+    await inbound('wamid.CONF-OPEN', '¿Me lo puedes enviar?');
+    const pedido = await json(
+      await call('/api/admin/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerId,
+          conversationId,
+          phone: '+18095557777',
+          name: 'Ana WhatsApp',
+          items: [{ variantId: 'capsules_10', quantity: 2 }],
+          paymentMethod: 'TRANSFER',
+          status: 'nuevo',
+        }),
+      }),
+    );
+    expect(pedido.ok).toBe(true);
+    pedidoAna = pedido.item.id;
+
+    // OTRO cliente, con SU conversación y SU pedido: no se pueden cruzar.
+    await inbound('wamid.CONF-OTRO', 'Hola', OTRO_TELEFONO);
+    const otra = await waitFor(async () => {
+      const data = await json(await call('/api/admin/conversations'));
+      return data.conversations.find((row) => row.customer?.phone_e164 === `+${OTRO_TELEFONO}`) ?? null;
+    });
+    conversacionOtro = otra.id;
+    const segundo = await json(
+      await call('/api/admin/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerId: otra.customer_id,
+          conversationId: otra.id,
+          phone: `+${OTRO_TELEFONO}`,
+          name: 'Otro Cliente',
+          items: [{ variantId: 'capsules_5', quantity: 1 }],
+          paymentMethod: 'CASH',
+          status: 'nuevo',
+        }),
+      }),
+    );
+    pedidoOtro = segundo.item.id;
+  }, 30000);
+
+  it('el texto sale del pedido REAL y no lleva ids ni estados técnicos', async () => {
+    const response = await call(
+      `/api/admin/conversations/${conversationId}/order-confirmation?orderId=${pedidoAna}`,
+    );
+    expect(response.status).toBe(200);
+    const data = await json(response);
+    expect(data.text).toContain('este es tu pedido:');
+    expect(data.text).toContain('2 × Frasco de 10 cápsulas');
+    expect(data.text).toContain('Total: RD$');
+    expect(data.text).toContain('Forma de pago: Transferencia');
+    expect(data.text).toContain('Por favor, revísalo y confírmanos si está correcto.');
+    // Ni el id del pedido, ni claves internas, ni estados técnicos.
+    expect(data.text).not.toContain(pedidoAna);
+    expect(data.text).not.toMatch(/order_json|customer_id|conversation_id|subtotal_|payload/i);
+    expect(data.text).not.toContain('nuevo');
+  });
+
+  it('enviarlo manda EXACTAMENTE ese texto y NO una plantilla', async () => {
+    mockWhatsApp.sent.length = 0;
+    const response = await call(`/api/admin/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ orderId: pedidoAna }),
+    });
+    expect(response.status).toBe(200);
+    const enviado = mockWhatsApp.sent.at(-1);
+    expect(enviado.type).toBe('text');
+    expect(enviado.template).toBeUndefined();
+    expect(enviado.body).toContain('este es tu pedido');
+    expect(enviado.body).toContain('Frasco de 10 cápsulas');
+    expect(enviado.body).toContain('revísalo y confírmanos');
+  });
+
+  it('el cuerpo que manda el navegador se IGNORA: el texto sale del pedido', async () => {
+    mockWhatsApp.sent.length = 0;
+    await call(`/api/admin/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ orderId: pedidoAna, body: 'TEXTO INVENTADO POR EL NAVEGADOR' }),
+    });
+    const enviado = mockWhatsApp.sent.at(-1);
+    expect(enviado.body).not.toContain('TEXTO INVENTADO');
+    expect(enviado.body).toContain('este es tu pedido');
+  });
+
+  it('NUNCA deja enseñar ni enviar el pedido de OTRO cliente', async () => {
+    mockWhatsApp.sent.length = 0;
+    const preview = await call(
+      `/api/admin/conversations/${conversationId}/order-confirmation?orderId=${pedidoOtro}`,
+    );
+    expect(preview.status).toBe(422);
+    expect((await json(preview)).error).toBe('order_from_other_customer');
+
+    const send = await call(`/api/admin/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ orderId: pedidoOtro }),
+    });
+    expect(send.status).toBe(422);
+    expect((await json(send)).error).toBe('order_from_other_customer');
+    expect(mockWhatsApp.sent).toHaveLength(0);
+  });
+
+  it('tampoco se cuela un pedido desde OTRA conversación', async () => {
+    mockWhatsApp.sent.length = 0;
+    const send = await call(`/api/admin/conversations/${conversacionOtro}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ orderId: pedidoAna }),
+    });
+    expect(send.status).toBe(422);
+    expect((await json(send)).error).toBe('order_from_other_customer');
+    expect(mockWhatsApp.sent).toHaveLength(0);
+  });
+
+  it('un pedido que no existe se rechaza sin enviar nada', async () => {
+    mockWhatsApp.sent.length = 0;
+    const send = await call(`/api/admin/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ orderId: 'pedido-que-no-existe' }),
+    });
+    expect(send.status).toBe(422);
+    expect((await json(send)).error).toBe('unknown_order');
+    expect(mockWhatsApp.sent).toHaveLength(0);
+  });
+});
+
 describe('plantillas oficiales', () => {
   it('ninguna plantilla nace aprobada y sin aprobar no se puede enviar', async () => {
     const data = await json(await call('/api/admin/wa-templates'));

@@ -118,6 +118,7 @@ import {
   isCompletedPurchaseStatus,
   isOrderStatus,
   normalizePaymentMethod,
+  orderConfirmationText,
   orderOf,
   receiptHtml,
   receiptPdf,
@@ -553,6 +554,42 @@ async function findOrderItem(store, orderId) {
   const items = await store.listAdmin({ limit: 5000 });
   const item = items.find((entry) => entry.id === orderId) ?? null;
   return item?.type === 'order_intent' ? item : null;
+}
+
+/**
+ * EL PEDIDO DE ESTA CONVERSACIÓN, COMPROBADO.
+ *
+ * Antes de enseñar o enviar el resumen de un pedido se valida la relación
+ * cliente → conversación → pedido. Es la única defensa seria contra mandarle a un
+ * cliente el pedido de otro, así que es ESTRICTA a propósito:
+ *   - el pedido tiene que existir;
+ *   - tiene que ser de ESTE cliente (si no trae `customer_id`, no se puede
+ *     demostrar que sea suyo: se rechaza);
+ *   - si el pedido apunta a una conversación, tiene que ser ESTA.
+ */
+async function conversationOrder(store, conversation, customer, orderId) {
+  const item = await findOrderItem(store, orderId);
+  const order = item ? orderOf(item) : null;
+  if (!order) {
+    return { ok: false, status: 422, error: 'unknown_order', message: 'Ese pedido ya no existe.' };
+  }
+  if (!customer?.id || order.customer_id !== customer.id) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'order_from_other_customer',
+      message: 'Ese pedido es de otro cliente: no se envía.',
+    };
+  }
+  if (order.conversation_id && order.conversation_id !== conversation.id) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'order_from_other_conversation',
+      message: 'Ese pedido pertenece a otra conversación. Ábrelo desde su chat.',
+    };
+  }
+  return { ok: true, item, order };
 }
 
 async function updateOrderStatus(store, item, status, actor = null) {
@@ -5908,6 +5945,31 @@ async function handle(req, res, ctx) {
         return;
       }
 
+      /*
+       * TEXTO DE «PEDIR CONFIRMACIÓN» (para que el agente lo LEA antes de enviar).
+       *
+       * Lo construye el servidor desde el pedido REAL de ESTE cliente y ESTA
+       * conversación. El panel solo lo enseña; al enviar se vuelve a construir,
+       * así que lo que se manda nunca depende del navegador.
+       */
+      if (action === 'order-confirmation' && req.method === 'GET') {
+        if (!(await canOpenConversation(ctx, actor, conversation))) {
+          denyConversation(res, json, conversation);
+          return;
+        }
+        const encontrado = await conversationOrder(ctx.store, conversation, customer, url.searchParams.get('orderId') ?? '');
+        if (!encontrado.ok) {
+          json(res, encontrado.status, { ok: false, error: encontrado.error, message: encontrado.message });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          order_number: encontrado.order.order_number ?? null,
+          text: orderConfirmationText(encontrado.order, customer),
+        });
+        return;
+      }
+
       if (action === 'read' && req.method === 'POST') {
         if (!(await canOpenConversation(ctx, actor, conversation))) {
           denyConversation(res, json, conversation);
@@ -6113,8 +6175,23 @@ async function handle(req, res, ctx) {
         } catch {
           body = {};
         }
-        const rawMessageBody = longText(body.body, 1200);
+        let rawMessageBody = longText(body.body, 1200);
         const templateName = text(body.template, 60);
+        /*
+         * «PEDIR CONFIRMACIÓN»: cuando llega `orderId`, el texto lo construye el
+         * SERVIDOR desde el pedido REAL y se comprueba la relación cliente →
+         * conversación → pedido. Lo que mande el navegador en `body` se IGNORA:
+         * así no hay forma de enviarle a un cliente el pedido de otro.
+         */
+        const confirmationOrderId = text(body.orderId ?? body.order_id, 80);
+        if (confirmationOrderId) {
+          const encontrado = await conversationOrder(ctx.store, conversation, customer, confirmationOrderId);
+          if (!encontrado.ok) {
+            json(res, encontrado.status, { ok: false, error: encontrado.error, message: encontrado.message });
+            return;
+          }
+          rawMessageBody = longText(orderConfirmationText(encontrado.order, customer), 1200) ?? '';
+        }
         if (!rawMessageBody && !templateName) {
           json(res, 422, { ok: false, error: 'empty_message', message: 'Escribe el mensaje.' });
           return;

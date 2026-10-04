@@ -5037,6 +5037,14 @@
   const LOCATION_TEMPLATE = 'phyto_ubicacion_entrega_v1';
   /** Plantilla con la que se le pide al cliente confirmar SU pedido. */
   const ORDER_CONFIRM_TEMPLATE = 'phyto_confirmacion_pedido_v1';
+  /*
+   * «Pedir / confirmar ubicación»: la PREGUNTA que acompaña a la ubicación ya
+   * guardada cuando se la mandamos al cliente para que la revise.
+   */
+  const LOCATION_CONFIRM_QUESTION =
+    '¿Confirmas que deseas recibir tu pedido en esta misma ubicación? Si deseas cambiarla, envíanos tu nueva ubicación por aquí.';
+  /** «Pedir / confirmar ubicación» cuando el cliente NO tiene ninguna guardada. */
+  const LOCATION_REQUEST_TEXT = 'Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.';
   function waTemplateFreeSlot(template) {
     const index = waTemplateHuecos(template).findIndex((key) =>
       WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase()),
@@ -5200,14 +5208,240 @@
   }
 
   /**
-   * PEDIR LA UBICACIÓN desde el chat.
+   * AVISO de ventana cerrada.
    *
-   * WhatsApp solo deja texto libre dentro de la ventana de 24 h; para pedirla
-   * siempre se usa la plantilla aprobada «Solicitar ubicación», que se abre ya
-   * elegida (el nombre del cliente y el número de pedido los pone el CRM).
+   * Fuera de las 24 h WhatsApp NO deja texto libre ni ubicaciones: solo plantillas
+   * aprobadas. No se evade la regla de Meta: se dice claro y se deja la plantilla
+   * a un toque (que es la vía segura y la única permitida).
    */
-  function askForLocation() {
-    return openWaTemplateSheet({ templateName: LOCATION_TEMPLATE });
+  function openClosedWindowNotice({ templateName, note }) {
+    openSheet(
+      'Fuera de la ventana de 24 h',
+      `
+      <p class="rule rule--warn">Han pasado más de 24 h desde el último mensaje del cliente. WhatsApp solo permite enviar
+      una <strong>plantilla aprobada</strong>, así que este mensaje no se puede mandar como texto libre.</p>
+      <p class="rule">${note}</p>
+      <button class="btn btn--primary btn--block" id="wa-closed-template" type="button">Elegir la plantilla aprobada</button>
+      `,
+    );
+    $('#wa-closed-template')?.addEventListener('click', () => openWaTemplateSheet({ templateName }));
+  }
+
+  /** Envía un texto ya decidido por el SERVIDOR (previsualizado antes). */
+  function sendPreviewedText(conversationId, { title, lead, body, key }) {
+    openSheet(
+      title,
+      `
+      <p class="rule">${lead}</p>
+      <div class="wa-preview">${escapeHtml(body)}</div>
+      <button class="btn btn--primary btn--block" id="wa-preview-send" type="button">Enviar por WhatsApp</button>
+      `,
+    );
+    $('#wa-preview-send')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ body, idempotencyKey: uploadKey(key) }),
+          });
+          toast('Mensaje enviado');
+          closeSheet();
+          await loadWaThread(conversationId, { force: true });
+          refreshWhatsapp().catch(() => {});
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar el mensaje');
+        }
+      });
+    });
+  }
+
+  /**
+   * PEDIR / CONFIRMAR LA UBICACIÓN desde el chat.
+   *
+   *  - Si el cliente YA tiene una ubicación de entrega guardada, se le manda ESA
+   *    ubicación como ubicación NATIVA de WhatsApp (el mapa que él puede tocar) y
+   *    después la pregunta de confirmación.
+   *  - Si NO tiene ninguna (o la guardada no tiene coordenadas válidas), NO se
+   *    manda ningún mapa: solo se le pide que envíe su ubicación.
+   *
+   * La ubicación sale SIEMPRE de este cliente: se pide su lista al servidor y el
+   * servidor, además, rechaza cualquier ubicación que no sea suya.
+   */
+  async function requestOrConfirmLocation() {
+    const conversationId = state.wa.selectedId ?? '';
+    const customerId = state.wa.chat?.customer?.id ?? '';
+    if (!conversationId || !customerId) return;
+    /*
+     * Fuera de la ventana de 24 h ni el texto ni la ubicación se pueden mandar
+     * (son contenido libre): se avisa y se deja la plantilla aprobada.
+     */
+    if (state.wa.chat?.canSendFreeText !== true) {
+      openClosedWindowNotice({
+        templateName: LOCATION_TEMPLATE,
+        note: 'Puedes pedirle la ubicación con la plantilla «Solicitar ubicación»: lleva su nombre y el número de pedido puestos.',
+      });
+      return;
+    }
+    const ubicaciones = await fetchCustomerLocations(customerId).catch(() => []);
+    const guardada = preferredDeliveryLocation(customerId, ubicaciones);
+    // Coordenadas incompletas o fuera de rango NO valen: eso es «sin ubicación».
+    const valida = guardada && guardada.id && locationCoordsOk(guardada) ? guardada : null;
+    if (!valida) {
+      // CASO B — sin ubicación: solo se le pide.
+      sendPreviewedText(conversationId, {
+        title: 'Pedir ubicación',
+        lead: 'Este cliente no tiene ninguna ubicación de entrega guardada. Se le pedirá que la envíe por WhatsApp.',
+        body: LOCATION_REQUEST_TEXT,
+        key: 'la',
+      });
+      return;
+    }
+    // CASO A — con ubicación: primero el mapa de WhatsApp, después la pregunta.
+    openSheet(
+      'Confirmar ubicación',
+      `
+      <p class="rule">Se le enviará al cliente <strong>esta ubicación</strong> (la que ya tenemos guardada) como ubicación
+      de WhatsApp, para que la vea en el mapa; después, la pregunta de confirmación.</p>
+      ${locationChip(valida, { withActions: false })}
+      <div class="wa-preview">${escapeHtml(LOCATION_CONFIRM_QUESTION)}</div>
+      <button class="btn btn--primary btn--block" id="loc-request-send" type="button">Enviar ubicación y pregunta</button>
+      `,
+    );
+    $('#loc-request-send')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          /*
+           * La ubicación viaja por ID: el servidor carga ESA fila y comprueba que
+           * sea de este cliente (si no, la rechaza). No se reenvían coordenadas
+           * sueltas desde el navegador.
+           */
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/location`, {
+            method: 'POST',
+            body: JSON.stringify({
+              locationId: valida.id,
+              confirmed: true,
+              idempotencyKey: uploadKey('loc'),
+            }),
+          });
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ body: LOCATION_CONFIRM_QUESTION, idempotencyKey: uploadKey('lc') }),
+          });
+          toast('Ubicación enviada al cliente');
+          closeSheet();
+          await loadWaThread(conversationId, { force: true });
+          refreshWhatsapp().catch(() => {});
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar la ubicación');
+        }
+      });
+    });
+  }
+
+  /** Pedidos de ESTE cliente que se pueden confirmar desde ESTA conversación. */
+  function ordersForConfirmation(customerId, conversationId) {
+    return liveOrdersForCustomer(customerId).filter((item) => {
+      const deConversacion = String(item.conversation_id ?? itemOrder(item)?.conversation_id ?? '');
+      // Nunca un pedido de OTRA conversación (el servidor también lo comprueba).
+      return !deConversacion || deConversacion === conversationId;
+    });
+  }
+
+  /**
+   * PEDIR CONFIRMACIÓN DEL PEDIDO.
+   *
+   * Se manda el PEDIDO REAL del cliente (productos, cantidades, importes y forma
+   * de pago) y la pregunta de si está correcto. El texto lo construye el SERVIDOR
+   * desde ese pedido y aquí solo se ENSEÑA antes de mandarlo: así el cliente lee
+   * exactamente lo que se aprueba en pantalla.
+   *
+   * Si el cliente tiene varios pedidos abiertos se elige CUÁL: enviar el que no
+   * es sería un error grave, así que nunca se adivina.
+   */
+  async function openOrderConfirmation() {
+    const conversationId = state.wa.selectedId ?? '';
+    const customerId = state.wa.chat?.customer?.id ?? '';
+    if (!conversationId || !customerId) return;
+    if (state.wa.chat?.canSendFreeText !== true) {
+      openClosedWindowNotice({
+        templateName: ORDER_CONFIRM_TEMPLATE,
+        note: 'Puedes pedirle la confirmación con la plantilla del pedido: lleva el número, el total y la forma de pago.',
+      });
+      return;
+    }
+    const pedidos = ordersForConfirmation(customerId, conversationId);
+    if (!pedidos.length) {
+      toast('Este cliente todavía no tiene un pedido abierto para confirmar');
+      return;
+    }
+    if (pedidos.length === 1) {
+      await previewOrderConfirmation(pedidos[0].id);
+      return;
+    }
+    openSheet(
+      '¿Qué pedido?',
+      `
+      <p class="rule">Este cliente tiene ${pedidos.length} pedidos abiertos. Elige el que le vas a enviar: se manda
+      exactamente ese.</p>
+      <div class="menu-list">
+        ${pedidos
+          .map((item) => {
+            const order = itemOrder(item) ?? {};
+            return `<button class="menu-item" data-order-confirm-pick="${escapeHtml(item.id)}" type="button">
+              <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+              <span><strong>${escapeHtml(order.order_number ?? 'Pedido')}</strong><small>${escapeHtml(
+                fmtWhen(item.received_at ?? order.created_at),
+              )} · ${escapeHtml(money(order.total ?? item.total, order.currency ?? item.currency))}</small></span>
+            </button>`;
+          })
+          .join('')}
+      </div>
+      `,
+      { variant: 'menu' },
+    );
+  }
+
+  /** Enseña el mensaje EXACTO (lo devuelve el servidor) y lo envía al confirmar. */
+  async function previewOrderConfirmation(orderId) {
+    const conversationId = state.wa.selectedId ?? '';
+    if (!conversationId || !orderId) return;
+    let preview = null;
+    try {
+      preview = await api(
+        `/api/admin/conversations/${encodeURIComponent(conversationId)}/order-confirmation?orderId=${encodeURIComponent(orderId)}`,
+      );
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo preparar la confirmación');
+      return;
+    }
+    openSheet(
+      preview.order_number ? `Confirmar pedido · ${preview.order_number}` : 'Confirmar pedido',
+      `
+      <p class="rule">Esto es lo que va a leer el cliente. Se envía tal cual, con los datos reales de ESTE pedido.</p>
+      <div class="wa-preview">${escapeHtml(preview.text)}</div>
+      <button class="btn btn--primary btn--block" id="order-confirm-send" type="button">Enviar por WhatsApp</button>
+      `,
+    );
+    $('#order-confirm-send')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          /*
+           * Solo viaja el ID del pedido: el texto lo arma el SERVIDOR desde ese
+           * pedido (y comprueba cliente → conversación → pedido).
+           */
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ orderId, idempotencyKey: uploadKey('oc') }),
+          });
+          toast('Pedido enviado al cliente');
+          closeSheet();
+          await loadWaThread(conversationId, { force: true });
+          refreshWhatsapp().catch(() => {});
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar el pedido');
+        }
+      });
+    });
   }
 
   /**
@@ -7432,11 +7666,11 @@
         </button>
         <button class="menu-item" data-wa-ask-location="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.pin}</span>
-          <span><strong>Pedir ubicación</strong><small>Plantilla «Solicitar ubicación»</small></span>
+          <span><strong>Pedir / confirmar ubicación</strong><small>Le enviamos la que tenemos o se la pedimos</small></span>
         </button>
         <button class="menu-item" data-wa-confirm-order="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.check}</span>
-          <span><strong>Pedir confirmación</strong><small>Plantilla del pedido, con sus datos</small></span>
+          <span><strong>Pedir confirmación</strong><small>Le manda su pedido real, para que lo revise</small></span>
         </button>
 
         <p class="menu-list__label">Seguimiento</p>
@@ -12110,13 +12344,20 @@
         return;
       }
       if (event.target.closest('[data-wa-ask-location]')) {
-        askForLocation();
+        requestOrConfirmLocation();
         return;
       }
       if (event.target.closest('[data-wa-confirm-order]')) {
-        // Confirmación del pedido: los datos (número, total, pago) van puestos
-        // solos, así el cliente solo tiene que decir «sí» o corregir algo.
-        openWaTemplateSheet({ templateName: ORDER_CONFIRM_TEMPLATE });
+        /*
+         * Confirmación del pedido: se manda el PEDIDO REAL del cliente (no una
+         * plantilla genérica) y luego la pregunta. El texto lo arma el servidor.
+         */
+        openOrderConfirmation();
+        return;
+      }
+      const orderConfirmPick = event.target.closest('[data-order-confirm-pick]');
+      if (orderConfirmPick) {
+        previewOrderConfirmation(orderConfirmPick.dataset.orderConfirmPick);
         return;
       }
       // --------------------------------------------- respuestas rápidas

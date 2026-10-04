@@ -8255,3 +8255,20 @@ body:has(> #sheet:not([hidden])) .map-fab {
 .menu-item--primary .menu-item__icon {
   color: var(--phyto-primary-dark);
 }
+
+/*
+ * LO QUE SE VA A ENVIAR (resumen del pedido, petición de ubicación). Es texto de
+ * WhatsApp: se respetan los saltos de línea y se lee como una burbuja.
+ */
+.wa-preview {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--pe-border);
+  border-radius: 12px;
+  background: var(--pe-surface-alt);
+  color: var(--pe-ink-900);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

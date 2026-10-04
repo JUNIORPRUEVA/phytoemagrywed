@@ -394,6 +394,51 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
   };
 }
 
+/**
+ * TEXTO DE «PEDIR CONFIRMACIÓN»: el resumen del pedido tal y como lo lee el
+ * CLIENTE por WhatsApp.
+ *
+ * Solo datos comerciales (productos, cantidades, importes y forma de pago): ni un
+ * id, ni un estado técnico, ni nada administrativo. Se escribe en el SERVIDOR a
+ * propósito: el panel pide este texto para enseñarlo y, al enviar, el servidor lo
+ * vuelve a construir desde el pedido REAL, así el mensaje que sale es siempre el
+ * de ESE pedido y nunca lo que mande el navegador.
+ */
+export function orderConfirmationText(order, customer = null) {
+  const currency = order?.currency || CATALOG_CURRENCY;
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const nombre = String(customer?.name ?? '').trim();
+  const lineas = [`Hola${nombre ? ` ${nombre}` : ''}, este es tu pedido:`, ''];
+  for (const line of items) {
+    const cantidad = Number(line.quantity) || 1;
+    const label = line.label ?? (line.capsules ? `Frasco de ${line.capsules} cápsulas` : line.variantName) ?? 'Producto';
+    const importe = Number(line.subtotal) || (Number(line.unitPrice) || 0) * cantidad;
+    /*
+     * Si el pedido no trae precio por línea (pedidos viejos), NO se le inventa un
+     * «RD$ 0» al cliente: se enseña el producto y el total manda.
+     */
+    lineas.push(importe > 0 ? `• ${cantidad} × ${label} — ${money(importe, currency)}` : `• ${cantidad} × ${label}`);
+  }
+  const subtotal = Number(order?.subtotal) || 0;
+  const descuento = Number(order?.discount) || 0;
+  const delivery = Number(order?.delivery_fee ?? order?.delivery?.fee ?? 0) || 0;
+  const total = Number(order?.total) || 0;
+  lineas.push('');
+  // El número de pedido es la referencia que el cliente ya ve en su factura
+  // (`PE-XXXXXX`), no un id de base de datos: sirve para que pueda citarlo.
+  if (order?.order_number) lineas.push(`Pedido: ${order.order_number}`);
+  // El desglose solo cuando aporta algo: con una línea y sin extras, sobra ruido.
+  if (items.length > 1 || descuento > 0 || delivery > 0) {
+    lineas.push(`Productos: ${money(subtotal, currency)}`);
+    if (descuento > 0) lineas.push(`Descuento: -${money(descuento, currency)}`);
+    if (delivery > 0) lineas.push(`Delivery: ${money(delivery, currency)}`);
+  }
+  lineas.push(`Total: ${money(total, currency)}`);
+  if (order?.payment_method_label) lineas.push(`Forma de pago: ${order.payment_method_label}`);
+  lineas.push('', 'Por favor, revísalo y confírmanos si está correcto.');
+  return lineas.join('\n');
+}
+
 /** Escapa texto para HTML (el comprobante se abre en el navegador). */
 function esc(value) {
   return String(value ?? '')

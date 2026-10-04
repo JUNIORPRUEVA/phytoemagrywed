@@ -781,7 +781,7 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     click('#wa-actions');
     await waitFor(() => $('#sheet-body [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
     expect($('#sheet-body [data-wa-ask-location]')).not.toBeNull();
-    expect($('#sheet-body').textContent).toContain('Pedir ubicación');
+    expect($('#sheet-body').textContent).toContain('Pedir / confirmar ubicación');
     expect($('#sheet-body').textContent).toContain('Mensajes');
 
     click('#sheet-body [data-wa-template]');
@@ -792,47 +792,31 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     closeSheetForUat();
   }, 30000);
 
-  it('«Pedir ubicación» abre LA plantilla correcta y se envía con los datos escritos', async () => {
+  it('«Pedir / confirmar ubicación» sin ubicación guardada: solo la pide (texto, sin plantilla)', async () => {
     // El menú puede haberse cerrado con la hoja anterior: se vuelve a abrir.
     if (!$('#sheet-body [data-wa-ask-location]')) {
       click('#wa-actions');
       await waitFor(() => $('#sheet-body [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
     }
     click('#sheet-body [data-wa-ask-location]');
-    const pedido = await waitFor(
-      () => $('#wa-template-fields [data-wa-var="2"]'),
-      'los huecos de la plantilla de ubicación',
-      9000,
-    );
-    expect($('#wa-template').value).toBe('phyto_ubicacion_entrega_v1');
-    // El nombre lo pone el CRM; el número de pedido se escribe aquí.
-    expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Luis Lista');
-    // Sin pedidos todavía, el hueco se ve COMO hueco (no como un `{{2}}` roto) y
-    // la hoja dice qué falta y cómo resolverlo.
-    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe('');
-    expect($('#wa-template-preview').textContent).toContain('⟨falta Nº de pedido⟩');
-    expect($('#wa-template-fields').textContent).toContain('todavía no tiene pedidos');
+    /*
+     * Luis todavía NO ha mandado ninguna ubicación: ni se inventa un mapa ni se
+     * manda una plantilla. Solo se le pide que la envíe (la ventana está abierta).
+     */
+    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'la previsualización del mensaje', 9000);
+    expect(preview.textContent).toBe('Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.');
+    expect($('#wa-template')).toBeNull();
 
     const antes = whatsapp.sent.length;
-    pedido.value = 'PED-1042';
-    pedido.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    expect($('#wa-template-preview').textContent).toContain('pedido PED-1042');
-
-    click('#sheet-body #wa-send-template');
-    await waitFor(() => whatsapp.sent.length === antes + 1, 'la plantilla de ubicación enviada', 9000);
-    expect(whatsapp.sent.at(-1).template.name).toBe('phyto_ubicacion_entrega_v1');
-    expect(whatsapp.sent.at(-1).template.components).toEqual([
-      {
-        type: 'body',
-        parameters: [
-          { type: 'text', text: 'Luis Lista' },
-          { type: 'text', text: 'PED-1042' },
-        ],
-      },
-    ]);
+    click('#sheet-body #wa-preview-send');
+    await waitFor(() => whatsapp.sent.length === antes + 1, 'el mensaje enviado', 9000);
+    const enviado = whatsapp.sent.at(-1);
+    expect(enviado.body).toBe('Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.');
+    // Es TEXTO libre, no una plantilla.
+    expect(enviado.template).toBeUndefined();
   }, 30000);
 
-  it('el número de pedido se rellena SOLO con el pedido real de esa conversación', async () => {
+  it('«Pedir confirmación» usa el pedido REAL de esa conversación (no una plantilla)', async () => {
     // El pedido se crea DESDE el panel, como lo hace una persona.
     click('#wa-actions');
     await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
@@ -857,14 +841,16 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     expect(numero).toBeTruthy();
 
     click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-wa-ask-location]');
+    await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
+    click('#sheet-body [data-wa-confirm-order]');
 
-    const campo = await waitFor(() => $('#wa-template-fields [data-wa-var="2"]'), 'el hueco del pedido', 9000);
-    // Nadie tiene que saberse el número de la factura: viene puesto.
-    expect(campo.value).toBe(numero);
-    expect($('#wa-template-preview').textContent).toContain(numero);
-    expect($('#wa-template-fields').textContent).not.toContain('todavía no tiene pedidos');
+    // Con UN solo pedido abierto no hay que elegir: va directo al mensaje.
+    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'el resumen del pedido', 9000);
+    // Nadie tiene que saberse el número de la factura: sale del pedido real.
+    expect(preview.textContent).toContain(numero);
+    expect(preview.textContent).toContain('10 cápsulas');
+    expect(preview.textContent).toContain('revísalo y confírmanos si está correcto');
+    expect($('#wa-template')).toBeNull();
     closeSheetForUat();
   }, 40000);
 });
@@ -955,14 +941,22 @@ describe('preferencias del pedido del cliente', () => {
 });
 
 describe('pedir al cliente que confirme su pedido', () => {
-  it('«Pedir confirmación» trae la plantilla del pedido con TODOS sus datos', async () => {
-    await approveOrderConfirmTemplateForUat();
+  it('«Pedir confirmación» manda el pedido REAL como texto (con varios, se elige CUÁL)', async () => {
     click('#wa-actions');
     await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
     click('#sheet-body [data-wa-confirm-order]');
-    await waitFor(() => $('#wa-template-fields [data-wa-var="4"]'), 'los huecos de la confirmación', 9000);
 
-    // Los datos NO se escriben a mano: salen del pedido real más reciente.
+    /*
+     * Luis ya tiene MÁS DE UN pedido abierto: el CRM pregunta CUÁL, porque
+     * mandarle el que no es sería un error grave. La primera fila es el más
+     * reciente.
+     */
+    const filas = await waitFor(() => {
+      const rows = $$('#sheet-body [data-order-confirm-pick]');
+      return rows.length ? rows : null;
+    }, 'la elección de pedido', 9000);
+    expect(filas.length).toBeGreaterThan(1);
+
     const luis = (await conversations()).find((row) => row.id === ids.luis);
     const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
     const ultimo = datos.items
@@ -970,27 +964,26 @@ describe('pedir al cliente que confirme su pedido', () => {
       .sort((a, b) => String(b.received_at ?? '').localeCompare(String(a.received_at ?? '')))[0];
     expect(ultimo).toBeTruthy();
 
-    expect($('#wa-template').value).toBe('phyto_confirmacion_pedido_v1');
-    expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Luis Lista');
-    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe(ultimo.order_number);
-    // El total va como lo pinta todo el CRM («DOP 3,500»): se compara el importe.
-    const importe = (valor) => Number(String(valor).replace(/[^\d.]/g, ''));
-    expect(importe($('#wa-template-fields [data-wa-var="3"]').value)).toBe(Number(ultimo.total));
-    const pago = orderOfItem(ultimo).payment_method;
-    expect($('#wa-template-fields [data-wa-var="4"]').value).toBe({ CASH: 'Efectivo', TRANSFER: 'Transferencia' }[pago]);
-    // Ni un hueco sin rellenar: el mensaje se lee entero antes de enviarlo.
-    expect($('#wa-template-preview').textContent).not.toContain('⟨falta');
+    click(filas[0]);
 
-    const campos = [1, 2, 3, 4].map((slot) => $(`#wa-template-fields [data-wa-var="${slot}"]`).value);
+    // El mensaje que se ENSEÑA es el que se envía: lo arma el servidor y aquí solo
+    // se lee. Lleva los datos comerciales del pedido y nada técnico.
+    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'el resumen del pedido', 9000);
+    expect(preview.textContent).toContain(ultimo.order_number);
+    expect(preview.textContent).toContain('este es tu pedido');
+    expect(preview.textContent).toContain('revísalo y confírmanos si está correcto');
+    expect(preview.textContent).not.toContain(ultimo.id);
+
     const antes = whatsapp.sent.length;
-    click('#sheet-body #wa-send-template');
+    click('#sheet-body #order-confirm-send');
     await waitFor(() => whatsapp.sent.length === antes + 1, 'la confirmación enviada', 9000);
     const enviado = whatsapp.sent.at(-1);
-    expect(enviado.template.name).toBe('phyto_confirmacion_pedido_v1');
+    // Es el pedido REAL como TEXTO: ninguna plantilla de por medio.
+    expect(enviado.template).toBeUndefined();
+    expect(enviado.body).toContain(ultimo.order_number);
     // Lo que se envía es EXACTAMENTE lo que se revisó en pantalla.
-    const textos = enviado.template.components[0].parameters.map((parameter) => parameter.text);
-    expect(textos).toEqual(campos);
-  }, 30000);
+    expect(enviado.body).toBe(preview.textContent);
+  }, 40000);
 });
 
 describe('la foto del cliente', () => {
