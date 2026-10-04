@@ -8289,3 +8289,123 @@ body:has(> #sheet:not([hidden])) .map-fab {
   font-family: inherit;
   font-size: 14px;
 }
+
+/*
+ * MENSAJE PROGRAMADO en la ficha del cliente.
+ *
+ * Una fila por mensaje: QUÉ va a pasar (o qué pasó), CUÁNDO, QUÉ texto saldrá y
+ * con qué plantilla. Cuando algo no salió, el motivo va debajo en palabras, nunca
+ * un código de Meta.
+ */
+.sch-list {
+  display: grid;
+  gap: 8px;
+}
+
+.sch-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--pe-border);
+  border-radius: 12px;
+  background: var(--pe-surface-alt);
+}
+
+.sch-item--warn {
+  border-color: rgba(180, 83, 9, 0.28);
+  background: #fff8ed;
+}
+
+.sch-item__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sch-item__head strong {
+  font-size: 0.9rem;
+  color: var(--pe-ink-900);
+}
+
+.sch-item__when {
+  font-size: 0.78rem;
+  color: var(--pe-ink-500);
+  white-space: nowrap;
+}
+
+.sch-item__body {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--pe-ink-800);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sch-item__meta {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--pe-ink-500);
+}
+
+.sch-item__reason {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #92400e;
+}
+
+.sch-item .btn {
+  justify-self: start;
+}
+
+/*
+ * PLANTILLAS QUE TODAVÍA NO SE PUEDEN USAR. Se enseñan aparte (con su nombre
+ * técnico) para que nadie las busque entre las enviables ni crea que el CRM las
+ * ha perdido.
+ */
+.wa-pending {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--pe-border);
+  border-radius: 12px;
+  background: var(--pe-surface-alt);
+}
+
+.wa-pending strong {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--pe-ink-900);
+}
+
+.wa-pending p {
+  margin: 4px 0 6px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--pe-ink-600);
+}
+
+.wa-pending ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  color: var(--pe-ink-600);
+}
+
+.wa-pending code {
+  font-size: 0.74rem;
+  color: var(--pe-ink-500);
+}
+
+/*
+ * VALORES LARGOS en la lista de datos (dt/dd).
+ *
+ * El nombre técnico de una plantilla (`phyto_seguimiento_compra_v1`) no tiene
+ * espacios: en el móvil se salía del recuadro y quedaba cortado. Aquí se permite
+ * partirlo por donde haga falta, sin tocar el resto de la lista.
+ */
+.fact dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

@@ -49,6 +49,7 @@ export const BLOCK_REASONS = Object.freeze({
   WHATSAPP_NOT_CONFIGURED: 'WhatsApp no está configurado en el servidor.',
   UNKNOWN_TEMPLATE: 'La plantilla ya no existe.',
   CUSTOMER_MISSING: 'El cliente del mensaje ya no existe.',
+  CONVERSATION_MISMATCH: 'La conversación guardada no es de este cliente: no se envía.',
 });
 
 /** Milisegundos que una fila puede estar «Processing» antes de considerarla huérfana. */
@@ -76,6 +77,29 @@ function isoDate(value) {
   if (!raw) return null;
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+/**
+ * Componentes EXACTOS de la plantilla (los parámetros que se enviarán).
+ *
+ * Se guardan tal cual se aprobaron al programar y se sanean una sola vez: al
+ * llegar la hora NO se reconstruye nada, se manda esto. Es lo que garantiza que
+ * el cliente reciba el mismo texto que el agente revisó.
+ */
+function componentsOf(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((row) => row && typeof row === 'object' && typeof row.type === 'string')
+    .slice(0, 5)
+    .map((row) => ({
+      ...row,
+      parameters: Array.isArray(row.parameters)
+        ? row.parameters
+            .filter((parameter) => parameter && typeof parameter === 'object')
+            .slice(0, 20)
+            .map((parameter) => ({ type: String(parameter.type ?? 'text'), text: String(parameter.text ?? '') }))
+        : [],
+    }));
 }
 
 /**
@@ -144,7 +168,9 @@ export function createScheduler(deps) {
      *
      * @param {{ customerId: string, conversationId?: string|null, orderId?: string|null,
      *           scheduledAt: string, type?: 'text'|'template', text?: string|null,
-     *           template?: string|null, createdBy?: string|null, idempotencyKey?: string|null }} input
+     *           template?: string|null, createdBy?: string|null, idempotencyKey?: string|null,
+     *           templateComponents?: any[]|null, templateBody?: string|null,
+     *           templateLanguage?: string|null, timeZone?: string|null }} input
      */
     async schedule(input) {
       const customerId = short(input.customerId, 80);
@@ -166,6 +192,17 @@ export function createScheduler(deps) {
         type,
         text: type === 'text' ? text : null,
         template: type === 'template' ? template : null,
+        /*
+         * CONTENIDO CONGELADO de la plantilla. Se guarda lo que el agente aprobó
+         * al programar: el idioma, los parámetros y el texto final. Al llegar la
+         * hora se manda ESTO, sin volver a calcularlo (si la compra cambió entre
+         * medias, el mensaje programado no cambia solo).
+         */
+        template_language: type === 'template' ? (short(input.templateLanguage, 10) ?? 'es') : null,
+        template_components: type === 'template' ? componentsOf(input.templateComponents) : [],
+        template_body: type === 'template' ? long(input.templateBody, 1024) : null,
+        /* La zona horaria con la que se eligió la hora (para poder auditarla). */
+        time_zone: short(input.timeZone, 60),
         scheduled_at: scheduledAt,
         status: 'SCHEDULED',
         attempts: 0,
@@ -341,6 +378,13 @@ export function createScheduler(deps) {
       const conversation = current.conversation_id
         ? await db.get('conversations', current.conversation_id)
         : await customers.conversationFor(customer.id, { create: false });
+      /*
+       * REVALIDACIÓN DEL DESTINATARIO, justo antes de enviar: la conversación
+       * guardada tiene que ser de ESTE cliente. Si no lo es, no sale nada.
+       */
+      if (current.conversation_id && conversation && conversation.customer_id !== customer.id) {
+        return block(claimed, 'CONVERSATION_MISMATCH');
+      }
 
       /** @type {any} */
       let template = null;
@@ -356,8 +400,9 @@ export function createScheduler(deps) {
       const sendResult = template
         ? await whatsapp.sendTemplate(customer.phone_e164, {
             name: template.name,
-            language: template.language ?? 'es',
-            components: [],
+            language: current.template_language ?? template.language ?? 'es',
+            // LOS PARÁMETROS CONGELADOS: los mismos que el agente aprobó, tal cual.
+            components: Array.isArray(current.template_components) ? current.template_components : [],
           })
         : await whatsapp.sendText(customer.phone_e164, current.text);
 
@@ -366,7 +411,7 @@ export function createScheduler(deps) {
         const recorded = await customers.recordOutbound({
           customer,
           conversation,
-          body: template ? null : current.text,
+          body: template ? current.template_body ?? null : current.text,
           template: template?.name ?? null,
           status: 'failed',
           error: sendResult?.error ?? { message: sendResult?.reason ?? 'error' },
@@ -396,7 +441,7 @@ export function createScheduler(deps) {
       const recorded = await customers.recordOutbound({
         customer,
         conversation,
-        body: template ? null : current.text,
+        body: template ? current.template_body ?? null : current.text,
         template: template?.name ?? null,
         waMessageId: sendResult.messageId ?? null,
         status: 'sent',

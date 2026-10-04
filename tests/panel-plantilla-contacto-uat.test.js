@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 /**
- * UAT DEL PANEL — PLANTILLA PRINCIPAL «Contacto personalizado».
+ * UAT DEL PANEL — CHAT DIRECTO con «Contacto personalizado».
  *
  * Lo que se demuestra aquí, que es lo que se pidió:
- *   - el saludo viene PUESTO y calculado por el servidor con la hora local del
- *     negocio (y se dice que es automático, para poder corregirlo);
- *   - el hueco libre se escribe en un CAMPO AMPLIO (varias líneas), no en un
- *     renglón suelto, porque es un mensaje;
+ *   - el NOMBRE viene puesto solo y se dice que es automático;
+ *   - el MENSAJE se escribe en un campo amplio y es editable;
  *   - la VISTA PREVIA enseña el texto exacto que se va a enviar, con sus saltos
  *     de línea, antes de tocar «Enviar»;
- *   - abrir la hoja no manda nada, y al enviar viajan solo los tres parámetros.
+ *   - las plantillas que Meta todavía NO ha aprobado se ven aparte y se dice que
+ *     no se pueden enviar (nada de fingir que están listas);
+ *   - abrir la hoja no manda nada, y al enviar viajan los dos parámetros exactos.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -19,19 +19,19 @@ import { JSDOM } from 'jsdom';
 
 import { startCrmServer } from '../server/crm-server.mjs';
 
-const TOKEN = 'uat-plantilla-contacto';
+const TOKEN = 'uat-chat-directo';
 const ADMIN_DIR = path.join(process.cwd(), 'public', 'admin');
-const PHONE = '18095559001';
+const PHONE = '18095559071';
 const NOMBRE = 'Juan Pérez';
 
 const CUERPO =
-  '{{1}}, {{2}}.\n\nTe escribimos de Phytoemagry en relación con tu solicitud.\n\n{{3}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.';
+  'Hola {{1}}, te escribimos de Phytoemagry.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.';
 
 /** Graph de mentira: NO hay una sola llamada real a Meta. */
 const whatsapp = {
   enabled: true,
   graphVersion: 'v21.0',
-  phoneNumberId: 'PN-UAT-TPL',
+  phoneNumberId: 'PN-UAT-CHAT',
   businessAccountId: 'WABA1',
   sent: [],
   async sendText(to, body) {
@@ -42,12 +42,6 @@ const whatsapp = {
     whatsapp.sent.push({ to, template, type: 'template' });
     return { ok: true, status: 200, messageId: `wamid.TPL${whatsapp.sent.length}` };
   },
-  /*
-   * A PROPÓSITO no hay `listTemplates`, igual que en el resto de UAT del panel:
-   * si Meta devolviera una lista SIN la plantilla, el CRM la marcaría como «no
-   * aprobada» (que es lo correcto). Aquí interesa el camino normal: la plantilla
-   * ya está aprobada y el CRM la conserva tal cual hasta que alguien la cambie.
-   */
   async markAsRead() {
     return { ok: true };
   },
@@ -98,7 +92,7 @@ async function adminJson(route, options = {}) {
 }
 
 beforeAll(async () => {
-  tmpDir = mkdtempSync(path.join(os.tmpdir(), 'phyto-uat-tpl-contacto-'));
+  tmpDir = mkdtempSync(path.join(os.tmpdir(), 'phyto-uat-chat-'));
   app = await startCrmServer({
     port: 0,
     host: '127.0.0.1',
@@ -118,10 +112,9 @@ beforeAll(async () => {
   cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
 
   /*
-   * La plantilla se aprueba SOLO aquí (como si Meta ya la hubiera aprobado) y con
-   * su cuerpo EXACTO: la prueba no puede pasar con un texto distinto al que hay
-   * que registrar en Meta. El cuerpo y las variables son los del CRM; nada se
-   * inventa en la prueba.
+   * Solo se aprueba ESTA plantilla (como si Meta la hubiera aprobado) y con su
+   * cuerpo EXACTO: la prueba no puede pasar con un texto distinto al que hay que
+   * registrar en Meta. Las demás se quedan pendientes a propósito.
    */
   const guardada = await adminJson('/api/admin/wa-templates', {
     method: 'POST',
@@ -130,21 +123,10 @@ beforeAll(async () => {
       friendlyName: 'Contacto personalizado',
       status: 'APPROVED',
       body: CUERPO,
-      variables: ['saludo', 'customer_name', 'mensaje'],
-      metaTemplateId: 'tpl-uat-contacto',
-      lastSyncedAt: new Date().toISOString(),
+      variables: ['customer_name', 'mensaje'],
     }),
   });
   if (guardada.response.status !== 200) throw new Error(`no se pudo aprobar la plantilla: ${JSON.stringify(guardada.body)}`);
-  // No hay ninguna otra aprobada: la hoja tiene que elegir ESTA.
-  for (const row of guardada.body.templates ?? []) {
-    if (row.name !== 'phyto_contacto_personalizado_v1' && row.sendable) {
-      await adminJson('/api/admin/wa-templates', {
-        method: 'POST',
-        body: JSON.stringify({ name: row.name, status: 'PENDING' }),
-      });
-    }
-  }
 
   const started = await adminJson('/api/admin/conversations/start', {
     method: 'POST',
@@ -201,61 +183,63 @@ afterAll(async () => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('la hoja de la plantilla principal', () => {
-  it('el saludo viene puesto por el servidor, avisado como automático', async () => {
+describe('la hoja de plantilla del chat directo', () => {
+  it('trae el NOMBRE del cliente puesto y avisado como automático', async () => {
     click(`[data-conv="${conversationId}"]`);
     await waitFor(() => $('#wa-open-template'), 'el botón de plantilla del compositor');
     click('#wa-open-template');
     await waitFor(() => $('#wa-template-fields [data-wa-var="1"]'), 'los huecos de la plantilla');
 
-    // La plantilla nueva es la que se elige (y es la única aprobada).
     expect($('#wa-template').value).toBe('phyto_contacto_personalizado_v1');
-
-    // El saludo lo dice el SERVIDOR: el panel solo lo trae puesto.
-    const delServidor = await adminJson('/api/admin/wa-templates');
-    const saludo = $('#wa-template-fields [data-wa-var="1"]');
-    expect(saludo.value).toBe(delServidor.body.greeting);
-    expect(['Buenos días', 'Buenas tardes', 'Buenas noches']).toContain(saludo.value);
-    // Y se avisa de que es automático, para poder corregirlo.
-    expect(saludo.closest('.field').textContent).toContain('Saludo');
-    expect(saludo.closest('.field').textContent).toContain('automático según la hora');
-
-    // El nombre real del cliente también viene puesto.
-    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe(NOMBRE);
+    const nombre = $('#wa-template-fields [data-wa-var="1"]');
+    expect(nombre.value).toBe(NOMBRE);
+    expect(nombre.closest('.field').textContent).toContain('Nombre del cliente');
+    expect(nombre.closest('.field').textContent).toContain('automático');
+    // Ya no hay ningún hueco de saludo por hora.
+    expect($('#wa-template-fields [data-wa-var="3"]')).toBeNull();
+    expect($('#wa-template-fields').textContent).not.toMatch(/Buenos|Buenas/);
   }, 20000);
 
-  it('el hueco libre es un campo AMPLIO de varias líneas, no un renglón suelto', () => {
-    const libre = $('#wa-template-fields [data-wa-var="3"]');
+  it('el MENSAJE se escribe en un campo amplio de varias líneas, no en un renglón', () => {
+    const libre = $('#wa-template-fields [data-wa-var="2"]');
     expect(libre.tagName).toBe('TEXTAREA');
     expect(libre.closest('.field').textContent).toContain('lo escribes tú');
-    // Los otros huecos siguen siendo campos de una línea.
     expect($('#wa-template-fields [data-wa-var="1"]').tagName).toBe('INPUT');
-    expect($('#wa-template-fields [data-wa-var="2"]').tagName).toBe('INPUT');
   });
 
-  it('la vista previa es EXACTA, con los saltos de línea del texto fijo', () => {
-    const saludo = $('#wa-template-fields [data-wa-var="1"]').value;
+  it('la VISTA PREVIA es exacta, con los saltos de línea del texto fijo', () => {
     const texto = 'Queremos confirmar si todavía deseas recibir tu pedido mañana.';
-    setValue('#wa-template-fields [data-wa-var="3"]', texto);
-    const esperado = CUERPO.replace('{{1}}', saludo).replace('{{2}}', NOMBRE).replace('{{3}}', texto);
+    setValue('#wa-template-fields [data-wa-var="2"]', texto);
+    const esperado = CUERPO.replace('{{1}}', NOMBRE).replace('{{2}}', texto);
     expect($('#wa-template-preview').textContent).toBe(esperado);
-    // Con saltos de línea de verdad (no todo en una línea).
-    expect($('#wa-template-preview').textContent.split('\n\n')).toHaveLength(4);
+    expect($('#wa-template-preview').textContent.split('\n\n')).toHaveLength(3);
   });
 
-  it('enseña lo que FALTA en vez de un hueco vacío o un `{{3}}` suelto', () => {
-    setValue('#wa-template-fields [data-wa-var="3"]', '');
+  it('enseña lo que FALTA en vez de un hueco vacío', () => {
+    setValue('#wa-template-fields [data-wa-var="2"]', '');
     expect($('#wa-template-preview').textContent).toContain('⟨falta Tu mensaje⟩');
+  });
+
+  it('las plantillas que Meta NO ha aprobado se ven aparte y avisadas', () => {
+    // El aviso existe y nombra la plantilla nueva de seguimiento programado.
+    const aviso = $('.wa-pending');
+    expect(aviso).not.toBeNull();
+    expect(aviso.textContent).toContain('Pendientes de aprobación de Meta');
+    expect(aviso.textContent).toContain('phyto_seguimiento_compra_v1');
+    expect(aviso.textContent).toContain('phyto_seguimiento_interes_v1');
+    // Y NO aparece entre las que se pueden enviar.
+    expect([...$$('#wa-template option')].map((option) => option.value)).not.toContain(
+      'phyto_seguimiento_compra_v1',
+    );
   });
 
   it('abrir la hoja y mirar la vista previa NO manda nada', () => {
     expect(whatsapp.sent).toHaveLength(0);
   });
 
-  it('al enviar viajan los tres parámetros y el texto final es el previsto', async () => {
-    const saludo = $('#wa-template-fields [data-wa-var="1"]').value;
+  it('al enviar viajan los dos parámetros y el texto final es el previsto', async () => {
     const texto = 'Queremos confirmar si todavía deseas recibir tu pedido mañana.';
-    setValue('#wa-template-fields [data-wa-var="3"]', texto);
+    setValue('#wa-template-fields [data-wa-var="2"]', texto);
     const previsto = $('#wa-template-preview').textContent;
 
     click('#wa-send-template');
@@ -268,15 +252,14 @@ describe('la hoja de la plantilla principal', () => {
       {
         type: 'body',
         parameters: [
-          { type: 'text', text: saludo },
           { type: 'text', text: NOMBRE },
           { type: 'text', text: texto },
         ],
       },
     ]);
-    // Lo que se envió es EXACTAMENTE lo que la vista previa decía.
-    await waitFor(() => $('#thread').textContent.includes('Te escribimos de Phytoemagry'), 'el mensaje en el hilo');
-    expect($('#thread').textContent).toContain(previsto.split('\n\n')[2]);
+    // Lo que se envió es EXACTAMENTE lo que decía la vista previa.
+    await waitFor(() => $('#thread').textContent.includes('te escribimos de Phytoemagry'), 'el mensaje en el hilo');
+    expect($('#thread').textContent).toContain(previsto.split('\n\n')[1]);
     expect($('#thread').textContent).not.toContain(PHONE);
   }, 20000);
 });

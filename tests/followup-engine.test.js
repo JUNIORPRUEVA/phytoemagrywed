@@ -409,28 +409,30 @@ describe('cola de mensajes programados', () => {
     expect(after.followups.filter((entry) => entry.type === 'alert')).toHaveLength(1);
   });
 
-  it('fuera de ventana SÍ sale con una plantilla APROBADA', async () => {
-    // Sin aprobar: se bloquea y lo dice.
-    const blocked = await json(
-      await call('/api/admin/scheduled', {
-        method: 'POST',
-        body: JSON.stringify({
-          customerId,
-          conversationId,
-          scheduledAt: soon(),
-          type: 'template',
-          template: 'phyto_purchase_thanks',
-          idempotencyKey: 'sm:test:tpl-1',
-        }),
+  it('con una plantilla SIN aprobar NO se programa: se dice y no se guarda nada', async () => {
+    mockWhatsApp.sent.length = 0;
+    const response = await call('/api/admin/scheduled', {
+      method: 'POST',
+      body: JSON.stringify({
+        customerId,
+        conversationId,
+        scheduledAt: soon(),
+        type: 'template',
+        template: 'phyto_purchase_thanks',
+        idempotencyKey: 'sm:test:tpl-1',
       }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    await app.scheduler.tick();
-    let list = await json(await call('/api/admin/scheduled'));
-    expect(list.scheduled.find((entry) => entry.id === blocked.message.id).blocked_reason).toBe('TEMPLATE_NOT_APPROVED');
+    });
+    expect(response.status).toBe(409);
+    const body = await json(response);
+    expect(body.error).toBe('template_not_approved');
+    expect(body.message).toMatch(/no está aprobada en Meta/i);
+    const list = await json(await call('/api/admin/scheduled'));
+    expect(list.scheduled.some((entry) => entry.idempotency_key === 'sm:test:tpl-1')).toBe(false);
     expect(mockWhatsApp.sent).toHaveLength(0);
+  });
 
-    // El negocio la aprueba en Meta y la marca aprobada en el CRM: ahora sí sale.
+  it('con la plantilla APROBADA se programa y sale al llegar la hora', async () => {
+    // El negocio la aprueba en Meta y la marca aprobada en el CRM.
     await call('/api/admin/wa-templates', {
       method: 'POST',
       body: JSON.stringify({ name: 'phyto_purchase_thanks', status: 'approved' }),
@@ -448,12 +450,46 @@ describe('cola de mensajes programados', () => {
         }),
       }),
     );
+    expect(ok.message.status).toBe('SCHEDULED');
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await app.scheduler.tick();
-    list = await json(await call('/api/admin/scheduled'));
+    const list = await json(await call('/api/admin/scheduled'));
     expect(list.scheduled.find((entry) => entry.id === ok.message.id).status).toBe('SENT');
     expect(mockWhatsApp.sent).toHaveLength(1);
     expect(mockWhatsApp.sent[0].type).toBe('template');
+  });
+
+  it('si Meta la retira entre programar y enviar, NO se fuerza: queda BLOQUEADO', async () => {
+    // Se programó con la plantilla aprobada...
+    const programado = await json(
+      await call('/api/admin/scheduled', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerId,
+          conversationId,
+          scheduledAt: soon(),
+          type: 'template',
+          template: 'phyto_purchase_thanks',
+          idempotencyKey: 'sm:test:tpl-3',
+        }),
+      }),
+    );
+    // ...y antes de la hora Meta la deja sin aprobar.
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'phyto_purchase_thanks', status: 'pending' }),
+    });
+    mockWhatsApp.sent.length = 0;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await app.scheduler.tick();
+    const list = await json(await call('/api/admin/scheduled'));
+    expect(list.scheduled.find((entry) => entry.id === programado.message.id).blocked_reason).toBe('TEMPLATE_NOT_APPROVED');
+    expect(mockWhatsApp.sent).toHaveLength(0);
+    // Se deja como estaba para el resto de la suite.
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'phyto_purchase_thanks', status: 'approved' }),
+    });
   });
 
   it('el opt-out manda: no se contacta a quien pidió no recibir mensajes', async () => {

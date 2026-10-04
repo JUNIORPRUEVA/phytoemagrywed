@@ -325,6 +325,10 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     click('#wa-actions');
     click('[data-scheduled-new]');
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
+    // La pantalla propone una plantilla de seguimiento; aquí se prueba el TEXTO LIBRE.
+    // Se espera a que termine de preparar la propuesta (mientras, el botón está apagado).
+    await waitFor(() => $('#sch-save')?.dataset?.schLoading === '0', 'la pantalla lista');
+    setValue('#sch-tipo', 'libre');
     setValue('#sch-text', 'Hola Ana, ¿te ayudo con algo más?');
     click('#sch-save');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
@@ -603,6 +607,9 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     click(fab);
     click(await waitFor(() => $('[data-scheduled-new]'), 'la acción de programar mensaje'));
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
+    // Aquí se prueba el texto libre (no la plantilla de seguimiento sugerida).
+    await waitFor(() => $('#sch-save')?.dataset?.schLoading === '0', 'la pantalla lista');
+    setValue('#sch-tipo', 'libre');
     setValue('#sch-text', 'Hola Ana, ¿cómo te fue con el pedido?');
     click('#sch-save');
     const programado = await esperar(async () => {

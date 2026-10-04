@@ -100,6 +100,11 @@ import {
 } from './users.mjs';
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createScheduler } from './scheduler.mjs';
+import {
+  INTEREST_FOLLOWUP_TEMPLATE,
+  PURCHASE_FOLLOWUP_TEMPLATE,
+  suggestScheduledMessage,
+} from './message-suggestions.mjs';
 import { createSettingsService } from './settings.mjs';
 import { createSqlQuery } from './sql-query.mjs';
 import { createMediaStore, MEDIA_STATUS, SEND_STATUS } from './media.mjs';
@@ -2284,34 +2289,6 @@ async function ensureFollowupsForDelivered(ctx, log = console.log) {
 // ------------------------------------------- clientes · seguimiento · WhatsApp
 
 /**
- * SALUDO según la HORA LOCAL DEL NEGOCIO.
- *
- * Se calcula en el SERVIDOR (no en el navegador) para que la hora que decide sea
- * siempre la del negocio y no la del teléfono de quien escribe. Devuelve la frase
- * COMPLETA y bien concordada —«Buenos días», «Buenas tardes» o «Buenas noches»—
- * así que nunca puede salir un «Buenos tardes».
- *
- * Es el valor AUTOMÁTICO del hueco `saludo` de una plantilla. Si el agente lo
- * escribe a mano, lo suyo manda (eso lo resuelve `resolveTemplatePayload`).
- *
- * @param {Date} [clock] reloj (se inyecta en las pruebas)
- * @param {string} [timeZone] zona del negocio (`PHYTO_CRM_TZ`)
- */
-export function greetingForNow(clock = new Date(), timeZone = TIME_ZONE) {
-  let hour = NaN;
-  try {
-    const raw = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(clock);
-    hour = Number.parseInt(raw, 10);
-  } catch {
-    hour = NaN;
-  }
-  if (!Number.isFinite(hour)) hour = clock.getHours();
-  if (hour >= 5 && hour < 12) return 'Buenos días';
-  if (hour >= 12 && hour < 19) return 'Buenas tardes';
-  return 'Buenas noches';
-}
-
-/**
  * Plantillas oficiales de WhatsApp: nombres, categoría y variables.
  *
  * NINGUNA nace "aprobada": en Meta las aprueba una persona. Hasta que no estén
@@ -2321,28 +2298,54 @@ export function greetingForNow(clock = new Date(), timeZone = TIME_ZONE) {
 const WA_TEMPLATE_SEED = [
   {
     /*
-     * CONTACTO PERSONALIZADO — la plantilla PRINCIPAL y reutilizable.
+     * CONTACTO PERSONALIZADO — la plantilla PRINCIPAL del CHAT DIRECTO.
      *
-     * Estructura: saludo + nombre real + MENSAJE DEL AGENTE.
-     *   {{1}} → saludo según la hora local del negocio («Buenos días» / «Buenas
-     *           tardes» / «Buenas noches»). Lo calcula el SERVIDOR; el agente
-     *           puede corregirlo en el panel.
-     *   {{2}} → nombre real del cliente (lo pone el CRM desde ESA conversación).
-     *   {{3}} → hueco LIBRE: lo que el agente necesita comunicar.
+     * Es la que se usa cuando la ventana de 24 h ya está cerrada y hay que
+     * volver a contactar al cliente. Estructura mínima y natural:
+     *   {{1}} → nombre real del cliente (lo pone el CRM desde ESA conversación).
+     *   {{2}} → hueco LIBRE: el mensaje que escribe el agente.
      *
-     * El texto fijo NO se toca nunca: solo se rellenan variables.
+     * Nada más: sin saludo por hora, sin «solicitud», sin teléfonos. El texto
+     * fijo NO se toca nunca (Meta no lo permite); solo se rellenan sus variables.
      *
-     * Nace `pending_approval` como todas: se registra y se aprueba en Meta, y el
-     * CRM lo refleja en cuanto la sincronización la vea. Hasta entonces el panel
-     * no deja enviarla (nunca se finge que está aprobada).
+     * Nace `pending_approval` como todas: hasta que Meta la apruebe de verdad, el
+     * panel no deja enviarla (nunca se finge una aprobación).
      */
     name: 'phyto_contacto_personalizado_v1',
     friendly_name: 'Contacto personalizado',
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: '{{1}}, {{2}}.\n\nTe escribimos de Phytoemagry en relación con tu solicitud.\n\n{{3}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
-    variables: ['saludo', 'customer_name', 'mensaje'],
+    body: 'Hola {{1}}, te escribimos de Phytoemagry.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+    variables: ['customer_name', 'mensaje'],
+    buttons: [],
+  },
+  {
+    /*
+     * SEGUIMIENTO DE COMPRA — MENSAJE PROGRAMADO para quien YA compró.
+     *   {{1}} nombre real · {{2}} mensaje de seguimiento (lo sugiere el CRM).
+     */
+    name: 'phyto_seguimiento_compra_v1',
+    friendly_name: 'Seguimiento de compra',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, te escribimos de Phytoemagry para dar seguimiento a tu última compra.\n\n{{2}}\n\nCuéntanos cómo te ha ido. Si tienes alguna pregunta o deseas realizar otro pedido, estamos disponibles para ayudarte.',
+    variables: ['customer_name', 'mensaje'],
+    buttons: [],
+  },
+  {
+    /*
+     * SEGUIMIENTO DE INTERÉS — MENSAJE PROGRAMADO para quien NO ha comprado.
+     *   {{1}} nombre real · {{2}} mensaje de seguimiento (lo sugiere el CRM).
+     */
+    name: 'phyto_seguimiento_interes_v1',
+    friendly_name: 'Seguimiento de interés',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, te contactamos de Phytoemagry para dar seguimiento.\n\n{{2}}\n\nNos gustaría saber si todavía estás interesado/a o si necesitas más información. Si deseas hacer tu pedido, estamos disponibles para ayudarte.',
+    variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
   {
@@ -2821,15 +2824,7 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
     order?.delivery?.delivery_assigned_by_display_name_snapshot ??
     item?.delivery_display_name ??
     null;
-  /*
-   * EL SALUDO lo calcula el SERVIDOR con la hora local del negocio. Si el agente
-   * lo escribe en el panel, lo suyo manda (eso lo hace la rama `written` de
-   * abajo); si lo deja vacío, sale bien igual.
-   */
-  const saludo = greetingForNow(ctx.clock(), TIME_ZONE);
   const values = {
-    saludo,
-    greeting: saludo,
     customer_name: customer?.name || customer?.phone_e164 || 'cliente',
     nombre: customer?.name || customer?.phone_e164 || 'cliente',
     order_number: order?.order_number ?? item?.order_number ?? item?.id ?? null,
@@ -6258,6 +6253,19 @@ async function handle(req, res, ctx) {
           });
           return;
         }
+        /*
+         * EL DESTINATARIO es, por construcción, el cliente de ESTA conversación
+         * (el teléfono sale de aquí, nunca del cuerpo de la petición). Si ese
+         * cliente ya no existiera, se corta en vez de enviar a un teléfono suelto.
+         */
+        if (!customer?.phone_e164) {
+          json(res, 409, {
+            ok: false,
+            error: 'customer_missing',
+            message: 'No encontramos el cliente de esta conversación. El mensaje NO se ha enviado.',
+          });
+          return;
+        }
         const templateName = text(body.template, 60);
         /*
          * «PEDIR CONFIRMACIÓN»: cuando llega `orderId`, el texto lo construye el
@@ -6639,12 +6647,7 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/wa-templates' && req.method === 'GET') {
       const sync = url.searchParams.get('sync');
       if (sync === '1' || sync === 'true' || sync === 'stale') await syncWaTemplatesIfStale(ctx);
-      /*
-       * `greeting` viaja al panel para que el hueco `saludo` se rellene con la
-       * MISMA frase que usaría el servidor: una sola fuente de verdad, sin
-       * desfases entre lo que el agente ve y lo que se envía.
-       */
-      json(res, 200, { ok: true, templates: await listWaTemplates(ctx), greeting: greetingForNow(ctx.clock(), TIME_ZONE) });
+      json(res, 200, { ok: true, templates: await listWaTemplates(ctx) });
       return;
     }
 
@@ -6660,7 +6663,7 @@ async function handle(req, res, ctx) {
         });
         return;
       }
-      json(res, 200, { ok: true, sync: result, templates: await listWaTemplates(ctx), greeting: greetingForNow(ctx.clock(), TIME_ZONE) });
+      json(res, 200, { ok: true, sync: result, templates: await listWaTemplates(ctx) });
       return;
     }
 
@@ -6827,6 +6830,50 @@ async function handle(req, res, ctx) {
     }
 
     // -------------------------------------------- mensajes programados (S5)
+    /*
+     * QUÉ SE PROPONE PROGRAMAR para este cliente.
+     *
+     * Lo decide el SERVIDOR (una sola fuente de verdad, la misma que usará el
+     * envío) y el panel solo lo enseña. Con compra entregada → seguimiento de
+     * compra; sin ella → seguimiento de interés. El mensaje sugerido va calculado
+     * y el agente puede dejarlo, editarlo o reemplazarlo.
+     */
+    if (route === '/api/admin/scheduled/suggestion' && req.method === 'GET') {
+      const customerId = text(url.searchParams.get('customerId'), 80);
+      const customer = customerId ? await ctx.customers.get(customerId) : null;
+      if (!customer) {
+        json(res, 404, { ok: false, error: 'unknown_customer', message: 'No encontramos ese cliente.' });
+        return;
+      }
+      const pedidos = (await ctx.store.listAdmin({ limit: 5000 })).filter(
+        (item) => item.type === 'order_intent' && item.customer_id === customer.id,
+      );
+      const suggestion = suggestScheduledMessage({ customer, orders: pedidos });
+      const plantillas = await Promise.all(
+        [PURCHASE_FOLLOWUP_TEMPLATE, INTEREST_FOLLOWUP_TEMPLATE].map(async (name) => {
+          const check = await approvedTemplate(ctx, name);
+          const known = await ctx.db.findBy('wa_templates', 'name', name);
+          return {
+            name,
+            friendly_name: known?.friendly_name ?? null,
+            ready: check.ok === true,
+            status: known?.status ?? 'desconocida',
+          };
+        }),
+      );
+      json(res, 200, {
+        ok: true,
+        customer: { id: customer.id, name: customer.name ?? null, phone_e164: customer.phone_e164 ?? null },
+        suggestion,
+        templates: {
+          purchase: plantillas.find((row) => row.name === PURCHASE_FOLLOWUP_TEMPLATE) ?? null,
+          interest: plantillas.find((row) => row.name === INTEREST_FOLLOWUP_TEMPLATE) ?? null,
+        },
+        timeZone: TIME_ZONE,
+      });
+      return;
+    }
+
     if (route === '/api/admin/scheduled' && req.method === 'GET') {
       const rows = await ctx.scheduler.list();
       const customers = await ctx.customers.list({});
@@ -6860,20 +6907,101 @@ async function handle(req, res, ctx) {
       const customerId = text(body.customerId, 80);
       const customer = customerId ? await ctx.customers.get(customerId) : null;
       if (!customer) {
-        json(res, 422, { ok: false, error: 'unknown_customer' });
+        json(res, 422, { ok: false, error: 'unknown_customer', message: 'No encontramos ese cliente.' });
         return;
+      }
+      /*
+       * LA CONVERSACIÓN TIENE QUE SER DE ESTE CLIENTE.
+       *
+       * Un mensaje programado se guarda con su cliente y su conversación, y al
+       * llegar la hora se envía al teléfono de ESE cliente. Si el panel manda una
+       * conversación que no es suya (una pestaña vieja, un id cambiado), se corta
+       * aquí: nunca se cruzan datos entre clientes.
+       */
+      const conversationId = text(body.conversationId, 80);
+      if (conversationId) {
+        const conversacion = await ctx.db.get('conversations', conversationId);
+        if (!conversacion) {
+          json(res, 404, { ok: false, error: 'unknown_conversation', message: 'Esa conversación ya no existe.' });
+          return;
+        }
+        if (conversacion.customer_id !== customer.id) {
+          json(res, 409, {
+            ok: false,
+            error: 'conversation_mismatch',
+            message: 'Esa conversación es de otro cliente: el mensaje NO se ha programado.',
+          });
+          return;
+        }
+      }
+      const tipo = body.type === 'template' ? 'template' : 'text';
+      /** @type {any} */
+      let congelado = {};
+      if (tipo === 'template') {
+        const templateName = text(body.template, 60);
+        /*
+         * SOLO PLANTILLAS APROBADAS. Programar con una plantilla que Meta todavía
+         * no ha aprobado sería prometer un envío que no va a salir: se dice claro
+         * y no se guarda nada. (El envío vuelve a comprobarlo: si Meta la retira
+         * entre programar y enviar, el mensaje queda BLOQUEADO, nunca se fuerza.)
+         */
+        const check = templateName ? await approvedTemplate(ctx, templateName) : { ok: false, reason: 'unknown_template' };
+        if (!check.ok) {
+          json(res, 409, {
+            ok: false,
+            error: check.reason === 'unknown_template' ? 'unknown_template' : 'template_not_approved',
+            message:
+              check.reason === 'unknown_template'
+                ? 'Esa plantilla no existe en el CRM.'
+                : `La plantilla «${templateName}» todavía no está aprobada en Meta: hasta que lo esté no se puede programar un mensaje con ella.`,
+            template: check.template ?? null,
+          });
+          return;
+        }
+        /*
+         * EL CONTENIDO SE CONGELA AQUÍ. Lo que el agente ve y aprueba al programar
+         * es EXACTAMENTE lo que se enviará cuando llegue la hora: los parámetros y
+         * el texto final quedan guardados. Nada se regenera después (si la compra
+         * cambia, este mensaje NO cambia).
+         */
+        const payload = await resolveTemplatePayload(ctx, {
+          template: check.template,
+          customer,
+          conversation: conversationId ? { id: conversationId } : null,
+          orderId: text(body.orderId ?? body.order_id, 80),
+          provided:
+            body.templateValues && typeof body.templateValues === 'object' && !Array.isArray(body.templateValues)
+              ? body.templateValues
+              : null,
+        });
+        if (!payload.ok) {
+          json(res, payload.status ?? 422, {
+            ok: false,
+            error: payload.error,
+            message: payload.message,
+            missing: payload.missing ?? undefined,
+          });
+          return;
+        }
+        congelado = {
+          templateComponents: payload.components,
+          templateBody: payload.body,
+          templateLanguage: check.template.language ?? 'es',
+        };
       }
       const result = await ctx.scheduler.schedule({
         customerId: customer.id,
-        conversationId: text(body.conversationId, 80) ?? null,
+        conversationId,
         orderId: text(body.orderId, 80) ?? null,
         scheduledAt: body.scheduledAt,
-        type: body.type === 'template' ? 'template' : 'text',
+        type: tipo,
         text: body.text,
         template: body.template,
+        timeZone: text(body.timeZone, 60) ?? TIME_ZONE,
         createdBy: actor?.display_name ?? 'panel',
         scheduledByUserId: actor?.actor_type === 'USER' ? actor.id : null,
         idempotencyKey: text(body.idempotencyKey, 120) ?? null,
+        ...congelado,
       });
       if (!result.ok) {
         json(res, 422, {

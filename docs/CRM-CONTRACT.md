@@ -79,6 +79,7 @@ La app instalable vive en `/admin/` y usa estos endpoints. Todos piden **sesión
 | `PATCH /api/admin/orders/:id` | Modifica frascos, descuento, notas y entrega; recalcula el total |
 | `GET /api/admin/orders/:id/receipt` | **Comprobante de compra** en HTML imprimible/descargable (teléfono enmascarado; nunca «factura fiscal») |
 | `GET`/`POST /api/admin/scheduled` | Cola de mensajes programados: listar (con resumen para HOY) y programar |
+| `GET /api/admin/scheduled/suggestion?customerId=` | **Qué proponer** para programar: con compra entregada → `phyto_seguimiento_compra_v1` (mensaje de 6+ o de menos frascos); sin compra → `phyto_seguimiento_interes_v1`. Lo decide el servidor; el panel solo lo enseña |
 | `PATCH /api/admin/scheduled/:id` | `{ action: 'cancel' \| 'reschedule' }` |
 | `GET`/`POST /api/admin/settings[/followup]` | Ajustes del negocio (hoy: qué días del plan de postventa están activos) |
 | `GET /api/admin/audit` | Traza comercial (`?entity=`, `?entityId=`, `?limit=`) |
@@ -94,6 +95,29 @@ Mensajes programados: `SCHEDULED → PROCESSING → SENT → DELIVERED → READ`
 `FAILED` / `CANCELLED` / `BLOCKED`. Si al llegar la hora ya no se puede enviar
 legalmente (ventana de 24 h, opt-out, plantilla sin aprobar) **no se fuerza**:
 queda `BLOCKED` y se crea una tarea de aviso para el operador.
+
+Un mensaje programado con plantilla guarda su **contenido congelado**:
+`template_language`, `template_components` (los parámetros exactos) y
+`template_body` (el texto final que el agente revisó). Al llegar la hora se envía
+**eso**, sin volver a calcularlo: si el cliente o su pedido cambian entre medias,
+el mensaje programado NO cambia. Además, la programación **rechaza** una plantilla
+que Meta todavía no ha aprobado (`409 template_not_approved`) y una conversación
+que no sea del cliente (`409 conversation_mismatch`); el envío vuelve a comprobar
+cliente → conversación → plantilla antes de mandar nada.
+
+Plantillas de seguimiento (nacen `pending_approval`, `sendable: false`; se
+desbloquean cuando Meta las aprueba y el CRM sincroniza):
+
+| Nombre | Para qué | Variables |
+| --- | --- | --- |
+| `phyto_contacto_personalizado_v1` | **Chat directo** fuera de la ventana de 24 h | `customer_name`, `mensaje` |
+| `phyto_seguimiento_compra_v1` | Mensaje programado de quien YA compró | `customer_name`, `mensaje` |
+| `phyto_seguimiento_interes_v1` | Mensaje programado de quien NO ha comprado | `customer_name`, `mensaje` |
+
+El mensaje sugerido de una compra usa el de «6 frascos o más» cuando el pedido
+trae esa cantidad (`order_json.units`, o la suma de las líneas); si no se puede
+saber, usa el general y lo dice. Nunca se menciona un «grupo» de WhatsApp: el CRM
+no guarda esa pertenencia por cliente.
 
 Campos de gestión que se añaden a cada registro: `status` (los del pedido),
 `notes`, `next_action_at` (`YYYY-MM-DD`), `last_contact_at`, `updated_at`,

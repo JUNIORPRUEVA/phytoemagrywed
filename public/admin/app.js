@@ -192,13 +192,6 @@
       threadError: false,
       /* Conversación que no es suya: se explica y se ofrece PEDIRLA (no se abre). */
       locked: null,
-      /*
-       * SALUDO del momento según la hora LOCAL DEL NEGOCIO («Buenos días»,
-       * «Buenas tardes» o «Buenas noches»). No se calcula aquí: lo manda el
-       * servidor para que la hora que decide sea la del negocio y no la del
-       * teléfono de quien escribe, y para que no pueda salir un «Buenos tardes».
-       */
-      greeting: '',
     },
     online: navigator.onLine,
     syncedAt: null,
@@ -694,13 +687,7 @@
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
       state.auth = data.auth ?? null;
-      // El saludo de las plantillas lo decide el SERVIDOR con la hora local del
-      // negocio; el panel solo lo guarda para traerlo puesto en el formulario.
-      const plantillas = await api('/api/admin/wa-templates').catch(() => null);
-      if (plantillas) {
-        state.templates = plantillas.templates ?? state.templates ?? [];
-        if (plantillas.greeting) state.wa.greeting = plantillas.greeting;
-      }
+      state.templates = (await api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }))).templates ?? [];
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
@@ -851,6 +838,20 @@
 
   const waTemplateStatus = (template) => String(template?.status ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
   const waTemplateApproved = (template) => waTemplateStatus(template) === 'APPROVED' && template?.sendable === true;
+  /*
+   * PENDIENTE DE META. Ni aprobada ni descartada: existe en el CRM y todavía no
+   * se puede usar. Se enseña aparte para que nadie la busque en la lista de
+   * enviables ni crea que el CRM «no la tiene».
+   */
+  const waTemplatePending = (template) =>
+    !waTemplateApproved(template) &&
+    !['REJECTED', 'PAUSED', 'DISABLED', 'NOT_FOUND_IN_META'].includes(waTemplateStatus(template));
+  /** Nombre legible de una plantilla del CRM a partir de su nombre técnico. */
+  const waTemplateNameLabel = (name) => {
+    if (!name) return '';
+    const found = (state.templates ?? []).find((template) => template.name === name) ?? null;
+    return found ? waTemplateLabel(found) : String(name);
+  };
   const waTemplateLabel = (template) => template?.friendly_name || template?.friendlyName || template?.name || 'Plantilla';
   const waTemplateMetaSynced = (template) => template?.source === 'meta' || Boolean(template?.last_synced_at);
 
@@ -944,7 +945,6 @@
       try {
         const result = await api('/api/admin/wa-templates/sync', { method: 'POST', body: JSON.stringify({}) });
         state.templates = result.templates ?? state.templates;
-        if (result.greeting) state.wa.greeting = result.greeting;
         renderAjustes();
         const sync = result.sync ?? {};
         toast(`${sync.foundFromMeta ?? sync.found ?? 0} en Meta · ${sync.approved ?? 0} aprobadas`);
@@ -990,17 +990,15 @@
       }
     }
     for (const row of state.scheduled?.problems ?? []) {
-      const key = `scheduled-problem:${row.id}:${row.status}:${row.error_message ?? row.blocked_message ?? ''}`;
+      const key = `scheduled-problem:${row.id}:${row.status}`;
       if (dismissed.has(key)) continue;
       const customer = customerById(row.customer_id);
       const conversation = conversationForCustomer(row.customer_id);
       rows.push({
         key,
-        title: row.status === 'BLOCKED' ? 'Mensaje programado bloqueado' : 'Mensaje programado falló',
-        body:
-          row.status === 'BLOCKED'
-            ? row.blocked_message ?? 'No se pudo enviar automáticamente.'
-            : row.error_message ?? 'WhatsApp rechazó el envío.',
+        title: row.status === 'BLOCKED' ? 'Mensaje programado sin enviar' : 'Mensaje programado no se pudo enviar',
+        // El motivo, en palabras: los códigos de Meta no salen al agente.
+        body: scheduledFriendlyReason(row),
         meta: `${customer?.name ?? customer?.phone_e164 ?? 'Cliente'} · ${fmtDay(String(row.scheduled_at).slice(0, 10))}`,
         tone: 'warn',
         conversationId: conversation?.id ?? '',
@@ -4994,28 +4992,6 @@
   }
 
   /**
-   * SALUDO según la hora local del negocio.
-   *
-   * La versión BUENA la manda el servidor (`state.wa.greeting`) con la zona del
-   * negocio; esto es solo el respaldo para cuando esa consulta no ha llegado
-   * todavía, y sirve para que la previsualización nunca enseñe un hueco vacío.
-   * Mismas franjas que el servidor: mañana hasta las 12, tarde hasta las 19.
-   */
-  function waSaludoAhora() {
-    let hora = NaN;
-    try {
-      const raw = new Intl.DateTimeFormat('en-US', { timeZone: BUSINESS_TIME_ZONE, hour: '2-digit', hourCycle: 'h23' }).format(new Date());
-      hora = Number.parseInt(raw, 10);
-    } catch {
-      hora = NaN;
-    }
-    if (!Number.isFinite(hora)) hora = new Date().getHours();
-    if (hora >= 5 && hora < 12) return 'Buenos días';
-    if (hora >= 12 && hora < 19) return 'Buenas tardes';
-    return 'Buenas noches';
-  }
-
-  /**
    * Texto que el CRM ya sabe poner en cada hueco de una plantilla.
    *
    * El número de pedido sale SOLO del pedido real de esta conversación (o del
@@ -5025,10 +5001,6 @@
     const nombre = (customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
     const order = orderForConversation(customer?.id ?? null, conversationId);
     return {
-      // El SALUDO lo calcula el servidor con la hora local del negocio y el CRM
-      // solo lo trae puesto; si el agente lo cambia, su versión manda.
-      saludo: state.wa.greeting || waSaludoAhora(),
-      greeting: state.wa.greeting || waSaludoAhora(),
       customer_name: nombre,
       nombre,
       phone: customer?.phone_e164 ?? '',
@@ -5053,8 +5025,6 @@
   }
 
   const WA_VAR_LABELS = {
-    saludo: 'Saludo',
-    greeting: 'Saludo',
     customer_name: 'Nombre del cliente',
     nombre: 'Nombre del cliente',
     mensaje: 'Tu mensaje',
@@ -5115,9 +5085,25 @@
 
   function waTemplateSheetHtml(prefill = {}) {
     const approved = (state.templates ?? []).filter(waTemplateApproved);
+    /*
+     * LO QUE TODAVÍA NO SE PUEDE USAR SE DICE, no se esconde: si el negocio acaba
+     * de registrar una plantilla en Meta, aquí ve que está pendiente y que el envío
+     * se desbloquea solo cuando Meta la apruebe.
+     */
+    const pendientes = (state.templates ?? []).filter(waTemplatePending);
+    const avisoPendientes = pendientes.length
+      ? `<div class="wa-pending">
+        <strong>Pendientes de aprobación de Meta</strong>
+        <p>Estas todavía NO se pueden enviar. Se desbloquean solas cuando Meta las apruebe.</p>
+        <ul>${pendientes
+          .map((template) => `<li>${escapeHtml(waTemplateLabel(template))} <code>${escapeHtml(template.name)}</code></li>`)
+          .join('')}</ul>
+      </div>`
+      : '';
     if (!approved.length) {
-      return `<p class="rule rule--warn">No hay plantillas aprobadas sincronizadas.</p>
-        <p class="view__hint">Ve a Ajustes > WhatsApp y pulsa Sincronizar con Meta.</p>`;
+      return `<p class="rule rule--warn">No hay ninguna plantilla aprobada por Meta: fuera de la ventana de 24 h no se puede contactar al cliente.</p>
+        <p class="view__hint">Regístrala en Meta y pulsa «Sincronizar con Meta» en Ajustes > WhatsApp.</p>
+        ${avisoPendientes}`;
     }
     const elegida = approved.find((template) => template.name === prefill.templateName) ?? approved[0];
     return `<label class="field">
@@ -5139,7 +5125,8 @@
         <p class="wa-template-preview" id="wa-template-preview"></p>
       </label>
       <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>
-      <p class="rule">Para escribir a alguien por primera vez WhatsApp solo admite una plantilla aprobada: el texto fijo no se puede cambiar, pero los huecos sí. El número del pedido se pone solo con el pedido de esta conversación.</p>`;
+      <p class="rule">Para escribir a alguien por primera vez WhatsApp solo admite una plantilla aprobada: el texto fijo no se puede cambiar, pero los huecos sí. El nombre del cliente y los datos del pedido se ponen solos.</p>
+      ${avisoPendientes}`;
   }
 
   /**
@@ -5164,9 +5151,9 @@
             // El hueco libre arranca con lo que se escribió en el compositor.
             const esLibre = index === libre;
             const valor = esLibre && prefill.freeText ? prefill.freeText : (auto[key] ?? '');
-            // El saludo viene calculado por el SERVIDOR con la hora del negocio.
-            const esSaludo = ['saludo', 'greeting'].includes(String(key ?? '').trim().toLowerCase());
-            const pista = esLibre ? ' · lo escribes tú' : esSaludo ? ' · automático según la hora' : '';
+            // El NOMBRE lo pone el CRM solo, desde el cliente de ESTA conversación.
+            const esNombre = ['customer_name', 'nombre'].includes(String(key ?? '').trim().toLowerCase());
+            const pista = esLibre ? ' · lo escribes tú' : esNombre ? ' · automático' : '';
             // El hueco libre es donde la persona escribe SU mensaje: por eso va en
             // un campo amplio de varias líneas y no en un renglón suelto.
             const campo = esLibre
@@ -5220,8 +5207,6 @@
     try {
       const result = await api('/api/admin/wa-templates?sync=stale');
       state.templates = result.templates ?? state.templates;
-      // El saludo lo decide el servidor (hora del negocio): el panel solo lo enseña.
-      if (result.greeting) state.wa.greeting = result.greeting;
     } catch {
       /* Si falla la consulta, se usa la última lista conocida y la hoja lo explica. */
     }
@@ -6982,6 +6967,44 @@
       <button class="btn btn--primary btn--block" id="customer-save" type="button">Guardar notas</button>`,
     );
 
+    /*
+     * MENSAJES PROGRAMADOS. Es OTRA COSA que el seguimiento: aquí el sistema
+     * intenta ENVIAR de verdad. Se ve la fecha, el texto exacto que saldrá y, si
+     * algo no salió, el motivo EN PALABRAS (nunca un código de Meta).
+     */
+    const scheduledHtml = customerProfileSection(
+      'Mensajes programados',
+      scheduled.length
+        ? `<div class="sch-list">${scheduled
+            .map((row) => {
+              const cuando = new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(
+                new Date(row.scheduled_at),
+              );
+              const sinSalir = ['FAILED', 'BLOCKED'].includes(String(row?.status ?? '').toUpperCase());
+              return `<article class="sch-item${sinSalir ? ' sch-item--warn' : ''}">
+                <div class="sch-item__head">
+                  <strong>${escapeHtml(scheduledStateTitle(row.status))}</strong>
+                  <span class="sch-item__when">${escapeHtml(cuando)}</span>
+                </div>
+                <p class="sch-item__body">${escapeHtml(
+                  String(row.template_body ?? row.text ?? '').trim() || 'Sin contenido guardado',
+                )}</p>
+                <p class="sch-item__meta">${
+                  row.template ? `Plantilla: ${escapeHtml(waTemplateNameLabel(row.template))}` : 'Texto libre'
+                }</p>
+                ${sinSalir ? `<p class="sch-item__reason">${escapeHtml(scheduledFriendlyReason(row))}</p>` : ''}
+                ${
+                  scheduledIsPending(row)
+                    ? `<button class="btn btn--ghost btn--xs" data-scheduled-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>`
+                    : ''
+                }
+              </article>`;
+            })
+            .join('')}</div>`
+        : '<p class="view__hint">No hay mensajes programados. Programar un mensaje NO es un seguimiento: aquí el sistema intenta enviar.</p>',
+      'profile-card--wide',
+    );
+
     const orderDetail = (row) => `
       <div class="profile-order-detail">
         <div class="profile-order-detail__head">
@@ -7142,6 +7165,7 @@
         ${commercialHtml}
         ${commercialSummary}
         ${followupHtml}
+        ${scheduledHtml}
         ${orders}
         ${historyHtml}
       </div>
@@ -7361,28 +7385,32 @@
         <span class="field__label">Mensajes programados</span>
         ${
           scheduled.length
-            ? `<dl class="facts">${scheduled
-                .map(
-                  (row) => `<div class="fact"><dt>${escapeHtml(
-                    new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(
-                      new Date(row.scheduled_at),
-                    ),
-                  )}</dt><dd>${escapeHtml(
-                    {
-                      SCHEDULED: 'programado',
-                      PROCESSING: 'enviando',
-                      SENT: 'enviado',
-                      DELIVERED: 'entregado',
-                      READ: 'leído',
-                      FAILED: 'falló',
-                      CANCELLED: 'cancelado',
-                      BLOCKED: 'bloqueado',
-                    }[row.status] ?? row.status,
-                  )}${
-                    row.blocked_message ? ` · ${escapeHtml(row.blocked_message)}` : ''
-                  }</dd></div>`,
-                )
-                .join('')}</dl>`
+            ? `<div class="sch-list">${scheduled
+                .map((row) => {
+                  const cuando = new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(
+                    new Date(row.scheduled_at),
+                  );
+                  const sinSalir = ['FAILED', 'BLOCKED'].includes(String(row?.status ?? '').toUpperCase());
+                  return `<article class="sch-item${sinSalir ? ' sch-item--warn' : ''}">
+                    <div class="sch-item__head">
+                      <strong>${escapeHtml(scheduledStateTitle(row.status))}</strong>
+                      <span class="sch-item__when">${escapeHtml(cuando)}</span>
+                    </div>
+                    <p class="sch-item__body">${escapeHtml(
+                      String(row.template_body ?? row.text ?? '').trim() || 'Sin contenido guardado',
+                    )}</p>
+                    <p class="sch-item__meta">${
+                      row.template ? `Plantilla: ${escapeHtml(waTemplateNameLabel(row.template))}` : 'Texto libre'
+                    }</p>
+                    ${sinSalir ? `<p class="sch-item__reason">${escapeHtml(scheduledFriendlyReason(row))}</p>` : ''}
+                    ${
+                      scheduledIsPending(row)
+                        ? `<button class="btn btn--ghost btn--xs" data-scheduled-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>`
+                        : ''
+                    }
+                  </article>`;
+                })
+                .join('')}</div>`
             : '<p class="view__hint">No hay mensajes programados. Programar un mensaje NO es un seguimiento: aquí el sistema intenta enviar.</p>'
         }
       </div>
@@ -10939,25 +10967,129 @@
   /** Base del panel (para construir enlaces absolutos del comprobante). */
   const app2Base = () => `${window.location.origin}`;
 
+  /** Estados de un MENSAJE PROGRAMADO, en palabras (los códigos técnicos no salen). */
+  const SCHEDULED_STATE_LABELS = {
+    SCHEDULED: 'Programado',
+    PROCESSING: 'Enviando',
+    SENT: 'Enviado',
+    DELIVERED: 'Entregado',
+    READ: 'Leído',
+    FAILED: 'No se pudo enviar',
+    CANCELLED: 'Cancelado',
+    BLOCKED: 'No se pudo enviar',
+  };
+  /** El titular de la fila: lo primero que se lee. */
+  const SCHEDULED_STATE_TITLES = {
+    SCHEDULED: 'Pendiente de envío',
+    PROCESSING: 'Enviando ahora',
+    SENT: 'Mensaje enviado',
+    DELIVERED: 'Mensaje entregado',
+    READ: 'Mensaje leído',
+    FAILED: 'No se pudo enviar',
+    CANCELLED: 'Cancelado',
+    BLOCKED: 'No se pudo enviar',
+  };
+  const scheduledStateLabel = (status) => SCHEDULED_STATE_LABELS[String(status ?? '').toUpperCase()] ?? 'Programado';
+  const scheduledStateTitle = (status) => SCHEDULED_STATE_TITLES[String(status ?? '').toUpperCase()] ?? 'Pendiente de envío';
+  const scheduledIsPending = (row) => ['SCHEDULED', 'PROCESSING'].includes(String(row?.status ?? '').toUpperCase());
+
   /**
-   * Programar un MENSAJE (no es un seguimiento: aquí el sistema intenta enviar).
-   * Fuera de la ventana de 24 h solo se puede programar una plantilla aprobada.
+   * POR QUÉ no salió, en palabras.
+   *
+   * El motivo ya viene del servidor en castellano (`blocked_message`). Los códigos
+   * de Meta se quedan en la base de datos y en la auditoría: al agente se le dice
+   * qué pasó y qué puede hacer, nunca un «#131026».
+   */
+  function scheduledFriendlyReason(row) {
+    if (String(row?.status ?? '').toUpperCase() === 'CANCELLED') return 'Lo cancelaste antes de que saliera.';
+    const code = String(row?.error_code ?? '');
+    if (code === '131026') return 'El número del cliente no puede recibir mensajes de WhatsApp.';
+    if (code === '131047') {
+      return 'Habían pasado más de 24 h desde el último mensaje del cliente y este mensaje no iba dentro de una plantilla aprobada.';
+    }
+    if (code === '132000') return 'Faltan o sobran datos en la plantilla.';
+    if (code === '132001') return 'La plantilla todavía no está disponible en WhatsApp.';
+    if (code === '131053') return 'WhatsApp rechazó el archivo que llevaba el mensaje.';
+    const reason = String(row?.blocked_reason ?? '');
+    if (reason === 'TEMPLATE_NOT_APPROVED' || reason === 'UNKNOWN_TEMPLATE') {
+      return 'La plantilla todavía no está aprobada en Meta. Se desbloquea sola cuando Meta la apruebe.';
+    }
+    if (reason === 'OUTSIDE_WINDOW') {
+      return 'La ventana de atención de 24 h había terminado y este mensaje no iba dentro de una plantilla aprobada.';
+    }
+    if (reason === 'DO_NOT_CONTACT') return 'El cliente pidió no recibir mensajes.';
+    if (reason === 'CONVERSATION_MISMATCH') return 'La conversación ya no era la de este cliente: no se envió para no cruzar datos.';
+    if (reason === 'CUSTOMER_MISSING') return 'El cliente ya no existe en el CRM.';
+    if (reason === 'WHATSAPP_NOT_CONFIGURED') return 'WhatsApp no estaba configurado en el servidor a esa hora.';
+    if (row?.blocked_message) return String(row.blocked_message);
+    if (code) return 'WhatsApp no aceptó el mensaje a esa hora.';
+    return 'El mensaje no se pudo enviar.';
+  }
+
+  /*
+   * PROGRAMAR UN MENSAJE — pantalla propia, sin mezclarse con el chat.
+   *
+   * Es OTRA COSA que el chat directo: aquí se elige una plantilla APROBADA, se
+   * revisa el mensaje COMPLETO que se va a enviar y se fija una fecha y una hora.
+   * El contenido se congela al programar: cuando llegue el momento se envía
+   * exactamente eso, sin regenerarlo (si la compra cambia, este mensaje NO cambia).
+   *
+   * El panel PROPONE (plantilla y texto) según lo que el CRM sabe de verdad del
+   * cliente; el agente puede cambiar la plantilla, dejar el texto o reescribirlo.
    */
   function openScheduledForm({ customerId, conversationId = '', orderId = '' } = {}) {
     const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
     if (!customer) return;
-    const approved = (state.templates ?? []).filter(waTemplateApproved);
     const dentroDeVentana = state.wa.chat?.customer?.id === customerId ? state.wa.chat?.canSendFreeText !== false : null;
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    /**
+     * Lo que se está programando AHORA MISMO.
+     *   `tipo`   → 'compra' | 'interes' | 'libre'
+     *   `libre`  → índice (0-based) del hueco de texto de la plantilla, o null
+     *   `listas` → si cada plantilla de seguimiento está aprobada o no
+     */
+    const plan = { tipo: 'compra', templateName: '', valores: {}, libre: null, listas: {}, notas: [], cargando: true };
+    const esTextoLibre = () => plan.tipo === 'libre';
+    const plantillaElegida = () => (state.templates ?? []).find((template) => template.name === plan.templateName) ?? null;
+    const textoMensaje = () => String($('#sch-text')?.value ?? '').trim();
+    const aprobadas = () => (state.templates ?? []).filter(waTemplateApproved);
 
     openSheet(
       `Programar mensaje · ${customerName(customer)}`,
       `
       <p class="view__hint">
-        El sistema lo intentará enviar a esa hora. Si al llegar el momento ya no se puede (ventana de 24 h,
-        «no contactar»), <strong>no se fuerza</strong>: queda bloqueado y te avisa.
+        Se enviará <strong>solo</strong>, a la fecha y hora que elijas. Si al llegar el momento ya no se puede
+        (ventana de 24 h, «no contactar», plantilla sin aprobar), <strong>no se fuerza</strong>: queda sin enviar
+        y te avisa aquí.
       </p>
+      <dl class="facts">
+        <div class="fact"><dt>Cliente</dt><dd>${escapeHtml(customerName(customer))}</dd></div>
+        <div class="fact"><dt>Plantilla</dt><dd id="sch-template-name">Cargando…</dd></div>
+      </dl>
+      <label class="field">
+        <span class="field__label">Tipo</span>
+        <select class="field__select" id="sch-tipo">
+          <option value="compra">Seguimiento de compra</option>
+          <option value="interes">Seguimiento de interés</option>
+          <option value="libre">Texto libre</option>
+        </select>
+      </label>
+      <label class="field" id="sch-template-field">
+        <span class="field__label">Plantilla</span>
+        <select class="field__select" id="sch-template"></select>
+      </label>
+      <div id="sch-fields"></div>
+      <label class="field" id="sch-text-field">
+        <span class="field__label" id="sch-text-label">Mensaje</span>
+        <textarea class="field__area" id="sch-text" rows="4" placeholder="Escribe el mensaje…"></textarea>
+      </label>
+      <p class="view__hint" id="sch-note"></p>
+      <label class="field">
+        <span class="field__label">Mensaje que se enviará</span>
+        <p class="wa-template-preview" id="sch-preview"></p>
+      </label>
       <label class="field">
         <span class="field__label">Fecha</span>
         <input class="field__input" id="sch-date" type="date" value="${todayISO()}" />
@@ -10971,29 +11103,210 @@
         <button class="chip" data-sch-quick="1440" type="button">Mañana</button>
         <button class="chip" data-sch-quick="10080" type="button">En 7 días</button>
       </div>
-      <label class="field">
-        <span class="field__label">Mensaje</span>
-        <textarea class="field__area" id="sch-text" placeholder="Hola, ¿te ayudo con tu pedido?"></textarea>
-      </label>
-      ${
-        approved.length
-          ? `<label class="field">
-               <span class="field__label">O usar una plantilla aprobada</span>
-               <select class="field__select" id="sch-template">
-                 <option value="">— texto de arriba —</option>
-                 ${approved.map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(waTemplateLabel(template))}</option>`).join('')}
-               </select>
-             </label>`
-          : `<p class="view__hint">No hay plantillas aprobadas en Meta: fuera de la ventana de 24 h el mensaje quedará bloqueado.</p>`
-      }
-      ${
-        dentroDeVentana === false
-          ? '<p class="rule rule--warn">La ventana de 24 h ya terminó: programa una plantilla aprobada.</p>'
-          : ''
-      }
       <button class="btn btn--primary btn--block" id="sch-save" type="button">Programar mensaje</button>
       `,
     );
+
+    /** Los huecos de la plantilla que NO son el mensaje (el nombre, el pedido…). */
+    function pintarHuecos() {
+      const plantilla = plantillaElegida();
+      const caja = $('#sch-fields');
+      if (!caja) return;
+      if (esTextoLibre() || !plantilla) {
+        caja.innerHTML = '';
+        return;
+      }
+      const auto = waTemplateAutoValues(customer, conversationId || null);
+      const huecos = waTemplateHuecos(plantilla);
+      caja.innerHTML = huecos
+        .map((key, index) => {
+          if (index === plan.libre) return '';
+          const valor = plan.valores[index] ?? auto[key] ?? '';
+          const automatico = ['customer_name', 'nombre'].includes(String(key).toLowerCase());
+          return `<label class="field">
+        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}${automatico ? ' · automático' : ''}</span>
+        <input class="field__input" type="text" data-sch-var="${index + 1}" value="${escapeHtml(valor)}"
+          placeholder="${escapeHtml(waVariablePlaceholder(key))}" />
+      </label>`;
+        })
+        .join('');
+      for (const input of $$('#sch-fields [data-sch-var]')) {
+        input.addEventListener('input', () => {
+          plan.valores[Number(input.dataset.schVar) - 1] = input.value;
+          pintarVistaPrevia();
+        });
+      }
+    }
+
+    /** Los valores que se van a mandar, con el mensaje escrito ya dentro. */
+    function valoresCompletos() {
+      const plantilla = plantillaElegida();
+      const auto = plantilla ? waTemplateAutoValues(customer, conversationId || null) : {};
+      const valores = {};
+      if (plantilla) {
+        // Hueco por hueco: lo escrito manda; lo que no, se rellena como siempre.
+        waTemplateHuecos(plantilla).forEach((key, index) => {
+          valores[index] = String(plan.valores[index] ?? auto[key] ?? '').trim();
+        });
+      }
+      const texto = textoMensaje();
+      if (plan.libre !== null && texto) valores[plan.libre] = texto;
+      return valores;
+    }
+
+    /** Lo que se va a enviar, tal cual, y por qué. */
+    function pintarVistaPrevia() {
+      const preview = $('#sch-preview');
+      const nota = $('#sch-note');
+      if (!preview) return;
+      if (plan.cargando) {
+        preview.textContent = 'Buscando qué le viene mejor a este cliente…';
+        if (nota) nota.textContent = 'Un momento: se está preparando la propuesta con lo que el CRM sabe de este cliente.';
+        return;
+      }
+      if (esTextoLibre()) {
+        preview.textContent = textoMensaje() || 'Escribe el mensaje para verlo aquí.';
+        if (nota) {
+          nota.textContent =
+            dentroDeVentana === false
+              ? 'Texto libre: la ventana de atención de 24 h ya terminó, así que este mensaje quedará sin enviar. Programa una plantilla aprobada.'
+              : 'Texto libre: solo saldrá si la ventana de atención de 24 h sigue abierta cuando llegue el momento.';
+        }
+        return;
+      }
+      const plantilla = plantillaElegida();
+      preview.textContent = plantilla ? waRenderTemplatePreview(plantilla, valoresCompletos()) : 'Elige una plantilla aprobada.';
+      if (nota) {
+        const aviso = !plantilla
+          ? 'Esa plantilla todavía no está aprobada en Meta: hasta que lo esté no se puede programar un mensaje con ella.'
+          : waTemplateApproved(plantilla)
+            ? 'Esto es exactamente lo que se enviará. Lo que revisas aquí queda guardado tal cual: cuando llegue la hora no se recalcula nada.'
+            : 'Esta plantilla todavía no está aprobada en Meta: se puede dejar todo listo, pero no se programará hasta que la aprueben.';
+        nota.textContent = [aviso, ...plan.notas].join(' ');
+      }
+    }
+
+    /** Todo el estado de la pantalla, en un solo sitio. */
+    function pintar() {
+      const plantilla = plantillaElegida();
+      const libre = esTextoLibre();
+      const aprobada = waTemplateApproved(plantilla);
+      if ($('#sch-template-field')) $('#sch-template-field').hidden = libre;
+      if ($('#sch-template-name')) {
+        $('#sch-template-name').textContent = libre
+          ? 'Sin plantilla (texto libre)'
+          : plantilla
+            ? `${waTemplateLabel(plantilla)} · ${plantilla.name}${aprobada ? '' : ' (pendiente de aprobación de Meta)'}`
+            : 'Sin aprobar todavía';
+      }
+      if ($('#sch-text-label')) $('#sch-text-label').textContent = libre ? 'Mensaje' : 'Tu mensaje (va dentro de la plantilla)';
+      // Sin hueco de texto propio, el campo del mensaje sobra: se dice, no se deja vacío.
+      if ($('#sch-text-field')) $('#sch-text-field').hidden = !libre && plan.libre === null;
+      pintarHuecos();
+      pintarVistaPrevia();
+      /*
+       * NO SE PROGRAMA LO QUE NO SE PUEDE ENVIAR: si la plantilla no está aprobada
+       * por Meta, el botón se apaga y se explica por qué, en vez de dejar programar
+       * y fallar después. Y NUNCA se cambia por otra plantilla distinta a la espalda
+       * del agente: eso mandaría un seguimiento de compra a quien no ha comprado.
+       */
+      const boton = $('#sch-save');
+      if (boton) {
+        boton.disabled = plan.cargando || (!libre && !aprobada);
+        // Estado visible (y comprobable): «todavía estoy preparando la propuesta».
+        boton.dataset.schLoading = plan.cargando ? '1' : '0';
+      }
+    }
+
+    /** El selector: las aprobadas y, si toca, la propuesta aún pendiente (avisada). */
+    function pintarSelector() {
+      const select = $('#sch-template');
+      if (!select) return;
+      const opciones = aprobadas();
+      const actual = plantillaElegida();
+      if (actual && !waTemplateApproved(actual)) opciones.unshift(actual);
+      select.innerHTML = opciones.length
+        ? opciones
+            .map(
+              (template) =>
+                `<option value="${escapeHtml(template.name)}"${template.name === plan.templateName ? ' selected' : ''}>${escapeHtml(
+                  waTemplateLabel(template),
+                )}${waTemplateApproved(template) ? '' : ' — pendiente de aprobación de Meta'}</option>`,
+            )
+            .join('')
+        : '<option value="">— ninguna aprobada todavía —</option>';
+    }
+
+    /** Deja puesto el hueco del mensaje con lo que sugiera el CRM. */
+    function ponerMensajeSugerido() {
+      const plantilla = plantillaElegida();
+      if (!plantilla || plan.libre === null) return;
+      if (textoMensaje()) return;
+      const auto = waTemplateAutoValues(customer, conversationId || null);
+      const clave = waTemplateHuecos(plantilla)[plan.libre];
+      const valor = auto[clave] ?? '';
+      if (valor && $('#sch-text')) $('#sch-text').value = valor;
+    }
+
+    /** Cambia de plantilla sin perder el mensaje que ya hubiera escrito. */
+    function ponerPlantilla(nombre) {
+      plan.templateName = nombre;
+      const plantilla = plantillaElegida();
+      plan.libre = plantilla ? waTemplateFreeSlot(plantilla) : null;
+      plan.valores = {};
+      if ($('#sch-template')) $('#sch-template').value = nombre;
+      pintar();
+      ponerMensajeSugerido();
+      pintar();
+    }
+
+    /**
+     * La PROPUESTA del servidor: qué plantilla y qué texto tocan según lo que el
+     * CRM sabe de verdad de ESTE cliente (¿compró? ¿cuántos frascos?).
+     */
+    async function preparar() {
+      /*
+       * Las plantillas, al día: si el negocio acaba de aprobar una en Meta, el
+       * agente no debería tener que recargar el panel para poder programarla.
+       */
+      try {
+        const plantillas = await api('/api/admin/wa-templates?sync=stale');
+        state.templates = plantillas.templates ?? state.templates;
+      } catch {
+        /* Se usa la última lista conocida. */
+      }
+      try {
+        const resultado = await api(`/api/admin/scheduled/suggestion?customerId=${encodeURIComponent(customer.id)}`);
+        plan.listas = resultado.templates ?? {};
+        const sugerencia = resultado.suggestion ?? null;
+        if (sugerencia) {
+          plan.tipo = sugerencia.type === 'compra' ? 'compra' : 'interes';
+          plan.notas = Array.isArray(sugerencia.notes) ? sugerencia.notes : [];
+          plan.templateName = sugerencia.templateName ?? '';
+          /*
+           * El texto sugerido es el del hueco del mensaje: va al campo amplio.
+           * NUNCA pisa lo que la persona ya haya escrito (la propuesta llega un
+           * instante después de abrir la pantalla).
+           */
+          if ($('#sch-text') && !textoMensaje()) $('#sch-text').value = sugerencia.message ?? '';
+        }
+      } catch {
+        /* Sin propuesta se puede seguir igual: se elige la plantilla a mano. */
+      }
+      /*
+       * La propuesta NO se sustituye por otra plantilla si todavía no está
+       * aprobada: se enseña tal cual con su aviso. Cambiarla por la que sí está
+       * aprobada mandaría un «seguimiento de compra» a quien nunca compró.
+       */
+      if (!plan.templateName) plan.templateName = aprobadas()[0]?.name ?? '';
+      if ($('#sch-tipo')) $('#sch-tipo').value = plan.tipo;
+      pintarSelector();
+      const plantilla = plantillaElegida();
+      plan.libre = plantilla ? waTemplateFreeSlot(plantilla) : null;
+      if ($('#sch-template') && plantilla) $('#sch-template').value = plantilla.name;
+      plan.cargando = false;
+      pintar();
+    }
 
     $$('[data-sch-quick]').forEach((chip) =>
       chip.addEventListener('click', () => {
@@ -11005,18 +11318,56 @@
       }),
     );
 
+    // Cambiar de TIPO trae la plantilla de ese caso con su mensaje sugerido.
+    // Se escucha `input` además de `change`: los navegadores no son unánimes con
+    // los `select` y el usuario no debería notar la diferencia.
+    const cambiarTipo = (valor) => {
+      plan.tipo = valor;
+      if (esTextoLibre()) {
+        plan.libre = null;
+        plan.templateName = '';
+        pintar();
+        return;
+      }
+      const propuesta = plan.listas?.[plan.tipo === 'compra' ? 'purchase' : 'interest']?.name ?? '';
+      const porDefecto = plan.tipo === 'compra' ? 'phyto_seguimiento_compra_v1' : 'phyto_seguimiento_interes_v1';
+      // La plantilla del tipo elegido, aunque todavía no esté aprobada: se avisa.
+      plan.templateName = propuesta || porDefecto;
+      const plantilla = plantillaElegida();
+      plan.libre = plantilla ? waTemplateFreeSlot(plantilla) : null;
+      if ($('#sch-text')) {
+        const auto = waTemplateAutoValues(customer, conversationId || null);
+        $('#sch-text').value = plantilla && plan.libre !== null ? (auto[waTemplateHuecos(plantilla)[plan.libre]] ?? '') : '';
+      }
+      ponerPlantilla(plan.templateName);
+    };
+    $('#sch-tipo')?.addEventListener('change', (event) => cambiarTipo(event.currentTarget.value));
+    $('#sch-tipo')?.addEventListener('input', (event) => cambiarTipo(event.currentTarget.value));
+
+    $('#sch-template')?.addEventListener('change', (event) => ponerPlantilla(event.currentTarget.value));
+    $('#sch-text')?.addEventListener('input', pintarVistaPrevia);
+
     $('#sch-save').addEventListener('click', async (event) => {
       const date = $('#sch-date').value;
-      const time = $('#sch-time').value || '09:00';
-      const template = $('#sch-template')?.value || '';
-      const body = $('#sch-text').value.trim();
+      const hora = $('#sch-time').value || '09:00';
       if (!date) {
         toast('Elige la fecha');
         return;
       }
-      if (!template && !body) {
-        toast('Escribe el mensaje');
+      const plantilla = plantillaElegida();
+      if (esTextoLibre()) {
+        if (!textoMensaje()) {
+          toast('Escribe el mensaje');
+          return;
+        }
+      } else if (!plantilla) {
+        toast('Elige una plantilla aprobada');
         return;
+      }
+      // Los valores viajan indexados desde 1, como los espera el servidor.
+      const valores = {};
+      for (const [indice, valor] of Object.entries(valoresCompletos())) {
+        if (String(valor ?? '').trim()) valores[Number(indice) + 1] = String(valor).trim();
       }
       await working(event.currentTarget, 'Programando…', async () => {
         try {
@@ -11027,19 +11378,35 @@
               conversationId: conversationId || undefined,
               orderId: orderId || undefined,
               // La hora local del teléfono → instante exacto (sin desfases).
-              scheduledAt: new Date(`${date}T${time}:00`).toISOString(),
-              type: template ? 'template' : 'text',
-              template: template || undefined,
-              text: body || undefined,
+              scheduledAt: new Date(`${date}T${hora}:00`).toISOString(),
+              timeZone: BUSINESS_TIME_ZONE,
+              type: esTextoLibre() ? 'text' : 'template',
+              template: esTextoLibre() ? undefined : plan.templateName,
+              text: esTextoLibre() ? textoMensaje() : undefined,
+              templateValues: esTextoLibre() ? undefined : valores,
             }),
           });
           toast('Mensaje programado');
           await load({ keepTab: true });
           closeSheet();
         } catch (error) {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo programar');
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo programar el mensaje');
         }
       });
+    });
+
+    pintarSelector();
+    pintar();
+    /*
+     * La propuesta se pide DESPUÉS de pintar (la pantalla aparece al instante) y
+     * si algo falla se dice en la consola: un formulario a medio rellenar sin
+     * explicación es lo peor para quien lo está usando.
+     */
+    void preparar().catch((error) => {
+      // Sin propuesta la pantalla sigue siendo usable (se elige la plantilla a mano).
+      plan.cargando = false;
+      pintar();
+      console.error('[panel] no se pudo preparar el mensaje programado:', error);
     });
   }
 
