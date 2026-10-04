@@ -605,8 +605,10 @@ export function receiptPdf(receipt, options = {}) {
 }
 
 /**
- * HTML ligero e imprimible de la factura. Es el documento que se comparte o se
- * imprime desde el navegador si el negocio quiere.
+ * HTML ligero e imprimible de la factura. Es el documento que se abre para
+ * imprimir o guardar desde el navegador, y desde el que se puede ENVIAR la
+ * factura por WhatsApp con la API oficial del CRM (nunca por WhatsApp Web ni por
+ * el menú de compartir del teléfono).
  * No lleva dependencias ni imágenes: se abre en cualquier móvil, aunque no haya red.
  *
  * @param {ReturnType<typeof buildReceipt>} receipt
@@ -614,7 +616,6 @@ export function receiptPdf(receipt, options = {}) {
  */
 export function receiptHtml(receipt, options = {}) {
   if (!receipt) return '<!doctype html><title>Factura</title><p>Sin datos.</p>';
-  const pdfUrl = `./factura`;
   const rows = receipt.items
     .map(
       (line) => `<tr>
@@ -639,6 +640,9 @@ export function receiptHtml(receipt, options = {}) {
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .toolbar { position: sticky; top: 0; z-index: 2; max-width: 420px; margin: 0 auto 12px;
     display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+  .toolbar__wide { grid-column: 1 / -1; }
+  .aviso { max-width: 420px; margin: 0 auto 12px; padding: 10px 12px; border-radius: 12px;
+    background: #fff; border: 1px solid #dce6e1; font-size: 14px; color: #0b6b4f; }
   .btn { min-height: 42px; display: inline-flex; align-items: center; justify-content: center;
     padding: 9px 12px; border: 1px solid #dce6e1; border-radius: 12px; background: #fff;
     color: #0b6b4f; font: inherit; font-weight: 700; text-decoration: none; }
@@ -664,8 +668,10 @@ export function receiptHtml(receipt, options = {}) {
 <body>
   <nav class="toolbar" aria-label="Acciones del comprobante">
     <button class="btn" type="button" onclick="history.length > 1 ? history.back() : location.assign('/admin/')">Volver</button>
-    <button class="btn btn--primary" type="button" id="share">Compartir factura</button>
+    <a class="btn" href="./factura" target="_blank" rel="noopener">Abrir PDF</a>
+    <button class="btn btn--primary toolbar__wide" type="button" id="send">Enviar factura por WhatsApp</button>
   </nav>
+  <p class="aviso" id="aviso" role="status" hidden></p>
   <main class="sheet">
     <h1 class="brand">${esc(receipt.business)}</h1>
     <p class="doc">${esc(receipt.document)}</p>
@@ -703,15 +709,46 @@ export function receiptHtml(receipt, options = {}) {
     <p class="footer">${esc(receipt.note)}</p>
   </main>
   <script>
-    document.getElementById('share').addEventListener('click', async () => {
-      const url = new URL(${JSON.stringify(pdfUrl)}, location.href).href;
-      if (navigator.share) {
-        try {
-          await navigator.share({ title: document.title, url });
-          return;
-        } catch {}
+    /*
+     * ENVIAR LA FACTURA POR WHATSAPP desde el propio CRM (API oficial).
+     *
+     * Antes este botón abría el menú de compartir del teléfono (navigator.share)
+     * y, si el navegador no podía, navegaba al PDF: la factura nunca salía del CRM
+     * y quien la mandaba era el teléfono del agente. Ahora la manda el servidor al
+     * chat del cliente desde el pedido (el destinatario y el archivo los decide
+     * él) y queda registrada en el hilo.
+     *
+     * UNA visita = UNA operación = UNA clave: si se pulsa dos veces, la segunda se
+     * reconoce como la misma y NO se envía otra factura.
+     */
+    const boton = document.getElementById('send');
+    const aviso = document.getElementById('aviso');
+    const clave = 'invoice:receipt:${receipt.order_number ?? ''}:' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    boton?.addEventListener('click', async () => {
+      const original = boton.textContent;
+      boton.disabled = true;
+      boton.textContent = 'Enviando factura…';
+      aviso.hidden = true;
+      try {
+        const response = await fetch('./invoice-whatsapp', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ idempotencyKey: clave }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'No se pudo enviar la factura por WhatsApp.');
+        boton.textContent = data.duplicate ? 'Ya estaba enviada' : 'Factura enviada';
+        aviso.textContent = data.duplicate
+          ? 'Esa factura ya se había enviado: no se ha mandado otra.'
+          : 'Factura enviada al chat de WhatsApp del cliente.';
+        aviso.hidden = false;
+      } catch (error) {
+        boton.disabled = false;
+        boton.textContent = original;
+        aviso.textContent = error.message || 'No se pudo enviar la factura por WhatsApp.';
+        aviso.hidden = false;
       }
-      location.href = url;
     });
   </script>
 </body>

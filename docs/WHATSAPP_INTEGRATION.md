@@ -280,6 +280,30 @@ intenta nunca un envío que WhatsApp va a rechazar (error 132001).
 Plantillas de partida (`wa_templates`): `phyto_purchase_thanks`,
 `phyto_followup_checkin`, `phyto_weekly_education`, `phyto_reorder_reminder`.
 
+### Enviar la factura de un pedido (`phyto_envio_factura_v1`)
+
+La factura de un pedido se envía al chat del cliente **desde el CRM** con la API
+oficial (documento nativo de WhatsApp). El panel no abre WhatsApp Web, ni la app,
+ni el menú de compartir del teléfono, y no obliga a descargar el PDF.
+
+| Situación | Qué hace el CRM |
+| --- | --- |
+| Dentro de la ventana de 24 h | Un texto corto + el PDF como **documento** (`Factura-<pedido>.pdf`) |
+| Fuera de la ventana, plantilla aprobada con cabecera `DOCUMENT` | Plantilla con el PDF en la **cabecera** y el nombre y el pedido en el cuerpo |
+| Fuera de la ventana, plantilla sin aprobar o sin esa cabecera | **Nada**: `409` explicado (`template_not_approved` / `template_without_document_header`) |
+| Meta rechaza | `502` con el motivo en palabras; el texto ya enviado queda registrado |
+| Meta no confirma si llegó | `409 send_unknown` **sin reenviar** (para no duplicar) |
+
+Para registrarla en Meta (paso manual) hace falta, además del cuerpo, un **ejemplo
+de documento** (`header_handle`): Meta no aprueba una cabecera de documento sin su
+muestra. Definición exacta: nombre `phyto_envio_factura_v1`, categoría `UTILITY`,
+idioma `es`, cabecera de tipo **Documento**, cuerpo
+`Hola {{1}}, te compartimos la factura correspondiente a tu pedido {{2}}.`,
+variables `customer_name` y `order_number` (ejemplo: `Ana Volumen` / `PE-00125`),
+sin botones. Hasta que Meta la apruebe, el CRM la guarda como
+`pending_approval`/`sendable: false` y lo dice en pantalla: no se finge la
+aprobación.
+
 Ficha completa de una plantilla (todos los campos existen ya en el CRM):
 
 | Campo | Quién lo rellena |

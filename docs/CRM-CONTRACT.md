@@ -78,6 +78,8 @@ La app instalable vive en `/admin/` y usa estos endpoints. Todos piden **sesión
 | `GET /api/admin/orders/:id` | Detalle del pedido + comprobante + seguimientos y programados ligados |
 | `PATCH /api/admin/orders/:id` | Modifica frascos, descuento, notas y entrega; recalcula el total |
 | `GET /api/admin/orders/:id/receipt` | **Comprobante de compra** en HTML imprimible/descargable (teléfono enmascarado; nunca «factura fiscal») |
+| `GET /api/admin/orders/:id/invoice-whatsapp` | **Vista previa** del envío de la factura: `{ filename, order_number, customer_name, sendable, insideWindow, greeting, template, conversation_id }`. Lo decide el servidor; el panel solo lo enseña |
+| `POST /api/admin/orders/:id/invoice-whatsapp` | **Envía la factura por WhatsApp** desde el CRM (API oficial). El cuerpo solo lleva `{ idempotencyKey }`: el destinatario, la conversación y el PDF salen del PEDIDO. Dentro de la ventana: texto corto + documento nativo. Fuera: SOLO `phyto_envio_factura_v1` (aprobada y con cabecera de documento) o `409` explicado |
 | `GET`/`POST /api/admin/scheduled` | Cola de mensajes programados: listar (con resumen para HOY) y programar |
 | `GET /api/admin/scheduled/suggestion?customerId=` | **Qué proponer** para programar: con compra entregada → `phyto_seguimiento_compra_v1` (mensaje de 6+ o de menos frascos); sin compra → `phyto_seguimiento_interes_v1`. Lo decide el servidor; el panel solo lo enseña |
 | `PATCH /api/admin/scheduled/:id` | `{ action: 'cancel' \| 'reschedule' }` |
@@ -113,11 +115,43 @@ desbloquean cuando Meta las aprueba y el CRM sincroniza):
 | `phyto_contacto_personalizado_v1` | **Chat directo** fuera de la ventana de 24 h | `customer_name`, `mensaje` |
 | `phyto_seguimiento_compra_v1` | Mensaje programado de quien YA compró | `customer_name`, `mensaje` |
 | `phyto_seguimiento_interes_v1` | Mensaje programado de quien NO ha comprado | `customer_name`, `mensaje` |
+| `phyto_envio_factura_v1` | **Factura por WhatsApp** fuera de la ventana de 24 h (cabecera `DOCUMENT`) | `customer_name`, `order_number` |
 
 El mensaje sugerido de una compra usa el de «6 frascos o más» cuando el pedido
 trae esa cantidad (`order_json.units`, o la suma de las líneas); si no se puede
 saber, usa el general y lo dice. Nunca se menciona un «grupo» de WhatsApp: el CRM
 no guarda esa pertenencia por cliente.
+
+**Factura por WhatsApp** (`POST /api/admin/orders/:id/invoice-whatsapp`). La
+factura la manda el CRM al chat del cliente con la API oficial; NO se abre
+WhatsApp Web, ni la app, ni el menú de compartir del teléfono, ni se obliga a
+descargar el PDF. Reglas:
+
+- **A quién se le envía lo decide el servidor** desde el pedido: cliente →
+  conversación (tiene que ser SUYA; si no hay, no se inventa) → PDF regenerado del
+  pedido actual. Nada de lo que manda el panel (ni ids, ni teléfonos) se usa para
+  decidir el destinatario.
+- Bloqueos que **no** se saltan: pedido sin cliente (`409 order_without_customer`),
+  cliente sin teléfono (`409 missing_phone`), opt-out (`409 do_not_contact`),
+  sin conversación (`409 no_conversation`) y WhatsApp sin configurar (`503`).
+- **Dentro de la ventana de 24 h**: un texto corto («Hola <nombre>, te compartimos
+  la factura de tu pedido.») y después el PDF como **documento nativo** de
+  WhatsApp, con nombre `Factura-<numero_pedido>.pdf`, por la misma puerta que las
+  fotos y los audios (guardado en R2, idempotencia y registro en el hilo).
+- **Fuera de la ventana de 24 h**: solo sale con la plantilla aprobada
+  `phyto_envio_factura_v1`, que **debe llevar cabecera de documento** en Meta. Si
+  no está aprobada (`409 template_not_approved` / `invoice_template_missing`) o no
+  tiene esa cabecera (`409 template_without_document_header`), no se envía nada y
+  se explica en palabras. El PDF **no se guarda** en R2 en ese camino: queda
+  registrado en el hilo con su nombre de archivo (`invoice_filename`) y se puede
+  regenerar del pedido.
+- **Idempotencia**: `idempotencyKey` (una por confirmación). Un doble clic o un
+  reintento con la misma clave NO manda una segunda factura: el texto se salta si
+  ya salió y el documento lo reconoce el pipeline de archivos. Un envío ambiguo
+  (Meta no confirma) responde `409 send_unknown` **sin reenviar**.
+- El hilo queda como **evidencia**: mensaje del documento con el nombre del PDF, su
+  archivo (servido en `/api/admin/media/:id`) y quién lo envió. Los ids técnicos no
+  se enseñan en el panel.
 
 Campos de gestión que se añaden a cada registro: `status` (los del pedido),
 `notes`, `next_action_at` (`YYYY-MM-DD`), `last_contact_at`, `updated_at`,

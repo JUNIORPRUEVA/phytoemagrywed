@@ -190,6 +190,14 @@ Dos vistas: la del panel y un documento HTML ligero (`/api/admin/orders/:id/rece
 que se abre, se imprime o se guarda como PDF desde el navegador. **Nunca se llama
 «factura»**: no hay integración fiscal.
 
+En el botón flotante de la factura, **Enviar factura por WhatsApp**: el PDF (nombre
+`Factura-<pedido>.pdf`) sale del CRM con la API oficial de WhatsApp. Antes de enviar
+se enseña a quién, qué documento y con qué texto; un toque lo envía y queda en el
+hilo. No se abre WhatsApp Web, ni la app, ni el menú de compartir del teléfono.
+Fuera de la ventana de 24 h solo sale con la plantilla `phyto_envio_factura_v1`
+aprobada (con cabecera de documento); si no lo está, se explica y no se envía nada.
+Ver `docs/WHATSAPP_INTEGRATION.md` y `docs/CRM-CONTRACT.md`.
+
 ### HOY = «¿qué tengo que hacer ahora para vender?»
 
 Los contadores y las secciones son trabajo pendiente con su acción directa (responder,

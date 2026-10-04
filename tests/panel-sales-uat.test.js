@@ -493,7 +493,13 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const fabFactura = await waitFor(() => $('#sheet-body [data-receipt-actions]'), 'el botón flotante de la factura');
     click(fabFactura);
     const menu = await waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'las acciones de la factura');
-    for (const accion of ['Ver factura', 'Compartir factura', 'Pasar a un delivery', 'Ver cliente', 'Modificar pedido']) {
+    for (const accion of [
+      'Ver factura',
+      'Enviar factura por WhatsApp',
+      'Pasar a un delivery',
+      'Ver cliente',
+      'Modificar pedido',
+    ]) {
       expect(menu.textContent).toContain(accion);
     }
     click('[data-close-sheet]');

@@ -1045,7 +1045,8 @@ que se lee es lo importante; las acciones son otra cosa.
 3. La ficha del pedido queda con **un solo botón**: "Guardar notas" (es del formulario).
    El menú incluye "Volver a la ficha" para no perderse al cambiar de hoja.
 4. La hoja del comprobante guarda sus datos en `state.receiptContext` mientras está
-   abierta: el menú de la factura los necesita (para compartir el PDF o cambiar estado).
+   abierta: el menú de la factura los necesita (para enviar la factura por WhatsApp o
+   cambiar estado).
 5. Con acciones flotantes, el final de la hoja se aparta para que el botón no tape el
    último dato (`.sheet__body:has(.sheet-fab)`).
 

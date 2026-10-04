@@ -3718,6 +3718,22 @@
           </span>
           <span class="audio__kind" aria-hidden="true">${tipo === 'voice' ? ICONS.mic : ICONS.audio}</span>
         </span>`;
+    } else if (tipo === 'document' && mediaSrc && mediaListo) {
+      /*
+       * DOCUMENTO listo (la factura que mandó el CRM): se abre desde el propio
+       * hilo. Ni se obliga a descargarlo ni se saca a nadie del panel: es un
+       * enlace al archivo privado, con el NOMBRE real del PDF que recibió el
+       * cliente (esa es la prueba de que salió).
+       */
+      soloArchivo = true;
+      const nombreArchivo = message.body && message.body !== '[document]' ? message.body : 'Documento';
+      cuerpo = `<a class="doc-card" href="${escapeHtml(mediaSrc)}" target="_blank" rel="noopener noreferrer">
+          <span class="doc-card__icon" aria-hidden="true">${ICONS.doc}</span>
+          <span class="doc-card__body">
+            <strong>${escapeHtml(nombreArchivo)}</strong>
+            <small>${inbound ? 'Documento recibido' : 'Enviado'} · abrir</small>
+          </span>
+        </a>`;
     } else if (tipo === 'location') {
       /*
        * UBICACIÓN: una pieza visual propia (no pasa por multimedia). Si el mensaje
@@ -10444,32 +10460,107 @@
     }`;
   }
 
-  async function shareReceiptPdf({ url, receipt }) {
-    const title = `Factura ${receipt.order_number}`;
-    if (navigator.canShare && window.File) {
-      try {
-        const response = await fetch(url, { credentials: 'same-origin' });
-        if (response.ok) {
-          const blob = await response.blob();
-          const file = new File([blob], `${receipt.order_number}-factura.pdf`, { type: 'application/pdf' });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({ title, files: [file] });
-            return;
-          }
+  /**
+   * Clave de UNA operación de envío de factura. Se genera al ABRIR la hoja (una
+   * confirmación = una operación): así un doble toque o un reintento desde la
+   * misma hoja NO duplican la factura en el chat del cliente.
+   */
+  const invoiceSendKey = (orderId) =>
+    `invoice:${orderId}:${(
+      globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    ).slice(0, 40)}`;
+
+  /**
+   * ENVIAR LA FACTURA POR WHATSAPP, desde el CRM.
+   *
+   * Antes esta acción abría el menú del sistema (`navigator.share`) o WhatsApp
+   * Web: la factura NO salía del CRM (la mandaba una persona desde su teléfono,
+   * con su número) y en el hilo del cliente no quedaba ni rastro. Ahora se le
+   * pide al SERVIDOR la vista previa (destinatario, nombre del archivo, texto y
+   * si la ventana de 24 h está abierta) y un solo toque la envía con la API
+   * oficial, registrándola en la conversación.
+   *
+   * UNA hoja abierta = UNA operación = UNA clave. Si se pulsa dos veces (o se
+   * reintenta desde la misma hoja), el servidor reconoce la segunda petición
+   * como la MISMA operación y no manda otra factura.
+   */
+  async function openSendInvoiceSheet(orderId) {
+    if (!orderId) return;
+    if (!hasPermission('chats.reply')) {
+      toast('No tienes permiso para enviar mensajes');
+      return;
+    }
+    let preview;
+    try {
+      preview = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/invoice-whatsapp`);
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo preparar la factura');
+      return;
+    }
+    const enviable = preview.sendable === true;
+    const plantilla = preview.template?.friendly_name || preview.template?.name || '';
+    const nota = enviable
+      ? preview.insideWindow
+        ? 'El cliente escribió en las últimas 24 h: se envía el texto y el PDF como documento, dentro del chat.'
+        : `La ventana de 24 h está CERRADA: solo se puede enviar con la plantilla aprobada «${plantilla}», que lleva el PDF en su cabecera.`
+      : preview.message ?? 'Ahora mismo no se puede enviar esta factura.';
+    openSheet(
+      'Enviar factura por WhatsApp',
+      `
+      <dl class="facts">
+        <div class="fact"><dt>Cliente</dt><dd>${escapeHtml(preview.customer_name ?? '—')}</dd></div>
+        <div class="fact"><dt>Pedido</dt><dd>${escapeHtml(preview.order_number ?? orderId)}</dd></div>
+        <div class="fact"><dt>Documento</dt><dd>${escapeHtml(preview.filename ?? '')}</dd></div>
+      </dl>
+      ${
+        preview.greeting
+          ? `<div class="field">
+              <span class="field__label">Mensaje</span>
+              <p class="invoice-preview" id="invoice-preview">${escapeHtml(preview.greeting)}</p>
+            </div>`
+          : ''
+      }
+      <p class="rule" id="invoice-note">${escapeHtml(nota)}</p>
+      <div class="invoice-actions">
+        <button class="btn btn--ghost btn--block" id="invoice-cancel" type="button">Cancelar</button>
+        <button class="btn btn--whatsapp btn--block" id="invoice-send" type="button" ${
+          enviable ? '' : 'disabled'
+        }>Enviar factura</button>
+      </div>`,
+    );
+    const clave = invoiceSendKey(orderId);
+    const refrescarHilo = async () => {
+      const conversacion = preview.conversation_id;
+      if (conversacion && state.wa.chat?.conversation?.id === conversacion) {
+        await loadWaThread(conversacion, { force: true }).catch(() => {});
+      }
+    };
+    $('#invoice-cancel')?.addEventListener('click', closeSheet);
+    $('#invoice-send')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      await working(button, 'Enviando factura…', async () => {
+        try {
+          const resultado = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/invoice-whatsapp`, {
+            method: 'POST',
+            // La clave es lo ÚNICO que manda el panel: a quién se le envía y qué
+            // documento sale lo decide el servidor desde el pedido.
+            body: JSON.stringify({ idempotencyKey: clave }),
+          });
+          closeSheet();
+          toast(resultado.duplicate ? 'Esa factura ya se había enviado' : 'Factura enviada por WhatsApp');
+          await refrescarHilo();
+          refreshWhatsapp().catch(() => {});
+        } catch (error) {
+          if (error.message === 'unauthorized') return;
+          const aviso = error.body?.message ?? 'No se pudo enviar la factura';
+          const notaHoja = $('#invoice-note');
+          if (notaHoja) notaHoja.textContent = aviso;
+          toast(aviso);
+          // Si algo SÍ salió (medio envío), el hilo es la prueba: se enseña.
+          await refrescarHilo();
         }
-      } catch {
-        /* Si no puede compartir archivo, se intenta compartir el enlace. */
-      }
-    }
-    if (navigator.share) {
-      try {
-        await navigator.share({ title, url });
-        return;
-      } catch {
-        /* el usuario canceló o el navegador no pudo compartir */
-      }
-    }
-    window.open(url, '_blank', 'noopener');
+      });
+    });
   }
 
   async function openOrderEditor(orderId) {
@@ -10575,10 +10666,10 @@
           <p class="view__hint">${escapeHtml(receipt.thanks)}</p>
           <p class="view__hint">${escapeHtml(receipt.note)}</p>
         </div>
-        <div class="receipt-pdf-card" aria-label="Factura lista para compartir">
+        <div class="receipt-pdf-card" aria-label="Factura lista para enviar">
           <span class="receipt-pdf-card__icon" aria-hidden="true">${ICONS.doc}</span>
           <span class="receipt-pdf-card__body">
-            <strong>Factura lista para compartir</strong>
+            <strong>Factura lista para enviar</strong>
             <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
           </span>
         </div>
@@ -10824,9 +10915,9 @@
         { icon: ICONS.doc, label: 'Ver factura', note: 'Documento para imprimir', data: { 'data-receipt-open': orderId } },
         {
           icon: ICONS.send,
-          label: 'Compartir factura',
-          note: 'PDF por WhatsApp o donde quieras',
-          data: { 'data-receipt-share': orderId },
+          label: 'Enviar factura por WhatsApp',
+          note: 'La manda el CRM al chat del cliente',
+          data: { 'data-receipt-wa': orderId },
         },
         hasPermission('delivery.tracking.manage_all') && abierto
           ? { icon: ICONS.send, label: 'Pasar a un delivery', data: { 'data-order-delivery': orderId } }
@@ -12618,15 +12709,9 @@
         );
         return;
       }
-      const receiptShare = event.target.closest('[data-receipt-share]');
-      if (receiptShare) {
-        const receipt = state.receiptContext?.receipt ?? null;
-        if (receipt) {
-          shareReceiptPdf({
-            url: `${app2Base()}/api/admin/orders/${encodeURIComponent(receiptShare.dataset.receiptShare)}/factura`,
-            receipt,
-          });
-        }
+      const receiptWa = event.target.closest('[data-receipt-wa]');
+      if (receiptWa) {
+        openSendInvoiceSheet(receiptWa.dataset.receiptWa);
         return;
       }
       const orderDelivery = event.target.closest('[data-order-delivery]');

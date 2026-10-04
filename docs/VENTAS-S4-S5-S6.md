@@ -70,7 +70,9 @@ panel (`/api/admin/catalog`). **Ninguna pantalla repite un precio.**
   (no hay integración fiscal). Teléfono **enmascarado**. Sin afirmaciones médicas.
 - Dos vistas: la del CRM (en el panel) y una **HTML imprimible/descargable**
   (`/api/admin/orders/:id/receipt`), ligera, sin PDF pesado. En móvil, botón
-  Compartir (Web Share API) con reserva a «Descargar/Imprimir».
+  para **enviar la factura por WhatsApp desde el CRM** (API oficial) y «Abrir PDF».
+  *(Cambio posterior: el botón usaba la Web Share API —el menú del sistema— y ya no:
+  ver `docs/WHATSAPP_INTEGRATION.md`, «Enviar la factura de un pedido».)*
 
 ### 2.3 Seguimiento y programación (S5)
 

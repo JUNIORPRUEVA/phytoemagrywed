@@ -227,6 +227,23 @@ export function createWhatsAppMedia(options = {}) {
       return this.sendMessage(to, { type: 'audio', audio: link ? { link } : { id: mediaId } });
     },
 
+    /**
+     * Envía un DOCUMENTO (un PDF, por ejemplo) como documento NATIVO de WhatsApp:
+     * el cliente lo ve como un archivo descargable con su nombre, no como un enlace.
+     *
+     * `filename` NO es decorativo: al enviar por `media_id`, Meta solo enseña un
+     * nombre de archivo si se lo damos aquí (si no, el cliente ve un nombre
+     * genérico y el PDF parece otra cosa). Meta lo limita a 240 caracteres.
+     */
+    async sendDocument(to, { mediaId, link = null, filename = null, caption = null }) {
+      const documento = {};
+      if (link) documento.link = link;
+      else documento.id = mediaId;
+      if (filename) documento.filename = String(filename).slice(0, 240);
+      if (caption) documento.caption = String(caption).slice(0, 1024);
+      return this.sendMessage(to, { type: 'document', document: documento });
+    },
+
     /** Envío genérico de un mensaje con archivo (una sola puerta). */
     async sendMessage(to, payload, caption = null) {
       if (!enabled) return { ok: false, error: { code: 'not_configured', message: 'WhatsApp no configurado', subcode: null } };

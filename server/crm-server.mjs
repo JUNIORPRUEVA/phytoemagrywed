@@ -2289,6 +2289,28 @@ async function ensureFollowupsForDelivered(ctx, log = console.log) {
 // ------------------------------------------- clientes · seguimiento · WhatsApp
 
 /**
+ * FACTURA POR WHATSAPP.
+ *
+ * `INVOICE_TEMPLATE` es la plantilla que transporta el PDF cuando la ventana de
+ * 24 h está cerrada (lleva CABECERA DE DOCUMENTO). El nombre del archivo se
+ * construye SIEMPRE desde el número de pedido del CRM: nunca desde algo que
+ * mande el navegador.
+ */
+const INVOICE_TEMPLATE = 'phyto_envio_factura_v1';
+
+/** Nombre del PDF que recibe el cliente: `Factura-PE-00125.pdf`. */
+function invoiceFilename(orderNumber) {
+  const limpio = String(orderNumber ?? '').replace(/[^A-Za-z0-9_-]/g, '');
+  return `Factura-${limpio || 'pedido'}.pdf`;
+}
+
+/** Texto corto que acompaña a la factura dentro de la ventana de 24 h. */
+function invoiceCaption(customer) {
+  const nombre = String(customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
+  return `Hola ${nombre}, te compartimos la factura de tu pedido.`;
+}
+
+/**
  * Plantillas oficiales de WhatsApp: nombres, categoría y variables.
  *
  * NINGUNA nace "aprobada": en Meta las aprueba una persona. Hasta que no estén
@@ -2346,6 +2368,29 @@ const WA_TEMPLATE_SEED = [
     language: 'es',
     body: 'Hola {{1}}, te contactamos de Phytoemagry para dar seguimiento.\n\n{{2}}\n\nNos gustaría saber si todavía estás interesado/a o si necesitas más información. Si deseas hacer tu pedido, estamos disponibles para ayudarte.',
     variables: ['customer_name', 'mensaje'],
+    buttons: [],
+  },
+  {
+    /*
+     * ENVÍO DE FACTURA — la única forma de mandar la factura FUERA de la ventana
+     * de 24 h.
+     *
+     * Lleva CABECERA DE DOCUMENTO: la plantilla transporta el PDF de verdad (no
+     * un enlace), que es como el cliente lo ve como archivo descargable.
+     *   {{1}} nombre real · {{2}} número de pedido.
+     *
+     * Categoría UTILITY porque es un mensaje transaccional de un pedido que YA
+     * existe (no promoción). Aun así, Meta decide: si la rechaza o la cambia de
+     * categoría, el CRM refleja lo que diga Meta y no la da por aprobada.
+     */
+    name: 'phyto_envio_factura_v1',
+    friendly_name: 'Envío de factura',
+    group: 'PEDIDOS',
+    category: 'UTILITY',
+    language: 'es',
+    header: { format: 'DOCUMENT' },
+    body: 'Hola {{1}}, te compartimos la factura correspondiente a tu pedido {{2}}.',
+    variables: ['customer_name', 'order_number'],
     buttons: [],
   },
   {
@@ -2501,6 +2546,21 @@ function templateBodyFromComponents(components = []) {
   return components.find((component) => String(component?.type ?? '').toUpperCase() === 'BODY')?.text ?? null;
 }
 
+/**
+ * CABECERA de una plantilla, tal como la describe Meta.
+ *
+ * Se lee del componente real (`IMAGE`, `DOCUMENT`, `TEXT`…). Es lo que permite
+ * saber si una plantilla puede transportar un archivo: dar por hecho que lleva
+ * cabecera de documento cuando no la tiene es el error 132012 de WhatsApp.
+ */
+function templateHeaderFromComponents(components = []) {
+  const header = components.find((component) => String(component?.type ?? '').toUpperCase() === 'HEADER');
+  if (!header) return null;
+  const format = String(header.format ?? '').toUpperCase() || null;
+  if (!format) return null;
+  return { format, text: header.text ?? null };
+}
+
 function templateButtonsFromComponents(components = []) {
   const buttons = components.find((component) => String(component?.type ?? '').toUpperCase() === 'BUTTONS')?.buttons;
   return Array.isArray(buttons) ? buttons : [];
@@ -2532,6 +2592,8 @@ async function listWaTemplates(ctx, options = {}) {
       body: seed.body,
       variables: seed.variables,
       buttons: seed.buttons ?? [],
+      // Cabecera (TEXT/IMAGE/DOCUMENT…). Importa para saber qué transporte lleva.
+      header: seed.header ?? null,
       required_context: seed.required_context ?? 'none',
       status: 'pending_approval',
       sendable: false,
@@ -2929,6 +2991,12 @@ export async function syncWhatsAppTemplatesFromMeta(ctx) {
       body: templateBodyFromComponents(components) ?? existing?.body ?? seed?.body ?? null,
       variables: Array.isArray(existing?.variables) && existing.variables.length ? existing.variables : seed?.variables ?? [],
       buttons: templateButtonsFromComponents(components),
+      /*
+       * La cabecera la manda Meta. Si Meta devolvió sus componentes y ninguno es
+       * una cabecera, entonces NO tiene: quedarse con la de la semilla sería
+       * creer que la plantilla transporta un archivo que Meta no espera.
+       */
+      header: components.length ? templateHeaderFromComponents(components) : existing?.header ?? seed?.header ?? null,
       components,
       required_context: existing?.required_context ?? seed?.required_context ?? 'none',
       status,
@@ -5196,6 +5264,323 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    /*
+     * ENVIAR LA FACTURA POR WHATSAPP — sin salir del CRM.
+     *
+     * Lo que NO se hace aquí: abrir WhatsApp Web, la app de WhatsApp, el menú de
+     * compartir del sistema ni obligar a descargar el PDF. El CRM lo manda él
+     * mismo con la API oficial y lo deja escrito en el hilo.
+     *
+     * La factura NO llega del navegador: se resuelve el PEDIDO por su id (única
+     * fuente de verdad) y de ahí salen el cliente, su conversación y el PDF. Nada
+     * de lo que manda el panel se usa para decidir a quién se le envía.
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/invoice-whatsapp') && req.method === 'POST') {
+      if (!requirePermission('chats.reply')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/invoice-whatsapp'.length)).replace(/\/+$/, '');
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const item = (await store.listAdmin({ limit: 1000 })).find((entry) => entry.id === orderId) ?? null;
+      if (!item || item.type !== 'order_intent') {
+        json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no existe.' });
+        return;
+      }
+      // 1) El CLIENTE sale del pedido, nunca de la petición.
+      const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
+      if (!customer) {
+        json(res, 409, {
+          ok: false,
+          error: 'order_without_customer',
+          message: 'Ese pedido no tiene cliente asignado: no hay a quién enviarle la factura.',
+        });
+        return;
+      }
+      if (!customer.phone_e164) {
+        json(res, 409, { ok: false, error: 'missing_phone', message: 'Ese cliente no tiene teléfono de WhatsApp.' });
+        return;
+      }
+      if (customer.do_not_contact || customer.whatsapp_opt_out_at) {
+        json(res, 409, { ok: false, error: 'do_not_contact', message: 'Este cliente pidió no recibir mensajes. Respétalo.' });
+        return;
+      }
+      if (!ctx.whatsapp?.enabled) {
+        json(res, 503, {
+          ok: false,
+          error: 'whatsapp_not_configured',
+          message: 'WhatsApp todavía no está configurado en el servidor. La factura NO se ha enviado.',
+        });
+        return;
+      }
+      /*
+       * 2) La CONVERSACIÓN tiene que ser DE ESTE cliente. Se prefiere la del pedido
+       * (de dónde nació), pero solo si de verdad es suya; si no, se usa la del
+       * cliente. Si no hay ninguna, no se abre una a la espalda de nadie: se dice.
+       */
+      const order = orderOf(item);
+      const delPedido = order?.conversation_id ? await ctx.db.get('conversations', order.conversation_id) : null;
+      const conversacion =
+        delPedido && delPedido.customer_id === customer.id
+          ? delPedido
+          : await ctx.customers.conversationFor(customer.id, { create: false });
+      if (!conversacion || conversacion.customer_id !== customer.id) {
+        json(res, 409, {
+          ok: false,
+          error: 'no_conversation',
+          message: 'Este cliente todavía no tiene una conversación de WhatsApp en el CRM.',
+        });
+        return;
+      }
+      // Misma regla que el texto: sin la conversación a mi nombre no se manda nada.
+      if (!(await canOpenConversation(ctx, actor, conversacion))) {
+        denyConversation(res, json, conversacion);
+        return;
+      }
+
+      const receipt = buildReceipt({ order, customer });
+      const filename = invoiceFilename(receipt.order_number ?? orderId);
+      const dentroDeVentana = ctx.customers.canSendFreeText(conversacion);
+      const clave = text(body.idempotencyKey, 120);
+      /*
+       * DOBLE CLIC / REINTENTO: la clave la manda el panel (una por confirmación).
+       * Si esa operación YA existe, se devuelve tal cual sin volver a enviar nada.
+       */
+      if (clave) {
+        const previo = await ctx.db.findBy('wa_messages', 'idempotency_key', clave);
+        if (previo) {
+          json(res, 200, { ok: true, duplicate: true, message: previo, filename });
+          return;
+        }
+      }
+
+      const actorFields = messageActorFields(actor);
+      const meta = { phoneNumberId: ctx.whatsapp.phoneNumberId, to: customer.phone_e164, order_id: item.id, invoice_filename: filename };
+      const pdf = receiptPdf(receipt, { timeZone: TIME_ZONE });
+
+      /*
+       * ============ FUERA DE LA VENTANA DE 24 H ============
+       * WhatsApp no admite texto ni documentos sueltos: solo una plantilla
+       * APROBADA. Y para transportar el PDF tiene que ser una plantilla con
+       * CABECERA DE DOCUMENTO (comprobado: no se da por hecho).
+       */
+      if (!dentroDeVentana) {
+        const check = await approvedTemplate(ctx, INVOICE_TEMPLATE);
+        if (!check.ok) {
+          json(res, 409, {
+            ok: false,
+            error: check.reason === 'unknown_template' ? 'invoice_template_missing' : 'template_not_approved',
+            message:
+              `La ventana de 24 h de WhatsApp está cerrada, así que la factura solo puede salir con la plantilla «${INVOICE_TEMPLATE}», ` +
+              'que todavía no está aprobada en Meta. Regístrala en Meta y pulsa «Sincronizar con Meta» en Ajustes > WhatsApp.',
+            template: check.template ?? null,
+            outsideWindow: true,
+          });
+          return;
+        }
+        if (String(check.template?.header?.format ?? '').toUpperCase() !== 'DOCUMENT') {
+          json(res, 409, {
+            ok: false,
+            error: 'template_without_document_header',
+            message:
+              `La plantilla «${INVOICE_TEMPLATE}» no lleva cabecera de documento en Meta, así que no puede transportar el PDF. ` +
+              'Revísala en Meta y vuelve a sincronizar.',
+            template: check.template,
+            outsideWindow: true,
+          });
+          return;
+        }
+        const subida = await ctx.media.whatsapp.uploadMedia({ buffer: pdf, mimeType: 'application/pdf', filename });
+        if (!subida.ok) {
+          json(res, 502, {
+            ok: false,
+            error: 'upload_failed',
+            message: 'No se pudo preparar la factura para WhatsApp. No se ha enviado nada.',
+            detail: subida.error ?? null,
+          });
+          return;
+        }
+        const payload = await resolveTemplatePayload(ctx, {
+          template: check.template,
+          customer,
+          conversation: conversacion,
+          provided: { 1: customer.name || customer.phone_e164, 2: receipt.order_number ?? '' },
+        });
+        if (!payload.ok) {
+          json(res, payload.status ?? 422, { ok: false, error: payload.error, message: payload.message, missing: payload.missing ?? undefined });
+          return;
+        }
+        // La cabecera lleva el PDF de verdad; el cuerpo, el nombre y el pedido.
+        const components = [
+          { type: 'header', parameters: [{ type: 'document', document: { id: subida.mediaId, filename } }] },
+          ...(payload.components ?? []),
+        ];
+        const result = await ctx.whatsapp.sendTemplate(customer.phone_e164, {
+          name: check.template.name,
+          language: check.template.language ?? 'es',
+          components,
+        });
+        const registrado = await ctx.customers.recordOutbound({
+          customer,
+          conversation: conversacion,
+          type: 'template',
+          template: check.template.name,
+          body: payload.body,
+          waMessageId: result.messageId ?? null,
+          status: result.ok ? 'sent' : 'failed',
+          error: result.ok ? null : (result.error ?? { message: result.reason ?? 'error' }),
+          idempotencyKey: clave,
+          meta,
+          ...actorFields,
+        });
+        await ctx.audit?.record({
+          entity: 'message',
+          entityId: registrado.message?.id ?? null,
+          action: result.ok ? 'message.sent' : 'message.failed',
+          actor: actor?.display_name ?? null,
+          summary: `Factura ${filename} ${result.ok ? 'enviada' : 'rechazada'} (plantilla) a ${customer.name ?? customer.phone_e164}`,
+          data: { order_id: item.id, order_number: receipt.order_number ?? null, filename, template: check.template.name, outside_window: true },
+          idempotencyKey: registrado.message?.id ? `${result.ok ? 'message.sent' : 'message.failed'}:${registrado.message.id}` : null,
+        });
+        if (!result.ok) {
+          json(res, 502, {
+            ok: false,
+            error: 'send_failed',
+            message: 'WhatsApp rechazó el envío de la factura. No se ha enviado nada.',
+            detail: result.error ?? null,
+            message_record: registrado.message,
+          });
+          return;
+        }
+        await ctx.customers.markConversationRead(conversacion.id);
+        json(res, 201, {
+          ok: true,
+          duplicate: false,
+          filename,
+          order_number: receipt.order_number ?? null,
+          template: check.template.name,
+          outsideWindow: true,
+          message: registrado.message,
+        });
+        return;
+      }
+
+      /*
+       * ============ DENTRO DE LA VENTANA DE 24 H ============
+       * Primero el texto corto (una sola vez) y después el PDF como documento
+       * NATIVO de WhatsApp, por la MISMA puerta que las fotos y los audios: así
+       * hereda el guardado, la idempotencia y el registro del hilo.
+       */
+      const saludo = invoiceCaption(customer);
+      let registradoTexto = clave ? await ctx.db.findBy('wa_messages', 'idempotency_key', `${clave}:text`) : null;
+      if (!registradoTexto) {
+        const envioTexto = await ctx.whatsapp.sendText(customer.phone_e164, saludo);
+        registradoTexto = (
+          await ctx.customers.recordOutbound({
+            customer,
+            conversation: conversacion,
+            type: 'text',
+            body: saludo,
+            waMessageId: envioTexto.messageId ?? null,
+            status: envioTexto.ok ? 'sent' : 'failed',
+            error: envioTexto.ok ? null : (envioTexto.error ?? { message: envioTexto.reason ?? 'error' }),
+            idempotencyKey: clave ? `${clave}:text` : null,
+            meta,
+            ...actorFields,
+          })
+        ).message;
+        if (!envioTexto.ok) {
+          json(res, 502, {
+            ok: false,
+            error: 'send_failed',
+            message: 'WhatsApp rechazó el mensaje. La factura NO se ha enviado.',
+            detail: envioTexto.error ?? null,
+            message_record: registradoTexto,
+          });
+          return;
+        }
+      }
+
+      const documento = await ctx.media.pipeline.processOutbound({
+        direction: 'document',
+        to: customer.phone_e164,
+        buffer: pdf,
+        declaredMime: 'application/pdf',
+        filename,
+        caption: null,
+        conversationId: conversacion.id,
+        idempotencyKey: clave ? `${clave}:doc` : null,
+        findExistingMessage: (key) => ctx.db.findBy('wa_messages', 'idempotency_key', key),
+      });
+      if (!documento.ok) {
+        if (documento.requiresReconciliation) {
+          json(res, 409, {
+            ok: false,
+            error: 'send_unknown',
+            message:
+              'Se envió la factura pero WhatsApp no confirmó si llegó. NO se ha reenviado para no duplicarla: míralo en el hilo antes de intentarlo otra vez.',
+          });
+          return;
+        }
+        const codigo = documento.error?.code ?? 'send_failed';
+        json(res, codigo === 'too_large' ? 413 : 422, {
+          ok: false,
+          error: codigo,
+          message: 'No se pudo enviar la factura por WhatsApp. No se ha enviado nada.',
+          detail: documento.error ?? null,
+        });
+        return;
+      }
+
+      // El mensaje del documento lo guarda el CRM, y la operación de archivo se
+      // reapunta a ese mensaje para que el hilo pueda pintarlo con su estado real.
+      const registradoDocumento = documento.duplicate && !clave
+        ? null
+        : await ctx.customers.recordOutbound({
+            customer,
+            conversation: conversacion,
+            type: 'document',
+            body: filename,
+            waMessageId: documento.waMessageId ?? null,
+            status: documento.waMessageId ? 'sent' : 'pending',
+            idempotencyKey: clave,
+            meta,
+            ...actorFields,
+          });
+      try {
+        const fila =
+          (clave ? await ctx.media.store.byIdempotencyKey(`${clave}:doc`) : null) ??
+          (documento.waMessageId ? await ctx.media.store.byWaMessageId(documento.waMessageId) : null);
+        if (fila && registradoDocumento?.message?.id && fila.message_id !== registradoDocumento.message.id) {
+          await ctx.media.store.update(fila.id, { messageId: registradoDocumento.message.id });
+        }
+      } catch (error) {
+        console.warn(`[crm] no se pudo enlazar la factura con su mensaje: ${error?.message ?? error}`);
+      }
+      await ctx.customers.markConversationRead(conversacion.id);
+      await ctx.audit?.record({
+        entity: 'message',
+        entityId: registradoDocumento?.message?.id ?? null,
+        action: 'message.sent',
+        actor: actor?.display_name ?? null,
+        summary: `Factura ${filename} enviada a ${customer.name ?? customer.phone_e164}`,
+        data: { order_id: item.id, order_number: receipt.order_number ?? null, filename, media_type: 'document' },
+        idempotencyKey: registradoDocumento?.message?.id ? `message.sent:${registradoDocumento.message.id}` : null,
+      });
+      json(res, 201, {
+        ok: true,
+        duplicate: documento.duplicate === true,
+        filename,
+        order_number: receipt.order_number ?? null,
+        outsideWindow: false,
+        message: registradoDocumento?.message ?? null,
+      });
+      return;
+    }
+
     // Detalle de un pedido + comprobante (para la vista dentro del CRM).
     if (route.startsWith('/api/admin/orders/') && req.method === 'GET') {
       const rest = decodeURIComponent(route.slice('/api/admin/orders/'.length));
@@ -5209,6 +5594,100 @@ async function handle(req, res, ctx) {
       const order = orderOf(item);
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
       const receipt = buildReceipt({ order, customer });
+      /*
+       * VISTA PREVIA del envío de la factura: EXACTAMENTE lo que va a salir, sin
+       * enviarlo. El texto, el nombre del archivo y la ventana de 24 h los decide
+       * el SERVIDOR (una sola fuente de verdad): el panel solo los enseña, nunca
+       * los inventa ni los manda.
+       */
+      if (action === 'invoice-whatsapp') {
+        if (!requirePermission('chats.reply')) return;
+        const filename = invoiceFilename(receipt.order_number ?? orderId);
+        const base = {
+          ok: true,
+          filename,
+          order_number: receipt.order_number ?? null,
+          customer_name: customer?.name ?? null,
+        };
+        const noSePuede = (error, message) => json(res, 200, { ...base, sendable: false, error, message });
+        if (!customer) return noSePuede('order_without_customer', 'Ese pedido no tiene cliente asignado: no hay a quién enviarle la factura.');
+        if (!customer.phone_e164) return noSePuede('missing_phone', 'Ese cliente no tiene teléfono de WhatsApp.');
+        if (customer.do_not_contact || customer.whatsapp_opt_out_at) return noSePuede('do_not_contact', 'Este cliente pidió no recibir mensajes. Respétalo.');
+        if (!ctx.whatsapp?.enabled) return noSePuede('whatsapp_not_configured', 'WhatsApp todavía no está configurado en el servidor.');
+        // La conversación, con la MISMA regla que el envío: solo la suya.
+        const delPedido = order?.conversation_id ? await ctx.db.get('conversations', order.conversation_id) : null;
+        const conversacion =
+          delPedido && delPedido.customer_id === customer.id
+            ? delPedido
+            : await ctx.customers.conversationFor(customer.id, { create: false });
+        if (!conversacion || conversacion.customer_id !== customer.id) {
+          return noSePuede('no_conversation', 'Este cliente todavía no tiene una conversación de WhatsApp en el CRM.');
+        }
+        const dentroDeVentana = ctx.customers.canSendFreeText(conversacion);
+        if (dentroDeVentana) {
+          json(res, 200, {
+            ...base,
+            sendable: true,
+            insideWindow: true,
+            conversation_id: conversacion.id,
+            greeting: invoiceCaption(customer),
+            template: null,
+          });
+          return;
+        }
+        /*
+         * Cerrada la ventana solo sale con la plantilla APROBADA con cabecera de
+         * documento. Si no lo está, se dice ANTES de intentar nada.
+         */
+        const check = await approvedTemplate(ctx, INVOICE_TEMPLATE);
+        if (!check.ok) {
+          json(res, 200, {
+            ...base,
+            sendable: false,
+            insideWindow: false,
+            conversation_id: conversacion.id,
+            error: check.reason === 'unknown_template' ? 'invoice_template_missing' : 'template_not_approved',
+            message:
+              `La ventana de 24 h de WhatsApp está cerrada, así que la factura solo puede salir con la plantilla «${INVOICE_TEMPLATE}», ` +
+              'que todavía no está aprobada en Meta. Regístrala en Meta y pulsa «Sincronizar con Meta» en Ajustes > WhatsApp.',
+            template: check.template ?? null,
+          });
+          return;
+        }
+        if (String(check.template?.header?.format ?? '').toUpperCase() !== 'DOCUMENT') {
+          json(res, 200, {
+            ...base,
+            sendable: false,
+            insideWindow: false,
+            conversation_id: conversacion.id,
+            error: 'template_without_document_header',
+            message:
+              `La plantilla «${INVOICE_TEMPLATE}» no lleva cabecera de documento en Meta, así que no puede transportar el PDF. ` +
+              'Revísala en Meta y vuelve a sincronizar.',
+            template: check.template,
+          });
+          return;
+        }
+        // El texto de la plantilla, con los MISMOS datos que usará el envío real.
+        const cuerpo = String(check.template.body ?? '')
+          .replace(/\{\{1\}\}/g, customer.name || customer.phone_e164)
+          .replace(/\{\{2\}\}/g, receipt.order_number ?? '');
+        json(res, 200, {
+          ...base,
+          sendable: true,
+          insideWindow: false,
+          conversation_id: conversacion.id,
+          greeting: cuerpo,
+          template: {
+            name: check.template.name,
+            friendly_name: check.template.friendly_name ?? null,
+            category: check.template.category ?? null,
+            language: check.template.language ?? null,
+            header: check.template.header ?? null,
+          },
+        });
+        return;
+      }
       if (action === 'integrity') {
         json(res, 200, { ok: true, integrity: await validateOrderOperationalIntegrity(ctx, orderId) });
         return;
@@ -5229,7 +5708,7 @@ async function handle(req, res, ctx) {
         return;
       }
 
-      // Documento HTML ligero con acciones móviles (volver + compartir factura).
+      // Documento HTML ligero con acciones móviles (volver + abrir el PDF + enviarlo por WhatsApp).
       if (action === 'receipt') {
         const html = receiptHtml(receipt, { timeZone: TIME_ZONE });
         res.writeHead(200, {
@@ -6698,6 +7177,8 @@ async function handle(req, res, ctx) {
         body: longText(body.body, 1024) ?? existing?.body ?? null,
         variables: Array.isArray(body.variables) ? body.variables.slice(0, 10) : existing?.variables ?? [],
         buttons: Array.isArray(body.buttons) ? body.buttons.slice(0, 5) : existing?.buttons ?? [],
+        // La cabecera solo puede venir de Meta (o de la semilla): aquí no se inventa.
+        header: body.header && typeof body.header === 'object' ? body.header : existing?.header ?? null,
         components: Array.isArray(body.components) ? body.components : existing?.components ?? [],
         required_context: text(body.requiredContext ?? body.required_context, 30) ?? existing?.required_context ?? 'none',
         status,

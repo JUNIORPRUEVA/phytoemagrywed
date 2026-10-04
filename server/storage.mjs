@@ -52,6 +52,13 @@ export const LIMITS = Object.freeze({
   imageMaxBytes: 5 * 1024 * 1024,
   audioMaxBytes: 16 * 1024 * 1024,
   audioMaxSeconds: 300,
+  /*
+   * DOCUMENTOS (un PDF de factura, por ejemplo). WhatsApp admite hasta 100 MB,
+   * pero aquí no se sube lo que manda el navegador: lo genera el propio CRM y
+   * pesa unos pocos KB. 16 MB deja margen de sobra para un pedido enorme sin
+   * abrir la puerta a subir cualquier cosa gigante.
+   */
+  documentMaxBytes: 16 * 1024 * 1024,
 });
 
 /** ¿Es un MIME que aceptamos? (nunca SVG, HTML ni ejecutables) */

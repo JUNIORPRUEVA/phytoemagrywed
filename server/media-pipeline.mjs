@@ -34,7 +34,20 @@ function filenameForMime(filename, mimeType, fallback = 'archivo') {
 
 /** Límite según el tipo de contenido. */
 function limitFor(mediaType) {
-  return mediaType === 'image' || mediaType === 'sticker' ? LIMITS.imageMaxBytes : LIMITS.audioMaxBytes;
+  if (mediaType === 'image' || mediaType === 'sticker') return LIMITS.imageMaxBytes;
+  if (mediaType === 'document') return LIMITS.documentMaxBytes;
+  return LIMITS.audioMaxBytes;
+}
+
+/**
+ * Familia de un MIME ya verificado por los bytes: imagen, documento o audio.
+ * Es la clase con la que se decide el límite de peso y el tipo que se envía.
+ */
+function kindOfMime(mime) {
+  const value = String(mime ?? '').toLowerCase();
+  if (value.startsWith('image/')) return 'image';
+  if (value === 'application/pdf') return 'document';
+  return 'audio';
 }
 
 /**
@@ -50,7 +63,11 @@ export function validateBinary(buffer, { declaredMime = null, expect = null } = 
   }
   const real = sniffMime(buffer);
   if (!real) {
-    return { ok: false, code: 'unrecognized_type', message: 'El contenido del archivo no es una imagen ni un audio válidos.' };
+    return {
+      ok: false,
+      code: 'unrecognized_type',
+      message: 'El contenido del archivo no es una imagen, un audio ni un PDF válidos.',
+    };
   }
   if (!isAllowedMime(real)) {
     return { ok: false, code: 'mime_not_allowed', message: 'Ese tipo de archivo no está permitido.' };
@@ -59,10 +76,19 @@ export function validateBinary(buffer, { declaredMime = null, expect = null } = 
   if (declaredMime && String(declaredMime).toLowerCase() !== real && !String(declaredMime).startsWith('audio/')) {
     // Se acepta igualmente (los navegadores mienten a menudo), pero lo guardado es lo real.
   }
-  if (expect && !real.startsWith(expect)) {
-    return { ok: false, code: 'wrong_kind', message: expect === 'image' ? 'Eso no es una imagen.' : 'Eso no es un audio.' };
+  const clase = kindOfMime(real);
+  if (expect) {
+    // `expect` puede ser la FAMILIA ('image') o el MIME exacto ('application/pdf').
+    const coincide = String(expect).includes('/') ? real === String(expect).toLowerCase() : clase === expect;
+    if (!coincide) {
+      return {
+        ok: false,
+        code: 'wrong_kind',
+        message: expect === 'image' ? 'Eso no es una imagen.' : expect === 'audio' ? 'Eso no es un audio.' : 'Eso no es un PDF.',
+      };
+    }
   }
-  const limite = limitFor(real.startsWith('image') ? 'image' : 'audio');
+  const limite = limitFor(clase);
   if (buffer.length > limite) {
     return { ok: false, code: 'too_large', message: `El archivo pesa demasiado (máximo ${Math.round(limite / 1024 / 1024)} MB).` };
   }
@@ -210,12 +236,12 @@ export function createMediaPipeline(deps) {
    * fila queda en SENT con el `wa_message_id`: se completa la persistencia sin
    * volver a mandar nada.
    *
-   * @param {{ direction: 'image'|'audio', to: string, buffer: Buffer, declaredMime?: string|null,
+   * @param {{ direction: 'image'|'audio'|'document', to: string, buffer: Buffer, declaredMime?: string|null,
    *           caption?: string|null, filename?: string|null, conversationId: string|null,
    *           messageId?: string|null, idempotencyKey?: string|null, findExistingMessage?: Function }} input
    */
   async function processOutbound(input) {
-    const kind = input.direction === 'audio' ? 'audio' : 'image';
+    const kind = input.direction === 'audio' ? 'audio' : input.direction === 'document' ? 'document' : 'image';
     const key = input.idempotencyKey ? String(input.idempotencyKey).slice(0, 80) : null;
 
     /** La operación ya salió: se devuelve lo que hay, sin tocar Meta. */
@@ -442,7 +468,13 @@ export function createMediaPipeline(deps) {
     const envio =
       kind === 'audio'
         ? await whatsappMedia.sendAudio(input.to, { mediaId: metaMediaId })
-        : await whatsappMedia.sendImage(input.to, { mediaId: metaMediaId, caption: input.caption ?? null });
+        : kind === 'document'
+          ? await whatsappMedia.sendDocument(input.to, {
+              mediaId: metaMediaId,
+              filename: input.filename ?? null,
+              caption: input.caption ?? null,
+            })
+          : await whatsappMedia.sendImage(input.to, { mediaId: metaMediaId, caption: input.caption ?? null });
 
     if (!envio.ok) {
       const error = envio.error ?? {};

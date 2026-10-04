@@ -3051,6 +3051,23 @@ body[data-tab='whatsapp'] .content {
   font-size: 0.78rem;
 }
 
+/* Hoja «Enviar factura por WhatsApp»: lo que va a salir, antes de que salga. */
+.invoice-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(246, 249, 247, 0.8);
+  font-size: 0.92rem;
+  white-space: pre-wrap;
+}
+
+.invoice-actions {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
 .order-timeline {
   display: grid;
   gap: 8px;
@@ -4497,6 +4514,63 @@ body[data-wa-view='chat'] .float-btn--menu {
 
 .audio--playing .audio__kind {
   color: var(--phyto-primary-dark);
+}
+
+/* --------------------------------------------------------------- documento */
+/*
+ * FACTURA EN EL HILO: un documento nativo de WhatsApp. Es un enlace al archivo
+ * privado del CRM (se ABRE; no se descarga a la fuerza), con el NOMBRE real del
+ * PDF que recibió el cliente: esa es la prueba de que salió del negocio.
+ */
+.doc-card {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  align-items: center;
+  gap: 10px;
+  min-width: min(66vw, 250px);
+  max-width: min(84vw, 340px);
+  padding: 9px 12px 9px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+.bubble--out .doc-card {
+  border-color: transparent;
+  background: #d5ecdd;
+}
+
+.doc-card__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--phyto-primary);
+  color: #fff;
+}
+
+.doc-card__icon .svg {
+  width: 20px;
+  height: 20px;
+}
+
+.doc-card__body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.doc-card__body strong {
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.doc-card__body small {
+  font-size: 11px;
+  color: var(--pe-ink-500);
 }
 
 /* -------------------------------------------------------------- separadores */
