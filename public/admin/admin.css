@@ -196,51 +196,61 @@ code {
 
 /* ------------------------------------------------------------------ ENTRAR */
 .login {
-  max-width: 420px;
-  margin: 0 auto;
   min-height: 100dvh;
   display: grid;
-  align-content: center;
-  padding: 48px 20px calc(40px + env(safe-area-inset-bottom, 0px));
+  place-items: center;
+  padding: 24px 18px calc(24px + env(safe-area-inset-bottom, 0px));
   background:
-    radial-gradient(circle at 50% 13%, rgba(201, 226, 101, 0.2), transparent 30%),
-    var(--surface-tint);
+    radial-gradient(circle at 50% -8%, rgba(201, 226, 101, 0.28), transparent 46%),
+    radial-gradient(circle at 88% 108%, rgba(11, 107, 79, 0.12), transparent 46%),
+    var(--pe-surface-alt);
+}
+
+/* Un solo cuadro limpio: logo, dos campos y el botón. Nada más. */
+.login__card {
+  width: 100%;
+  max-width: 352px;
+  display: grid;
+  justify-items: center;
+  padding: 28px 22px 24px;
+  border: 1px solid var(--pe-border);
+  border-radius: var(--pe-radius-lg);
+  background: var(--pe-surface);
+  box-shadow: 0 20px 48px rgba(14, 27, 22, 0.16);
   text-align: center;
 }
 
 .login__logo {
-  justify-self: center;
   object-fit: contain;
-  filter: drop-shadow(0 10px 22px rgba(7, 61, 46, 0.16));
+  filter: drop-shadow(0 8px 18px rgba(7, 61, 46, 0.18));
 }
 
 .login__title {
-  font-size: 1.375rem;
-  margin: 18px 0 6px;
+  margin: 12px 0 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--pe-ink-900);
 }
 
 .login__title span {
-  font-size: 0.95rem;
-  letter-spacing: 0;
-}
-
-.login__text,
-.login__hint {
-  color: var(--pe-ink-500);
-  font-size: 0.9rem;
+  color: var(--pe-brand-700);
+  font-weight: 800;
+  letter-spacing: 0.08em;
 }
 
 .login__form {
+  width: 100%;
   display: grid;
   gap: 12px;
-  margin: 20px 0 16px;
+  margin: 20px 0 0;
   text-align: left;
 }
 
 .login__error {
   margin: 0;
   color: var(--pe-danger);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   font-weight: 600;
 }
 
@@ -7981,4 +7991,77 @@ body:has(> #sheet:not([hidden])) .map-fab {
   .list--orders {
     padding: 0 0 96px;
   }
+}
+
+/* ------------------------------------------------- AVISO DE VERSIÓN NUEVA */
+/*
+ * Franja que baja desde arriba cuando el service worker ya tiene una versión
+ * nueva del panel. Vive por encima de todo (z-index alto) porque es la primera
+ * cosa que hay que ver: sin actualizar, el negocio trabaja con código viejo.
+ */
+.update-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  background: var(--pe-brand-900);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(7, 30, 23, 0.32);
+  transform: translateY(-115%);
+  transition: transform 0.28s ease;
+}
+
+.update-bar--show {
+  transform: translateY(0);
+}
+
+.update-bar__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  font-size: 0.8rem;
+}
+
+.update-bar__text strong {
+  font-size: 0.9rem;
+}
+
+.update-bar__text span {
+  opacity: 0.82;
+}
+
+.update-bar__apply {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--pe-brand-900);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.update-bar__close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
 }

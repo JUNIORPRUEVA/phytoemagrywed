@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v32-compartir-app';
+const VERSION = 'crm-v33-login-actualizacion';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -52,6 +52,15 @@ self.addEventListener('activate', (event) => {
       await self.clients.claim();
     })(),
   );
+});
+
+/*
+ * El panel avisa por aquí cuando alguien pulsa «Actualizar»: si por lo que sea
+ * quedó una versión esperando, se activa ya. Normalmente el propio `install`
+ * hace skipWaiting y ni hace falta, pero así «Actualizar» nunca se queda mudo.
+ */
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 /**

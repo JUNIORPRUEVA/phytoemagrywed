@@ -10870,6 +10870,7 @@
   }
 
   let installEvent = null;
+  let swRegistration = null;
 
   function pushPermissionLabel() {
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) return 'No disponible';
@@ -11041,10 +11042,103 @@
     return state.pushResult;
   }
 
-  function initPwa() {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/admin/sw.js', { scope: '/admin/' }).catch(() => {});
+  /*
+   * ACTUALIZAR EL PANEL — cada vez que se publica una versión nueva en el
+   * servidor, el service worker la descarga por su cuenta, pero la pestaña que
+   * ya está abierta sigue con el código viejo hasta recargar. Aquí se avisa y
+   * se ofrece «Actualizar», sin que nadie tenga que saber qué es un service
+   * worker. La primera instalación NO avisa: solo cuenta cuando ya había un
+   * panel cargado y éste ha pasado a quedar desfasado.
+   */
+  function initServiceWorkerUpdates() {
+    const teniaControl = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (teniaControl) showUpdateBar();
+    });
+    navigator.serviceWorker
+      .register('/admin/sw.js', { scope: '/admin/' })
+      .then((registration) => {
+        swRegistration = registration;
+        // Pudo quedar una versión esperando de una visita anterior.
+        if (registration.waiting && teniaControl) showUpdateBar();
+        registration.addEventListener('updatefound', () => {
+          const nuevo = registration.installing;
+          if (!nuevo) return;
+          nuevo.addEventListener('statechange', () => {
+            // `installed` con controlador = hay versión nueva lista; `activating`
+            // (por el skipWaiting del propio SW) también vale.
+            if (!teniaControl) return;
+            if (nuevo.state === 'installed' || nuevo.state === 'activating') showUpdateBar();
+          });
+        });
+        // Se busca de nuevo al volver a la app (el caso normal en el móvil) y
+        // al recuperar el foco: sin temporizadores propios, sin trabajo de fondo.
+        const revisar = () => registration.update().catch(() => {});
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) revisar();
+        });
+        window.addEventListener('focus', revisar);
+      })
+      .catch(() => {});
+
+    $('#update-apply')?.addEventListener('click', applyUpdate);
+    $('#update-later')?.addEventListener('click', hideUpdateBar);
+    $('#check-update')?.addEventListener('click', buscarActualizacion);
+  }
+
+  function showUpdateBar() {
+    const bar = $('#update-bar');
+    if (!bar || !bar.hidden) return;
+    bar.hidden = false;
+    requestAnimationFrame(() => bar.classList.add('update-bar--show'));
+  }
+
+  function hideUpdateBar() {
+    const bar = $('#update-bar');
+    if (!bar) return;
+    bar.classList.remove('update-bar--show');
+    setTimeout(() => {
+      bar.hidden = true;
+    }, 280);
+  }
+
+  /**
+   * «Actualizar»: con `skipWaiting` dentro del propio service worker la versión
+   * nueva ya está activa, así que basta recargar para traer el HTML/JS al día.
+   * Aun así se avisa al SW por si quedó una versión esperando en algún navegador.
+   */
+  function applyUpdate() {
+    hideUpdateBar();
+    toast('Actualizando…');
+    try {
+      (swRegistration?.waiting)?.postMessage({ type: 'SKIP_WAITING' });
+    } catch {
+      /* sin service worker no hay nada que avisar: la recarga igual sirve */
     }
+    setTimeout(() => location.reload(), 260);
+  }
+
+  /** Botón manual de Ajustes: obliga a mirar si hay algo nuevo en el servidor. */
+  async function buscarActualizacion() {
+    let registro = swRegistration;
+    try {
+      registro = registro ?? (await navigator.serviceWorker?.getRegistration('/admin/'));
+      if (!registro) {
+        toast('Este navegador no permite buscar actualizaciones aquí');
+        return;
+      }
+      await registro.update();
+    } catch {
+      toast('No se pudo buscar actualizaciones');
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    if (registro.waiting || registro.installing) showUpdateBar();
+    else toast('Ya tienes la última versión');
+  }
+
+  function initPwa() {
+    if ('serviceWorker' in navigator) initServiceWorkerUpdates();
 
     window.addEventListener('online', () => setConnection(true));
     window.addEventListener('offline', () => setConnection(false));

@@ -33,52 +33,57 @@
 
     <!-- ------------------------------------------------------------- ENTRAR -->
     <main id="login" class="login" hidden>
-      <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="92" height="92" />
-      <h1 class="login__title">PHYTOEMAGRY<br /><span>CRM</span></h1>
-      <p class="login__text">
-        Entra con tu usuario del equipo.
-      </p>
-      <form id="login-form" class="login__form" autocomplete="on">
-        <label class="field">
-          <span class="field__label">Usuario/correo</span>
-          <input
-            class="field__input"
-            id="login-username"
-            name="username"
-            type="text"
-            autocomplete="username"
-            placeholder="ana@phytoemagry"
-          />
-        </label>
-        <label class="field">
-          <span class="field__label">Contraseña</span>
-          <input
-            class="field__input"
-            id="login-password"
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Tu contraseña"
-          />
-        </label>
-        <label class="field field--legacy" hidden>
-          <span class="field__label">Clave legacy</span>
-          <input
-            class="field__input"
-            id="login-token"
-            name="token"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Clave temporal"
-          />
-        </label>
-        <p class="login__error" id="login-error" role="alert" hidden></p>
-        <button class="btn btn--primary btn--block" type="submit">Entrar</button>
-      </form>
-      <p class="login__hint">
-        Se instala como app: en Chrome, menú ⋮ → «Añadir a pantalla de inicio». En iPhone, Compartir →
-        «Añadir a pantalla de inicio».
-      </p>
+      <section class="login__card" aria-labelledby="login-title">
+        <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="68" height="68" />
+        <h1 class="login__title" id="login-title">Phytoemagry <span>CRM</span></h1>
+        <form id="login-form" class="login__form" autocomplete="on">
+          <label class="field">
+            <span class="field__label">Usuario o correo</span>
+            <input
+              class="field__input"
+              id="login-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              placeholder="tu@correo"
+            />
+          </label>
+          <label class="field">
+            <span class="field__label">Contraseña</span>
+            <span class="pass">
+              <input
+                class="field__input"
+                id="login-password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="Tu contraseña"
+              />
+              <button
+                class="pass__eye"
+                type="button"
+                data-pass-eye
+                aria-label="Ver la contraseña"
+                aria-pressed="false"
+                data-icon="eye"
+              ></button>
+            </span>
+          </label>
+          <label class="field field--legacy" hidden>
+            <span class="field__label">Clave legacy</span>
+            <input
+              class="field__input"
+              id="login-token"
+              name="token"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Clave temporal"
+            />
+          </label>
+          <p class="login__error" id="login-error" role="alert" hidden></p>
+          <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+        </form>
+      </section>
     </main>
 
     <!-- --------------------------------------------------------------- APP -->
@@ -482,6 +487,7 @@
               pantalla de inicio». En iPhone, Compartir → «Añadir a pantalla de inicio».
             </p>
             <button class="btn btn--primary" id="install" type="button" hidden>Instalar ahora</button>
+            <button class="btn btn--ghost btn--sm" id="check-update" type="button">Buscar actualización</button>
           </div>
           <div class="card">
             <p class="card__title">Datos</p>
@@ -603,6 +609,20 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
+
+    <!--
+      Aviso de VERSIÓN NUEVA: en cuanto se publica un cambio en el servidor, el
+      service worker lo descarga solo, pero la pestaña abierta sigue con el panel
+      viejo. Esta franja ofrece recargar con lo último de un toque.
+    -->
+    <div class="update-bar" id="update-bar" role="status" aria-live="polite" hidden>
+      <div class="update-bar__text">
+        <strong>Versión nueva lista</strong>
+        <span>Actualiza para trabajar con lo último.</span>
+      </div>
+      <button class="update-bar__apply" id="update-apply" type="button">Actualizar</button>
+      <button class="update-bar__close" id="update-later" type="button" aria-label="Más tarde">✕</button>
+    </div>
 
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/app.js" defer></script>
