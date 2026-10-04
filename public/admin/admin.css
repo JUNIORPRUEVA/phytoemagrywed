@@ -8272,3 +8272,20 @@ body:has(> #sheet:not([hidden])) .map-fab {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/*
+ * HUECO LIBRE de una plantilla: donde el agente escribe SU mensaje.
+ *
+ * Es un mensaje, no un dato suelto, así que va en un campo AMPLIO de varias
+ * líneas (como el compositor del chat) en vez de en un renglón de una sola
+ * línea: se ve lo que se escribe y se corrige sin pelearse con el campo.
+ */
+.wa-var__area {
+  min-height: 84px;
+  height: auto;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+}

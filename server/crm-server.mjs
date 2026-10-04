@@ -2284,6 +2284,34 @@ async function ensureFollowupsForDelivered(ctx, log = console.log) {
 // ------------------------------------------- clientes · seguimiento · WhatsApp
 
 /**
+ * SALUDO según la HORA LOCAL DEL NEGOCIO.
+ *
+ * Se calcula en el SERVIDOR (no en el navegador) para que la hora que decide sea
+ * siempre la del negocio y no la del teléfono de quien escribe. Devuelve la frase
+ * COMPLETA y bien concordada —«Buenos días», «Buenas tardes» o «Buenas noches»—
+ * así que nunca puede salir un «Buenos tardes».
+ *
+ * Es el valor AUTOMÁTICO del hueco `saludo` de una plantilla. Si el agente lo
+ * escribe a mano, lo suyo manda (eso lo resuelve `resolveTemplatePayload`).
+ *
+ * @param {Date} [clock] reloj (se inyecta en las pruebas)
+ * @param {string} [timeZone] zona del negocio (`PHYTO_CRM_TZ`)
+ */
+export function greetingForNow(clock = new Date(), timeZone = TIME_ZONE) {
+  let hour = NaN;
+  try {
+    const raw = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(clock);
+    hour = Number.parseInt(raw, 10);
+  } catch {
+    hour = NaN;
+  }
+  if (!Number.isFinite(hour)) hour = clock.getHours();
+  if (hour >= 5 && hour < 12) return 'Buenos días';
+  if (hour >= 12 && hour < 19) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+/**
  * Plantillas oficiales de WhatsApp: nombres, categoría y variables.
  *
  * NINGUNA nace "aprobada": en Meta las aprueba una persona. Hasta que no estén
@@ -2291,6 +2319,32 @@ async function ensureFollowupsForDelivered(ctx, log = console.log) {
  * WhatsApp todavía no permite (y no se come el error 132001 de Meta).
  */
 const WA_TEMPLATE_SEED = [
+  {
+    /*
+     * CONTACTO PERSONALIZADO — la plantilla PRINCIPAL y reutilizable.
+     *
+     * Estructura: saludo + nombre real + MENSAJE DEL AGENTE.
+     *   {{1}} → saludo según la hora local del negocio («Buenos días» / «Buenas
+     *           tardes» / «Buenas noches»). Lo calcula el SERVIDOR; el agente
+     *           puede corregirlo en el panel.
+     *   {{2}} → nombre real del cliente (lo pone el CRM desde ESA conversación).
+     *   {{3}} → hueco LIBRE: lo que el agente necesita comunicar.
+     *
+     * El texto fijo NO se toca nunca: solo se rellenan variables.
+     *
+     * Nace `pending_approval` como todas: se registra y se aprueba en Meta, y el
+     * CRM lo refleja en cuanto la sincronización la vea. Hasta entonces el panel
+     * no deja enviarla (nunca se finge que está aprobada).
+     */
+    name: 'phyto_contacto_personalizado_v1',
+    friendly_name: 'Contacto personalizado',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: '{{1}}, {{2}}.\n\nTe escribimos de Phytoemagry en relación con tu solicitud.\n\n{{3}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+    variables: ['saludo', 'customer_name', 'mensaje'],
+    buttons: [],
+  },
   {
     name: 'phyto_seguimiento_cliente_v1',
     friendly_name: 'Seguimiento al cliente',
@@ -2767,7 +2821,15 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
     order?.delivery?.delivery_assigned_by_display_name_snapshot ??
     item?.delivery_display_name ??
     null;
+  /*
+   * EL SALUDO lo calcula el SERVIDOR con la hora local del negocio. Si el agente
+   * lo escribe en el panel, lo suyo manda (eso lo hace la rama `written` de
+   * abajo); si lo deja vacío, sale bien igual.
+   */
+  const saludo = greetingForNow(ctx.clock(), TIME_ZONE);
   const values = {
+    saludo,
+    greeting: saludo,
     customer_name: customer?.name || customer?.phone_e164 || 'cliente',
     nombre: customer?.name || customer?.phone_e164 || 'cliente',
     order_number: order?.order_number ?? item?.order_number ?? item?.id ?? null,
@@ -6176,6 +6238,26 @@ async function handle(req, res, ctx) {
           body = {};
         }
         let rawMessageBody = longText(body.body, 1200);
+        /*
+         * REVALIDACIÓN DE LA CONVERSACIÓN, EN EL SERVIDOR Y JUSTO ANTES DE ENVIAR.
+         *
+         * La conversación sale del camino de la URL (nunca del cuerpo), así que no
+         * hay forma de escribirle a un cliente distinto del de la conversación
+         * abierta. Aun así, el panel declara también en qué conversación CREE que
+         * está escribiendo: si no coincide —una pestaña vieja, un cambio de cliente
+         * a medias— se corta aquí, antes de gastar el mensaje, en vez de mandarlo a
+         * quien no toca.
+         */
+        const claimedConversationId = text(body.conversationId ?? body.conversation_id, 80);
+        if (claimedConversationId && claimedConversationId !== conversation.id) {
+          json(res, 409, {
+            ok: false,
+            error: 'conversation_mismatch',
+            message:
+              'La conversación abierta en el panel ya no es esta. Vuelve a abrirla y reenvía: el mensaje NO se ha enviado.',
+          });
+          return;
+        }
         const templateName = text(body.template, 60);
         /*
          * «PEDIR CONFIRMACIÓN»: cuando llega `orderId`, el texto lo construye el
@@ -6557,7 +6639,12 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/wa-templates' && req.method === 'GET') {
       const sync = url.searchParams.get('sync');
       if (sync === '1' || sync === 'true' || sync === 'stale') await syncWaTemplatesIfStale(ctx);
-      json(res, 200, { ok: true, templates: await listWaTemplates(ctx) });
+      /*
+       * `greeting` viaja al panel para que el hueco `saludo` se rellene con la
+       * MISMA frase que usaría el servidor: una sola fuente de verdad, sin
+       * desfases entre lo que el agente ve y lo que se envía.
+       */
+      json(res, 200, { ok: true, templates: await listWaTemplates(ctx), greeting: greetingForNow(ctx.clock(), TIME_ZONE) });
       return;
     }
 
@@ -6573,7 +6660,7 @@ async function handle(req, res, ctx) {
         });
         return;
       }
-      json(res, 200, { ok: true, sync: result, templates: await listWaTemplates(ctx) });
+      json(res, 200, { ok: true, sync: result, templates: await listWaTemplates(ctx), greeting: greetingForNow(ctx.clock(), TIME_ZONE) });
       return;
     }
 

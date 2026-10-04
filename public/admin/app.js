@@ -192,6 +192,13 @@
       threadError: false,
       /* Conversación que no es suya: se explica y se ofrece PEDIRLA (no se abre). */
       locked: null,
+      /*
+       * SALUDO del momento según la hora LOCAL DEL NEGOCIO («Buenos días»,
+       * «Buenas tardes» o «Buenas noches»). No se calcula aquí: lo manda el
+       * servidor para que la hora que decide sea la del negocio y no la del
+       * teléfono de quien escribe, y para que no pueda salir un «Buenos tardes».
+       */
+      greeting: '',
     },
     online: navigator.onLine,
     syncedAt: null,
@@ -687,7 +694,13 @@
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
       state.auth = data.auth ?? null;
-      state.templates = (await api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }))).templates ?? [];
+      // El saludo de las plantillas lo decide el SERVIDOR con la hora local del
+      // negocio; el panel solo lo guarda para traerlo puesto en el formulario.
+      const plantillas = await api('/api/admin/wa-templates').catch(() => null);
+      if (plantillas) {
+        state.templates = plantillas.templates ?? state.templates ?? [];
+        if (plantillas.greeting) state.wa.greeting = plantillas.greeting;
+      }
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
@@ -931,6 +944,7 @@
       try {
         const result = await api('/api/admin/wa-templates/sync', { method: 'POST', body: JSON.stringify({}) });
         state.templates = result.templates ?? state.templates;
+        if (result.greeting) state.wa.greeting = result.greeting;
         renderAjustes();
         const sync = result.sync ?? {};
         toast(`${sync.foundFromMeta ?? sync.found ?? 0} en Meta · ${sync.approved ?? 0} aprobadas`);
@@ -4980,6 +4994,28 @@
   }
 
   /**
+   * SALUDO según la hora local del negocio.
+   *
+   * La versión BUENA la manda el servidor (`state.wa.greeting`) con la zona del
+   * negocio; esto es solo el respaldo para cuando esa consulta no ha llegado
+   * todavía, y sirve para que la previsualización nunca enseñe un hueco vacío.
+   * Mismas franjas que el servidor: mañana hasta las 12, tarde hasta las 19.
+   */
+  function waSaludoAhora() {
+    let hora = NaN;
+    try {
+      const raw = new Intl.DateTimeFormat('en-US', { timeZone: BUSINESS_TIME_ZONE, hour: '2-digit', hourCycle: 'h23' }).format(new Date());
+      hora = Number.parseInt(raw, 10);
+    } catch {
+      hora = NaN;
+    }
+    if (!Number.isFinite(hora)) hora = new Date().getHours();
+    if (hora >= 5 && hora < 12) return 'Buenos días';
+    if (hora >= 12 && hora < 19) return 'Buenas tardes';
+    return 'Buenas noches';
+  }
+
+  /**
    * Texto que el CRM ya sabe poner en cada hueco de una plantilla.
    *
    * El número de pedido sale SOLO del pedido real de esta conversación (o del
@@ -4989,6 +5025,10 @@
     const nombre = (customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
     const order = orderForConversation(customer?.id ?? null, conversationId);
     return {
+      // El SALUDO lo calcula el servidor con la hora local del negocio y el CRM
+      // solo lo trae puesto; si el agente lo cambia, su versión manda.
+      saludo: state.wa.greeting || waSaludoAhora(),
+      greeting: state.wa.greeting || waSaludoAhora(),
       customer_name: nombre,
       nombre,
       phone: customer?.phone_e164 ?? '',
@@ -5013,6 +5053,8 @@
   }
 
   const WA_VAR_LABELS = {
+    saludo: 'Saludo',
+    greeting: 'Saludo',
     customer_name: 'Nombre del cliente',
     nombre: 'Nombre del cliente',
     mensaje: 'Tu mensaje',
@@ -5122,10 +5164,19 @@
             // El hueco libre arranca con lo que se escribió en el compositor.
             const esLibre = index === libre;
             const valor = esLibre && prefill.freeText ? prefill.freeText : (auto[key] ?? '');
+            // El saludo viene calculado por el SERVIDOR con la hora del negocio.
+            const esSaludo = ['saludo', 'greeting'].includes(String(key ?? '').trim().toLowerCase());
+            const pista = esLibre ? ' · lo escribes tú' : esSaludo ? ' · automático según la hora' : '';
+            // El hueco libre es donde la persona escribe SU mensaje: por eso va en
+            // un campo amplio de varias líneas y no en un renglón suelto.
+            const campo = esLibre
+              ? `<textarea class="field__input wa-var__area" rows="3" data-wa-var="${index + 1}"
+          placeholder="Escribe aquí lo que quieras decirle…">${escapeHtml(valor)}</textarea>`
+              : `<input class="field__input" type="text" data-wa-var="${index + 1}" value="${escapeHtml(valor)}"
+          placeholder="${escapeHtml(waVariablePlaceholder(key))}" />`;
             return `<label class="field">
-        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}${esLibre ? ' · lo escribes tú' : ''}</span>
-        <input class="field__input" type="text" data-wa-var="${index + 1}" value="${escapeHtml(valor)}"
-          placeholder="${escapeHtml(esLibre ? 'Escribe aquí lo que quieras decirle…' : waVariablePlaceholder(key))}" />
+        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}${pista}</span>
+        ${campo}
       </label>`;
           })
           .join('')
@@ -5169,6 +5220,8 @@
     try {
       const result = await api('/api/admin/wa-templates?sync=stale');
       state.templates = result.templates ?? state.templates;
+      // El saludo lo decide el servidor (hora del negocio): el panel solo lo enseña.
+      if (result.greeting) state.wa.greeting = result.greeting;
     } catch {
       /* Si falla la consulta, se usa la última lista conocida y la hoja lo explica. */
     }
@@ -6471,7 +6524,12 @@
       try {
         const resultado = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
           method: 'POST',
-          body: JSON.stringify(payload),
+          /*
+           * La conversación viaja EN EL CUERPO además de en la URL: el servidor la
+           * vuelve a comprobar antes de enviar y corta si el panel se quedó en otra
+           * (una pestaña vieja, un cliente cambiado a medias).
+           */
+          body: JSON.stringify({ ...payload, conversationId }),
         });
         state.wa.draft = '';
         /*
