@@ -1299,5 +1299,55 @@ que las rechacen».
    no hay `[data-consent]` en el HTML (`client-flow.test.js`); con aviso, nada sale al
    píxel hasta que se acepta.
 
+## 48. ¿Esta web convence a alguien de comprar? Lo que se midió (2026-10-03)
+
+Lo pidió el negocio: «comprobar que la web sea capaz de convencer a alguien de comprar».
+Se probó con un navegador de verdad (Chrome headless por CDP) **contra la web publicada**,
+haciendo el recorrido completo como un cliente, y estos son los hechos:
+
+**Lo que SÍ está (comprobado, no supuesto)**
+1. **El pedido se puede hacer de principio a fin.** Simulado en producción: elegir frasco
+   → cantidad 2 → «Comprar / Consultar» → escribir el nombre → se abre WhatsApp con el
+   pedido ESCRITO: `Frasco: 10 cápsulas · Cantidad: 2 · Precio por frasco: RD$2,500 ·
+   Cápsulas en total: 20 · Total: RD$5,000 · Nombre: …` al `+1 849-424-0621`.
+2. **Y el pedido también entra en el CRM** (`PHYTO_CRM_ENDPOINT=/api/crm` verificado en el
+   JS servido): si el cliente cierra WhatsApp sin enviar, el pedido queda igualmente en la
+   base y aparece en el panel.
+3. **El primer pantallazo vende:** en móvil (390×844) se ven la portada, «Desde RD$1,250»,
+   «Ver frascos y precios», «Consultar por WhatsApp» y la barra fija
+   (Comprar / WhatsApp), sin hacer scroll.
+4. **Poca fricción donde importa:** el modal de pedido pide **un solo campo** (el nombre),
+   muestra el resumen con el total y avisa de que no se cobra nada en la página.
+5. **Ligera y rápida:** 324 KB y 11 peticiones; todas las fotos en AVIF con su ancho
+   (320/480/768 px); sin desbordes horizontales en escritorio (1280 px).
+6. **El píxel está instalado y habla con Meta** (fbevents 2.9.414). Meta bloqueó la sesión
+   de prueba por ser tráfico de robot — señal de que la conversación con Meta existe.
+
+**Lo que FALTA para convencer (y de quién depende)**
+
+Nada de esto se puede inventar; el código ya está preparado y solo espera el dato:
+
+| Falta | Dónde se configura | Por qué cuesta ventas |
+| --- | --- | --- |
+| **Imagen al compartir el enlace** + canonical/sitemap | `.env` → `SEO_SITE_URL=https://phytoemagryrd.lat` | Hoy el enlace compartido en WhatsApp/Facebook sale **sin foto** (y `/sitemap.xml` da 404). Es UN renglón y se nota en cada anuncio |
+| **Zonas, costo y forma de entrega** | `site.config.js` → `commerce.deliveryAreas`, `deliveryMessage`, `shippingAvailable` | «¿Llega a mi casa?» sin respuesta: el que no pregunta, no compra |
+| **Formas de pago reales** | `commerce.paymentMethods` | «¿Pago contra entrega?» sin respuesta |
+| **Horario de atención** | `contact.whatsapp.hours` | «¿Me responderán hoy?» |
+| **Opiniones reales de clientes** | `content.config.js` → `testimonials.items` | La prueba social es lo que más convierte; solo valen reales, con permiso |
+| **Datos de la empresa** | `privacy.company.*` (7 marcas `[PENDIENTE]` en la política) | Quien comprueba la política, duda |
+| **El «para qué sirve»** | `product.config.js` → `shortDescription` / claim aprobado | La web dice qué ES y cuánto CUESTA, pero no dice para qué le sirve a quien lo compra. Necesita una frase aprobada por el negocio (y por eso no se inventa) |
+
+`npm run check` los lista todos y ahora dice **lo que cuesta cada uno** («sin imagen al
+compartir», «no sabe si le llega», «no sabe cómo se paga»…).
+
+**Lo que sí se arregló ya (sin inventar nada):** la FAQ no respondía las dos dudas que más
+frenan a quien no conoce el negocio —**cómo se paga** y **si hace falta cuenta**—, y la
+respuesta de entrega se quedaba en «se coordina por WhatsApp». Ahora hay tres preguntas
+fijas (`¿Cómo realizo mi pedido?`, `¿Cómo puedo pagar?`, `¿Necesito crear una cuenta?`) y
+las respuestas dicen qué pasa y qué NO se le va a pedir (ni cobro en la página ni datos de
+tarjeta), con el total por delante. También se corrigió un texto que mentía: «¿Cómo realizo
+mi pedido?» describía un formulario de tres campos que no existe (el modal pide el nombre).
+
+
 
 
