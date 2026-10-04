@@ -58,12 +58,16 @@ describe('el panel tiene las secciones nuevas', () => {
     expect(app).toContain("$$('[data-tab]')");
   });
 
-  it('la barra de pestañas tiene TRES destinos y WhatsApp en el centro', () => {
-    expect(css).toContain('repeat(3, 1fr)');
-    expect(html).toContain('class="tab tab--center" data-tab="whatsapp"');
+  it('la barra de pestañas tiene cuatro destinos y Hoy va primero', () => {
+    expect(css).toContain('repeat(4, minmax(0, 1fr))');
+    const nav = html.slice(html.indexOf('<nav class="tabs"'), html.indexOf('</nav>', html.indexOf('<nav class="tabs"')));
+    const tabs = [...nav.matchAll(/data-tab="([^"]+)"/g)].map((match) => match[1]);
+    expect(tabs).toEqual(['hoy', 'whatsapp', 'pedidos', 'clientes']);
     // Lo secundario vive en el menú lateral, no en la barra de abajo.
     expect(html).toContain('id="drawer"');
-    expect(html).toContain('data-tab="pedidos"');
+    expect(nav).toContain('data-tab="pedidos"');
+    expect(nav).not.toContain('data-tab="delivery"');
+    expect(html).toContain('data-tab="delivery"');
     expect(html).toContain('data-tab="seguimientos"');
     expect(html).not.toContain('class="tab" data-tab="mensajes"');
   });
@@ -164,7 +168,7 @@ describe('nada se envía solo', () => {
     expect(app).toMatch(/waPollTick/);
     const deliveryFrom = app.indexOf('function deliveryPollTick');
     const deliveryTick = app.slice(deliveryFrom, deliveryFrom + 500);
-    expect(deliveryTick).toContain("state.tab !== 'mapa'");
+    expect(deliveryTick).toContain("!['mapa', 'delivery'].includes(state.tab)");
     expect(deliveryTick).toContain("document.visibilityState !== 'visible'");
     expect(deliveryTick).toContain('refreshDeliveryTracking');
     expect(deliveryTick).not.toContain('POST');

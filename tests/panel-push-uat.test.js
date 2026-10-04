@@ -3,15 +3,14 @@
  * UAT DEL PANEL — NOTIFICACIONES DEL TELÉFONO (panel real + CRM real, sin push real).
  *
  * Lo que se pidió: que al pulsar «Probar» o «Revisar» PASE algo, que se pueda
- * probar de verdad, y que la lista de notificaciones sea COMPACTA (tarjetas
- * pequeñas y botones pequeños en vez de bloques enormes).
+ * probar de verdad desde Configuración, y que la lista de notificaciones sea
+ * COMPACTA (tarjetas pequeñas y botones pequeños en vez de bloques enormes).
  *
  * Aquí se comprueba, con el servidor de verdad y un service worker de mentira:
- *   - la hoja lista las notificaciones en filas compactas (`.notice`, botones
- *     `.btn--xs`) y ya no con las tarjetas grandes de delivery;
- *   - «Probar» está SIEMPRE disponible (antes quedaba deshabilitado y el clic no
+ *   - la campana lista notificaciones, pero la prueba vive en Configuración;
+ *   - «Probar notificación» está SIEMPRE disponible (antes quedaba deshabilitado y el clic no
  *     hacía nada), registra este teléfono si hacía falta, pide la prueba al
- *     servidor y deja el RESULTADO escrito en la hoja;
+ *     servidor y deja el RESULTADO escrito en Configuración;
  *   - la prueba también se muestra en el propio teléfono (aviso local), para
  *     distinguir «no salió del servidor» de «el teléfono no muestra avisos»;
  *   - «Revisar» también deja resultado visible.
@@ -168,7 +167,7 @@ beforeAll(async () => {
   setValue('#login-username', USER);
   setValue('#login-password', PASS);
   $('#login-form').dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
-  await waitFor(() => $('#drawer-user-go') !== null, 'el panel cargado con la sesión');
+  await waitFor(() => $('.drawer__brand')?.textContent?.includes('Junior Push'), 'el panel cargado con la sesión');
 }, 60000);
 
 afterAll(async () => {
@@ -178,20 +177,13 @@ afterAll(async () => {
 });
 
 describe('la hoja de notificaciones', () => {
-  it('abre con filas compactas y botones pequeños', async () => {
+  it('abre sin controles de prueba; esos viven en Configuración', async () => {
     click('[data-dashboard-notifications]');
     await waitFor(() => $('#sheet').hidden === false, 'la hoja abierta');
-    await waitFor(() => $('#sheet-body .notice'), 'las filas compactas de la hoja');
-    expect($('.notice-list')).not.toBeNull();
     // Ya no son las tarjetas grandes de delivery.
     expect($$('#sheet-body .delivery-order')).toHaveLength(0);
-    const probar = $('[data-push-test]');
-    expect(probar).not.toBeNull();
-    expect(probar.classList.contains('btn--xs')).toBe(true);
-    expect(probar.classList.contains('btn--sm')).toBe(false);
-    expect($('[data-push-enable]')?.classList.contains('btn--xs')).toBe(true);
-    // Y el aviso de que el botón hace algo, antes de pulsarlo.
-    expect($('[data-push-result]')?.textContent ?? '').toMatch(/Sin pruebas recientes|Último envío|Servidor/);
+    expect($('#sheet-body [data-push-test]')).toBeNull();
+    expect($('#sheet-body [data-push-enable]')).toBeNull();
   });
 
   it('el CSS las sostiene pequeñas (dos líneas de texto y botón de 32 px)', () => {
@@ -204,18 +196,25 @@ describe('la hoja de notificaciones', () => {
 
 describe('«Probar» y «Revisar» no se quedan sin respuesta', () => {
   it('«Probar» registra el teléfono, pide la prueba al servidor y lo deja escrito', async () => {
+    click('[data-tab="ajustes"]');
+    await waitFor(() => !$('#view-ajustes').hidden, 'Configuración abierta');
+    expect($('.config-menu')?.textContent).toContain('Notificaciones');
+    expect($('#push-config [data-push-test]')?.textContent).toContain('Probar notificación');
+    expect($('#push-config [data-push-enable]')?.classList.contains('btn--xs')).toBe(true);
+    expect($('#push-config [data-push-result]')?.textContent ?? '').toMatch(/Sin pruebas recientes|Último envío|Servidor/);
+
     const antes = await pushStatusFromServer();
     expect(antes.activeSubscriptions).toBeGreaterThanOrEqual(0);
 
-    expect(click('[data-push-test]')).toBe(true);
+    expect(click('#push-config [data-push-test]')).toBe(true);
     /*
      * OJO: el texto de la línea existe ANTES de la prueba («Sin pruebas recientes»),
      * así que hay que esperar al RESULTADO, no a que haya una línea.
      */
     const resultado = await waitFor(() => {
-      const texto = $('#sheet-body [data-push-result]')?.textContent ?? '';
+      const texto = $('#push-config [data-push-result]')?.textContent ?? '';
       return texto.includes('Servidor:') ? texto : null;
-    }, 'el resultado de la prueba en la hoja', 20000);
+    }, 'el resultado de la prueba en Configuración', 20000);
 
     // El teléfono quedó registrado en el CRM (el servidor es la fuente de verdad).
     const despues = await waitFor(async () => {
@@ -225,7 +224,7 @@ describe('«Probar» y «Revisar» no se quedan sin respuesta', () => {
     expect(despues.subscriptions.some((row) => row.endpoint.includes('push.example'))).toBe(true);
     expect(suscripcionesCreadas).toBeGreaterThanOrEqual(1);
 
-    // La prueba se muestra TAMBIÉN en este dispositivo, y se dice en la hoja.
+    // La prueba se muestra TAMBIÉN en este dispositivo, y se dice en Configuración.
     await waitFor(() => avisosLocales.length >= 1, 'el aviso local de prueba');
     expect(avisosLocales[0].title).toContain('Prueba');
     expect(avisosLocales[0].options.tag).toBe('phyto-push-test-local');
@@ -235,6 +234,10 @@ describe('«Probar» y «Revisar» no se quedan sin respuesta', () => {
   }, 30000);
 
   it('la notificación de prueba aparece en la lista y se puede abrir', async () => {
+    click('[data-tab="hoy"]');
+    await waitFor(() => !$('#view-hoy').hidden, 'Hoy abierto');
+    click('[data-dashboard-notifications]');
+    await waitFor(() => $('#sheet').hidden === false, 'la hoja abierta');
     const filas = await waitFor(
       () => $$('#sheet-body .notice').find((row) => row.textContent.includes('Prueba de notificaciones')),
       'la notificación de prueba en la lista',
@@ -243,12 +246,14 @@ describe('«Probar» y «Revisar» no se quedan sin respuesta', () => {
   }, 20000);
 
   it('«Revisar» deja su resultado en la hoja (sin silencios)', async () => {
-    expect(click('[data-push-enable]')).toBe(true);
+    click('[data-tab="ajustes"]');
+    await waitFor(() => !$('#view-ajustes').hidden, 'Configuración abierta');
+    expect(click('#push-config [data-push-enable]')).toBe(true);
     const resultado = await waitFor(() => {
-      const texto = $('#sheet-body [data-push-result]')?.textContent ?? '';
+      const texto = $('#push-config [data-push-result]')?.textContent ?? '';
       return /Teléfono registrado|no quedó registrado/.test(texto) ? texto : null;
     }, 'el resultado de Revisar');
     expect(resultado).toMatch(/Teléfono registrado|no quedó registrado/);
-    expect($('#sheet-body .notice-hint')).not.toBeNull();
+    expect($('#push-config .notice-hint')).not.toBeNull();
   }, 20000);
 });

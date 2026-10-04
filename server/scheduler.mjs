@@ -121,6 +121,7 @@ export function createScheduler(deps) {
   const followups = deps.followups;
   const audit = deps.audit;
   const resolveTemplate = deps.resolveTemplate ?? (async () => ({ ok: false, reason: 'unknown_template' }));
+  const deliveryControlTick = deps.deliveryControlTick ?? null;
   const clock = deps.clock ?? (() => new Date());
   const log = deps.log ?? (() => {});
   const staleMs = Number(deps.staleMs ?? DEFAULT_STALE_MS);
@@ -481,7 +482,8 @@ export function createScheduler(deps) {
         const result = await this.process(row);
         if (result?.status === 'SENT') sent += 1;
       }
-      return { recovered, due: due.length, sent };
+      const delivery = deliveryControlTick ? await deliveryControlTick() : null;
+      return { recovered, due: due.length, sent, delivery };
     },
 
     /**

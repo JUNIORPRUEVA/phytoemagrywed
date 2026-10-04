@@ -3,8 +3,8 @@
  * UAT DEL PANEL — MI PERFIL (panel real + CRM real, sin WhatsApp de verdad).
  *
  * Lo que se demuestra aquí, que es lo que se pidió:
- *   - «Perfil» está en el menú lateral, al FINAL de la parte de abajo;
- *   - el bloque del usuario de arriba del menú también lleva al perfil;
+ *   - «Perfil» está en el menú lateral, junto a los accesos de sistema;
+ *   - el encabezado del menú muestra el usuario real sin una tarjeta extra;
  *   - el usuario con sesión cambia su NOMBRE VISIBLE y el CRM lo guarda (es el
  *     nombre que viajará con los mensajes que envíe);
  *   - cambia su CONTRASEÑA desde ahí, con la actual delante;
@@ -117,28 +117,29 @@ describe('Mi perfil', () => {
     setValue('#login-password', PASS);
     $('#login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
     // OJO: `#app` se enseña ANTES de que terminen de llegar los datos, así que
-    // hay que esperar a algo pintado (el bloque del usuario), no a la app.
-    await waitFor(() => $('#drawer-user-go') !== null, 'el bloque del usuario en el menú');
+    // hay que esperar a algo pintado (la identidad del menú), no a la app.
+    await waitFor(() => $('.drawer__brand')?.textContent?.includes('Ana Perfil'), 'la identidad del menú');
     expect($('#login-error').hidden).toBe(true);
-    expect($('#drawer-user')?.textContent).toContain('Ana Perfil');
+    expect($('.drawer__brand')?.textContent).toContain('Ana Perfil');
+    expect($('.drawer__brand')?.textContent).toContain('Administrador');
+    expect($('#drawer-user')?.hidden).toBe(true);
   });
 
-  it('«Perfil» está al final de las pantallas del menú (y después va «Ir a la web»)', () => {
+  it('«Perfil» está en sistema y después quedan compartir e ir a la web', () => {
     const items = $$('.drawer__nav--bottom .drawer__item');
     expect(items.length).toBeGreaterThanOrEqual(2);
-    // La última PANTALLA es el perfil; después solo queda el enlace a la tienda.
     const pantallas = items.filter((item) => item.dataset.tab);
-    const ultimo = pantallas.at(-1);
-    expect(ultimo.dataset.tab).toBe('perfil');
-    expect(ultimo.textContent).toContain('Perfil');
+    expect(pantallas.map((item) => item.dataset.tab)).toContain('perfil');
+    const perfil = pantallas.find((item) => item.dataset.tab === 'perfil');
+    expect(perfil.textContent).toContain('Perfil');
     const enlace = items.at(-1);
     expect(enlace.id).toBe('drawer-web');
     expect(enlace.getAttribute('href')).toBe('/');
   });
 
-  it('el bloque del usuario del menú también lleva al perfil', async () => {
-    expect($('#drawer-user-go')).not.toBeNull();
-    click('#drawer-user-go');
+  it('la opción Perfil del menú lleva al perfil', async () => {
+    expect($('.drawer__item[data-tab="perfil"]')).not.toBeNull();
+    click('.drawer__item[data-tab="perfil"]');
     await waitFor(() => !$('#view-perfil').hidden, 'la vista de perfil');
     expect($('#profile-name').value).toBe('Ana Perfil');
     expect($('#profile-username').value).toBe(USER);
@@ -149,7 +150,7 @@ describe('Mi perfil', () => {
   it('guarda el nombre visible y el CRM lo guarda de verdad', async () => {
     setValue('#profile-name', 'Ana Nueva');
     click('#profile-save');
-    await waitFor(() => $('#drawer-user')?.textContent?.includes('Ana Nueva'), 'el nombre nuevo en el menú');
+    await waitFor(() => $('.drawer__brand')?.textContent?.includes('Ana Nueva'), 'el nombre nuevo en el menú');
     expect((await userFromServer()).display_name).toBe('Ana Nueva');
   });
 

@@ -133,6 +133,12 @@ export function orderDestination(order) {
 export function publicTrackingSession(session, options = {}) {
   if (!session) return null;
   const destination = options.destination ?? null;
+  let metadata = {};
+  try {
+    metadata = session.metadata ? JSON.parse(session.metadata) : {};
+  } catch {
+    metadata = {};
+  }
   const hasPosition = parseCoordinates({ latitude: session.last_latitude, longitude: session.last_longitude }).ok;
   const current = hasPosition
     ? {
@@ -154,6 +160,7 @@ export function publicTrackingSession(session, options = {}) {
     status: session.status,
     started_at: session.started_at,
     ended_at: session.ended_at ?? null,
+    metadata,
     last_position: current,
     destination,
     distance_m: summary.distance_m,

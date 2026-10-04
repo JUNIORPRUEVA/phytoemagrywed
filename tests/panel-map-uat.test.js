@@ -449,7 +449,7 @@ async function abrirMapa() {
 
 /** Abre el chat de Ana y espera al hilo con la ubicación. */
 async function abrirChatAna() {
-  click('.drawer__item[data-tab="whatsapp"]');
+  click('.tabs [data-tab="whatsapp"]');
   const fila = await waitFor(() => $(`[data-conv="${ids.convAna}"]`), 'la fila de Ana');
   click(fila);
   await waitFor(() => $('#wa-chat-name')?.textContent.includes('Ana'), 'el chat de Ana');
@@ -523,7 +523,7 @@ describe('el mapa se abre DENTRO de la app', () => {
 
   it('la factura del pedido abre su ubicación en el mapa de la app', async () => {
     closeSheetForUat();
-    click('.drawer__item[data-tab="pedidos"]');
+    click('.tabs [data-tab="pedidos"]');
     const boton = await waitFor(() => $(`[data-receipt="${ordenId}"]`), 'la factura del pedido');
     click(boton);
     // El botón de la ubicación de entrega de la factura (hay más ubicaciones en la
@@ -680,7 +680,7 @@ describe('pantalla «Mapa de pedidos»', () => {
           : null,
       'la distancia medida desde el punto',
     );
-    expect(aviso.textContent).toMatch(/unos \d+ min a 25 km\/h/);
+    expect(aviso.textContent).toMatch(/unos (?:\d+ min|\d+ h(?: \d+ min)?) a 25 km\/h/);
     dejarDeMedir();
   }, 30000);
 

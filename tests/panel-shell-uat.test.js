@@ -59,38 +59,41 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(app).toContain("hoy: 'CRM'");
   });
 
-  it('la barra inferior es sobria: tres destinos y sin círculo elevado', () => {
-    expect(css).toContain('grid-template-columns: repeat(3, 1fr)');
-    expect(css).toContain('.tab--center[aria-current=\'true\'] .tab__icon');
-    // El globo de WhatsApp ya no es el protagonista de la barra.
-    expect(css).toMatch(/\.tab--center \.tab__icon \{[^}]*margin-top: 0/);
+  it('la barra inferior tiene cuatro accesos equilibrados, con Hoy primero', () => {
+    expect(css).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(css).toMatch(/\.tabs \{[\s\S]*?left: 0;\n\s+right: 0;\n\s+bottom: 0;/);
+    expect(css).toMatch(/\.tabs \{[\s\S]*?border-radius: 0;/);
+    const nav = html.slice(html.indexOf('<nav class="tabs"'), html.indexOf('</nav>', html.indexOf('<nav class="tabs"')));
+    const tabs = [...nav.matchAll(/data-tab="([^"]+)"/g)].map((match) => match[1]);
+    expect(tabs).toEqual(['hoy', 'whatsapp', 'pedidos', 'clientes']);
+    expect(nav).not.toContain('data-tab="delivery"');
+    expect(css).toMatch(/\.tab__icon,\n\s+\.tab--center \.tab__icon \{[\s\S]*?width: 23px;\n\s+height: 23px;/);
   });
 
-  it('el drawer está ordenado por secciones y el mapa va en Ventas', () => {
-    // Cuatro bloques con su título, en el orden en que se trabaja: primero el día
-    // a día, luego lo que se vende, luego a quién se sigue y al final el sistema.
+  it('el drawer no repite el navbar y deja el mapa en Ventas', () => {
+    // Lo principal (Hoy, WhatsApp, Pedidos, Clientes) vive abajo; el menú lateral
+    // queda para pantallas secundarias.
     for (const grupo of ['Ventas', 'Seguimiento', 'Sistema']) {
       expect(html).toContain(`<p class="drawer__group">${grupo}</p>`);
     }
-    expect(html).toContain('<p class="drawer__group drawer__group--primary">Operación</p>');
+    expect(html).not.toContain('drawer__group--primary');
+    expect(html).not.toContain('drawer__nav--primary');
+    expect(html).not.toContain('Pedidos y compras');
     const posicion = (texto) => html.indexOf(texto);
-    expect(posicion('>Operación</p>')).toBeLessThan(posicion('>Ventas</p>'));
     expect(posicion('>Ventas</p>')).toBeLessThan(posicion('>Seguimiento</p>'));
     expect(posicion('>Seguimiento</p>')).toBeLessThan(posicion('>Sistema</p>'));
-    // El mapa y las entregas son UNA entrada del menú (antes había dos pantallas).
+    // El mapa operativo sigue en Ventas, y el repartidor tiene su entrada directa.
     expect(html).toContain('<button class="drawer__item" data-tab="mapa" type="button">');
     expect(html).toContain('Mapa y entregas');
-    expect(html).not.toContain('data-tab="delivery"');
+    expect(html).toContain('data-tab="delivery"');
+    expect(html).toContain('Mis entregas');
     expect(html).toContain('id="view-mapa"');
-    expect(html).not.toContain('id="view-delivery"');
-    // En el móvil, el bloque de Operación no se repite en el menú: ya está abajo.
-    expect(css).toMatch(
-      /@media \(max-width: 979px\) \{[\s\S]*?\.drawer__group--primary,\n\s+\.drawer__nav--primary \{\n\s+display: none;/,
-    );
-    expect(css).toMatch(/@media \(min-width: 980px\) \{[\s\S]*?\.drawer__group--primary,\n\s+\.drawer__nav--primary \{\n\s+display: block;/);
-    expect(css).not.toContain(".drawer__nav--primary .drawer__item:not([data-tab='delivery'])");
+    expect(html).toContain('id="view-delivery"');
     expect(css).toMatch(/\.drawer \{[\s\S]*?display: flex;\n\s+flex-direction: column;/);
     expect(css).toMatch(/\.drawer__foot \{[\s\S]*?margin-top: auto;/);
+    expect(css).toMatch(/\.drawer__logout \{[\s\S]*?justify-self: end;/);
+    expect(html).toContain('data-icon="logout"');
+    expect(app).toContain('logout: svg(');
   });
 
   it('el menú lleva a la web de la tienda con un enlace de verdad', () => {
@@ -170,8 +173,9 @@ describe('WhatsApp: la conversación es la pantalla', () => {
     expect(waHtml).toContain('id="wa-chat-meta"');
     expect(app).toContain("$('#wa-chat-name').textContent");
     expect(app).toContain("$('#wa-chat-meta').textContent");
-    // Cabecera compacta (una franja de ~50 px, no un header de 80).
-    expect(css).toMatch(/\.wa__chat-head \{[\s\S]*?padding: calc\(7px \+ env\(safe-area-inset-top, 0px\)\) 46px 7px 60px;/);
+    // Cabecera compacta y sticky (una franja de ~50 px, no un header de 80).
+    expect(css).toMatch(/body\[data-tab='whatsapp'\]\[data-wa-view='chat'\] \.wa__chat-head \{[\s\S]*?position: sticky;\n\s+top: 0;/);
+    expect(css).toMatch(/body\[data-tab='whatsapp'\]\[data-wa-view='chat'\] \.wa__chat-head \{[\s\S]*?padding: calc\(5px \+ env\(safe-area-inset-top, 0px\)\) 46px 5px 56px;/);
   });
 
   it('atrás solo aparece donde hace falta (en escritorio sobra)', () => {

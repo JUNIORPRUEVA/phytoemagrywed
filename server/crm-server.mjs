@@ -162,6 +162,7 @@ import { catalogItems, computeOrderTotals, findCatalogItem } from '../src/lib/ca
 import {
   createWhatsAppClient,
   parseWebhook,
+  toE164,
   verifyWebhookChallenge,
   verifyWebhookSignature,
 } from './whatsapp.mjs';
@@ -226,8 +227,30 @@ const DELIVERY_OPERATIONAL_STATUSES = Object.freeze({
   CONTACTED: 'CONTACTED',
   READY_FOR_DELIVERY: 'READY_FOR_DELIVERY',
   IN_TRANSIT: 'IN_TRANSIT',
+  ISSUE_REPORTED: 'ISSUE_REPORTED',
   DELIVERED: 'DELIVERED',
   CANCELLED: 'CANCELLED',
+});
+const DELIVERY_ASSIGNMENT_TEMPLATE = 'phyto_delivery_asignado_v1';
+const DELIVERY_DELIVERED_TEMPLATE = 'phyto_pedido_entregado_v1';
+const DELIVERY_REMINDER_TEMPLATE = 'phyto_delivery_pedido_pendiente_v1';
+const DELIVERY_ADMIN_ESCALATION_TEMPLATE = 'phyto_delivery_sin_atender_admin_v1';
+const DELIVERY_ADMIN_DELIVERED_TEMPLATE = 'phyto_delivery_entregado_admin_v1';
+const DELIVERY_CONTROL_SETTINGS_KEY = 'delivery_control';
+const DELIVERY_CONTROL_DEFAULTS = Object.freeze({
+  deliveryReminderMinutes: 5,
+  deliveryAdminEscalationMinutes: 30,
+  deliveryAdminEscalationContacts: [
+    { name: 'Yahaira', phone: '8294933332' },
+    { name: 'Junior', phone: '8293987826' },
+  ],
+});
+const DELIVERY_ISSUE_REASONS = Object.freeze({
+  no_response: 'Cliente no responde',
+  not_found: 'Cliente no se encuentra',
+  wrong_address: 'Dirección incorrecta',
+  rejected: 'Cliente rechazó el pedido',
+  other: 'Otro',
 });
 
 // ------------------------------------------------------------------- Meta CAPI
@@ -736,10 +759,15 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null) {
   };
   const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
   const order = orderOf(updated) ?? next;
+  const action = !deliveryUser
+    ? 'delivery.unassigned'
+    : previousUserId && previousUserId !== deliveryUser?.id
+      ? 'delivery.reassigned'
+      : 'delivery.assigned';
   await ctx.audit?.record({
     entity: 'order',
     entityId: item.id,
-    action: previousUserId && previousUserId !== deliveryUser?.id ? 'order.delivery_reassigned' : 'order.delivery_assigned',
+    action,
     actor: actor?.display_name ?? null,
     summary: `Delivery asignado a ${deliveryUser?.display_name ?? 'sin asignar'}`,
     data: {
@@ -763,6 +791,39 @@ function canOpenDeliveryOrder(actor, order) {
   return hasPermission(actor, 'delivery.tracking.manage_all') || order?.delivery?.delivery_user_id === actor?.id;
 }
 
+function isDeliveryOnly(actor) {
+  return actor?.actor_type === 'USER' && String(actor?.role ?? '').toUpperCase() === 'DELIVERY';
+}
+
+async function canReadOrder(ctx, actor, itemOrOrder) {
+  if (!itemOrOrder) return false;
+  if (!isDeliveryOnly(actor)) return hasPermission(actor, 'orders.read') || hasPermission(actor, 'orders.update_operational') || hasPermission(actor, 'admin.full') || actor?.actor_type !== 'USER';
+  const looksLikeItem = itemOrOrder.order_json || itemOrOrder.orderJson || itemOrOrder.type === 'order_intent';
+  const order = looksLikeItem ? orderOf(itemOrOrder) : itemOrOrder;
+  return canOpenDeliveryOrder(actor, order);
+}
+
+async function deliveryAccessScope(ctx, actor) {
+  if (!isDeliveryOnly(actor)) return { restricted: false, orderIds: null, customerIds: null, conversationIds: null };
+  const orderIds = new Set();
+  const customerIds = new Set();
+  const conversationIds = new Set();
+  const rows = await ctx.store.listAdmin({ limit: 5000 });
+  for (const item of rows) {
+    if (item.type !== 'order_intent') continue;
+    const order = orderOf(item);
+    if (!canOpenDeliveryOrder(actor, order)) continue;
+    orderIds.add(item.id);
+    if (order?.customer_id ?? item.customer_id) customerIds.add(order?.customer_id ?? item.customer_id);
+    if (order?.conversation_id ?? item.conversation_id) conversationIds.add(order?.conversation_id ?? item.conversation_id);
+  }
+  const conversations = await ctx.db.list('conversations', { limit: 5000 });
+  for (const conversation of conversations) {
+    if (customerIds.has(conversation.customer_id)) conversationIds.add(conversation.id);
+  }
+  return { restricted: true, orderIds, customerIds, conversationIds };
+}
+
 function orderDeliveryDeepLink(orderId) {
   return `/admin/?v=delivery&order=${encodeURIComponent(orderId)}`;
 }
@@ -773,10 +834,7 @@ function publicDeliveryOrder(item, order, customer = null, conversation = null) 
     order_id: item.id,
     order_number: order?.order_number ?? item.order_number ?? item.id,
     status: order?.status ?? item.status ?? 'nuevo',
-    total: order?.total ?? item.total ?? null,
     currency: order?.currency ?? item.currency ?? 'DOP',
-    payment_method: order?.payment_method ?? null,
-    payment_method_label: order?.payment_method_label ?? null,
     items: order?.items ?? [],
     notes: order?.notes ?? item.notes ?? null,
     customer_id: order?.customer_id ?? item.customer_id ?? null,
@@ -792,13 +850,15 @@ function publicDeliveryOrder(item, order, customer = null, conversation = null) 
 
 async function visibleDeliveryOrders(ctx, actor) {
   const items = await ctx.store.listAdmin({ limit: 5000 });
+  const conversations = await ctx.db.list('conversations', { limit: 5000 });
   const orders = [];
   for (const item of items.filter((row) => row.type === 'order_intent')) {
     const order = orderOf(item);
-    if (['entregado', 'cancelado', 'perdido'].includes(order.status)) continue;
     if (!canOpenDeliveryOrder(actor, order)) continue;
     const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
-    const conversation = order.conversation_id ? await findConversation(ctx, order.conversation_id) : null;
+    const conversation = order.conversation_id
+      ? await findConversation(ctx, order.conversation_id)
+      : conversations.find((row) => customer?.id && row.customer_id === customer.id) ?? null;
     orders.push(publicDeliveryOrder(item, order, customer, conversation));
   }
   return orders;
@@ -1096,6 +1156,355 @@ async function createDeliveryAssignmentNotification(ctx, { item, order, delivery
   return created.notification;
 }
 
+async function conversationForOrderCustomer(ctx, order) {
+  if (order?.conversation_id) {
+    const linked = await findConversation(ctx, order.conversation_id);
+    if (linked) return linked;
+  }
+  const customerId = order?.customer_id ?? null;
+  if (!customerId) return null;
+  const conversations = await ctx.db.list('conversations', { limit: 5000 });
+  return conversations
+    .filter((row) => row.customer_id === customerId)
+    .sort((a, b) => String(b.last_message_at ?? b.updated_at ?? b.created_at ?? '').localeCompare(String(a.last_message_at ?? a.updated_at ?? a.created_at ?? '')))[0] ?? null;
+}
+
+function deliveryNotificationText(kind, customer, order) {
+  const name = customer?.name || customer?.phone_e164 || 'cliente';
+  if (kind === 'assignment') {
+    const deliveryName = order?.delivery?.delivery_user_name_snapshot || 'nuestro delivery';
+    return `Hola ${name}, tu pedido ha sido asignado a nuestro delivery ${deliveryName}. Te estará contactando para coordinar la entrega.`;
+  }
+  return `Hola ${name}, hemos registrado tu pedido ${order?.order_number ?? order?.id ?? ''} como entregado. Gracias por elegir Phytoemagry.`;
+}
+
+async function rememberDeliveryNotificationResult(ctx, item, order, key, result) {
+  const currentItem = (await findOrderItem(ctx.store, item.id)) ?? item;
+  const current = orderOf(currentItem) ?? order;
+  const next = {
+    ...current,
+    delivery: {
+      ...(current.delivery ?? {}),
+      [`${key}_notification`]: {
+        status: result.status,
+        channel: result.channel ?? null,
+        template: result.template ?? null,
+        conversation_id: result.conversation_id ?? null,
+        message_id: result.message_id ?? null,
+        reason: result.reason ?? null,
+        attempted_at: ctx.clock().toISOString(),
+      },
+    },
+    updated_at: ctx.clock().toISOString(),
+  };
+  const updated = await ctx.store.update(currentItem.id, { orderJson: JSON.stringify(next) });
+  return orderOf(updated) ?? next;
+}
+
+async function notifyDeliveryCustomer(ctx, { item, order, actor = null, kind }) {
+  const key = kind === 'assignment' ? 'assignment_customer' : 'delivered_customer';
+  const sentAction =
+    kind === 'assignment'
+      ? 'delivery.customer_assignment_notification_sent'
+      : 'delivery.customer_delivery_notification_sent';
+  const failedAction =
+    kind === 'assignment'
+      ? 'delivery.customer_assignment_notification_failed'
+      : 'delivery.customer_delivery_notification_failed';
+  const existing = order?.delivery?.[`${key}_notification`];
+  if (existing?.status === 'sent' || existing?.status === 'pending') return { status: existing.status, duplicate: true };
+
+  const customer = order?.customer_id ? await ctx.customers.get(order.customer_id) : null;
+  const conversation = await conversationForOrderCustomer(ctx, order);
+  const deliveryUserId = order?.delivery?.delivery_user_id ?? null;
+  const data = {
+    order_id: item.id,
+    customer_id: customer?.id ?? order?.customer_id ?? null,
+    conversation_id: conversation?.id ?? null,
+    delivery_user_id: deliveryUserId,
+    timestamp: ctx.clock().toISOString(),
+  };
+  const record = (result) => rememberDeliveryNotificationResult(ctx, item, order, key, { ...result, conversation_id: conversation?.id ?? null });
+
+  if (!customer?.phone_e164 || !conversation || !ctx.whatsapp?.enabled) {
+    const result = { status: 'not_applicable', reason: !customer?.phone_e164 ? 'missing_phone' : !conversation ? 'missing_conversation' : 'whatsapp_not_configured' };
+    await record(result);
+    return result;
+  }
+
+  const templateName = kind === 'assignment' ? DELIVERY_ASSIGNMENT_TEMPLATE : DELIVERY_DELIVERED_TEMPLATE;
+  let sendResult = null;
+  let channel = 'text';
+  let template = null;
+  if (ctx.customers.canSendFreeText(conversation)) {
+    sendResult = await ctx.whatsapp.sendText(customer.phone_e164, deliveryNotificationText(kind, customer, order));
+  } else {
+    await refreshTemplateFromMeta(ctx, templateName);
+    const check = await approvedTemplate(ctx, templateName);
+    if (!check.ok) {
+      const result = { status: 'pending', channel: 'template', template: templateName, reason: check.reason };
+      await record(result);
+      return result;
+    }
+    template = check.template;
+    const payload = await resolveTemplatePayload(ctx, { template, customer, conversation, orderId: item.id });
+    if (!payload.ok) {
+      const result = { status: 'failed', channel: 'template', template: templateName, reason: payload.error };
+      await record(result);
+      await ctx.audit?.record({ entity: 'order', entityId: item.id, action: failedAction, actor: actor?.display_name ?? null, summary: `No se pudo notificar al cliente: ${payload.error}`, data: { ...data, error: payload.error } });
+      return result;
+    }
+    channel = 'template';
+    sendResult = await ctx.whatsapp.sendTemplate(customer.phone_e164, {
+      name: template.name,
+      language: template.language ?? 'es',
+      components: payload.components,
+    });
+  }
+
+  if (!sendResult?.ok) {
+    const reason = sendResult?.error?.message ?? sendResult?.reason ?? 'send_failed';
+    const result = { status: 'failed', channel, template: template?.name ?? null, reason };
+    await record(result);
+    await ctx.audit?.record({ entity: 'order', entityId: item.id, action: failedAction, actor: actor?.display_name ?? null, summary: `No se pudo notificar al cliente: ${reason}`, data: { ...data, error: reason } });
+    return result;
+  }
+
+  const result = { status: 'sent', channel, template: template?.name ?? null, message_id: sendResult.messageId ?? null };
+  await record(result);
+  await ctx.audit?.record({ entity: 'order', entityId: item.id, action: sentAction, actor: actor?.display_name ?? null, summary: 'Cliente notificado por delivery', data: { ...data, channel, template: template?.name ?? null, message_id: sendResult.messageId ?? null } });
+  return result;
+}
+
+function normalizeDeliveryControlSettings(raw = null) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const reminder = Number(source.deliveryReminderMinutes ?? source.delivery_reminder_minutes ?? DELIVERY_CONTROL_DEFAULTS.deliveryReminderMinutes);
+  const escalation = Number(source.deliveryAdminEscalationMinutes ?? source.delivery_admin_escalation_minutes ?? DELIVERY_CONTROL_DEFAULTS.deliveryAdminEscalationMinutes);
+  const contactsRaw = Array.isArray(source.deliveryAdminEscalationContacts ?? source.delivery_admin_escalation_contacts)
+    ? source.deliveryAdminEscalationContacts ?? source.delivery_admin_escalation_contacts
+    : DELIVERY_CONTROL_DEFAULTS.deliveryAdminEscalationContacts;
+  const contacts = contactsRaw
+    .map((row) => ({ name: text(row?.name, 80) ?? 'Admin', phone: toE164(row?.phone) }))
+    .filter((row) => row.phone);
+  return {
+    deliveryReminderMinutes: Number.isFinite(reminder) && reminder > 0 ? reminder : DELIVERY_CONTROL_DEFAULTS.deliveryReminderMinutes,
+    deliveryAdminEscalationMinutes: Number.isFinite(escalation) && escalation > 0 ? escalation : DELIVERY_CONTROL_DEFAULTS.deliveryAdminEscalationMinutes,
+    deliveryAdminEscalationContacts: contacts.length ? contacts : DELIVERY_CONTROL_DEFAULTS.deliveryAdminEscalationContacts.map((row) => ({ ...row, phone: toE164(row.phone) })),
+  };
+}
+
+async function deliveryControlSettings(ctx) {
+  const doc = await ctx.settings.read(DELIVERY_CONTROL_SETTINGS_KEY);
+  return normalizeDeliveryControlSettings(doc?.value);
+}
+
+function deliveryControlCanEscalate(order) {
+  return order?.delivery?.delivery_user_id &&
+    order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT &&
+    !['entregado', 'cancelado', 'perdido'].includes(String(order.status ?? ''));
+}
+
+function deliveryControlRecipients(user) {
+  return [
+    { key: 'personal', phone: toE164(user?.personal_phone), label: 'personal' },
+    { key: 'fleet', phone: toE164(user?.fleet_phone), label: 'flota' },
+  ].filter((row) => row.phone);
+}
+
+function deliveryControlStatus(order, key, version) {
+  const current = order?.delivery?.[key];
+  if (!current || Number(current.assignment_version ?? 0) !== Number(version)) return {};
+  return current;
+}
+
+async function updateDeliveryControlStatus(ctx, item, order, key, version, recipientKey, result) {
+  const currentItem = (await findOrderItem(ctx.store, item.id)) ?? item;
+  const current = orderOf(currentItem) ?? order;
+  const existing = deliveryControlStatus(current, key, version);
+  const nextEntry = {
+    ...existing,
+    assignment_version: version,
+    attempted_at: ctx.clock().toISOString(),
+    recipients: {
+      ...(existing.recipients ?? {}),
+      [recipientKey]: {
+        status: result.status,
+        phone_masked: result.phone ? `***${String(result.phone).slice(-4)}` : null,
+        message_id: result.message_id ?? null,
+        error: result.error ?? null,
+        at: ctx.clock().toISOString(),
+      },
+    },
+  };
+  const next = {
+    ...current,
+    delivery: { ...(current.delivery ?? {}), [key]: nextEntry },
+    updated_at: ctx.clock().toISOString(),
+  };
+  const updated = await ctx.store.update(currentItem.id, { orderJson: JSON.stringify(next) });
+  return orderOf(updated) ?? next;
+}
+
+async function sendDeliveryControlTemplate(ctx, { item, order, templateName, to, provided }) {
+  if (!ctx.whatsapp?.enabled) return { status: 'failed', error: 'whatsapp_not_configured' };
+  await refreshTemplateFromMeta(ctx, templateName);
+  const check = await approvedTemplate(ctx, templateName);
+  if (!check.ok) return { status: 'pending', error: check.reason };
+  const customer = order?.customer_id ? await ctx.customers.get(order.customer_id) : null;
+  const payload = await resolveTemplatePayload(ctx, {
+    template: check.template,
+    customer,
+    conversation: await conversationForOrderCustomer(ctx, order),
+    orderId: item.id,
+    provided,
+  });
+  if (!payload.ok) return { status: 'failed', error: payload.error };
+  const sent = await ctx.whatsapp.sendTemplate(to, {
+    name: check.template.name,
+    language: check.template.language ?? 'es',
+    components: payload.components,
+  });
+  if (!sent.ok) return { status: 'failed', error: sent.error?.message ?? sent.reason ?? 'send_failed' };
+  return { status: 'sent', message_id: sent.messageId ?? null };
+}
+
+async function maybeSendDeliveryReminder(ctx, item, order, deliveryUser, version) {
+  const recipients = deliveryControlRecipients(deliveryUser);
+  if (!recipients.length) return { sent: 0, failed: 0, pending: 0, skipped: true };
+  let currentOrder = order;
+  let sent = 0;
+  let failed = 0;
+  let pending = 0;
+  const status = deliveryControlStatus(currentOrder, 'reminder_5m', version);
+  for (const recipient of recipients) {
+    if (status.recipients?.[recipient.key]?.status === 'sent') continue;
+    const result = await sendDeliveryControlTemplate(ctx, {
+      item,
+      order: currentOrder,
+      templateName: DELIVERY_REMINDER_TEMPLATE,
+      to: recipient.phone,
+      provided: {
+        1: deliveryUser.display_name ?? 'Delivery',
+        2: order.order_number ?? item.id,
+        3: orderDeliveryDeepLink(item.id),
+      },
+    });
+    currentOrder = await updateDeliveryControlStatus(ctx, item, currentOrder, 'reminder_5m', version, recipient.key, { ...result, phone: recipient.phone });
+    if (result.status === 'sent') sent += 1;
+    else if (result.status === 'pending') pending += 1;
+    else failed += 1;
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: item.id,
+      action: result.status === 'sent' ? 'delivery.reminder_5m_sent' : 'delivery.reminder_5m_failed',
+      actor: 'Sistema',
+      summary: result.status === 'sent' ? `Recordatorio enviado al delivery (${recipient.label})` : `Recordatorio delivery pendiente/fallido (${recipient.label})`,
+      data: { order_id: item.id, delivery_user_id: deliveryUser.id, assignment_version: version, recipient: recipient.key, template: DELIVERY_REMINDER_TEMPLATE, message_id: result.message_id ?? null, error: result.error ?? null },
+      idempotencyKey: `delivery-reminder-5m:${item.id}:${version}:${recipient.key}:${result.status === 'sent' ? 'sent' : ctx.clock().toISOString()}`,
+    });
+  }
+  return { sent, failed, pending };
+}
+
+async function maybeSendDeliveryAdminEscalation(ctx, item, order, deliveryUser, version, settings) {
+  let currentOrder = order;
+  let sent = 0;
+  let failed = 0;
+  let pending = 0;
+  const status = deliveryControlStatus(currentOrder, 'escalation_30m', version);
+  for (const contact of settings.deliveryAdminEscalationContacts) {
+    const key = contact.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || contact.phone.slice(-4);
+    if (status.recipients?.[key]?.status === 'sent') continue;
+    const result = await sendDeliveryControlTemplate(ctx, {
+      item,
+      order: currentOrder,
+      templateName: DELIVERY_ADMIN_ESCALATION_TEMPLATE,
+      to: contact.phone,
+      provided: { 1: order.order_number ?? item.id, 2: deliveryUser.display_name ?? 'Delivery', 3: orderDeliveryDeepLink(item.id) },
+    });
+    currentOrder = await updateDeliveryControlStatus(ctx, item, currentOrder, 'escalation_30m', version, key, { ...result, phone: contact.phone });
+    if (result.status === 'sent') sent += 1;
+    else if (result.status === 'pending') pending += 1;
+    else failed += 1;
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: item.id,
+      action: result.status === 'sent' ? 'delivery.escalation_30m_sent' : 'delivery.escalation_30m_failed',
+      actor: 'Sistema',
+      summary: result.status === 'sent' ? `Escalamiento enviado a ${contact.name}` : `Escalamiento pendiente/fallido para ${contact.name}`,
+      data: { order_id: item.id, delivery_user_id: deliveryUser.id, assignment_version: version, admin: contact.name, template: DELIVERY_ADMIN_ESCALATION_TEMPLATE, message_id: result.message_id ?? null, error: result.error ?? null },
+      idempotencyKey: `delivery-escalation-30m:${item.id}:${version}:${key}:${result.status === 'sent' ? 'sent' : ctx.clock().toISOString()}`,
+    });
+  }
+  return { sent, failed, pending };
+}
+
+async function notifyAdminsDeliveryCompleted(ctx, item, order, actor = null) {
+  const settings = await deliveryControlSettings(ctx);
+  const version = Number(order.delivery?.delivery_assignment_version ?? 1);
+  let currentOrder = order;
+  const status = deliveryControlStatus(currentOrder, 'admin_delivered_notification', version);
+  const deliveryUser = order.delivery?.delivery_user_id ? await ctx.users.get(order.delivery.delivery_user_id) : null;
+  const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
+  for (const contact of settings.deliveryAdminEscalationContacts) {
+    const key = contact.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || contact.phone.slice(-4);
+    if (status.recipients?.[key]?.status === 'sent') continue;
+    const result = await sendDeliveryControlTemplate(ctx, {
+      item,
+      order: currentOrder,
+      templateName: DELIVERY_ADMIN_DELIVERED_TEMPLATE,
+      to: contact.phone,
+      provided: {
+        1: order.order_number ?? item.id,
+        2: deliveryUser?.display_name ?? order.delivery?.delivery_user_name_snapshot ?? 'Delivery',
+        3: customer?.name ?? customer?.phone_e164 ?? 'Cliente',
+        4: order.delivered_at ? new Date(order.delivered_at).toLocaleString('es-DO') : ctx.clock().toISOString(),
+        5: orderDeliveryDeepLink(item.id),
+      },
+    });
+    currentOrder = await updateDeliveryControlStatus(ctx, item, currentOrder, 'admin_delivered_notification', version, key, { ...result, phone: contact.phone });
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: item.id,
+      action: result.status === 'sent' ? 'delivery.admin_delivery_notification_sent' : 'delivery.admin_delivery_notification_failed',
+      actor: actor?.display_name ?? 'Sistema',
+      summary: result.status === 'sent' ? `Admin notificado de entrega (${contact.name})` : `Aviso de entrega admin pendiente/fallido (${contact.name})`,
+      data: { order_id: item.id, delivery_user_id: deliveryUser?.id ?? null, assignment_version: version, admin: contact.name, template: DELIVERY_ADMIN_DELIVERED_TEMPLATE, message_id: result.message_id ?? null, error: result.error ?? null },
+      idempotencyKey: `delivery-admin-delivered:${item.id}:${version}:${key}:${result.status === 'sent' ? 'sent' : ctx.clock().toISOString()}`,
+    });
+  }
+}
+
+async function deliveryControlTick(ctx) {
+  const settings = await deliveryControlSettings(ctx);
+  const now = ctx.clock().getTime();
+  const rows = await ctx.store.listAdmin({ limit: 5000 });
+  let reminders = 0;
+  let escalations = 0;
+  for (const item of rows.filter((row) => row.type === 'order_intent')) {
+    const order = orderOf(item);
+    if (!deliveryControlCanEscalate(order)) continue;
+    const assignedAt = Date.parse(order.delivery?.delivery_assigned_at ?? '');
+    if (!Number.isFinite(assignedAt)) continue;
+    const version = Number(order.delivery?.delivery_assignment_version ?? 1);
+    const deliveryUser = await ctx.users.get(order.delivery.delivery_user_id);
+    if (!deliveryUser || deliveryUser.active === false) continue;
+    const ageMinutes = (now - assignedAt) / 60_000;
+    if (ageMinutes >= settings.deliveryReminderMinutes) {
+      const result = await maybeSendDeliveryReminder(ctx, item, order, deliveryUser, version);
+      reminders += result.sent + result.failed + result.pending;
+    }
+    const freshItem = await findOrderItem(ctx.store, item.id);
+    const freshOrder = orderOf(freshItem) ?? order;
+    if (!deliveryControlCanEscalate(freshOrder)) continue;
+    if (ageMinutes >= settings.deliveryAdminEscalationMinutes) {
+      const result = await maybeSendDeliveryAdminEscalation(ctx, freshItem ?? item, freshOrder, deliveryUser, version, settings);
+      escalations += result.sent + result.failed + result.pending;
+    }
+  }
+  return { reminders, escalations };
+}
+
 async function notifyDeliveryOrderCancelled(ctx, item, order, actor = null) {
   const deliveryUserId = order?.delivery?.delivery_user_id;
   if (!deliveryUserId) return null;
@@ -1156,8 +1565,11 @@ async function deliveryOrderForConversation(ctx, conversation, actor) {
   if (!conversation?.id || !canDeliver(actor)) return null;
   const items = await ctx.store.listAdmin({ limit: 5000 });
   const candidates = [];
-  for (const item of items.filter((row) => row.type === 'order_intent' && row.conversation_id === conversation.id)) {
+  for (const item of items.filter((row) => row.type === 'order_intent')) {
     const order = orderOf(item);
+    const sameConversation = (order?.conversation_id ?? item.conversation_id) === conversation.id;
+    const sameCustomer = (order?.customer_id ?? item.customer_id) === conversation.customer_id;
+    if (!sameConversation && !sameCustomer) continue;
     if (order?.delivery?.delivery_user_id === actor.id && !['entregado', 'cancelado', 'perdido'].includes(order.status)) {
       candidates.push({ item, order });
     }
@@ -1200,7 +1612,6 @@ async function conversationAccess(ctx, actor) {
   for (const item of rows) {
     if (item.type !== 'order_intent' || !item.conversation_id) continue;
     const order = orderOf(item);
-    if (['entregado', 'cancelado', 'perdido'].includes(String(order?.status ?? ''))) continue;
     if (order?.delivery?.delivery_user_id === actor.id) conversationIds.add(item.conversation_id);
   }
   const customerIds = new Set();
@@ -1233,7 +1644,9 @@ async function canOpenConversation(ctx, actor, conversation) {
 async function canWorkWithCustomer(ctx, actor, customerId) {
   if (!customerId) return false;
   const access = await conversationAccess(ctx, actor);
-  return access.all || access.customerIds.has(customerId);
+  if (access.all || access.customerIds.has(customerId)) return true;
+  const deliveryScope = await deliveryAccessScope(ctx, actor);
+  return deliveryScope.restricted && deliveryScope.customerIds.has(customerId);
 }
 
 /** Respuesta única cuando la conversación no es suya. */
@@ -1275,6 +1688,59 @@ async function markDeliveryContacted(ctx, item, order, actor) {  if (!item || !o
     idempotencyKey: `delivery-contacted:${item.id}:${actor.id}:${order.delivery?.delivery_assignment_version ?? 1}`,
   });
   return orderOf(updated) ?? next;
+}
+
+async function reportDeliveryIssue(ctx, item, actor, input = {}) {
+  const order = orderOf(item);
+  if (!order) return { ok: false, status: 422, error: 'invalid_order' };
+  if (!canDeliver(actor) || order.delivery?.delivery_user_id !== actor.id) return { ok: false, status: 403, error: 'forbidden' };
+  const status = String(order.status ?? item.status ?? '');
+  if (isCompletedPurchaseStatus(status)) return { ok: false, status: 409, error: 'order_delivered', message: 'Este pedido ya fue entregado.' };
+  if (['cancelado', 'perdido'].includes(status)) return { ok: false, status: 409, error: 'order_cancelled', message: 'Este pedido ya está cancelado.' };
+  const reasonCode = text(input.reason ?? input.issue_reason, 40);
+  if (!reasonCode || !DELIVERY_ISSUE_REASONS[reasonCode]) {
+    return { ok: false, status: 422, error: 'missing_reason', message: 'Elige un motivo de incidencia.' };
+  }
+  const note = longText(input.note ?? input.issue_note, 500) ?? '';
+  if (reasonCode === 'other' && note.trim().length < 3) {
+    return { ok: false, status: 422, error: 'missing_note', message: 'Escribe una nota para explicar la incidencia.' };
+  }
+  const at = ctx.clock().toISOString();
+  const next = {
+    ...order,
+    delivery: {
+      ...(order.delivery ?? {}),
+      delivery_status: DELIVERY_OPERATIONAL_STATUSES.ISSUE_REPORTED,
+      issue_reason: reasonCode,
+      issue_reason_label: DELIVERY_ISSUE_REASONS[reasonCode],
+      issue_note: note || null,
+      issue_reported_at: at,
+      issue_reported_by_user_id: actor.id,
+      issue_reported_by_name: actor.display_name ?? null,
+    },
+    updated_at: at,
+  };
+  const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+  const closed = await closeActiveTrackingForOrder(ctx, item.id, 'PAUSED', actor);
+  await ctx.audit?.record({
+    entity: 'order',
+    entityId: item.id,
+    action: 'delivery.issue_reported',
+    actor: actor?.display_name ?? null,
+    summary: `Incidencia de entrega: ${DELIVERY_ISSUE_REASONS[reasonCode]}`,
+    data: {
+      order_id: item.id,
+      customer_id: order.customer_id ?? item.customer_id ?? null,
+      conversation_id: order.conversation_id ?? item.conversation_id ?? null,
+      delivery_user_id: order.delivery?.delivery_user_id ?? null,
+      issue_reason: reasonCode,
+      issue_note: note || null,
+      timestamp: at,
+      tracking_closed: closed.length,
+    },
+    idempotencyKey: `delivery.issue:${item.id}:${actor.id}:${at}`,
+  });
+  return { ok: true, order: orderOf(updated) ?? next, closedTracking: closed };
 }
 
 /** Identificador aleatorio corto (mismo patrón que el resto del CRM). */
@@ -1357,6 +1823,7 @@ function orderOperationalStatus(order, item = null, activeSessions = []) {
   const status = String(order?.status ?? item?.status ?? '').trim();
   if (status === 'cancelado' || status === 'perdido') return 'CANCELADO';
   if (isCompletedPurchaseStatus(status)) return 'ENTREGADO';
+  if (order?.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.ISSUE_REPORTED) return 'INCIDENCIA';
   if (activeSessions.length || status === 'enviado' || order?.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) return 'EN_CAMINO';
   return 'PENDIENTE';
 }
@@ -2448,6 +2915,50 @@ const WA_TEMPLATE_SEED = [
     required_context: 'order',
   },
   {
+    name: DELIVERY_DELIVERED_TEMPLATE,
+    friendly_name: 'Pedido entregado',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, hemos registrado tu pedido {{2}} como entregado. Gracias por elegir Phytoemagry.',
+    variables: ['customer_name', 'order_number'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: DELIVERY_REMINDER_TEMPLATE,
+    friendly_name: 'Recordatorio delivery pedido pendiente',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, recuerda que tienes un pedido pendiente por atender.\n\nPedido: {{2}}\n\nPor favor contacta al cliente y coordina la entrega lo antes posible.\n\n{{3}}',
+    variables: ['delivery_display_name', 'order_number', 'delivery_deep_link'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: DELIVERY_ADMIN_ESCALATION_TEMPLATE,
+    friendly_name: 'Delivery sin atender admin',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'URGENTE: el pedido {{1}} fue asignado al delivery {{2}} hace aproximadamente 30 minutos y todavía no ha contactado al cliente.\n\nSe requiere intervención administrativa.\n\n{{3}}',
+    variables: ['order_number', 'delivery_display_name', 'delivery_deep_link'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
+    name: DELIVERY_ADMIN_DELIVERED_TEMPLATE,
+    friendly_name: 'Entrega completada admin',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Pedido {{1}} entregado correctamente.\n\nDelivery: {{2}}\nCliente: {{3}}\nHora: {{4}}\n\n{{5}}',
+    variables: ['order_number', 'delivery_display_name', 'customer_name', 'delivered_at', 'delivery_deep_link'],
+    buttons: [],
+    required_context: 'order',
+  },
+  {
     name: 'phyto_recompra_cliente_v1',
     friendly_name: 'Recompra',
     group: 'SEGUIMIENTO',
@@ -2893,6 +3404,8 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
     total: orderTotalText(order, item),
     payment_method: order?.payment_method_label ?? paymentMethodLabel(order?.payment_method ?? item?.payment_method) ?? null,
     delivery_display_name: deliveryName,
+    delivery_deep_link: orderDeliveryDeepLink(item?.id ?? order?.id ?? ''),
+    delivered_at: order?.delivered_at ? new Date(order.delivered_at).toLocaleString('es-DO') : null,
   };
   if (variables.includes('delivery_display_name') && !values.delivery_display_name && !escrito(variables.indexOf('delivery_display_name'))) {
     return { ok: false, status: 422, error: 'missing_delivery', message: 'Este pedido no tiene delivery asignado para completar esta plantilla.' };
@@ -3686,6 +4199,8 @@ async function handle(req, res, ctx) {
         lastName: body.lastName ?? body.last_name,
         displayName: body.displayName ?? body.display_name,
         role: ['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR'].includes(String(body.role)) ? String(body.role) : 'AGENT',
+        personalPhone: body.personalPhone ?? body.personal_phone,
+        fleetPhone: body.fleetPhone ?? body.fleet_phone,
         active: body.active !== false,
         createdBy: actor?.id ?? null,
         actorName: actor?.display_name ?? null,
@@ -3814,15 +4329,27 @@ async function handle(req, res, ctx) {
 
     // Todo lo que necesita el panel en una sola petición (móvil con mala señal).
     if (route === '/api/admin/data' && req.method === 'GET') {
-      const items = (await store.listAdmin({ limit: 500 })).map((item) => sanitizeItemForPermissions(item, actor));
-      const messages = await store.messages().list();
-      const customerList = await ctx.customers.list({});
-      const conversationList = await ctx.customers.listConversations({});
+      const deliveryScope = await deliveryAccessScope(ctx, actor);
+      const rawItems = await store.listAdmin({ limit: 500 });
+      const items = rawItems
+        .filter((item) => !deliveryScope.restricted || (item.type === 'order_intent' && deliveryScope.orderIds.has(item.id)))
+        .map((item) => sanitizeItemForPermissions(item, actor));
+      const messages = deliveryScope.restricted ? [] : await store.messages().list();
+      const fullCustomerList = await ctx.customers.list({});
+      const customerList = deliveryScope.restricted
+        ? fullCustomerList.filter((customer) => deliveryScope.customerIds.has(customer.id))
+        : fullCustomerList;
+      const fullConversationList = await ctx.customers.listConversations({});
+      const conversationList = deliveryScope.restricted
+        ? fullConversationList.filter((conversation) => deliveryScope.conversationIds.has(conversation.id))
+        : fullConversationList;
       const conversationCounts = await ctx.customers.conversationCounts();
       await ctx.customers.ensureInitialTags();
-      const buckets = await ctx.followups.buckets();
+      const buckets = deliveryScope.restricted
+        ? { reference: new Date().toISOString(), today: [], overdue: [], upcoming: [], completed: [] }
+        : await ctx.followups.buckets();
       const outbound = await ctx.db.list('wa_messages', { limit: 500 });
-      const failed = outbound.filter((row) => row.status === 'failed');
+      const failed = deliveryScope.restricted ? [] : outbound.filter((row) => row.status === 'failed');
       /*
        * Operaciones de archivo que quedaron AMBIGUAS (se intentó enviar y no hay
        * confirmación) o a medias por una caída. Lista corta, saneada y solo para
@@ -3893,7 +4420,7 @@ async function handle(req, res, ctx) {
           deprecated: 'commercial_state se mantiene por compatibilidad; la UI nueva debe usar customerStage.',
         },
         customerStages: CUSTOMER_STAGES.map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
-        customerTags: await ctx.customers.listTags(),
+        customerTags: deliveryScope.restricted ? [] : await ctx.customers.listTags(),
         deliveryTracking: await listVisibleTracking(ctx, actor),
         deliveryOrders: await visibleDeliveryOrders(ctx, actor),
         deliveryUsers: can('delivery.tracking.manage_all')
@@ -3915,7 +4442,7 @@ async function handle(req, res, ctx) {
           seguimientosHoy: buckets.today.length,
           seguimientosVencidos: buckets.overdue.length,
           sinResponder: conversationList.filter((row) => row.awaiting_reply === true).length,
-          humanoRequerido: conversationList.filter((row) => row.status === 'HUMAN_REQUIRED').length,
+          humanoRequerido: deliveryScope.restricted ? 0 : conversationList.filter((row) => row.status === 'HUMAN_REQUIRED').length,
           pedidosPendientes: items.filter(
             (item) => item.type === 'order_intent' && !isCompletedPurchaseStatus(item.status) && item.status !== 'perdido',
           ).length,
@@ -4146,7 +4673,6 @@ async function handle(req, res, ctx) {
   }
 
   if (route.startsWith('/api/admin/items/') && (req.method === 'PATCH' || req.method === 'POST')) {
-      if (!requirePermission('orders.update_operational')) return;
       const id = decodeURIComponent(route.slice('/api/admin/items/'.length));
       /** @type {any} */
       let body = {};
@@ -4157,6 +4683,22 @@ async function handle(req, res, ctx) {
       }
       const beforeRows = await store.listAdmin({ limit: 1000 });
       const before = beforeRows.find((row) => row.id === id);
+      const legacyDeliveryRollback =
+        before?.type === 'order_intent' &&
+        isDeliveryOnly(actor) &&
+        body.deliveryRollback === true &&
+        body.status === 'nuevo' &&
+        before.status === 'enviado' &&
+        orderOf(before)?.delivery?.delivery_user_id === actor?.id &&
+        body.notes === undefined &&
+        body.nextActionAt === undefined &&
+        body.source === undefined &&
+        body.saleSource === undefined &&
+        body.orderSource === undefined;
+      if (!hasPermission(actor, 'orders.update_operational') && !legacyDeliveryRollback) {
+        forbid();
+        return;
+      }
       /** @type {Record<string, unknown>} */
       const patch = {};
       if (body.status !== undefined) {
@@ -4225,6 +4767,20 @@ async function handle(req, res, ctx) {
           ok: false,
           error: 'legacy_order_status',
           message: 'Contactado/Interesado son estados de conversación o cliente; no se guardan como estado de pedido.',
+        });
+        return;
+      }
+      if (
+        before?.type === 'order_intent' &&
+        patch.status &&
+        before.status !== patch.status &&
+        !legacyDeliveryRollback &&
+        !hasPermission(actor, 'orders.change_status')
+      ) {
+        json(res, 403, {
+          ok: false,
+          error: 'protected_order_status',
+          message: 'El estado de un pedido se cambia desde el flujo protegido correspondiente.',
         });
         return;
       }
@@ -4366,7 +4922,11 @@ async function handle(req, res, ctx) {
     // ------------------------------------------------------------- clientes
     // Listado con búsqueda (nombre, teléfono, ciudad) y su próximo seguimiento.
     if (route === '/api/admin/customers' && req.method === 'GET') {
-      const customers = await ctx.customers.list({ q: url.searchParams.get('q') ?? '' });
+      if (!requirePermission('clients.read')) return;
+      const deliveryScope = await deliveryAccessScope(ctx, actor);
+      const customers = (await ctx.customers.list({ q: url.searchParams.get('q') ?? '' })).filter(
+        (customer) => !deliveryScope.restricted || deliveryScope.customerIds.has(customer.id),
+      );
       const followupRows = await ctx.db.list('followups', { limit: 2000 });
       const nextByCustomer = new Map();
       for (const row of followupRows) {
@@ -4462,12 +5022,58 @@ async function handle(req, res, ctx) {
 
       if (!action && req.method === 'DELETE') {
         if (!requirePermission('clients.delete', 'Solo ADMIN puede eliminar clientes.')) return;
-        json(res, 501, { ok: false, error: 'not_implemented', message: 'La eliminación definitiva de clientes no está implementada.' });
+        const [items, conversations, followups, scheduled, locations, tagAssignments, stageHistory] = await Promise.all([
+          store.listAdmin({ limit: 5000 }),
+          ctx.db.list('conversations', { limit: 5000 }),
+          ctx.db.list('followups', { limit: 5000 }),
+          ctx.scheduler.list(),
+          ctx.db.list('locations', { limit: 5000 }),
+          ctx.db.list('customer_tag_assignments', { limit: 5000 }),
+          ctx.db.list('customer_stage_history', { limit: 5000 }),
+        ]);
+        const blockers = {
+          orders: items.filter((item) => item.customer_id === customerId).length,
+          conversations: conversations.filter((row) => row.customer_id === customerId).length,
+          followups: followups.filter((row) => row.customer_id === customerId).length,
+          scheduled: scheduled.filter((row) => row.customer_id === customerId).length,
+          locations: locations.filter((row) => row.customer_id === customerId).length,
+        };
+        const totalBlockers = Object.values(blockers).reduce((sum, value) => sum + value, 0);
+        if (totalBlockers > 0) {
+          json(res, 409, {
+            ok: false,
+            error: 'customer_has_history',
+            message:
+              'Este cliente tiene historial vinculado. Para conservar trazabilidad no se elimina: puedes marcarlo como inactivo o No contactar.',
+            blockers,
+          });
+          return;
+        }
+        for (const row of tagAssignments.filter((entry) => entry.customer_id === customerId)) {
+          await ctx.db.remove('customer_tag_assignments', row.id);
+        }
+        for (const row of stageHistory.filter((entry) => entry.customer_id === customerId)) {
+          await ctx.db.remove('customer_stage_history', row.id);
+        }
+        const deleted = await ctx.db.remove('customers', customerId);
+        await ctx.audit?.record({
+          entity: 'customer',
+          entityId: customerId,
+          action: 'customer.deleted',
+          actor: actor?.display_name ?? null,
+          summary: `Cliente eliminado: ${customer.name ?? customer.phone_e164 ?? customerId}`,
+          data: { customer_id: customerId, phone_e164: customer.phone_e164 ?? null },
+        });
+        json(res, 200, { ok: true, deleted });
         return;
       }
 
       // Perfil 360: compras, chat, seguimiento, consentimiento y ventana de 24 h.
       if (!action && req.method === 'GET') {
+        if (!(await canWorkWithCustomer(ctx, actor, customerId))) {
+          forbid();
+          return;
+        }
         const profile = await ctx.customers.profile(customerId);
         json(res, 200, { ok: true, ...profile });
         return;
@@ -4479,6 +5085,10 @@ async function handle(req, res, ctx) {
        * sesión y nunca se expone a nadie sin autenticar.
        */
       if (action === 'locations' && req.method === 'GET') {
+        if (!(await canWorkWithCustomer(ctx, actor, customerId))) {
+          forbid();
+          return;
+        }
         const locations = await ctx.customers.listLocations(customerId, { limit: 100 });
         json(res, 200, { ok: true, customerId, locations });
         return;
@@ -4791,6 +5401,24 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route === '/api/admin/notifications' && req.method === 'DELETE') {
+      const notifications = await listUserNotifications(ctx, actor, { limit: 500 });
+      let deleted = 0;
+      for (const row of notifications) {
+        if (await ctx.db.remove('user_notifications', row.id)) deleted += 1;
+      }
+      await ctx.audit?.record({
+        entity: 'notifications',
+        entityId: actor?.id ?? 'legacy',
+        action: 'notifications.deleted_all',
+        actor: actor?.display_name ?? null,
+        summary: `Notificaciones eliminadas: ${deleted}`,
+        data: { deleted },
+      });
+      json(res, 200, { ok: true, deleted });
+      return;
+    }
+
     if (route.startsWith('/api/admin/notifications/') && route.endsWith('/read') && req.method === 'POST') {
       const id = decodeURIComponent(route.slice('/api/admin/notifications/'.length, -'/read'.length));
       const current = await ctx.db.get('user_notifications', id);
@@ -5081,6 +5709,8 @@ async function handle(req, res, ctx) {
           forbid();
           return;
         }
+        const body = await readJsonBody(req).catch(() => ({}));
+        const deliveryNote = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : '';
         const required = action === 'complete' ? 'delivery.tracking.stop' : 'delivery.tracking.stop';
         if (!requirePermission(required)) return;
         if (action === 'complete' && session.status === 'COMPLETED') {
@@ -5108,9 +5738,19 @@ async function handle(req, res, ctx) {
           }
         }
         const status = action === 'complete' ? 'COMPLETED' : 'CANCELLED';
+        let metadata = {};
+        try {
+          metadata = session.metadata ? JSON.parse(session.metadata) : {};
+        } catch {
+          metadata = {};
+        }
         const ended = await ctx.db.update('delivery_tracking_sessions', session.id, {
           status,
           ended_at: ctx.clock().toISOString(),
+          metadata: JSON.stringify({
+            ...metadata,
+            ...(deliveryNote ? { completion_note: deliveryNote } : {}),
+          }),
           updated_at: ctx.clock().toISOString(),
         });
         let order = null;
@@ -5125,11 +5765,19 @@ async function handle(req, res, ctx) {
                 previousStatus: item.status ?? null,
                 newStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
                 actor,
-                reason: 'Entrega completada por delivery',
+                reason: deliveryNote ? `Entrega completada por delivery: ${deliveryNote}` : 'Entrega completada por delivery',
                 changedAt: ctx.clock().toISOString(),
                 source: 'DELIVERY_ACTION',
                 idempotencyKey: `order.status:${item.id}:delivery-complete:${session.id}`,
               });
+            }
+            if (order) {
+              await notifyDeliveryCustomer(ctx, { item, order, actor, kind: 'delivered' }).catch(() => null);
+              const refreshed = await findOrderItem(store, item.id);
+              order = refreshed ? orderOf(refreshed) ?? order : order;
+              await notifyAdminsDeliveryCompleted(ctx, refreshed ?? item, order, actor).catch(() => null);
+              const refreshedAfterAdmin = await findOrderItem(store, item.id);
+              order = refreshedAfterAdmin ? orderOf(refreshedAfterAdmin) ?? order : order;
             }
           }
         }
@@ -5147,6 +5795,16 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
       }
+      const currentOrder = orderOf(item);
+      if (['entregado', 'cancelado', 'perdido'].includes(String(currentOrder?.status ?? item.status ?? ''))) {
+        json(res, 409, { ok: false, error: 'order_closed', message: 'No se puede asignar un pedido cerrado.' });
+        return;
+      }
+      const activeSessions = await activeTrackingSessionsForOrder(ctx, orderId);
+      if (activeSessions.length) {
+        json(res, 409, { ok: false, error: 'active_tracking_exists', message: 'Detén o completa la entrega activa antes de reasignar.' });
+        return;
+      }
       let body = {};
       try {
         body = await readJsonBody(req);
@@ -5155,12 +5813,41 @@ async function handle(req, res, ctx) {
       }
       const deliveryUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
       const deliveryUser = deliveryUserId ? await ctx.users.get(deliveryUserId) : null;
-      if (!deliveryUser || !canDeliver(deliveryUser)) {
+      if (deliveryUserId && (!deliveryUser || !canDeliver(deliveryUser) || deliveryUser.active === false)) {
         json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' });
         return;
       }
       const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor);
-      json(res, 200, { ok: true, order: assigned.order, deliveryUser });
+      const customerNotification = deliveryUser
+        ? await notifyDeliveryCustomer(ctx, { item: assigned.item, order: assigned.order, actor, kind: 'assignment' }).catch((error) => ({
+            status: 'failed',
+            reason: error?.message ?? 'notification_failed',
+          }))
+        : { status: 'not_applicable', reason: 'unassigned' };
+      json(res, 200, { ok: true, order: assigned.order, deliveryUser, customerNotification });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/issue') && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.stop')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/issue'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await reportDeliveryIssue(ctx, item, actor, body);
+      if (!result.ok) {
+        json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message });
+        return;
+      }
+      json(res, 200, { ok: true, order: result.order, closedTracking: result.closedTracking.map((session) => publicTrackingSession(session)) });
       return;
     }
 
@@ -5172,95 +5859,102 @@ async function handle(req, res, ctx) {
         forbid();
         return;
       }
-      const item = await findOrderItem(store, orderId);
-      if (!item) {
-        json(res, 404, { ok: false, error: 'not_found' });
-        return;
-      }
-      const order = orderOf(item);
-      if (['entregado', 'cancelado', 'perdido'].includes(order?.status)) {
-        json(res, 409, { ok: false, error: 'order_closed', message: 'Este pedido ya está cerrado.' });
-        return;
-      }
-      const destination = orderDestination(order);
-      if (!destination) {
-        json(res, 422, { ok: false, error: 'missing_destination', message: 'El pedido no tiene ubicación de entrega.' });
-        return;
-      }
       let body = {};
       try {
         body = await readJsonBody(req);
       } catch {
         body = {};
       }
-      const requestedUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
-      const assignedUserId = text(order.delivery?.delivery_user_id, 80);
-      const deliveryUser =
-        canManageAll && requestedUserId ? await ctx.users.get(requestedUserId) : currentUser;
-      if (!deliveryUser || !canDeliver(deliveryUser)) {
-        json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' });
-        return;
-      }
-      if (assignedUserId && deliveryUser.id !== assignedUserId && !canManageAll) {
-        forbid('Este pedido está asignado a otro delivery.');
-        return;
-      }
-      if (!assignedUserId && !canManageAll) {
-        json(res, 409, { ok: false, error: 'delivery_not_assigned', message: 'Un ADMIN debe asignar este pedido antes de iniciar entrega.' });
-        return;
-      }
-      if (!canManageAll && deliveryUser.id !== actor?.id) {
-        forbid();
-        return;
-      }
-      const existing = (await ctx.db.list('delivery_tracking_sessions', { limit: 1000 })).find(
-        (row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS,
-      );
-      if (existing) {
-        if (!canReadTracking(actor, existing)) {
-          forbid();
-          return;
+      const result = await withOrderTransitionLock(orderId, async () => {
+        const item = await findOrderItem(store, orderId);
+        if (!item) return { status: 404, body: { ok: false, error: 'not_found' } };
+        const order = orderOf(item);
+        if (['entregado', 'cancelado', 'perdido'].includes(order?.status)) {
+          return { status: 409, body: { ok: false, error: 'order_closed', message: 'Este pedido ya está cerrado.' } };
         }
-        json(res, 200, { ok: true, duplicate: true, session: await publicSessionWithOrder(ctx, existing) });
-        return;
-      }
-      let effectiveOrder = order;
-      if (!assignedUserId || assignedUserId !== deliveryUser.id) {
-        effectiveOrder = (await assignDeliveryToOrder(ctx, item, deliveryUser, actor))?.order ?? order;
-      }
-      if (effectiveOrder.delivery?.delivery_status !== DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) {
-        effectiveOrder = {
-          ...effectiveOrder,
-          delivery: {
-            ...(effectiveOrder.delivery ?? {}),
-            delivery_status: DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT,
+        const destination = orderDestination(order);
+        if (!destination) {
+          return { status: 422, body: { ok: false, error: 'missing_destination', message: 'El pedido no tiene ubicación de entrega.' } };
+        }
+        const requestedUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
+        const assignedUserId = text(order.delivery?.delivery_user_id, 80);
+        const deliveryUser =
+          canManageAll && requestedUserId ? await ctx.users.get(requestedUserId) : currentUser;
+        if (!deliveryUser || !canDeliver(deliveryUser) || deliveryUser.active === false) {
+          return { status: 422, body: { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' } };
+        }
+        if (assignedUserId && deliveryUser.id !== assignedUserId && !canManageAll) {
+          return { status: 403, body: { ok: false, error: 'forbidden', message: 'Este pedido está asignado a otro delivery.' } };
+        }
+        if (!assignedUserId && !canManageAll) {
+          return { status: 409, body: { ok: false, error: 'delivery_not_assigned', message: 'Un ADMIN debe asignar este pedido antes de iniciar entrega.' } };
+        }
+        if (!canManageAll && deliveryUser.id !== actor?.id) {
+          return { status: 403, body: { ok: false, error: 'forbidden', message: 'No tienes permiso para esta acción.' } };
+        }
+        if (!canManageAll && order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.ISSUE_REPORTED) {
+          return { status: 409, body: { ok: false, error: 'issue_pending_admin', message: 'La incidencia está esperando decisión administrativa.' } };
+        }
+        const existing = (await ctx.db.list('delivery_tracking_sessions', { limit: 1000 })).find(
+          (row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS,
+        );
+        if (existing) {
+          if (!canReadTracking(actor, existing)) {
+            return { status: 403, body: { ok: false, error: 'forbidden', message: 'No tienes permiso para esta acción.' } };
+          }
+          return { status: 200, body: { ok: true, duplicate: true, session: await publicSessionWithOrder(ctx, existing) } };
+        }
+        let effectiveOrder = order;
+        if (!assignedUserId || assignedUserId !== deliveryUser.id) {
+          effectiveOrder = (await assignDeliveryToOrder(ctx, item, deliveryUser, actor))?.order ?? order;
+        }
+        if (effectiveOrder.delivery?.delivery_status !== DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) {
+          effectiveOrder = {
+            ...effectiveOrder,
+            delivery: {
+              ...(effectiveOrder.delivery ?? {}),
+              delivery_status: DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT,
+            },
+            updated_at: ctx.clock().toISOString(),
+          };
+          await ctx.store.update(orderId, { orderJson: JSON.stringify(effectiveOrder) });
+        }
+        const session = buildTrackingSession({ orderId, deliveryUser, order: effectiveOrder, now: ctx.clock() });
+        const inserted = await ctx.db.insert('delivery_tracking_sessions', session);
+        const freshItem = await findOrderItem(store, orderId);
+        const statusUpdate = effectiveOrder.status === 'entregado' || !freshItem ? null : await updateOrderStatus(store, freshItem, 'enviado', actor);
+        if (statusUpdate?.item) {
+          await auditOrderStatusTransition(ctx, {
+            orderId,
+            previousStatus: freshItem.status ?? null,
+            newStatus: 'enviado',
+            actor,
+            reason: 'Entrega iniciada',
+            changedAt: ctx.clock().toISOString(),
+            source: 'DELIVERY_ACTION',
+            idempotencyKey: `order.status:${orderId}:delivery-start:${inserted.doc.id}`,
+          });
+          await ctx.audit?.record({
+            entity: 'order',
+            entityId: orderId,
+            action: 'delivery.started',
+            actor: actor?.display_name ?? null,
+            summary: 'Entrega iniciada',
+            data: { order_id: orderId, delivery_user_id: deliveryUser.id, session_id: inserted.doc.id },
+            idempotencyKey: `delivery.started:${orderId}:${inserted.doc.id}`,
+          });
+        }
+        await emitDeliveryEvent(ctx, 'delivery.tracking_started', inserted.doc);
+        return {
+          status: 201,
+          body: {
+            ok: true,
+            session: await publicSessionWithOrder(ctx, inserted.doc),
+            order: statusUpdate?.order ?? order,
           },
-          updated_at: ctx.clock().toISOString(),
         };
-        await ctx.store.update(orderId, { orderJson: JSON.stringify(effectiveOrder) });
-      }
-      const session = buildTrackingSession({ orderId, deliveryUser, order: effectiveOrder, now: ctx.clock() });
-      const inserted = await ctx.db.insert('delivery_tracking_sessions', session);
-      const freshItem = await findOrderItem(store, orderId);
-      const statusUpdate = effectiveOrder.status === 'entregado' || !freshItem ? null : await updateOrderStatus(store, freshItem, 'enviado', actor);
-      if (statusUpdate?.item) {
-        await auditOrderStatusTransition(ctx, {
-          orderId,
-          previousStatus: freshItem.status ?? null,
-          newStatus: 'enviado',
-          actor,
-          reason: 'Entrega iniciada',
-          changedAt: ctx.clock().toISOString(),
-          source: 'DELIVERY_ACTION',
-          idempotencyKey: `order.status:${orderId}:delivery-start:${inserted.doc.id}`,
-        });
-      }
-      await emitDeliveryEvent(ctx, 'delivery.tracking_started', inserted.doc);
-      json(res, 201, {
-        ok: true,
-        session: await publicSessionWithOrder(ctx, inserted.doc),
-        order: statusUpdate?.order ?? order,
       });
+      json(res, result.status, result.body);
       return;
     }
 
@@ -5288,6 +5982,10 @@ async function handle(req, res, ctx) {
       const item = (await store.listAdmin({ limit: 1000 })).find((entry) => entry.id === orderId) ?? null;
       if (!item || item.type !== 'order_intent') {
         json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no existe.' });
+        return;
+      }
+      if (!(await canReadOrder(ctx, actor, item))) {
+        forbid();
         return;
       }
       // 1) El CLIENTE sale del pedido, nunca de la petición.
@@ -5591,6 +6289,10 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
       }
+      if (!(await canReadOrder(ctx, actor, item))) {
+        forbid();
+        return;
+      }
       const order = orderOf(item);
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
       const receipt = buildReceipt({ order, customer });
@@ -5846,6 +6548,17 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: entrega.code, message: entrega.message });
         return;
       }
+      if (
+        entrega.provided &&
+        (current.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT || (await activeTrackingSessionsForOrder(ctx, orderId)).length)
+      ) {
+        json(res, 409, {
+          ok: false,
+          error: 'delivery_in_transit_destination_locked',
+          message: 'La entrega está en camino. Para cambiar el destino hace falta detener o resolver la entrega activa.',
+        });
+        return;
+      }
       /** @type {any} */
       let totals;
       try {
@@ -5972,8 +6685,16 @@ async function handle(req, res, ctx) {
      */
     if (route === '/api/admin/locations' && req.method === 'GET') {
       const limite = Math.min(Math.max(Number(url.searchParams.get('limit')) || 500, 1), 2000);
-      const locations = await ctx.customers.listLocations(null, { limit: limite });
-      const customerList = await ctx.customers.list({});
+      const deliveryScope = await deliveryAccessScope(ctx, actor);
+      const locations = (await ctx.customers.listLocations(null, { limit: limite })).filter(
+        (location) =>
+          !deliveryScope.restricted ||
+          deliveryScope.customerIds.has(location.customer_id) ||
+          deliveryScope.orderIds.has(location.order_id),
+      );
+      const customerList = (await ctx.customers.list({})).filter(
+        (customer) => !deliveryScope.restricted || deliveryScope.customerIds.has(customer.id),
+      );
       const clientePorId = new Map(customerList.map((row) => [row.id, row]));
       /** @type {Map<string, any>} */
       const pedidoPorId = new Map();
@@ -6024,9 +6745,17 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'unknown_location', message: 'Esa ubicación ya no existe.' });
         return;
       }
+      if (!(await canWorkWithCustomer(ctx, actor, source.customer_id))) {
+        forbid();
+        return;
+      }
       const destination = await findConversation(ctx, text(body.conversationId, 80) ?? '');
       if (!destination) {
         json(res, 404, { ok: false, error: 'unknown_conversation', message: 'Elige una conversación de destino.' });
+        return;
+      }
+      if (!(await canOpenConversation(ctx, actor, destination))) {
+        denyConversation(res, json, destination);
         return;
       }
       if (body.confirmed !== true) {
@@ -6201,7 +6930,7 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: dateRange.error, message: 'El rango de fechas no es válido.' });
         return;
       }
-      const conversations = await ctx.customers.listConversations({
+      const listedConversations = await ctx.customers.listConversations({
         filter,
         order,
         q,
@@ -6209,6 +6938,11 @@ async function handle(req, res, ctx) {
         to: dateRange.to,
         currentUserId: actor?.actor_type === 'USER' ? actor.id : null,
       });
+      const access = await conversationAccess(ctx, actor);
+      const conversations =
+        isDeliveryOnly(actor) && !access.all
+          ? listedConversations.filter((row) => access.conversationIds.has(row.id))
+          : listedConversations;
       const counts = await ctx.customers.conversationCounts();
       json(res, 200, { ok: true, conversations, counts, dateRange: { from: dateRange.from, to: dateRange.to }, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
       return;
@@ -6272,7 +7006,7 @@ async function handle(req, res, ctx) {
       }
       const action = text(body.action, 40);
       const ids = Array.isArray(body.ids) ? body.ids.map((id) => text(id, 80)).filter(Boolean).slice(0, 100) : [];
-      if (!ids.length || !['mark_read', 'archive', 'unarchive', 'message_preview'].includes(action)) {
+      if (!ids.length || !['mark_read', 'archive', 'unarchive', 'delete', 'message_preview'].includes(action)) {
         json(res, 422, { ok: false, error: 'invalid_bulk_action' });
         return;
       }
@@ -6300,6 +7034,24 @@ async function handle(req, res, ctx) {
         if (action === 'archive' || action === 'unarchive') {
           const updated = await ctx.customers.archiveConversation(id, action === 'archive');
           results.push({ id, ok: Boolean(updated) });
+          continue;
+        }
+        if (action === 'delete') {
+          const messages = await ctx.db.list('wa_messages', { limit: 5000 });
+          let deletedMessages = 0;
+          for (const message of messages.filter((row) => row.conversation_id === id)) {
+            if (await ctx.db.remove('wa_messages', message.id)) deletedMessages += 1;
+          }
+          const deletedConversation = await ctx.db.remove('conversations', id);
+          await ctx.audit?.record({
+            entity: 'conversation',
+            entityId: id,
+            action: 'conversation.deleted',
+            actor: actor?.display_name ?? null,
+            summary: `Conversación eliminada (${deletedMessages} mensaje(s))`,
+            data: { customer_id: conversation.customer_id, messages_deleted: deletedMessages },
+          });
+          results.push({ id, ok: deletedConversation, deletedMessages });
           continue;
         }
         const customer = await ctx.customers.get(conversation.customer_id);
@@ -6911,7 +7663,7 @@ async function handle(req, res, ctx) {
           ...messageActorFields(actor),
         });
         let deliveryOrder = null;
-        if (!template && deliveryOrderContext) {
+        if (deliveryOrderContext) {
           deliveryOrder = await markDeliveryContacted(ctx, deliveryOrderContext.item, deliveryOrderContext.order, actor);
         }
         await ctx.customers.markConversationRead(conversation.id);
@@ -7880,6 +8632,7 @@ export async function startCrmServer(config = {}) {
     audit,
     // La plantilla se resuelve contra el mismo criterio que el envío manual.
     resolveTemplate: (name) => approvedTemplate(ctxRef.current, name),
+    deliveryControlTick: () => deliveryControlTick(ctxRef.current),
     clock: config.clock,
     intervalMs: config.schedulerIntervalMs,
     log: settings.quiet ? () => {} : (message) => console.log(message),

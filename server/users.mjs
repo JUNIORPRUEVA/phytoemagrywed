@@ -45,23 +45,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'delivery.tracking.stop',
   ]),
   DELIVERY: Object.freeze([
-    'clients.read',
-    'clients.update',
-    'customer.stage.update',
-    'customer.tags.assign',
     'chats.read',
     'chats.reply',
-    'chats.transfer_own',
-    'followups.read',
-    'followups.create',
-    'followups.update',
-    'sales.read',
-    'sales.create',
-    'sales.view_payment_method',
-    'orders.read',
-    'orders.create',
-    'orders.update_operational',
-    'delivery.manage',
     'delivery.location.read_own',
     'delivery.location.update_own',
     'delivery.tracking.start',
@@ -230,6 +215,8 @@ export function createUserService(deps) {
     const firstName = short(input.firstName ?? input.first_name, 80);
     const lastName = short(input.lastName ?? input.last_name, 80);
     const displayName = short(input.displayName ?? input.display_name, 120) ?? ([firstName, lastName].filter(Boolean).join(' ') || username);
+    const personalPhone = short(input.personalPhone ?? input.personal_phone, 40);
+    const fleetPhone = short(input.fleetPhone ?? input.fleet_phone, 40);
     if (!username || !displayName) return { ok: false, error: 'invalid_user' };
     const password = await hashPassword(input.password);
     if (!password.ok) return { ok: false, error: password.error };
@@ -242,6 +229,8 @@ export function createUserService(deps) {
       username,
       password_hash: password.hash,
       role,
+      personal_phone: personalPhone,
+      fleet_phone: fleetPhone,
       active: input.active === false ? false : true,
       created_at: at,
       updated_at: at,
@@ -286,6 +275,8 @@ export function createUserService(deps) {
       update.display_name = displayName;
     }
     if (patch.role !== undefined) update.role = nextRole;
+    if (patch.personalPhone !== undefined || patch.personal_phone !== undefined) update.personal_phone = short(patch.personalPhone ?? patch.personal_phone, 40);
+    if (patch.fleetPhone !== undefined || patch.fleet_phone !== undefined) update.fleet_phone = short(patch.fleetPhone ?? patch.fleet_phone, 40);
     if (patch.active !== undefined) update.active = nextActive;
     if (patch.password !== undefined) {
       const password = await hashPassword(patch.password);

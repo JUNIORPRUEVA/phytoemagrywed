@@ -159,6 +159,9 @@
       date: { mode: 'all', from: '', to: '' },
       q: '',
       searchOpen: false,
+      filtersOpen: false,
+      threadSearchOpen: false,
+      threadQuery: '',
       chat: null,
       draft: '',
       listSig: null,
@@ -361,10 +364,13 @@
     plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
     mic: svg('<rect x="9.2" y="2.8" width="5.6" height="10.8" rx="2.8"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.4V21M9.4 21h5.2"/>'),
     send: svg('<path d="M4.6 12 20 4.6l-7.3 15-1.9-6.3z"/><path d="M10.8 13.3 20 4.6"/>'),
+    filter: svg('<path d="M4.5 6.2h15"/><path d="M7.4 12h9.2"/><path d="M10.3 17.8h3.4"/>'),
     spark: svg('<path d="M11.4 3.6l1.8 4.9 4.9 1.8-4.9 1.8-1.8 4.9-1.8-4.9L4.7 10.3l4.9-1.8z"/><path d="M18.4 15.6l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/>'),
     bag: svg('<path d="M4.6 7.4h14.8l-1.2 11.9a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8z"/><path d="M8.8 7.4V5.8a3.2 3.2 0 0 1 6.4 0v1.6"/>'),
     clock: svg('<circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3 1.9"/>'),
     lock: svg('<rect x="5.5" y="10" width="13" height="10" rx="2"/><path d="M8.5 10V7.6a3.5 3.5 0 0 1 7 0V10"/>'),
+    logout: svg('<path d="M9.8 5.2H6.2a2 2 0 0 0-2 2v9.6a2 2 0 0 0 2 2h3.6"/><path d="M14.2 16.2 18.4 12l-4.2-4.2"/><path d="M18.4 12H9.2"/>'),
+    trash: svg('<path d="M4.5 6.6h15"/><path d="M9.4 6.6V4.8h5.2v1.8"/><path d="M7.2 6.6l.8 13h8l.8-13"/><path d="M10.3 10.2v5.8M13.7 10.2v5.8"/>'),
     person: svg('<circle cx="12" cy="7.9" r="3.9"/><path d="M4.8 20.4c1.3-3.3 4-4.9 7.2-4.9s5.9 1.6 7.2 4.9"/>'),
     userCog: svg('<circle cx="10" cy="7.8" r="3.4"/><path d="M3.8 19.4c1.1-3 3.4-4.5 6.2-4.5 1.1 0 2.1.2 3 .7"/><circle cx="17.6" cy="16.8" r="2.1"/><path d="M17.6 13.5v1M17.6 18.9v1M14.7 15.1l.9.5M19.6 18l.9.5M14.7 18.5l.9-.5M19.6 15.6l.9-.5"/>'),
     image: svg('<rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6"/><circle cx="9" cy="10" r="1.6"/><path d="M3.6 17.2l4.9-4.9 4.4 4.4 2.8-2.7 4.7 4.6"/>'),
@@ -885,6 +891,7 @@
     renderWhatsapp();
     renderClientes();
     renderOrdersMap();
+    renderDelivery();
     renderPedidos();
     renderProductos();
     renderReportes();
@@ -917,6 +924,7 @@
   const moneyCents = (value) => money((Number(value) || 0) / 100);
 
   const currentUser = () => state.auth?.user ?? null;
+  const isDeliveryUser = () => currentUser()?.role === 'DELIVERY';
   const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
   const permissions = () => state.auth?.permissions ?? [];
   const hasPermission = (permission) => isAdmin() || permissions().includes('*') || permissions().includes(permission);
@@ -971,6 +979,12 @@
     renderMobileHeader();
     renderHoy();
     openNotificationsSheet();
+  }
+
+  function dismissAllLocalNotices() {
+    const list = readDismissedNotices();
+    for (const row of localNoticeRows()) list.add(row.key);
+    writeDismissedNotices(list);
   }
 
   function localNoticeRows() {
@@ -1055,11 +1069,11 @@
       box.innerHTML = `<div class="wa-appbar">
         <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>WhatsApp</strong>
-          <span>Conversaciones</span>
+          <strong>Conversaciones</strong>
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-wa-search-open type="button" aria-label="Buscar conversación">${ICONS.search}</button>
+          <button class="wa-appbar__icon" data-wa-filter-open type="button" aria-label="Filtrar conversaciones">${ICONS.filter}</button>
         </div>
       </div>`;
       return;
@@ -1087,6 +1101,17 @@
       </div>`;
       return;
     }
+    if (state.tab === 'pedidos') {
+      box.innerHTML = `<div class="wa-appbar order-appbar">
+        <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+        <div class="wa-appbar__title">
+          <strong>Pedidos</strong>
+          <span>Compras y entregas</span>
+        </div>
+        <div class="wa-appbar__actions"></div>
+      </div>`;
+      return;
+    }
     box.innerHTML = `<div class="simple-head">
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
       <strong>${escapeHtml(currentViewTitle())}</strong>
@@ -1096,20 +1121,16 @@
   function renderCurrentUser() {
     const user = currentUser();
     const box = $('#drawer-user');
+    const brand = $('.drawer__brand');
+    if (brand) {
+      const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : 'Usuario');
+      brand.innerHTML = `
+        <img class="drawer__logo" src="/admin/logo-phytoemagry.png" alt="" width="38" height="38" />
+        <span><strong>${escapeHtml(name)}</strong><span>${escapeHtml(roleLabel(user?.role ?? 'ADMIN'))}</span></span>`;
+    }
     if (box) {
-      const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : '');
-      box.hidden = !name;
-      // El bloque de usuario ES la puerta a «Mi perfil»: se toca y se entra.
-      box.innerHTML = name
-        ? `<button class="drawer__user-btn" id="drawer-user-go" type="button" aria-label="Abrir mi perfil">
-             <span class="avatar avatar--sm">${escapeHtml(waInitials(name))}</span>
-             <span class="drawer__user-body"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(
-               roleLabel(user?.role ?? 'ADMIN'),
-             )}</small></span>
-             <span class="drawer__user-go" aria-hidden="true">${ICONS.chevron}</span>
-           </button>`
-        : '';
-      $('#drawer-user-go')?.addEventListener('click', () => setTab('perfil'));
+      box.hidden = true;
+      box.innerHTML = '';
     }
     $$('[data-admin-only]').forEach((node) => {
       node.hidden = !isAdmin();
@@ -1117,10 +1138,27 @@
     $$('[data-permission]').forEach((node) => {
       node.hidden = !hasPermission(node.dataset.permission);
     });
+    if (isDeliveryUser()) {
+      $$('[data-tab]').forEach((node) => {
+        if (!['delivery', 'whatsapp', 'perfil'].includes(node.dataset.tab)) node.hidden = true;
+      });
+    } else {
+      $$('[data-tab]').forEach((node) => {
+        if (!node.dataset.permission && !node.hasAttribute('data-admin-only')) node.hidden = false;
+      });
+    }
   }
 
   function renderStats() {
     const hoy = state.hoy ?? {};
+    const scheduled = state.scheduled ?? {};
+    const deliveryOrders = state.deliveryOrders ?? [];
+    const deliveryActivas = deliveryOrders.filter((order) => {
+      const status = deliveryVisibleStatus(order, deliverySessionForOrder(order.id));
+      return ['PENDIENTE', 'EN_PROCESO', 'EN_CAMINO'].includes(status);
+    }).length;
+    const sinAsignar = state.conversations.filter((row) => !row.assigned_user_id && row.status !== 'ARCHIVED').length;
+    const scheduledProblems = Number(scheduled.blocked ?? 0) + Number(scheduled.failed ?? 0);
     /*
      * HOY es un centro OPERATIVO: los contadores son trabajo que hacer ahora
      * (contestar, seguir, resolver un mensaje que no salió), no gráficas. Cada
@@ -1145,6 +1183,33 @@
         tone: 'amber',
       },
       { label: 'Pedidos abiertos', value: hoy.pedidosPendientes ?? 0, goto: 'pedidos', icon: ICONS.box, tone: 'purple' },
+      {
+        label: 'Programados hoy',
+        value: scheduled.due ?? 0,
+        alert: (scheduled.due ?? 0) > 0,
+        goto: 'hoy',
+        icon: ICONS.calendar,
+        tone: 'blue',
+      },
+      { label: 'Por enviar', value: scheduled.scheduled ?? 0, goto: 'hoy', icon: ICONS.clock, tone: 'green' },
+      { label: 'Enviados', value: scheduled.sent ?? 0, goto: 'hoy', icon: ICONS.checkCircle, tone: 'green' },
+      {
+        label: 'Por revisar',
+        value: scheduledProblems,
+        alert: scheduledProblems > 0,
+        goto: 'hoy',
+        icon: ICONS.bell,
+        tone: 'red',
+      },
+      { label: 'Entregas activas', value: deliveryActivas, goto: 'delivery', icon: ICONS.pin, tone: 'blue' },
+      {
+        label: 'Sin asignar',
+        value: sinAsignar,
+        alert: sinAsignar > 0,
+        goto: 'whatsapp',
+        icon: ICONS.userCog,
+        tone: 'amber',
+      },
     ];
     $('#stats').innerHTML = cards
       .map(
@@ -1156,6 +1221,49 @@
           </button>`,
       )
       .join('');
+  }
+
+  function todayDashboardSection({ id, title, count, html, tone = 'neutral', open = false, action = '' }) {
+    const numeric = Number(count ?? 0);
+    return `<details class="today-section today-section--${escapeHtml(tone)}" data-today-section="${escapeHtml(id)}" ${
+      open ? 'open' : ''
+    }>
+      <summary class="today-section__summary">
+        <span class="today-section__copy">
+          <span class="today-section__count">${escapeHtml(numeric)}</span>
+          <span class="today-section__title">${escapeHtml(title)}</span>
+        </span>
+        <span class="today-section__action">${action}</span>
+        <span class="today-section__arrow" aria-hidden="true">${ICONS.chevron}</span>
+      </summary>
+      <div class="today-section__body">${html || '<p class="view__hint">Sin pendientes en esta sección.</p>'}</div>
+    </details>`;
+  }
+
+  function scheduledDashboardRow(row) {
+    const customer = customerById(row.customer_id);
+    const conversation = conversationForCustomer(row.customer_id);
+    const when = row.scheduled_at
+      ? new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.scheduled_at))
+      : '';
+    const body = String(row.template_body ?? row.text ?? '').trim();
+    const reason = ['FAILED', 'BLOCKED'].includes(String(row.status ?? '').toUpperCase()) ? scheduledFriendlyReason(row) : '';
+    return `<article class="today-row today-row--scheduled">
+      <div class="today-row__main">
+        <strong>${escapeHtml(customer ? customerName(customer) : row.customer_id ?? 'Cliente')}</strong>
+        <span>${escapeHtml(scheduledStateTitle(row.status))}${when ? ` · ${escapeHtml(when)}` : ''}</span>
+        ${body ? `<small>${escapeHtml(body.slice(0, 110))}</small>` : ''}
+        ${reason ? `<small class="today-row__warn">${escapeHtml(reason)}</small>` : ''}
+      </div>
+      ${conversation ? `<button class="btn btn--ghost btn--sm" data-chat="${escapeHtml(conversation.id)}" type="button">Abrir chat</button>` : ''}
+    </article>`;
+  }
+
+  function todayCountNotice(text, action = '') {
+    return `<article class="today-row today-row--notice">
+      <div class="today-row__main"><strong>${escapeHtml(text)}</strong></div>
+      ${action}
+    </article>`;
   }
 
   function renderProductos() {
@@ -1646,8 +1754,16 @@
       </article>`;
   }
 
-  const section = (title, count, html) =>
-    `<h2 class="view__title">${escapeHtml(title)}${count ? ` (${count})` : ''}</h2><div class="list">${html}</div>`;
+  const section = (title, count, html, options = {}) =>
+    todayDashboardSection({
+      id: title.toLowerCase().replace(/\s+/g, '-'),
+      title,
+      count,
+      html,
+      tone: options.tone ?? 'neutral',
+      open: options.open ?? false,
+      action: options.action ?? '',
+    });
 
   function renderHoy() {
     const today = todayISO();
@@ -1682,34 +1798,71 @@
     const pedidosAbiertos = state.items.filter(
       (item) => item.type === 'order_intent' && !['entregado', 'perdido'].includes(item.status ?? 'nuevo'),
     );
+    const scheduled = state.scheduled ?? {};
+    const upcoming = scheduled.upcoming ?? [];
+    const mensajesHoy = upcoming.filter((row) => String(row.scheduled_at ?? '').slice(0, 10) === today);
+    const mensajesProblema = scheduled.problems ?? [];
+    const mensajesPorEnviar = Number(scheduled.scheduled ?? 0);
+    const mensajesVencidos = Number(scheduled.due ?? 0);
 
     const bloques = [
       followups.overdue?.length
-        ? section('Seguimientos vencidos', followups.overdue.length, followups.overdue.map(followupCard).join(''))
+        ? section('Seguimientos vencidos', followups.overdue.length, followups.overdue.map(followupCard).join(''), {
+            tone: 'urgent',
+            open: true,
+          })
         : '',
       followups.today?.length
-        ? section('Seguimientos de hoy', followups.today.length, followups.today.map(followupCard).join(''))
+        ? section('Seguimientos de hoy', followups.today.length, followups.today.map(followupCard).join(''), { tone: 'green' })
         : '',
       humano.length
-        ? section('Necesitan una persona', humano.length, humano.map(conversationCard).join(''))
+        ? section('Necesitan una persona', humano.length, humano.map(conversationCard).join(''), { tone: 'amber' })
         : '',
       sinLeer.length
-        ? section('Esperando respuesta', sinLeer.length, sinLeer.map(conversationCard).join(''))
+        ? section('Esperando respuesta', sinLeer.length, sinLeer.map(conversationCard).join(''), { tone: 'blue', open: true })
         : '',
       pendientes.length
-        ? section('Recordatorios de hoy', pendientes.length, pendientes.map(itemCard).join(''))
+        ? section('Recordatorios de hoy', pendientes.length, pendientes.map(itemCard).join(''), { tone: 'green' })
+        : '',
+      mensajesVencidos
+        ? section(
+            'Mensajes por enviar ahora',
+            mensajesVencidos,
+            mensajesHoy.length
+              ? mensajesHoy.map(scheduledDashboardRow).join('')
+              : todayCountNotice(`${mensajesVencidos} mensaje${mensajesVencidos === 1 ? '' : 's'} vencido${mensajesVencidos === 1 ? '' : 's'} en la cola.`),
+            { tone: 'amber', open: true },
+          )
+        : '',
+      mensajesHoy.length
+        ? section('Mensajes programados hoy', mensajesHoy.length, mensajesHoy.map(scheduledDashboardRow).join(''), { tone: 'blue' })
+        : '',
+      mensajesProblema.length
+        ? section('Mensajes por revisar', mensajesProblema.length, mensajesProblema.map(scheduledDashboardRow).join(''), {
+            tone: 'urgent',
+            open: true,
+          })
         : '',
       nuevos.length
-        ? `<div class="dash-section">
-            <div class="dash-section__head">
-              <h2>Sin contactar (${nuevos.length})</h2>
-              <button class="dash-section__link" data-dashboard-tab="clientes" type="button">Ver todos ${ICONS.chevron}</button>
-            </div>
-            <div class="dash-list">${nuevos.map(dashboardLeadRow).join('')}</div>
-          </div>`
+        ? section('Sin contactar', nuevos.length, `<div class="dash-list">${nuevos.map(dashboardLeadRow).join('')}</div>`, {
+            tone: 'amber',
+            action: '<span class="dash-section__link" data-dashboard-tab="clientes" role="button" tabindex="0">Ver todos</span>',
+          })
         : '',
       pedidosAbiertos.length
-        ? section('Pedidos sin cerrar', pedidosAbiertos.length, pedidosAbiertos.slice(0, 5).map(itemCard).join(''))
+        ? section('Pedidos sin cerrar', pedidosAbiertos.length, pedidosAbiertos.slice(0, 5).map(itemCard).join(''), {
+            tone: 'purple',
+          })
+        : '',
+      mensajesPorEnviar && !mensajesHoy.length && !mensajesVencidos
+        ? section(
+            'Próximos mensajes',
+            mensajesPorEnviar,
+            upcoming.length
+              ? upcoming.map(scheduledDashboardRow).join('')
+              : todayCountNotice(`${mensajesPorEnviar} mensaje${mensajesPorEnviar === 1 ? '' : 's'} en cola.`),
+            { tone: 'blue' },
+          )
         : '',
     ]
       .filter(Boolean)
@@ -1721,6 +1874,7 @@
 
   function renderWhatsapp() {
     const wa = state.whatsapp ?? { configured: false };
+    document.body.dataset.waFilters = state.wa.filtersOpen ? 'open' : 'closed';
     /*
      * En WhatsApp NO se anuncia "conectado" ni se repite el número del negocio:
      * es SU número y la pantalla ya dice dónde estamos. Solo se avisa cuando hay
@@ -1734,7 +1888,11 @@
 
     const filters = $('#wa-filters');
     if (filters) {
-      filters.innerHTML = WA_FILTERS.map(
+      filters.innerHTML = `<div class="wa-filter-panel__head">
+        <span><strong>Filtros</strong><small>Conversaciones</small></span>
+        <button class="wa-filter-panel__close" data-wa-filter-close type="button" aria-label="Cerrar filtros">${ICONS.close}</button>
+      </div>
+      <div class="wa-filter-panel__group">` + WA_FILTERS.map(
         ([value, text]) => {
           const count = waFilterCount(value);
           const label = Number.isFinite(Number(count)) && Number(count) > 0 ? `${text} ${count}` : text;
@@ -1744,11 +1902,11 @@
           }" type="button">${label}</button>`
           );
         },
-      ).join('') + `<button class="chip" id="wa-notify" type="button">${
+      ).join('') + `</div><div class="wa-filter-panel__group wa-filter-panel__group--tools"><button class="chip" id="wa-notify" type="button">${
         state.wa.notify ? 'Notificaciones activas' : 'Activar notificaciones'
       }</button><button class="chip" id="wa-sound" aria-pressed="${state.wa.sound}" type="button">Sonido ${
         state.wa.sound ? 'sí' : 'no'
-      }</button>${waDateChipHtml()}`;
+      }</button>${waDateChipHtml()}</div>`;
     }
     const search = $('#wa-search');
     if (search && search.value !== state.wa.q) search.value = state.wa.q;
@@ -1930,7 +2088,7 @@
     </button>`;
   }
 
-  /** Pedidos y compras (menú lateral): lo que entró por la web o se apuntó a mano. */
+  /** Pedidos: lo que entró por la web o se apuntó a mano. */
   /**
    * QUIÉN ATENDIÓ EL PEDIDO.
    *
@@ -2011,6 +2169,7 @@
     const status = String(order?.status ?? '').trim();
     if (status === 'cancelado' || status === 'perdido') return 'CANCELADO';
     if (status === 'entregado') return 'ENTREGADO';
+    if (order?.delivery?.delivery_status === 'ISSUE_REPORTED') return 'INCIDENCIA';
     if (session?.status === 'ACTIVE' || status === 'enviado' || order?.delivery?.delivery_status === 'IN_TRANSIT') return 'EN_CAMINO';
     return 'PENDIENTE';
   }
@@ -2018,10 +2177,33 @@
   function operationalStatusLabel(value) {
     return {
       PENDIENTE: 'Pendiente',
+      EN_PROCESO: 'En proceso',
       EN_CAMINO: 'En camino',
       ENTREGADO: 'Entregado',
+      INCIDENCIA: 'Incidencia',
       CANCELADO: 'Cancelado',
     }[value] ?? 'Pendiente';
+  }
+
+  function deliveryVisibleStatus(orderLike, session = null) {
+    const order = orderLike?.delivery ? orderLike : itemOrder(orderLike);
+    const base = getOrderOperationalStatus(order, session);
+    if (base === 'PENDIENTE' && order?.delivery?.delivery_status === 'CONTACTED') return 'EN_PROCESO';
+    return base;
+  }
+
+  function deliveryVisibleLabel(orderLike, session = null) {
+    return operationalStatusLabel(deliveryVisibleStatus(orderLike, session));
+  }
+
+  function deliveryOrderLocation(order) {
+    return order?.delivery?.location ?? null;
+  }
+
+  function externalNavigationUrl(location) {
+    const coords = mapLatLng(location);
+    if (!coords) return '';
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${coords[0]},${coords[1]}`)}`;
   }
 
   function manualOrderStatusOptions(current) {
@@ -2499,19 +2681,11 @@
     return `Último envío: ${PUSH_JOB_LABEL[job.status] ?? job.status} · ${fmtWhen(job.created_at)}`;
   }
 
-  function openNotificationsSheet() {
-    $('#sheet-title').textContent = 'Notificaciones';
-    const rows = state.notifications ?? [];
-    const localRows = localNoticeRows();
+  function pushConfigHtml({ compact = false } = {}) {
     const pushPermission = pushPermissionLabel();
     const pushActive = Number(state.push?.activeSubscriptions ?? 0) > 0 || state.push?.subscribed === true;
     const lastPushJob = state.push?.recentJobs?.[0] ?? null;
     const resultado = state.pushResult ?? null;
-    /*
-     * El estado tiene que decir QUÉ hacer. «Teléfono sin conectar · Activadas» se
-     * leía como si estuviera todo bien cuando en realidad este teléfono no estaba
-     * registrado: sin registro el servidor no tiene a dónde mandar el aviso.
-     */
     const pushStatusText = !state.push?.configured
       ? 'El servidor no tiene llaves push configuradas'
       : pushActive
@@ -2521,26 +2695,34 @@
           : pushPermission === 'No disponible'
             ? 'Este navegador no admite push (en iPhone hay que añadir el panel a la pantalla de inicio)'
             : `Teléfono sin conectar · ${pushPermission}`;
-    /*
-     * Fila compacta: en esta lista el contenido manda y los botones son pequeños.
-     * «Probar» manda la prueba real desde el servidor Y muestra un aviso en este
-     * teléfono, así el resultado se ve aquí (antes no pasaba nada visible).
-     */
-    const pushCard = `<article class="notice notice--push">
+    return `<article class="notice notice--push ${compact ? 'notice--compact' : 'settings-push'}">
       <div class="notice__main">
         <strong>Notificaciones del teléfono</strong>
         <p>${escapeHtml(pushStatusText)}</p>
         <small data-push-result>${escapeHtml(pushLastLine(lastPushJob, resultado))}</small>
       </div>
       <div class="notice__actions">
-        <button class="btn btn--primary btn--xs" data-push-test type="button">Probar</button>
-        <button class="btn btn--ghost btn--xs" data-push-enable type="button">${pushActive ? 'Revisar' : 'Activar'}</button>
+        <button class="btn btn--primary btn--xs" data-push-test type="button">Probar notificación</button>
+        <button class="btn btn--ghost btn--xs" data-push-enable type="button">${pushActive ? 'Revisar teléfono' : 'Activar'}</button>
       </div>
-    </article>`;
-    const html = [
-      pushCard,
+    </article>
+    ${
       resultado
         ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa los avisos de Chrome en los ajustes del teléfono y quita el ahorro de batería.</p>'
+        : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
+    }`;
+  }
+
+  function openNotificationsSheet() {
+    $('#sheet-title').textContent = 'Notificaciones';
+    const rows = state.notifications ?? [];
+    const localRows = localNoticeRows();
+    const hasNotices = rows.length > 0 || localRows.length > 0;
+    const html = [
+      hasNotices
+        ? `<div class="notice-tools">
+            <button class="btn btn--danger btn--xs" data-notifications-delete-all type="button">Eliminar todas</button>
+          </div>`
         : '',
       ...localRows.map(
         (row) => `<article class="notice notice--nueva">
@@ -2579,6 +2761,23 @@
     $('#sheet').hidden = false;
   }
 
+  async function deleteAllNotifications(button = null) {
+    const ok = window.confirm('¿Eliminar todas las notificaciones de esta lista?');
+    if (!ok) return;
+    await working(button, 'Eliminando…', async () => {
+      await api('/api/admin/notifications', { method: 'DELETE' });
+      dismissAllLocalNotices();
+      state.notifications = [];
+      await load({ keepTab: true }).catch(() => {});
+      renderMobileHeader();
+      renderHoy();
+      openNotificationsSheet();
+      toast('Notificaciones eliminadas');
+    }).catch((error) => {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudieron eliminar las notificaciones');
+    });
+  }
+
   async function openDeliveryOrderFromNotification(notificationId, orderId) {
     if (notificationId) {
       await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
@@ -2589,6 +2788,7 @@
       await api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}${notificationId ? `?notification=${encodeURIComponent(notificationId)}` : ''}`).catch(() => null);
       await load({ keepTab: true });
       setTab('delivery', { silent: true });
+      renderDelivery();
     }
     closeSheet();
   }
@@ -2655,7 +2855,7 @@
   }
 
   function deliveryPollTick() {
-    if (state.tab !== 'mapa' || document.visibilityState !== 'visible') return;
+    if (!['mapa', 'delivery'].includes(state.tab) || document.visibilityState !== 'visible') return;
     refreshDeliveryTracking().catch(() => {});
   }
 
@@ -2664,7 +2864,7 @@
   }
 
   function startDeliveryEvents() {
-    if (state.deliveryEvents || state.deliveryPollTimer || state.tab !== 'mapa') return;
+    if (state.deliveryEvents || state.deliveryPollTimer || !['mapa', 'delivery'].includes(state.tab)) return;
     if (typeof EventSource === 'function') {
       const source = new EventSource('/api/admin/delivery-tracking/events');
       source.addEventListener('delivery.tracking_started', (event) => {
@@ -2744,7 +2944,7 @@
       if (previousStatus && previousStatus !== 'enviado') {
         await api(`/api/admin/items/${encodeURIComponent(orderId)}`, {
           method: 'PATCH',
-          body: JSON.stringify({ status: previousStatus }),
+          body: JSON.stringify({ status: previousStatus, deliveryRollback: true }),
         });
       }
       await load({ keepTab: true });
@@ -2783,12 +2983,22 @@
     toast('GPS activo durante esta entrega');
   }
 
-  async function startDelivery(orderId) {
+  async function startDelivery(orderId, button = null) {
+    const original = button ? button.textContent : '';
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Obteniendo tu ubicación…';
+    }
+    toast('Obteniendo tu ubicación…');
     let initialPosition;
     try {
       initialPosition = await getInitialDeliveryPosition();
     } catch (error) {
       toast(error?.code === 1 ? 'Necesitas permitir acceso a tu ubicación para iniciar la entrega.' : 'No se pudo obtener tu GPS para iniciar la entrega.');
+      if (button) {
+        button.disabled = false;
+        button.textContent = original;
+      }
       return;
     }
     const currentOrder = itemOrder(state.items.find((item) => item.id === orderId));
@@ -2808,18 +3018,214 @@
     startDeliveryWatch(data.session.id, { sessionId: data.session.id, orderId, previousStatus });
     await load({ keepTab: true });
     setTab('delivery', { silent: true });
+    if (button) {
+      button.disabled = false;
+      button.textContent = original;
+    }
   }
 
-  async function stopDelivery(sessionId, complete = false) {
+  async function stopDelivery(sessionId, complete = false, options = {}) {
     const data = await api(`/api/admin/delivery-tracking/${encodeURIComponent(sessionId)}/${complete ? 'complete' : 'stop'}`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(options),
     });
     stopDeliveryWatch();
     applyDeliverySession(data.session);
     renderOrdersMap();
     await load({ keepTab: true });
     toast(complete ? 'Entrega completada' : 'Tracking detenido');
+  }
+
+  function deliveryOrdersSorted() {
+    return [...(state.deliveryOrders ?? [])].sort((a, b) => {
+      const rank = { EN_CAMINO: 0, EN_PROCESO: 1, PENDIENTE: 2, INCIDENCIA: 3, ENTREGADO: 4, CANCELADO: 5 };
+      const sa = deliveryVisibleStatus(a, deliverySessionForOrder(a.id));
+      const sb = deliveryVisibleStatus(b, deliverySessionForOrder(b.id));
+      const byStatus = (rank[sa] ?? 9) - (rank[sb] ?? 9);
+      if (byStatus) return byStatus;
+      return String(b.delivery?.delivery_assigned_at ?? b.created_at ?? '').localeCompare(String(a.delivery?.delivery_assigned_at ?? a.created_at ?? ''));
+    });
+  }
+
+  function deliveryPrimaryAction(order, session) {
+    const status = deliveryVisibleStatus(order, session);
+    if (status === 'PENDIENTE') {
+      return order.conversation_id
+        ? `<button class="btn btn--primary btn--block" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>`
+        : `<button class="btn btn--primary btn--block" type="button" disabled>Sin conversación</button>`;
+    }
+    if (status === 'EN_PROCESO') {
+      return `<button class="btn btn--primary btn--block" data-delivery-start="${escapeHtml(order.id)}" type="button">Iniciar entrega</button>`;
+    }
+    if (status === 'EN_CAMINO') {
+      return `<button class="btn btn--primary btn--block" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${session?.id ? '' : 'disabled'}>Finalizar entrega</button>
+        <button class="btn btn--ghost btn--block" data-delivery-issue="${escapeHtml(order.id)}" type="button">No pude entregar</button>`;
+    }
+    if (status === 'ENTREGADO') {
+      return `<button class="btn btn--ghost btn--block" data-delivery-back type="button">Volver a mis entregas</button>`;
+    }
+    if (status === 'INCIDENCIA') {
+      return `<button class="btn btn--ghost btn--block" data-delivery-back type="button">Volver a mis entregas</button>`;
+    }
+    return '';
+  }
+
+  function deliveryCard(order, { detail = false } = {}) {
+    const session = deliverySessionForOrder(order.id);
+    const status = deliveryVisibleStatus(order, session);
+    const customer = order.customer ?? {};
+    const location = deliveryOrderLocation(order);
+    const navUrl = externalNavigationUrl(location);
+    const title = order.order_number ?? order.id;
+    const meta = [customer.name, location?.name || location?.address, order.delivery?.delivery_assigned_at ? fmtWhen(order.delivery.delivery_assigned_at) : '']
+      .filter(Boolean)
+      .join(' · ');
+    const items = (order.items ?? []).map((line) => `${line.quantity ?? 1} × ${line.variantName ?? line.name ?? 'Producto'}`).join(', ');
+    return `<article class="delivery-card delivery-card--${escapeHtml(status.toLowerCase())}" data-delivery-order-card="${escapeHtml(order.id)}">
+      <button class="delivery-card__main" data-delivery-open="${escapeHtml(order.id)}" type="button">
+        <span class="delivery-card__top">
+          <strong>Pedido ${escapeHtml(title)}</strong>
+          <span class="tag delivery-status delivery-status--${escapeHtml(status.toLowerCase())}">${escapeHtml(operationalStatusLabel(status))}</span>
+        </span>
+        <span class="delivery-card__customer">${escapeHtml(customer.name ?? 'Cliente')}</span>
+        <span class="delivery-card__meta">${escapeHtml(meta || 'Entrega asignada')}</span>
+        ${items ? `<span class="delivery-card__items">${escapeHtml(items)}</span>` : ''}
+      </button>
+      ${
+        detail
+          ? `<div class="delivery-card__detail">
+              <div class="delivery-destination">
+                <strong>Ubicación</strong>
+                <span>${escapeHtml(location?.name || location?.address || 'Sin dirección textual')}</span>
+                ${location ? `<button class="btn btn--ghost btn--sm" data-open-map="${mapLocationAttr(location)}" data-map-title="Entrega ${escapeHtml(title)}" type="button">Ver mapa</button>` : ''}
+              </div>
+              <div class="delivery-actions">
+                ${order.conversation_id ? `<button class="btn btn--whatsapp btn--block" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
+                ${status === 'EN_CAMINO' && navUrl ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Cómo llegar</a>` : ''}
+                ${
+                  status === 'INCIDENCIA'
+                    ? `<div class="delivery-issue">
+                        <strong>Incidencia reportada</strong>
+                        <p><span>Motivo:</span> ${escapeHtml(order.delivery?.issue_reason_label ?? 'Incidencia')}</p>
+                        ${order.delivery?.issue_note ? `<p><span>Nota:</span> ${escapeHtml(order.delivery.issue_note)}</p>` : ''}
+                        <p>Esperando decisión administrativa.</p>
+                      </div>`
+                    : ''
+                }
+                ${deliveryPrimaryAction(order, session)}
+              </div>
+            </div>`
+          : `<div class="delivery-card__actions">${deliveryPrimaryAction(order, session)}</div>`
+      }
+    </article>`;
+  }
+
+  function renderDelivery() {
+    const box = $('#delivery-view');
+    if (!box) return;
+    const orders = deliveryOrdersSorted();
+    const activeId = state.deliveryActiveOrderId;
+    const active = activeId ? orders.find((order) => order.id === activeId) ?? null : null;
+    if (active) {
+      box.innerHTML = `<div class="delivery-head">
+        <button class="icon-btn" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
+        <div><h1>Entrega</h1><p>Pedido ${escapeHtml(active.order_number ?? active.id)}</p></div>
+      </div>${deliveryCard(active, { detail: true })}`;
+      return;
+    }
+    const group = (title, values) =>
+      values.length
+        ? `<section class="delivery-group"><h2>${escapeHtml(title)}</h2>${values.map((order) => deliveryCard(order)).join('')}</section>`
+        : '';
+    const buckets = {
+      pendientes: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'PENDIENTE'),
+      proceso: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'EN_PROCESO'),
+      camino: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'EN_CAMINO'),
+      finalizadas: orders.filter((order) => ['ENTREGADO', 'CANCELADO', 'INCIDENCIA'].includes(deliveryVisibleStatus(order, deliverySessionForOrder(order.id)))),
+    };
+    box.innerHTML = `<div class="delivery-head">
+      <div><h1>Mis entregas</h1><p>${orders.length ? `${orders.length} pedido${orders.length === 1 ? '' : 's'}` : 'Sin entregas asignadas'}</p></div>
+      <button class="icon-btn" data-delivery-refresh type="button" aria-label="Actualizar">${ICONS.retry}</button>
+    </div>
+    ${orders.length ? [
+      group('Pendientes', buckets.pendientes),
+      group('En proceso', buckets.proceso),
+      group('En camino', buckets.camino),
+      group('Finalizadas', buckets.finalizadas),
+    ].join('') : emptyState('No tienes entregas asignadas.')}
+    `;
+  }
+
+  function openDeliveryOrder(orderId) {
+    if (!orderId) return;
+    state.deliveryActiveOrderId = orderId;
+    setTab('delivery', { silent: true });
+    renderDelivery();
+  }
+
+  function confirmDeliveryComplete(sessionId) {
+    const session = (state.deliveryTracking ?? []).find((row) => row.id === sessionId) ?? selectedDeliverySession();
+    if (!session?.id) {
+      toast('No hay entrega activa para finalizar');
+      return;
+    }
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === session.order_id) ?? null;
+    openSheet(
+      'Finalizar entrega',
+      `<div class="delivery-confirm">
+        <p><strong>Cliente:</strong> ${escapeHtml(order?.customer?.name ?? session.customer?.name ?? 'Cliente')}</p>
+        <p><strong>Pedido:</strong> ${escapeHtml(order?.order_number ?? session.order?.order_number ?? session.order_id)}</p>
+        <p>¿Confirmas que el pedido fue entregado?</p>
+        <label class="field">
+          <span class="field__label">Nota de entrega</span>
+          <textarea class="field__input" id="delivery-complete-note" rows="3" placeholder="Opcional"></textarea>
+        </label>
+        <div class="sheet-actions">
+          <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
+          <button class="btn btn--primary" data-delivery-confirm-complete="${escapeHtml(session.id)}" type="button">Confirmar entrega</button>
+        </div>
+      </div>`,
+    );
+  }
+
+  function openDeliveryIssueSheet(orderId) {
+    const reasons = [
+      ['no_response', 'Cliente no responde'],
+      ['not_found', 'Cliente no se encuentra'],
+      ['wrong_address', 'Dirección incorrecta'],
+      ['rejected', 'Cliente rechazó el pedido'],
+      ['other', 'Otro'],
+    ];
+    openSheet(
+      'Reportar incidencia',
+      `<div class="delivery-confirm">
+        <label class="field">
+          <span class="field__label">Motivo</span>
+          <select class="field__input" id="delivery-issue-reason">
+            <option value="">Seleccionar motivo</option>
+            ${reasons.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">Nota adicional</span>
+          <textarea class="field__input" id="delivery-issue-note" rows="3" placeholder="Opcional"></textarea>
+        </label>
+        <div class="sheet-actions">
+          <button class="btn btn--ghost" data-close-sheet type="button">Volver</button>
+          <button class="btn btn--primary" data-delivery-confirm-issue="${escapeHtml(orderId)}" type="button">Reportar incidencia</button>
+        </div>
+      </div>`,
+    );
+  }
+
+  async function reportDeliveryIssue(orderId, input = {}) {
+    await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/issue`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    await load({ keepTab: true });
+    setTab('delivery', { silent: true });
+    renderDelivery();
   }
 
   /** Seguimientos (menú lateral): vencidos, de hoy y los que vienen. */
@@ -2870,6 +3276,8 @@
     const stats = state.stats ?? {};
     const outbox = readOutbox().length;
     const wa = state.whatsapp ?? {};
+    const pushConfig = $('#push-config');
+    if (pushConfig) pushConfig.innerHTML = pushConfigHtml();
     $('#facts').innerHTML = [
       ['Registros', stats.total ?? state.items.length],
       ['Clientes', state.customers.length],
@@ -4436,14 +4844,17 @@
     const stage = customerStageOf(row);
     const activeOrder = row.active_order?.status ? `Pedido · ${statusLabel(row.active_order.status)}` : null;
     const assignment = conversationAssignmentLabel(row);
-    const compactFlags = [customerStageLabel(stage), followupText, activeOrder].filter(Boolean).slice(0, 3);
+    const compactFlags = [customerStageLabel(stage), activeOrder, followupText].filter(Boolean).slice(0, 3);
+    const stateFlags = [
+      awaiting ? 'Pendiente' : null,
+      row.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
+      ...compactFlags,
+    ].filter(Boolean);
     const flags =
-      awaiting || row.status === 'HUMAN_REQUIRED' || compactFlags.length || assignment
+      stateFlags.length || assignment
         ? `<span class="conv__flags">
-            ${awaiting ? '<span class="conv__await">Pendiente</span>' : ''}
-            ${row.status === 'HUMAN_REQUIRED' ? '<span class="conv__await">Necesita una persona</span>' : ''}
-            ${compactFlags.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
             <span class="conv__assign ${row.assigned_user_id ? '' : 'conv__assign--empty'}">${escapeHtml(assignment)}</span>
+            ${stateFlags.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
           </span>`
         : '';
     const selected = state.wa.selected.has(row.id);
@@ -4464,13 +4875,18 @@
             : ''
         }
         <span class="conv__body">
-          <span class="conv__name">${escapeHtml(nombre)}</span>
-          <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
+          <span class="conv__line conv__line--top">
+            <span class="conv__name">${escapeHtml(nombre)}</span>
+            <span class="conv__stamps"${sello ? ` title="${escapeHtml(sello.completo)}"` : ''}>${
+              sello ? `<span class="conv__when">${escapeHtml(sello.label)}</span>` : ''
+            }</span>
+          </span>
+          <span class="conv__line conv__line--preview">
+            <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
+            ${unread ? `<span class="conv__unread" aria-label="${unread} mensaje${unread === 1 ? '' : 's'} sin leer">${ICONS.bell}<span>${unread}</span></span>` : ''}
+          </span>
           ${flags}
         </span>
-        <span class="conv__stamps"${sello ? ` title="${escapeHtml(sello.completo)}"` : ''}>${
-          sello ? `<span class="conv__when">${escapeHtml(sello.label)}</span>` : ''
-        }${unread ? `<span class="conv__unread" aria-label="${unread} mensaje${unread === 1 ? '' : 's'} sin leer">${ICONS.bell}<span>${unread}</span></span>` : ''}</span>
       </button>
       <button class="conv__more" data-conv-more="${escapeHtml(row.id)}" type="button" aria-label="Más acciones de la conversación con ${escapeHtml(
         nombre,
@@ -4532,6 +4948,7 @@
       <button class="wa-bulk__btn" data-wa-bulk="${archived ? 'unarchive' : 'archive'}" type="button" title="${
         archived ? 'Desarchivar' : 'Archivar'
       }" aria-label="${archived ? 'Desarchivar' : 'Archivar'}">${ICONS.box}</button>
+      <button class="wa-bulk__btn wa-bulk__btn--danger" data-wa-bulk="delete" type="button" title="Eliminar chats" aria-label="Eliminar chats">${ICONS.trash}</button>
       <button class="wa-bulk__btn" data-wa-bulk="message_preview" type="button" title="Mensaje a varios" aria-label="Mensaje a varios">${ICONS.send}</button>
     </div>`;
   }
@@ -4555,6 +4972,8 @@
       barra.hidden = !seleccionando;
       barra.innerHTML = seleccionando ? waBulkBar() : '';
     }
+    if (seleccionando) state.wa.filtersOpen = false;
+    document.body.dataset.waFilters = state.wa.filtersOpen ? 'open' : 'closed';
     const head = $('.wa__list-head');
     if (head) head.hidden = seleccionando;
     const chips = $('#wa-filters');
@@ -4629,6 +5048,10 @@
         )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span>
           <span><strong>${archived ? 'Desarchivar' : 'Archivar'}</strong></span>
+        </button>
+        <button class="menu-item menu-item--danger" data-conv-act="delete" data-conv-id="${escapeHtml(conversationId)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.trash}</span>
+          <span><strong>Eliminar chat</strong><small>Borra la conversación y sus mensajes del CRM</small></span>
         </button>
         ${
           customerId
@@ -5567,6 +5990,21 @@
       <p class="composer-rule">Enter envía · Shift+Enter salto de línea · Nada se envía solo.</p>`;
   }
 
+  function waMessageSearchText(message) {
+    return [
+      message?.body,
+      message?.template_body,
+      message?.template_name,
+      message?.caption,
+      message?.filename,
+      message?.type,
+      message?.status,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  }
+
   /**
    * Ajusta el compositor al contenido: la altura del campo (hasta 132 px) y el
    * cambio entre micro y Enviar. NO crea ni destruye nada, así que el campo puede
@@ -5666,17 +6104,17 @@
      */
     const hilo = conPendientes(conversation, messages);
     $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
-    const headerTags = customerTagsOf(customer).slice(0, 2).map((tag) => tag.label);
+    const headerTags = customerTagsOf(customer).slice(0, 1).map((tag) => tag.label);
     $('#wa-chat-meta').textContent = [
       customer ? customerStageLabel(customerStageOf(customer)) : null,
-      customer?.phone_e164,
       conversationAssignmentLabel(conversation),
-      data.nextFollowup ? `Seguimiento ${fmtDay(data.nextFollowup.scheduled_at)}` : null,
-      ...headerTags,
       conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
       customer?.do_not_contact ? 'No contactar' : null,
+      data.nextFollowup ? `Seguimiento ${fmtDay(data.nextFollowup.scheduled_at)}` : null,
+      ...headerTags,
     ]
       .filter(Boolean)
+      .slice(0, 3)
       .join(' · ');
 
     const viewCustomer = $('#wa-view-customer');
@@ -5696,7 +6134,9 @@
 
     const avatar = $('#wa-chat-avatar');
     if (avatar) {
+      const photo = customerPhotoUrl(customer);
       setAvatarContent(avatar, customer, (customer?.name ?? '').trim() || customer?.phone_e164);
+      avatar.hidden = !photo;
       avatar.dataset.customer = customer?.id ?? '';
       avatar.disabled = !customer?.id;
       avatar.setAttribute(
@@ -5704,12 +6144,26 @@
         customer?.id ? `Ver perfil de ${((customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente')}` : 'Perfil del cliente',
       );
     }
+    const searchBar = $('#wa-thread-searchbar');
+    const searchOpen = $('#wa-thread-search-open');
+    const searchInput = $('#wa-thread-search-input');
+    if (searchBar) searchBar.hidden = !state.wa.threadSearchOpen;
+    if (searchOpen) searchOpen.hidden = state.wa.threadSearchOpen;
+    if (searchInput && searchInput.value !== state.wa.threadQuery) searchInput.value = state.wa.threadQuery;
 
     const emptyThread =
       contactState === CONTACT_STATE.NEW_CONTACT
         ? '<div class="wa-empty"><strong>Todavía no has iniciado una conversación con este cliente.</strong><span>Usa una plantilla aprobada para enviar el primer mensaje.</span></div>'
         : '<p class="view__hint">Todavía no hay mensajes.</p>';
-    $('#thread').innerHTML = hilo.length ? waThreadHtml(hilo) : emptyThread;
+    const query = String(state.wa.threadQuery ?? '').trim().toLowerCase();
+    if (!query) {
+      $('#thread').innerHTML = hilo.length ? waThreadHtml(hilo) : emptyThread;
+    } else {
+      const hiloVisible = hilo.filter((message) => waMessageSearchText(message).includes(query));
+      $('#thread').innerHTML = hiloVisible.length
+        ? waThreadHtml(hiloVisible)
+        : '<div class="wa-empty"><strong>Sin resultados</strong><span>No encontramos ese texto en esta conversación cargada.</span></div>';
+    }
 
     /*
      * El compositor NO se reescribe si no cambia. Antes, cada mensaje nuevo (o
@@ -5770,11 +6224,13 @@
       const irAlFinal = () => {
         thread.scrollTop = thread.scrollHeight;
       };
-      irAlFinal();
+      if (!query) irAlFinal();
       // `requestAnimationFrame` no existe en todos los entornos de prueba: si no
       // está, basta con el empujón de arriba.
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(irAlFinal);
-      $$('img', thread).forEach((img) => img.addEventListener('load', irAlFinal, { once: true }));
+      if (!query) {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(irAlFinal);
+        $$('img', thread).forEach((img) => img.addEventListener('load', irAlFinal, { once: true }));
+      }
     }
   }
 
@@ -6417,6 +6873,8 @@
     state.wa.threadError = false;
     state.wa.locked = null;
     state.wa.draft = options.draft ?? '';
+    state.wa.threadSearchOpen = false;
+    state.wa.threadQuery = '';
     setWaView('chat');
     renderWhatsapp();
     await loadWaThread(conversationId, { force: true });
@@ -6560,6 +7018,7 @@
         // Ya está en el hilo del servidor: el pendiente sobra.
         quitarPendiente(provisional.id);
         refreshWhatsapp().catch(() => {});
+        load({ keepTab: true }).catch(() => {});
         if (followupId) toast('Seguimiento marcado como hecho');
         ok = true;
       } catch (error) {
@@ -6586,6 +7045,14 @@
   async function runWaBulk(action, explicitIds = null) {
     const ids = explicitIds?.length ? [...explicitIds] : [...state.wa.selected];
     if (!ids.length) return;
+    if (action === 'delete') {
+      const ok = window.confirm(
+        ids.length === 1
+          ? '¿Eliminar este chat? Se borrará la conversación y sus mensajes del CRM.'
+          : `¿Eliminar ${ids.length} chats? Se borrarán las conversaciones y sus mensajes del CRM.`,
+      );
+      if (!ok) return;
+    }
     try {
       const result = await api('/api/admin/conversations/bulk', {
         method: 'POST',
@@ -6609,6 +7076,10 @@
       }
       toast(`${result.processed} procesados${result.failed ? `, ${result.failed} fallaron` : ''}`);
       if (!explicitIds) state.wa.selected.clear();
+      if (action === 'delete' && ids.includes(state.wa.selectedId)) {
+        state.wa.selectedId = null;
+        state.wa.chat = null;
+      }
       await refreshWhatsapp();
     } catch (error) {
       if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar la acción');
@@ -7464,8 +7935,9 @@
               ? `<button class="btn btn--ghost btn--sm" data-optin="${escapeHtml(customer.id)}" type="button">Volver a permitir mensajes</button>`
               : `<button class="btn btn--danger btn--sm" data-optout="${escapeHtml(customer.id)}" type="button">No contactar nunca más</button>`
           }
+          <button class="btn btn--danger btn--sm" data-customer-delete="${escapeHtml(customer.id)}" type="button">Eliminar cliente</button>
         </div>
-        <p class="view__hint">Pausar detiene el seguimiento; «no contactar» además borra las tareas de marketing pendientes.</p>
+        <p class="view__hint">Pausar detiene el seguimiento; «no contactar» cancela marketing. Eliminar solo se permite si no hay historial vinculado.</p>
       </div>
 
       <label class="field">
@@ -7915,9 +8387,35 @@
                 <span><strong>Pausar seguimiento</strong></span>
               </button>`
         }
+        <button class="menu-item menu-item--danger" data-customer-delete="${escapeHtml(customer.id)}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.trash}</span>
+          <span><strong>Eliminar cliente</strong><small>Solo si no tiene pedidos ni conversaciones</small></span>
+        </button>
       </div>`,
       { variant: 'menu' },
     );
+  }
+
+  async function deleteCustomer(customerId, button = null) {
+    const customer = customerById(customerId) ?? state.customerProfile?.customer ?? null;
+    const name = customer ? customerName(customer) : 'este cliente';
+    const ok = window.confirm(`¿Eliminar ${name}? Solo se eliminará si no tiene historial vinculado.`);
+    if (!ok) return;
+    await working(button, 'Eliminando…', async () => {
+      try {
+        await api(`/api/admin/customers/${encodeURIComponent(customerId)}`, { method: 'DELETE' });
+        toast('Cliente eliminado');
+        closeSheet();
+        state.customerProfile = null;
+        state.customerId = null;
+        await load({ keepTab: true });
+        setTab('clientes');
+      } catch (error) {
+        if (error.message !== 'unauthorized') {
+          toast(error.body?.message ?? 'No se pudo eliminar el cliente');
+        }
+      }
+    });
   }
 
   // ---------------------------------------------------- respuestas r?pidas
@@ -10235,7 +10733,7 @@
     const assignedToMe = Boolean(assignedUserId) && assignedUserId === currentUser()?.id;
     const canAssign = (state.deliveryUsers ?? []).length > 0;
     const hasDestination = Boolean(deliveryLatLng(order.delivery?.location));
-    const canStart = operational === 'PENDIENTE' && hasDestination && (esRepartidor ? assignedToMe : true);
+    const canStart = ['PENDIENTE', 'INCIDENCIA'].includes(operational) && hasDestination && (esRepartidor ? assignedToMe : true);
     const chat = point.conversationId
       ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>`
       : '';
@@ -10243,7 +10741,7 @@
     if (operational === 'EN_CAMINO' && session) {
       return `${chat}<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver en vivo</button>${
         esRepartidor && assignedToMe
-          ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button>`
+          ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button><button class="btn btn--ghost btn--sm" data-delivery-issue="${escapeHtml(item.id)}" type="button">No pude entregar</button>`
           : ''
       }`;
     }
@@ -10257,9 +10755,11 @@
         canStart ? '' : 'disabled'
       }>Iniciar entrega</button>`;
     }
-    if (esRepartidor) return `${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>No asignado</button>`;
-    if (canAssign && operational === 'PENDIENTE' && !session) {
-      return `${chat}<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(
+    if (esRepartidor) return `${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>${escapeHtml(assignedName ? `Asignado a ${assignedName}` : 'Sin asignar')}</button>`;
+    if (canAssign && ['PENDIENTE', 'INCIDENCIA'].includes(operational) && !session) {
+      const retry = operational === 'INCIDENCIA' && assignedUserId ? `<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button">Reintentar entrega</button>` : '';
+      const cancel = operational === 'INCIDENCIA' ? `<button class="btn btn--ghost btn--sm" data-status-change="${escapeHtml(item.id)}" data-status-target="CANCELADO" type="button">Cancelar pedido</button>` : '';
+      return `${chat}${retry}${cancel}<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(
         item.id,
       )}" aria-label="Asignar a un agente">
         <option value="">${assignedName ? 'Cambiar de agente' : 'Asignar a un agente'}</option>
@@ -10300,6 +10800,7 @@
         const esPedido = point.kind === 'order';
         const vivo = esPedido && Boolean(point.session);
         const gps = vivo ? deliveryGpsLabel(point.session) : '';
+        const issue = esPedido && point.order?.delivery?.delivery_status === 'ISSUE_REPORTED' ? point.order.delivery : null;
         return `<article class="map-item ${esPedido ? 'map-item--order' : ''}${vivo ? ' map-item--live' : ''}">
           <button class="map-item__main" data-map-open="${escapeHtml(point.key)}" type="button">
             <strong>${escapeHtml(point.title)}</strong>
@@ -10312,6 +10813,11 @@
                 : 'Ubicación del cliente'
             } · ${escapeHtml(mapWhen(point.at))}${meters !== null ? ` · <b>${escapeHtml(fmtDistance(meters))}</b>` : ''}</small>
             ${gps ? `<small class="map-item__gps">${escapeHtml(gps)}</small>` : ''}
+            ${
+              issue
+                ? `<small class="map-item__gps"><strong>Incidencia de entrega</strong> · Delivery: ${escapeHtml(issue.delivery_user_name_snapshot ?? 'Delivery')} · Motivo: ${escapeHtml(issue.issue_reason_label ?? 'Incidencia')} · Fecha: ${escapeHtml(fmtWhen(issue.issue_reported_at))}${issue.issue_note ? ` · Nota: ${escapeHtml(issue.issue_note)}` : ''}</small>`
+                : ''
+            }
           </button>
           <div class="map-item__actions">${esPedido ? mapOrderActionsHtml(point) : `${point.conversationId ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>` : ''}<button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>`}</div>
         </article>`;
@@ -10841,6 +11347,14 @@
               label: 'Pasar a un delivery',
               note: 'Elige el agente que lo lleva',
               data: { 'data-order-delivery': item.id },
+            }
+          : null,
+        esPedido && isAdmin() && estado !== 'CANCELADO'
+          ? {
+              icon: ICONS.trash,
+              label: 'Cancelar venta',
+              note: 'Cancela el pedido y devuelve inventario si aplica',
+              data: { 'data-sale-cancel': item.id },
             }
           : null,
         clienteId
@@ -11827,7 +12341,7 @@
    *      mandar el aviso) y pide al servidor la prueba real por push;
    *   2. muestra además un aviso LOCAL, para saber si el que falla es el envío
    *      o el teléfono;
-   *   3. deja el resultado escrito en la hoja (antes, si el botón estaba
+   *   3. deja el resultado escrito en Configuración (antes, si el botón estaba
    *      deshabilitado o el service worker no arrancaba, no pasaba NADA).
    */
   async function testCrmPush() {
@@ -11858,7 +12372,7 @@
     toast(`${servidor} · ${state.pushResult.local}`);
     // La prueba ya está creada en el CRM: se refresca para que aparezca aquí mismo.
     await load({ keepTab: true }).catch(() => {});
-    openNotificationsSheet();
+    renderAjustes();
     return state.pushResult;
   }
 
@@ -12083,13 +12597,33 @@
     }
   }
 
+  function confirmLogout() {
+    openSheet(
+      'Cerrar sesión',
+        `<p class="view__hint">¿Seguro que quieres cerrar esta sesión?</p>
+         <div class="menu-list">
+          <button class="menu-item menu-item--danger" id="logout-confirm" type="button">
+            <span class="menu-item__icon" aria-hidden="true">${ICONS.logout}</span>
+            <span><strong>Sí, cerrar sesión</strong><small>Volverás a la pantalla de acceso.</small></span>
+          </button>
+        <button class="menu-item" data-close-sheet type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+          <span><strong>Cancelar</strong></span>
+        </button>
+       </div>`,
+      { variant: 'menu' },
+    );
+    $('#logout-confirm')?.addEventListener('click', () => $('#logout').click());
+  }
+
   // ------------------------------------------------------------------- tabs
-  /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  /** Destinos principales + lo que vive en el menú lateral. */
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
+    delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
@@ -12097,7 +12631,7 @@
     reportes: 'Reportes',
     seguimientos: 'Seguimientos',
     mensajes: 'Plantillas',
-    ajustes: 'Ajustes',
+    ajustes: 'Configuración',
     usuarios: 'Usuarios',
     perfil: 'Mi perfil',
   };
@@ -12106,19 +12640,22 @@
     if ((tab === 'usuarios' && !isAdmin()) || (tab === 'ajustes' && !hasPermission('settings.manage')) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
       tab = 'hoy';
     }
+    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil'].includes(tab)) tab = 'delivery';
     if (tab !== 'whatsapp') {
       state.wa.searchOpen = false;
+      state.wa.filtersOpen = false;
       delete document.body.dataset.waView;
+      delete document.body.dataset.waFilters;
     }
     if (tab !== 'clientes') state.clientSearchOpen = false;
     // Fuera del mapa no se sigue nada: ni GPS en vivo ni sondeos ni el mapa vivo.
     if (tab !== 'mapa') {
       stopOrdersMapPoll();
-      stopDeliveryEvents();
       resetOrdersMap();
       delete document.body.dataset.mapPanel;
       state.ordersMap.panelOpen = false;
     }
+    if (!['mapa', 'delivery'].includes(tab)) stopDeliveryEvents();
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     if (state.drawer) closeDrawer();
@@ -12175,6 +12712,10 @@
       refreshOrdersMap({ full: !options.silent }).catch(() => {});
       startOrdersMapPoll();
       refreshDeliveryTracking().catch(() => {});
+      startDeliveryEvents();
+    }
+    if (tab === 'delivery') {
+      refreshDeliveryTracking().then(() => renderDelivery()).catch(() => {});
       startDeliveryEvents();
     }
   }
@@ -12525,12 +13066,17 @@
       }
       if (event.target.closest('[data-push-enable]')) {
         enableCrmPush()
-          .then(() => openNotificationsSheet())
+          .then(() => renderAjustes())
           .catch((error) => toast(error.body?.message ?? 'No se pudieron activar las notificaciones'));
         return;
       }
       if (event.target.closest('[data-push-test]')) {
         testCrmPush().catch((error) => toast(error.body?.message ?? 'No se pudo probar las notificaciones'));
+        return;
+      }
+      const notificationsDeleteAll = event.target.closest('[data-notifications-delete-all]');
+      if (notificationsDeleteAll) {
+        deleteAllNotifications(notificationsDeleteAll);
         return;
       }
       const noticeDismiss = event.target.closest('[data-notice-dismiss]');
@@ -12565,9 +13111,20 @@
       }
       const deliveryStart = event.target.closest('[data-delivery-start]');
       if (deliveryStart) {
-        startDelivery(deliveryStart.dataset.deliveryStart).catch((error) => {
+        startDelivery(deliveryStart.dataset.deliveryStart, deliveryStart).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo iniciar entrega');
         });
+        return;
+      }
+      const deliveryOpen = event.target.closest('[data-delivery-open]');
+      if (deliveryOpen) {
+        openDeliveryOrder(deliveryOpen.dataset.deliveryOpen);
+        return;
+      }
+      if (event.target.closest('[data-delivery-back]')) {
+        state.deliveryActiveOrderId = null;
+        setTab('delivery', { silent: true });
+        renderDelivery();
         return;
       }
       const deliveryFocus = event.target.closest('[data-delivery-focus]');
@@ -12588,8 +13145,53 @@
       }
       const deliveryComplete = event.target.closest('[data-delivery-complete]');
       if (deliveryComplete) {
-        stopDelivery(deliveryComplete.dataset.deliveryComplete, true).catch((error) => {
+        confirmDeliveryComplete(deliveryComplete.dataset.deliveryComplete);
+        return;
+      }
+      const deliveryIssue = event.target.closest('[data-delivery-issue]');
+      if (deliveryIssue) {
+        openDeliveryIssueSheet(deliveryIssue.dataset.deliveryIssue);
+        return;
+      }
+      const deliveryConfirmComplete = event.target.closest('[data-delivery-confirm-complete]');
+      if (deliveryConfirmComplete) {
+        const sessionId = deliveryConfirmComplete.dataset.deliveryConfirmComplete;
+        const note = String($('#delivery-complete-note')?.value ?? '').trim();
+        working(deliveryConfirmComplete, 'Confirmando…', async () => {
+          await stopDelivery(sessionId, true, note ? { note } : {});
+          closeSheet();
+          state.deliveryActiveOrderId = null;
+          renderDelivery();
+          openSheet(
+            'Entrega completada',
+            `<div class="delivery-done">
+              <p><strong>Entrega completada</strong></p>
+              <p>El pedido quedó marcado como entregado.</p>
+              <button class="btn btn--primary btn--block" data-delivery-back type="button">Volver a mis entregas</button>
+            </div>`,
+          );
+        }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar');
+        });
+        return;
+      }
+      const deliveryConfirmIssue = event.target.closest('[data-delivery-confirm-issue]');
+      if (deliveryConfirmIssue) {
+        const reason = $('#delivery-issue-reason')?.value ?? '';
+        const note = String($('#delivery-issue-note')?.value ?? '').trim();
+        working(deliveryConfirmIssue, 'Reportando…', async () => {
+          await reportDeliveryIssue(deliveryConfirmIssue.dataset.deliveryConfirmIssue, { reason, note });
+          closeSheet();
+          openSheet(
+            'Incidencia reportada',
+            `<div class="delivery-done">
+              <p><strong>Incidencia reportada</strong></p>
+              <p>El pedido quedó esperando decisión administrativa.</p>
+              <button class="btn btn--primary btn--block" data-delivery-back type="button">Volver a mis entregas</button>
+            </div>`,
+          );
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo reportar la incidencia');
         });
         return;
       }
@@ -12616,6 +13218,11 @@
       const profilePhoto = event.target.closest('[data-profile-photo]');
       if (profilePhoto) {
         openImageViewer(profilePhoto.dataset.profilePhoto, 'Foto del cliente');
+        return;
+      }
+      const customerDelete = event.target.closest('[data-customer-delete]');
+      if (customerDelete) {
+        deleteCustomer(customerDelete.dataset.customerDelete, customerDelete);
         return;
       }
       const chatAssignMenu = event.target.closest('[data-chat-assign-menu]');
@@ -13029,6 +13636,26 @@
         if (state.wa.selectedId) loadWaThread(state.wa.selectedId, { force: true });
         return;
       }
+      if (event.target.closest('#wa-thread-search-open')) {
+        state.wa.threadSearchOpen = true;
+        renderWaChat();
+        requestAnimationFrame(() => $('#wa-thread-search-input')?.focus());
+        return;
+      }
+      if (event.target.closest('#wa-thread-search-close')) {
+        state.wa.threadSearchOpen = false;
+        state.wa.threadQuery = '';
+        renderWaChat();
+        return;
+      }
+      if (event.target.closest('#wa-thread-search-clear')) {
+        state.wa.threadQuery = '';
+        const input = $('#wa-thread-search-input');
+        if (input) input.value = '';
+        renderWaChat();
+        requestAnimationFrame(() => $('#wa-thread-search-input')?.focus());
+        return;
+      }
       if (event.target.closest('[data-client-search-open]')) {
         state.clientSearchOpen = true;
         renderMobileHeader();
@@ -13061,6 +13688,8 @@
       }
       if (event.target.closest('[data-wa-search-open]')) {
         state.wa.searchOpen = true;
+        state.wa.filtersOpen = false;
+        document.body.dataset.waFilters = 'closed';
         renderMobileHeader();
         requestAnimationFrame(() => $('#wa-appbar-search')?.focus());
         return;
@@ -13083,6 +13712,18 @@
         if (search) search.value = '';
         refreshWhatsapp().catch(() => renderWaList());
         renderMobileHeader();
+        return;
+      }
+      if (event.target.closest('[data-wa-filter-open]')) {
+        state.wa.filtersOpen = true;
+        document.body.dataset.waFilters = 'open';
+        renderWhatsapp();
+        return;
+      }
+      if (event.target.closest('[data-wa-filter-close]')) {
+        state.wa.filtersOpen = false;
+        document.body.dataset.waFilters = 'closed';
+        renderWhatsapp();
         return;
       }
       if (event.target.closest('[data-wa-date-open]')) {
@@ -13190,7 +13831,7 @@
       // Elegir una opción del menú navega y lo cierra.
       if (event.target.closest('[data-tab]')) closeDrawer();
     });
-    $('#logout-drawer').addEventListener('click', () => $('#logout').click());
+    $('#logout-drawer').addEventListener('click', () => confirmLogout());
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         if (!$('#media-viewer')?.hidden) {
@@ -13223,6 +13864,13 @@
         refreshWhatsapp().catch(() => renderWaList());
         return;
       }
+      const threadSearch = event.target.closest('#wa-thread-search-input');
+      if (threadSearch) {
+        state.wa.threadQuery = threadSearch.value.trim();
+        renderWaChat();
+        requestAnimationFrame(() => $('#wa-thread-search-input')?.focus());
+        return;
+      }
       const clientSearch = event.target.closest('#client-appbar-search');
       if (clientSearch) {
         state.q = clientSearch.value.trim();
@@ -13252,6 +13900,8 @@
       const chip = event.target.closest('[data-wa-filter]');
       if (!chip) return;
       state.wa.filter = chip.dataset.waFilter;
+      state.wa.filtersOpen = false;
+      document.body.dataset.waFilters = 'closed';
       state.wa.selected.clear();
       $$('[data-wa-filter]').forEach((button) =>
         button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),

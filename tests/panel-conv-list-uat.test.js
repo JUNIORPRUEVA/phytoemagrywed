@@ -445,8 +445,8 @@ describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
     expect($('#wa-filters').hidden).toBe(true);
     expect($('#wa-conversations').classList.contains('wa__convs--sel')).toBe(true);
     expect($('#wa-sel .wa-bulk__count').textContent).toContain('1');
-    // Cuatro acciones en iconos (caben en 360 px sin scroll horizontal).
-    expect($$('#wa-sel .wa-bulk__btn').length).toBe(4);
+    // Cinco acciones en iconos: seleccionar, leído, archivar, eliminar y mensaje a varios.
+    expect($$('#wa-sel .wa-bulk__btn').length).toBe(5);
     expect($(`[data-conv="${ids.luis}"] .conv__avatar svg`)).not.toBeNull();
   });
 
@@ -895,7 +895,7 @@ describe('preferencias del pedido del cliente', () => {
     expect(prefs.note).toContain('5 pm');
 
     // 2) Crear pedido: el formulario ya viene con «lo de siempre».
-    click('.drawer__item[data-tab="whatsapp"]');
+    click('.tabs [data-tab="whatsapp"]');
     const fila = await waitFor(() => $(`[data-conv="${ids.luis}"]`), 'la fila de Luis', 9000);
     click(fila);
     // El chat se repinta al llegar sus mensajes: se espera al chat pintado

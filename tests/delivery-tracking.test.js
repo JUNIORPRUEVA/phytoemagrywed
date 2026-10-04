@@ -39,12 +39,12 @@ async function login(username, password) {
   return { response, body: await json(response), cookie: (response.headers.get('set-cookie') ?? '').split(';')[0] };
 }
 
-async function createOrder() {
+async function createOrder(overrides = {}) {
   const response = await request('/api/admin/orders', {
     method: 'POST',
     body: JSON.stringify({
-      phone: '18095550999',
-      name: 'Cliente Delivery',
+      phone: overrides.phone ?? '18095550999',
+      name: overrides.name ?? 'Cliente Delivery',
       paymentMethod: 'CASH',
       items: [{ variantId: 'capsules_10', quantity: 1 }],
       deliveryLocation: L1,
@@ -153,7 +153,8 @@ describe('delivery tracking realtime API', () => {
 
     // Un administrador NO reparte: no se puede poner como delivery.
     const adminId = (await json(await request('/api/admin/users'))).users.find((user) => user.role === 'ADMIN').id;
-    const comoAdmin = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+    const otherOrder = await createOrder();
+    const comoAdmin = await request(`/api/admin/orders/${otherOrder.item.id}/delivery/assign`, {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: adminId }),
     });
@@ -201,6 +202,66 @@ describe('delivery tracking realtime API', () => {
     expect(stolenRead.status).toBe(403);
   });
 
+  it('DELIVERY no puede cerrar pedidos por la ruta legacy ni modificar pedidos ajenos', async () => {
+    const own = await createOrder();
+    const foreign = await createOrder({ phone: '18095550123', name: 'Cliente Ajeno' });
+    await request(`/api/admin/orders/${own.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+
+    const ownDelivered = await request(`/api/admin/items/${own.item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'entregado' }),
+    }, deliveryCookie);
+    expect(ownDelivered.status).toBe(403);
+    expect((await json(ownDelivered)).error).toBe('forbidden');
+
+    const foreignCancelled = await request(`/api/admin/items/${foreign.item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'cancelado' }),
+    }, deliveryCookie);
+    expect(foreignCancelled.status).toBe(403);
+
+    const editForeign = await request(`/api/admin/orders/${foreign.item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ discount: 500 }),
+    }, deliveryCookie);
+    expect(editForeign.status).toBe(403);
+  });
+
+  it('DELIVERY solo recibe sus pedidos, clientes, conversaciones y ubicaciones', async () => {
+    const own = await createOrder();
+    const foreign = await createOrder({ phone: '18095550124', name: 'Cliente Ajeno' });
+    await request(`/api/admin/orders/${own.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    await request(`/api/admin/orders/${foreign.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: (await json(await request('/api/admin/users'))).users.find((user) => user.username === 'delivery2@phyto.local').id }),
+    });
+
+    const data = await json(await request('/api/admin/data', {}, deliveryCookie));
+    expect(data.items.map((item) => item.id)).toContain(own.item.id);
+    expect(data.items.map((item) => item.id)).not.toContain(foreign.item.id);
+    expect(data.deliveryOrders.map((order) => order.id)).toContain(own.item.id);
+    expect(data.deliveryOrders.map((order) => order.id)).not.toContain(foreign.item.id);
+
+    const ownCustomer = await request(`/api/admin/customers/${own.customer.id}`, {}, deliveryCookie);
+    expect(ownCustomer.status).toBe(200);
+    const foreignCustomer = await request(`/api/admin/customers/${foreign.customer.id}`, {}, deliveryCookie);
+    expect(foreignCustomer.status).toBe(403);
+
+    const ownDetail = await request(`/api/admin/orders/${own.item.id}`, {}, deliveryCookie);
+    expect(ownDetail.status).toBe(200);
+    const foreignDetail = await request(`/api/admin/orders/${foreign.item.id}`, {}, deliveryCookie);
+    expect(foreignDetail.status).toBe(403);
+
+    const locations = await json(await request('/api/admin/locations', {}, deliveryCookie));
+    expect(locations.locations.every((location) => location.order_id === own.item.id || location.customer_id === own.customer.id)).toBe(true);
+  });
+
   it('rechaza coordenadas inválidas y sesiones cerradas', async () => {
     const order = await createOrder();
     const start = await json(await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
@@ -226,6 +287,23 @@ describe('delivery tracking realtime API', () => {
       body: JSON.stringify(P1),
     }, deliveryCookie);
     expect(after.status).toBe(409);
+  });
+
+  it('doble inicio concurrente devuelve la misma sesión activa', async () => {
+    const order = await createOrder();
+    await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    const [a, b] = await Promise.all([
+      request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie),
+      request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    const bodies = await Promise.all([json(a), json(b)]);
+    expect(new Set(bodies.map((body) => body.session.id))).toHaveLength(1);
+    const sessions = await json(await request('/api/admin/delivery-tracking'));
+    expect(sessions.sessions.filter((session) => session.order_id === order.item.id && session.status === 'ACTIVE')).toHaveLength(1);
   });
 
   it('guarda puntos consistentes y mantiene último punto de la sesión', async () => {
@@ -263,13 +341,25 @@ describe('delivery tracking realtime API', () => {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     }));
-    const complete = await request(`/api/admin/delivery-tracking/${start.session.id}/complete`, { method: 'POST', body: '{}' }, deliveryCookie);
+    const complete = await request(`/api/admin/delivery-tracking/${start.session.id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Entregado en recepción' }),
+    }, deliveryCookie);
     expect(complete.status).toBe(200);
     const body = await json(complete);
     expect(body.session.status).toBe('COMPLETED');
     expect(body.order.status).toBe('entregado');
     expect(body.order.delivered_at).toBeTruthy();
     expect(body.order.delivery.delivery_status).toBe('DELIVERED');
+
+    const completedSession = await json(await request(`/api/admin/delivery-tracking/${start.session.id}`, {}, deliveryCookie));
+    expect(completedSession.session.metadata.completion_note).toBe('Entregado en recepción');
+    const deliveryData = await json(await request('/api/admin/data', {}, deliveryCookie));
+    expect(deliveryData.deliveryTracking.filter((row) => row.status === 'ACTIVE' && row.order_id === order.item.id)).toHaveLength(0);
+    const finalized = deliveryData.deliveryOrders.find((row) => row.id === order.item.id);
+    expect(finalized.status).toBe('entregado');
+    expect(finalized.customer.name).toBe('Cliente Delivery');
+    expect(finalized.delivery.delivery_status).toBe('DELIVERED');
 
     const duplicate = await request(`/api/admin/delivery-tracking/${start.session.id}/complete`, { method: 'POST', body: '{}' }, deliveryCookie);
     expect(duplicate.status).toBe(200);
@@ -414,6 +504,132 @@ describe('delivery tracking realtime API', () => {
 
     const session = await json(await request(`/api/admin/delivery-tracking/${start.session.id}`));
     expect(session.session.status).toBe('CANCELLED');
+  });
+
+  it('DELIVERY reporta incidencia sin cancelar venta ni efectos comerciales', async () => {
+    await restock(100);
+    const order = await createOrder();
+    await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    const start = await json(await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie));
+
+    const missing = await request(`/api/admin/orders/${order.item.id}/delivery/issue`, { method: 'POST', body: '{}' }, deliveryCookie);
+    expect(missing.status).toBe(422);
+    const otherWithoutNote = await request(`/api/admin/orders/${order.item.id}/delivery/issue`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'other' }),
+    }, deliveryCookie);
+    expect(otherWithoutNote.status).toBe(422);
+
+    const blockedOtherDelivery = await request(`/api/admin/orders/${order.item.id}/delivery/issue`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'no_response' }),
+    }, otherDeliveryCookie);
+    expect(blockedOtherDelivery.status).toBe(403);
+
+    const issue = await request(`/api/admin/orders/${order.item.id}/delivery/issue`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'no_response', note: 'Llamé dos veces' }),
+    }, deliveryCookie);
+    expect(issue.status).toBe(200);
+    const body = await json(issue);
+    expect(body.order.status).toBe('enviado');
+    expect(body.order.delivery.delivery_status).toBe('ISSUE_REPORTED');
+    expect(body.order.delivery.issue_reason).toBe('no_response');
+    expect(body.order.delivery.issue_note).toBe('Llamé dos veces');
+
+    const session = await json(await request(`/api/admin/delivery-tracking/${start.session.id}`, {}, deliveryCookie));
+    expect(session.session.status).toBe('PAUSED');
+    const inventory = await json(await request('/api/admin/inventory'));
+    expect(inventory.movements.filter((row) => row.order_id === order.item.id && row.type === 'SALE')).toHaveLength(0);
+    const data = await json(await request('/api/admin/data'));
+    expect(data.deliveryOrders.find((row) => row.id === order.item.id).delivery.delivery_status).toBe('ISSUE_REPORTED');
+    expect(data.followups.today.filter((row) => row.order_id === order.item.id)).toHaveLength(0);
+
+    const retryByDelivery = await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie);
+    expect(retryByDelivery.status).toBe(409);
+    const retryByAdmin = await request(`/api/admin/orders/${order.item.id}/delivery/start`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    expect(retryByAdmin.status).toBe(201);
+  });
+
+  it('no permite reportar incidencia sobre pedidos entregados o cancelados', async () => {
+    await restock(100);
+    const delivered = await createOrder();
+    await request(`/api/admin/orders/${delivered.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    await request(`/api/admin/orders/${delivered.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'ENTREGADO', expectedStatus: 'PENDIENTE', reason: 'Entrega cerrada' }),
+    });
+    const deliveredIssue = await request(`/api/admin/orders/${delivered.item.id}/delivery/issue`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'no_response' }),
+    }, deliveryCookie);
+    expect(deliveredIssue.status).toBe(409);
+
+    const cancelled = await createOrder();
+    await request(`/api/admin/orders/${cancelled.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    await request(`/api/admin/orders/${cancelled.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'CANCELADO', expectedStatus: 'PENDIENTE', reason: 'Cliente no recibirá' }),
+    });
+    const cancelledIssue = await request(`/api/admin/orders/${cancelled.item.id}/delivery/issue`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'no_response' }),
+    }, deliveryCookie);
+    expect(cancelledIssue.status).toBe(409);
+  });
+
+  it('no asigna usuarios inactivos ni pedidos cerrados, y no reasigna en camino', async () => {
+    const inactive = (await json(await request('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'inactive-delivery@phyto.local', password: DELIVERY_PASS, displayName: 'Delivery Inactivo', role: 'DELIVERY' }),
+    }))).user;
+    await request(`/api/admin/users/${inactive.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ active: false }),
+    });
+    const order = await createOrder();
+    const inactiveAssign = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: inactive.id }),
+    });
+    expect(inactiveAssign.status).toBe(422);
+
+    await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie);
+    const reassignInTransit = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: inactive.id }),
+    });
+    expect(reassignInTransit.status).toBe(409);
+    expect((await json(reassignInTransit)).error).toBe('active_tracking_exists');
+
+    await restock(100);
+    const closed = await createOrder();
+    await request(`/api/admin/orders/${closed.item.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'ENTREGADO', expectedStatus: 'PENDIENTE', reason: 'Entrega cerrada para prueba' }),
+    });
+    const closedAssign = await request(`/api/admin/orders/${closed.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+    expect(closedAssign.status).toBe(409);
+    expect((await json(closedAssign)).error).toBe('order_closed');
   });
 
   it('cambios concurrentes: una transición gana y la otra recibe 409 por estado obsoleto', async () => {

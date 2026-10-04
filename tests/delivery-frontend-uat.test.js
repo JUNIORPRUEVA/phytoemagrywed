@@ -21,7 +21,7 @@ describe('delivery tracking frontend UAT guards', () => {
   });
 
   it('pide GPS inicial antes de crear tracking para evitar sesiones zombie', () => {
-    const startDelivery = app.indexOf('async function startDelivery(orderId)');
+    const startDelivery = app.indexOf('async function startDelivery(orderId, button = null)');
     const getInitial = app.indexOf('await getInitialDeliveryPosition()', startDelivery);
     const startApi = app.indexOf('/delivery/start', startDelivery);
     expect(startDelivery).toBeGreaterThan(-1);

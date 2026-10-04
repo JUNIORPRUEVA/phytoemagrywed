@@ -492,8 +492,8 @@ describe('compartir una ubicación con otro chat', () => {
      * conversación nueva esté EN LA LISTA (el selector de destino se arma con lo
      * que el panel conoce en ese momento).
      */
-    click('.drawer__item[data-tab="clientes"]');
-    click('.drawer__item[data-tab="whatsapp"]');
+    click('.tabs [data-tab="clientes"]');
+    click('.tabs [data-tab="whatsapp"]');
     await waitFor(() => $(`[data-conv="${destino.id}"]`), 'la conversación nueva en la lista', 12000);
     click(`[data-conv="${conversationId}"]`);
     await waitFor(() => $$('#thread .loc').length > 0, 'el hilo con la ubicación');

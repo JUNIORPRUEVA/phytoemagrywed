@@ -130,28 +130,14 @@
         </div>
         <div class="drawer__user" id="drawer-user" hidden></div>
 
-        <!-- Operación: el día a día (en el móvil vive en la barra de abajo). -->
-        <p class="drawer__group drawer__group--primary">Operación</p>
-        <nav class="drawer__nav drawer__nav--primary">
-          <button class="drawer__item" data-tab="hoy" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
-          </button>
-          <button class="drawer__item" data-tab="whatsapp" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>WhatsApp
-          </button>
-          <button class="drawer__item" data-tab="clientes" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
-          </button>
-        </nav>
-
-        <!-- Ventas: lo que se vende y a dónde va. -->
+        <!-- Ventas: lo que se vende y a dónde va. Lo principal vive en el navbar. -->
         <p class="drawer__group">Ventas</p>
         <nav class="drawer__nav">
-          <button class="drawer__item" data-tab="pedidos" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
-          </button>
           <button class="drawer__item" data-tab="mapa" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
+          </button>
+          <button class="drawer__item" data-tab="delivery" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
           </button>
           <button class="drawer__item" data-tab="productos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
@@ -176,7 +162,7 @@
           <p class="drawer__group">Sistema</p>
           <nav class="drawer__nav drawer__nav--bottom">
             <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
-              <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
+              <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
             </button>
             <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
               <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
@@ -208,7 +194,9 @@
               <span class="drawer__out" aria-hidden="true">↗</span>
             </a>
           </nav>
-          <button class="btn btn--danger btn--block" id="logout-drawer" type="button">Cerrar sesión</button>
+          <button class="drawer__logout" id="logout-drawer" type="button" aria-label="Cerrar sesión" title="Cerrar sesión">
+            <span class="drawer__icon" aria-hidden="true" data-icon="logout"></span>
+          </button>
         </div>
       </aside>
 
@@ -276,6 +264,18 @@
                 <div class="wa__chat-who">
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
+                </div>
+                <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación">
+                  <span class="ico" aria-hidden="true" data-icon="search"></span>
+                </button>
+                <div class="wa__thread-search" id="wa-thread-searchbar" hidden>
+                  <button class="wa__head-icon" id="wa-thread-search-close" type="button" aria-label="Cerrar búsqueda">
+                    <span class="ico" aria-hidden="true" data-icon="back"></span>
+                  </button>
+                  <input class="wa__thread-search-input" id="wa-thread-search-input" type="search" placeholder="Buscar en esta conversación" aria-label="Buscar en esta conversación" autocomplete="off" />
+                  <button class="wa__head-icon" id="wa-thread-search-clear" type="button" aria-label="Limpiar búsqueda">
+                    <span class="ico" aria-hidden="true" data-icon="close"></span>
+                  </button>
                 </div>
               </div>
               <div class="thread thread--wa chat-bg" id="thread"></div>
@@ -373,6 +373,11 @@
           </div>
         </section>
 
+        <!-- MIS ENTREGAS -->
+        <section class="view view--delivery" id="view-delivery" hidden>
+          <div class="delivery-view" id="delivery-view"></div>
+        </section>
+
         <!-- PERFIL DEL CLIENTE -->
         <section class="view view--customer-profile" id="view-perfil-cliente" hidden>
           <div id="customer-profile"></div>
@@ -446,10 +451,20 @@
           </button>
         </section>
 
-        <!-- AJUSTES -->
+        <!-- CONFIGURACIÓN -->
         <section class="view" id="view-ajustes" hidden>
-          <h2 class="view__title">Ajustes</h2>
-          <div class="card">
+          <h2 class="view__title">Configuración</h2>
+          <div class="config-menu" aria-label="Menú de configuración">
+            <a href="#config-notificaciones">Notificaciones</a>
+            <a href="#config-seguimiento">Seguimiento</a>
+            <a href="#config-whatsapp">WhatsApp</a>
+            <a href="#config-datos">Datos</a>
+          </div>
+          <div class="card config-card config-card--active" id="config-notificaciones">
+            <p class="card__title">Notificaciones</p>
+            <div id="push-config"></div>
+          </div>
+          <div class="card" id="config-seguimiento">
             <p class="card__title">Seguimiento postventa</p>
             <p class="card__text">
               Elige qué días se crean tareas solas al entregar una compra. Las tareas ya creadas no se borran
@@ -492,11 +507,11 @@
             <button class="btn btn--primary" id="install" type="button" hidden>Instalar ahora</button>
             <button class="btn btn--ghost btn--sm" id="check-update" type="button">Buscar actualización</button>
           </div>
-          <div class="card">
+          <div class="card" id="config-datos">
             <p class="card__title">Datos</p>
             <dl class="facts" id="facts"></dl>
           </div>
-          <div class="card">
+          <div class="card" id="config-whatsapp">
             <p class="card__title">WhatsApp</p>
             <div id="wa-config"></div>
           </div>
@@ -575,9 +590,12 @@
           <span class="tab__icon" aria-hidden="true" data-icon="sun"></span><span>Hoy</span>
           <span class="tab__badge" id="badge-hoy" hidden></span>
         </button>
-        <button class="tab tab--center" data-tab="whatsapp" type="button">
+        <button class="tab" data-tab="whatsapp" type="button">
           <span class="tab__icon" aria-hidden="true" data-icon="chat"></span><span>WhatsApp</span>
           <span class="tab__badge" id="badge-whatsapp" hidden></span>
+        </button>
+        <button class="tab" data-tab="pedidos" type="button">
+          <span class="tab__icon" aria-hidden="true" data-icon="box"></span><span>Pedidos</span>
         </button>
         <button class="tab" data-tab="clientes" type="button">
           <span class="tab__icon" aria-hidden="true" data-icon="users"></span><span>Clientes</span>
