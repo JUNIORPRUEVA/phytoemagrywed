@@ -328,7 +328,8 @@ completo**: se identifica con la etiqueta neutra "Frasco completo", nunca con
   `click_whatsapp`, **nunca** cuenta como `lead` ni como `purchase` y no se envía
   al pixel. Un visitante que entra a la comunidad puede volver y comprar después;
   por eso no debe contaminar el embudo.
-- Mapeo a Meta Pixel (con Pixel ID y consentimiento): `page_view→PageView`,
+- Mapeo a Meta Pixel (con Pixel ID; hoy se mide sin aviso de cookies y, si
+  `tracking.consentRequired` vuelve a `true`, tras aceptar): `page_view→PageView`,
   `view_product→ViewContent`, `begin_checkout→InitiateCheckout`, `lead→Lead`,
   `purchase→Purchase`.
 - Los últimos 100 eventos quedan en `localStorage` (`pe:analytics.log`).

@@ -426,7 +426,13 @@ export const contentConfig = {
     disclaimer: null,
   },
 
-  /** ----------------------------------------------------- BANNER DE COOKIES */
+  /**
+   * ----------------------------------------------------- BANNER DE COOKIES
+   *
+   * Este aviso SOLO se muestra si `site.tracking.consentRequired` está en `true`.
+   * Hoy está en `false` (decisión del negocio): la medición va con la visita y este
+   * texto no se ve. Se conserva para poder volver a pedir permiso con un interruptor.
+   */
   consent: {
     title: 'Medición publicitaria',
     text: 'Usamos cookies de medición para saber qué anuncio funciona. Puedes rechazarlas y la web seguirá funcionando igual.',

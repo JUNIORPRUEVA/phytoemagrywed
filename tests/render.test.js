@@ -611,12 +611,22 @@ describe('páginas legales', () => {
     expect(doc.querySelector('meta[name="robots"]').getAttribute('content')).toBe('noindex, nofollow');
   });
 
-  it('menciona la medición publicitaria solo si está configurada', () => {
+  it('menciona la medición publicitaria y dice la verdad según la configuración', () => {
     expect(parse(renderLegalPage(view, { kind: 'privacy' })).body.textContent).toContain(
       'No se instalan cookies de medición publicitaria',
     );
-    const conPixel = parse(renderLegalPage(makeShopView({ pixelId: '999' }), { kind: 'privacy' }));
-    expect(conPixel.body.textContent).toContain('únicamente después de que aceptes');
+    // Hoy se mide SIN aviso (decisión del negocio): la privacidad lo dice tal cual.
+    const sinAviso = parse(renderLegalPage(makeShopView({ pixelId: '999' }), { kind: 'privacy' }));
+    expect(sinAviso.body.textContent).toContain('Se instalan al entrar en la web, sin aviso previo');
+    expect(sinAviso.body.textContent).toContain('bloquearlas o borrarlas');
+    // Y si el negocio vuelve a pedir permiso, el texto vuelve con él.
+    const conAviso = parse(
+      renderLegalPage(
+        makeShopView({ pixelId: '999', site: { tracking: { consentRequired: true } } }),
+        { kind: 'privacy' },
+      ),
+    );
+    expect(conAviso.body.textContent).toContain('únicamente después de que aceptes');
   });
 
   it('los términos describen el proceso real de compra', () => {

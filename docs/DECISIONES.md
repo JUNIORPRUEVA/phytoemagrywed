@@ -1270,4 +1270,34 @@ en la consola del navegador.
    con su botón, la ausencia total de compositor y de envíos, el aviso a administración
    sin cambio de asignación, y el chat funcionando en cuanto administración asigna.
 
+## 47. La web NO pide permiso para medir: fuera el aviso de cookies
+
+Lo pidió el negocio así: «la web pregunta si acepta las cookies, pero la mayoría de la
+gente quizá no las acepte; podemos quitar esa confirmación para no correr el riesgo de
+que las rechacen».
+
+1. **Un interruptor, no un borrado.** `site.config.js` → `tracking.consentRequired`
+   pasa a `false`. Con eso: la web **no muestra el aviso**, el píxel de Meta arranca con
+   la visita y la medición deja de depender de un clic que casi nadie da. Todo el código
+   del aviso sigue ahí (HTML, CSS, textos y su prueba): poner el interruptor en `true`
+   devuelve exactamente el comportamiento de antes, sin tocar código.
+2. **Por qué tiene sentido en este negocio:** el aviso se pone PARA PODER medir, y en la
+   práctica el que no lo acepta no mide nada. El tráfico de esta web es **pagado** (Meta
+   Ads): si el píxel no dispara, no se sabe qué anuncio trae clientes y se compra a
+   ciegas. La medición propia (analytics interno, primera parte) nunca dependió del
+   aviso; esto afecta solo a las cookies de medición publicitaria.
+3. **Ni se finge ni se esconde: la privacidad lo dice.** La Política de privacidad (§8)
+   tiene ahora tres textos y elige según la configuración: sin medición («no se instalan
+   cookies»), sin aviso («se instalan al entrar en la web, sin aviso previo; puedes
+   bloquearlas o borrarlas cuando quieras desde tu navegador») y con aviso (el de
+   siempre). El registro que manda la web al CRM sigue llevando su campo `consent` — es
+   el permiso para **contactar** a la persona, que es otra cosa y sigue pidiéndose en el
+   formulario.
+4. **Revertir es un renglón.** Si el negocio quiere volver al aviso (por ejemplo, si un
+   asesor legal lo pide), `consentRequired: true` y a desplegar. Las pruebas cubren los
+   dos caminos: sin aviso el píxel mide desde el arranque (`meta-pixel-wiring.test.js`) y
+   no hay `[data-consent]` en el HTML (`client-flow.test.js`); con aviso, nada sale al
+   píxel hasta que se acepta.
+
+
 

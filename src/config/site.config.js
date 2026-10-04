@@ -99,6 +99,23 @@ export const siteConfig = {
     metaPixelId: envString('PHYTO_META_PIXEL_ID'),
     /** Empuja eventos a window.dataLayer (GTM). Requiere consentimiento. */
     dataLayer: false,
+    /**
+     * ¿HAY QUE PEDIR PERMISO (el aviso de cookies) ANTES DE MEDIR?
+     *
+     * `false` (decisión del negocio, 2026-10-03): la web NO muestra el aviso y la
+     * medición publicitaria arranca sola con la visita. El motivo es práctico: casi
+     * nadie acepta ese aviso, así que la medición se quedaba ciega justo en el
+     * tráfico pagado — el único que hay que medir para saber qué anuncio funciona.
+     *
+     * Dicho claro, para que nadie se lleve una sorpresa: con `false` el píxel de
+     * Meta instala sus cookies (`_fbp`, `_fbc`) al entrar, SIN pregunta previa. Por
+     * eso la Política de privacidad lo dice con esas palabras (§8) y explica cómo
+     * bloquearlas; no se publica un consentimiento que no existe.
+     *
+     * `true` devuelve el aviso tal y como estaba (y entonces nada se mide hasta
+     * que el visitante acepte). Es UN interruptor: no hay que tocar código.
+     */
+    consentRequired: false,
     /** Log en consola de cada evento (solo en build de desarrollo). */
     debug: isDev(),
     /** Guarda una copia local del plan de medición para depurar (últimos 100 eventos). */

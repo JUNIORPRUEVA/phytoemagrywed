@@ -30,7 +30,7 @@ Anuncio Meta ───►│ landing Phytoemagry                                
 ```
 
 - **Píxel del navegador**: `src/lib/tracking.js` (adaptador) +
-  `src/client/init-tracking.js` (registro y consentimiento).
+  `src/client/init-tracking.js` (registro y permiso de medición).
 - **API de conversiones**: `server/meta-capi.mjs` (cliente aislado). Nunca se
   llama a Meta desde el navegador.
 - **Venta**: `server/crm-server.mjs` decide y escribe el resultado en la fila del
@@ -50,8 +50,10 @@ Anuncio Meta ───►│ landing Phytoemagry                                
 
 Reglas que respeta el código:
 
-- Sin `PHYTO_META_PIXEL_ID` **no se carga ningún script de Meta** y no aparece el
-  banner de consentimiento.
+- Sin `PHYTO_META_PIXEL_ID` **no se carga ningún script de Meta**.
+- Con `PHYTO_META_PIXEL_ID` la medición va **con la visita** (decisión del negocio,
+  ver §7): no hay aviso de cookies. Se recupera poniendo
+  `site.tracking.consentRequired: true` en `src/config/site.config.js`.
 - Sin `PHYTO_META_CAPI_ACCESS_TOKEN` la API de conversiones queda desactivada: el
   CRM funciona igual y guarda los pedidos.
 - El token **nunca** sale del servidor: no viaja al navegador, no se registra en
@@ -200,18 +202,26 @@ ventas `AUTO` (evidencia real) de `MANUAL` (marcadas por usuario). ROAS queda en
 
 ---
 
-## 7. Privacidad y consentimiento
+## 7. Privacidad y permiso de medición
 
-- El píxel solo se carga si el visitante **acepta** el banner de medición. Si
-  rechaza, no se carga ningún script de Meta.
+- **Hoy no hay aviso de cookies** (decisión del negocio, 2026-10-03): con
+  `PHYTO_META_PIXEL_ID` configurado, el píxel se carga al entrar y mide la visita.
+  El motivo es práctico: casi nadie aceptaba ese aviso, así que la medición se
+  quedaba ciega justo en el tráfico pagado — el único que interesa medir.
+- **Se puede volver atrás con un interruptor**: `src/config/site.config.js` →
+  `tracking.consentRequired: true` devuelve el aviso y, entonces, el píxel no
+  recibe **nada** hasta que el visitante acepte (lo cubre
+  `tests/meta-pixel-wiring.test.js` y `tests/client-flow.test.js`).
+- **La Política de privacidad lo dice con esas palabras** (§8: «se instalan al
+  entrar en la web, sin aviso previo» + cómo bloquearlas). No se publica un
+  consentimiento que no existe.
 - El servidor guarda la decisión de consentimiento con el registro y respeta la
-  misma regla para el espejo del `Lead` (si no hay consentimiento, no se envía).
+  misma regla para el espejo del `Lead` (si el visitante rechazó, no se envía).
 - No se envían datos que el sistema no recoge (fecha de nacimiento, sexo,
   apellidos, dirección).
-- `Purchase` sí se envía aunque no haya consentimiento de publicidad, porque es
-  una transacción con el propio cliente (primera parte) y es la única forma de
-  medir ventas reales. Si se prefiere lo contrario, se cambia en
-  `server/crm-server.mjs` → `mirrorLeadToMeta`.
+- `Purchase` se envía siempre, porque es una transacción con el propio cliente
+  (primera parte) y es la única forma de medir ventas reales. Si se prefiere lo
+  contrario, se cambia en `server/crm-server.mjs` → `mirrorLeadToMeta`.
 
 ---
 
@@ -234,7 +244,7 @@ ventas `AUTO` (evidencia real) de `MANUAL` (marcadas por usuario). ROAS queda en
 
 | Síntoma | Causa y solución |
 | --- | --- |
-| El píxel no envía nada | No hay `PHYTO_META_PIXEL_ID`, o el visitante no aceptó el banner |
+| El píxel no envía nada | No hay `PHYTO_META_PIXEL_ID` en el build; o, con `consentRequired: true`, el visitante no aceptó el aviso |
 | Llega `PageView` pero nada más | (Corregido) Los adaptadores deben registrarse en el tracker: `tracker.addAdapter`. Lo cubre `tests/meta-pixel-wiring.test.js` |
 | `Purchase` nunca se envía | El pedido no está en el estado de venta (`PHYTO_META_PURCHASE_STATUS`, por defecto `entregado`), o faltan credenciales de CAPI |
 | Meta devuelve `events_received: 0` | El `event_name` o el `event_id` van vacíos; mira el error saneado en la fila del pedido |

@@ -15,7 +15,7 @@ import { siteConfig } from '../src/config/site.config.js';
 import { createConsent } from '../src/lib/consent.js';
 import { createMemoryStorage } from '../src/lib/storage.js';
 import { createTracker, EVENTS } from '../src/lib/tracking.js';
-import { renderIndexPage } from '../src/render/pages.js';
+import { renderIndexPage, renderLegalPage } from '../src/render/pages.js';
 import { initCheckout } from '../src/client/checkout.js';
 import { initConsentBanner } from '../src/client/consent-banner.js';
 import { initLeadForm } from '../src/client/lead-form.js';
@@ -606,18 +606,41 @@ describe('consentimiento y medición', () => {
     expect(mount().$('[data-consent]')).toBeNull();
   });
 
-  it('con Pixel aparece el banner y solo al aceptar se habilita', () => {
+  /*
+   * DECISIÓN DEL NEGOCIO (2026-10-03): no se pide permiso para medir.
+   * El aviso de cookies casi nadie lo acepta, así que la medición se quedaba
+   * ciega justo en el tráfico pagado. El interruptor es
+   * `site.tracking.consentRequired`; con `true` vuelve el banner de antes.
+   */
+  it('con Pixel configurado NO aparece el aviso: la medición va con la visita', () => {
     const app = mount({ pixelId: '1234567890' });
+    expect(app.view.flags.consentBanner).toBe(false);
+    expect(app.view.flags.trackingWithoutConsent).toBe(true);
+    expect(app.$('[data-consent]')).toBeNull();
+  });
+
+  it('si el negocio pide permiso (consentRequired: true) vuelve el aviso y solo mide al aceptar', () => {
+    const app = mount({ pixelId: '1234567890', site: { tracking: { consentRequired: true } } });
+    expect(app.view.flags.consentBanner).toBe(true);
     expect(app.$('[data-consent]').hidden).toBe(false);
+    expect(app.enableAds).not.toHaveBeenCalled();
+
     app.click('[data-consent="accept"]');
     expect(app.enableAds).toHaveBeenCalledTimes(1);
     expect(app.consent.adsAllowed()).toBe(true);
   });
 
-  it('al rechazar no se habilita la medición', () => {
-    const app = mount({ pixelId: '1234567890' });
+  it('con el aviso puesto, rechazar deja la medición apagada', () => {
+    const app = mount({ pixelId: '1234567890', site: { tracking: { consentRequired: true } } });
     app.click('[data-consent="reject"]');
     expect(app.enableAds).not.toHaveBeenCalled();
     expect(app.consent.getState()).toBe('denied');
+  });
+
+  it('la Política de privacidad dice la verdad: se mide desde la entrada y cómo bloquearlo', () => {
+    const app = mount({ pixelId: '1234567890' });
+    const privacidad = renderLegalPage(app.view, { kind: 'privacy' });
+    expect(privacidad).toContain('Se instalan al entrar en la web, sin aviso previo');
+    expect(privacidad).toContain('bloquearlas o borrarlas');
   });
 });

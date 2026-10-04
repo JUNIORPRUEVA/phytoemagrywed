@@ -102,6 +102,31 @@ describe('medición · los adaptadores quedan conectados al tracker', () => {
     expect(window.fbq).toBeUndefined();
   });
 
+  /*
+   * DECISIÓN DEL NEGOCIO (2026-10-03): no hay aviso de cookies y la medición va
+   * con la visita, porque el aviso casi nadie lo acepta y dejaba ciego al tráfico
+   * pagado. El interruptor es `tracking.consentRequired`.
+   */
+  it('sin aviso (consentRequired: false) el píxel mide desde el arranque, sin decisión previa', async () => {
+    const storage = memoryStorage();
+    const consent = createConsent({ storage });
+    expect(consent.hasDecided()).toBe(false);
+
+    const tracking = initTracking({
+      view: fakeView({ tracking: { consentRequired: false } }),
+      consent,
+      storage,
+    });
+
+    expect(typeof window.fbq).toBe('function');
+    await tracking.tracker.trackEvent(EVENTS.LEAD, { productName: 'Phytoemagry' });
+
+    const eventos = (window.fbq.queue ?? []).map((entry) => `${entry[0]}:${entry[1]}`);
+    expect(eventos).toContain('track:Lead');
+    // Y sigue sin haber decisión guardada: no se finge un consentimiento.
+    expect(consent.hasDecided()).toBe(false);
+  });
+
   it('el evento lleva el mismo event_id con el que se envió al CRM', () => {
     const storage = memoryStorage();
     const consent = createConsent({ storage });

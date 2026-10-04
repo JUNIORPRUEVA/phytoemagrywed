@@ -287,11 +287,14 @@ export function buildView(overrides = {}) {
   const rawSiteUrl = normalizeSiteUrl(site.seo?.siteUrl);
   const siteUrlIsPlaceholder = rawSiteUrl ? isPlaceholderUrl(rawSiteUrl) : false;
   const siteUrl = siteUrlIsPlaceholder ? null : rawSiteUrl;
+  /** Hay algo que medir: píxel de Meta y/o capa de datos de Google. */
+  const hasAds = Boolean(textOrNull(site.tracking?.metaPixelId)) || site.tracking?.dataLayer === true;
+  /** El negocio pide permiso antes de medir (banner). Por defecto, sí. */
+  const requiresConsent = site.tracking?.consentRequired !== false;
   const flags = {
     whatsapp: waEnabled,
     /** Hay al menos una presentación con precio real. */
-    variants: variants.length > 0,
-    pricing: Boolean(referenceVariant),
+    variants: variants.length > 0,    pricing: Boolean(referenceVariant),
     priceOnRequest: !referenceVariant && showPriceWhenUnknown,
     compareAt: false,
     availability: Boolean(availabilityLabel),
@@ -325,7 +328,14 @@ export function buildView(overrides = {}) {
     returns: isSet(site.commerce?.returns),
     email: isSet(site.contact?.email),
     mobileCtaBar: site.features?.showMobileCtaBar !== false,
-    consentBanner: Boolean(textOrNull(site.tracking?.metaPixelId) || site.tracking?.dataLayer === true),
+    /*
+     * AVISO DE COOKIES: solo si hay algo que medir Y el negocio pide permiso.
+     * Con `tracking.consentRequired: false` (lo que hay hoy) no se muestra aviso:
+     * la medición va con la visita y la Política de privacidad lo dice.
+     */
+    consentBanner: requiresConsent && hasAds,
+    /** Hay medición publicitaria pero NO se pide permiso (lo publica la privacidad). */
+    trackingWithoutConsent: hasAds && !requiresConsent,
     /** El formulario de compra necesita WhatsApp para poder "continuar el pedido". */
     checkoutWhatsApp: waEnabled,
   };

@@ -133,8 +133,10 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 ## 6. Decisiones operativas pendientes
 - ¿Se publica con `noindex` mientras el contenido no está aprobado?
   (`site.config.js` → `seo.noindex`, hoy en `false`).
-- ¿Se activa Meta Pixel? (`PHYTO_META_PIXEL_ID`). El banner de consentimiento
-  aparece automáticamente y el pixel solo carga si se acepta.
+- ¿Se activa Meta Pixel? (`PHYTO_META_PIXEL_ID`). **Resuelto el 2026-10-03**: se
+  mide sin pedir permiso (`tracking.consentRequired: false` en `site.config.js`),
+  así que no hay aviso de cookies y el píxel carga con la visita. Poniendo ese
+  interruptor en `true` vuelve el aviso y el píxel solo carga si se acepta.
 - ¿Endpoint definitivo del CRM para dejar de usar la cola local?
   (`PHYTO_CRM_ENDPOINT`).
 - Confirmar si hay entrega en Higüey y zonas aledañas, punto de entrega y envíos

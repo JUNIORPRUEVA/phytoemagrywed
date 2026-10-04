@@ -38,6 +38,15 @@ export function initTracking(input) {
   const debug = view.site.tracking.debug === true;
   const pixelId = view.site.tracking.metaPixelId;
   const sessionId = getSessionId();
+  /*
+   * ¿Hay que pedir permiso antes de medir? El negocio decidió que NO
+   * (`tracking.consentRequired: false`): el aviso de cookies casi nadie lo acepta
+   * y dejaba la medición ciega en el tráfico pagado. Con el interruptor en `true`
+   * vuelve la regla de antes: sin "Aceptar", el píxel no recibe nada.
+   */
+  const requierePermiso = view.site.tracking.consentRequired !== false;
+  /** Una sola puerta: la usan todos los adaptadores y el arranque. */
+  const medicionPermitida = () => !requierePermiso || consent.adsAllowed();
 
   /** @type {{ name: string, track: Function }[]} */
   const adsAdapters = [];
@@ -56,13 +65,13 @@ export function initTracking(input) {
   });
 
   if (view.site.tracking.dataLayer) {
-    adsAdapters.push(createDataLayerAdapter({ allowed: () => consent.adsAllowed() }));
+    adsAdapters.push(createDataLayerAdapter({ allowed: medicionPermitida }));
   }
 
   const metaPixel = pixelId
     ? createMetaPixelAdapter({
         pixelId,
-        allowed: () => consent.adsAllowed(),
+        allowed: medicionPermitida,
         debug,
         /*
          * Un clic en WhatsApp no es una compra, pero SI es un contacto. Se cuenta
@@ -124,7 +133,9 @@ export function initTracking(input) {
     if (debug && context.reason) console.info('[tracking] medición publicitaria habilitada:', context.reason);
   }
 
-  if (adsAdapters.length > 0 && consent.adsAllowed()) enableAds({ reason: 'consentimiento previo' });
+  if (adsAdapters.length > 0 && medicionPermitida()) {
+    enableAds({ reason: requierePermiso ? 'consentimiento previo' : 'medición sin aviso (consentRequired: false)' });
+  }
 
   return { tracker, consent, sessionId, metaPixel, enableAds, hasAds: adsAdapters.length > 0 };
 }

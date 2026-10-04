@@ -245,9 +245,11 @@ function legalBody(view, kind) {
         },
         {
           title: '8. Cookies y medición',
-          text: site.tracking.metaPixelId
-            ? 'Usamos cookies de medición publicitaria únicamente después de que aceptes el aviso correspondiente. Puedes rechazarlas y la web sigue funcionando con normalidad.'
-            : 'No se instalan cookies de medición publicitaria en esta web.',
+          text: !site.tracking.metaPixelId
+            ? 'No se instalan cookies de medición publicitaria en esta web.'
+            : site.tracking.consentRequired === false
+              ? 'Usamos cookies de medición publicitaria (Meta) para saber qué anuncio trae clientes. Se instalan al entrar en la web, sin aviso previo; puedes bloquearlas o borrarlas cuando quieras desde tu navegador y la web sigue funcionando igual.'
+              : 'Usamos cookies de medición publicitaria únicamente después de que aceptes el aviso correspondiente. Puedes rechazarlas y la web sigue funcionando con normalidad.',
         },
       ]
     : [
