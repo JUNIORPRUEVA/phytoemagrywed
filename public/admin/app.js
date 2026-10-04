@@ -624,9 +624,16 @@
       const response = await fetch('/api/admin/session', { credentials: 'same-origin' });
       const body = await response.json().catch(() => ({}));
       if (body.ok) state.auth = { user: body.user ?? null, legacy: body.legacy === true };
+      /*
+       * El servidor SÍ contestó y dijo que no hay sesión: eso es distinto de
+       * «no se pudo preguntar». Se guarda para no enseñar datos guardados y
+       * caer después a la entrada con un aviso rojo que nadie pidió.
+       */
+      state.sessionRejected = response.status === 401 || body.ok === false;
       return Boolean(body.ok);
     } catch {
       // Sin red no se puede preguntar: no significa que la sesión no valga.
+      state.sessionRejected = false;
       return false;
     }
   }
@@ -12545,8 +12552,9 @@
       showApp();
       await load();
       await applyDeepLink(query);
-    } else if (cached) {
-      // El servidor no contesta (o la sesión caducó): si hay copia, se enseña.
+    } else if (cached && !state.sessionRejected) {
+      // El servidor NO contesta (sin red): si hay copia, se enseña lo guardado.
+      // Si lo que pasó fue un 401, se va a la entrada LIMPIA (sin aviso rojo).
       showApp();
       await load({ keepTab: true });
       await applyDeepLink(query);

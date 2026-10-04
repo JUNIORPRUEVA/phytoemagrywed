@@ -34,18 +34,21 @@
     <!-- ------------------------------------------------------------- ENTRAR -->
     <main id="login" class="login" hidden>
       <section class="login__card" aria-labelledby="login-title">
-        <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="68" height="68" />
+        <span class="login__mark">
+          <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="46" height="46" />
+        </span>
         <h1 class="login__title" id="login-title">Phytoemagry <span>CRM</span></h1>
+        <p class="login__lede">Acceso privado del equipo</p>
         <form id="login-form" class="login__form" autocomplete="on">
           <label class="field">
-            <span class="field__label">Usuario o correo</span>
+            <span class="field__label">Usuario</span>
             <input
               class="field__input"
               id="login-username"
               name="username"
               type="text"
               autocomplete="username"
-              placeholder="tu@correo"
+              placeholder="tu usuario"
             />
           </label>
           <label class="field">
@@ -81,7 +84,7 @@
             />
           </label>
           <p class="login__error" id="login-error" role="alert" hidden></p>
-          <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+          <button class="btn btn--primary login__submit" type="submit">Entrar</button>
         </form>
       </section>
     </main>

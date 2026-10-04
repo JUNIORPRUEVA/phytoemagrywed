@@ -206,13 +206,13 @@ code {
     var(--pe-surface-alt);
 }
 
-/* Un solo cuadro limpio: logo, dos campos y el botón. Nada más. */
+/* Un solo cuadro limpio, estrecho: marca, dos campos y el botón. Nada más. */
 .login__card {
   width: 100%;
-  max-width: 352px;
+  max-width: 318px;
   display: grid;
   justify-items: center;
-  padding: 28px 22px 24px;
+  padding: 26px 20px 22px;
   border: 1px solid var(--pe-border);
   border-radius: var(--pe-radius-lg);
   background: var(--pe-surface);
@@ -220,14 +220,28 @@ code {
   text-align: center;
 }
 
+/* La marca en CUADRADO (tipo icono de app): el logo va dentro de una placa. */
+.login__mark {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 16px;
+  border: 1px solid rgba(11, 107, 79, 0.22);
+  background: linear-gradient(160deg, #ffffff, var(--phyto-primary-tint));
+  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
 .login__logo {
+  display: block;
+  width: 42px;
+  height: 42px;
   object-fit: contain;
-  filter: drop-shadow(0 8px 18px rgba(7, 61, 46, 0.18));
 }
 
 .login__title {
   margin: 12px 0 0;
-  font-size: 1.2rem;
+  font-size: 1.12rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--pe-ink-900);
@@ -239,19 +253,125 @@ code {
   letter-spacing: 0.08em;
 }
 
+/* Línea fina y elegante bajo el título, en vez del aviso rojo de antes. */
+.login__lede {
+  margin: 5px 0 0;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--pe-ink-500);
+}
+
 .login__form {
   width: 100%;
   display: grid;
-  gap: 12px;
-  margin: 20px 0 0;
+  gap: 11px;
+  margin: 18px 0 0;
   text-align: left;
 }
 
+/* Campos CUADRADOS, más bajos y estrechos (solo en la entrada). */
+.login .field {
+  gap: 3px;
+}
+
+.login .field__label {
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+}
+
+.login .field__input {
+  min-height: 40px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.login .pass .field__input {
+  padding-right: 44px;
+}
+
+.login .pass__eye {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.login .pass__eye .svg {
+  width: 18px;
+  height: 18px;
+}
+
 .login__error {
-  margin: 0;
+  margin: 2px 2px 0;
   color: var(--pe-danger);
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   font-weight: 600;
+}
+
+/* Botón más estrecho y cuadrado, con una animación fina al pasar el dedo. */
+.login .login__submit {
+  justify-self: center;
+  min-width: 156px;
+  min-height: 40px;
+  margin-top: 2px;
+  padding: 9px 26px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--pe-brand-700), var(--pe-brand-800));
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 6px 16px rgba(11, 107, 79, 0.26);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* El brillo que barre el botón en cada toque. */
+.login .login__submit::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  transform: translateX(-160%);
+  pointer-events: none;
+}
+
+.login .login__submit:hover,
+.login .login__submit:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(11, 107, 79, 0.34);
+}
+
+.login .login__submit:hover::after,
+.login .login__submit:focus-visible::after {
+  animation: login-sheen 0.75s ease;
+}
+
+.login .login__submit:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 10px rgba(11, 107, 79, 0.28);
+}
+
+@keyframes login-sheen {
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login .login__submit,
+  .login .login__submit::after {
+    transition: none;
+    animation: none;
+  }
 }
 
 /* --------------------------------------------------------------------- APP */
