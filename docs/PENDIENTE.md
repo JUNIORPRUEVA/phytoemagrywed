@@ -142,6 +142,44 @@ Regla reforzada por tests automáticos (`tests/content-safety.test.js` y
 - Confirmar si hay entrega en Higüey y zonas aledañas, punto de entrega y envíos
   nacionales (`commerce.pickupAvailable`, `shippingAvailable`).
 
+## 6.b Pendiente de DESPLIEGUE: factura por WhatsApp (2026-10-04)
+
+El CRM ya sabe enviar la factura por WhatsApp desde el propio panel (documento
+nativo, sin WhatsApp Web ni el menú de compartir del teléfono). **Está terminado y
+probado, pero NO está en el servidor**, y no por un fallo del deploy:
+
+- El servicio de despliegue compila desde **GitHub** (`origin/main`), no desde el
+  equipo local. Hoy `origin/main` está en `7305313` (`feat(chat): el campo de
+  texto ya no desaparece…`): ese es el nombre que aparece en el historial de
+  despliegues.
+- Los cambios viven en **commits locales sin empujar** (`ahead 5`): `6a5d442`,
+  `aed9d39`, `d3cc74f`, `f77e718` (factura por WhatsApp) y `303f7eb` (pruebas del
+  payload). Mientras no se empujen, el servidor no puede verlos ni compilarlos.
+
+Para que aparezca, en este orden:
+
+1. `git push origin main` (lo decide el negocio: **publica también las fases
+   anteriores**, no solo la factura).
+2. Relanzar el despliegue de **ese** servicio. La imagen lleva las dos mitades
+   juntas: nginx sirve `dist/` + `dist/admin/` (el panel) y Node el CRM
+   (`PHYTO_ADMIN_DIR=/app/admin`), así que un redeploy basta si es el mismo
+   servicio. Si el CRM es otro servicio, hay que redesplegarlo también.
+3. Antes de usarlo: **en producción el botón envía facturas REALES** (cada
+   confirmación = un mensaje al cliente). Dentro de la ventana de 24 h envía ya;
+   fuera, no enviará nada hasta que Meta apruebe `phyto_envio_factura_v1` y se
+   pulse «Sincronizar con Meta» en Ajustes > WhatsApp (definición exacta en
+   `docs/WHATSAPP_INTEGRATION.md`, sección «Enviar la factura de un pedido»).
+
+No hace falta migrar nada: `document` ya era un tipo de `MEDIA_TYPES`, el PDF ya
+está en `ALLOWED_MIME` y `/api/admin/media/:id` lo sirve `inline`. Lo que sí hay
+que tener: `PHYTO_ADMIN_DIR` apuntando al panel compilado y el `sw.js` con
+`crm-v40-factura-whatsapp` (ya va en el cambio) para que los móviles recarguen el
+panel nuevo.
+
+Aviso para pruebas manuales: **NO** usar `npm run dev` con el `.env` real para
+probar el botón (el token de WhatsApp es de verdad y el mensaje sale al cliente).
+Para eso está el arnés con WhatsApp simulado que se usó en la UAT.
+
 ## 7. Revisión: ¿esta web puede generar confianza, clientes y compras?
 
 ### Lo que ya empuja a la venta (no tocar)
