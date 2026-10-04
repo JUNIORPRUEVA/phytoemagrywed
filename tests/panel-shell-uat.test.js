@@ -111,6 +111,33 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toContain('.drawer__item--link');
   });
 
+  it('el menú tiene «Compartir app» y comparte el enlace SIN la clave', () => {
+    /*
+     * El botón sirve para pasarle el panel a otra persona (un vendedor, un
+     * repartidor, el socio). Lo que se comparte es el ENLACE, y jamás la clave:
+     * la dirección del panel puede llevar `?token=…`, así que el enlace se arma
+     * a mano (origin + /admin/) y no se copia lo que hay en la barra.
+     */
+    const item = html.match(/<button[^>]*id="drawer-share"[\s\S]*?<\/button>/);
+    expect(item).toBeTruthy();
+    expect(item[0]).toContain('Compartir app');
+    expect(item[0]).toContain('data-icon="share"');
+    // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
+    expect(app).toContain('share: svg(');
+    expect(app).toContain('return `${location.origin}/admin/`;');
+
+    const funcion = app.slice(app.indexOf('function panelShareUrl'), app.indexOf('function panelShareMessage'));
+    expect(funcion).not.toContain('location.href');
+    expect(funcion).not.toContain('location.search');
+
+    // Está conectado al menú y tiene salida en los dos mundos.
+    expect(app).toContain("$('#drawer-share')?.addEventListener('click'");
+    expect(app).toContain('navigator.share');
+    expect(app).toContain('navigator.clipboard.writeText');
+    // Y un camino de WhatsApp para cuando el navegador no deja copiar.
+    expect(app).toContain('https://wa.me/?text=');
+  });
+
   it('los iconos son UN sistema (SVG), no emojis mezclados', () => {
     expect(app).toContain('const ICONS = {');
     expect(app).toContain('function paintIcons');

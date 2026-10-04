@@ -384,6 +384,8 @@
     eyeOff: svg('<path d="M4.4 8.4C3.3 9.7 2.8 12 2.8 12S6.4 18.2 12 18.2c1.5 0 2.8-.4 4-1M9.2 6.2A7.6 7.6 0 0 1 12 5.8c5.6 0 9.2 6.2 9.2 6.2a17 17 0 0 1-3 3.6"/><path d="M4.6 4.6l14.8 14.8"/><path d="M9.9 9.9a2.9 2.9 0 0 0 4.2 4.2"/>'),
     /* «Ir a la web»: el globo del menú, para la tienda. */
     web: svg('<circle cx="12" cy="12" r="8.6"/><path d="M3.6 9.5h16.8M3.6 14.5h16.8"/><path d="M12 3.4c2.2 2.4 3.3 5.3 3.3 8.6s-1.1 6.2-3.3 8.6c-2.2-2.4-3.3-5.3-3.3-8.6S9.8 5.8 12 3.4z"/>'),
+    /* «Compartir app»: dos puntos unidos por líneas. */
+    share: svg('<circle cx="17.6" cy="5.9" r="2.7"/><circle cx="6.4" cy="12" r="2.7"/><circle cx="17.6" cy="18.1" r="2.7"/><path d="M8.8 10.7l6.4-3.4M8.8 13.3l6.4 3.4"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -11113,8 +11115,61 @@
     drawerFocusBack = null;
   }
 
-  // ------------------------------------------------------------------- tabs
+  /**
+   * COMPARTIR LA APP (el panel) con otra persona: un vendedor, un repartidor, el
+   * socio. Se comparte el ENLACE, nada más — y SIEMPRE sin la clave: quien lo
+   * recibe abre la pantalla de entrada y adentro pone su usuario. Nunca se manda
+   * `location.href`, porque la dirección del panel puede llevar la clave del
+   * enlace (`?token=…`) y eso sería regalar el panel entero.
+   */
+  function panelShareUrl() {
+    return `${location.origin}/admin/`;
+  }
 
+  /** El texto que viaja con el enlace (en el móvil, en el chat o por WhatsApp). */
+  function panelShareMessage(url) {
+    return `Panel de trabajo de Phytoemagry: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
+  }
+
+  /**
+   * Compartir con lo que tenga el dispositivo: la hoja nativa en el móvil, el
+   * enlace copiado en el ordenador y, si el navegador no deja copiar, una hoja
+   * con el enlace a la vista y un botón de WhatsApp. Ninguna vía falla en
+   * silencio.
+   */
+  async function sharePanelApp() {
+    const url = panelShareUrl();
+    const texto = panelShareMessage(url);
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({ title: 'Phytoemagry · Panel', text: texto, url });
+        return true;
+      }
+    } catch (error) {
+      // Cerrar la hoja de compartir sin elegir a nadie no es un error.
+      if (error?.name === 'AbortError') return false;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Enlace copiado. Pégalo donde quieras mandarlo.');
+      return true;
+    } catch {
+      openSheet(
+        'Compartir la app',
+        `<div class="field">
+          <span class="field__label">Enlace del panel</span>
+          <input class="field__input" id="share-url" type="text" readonly value="${escapeHtml(url)}" />
+        </div>
+        <p class="view__hint">Cópialo y mándalo: quien lo reciba abre el panel y entra con el usuario que le des.</p>
+        <a class="btn btn--primary btn--block" href="https://wa.me/?text=${encodeURIComponent(texto)}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp</a>`,
+        { variant: 'menu' },
+      );
+      $('#share-url')?.select();
+      return false;
+    }
+  }
+
+  // ------------------------------------------------------------------- tabs
   /** Los tres destinos de trabajo + lo que vive en el menú lateral. */
   const VIEWS = ['hoy', 'whatsapp', 'clientes', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
@@ -11266,6 +11321,12 @@
     });
 
     $$('[data-tab]').forEach((button) => button.addEventListener('click', () => setTab(button.dataset.tab)));
+
+    /* «Compartir app»: manda el enlace del panel (sin la clave) a otra persona. */
+    $('#drawer-share')?.addEventListener('click', () => {
+      closeDrawer();
+      sharePanelApp();
+    });
 
     $('#search').addEventListener('input', (event) => {
       state.q = event.target.value.trim();

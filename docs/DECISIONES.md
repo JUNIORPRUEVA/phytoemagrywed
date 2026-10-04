@@ -1348,6 +1348,31 @@ las respuestas dicen qué pasa y qué NO se le va a pedir (ni cobro en la págin
 tarjeta), con el total por delante. También se corrigió un texto que mentía: «¿Cómo realizo
 mi pedido?» describía un formulario de tres campos que no existe (el modal pide el nombre).
 
+## 49. «Compartir app» en el menú del panel (y por qué NO se comparte la clave)
+
+El negocio lo pidió así: «un botón que diga compartir app, para poder compartirla con otra
+persona». Está en el menú lateral, en **Sistema**, entre «Perfil» e «Ir a la web».
+
+1. **Se comparte el ENLACE, nunca la clave.** La dirección del panel puede llevar la clave
+   del enlace (`/admin/?token=…`) y mandar eso sería regalar el panel entero. El enlace se
+   arma a mano (`location.origin + '/admin/'`) y **no** se copia la barra de direcciones:
+   comprobado en un navegador de verdad entrando con clave y con parámetros en la URL — lo
+   que sale es `https://<dominio>/admin/` limpio. La prueba de código
+   (`panel-shell-uat.test.js`) además revisa que `panelShareUrl()` no use `location.href`
+   ni `location.search`.
+2. **Tres salidas, ninguna en silencio:** la hoja nativa del teléfono (`navigator.share`,
+   que es la que usa la gente: WhatsApp, correo…), el enlace copiado al portapapeles con
+   aviso («Enlace copiado…») en el ordenador, y —si el navegador no deja copiar— una hoja
+   con el enlace a la vista y un botón para mandarlo por WhatsApp. Cerrar la hoja de
+   compartir sin elegir a nadie no avisa de nada (no es un error).
+3. **El enlace no da acceso.** Quien lo recibe ve la pantalla de entrada: para trabajar
+   necesita su propio usuario, que se crea en **Usuarios**. Por eso el texto que acompaña
+   al enlace lo dice con esas palabras («entra con el usuario que te demos»), en vez de
+   dejar creer que el enlace ya abre el panel.
+4. **Probado en el navegador de verdad** (los dos caminos: hoja nativa y portapapeles) y
+   en la prueba de la piel del panel. El service worker sube a `crm-v32-compartir-app`.
+
+
 
 
 

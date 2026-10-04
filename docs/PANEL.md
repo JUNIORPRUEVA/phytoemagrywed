@@ -227,6 +227,20 @@ clave no es una cuenta personal y la página lo dice, con un botón para entrar 
 usuario. Un agente puede cambiar **sus** datos y su clave; los de otra persona solo los
 toca un administrador desde **Usuarios**.
 
+### Compartir app (abajo del menú lateral)
+
+Para pasarle el panel a otra persona (un vendedor, un repartidor, el socio):
+
+1. **Compartir app** en el menú: en el móvil abre la hoja de compartir del teléfono
+   (WhatsApp, correo, lo que uses); en el ordenador copia el enlace y lo avisa.
+   Si el navegador no deja copiar, sale una hoja con el enlace a la vista y un botón
+   para mandarlo por WhatsApp.
+2. Esa persona **abre el enlace** e instala el panel en su teléfono si quiere (se puede
+   añadir a la pantalla de inicio, como una app).
+3. Para **entrar** necesita su propio usuario: se crea en **Usuarios** y se le dice el
+   usuario y la contraseña. El enlace que se comparte **no da acceso a nada** — va sin la
+   clave del panel a propósito.
+
 ### Reglas que no se rompen
 
 1. **Nada se envía solo** salvo un mensaje que el negocio programó expresamente, y solo
