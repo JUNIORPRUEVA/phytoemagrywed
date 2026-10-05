@@ -4298,6 +4298,27 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route.startsWith('/api/admin/users/') && req.method === 'DELETE') {
+      if (!requireAdmin()) return;
+      const userId = decodeURIComponent(route.slice('/api/admin/users/'.length));
+      const result = await ctx.users.deleteUser(userId, actor);
+      if (!result.ok) {
+        json(res, result.error === 'not_found' ? 404 : 409, {
+          ok: false,
+          error: result.error,
+          message:
+            result.error === 'self_delete'
+              ? 'No puedes eliminar tu propio usuario desde la sesión actual.'
+              : result.error === 'last_admin'
+                ? 'Debe quedar al menos un administrador activo.'
+                : 'No se pudo eliminar el usuario.',
+        });
+        return;
+      }
+      json(res, 200, { ok: true, deleted: result.deleted, user: result.user });
+      return;
+    }
+
     if (route.startsWith('/api/admin/users/') && (req.method === 'PATCH' || req.method === 'POST')) {
       if (!requireAdmin()) return;
       const userId = decodeURIComponent(route.slice('/api/admin/users/'.length));
@@ -6514,6 +6535,41 @@ async function handle(req, res, ctx) {
         });
         return;
       }
+    }
+
+    if (route.startsWith('/api/admin/orders/') && req.method === 'DELETE') {
+      if (!requirePermission('sales.cancel', 'Solo ADMIN puede eliminar pedidos.')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length)).replace(/\/+$/, '');
+      const item = (await store.listAdmin({ limit: 5000 })).find((entry) => entry.id === orderId) ?? null;
+      if (!item || item.type !== 'order_intent') {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      const status = String(item.status ?? order?.status ?? '').toLowerCase();
+      const blocked =
+        isCompletedPurchaseStatus(status) ||
+        ['cancelado', 'perdido'].includes(status) ||
+        Boolean(order?.delivered_at || order?.cancelled_at || order?.inventory_restored_at || item.meta_purchase_event_id);
+      if (blocked) {
+        json(res, 409, {
+          ok: false,
+          error: 'order_has_commercial_history',
+          message: 'Este pedido ya tiene historial comercial. No se borra: usa Cancelar venta para conservar trazabilidad.',
+        });
+        return;
+      }
+      const deleted = await store.remove(orderId);
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: orderId,
+        action: 'order.deleted',
+        actor: actor?.display_name ?? null,
+        summary: `Pedido eliminado: ${order?.order_number ?? item.order_number ?? orderId}`,
+        data: { customer_id: item.customer_id ?? order?.customer_id ?? null, status },
+      });
+      json(res, 200, { ok: true, deleted });
+      return;
     }
 
     // Modificar un pedido (frascos, descuento, notas, entrega). Recalcula el total.

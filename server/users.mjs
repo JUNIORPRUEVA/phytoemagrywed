@@ -304,6 +304,34 @@ export function createUserService(deps) {
     return { ok: true, user: publicUser(updated) };
   }
 
+  async function deleteUser(id, actor = null) {
+    const current = await db.get('crm_users', id);
+    if (!current) return { ok: false, error: 'not_found' };
+    if (actor?.id && actor.id === id) return { ok: false, error: 'self_delete' };
+    if (current.role === 'ADMIN' && current.active !== false && (await activeAdmins(current.id)).length === 0) {
+      return { ok: false, error: 'last_admin' };
+    }
+    await revokeSessionsForUser(id, 'user_deleted');
+    const sessions = await db.list('crm_sessions', { limit: 5000 });
+    for (const session of sessions.filter((row) => row.user_id === id)) {
+      await db.remove('crm_sessions', session.id);
+    }
+    const notifications = await db.list('user_notifications', { limit: 5000 });
+    for (const notification of notifications.filter((row) => row.recipient_user_id === id)) {
+      await db.remove('user_notifications', notification.id);
+    }
+    const deleted = await db.remove('crm_users', id);
+    await audit?.record({
+      entity: 'user',
+      entityId: id,
+      action: 'user_deleted',
+      actor: actor?.display_name,
+      summary: `Usuario eliminado: ${current.display_name}`,
+      data: { username: current.username, role: current.role },
+    });
+    return { ok: true, deleted, user: publicUser(current) };
+  }
+
   async function changeOwnPassword(userId, currentPassword, nextPassword, actor = null) {
     const user = await db.get('crm_users', userId);
     if (!user || user.active === false) return { ok: false, error: 'not_found' };
@@ -397,6 +425,7 @@ export function createUserService(deps) {
     createUser,
     listUsers,
     updateUser,
+    deleteUser,
     changeOwnPassword,
     login,
     sessionUser,

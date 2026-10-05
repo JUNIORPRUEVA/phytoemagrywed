@@ -9883,3 +9883,323 @@ body[data-tab='pedidos'] .order-row__status,
 .menu-item--danger {
   color: #991b1b;
 }
+
+/* ==========================================================================
+   Pulido final: drawer compacto + Hoy/Clientes/Pedidos al estilo WhatsApp
+   ========================================================================== */
+.drawer {
+  gap: 2px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 10px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+.drawer__head {
+  min-height: 48px;
+  margin-bottom: 4px;
+}
+
+.drawer__logo {
+  width: 36px;
+  height: 36px;
+}
+
+.drawer__head .icon-btn {
+  width: 38px;
+  height: 38px;
+}
+
+.drawer__group {
+  display: none;
+}
+
+.drawer__nav {
+  gap: 1px;
+}
+
+.drawer__item {
+  min-height: 36px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  font-size: 13.5px;
+}
+
+.drawer__icon {
+  width: 18px;
+}
+
+.drawer__icon .svg {
+  width: 17px;
+  height: 17px;
+}
+
+.drawer__foot {
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.drawer__logout {
+  width: 40px;
+  height: 40px;
+  margin-top: 6px;
+}
+
+@media (max-width: 979px) {
+  .tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  body[data-tab='hoy'] .mobile-header {
+    min-height: 252px;
+  }
+
+  body[data-tab='hoy'] .dashboard-head {
+    min-height: 74px;
+    padding: calc(5px + env(safe-area-inset-top, 0px)) 16px 4px;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__menu,
+  body[data-tab='hoy'] .dashboard-head__quick {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__title strong {
+    font-size: clamp(1.2rem, 5vw, 1.55rem);
+  }
+
+  body[data-tab='hoy'] .dashboard-head__title span {
+    font-size: 0.74rem;
+  }
+
+  body[data-tab='hoy'] .content {
+    --dash-content-top: 66px;
+    margin-top: -170px;
+    padding: 0 10px calc(var(--pe-tabbar) + env(safe-area-inset-bottom, 0px));
+    height: calc(100dvh - var(--dash-content-top) - var(--pe-tabbar) - env(safe-area-inset-bottom, 0px));
+  }
+
+  body[data-tab='hoy'] .stats {
+    gap: 7px;
+  }
+
+  body[data-tab='hoy'] .stat {
+    grid-template-columns: 38px minmax(0, 1fr) 12px;
+    min-height: 62px;
+    padding: 8px 9px;
+    border-radius: 12px;
+  }
+
+  body[data-tab='hoy'] .stat__icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  body[data-tab='hoy'] .stat__value {
+    font-size: 1.22rem;
+  }
+
+  body[data-tab='hoy'] .stat__label {
+    font-size: 0.68rem;
+  }
+
+  body[data-tab='hoy'] .stat:nth-child(5) {
+    grid-column: auto;
+    max-width: none;
+  }
+
+  body[data-tab='hoy'] #list-hoy {
+    display: grid;
+    gap: 7px;
+    padding: 9px 0 4px;
+  }
+
+  body[data-tab='hoy'][data-today-expanded='true'] #list-hoy .today-section:not([open]) {
+    display: none;
+  }
+
+  body[data-tab='hoy'] .today-section {
+    border-radius: 10px;
+  }
+
+  body[data-tab='hoy'] .today-section__summary {
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+
+  body[data-tab='hoy'] .today-section__count {
+    min-width: 35px;
+    height: 30px;
+    border-radius: 9px;
+    font-size: 1rem;
+  }
+
+  body[data-tab='hoy'] .today-section__title {
+    font-size: 0.9rem;
+  }
+
+  body[data-tab='hoy'] .today-section__body {
+    max-height: calc(100dvh - 210px);
+    overflow-y: auto;
+    padding: 0 6px 8px;
+    scrollbar-width: thin;
+  }
+
+  body[data-tab='clientes'],
+  body[data-tab='pedidos'] {
+    overflow: hidden;
+  }
+
+  body[data-tab='clientes'] .app,
+  body[data-tab='pedidos'] .app {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  body[data-tab='clientes'] .mobile-header,
+  body[data-tab='pedidos'] .mobile-header {
+    display: block;
+  }
+
+  body[data-tab='clientes'] .content,
+  body[data-tab='pedidos'] .content {
+    height: calc(100dvh - var(--pe-tabbar) - env(safe-area-inset-bottom, 0px));
+    min-height: 0;
+    padding: 0 0 calc(var(--pe-tabbar) + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+  }
+
+  body[data-tab='clientes'] #view-clientes,
+  body[data-tab='pedidos'] #view-pedidos {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+  }
+
+  body[data-tab='clientes'] #view-clientes .filters {
+    display: contents;
+  }
+
+  body[data-tab='clientes'] #search {
+    display: none;
+  }
+
+  body[data-tab='clientes'] #clientes-count,
+  body[data-tab='pedidos'] #pedidos-count {
+    margin: 0;
+    padding: 5px 14px 6px;
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 750;
+  }
+
+  body[data-tab='clientes'] #list-clientes,
+  body[data-tab='pedidos'] #list-pedidos {
+    min-height: 0;
+    align-content: start;
+    align-items: start;
+    gap: 0;
+    grid-auto-rows: min-content;
+    overflow-y: auto;
+    padding: 0 0 8px;
+    scrollbar-width: thin;
+  }
+
+  body[data-tab='clientes'] .client-row,
+  body[data-tab='pedidos'] .order-row {
+    align-self: start;
+    min-height: 58px;
+    margin: 0;
+    padding: 8px 10px 7px 14px;
+    border: 0;
+    border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+    border-left: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  body[data-tab='clientes'] .client-row__avatar {
+    display: none;
+  }
+
+  body[data-tab='clientes'] .client-row__main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body[data-tab='clientes'] .client-row__body {
+    gap: 2px;
+  }
+
+  body[data-tab='clientes'] .client-row__meta,
+  body[data-tab='clientes'] .client-row__sales {
+    min-width: 0;
+  }
+
+  body[data-tab='clientes'] .client-row__sales > span {
+    max-width: 44%;
+  }
+
+  body[data-tab='clientes'] .client-row__icon {
+    border-radius: 10px;
+    background: rgba(11, 107, 79, 0.055);
+  }
+
+  body[data-tab='pedidos'] .order-row__status {
+    border-radius: 9px;
+  }
+
+  body[data-tab='clientes'] #chips,
+  body[data-tab='pedidos'] #pedidos-filtros {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 65;
+    display: grid;
+    align-content: start;
+    width: min(58vw, 276px);
+    min-width: 210px;
+    max-height: 100dvh;
+    gap: 10px;
+    padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 14px;
+    overflow-y: auto;
+    border-left: 1px solid rgba(11, 107, 79, 0.12);
+    border-radius: 18px 0 0 18px;
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: -22px 0 42px rgba(7, 61, 46, 0.2);
+    transform: translateX(110%);
+    transition: transform 0.2s ease;
+    backdrop-filter: blur(16px);
+    scrollbar-width: thin;
+  }
+
+  body[data-tab='clientes'][data-client-filters='open'] #chips,
+  body[data-tab='pedidos'][data-order-filters='open'] #pedidos-filtros {
+    transform: translateX(0);
+  }
+
+  body[data-tab='clientes'] #chips .chip,
+  body[data-tab='pedidos'] #pedidos-filtros .chip {
+    justify-content: space-between;
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 1px solid rgba(11, 107, 79, 0.08);
+    border-radius: 11px;
+    background: rgba(11, 107, 79, 0.055);
+    color: #082235;
+    font-size: 13px;
+    font-weight: 720;
+    text-align: left;
+  }
+
+  body[data-tab='clientes'] #chips .chip[aria-pressed='true'],
+  body[data-tab='pedidos'] #pedidos-filtros .chip[aria-pressed='true'] {
+    border-color: var(--phyto-primary);
+    background: var(--phyto-primary);
+    color: #fff;
+  }
+}

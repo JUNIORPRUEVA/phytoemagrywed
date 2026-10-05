@@ -292,6 +292,33 @@ describe('multiusuario, auth y asignación', () => {
     expect((await body(demote)).error).toBe('last_admin');
   });
 
+  it('ADMIN puede eliminar usuarios, pero no a sí mismo ni al último admin', async () => {
+    const temporal = await body(await request('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'temporal@phyto.local', password: 'Temporal-123', displayName: 'Temporal', role: 'AGENT' }),
+    }));
+    expect(temporal.user.id).toBeTruthy();
+
+    const removed = await request(`/api/admin/users/${temporal.user.id}`, { method: 'DELETE' });
+    expect(removed.status).toBe(200);
+    const usersAfter = (await body(await request('/api/admin/users'))).users;
+    expect(usersAfter.some((user) => user.id === temporal.user.id)).toBe(false);
+
+    const ana = usersAfter.find((user) => user.username === ADMIN_USER);
+    const self = await request(`/api/admin/users/${ana.id}`, { method: 'DELETE' });
+    expect(self.status).toBe(409);
+    expect((await body(self)).error).toBe('self_delete');
+
+    const anotherAdmin = await body(await request('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'admin2@phyto.local', password: 'Admin2-123', displayName: 'Admin Dos', role: 'ADMIN' }),
+    }));
+    const deletedSecondAdmin = await request(`/api/admin/users/${anotherAdmin.user.id}`, { method: 'DELETE' });
+    expect(deletedSecondAdmin.status).toBe(200);
+    const stillAdmin = (await body(await request('/api/admin/users'))).users.find((user) => user.id === ana.id);
+    expect(stillAdmin.role).toBe('ADMIN');
+  });
+
   it('logout invalida sesión', async () => {
     const pedroLogin = await login('pedro@phyto.local', PEDRO_PASS);
     pedroCookie = pedroLogin.cookie;
@@ -451,6 +478,39 @@ describe('multiusuario, auth y asignación', () => {
       body: JSON.stringify({ tagId: first.id }),
     }, mariaCookie);
     expect(assigned.status).toBe(200);
+  });
+
+  it('ADMIN elimina pedidos nuevos, pero bloquea borrar ventas con historial comercial', async () => {
+    const draft = await body(
+      await request('/api/admin/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerId: conversation.customer.id,
+          items: [{ variantId: 'capsules_5', quantity: 1 }],
+          paymentMethod: 'CASH',
+          status: 'nuevo',
+        }),
+      }),
+    );
+    const deleted = await request(`/api/admin/orders/${draft.item.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+    const missing = await request(`/api/admin/orders/${draft.item.id}`);
+    expect(missing.status).toBe(404);
+
+    const delivered = await body(
+      await request('/api/admin/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customerId: conversation.customer.id,
+          items: [{ variantId: 'capsules_5', quantity: 1 }],
+          paymentMethod: 'CASH',
+          status: 'entregado',
+        }),
+      }),
+    );
+    const blocked = await request(`/api/admin/orders/${delivered.item.id}`, { method: 'DELETE' });
+    expect(blocked.status).toBe(409);
+    expect((await body(blocked)).error).toBe('order_has_commercial_history');
   });
 
   it('ADMIN reasigna, filtros Míos/Sin asignar responden y auditoría registra actor', async () => {

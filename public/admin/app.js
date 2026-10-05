@@ -145,8 +145,10 @@
     filter: 'todos',
     q: '',
     clientSearchOpen: false,
+    clientFiltersOpen: false,
     // Filtro de la lista de pedidos, por ESTADO OPERATIVO (pendiente, en camino…).
     pedidosFilter: 'todo',
+    pedidosFiltersOpen: false,
     // Datos de la factura abierta (los usa el menú de su botón flotante).
     receiptContext: null,
     openId: null,
@@ -1092,11 +1094,11 @@
       box.innerHTML = `<div class="wa-appbar client-appbar">
         <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>Clientes</strong>
-          <span>Lista de clientes</span>
+          <strong>Personas</strong>
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-client-search-open type="button" aria-label="Buscar cliente">${ICONS.search}</button>
+          <button class="wa-appbar__icon" data-client-filter-open type="button" aria-label="Filtrar clientes">${ICONS.filter}</button>
         </div>
       </div>`;
       return;
@@ -1105,10 +1107,11 @@
       box.innerHTML = `<div class="wa-appbar order-appbar">
         <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>Pedidos</strong>
-          <span>Compras y entregas</span>
+          <strong>Compras y entregas</strong>
         </div>
-        <div class="wa-appbar__actions"></div>
+        <div class="wa-appbar__actions">
+          <button class="wa-appbar__icon" data-order-filter-open type="button" aria-label="Filtrar pedidos">${ICONS.filter}</button>
+        </div>
       </div>`;
       return;
     }
@@ -1223,11 +1226,9 @@
       .join('');
   }
 
-  function todayDashboardSection({ id, title, count, html, tone = 'neutral', open = false, action = '' }) {
+  function todayDashboardSection({ id, title, count, html, tone = 'neutral', action = '' }) {
     const numeric = Number(count ?? 0);
-    return `<details class="today-section today-section--${escapeHtml(tone)}" data-today-section="${escapeHtml(id)}" ${
-      open ? 'open' : ''
-    }>
+    return `<details class="today-section today-section--${escapeHtml(tone)}" data-today-section="${escapeHtml(id)}">
       <summary class="today-section__summary">
         <span class="today-section__copy">
           <span class="today-section__count">${escapeHtml(numeric)}</span>
@@ -1761,7 +1762,6 @@
       count,
       html,
       tone: options.tone ?? 'neutral',
-      open: options.open ?? false,
       action: options.action ?? '',
     });
 
@@ -1870,6 +1870,7 @@
 
     $('#list-hoy').innerHTML =
       bloques || emptyState('Todo al día 👌 Nada pendiente y ningún mensaje sin contestar.');
+    delete document.body.dataset.todayExpanded;
   }
 
   function renderWhatsapp() {
@@ -2018,6 +2019,7 @@
   }
 
   function renderClientes() {
+    document.body.dataset.clientFilters = state.clientFiltersOpen ? 'open' : 'closed';
     const customers = filteredCustomers();
     $('#clientes-count').textContent = `${customers.length} de ${state.customers.length} clientes`;
     $('#list-clientes').innerHTML = customers.length
@@ -2109,6 +2111,7 @@
   function renderPedidos() {
     const box = $('#list-pedidos');
     if (!box) return;
+    document.body.dataset.orderFilters = state.pedidosFiltersOpen ? 'open' : 'closed';
     const items = ordersNewestFirst(applyOutbox(state.items.filter((item) => item.type === 'order_intent')));
     const filter = state.pedidosFilter ?? 'todo';
     const byFilter = (value) =>
@@ -3575,6 +3578,7 @@
               user.active === false ? 'true' : 'false'
             }" type="button">${user.active === false ? 'Activar' : 'Desactivar'}</button>
             <button class="btn btn--ghost btn--sm" data-user-password="${escapeHtml(user.id)}" type="button">Reset contraseña</button>
+            <button class="btn btn--danger btn--sm" data-user-delete="${escapeHtml(user.id)}" type="button">Eliminar</button>
           </div>
         </article>`,
       )
@@ -3603,6 +3607,24 @@
         toast(error.body?.error === 'last_admin' ? 'Debe quedar al menos un administrador activo' : error.body?.message ?? 'No se pudo actualizar');
       }
     }
+  }
+
+  async function deleteUser(id, button = null) {
+    const user = (state.users ?? []).find((row) => row.id === id) ?? null;
+    const name = user?.display_name ?? user?.username ?? 'este usuario';
+    const ok = window.confirm(`¿Eliminar ${name}? Se cerrarán sus sesiones y se borrarán sus notificaciones.`);
+    if (!ok) return;
+    await working(button, 'Eliminando…', async () => {
+      try {
+        await api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        await loadUsers();
+        toast('Usuario eliminado');
+      } catch (error) {
+        if (error.message !== 'unauthorized') {
+          toast(error.body?.message ?? 'No se pudo eliminar el usuario');
+        }
+      }
+    });
   }
 
   /*
@@ -11357,6 +11379,15 @@
               data: { 'data-sale-cancel': item.id },
             }
           : null,
+        esPedido && isAdmin()
+          ? {
+              icon: ICONS.trash,
+              label: 'Eliminar pedido',
+              note: 'Borrado administrativo si no tiene historial comercial',
+              data: { 'data-order-delete': item.id },
+              danger: true,
+            }
+          : null,
         clienteId
           ? { icon: ICONS.person, label: 'Ver cliente', note: 'Su ficha completa', data: { 'data-customer': clienteId } }
           : null,
@@ -11449,7 +11480,36 @@
         isAdmin() && receipt.status !== 'cancelado'
           ? { icon: ICONS.close, label: 'Cancelar venta', data: { 'data-sale-cancel': orderId } }
           : null,
+        isAdmin()
+          ? {
+              icon: ICONS.trash,
+              label: 'Eliminar pedido',
+              note: 'Solo si no tiene historial comercial',
+              data: { 'data-order-delete': orderId },
+              danger: true,
+            }
+          : null,
       ].filter(Boolean),
+    });
+  }
+
+  async function deleteOrder(orderId, button = null) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    const label = item?.order_number ?? item?.name ?? orderId;
+    const ok = window.confirm(`¿Eliminar el pedido ${label}? Si ya tiene historial comercial, el CRM lo bloqueará.`);
+    if (!ok) return;
+    await working(button, 'Eliminando…', async () => {
+      try {
+        await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+        toast('Pedido eliminado');
+        closeSheet();
+        await load({ keepTab: true });
+        renderPedidos();
+      } catch (error) {
+        if (error.message !== 'unauthorized') {
+          toast(error.body?.message ?? 'No se pudo eliminar el pedido');
+        }
+      }
     });
   }
 
@@ -12648,6 +12708,14 @@
       delete document.body.dataset.waFilters;
     }
     if (tab !== 'clientes') state.clientSearchOpen = false;
+    if (tab !== 'clientes') {
+      state.clientFiltersOpen = false;
+      delete document.body.dataset.clientFilters;
+    }
+    if (tab !== 'pedidos') {
+      state.pedidosFiltersOpen = false;
+      delete document.body.dataset.orderFilters;
+    }
     // Fuera del mapa no se sigue nada: ni GPS en vivo ni sondeos ni el mapa vivo.
     if (tab !== 'mapa') {
       stopOrdersMapPoll();
@@ -12788,7 +12856,11 @@
       renderClientes();
     });
 
-    $('#chips').innerHTML = [
+    $('#chips').innerHTML = `<div class="wa-filter-panel__head">
+        <span><strong>Filtros</strong><small>Clientes</small></span>
+        <button class="wa-filter-panel__close" data-client-filter-close type="button" aria-label="Cerrar filtros">${ICONS.close}</button>
+      </div>
+      <div class="wa-filter-panel__group">` + [
       ['todos', 'Todos'],
       ['clientes', 'Clientes'],
       ['interesados', 'Interesados'],
@@ -12799,7 +12871,7 @@
         ([value, text]) =>
           `<button class="chip" data-filter="${value}" aria-pressed="${value === state.filter}" type="button">${text}</button>`,
       )
-      .join('');
+      .join('') + `</div>`;
 
     $('#chips').addEventListener('click', (event) => {
       const chip = event.target.closest('[data-filter]');
@@ -12808,6 +12880,8 @@
       $$('[data-filter]').forEach((button) =>
         button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)),
       );
+      state.clientFiltersOpen = false;
+      document.body.dataset.clientFilters = 'closed';
       renderClientes();
     });
 
@@ -12827,6 +12901,19 @@
       setTab('clientes');
       renderClientes();
     });
+
+    $('#list-hoy').addEventListener('toggle', (event) => {
+      const current = event.target.closest?.('[data-today-section]');
+      if (!current) return;
+      if (current.open) {
+        $$('[data-today-section]').forEach((section) => {
+          if (section !== current) section.open = false;
+        });
+        document.body.dataset.todayExpanded = 'true';
+      } else if (!$$('[data-today-section]').some((section) => section.open)) {
+        delete document.body.dataset.todayExpanded;
+      }
+    }, true);
 
     /*
      * Pulsación larga = seleccionar (el gesto de WhatsApp). Se cancela en cuanto
@@ -13287,6 +13374,8 @@
       const orderFilter = event.target.closest('[data-order-filter]');
       if (orderFilter) {
         state.pedidosFilter = orderFilter.dataset.orderFilter;
+        state.pedidosFiltersOpen = false;
+        document.body.dataset.orderFilters = 'closed';
         renderPedidos();
         return;
       }
@@ -13365,6 +13454,11 @@
         openCancelSale(saleCancel.dataset.saleCancel);
         return;
       }
+      const orderDelete = event.target.closest('[data-order-delete]');
+      if (orderDelete) {
+        deleteOrder(orderDelete.dataset.orderDelete, orderDelete);
+        return;
+      }
       const scheduledNew = event.target.closest('[data-scheduled-new]');
       if (scheduledNew) {
         openScheduledForm({
@@ -13411,6 +13505,11 @@
           password.dataset.userPassword,
           usuario?.display_name ?? usuario?.username ?? 'Usuario',
         );
+        return;
+      }
+      const userDelete = event.target.closest('[data-user-delete]');
+      if (userDelete) {
+        deleteUser(userDelete.dataset.userDelete, userDelete);
         return;
       }
       // El ojo de cualquier campo de contraseña: solo cambia el `type` del campo de al lado.
@@ -13684,6 +13783,30 @@
       }
       if (event.target.closest('[data-client-actions-open]')) {
         openClientsActions();
+        return;
+      }
+      if (event.target.closest('[data-client-filter-open]')) {
+        state.clientFiltersOpen = true;
+        document.body.dataset.clientFilters = 'open';
+        renderClientes();
+        return;
+      }
+      if (event.target.closest('[data-client-filter-close]')) {
+        state.clientFiltersOpen = false;
+        document.body.dataset.clientFilters = 'closed';
+        renderClientes();
+        return;
+      }
+      if (event.target.closest('[data-order-filter-open]')) {
+        state.pedidosFiltersOpen = true;
+        document.body.dataset.orderFilters = 'open';
+        renderPedidos();
+        return;
+      }
+      if (event.target.closest('[data-order-filter-close]')) {
+        state.pedidosFiltersOpen = false;
+        document.body.dataset.orderFilters = 'closed';
+        renderPedidos();
         return;
       }
       if (event.target.closest('[data-wa-search-open]')) {

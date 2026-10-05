@@ -393,11 +393,19 @@
         -->
         <section class="view" id="view-pedidos" hidden>
           <div class="chips" id="pedidos-filtros">
+            <div class="wa-filter-panel__head">
+              <span><strong>Filtros</strong><small>Compras y entregas</small></span>
+              <button class="wa-filter-panel__close" data-order-filter-close type="button" aria-label="Cerrar filtros">
+                <span class="ico" aria-hidden="true" data-icon="close"></span>
+              </button>
+            </div>
+            <div class="wa-filter-panel__group">
             <button class="chip" data-order-filter="todo" aria-pressed="true" type="button">Todo</button>
             <button class="chip" data-order-filter="pendiente" type="button">Pendientes</button>
             <button class="chip" data-order-filter="en-camino" type="button">En camino</button>
             <button class="chip" data-order-filter="entregado" type="button">Entregados</button>
             <button class="chip" data-order-filter="cancelado" type="button">Cancelados</button>
+            </div>
           </div>
           <p class="view__count" id="pedidos-count"></p>
           <div class="list list--orders" id="list-pedidos"></div>

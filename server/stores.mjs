@@ -343,6 +343,7 @@ async function createSqliteStore(file) {
       position = excluded.position, updated_at = excluded.updated_at
   `);
   const deleteMessage = db.prepare('DELETE FROM messages WHERE id = ?');
+  const deleteItem = db.prepare('DELETE FROM items WHERE id = ?');
 
   const store = {
     kind: 'sqlite',
@@ -451,6 +452,9 @@ async function createSqliteStore(file) {
       );
       return { ...item, ...next };
     },
+    remove(id) {
+      return Number(deleteItem.run(id).changes) > 0;
+    },
     messages() {
       return {
         list: () => allMessages.all(),
@@ -550,6 +554,13 @@ function createJsonlStore(file) {
       rows[index] = next;
       writeFileSync(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(''), 'utf8');
       return next;
+    },
+    remove(id) {
+      const rows = readRows(file);
+      const next = rows.filter((item) => item.id !== id);
+      if (next.length === rows.length) return false;
+      writeFileSync(file, next.map((row) => `${JSON.stringify(row)}\n`).join(''), 'utf8');
+      return true;
     },
     messages() {
       const list = () => {
@@ -826,6 +837,10 @@ async function createPostgresStore(url) {
         ],
       );
       return { ...item, ...next };
+    },
+    async remove(id) {
+      const result = await pool.query(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
+      return result.rowCount > 0;
     },
     messages() {
       return {
