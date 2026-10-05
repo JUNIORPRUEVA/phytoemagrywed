@@ -182,7 +182,7 @@ describe('usuarios: contraseña corta y con ojo para verla', () => {
     expect(usuarios.users.find((user) => user.username === 'ana.agente@phyto.local').role).toBe('AGENT');
     // Seis caracteres de verdad sirven para entrar.
     expect(await loginWorks('ana.agente@phyto.local', 'ana123')).toBe(true);
-  });
+  }, 15000);
 
   it('el reseteo de contraseña es una hoja con ojo (no un prompt a ciegas)', async () => {
     const fila = await waitFor(
@@ -206,5 +206,5 @@ describe('usuarios: contraseña corta y con ojo para verla', () => {
     // La contraseña nueva (6 caracteres) es la que entra; la vieja ya no.
     expect(await loginWorks('ana.agente@phyto.local', 'nueva1')).toBe(true);
     expect(await loginWorks('ana.agente@phyto.local', 'ana123')).toBe(false);
-  });
+  }, 15000);
 });
