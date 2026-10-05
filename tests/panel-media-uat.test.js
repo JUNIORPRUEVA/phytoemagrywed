@@ -598,16 +598,16 @@ describe('UAT del panel con multimedia', () => {
     expect(review.innerHTML).toContain('Sí salió');
 
     // Y la decisión queda en la auditoría.
-    const audit = await (await fetch(`${app.url}/api/admin/audit?entity=message`, { headers: { cookie } })).json();
     const row = review.querySelector('[data-review-wamid]');
     row.value = 'wamid.RECONCILIADO';
     click(review.querySelector('[data-review="sent"]'));
+    let audit = null;
     await waitFor(async () => {
-      const after = await (await fetch(`${app.url}/api/admin/audit?entity=message`, { headers: { cookie } })).json();
-      return after.entries.some((entry) => entry.action === 'message.reconciled');
+      audit = await (await fetch(`${app.url}/api/admin/audit?entity=message`, { headers: { cookie } })).json();
+      return audit.entries.some((entry) => entry.action === 'message.reconciled');
     }, 'la auditoría de la reconciliación');
-    expect(audit.entries.length).toBeGreaterThan(0);
-  });
+    expect(audit.entries.some((entry) => entry.action === 'message.reconciled')).toBe(true);
+  }, 30000);
 
   it('el flujo comercial sigue intacto: menú ⋯, pedido y comprobante', async () => {
     click('[data-tab="whatsapp"]');
