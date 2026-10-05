@@ -1737,6 +1737,105 @@ body[data-tab='hoy'] .stat__label {
   height: 17px;
 }
 
+.list--users {
+  gap: 0;
+}
+
+.user-row {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.user-row:focus-visible {
+  outline: 3px solid rgba(11, 107, 79, 0.18);
+  outline-offset: -3px;
+}
+
+.user-row__main {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-row__avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(11, 107, 79, 0.11);
+  color: var(--phyto-primary-dark);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.user-row__body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.user-row__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.user-row__top small {
+  color: var(--pe-ink-500);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.user-row__permissions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.user-row__permissions span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(11, 107, 79, 0.08);
+  color: var(--phyto-primary-dark);
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-row__permissions--sheet {
+  margin: 12px 0 14px;
+}
+
+.user-row__chevron {
+  display: grid;
+  place-items: center;
+  color: var(--phyto-primary-dark);
+  opacity: 0.7;
+  transform: rotate(180deg);
+}
+
+.user-row__chevron .svg {
+  width: 18px;
+  height: 18px;
+}
+
+.user-profile__actions {
+  margin-top: 12px;
+}
+
 .client-fab,
 .list-fab {
   position: fixed;
@@ -6594,6 +6693,95 @@ body[data-wa-view='chat'] .mobile-header {
   align-items: center;
 }
 
+.printer-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.printer-settings__hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid rgba(8, 104, 78, 0.12);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(232, 248, 255, 0.86), rgba(239, 250, 247, 0.92));
+}
+
+.printer-settings__icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(8, 122, 91, 0.1);
+  color: var(--phyto-primary);
+}
+
+.printer-settings__hero strong {
+  display: block;
+  color: var(--pe-ink-900);
+  font-weight: 850;
+}
+
+.printer-settings__hero p {
+  margin: 3px 0 0;
+  color: var(--pe-ink-600);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.printer-settings__facts {
+  margin: 0;
+}
+
+.printer-settings__actions {
+  gap: 8px;
+}
+
+.printer-settings__actions .btn {
+  min-height: 38px;
+}
+
+.printer-settings__guide {
+  padding: 12px 14px;
+  border: 1px solid rgba(8, 104, 78, 0.14);
+  border-radius: var(--radius-md);
+  background: rgba(248, 252, 250, 0.88);
+}
+
+.printer-settings__guide strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--pe-ink-900);
+  font-weight: 850;
+}
+
+.printer-settings__guide ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.printer-settings__guide li {
+  margin: 0 0 7px;
+  color: var(--pe-ink-600);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.printer-settings__guide li:last-child {
+  margin-bottom: 0;
+}
+
+.printer-settings__guide code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(8, 122, 91, 0.08);
+  color: var(--phyto-primary);
+  font-size: 0.8rem;
+}
+
 .delivery-status {
   display: inline-flex;
   width: fit-content;
@@ -6651,14 +6839,14 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 .view--delivery {
-  max-width: 760px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
 }
 
 .delivery-view {
   display: grid;
-  gap: 14px;
-  padding-bottom: 84px;
+  gap: 0;
+  padding: 0 0 74px;
 }
 
 .delivery-head {
@@ -6666,6 +6854,9 @@ body[data-wa-view='chat'] .mobile-header {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: 42px;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .delivery-head h1,
@@ -6681,7 +6872,7 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 .delivery-head p {
-  margin: 4px 0 0;
+  margin: 0;
   color: var(--pe-ink-500);
   font-size: 0.88rem;
   font-weight: 700;
@@ -6689,28 +6880,48 @@ body[data-wa-view='chat'] .mobile-header {
 
 .delivery-group {
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
 
 .delivery-group h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 8px 8px;
   font-size: 0.8rem;
   text-transform: uppercase;
   color: var(--pe-ink-500);
 }
 
+.delivery-group h2 span {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(8, 122, 91, 0.1);
+  color: var(--phyto-primary);
+  font-size: 0.72rem;
+}
+
 .delivery-card {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  min-height: 86px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .delivery-card__main {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   width: 100%;
   padding: 0;
   border: 0;
@@ -6722,7 +6933,7 @@ body[data-wa-view='chat'] .mobile-header {
 .delivery-card__top {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -6733,22 +6944,57 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 .delivery-card__customer {
-  font-size: 1.02rem;
+  font-size: 0.98rem;
 }
 
 .delivery-card__meta,
 .delivery-card__items {
   color: var(--pe-ink-500);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 650;
   line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .delivery-card__actions,
 .delivery-actions,
 .delivery-card__detail {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.delivery-card__actions .btn,
+.delivery-actions .btn {
+  min-height: 32px;
+  padding-inline: 11px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+
+.delivery-unavailable {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid rgba(8, 104, 78, 0.12);
+  border-radius: 10px;
+  background: rgba(8, 122, 91, 0.06);
+  color: var(--pe-ink-500);
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.delivery-card__detail {
+  grid-column: 1 / -1;
+  align-items: stretch;
+  justify-content: stretch;
+  padding-top: 8px;
 }
 
 .delivery-destination {
@@ -6792,11 +7038,19 @@ body[data-wa-view='chat'] .mobile-header {
   }
 
   .delivery-view {
-    gap: 12px;
+    gap: 0;
   }
 
   .delivery-card {
-    padding: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    min-height: 0;
+    padding: 10px 8px;
+  }
+
+  .delivery-card__actions,
+  .delivery-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -7086,7 +7340,8 @@ body[data-wa-view='chat'] .mobile-header {
     max-width: 94px;
   }
 
-  body[data-tab='pedidos'] .mobile-header {
+  body[data-tab='pedidos'] .mobile-header,
+  body[data-tab='usuarios'] .mobile-header {
     /*
      * En la lista de pedidos la barra de arriba NO se va con el scroll: con 40
      * pedidos hay que poder volver atrás y ver en qué pantalla estás sin subir.
@@ -7098,7 +7353,8 @@ body[data-wa-view='chat'] .mobile-header {
     backdrop-filter: blur(14px);
   }
 
-  body[data-tab='pedidos'] #view-pedidos {
+  body[data-tab='pedidos'] #view-pedidos,
+  body[data-tab='usuarios'] #view-usuarios {
     padding-top: 0;
   }
 
@@ -9894,7 +10150,7 @@ body[data-tab='pedidos'] .order-row__status,
 
 .drawer__head {
   min-height: 48px;
-  margin-bottom: 4px;
+  margin-bottom: 18px;
 }
 
 .drawer__logo {
@@ -9912,7 +10168,7 @@ body[data-tab='pedidos'] .order-row__status,
 }
 
 .drawer__nav {
-  gap: 1px;
+  gap: 3px;
 }
 
 .drawer__item {
@@ -10046,24 +10302,28 @@ body[data-tab='pedidos'] .order-row__status,
   }
 
   body[data-tab='clientes'],
-  body[data-tab='pedidos'] {
+  body[data-tab='pedidos'],
+  body[data-tab='usuarios'] {
     overflow: hidden;
   }
 
   body[data-tab='clientes'] .app,
-  body[data-tab='pedidos'] .app {
+  body[data-tab='pedidos'] .app,
+  body[data-tab='usuarios'] .app {
     height: 100dvh;
     min-height: 0;
     overflow: hidden;
   }
 
   body[data-tab='clientes'] .mobile-header,
-  body[data-tab='pedidos'] .mobile-header {
+  body[data-tab='pedidos'] .mobile-header,
+  body[data-tab='usuarios'] .mobile-header {
     display: block;
   }
 
   body[data-tab='clientes'] .content,
-  body[data-tab='pedidos'] .content {
+  body[data-tab='pedidos'] .content,
+  body[data-tab='usuarios'] .content {
     height: calc(100dvh - var(--pe-tabbar) - env(safe-area-inset-bottom, 0px));
     min-height: 0;
     padding: 0 0 calc(var(--pe-tabbar) + env(safe-area-inset-bottom, 0px));
@@ -10071,7 +10331,8 @@ body[data-tab='pedidos'] .order-row__status,
   }
 
   body[data-tab='clientes'] #view-clientes,
-  body[data-tab='pedidos'] #view-pedidos {
+  body[data-tab='pedidos'] #view-pedidos,
+  body[data-tab='usuarios'] #view-usuarios {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     height: 100%;
@@ -10088,7 +10349,8 @@ body[data-tab='pedidos'] .order-row__status,
   }
 
   body[data-tab='clientes'] #clientes-count,
-  body[data-tab='pedidos'] #pedidos-count {
+  body[data-tab='pedidos'] #pedidos-count,
+  body[data-tab='usuarios'] #users-count {
     margin: 0;
     padding: 5px 14px 6px;
     color: #64748b;
@@ -10097,7 +10359,8 @@ body[data-tab='pedidos'] .order-row__status,
   }
 
   body[data-tab='clientes'] #list-clientes,
-  body[data-tab='pedidos'] #list-pedidos {
+  body[data-tab='pedidos'] #list-pedidos,
+  body[data-tab='usuarios'] #users-view {
     min-height: 0;
     align-content: start;
     align-items: start;
@@ -10109,7 +10372,8 @@ body[data-tab='pedidos'] .order-row__status,
   }
 
   body[data-tab='clientes'] .client-row,
-  body[data-tab='pedidos'] .order-row {
+  body[data-tab='pedidos'] .order-row,
+  body[data-tab='usuarios'] .user-row {
     align-self: start;
     min-height: 58px;
     margin: 0;

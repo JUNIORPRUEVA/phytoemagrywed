@@ -57,8 +57,16 @@ describe('mobile navigation and floating actions', () => {
     const plano = css.replaceAll('\r\n', '\n');
     // Igual que Clientes: pegada arriba, con fondo translúcido para que se lea
     // por encima de la lista al desplazarse.
-    expect(plano).toMatch(/body\[data-tab='pedidos'\] \.mobile-header \{[^}]*?position: sticky;\n\s+top: 0;/);
-    expect(plano).toMatch(/body\[data-tab='pedidos'\] \.mobile-header \{[\s\S]*?backdrop-filter: blur\(14px\);/);
-    expect(plano).toMatch(/body\[data-tab='pedidos'\] #view-pedidos \{\n\s+padding-top: 0;/);
+    expect(plano).toMatch(/body\[data-tab='pedidos'\] \.mobile-header,\n\s+body\[data-tab='usuarios'\] \.mobile-header \{[^}]*?position: sticky;\n\s+top: 0;/);
+    expect(plano).toMatch(/body\[data-tab='pedidos'\] \.mobile-header,\n\s+body\[data-tab='usuarios'\] \.mobile-header \{[\s\S]*?backdrop-filter: blur\(14px\);/);
+    expect(plano).toMatch(/body\[data-tab='pedidos'\] #view-pedidos,\n\s+body\[data-tab='usuarios'\] #view-usuarios \{\n\s+padding-top: 0;/);
+  });
+
+  it('Pedidos tiene buscador móvil junto al filtro con el mismo appbar de WhatsApp', () => {
+    expect(app).toContain('data-order-search-open');
+    expect(app).toContain('id="order-appbar-search"');
+    expect(app).toContain('data-order-search-clear');
+    expect(app).toContain('state.pedidosSearch = orderSearch.value.trim();');
+    expect(app).toContain('function orderMatchesSearch');
   });
 });

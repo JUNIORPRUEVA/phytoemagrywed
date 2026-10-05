@@ -464,6 +464,7 @@
           <h2 class="view__title">Configuración</h2>
           <div class="config-menu" aria-label="Menú de configuración">
             <a href="#config-notificaciones">Notificaciones</a>
+            <a href="#config-impresora">Impresora</a>
             <a href="#config-seguimiento">Seguimiento</a>
             <a href="#config-whatsapp">WhatsApp</a>
             <a href="#config-datos">Datos</a>
@@ -471,6 +472,10 @@
           <div class="card config-card config-card--active" id="config-notificaciones">
             <p class="card__title">Notificaciones</p>
             <div id="push-config"></div>
+          </div>
+          <div class="card" id="config-impresora">
+            <p class="card__title">Impresora</p>
+            <div id="printer-config"></div>
           </div>
           <div class="card" id="config-seguimiento">
             <p class="card__title">Seguimiento postventa</p>
@@ -540,47 +545,11 @@
 
         <!-- USUARIOS -->
         <section class="view" id="view-usuarios" hidden>
-          <h2 class="view__title">Usuarios</h2>
-          <div class="card">
-            <p class="card__title">Crear usuario</p>
-            <form class="grid-form" id="user-create">
-              <label class="field">
-                <span class="field__label">Nombre visible</span>
-                <input class="field__input" name="displayName" autocomplete="name" required />
-              </label>
-              <label class="field">
-                <span class="field__label">Usuario/correo</span>
-                <input class="field__input" name="username" autocomplete="username" required />
-              </label>
-              <label class="field">
-                <span class="field__label">Rol</span>
-                <select class="field__select" name="role">
-                  <option value="AGENT">Agente (también puede entregar un pedido)</option>
-                  <option value="DELIVERY">Repartidor (solo entregas)</option>
-                  <option value="OPERADOR">Operador</option>
-                  <option value="ADMIN">Administrador</option>
-                </select>
-                <span class="field__hint">Un pedido se le pasa a un AGENTE y ese agente lo entrega. El administrador gestiona; no reparte.</span>
-              </label>
-              <label class="field">
-                <span class="field__label">Contraseña inicial</span>
-                <span class="pass">
-                  <input
-                    class="field__input"
-                    name="password"
-                    type="password"
-                    autocomplete="new-password"
-                    required
-                    minlength="6"
-                  />
-                  <button class="pass__eye" type="button" data-pass-eye aria-label="Ver la contraseña" aria-pressed="false" data-icon="eye"></button>
-                </span>
-                <span class="field__hint">Mínimo 6 caracteres.</span>
-              </label>
-              <button class="btn btn--primary btn--block" type="submit">Crear usuario</button>
-            </form>
-          </div>
-          <div class="list" id="users-view"></div>
+          <p class="view__count" id="users-count"></p>
+          <div class="list list--users" id="users-view"></div>
+          <button class="client-fab list-fab user-fab" id="usuario-nuevo" type="button" aria-label="Crear usuario" title="Crear usuario">
+            <span class="ico" aria-hidden="true" data-icon="plus"></span>
+          </button>
         </section>
 
         <!-- MI PERFIL (el usuario que tiene la sesión) -->

@@ -141,6 +141,32 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(app).toContain('https://wa.me/?text=');
   });
 
+  it('Configuración incluye Impresora y usa el bridge nativo sin deep links', () => {
+    expect(html).toContain('href="#config-impresora"');
+    expect(html).toContain('id="config-impresora"');
+    expect(html).toContain('id="printer-config"');
+    expect(app).toContain('PhytoDeviceBridge');
+    expect(app).toContain("nativePrinterRequest('printerStatus'");
+    expect(app).toContain("nativePrinterRequest('configurePrinter'");
+    expect(app).toContain("nativePrinterRequest('testPrint'");
+    expect(app).toContain("nativePrinterRequest('printReceipt'");
+    expect(app).toContain('data-native-printer="configure"');
+    expect(app).toContain('data-native-printer="test"');
+    expect(app).toContain('Para imprimir por Bluetooth desde el teléfono, instala la app de Phytoemagry para Android.');
+    expect(app).toContain('/api/admin/android-apk/download');
+    expect(app).toContain('Descargar app para Android');
+    expect(app).toContain('Cómo instalar y probar la impresora');
+    expect(app).toContain('Si el teléfono pide permiso para instalar');
+    expect(app).toContain('confirma la instalación solo si el archivo viene desde este botón del CRM');
+    expect(app).toContain('Imprimir prueba');
+    expect(app).not.toContain('flutter build apk --debug');
+    expect(app).not.toContain('PHYTO_ANDROID_APK_URL');
+    expect(app).not.toContain('apps/phyto_printer/build/app/outputs/flutter-apk/app-debug.apk');
+    expect(app).not.toContain('phytoemagry-printer://');
+    expect(css).toContain('.printer-settings');
+    expect(css).toContain('.printer-settings__guide');
+  });
+
   it('los iconos son UN sistema (SVG), no emojis mezclados', () => {
     expect(app).toContain('const ICONS = {');
     expect(app).toContain('function paintIcons');

@@ -136,6 +136,8 @@ afterAll(async () => {
 
 describe('usuarios: contraseña corta y con ojo para verla', () => {
   it('el formulario pide 6 caracteres y el ojo enseña lo escrito', async () => {
+    click('#usuario-nuevo');
+    await waitFor(() => $('#user-create'), 'el formulario de crear usuario');
     const campo = $('#user-create input[name="password"]');
     expect(campo.getAttribute('minlength')).toBe('6');
     expect($('#user-create').textContent).toContain('Mínimo 6 caracteres');
@@ -155,9 +157,13 @@ describe('usuarios: contraseña corta y con ojo para verla', () => {
     click(ojo);
     expect(campo.type).toBe('password');
     expect(ojo.getAttribute('aria-pressed')).toBe('false');
+    click('[data-close-sheet]');
+    await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
   });
 
   it('crea un AGENTE con contraseña de 6 caracteres y esa cuenta entra', async () => {
+    click('#usuario-nuevo');
+    await waitFor(() => $('#user-create'), 'el formulario de crear usuario');
     setValue('#user-create input[name="displayName"]', 'Ana Agente');
     setValue('#user-create input[name="username"]', 'ana.agente@phyto.local');
     setValue('#user-create input[name="password"]', 'ana123');
@@ -170,6 +176,8 @@ describe('usuarios: contraseña corta y con ojo para verla', () => {
       'el usuario nuevo en la lista',
     );
     expect(fila.textContent).toContain('Agente');
+    expect(fila.textContent).toContain('Clientes');
+    expect(fila.textContent).toContain('Entrega propia');
     const usuarios = await (await fetch(`${app.url}/api/admin/users`, { headers: { cookie } })).json();
     expect(usuarios.users.find((user) => user.username === 'ana.agente@phyto.local').role).toBe('AGENT');
     // Seis caracteres de verdad sirven para entrar.
@@ -181,7 +189,9 @@ describe('usuarios: contraseña corta y con ojo para verla', () => {
       () => $$('#users-view .item').find((row) => row.textContent.includes('Ana Agente')) ?? null,
       'la fila del usuario',
     );
-    const boton = [...fila.querySelectorAll('[data-user-password]')][0];
+    click(fila);
+    await waitFor(() => $('#sheet-body').textContent.includes('Reset contraseña'), 'la ficha del usuario');
+    const boton = $('#sheet-body [data-user-password]');
     click(boton);
     const campo = await waitFor(() => $('#user-pass-new'), 'el campo de la contraseña nueva');
     // Y trae su ojo, como el formulario de alta.

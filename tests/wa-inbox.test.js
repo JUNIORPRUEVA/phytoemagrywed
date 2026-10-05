@@ -396,6 +396,23 @@ describe('archivado y acciones masivas de la bandeja', () => {
     expect(rows.find((row) => row.id === conversationA.id).unread_count).toBe(0);
   });
 
+  it('elimina una conversación individual y sus mensajes desde el menú del chat', async () => {
+    await inbound('wamid.C1', PHONE_C, 'Quiero limpiar este chat', 'Cliente C');
+    const rows = await listConversations();
+    const conversationC = rows.find((row) => row.last_message?.body === 'Quiero limpiar este chat');
+    expect(conversationC?.id).toBeTruthy();
+    expect((await threadOf(conversationC.id)).messages.length).toBeGreaterThan(0);
+
+    const deleted = await call(`/api/admin/conversations/${conversationC.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toMatchObject({ ok: true, deleted: true });
+
+    const after = await listConversations();
+    expect(after.map((row) => row.id)).not.toContain(conversationC.id);
+    const thread = await call(`/api/admin/conversations/${conversationC.id}/messages`);
+    expect(thread.status).toBe(404);
+  });
+
   it('mensaje a varios solo valida: excluye opt-out y no envía nada', async () => {
     await call(`/api/admin/customers/${conversationA.customer_id}/opt-out`, { method: 'POST' });
     mockWhatsApp.sent.length = 0;

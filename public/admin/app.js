@@ -65,6 +65,7 @@
     deliveryOrders: [],
     notifications: [],
     push: null,
+    nativePrinter: { available: false, status: null, loading: false, result: null },
     deliveryEvents: null,
     deliveryPollTimer: null,
     deliveryWatchId: null,
@@ -149,6 +150,8 @@
     // Filtro de la lista de pedidos, por ESTADO OPERATIVO (pendiente, en camino…).
     pedidosFilter: 'todo',
     pedidosFiltersOpen: false,
+    pedidosSearchOpen: false,
+    pedidosSearch: '',
     // Datos de la factura abierta (los usa el menú de su botón flotante).
     receiptContext: null,
     openId: null,
@@ -940,6 +943,14 @@
             : role === 'AGENT'
               ? 'Agente'
               : 'Sesión';
+  const initials = (value) =>
+    String(value ?? 'U')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase() || 'U';
 
   function readDismissedNotices() {
     try {
@@ -1104,12 +1115,23 @@
       return;
     }
     if (state.tab === 'pedidos') {
+      if (state.pedidosSearchOpen) {
+        box.innerHTML = `<div class="wa-appbar wa-appbar--search order-appbar order-appbar--search">
+          <button class="wa-appbar__back" data-order-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
+          <input class="wa-appbar__search" id="order-appbar-search" type="search" value="${escapeHtml(
+            state.pedidosSearch,
+          )}" placeholder="Buscar pedido" aria-label="Buscar pedido" autocomplete="off" />
+          <button class="wa-appbar__icon" data-order-search-clear type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button>
+        </div>`;
+        return;
+      }
       box.innerHTML = `<div class="wa-appbar order-appbar">
         <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
         <div class="wa-appbar__title">
           <strong>Compras y entregas</strong>
         </div>
         <div class="wa-appbar__actions">
+          <button class="wa-appbar__icon" data-order-search-open type="button" aria-label="Buscar pedido">${ICONS.search}</button>
           <button class="wa-appbar__icon" data-order-filter-open type="button" aria-label="Filtrar pedidos">${ICONS.filter}</button>
         </div>
       </div>`;
@@ -2116,7 +2138,9 @@
     const filter = state.pedidosFilter ?? 'todo';
     const byFilter = (value) =>
       value === 'todo' ? items : items.filter((item) => orderOperational(item) === orderFilterValue(value));
-    const visibles = byFilter(filter);
+    const byStatus = byFilter(filter);
+    const query = state.pedidosSearch.trim().toLowerCase();
+    const visibles = query ? byStatus.filter((item) => orderMatchesSearch(item, query)) : byStatus;
     // Cada chip lleva su cuenta: se ve cuántos hay sin abrir el filtro.
     $$('#pedidos-filtros [data-order-filter]').forEach((chip) => {
       const value = chip.dataset.orderFilter;
@@ -2129,15 +2153,57 @@
     if (count) {
       count.textContent = !items.length
         ? ''
-        : visibles.length === items.length
+        : visibles.length === items.length && !query
           ? `${items.length} ${items.length === 1 ? 'pedido' : 'pedidos'}`
           : `${visibles.length} de ${items.length} pedidos`;
     }
     box.innerHTML = visibles.length
       ? visibles.map(orderRow).join('')
       : emptyState(
-          items.length ? 'Ningún pedido con ese estado.' : 'Todavía no hay pedidos registrados.',
+          items.length
+            ? query
+              ? 'Ningún pedido coincide con la búsqueda.'
+              : 'Ningún pedido con ese estado.'
+            : 'Todavía no hay pedidos registrados.',
         );
+  }
+
+  function orderMatchesSearch(item, query) {
+    const order = itemOrder(item) ?? {};
+    const customer = item.customer_id ? customerById(item.customer_id) : null;
+    const agent = orderAgent(item);
+    return [
+      item.id,
+      item.name,
+      item.phone,
+      item.location,
+      item.variant_name,
+      item.order_number,
+      item.status,
+      item.notes,
+      order.id,
+      order.order_number,
+      order.status,
+      order.customer_id,
+      order.conversation_id,
+      order?.delivery?.address,
+      order?.delivery?.delivery_status,
+      customer ? customerName(customer) : null,
+      customer?.phone,
+      customer?.phone_e164,
+      customer?.city,
+      agent.label,
+      agent.asignado,
+      agent.creador,
+      agent.ultimo,
+      ...(Array.isArray(order.items)
+        ? order.items.flatMap((line) => [line.name, line.variant_name, line.sku, line.quantity, line.qty])
+        : []),
+    ]
+      .filter((value) => value !== null && value !== undefined && value !== '')
+      .join(' ')
+      .toLowerCase()
+      .includes(query);
   }
 
   function itemOrder(item) {
@@ -2713,7 +2779,125 @@
       resultado
         ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa los avisos de Chrome en los ajustes del teléfono y quita el ahorro de batería.</p>'
         : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
-    }`;
+      }`;
+  }
+
+  const nativePrinterRequests = new Map();
+  let nativePrinterRequestSeq = 0;
+
+  function nativePrinterAvailable() {
+    return Boolean(window.PhytoDeviceBridge && typeof window.PhytoDeviceBridge.postMessage === 'function');
+  }
+
+  window.addEventListener('phyto-device-response', (event) => {
+    const detail = event.detail ?? {};
+    const id = detail.id;
+    const pending = nativePrinterRequests.get(id);
+    if (!pending) return;
+    nativePrinterRequests.delete(id);
+    clearTimeout(pending.timer);
+    if (detail.ok) pending.resolve(detail.data ?? {});
+    else {
+      const error = new Error(detail.error?.message || 'No se pudo completar la acción nativa.');
+      error.code = detail.error?.code;
+      pending.reject(error);
+    }
+  });
+
+  function nativePrinterRequest(action, payload = {}) {
+    if (!nativePrinterAvailable()) {
+      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación Phytoemagry para Android.'));
+    }
+    const id = `printer-${Date.now()}-${++nativePrinterRequestSeq}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        nativePrinterRequests.delete(id);
+        reject(new Error('La impresora no respondió a tiempo.'));
+      }, 15000);
+      nativePrinterRequests.set(id, { resolve, reject, timer });
+      window.PhytoDeviceBridge.postMessage(JSON.stringify({ id, scope: 'printer', action, payload }));
+    });
+  }
+
+  function printerConfigHtml() {
+    const status = state.nativePrinter?.status ?? null;
+    const result = state.nativePrinter?.result ?? '';
+    if (!nativePrinterAvailable()) {
+      return `<article class="printer-settings printer-settings--browser">
+        <div class="printer-settings__hero">
+          <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
+          <div>
+            <strong>Impresora térmica</strong>
+            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de Phytoemagry para Android.</p>
+          </div>
+        </div>
+        <dl class="facts printer-settings__facts">
+          <div class="fact"><dt>Estado</dt><dd>Usando el CRM desde el navegador</dd></div>
+          <div class="fact"><dt>Impresión Bluetooth</dt><dd>Disponible en la app Android</dd></div>
+          <div class="fact"><dt>Nombre de la app</dt><dd>Phytoemagry</dd></div>
+        </dl>
+        <div class="item__actions printer-settings__actions">
+          <a class="btn btn--primary" href="/api/admin/android-apk/download">Descargar app para Android</a>
+        </div>
+        <div class="printer-settings__guide">
+          <strong>Cómo instalar y probar la impresora</strong>
+          <ol>
+            <li>Desde el teléfono Android, toca <strong>Descargar app para Android</strong>.</li>
+            <li>Cuando termine la descarga, abre el archivo y toca <strong>Instalar</strong>.</li>
+            <li>Si el teléfono pide permiso para instalar, toca <strong>Permitir</strong> y vuelve a abrir el archivo descargado.</li>
+            <li>Abre la app <strong>Phytoemagry</strong> e inicia sesión en el CRM.</li>
+            <li>Entra a <strong>Configuración → Impresora</strong> y toca <strong>Seleccionar impresora</strong>.</li>
+            <li>Elige tu impresora térmica Bluetooth. Si no aparece, primero vincúlala en los ajustes Bluetooth del teléfono.</li>
+            <li>Toca <strong>Imprimir prueba</strong>. Si sale bien, ya puedes imprimir facturas desde los pedidos.</li>
+          </ol>
+        </div>
+        <p class="notice-hint">Android puede mostrar avisos de seguridad antes de instalar. Es normal: confirma la instalación solo si el archivo viene desde este botón del CRM.</p>
+      </article>`;
+    }
+    const bluetooth = status?.bluetoothLabel ?? 'Revisando…';
+    const device = status?.defaultDevice?.name || 'Sin impresora seleccionada';
+    const paper = status?.paperWidthLabel ?? '58 mm';
+    const profile = status?.profileLabel ?? 'Generic ESC/POS';
+    const autoPrint = status?.autoPrint ? 'ON' : 'OFF';
+    return `<article class="printer-settings">
+      <div class="printer-settings__hero">
+        <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
+        <div>
+          <strong>Impresora térmica</strong>
+          <p>Bluetooth: ${escapeHtml(bluetooth)}</p>
+        </div>
+      </div>
+      <dl class="facts printer-settings__facts">
+        <div class="fact"><dt>Bluetooth</dt><dd>${escapeHtml(bluetooth)}</dd></div>
+        <div class="fact"><dt>Impresora predeterminada</dt><dd>${escapeHtml(device)}</dd></div>
+        <div class="fact"><dt>Tamaño</dt><dd>${escapeHtml(paper)}</dd></div>
+        <div class="fact"><dt>Perfil</dt><dd>${escapeHtml(profile)}</dd></div>
+        <div class="fact"><dt>Impresión automática</dt><dd>${escapeHtml(autoPrint)}</dd></div>
+      </dl>
+      ${result ? `<p class="notice-hint printer-settings__result">${escapeHtml(result)}</p>` : ''}
+      <div class="item__actions printer-settings__actions">
+        <button class="btn btn--primary" data-native-printer="configure" type="button">Seleccionar impresora</button>
+        <button class="btn btn--ghost" data-native-printer="test" type="button">Imprimir prueba</button>
+      </div>
+    </article>`;
+  }
+
+  async function refreshNativePrinterStatus() {
+    state.nativePrinter.available = nativePrinterAvailable();
+    if (!state.nativePrinter.available) {
+      state.nativePrinter.status = null;
+      $('#printer-config') && ($('#printer-config').innerHTML = printerConfigHtml());
+      return;
+    }
+    state.nativePrinter.loading = true;
+    try {
+      state.nativePrinter.status = await nativePrinterRequest('printerStatus');
+    } catch (error) {
+      state.nativePrinter.result = error.message || 'No se pudo leer la impresora.';
+    } finally {
+      state.nativePrinter.loading = false;
+      $('#printer-config') && ($('#printer-config').innerHTML = printerConfigHtml());
+    }
   }
 
   function openNotificationsSheet() {
@@ -3054,21 +3238,21 @@
     const status = deliveryVisibleStatus(order, session);
     if (status === 'PENDIENTE') {
       return order.conversation_id
-        ? `<button class="btn btn--primary btn--block" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>`
-        : `<button class="btn btn--primary btn--block" type="button" disabled>Sin conversación</button>`;
+        ? `<button class="btn btn--primary btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar</button>`
+        : `<span class="delivery-unavailable">Sin conversación</span>`;
     }
     if (status === 'EN_PROCESO') {
-      return `<button class="btn btn--primary btn--block" data-delivery-start="${escapeHtml(order.id)}" type="button">Iniciar entrega</button>`;
+      return `<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(order.id)}" type="button">Iniciar</button>`;
     }
     if (status === 'EN_CAMINO') {
-      return `<button class="btn btn--primary btn--block" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${session?.id ? '' : 'disabled'}>Finalizar entrega</button>
-        <button class="btn btn--ghost btn--block" data-delivery-issue="${escapeHtml(order.id)}" type="button">No pude entregar</button>`;
+      return `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${session?.id ? '' : 'disabled'}>Finalizar</button>
+        <button class="btn btn--ghost btn--sm" data-delivery-issue="${escapeHtml(order.id)}" type="button">Incidencia</button>`;
     }
     if (status === 'ENTREGADO') {
-      return `<button class="btn btn--ghost btn--block" data-delivery-back type="button">Volver a mis entregas</button>`;
+      return `<button class="btn btn--ghost btn--sm" data-delivery-back type="button">Volver</button>`;
     }
     if (status === 'INCIDENCIA') {
-      return `<button class="btn btn--ghost btn--block" data-delivery-back type="button">Volver a mis entregas</button>`;
+      return `<button class="btn btn--ghost btn--sm" data-delivery-back type="button">Volver</button>`;
     }
     return '';
   }
@@ -3080,7 +3264,8 @@
     const location = deliveryOrderLocation(order);
     const navUrl = externalNavigationUrl(location);
     const title = order.order_number ?? order.id;
-    const meta = [customer.name, location?.name || location?.address, order.delivery?.delivery_assigned_at ? fmtWhen(order.delivery.delivery_assigned_at) : '']
+    const assignedAt = order.delivery?.delivery_assigned_at ? fmtWhen(order.delivery.delivery_assigned_at) : '';
+    const meta = [location?.name || location?.address, assignedAt]
       .filter(Boolean)
       .join(' · ');
     const items = (order.items ?? []).map((line) => `${line.quantity ?? 1} × ${line.variantName ?? line.name ?? 'Producto'}`).join(', ');
@@ -3103,8 +3288,8 @@
                 ${location ? `<button class="btn btn--ghost btn--sm" data-open-map="${mapLocationAttr(location)}" data-map-title="Entrega ${escapeHtml(title)}" type="button">Ver mapa</button>` : ''}
               </div>
               <div class="delivery-actions">
-                ${order.conversation_id ? `<button class="btn btn--whatsapp btn--block" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar cliente</button>` : ''}
-                ${status === 'EN_CAMINO' && navUrl ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Cómo llegar</a>` : ''}
+                ${order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.conversation_id)}" type="button">Contactar</button>` : '<span class="delivery-unavailable">Sin conversación</span>'}
+                ${status === 'EN_CAMINO' && navUrl ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Cómo llegar</a>` : ''}
                 ${
                   status === 'INCIDENCIA'
                     ? `<div class="delivery-issue">
@@ -3138,7 +3323,7 @@
     }
     const group = (title, values) =>
       values.length
-        ? `<section class="delivery-group"><h2>${escapeHtml(title)}</h2>${values.map((order) => deliveryCard(order)).join('')}</section>`
+        ? `<section class="delivery-group"><h2>${escapeHtml(title)} <span>${values.length}</span></h2>${values.map((order) => deliveryCard(order)).join('')}</section>`
         : '';
     const buckets = {
       pendientes: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'PENDIENTE'),
@@ -3147,7 +3332,7 @@
       finalizadas: orders.filter((order) => ['ENTREGADO', 'CANCELADO', 'INCIDENCIA'].includes(deliveryVisibleStatus(order, deliverySessionForOrder(order.id)))),
     };
     box.innerHTML = `<div class="delivery-head">
-      <div><h1>Mis entregas</h1><p>${orders.length ? `${orders.length} pedido${orders.length === 1 ? '' : 's'}` : 'Sin entregas asignadas'}</p></div>
+      <div><p>${orders.length ? `${orders.length} pedido${orders.length === 1 ? '' : 's'} asignado${orders.length === 1 ? '' : 's'}` : 'Sin entregas asignadas'}</p></div>
       <button class="icon-btn" data-delivery-refresh type="button" aria-label="Actualizar">${ICONS.retry}</button>
     </div>
     ${orders.length ? [
@@ -3281,6 +3466,11 @@
     const wa = state.whatsapp ?? {};
     const pushConfig = $('#push-config');
     if (pushConfig) pushConfig.innerHTML = pushConfigHtml();
+    const printerConfig = $('#printer-config');
+    if (printerConfig) {
+      printerConfig.innerHTML = printerConfigHtml();
+      refreshNativePrinterStatus().catch(() => {});
+    }
     $('#facts').innerHTML = [
       ['Registros', stats.total ?? state.items.length],
       ['Clientes', state.customers.length],
@@ -3551,34 +3741,131 @@
     });
   }
 
+  function userCreateFormHtml() {
+    return `<form class="grid-form user-create-form" id="user-create">
+      <label class="field">
+        <span class="field__label">Nombre visible</span>
+        <input class="field__input" name="displayName" autocomplete="name" required />
+      </label>
+      <label class="field">
+        <span class="field__label">Usuario/correo</span>
+        <input class="field__input" name="username" autocomplete="username" required />
+      </label>
+      <label class="field">
+        <span class="field__label">Rol</span>
+        <select class="field__select" name="role">
+          <option value="AGENT">Agente (también puede entregar un pedido)</option>
+          <option value="DELIVERY">Repartidor (solo entregas)</option>
+          <option value="OPERADOR">Operador</option>
+          <option value="ADMIN">Administrador</option>
+        </select>
+        <span class="field__hint">Un pedido se le pasa a un AGENTE y ese agente lo entrega. El administrador gestiona; no reparte.</span>
+      </label>
+      <label class="field">
+        <span class="field__label">Contraseña inicial</span>
+        <span class="pass">
+          <input class="field__input" name="password" type="password" autocomplete="new-password" required minlength="${minPass()}" />
+          <button class="pass__eye" type="button" data-pass-eye aria-label="Ver la contraseña" aria-pressed="false">${ICONS.eye}</button>
+        </span>
+        <span class="field__hint">Mínimo ${minPass()} caracteres.</span>
+      </label>
+      <button class="btn btn--primary btn--block" type="submit">Crear usuario</button>
+    </form>`;
+  }
+
+  function openUserCreateSheet() {
+    openSheet('Crear usuario', userCreateFormHtml());
+    $('#user-create input[name="displayName"]')?.focus();
+  }
+
+  function userPermissionsSummary(role) {
+    if (role === 'ADMIN') return ['Todos los permisos'];
+    const labels = {
+      AGENT: ['Clientes', 'WhatsApp', 'Seguimientos', 'Ventas', 'Pedidos', 'Entrega propia'],
+      DELIVERY: ['WhatsApp', 'Mis entregas', 'Ubicación propia'],
+      OPERADOR: ['Clientes', 'WhatsApp', 'Seguimientos', 'Ventas', 'Pedidos'],
+    };
+    return labels[role] ?? ['Permisos limitados'];
+  }
+
+  function userStatusText(user) {
+    return user.active === false ? 'Inactivo' : 'Activo';
+  }
+
+  function openUserDetailSheet(userId) {
+    const user = (state.users ?? []).find((row) => row.id === userId) ?? null;
+    if (!user) return;
+    const permisos = userPermissionsSummary(user.role);
+    openSheet(
+      user.display_name ?? user.username ?? 'Usuario',
+      `<section class="user-profile">
+        <dl class="facts">
+          <div class="fact"><dt>Usuario/correo</dt><dd>${escapeHtml(user.username ?? '')}</dd></div>
+          <div class="fact"><dt>Rol</dt><dd>${escapeHtml(roleLabel(user.role))}</dd></div>
+          <div class="fact"><dt>Estado</dt><dd>${escapeHtml(userStatusText(user))}</dd></div>
+          <div class="fact"><dt>Último acceso</dt><dd>${escapeHtml(user.last_login_at ? fmtWhen(user.last_login_at) : 'Sin acceso reciente')}</dd></div>
+        </dl>
+        <div class="user-row__permissions user-row__permissions--sheet">
+          ${permisos.map((permiso) => `<span>${escapeHtml(permiso)}</span>`).join('')}
+        </div>
+        <div class="menu-list user-profile__actions">
+          <button class="menu-item" data-user-role="${escapeHtml(user.id)}" data-role="${user.role === 'ADMIN' ? 'AGENT' : 'ADMIN'}" type="button">
+            <span class="menu-item__icon" aria-hidden="true">${ICONS.userCog}</span>
+            <span><strong>${user.role === 'ADMIN' ? 'Hacer agente' : 'Hacer admin'}</strong><small>Cambia el nivel de acceso</small></span>
+          </button>
+          <button class="menu-item" data-user-active="${escapeHtml(user.id)}" data-active="${user.active === false ? 'true' : 'false'}" type="button">
+            <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+            <span><strong>${user.active === false ? 'Activar usuario' : 'Desactivar usuario'}</strong><small>${user.active === false ? 'Puede volver a entrar' : 'Bloquea nuevos accesos'}</small></span>
+          </button>
+          <button class="menu-item" data-user-password="${escapeHtml(user.id)}" type="button">
+            <span class="menu-item__icon" aria-hidden="true">${ICONS.eye}</span>
+            <span><strong>Reset contraseña</strong><small>Guarda una clave nueva</small></span>
+          </button>
+          <button class="menu-item menu-item--danger" data-user-delete="${escapeHtml(user.id)}" type="button">
+            <span class="menu-item__icon" aria-hidden="true">${ICONS.trash}</span>
+            <span><strong>Eliminar usuario</strong><small>Cierra sesiones y borra notificaciones</small></span>
+          </button>
+        </div>
+      </section>`,
+    );
+  }
+
   function renderUsuarios() {
     const box = $('#users-view');
     if (!box) return;
+    const count = $('#users-count');
     if (!isAdmin()) {
+      if (count) count.textContent = '';
       box.innerHTML = emptyState('Esta sección es solo para administradores.');
       return;
     }
     if (!state.users?.length) {
-      box.innerHTML = '<div class="card"><p class="card__text">Cargando usuarios…</p></div>';
+      if (count) count.textContent = '';
+      box.innerHTML = '<div class="user-row user-row--loading"><p class="item__meta">Cargando usuarios…</p></div>';
       if (!state.usersLoading && state.online) loadUsers().catch(() => {});
       return;
     }
+    if (count) {
+      count.textContent = `${state.users.length} ${state.users.length === 1 ? 'usuario' : 'usuarios'}`;
+    }
     box.innerHTML = state.users
       .map(
-        (user) => `<article class="item">
-          <p class="item__name">${escapeHtml(user.display_name)}</p>
-          <p class="item__meta">${escapeHtml(user.username)} · ${escapeHtml(roleLabel(user.role))} · ${
-            user.active === false ? 'Inactivo' : 'Activo'
-          }${user.last_login_at ? ` · último acceso ${escapeHtml(fmtWhen(user.last_login_at))}` : ''}</p>
-          <div class="item__actions">
-            <button class="btn btn--ghost btn--sm" data-user-role="${escapeHtml(user.id)}" data-role="${
-              user.role === 'ADMIN' ? 'AGENT' : 'ADMIN'
-            }" type="button">${user.role === 'ADMIN' ? 'Hacer agente' : 'Hacer admin'}</button>
-            <button class="btn btn--ghost btn--sm" data-user-active="${escapeHtml(user.id)}" data-active="${
-              user.active === false ? 'true' : 'false'
-            }" type="button">${user.active === false ? 'Activar' : 'Desactivar'}</button>
-            <button class="btn btn--ghost btn--sm" data-user-password="${escapeHtml(user.id)}" type="button">Reset contraseña</button>
-            <button class="btn btn--danger btn--sm" data-user-delete="${escapeHtml(user.id)}" type="button">Eliminar</button>
+        (user) => `<article class="item user-row" data-user-open="${escapeHtml(user.id)}" tabindex="0" role="button" aria-label="Abrir ${escapeHtml(user.display_name ?? user.username ?? 'usuario')}">
+          <div class="user-row__main">
+            <span class="user-row__avatar" aria-hidden="true">${escapeHtml(initials(user.display_name ?? user.username ?? 'U'))}</span>
+            <div class="user-row__body">
+              <span class="user-row__top">
+                <strong class="item__name">${escapeHtml(user.display_name ?? 'Sin nombre')}</strong>
+                <small>${escapeHtml(user.last_login_at ? fmtWhen(user.last_login_at) : 'Sin acceso')}</small>
+              </span>
+              <span class="item__meta">${escapeHtml(user.username ?? '')} · ${escapeHtml(roleLabel(user.role))} · ${escapeHtml(userStatusText(user))}</span>
+              ${
+                user.role === 'ADMIN'
+                  ? '<span class="user-row__permissions"><span>Todos los permisos</span></span>'
+                  : `<span class="user-row__permissions">${userPermissionsSummary(user.role).map((permiso) => `<span>${escapeHtml(permiso)}</span>`).join('')}</span>`
+              }
+            </div>
+            <span class="user-row__chevron" aria-hidden="true">${ICONS.back}</span>
           </div>
         </article>`,
       )
@@ -3618,6 +3905,7 @@
       try {
         await api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
         await loadUsers();
+        closeSheet();
         toast('Usuario eliminado');
       } catch (error) {
         if (error.message !== 'unauthorized') {
@@ -5099,7 +5387,7 @@
   }
 
   /** Ejecuta una acción del menú «⋯» de una fila (nunca manda nada sola). */
-  function runConvAction(action, conversationId) {
+  async function runConvAction(action, conversationId) {
     closeSheet();
     if (action === 'open') {
       selectConversation(conversationId);
@@ -5108,6 +5396,36 @@
     if (action === 'select') {
       if (!state.wa.selected.has(conversationId)) state.wa.selected.add(conversationId);
       renderWaList();
+      return;
+    }
+    if (action === 'archive' || action === 'unarchive') {
+      try {
+        await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/${action}`, { method: 'POST' });
+        toast(action === 'archive' ? 'Chat archivado' : 'Chat desarchivado');
+        if (conversationId === state.wa.selectedId && action === 'archive') {
+          state.wa.selectedId = null;
+          state.wa.chat = null;
+        }
+        await refreshWhatsapp();
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo archivar el chat');
+      }
+      return;
+    }
+    if (action === 'delete') {
+      const ok = window.confirm('¿Eliminar este chat? Se borrará la conversación y sus mensajes del CRM.');
+      if (!ok) return;
+      try {
+        await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}`, { method: 'DELETE' });
+        toast('Chat eliminado');
+        if (conversationId === state.wa.selectedId) {
+          state.wa.selectedId = null;
+          state.wa.chat = null;
+        }
+        await refreshWhatsapp();
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo eliminar el chat');
+      }
       return;
     }
     runWaBulk(action, [conversationId]);
@@ -11458,6 +11776,14 @@
       title: receipt.order_number ? `Factura · ${receipt.order_number}` : 'Factura',
       acciones: [
         { icon: ICONS.doc, label: 'Ver factura', note: 'Documento para imprimir', data: { 'data-receipt-open': orderId } },
+        nativePrinterAvailable()
+          ? {
+              icon: ICONS.box,
+              label: 'Imprimir factura',
+              note: 'Ticket Bluetooth ESC/POS',
+              data: { 'data-receipt-print': orderId },
+            }
+          : null,
         {
           icon: ICONS.send,
           label: 'Enviar factura por WhatsApp',
@@ -11490,6 +11816,23 @@
             }
           : null,
       ].filter(Boolean),
+    });
+  }
+
+  async function printReceiptNative(orderId, button = null) {
+    const ctx = state.receiptContext ?? {};
+    const receipt = ctx.orderId === orderId ? ctx.receipt : null;
+    if (!receipt || Object.keys(receipt).length === 0) {
+      toast('Abre la factura antes de imprimirla');
+      return;
+    }
+    await working(button, 'Imprimiendo…', async () => {
+      try {
+        const data = await nativePrinterRequest('printReceipt', receipt);
+        toast(data?.orderNumber ? `Factura ${data.orderNumber} enviada a impresora` : 'Factura enviada a impresora');
+      } catch (error) {
+        toast(error.message || 'No se pudo imprimir la factura');
+      }
     });
   }
 
@@ -12714,6 +13057,7 @@
     }
     if (tab !== 'pedidos') {
       state.pedidosFiltersOpen = false;
+      state.pedidosSearchOpen = false;
       delete document.body.dataset.orderFilters;
     }
     // Fuera del mapa no se sigue nada: ni GPS en vivo ni sondeos ni el mapa vivo.
@@ -12836,6 +13180,7 @@
           await api('/api/admin/users', { method: 'POST', body: JSON.stringify(data) });
           form.reset();
           await loadUsers();
+          closeSheet();
           toast('Usuario creado');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.error === 'weak_password' ? `La contraseña debe tener mínimo ${minPass()} caracteres` : error.body?.message ?? 'No se pudo crear');
@@ -13161,6 +13506,32 @@
         testCrmPush().catch((error) => toast(error.body?.message ?? 'No se pudo probar las notificaciones'));
         return;
       }
+      const nativePrinter = event.target.closest('[data-native-printer]');
+      if (nativePrinter) {
+        const action = nativePrinter.dataset.nativePrinter;
+        if (action === 'configure') {
+          nativePrinterRequest('configurePrinter')
+            .then(() => {
+              state.nativePrinter.result = 'Configuración de impresora guardada.';
+              refreshNativePrinterStatus();
+            })
+            .catch((error) => {
+              state.nativePrinter.result = error.message || 'No se pudo configurar la impresora.';
+              refreshNativePrinterStatus();
+            });
+        } else if (action === 'test') {
+          working(nativePrinter, 'Imprimiendo…', async () => {
+            try {
+              await nativePrinterRequest('testPrint');
+              state.nativePrinter.result = 'Prueba enviada correctamente.';
+            } catch (error) {
+              state.nativePrinter.result = error.message || 'No fue posible conectar con la impresora.';
+            }
+            refreshNativePrinterStatus();
+          });
+        }
+        return;
+      }
       const notificationsDeleteAll = event.target.closest('[data-notifications-delete-all]');
       if (notificationsDeleteAll) {
         deleteAllNotifications(notificationsDeleteAll);
@@ -13410,6 +13781,11 @@
         openSendInvoiceSheet(receiptWa.dataset.receiptWa);
         return;
       }
+      const receiptPrint = event.target.closest('[data-receipt-print]');
+      if (receiptPrint) {
+        printReceiptNative(receiptPrint.dataset.receiptPrint, receiptPrint);
+        return;
+      }
       const orderDelivery = event.target.closest('[data-order-delivery]');
       if (orderDelivery) {
         const id = orderDelivery.dataset.orderDelivery;
@@ -13491,11 +13867,13 @@
       const role = event.target.closest('[data-user-role]');
       if (role) {
         updateUser(role.dataset.userRole, { role: role.dataset.role });
+        closeSheet();
         return;
       }
       const active = event.target.closest('[data-user-active]');
       if (active) {
         updateUser(active.dataset.userActive, { active: active.dataset.active === 'true' });
+        closeSheet();
         return;
       }
       const password = event.target.closest('[data-user-password]');
@@ -13510,6 +13888,11 @@
       const userDelete = event.target.closest('[data-user-delete]');
       if (userDelete) {
         deleteUser(userDelete.dataset.userDelete, userDelete);
+        return;
+      }
+      const userOpen = event.target.closest('[data-user-open]');
+      if (userOpen) {
+        openUserDetailSheet(userOpen.dataset.userOpen);
         return;
       }
       // El ojo de cualquier campo de contraseña: solo cambia el `type` del campo de al lado.
@@ -13809,6 +14192,31 @@
         renderPedidos();
         return;
       }
+      if (event.target.closest('[data-order-search-open]')) {
+        state.pedidosSearchOpen = true;
+        state.pedidosFiltersOpen = false;
+        document.body.dataset.orderFilters = 'closed';
+        renderMobileHeader();
+        renderPedidos();
+        requestAnimationFrame(() => $('#order-appbar-search')?.focus());
+        return;
+      }
+      if (event.target.closest('[data-order-search-close]')) {
+        state.pedidosSearchOpen = false;
+        if (state.pedidosSearch) {
+          state.pedidosSearch = '';
+          renderPedidos();
+        }
+        renderMobileHeader();
+        return;
+      }
+      if (event.target.closest('[data-order-search-clear]')) {
+        state.pedidosSearchOpen = false;
+        state.pedidosSearch = '';
+        renderPedidos();
+        renderMobileHeader();
+        return;
+      }
       if (event.target.closest('[data-wa-search-open]')) {
         state.wa.searchOpen = true;
         state.wa.filtersOpen = false;
@@ -13921,6 +14329,7 @@
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
     $('#clientes-acciones').addEventListener('click', () => openClientsActions());
     $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
+    $('#usuario-nuevo')?.addEventListener('click', () => openUserCreateSheet());
 
     // Interruptores del plan de postventa (Ajustes): cada día se activa o apaga.
     document.addEventListener('change', (event) => {
@@ -13956,6 +14365,12 @@
     });
     $('#logout-drawer').addEventListener('click', () => confirmLogout());
     document.addEventListener('keydown', (event) => {
+      const userOpen = event.target.closest?.('[data-user-open]');
+      if (userOpen && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        openUserDetailSheet(userOpen.dataset.userOpen);
+        return;
+      }
       if (event.key === 'Escape') {
         if (!$('#media-viewer')?.hidden) {
           closeViewer();
@@ -14000,6 +14415,12 @@
         const search = $('#search');
         if (search && search.value !== state.q) search.value = state.q;
         renderClientes();
+        return;
+      }
+      const orderSearch = event.target.closest('#order-appbar-search');
+      if (orderSearch) {
+        state.pedidosSearch = orderSearch.value.trim();
+        renderPedidos();
       }
     });
     $('#wa-filters').addEventListener('click', (event) => {

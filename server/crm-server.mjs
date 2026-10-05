@@ -73,7 +73,7 @@
 
 import { createServer } from 'node:http';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -180,6 +180,13 @@ import {
 } from './stores.mjs';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ANDROID_APK_PATH = path.resolve(
+  process.env.PHYTO_ANDROID_APK_PATH ??
+    path.join(PROJECT_ROOT, 'apps', 'phyto_printer', 'build', 'app', 'outputs', 'flutter-apk', 'app-debug.apk'),
+);
+const DEFAULT_ANDROID_APK_URL =
+  'https://github.com/JUNIORPRUEVA/phytoemagrywed/releases/download/v1.01/app-debug.apk';
+const ANDROID_APK_URL = (process.env.PHYTO_ANDROID_APK_URL ?? DEFAULT_ANDROID_APK_URL).trim();
 
 function loadServerEnv() {
   if (process.env.NODE_ENV === 'test') return;
@@ -3901,6 +3908,69 @@ function serveAdminFile(res, urlPath, adminDir) {
   res.end(body);
 }
 
+function androidApkInfo(ctx) {
+  const configuredUrl = String(ctx.androidApk?.url ?? '').trim();
+  const filePath = path.resolve(String(ctx.androidApk?.path ?? ANDROID_APK_PATH));
+  const hasRemoteUrl = /^https?:\/\//i.test(configuredUrl);
+  const exists = existsSync(filePath) && statSync(filePath).isFile();
+  return {
+    available: hasRemoteUrl || exists,
+    source: hasRemoteUrl ? 'storage' : exists ? 'local' : 'missing',
+    url: hasRemoteUrl ? configuredUrl : '/api/admin/android-apk/download',
+    filename: 'phytoemagry-android.apk',
+    path: filePath,
+    sizeBytes: exists ? statSync(filePath).size : null,
+  };
+}
+
+function serveAndroidApk(req, res, ctx) {
+  const info = androidApkInfo(ctx);
+  if (/^https?:\/\//i.test(info.url)) {
+    res.writeHead(302, { location: info.url, 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  if (!info.available || !existsSync(info.path)) {
+    json(res, 404, {
+      ok: false,
+      error: 'apk_not_found',
+      message: 'El APK Android todavía no está publicado en el servidor.',
+    });
+    return;
+  }
+  const size = statSync(info.path).size;
+  res.writeHead(200, {
+    'content-type': 'application/vnd.android.package-archive',
+    'content-length': size,
+    'content-disposition': `attachment; filename="${info.filename}"`,
+    'cache-control': 'no-store',
+    'x-robots-tag': 'noindex, nofollow',
+  });
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  createReadStream(info.path).pipe(res);
+}
+
+async function deleteConversationFromCrm(ctx, conversation, actor) {
+  const messages = await ctx.db.list('wa_messages', { limit: 5000 });
+  let deletedMessages = 0;
+  for (const message of messages.filter((row) => row.conversation_id === conversation.id)) {
+    if (await ctx.db.remove('wa_messages', message.id)) deletedMessages += 1;
+  }
+  const deletedConversation = await ctx.db.remove('conversations', conversation.id);
+  await ctx.audit?.record({
+    entity: 'conversation',
+    entityId: conversation.id,
+    action: 'conversation.deleted',
+    actor: actor?.display_name ?? null,
+    summary: `Conversación eliminada (${deletedMessages} mensaje(s))`,
+    data: { customer_id: conversation.customer_id, messages_deleted: deletedMessages },
+  });
+  return { deletedConversation, deletedMessages };
+}
+
 // -------------------------------------------------------------------- rutas
 
 async function handle(req, res, ctx) {
@@ -4175,6 +4245,24 @@ async function handle(req, res, ctx) {
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
       json(res, 200, { ok: true, ...authPayload() });
+      return;
+    }
+
+    if (route === '/api/admin/android-apk/status' && req.method === 'GET') {
+      const info = androidApkInfo(ctx);
+      json(res, 200, {
+        ok: true,
+        available: info.available,
+        source: info.source,
+        url: info.url,
+        filename: info.filename,
+        sizeBytes: info.sizeBytes,
+      });
+      return;
+    }
+
+    if (route === '/api/admin/android-apk/download' && ['GET', 'HEAD'].includes(req.method ?? 'GET')) {
+      serveAndroidApk(req, res, ctx);
       return;
     }
 
@@ -7093,20 +7181,7 @@ async function handle(req, res, ctx) {
           continue;
         }
         if (action === 'delete') {
-          const messages = await ctx.db.list('wa_messages', { limit: 5000 });
-          let deletedMessages = 0;
-          for (const message of messages.filter((row) => row.conversation_id === id)) {
-            if (await ctx.db.remove('wa_messages', message.id)) deletedMessages += 1;
-          }
-          const deletedConversation = await ctx.db.remove('conversations', id);
-          await ctx.audit?.record({
-            entity: 'conversation',
-            entityId: id,
-            action: 'conversation.deleted',
-            actor: actor?.display_name ?? null,
-            summary: `Conversación eliminada (${deletedMessages} mensaje(s))`,
-            data: { customer_id: conversation.customer_id, messages_deleted: deletedMessages },
-          });
+          const { deletedConversation, deletedMessages } = await deleteConversationFromCrm(ctx, conversation, actor);
           results.push({ id, ok: deletedConversation, deletedMessages });
           continue;
         }
@@ -7141,6 +7216,16 @@ async function handle(req, res, ctx) {
         return;
       }
       const customer = await ctx.customers.get(conversation.customer_id);
+
+      if ((action === '' || action === 'delete') && req.method === 'DELETE') {
+        if (!(await canOpenConversation(ctx, actor, conversation))) {
+          denyConversation(res, json, conversation);
+          return;
+        }
+        const { deletedConversation, deletedMessages } = await deleteConversationFromCrm(ctx, conversation, actor);
+        json(res, 200, { ok: true, deleted: deletedConversation, deletedMessages });
+        return;
+      }
 
       /*
        * SOLICITAR QUE ME LA ASIGNEN. Un agente no se asigna conversaciones solo
@@ -7325,6 +7410,10 @@ async function handle(req, res, ctx) {
       }
 
       if ((action === 'archive' || action === 'unarchive') && req.method === 'POST') {
+        if (!(await canOpenConversation(ctx, actor, conversation))) {
+          denyConversation(res, json, conversation);
+          return;
+        }
         const updated = await ctx.customers.archiveConversation(conversation.id, action === 'archive');
         await ctx.audit?.record({
           entity: 'conversation',
@@ -8474,6 +8563,8 @@ function descripcionMultimedia(mediaStore, storage, whatsappMedia) {
  * @param {string} [config.token] clave del panel (vacía = panel desactivado)
  * @param {string} [config.adminDir] carpeta de la app del panel
  * @param {string} [config.allowedOrigin] origen permitido por CORS
+ * @param {string} [config.androidApkPath] APK local para descarga desde el panel
+ * @param {string} [config.androidApkUrl] URL de storage/CDN del APK publicado
  * @param {boolean} [config.quiet] no imprimir el banner de arranque
  * @param {any} [config.metaCapi] cliente de CAPI ya construido (tests)
  * @param {string} [config.metaPixelId]
@@ -8492,6 +8583,8 @@ export async function startCrmServer(config = {}) {
     token: config.token ?? TOKEN,
     allowedOrigin: config.allowedOrigin ?? ALLOWED_ORIGIN,
     adminDir: resolveAdminDir(config.adminDir),
+    androidApkPath: path.resolve(config.androidApkPath ?? ANDROID_APK_PATH),
+    androidApkUrl: config.androidApkUrl ?? ANDROID_APK_URL,
     quiet: config.quiet ?? false,
   };
 
@@ -8701,6 +8794,7 @@ export async function startCrmServer(config = {}) {
     token: settings.token,
     allowedOrigin: settings.allowedOrigin,
     adminDir: settings.adminDir,
+    androidApk: { path: settings.androidApkPath, url: settings.androidApkUrl },
     metaCapi,
     purchaseStatus: config.purchaseStatus ?? META_PURCHASE_STATUS,
     followups,

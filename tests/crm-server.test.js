@@ -5,7 +5,7 @@
  * queden guardados y se puedan volver a leer (no que una función devuelva algo).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startCrmServer } from '../server/crm-server.mjs';
@@ -225,6 +225,95 @@ describe('almacén alternativo', () => {
   it.skipIf(!sqliteAvailable)('en este Node sí hay SQLite (el modo normal)', () => {
     expect(sqliteAvailable).toBe(true);
     expect(app.storage).toBe('sqlite');
+  });
+});
+
+describe('APK Android desde el panel', () => {
+  it('no descarga el APK sin sesión', async () => {
+    const response = await fetch(`${app.url}/api/admin/android-apk/download`, { redirect: 'manual' });
+    expect(response.status).toBe(401);
+  });
+
+  it('descarga el APK local autenticado desde Configuración', async () => {
+    const apkPath = path.join(tmpDir, 'phytoemagry-test.apk');
+    writeFileSync(apkPath, Buffer.from('APK de prueba'));
+    const apkApp = await startCrmServer({
+      port: 0,
+      host: '127.0.0.1',
+      dataFile: path.join(tmpDir, 'apk.sqlite'),
+      token: TOKEN,
+      androidApkPath: apkPath,
+      androidApkUrl: '',
+      quiet: true,
+    });
+    try {
+      const login = await fetch(`${apkApp.url}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN }),
+      });
+      const cookie = login.headers.get('set-cookie');
+      expect(cookie).toContain('pe_crm=');
+
+      const status = await fetch(`${apkApp.url}/api/admin/android-apk/status`, {
+        headers: { cookie },
+      });
+      expect(await status.json()).toMatchObject({
+        ok: true,
+        available: true,
+        source: 'local',
+        filename: 'phytoemagry-android.apk',
+      });
+
+      const download = await fetch(`${apkApp.url}/api/admin/android-apk/download`, {
+        headers: { cookie },
+      });
+      expect(download.status).toBe(200);
+      expect(download.headers.get('content-type')).toContain('application/vnd.android.package-archive');
+      expect(download.headers.get('content-disposition')).toContain('phytoemagry-android.apk');
+      expect(await download.text()).toBe('APK de prueba');
+    } finally {
+      await apkApp.close();
+    }
+  });
+
+  it('redirige al release oficial de GitHub cuando no hay URL personalizada', async () => {
+    const apkApp = await startCrmServer({
+      port: 0,
+      host: '127.0.0.1',
+      dataFile: path.join(tmpDir, 'apk-release.sqlite'),
+      token: TOKEN,
+      quiet: true,
+    });
+    try {
+      const login = await fetch(`${apkApp.url}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN }),
+      });
+      const cookie = login.headers.get('set-cookie');
+
+      const status = await fetch(`${apkApp.url}/api/admin/android-apk/status`, {
+        headers: { cookie },
+      });
+      expect(await status.json()).toMatchObject({
+        ok: true,
+        available: true,
+        source: 'storage',
+        url: 'https://github.com/JUNIORPRUEVA/phytoemagrywed/releases/download/v1.01/app-debug.apk',
+      });
+
+      const download = await fetch(`${apkApp.url}/api/admin/android-apk/download`, {
+        headers: { cookie },
+        redirect: 'manual',
+      });
+      expect(download.status).toBe(302);
+      expect(download.headers.get('location')).toBe(
+        'https://github.com/JUNIORPRUEVA/phytoemagrywed/releases/download/v1.01/app-debug.apk',
+      );
+    } finally {
+      await apkApp.close();
+    }
   });
 });
 
