@@ -92,6 +92,7 @@
     deliveryWatchId: null,
     deliveryActiveSessionId: null,
     deliveryActiveOrderId: null,
+    deliveryListRequested: false,
     deliveryPreviewPoint: null,
     deliveryLastSentAt: 0,
     deliveryLastSentPoint: null,
@@ -154,6 +155,14 @@
       tileLoading: 0,
       tileError: false,
       slowTimer: null,
+    },
+    deliveryDetailMap: {
+      map: null,
+      baseLayer: null,
+      customerMarker: null,
+      deliveryMarker: null,
+      routeLine: null,
+      orderId: null,
     },
     auth: null,
     users: [],
@@ -1069,6 +1078,16 @@
   function renderMobileHeader() {
     const box = $('#mobile-header');
     if (!box) return;
+    if (state.tab === 'delivery') {
+      const orders = deliveryOrdersSorted();
+      const hasActive = Boolean(state.deliveryActiveOrderId && orders.some((order) => order.id === state.deliveryActiveOrderId));
+      const autoOpen = !state.deliveryActiveOrderId && !state.deliveryListRequested && orders.length === 1;
+      if (hasActive || autoOpen) {
+        document.body.dataset.deliveryDetail = 'true';
+        box.innerHTML = '';
+        return;
+      }
+    }
     if (state.tab === 'hoy') {
       const unreadNotifications = unreadNotificationCount();
       box.innerHTML = `<div class="dashboard-head">
@@ -2994,6 +3013,7 @@
     }
     if (orderId) {
       state.deliveryActiveOrderId = orderId;
+      state.deliveryListRequested = false;
       setTab('delivery');
       await api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}${notificationId ? `?notification=${encodeURIComponent(notificationId)}` : ''}`).catch(() => null);
       await load({ keepTab: true });
@@ -3044,6 +3064,8 @@
     const index = state.deliveryTracking.findIndex((row) => row.id === session.id);
     if (index >= 0) state.deliveryTracking[index] = session;
     else state.deliveryTracking.unshift(session);
+    const activeOrder = state.deliveryActiveOrderId ? (state.deliveryOrders ?? []).find((order) => order.id === state.deliveryActiveOrderId) : null;
+    if (activeOrder && session.order_id === activeOrder.id) updateDeliveryDetailMap(activeOrder);
   }
 
   async function refreshDeliveryTracking(options = {}) {
@@ -3134,6 +3156,8 @@
     state.deliveryLastSentPoint = { latitude: point.lat, longitude: point.lng };
     applyDeliverySession(data.session);
     updateDeliveryMap(selectedDeliverySession());
+    const activeOrder = state.deliveryActiveOrderId ? (state.deliveryOrders ?? []).find((order) => order.id === state.deliveryActiveOrderId) : null;
+    if (activeOrder && data.session?.order_id === activeOrder.id) updateDeliveryDetailMap(activeOrder);
   }
 
   function getInitialDeliveryPosition() {
@@ -3175,6 +3199,7 @@
         at: Date.now(),
       };
       renderDelivery();
+      updateDeliveryDetailMap(order);
     } catch {
       if (state.deliveryActiveOrderId !== orderId) return;
       state.deliveryPreviewPoint = { orderId, error: true, at: Date.now() };
@@ -3316,12 +3341,13 @@
     const preview = state.deliveryPreviewPoint?.orderId === order?.id ? state.deliveryPreviewPoint : null;
     const current = mapLatLng(session?.last_position) ?? mapLatLng(preview);
     const meters = Number(session?.distance_meters);
-    const distance = Number.isFinite(meters) ? meters : current && destination ? metersBetween(current, destination) : null;
+    const measuredDistance = current && destination ? metersBetween(current, destination) : null;
+    const distance = measuredDistance ?? (Number.isFinite(meters) ? meters : null);
     return {
       destination,
       current,
-      distanceLabel: session?.distance_label ?? fmtDistance(distance),
-      etaLabel: session?.eta_label ?? fmtEta(distance),
+      distanceLabel: fmtDistance(distance),
+      etaLabel: fmtEta(distance),
       gpsLabel: session?.last_position?.recorded_at
         ? `GPS ${fmtWhen(session.last_position.recorded_at)}`
         : preview?.loading
@@ -3337,15 +3363,40 @@
   function deliveryOrderSummaryHtml(order, session, status) {
     const customer = order.customer ?? {};
     const items = (order.items ?? []).map((line) => `${line.quantity ?? 1} x ${line.variantName ?? line.name ?? 'Producto'}`).join(', ');
-    const summary = [
-      customer.phone_e164 || customer.phone || null,
-      items || null,
-      order.total ? money(order.total, order.currency) : null,
-    ].filter(Boolean);
     return `<div class="delivery-summary">
-      <strong>${escapeHtml(customer.name ?? 'Cliente')}</strong>
-      <span>Pedido ${escapeHtml(order.order_number ?? order.id)} · ${escapeHtml(operationalStatusLabel(status))}</span>
-      ${summary.length ? `<small>${escapeHtml(summary.join(' · '))}</small>` : ''}
+      <div>
+        <strong>${escapeHtml(customer.name ?? 'Cliente')}</strong>
+        <span>${escapeHtml(customer.phone_e164 || customer.phone || 'Sin teléfono')}</span>
+      </div>
+      <div>
+        <strong>${escapeHtml(order.order_number ?? order.id)}</strong>
+        <span>${escapeHtml(operationalStatusLabel(status))}</span>
+      </div>
+      <div>
+        <strong>${items ? escapeHtml(items) : 'Producto'}</strong>
+        <span>${order.total ? escapeHtml(money(order.total, order.currency)) : 'Total pendiente'}</span>
+      </div>
+    </div>`;
+  }
+
+  function deliveryCompactFactsHtml(order, session, status) {
+    const route = deliveryRouteSummary(order, session);
+    const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
+    const facts = [
+      ['Distancia', route.distanceLabel || 'Calculando'],
+      ['Llegada', route.etaLabel ? `${route.etaLabel} aprox.` : 'Calculando'],
+      ['Delivery cobrado', money(deliveryFee, order.currency)],
+      ['GPS', route.gpsLabel || (status === 'EN_CAMINO' ? 'Esperando señal' : 'Al entrar al detalle')],
+    ];
+    return `<div class="delivery-compact-facts">
+      ${facts
+        .map(
+          ([label, value]) => `<div>
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>`,
+        )
+        .join('')}
     </div>`;
   }
 
@@ -3385,6 +3436,98 @@
       <p>${escapeHtml(note)}</p>
       ${author ? `<small>De ${escapeHtml(author)}</small>` : ''}
     </div>`;
+  }
+
+  function resetDeliveryDetailMap() {
+    const detail = state.deliveryDetailMap;
+    if (detail?.map) {
+      try {
+        detail.map.remove();
+      } catch {
+        /* Leaflet ya limpió el contenedor */
+      }
+    }
+    state.deliveryDetailMap = {
+      map: null,
+      baseLayer: null,
+      customerMarker: null,
+      deliveryMarker: null,
+      routeLine: null,
+      orderId: null,
+    };
+  }
+
+  function ensureDeliveryDetailMap(order) {
+    const el = $('#delivery-detail-map');
+    if (!el || !window.L) return null;
+    if (state.deliveryDetailMap.map && state.deliveryDetailMap.map.getContainer?.() === el) return state.deliveryDetailMap.map;
+    resetDeliveryDetailMap();
+    let map;
+    try {
+      map = window.L.map(el, {
+        zoomControl: false,
+        attributionControl: false,
+        scrollWheelZoom: false,
+        tap: true,
+      });
+    } catch {
+      try {
+        delete el._leaflet_id;
+      } catch {
+        /* nada que limpiar */
+      }
+      map = window.L.map(el, { zoomControl: false, attributionControl: false, scrollWheelZoom: false, tap: true });
+    }
+    const base = MAP_BASE_LAYERS.calles;
+    state.deliveryDetailMap.baseLayer = window.L.tileLayer(base.url, {
+      maxZoom: base.maxZoom,
+      maxNativeZoom: base.maxNativeZoom,
+      attribution: base.attribution,
+    }).addTo(map);
+    state.deliveryDetailMap.map = map;
+    state.deliveryDetailMap.orderId = order?.id ?? null;
+    return map;
+  }
+
+  function updateDeliveryDetailMap(order) {
+    const map = ensureDeliveryDetailMap(order);
+    if (!map || !window.L || !order) return;
+    const detail = state.deliveryDetailMap;
+    const session = deliverySessionForOrder(order.id);
+    const location = deliveryOrderLocation(order);
+    const destination = mapLatLng(location);
+    const preview = state.deliveryPreviewPoint?.orderId === order.id ? state.deliveryPreviewPoint : null;
+    const current = mapLatLng(session?.last_position) ?? mapLatLng(preview);
+    if (!destination) {
+      map.setView([18.6157, -68.7071], 12);
+      return;
+    }
+    if (!detail.customerMarker) {
+      detail.customerMarker = window.L.marker(destination, { icon: deliveryMarkerIcon('customer') })
+        .addTo(map)
+        .bindTooltip('Cliente', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--customer' });
+    } else {
+      detail.customerMarker.setLatLng(destination);
+    }
+    if (current) {
+      if (!detail.deliveryMarker) {
+        detail.deliveryMarker = window.L.marker(current, { icon: deliveryMarkerIcon('delivery') })
+          .addTo(map)
+          .bindTooltip('Tu ubicación', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--driver' });
+      } else {
+        detail.deliveryMarker.setLatLng(current);
+      }
+      const points = [current, destination];
+      if (!detail.routeLine) {
+        detail.routeLine = window.L.polyline(points, { color: '#0b6b4f', weight: 4, opacity: 0.72, dashArray: '8 8' }).addTo(map);
+      } else {
+        detail.routeLine.setLatLngs(points);
+      }
+      map.fitBounds(window.L.latLngBounds(points).pad(0.32), { animate: false, maxZoom: 16, padding: [40, 150] });
+    } else {
+      map.setView(destination, 16);
+    }
+    setTimeout(() => map.invalidateSize(), 0);
   }
 
   async function openDeliveryOrderDetail(orderId) {
@@ -3514,9 +3657,42 @@
                 ${deliveryPrimaryAction(order, session)}
               </div>
             </div>`
-          : `<div class="delivery-card__actions">${deliveryPrimaryAction(order, session)}</div>`
+          : ''
       }
     </article>`;
+  }
+
+  function deliveryDetailPanelHtml(order) {
+    const session = deliverySessionForOrder(order.id);
+    const status = deliveryVisibleStatus(order, session);
+    const navUrl = externalNavigationUrl(deliveryOrderLocation(order));
+    return `<section class="delivery-detail-panel" aria-label="Detalle de entrega">
+      ${deliveryOrderSummaryHtml(order, session, status)}
+      ${deliveryCompactFactsHtml(order, session, status)}
+      ${deliveryAssignmentNoteHtml(order)}
+      <div class="delivery-step ${status === 'PENDIENTE' ? 'delivery-step--required' : ''}">
+        <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
+        <div>
+          <strong>${status === 'PENDIENTE' ? 'Primero contacta al cliente' : 'Cliente contactado'}</strong>
+          <small>${status === 'PENDIENTE' ? 'Acepta y abre el chat con el mensaje listo.' : 'Ya puedes continuar con la entrega.'}</small>
+        </div>
+      </div>
+      <div class="delivery-actions">
+        <button class="btn btn--ghost btn--sm" data-delivery-order-detail="${escapeHtml(order.id)}" type="button">Ver pedido</button>
+        ${deliveryVisibleStatus(order, session) === 'EN_CAMINO' && navUrl ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Ruta</a>` : ''}
+        ${
+          status === 'INCIDENCIA'
+            ? `<div class="delivery-issue">
+                <strong>Incidencia reportada</strong>
+                <p><span>Motivo:</span> ${escapeHtml(order.delivery?.issue_reason_label ?? 'Incidencia')}</p>
+                ${order.delivery?.issue_note ? `<p><span>Nota:</span> ${escapeHtml(order.delivery.issue_note)}</p>` : ''}
+                <p>Esperando decisión administrativa.</p>
+              </div>`
+            : ''
+        }
+        ${deliveryPrimaryAction(order, session)}
+      </div>
+    </section>`;
   }
 
   function renderDelivery() {
@@ -3524,17 +3700,30 @@
     if (!box) return;
     const orders = deliveryOrdersSorted();
     const activeId = state.deliveryActiveOrderId;
-    const active = activeId ? orders.find((order) => order.id === activeId) ?? null : null;
+    const autoOpen = !activeId && !state.deliveryListRequested && orders.length === 1;
+    const active = activeId
+      ? orders.find((order) => order.id === activeId) ?? null
+      : autoOpen
+        ? orders[0]
+        : null;
+    if (active && state.deliveryActiveOrderId !== active.id) {
+      state.deliveryActiveOrderId = active.id;
+      refreshDeliveryPreviewPosition(active.id).catch(() => {});
+    }
+    if (active) document.body.dataset.deliveryDetail = 'true';
+    else delete document.body.dataset.deliveryDetail;
+    box.classList.toggle('delivery-view--detail', Boolean(active));
     if (active) {
-      const session = deliverySessionForOrder(active.id);
-      const navUrl = externalNavigationUrl(deliveryOrderLocation(active));
-      box.innerHTML = `<div class="delivery-head">
-        <button class="icon-btn" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
-        <div><h1>Entrega</h1><p>Pedido ${escapeHtml(active.order_number ?? active.id)}</p></div>
-      </div>${deliveryCard(active, { detail: true })}
-      ${deliveryVisibleStatus(active, session) === 'EN_CAMINO' && navUrl ? `<a class="delivery-nav-link" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Abrir ruta en Google Maps</a>` : ''}`;
+      resetDeliveryDetailMap();
+      box.innerHTML = `<div class="delivery-detail-screen">
+        <div class="delivery-detail-map" id="delivery-detail-map" aria-label="Mapa de entrega"></div>
+        <button class="icon-btn delivery-detail-back" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
+        ${deliveryDetailPanelHtml(active)}
+      </div>`;
+      setTimeout(() => updateDeliveryDetailMap(active), 0);
       return;
     }
+    resetDeliveryDetailMap();
     const group = (title, values) =>
       values.length
         ? `<section class="delivery-group"><h2>${escapeHtml(title)} <span>${values.length}</span></h2>${values.map((order) => deliveryCard(order)).join('')}</section>`
@@ -3561,6 +3750,7 @@
   function openDeliveryOrder(orderId) {
     if (!orderId) return;
     state.deliveryActiveOrderId = orderId;
+    state.deliveryListRequested = false;
     setTab('delivery', { silent: true });
     renderDelivery();
     refreshDeliveryPreviewPosition(orderId).catch(() => {});
@@ -4579,6 +4769,7 @@
     const orderId = query?.get('order');
     if (orderId) {
       state.deliveryActiveOrderId = orderId;
+      state.deliveryListRequested = false;
       setTab('delivery', { silent: true });
       try {
         await api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}${query?.get('notification') ? `?notification=${encodeURIComponent(query.get('notification'))}` : ''}`);
@@ -10248,6 +10439,11 @@
 
   /** Coordenadas numéricas de cualquier punto (ubicación, pedido o marcador). */
   function mapLatLng(point) {
+    if (Array.isArray(point) && point.length >= 2) {
+      const lat = Number(point[0]);
+      const lng = Number(point[1]);
+      return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+    }
     const lat = Number(point?.latitude ?? point?.lat);
     const lng = Number(point?.longitude ?? point?.lng);
     return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
@@ -10275,6 +10471,7 @@
 
   /** «850 m» / «12,4 km»: la distancia se lee como se habla, no como un decimal. */
   function fmtDistance(meters) {
+    if (meters === null || meters === undefined || meters === '') return '';
     const value = Number(meters);
     if (!Number.isFinite(value)) return '';
     if (value < 1000) return `${Math.round(value)} m`;
@@ -10293,6 +10490,7 @@
   const MAP_AVG_SPEED_KMH = 25;
 
   function fmtEta(meters, speedKmh = MAP_AVG_SPEED_KMH) {
+    if (meters === null || meters === undefined || meters === '') return '';
     const distancia = Number(meters);
     const velocidad = Number(speedKmh);
     if (!Number.isFinite(distancia) || !Number.isFinite(velocidad) || velocidad <= 0) return '';
@@ -13311,6 +13509,10 @@
       state.ordersMap.panelOpen = false;
     }
     if (!['mapa', 'delivery'].includes(tab)) stopDeliveryEvents();
+    if (tab !== 'delivery') {
+      state.deliveryListRequested = false;
+      delete document.body.dataset.deliveryDetail;
+    }
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     if (state.drawer) closeDrawer();
@@ -13835,6 +14037,8 @@
       }
       if (event.target.closest('[data-delivery-back]')) {
         state.deliveryActiveOrderId = null;
+        state.deliveryListRequested = true;
+        delete document.body.dataset.deliveryDetail;
         setTab('delivery', { silent: true });
         renderDelivery();
         return;

@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
  */
 const app = readFileSync(new URL('../public/admin/app.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 const html = readFileSync(new URL('../public/admin/index.html', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+const css = readFileSync(new URL('../public/admin/admin.css', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
 describe('delivery tracking frontend UAT guards', () => {
   it('Mis entregas abre el chat correcto con mensaje listo sin cambiar estado', () => {
@@ -26,10 +27,19 @@ describe('delivery tracking frontend UAT guards', () => {
   });
 
   it('el detalle de entrega obliga contacto primero y muestra mapa cacheable compacto', () => {
-    expect(app).toContain('function deliveryMapPreviewHtml');
+    expect(app).toContain('function updateDeliveryDetailMap');
+    expect(app).toContain('if (Array.isArray(point) && point.length >= 2)');
+    expect(app).toContain('if (meters === null || meters === undefined || meters === \'\') return \'\';');
+    expect(app).toContain('const measuredDistance = current && destination ? metersBetween(current, destination) : null;');
+    expect(app).toContain('class="delivery-detail-map" id="delivery-detail-map"');
+    expect(app).toContain(".bindTooltip('Cliente'");
+    expect(app).toContain(".bindTooltip('Tu ubicación'");
+    expect(app).toContain('if (activeOrder && session.order_id === activeOrder.id) updateDeliveryDetailMap(activeOrder);');
+    expect(app).toContain('class="icon-btn delivery-detail-back"');
+    expect(app).toContain('function deliveryDetailPanelHtml');
+    expect(app).toContain("document.body.dataset.deliveryDetail = 'true'");
     expect(app).toContain('function openDeliveryOrderDetail');
-    expect(app).toContain('tileUrlFor(MAP_BASE_LAYERS.calles.url, 16');
-    expect(app).toContain('loading="eager"');
+    expect(app).toContain('Delivery cobrado');
     expect(app).toContain('Primero contacta al cliente');
     expect(app).toContain('Luego podrás iniciar la entrega.');
     expect(app).toContain('Aceptar y contactar');
@@ -37,8 +47,18 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('Ver pedido');
     expect(app).toContain('Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.');
     expect(app.match(/data-delivery-contact=/g)).toHaveLength(1);
-    const cardBlock = app.slice(app.indexOf('function deliveryCard'), app.indexOf('function renderDelivery'));
-    expect(cardBlock).not.toContain('Ver mapa</button>');
+    const renderBlock = app.slice(app.indexOf('function renderDelivery'), app.indexOf('function openDeliveryOrder'));
+    expect(renderBlock).not.toContain('<div><h1>Entrega</h1>');
+    expect(css).toContain("body[data-delivery-detail='true'] .mobile-header");
+    expect(css).toContain("body[data-delivery-detail='true'] {");
+    expect(css).toContain("body[data-delivery-detail='true'] .app");
+    expect(css).toContain('display: none');
+    expect(css).toContain('height: calc(100dvh - var(--pe-tabbar)');
+    expect(css).toContain('overflow: hidden');
+    expect(css).toContain('animation: delivery-action-breathe');
+    expect(css).toContain('@keyframes delivery-action-sheen');
+    expect(css).toContain('.delivery-map-label--customer');
+    expect(css).toContain('.delivery-map-label--driver');
   });
 
   it('al asignar delivery permite comentario interno visible en la orden', () => {
@@ -78,6 +98,8 @@ describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
+    expect(html).toContain('/admin/app.js?v=delivery-full-map-47');
+    expect(html).toContain('/admin/admin.css?v=delivery-full-map-47');
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');
@@ -137,12 +159,14 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('state.deliveryMap.deliveryMarker.setLatLng(currentLatLng)');
   });
 
-  it('usa UN solo mapa de Leaflet para la pantalla unificada', () => {
-    // Una sola llamada a window.L.map en todo el panel: si aparece otra, es que
-    // alguien volvió a crear un mapa aparte (lo que había antes con Delivery).
-    expect(app.match(/window\.L\.map\(/g)).toHaveLength(1);
+  it('usa el mapa principal y un mapa real de fondo en el detalle de entrega', () => {
+    // Hay dos instancias controladas: el mapa operativo grande y el fondo real
+    // del detalle de entrega. Ambas se limpian explícitamente.
+    expect(app.match(/window\.L\.map\(/g)).toHaveLength(3);
     expect(app).toContain('if (state.ordersMap.map && state.ordersMap.map.getContainer?.() === el) return state.ordersMap.map;');
     expect(app).toContain('function ensureDeliveryMap() {\n    return ensureOrdersMap();');
+    expect(app).toContain('function resetDeliveryDetailMap');
+    expect(app).toContain('function ensureDeliveryDetailMap');
     expect(app).toContain('state.deliveryMap.customerMarker = window.L.marker');
     expect(app).toContain('state.deliveryMap.deliveryMarker = window.L.marker');
     expect(app).toContain('state.deliveryMap.deliveryMarker.setLatLng(currentLatLng)');
