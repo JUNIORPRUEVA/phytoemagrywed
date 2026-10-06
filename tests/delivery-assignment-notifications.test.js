@@ -22,6 +22,7 @@ let deliveryCookie = '';
 let otherDeliveryCookie = '';
 let delivery;
 let otherDelivery;
+let ana;
 let conversationId;
 let now = new Date('2026-10-04T10:00:00.000Z');
 
@@ -176,6 +177,15 @@ beforeAll(async () => {
       role: 'DELIVERY',
       personalPhone: '8293333333',
       fleetPhone: '8294444444',
+    }),
+  }))).user;
+  ana = (await json(await request('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'ana.delivery@phyto.local',
+      password: DELIVERY_PASS,
+      displayName: 'Ana Admin',
+      role: 'AGENT',
     }),
   }))).user;
   deliveryCookie = (await login('delivery1@phyto.local', DELIVERY_PASS)).cookie;
@@ -436,6 +446,37 @@ describe('delivery assignment notifications and contact flow', () => {
 
     const started = await request(`/api/admin/orders/${order.item.id}/delivery/start`, { method: 'POST', body: '{}' }, deliveryCookie);
     expect(started.status).toBe(201);
+  });
+
+  it('delivery asignado puede abrir y escribir aunque la conversación la atienda otro agente', async () => {
+    mockWhatsApp.sent = [];
+    await request(`/api/admin/conversations/${conversationId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: ana.id }),
+    });
+    const order = await createOrder();
+    await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+
+    const thread = await request(`/api/admin/conversations/${conversationId}/messages`, {}, deliveryCookie);
+    expect(thread.status).toBe(200);
+    const threadBody = await json(thread);
+    expect(threadBody.deliveryContext.asDelivery).toBe(true);
+    expect(threadBody.conversation.assigned_user_id).toBe(ana.id);
+
+    const sent = await request(`/api/admin/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body: 'Hola, voy con tu pedido' }),
+    }, deliveryCookie);
+    expect(sent.status).toBe(200);
+    const body = await json(sent);
+    expect(body.deliveryOrder.delivery.delivery_status).toBe('CONTACTED');
+    expect(mockWhatsApp.sent.at(-1).body).toContain('*Carlos Rodríguez · Delivery*');
+
+    const stillAssigned = await json(await request(`/api/admin/conversations/${conversationId}/messages`, {}, adminCookie));
+    expect(stillAssigned.conversation.assigned_user_id).toBe(ana.id);
   });
 
   it('si WhatsApp falla no marca CONTACTED', async () => {

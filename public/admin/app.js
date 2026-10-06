@@ -6493,6 +6493,7 @@
     const headerTags = customerTagsOf(customer).slice(0, 1).map((tag) => tag.label);
     $('#wa-chat-meta').textContent = [
       customer ? customerStageLabel(customerStageOf(customer)) : null,
+      data.deliveryContext?.asDelivery ? `Delivery: ${data.deliveryContext.deliveryUserName ?? 'entrega'}` : null,
       conversationAssignmentLabel(conversation),
       conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
       customer?.do_not_contact ? 'No contactar' : null,

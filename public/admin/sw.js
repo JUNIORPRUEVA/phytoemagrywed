@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v41-delivery-contact-zoom';
+const VERSION = 'crm-v42-delivery-chat-access';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;

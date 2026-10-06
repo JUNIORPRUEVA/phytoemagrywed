@@ -7355,6 +7355,7 @@ async function handle(req, res, ctx) {
           denyConversation(res, json, conversation);
           return;
         }
+        const deliveryOrderContext = await deliveryOrderForConversation(ctx, conversation, actor);
         const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
         const stage = customer ? await ctx.customers.customerStage(customer.id) : null;
         const tags = customer ? await ctx.customers.tagsForCustomer(customer.id) : [];
@@ -7369,6 +7370,14 @@ async function handle(req, res, ctx) {
           messages,
           nextFollowup,
           canSendFreeText: ctx.customers.canSendFreeText(conversation),
+          deliveryContext: deliveryOrderContext
+            ? {
+                asDelivery: true,
+                orderId: deliveryOrderContext.item.id,
+                orderNumber: deliveryOrderContext.order.order_number ?? deliveryOrderContext.item.order_number ?? null,
+                deliveryUserName: actor?.display_name ?? deliveryOrderContext.order.delivery?.delivery_user_name_snapshot ?? null,
+              }
+            : null,
           whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) },
         });
         return;
@@ -7442,10 +7451,12 @@ async function handle(req, res, ctx) {
        */
       if (action === 'location' && req.method === 'POST') {
         if (!requirePermission('chats.reply')) return;
+        const deliveryOrderContext = await deliveryOrderForConversation(ctx, conversation, actor);
         if (
           conversation.assigned_user_id &&
           conversation.assigned_user_id !== currentUser?.id &&
-          !can('chats.force_reassign')
+          !can('chats.force_reassign') &&
+          !deliveryOrderContext
         ) {
           json(res, 403, {
             ok: false,
@@ -7589,10 +7600,12 @@ async function handle(req, res, ctx) {
           denyConversation(res, json, conversation);
           return;
         }
+        const deliveryOrderContext = await deliveryOrderForConversation(ctx, conversation, actor);
         if (
           conversation.assigned_user_id &&
           conversation.assigned_user_id !== currentUser?.id &&
-          !can('chats.force_reassign')
+          !can('chats.force_reassign') &&
+          !deliveryOrderContext
         ) {
           json(res, 403, {
             ok: false,
@@ -7711,7 +7724,6 @@ async function handle(req, res, ctx) {
           return;
         }
 
-        const deliveryOrderContext = await deliveryOrderForConversation(ctx, conversation, actor);
         const messageBody =
           !template && deliveryOrderContext && messageNeedsDeliveryIdentity(deliveryOrderContext.order, actor)
             ? withDeliveryIdentity(rawMessageBody, actor)
