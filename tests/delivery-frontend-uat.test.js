@@ -31,10 +31,22 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('loading="eager"');
     expect(app).toContain('Primero contacta al cliente');
     expect(app).toContain('Luego podrás iniciar la entrega.');
+    expect(app).toContain('Aceptar y contactar');
     expect(app).toContain('Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.');
     expect(app.match(/data-delivery-contact=/g)).toHaveLength(1);
     const cardBlock = app.slice(app.indexOf('function deliveryCard'), app.indexOf('function renderDelivery'));
     expect(cardBlock).not.toContain('Ver mapa</button>');
+  });
+
+  it('al entrar al detalle calcula distancia con GPS sin iniciar tracking ni cambiar estado', () => {
+    expect(app).toContain('function getDeliveryPreviewPosition');
+    expect(app).toContain('maximumAge: 30000');
+    expect(app).toContain('state.deliveryPreviewPoint = { orderId, loading: true');
+    expect(app).toContain('refreshDeliveryPreviewPosition(orderId).catch(() => {});');
+    expect(app).toContain('Activa ubicación para calcular distancia');
+    const previewBlock = app.slice(app.indexOf('async function refreshDeliveryPreviewPosition'), app.indexOf('async function rollbackDeliveryStart'));
+    expect(previewBlock).not.toContain('/delivery/start');
+    expect(previewBlock).not.toContain('sendDeliveryPoint');
   });
 
   it('en chat abierto desde delivery oculta acciones comerciales flotantes', () => {

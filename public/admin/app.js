@@ -92,6 +92,7 @@
     deliveryWatchId: null,
     deliveryActiveSessionId: null,
     deliveryActiveOrderId: null,
+    deliveryPreviewPoint: null,
     deliveryLastSentAt: 0,
     deliveryLastSentPoint: null,
     deliveryWatchStartedAt: 0,
@@ -2998,6 +2999,7 @@
       await load({ keepTab: true });
       setTab('delivery', { silent: true });
       renderDelivery();
+      refreshDeliveryPreviewPosition(orderId).catch(() => {});
     }
     closeSheet();
   }
@@ -3144,6 +3146,42 @@
     });
   }
 
+  function getDeliveryPreviewPosition() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation?.getCurrentPosition) {
+        reject(new Error('geolocation_unavailable'));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 9000, maximumAge: 30000 });
+    });
+  }
+
+  async function refreshDeliveryPreviewPosition(orderId) {
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    if (!order || !deliveryOrderLocation(order)) return;
+    const current = state.deliveryPreviewPoint;
+    if (current?.orderId === orderId && Date.now() - Number(current.at ?? 0) < 30000) return;
+    state.deliveryPreviewPoint = { orderId, loading: true, at: Date.now() };
+    renderDelivery();
+    try {
+      const position = await getDeliveryPreviewPosition();
+      if (state.deliveryActiveOrderId !== orderId) return;
+      state.deliveryPreviewPoint = {
+        orderId,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        recorded_at: new Date(position.timestamp || Date.now()).toISOString(),
+        at: Date.now(),
+      };
+      renderDelivery();
+    } catch {
+      if (state.deliveryActiveOrderId !== orderId) return;
+      state.deliveryPreviewPoint = { orderId, error: true, at: Date.now() };
+      renderDelivery();
+    }
+  }
+
   async function rollbackDeliveryStart({ sessionId, orderId, previousStatus }) {
     try {
       await api(`/api/admin/delivery-tracking/${encodeURIComponent(sessionId)}/stop`, {
@@ -3275,7 +3313,8 @@
   function deliveryRouteSummary(order, session = deliverySessionForOrder(order?.id)) {
     const location = deliveryOrderLocation(order);
     const destination = mapLatLng(location);
-    const current = mapLatLng(session?.last_position);
+    const preview = state.deliveryPreviewPoint?.orderId === order?.id ? state.deliveryPreviewPoint : null;
+    const current = mapLatLng(session?.last_position) ?? mapLatLng(preview);
     const meters = Number(session?.distance_meters);
     const distance = Number.isFinite(meters) ? meters : current && destination ? metersBetween(current, destination) : null;
     return {
@@ -3283,7 +3322,15 @@
       current,
       distanceLabel: session?.distance_label ?? fmtDistance(distance),
       etaLabel: session?.eta_label ?? fmtEta(distance),
-      gpsLabel: session?.last_position?.recorded_at ? `GPS ${fmtWhen(session.last_position.recorded_at)}` : '',
+      gpsLabel: session?.last_position?.recorded_at
+        ? `GPS ${fmtWhen(session.last_position.recorded_at)}`
+        : preview?.loading
+          ? 'Tomando tu ubicación...'
+          : preview?.error
+            ? 'Activa ubicación para calcular distancia'
+            : preview?.recorded_at
+              ? `Tu ubicación ${fmtWhen(preview.recorded_at)}`
+              : '',
     };
   }
 
@@ -3333,7 +3380,7 @@
     const status = deliveryVisibleStatus(order, session);
     if (status === 'PENDIENTE') {
       return order.conversation_id
-        ? `<button class="btn btn--primary btn--sm" data-delivery-contact="${escapeHtml(order.id)}" type="button">Contactar cliente</button>`
+        ? `<button class="btn btn--primary btn--sm" data-delivery-contact="${escapeHtml(order.id)}" type="button">Aceptar y contactar</button>`
         : `<span class="delivery-unavailable">Sin conversación</span>`;
     }
     if (status === 'EN_PROCESO') {
@@ -3448,6 +3495,7 @@
     state.deliveryActiveOrderId = orderId;
     setTab('delivery', { silent: true });
     renderDelivery();
+    refreshDeliveryPreviewPosition(orderId).catch(() => {});
   }
 
   function confirmDeliveryComplete(sessionId) {
@@ -4468,6 +4516,7 @@
         await api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}${query?.get('notification') ? `?notification=${encodeURIComponent(query.get('notification'))}` : ''}`);
         await load({ keepTab: true });
         setTab('delivery', { silent: true });
+        refreshDeliveryPreviewPosition(orderId).catch(() => {});
       } catch {
         toast('No tienes acceso a ese pedido');
       }
