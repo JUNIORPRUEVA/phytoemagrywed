@@ -6992,17 +6992,166 @@ body[data-wa-view='chat'] .mobile-header {
 
 .delivery-card__detail {
   grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
   align-items: stretch;
   justify-content: stretch;
   padding-top: 8px;
 }
 
+.delivery-summary,
+.delivery-step,
+.delivery-map-card,
 .delivery-destination {
   display: grid;
-  gap: 6px;
-  padding: 10px;
+  gap: 4px;
+  padding: 9px 10px;
   border-radius: 8px;
   background: var(--pe-surface-alt);
+}
+
+.delivery-summary strong {
+  color: var(--pe-ink-900);
+  font-size: 1rem;
+  line-height: 1.15;
+}
+
+.delivery-summary span,
+.delivery-summary small {
+  overflow: hidden;
+  color: var(--pe-ink-500);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delivery-map-card {
+  position: relative;
+  min-height: 146px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgba(8, 104, 78, 0.12);
+  background: #e8f2ed;
+  color: inherit;
+  text-align: left;
+}
+
+.delivery-map-card img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.delivery-map-card__shade {
+  position: absolute;
+  inset: auto 0 0;
+  height: 58%;
+  background: linear-gradient(180deg, rgba(4, 28, 23, 0), rgba(4, 28, 23, 0.72));
+}
+
+.delivery-map-card__pin {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 12px;
+  background: var(--pe-brand-700);
+  color: #fff;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 12px 24px rgba(4, 28, 23, 0.22);
+}
+
+.delivery-map-card__pin .svg {
+  width: 18px;
+  height: 18px;
+}
+
+.delivery-map-card__text {
+  position: relative;
+  z-index: 1;
+  align-self: end;
+  display: grid;
+  gap: 2px;
+  padding: 78px 11px 10px;
+  color: #fff;
+}
+
+.delivery-map-card__text strong,
+.delivery-map-card__text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delivery-map-card__text strong {
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.delivery-map-card__text small {
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.delivery-map-card--empty {
+  min-height: 76px;
+  border: 1px dashed rgba(8, 104, 78, 0.22);
+}
+
+.delivery-map-card--empty strong,
+.delivery-map-card--empty span {
+  color: var(--pe-ink-700);
+}
+
+.delivery-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.delivery-step > span {
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(8, 122, 91, 0.12);
+  color: var(--pe-brand-700);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.delivery-step--required > span {
+  background: var(--pe-brand-700);
+  color: #fff;
+}
+
+.delivery-step strong,
+.delivery-step small {
+  display: block;
+  line-height: 1.22;
+}
+
+.delivery-step strong {
+  color: var(--pe-ink-900);
+  font-size: 0.86rem;
+}
+
+.delivery-step small {
+  margin-top: 2px;
+  color: var(--pe-ink-500);
+  font-size: 0.73rem;
+  font-weight: 700;
 }
 
 .delivery-destination strong {
@@ -7013,6 +7162,21 @@ body[data-wa-view='chat'] .mobile-header {
   color: var(--pe-ink-600);
   font-size: 0.9rem;
   font-weight: 650;
+}
+
+.delivery-nav-link {
+  display: block;
+  margin: 8px;
+  min-height: 38px;
+  padding: 10px 12px;
+  border: 1px solid rgba(8, 104, 78, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--pe-brand-700);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+  text-decoration: none;
 }
 
 .delivery-confirm,

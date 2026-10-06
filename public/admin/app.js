@@ -219,6 +219,7 @@
       followupId: null,
       listError: false,
       threadError: false,
+      deliveryOrderId: null,
       /* Conversación que no es suya: se explica y se ofrece PEDIRLA (no se abre). */
       locked: null,
     },
@@ -3265,10 +3266,67 @@
     return [
       `Hola ${customer}, soy ${deliveryName} de Phytoemagry.`,
       number ? `Tengo tu pedido ${number}${items ? ` (${items})` : ''} asignado para entrega.` : '',
-      'Te escribo para coordinar contigo la entrega.',
+      'Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.',
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  function deliveryRouteSummary(order, session = deliverySessionForOrder(order?.id)) {
+    const location = deliveryOrderLocation(order);
+    const destination = mapLatLng(location);
+    const current = mapLatLng(session?.last_position);
+    const meters = Number(session?.distance_meters);
+    const distance = Number.isFinite(meters) ? meters : current && destination ? metersBetween(current, destination) : null;
+    return {
+      destination,
+      current,
+      distanceLabel: session?.distance_label ?? fmtDistance(distance),
+      etaLabel: session?.eta_label ?? fmtEta(distance),
+      gpsLabel: session?.last_position?.recorded_at ? `GPS ${fmtWhen(session.last_position.recorded_at)}` : '',
+    };
+  }
+
+  function deliveryOrderSummaryHtml(order, session, status) {
+    const customer = order.customer ?? {};
+    const items = (order.items ?? []).map((line) => `${line.quantity ?? 1} x ${line.variantName ?? line.name ?? 'Producto'}`).join(', ');
+    const summary = [
+      customer.phone_e164 || customer.phone || null,
+      items || null,
+      order.total ? money(order.total, order.currency) : null,
+    ].filter(Boolean);
+    return `<div class="delivery-summary">
+      <strong>${escapeHtml(customer.name ?? 'Cliente')}</strong>
+      <span>Pedido ${escapeHtml(order.order_number ?? order.id)} · ${escapeHtml(operationalStatusLabel(status))}</span>
+      ${summary.length ? `<small>${escapeHtml(summary.join(' · '))}</small>` : ''}
+    </div>`;
+  }
+
+  function deliveryMapPreviewHtml(order, session, status) {
+    const location = deliveryOrderLocation(order);
+    const route = deliveryRouteSummary(order, session);
+    if (!location || !route.destination) {
+      return `<div class="delivery-map-card delivery-map-card--empty">
+        <strong>Ubicación del cliente</strong>
+        <span>No hay ubicación guardada para este pedido.</span>
+      </div>`;
+    }
+    const [lat, lng] = route.destination;
+    const tileUrl = tileUrlFor(MAP_BASE_LAYERS.calles.url, 16, lat, lng);
+    const title = `Entrega ${order.order_number ?? order.id}`;
+    const facts = [
+      route.distanceLabel && route.etaLabel ? `${route.distanceLabel} · ${route.etaLabel} aprox.` : null,
+      route.gpsLabel || (status === 'EN_CAMINO' ? 'Esperando señal GPS' : 'El GPS se activa al iniciar'),
+    ].filter(Boolean);
+    return `<button class="delivery-map-card" data-open-map="${mapLocationAttr(location)}" data-map-title="${escapeHtml(title)}" type="button">
+      <img src="${escapeHtml(tileUrl)}" alt="" loading="eager" decoding="async" />
+      <span class="delivery-map-card__pin" aria-hidden="true">${ICONS.pin}</span>
+      <span class="delivery-map-card__shade"></span>
+      <span class="delivery-map-card__text">
+        <strong>${escapeHtml(location.name || location.address || 'Ubicación del cliente')}</strong>
+        <small>${escapeHtml(facts.join(' · ') || 'Toca para abrir el mapa completo')}</small>
+      </span>
+    </button>`;
   }
 
   function deliveryPrimaryAction(order, session) {
@@ -3299,7 +3357,6 @@
     const status = deliveryVisibleStatus(order, session);
     const customer = order.customer ?? {};
     const location = deliveryOrderLocation(order);
-    const navUrl = externalNavigationUrl(location);
     const title = order.order_number ?? order.id;
     const assignedAt = order.delivery?.delivery_assigned_at ? fmtWhen(order.delivery.delivery_assigned_at) : '';
     const meta = [location?.name || location?.address, assignedAt]
@@ -3319,14 +3376,16 @@
       ${
         detail
           ? `<div class="delivery-card__detail">
-              <div class="delivery-destination">
-                <strong>Ubicación</strong>
-                <span>${escapeHtml(location?.name || location?.address || 'Sin dirección textual')}</span>
-                ${location ? `<button class="btn btn--ghost btn--sm" data-open-map="${mapLocationAttr(location)}" data-map-title="Entrega ${escapeHtml(title)}" type="button">Ver mapa</button>` : ''}
+              ${deliveryOrderSummaryHtml(order, session, status)}
+              ${deliveryMapPreviewHtml(order, session, status)}
+              <div class="delivery-step ${status === 'PENDIENTE' ? 'delivery-step--required' : ''}">
+                <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
+                <div>
+                  <strong>${status === 'PENDIENTE' ? 'Primero contacta al cliente' : 'Cliente contactado'}</strong>
+                  <small>${status === 'PENDIENTE' ? 'Luego podrás iniciar la entrega.' : 'Ya puedes continuar con la entrega.'}</small>
+                </div>
               </div>
               <div class="delivery-actions">
-                ${order.conversation_id ? `<button class="btn btn--whatsapp btn--sm" data-delivery-contact="${escapeHtml(order.id)}" type="button">Contactar cliente</button>` : '<span class="delivery-unavailable">Sin conversación</span>'}
-                ${status === 'EN_CAMINO' && navUrl ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Cómo llegar</a>` : ''}
                 ${
                   status === 'INCIDENCIA'
                     ? `<div class="delivery-issue">
@@ -3352,10 +3411,13 @@
     const activeId = state.deliveryActiveOrderId;
     const active = activeId ? orders.find((order) => order.id === activeId) ?? null : null;
     if (active) {
+      const session = deliverySessionForOrder(active.id);
+      const navUrl = externalNavigationUrl(deliveryOrderLocation(active));
       box.innerHTML = `<div class="delivery-head">
         <button class="icon-btn" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
         <div><h1>Entrega</h1><p>Pedido ${escapeHtml(active.order_number ?? active.id)}</p></div>
-      </div>${deliveryCard(active, { detail: true })}`;
+      </div>${deliveryCard(active, { detail: true })}
+      ${deliveryVisibleStatus(active, session) === 'EN_CAMINO' && navUrl ? `<a class="delivery-nav-link" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Abrir ruta en Google Maps</a>` : ''}`;
       return;
     }
     const group = (title, values) =>
@@ -4388,7 +4450,7 @@
       toast('Este pedido no tiene conversación vinculada');
       return;
     }
-    await openChat(order.conversation_id, { draft: deliveryMessage(order) });
+    await openChat(order.conversation_id, { draft: deliveryMessage(order), deliveryOrderId: order.id });
   }
 
   /**
@@ -6417,6 +6479,8 @@
     if (!state.wa.selectedId) {
       pane.hidden = true;
       placeholder.hidden = false;
+      const actionsIdle = $('#wa-actions');
+      if (actionsIdle) actionsIdle.hidden = false;
       return;
     }
     pane.hidden = false;
@@ -6447,6 +6511,7 @@
         const accionesBloqueadas = $('#wa-actions');
         if (accionesBloqueadas) {
           accionesBloqueadas.disabled = true;
+          accionesBloqueadas.hidden = false;
           accionesBloqueadas.dataset.customer = '';
           accionesBloqueadas.dataset.conversation = '';
         }
@@ -6477,11 +6542,15 @@
       state.wa.composerHtml = null;
       // Mientras no hay datos no se puede pedir ninguna acción comercial.
       const actionsLoading = $('#wa-actions');
-      if (actionsLoading) actionsLoading.disabled = true;
+      if (actionsLoading) {
+        actionsLoading.disabled = true;
+        actionsLoading.hidden = Boolean(state.wa.deliveryOrderId);
+      }
       return;
     }
 
     const { customer, conversation, messages, canSendFreeText } = data;
+    const deliveryChatMode = Boolean(data.deliveryContext?.asDelivery || state.wa.deliveryOrderId);
     const contactState = getConversationContactState(data);
     /*
      * El hilo que se pinta = lo que tiene el servidor + lo que acabas de enviar y
@@ -6516,6 +6585,7 @@
       actions.dataset.customer = customer?.id ?? '';
       actions.dataset.conversation = conversation?.id ?? '';
       actions.disabled = !customer?.id;
+      actions.hidden = deliveryChatMode;
       actions.setAttribute('aria-label', `Acciones de la conversación. ${conversationAssignmentLabel(conversation)}`);
     }
 
@@ -7260,6 +7330,7 @@
     state.wa.threadError = false;
     state.wa.locked = null;
     state.wa.draft = options.draft ?? '';
+    state.wa.deliveryOrderId = options.deliveryOrderId ?? null;
     state.wa.threadSearchOpen = false;
     state.wa.threadQuery = '';
     setWaView('chat');
@@ -13527,6 +13598,7 @@
       // --- acciones comerciales (S4/S5): pedido, comprobante, programar ---
       if (event.target.closest('#wa-actions')) {
         const button = event.target.closest('#wa-actions');
+        if (button.hidden || state.wa.chat?.deliveryContext?.asDelivery || state.wa.deliveryOrderId) return;
         openChatActions(button.dataset.customer, button.dataset.conversation);
         return;
       }

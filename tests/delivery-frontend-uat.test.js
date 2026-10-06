@@ -15,13 +15,32 @@ describe('delivery tracking frontend UAT guards', () => {
   it('Mis entregas abre el chat correcto con mensaje listo sin cambiar estado', () => {
     expect(app).toContain('function deliveryMessage(order)');
     expect(app).toContain('data-delivery-contact="${escapeHtml(order.id)}"');
-    expect(app).toContain('await openChat(order.conversation_id, { draft: deliveryMessage(order) });');
+    expect(app).toContain('await openChat(order.conversation_id, { draft: deliveryMessage(order), deliveryOrderId: order.id });');
     expect(app).toContain("state.wa.draft = options.draft ?? ''");
+    expect(app).toContain('state.wa.deliveryOrderId = options.deliveryOrderId ?? null');
 
     const contactBlock = app.slice(app.indexOf('async function contactDeliveryCustomer'), app.indexOf('async function applyDeepLink'));
     expect(contactBlock).toContain('openChat(order.conversation_id');
     expect(contactBlock).not.toContain('/delivery/start');
     expect(contactBlock).not.toContain('/delivery-tracking/');
+  });
+
+  it('el detalle de entrega obliga contacto primero y muestra mapa cacheable compacto', () => {
+    expect(app).toContain('function deliveryMapPreviewHtml');
+    expect(app).toContain('tileUrlFor(MAP_BASE_LAYERS.calles.url, 16');
+    expect(app).toContain('loading="eager"');
+    expect(app).toContain('Primero contacta al cliente');
+    expect(app).toContain('Luego podrás iniciar la entrega.');
+    expect(app).toContain('Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.');
+    expect(app.match(/data-delivery-contact=/g)).toHaveLength(1);
+    const cardBlock = app.slice(app.indexOf('function deliveryCard'), app.indexOf('function renderDelivery'));
+    expect(cardBlock).not.toContain('Ver mapa</button>');
+  });
+
+  it('en chat abierto desde delivery oculta acciones comerciales flotantes', () => {
+    expect(app).toContain('const deliveryChatMode = Boolean(data.deliveryContext?.asDelivery || state.wa.deliveryOrderId);');
+    expect(app).toContain('actions.hidden = deliveryChatMode');
+    expect(app).toContain('button.hidden || state.wa.chat?.deliveryContext?.asDelivery || state.wa.deliveryOrderId');
   });
 
   it('la app instalada no permite zoom de página por pellizco ni doble toque', () => {
