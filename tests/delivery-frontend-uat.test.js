@@ -34,10 +34,12 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(html).toContain('id="notifications-card"');
     expect(html).toContain('id="settings-notify"');
     expect(html).toContain('id="install-card"');
-    expect(app).toContain("if (canDeliver()) return ['delivery', 'whatsapp', 'ajustes'].includes(tab);");
+    expect(app).toContain("return !['reportes', 'usuarios'].includes(tab);");
+    expect(app).toContain("if (!canAccessTab(tab)) tab = 'hoy';");
     expect(app).toContain("$$('[data-admin-settings]').forEach");
     expect(app).toContain('if (isAdmin() && !state.metrics && !state.metricsLoading && state.online)');
     expect(app).toContain('if (isAdmin() && !state.auditEntries && !state.auditLoading && state.online)');
+    expect(app).toContain("if (tab === 'ajustes' && isAdmin())");
   });
 
   it('la app instalada no permite zoom de página por pellizco ni doble toque', () => {

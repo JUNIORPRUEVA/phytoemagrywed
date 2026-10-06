@@ -617,7 +617,8 @@
 
   const currentUser = () => state.auth?.user ?? null;
   const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
-  const canDeliver = () => ['AGENT', 'DELIVERY'].includes(String(currentUser()?.role ?? '').toUpperCase());
+  const currentRole = () => String(currentUser()?.role ?? '').toUpperCase();
+  const canDeliver = () => ['AGENT', 'DELIVERY'].includes(currentRole());
   const roleLabel = (role) =>
     role === 'ADMIN' ? 'Administrador' : role === 'AGENT' ? 'Agente' : role === 'DELIVERY' ? 'Delivery' : 'Sesión';
 
@@ -5331,12 +5332,11 @@
   function canAccessTab(tab) {
     if (tab === 'usuarios') return isAdmin();
     if (isAdmin()) return true;
-    if (canDeliver()) return ['delivery', 'whatsapp', 'ajustes'].includes(tab);
     return !['reportes', 'usuarios'].includes(tab);
   }
 
   function setTab(tab, options = {}) {
-    if (!canAccessTab(tab)) tab = canDeliver() ? 'delivery' : 'hoy';
+    if (!canAccessTab(tab)) tab = 'hoy';
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
     if (state.drawer) closeDrawer();
@@ -5358,7 +5358,7 @@
       if (tab === 'usuarios') loadUsers().catch(() => {});
       // Al entrar en Ajustes se refresca lo que cambia con el uso: los números y
       // la traza. Así el negocio ve el efecto de lo que acaba de hacer.
-      if (tab === 'ajustes') {
+      if (tab === 'ajustes' && isAdmin()) {
         loadMetrics(state.metricsPeriod).catch(() => {});
         state.auditEntries = null;
         state.auditLoading = true;
