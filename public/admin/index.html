@@ -2,7 +2,10 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#0b6b4f" />
     <meta name="color-scheme" content="light" />
@@ -18,7 +21,6 @@
     <meta name="apple-mobile-web-app-title" content="CRM Phyto" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-    <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/admin/admin.css" />
   </head>
   <body>
@@ -33,60 +35,52 @@
 
     <!-- ------------------------------------------------------------- ENTRAR -->
     <main id="login" class="login" hidden>
-      <section class="login__card" aria-labelledby="login-title">
-        <span class="login__mark">
-          <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="46" height="46" />
-        </span>
-        <h1 class="login__title" id="login-title">Phytoemagry <span>CRM</span></h1>
-        <p class="login__lede">Acceso privado del equipo</p>
-        <form id="login-form" class="login__form" autocomplete="on">
-          <label class="field">
-            <span class="field__label">Usuario</span>
-            <input
-              class="field__input"
-              id="login-username"
-              name="username"
-              type="text"
-              autocomplete="username"
-              placeholder="tu usuario"
-            />
-          </label>
-          <label class="field">
-            <span class="field__label">Contraseña</span>
-            <span class="pass">
-              <input
-                class="field__input"
-                id="login-password"
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                placeholder="Tu contraseña"
-              />
-              <button
-                class="pass__eye"
-                type="button"
-                data-pass-eye
-                aria-label="Ver la contraseña"
-                aria-pressed="false"
-                data-icon="eye"
-              ></button>
-            </span>
-          </label>
-          <label class="field field--legacy" hidden>
-            <span class="field__label">Clave legacy</span>
-            <input
-              class="field__input"
-              id="login-token"
-              name="token"
-              type="password"
-              autocomplete="current-password"
-              placeholder="Clave temporal"
-            />
-          </label>
-          <p class="login__error" id="login-error" role="alert" hidden></p>
-          <button class="btn btn--primary login__submit" type="submit">Entrar</button>
-        </form>
-      </section>
+      <img class="login__logo" src="/admin/logo-phytoemagry.png" alt="" width="92" height="92" />
+      <h1 class="login__title">PHYTOEMAGRY<br /><span>CRM</span></h1>
+      <p class="login__text">
+        Entra con tu usuario del equipo.
+      </p>
+      <form id="login-form" class="login__form" autocomplete="on">
+        <label class="field">
+          <span class="field__label">Usuario/correo</span>
+          <input
+            class="field__input"
+            id="login-username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            placeholder="ana@phytoemagry"
+          />
+        </label>
+        <label class="field">
+          <span class="field__label">Contraseña</span>
+          <input
+            class="field__input"
+            id="login-password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Tu contraseña"
+          />
+        </label>
+        <label class="field field--legacy" hidden>
+          <span class="field__label">Clave legacy</span>
+          <input
+            class="field__input"
+            id="login-token"
+            name="token"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Clave temporal"
+          />
+        </label>
+        <p class="login__error" id="login-error" role="alert" hidden></p>
+        <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+      </form>
+      <p class="login__hint">
+        Se instala como app: en Chrome, menú ⋮ → «Añadir a pantalla de inicio». En iPhone, Compartir →
+        «Añadir a pantalla de inicio».
+      </p>
     </main>
 
     <!-- --------------------------------------------------------------- APP -->
@@ -104,8 +98,7 @@
         aria-expanded="false"
         aria-controls="drawer"
       >
-        <span class="burger" aria-hidden="true" hidden><span></span><span></span></span>
-        <img class="drawer-menu-icon" src="/admin/icon-menu.png" alt="" aria-hidden="true" width="22" height="22" />
+        <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
       </button>
       <span class="presence" id="state-pill" role="status" hidden></span>
       <header class="topbar">
@@ -114,7 +107,6 @@
           <span class="topbar__sub" id="topbar-sub">CRM</span>
         </div>
       </header>
-      <header class="mobile-header" id="mobile-header"></header>
 
       <!-- Menú lateral: lo secundario no ocupa la barra inferior -->
       <div class="scrim" id="scrim" hidden></div>
@@ -129,27 +121,32 @@
           </button>
         </div>
         <div class="drawer__user" id="drawer-user" hidden></div>
-
-        <!-- Ventas: lo que se vende y a dónde va. Lo principal vive en el navbar. -->
-        <p class="drawer__group">Ventas</p>
-        <nav class="drawer__nav">
-          <button class="drawer__item" data-tab="mapa" type="button">
-            <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
+        <p class="drawer__group drawer__group--primary">Operación</p>
+        <nav class="drawer__nav drawer__nav--primary">
+          <button class="drawer__item" data-tab="hoy" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
           </button>
-          <button class="drawer__item" data-tab="delivery" type="button">
+          <button class="drawer__item" data-tab="whatsapp" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>WhatsApp
+          </button>
+          <button class="drawer__item" data-tab="clientes" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
+          </button>
+          <button class="drawer__item" data-tab="delivery" type="button" data-delivery-only hidden>
             <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
+          </button>
+        </nav>
+        <p class="drawer__group">Gestión</p>
+        <nav class="drawer__nav">
+          <button class="drawer__item" data-tab="pedidos" type="button">
+            <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos y compras
           </button>
           <button class="drawer__item" data-tab="productos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
           </button>
-          <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
+          <button class="drawer__item" data-tab="reportes" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
           </button>
-        </nav>
-
-        <!-- Seguimiento: hablar con quien ya es cliente. -->
-        <p class="drawer__group">Seguimiento</p>
-        <nav class="drawer__nav">
           <button class="drawer__item" data-tab="seguimientos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
           </button>
@@ -157,46 +154,16 @@
             <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
           </button>
         </nav>
-
         <div class="drawer__foot">
-          <p class="drawer__group">Sistema</p>
           <nav class="drawer__nav drawer__nav--bottom">
-            <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
-              <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
+            <button class="drawer__item" data-tab="ajustes" type="button">
+              <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Ajustes
             </button>
             <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
               <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
             </button>
-            <button class="drawer__item" data-tab="perfil" type="button">
-              <span class="drawer__icon" aria-hidden="true" data-icon="person"></span>Perfil
-            </button>
-            <!--
-              COMPARTIR APP: manda el enlace del panel a otra persona (un vendedor,
-              un repartidor, el socio). SIEMPRE sin la clave: el enlace que sale de
-              aquí no da acceso a nada, cada uno entra con su usuario.
-            -->
-            <button class="drawer__item" id="drawer-share" type="button">
-              <span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app
-            </button>
-            <!--
-              IR A LA WEB: enlace de verdad a la tienda (`/`, el mismo dominio donde
-              vive el panel). Abre en otra pestaña para no perder el panel abierto; en
-              el teléfono, la app instalada abre el navegador con la web.
-            -->
-            <a
-              class="drawer__item drawer__item--link"
-              id="drawer-web"
-              href="/"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Ir a la web
-              <span class="drawer__out" aria-hidden="true">↗</span>
-            </a>
           </nav>
-          <button class="drawer__logout" id="logout-drawer" type="button" aria-label="Cerrar sesión" title="Cerrar sesión">
-            <span class="drawer__icon" aria-hidden="true" data-icon="logout"></span>
-          </button>
+          <button class="btn btn--danger btn--block" id="logout-drawer" type="button">Cerrar sesión</button>
         </div>
       </aside>
 
@@ -210,6 +177,7 @@
         <!-- HOY -->
         <section class="view" id="view-hoy" hidden>
           <div class="stats" id="stats"></div>
+          <h2 class="view__title">Para hoy</h2>
           <div class="list" id="list-hoy"></div>
         </section>
 
@@ -238,13 +206,6 @@
               <div class="chips" id="wa-filters"></div>
               <div class="wa__error" id="wa-error" hidden></div>
               <div class="wa__convs" id="wa-conversations"></div>
-              <!--
-                Agregar un cliente: botón FLOTANTE en la esquina (estilo AppSheet),
-                como el resto de acciones rápidas.
-              -->
-              <button class="wa-new-chat" id="wa-new-chat" type="button" aria-label="Agregar cliente para WhatsApp" title="Agregar cliente">
-                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="28" height="28" />
-              </button>
             </div>
 
             <!-- Columna derecha -->
@@ -265,27 +226,19 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
-                <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación">
-                  <span class="ico" aria-hidden="true" data-icon="search"></span>
-                </button>
-                <div class="wa__thread-search" id="wa-thread-searchbar" hidden>
-                  <button class="wa__head-icon" id="wa-thread-search-close" type="button" aria-label="Cerrar búsqueda">
-                    <span class="ico" aria-hidden="true" data-icon="back"></span>
-                  </button>
-                  <input class="wa__thread-search-input" id="wa-thread-search-input" type="search" placeholder="Buscar en esta conversación" aria-label="Buscar en esta conversación" autocomplete="off" />
-                  <button class="wa__head-icon" id="wa-thread-search-clear" type="button" aria-label="Limpiar búsqueda">
-                    <span class="ico" aria-hidden="true" data-icon="close"></span>
-                  </button>
-                </div>
               </div>
               <div class="thread thread--wa chat-bg" id="thread"></div>
+              <!--
+                Acciones del cliente: botón flotante, separado del «+» del
+                compositor (que adjunta) y sin tapar mensajes, compositor ni barra.
+              -->
               <div class="wa__fab-row">
                 <button
                   class="wa-fab"
                   id="wa-actions"
                   type="button"
-                  aria-label="Acciones de la conversación"
-                  title="Acciones de la conversación"
+                  aria-label="Acciones del cliente"
+                  title="Acciones del cliente"
                   disabled
                 >
                   <span class="ico" aria-hidden="true" data-icon="spark"></span>
@@ -313,111 +266,27 @@
             <div class="chips" id="chips"></div>
           </div>
           <p class="view__count" id="clientes-count"></p>
-          <button class="client-fab" id="clientes-acciones" type="button" aria-label="Acciones de clientes" title="Acciones de clientes">
-            <span class="ico" aria-hidden="true" data-icon="plus"></span>
+          <button class="btn btn--primary btn--block" id="compra-nueva" type="button">
+            + Registrar compra de un cliente
           </button>
           <div class="list" id="list-clientes"></div>
         </section>
 
-        <!--
-          MAPA Y ENTREGAS — UNA sola pantalla para todo lo que es un mapa.
-
-          Aquí viven JUNTOS: los pedidos con ubicación de entrega, las ubicaciones
-          que han mandado los clientes y el seguimiento en vivo de las entregas
-          (GPS del repartidor, distancia y ETA). Antes eran dos vistas («Delivery»
-          y «Mapa de pedidos») y obligaban a saltar de una a otra.
-
-          En el teléfono el mapa ocupa la pantalla completa y los controles FLOTAN
-          encima: barra de arriba, tarjeta de la entrega en vivo y el botón de
-          acciones (medir distancia, mi ubicación, ver todo, capas, la lista…).
-          La lista de pedidos y ubicaciones se abre como panel desde ese botón.
-        -->
-        <section class="view view--map" id="view-mapa" hidden>
-          <div class="map-stage" id="mapa-stage">
-            <div class="map-view map-view--full" id="orders-map" aria-label="Mapa de pedidos, ubicaciones y entregas en vivo"></div>
-            <p class="map-notice" id="orders-map-notice" hidden></p>
-            <div class="map-appbar">
-              <button class="icon-btn" data-simple-back type="button" aria-label="Volver">
-                <span class="ico" aria-hidden="true" data-icon="back"></span>
-              </button>
-              <span class="map-appbar__title">
-                <strong id="mapa-titulo">Mapa y entregas</strong>
-                <small id="mapa-sub">Pedidos, ubicaciones y GPS en vivo</small>
-              </span>
-              <button class="icon-btn" id="mapa-actualizar" type="button" aria-label="Actualizar ahora">
-                <span class="ico" aria-hidden="true" data-icon="retry"></span>
-              </button>
-            </div>
-            <!-- Entrega seleccionada: lo esencial, flotando sobre el mapa. -->
-            <div class="map-live" id="mapa-live" hidden></div>
-            <button class="map-fab" id="mapa-acciones" type="button" aria-label="Acciones del mapa" title="Acciones del mapa">
-              <span class="ico" aria-hidden="true" data-icon="spark"></span>
-            </button>
-            <!-- Velo del panel de la lista (solo móvil): tocarlo lo cierra. -->
-            <div class="map-scrim" id="mapa-scrim"></div>
-          </div>
-
-          <div class="map-panel" id="mapa-panel">
-            <button class="map-panel__handle" id="mapa-panel-handle" type="button" aria-label="Cerrar la lista">
-              <span aria-hidden="true"></span>
-            </button>
-            <div class="chips" id="mapa-filtros">
-              <button class="chip" data-map-filter="todo" aria-pressed="true" type="button">Todo</button>
-              <button class="chip" data-map-filter="pedidos" type="button">Pedidos</button>
-              <button class="chip" data-map-filter="envivo" type="button">En vivo</button>
-              <button class="chip" data-map-filter="ubicaciones" type="button">Ubicaciones</button>
-              <button class="chip" data-map-filter="hoy" type="button">De hoy</button>
-            </div>
-            <p class="map-status" id="mapa-estado"></p>
-            <div class="list" id="mapa-lista"></div>
-          </div>
+        <!-- PEDIDOS Y COMPRAS (menú lateral) -->
+        <section class="view" id="view-pedidos" hidden>
+          <h2 class="view__title">Pedidos y compras</h2>
+          <p class="view__hint">Todo lo que ha entrado por la web o lo has apuntado tú. Una compra es un hecho, no un mensaje.</p>
+          <div class="list" id="list-pedidos"></div>
+          <button class="btn btn--primary btn--block" id="compra-nueva-ped" type="button">
+            + Registrar compra de un cliente
+          </button>
         </section>
 
         <!-- MIS ENTREGAS -->
         <section class="view view--delivery" id="view-delivery" hidden>
-          <div class="delivery-view" id="delivery-view"></div>
-        </section>
-
-        <!-- PERFIL DEL CLIENTE -->
-        <section class="view view--customer-profile" id="view-perfil-cliente" hidden>
-          <div id="customer-profile"></div>
-        </section>
-
-        <!--
-          PEDIDOS Y COMPRAS (menú lateral).
-
-          Una FILA por pedido, de dos líneas y sin botones dentro: el nombre de la
-          pantalla ya está en la barra de arriba, así que aquí NO se repite. Se
-          filtra por estado operativo y el alta vive en el botón cuadrado
-          flotante, igual que en Clientes.
-        -->
-        <section class="view" id="view-pedidos" hidden>
-          <div class="chips" id="pedidos-filtros">
-            <div class="wa-filter-panel__head">
-              <span><strong>Filtros</strong><small>Compras y entregas</small></span>
-              <button class="wa-filter-panel__close" data-order-filter-close type="button" aria-label="Cerrar filtros">
-                <span class="ico" aria-hidden="true" data-icon="close"></span>
-              </button>
-            </div>
-            <div class="wa-filter-panel__group">
-            <button class="chip" data-order-filter="todo" aria-pressed="true" type="button">Todo</button>
-            <button class="chip" data-order-filter="pendiente" type="button">Pendientes</button>
-            <button class="chip" data-order-filter="en-camino" type="button">En camino</button>
-            <button class="chip" data-order-filter="entregado" type="button">Entregados</button>
-            <button class="chip" data-order-filter="cancelado" type="button">Cancelados</button>
-            </div>
-          </div>
-          <p class="view__count" id="pedidos-count"></p>
-          <div class="list list--orders" id="list-pedidos"></div>
-          <button
-            class="client-fab list-fab"
-            id="compra-nueva-ped"
-            type="button"
-            aria-label="Registrar compra de un cliente"
-            title="Registrar compra"
-          >
-            <span class="ico" aria-hidden="true" data-icon="plus"></span>
-          </button>
+          <h2 class="view__title">Mis entregas</h2>
+          <p class="view__hint">Pedidos asignados a tu usuario. Contacta al cliente desde el chat interno y luego inicia la entrega.</p>
+          <div class="list" id="delivery-view"></div>
         </section>
 
         <!-- PRODUCTOS E INVENTARIO -->
@@ -459,25 +328,17 @@
           </button>
         </section>
 
-        <!-- CONFIGURACIÓN -->
+        <!-- AJUSTES -->
         <section class="view" id="view-ajustes" hidden>
-          <h2 class="view__title">Configuración</h2>
-          <div class="config-menu" aria-label="Menú de configuración">
-            <a href="#config-notificaciones">Notificaciones</a>
-            <a href="#config-impresora">Impresora</a>
-            <a href="#config-seguimiento">Seguimiento</a>
-            <a href="#config-whatsapp">WhatsApp</a>
-            <a href="#config-datos">Datos</a>
+          <h2 class="view__title">Ajustes</h2>
+          <div class="card" id="notifications-card">
+            <p class="card__title">Notificaciones del teléfono</p>
+            <p class="card__text" id="settings-notify-text">
+              Activa los avisos para enterarte cuando llegue un mensaje o se te asigne una entrega.
+            </p>
+            <button class="btn btn--primary" id="settings-notify" type="button">Activar notificaciones</button>
           </div>
-          <div class="card config-card config-card--active" id="config-notificaciones">
-            <p class="card__title">Notificaciones</p>
-            <div id="push-config"></div>
-          </div>
-          <div class="card" id="config-impresora">
-            <p class="card__title">Impresora</p>
-            <div id="printer-config"></div>
-          </div>
-          <div class="card" id="config-seguimiento">
+          <div class="card" data-admin-settings>
             <p class="card__title">Seguimiento postventa</p>
             <p class="card__text">
               Elige qué días se crean tareas solas al entregar una compra. Las tareas ya creadas no se borran
@@ -485,7 +346,7 @@
             </p>
             <div class="toggles" id="followup-config"></div>
           </div>
-          <div class="card">
+          <div class="card" data-admin-settings>
             <p class="card__title">Métricas de ventas</p>
             <div class="chips" id="metrics-period">
               <button class="chip" data-metrics="hoy" type="button">Hoy</button>
@@ -494,15 +355,15 @@
             </div>
             <dl class="facts" id="metrics"></dl>
           </div>
-          <div class="card">
+          <div class="card" data-admin-settings>
             <p class="card__title">Auditoría reciente</p>
             <div id="audit"></div>
           </div>
-          <div class="card">
+          <div class="card" data-admin-settings>
             <p class="card__title">Multimedia</p>
             <div id="media-config"></div>
           </div>
-          <div class="card" id="media-review-card" hidden>
+          <div class="card" id="media-review-card" data-admin-settings hidden>
             <p class="card__title">Envíos de archivo por revisar</p>
             <p class="card__text">
               Un archivo que quedó <strong>a medias</strong> (se intentó enviar y no hay confirmación) no se
@@ -518,21 +379,16 @@
               pantalla de inicio». En iPhone, Compartir → «Añadir a pantalla de inicio».
             </p>
             <button class="btn btn--primary" id="install" type="button" hidden>Instalar ahora</button>
-            <button class="btn btn--ghost btn--sm" id="check-update" type="button">Buscar actualización</button>
           </div>
-          <div class="card" id="config-datos">
+          <div class="card" data-admin-settings>
             <p class="card__title">Datos</p>
             <dl class="facts" id="facts"></dl>
           </div>
-          <div class="card" id="config-whatsapp">
+          <div class="card" data-admin-settings>
             <p class="card__title">WhatsApp</p>
             <div id="wa-config"></div>
           </div>
-          <div class="card">
-            <p class="card__title">WhatsApp · Plantillas</p>
-            <div id="wa-templates-config"></div>
-          </div>
-          <div class="card">
+          <div class="card" data-admin-settings>
             <p class="card__title">Exportar</p>
             <p class="card__text">Descarga todos los contactos y pedidos en CSV (Excel, Sheets).</p>
             <a class="btn btn--ghost" id="csv" href="/api/crm/export.csv?limit=1000" download
@@ -545,20 +401,33 @@
 
         <!-- USUARIOS -->
         <section class="view" id="view-usuarios" hidden>
-          <p class="view__count" id="users-count"></p>
-          <div class="list list--users" id="users-view"></div>
-          <button class="client-fab list-fab user-fab" id="usuario-nuevo" type="button" aria-label="Crear usuario" title="Crear usuario">
-            <span class="ico" aria-hidden="true" data-icon="plus"></span>
-          </button>
-        </section>
-
-        <!-- MI PERFIL (el usuario que tiene la sesión) -->
-        <section class="view view--profile" id="view-perfil" hidden>
-          <h2 class="view__title">Mi perfil</h2>
-          <p class="view__hint">
-            Tu nombre y tu clave son tuyos: aquí los cambias sin pedirle nada a nadie.
-          </p>
-          <div id="profile-view"></div>
+          <h2 class="view__title">Usuarios</h2>
+          <div class="card">
+            <p class="card__title">Crear usuario</p>
+            <form class="grid-form" id="user-create">
+              <label class="field">
+                <span class="field__label">Nombre visible</span>
+                <input class="field__input" name="displayName" autocomplete="name" required />
+              </label>
+              <label class="field">
+                <span class="field__label">Usuario/correo</span>
+                <input class="field__input" name="username" autocomplete="username" required />
+              </label>
+              <label class="field">
+                <span class="field__label">Rol</span>
+                <select class="field__select" name="role">
+                  <option value="AGENT">Agente</option>
+                  <option value="ADMIN">Administrador</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field__label">Contraseña inicial</span>
+                <input class="field__input" name="password" type="password" autocomplete="new-password" required minlength="10" />
+              </label>
+              <button class="btn btn--primary btn--block" type="submit">Crear usuario</button>
+            </form>
+          </div>
+          <div class="list" id="users-view"></div>
         </section>
       </main>
 
@@ -567,12 +436,9 @@
           <span class="tab__icon" aria-hidden="true" data-icon="sun"></span><span>Hoy</span>
           <span class="tab__badge" id="badge-hoy" hidden></span>
         </button>
-        <button class="tab" data-tab="whatsapp" type="button">
+        <button class="tab tab--center" data-tab="whatsapp" type="button">
           <span class="tab__icon" aria-hidden="true" data-icon="chat"></span><span>WhatsApp</span>
           <span class="tab__badge" id="badge-whatsapp" hidden></span>
-        </button>
-        <button class="tab" data-tab="pedidos" type="button">
-          <span class="tab__icon" aria-hidden="true" data-icon="box"></span><span>Pedidos</span>
         </button>
         <button class="tab" data-tab="clientes" type="button">
           <span class="tab__icon" aria-hidden="true" data-icon="users"></span><span>Clientes</span>
@@ -608,21 +474,6 @@
 
     <div class="toast" id="toast" hidden></div>
 
-    <!--
-      Aviso de VERSIÓN NUEVA: en cuanto se publica un cambio en el servidor, el
-      service worker lo descarga solo, pero la pestaña abierta sigue con el panel
-      viejo. Esta franja ofrece recargar con lo último de un toque.
-    -->
-    <div class="update-bar" id="update-bar" role="status" aria-live="polite" hidden>
-      <div class="update-bar__text">
-        <strong>Versión nueva lista</strong>
-        <span>Actualiza para trabajar con lo último.</span>
-      </div>
-      <button class="update-bar__apply" id="update-apply" type="button">Actualizar</button>
-      <button class="update-bar__close" id="update-later" type="button" aria-label="Más tarde">✕</button>
-    </div>
-
-    <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/app.js" defer></script>
   </body>
 </html>

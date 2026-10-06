@@ -22,7 +22,6 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
 import { startCrmServer } from '../server/crm-server.mjs';
-import { addDays, dayIn } from '../server/followups.mjs';
 
 const TOKEN = 'uat-conv-panel';
 const APP_SECRET = 'uat-conv-secret';
@@ -56,18 +55,12 @@ const whatsapp = {
   phoneNumberId: 'PN-UAT-CONV',
   businessAccountId: 'WABA1',
   sent: [],
-  failWith: null,
   async sendText(to, body) {
-    if (whatsapp.failWith) return { ok: false, status: 400, error: whatsapp.failWith };
-    const messageId = `wamid.TXT${whatsapp.sent.length + 1}`;
-    whatsapp.sent.push({ to, body, messageId });
+    whatsapp.sent.push({ to, body });
     return { ok: true, status: 200, messageId: `wamid.TXT${whatsapp.sent.length}` };
   },
-  async sendTemplate(to, template) {
-    if (whatsapp.failWith) return { ok: false, status: 400, error: whatsapp.failWith };
-    const messageId = `wamid.TPL${whatsapp.sent.length + 1}`;
-    whatsapp.sent.push({ to, template, messageId });
-    return { ok: true, status: 200, messageId: `wamid.TPL${whatsapp.sent.length}` };
+  async sendTemplate() {
+    return { ok: true, status: 200, messageId: 'wamid.TPL1' };
   },
   async downloadMedia() {
     return { ok: true, buffer: png(), mimeType: 'image/png' };
@@ -92,7 +85,6 @@ let app;
 let dom;
 let cookie = '';
 const ids = {};
-let uxConversationId = '';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitFor(check, label, timeout = 6000) {
@@ -114,15 +106,6 @@ const click = (element) => {
   target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   return true;
 };
-
-/** Escribe en un campo como una persona: valor + evento `input`. */
-function setValue(selector, value) {
-  const input = typeof selector === 'string' ? $(selector) : selector;
-  if (!input) throw new Error(`no existe el campo: ${selector}`);
-  input.value = value;
-  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  return input;
-}
 
 /** Mensaje entrante firmado (webhook real del CRM). */
 async function inbound(phone, id, node) {
@@ -159,107 +142,6 @@ async function conversations(filter = '') {
   const query = filter ? `?filter=${encodeURIComponent(filter)}` : '';
   const response = await fetch(`${app.url}/api/admin/conversations${query}`, { headers: { cookie } });
   return (await response.json()).conversations ?? [];
-}
-
-async function adminJson(route, options = {}) {
-  const response = await fetch(`${app.url}${route}`, {
-    ...options,
-    headers: { 'content-type': 'application/json', cookie, ...(options.headers ?? {}) },
-  });
-  const body = await response.json().catch(() => ({}));
-  return { response, body };
-}
-
-/**
- * El pedido COMPLETO de un ítem del panel.
- *
- * `/api/admin/data` trae el resumen plano (variant_id, quantity, total…) y el
- * detalle del pedido dentro de `order_json`, que es de donde lo lee el panel
- * (`itemOrder`). Igual que en la app: si el detalle no está, se cae al resumen.
- */
-function orderOfItem(item) {
-  try {
-    const parsed = JSON.parse(item?.order_json ?? item?.orderJson ?? '{}');
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-async function startConversation(phone, name, body = '') {
-  const result = await adminJson('/api/admin/conversations/start', {
-    method: 'POST',
-    body: JSON.stringify({ phone, name, body }),
-  });
-  if (result.response.status !== 200) throw new Error(`no se pudo iniciar conversación: ${JSON.stringify(result.body)}`);
-  return result.body;
-}
-
-async function approveTemplateForUat() {
-  const result = await adminJson('/api/admin/wa-templates', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: 'phyto_followup_checkin',
-      friendlyName: 'Seguimiento al cliente',
-      status: 'APPROVED',
-      body: 'Hola {{1}}, ¿cómo va todo?',
-      variables: ['customer_name'],
-      metaTemplateId: 'tpl-uat-followup',
-      lastSyncedAt: new Date().toISOString(),
-    }),
-  });
-  if (result.response.status !== 200) throw new Error(`no se pudo aprobar plantilla: ${JSON.stringify(result.body)}`);
-}
-
-/** La plantilla que admite un mensaje escrito a mano (hueco libre declarado). */
-async function approvePersonalTemplateForUat() {
-  const result = await adminJson('/api/admin/wa-templates', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: 'phyto_mensaje_personalizado_v1',
-      friendlyName: 'Mensaje personalizado',
-      status: 'APPROVED',
-      body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
-      variables: ['customer_name', 'mensaje'],
-      metaTemplateId: 'tpl-uat-personal',
-      lastSyncedAt: new Date().toISOString(),
-    }),
-  });
-  if (result.response.status !== 200) throw new Error(`no se pudo aprobar plantilla libre: ${JSON.stringify(result.body)}`);
-}
-
-/** La plantilla con la que se PIDE la ubicación al cliente. */
-async function approveLocationTemplateForUat() {
-  const result = await adminJson('/api/admin/wa-templates', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: 'phyto_ubicacion_entrega_v1',
-      friendlyName: 'Solicitar ubicación',
-      status: 'APPROVED',
-      body: 'Hola {{1}}, necesitamos confirmar la ubicación donde deseas recibir tu pedido {{2}}.',
-      variables: ['customer_name', 'order_number'],
-      metaTemplateId: 'tpl-uat-location',
-      lastSyncedAt: new Date().toISOString(),
-    }),
-  });
-  if (result.response.status !== 200) throw new Error(`no se pudo aprobar la plantilla de ubicación: ${JSON.stringify(result.body)}`);
-}
-
-/** La plantilla con la que se le pide al cliente CONFIRMAR su pedido. */
-async function approveOrderConfirmTemplateForUat() {
-  const result = await adminJson('/api/admin/wa-templates', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: 'phyto_confirmacion_pedido_v1',
-      friendlyName: 'Confirmación de pedido',
-      status: 'APPROVED',
-      body: 'Hola {{1}}, recibimos tu pedido {{2}} correctamente. Total: {{3}} Forma de pago: {{4}} Por favor confirma que los datos de tu pedido son correctos.',
-      variables: ['customer_name', 'order_number', 'total', 'payment_method'],
-      metaTemplateId: 'tpl-uat-confirm',
-      lastSyncedAt: new Date().toISOString(),
-    }),
-  });
-  if (result.response.status !== 200) throw new Error(`no se pudo aprobar la plantilla de confirmación: ${JSON.stringify(result.body)}`);
 }
 
 beforeAll(async () => {
@@ -310,10 +192,6 @@ beforeAll(async () => {
       })}`,
     );
   }
-  const today = dayIn(new Date(), 'America/Santo_Domingo');
-  await app.collections.update('conversations', ids.ana, { last_message_at: `${today}T16:42:00.000Z` });
-  await app.collections.update('conversations', ids.luis, { last_message_at: `${addDays(today, -1)}T18:15:00.000Z` });
-  await app.collections.update('conversations', ids.maria, { last_message_at: `${addDays(today, -10)}T10:08:00.000Z` });
 
   dom = new JSDOM(readFileSync(path.join(ADMIN_DIR, 'index.html'), 'utf8'), {
     url: `${app.url}/admin/`,
@@ -324,31 +202,6 @@ beforeAll(async () => {
   win.scrollTo = () => {};
   win.confirm = () => true;
   win.alert = () => {};
-  /*
-   * DOBLE DE `EventSource`: jsdom no lo trae y el panel abre con él el canal en
-   * vivo del chat. Aquí se guardan las conexiones y sus manejadores para poder
-   * simular un aviso del servidor desde el test.
-   */
-  win.__eventSources = [];
-  win.EventSource = class EventSourceFalso {
-    constructor(url) {
-      this.url = String(url);
-      this.listeners = new Map();
-      this.closed = false;
-      this.readyState = 1;
-      win.__eventSources.push(this);
-    }
-    addEventListener(type, listener) {
-      this.listeners.set(type, listener);
-    }
-    close() {
-      this.closed = true;
-      this.readyState = 2;
-    }
-    emit(type, payload = {}) {
-      this.listeners.get(type)?.({ data: JSON.stringify(payload) });
-    }
-  };
   win.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, `${app.url}/admin/`).toString();
     const headers = { ...(init.headers ?? {}) };
@@ -375,22 +228,15 @@ afterAll(async () => {
 });
 
 describe('la fila de la lista', () => {
-  it('muestra Hoy + hora del último mensaje', () => {
+  it('trae la fecha y hora exactas del último mensaje y, debajo, cuánto hace', () => {
     const row = $(`[data-conv="${ids.ana}"]`);
     const stamps = row.querySelector('.conv__stamps');
     const when = stamps.querySelector('.conv__when');
-    expect(when.textContent).toMatch(/^Hoy · \d{1,2}:\d{2} (AM|PM)$/);
+    const ago = stamps.querySelector('.conv__ago');
+    expect(when.textContent).toMatch(/^\d{1,2}:\d{2}$/);
+    expect(ago.textContent).toMatch(/^(ahora|hace \d)/);
+    // El sello completo (con el año) siempre está disponible.
     expect(stamps.getAttribute('title')).toMatch(/\d{1,2}:\d{2}/);
-  });
-
-  it('muestra Ayer + hora del último mensaje', () => {
-    const row = $(`[data-conv="${ids.luis}"]`);
-    expect(row.querySelector('.conv__when').textContent).toMatch(/^Ayer · \d{1,2}:\d{2} (AM|PM)$/);
-  });
-
-  it('muestra fecha corta para conversaciones antiguas', () => {
-    const row = $(`[data-conv="${ids.maria}"]`);
-    expect(row.querySelector('.conv__when').textContent).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
   });
 
   it('muestra la imagen del cliente como último mensaje, no un JSON ni coordenadas', () => {
@@ -402,8 +248,7 @@ describe('la fila de la lista', () => {
   it('la línea de estado es una etiqueta pequeña (no una frase con el día de la semana)', () => {
     const row = $(`[data-conv="${ids.luis}"]`);
     const tags = [...row.querySelectorAll('.conv__tag')].map((tag) => tag.textContent);
-    expect(tags).toContain('Prospecto');
-    expect(row.querySelector('.conv__assign--empty').textContent).toBe('Sin asignar');
+    expect(tags).toContain('Sin asignar');
     for (const tag of tags) expect(tag).not.toMatch(/,/);
   });
 
@@ -445,8 +290,8 @@ describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
     expect($('#wa-filters').hidden).toBe(true);
     expect($('#wa-conversations').classList.contains('wa__convs--sel')).toBe(true);
     expect($('#wa-sel .wa-bulk__count').textContent).toContain('1');
-    // Cinco acciones en iconos: seleccionar, leído, archivar, eliminar y mensaje a varios.
-    expect($$('#wa-sel .wa-bulk__btn').length).toBe(5);
+    // Cuatro acciones en iconos (caben en 360 px sin scroll horizontal).
+    expect($$('#wa-sel .wa-bulk__btn').length).toBe(4);
     expect($(`[data-conv="${ids.luis}"] .conv__avatar svg`)).not.toBeNull();
   });
 
@@ -491,585 +336,6 @@ describe('la imagen que manda el cliente', () => {
   });
 });
 
-describe('nuevo chat desde la lista de WhatsApp', () => {
-  it('crea o abre el cliente por teléfono sin enviar mensajes automáticamente', async () => {
-    const enviadosAntes = whatsapp.sent.length;
-    const response = await fetch(`${app.url}/api/admin/conversations/start`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        cookie,
-        origin: 'http://localhost:5173',
-        'x-forwarded-host': 'localhost:5173',
-      },
-      body: JSON.stringify({
-        phone: '18095550444',
-        name: 'Cliente Nuevo',
-        body: 'Hola, te escribo de Phytoemagry',
-      }),
-    });
-    const body = await response.json();
-    expect(response.status).toBe(200);
-    expect(body.conversation?.id).toBeTruthy();
-    expect(body.customer?.phone_e164).toBe('+18095550444');
-    expect(whatsapp.sent.length).toBe(enviadosAntes);
-
-    const rows = await conversations();
-    const row = rows.find((candidate) => candidate.id === body.conversation.id);
-    expect(row?.customer?.name).toBe('Cliente Nuevo');
-    expect(row?.last_message).toBeNull();
-  });
-
-  it('la lista tiene el botón flotante que abre el formulario', () => {
-    const button = $('#wa-new-chat');
-    expect(button).not.toBeNull();
-    click(button);
-    expect($('#sheet').hidden).toBe(false);
-    expect($('#sheet-title').textContent).toBe('Nuevo WhatsApp');
-    expect($('#wa-start-phone')).not.toBeNull();
-  });
-
-  it('pinta una conversación sin mensajes sin inventar hora', async () => {
-    $('#wa-start-phone').value = '18095550555';
-    $('#wa-start-name').value = 'Cliente Sin Mensajes';
-    $('#wa-start-body').value = '';
-    click('#wa-start-open');
-    await waitFor(() => [...$$('[data-conv]')].find((row) => row.textContent.includes('Cliente Sin Mensajes')), 'fila sin mensajes');
-    const row = [...$$('[data-conv]')].find((candidate) => candidate.textContent.includes('Cliente Sin Mensajes'));
-    expect(row.querySelector('.conv__preview').textContent).toContain('Sin mensajes');
-    expect(row.querySelector('.conv__when')).toBeNull();
-  });
-});
-
-describe('UX de ventana 24 h y plantillas en el chat', () => {
-  it('chat vacío muestra NEW_CONTACT y abre selector compacto en hoja', async () => {
-    click('#wa-new-chat');
-    $('#wa-start-phone').value = '18095550666';
-    $('#wa-start-name').value = 'Cliente UX Nuevo';
-    $('#wa-start-body').value = '';
-    click('#wa-start-open');
-    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Cliente UX Nuevo'), 'chat nuevo abierto', 9000);
-    const row = (await conversations()).find((candidate) => candidate.customer?.name === 'Cliente UX Nuevo');
-    uxConversationId = row.id;
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT');
-    expect($('#thread').textContent).toContain('Todavía no has iniciado una conversación');
-    expect($('#wa-composer').textContent).toContain('Iniciar conversación');
-    expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
-    await approveTemplateForUat();
-    await click('[data-wa-filter="todos"]');
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT recargado');
-    click('#wa-open-template');
-    expect($('#sheet').hidden).toBe(false);
-    expect($('#sheet-title').textContent).toBe('Enviar plantilla');
-    await waitFor(() => $('#sheet-body #wa-send-template'), 'selector con plantilla aprobada');
-  }, 12000);
-
-  it('después de enviar template queda WAITING_CUSTOMER_REPLY y el texto va dentro de una plantilla', async () => {
-    const before = whatsapp.sent.length;
-    click('#sheet-body #wa-send-template');
-    await waitFor(() => $('#sheet').hidden === true, 'selector de plantilla cerrado tras enviar', 9000);
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'estado esperando respuesta');
-    expect(whatsapp.sent.length).toBe(before + 1);
-    expect(whatsapp.sent.at(-1).template.components).toEqual([
-      { type: 'body', parameters: [{ type: 'text', text: 'Cliente UX Nuevo' }] },
-    ]);
-    expect($('#thread').textContent).toContain('Hola Cliente UX Nuevo');
-    expect($('#wa-composer').textContent).toContain('Esperando respuesta de Cliente UX Nuevo');
-    // «Enviado» no es «entregado»: WhatsApp solo aceptó el mensaje, así que la
-    // burbuja y el estado lo dicen sin prometer una entrega que no se confirmó.
-    expect($('#wa-composer').textContent).toContain('sin confirmar');
-    expect($('#thread').textContent).toContain('Enviado · sin confirmar');
-    // Hay dónde escribir (lo escrito viaja dentro de una plantilla), pero NO es
-    // texto libre: ni adjuntos ni notas de voz fuera de la ventana de 24 h.
-    expect($('#wa-text')).not.toBeNull();
-    expect($('#wa-mic')).toBeNull();
-    expect($('#wa-attach')).toBeNull();
-    expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
-    expect(uxConversationId).toBeTruthy();
-  }, 12000);
-
-  it('template delivered/read sin inbound sigue WAITING_CUSTOMER_REPLY', async () => {
-    const messageId = whatsapp.sent.at(-1)?.messageId ?? 'wamid.TPL1';
-    const message = (await app.collections.list('wa_messages', { limit: 1000 })).find((row) => row.wa_message_id === messageId);
-    expect(message).toBeTruthy();
-    await app.collections.update('wa_messages', message.id, {
-      ...message,
-      status: 'read',
-      delivered_at: new Date().toISOString(),
-      read_at: new Date().toISOString(),
-    });
-    await app.collections.update('conversations', uxConversationId, { updated_at: new Date().toISOString() });
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'sigue esperando');
-    expect($('#wa-send')).not.toBeNull();
-    // Con la entrega YA confirmada por Meta, el estado deja de decir «sin confirmar».
-    click('[data-wa-filter="todos"]');
-    await waitFor(
-      () => $('#wa-composer')?.textContent.includes('Plantilla entregada'),
-      'estado de entrega confirmada',
-      9000,
-    );
-  }, 15000);
-
-  it('el contenido de la plantilla se escribe en el panel (huecos + vista previa)', async () => {
-    click('[data-wa-filter="todos"]');
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]'), 'estado esperando respuesta');
-    click('#wa-open-template');
-    const hueco = await waitFor(() => $('#wa-template-fields [data-wa-var="1"]'), 'los huecos de la plantilla', 9000);
-    // El nombre del cliente viene puesto y se ve el mensaje tal como se enviará.
-    expect(hueco.value).toBe('Cliente UX Nuevo');
-    expect($('#wa-template-preview').textContent).toBe('Hola Cliente UX Nuevo, ¿cómo va todo?');
-
-    const antes = whatsapp.sent.length;
-    hueco.value = 'Vecino';
-    hueco.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    expect($('#wa-template-preview').textContent).toBe('Hola Vecino, ¿cómo va todo?');
-
-    click('#sheet-body #wa-send-template');
-    await waitFor(() => whatsapp.sent.length === antes + 1, 'la plantilla con el texto escrito', 9000);
-    expect(whatsapp.sent.at(-1).template.components).toEqual([
-      { type: 'body', parameters: [{ type: 'text', text: 'Vecino' }] },
-    ]);
-    await waitFor(() => $('#thread').textContent.includes('Hola Vecino'), 'el texto escrito en el hilo', 9000);
-  }, 30000);
-
-  it('quick reply inbound abre OPEN_WINDOW sin recargar manualmente', async () => {
-    await inbound('18095550666', 'wamid.UX-BUTTON-1', {
-      type: 'button',
-      button: { text: 'Continuar', payload: 'continuar' },
-    });
-    click('[data-wa-filter="todos"]');
-    // El compositor LIBRE se reconoce por el botón de adjuntar (que fuera de la
-    // ventana no existe): el campo de texto está en los dos casos.
-    await waitFor(() => $('#wa-attach'), 'composer libre tras quick reply inbound', 9000);
-    expect($('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]')).toBeNull();
-    expect($('#wa-composer').textContent).not.toContain('Esperando respuesta');
-  }, 12000);
-
-  it('con ventana expirada muestra CLOSED_WINDOW, no NEW_CONTACT', async () => {
-    const phone = '18095550777';
-    NOMBRES[phone] = 'Cliente UX Expirado';
-    await inbound(phone, 'wamid.UX-OLD-1', {
-      timestamp: String(Math.floor((Date.now() - 3 * 86400000) / 1000)),
-      type: 'text',
-      text: { body: 'Hola, escribí hace días' },
-    });
-    click('[data-wa-filter="todos"]');
-    const row = await waitFor(
-      () => [...$$('[data-conv]')].find((candidate) => candidate.textContent.includes('Cliente UX Expirado')),
-      'fila expirada',
-      9000,
-    );
-    click(row);
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="CLOSED_WINDOW"]'), 'estado ventana cerrada', 9000);
-    expect($('#wa-composer').textContent).toContain('Ventana de atención finalizada');
-    expect($('#wa-composer').textContent).toContain('La ventana de atención de 24 horas terminó');
-  }, 12000);
-
-  it('template fallido renderiza tarjeta amigable y mapea #132000', async () => {
-    whatsapp.failWith = { status: 400, code: 132000, message: 'Number of parameters does not match the expected number of params' };
-    click('#wa-open-template');
-    await waitFor(() => $('#sheet-body #wa-send-template'), 'selector con plantilla aprobada');
-    click('#sheet-body #wa-send-template');
-    await waitFor(() => $('#thread .template-fail'), 'tarjeta de plantilla fallida', 9000);
-    expect($('#thread .template-fail').textContent).toContain('Plantilla no enviada');
-    expect($('#thread .template-fail').textContent).toContain('Seguimiento al cliente');
-    expect($('#thread .template-fail').textContent).toContain('faltan o sobran datos requeridos');
-    expect($('#thread .template-fail').textContent).toContain('#132000');
-    expect($('#thread .template-fail').textContent).not.toContain('Archivo recibido');
-    // El compositor dice que NO se entregó (y por qué) en vez de fingir que no
-    // se intentó nada.
-    expect($('#wa-composer [data-wa-contact-state="TEMPLATE_FAILED"]')).toBeTruthy();
-    expect($('#wa-composer').textContent).toContain('La plantilla no se entregó');
-    expect($('#wa-composer').textContent).toContain('faltan o sobran datos requeridos');
-    whatsapp.failWith = null;
-    expect(uxConversationId).toBeTruthy();
-  }, 12000);
-});
-
-describe('escribir el mensaje de un chat nuevo (fuera de la ventana de 24 h)', () => {
-  /*
-   * Lo que se pidió: al abrir una conversación por primera vez, escribir en el
-   * compositor y que ESE texto salga dentro de la plantilla aprobada, sin tener
-   * que copiarlo a mano en un hueco.
-   */
-  it('lo escrito entra en el hueco libre de la plantilla y se revisa antes de enviar', async () => {
-    await approvePersonalTemplateForUat();
-    click('#wa-new-chat');
-    $('#wa-start-phone').value = '18095550888';
-    $('#wa-start-name').value = 'Cliente Escribe';
-    $('#wa-start-body').value = '';
-    click('#wa-start-open');
-    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Cliente Escribe'), 'chat nuevo abierto', 9000);
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT', 9000);
-
-    const area = await waitFor(() => $('#wa-text'), 'el compositor del chat nuevo', 9000);
-    expect($('#wa-composer').textContent).toContain('Mensaje personalizado');
-    expect($('#wa-composer').textContent).toContain('Nada se envía solo');
-    area.value = 'Tu pedido ya salió para tu dirección.';
-    area.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-
-    const antes = whatsapp.sent.length;
-    click('#wa-send');
-    const libre = await waitFor(() => $('#wa-template-fields [data-wa-var="2"]'), 'el hueco libre de la plantilla', 9000);
-    // La plantilla con hueco libre viene elegida y el texto ya está dentro.
-    expect($('#wa-template').value).toBe('phyto_mensaje_personalizado_v1');
-    expect($('#wa-template-fields [data-wa-var="1"]').value).toBe('Cliente Escribe');
-    expect(libre.value).toBe('Tu pedido ya salió para tu dirección.');
-    expect($('#wa-template-preview').textContent).toContain('Tu pedido ya salió para tu dirección.');
-    // Abrir la hoja NO ha enviado nada.
-    expect(whatsapp.sent.length).toBe(antes);
-
-    click('#sheet-body #wa-send-template');
-    await waitFor(() => whatsapp.sent.length === antes + 1, 'la plantilla con el mensaje escrito', 9000);
-    const enviado = whatsapp.sent.at(-1);
-    expect(enviado.to).toBe('+18095550888');
-    expect(enviado.template.name).toBe('phyto_mensaje_personalizado_v1');
-    expect(enviado.template.components).toEqual([
-      {
-        type: 'body',
-        parameters: [
-          { type: 'text', text: 'Cliente Escribe' },
-          { type: 'text', text: 'Tu pedido ya salió para tu dirección.' },
-        ],
-      },
-    ]);
-    await waitFor(
-      () => $('#thread').textContent.includes('Tu pedido ya salió para tu dirección.'),
-      'el mensaje final en el hilo',
-      9000,
-    );
-    expect($('#sheet').hidden).toBe(true);
-  }, 40000);
-
-  it('sin nada escrito no se inventa texto: la hoja solo trae lo que el CRM ya sabe', async () => {
-    click('#wa-open-template');
-    const nombre = await waitFor(
-      () => $('#wa-template-fields [data-wa-var="1"]'),
-      'los huecos de la plantilla por defecto',
-      9000,
-    );
-    expect($('#wa-template').value).toBe('phyto_followup_checkin');
-    expect(nombre.value).toBe('Cliente Escribe');
-    // Esa plantilla no declara hueco libre: nadie le mete un mensaje a la fuerza.
-    expect($('#wa-template-fields [data-wa-var="2"]')).toBeNull();
-    expect($('#wa-template-preview').textContent).toBe('Hola Cliente Escribe, ¿cómo va todo?');
-    closeSheetForUat();
-  });
-});
-
-/** Cierra la hoja desde el propio panel (el mismo botón que usa una persona). */
-function closeSheetForUat() {
-  click('[data-close-sheet]');
-}
-
-describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
-  /*
-   * Lo que se preguntó: desde el chat, ¿dónde se elige una plantilla? ¿y cómo se
-   * pide la ubicación? Antes, con la ventana abierta, no había NINGUNA entrada.
-   */
-  it('el menú ⋯ abre las plantillas aprobadas (sin botón repetido en el compositor)', async () => {
-    await approveLocationTemplateForUat();
-    click(`[data-conv="${ids.luis}"]`);
-    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
-
-    /*
-     * El icono de plantilla del compositor se QUITÓ: estaba repetido con esta
-     * misma entrada del menú de acciones del chat.
-     */
-    expect($('#wa-template-open')).toBeNull();
-
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
-    expect($('#sheet-body [data-wa-ask-location]')).not.toBeNull();
-    expect($('#sheet-body').textContent).toContain('Pedir / confirmar ubicación');
-    expect($('#sheet-body').textContent).toContain('Mensajes');
-
-    click('#sheet-body [data-wa-template]');
-    await waitFor(() => $('#sheet-body #wa-send-template'), 'la hoja de plantillas', 9000);
-    const opciones = $$('#wa-template option').map((option) => option.value);
-    expect(opciones).toContain('phyto_ubicacion_entrega_v1');
-    expect(opciones).toContain('phyto_followup_checkin');
-    closeSheetForUat();
-  }, 30000);
-
-  it('«Pedir / confirmar ubicación» sin ubicación guardada: solo la pide (texto, sin plantilla)', async () => {
-    // El menú puede haberse cerrado con la hoja anterior: se vuelve a abrir.
-    if (!$('#sheet-body [data-wa-ask-location]')) {
-      click('#wa-actions');
-      await waitFor(() => $('#sheet-body [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
-    }
-    click('#sheet-body [data-wa-ask-location]');
-    /*
-     * Luis todavía NO ha mandado ninguna ubicación: ni se inventa un mapa ni se
-     * manda una plantilla. Solo se le pide que la envíe (la ventana está abierta).
-     */
-    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'la previsualización del mensaje', 9000);
-    expect(preview.textContent).toBe('Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.');
-    expect($('#wa-template')).toBeNull();
-
-    const antes = whatsapp.sent.length;
-    click('#sheet-body #wa-preview-send');
-    await waitFor(() => whatsapp.sent.length === antes + 1, 'el mensaje enviado', 9000);
-    const enviado = whatsapp.sent.at(-1);
-    expect(enviado.body).toBe('Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.');
-    // Es TEXTO libre, no una plantilla.
-    expect(enviado.template).toBeUndefined();
-  }, 30000);
-
-  it('«Pedir confirmación» usa el pedido REAL de esa conversación (no una plantilla)', async () => {
-    // El pedido se crea DESDE el panel, como lo hace una persona.
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-order-new]');
-    const variante = await waitFor(() => $('#order-lines select'), 'el formulario de pedido', 9000);
-    variante.value = 'capsules_10';
-    variante.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    variante.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    click('#order-save');
-    await waitFor(
-      () => /Comprobante|Pedido/.test($('#sheet-body').innerHTML),
-      'el comprobante del pedido',
-      9000,
-    );
-    closeSheetForUat();
-
-    // El número real, tal como lo guardó el servidor.
-    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-    const numero = datos.items.find(
-      (item) => item.type === 'order_intent' && item.conversation_id === ids.luis,
-    )?.order_number;
-    expect(numero).toBeTruthy();
-
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-wa-confirm-order]');
-
-    // Con UN solo pedido abierto no hay que elegir: va directo al mensaje.
-    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'el resumen del pedido', 9000);
-    // Nadie tiene que saberse el número de la factura: sale del pedido real.
-    expect(preview.textContent).toContain(numero);
-    expect(preview.textContent).toContain('10 cápsulas');
-    expect(preview.textContent).toContain('revísalo y confírmanos si está correcto');
-    expect($('#wa-template')).toBeNull();
-    closeSheetForUat();
-  }, 40000);
-});
-
-describe('preferencias del pedido del cliente', () => {
-  /*
-   * Lo que pidió el negocio: guardar aparte lo que se repite (frasco, cantidad,
-   * pago, ubicación de entrega y una nota) para que un pedido nuevo se cree
-   * confirmando solo la cantidad; y ver cuántas compras y cuánto ha invertido.
-   */
-  it('la ficha guarda las preferencias y el pedido nuevo viene ya relleno', async () => {
-    const luis = (await conversations()).find((row) => row.id === ids.luis);
-
-    // 1) En la ficha del cliente se guardan sus preferencias (como lo haría una persona).
-    click(`[data-conv="${ids.luis}"]`);
-    await waitFor(() => $('#wa-chat-avatar'), 'el chat de Luis', 9000);
-    click('#wa-chat-avatar');
-    await waitFor(() => $('#prefs-save'), 'la sección de preferencias en la ficha', 9000);
-    // La ficha se pinta dos veces (lo que ya sabe y luego lo que confirma el
-    // servidor): se espera a la segunda para no escribir sobre un render viejo.
-    await waitFor(
-      () => !$('#customer-profile').textContent.includes('Todavía no tiene pedidos registrados'),
-      'la ficha completa del cliente',
-      9000,
-    );
-    expect($('#customer-profile').textContent).toContain('Preferencias del pedido');
-    expect($('#customer-profile').textContent).toContain('Compras');
-
-    $('#prefs-variant').value = 'capsules_15';
-    $('#prefs-quantity').value = '3';
-    $('#prefs-payment').value = 'TRANSFER';
-    $('#prefs-note').value = 'Entregar después de las 5 pm';
-    click('#prefs-save');
-
-    const prefs = await waitFor(async () => {
-      const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-      const cliente = (data.customers ?? []).find((row) => row.id === luis.customer_id);
-      return cliente?.orderPrefs?.quantity === 3 ? cliente.orderPrefs : null;
-    }, 'las preferencias guardadas en el servidor', 9000);
-    expect(prefs.variant_id).toBe('capsules_15');
-    expect(prefs.payment_method).toBe('TRANSFER');
-    expect(prefs.note).toContain('5 pm');
-
-    // 2) Crear pedido: el formulario ya viene con «lo de siempre».
-    click('.tabs [data-tab="whatsapp"]');
-    const fila = await waitFor(() => $(`[data-conv="${ids.luis}"]`), 'la fila de Luis', 9000);
-    click(fila);
-    // El chat se repinta al llegar sus mensajes: se espera al chat pintado
-    // (nombre incluido) para no pulsar el «⋯» de un render que ya no está.
-    await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
-    if (!$('#sheet-body [data-order-new]')) {
-      click('#wa-actions');
-      await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
-    }
-    click('#sheet-body [data-order-new]');
-
-    const variante = await waitFor(() => $('#order-lines select'), 'el formulario de pedido', 9000);
-    expect(variante.value).toBe('capsules_15');
-    expect($('#order-lines [data-line-qty="0"]').value).toBe('3');
-    expect($('#order-payment').value).toBe('TRANSFER');
-    expect($('#sheet-body').textContent).toContain('Lo de siempre');
-    expect($('#order-save-prefs')).not.toBeNull();
-
-    // Solo se confirma la cantidad.
-    const cantidad = $('#order-lines [data-line-qty="0"]');
-    cantidad.value = '2';
-    cantidad.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    /*
-     * Luis YA tiene un pedido abierto, así que el panel avisa y exige confirmar
-     * que este es otro de verdad: sin marcar la casilla no se guarda nada.
-     */
-    expect($('#order-open-warning')?.textContent).toMatch(/ya tiene un pedido sin cerrar/);
-    $('#order-open-ack').checked = true;
-    click('#order-save');
-    await waitFor(() => /Comprobante|Pedido/.test($('#sheet-body').innerHTML), 'el comprobante del pedido', 9000);
-    closeSheetForUat();
-
-    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-    const pedidos = datos.items.filter((item) => item.type === 'order_intent' && item.customer_id === luis.customer_id);
-    expect(pedidos.length).toBe(2);
-    const nuevo = pedidos.find((item) => item.variant_id === 'capsules_15');
-    expect(Number(nuevo.quantity)).toBe(2);
-    expect(orderOfItem(nuevo).payment_method).toBe('TRANSFER');
-    // «Lo de siempre» NO se pisó con la cantidad de este pedido (la casilla venía sin marcar).
-    const cliente = datos.customers.find((row) => row.id === luis.customer_id);
-    expect(Number(cliente.orderPrefs.quantity)).toBe(3);
-  }, 60000);
-});
-
-describe('pedir al cliente que confirme su pedido', () => {
-  it('«Pedir confirmación» manda el pedido REAL como texto (con varios, se elige CUÁL)', async () => {
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-wa-confirm-order]');
-
-    /*
-     * Luis ya tiene MÁS DE UN pedido abierto: el CRM pregunta CUÁL, porque
-     * mandarle el que no es sería un error grave. La primera fila es el más
-     * reciente.
-     */
-    const filas = await waitFor(() => {
-      const rows = $$('#sheet-body [data-order-confirm-pick]');
-      return rows.length ? rows : null;
-    }, 'la elección de pedido', 9000);
-    expect(filas.length).toBeGreaterThan(1);
-
-    const luis = (await conversations()).find((row) => row.id === ids.luis);
-    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-    const ultimo = datos.items
-      .filter((item) => item.type === 'order_intent' && item.customer_id === luis.customer_id)
-      .sort((a, b) => String(b.received_at ?? '').localeCompare(String(a.received_at ?? '')))[0];
-    expect(ultimo).toBeTruthy();
-
-    click(filas[0]);
-
-    // El mensaje que se ENSEÑA es el que se envía: lo arma el servidor y aquí solo
-    // se lee. Lleva los datos comerciales del pedido y nada técnico.
-    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'el resumen del pedido', 9000);
-    expect(preview.textContent).toContain(ultimo.order_number);
-    expect(preview.textContent).toContain('este es tu pedido');
-    expect(preview.textContent).toContain('revísalo y confírmanos si está correcto');
-    expect(preview.textContent).not.toContain(ultimo.id);
-
-    const antes = whatsapp.sent.length;
-    click('#sheet-body #order-confirm-send');
-    await waitFor(() => whatsapp.sent.length === antes + 1, 'la confirmación enviada', 9000);
-    const enviado = whatsapp.sent.at(-1);
-    // Es el pedido REAL como TEXTO: ninguna plantilla de por medio.
-    expect(enviado.template).toBeUndefined();
-    expect(enviado.body).toContain(ultimo.order_number);
-    // Lo que se envía es EXACTAMENTE lo que se revisó en pantalla.
-    expect(enviado.body).toBe(preview.textContent);
-  }, 40000);
-});
-
-describe('la foto del cliente', () => {
-  /*
-   * WhatsApp NO entrega la foto de perfil de los contactos por su API (el webhook
-   * solo trae `profile.name` y el wa_id del cliente no es un nodo de Graph), así
-   * que la foto la pone el equipo: se guarda con el cliente y se ve en toda la
-   * interfaz (lista, cabecera del chat y ficha).
-   */
-  const FOTO =
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
-  let clienteAna = '';
-
-  const clienteDe = async (phone) => {
-    const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-    const soloDigitos = (value) => String(value ?? '').replace(/\D/g, '');
-    return (data.customers ?? []).find((row) => soloDigitos(row.phone_e164) === phone) ?? null;
-  };
-
-  it('se guarda con el cliente y la API valida lo que recibe', async () => {
-    clienteAna = (await clienteDe(PHONES.ana))?.id ?? '';
-    expect(clienteAna).toBeTruthy();
-
-    // Ni una URL de script ni un "data:" enorme: 422 y la ficha no cambia.
-    const basura = await adminJson(`/api/admin/customers/${clienteAna}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ photo_url: 'javascript:alert(1)' }),
-    });
-    expect(basura.response.status).toBe(422);
-    expect(basura.body.error).toBe('invalid_photo');
-
-    const enorme = await adminJson(`/api/admin/customers/${clienteAna}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ photo_url: `data:image/png;base64,${'A'.repeat(150000)}` }),
-    });
-    expect(enorme.response.status).toBe(422);
-    expect((await clienteDe(PHONES.ana))?.photo_url ?? null).toBe(null);
-
-    const buena = await adminJson(`/api/admin/customers/${clienteAna}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ photo_url: FOTO }),
-    });
-    expect(buena.response.status).toBe(200);
-    expect((await clienteDe(PHONES.ana))?.photo_url).toBe(FOTO);
-  });
-
-  it('la foto aparece en la cabecera del chat y en la ficha, NO en la lista', async () => {
-    click('[data-wa-filter="todos"]');
-    await waitFor(() => $(`[data-conv="${ids.ana}"]`), 'la fila de la conversación', 9000);
-    /*
-     * La lista YA NO pinta fotos: lo que se lee es el nombre y lo último que dijo,
-     * y el cuadro de la izquierda solo vuelve al SELECCIONAR (con el visto). La foto
-     * vive donde de verdad se mira: la cabecera del chat y la ficha del cliente.
-     */
-    expect($(`[data-conv="${ids.ana}"] .conv__avatar`)).toBeNull();
-
-    click(`[data-conv="${ids.ana}"]`);
-    const enCabecera = await waitFor(() => $('#wa-chat-avatar img'), 'la foto en la cabecera del chat', 9000);
-    expect(enCabecera.getAttribute('src')).toBe(FOTO);
-
-    click('#wa-chat-avatar');
-    // La ficha se pinta dos veces (lo que ya sabemos y luego lo que confirma el
-    // servidor): se espera a la segunda, que es la que trae la foto.
-    const cambiar = await waitFor(
-      () => ($('#customer-photo-pick')?.textContent.includes('Cambiar foto') ? $('#customer-photo-pick') : null),
-      'los controles de foto en la ficha',
-      9000,
-    );
-    expect(cambiar.textContent).toContain('Cambiar foto');
-    expect($('#customer-photo-clear')).not.toBeNull();
-    expect($('#customer-photo-file').getAttribute('accept')).toContain('image/');
-    const hero = $('.profile-hero');
-    expect(hero.className).toContain('profile-hero--photo');
-    expect(hero.getAttribute('style')).toContain(FOTO.slice(0, 40));
-  }, 15000);
-
-  it('se puede quitar y vuelven las iniciales', async () => {
-    const quitada = await adminJson(`/api/admin/customers/${clienteAna}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ photo_url: null }),
-    });
-    expect(quitada.response.status).toBe(200);
-    expect((await clienteDe(PHONES.ana))?.photo_url ?? null).toBe(null);
-  });
-});
-
 describe('la lista que se pinta es la nueva', () => {
   const app_js = readFileSync(path.join(ADMIN_DIR, 'app.js'), 'utf8');
   const css = readFileSync(path.join(ADMIN_DIR, 'admin.css'), 'utf8');
@@ -1084,186 +350,16 @@ describe('la lista que se pinta es la nueva', () => {
   it('el CSS sostiene la fila fina, los sellos de tiempo y el cambio de cabecera', () => {
     expect(css).toContain('.conv__more');
     expect(css).toContain('.conv__stamps');
-    /*
-     * El filtro de fecha dejó de ser un icono con reloj pegado al buscador: es un
-     * CHIP más de la lista, que enseña el rango activo y se cambia desde el mismo
-     * sitio en el móvil y en el escritorio.
-     */
-    expect(css).toContain('.chip--date');
-    expect(app_js).toContain('waDateChipHtml');
-    expect(html).not.toContain('id="wa-date-menu"');
-    expect(css).not.toContain('.wa-date__text');
-    expect(app_js).toContain('data-wa-date');
-    expect(app_js).toContain('America/Santo_Domingo');
+    expect(css).toContain('.conv__ago');
     expect(css).toContain('.wa__list-head[hidden]');
     expect(css).toContain('.wa__convs--sel .conv__more');
-    /*
-     * La lista se lee: sin foto en la fila y la fila ENTERA es la tarjeta (el «⋯»
-     * queda dentro, con su fondo). Agregar cliente es un botón FLOTANTE redondo,
-     * solo el icono (estilo AppSheet), en la esquina.
-     */
-    expect(app_js).not.toContain('conv__avatar--profile');
-    expect(css).toContain('.conv-wrap:has(.conv--active)');
-    expect(css).toContain('.wa-new-chat');
-    expect(css).toContain('position: fixed');
-    expect(html).not.toContain('wa-new-chat__label');
     expect(css).toContain('.wa-bulk__btn');
     expect(app_js).toContain('wa-bulk__btn');
   });
 
   it('la barra de selección vive en la cabecera de la lista', () => {
     expect(html).toContain('id="wa-sel"');
-    expect(html).toContain('id="wa-new-chat"');
-    expect(app_js).toContain('/api/admin/conversations/start');
-    expect(css).toContain('.wa-new-chat');
     // El idioma de siempre: lo que se envía solo se dice, no se esconde.
     expect(app_js).toContain('data-wa-bulk');
-  });
-});
-
-describe('el chat va EN VIVO (sin esperar al sondeo de 8 s)', () => {
-  it('abre el canal del servidor y refresca la pantalla al recibir un aviso', async () => {
-    click('[data-tab="whatsapp"]');
-    const canal = await waitFor(
-      () => dom.window.__eventSources.at(-1) ?? null,
-      'el canal en vivo del chat',
-      8000,
-    );
-    expect(canal.url).toBe('/api/admin/whatsapp/events');
-
-    /*
-     * Se cuentan las peticiones de la LISTA: el aviso del servidor tiene que
-     * provocar el refresco por sí solo (sin esperar a los 8 s del sondeo).
-     */
-    const win = dom.window;
-    const original = win.fetch;
-    let listas = 0;
-    win.fetch = (input, init) => {
-      const url = String(typeof input === 'string' ? input : input.url);
-      if (url.includes('/api/admin/conversations?')) listas += 1;
-      return original(input, init);
-    };
-    try {
-      canal.emit('wa.message', { conversationId: ids.ana, direction: 'inbound', at: new Date().toISOString() });
-      await waitFor(() => listas > 0, 'el refresco que dispara el aviso', 4000);
-    } finally {
-      win.fetch = original;
-    }
-  });
-
-  it('al enviar, la burbuja sale AL INSTANTE y después se confirma', async () => {
-    click(`[data-conv="${ids.luis}"]`);
-    await waitFor(() => $('#wa-text'), 'el compositor de la conversación');
-    const antes = whatsapp.sent.length;
-    /*
-     * Se anotan TODAS las peticiones que salen durante el envío: si la prueba
-     * falla, el mensaje del fallo dice qué contestó el servidor (y qué avisó la
-     * pantalla) en vez de dejar adivinando.
-     */
-    const win = dom.window;
-    const original = win.fetch;
-    const registro = [];
-    win.fetch = async (input, init = {}) => {
-      const url = String(typeof input === 'string' ? input : input.url);
-      const response = await original(input, init);
-      const texto = await response.text();
-      registro.push({
-        method: (init.method ?? 'GET').toUpperCase(),
-        url: url.replace(/^https?:\/\/[^/]+/, ''),
-        status: response.status,
-        cuerpo: String(texto).slice(0, 200),
-      });
-      return {
-        ok: response.ok,
-        status: response.status,
-        headers: response.headers,
-        text: async () => texto,
-        json: async () => JSON.parse(texto),
-      };
-    };
-    setValue('#wa-text', 'Te lo llevo hoy mismo');
-    click('#wa-send');
-
-    // SIN esperar a nadie: el mensaje ya está en el hilo diciendo que se envía.
-    expect($('#thread').textContent).toContain('Te lo llevo hoy mismo');
-    expect($('#thread').textContent).toContain('Enviando');
-
-    try {
-      // Cuando el servidor confirma, la provisional se sustituye (no se duplica).
-      await waitFor(() => whatsapp.sent.length === antes + 1, 'el envío real al servidor', 8000);
-      await waitFor(() => !$('#thread').textContent.includes('Enviando'), 'la confirmación del envío', 8000);
-      const burbujas = [...$$('#thread .bubble')].filter((bubble) =>
-        bubble.textContent.includes('Te lo llevo hoy mismo'),
-      );
-      expect(
-        burbujas,
-        `hilo: ${$('#thread').textContent.replace(/\s+/g, ' ').slice(0, 200)} | aviso: ${$('#toast').textContent} | peticiones: ${JSON.stringify(registro.slice(-6))}`,
-      ).toHaveLength(1);
-    } finally {
-      win.fetch = original;
-    }
-  });
-
-  /*
-   * LA CARRERA DE VERDAD (y la que se veía en producción): un refresco de fondo
-   * —el aviso del servidor, el sondeo— sale ANTES del envío y vuelve DESPUÉS, con
-   * la foto del hilo de antes. Si esa respuesta manda, el mensaje recién enviado
-   * desaparece de la pantalla («aparece, se va y vuelve»).
-   *
-   * Aquí se provoca a propósito y de forma determinista: la lectura del hilo se
-   * retrasa, y la respuesta del envío TAMBIÉN (el servidor ya lo guardó, pero la
-   * pantalla se entera tarde). Así la lectura vieja aterriza con el envío aún en
-   * el aire, que es el hueco exacto.
-   */
-  it('un refresco LENTO que llega mientras el mensaje sale no se lleva la burbuja', async () => {
-    click(`[data-conv="${ids.luis}"]`);
-    await waitFor(() => $('#wa-text'), 'el compositor de la conversación');
-
-    const win = dom.window;
-    const original = win.fetch;
-    let hiloRetrasado = false;
-    let postRetrasado = false;
-    win.fetch = async (input, init = {}) => {
-      const url = String(typeof input === 'string' ? input : input.url);
-      const method = (init.method ?? 'GET').toUpperCase();
-      const esHilo = method === 'GET' && /\/api\/admin\/conversations\/[^/]+\/messages$/.test(url);
-      const esEnvio = method === 'POST' && /\/api\/admin\/conversations\/[^/]+\/messages$/.test(url);
-      if (esHilo && !hiloRetrasado) {
-        hiloRetrasado = true;
-        await sleep(300); // sale AHORA (sin el mensaje) y vuelve tarde
-      }
-      if (esEnvio && !postRetrasado) {
-        postRetrasado = true;
-        const respuesta = await original(input, init); // el servidor YA lo guardó…
-        await sleep(450); // …pero la pantalla se entera 450 ms después
-        return respuesta;
-      }
-      return original(input, init);
-    };
-    try {
-      // El aviso del servidor arranca un refresco que se quedará en el aire…
-      const canal = win.__eventSources.at(-1);
-      canal.emit('wa.message', { conversationId: ids.luis, direction: 'inbound', at: new Date().toISOString() });
-      await sleep(280);
-
-      // …y el mensaje sale mientras esa lectura vieja viene de camino.
-      whatsapp.sent.length = 0;
-      setValue('#wa-text', 'Llego en media hora');
-      click('#wa-send');
-      await waitFor(() => whatsapp.sent.length === 1, 'el envío real', 8000);
-      await waitFor(() => !$('#thread').textContent.includes('Enviando'), 'la confirmación del envío', 8000);
-
-      // Y al final hay UNA sola burbuja con el mensaje (ni dos, ni ninguna).
-      const burbujas = [...$$('#thread .bubble')].filter((bubble) =>
-        bubble.textContent.includes('Llego en media hora'),
-      );
-      expect(
-        burbujas,
-        `hilo: ${$('#thread').textContent.replace(/\s+/g, ' ').slice(0, 240)}`,
-      ).toHaveLength(1);
-      expect($('#thread').textContent).not.toContain('Cargando');
-    } finally {
-      win.fetch = original;
-    }
   });
 });
