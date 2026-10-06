@@ -56,7 +56,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitFor(check, label, timeout = 5000) {
   const start = Date.now();
   for (;;) {
-    const value = check();
+    const value = await check();
     if (value) return value;
     if (Date.now() - start > timeout) throw new Error(`timeout esperando: ${label}`);
     await sleep(25);
@@ -294,6 +294,9 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     const lineas = await waitFor(() => $('#order-lines')?.querySelector('select'), 'el formulario de pedido');
     // El catálogo sale del servidor: 7 frascos reales.
     expect(lineas.options).toHaveLength(7);
+    expect($('#order-save')?.textContent).toContain('Crear');
+    expect($('#order-save-delivery')?.textContent).toContain('Crear y pasar a delivery');
+    expect($('#order-notes-field')?.hidden).toBe(true);
 
     setValue('[data-line-variant="0"]', 'capsules_10');
     setValue('[data-line-qty="0"]', '3');
@@ -318,6 +321,56 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     expect(order.customer_id).toBeTruthy();
     expect(order.order_number).toMatch(/^PE-/);
     expect(receipt ?? true).toBeTruthy();
+  });
+
+  it('crea un pedido y lo pasa a delivery desde el mismo formulario con nota opcional', async () => {
+    if (!$('#sheet')?.hidden) click('[data-close-sheet]');
+    click('#wa-actions');
+    click('[data-order-new]');
+    await waitFor(() => $('#order-save-delivery'), 'el botón de crear y pasar a delivery');
+    expect($('#order-save-delivery').compareDocumentPosition($('#order-save')) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    $('#order-open-ack')?.click();
+    setValue('[data-line-variant="0"]', 'capsules_10');
+    setValue('[data-line-qty="0"]', '1');
+
+    const enviadosAntes = mockWhatsApp.sent.length;
+    click('#order-save-delivery');
+    const pedirUbicacion = await waitFor(() => ($('#order-location-required')?.hidden === false ? $('#order-location-request') : null), 'solicitar ubicación antes del delivery');
+    click(pedirUbicacion);
+    await waitFor(() => mockWhatsApp.sent.length === enviadosAntes + 1, 'la solicitud de ubicación enviada');
+    expect(mockWhatsApp.sent.at(-1).body).toContain('envíanos tu ubicación');
+    click('[data-close-sheet]');
+
+    await inboundLocation('wamid.UATPANEL-LOC-DELIVERY', {
+      latitude: 18.4764,
+      longitude: -69.9362,
+      name: 'Ubicación cliente',
+      address: 'Av. Winston Churchill, Santo Domingo',
+    });
+    click('#wa-actions');
+    click('[data-order-new]');
+    click(await waitFor(() => $('#order-draft-continue'), 'continuar el borrador del pedido'));
+    await waitFor(() => $('#order-save-delivery'), 'el formulario recuperado');
+    $('#order-open-ack')?.click();
+
+    click('#order-save-delivery');
+    const nota = await waitFor(() => ($('#order-delivery-note')?.hidden === false ? $('#order-delivery-note-text') : null), 'la nota de entrega');
+    setValue(nota, 'Llamar al llegar');
+    click('#order-delivery-note-continue');
+
+    const agente = await waitFor(
+      () => $$('#sheet-body [data-order-delivery-user]').find((row) => row.textContent.includes('Agente UAT')) ?? null,
+      'la lista para elegir agente',
+    );
+    expect($('#delivery-assign-note').value).toBe('Llamar al llegar');
+    const ordenId = agente.dataset.orderId;
+    click(agente);
+    await waitFor(async () => {
+      const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+      const item = data.items.find((candidate) => candidate.id === ordenId);
+      const order = item?.order ?? (item?.order_json ? JSON.parse(item.order_json) : item?.orderJson);
+      return order?.delivery?.delivery_user_id === agenteUatId ? order : null;
+    }, 'el pedido creado y asignado al agente');
   });
 
   it('programa un mensaje (no es un seguimiento: lo intentará el sistema)', async () => {
@@ -426,6 +479,8 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     click('[data-order-new]');
+    await waitFor(() => $('#order-lines') || $('#order-draft-new'), 'el formulario o el borrador');
+    if ($('#order-draft-new')) click('#order-draft-new');
     return waitFor(() => $('#order-lines'), 'el formulario de pedido');
   };
 
@@ -696,8 +751,9 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
   it('avisa de que ya hay un pedido abierto y NO lo guarda sin confirmar', async () => {
     const antes = (await pedidos()).length;
     await abrirPedidoDeAna();
+    if ($('#order-draft-new')) click('#order-draft-new');
     const aviso = await waitFor(() => $('#order-open-warning'), 'el aviso de pedido abierto');
-    expect(aviso.textContent).toMatch(/ya tiene un pedido sin cerrar/);
+    expect(aviso.textContent).toMatch(/ya tiene (un pedido|\d+ pedidos) sin cerrar/);
     expect(aviso.textContent).toMatch(/PE-/);
 
     click('#order-save');
@@ -718,7 +774,10 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     click('[data-tab="whatsapp"]');
     const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación en la bandeja');
     click(row);
-    const mas = await waitFor(() => $('#thread [data-loc-menu]'), 'la ubicación dentro del hilo');
+    const mas = await waitFor(
+      () => $$('#thread .loc').find((node) => node.textContent.includes('Casa UAT'))?.querySelector('[data-loc-menu]') ?? null,
+      'la ubicación nueva dentro del hilo',
+    );
     click(mas);
     await waitFor(() => $('#loc-attach'), 'las acciones de la ubicación');
     click('#loc-attach');

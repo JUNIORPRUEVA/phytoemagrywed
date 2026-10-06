@@ -16,6 +16,7 @@
   const WA_NOTIFY_KEY = 'pe_wa_notify';
   const WA_SOUND_KEY = 'pe_wa_sound';
   const NOTICE_DISMISSED_KEY = 'pe_notice_dismissed';
+  const ORDER_DRAFT_PREFIX = 'pe_order_draft_v1:';
   /*
    * MAPA DE PEDIDOS: la última vista del mapa y los últimos puntos vistos se
    * guardan en el teléfono. Así el mapa se pinta AL INSTANTE al abrir la pantalla
@@ -9447,7 +9448,52 @@
    * Formulario de pedido (nuevo o edición). El catálogo y los precios vienen del
    * servidor: el panel solo elige el frasco y la cantidad.
    */
-  async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null } = {}) {
+  function orderDraftKey(customerId, conversationId) {
+    return `${ORDER_DRAFT_PREFIX}${customerId || conversationId || 'nuevo'}`;
+  }
+
+  function readOrderDraft(key) {
+    try {
+      const draft = JSON.parse(localStorage.getItem(key) ?? 'null');
+      return draft && typeof draft === 'object' ? draft : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeOrderDraft(key, draft) {
+    try {
+      localStorage.setItem(key, JSON.stringify({ ...draft, savedAt: new Date().toISOString() }));
+    } catch {
+      /* Si el teléfono no deja guardar, el formulario sigue funcionando. */
+    }
+  }
+
+  function clearOrderDraft(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* nada que limpiar */
+    }
+  }
+
+  function openOrderDraftChoice(args, draft) {
+    openSheet(
+      'Pedido en progreso',
+      `<p class="rule">Hay un pedido sin terminar para este cliente. Puedes seguirlo o empezar uno nuevo.</p>
+      <div class="sheet-actions">
+        <button class="btn btn--ghost" id="order-draft-new" type="button">Crear uno nuevo</button>
+        <button class="btn btn--primary" id="order-draft-continue" type="button">Seguir con este</button>
+      </div>`,
+    );
+    $('#order-draft-new')?.addEventListener('click', () => {
+      clearOrderDraft(orderDraftKey(args.customerId, args.conversationId ?? ''));
+      openOrderForm({ ...args, skipDraftPrompt: true });
+    });
+    $('#order-draft-continue')?.addEventListener('click', () => openOrderForm({ ...args, draft, skipDraftPrompt: true }));
+  }
+
+  async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null, draft = null, skipDraftPrompt = false } = {}) {
     // Si no hay cliente, el formulario pinta id="order-phone"; desde chat, customer ? '' evita pedirlo.
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
@@ -9457,6 +9503,13 @@
       toast('El catálogo todavía no está disponible');
       return;
     }
+    const draftKey = !orderId ? orderDraftKey(customerId, conversationId) : null;
+    const storedDraft = draft ?? (!skipDraftPrompt && draftKey ? readOrderDraft(draftKey) : null);
+    if (!orderId && storedDraft && !draft && !skipDraftPrompt) {
+      openOrderDraftChoice({ customerId, conversationId, orderId, order, location }, storedDraft);
+      return;
+    }
+    const draftData = storedDraft && typeof storedDraft === 'object' ? storedDraft : null;
     // Ubicaciones del cliente: se piden antes de pintar para poder ofrecerlas (§9).
     const customerLocations = customerId ? await fetchCustomerLocations(customerId) : [];
     /*
@@ -9469,10 +9522,15 @@
     const prefsVariant =
       prefs?.variant_id && catalog.some((variant) => variant.id === prefs.variant_id) ? prefs.variant_id : null;
     /** @type {Array<{variantId: string, quantity: number}>} */
-    let lines = order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
-      { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
-    ];
-    const defaultStatus = order?.status ?? 'nuevo';
+    let lines = Array.isArray(draftData?.lines) && draftData.lines.length
+      ? draftData.lines
+          .filter((line) => catalog.some((variant) => variant.id === line.variantId))
+          .map((line) => ({ variantId: line.variantId, quantity: Math.max(1, Number(line.quantity) || 1) }))
+      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
+          { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
+        ];
+    if (!lines.length) lines = [{ variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) }];
+    const defaultStatus = draftData?.status ?? order?.status ?? 'nuevo';
     const methods = state.paymentMethods.length
       ? state.paymentMethods
       : [
@@ -9482,21 +9540,27 @@
     const prefsPayment = methods.some((method) => method.value === prefs?.payment_method)
       ? prefs.payment_method
       : null;
-    const defaultPayment = order?.payment_method ?? prefsPayment ?? methods[0]?.value ?? 'CASH';
+    const defaultPayment = draftData?.paymentMethod ?? order?.payment_method ?? prefsPayment ?? methods[0]?.value ?? 'CASH';
     const sourceConversation = conversationId ? state.conversations.find((row) => row.id === conversationId) ?? state.wa.chat?.conversation ?? null : null;
-    const defaultSource = order?.source ?? (sourceConversation?.source === 'META_ADS' ? 'META_ADS' : conversationId ? 'WHATSAPP' : 'MANUAL');
+    const defaultSource = draftData?.source ?? order?.source ?? (sourceConversation?.source === 'META_ADS' ? 'META_ADS' : conversationId ? 'WHATSAPP' : 'MANUAL');
     const defaultCampaign =
+      draftData?.utm_campaign ??
       order?.meta_attribution_snapshot?.utm_campaign ??
       order?.meta_attribution_snapshot?.campaign_id ??
       sourceConversation?.meta_attribution?.utm_campaign ??
       sourceConversation?.meta_attribution?.campaign_id ??
       '';
     const defaultAd =
+      draftData?.utm_content ??
       order?.meta_attribution_snapshot?.utm_content ??
       order?.meta_attribution_snapshot?.ad_id ??
       sourceConversation?.meta_attribution?.utm_content ??
       sourceConversation?.meta_attribution?.ad_id ??
       '';
+    const defaultSourceNote = draftData?.source_note ?? order?.meta_attribution_snapshot?.note ?? '';
+    const defaultDiscount = Number(draftData?.discount ?? order?.discount ?? 0) || 0;
+    const defaultDeliveryFee = Number(draftData?.deliveryFee ?? order?.delivery_fee ?? order?.delivery?.fee ?? '') || '';
+    const defaultNotes = draftData?.notes ?? order?.notes ?? '';
     /*
      * ¿YA TIENE UN PEDIDO ABIERTO? Se enseña ANTES de nada: un cliente con un
      * pedido en camino que hace otro suele ser un error (o una recompra que hay
@@ -9562,7 +9626,7 @@
                   : '<p class="view__hint">Sin preferencias guardadas todavía: se toman los datos del último pedido.</p>'
               }
               <label class="loc-option">
-                <input type="checkbox" id="order-save-prefs" ${prefs?.saved ? '' : 'checked'} />
+                <input type="checkbox" id="order-save-prefs" checked />
                 <span class="loc-option__body"><strong>Guardar estos datos como sus preferencias</strong>
                 <small>Frasco, cantidad, pago y ubicación para el próximo pedido.</small></span>
               </label>
@@ -9592,13 +9656,13 @@
         </label>
         <label class="field">
           <span class="field__label">Nota de origen (opcional)</span>
-          <input class="field__input" id="order-source-note" value="${escapeHtml(order?.meta_attribution_snapshot?.note ?? '')}" />
+        <input class="field__input" id="order-source-note" value="${escapeHtml(defaultSourceNote)}" />
         </label>
       </div>
       <label class="field">
         <span class="field__label">Descuento (opcional, RD$)</span>
         <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${
-          order?.discount ?? 0
+          defaultDiscount
         }" />
       </label>
       <div class="field">
@@ -9608,7 +9672,7 @@
       <label class="field">
         <span class="field__label">Costo de delivery (opcional, RD$)</span>
         <input class="field__input" id="order-fee" type="number" min="0" step="1" value="${
-          order?.delivery_fee ?? order?.delivery?.fee ?? ''
+          defaultDeliveryFee
         }" placeholder="0" />
       </label>
       <label class="field" ${orderId ? 'hidden' : ''}>
@@ -9642,20 +9706,38 @@
             .join('')}
         </select>
       </label>
-      <label class="field">
-        <span class="field__label">Notas</span>
+      <div class="order-note-tools">
+        <button class="icon-btn" id="order-notes-toggle" type="button" aria-label="Agregar nota">${ICONS.doc}</button>
+        <span>Nota interna del pedido</span>
+      </div>
+      <label class="field order-notes-field" id="order-notes-field" ${defaultNotes ? '' : 'hidden'}>
+        <span class="field__label">Nota interna</span>
         <textarea class="field__area" id="order-notes" placeholder="Pagó en efectivo, entrega el viernes…">${escapeHtml(
-          order?.notes ?? '',
+          defaultNotes,
         )}</textarea>
       </label>
       <p class="view__hint" id="order-total"></p>
-      <button class="btn btn--primary btn--block" id="order-save" type="button">${
-        orderId ? 'Guardar cambios' : 'Guardar pedido'
-      }</button>
-      <p class="view__hint">
-        Al marcarlo como «entregado» se envía la venta a Meta una sola vez y se crean las tareas de
-        seguimiento del día 1, 3, 7, 14, 21 y 30 (según tus Ajustes).
-      </p>
+      ${
+        orderId
+          ? '<button class="btn btn--primary btn--block" id="order-save" type="button">Guardar cambios</button>'
+          : `<div class="order-create-actions">
+              <button class="btn btn--primary btn--block order-create-delivery" id="order-save-delivery" type="button">${ICONS.send}<span>Crear y pasar a delivery</span></button>
+              <button class="btn btn--ghost btn--sm" id="order-save" type="button">Crear</button>
+            </div>
+            <div class="order-location-required" id="order-location-required" hidden>
+              <strong>No tiene ubicación del cliente</strong>
+              <p>Para pasarlo a delivery primero solicita la ubicación por WhatsApp. El pedido queda guardado como borrador para continuarlo cuando llegue.</p>
+              <button class="btn btn--primary btn--sm" id="order-location-request" type="button">Solicitar ubicación</button>
+            </div>
+            <div class="order-delivery-note" id="order-delivery-note" hidden>
+              <strong>¿Deseas agregar una nota de entrega?</strong>
+              <textarea class="field__area" id="order-delivery-note-text" rows="3" maxlength="600" placeholder="Opcional: cliente prefiere llamada, casa verde, cuidado con el portón..."></textarea>
+              <div class="order-delivery-note__actions">
+                <button class="btn btn--ghost btn--sm" id="order-delivery-note-skip" type="button">Sin nota</button>
+                <button class="btn btn--primary btn--sm" id="order-delivery-note-continue" type="button">Continuar</button>
+              </div>
+            </div>`
+      }
       `,
     );
 
@@ -9719,7 +9801,9 @@
      * abrir otra hoja: así no se pierde lo que ya estaba escrito (§9, §10, §24).
      * Nunca se pide el permiso de ubicación al abrir: solo al pulsar el botón.
      */
-    let chosenLocation = location && locationCoordsOk(location)
+    let chosenLocation = draftData?.chosenLocation && locationCoordsOk(draftData.chosenLocation)
+      ? { ...draftData.chosenLocation }
+      : location && locationCoordsOk(location)
       ? { ...location }
       : order?.delivery?.location
         ? { ...order.delivery.location, id: order.delivery.location.source_location_id ?? null }
@@ -9743,6 +9827,7 @@
         $('#order-loc-clear').addEventListener('click', () => {
           chosenLocation = null;
           renderLocationBlock();
+          persistOrderDraft();
         });
         return;
       }
@@ -9775,6 +9860,7 @@
           }
           chosenLocation = found.location;
           renderLocationBlock();
+          persistOrderDraft();
         });
       });
       box.addEventListener('change', (event) => {
@@ -9782,6 +9868,7 @@
         if (value) {
           chosenLocation = customerLocations.find((row) => row.id === value) ?? null;
           renderLocationBlock();
+          persistOrderDraft();
         }
       });
     };
@@ -9804,10 +9891,12 @@
       if (!remove) return;
       lines = lines.filter((_, index) => index !== Number(remove.dataset.lineRemove));
       renderLines();
+      persistOrderDraft();
     });
     $('#order-add').addEventListener('click', () => {
       lines = [...lines, { variantId: catalog[0].id, quantity: 1 }];
       renderLines();
+      persistOrderDraft();
     });
     $('#order-discount').addEventListener('input', refreshOrderTotal);
     $('#order-fee').addEventListener('input', refreshOrderTotal);
@@ -9819,7 +9908,76 @@
     refreshSourceFields();
     renderLines();
 
-    $('#order-save').addEventListener('click', async (event) => {
+    const collectOrderDraft = () => ({
+      customerId: customer?.id ?? customerId ?? null,
+      conversationId: conversationId || null,
+      lines,
+      discount: Number($('#order-discount')?.value) || 0,
+      deliveryFee: Number($('#order-fee')?.value) || 0,
+      chosenLocation: chosenLocation ? { ...chosenLocation } : null,
+      status: $('#order-status')?.value ?? defaultStatus,
+      paymentMethod: $('#order-payment')?.value ?? defaultPayment,
+      source: $('#order-source')?.value ?? defaultSource,
+      utm_campaign: $('#order-source-campaign')?.value.trim() || '',
+      utm_content: $('#order-source-ad')?.value.trim() || '',
+      source_note: $('#order-source-note')?.value.trim() || '',
+      notes: $('#order-notes')?.value ?? '',
+    });
+    const persistOrderDraft = () => {
+      if (!draftKey || orderId) return;
+      writeOrderDraft(draftKey, collectOrderDraft());
+    };
+    $('#sheet-body')?.addEventListener('input', persistOrderDraft);
+    $('#sheet-body')?.addEventListener('change', persistOrderDraft);
+
+    $('#order-notes-toggle')?.addEventListener('click', () => {
+      const field = $('#order-notes-field');
+      if (!field) return;
+      field.hidden = !field.hidden;
+      if (!field.hidden) $('#order-notes')?.focus();
+      persistOrderDraft();
+    });
+
+    const showMissingDeliveryLocation = () => {
+      persistOrderDraft();
+      const panel = $('#order-location-required');
+      if (panel) {
+        panel.hidden = false;
+        panel.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      }
+      $('#order-delivery-note')?.setAttribute('hidden', '');
+      toast('No tiene la ubicación del cliente. Solicítala para pasarlo a delivery');
+    };
+
+    const sendLocationRequestFromOrder = async (button) => {
+      if (!conversationId) {
+        toast('Abre el chat del cliente para solicitar la ubicación');
+        return;
+      }
+      persistOrderDraft();
+      if (state.wa.chat?.canSendFreeText !== true) {
+        openClosedWindowNotice({
+          templateName: LOCATION_TEMPLATE,
+          note: 'La ventana de 24 h está cerrada. Usa la plantilla aprobada para pedir la ubicación y luego continúa el borrador.',
+        });
+        return;
+      }
+      await working(button, 'Solicitando…', async () => {
+        try {
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ body: LOCATION_REQUEST_TEXT, idempotencyKey: uploadKey('order-loc') }),
+          });
+          toast('Solicitud de ubicación enviada. El pedido quedó guardado como borrador');
+          await loadWaThread(conversationId, { force: true });
+          refreshWhatsapp().catch(() => {});
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo solicitar la ubicación');
+        }
+      });
+    };
+
+    const saveOrder = async ({ button, assignAfter = false, deliveryNote = '' } = {}) => {
       /*
        * El aviso de pedido abierto se confirma AQUÍ (no solo se enseña): sin
        * marcar la casilla no se guarda. Es la diferencia entre avisar y evitar.
@@ -9850,7 +10008,11 @@
         toast('Escribe el teléfono del cliente');
         return;
       }
-      await working(event.currentTarget, 'Guardando…', async () => {
+      if (assignAfter && !chosenLocation) {
+        showMissingDeliveryLocation();
+        return;
+      }
+      await working(button, assignAfter ? 'Creando y asignando…' : 'Guardando…', async () => {
         try {
           const payload = {
             customerId: customer?.id,
@@ -9883,7 +10045,7 @@
             utm_campaign: $('#order-source-campaign')?.value.trim() || undefined,
             utm_content: $('#order-source-ad')?.value.trim() || undefined,
             source_note: $('#order-source-note')?.value.trim() || undefined,
-            notes: $('#order-notes').value,
+            notes: $('#order-notes')?.value ?? '',
           };
           const result = orderId
             ? await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
@@ -9903,6 +10065,7 @@
               })
             : await api('/api/admin/orders', { method: 'POST', body: JSON.stringify(payload) });
           const savedId = orderId ?? result.item?.id;
+          if (savedId && draftKey && !orderId) clearOrderDraft(draftKey);
           /*
            * GUARDAR LAS PREFERENCIAS: lo que se acaba de usar pasa a ser «lo de
            * siempre» de este cliente (frasco, cantidad, pago y ubicación), para
@@ -9924,14 +10087,68 @@
               }),
             }).catch(() => {});
           }
-          toast(orderId ? 'Pedido actualizado' : `Pedido ${result.order?.order_number ?? ''} guardado`);
+          const orderNumber = result.order?.order_number ?? '';
+          if (assignAfter && savedId) {
+            const activeUsers = (state.deliveryUsers ?? []).filter((user) => user.active !== false);
+            if (!activeUsers.length) {
+              toast(`Pedido ${orderNumber} creado. No hay agentes activos para delivery`);
+            } else if (activeUsers.length === 1) {
+              await api(`/api/admin/orders/${encodeURIComponent(savedId)}/delivery/assign`, {
+                method: 'POST',
+                body: JSON.stringify({ deliveryUserId: activeUsers[0].id, deliveryNote }),
+              });
+              toast(`Pedido ${orderNumber} creado y pasado a delivery`);
+            } else {
+              toast(`Pedido ${orderNumber} creado. Elige el agente`);
+              await load({ keepTab: true });
+              openDeliveryAssignSheet({ orderId: savedId, order: result.order ?? null, deliveryNote });
+              return;
+            }
+          } else {
+            toast(orderId ? 'Pedido actualizado' : `Pedido ${orderNumber} guardado`);
+          }
           await load({ keepTab: true });
-          if (savedId) await openReceipt(savedId);
+          if (savedId && assignAfter) {
+            closeSheet();
+            return;
+          }
+          if (savedId && !assignAfter) await openReceipt(savedId);
         } catch (error) {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar el pedido');
         }
       });
+    };
+
+    $('#order-save').addEventListener('click', (event) => saveOrder({ button: event.currentTarget }));
+    $('#order-save-delivery')?.addEventListener('click', (event) => {
+      const panel = $('#order-delivery-note');
+      if (!panel) return;
+      if (!chosenLocation) {
+        showMissingDeliveryLocation();
+        return;
+      }
+      if (!panel.hidden) {
+        saveOrder({
+          button: event.currentTarget,
+          assignAfter: true,
+          deliveryNote: String($('#order-delivery-note-text')?.value ?? '').trim(),
+        });
+        return;
+      }
+      panel.hidden = false;
+      $('#order-delivery-note-text')?.focus();
     });
+    $('#order-location-request')?.addEventListener('click', (event) => sendLocationRequestFromOrder(event.currentTarget));
+    $('#order-delivery-note-skip')?.addEventListener('click', (event) =>
+      saveOrder({ button: event.currentTarget, assignAfter: true, deliveryNote: '' }),
+    );
+    $('#order-delivery-note-continue')?.addEventListener('click', (event) =>
+      saveOrder({
+        button: event.currentTarget,
+        assignAfter: true,
+        deliveryNote: String($('#order-delivery-note-text')?.value ?? '').trim(),
+      }),
+    );
   }
 
   /*
@@ -11974,7 +12191,7 @@
    * gestionar el reparto (`delivery.tracking.manage_all`): si no, la lista de
    * repartidores llega vacía.
    */
-  async function openDeliveryAssignSheet({ orderId, order = null }) {
+  async function openDeliveryAssignSheet({ orderId, order = null, deliveryNote = '' }) {
     const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
     const actual = order ?? (item ? itemOrder(item) : {}) ?? {};
     const entrega = actual?.delivery ?? {};
@@ -12001,7 +12218,7 @@
       <label class="field">
         <span class="field__label">Comentario para el delivery</span>
         <textarea class="field__input" id="delivery-assign-note" rows="3" maxlength="600" placeholder="Ej.: cliente prefiere que llamen al llegar, casa verde, cuidado con el portón...">${escapeHtml(
-          entrega.delivery_assignment_note ?? '',
+          deliveryNote || entrega.delivery_assignment_note || '',
         )}</textarea>
         <small>El delivery verá esta nota dentro de su orden. No se envía al cliente.</small>
       </label>

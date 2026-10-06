@@ -913,6 +913,7 @@ describe('preferencias del pedido del cliente', () => {
     expect($('#order-payment').value).toBe('TRANSFER');
     expect($('#sheet-body').textContent).toContain('Lo de siempre');
     expect($('#order-save-prefs')).not.toBeNull();
+    expect($('#order-save-prefs').checked).toBe(true);
 
     // Solo se confirma la cantidad.
     const cantidad = $('#order-lines [data-line-qty="0"]');
@@ -934,9 +935,9 @@ describe('preferencias del pedido del cliente', () => {
     const nuevo = pedidos.find((item) => item.variant_id === 'capsules_15');
     expect(Number(nuevo.quantity)).toBe(2);
     expect(orderOfItem(nuevo).payment_method).toBe('TRANSFER');
-    // «Lo de siempre» NO se pisó con la cantidad de este pedido (la casilla venía sin marcar).
+    // «Lo de siempre» se actualiza por defecto con lo último confirmado.
     const cliente = datos.customers.find((row) => row.id === luis.customer_id);
-    expect(Number(cliente.orderPrefs.quantity)).toBe(3);
+    expect(Number(cliente.orderPrefs.quantity)).toBe(2);
   }, 60000);
 });
 
