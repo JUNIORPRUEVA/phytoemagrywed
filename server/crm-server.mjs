@@ -1188,7 +1188,130 @@ function deliveryNotificationText(kind, customer, order) {
     const deliveryName = order?.delivery?.delivery_user_name_snapshot || 'nuestro delivery';
     return `Hola ${name}, tu pedido ha sido asignado a nuestro delivery ${deliveryName}. Te estará contactando para coordinar la entrega.`;
   }
-  return `Hola ${name}, hemos registrado tu pedido ${order?.order_number ?? order?.id ?? ''} como entregado. Gracias por elegir Phytoemagry.`;
+  return 'Gracias por tu compra, aquí está tu recibo.';
+}
+
+async function sendDeliveryReceiptToCustomer(ctx, { item, order, customer, conversation, actor = null }) {
+  const receipt = buildReceipt({ order, customer });
+  const filename = receiptFilename(receipt.order_number ?? item.id);
+  const caption = deliveryNotificationText('delivered', customer, order);
+  const actorFields = messageActorFields(actor);
+  const meta = {
+    phoneNumberId: ctx.whatsapp?.phoneNumberId ?? null,
+    to: customer.phone_e164,
+    order_id: item.id,
+    invoice_filename: filename,
+    source: 'delivery_complete',
+  };
+  const key = `delivery-receipt:${item.id}:${order?.delivery?.delivery_assignment_version ?? 1}`;
+  const pdf = receiptPdf(receipt, { timeZone: TIME_ZONE });
+
+  if (ctx.customers.canSendFreeText(conversation)) {
+    let registradoTexto = await ctx.db.findBy('wa_messages', 'idempotency_key', `${key}:text`);
+    if (!registradoTexto) {
+      const envioTexto = await ctx.whatsapp.sendText(customer.phone_e164, caption);
+      registradoTexto = (
+        await ctx.customers.recordOutbound({
+          customer,
+          conversation,
+          type: 'text',
+          body: caption,
+          waMessageId: envioTexto.messageId ?? null,
+          status: envioTexto.ok ? 'sent' : 'failed',
+          error: envioTexto.ok ? null : (envioTexto.error ?? { message: envioTexto.reason ?? 'error' }),
+          idempotencyKey: `${key}:text`,
+          meta,
+          ...actorFields,
+        })
+      ).message;
+      if (!envioTexto.ok) return { ok: false, status: 'failed', channel: 'text', reason: envioTexto.error?.message ?? envioTexto.reason ?? 'send_failed' };
+    }
+
+    if (!ctx.media?.pipeline || !ctx.media?.store) return { ok: false, status: 'failed', channel: 'document', reason: 'media_not_configured' };
+    const documento = await ctx.media.pipeline.processOutbound({
+      direction: 'document',
+      to: customer.phone_e164,
+      buffer: pdf,
+      declaredMime: 'application/pdf',
+      filename,
+      caption: null,
+      conversationId: conversation.id,
+      idempotencyKey: `${key}:doc`,
+      findExistingMessage: (idempotencyKey) => ctx.db.findBy('wa_messages', 'idempotency_key', idempotencyKey),
+    });
+    if (!documento.ok) {
+      return {
+        ok: false,
+        status: documento.requiresReconciliation ? 'pending' : 'failed',
+        channel: 'document',
+        reason: documento.error?.message ?? documento.error?.code ?? 'document_send_failed',
+      };
+    }
+    const registradoDocumento = await ctx.customers.recordOutbound({
+      customer,
+      conversation,
+      type: 'document',
+      body: filename,
+      waMessageId: documento.waMessageId ?? null,
+      status: documento.waMessageId ? 'sent' : 'pending',
+      idempotencyKey: `${key}:doc-message`,
+      meta,
+      ...actorFields,
+    });
+    try {
+      const fila =
+        (await ctx.media.store.byIdempotencyKey(`${key}:doc`)) ??
+        (documento.waMessageId ? await ctx.media.store.byWaMessageId(documento.waMessageId) : null);
+      if (fila && registradoDocumento?.message?.id && fila.message_id !== registradoDocumento.message.id) {
+        await ctx.media.store.update(fila.id, { messageId: registradoDocumento.message.id });
+      }
+    } catch {
+      /* La entrega ya quedó cerrada; el hilo puede vivir sin este enlace. */
+    }
+    await ctx.customers.markConversationRead(conversation.id);
+    return { ok: true, status: 'sent', channel: 'document', message_id: documento.waMessageId ?? registradoTexto?.wa_message_id ?? null, filename };
+  }
+
+  if (!ctx.media?.whatsapp?.uploadMedia) return { ok: false, status: 'failed', channel: 'template', template: INVOICE_TEMPLATE, reason: 'media_not_configured' };
+  const check = await approvedTemplate(ctx, INVOICE_TEMPLATE);
+  if (!check.ok) return { ok: false, status: 'pending', channel: 'template', template: INVOICE_TEMPLATE, reason: check.reason };
+  if (String(check.template?.header?.format ?? '').toUpperCase() !== 'DOCUMENT') {
+    return { ok: false, status: 'failed', channel: 'template', template: INVOICE_TEMPLATE, reason: 'template_without_document_header' };
+  }
+  const subida = await ctx.media.whatsapp.uploadMedia({ buffer: pdf, mimeType: 'application/pdf', filename });
+  if (!subida.ok) return { ok: false, status: 'failed', channel: 'template', template: INVOICE_TEMPLATE, reason: subida.error?.message ?? 'upload_failed' };
+  const payload = await resolveTemplatePayload(ctx, {
+    template: check.template,
+    customer,
+    conversation,
+    provided: { 1: customer.name || customer.phone_e164, 2: receipt.order_number ?? '' },
+  });
+  if (!payload.ok) return { ok: false, status: 'failed', channel: 'template', template: INVOICE_TEMPLATE, reason: payload.error };
+  const components = [
+    { type: 'header', parameters: [{ type: 'document', document: { id: subida.mediaId, filename } }] },
+    ...(payload.components ?? []),
+  ];
+  const result = await ctx.whatsapp.sendTemplate(customer.phone_e164, {
+    name: check.template.name,
+    language: check.template.language ?? 'es',
+    components,
+  });
+  const registrado = await ctx.customers.recordOutbound({
+    customer,
+    conversation,
+    type: 'template',
+    template: check.template.name,
+    body: payload.body,
+    waMessageId: result.messageId ?? null,
+    status: result.ok ? 'sent' : 'failed',
+    error: result.ok ? null : (result.error ?? { message: result.reason ?? 'error' }),
+    idempotencyKey: `${key}:template`,
+    meta,
+    ...actorFields,
+  });
+  if (!result.ok) return { ok: false, status: 'failed', channel: 'template', template: check.template.name, reason: result.error?.message ?? result.reason ?? 'send_failed' };
+  await ctx.customers.markConversationRead(conversation.id);
+  return { ok: true, status: 'sent', channel: 'template', template: check.template.name, message_id: result.messageId ?? registrado.message?.wa_message_id ?? null, filename };
 }
 
 async function rememberDeliveryNotificationResult(ctx, item, order, key, result) {
@@ -1245,7 +1368,28 @@ async function notifyDeliveryCustomer(ctx, { item, order, actor = null, kind }) 
     return result;
   }
 
-  const templateName = kind === 'assignment' ? DELIVERY_ASSIGNMENT_TEMPLATE : DELIVERY_DELIVERED_TEMPLATE;
+  if (kind === 'delivered') {
+    const receiptResult = await sendDeliveryReceiptToCustomer(ctx, { item, order, customer, conversation, actor });
+    const result = {
+      status: receiptResult.status,
+      channel: receiptResult.channel,
+      template: receiptResult.template ?? null,
+      message_id: receiptResult.message_id ?? null,
+      reason: receiptResult.reason ?? null,
+    };
+    await record(result);
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: item.id,
+      action: receiptResult.ok ? sentAction : failedAction,
+      actor: actor?.display_name ?? null,
+      summary: receiptResult.ok ? 'Cliente recibió recibo de entrega' : `No se pudo enviar recibo de entrega: ${receiptResult.reason ?? 'error'}`,
+      data: { ...data, channel: result.channel, template: result.template, message_id: result.message_id, error: result.reason },
+    });
+    return result;
+  }
+
+  const templateName = DELIVERY_ASSIGNMENT_TEMPLATE;
   let sendResult = null;
   let channel = 'text';
   let template = null;
@@ -2784,6 +2928,12 @@ function invoiceFilename(orderNumber) {
   return `Factura-${limpio || 'pedido'}.pdf`;
 }
 
+/** Nombre del PDF que se envía al cerrar una entrega. */
+function receiptFilename(orderNumber) {
+  const limpio = String(orderNumber ?? '').replace(/[^A-Za-z0-9_-]/g, '');
+  return `Recibo-${limpio || 'pedido'}.pdf`;
+}
+
 /** Texto corto que acompaña a la factura dentro de la ventana de 24 h. */
 function invoiceCaption(customer) {
   const nombre = String(customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente';
@@ -2933,7 +3083,7 @@ const WA_TEMPLATE_SEED = [
     group: 'DELIVERY',
     category: 'UTILITY',
     language: 'es',
-    body: 'Hola {{1}}, hemos registrado tu pedido {{2}} como entregado. Gracias por elegir Phytoemagry.',
+    body: 'Gracias por tu compra {{1}}, aquí está tu recibo del pedido {{2}}.',
     variables: ['customer_name', 'order_number'],
     buttons: [],
     required_context: 'order',

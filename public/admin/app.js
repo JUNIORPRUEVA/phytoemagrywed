@@ -3503,24 +3503,26 @@
       return;
     }
     if (!detail.customerMarker) {
-      detail.customerMarker = window.L.marker(destination, { icon: deliveryMarkerIcon('customer') })
-        .addTo(map)
-        .bindTooltip('Cliente', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--customer' });
+      detail.customerMarker = window.L.marker(destination, { icon: deliveryMarkerIcon('customer') }).addTo(map);
+      if (typeof detail.customerMarker.bindTooltip === 'function') {
+        detail.customerMarker.bindTooltip('Cliente', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--customer' });
+      }
     } else {
       detail.customerMarker.setLatLng(destination);
     }
     if (current) {
       if (!detail.deliveryMarker) {
-        detail.deliveryMarker = window.L.marker(current, { icon: deliveryMarkerIcon('delivery') })
-          .addTo(map)
-          .bindTooltip('Tu ubicación', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--driver' });
+        detail.deliveryMarker = window.L.marker(current, { icon: deliveryMarkerIcon('delivery') }).addTo(map);
+        if (typeof detail.deliveryMarker.bindTooltip === 'function') {
+          detail.deliveryMarker.bindTooltip('Tu ubicación', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--driver' });
+        }
       } else {
         detail.deliveryMarker.setLatLng(current);
       }
       const points = [current, destination];
       if (!detail.routeLine) {
         detail.routeLine = window.L.polyline(points, { color: '#0b6b4f', weight: 4, opacity: 0.72, dashArray: '8 8' }).addTo(map);
-      } else {
+      } else if (typeof detail.routeLine.setLatLngs === 'function') {
         detail.routeLine.setLatLngs(points);
       }
       map.fitBounds(window.L.latLngBounds(points).pad(0.32), { animate: false, maxZoom: 16, padding: [40, 150] });
@@ -3596,8 +3598,7 @@
       return `<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(order.id)}" type="button">Iniciar</button>`;
     }
     if (status === 'EN_CAMINO') {
-      return `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${session?.id ? '' : 'disabled'}>Finalizar</button>
-        <button class="btn btn--ghost btn--sm" data-delivery-issue="${escapeHtml(order.id)}" type="button">Incidencia</button>`;
+      return `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${session?.id ? '' : 'disabled'}>Finalizar</button>`;
     }
     if (status === 'ENTREGADO') {
       return `<button class="btn btn--ghost btn--sm" data-delivery-back type="button">Volver</button>`;
@@ -3710,7 +3711,8 @@
       state.deliveryActiveOrderId = active.id;
       refreshDeliveryPreviewPosition(active.id).catch(() => {});
     }
-    if (active) document.body.dataset.deliveryDetail = 'true';
+    const visible = state.tab === 'delivery' && !box.hidden;
+    if (active && visible) document.body.dataset.deliveryDetail = 'true';
     else delete document.body.dataset.deliveryDetail;
     box.classList.toggle('delivery-view--detail', Boolean(active));
     if (active) {
@@ -3720,7 +3722,7 @@
         <button class="icon-btn delivery-detail-back" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
         ${deliveryDetailPanelHtml(active)}
       </div>`;
-      setTimeout(() => updateDeliveryDetailMap(active), 0);
+      if (visible) setTimeout(() => updateDeliveryDetailMap(active), 0);
       return;
     }
     resetDeliveryDetailMap();
@@ -11514,7 +11516,7 @@
     if (operational === 'EN_CAMINO' && session) {
       return `${chat}<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver en vivo</button>${
         esRepartidor && assignedToMe
-          ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Entregado</button><button class="btn btn--ghost btn--sm" data-delivery-issue="${escapeHtml(item.id)}" type="button">No pude entregar</button>`
+          ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Finalizar</button>`
           : ''
       }`;
     }
@@ -14077,15 +14079,11 @@
           await stopDelivery(sessionId, true, note ? { note } : {});
           closeSheet();
           state.deliveryActiveOrderId = null;
+          state.deliveryListRequested = false;
+          delete document.body.dataset.deliveryDetail;
           renderDelivery();
-          openSheet(
-            'Entrega completada',
-            `<div class="delivery-done">
-              <p><strong>Entrega completada</strong></p>
-              <p>El pedido quedó marcado como entregado.</p>
-              <button class="btn btn--primary btn--block" data-delivery-back type="button">Volver a mis entregas</button>
-            </div>`,
-          );
+          setTab('hoy');
+          toast('Gracias por colaborar con Phytoemagry');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar');
         });

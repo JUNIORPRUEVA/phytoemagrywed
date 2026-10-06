@@ -479,9 +479,10 @@ describe('el mapa se abre DENTRO de la app', () => {
     }, 'el marcador de la ubicación');
 
     expect(dom.window.__abrioPestana).toBeUndefined();
-    // Un solo mapa en toda la app: el contenedor es siempre el mismo.
-    expect(fake.calls.maps.map((el) => el.id ?? '')).toEqual(
-      fake.calls.maps.map(() => 'orders-map'),
+    // Esta acción debe abrir el mapa principal de pedidos; delivery tiene su
+    // propio mapa de detalle y no debe confundirse con este flujo.
+    expect(fake.calls.maps.slice(mapasAntes).map((el) => el.id ?? '')).toEqual(
+      fake.calls.maps.slice(mapasAntes).map(() => 'orders-map'),
     );
     expect(fake.calls.maps.length).toBeGreaterThanOrEqual(mapasAntes);
     expect(marcador.coords[0]).toBeCloseTo(L1.latitude, 4);

@@ -32,6 +32,8 @@ const mockWhatsApp = {
   phoneNumberId: 'PN-DELIVERY',
   businessAccountId: 'WABA1',
   sent: [],
+  documents: [],
+  uploads: [],
   read: [],
   failWith: null,
   failPhones: new Set(),
@@ -46,12 +48,35 @@ const mockWhatsApp = {
     mockWhatsApp.sent.push({ to, template, type: 'template' });
     return { ok: true, status: 200, messageId: `wamid.TPL${mockWhatsApp.sent.length}` };
   },
+  async uploadMedia(input) {
+    mockWhatsApp.uploads.push({ mimeType: input.mimeType, filename: input.filename, bytes: input.buffer.length });
+    return { ok: true, status: 200, mediaId: `mid_delivery_${mockWhatsApp.uploads.length}` };
+  },
+  async sendDocument(to, input) {
+    if (mockWhatsApp.failWith) return { ok: false, status: 400, error: mockWhatsApp.failWith };
+    mockWhatsApp.documents.push({ to, ...input });
+    return { ok: true, status: 200, waMessageId: `wamid.DOC${mockWhatsApp.documents.length}` };
+  },
   async sendInteractive() {
     return { ok: false, skipped: true };
   },
   async markAsRead(messageId) {
     mockWhatsApp.read.push(messageId);
     return { ok: true };
+  },
+};
+
+const storage = {
+  enabled: true,
+  provider: 'memory',
+  objects: new Map(),
+  async put(key, buffer) {
+    storage.objects.set(key, Buffer.from(buffer));
+    return { ok: true, objectKey: key, size: buffer.length };
+  },
+  async get(key) {
+    const found = storage.objects.get(key);
+    return found ? { ok: true, buffer: found } : { ok: false, error: 'not_found' };
   },
 };
 
@@ -151,6 +176,8 @@ beforeAll(async () => {
     metaAppSecret: APP_SECRET,
     whatsappPhoneNumber: '+18095550000',
     whatsapp: mockWhatsApp,
+    whatsappMedia: mockWhatsApp,
+    storage,
     bootstrapAdminUser: ADMIN_USER,
     bootstrapAdminPassword: ADMIN_PASS,
     schedulerEnabled: false,
@@ -271,6 +298,8 @@ describe('delivery assignment notifications and contact flow', () => {
   it('entrega notifica al cliente después de marcar entregado y no revierte si falla', async () => {
     await restock(100);
     mockWhatsApp.sent = [];
+    mockWhatsApp.documents = [];
+    mockWhatsApp.uploads = [];
     await setConversationWindow(true);
     const order = await createOrder();
     await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
@@ -282,10 +311,14 @@ describe('delivery assignment notifications and contact flow', () => {
     expect(complete.status).toBe(200);
     const completeBody = await json(complete);
     expect(completeBody.order.status).toBe('entregado');
-    expect(mockWhatsApp.sent.some((row) => row.type === 'text' && row.body.includes('como entregado'))).toBe(true);
+    expect(mockWhatsApp.sent.some((row) => row.type === 'text' && row.body.includes('Gracias por tu compra'))).toBe(true);
+    expect(mockWhatsApp.documents).toHaveLength(1);
+    expect(mockWhatsApp.documents[0].filename).toMatch(/^Recibo-PE-/);
+    expect(mockWhatsApp.uploads[0].mimeType).toBe('application/pdf');
 
     await restock(100);
-    await approveTemplate('phyto_pedido_entregado_v1', 'Hola {{1}}, hemos registrado tu pedido {{2}} como entregado. Gracias por elegir Phytoemagry.', ['customer_name', 'order_number']);
+    await approveTemplate('phyto_envio_factura_v1', 'Gracias por tu compra {{1}}, aquí está tu recibo del pedido {{2}}.', ['customer_name', 'order_number']);
+    mockWhatsApp.uploads = [];
     await setConversationWindow(false);
     const templated = await createOrder();
     await request(`/api/admin/orders/${templated.item.id}/delivery/assign`, {
@@ -296,6 +329,7 @@ describe('delivery assignment notifications and contact flow', () => {
     const completeTemplated = await request(`/api/admin/delivery-tracking/${startTemplated.session.id}/complete`, { method: 'POST', body: '{}' }, deliveryCookie);
     expect(completeTemplated.status).toBe(200);
     expect(mockWhatsApp.sent.at(-1).type).toBe('template');
+    expect(mockWhatsApp.uploads.at(-1).filename).toMatch(/^Recibo-PE-/);
 
     await restock(100);
     mockWhatsApp.failWith = { code: 131000, message: 'Meta falló entrega' };
