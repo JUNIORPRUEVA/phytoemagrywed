@@ -737,11 +737,12 @@ async function listVisibleTracking(ctx, actor) {
   return out;
 }
 
-async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null) {
+async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {
   const current = orderOf(item);
   if (!current) return null;
   const previousUserId = text(current.delivery?.delivery_user_id, 80);
   const sameDelivery = previousUserId && previousUserId === deliveryUser?.id;
+  const assignmentNote = text(options.assignmentNote ?? options.assignment_note ?? current.delivery?.delivery_assignment_note, 600);
   const assignmentVersion = sameDelivery
     ? Number(current.delivery?.delivery_assignment_version ?? 1)
     : Number(current.delivery?.delivery_assignment_version ?? 0) + 1;
@@ -761,6 +762,10 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null) {
       delivery_contacted_at: previousUserId && previousUserId !== deliveryUser?.id ? null : current.delivery?.delivery_contacted_at ?? null,
       delivery_assignment_version: assignmentVersion,
       delivery_previous_user_id: previousUserId && previousUserId !== deliveryUser?.id ? previousUserId : current.delivery?.delivery_previous_user_id ?? null,
+      delivery_assignment_note: assignmentNote ?? null,
+      delivery_assignment_note_by_user_id: assignmentNote && actor?.actor_type === 'USER' ? actor.id : null,
+      delivery_assignment_note_by_display_name_snapshot: assignmentNote ? actor?.display_name ?? null : null,
+      delivery_assignment_note_at: assignmentNote ? ctx.clock().toISOString() : null,
     },
     updated_at: ctx.clock().toISOString(),
   };
@@ -781,6 +786,7 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null) {
       previous_delivery_user_id: previousUserId ?? null,
       delivery_user_id: deliveryUser?.id ?? null,
       assignment_version: assignmentVersion,
+      delivery_assignment_note: assignmentNote ?? null,
     },
     idempotencyKey: `delivery-assignment-audit:${item.id}:${deliveryUser?.id ?? 'none'}:${assignmentVersion}`,
   });
@@ -5926,7 +5932,8 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' });
         return;
       }
-      const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor);
+      const assignmentNote = text(body.deliveryNote ?? body.delivery_note ?? body.note, 600);
+      const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor, { assignmentNote });
       const customerNotification = deliveryUser
         ? await notifyDeliveryCustomer(ctx, { item: assigned.item, order: assigned.order, actor, kind: 'assignment' }).catch((error) => ({
             status: 'failed',

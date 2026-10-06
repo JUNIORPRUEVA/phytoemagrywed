@@ -7154,6 +7154,35 @@ body[data-wa-view='chat'] .mobile-header {
   font-weight: 700;
 }
 
+.delivery-note {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid rgba(8, 104, 78, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.delivery-note strong {
+  color: var(--pe-ink-900);
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.delivery-note p,
+.delivery-note small {
+  margin: 0;
+  color: var(--pe-ink-600);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.32;
+}
+
+.delivery-order-sheet {
+  display: grid;
+  gap: 10px;
+}
+
 .delivery-destination strong {
   color: var(--pe-ink-900);
 }

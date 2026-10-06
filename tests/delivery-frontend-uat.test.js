@@ -27,15 +27,27 @@ describe('delivery tracking frontend UAT guards', () => {
 
   it('el detalle de entrega obliga contacto primero y muestra mapa cacheable compacto', () => {
     expect(app).toContain('function deliveryMapPreviewHtml');
+    expect(app).toContain('function openDeliveryOrderDetail');
     expect(app).toContain('tileUrlFor(MAP_BASE_LAYERS.calles.url, 16');
     expect(app).toContain('loading="eager"');
     expect(app).toContain('Primero contacta al cliente');
     expect(app).toContain('Luego podrás iniciar la entrega.');
     expect(app).toContain('Aceptar y contactar');
+    expect(app).toContain('data-delivery-order-detail');
+    expect(app).toContain('Ver pedido');
     expect(app).toContain('Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.');
     expect(app.match(/data-delivery-contact=/g)).toHaveLength(1);
     const cardBlock = app.slice(app.indexOf('function deliveryCard'), app.indexOf('function renderDelivery'));
     expect(cardBlock).not.toContain('Ver mapa</button>');
+  });
+
+  it('al asignar delivery permite comentario interno visible en la orden', () => {
+    expect(app).toContain('id="delivery-assign-note"');
+    expect(app).toContain('Comentario para el delivery');
+    expect(app).toContain('body: JSON.stringify({ deliveryUserId, deliveryNote })');
+    expect(app).toContain('function deliveryAssignmentNoteHtml');
+    expect(app).toContain('Comentario para esta entrega');
+    expect(app).toContain('No se envía al cliente.');
   });
 
   it('al entrar al detalle calcula distancia con GPS sin iniciar tracking ni cambiar estado', () => {

@@ -208,10 +208,12 @@ describe('delivery assignment notifications and contact flow', () => {
     const order = await createOrder();
     const assign = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',
-      body: JSON.stringify({ deliveryUserId: delivery.id }),
+      body: JSON.stringify({ deliveryUserId: delivery.id, deliveryNote: 'Cliente prefiere llamada al llegar' }),
     });
     expect(assign.status).toBe(200);
-    expect((await json(assign)).customerNotification.status).toBe('sent');
+    const assignBody = await json(assign);
+    expect(assignBody.customerNotification.status).toBe('sent');
+    expect(assignBody.order.delivery.delivery_assignment_note).toBe('Cliente prefiere llamada al llegar');
     expect(mockWhatsApp.sent.filter((row) => row.type === 'text' && row.body.includes('tu pedido ha sido asignado'))).toHaveLength(1);
     const duplicate = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',

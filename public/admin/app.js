@@ -3376,6 +3376,72 @@
     </button>`;
   }
 
+  function deliveryAssignmentNoteHtml(order) {
+    const note = String(order?.delivery?.delivery_assignment_note ?? '').trim();
+    if (!note) return '';
+    const author = order.delivery?.delivery_assignment_note_by_display_name_snapshot;
+    return `<div class="delivery-note">
+      <strong>Comentario para esta entrega</strong>
+      <p>${escapeHtml(note)}</p>
+      ${author ? `<small>De ${escapeHtml(author)}</small>` : ''}
+    </div>`;
+  }
+
+  async function openDeliveryOrderDetail(orderId) {
+    if (!orderId) return;
+    try {
+      const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
+      const order = data.order ?? {};
+      const customer = data.customer ?? order.customer ?? {};
+      const receipt = data.receipt ?? {};
+      const location = order.delivery?.location ?? receipt.location ?? null;
+      const lines = (order.items ?? receipt.items ?? [])
+        .map((line) => {
+          const qty = line.quantity ?? 1;
+          const label = line.variantName ?? line.name ?? line.label ?? 'Producto';
+          const subtotal = line.subtotal ?? line.total ?? null;
+          return `<div class="receipt-line">
+            <span>${escapeHtml(label)}</span>
+            <span class="receipt-line__qty">x${escapeHtml(qty)}</span>
+            <span class="receipt-line__amount">${subtotal != null ? money(subtotal, order.currency ?? receipt.currency) : ''}</span>
+          </div>`;
+        })
+        .join('');
+      openSheet(
+        `Pedido ${escapeHtml(order.order_number ?? receipt.order_number ?? orderId)}`,
+        `<div class="delivery-order-sheet">
+          <dl class="facts">
+            <div class="fact"><dt>Cliente</dt><dd>${escapeHtml(customer.name ?? receipt.customer_name ?? order.customer_name ?? 'Cliente')}</dd></div>
+            <div class="fact"><dt>Teléfono</dt><dd>${escapeHtml(customer.phone_e164 ?? order.customer_phone ?? receipt.phone_masked ?? '—')}</dd></div>
+            <div class="fact"><dt>Estado</dt><dd>${escapeHtml(receipt.status_label ?? deliveryVisibleLabel(order))}</dd></div>
+            <div class="fact"><dt>Total</dt><dd>${money(receipt.total ?? order.total ?? 0, receipt.currency ?? order.currency)}</dd></div>
+            ${order.payment_method ? `<div class="fact"><dt>Pago</dt><dd>${escapeHtml(paymentMethodLabel(order.payment_method))}</dd></div>` : ''}
+            ${order.created_at || receipt.date ? `<div class="fact"><dt>Fecha</dt><dd>${escapeHtml(fmtWhen(order.created_at ?? receipt.date))}</dd></div>` : ''}
+          </dl>
+          ${deliveryAssignmentNoteHtml(order)}
+          ${lines ? `<div class="receipt__lines">${lines}</div>` : ''}
+          ${
+            location
+              ? `<div class="loc-row">
+                  <span class="loc-row__body"><strong>Ubicación de entrega</strong><small>${escapeHtml(location.name || location.address || receipt.location_label || 'Ubicación compartida')}</small></span>
+                  ${
+                    mapLatLng(location)
+                      ? `<button class="btn btn--ghost btn--sm" data-open-map="${mapLocationAttr(location)}" data-map-title="Pedido ${escapeHtml(
+                          order.order_number ?? receipt.order_number ?? orderId,
+                        )}" type="button">Ver mapa</button>`
+                      : ''
+                  }
+                </div>`
+              : ''
+          }
+          ${order.notes ? `<div class="delivery-note"><strong>Nota del pedido</strong><p>${escapeHtml(order.notes)}</p></div>` : ''}
+        </div>`,
+      );
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo abrir el pedido');
+    }
+  }
+
   function deliveryPrimaryAction(order, session) {
     const status = deliveryVisibleStatus(order, session);
     if (status === 'PENDIENTE') {
@@ -3425,6 +3491,7 @@
           ? `<div class="delivery-card__detail">
               ${deliveryOrderSummaryHtml(order, session, status)}
               ${deliveryMapPreviewHtml(order, session, status)}
+              ${deliveryAssignmentNoteHtml(order)}
               <div class="delivery-step ${status === 'PENDIENTE' ? 'delivery-step--required' : ''}">
                 <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
                 <div>
@@ -3433,6 +3500,7 @@
                 </div>
               </div>
               <div class="delivery-actions">
+                <button class="btn btn--ghost btn--sm" data-delivery-order-detail="${escapeHtml(order.id)}" type="button">Ver pedido</button>
                 ${
                   status === 'INCIDENCIA'
                     ? `<div class="delivery-issue">
@@ -11730,6 +11798,13 @@
           ? `<p class="view__hint">Ahora lo lleva <strong>${escapeHtml(asignadoNombre)}</strong>. Al elegir otro, el pedido cambia de agente (queda auditado).</p>`
           : '<p class="view__hint">Elige el <strong>agente</strong> que va a hacer la entrega: es quien lo lleva, marca la entrega y comparte su ubicación mientras reparte.</p>'
       }
+      <label class="field">
+        <span class="field__label">Comentario para el delivery</span>
+        <textarea class="field__input" id="delivery-assign-note" rows="3" maxlength="600" placeholder="Ej.: cliente prefiere que llamen al llegar, casa verde, cuidado con el portón...">${escapeHtml(
+          entrega.delivery_assignment_note ?? '',
+        )}</textarea>
+        <small>El delivery verá esta nota dentro de su orden. No se envía al cliente.</small>
+      </label>
       <div class="menu-list">
         ${
           repartidores.length
@@ -11746,11 +11821,12 @@
   /** Asigna el pedido a un repartidor (el MISMO endpoint que usa el mapa). */
   async function assignOrderToDelivery(orderId, deliveryUserId, button) {
     if (!orderId || !deliveryUserId) return;
+    const deliveryNote = String($('#delivery-assign-note')?.value ?? '').trim();
     await working(button, 'Asignando…', async () => {
       try {
         await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/assign`, {
           method: 'POST',
-          body: JSON.stringify({ deliveryUserId }),
+          body: JSON.stringify({ deliveryUserId, deliveryNote }),
         });
         toast('Pedido pasado a delivery');
         closeSheet();
@@ -13720,6 +13796,11 @@
       const deliveryContact = event.target.closest('[data-delivery-contact]');
       if (deliveryContact) {
         contactDeliveryCustomer(deliveryContact.dataset.deliveryContact).catch(() => toast('No se pudo abrir el chat'));
+        return;
+      }
+      const deliveryOrderDetail = event.target.closest('[data-delivery-order-detail]');
+      if (deliveryOrderDetail) {
+        openDeliveryOrderDetail(deliveryOrderDetail.dataset.deliveryOrderDetail);
         return;
       }
       const deliveryChat = event.target.closest('[data-delivery-chat]');
