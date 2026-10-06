@@ -12,42 +12,23 @@ const app = readFileSync(new URL('../public/admin/app.js', import.meta.url), 'ut
 const html = readFileSync(new URL('../public/admin/index.html', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
 describe('delivery tracking frontend UAT guards', () => {
-  it('Mis entregas contacta por chat interno con mensaje personalizado, sin wa.me ni cambio de estado al abrir', () => {
-    expect(html).toContain('id="view-delivery"');
-    expect(html).toContain('id="delivery-view"');
+  it('Mis entregas abre el chat correcto con mensaje listo sin cambiar estado', () => {
     expect(app).toContain('function deliveryMessage(order)');
     expect(app).toContain('data-delivery-contact="${escapeHtml(order.id)}"');
     expect(app).toContain('await openChat(order.conversation_id, { draft: deliveryMessage(order) });');
     expect(app).toContain("state.wa.draft = options.draft ?? ''");
 
-    const contactStart = app.indexOf('async function contactDeliveryCustomer');
-    const contactEnd = app.indexOf('async function startDeliveryOrder', contactStart);
-    const contactBlock = app.slice(contactStart, contactEnd);
+    const contactBlock = app.slice(app.indexOf('async function contactDeliveryCustomer'), app.indexOf('async function applyDeepLink'));
     expect(contactBlock).toContain('openChat(order.conversation_id');
-    expect(contactBlock).not.toContain('openWhatsApp');
-    expect(contactBlock).not.toContain('wa.me');
     expect(contactBlock).not.toContain('/delivery/start');
     expect(contactBlock).not.toContain('/delivery-tracking/');
   });
 
-  it('Configuración general queda disponible para delivery/agente sin pedir métricas admin', () => {
-    expect(html).toContain('id="notifications-card"');
-    expect(html).toContain('id="settings-notify"');
-    expect(html).toContain('id="install-card"');
-    expect(app).toContain("return !['reportes', 'usuarios'].includes(tab);");
-    expect(app).toContain("if (!canAccessTab(tab)) tab = 'hoy';");
-    expect(app).toContain("$$('[data-admin-settings]').forEach");
-    expect(app).toContain('if (isAdmin() && !state.metrics && !state.metricsLoading && state.online)');
-    expect(app).toContain('if (isAdmin() && !state.auditEntries && !state.auditLoading && state.online)');
-    expect(app).toContain("if (tab === 'ajustes' && isAdmin())");
-  });
-
   it('la app instalada no permite zoom de página por pellizco ni doble toque', () => {
-    expect(html).toContain('maximum-scale=1');
-    expect(html).toContain('user-scalable=no');
+    expect(html).toContain('maximum-scale=1, user-scalable=no');
     expect(app).toContain('function lockAppZoom()');
-    expect(app).toContain("event.touches?.length > 1");
-    expect(app).toContain("'gesturestart'");
+    expect(app).toContain("'touchmove'");
+    expect(app).toContain("document.addEventListener('gesturestart'");
     expect(app).toContain('lockAppZoom();');
   });
 

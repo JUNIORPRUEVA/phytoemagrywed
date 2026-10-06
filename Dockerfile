@@ -49,11 +49,9 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-# La puerta de despliegue (`npm run verify:deploy`) valida contenido y build.
-# `npm run verify` queda como suite completa de desarrollo/UAT; no se ejecuta
-# dentro de EasyPanel para que pruebas largas o desfasadas no bloqueen hotfixes.
-# Runtime ya instala ffmpeg; build también debe tenerlo para mantener la misma
-# base de ejecución que producción.
+# La puerta de calidad (`npm run verify`) cubre normalización real de audio.
+# Runtime ya instala ffmpeg; build también debe tenerlo para no publicar una
+# imagen que no haya probado la ruta exacta de WebM/M4A -> Ogg/Opus.
 RUN apk add --no-cache ffmpeg
 
 # Dependencias primero: si no cambian, Docker reutiliza esta capa (build rápido).

@@ -47,6 +47,8 @@ let tmpDir;
 let app;
 let dom;
 let cookie = '';
+/** Id del AGENTE de la suite: en este negocio reparte un agente, no un rol aparte. */
+let agenteUatId = '';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -184,6 +186,28 @@ beforeAll(async () => {
       role: 'DELIVERY',
     }),
   });
+  /*
+   * Y UN AGENTE: en este negocio el pedido se le pasa a un AGENTE (no hay equipo
+   * de reparto aparte). Tiene que salir en la MISMA lista de «pasar a delivery».
+   */
+  const agenteUat = await (
+    await (
+      await fetch(`${app.url}/api/admin/users`, {
+        method: 'POST',
+        headers: {
+          cookie: loginAdmin.headers.get('set-cookie').split(';')[0],
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: 'agente@phyto.local',
+          password: 'Agente-12345',
+          displayName: 'Agente UAT',
+          role: 'AGENT',
+        }),
+      })
+    ).json()
+  ).user;
+  agenteUatId = agenteUat.id;
 
   /*
    * UN PEDIDO SIN CLIENTE: es lo que llega de la web cuando el registro entra sin
@@ -301,6 +325,10 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     click('#wa-actions');
     click('[data-scheduled-new]');
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
+    // La pantalla propone una plantilla de seguimiento; aquí se prueba el TEXTO LIBRE.
+    // Se espera a que termine de preparar la propuesta (mientras, el botón está apagado).
+    await waitFor(() => $('#sch-save')?.dataset?.schLoading === '0', 'la pantalla lista');
+    setValue('#sch-tipo', 'libre');
     setValue('#sch-text', 'Hola Ana, ¿te ayudo con algo más?');
     click('#sch-save');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
@@ -364,6 +392,15 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
 
   const datos = async () => (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
   const pedidos = async () => (await datos()).items.filter((item) => item.type === 'order_intent');
+  /*
+   * Una fila CON cliente (el teléfono se ve en la línea de referencia). Se busca por
+   * lo que dice la fila y no por su posición: la lista va de más nuevo a más viejo y
+   * el orden CAMBIA cada vez que un test toca un pedido (`updated_at`).
+   */
+  const filaConCliente = () =>
+    $$('#list-pedidos .order-row').find((fila) =>
+      /\+\d{6,}/.test(fila.querySelector('.order-row__ref')?.textContent ?? ''),
+    ) ?? null;
   const ordenDe = (item) => {
     const raw = item?.order_json ?? item?.orderJson;
     if (!raw) return null;
@@ -456,7 +493,13 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const fabFactura = await waitFor(() => $('#sheet-body [data-receipt-actions]'), 'el botón flotante de la factura');
     click(fabFactura);
     const menu = await waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'las acciones de la factura');
-    for (const accion of ['Ver factura', 'Compartir factura', 'Pasar a un delivery', 'Ver cliente', 'Modificar pedido']) {
+    for (const accion of [
+      'Ver factura',
+      'Enviar factura por WhatsApp',
+      'Pasar a un delivery',
+      'Ver cliente',
+      'Modificar pedido',
+    ]) {
       expect(menu.textContent).toContain(accion);
     }
     click('[data-close-sheet]');
@@ -493,6 +536,43 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(ordenDe(item).delivery.delivery_user_name_snapshot).toBe('Reparto UAT');
   });
 
+  it('el pedido se le pasa a un AGENTE (el agente es quien entrega)', async () => {
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-row'), 'la lista de pedidos');
+    // Un pedido CON cliente: da igual si ya lo llevaba otro, el menú deja cambiarlo.
+    const fila = filaConCliente();
+    expect(fila).toBeTruthy();
+    click(fila);
+    const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del pedido');
+    click(fab);
+    click(await waitFor(() => $('[data-order-delivery]'), 'la acción de pasar a delivery'));
+
+    // La lista ofrece a los AGENTES (y a los repartidores de siempre), con su rol escrito.
+    const filaAgente = await waitFor(
+      () =>
+        $$('#sheet-body [data-order-delivery-user]').find((row) => row.textContent.includes('Agente UAT')) ?? null,
+      'el agente en la lista de reparto',
+    );
+    // El texto habla de AGENTES: el que elige (primera vez) o el que cambia de agente.
+    const texto = $('#sheet-body').textContent;
+    expect(texto.includes('Elige el agente que va a hacer la entrega') || texto.includes('cambia de agente')).toBe(
+      true,
+    );
+    expect(filaAgente.textContent).toContain('Agente');
+    expect(filaAgente.dataset.orderDeliveryUser).toBe(agenteUatId);
+
+    const ordenId = filaAgente.dataset.orderId;
+    click(filaAgente);
+    await esperar(async () => {
+      const item = (await pedidos()).find((candidate) => candidate.id === ordenId);
+      return ordenDe(item)?.delivery?.delivery_user_id ?? null;
+    }, 'el pedido pasado al agente');
+
+    const item = (await pedidos()).find((candidate) => candidate.id === ordenId);
+    expect(ordenDe(item).delivery.delivery_user_id).toBe(agenteUatId);
+    expect(ordenDe(item).delivery.delivery_user_name_snapshot).toBe('Agente UAT');
+  });
+
   it('desde el pedido se programa un seguimiento y un mensaje al cliente', async () => {
     const abrirMenu = async (fila) => {
       click(fila);
@@ -505,7 +585,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const filas = await waitFor(() => $$('#list-pedidos .order-row'), 'la lista de pedidos');
 
     // 1) SEGUIMIENTO: una tarea para el equipo, ligada al pedido.
-    const menu = await abrirMenu(filas[0]);
+    const menu = await abrirMenu(filaConCliente());
     for (const opcion of ['Programar seguimiento', 'Programar mensaje al cliente']) {
       expect(menu.textContent).toContain(opcion);
     }
@@ -528,11 +608,14 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(seguimiento.customer_id).toBeTruthy();
 
     // 2) MENSAJE PROGRAMADO: lo envía el sistema el día y la hora elegidos.
-    click($$('#list-pedidos .order-row')[0]);
+    click(filaConCliente());
     const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante otra vez');
     click(fab);
     click(await waitFor(() => $('[data-scheduled-new]'), 'la acción de programar mensaje'));
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
+    // Aquí se prueba el texto libre (no la plantilla de seguimiento sugerida).
+    await waitFor(() => $('#sch-save')?.dataset?.schLoading === '0', 'la pantalla lista');
+    setValue('#sch-tipo', 'libre');
     setValue('#sch-text', 'Hola Ana, ¿cómo te fue con el pedido?');
     click('#sch-save');
     const programado = await esperar(async () => {

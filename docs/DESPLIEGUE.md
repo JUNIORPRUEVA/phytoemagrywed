@@ -20,7 +20,7 @@ datos, ni proceso Node en producción, ni secretos dentro de la imagen.
 
 | Etapa | Qué pasa |
 | --- | --- |
-| `build` (node:22-alpine) | `npm ci` → `npm run verify:deploy` (**revisión de contenido + build**) |
+| `build` (node:22-alpine) | `npm ci` → `npm run verify` (**tests + revisión de contenido + build**) |
 | `runtime` (node:22-alpine + nginx) | nginx sirve `dist/` y el **API del CRM** (`server/crm-server.mjs`) guarda los pedidos y los contactos en **PostgreSQL** (`PHYTO_CRM_DATABASE_URL`) o, si no hay, en SQLite (`/data/phytoemagry.sqlite`). Dentro del contenedor corren dos procesos: nginx (el principal) y Node |
 
 Si los tests fallan, falta una foto de frasco, un precio no cuadra o el número de
@@ -319,7 +319,7 @@ ignorarlo: los registros de prueba no molestan).
 | El contenedor arranca y se reinicia solo | Mira `docker compose logs web`; si es un error de sintaxis de nginx, la config está mal montada: `docker compose config` para validar el compose |
 | La web carga pero **no aparece ningún botón de WhatsApp** | La imagen se construyó sin número: reconstruye con `--build-arg PHYTO_WHATSAPP_NUMBER=...` o revisa el `.env` del compose |
 | Al cambiar una variable no veo el cambio | Hay que reconstruir: `docker compose up -d --build` (los valores van dentro del HTML) |
-| El build falla en `npm run verify:deploy` | Es intencionado: hay un precio incoherente, una foto que falta, un número de atención que no coincide o un error de build. El propio mensaje dice qué arreglar |
+| El build falla en `npm run verify` | Es intencionado: hay un test en rojo, un precio incoherente, una foto que falta o un número de atención que no coincide. El propio mensaje dice qué arreglar |
 | Error raro al leer el Dockerfile (`unknown instruction`, heredoc) | Docker demasiado antiguo: `DOCKER_BUILDKIT=1 docker build -t phytoemagry .` o actualiza Docker (`docker --version` debe ser 23 o superior) |
 | Easypanel: el dominio responde **502** o "no hay servicio escuchando" | El **puerto del proxy** no es el que usa la app. Por defecto es **80**; si el panel define la variable `PORT`, pon ese mismo número en el dominio (`docker logs` lo confirma: nginx registra en qué puerto escucha) |
 | Quiero ver la web sin publicar | `docker run --rm -p 8080:80 phytoemagry` en tu máquina, o `npm run preview` en local |
@@ -346,7 +346,6 @@ ignorarlo: los registros de prueba no molestan).
 ```bash
 npm ci
 npm run verify      # tests + revisión + build
-npm run verify:deploy # revisión + build (lo que usa EasyPanel)
 # copiar dist/ a /var/www/phytoemagry y usar nginx/phytoemagry.conf
 # (cambiando `root` y `server_name` como indica el propio archivo)
 

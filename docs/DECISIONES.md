@@ -1045,7 +1045,8 @@ que se lee es lo importante; las acciones son otra cosa.
 3. La ficha del pedido queda con **un solo botón**: "Guardar notas" (es del formulario).
    El menú incluye "Volver a la ficha" para no perderse al cambiar de hoja.
 4. La hoja del comprobante guarda sus datos en `state.receiptContext` mientras está
-   abierta: el menú de la factura los necesita (para compartir el PDF o cambiar estado).
+   abierta: el menú de la factura los necesita (para enviar la factura por WhatsApp o
+   cambiar estado).
 5. Con acciones flotantes, el final de la hoja se aparta para que el botón no tape el
    último dato (`.sheet__body:has(.sheet-fab)`).
 
@@ -1084,3 +1085,295 @@ ficha del cliente y en el chat, lejos del pedido que se acaba de entregar.
    su **conversación**, y si no por **teléfono** entre los clientes que el panel conoce.
    Así un pedido antiguo o de la web sigue teniendo «Ver cliente», seguimiento y mensaje
    programado.
+
+## 43. Usuarios: contraseña de seis con ojo, y el agente es quien reparte
+
+Dos cosas del día a día, dichas por el negocio: crear una cuenta costaba una pelea
+con la contraseña, y al pasar un pedido a delivery no quedaba claro A QUIÉN se le
+estaba pasando.
+
+1. **Seis caracteres, no diez.** La regla vive en el SERVIDOR (`MIN_PASSWORD_LENGTH`)
+   y viaja al panel en `/api/admin/data`: el panel no adivina el mínimo, lo enseña
+   (y así no pueden desincronizarse). Se crea la cuenta con el cliente delante.
+2. **Un OJO para ver lo que se escribe**, en el alta de usuario y también al
+   RESETEAR una contraseña (que antes era un `window.prompt` a ciegas, sin poder
+   mirar nada). El botón solo cambia el `type` del campo: la clave no se copia a
+   ningún sitio.
+3. **Ajustar el rol es elegir de verdad**: Agente, Repartidor, Operador y
+   Administrador (antes solo se podía crear Agente o Administrador, y los usuarios
+   de reparto había que crearlos por API).
+4. **EL AGENTE ES QUIEN REPARTE.** El negocio no tiene un equipo de reparto aparte:
+   el pedido se le pasa a un AGENTE y ese agente lo entrega. Por eso:
+   - la lista de «Pasar a un delivery» son los **agentes activos** (y los usuarios
+     con rol DELIVERY de siempre); un ADMINISTRADOR no aparece: gestiona, no reparte;
+   - el servidor acepta `AGENT` o `DELIVERY` al asignar y al arrancar la entrega
+     (`canDeliver()`), y rechaza a un admin con `invalid_delivery_user`;
+   - el agente recibe los permisos de reparto **propios** (`delivery.location.*_own`,
+     `delivery.tracking.start/stop`): sin ellos podría recibir el pedido pero no
+     arrancar la entrega ni compartir su ubicación, que es justo lo que hace falta;
+   - en el mapa, «el repartidor» de un pedido es el agente asignado (no el rol):
+     el que asigna ve los mandos de asignar, el agente asignado ve «Iniciar entrega».
+
+## 44. La lista de chats se lee: sin foto, de lado a lado y el «⋯» dentro de la fila
+
+La lista de conversaciones tenía tres cosas que estorbaban: una foto por fila, el
+botón de agregar cliente flotando encima de las conversaciones, y el «⋯» en una
+columna aparte que parecía fuera de la fila.
+
+1. **Fuera la foto de la fila.** En una fila de bandeja la foto no aporta (no deja
+   leer y se lleva el mejor sitio): lo que se lee es el **nombre** y **lo último que
+   dijo**. El cuadro de la izquierda solo vuelve al **seleccionar** (con el visto),
+   que es la única razón para tener algo ahí. La foto sigue donde de verdad se mira:
+   la **cabecera del chat** y la **ficha del cliente**.
+2. **LA TARJETA ES LA FILA ENTERA.** El fondo, el paso del dedo y la marca de la
+   conversación abierta se pintan en `.conv-wrap` (toda la fila, incluido el «⋯»),
+   no solo en la parte del texto: `:has(.conv--active)` da la marca verde del borde
+   izquierdo. El «⋯» ya no vive en un pasillo aparte.
+3. **De lado a lado, con un espacio pequeño**: 12 px a la izquierda y 6 a la derecha,
+   línea fina de separación, sin cajas dentro de cajas. El ancho de la columna del
+   «⋯» baja de 34 a 30 px (34 en móvil) y los sellos de hora quedan pegados al filo.
+4. **Agregar cliente es la ÚLTIMA FILA de la lista, dentro de la tarjeta**, con su
+   texto («Agregar cliente») y su sitio reservado: antes era un flotante que tapaba
+   la última conversación (y en el móvil había hasta un degradado para disimularlo,
+   que se ha quitado). En el móvil se aparta de la barra de abajo con su margen.
+   Solo se aparta al **seleccionar** varias conversaciones: ahí no se está creando
+   nada. Al abrir un chat se queda: en el escritorio la lista sigue a la vista.
+
+## 45. El chat va EN VIVO (y por qué NO hizo falta Redis)
+
+El negocio lo dijo claro: enviar o recibir un mensaje tardaba demasiado. Medido,
+el problema no era WhatsApp: era NUESTRA tubería.
+
+1. **Recibir: el servidor EMPUJA, el panel no pregunta.** El panel sondeaba cada
+   8 s, así que un mensaje entrante podía tardar hasta 8 s en aparecer. Ahora el
+   servidor abre `GET /api/admin/whatsapp/events` (SSE) por sesión y AVISA en
+   cuanto guarda un mensaje (`wa.message`) o cambia su estado (`wa.status`: enviado,
+   entregado, leído). El sondeo SIGUE puesto como red de seguridad (navegador sin
+   `EventSource`, sesión caída, móvil en segundo plano): si el canal no está, todo
+   funciona igual, solo que más lento.
+2. **nginx NO puede guardar eso en búfer.** Con `proxy_buffering` por defecto,
+   nginx acumula la respuesta del proxy y los avisos llegan tarde o no llegan —
+   justo el síntoma que se estaba viendo (y que también afectaba al mapa de
+   entregas). Las DOS copias de la config (`nginx/phytoemagry.conf` y el heredoc
+   del `Dockerfile`, que un test obliga a mantener iguales) llevan ahora
+   `proxy_buffering off`, `proxy_cache off`, `gzip off` y `proxy_read_timeout 1h`
+   en `/api/`, y el servidor manda además `X-Accel-Buffering: no`.
+3. **Enviar: la burbuja sale AL INSTANTE.** Antes, al pulsar Enviar el panel
+   esperaba al viaje al servidor, al envío a Meta y a una recarga COMPLETA del
+   panel (`/api/admin/data`). Ahora se pinta la burbuja con «Enviando…» y, cuando
+   el servidor confirma, se sustituye por el mensaje de verdad; si falla, se quita
+   y se avisa. La lista se pone al día sin bloquear.
+4. **MEDIDO con el servidor de verdad** (doble de WhatsApp, sin red a Meta):
+   entrante webhook → aviso en pantalla: 2-7 ms (peor caso, media 4 ms); envío →
+   respuesta del POST: 3-4 ms. Con Meta de por medio, el POST suma lo que tarde
+   Meta, pero la burbuja ya está en pantalla.
+5. **¿Redis? No hace falta.** Redis sirve para compartir estado entre VARIOS
+   procesos (varias instancias de Node, colas de trabajo entre máquinas). Aquí hay
+   UNA instancia de Node en el contenedor (con nginx delante), así que el canal
+   vive en memoria del proceso (`ctx.chatEventClients`) y ahorra un servicio más
+   que mantener, pagar y vigilar. Si algún día hubiera varias instancias o un
+   worker aparte, el único sitio a cambiar es `emitChatEvent()`: publicaría en un
+   bus (Redis pub/sub) en vez de escribir directo a las conexiones.
+6. **El aviso NO lleva el texto del mensaje**: solo de qué conversación es y qué
+   cambió. Quien escucha, si tiene permiso, pide el hilo; así el canal no se
+   convierte en una vía para ver contenido ajeno.
+
+## 46. Blindaje: el agente solo entra en lo suyo (y pide lo que no es suyo)
+
+El negocio lo pidió con estas palabras: «el agente no admin no debería poder ver los
+seguimientos de un cliente que no es asignado… la conversación sí puede verla, pero no
+puede enviar mensaje… que pueda SOLICITAR que se le asigne, pero que él solo no lo pueda
+hacer». Y remató: «asegúrate de esto, que quede blindado». No es una regla de la
+pantalla: es una regla del servidor, porque una pantalla se puede saltar con dos líneas
+en la consola del navegador.
+
+1. **La LISTA sí, el CONTENIDO no.** Un agente sigue viendo la lista de chats como en
+   WhatsApp (nombre y último mensaje), pero al abrir el hilo de una conversación que no
+   lleva recibe `403 not_your_conversation` con un motivo legible («Esta conversación
+   está al frente de Pedro. Pide que te la asignen para verla y contestar») y el panel
+   pinta el bloqueo en vez del compositor. El bloqueo está en el servidor, en todos los
+   caminos: leer el hilo, marcar leído, escribir, mandar ubicación, subir un adjunto
+   (`media-routes.mjs` resuelve la conversación con el mismo guarda) y las acciones EN
+   LOTE (marcar leído / archivar de golpe responde `not_your_conversation` por id).
+2. **NADIE se auto-asigna.** El permiso `chats.take_unassigned` se quitó de `AGENT`,
+   `DELIVERY` y `OPERADOR`: solo administración (`chats.force_reassign`) reparte. Se
+   corrigió además una herencia del diseño anterior por la que un agente podía contestar
+   una conversación SIN asignar («está libre, es de todos»): eso ya no existe.
+3. **Se PIDE, y administración se entera.** Nuevo `POST /api/admin/conversations/:id/
+   assignment-request`: a la tercera persona no le sirve de nada (409 `already_yours`),
+   avisa a cada ADMIN activo con una notificación interna (tipo
+   `CONVERSATION_ASSIGNMENT_REQUESTED`, con enlace directo a esa conversación), escribe
+   auditoría y responde 202. **Una petición por persona, por conversación y por día**
+   (clave de idempotencia) para que el aviso no se convierta en ruido. Pedir NO asigna:
+   la conversación se queda como estaba hasta que administración decide.
+4. **El repartidor sigue pudiendo hablar con SU cliente.** El acceso no es solo «lo
+   asignado a mí»: también entran las conversaciones de los pedidos que llevo
+   repartiendo (y no están entregados/cancelados/perdidos). Sin eso, el flujo del
+   delivery —que ya existe y está probado— se rompería al blindar el chat.
+5. **Seguimientos de un cliente ajeno: invisibles.** `GET /api/admin/followups` filtra
+   los cubos por los clientes a los que tengo acceso (o las tareas que llevo yo), y
+   crear/decidir un seguimiento de un cliente que no llevo responde `403
+   not_your_customer`. Antes, cualquier agente veía el nombre del cliente, el motivo y
+   la fecha de las tareas de todo el equipo.
+6. **Blindado con pruebas, no con buena voluntad.** `tests/agent-privacy.test.js`
+   levanta el servidor de verdad con DOS agentes y tres conversaciones (una de cada
+   agente y una sin asignar) y comprueba el listado visible, los 403 del hilo/leído/
+   envío/lote, que el aviso llega a administración y no cambia la asignación, que los
+   seguimientos ajenos no aparecen ni se pueden crear, y —lo más importante— que en
+   cuanto administración asigna, el agente lee y contesta sin estorbos. Ese archivo
+   destapó además un error real: el 403 del hilo explotaba en un 500 (`json()` se
+   llamaba con dos argumentos); ahora se ve el rechazo con su motivo.
+7. **Y el «Agregar cliente» vuelve a flotar**, estilo AppSheet, sobre la lista (con su
+   margen para no tapar la última fila). Se probó con la lista pequeña: el hueco de
+   abajo se reserva con `padding-bottom`, y en escritorio el botón se pega dentro del
+   panel. El enlace **«Ir a la web»** vive al final del menú (`href="/"`, pestaña nueva,
+   `rel="noopener noreferrer"`): desde el panel se salta a la tienda sin romper la
+   sesión del CRM.
+8. **Lo que destapó la prueba del PANEL** (entrando con un usuario AGENTE de verdad,
+   usuario y contraseña, contra el servidor de verdad). Tres cosas que la pantalla
+   llamaba y no existían o no hacían nada, y que ahora sí:
+   - **`requestConversationAssignment` no estaba definida** (el botón «Solicitar que me
+     la asignen» llamaba a una función inexistente): se escribió, con estado «Avisando…»,
+     aviso al terminar y refresco de la lista.
+   - **Nadie marcaba el bloqueo**: la pantalla sabía pintar «esta conversación no está a
+     tu nombre», pero el 403 del servidor caía en el `catch` genérico y salía un «No
+     pudimos cargar esta conversación · Reintentar», que era una mentira. Ahora el 403
+     `not_your_conversation` se reconoce por su código y pinta el bloqueo con el motivo
+     que manda el servidor.
+   - **El «⋯» de la lista no ofrecía pedirla**: solo salía dentro de la hoja de
+     asignación, que un agente no puede abrir. Ahora el menú de la conversación incluye
+     «Solicitar que me la asignen» para quien no administra (y sigue sin ofrecer «Tomar»
+     ni «Reasignar», que son de administración).
+   Además se corrigió una carrera real del hilo. El síntoma: **el mensaje recién
+   enviado aparecía, se iba y volvía**. La causa no era el envío, era un refresco de
+   fondo (el aviso del servidor o el sondeo) que salía ANTES del envío y volvía
+   DESPUÉS con la foto anterior del hilo; al pintarla, la burbuja provisional
+   —que vivía DENTRO de `chat.messages`— desaparecía de la pantalla hasta que el
+   servidor confirmaba. Se arregló por dos vías, porque son dos problemas distintos:
+   1. La burbuja que aún no está confirmada vive **aparte** del hilo del servidor
+      (`state.wa.pending`) y se pinta al final del hilo. Cualquier refresco, por viejo
+      que sea, ya no puede llevársela: en cuanto el servidor devuelve el mensaje con su
+      `id` real (`confirmed_id`), el pendiente deja de pintarse (no se ve dos veces) y
+      se retira al recargar. Esto además quita el parpadeo de «Enviando…».
+   2. Cada carga del hilo lleva un número (`state.wa.threadSeq`) y **los dos** caminos
+      que pisan el hilo (`loadWaThread` y el refresco de la lista) descartan las
+      respuestas viejas: un refresco no puede revertir datos más nuevos (estados,
+      no leídos, el propio mensaje).
+
+   Se descubrió porque una prueba empezó a fallar de forma **intermitente** (~1 de cada
+   3 vueltas, solo al correr toda la batería en paralelo: con la máquina cargada, los
+   tiempos largos hacen que el refresco llegue en mitad del envío). Ahora hay una prueba
+   que lo provoca A PROPÓSITO y de forma determinista —retrasa la lectura del hilo Y la
+   respuesta del envío, de modo que la lectura vieja aterriza con el envío aún en el
+   aire— y se comprobó que **falla con el código anterior y pasa con este**: un arreglo
+   de una carrera sin esa comprobación no vale nada. `tests/panel-blindaje-uat.test.js`
+   deja todo lo demás comprobado de punta a punta: la lista entera visible, el bloqueo
+   con su botón, la ausencia total de compositor y de envíos, el aviso a administración
+   sin cambio de asignación, y el chat funcionando en cuanto administración asigna.
+
+## 47. La web NO pide permiso para medir: fuera el aviso de cookies
+
+Lo pidió el negocio así: «la web pregunta si acepta las cookies, pero la mayoría de la
+gente quizá no las acepte; podemos quitar esa confirmación para no correr el riesgo de
+que las rechacen».
+
+1. **Un interruptor, no un borrado.** `site.config.js` → `tracking.consentRequired`
+   pasa a `false`. Con eso: la web **no muestra el aviso**, el píxel de Meta arranca con
+   la visita y la medición deja de depender de un clic que casi nadie da. Todo el código
+   del aviso sigue ahí (HTML, CSS, textos y su prueba): poner el interruptor en `true`
+   devuelve exactamente el comportamiento de antes, sin tocar código.
+2. **Por qué tiene sentido en este negocio:** el aviso se pone PARA PODER medir, y en la
+   práctica el que no lo acepta no mide nada. El tráfico de esta web es **pagado** (Meta
+   Ads): si el píxel no dispara, no se sabe qué anuncio trae clientes y se compra a
+   ciegas. La medición propia (analytics interno, primera parte) nunca dependió del
+   aviso; esto afecta solo a las cookies de medición publicitaria.
+3. **Ni se finge ni se esconde: la privacidad lo dice.** La Política de privacidad (§8)
+   tiene ahora tres textos y elige según la configuración: sin medición («no se instalan
+   cookies»), sin aviso («se instalan al entrar en la web, sin aviso previo; puedes
+   bloquearlas o borrarlas cuando quieras desde tu navegador») y con aviso (el de
+   siempre). El registro que manda la web al CRM sigue llevando su campo `consent` — es
+   el permiso para **contactar** a la persona, que es otra cosa y sigue pidiéndose en el
+   formulario.
+4. **Revertir es un renglón.** Si el negocio quiere volver al aviso (por ejemplo, si un
+   asesor legal lo pide), `consentRequired: true` y a desplegar. Las pruebas cubren los
+   dos caminos: sin aviso el píxel mide desde el arranque (`meta-pixel-wiring.test.js`) y
+   no hay `[data-consent]` en el HTML (`client-flow.test.js`); con aviso, nada sale al
+   píxel hasta que se acepta.
+
+## 48. ¿Esta web convence a alguien de comprar? Lo que se midió (2026-10-03)
+
+Lo pidió el negocio: «comprobar que la web sea capaz de convencer a alguien de comprar».
+Se probó con un navegador de verdad (Chrome headless por CDP) **contra la web publicada**,
+haciendo el recorrido completo como un cliente, y estos son los hechos:
+
+**Lo que SÍ está (comprobado, no supuesto)**
+1. **El pedido se puede hacer de principio a fin.** Simulado en producción: elegir frasco
+   → cantidad 2 → «Comprar / Consultar» → escribir el nombre → se abre WhatsApp con el
+   pedido ESCRITO: `Frasco: 10 cápsulas · Cantidad: 2 · Precio por frasco: RD$2,500 ·
+   Cápsulas en total: 20 · Total: RD$5,000 · Nombre: …` al `+1 849-424-0621`.
+2. **Y el pedido también entra en el CRM** (`PHYTO_CRM_ENDPOINT=/api/crm` verificado en el
+   JS servido): si el cliente cierra WhatsApp sin enviar, el pedido queda igualmente en la
+   base y aparece en el panel.
+3. **El primer pantallazo vende:** en móvil (390×844) se ven la portada, «Desde RD$1,250»,
+   «Ver frascos y precios», «Consultar por WhatsApp» y la barra fija
+   (Comprar / WhatsApp), sin hacer scroll.
+4. **Poca fricción donde importa:** el modal de pedido pide **un solo campo** (el nombre),
+   muestra el resumen con el total y avisa de que no se cobra nada en la página.
+5. **Ligera y rápida:** 324 KB y 11 peticiones; todas las fotos en AVIF con su ancho
+   (320/480/768 px); sin desbordes horizontales en escritorio (1280 px).
+6. **El píxel está instalado y habla con Meta** (fbevents 2.9.414). Meta bloqueó la sesión
+   de prueba por ser tráfico de robot — señal de que la conversación con Meta existe.
+
+**Lo que FALTA para convencer (y de quién depende)**
+
+Nada de esto se puede inventar; el código ya está preparado y solo espera el dato:
+
+| Falta | Dónde se configura | Por qué cuesta ventas |
+| --- | --- | --- |
+| **Imagen al compartir el enlace** + canonical/sitemap | `.env` → `SEO_SITE_URL=https://phytoemagryrd.lat` | Hoy el enlace compartido en WhatsApp/Facebook sale **sin foto** (y `/sitemap.xml` da 404). Es UN renglón y se nota en cada anuncio |
+| **Zonas, costo y forma de entrega** | `site.config.js` → `commerce.deliveryAreas`, `deliveryMessage`, `shippingAvailable` | «¿Llega a mi casa?» sin respuesta: el que no pregunta, no compra |
+| **Formas de pago reales** | `commerce.paymentMethods` | «¿Pago contra entrega?» sin respuesta |
+| **Horario de atención** | `contact.whatsapp.hours` | «¿Me responderán hoy?» |
+| **Opiniones reales de clientes** | `content.config.js` → `testimonials.items` | La prueba social es lo que más convierte; solo valen reales, con permiso |
+| **Datos de la empresa** | `privacy.company.*` (7 marcas `[PENDIENTE]` en la política) | Quien comprueba la política, duda |
+| **El «para qué sirve»** | `product.config.js` → `shortDescription` / claim aprobado | La web dice qué ES y cuánto CUESTA, pero no dice para qué le sirve a quien lo compra. Necesita una frase aprobada por el negocio (y por eso no se inventa) |
+
+`npm run check` los lista todos y ahora dice **lo que cuesta cada uno** («sin imagen al
+compartir», «no sabe si le llega», «no sabe cómo se paga»…).
+
+**Lo que sí se arregló ya (sin inventar nada):** la FAQ no respondía las dos dudas que más
+frenan a quien no conoce el negocio —**cómo se paga** y **si hace falta cuenta**—, y la
+respuesta de entrega se quedaba en «se coordina por WhatsApp». Ahora hay tres preguntas
+fijas (`¿Cómo realizo mi pedido?`, `¿Cómo puedo pagar?`, `¿Necesito crear una cuenta?`) y
+las respuestas dicen qué pasa y qué NO se le va a pedir (ni cobro en la página ni datos de
+tarjeta), con el total por delante. También se corrigió un texto que mentía: «¿Cómo realizo
+mi pedido?» describía un formulario de tres campos que no existe (el modal pide el nombre).
+
+## 49. «Compartir app» en el menú del panel (y por qué NO se comparte la clave)
+
+El negocio lo pidió así: «un botón que diga compartir app, para poder compartirla con otra
+persona». Está en el menú lateral, en **Sistema**, entre «Perfil» e «Ir a la web».
+
+1. **Se comparte el ENLACE, nunca la clave.** La dirección del panel puede llevar la clave
+   del enlace (`/admin/?token=…`) y mandar eso sería regalar el panel entero. El enlace se
+   arma a mano (`location.origin + '/admin/'`) y **no** se copia la barra de direcciones:
+   comprobado en un navegador de verdad entrando con clave y con parámetros en la URL — lo
+   que sale es `https://<dominio>/admin/` limpio. La prueba de código
+   (`panel-shell-uat.test.js`) además revisa que `panelShareUrl()` no use `location.href`
+   ni `location.search`.
+2. **Tres salidas, ninguna en silencio:** la hoja nativa del teléfono (`navigator.share`,
+   que es la que usa la gente: WhatsApp, correo…), el enlace copiado al portapapeles con
+   aviso («Enlace copiado…») en el ordenador, y —si el navegador no deja copiar— una hoja
+   con el enlace a la vista y un botón para mandarlo por WhatsApp. Cerrar la hoja de
+   compartir sin elegir a nadie no avisa de nada (no es un error).
+3. **El enlace no da acceso.** Quien lo recibe ve la pantalla de entrada: para trabajar
+   necesita su propio usuario, que se crea en **Usuarios**. Por eso el texto que acompaña
+   al enlace lo dice con esas palabras («entra con el usuario que te demos»), en vez de
+   dejar creer que el enlace ya abre el panel.
+4. **Probado en el navegador de verdad** (los dos caminos: hoja nativa y portapapeles) y
+   en la prueba de la piel del panel. El service worker sube a `crm-v32-compartir-app`.
+
+
+
+
+
