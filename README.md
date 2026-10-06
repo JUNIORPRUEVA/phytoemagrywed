@@ -31,6 +31,7 @@ npm run dev          # http://localhost:5173
 | `npm run audit:content` | Solo la auditoría de afirmaciones prohibidas |
 | `npm run inspect:render` | Resumen del HTML generado (secciones, precios, grupos) |
 | `npm run verify` | tests + check + build |
+| `npm run verify:deploy` | check + build (puerta rápida de EasyPanel) |
 | `npm run images` | Regenera las imágenes de marca (requiere Pillow) |
 | `npm run images:hero` | Optimiza la portada panorámica (AVIF/WebP/JPG a 480/768/1200/1672) |
 | `npm run images:frascos` | Optimiza la foto de cada frasco (AVIF/WebP/JPG a 320/480, recorte cuadrado) |

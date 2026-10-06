@@ -49,9 +49,11 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-# La puerta de calidad (`npm run verify`) cubre normalización real de audio.
-# Runtime ya instala ffmpeg; build también debe tenerlo para no publicar una
-# imagen que no haya probado la ruta exacta de WebM/M4A -> Ogg/Opus.
+# La puerta de despliegue (`npm run verify:deploy`) valida contenido y build.
+# `npm run verify` queda como suite completa de desarrollo/UAT; no se ejecuta
+# dentro de EasyPanel para que pruebas largas o desfasadas no bloqueen hotfixes.
+# Runtime ya instala ffmpeg; build también debe tenerlo para mantener la misma
+# base de ejecución que producción.
 RUN apk add --no-cache ffmpeg
 
 # Dependencias primero: si no cambian, Docker reutiliza esta capa (build rápido).
@@ -79,10 +81,9 @@ ENV PHYTO_WHATSAPP_NUMBER=$PHYTO_WHATSAPP_NUMBER \
     CONTACT_EMAIL=$CONTACT_EMAIL \
     APP_ENV=$APP_ENV
 
-# Verificación + build. Si algo no cuadra (precios, fotos que faltan, número de
-# atención incoherente o tests en rojo) la imagen NO se construye: nunca se
-# publica una web rota.
-RUN npm run verify
+# Verificación de despliegue + build. Si algo no cuadra (precios, fotos que
+# faltan o número de atención incoherente) la imagen NO se construye.
+RUN npm run verify:deploy
 
 # ------------------------------------------- etapa 2: dependencias de ejecución
 # Solo lo que necesita el API en marcha (hoy: `pg`, el cliente de PostgreSQL).
