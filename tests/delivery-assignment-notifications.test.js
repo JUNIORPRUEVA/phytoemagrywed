@@ -484,6 +484,28 @@ describe('delivery assignment notifications and contact flow', () => {
     expect(started.status).toBe(201);
   });
 
+  it('aviso automático de asignación no cuenta como primer contacto del delivery', async () => {
+    mockWhatsApp.sent = [];
+    const order = await createOrder();
+    await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ deliveryUserId: delivery.id }),
+    });
+
+    const notice = await request(`/api/admin/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        body: 'Ya pasé la orden al mensajero. Él te contactará para la entrega.',
+        deliveryAssignmentNotice: true,
+      }),
+    }, deliveryCookie);
+    expect(notice.status).toBe(200);
+    expect(mockWhatsApp.sent.at(-1).body).toBe('Ya pasé la orden al mensajero. Él te contactará para la entrega.');
+
+    const detail = await json(await request(`/api/admin/delivery/orders/${order.item.id}`, {}, deliveryCookie));
+    expect(detail.order.delivery_status).toBe('PENDING_CONTACT');
+  });
+
   it('delivery asignado puede abrir y escribir aunque la conversación la atienda otro agente', async () => {
     mockWhatsApp.sent = [];
     await request(`/api/admin/conversations/${conversationId}/assign`, {

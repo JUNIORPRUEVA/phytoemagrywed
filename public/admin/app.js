@@ -240,6 +240,7 @@
       listError: false,
       threadError: false,
       deliveryOrderId: null,
+      deliveryStartReadyOrderId: null,
       /* Conversación que no es suya: se explica y se ofrece PEDIRLA (no se abre). */
       locked: null,
     },
@@ -1213,11 +1214,11 @@
       node.hidden = !isAdmin();
     });
     $$('[data-permission]').forEach((node) => {
-      node.hidden = !hasPermission(node.dataset.permission);
+      node.hidden = node.dataset.tab === 'ajustes' ? false : !hasPermission(node.dataset.permission);
     });
     if (isDeliveryUser()) {
       $$('[data-tab]').forEach((node) => {
-        if (!['delivery', 'whatsapp', 'perfil'].includes(node.dataset.tab)) node.hidden = true;
+        if (!['delivery', 'whatsapp', 'ajustes', 'perfil'].includes(node.dataset.tab)) node.hidden = true;
       });
     } else {
       $$('[data-tab]').forEach((node) => {
@@ -3345,6 +3346,21 @@
       .join('\n');
   }
 
+  const DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE = 'Ya pasé la orden al mensajero. Él te contactará para la entrega.';
+
+  async function sendDeliveryAssignmentCustomerNotice(conversationId, orderId) {
+    if (!conversationId || !orderId) return false;
+    await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        body: DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE,
+        deliveryAssignmentNotice: true,
+        idempotencyKey: uploadKey(`delivery-notice-${orderId}`),
+      }),
+    });
+    return true;
+  }
+
   function deliveryRouteSummary(order, session = deliverySessionForOrder(order?.id)) {
     const location = deliveryOrderLocation(order);
     const destination = mapLatLng(location);
@@ -3960,8 +3976,33 @@
     const stats = state.stats ?? {};
     const outbox = readOutbox().length;
     const wa = state.whatsapp ?? {};
+    const admin = isAdmin();
+    const adminOnlyCards = [
+      'config-impresora',
+      'config-seguimiento',
+      'config-metricas',
+      'config-auditoria',
+      'config-media',
+      'media-review-card',
+      'config-datos',
+      'config-whatsapp',
+      'config-wa-templates',
+      'config-exportar',
+    ];
+    adminOnlyCards.forEach((id) => {
+      const node = $(`#${id}`);
+      if (node) node.hidden = !admin;
+    });
+    $$('.config-menu a').forEach((link) => {
+      const target = String(link.getAttribute('href') ?? '').replace('#', '');
+      link.hidden = !admin && target !== 'config-notificaciones';
+    });
     const pushConfig = $('#push-config');
     if (pushConfig) pushConfig.innerHTML = pushConfigHtml();
+    if (!admin) {
+      $('#build-info').textContent = `${state.online ? 'en línea' : 'sin conexión'} · Configuración personal`;
+      return;
+    }
     const printerConfig = $('#printer-config');
     if (printerConfig) {
       printerConfig.innerHTML = printerConfigHtml();
@@ -6926,6 +6967,11 @@
           </div>`;
         $('#wa-composer').innerHTML = '';
         state.wa.composerHtml = null;
+        const deliveryCtaLocked = $('#wa-delivery-cta');
+        if (deliveryCtaLocked) {
+          deliveryCtaLocked.hidden = true;
+          deliveryCtaLocked.innerHTML = '';
+        }
         $('#wa-ask-assign')?.addEventListener('click', (event) =>
           requestConversationAssignment(bloqueo.conversationId, event.currentTarget),
         );
@@ -6939,6 +6985,11 @@
            <button class="btn btn--ghost btn--block" id="wa-retry-thread" type="button">Reintentar</button>`
         : '';
       state.wa.composerHtml = null;
+      const deliveryCtaLoading = $('#wa-delivery-cta');
+      if (deliveryCtaLoading) {
+        deliveryCtaLoading.hidden = true;
+        deliveryCtaLoading.innerHTML = '';
+      }
       // Mientras no hay datos no se puede pedir ninguna acción comercial.
       const actionsLoading = $('#wa-actions');
       if (actionsLoading) {
@@ -7019,6 +7070,16 @@
       $('#thread').innerHTML = hiloVisible.length
         ? waThreadHtml(hiloVisible)
         : '<div class="wa-empty"><strong>Sin resultados</strong><span>No encontramos ese texto en esta conversación cargada.</span></div>';
+    }
+    const deliveryOrderId = state.wa.deliveryOrderId || data.deliveryContext?.orderId || '';
+    const deliveryStartReady = deliveryChatMode && deliveryOrderId && state.wa.deliveryStartReadyOrderId === deliveryOrderId;
+    const deliveryCta = $('#wa-delivery-cta');
+    if (deliveryCta) {
+      deliveryCta.hidden = !deliveryStartReady;
+      deliveryCta.innerHTML = deliveryStartReady
+        ? `<button class="btn btn--ghost" data-delivery-open="${escapeHtml(deliveryOrderId)}" type="button">Volver a entrega</button>
+           <button class="btn btn--primary" data-delivery-start="${escapeHtml(deliveryOrderId)}" type="button">Iniciar entrega</button>`
+        : '';
     }
 
     /*
@@ -7730,6 +7791,7 @@
     state.wa.locked = null;
     state.wa.draft = options.draft ?? '';
     state.wa.deliveryOrderId = options.deliveryOrderId ?? null;
+    state.wa.deliveryStartReadyOrderId = null;
     state.wa.threadSearchOpen = false;
     state.wa.threadQuery = '';
     setWaView('chat');
@@ -7865,6 +7927,9 @@
          * ve dos veces) y la recarga de abajo lo sustituye sin parpadeo.
          */
         provisional.confirmed_id = resultado?.message?.id ?? null;
+        if (state.wa.deliveryOrderId && resultado?.deliveryOrder) {
+          state.wa.deliveryStartReadyOrderId = resultado.deliveryOrder.id ?? state.wa.deliveryOrderId;
+        }
         toast('Mensaje enviado');
         /*
          * El hilo de verdad (con el mensaje ya guardado) y, SIN BLOQUEAR, la lista
@@ -9568,11 +9633,16 @@
   function openOrderDraftChoice(args, draft) {
     openSheet(
       'Pedido en progreso',
-      `<p class="rule">Hay un pedido sin terminar para este cliente. Puedes seguirlo o empezar uno nuevo.</p>
-      <div class="sheet-actions">
-        <button class="btn btn--ghost" id="order-draft-new" type="button">Crear uno nuevo</button>
-        <button class="btn btn--primary" id="order-draft-continue" type="button">Seguir con este</button>
+      `<div class="order-draft-choice">
+        <span class="order-draft-choice__icon" aria-hidden="true">${ICONS.box}</span>
+        <strong>Hay un pedido sin terminar</strong>
+        <p>Puedes continuar justo donde lo dejaste o empezar uno nuevo para este cliente.</p>
+        <div class="order-draft-choice__actions">
+          <button class="btn btn--primary" id="order-draft-continue" type="button">Seguir con este</button>
+          <button class="btn btn--ghost" id="order-draft-new" type="button">Crear nuevo</button>
+        </div>
       </div>`,
+      { variant: 'order-draft' },
     );
     $('#order-draft-new')?.addEventListener('click', () => {
       clearOrderDraft(orderDraftKey(args.customerId, args.conversationId ?? ''));
@@ -9586,12 +9656,13 @@
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
       : null;
+    const effectiveCustomerId = customer?.id ?? customerId ?? null;
     const catalog = state.catalog ?? [];
     if (!catalog.length) {
       toast('El catálogo todavía no está disponible');
       return;
     }
-    const draftKey = !orderId ? orderDraftKey(customerId, conversationId) : null;
+    const draftKey = !orderId ? orderDraftKey(effectiveCustomerId, conversationId) : null;
     const storedDraft = draft ?? (!skipDraftPrompt && draftKey ? readOrderDraft(draftKey) : null);
     if (!orderId && storedDraft && !draft && !skipDraftPrompt) {
       openOrderDraftChoice({ customerId, conversationId, orderId, order, location }, storedDraft);
@@ -9599,14 +9670,14 @@
     }
     const draftData = storedDraft && typeof storedDraft === 'object' ? storedDraft : null;
     // Ubicaciones del cliente: se piden antes de pintar para poder ofrecerlas (§9).
-    const customerLocations = customerId ? await fetchCustomerLocations(customerId) : [];
+    const customerLocations = effectiveCustomerId ? await fetchCustomerLocations(effectiveCustomerId) : [];
     /*
      * PREFERENCIAS DEL CLIENTE: frasco, cantidad, forma de pago y ubicación de
      * entrega. Con esto el formulario ya viene relleno y lo único que se confirma
      * es la cantidad, que es lo que cambia de un pedido a otro.
      */
-    const prefs = customerId ? customerOrderPrefs(customerId) : null;
-    const prefsLine = customerId ? orderPrefsSummary(prefs, customerLocations) : '';
+    const prefs = effectiveCustomerId ? customerOrderPrefs(effectiveCustomerId) : null;
+    const prefsLine = effectiveCustomerId ? orderPrefsSummary(prefs, customerLocations) : '';
     const prefsVariant =
       prefs?.variant_id && catalog.some((variant) => variant.id === prefs.variant_id) ? prefs.variant_id : null;
     /** @type {Array<{variantId: string, quantity: number}>} */
@@ -9688,18 +9759,30 @@
       ? { ...location }
       : order?.delivery?.location
         ? { ...order.delivery.location, id: order.delivery.location.source_location_id ?? null }
-        : customerId
-          ? preferredDeliveryLocation(customerId, customerLocations)
+        : effectiveCustomerId
+          ? preferredDeliveryLocation(effectiveCustomerId, customerLocations)
           : null;
     chosenLocation = chosenLocation && locationCoordsOk(chosenLocation) ? chosenLocation : null;
+    const activeDeliveryUsers = (state.deliveryUsers ?? []).filter((user) => user.active !== false);
+    const deliveryUserPicker =
+      activeDeliveryUsers.length > 1
+        ? `<label class="field">
+            <span class="field__label">Delivery</span>
+            <select class="field__select" id="order-delivery-user">
+              ${activeDeliveryUsers
+                .map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.display_name ?? user.username ?? 'Delivery')}</option>`)
+                .join('')}
+            </select>
+          </label>`
+        : '';
 
     openSheet(
       `${
         orderId
           ? `Modificar pedido · ${customer ? customerName(customer) : 'cliente'}`
           : customer
-            ? `Pedido para ${customerName(customer)}`
-            : 'Pedido para un cliente nuevo'
+            ? `Pedido ${customerName(customer)}`
+            : 'Pedido cliente nuevo'
       }`,
       `
       ${liveOrdersBlock}
@@ -9719,27 +9802,25 @@
       ${
         customer
           ? `<div class="order-prefs">
-              ${
-                prefsLine
-                  ? `<p class="view__hint"><strong>Lo de siempre:</strong> ${escapeHtml(prefsLine)}</p>`
-                  : '<p class="view__hint">Sin preferencias guardadas todavía: se toman los datos del último pedido.</p>'
-              }
-              <label class="loc-option">
+              <label class="order-prefs__line">
                 <input type="checkbox" id="order-save-prefs" checked />
-                <span class="loc-option__body"><strong>Guardar estos datos como sus preferencias</strong>
-                <small>Frasco, cantidad, pago y ubicación para el próximo pedido.</small></span>
+                <span><strong>Lo de siempre</strong>${prefsLine ? `<small>${escapeHtml(prefsLine)}</small>` : '<small>Guardar para el próximo pedido</small>'}</span>
               </label>
             </div>`
           : ''
       }
       <div id="order-lines"></div>
-      <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+      <div class="order-add-row">
+        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+        <strong id="order-products-total">${money(0)}</strong>
+      </div>
       <div class="order-compact-fields">
         <div class="order-compact-field">
           <button class="order-compact-toggle" data-order-toggle-field="source" type="button">
             <span>Origen</span><strong id="order-source-label">${escapeHtml(sourceLabel(defaultSource))}</strong>
           </button>
           <div class="order-compact-panel" id="order-source-panel" hidden>
+            <button class="icon-btn order-compact-close" data-order-close-field="source" type="button" aria-label="Cerrar origen">${ICONS.close}</button>
             <label class="field">
               <span class="field__label">Origen de la venta</span>
               <select class="field__select" id="order-source">
@@ -9772,6 +9853,7 @@
             <span>Descuento</span><strong id="order-discount-label">${defaultDiscount ? money(defaultDiscount) : 'Sin descuento'}</strong>
           </button>
           <div class="order-compact-panel" id="order-discount-panel" ${defaultDiscount ? '' : 'hidden'}>
+            <button class="icon-btn order-compact-close" data-order-close-field="discount" type="button" aria-label="Cerrar descuento">${ICONS.close}</button>
             <label class="field">
               <span class="field__label">Descuento (RD$)</span>
               <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${defaultDiscount}" placeholder="0" />
@@ -9783,46 +9865,50 @@
         <span class="field__label">Ubicación de entrega (opcional)</span>
         <div id="order-loc"></div>
       </div>
-      <label class="field">
-        <span class="field__label">Costo de delivery (opcional, RD$)</span>
-        <input class="field__input" id="order-fee" type="number" min="0" step="1" value="${
-          defaultDeliveryFee
-        }" placeholder="0" />
-      </label>
-      <label class="field" ${orderId ? 'hidden' : ''}>
-        <span class="field__label">Estado</span>
-        <select class="field__select" id="order-status">
-          ${(state.orderStatuses ?? [])
-            .map(
-              (status) =>
-                `<option value="${escapeHtml(status.value)}" ${
-                  status.value === defaultStatus ? 'selected' : ''
-                }>${escapeHtml(status.label)}</option>`,
-            )
-            .join('')}
-        </select>
-      </label>
+      <div class="order-form-grid">
+        <label class="field">
+          <span class="field__label">Costo delivery</span>
+          <input class="field__input" id="order-fee" type="number" min="0" step="1" value="${
+            defaultDeliveryFee
+          }" placeholder="0" />
+        </label>
+        <label class="field" ${orderId ? 'hidden' : ''}>
+          <span class="field__label">Estado</span>
+          <select class="field__select" id="order-status">
+            ${(state.orderStatuses ?? [])
+              .map(
+                (status) =>
+                  `<option value="${escapeHtml(status.value)}" ${
+                    status.value === defaultStatus ? 'selected' : ''
+                  }>${escapeHtml(status.label)}</option>`,
+              )
+              .join('')}
+          </select>
+        </label>
+      </div>
       ${
         orderId
           ? '<p class="view__hint">El estado del pedido se cambia desde “Cambiar estado”, con motivo y auditoría.</p>'
           : ''
       }
-      <label class="field">
-        <span class="field__label">Método de pago</span>
-        <select class="field__select" id="order-payment">
-          ${methods
-            .map(
-              (method) =>
-                `<option value="${escapeHtml(method.value)}" ${
-                  method.value === defaultPayment ? 'selected' : ''
-                }>${escapeHtml(method.label)}</option>`,
-            )
-            .join('')}
-        </select>
-      </label>
-      <div class="order-note-tools">
-        <button class="icon-btn" id="order-notes-toggle" type="button" aria-label="Agregar nota">${ICONS.doc}</button>
-        <span>Nota interna del pedido</span>
+      <div class="order-form-grid order-form-grid--payment">
+        <label class="field">
+          <span class="field__label">Pago</span>
+          <select class="field__select" id="order-payment">
+            ${methods
+              .map(
+                (method) =>
+                  `<option value="${escapeHtml(method.value)}" ${
+                    method.value === defaultPayment ? 'selected' : ''
+                  }>${escapeHtml(method.label)}</option>`,
+              )
+              .join('')}
+          </select>
+        </label>
+        <button class="order-note-tools" id="order-notes-toggle" type="button" aria-label="Agregar nota">
+          <span class="icon-btn" aria-hidden="true">${ICONS.doc}</span>
+          <span>Nota interna</span>
+        </button>
       </div>
       <label class="field order-notes-field" id="order-notes-field" ${defaultNotes ? '' : 'hidden'}>
         <span class="field__label">Nota interna</span>
@@ -9838,13 +9924,19 @@
               <button class="btn btn--primary btn--block order-create-delivery" id="order-save-delivery" type="button">${ICONS.send}<span>Crear y pasar a delivery</span></button>
               <button class="btn btn--ghost btn--sm" id="order-save" type="button">Crear</button>
             </div>
-            <div class="order-location-required" id="order-location-required" hidden>
+            <div class="order-flow-panel order-location-required" id="order-location-required" hidden>
+              <span class="order-flow-panel__icon" aria-hidden="true">${ICONS.pin}</span>
               <strong>No tiene ubicación del cliente</strong>
               <p>Para pasarlo a delivery primero solicita la ubicación por WhatsApp. El pedido queda guardado como borrador para continuarlo cuando llegue.</p>
-              <button class="btn btn--primary btn--sm" id="order-location-request" type="button">Solicitar ubicación</button>
+              <div class="order-flow-panel__actions">
+                <button class="btn btn--primary btn--sm" id="order-location-request" type="button">Solicitar ubicación</button>
+                <button class="btn btn--ghost btn--sm" data-order-flow-close type="button">Ahora no</button>
+              </div>
             </div>
-            <div class="order-delivery-note" id="order-delivery-note" hidden>
+            <div class="order-flow-panel order-delivery-note" id="order-delivery-note" hidden>
+              <span class="order-flow-panel__icon" aria-hidden="true">${ICONS.send}</span>
               <strong>¿Deseas agregar una nota de entrega?</strong>
+              ${deliveryUserPicker}
               <textarea class="field__area" id="order-delivery-note-text" rows="3" maxlength="600" placeholder="Opcional: cliente prefiere llamada, casa verde, cuidado con el portón..."></textarea>
               <div class="order-delivery-note__actions">
                 <button class="btn btn--ghost btn--sm" id="order-delivery-note-skip" type="button">Sin nota</button>
@@ -9853,6 +9945,7 @@
             </div>`
       }
       `,
+      { variant: 'order-form' },
     );
 
     const linesBox = $('#order-lines');
@@ -9869,7 +9962,7 @@
                   (variant) =>
                     `<option value="${escapeHtml(variant.id)}" ${
                       variant.id === line.variantId ? 'selected' : ''
-                    }>${escapeHtml(variant.label)} · ${money(variant.price, variant.currency)}</option>`,
+                    }>${escapeHtml(variant.label)}</option>`,
                 )
                 .join('')}
             </select>
@@ -9900,6 +9993,8 @@
       );
       const discountLabel = $('#order-discount-label');
       if (discountLabel) discountLabel.textContent = totals.discount ? money(totals.discount) : 'Sin descuento';
+      const productsTotal = $('#order-products-total');
+      if (productsTotal) productsTotal.textContent = money(totals.subtotal);
       const box = $('#order-total');
       if (!box) return;
       const stock = state.inventory;
@@ -9933,10 +10028,19 @@
          * operador tiene que poder verlo antes de confirmar el pedido.
          */
         const edad = locationContext(chosenLocation).age;
-        box.innerHTML = `${locationChip(chosenLocation, { withActions: false })}
-          ${edad ? `<p class="view__hint">${escapeHtml(edad)}. Si este pedido va a otro sitio, quítala y elige otra.</p>` : ''}
-          <button class="btn btn--ghost btn--sm" id="order-loc-clear" type="button">Quitar ubicación</button>`;
+        box.innerHTML = `<div class="order-location-pill">
+            ${locationChip(chosenLocation, { withActions: false })}
+            <button class="icon-btn order-location-pill__clear" id="order-loc-clear" type="button" aria-label="Quitar ubicación">${ICONS.close}</button>
+          </div>
+          ${edad ? `<p class="view__hint">${escapeHtml(edad)}.</p>` : ''}`;
         $('#order-loc-clear').addEventListener('click', () => {
+          let confirmed = true;
+          try {
+            confirmed = typeof confirm === 'function' ? confirm('¿Quitar esta ubicación del pedido?') !== false : true;
+          } catch {
+            confirmed = true;
+          }
+          if (!confirmed) return;
           chosenLocation = null;
           renderLocationBlock();
           persistOrderDraft();
@@ -9987,11 +10091,19 @@
         const target = button.dataset.orderToggleField;
         const panel = target === 'source' ? $('#order-source-panel') : $('#order-discount-panel');
         if (!panel) return;
-        panel.hidden = !panel.hidden;
-        if (!panel.hidden) {
-          if (target === 'source') $('#order-source')?.focus();
-          else $('#order-discount')?.focus();
-        }
+        button.hidden = true;
+        panel.hidden = false;
+        if (target === 'source') $('#order-source')?.focus();
+        else $('#order-discount')?.focus();
+      });
+    });
+    document.querySelectorAll('[data-order-close-field]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const target = button.dataset.orderCloseField;
+        const panel = target === 'source' ? $('#order-source-panel') : $('#order-discount-panel');
+        const toggle = $(`[data-order-toggle-field="${target}"]`);
+        if (panel) panel.hidden = true;
+        if (toggle) toggle.hidden = false;
       });
     });
     const refreshSourceFields = () => {
@@ -10033,6 +10145,11 @@
       if (!field.hidden) $('#order-notes')?.focus();
       persistOrderDraft();
     });
+    document.querySelectorAll('[data-order-flow-close]').forEach((button) => {
+      button.addEventListener('click', () => {
+        button.closest('.order-flow-panel')?.setAttribute('hidden', '');
+      });
+    });
 
     const showMissingDeliveryLocation = () => {
       persistOrderDraft();
@@ -10073,7 +10190,7 @@
       });
     };
 
-    const saveOrder = async ({ button, assignAfter = false, deliveryNote = '' } = {}) => {
+    const saveOrder = async ({ button, assignAfter = false, deliveryNote = '', deliveryUserId = '' } = {}) => {
       /*
        * El aviso de pedido abierto se confirma AQUÍ (no solo se enseña): sin
        * marcar la casilla no se guarda. Es la diferencia entre avisar y evitar.
@@ -10188,12 +10305,18 @@
             const activeUsers = (state.deliveryUsers ?? []).filter((user) => user.active !== false);
             if (!activeUsers.length) {
               toast(`Pedido ${orderNumber} creado. No hay agentes activos para delivery`);
-            } else if (activeUsers.length === 1) {
+            } else if (activeUsers.length === 1 || deliveryUserId) {
+              const selectedUserId = deliveryUserId || activeUsers[0].id;
               await api(`/api/admin/orders/${encodeURIComponent(savedId)}/delivery/assign`, {
                 method: 'POST',
-                body: JSON.stringify({ deliveryUserId: activeUsers[0].id, deliveryNote }),
+                body: JSON.stringify({ deliveryUserId: selectedUserId, deliveryNote }),
+              });
+              const avisado = await sendDeliveryAssignmentCustomerNotice(conversationId, savedId).catch((error) => {
+                if (error.message !== 'unauthorized') toast('Pedido asignado. No se pudo avisar al cliente.');
+                return false;
               });
               toast(`Pedido ${orderNumber} creado y pasado a delivery`);
+              if (avisado) toast('Cliente avisado');
             } else {
               toast(`Pedido ${orderNumber} creado. Elige el agente`);
               await load({ keepTab: true });
@@ -10228,6 +10351,7 @@
           button: event.currentTarget,
           assignAfter: true,
           deliveryNote: String($('#order-delivery-note-text')?.value ?? '').trim(),
+          deliveryUserId: $('#order-delivery-user')?.value ?? '',
         });
         return;
       }
@@ -10236,13 +10360,14 @@
     });
     $('#order-location-request')?.addEventListener('click', (event) => sendLocationRequestFromOrder(event.currentTarget));
     $('#order-delivery-note-skip')?.addEventListener('click', (event) =>
-      saveOrder({ button: event.currentTarget, assignAfter: true, deliveryNote: '' }),
+      saveOrder({ button: event.currentTarget, assignAfter: true, deliveryNote: '', deliveryUserId: $('#order-delivery-user')?.value ?? '' }),
     );
     $('#order-delivery-note-continue')?.addEventListener('click', (event) =>
       saveOrder({
         button: event.currentTarget,
         assignAfter: true,
         deliveryNote: String($('#order-delivery-note-text')?.value ?? '').trim(),
+        deliveryUserId: $('#order-delivery-user')?.value ?? '',
       }),
     );
   }
@@ -13806,7 +13931,7 @@
   };
 
   function setTab(tab, options = {}) {
-    if ((tab === 'usuarios' && !isAdmin()) || (tab === 'ajustes' && !hasPermission('settings.manage')) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
+    if ((tab === 'usuarios' && !isAdmin()) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
       tab = 'hoy';
     }
     if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil'].includes(tab)) tab = 'delivery';

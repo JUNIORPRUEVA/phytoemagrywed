@@ -333,7 +333,7 @@ describe('compositor y acciones del cliente', () => {
   });
 
   it('crear pedido desde el chat no vuelve a pedir nombre ni teléfono', () => {
-    expect(app).toContain('`Pedido para ${customerName(customer)}`');
+    expect(app).toContain('`Pedido ${customerName(customer)}`');
     // Los campos de teléfono/nombre solo existen cuando NO hay cliente.
     const form = app.slice(app.indexOf('function openOrderForm'), app.indexOf('function openOrderForm') + 1800);
     expect(form).toContain('id="order-phone"');

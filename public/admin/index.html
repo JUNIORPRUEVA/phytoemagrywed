@@ -19,7 +19,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=map-manual-zoom-53" />
+    <link rel="stylesheet" href="/admin/admin.css?v=delivery-flow-polish-55" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -291,6 +291,7 @@
                   <span class="ico" aria-hidden="true" data-icon="spark"></span>
                 </button>
               </div>
+              <div class="wa__delivery-cta" id="wa-delivery-cta" hidden></div>
               <div class="wa__composer" id="wa-composer"></div>
             </div>
 
@@ -485,7 +486,7 @@
             </p>
             <div class="toggles" id="followup-config"></div>
           </div>
-          <div class="card">
+          <div class="card" id="config-metricas">
             <p class="card__title">Métricas de ventas</p>
             <div class="chips" id="metrics-period">
               <button class="chip" data-metrics="hoy" type="button">Hoy</button>
@@ -494,11 +495,11 @@
             </div>
             <dl class="facts" id="metrics"></dl>
           </div>
-          <div class="card">
+          <div class="card" id="config-auditoria">
             <p class="card__title">Auditoría reciente</p>
             <div id="audit"></div>
           </div>
-          <div class="card">
+          <div class="card" id="config-media">
             <p class="card__title">Multimedia</p>
             <div id="media-config"></div>
           </div>
@@ -528,11 +529,11 @@
             <p class="card__title">WhatsApp</p>
             <div id="wa-config"></div>
           </div>
-          <div class="card">
+          <div class="card" id="config-wa-templates">
             <p class="card__title">WhatsApp · Plantillas</p>
             <div id="wa-templates-config"></div>
           </div>
-          <div class="card">
+          <div class="card" id="config-exportar">
             <p class="card__title">Exportar</p>
             <p class="card__text">Descarga todos los contactos y pedidos en CSV (Excel, Sheets).</p>
             <a class="btn btn--ghost" id="csv" href="/api/crm/export.csv?limit=1000" download
@@ -623,6 +624,6 @@
     </div>
 
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
-    <script src="/admin/app.js?v=map-manual-zoom-53" defer></script>
+    <script src="/admin/app.js?v=delivery-flow-polish-55" defer></script>
   </body>
 </html>

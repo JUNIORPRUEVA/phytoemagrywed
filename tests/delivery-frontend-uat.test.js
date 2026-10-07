@@ -19,6 +19,7 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('await openChat(order.conversation_id, { draft: deliveryMessage(order), deliveryOrderId: order.id });');
     expect(app).toContain("state.wa.draft = options.draft ?? ''");
     expect(app).toContain('state.wa.deliveryOrderId = options.deliveryOrderId ?? null');
+    expect(app).toContain('state.wa.deliveryStartReadyOrderId = null');
 
     const contactBlock = app.slice(app.indexOf('async function contactDeliveryCustomer'), app.indexOf('async function applyDeepLink'));
     expect(contactBlock).toContain('openChat(order.conversation_id');
@@ -52,6 +53,10 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('data-delivery-order-detail');
     expect(app).toContain('Ver pedido');
     expect(app).toContain('Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.');
+    expect(app).toContain("const DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE = 'Ya pasé la orden al mensajero. Él te contactará para la entrega.';");
+    expect(app).toContain('function sendDeliveryAssignmentCustomerNotice');
+    expect(app).toContain('deliveryAssignmentNotice: true');
+    expect(app).toContain("uploadKey(`delivery-notice-${orderId}`)");
     expect(app.match(/data-delivery-contact=/g)).toHaveLength(1);
     const renderBlock = app.slice(app.indexOf('function renderDelivery'), app.indexOf('function openDeliveryOrder'));
     expect(renderBlock).not.toContain('<div><h1>Entrega</h1>');
@@ -91,6 +96,13 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('const deliveryChatMode = Boolean(data.deliveryContext?.asDelivery || state.wa.deliveryOrderId);');
     expect(app).toContain('actions.hidden = deliveryChatMode');
     expect(app).toContain('button.hidden || state.wa.chat?.deliveryContext?.asDelivery || state.wa.deliveryOrderId');
+    expect(html).toContain('id="wa-delivery-cta"');
+    expect(app).toContain('state.wa.deliveryStartReadyOrderId = resultado.deliveryOrder.id ?? state.wa.deliveryOrderId');
+    expect(app).toContain('data-delivery-start="${escapeHtml(deliveryOrderId)}"');
+    expect(app).toContain('Volver a entrega');
+    expect(app).toContain('Iniciar entrega');
+    expect(css).toContain('.wa__delivery-cta');
+    expect(css).toContain('@keyframes delivery-chat-cta-in');
   });
 
   it('la app instalada no permite zoom de página por pellizco ni doble toque', () => {
@@ -106,8 +118,8 @@ describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
-    expect(html).toContain('/admin/app.js?v=map-manual-zoom-53');
-    expect(html).toContain('/admin/admin.css?v=map-manual-zoom-53');
+    expect(html).toContain('/admin/app.js?v=delivery-flow-polish-55');
+    expect(html).toContain('/admin/admin.css?v=delivery-flow-polish-55');
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');

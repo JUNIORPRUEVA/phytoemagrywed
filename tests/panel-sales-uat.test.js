@@ -366,25 +366,34 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
 
     click('#order-save-delivery');
     const nota = await waitFor(() => ($('#order-delivery-note')?.hidden === false ? $('#order-delivery-note-text') : null), 'la nota de entrega');
+    if ($('#order-delivery-user')) setValue('#order-delivery-user', agenteUatId);
     setValue(nota, 'Llamar al llegar');
+    const avisosAntes = mockWhatsApp.sent.length;
     click('#order-delivery-note-continue');
 
-    const agente = await waitFor(
-      () => $$('#sheet-body [data-order-delivery-user]').find((row) => row.textContent.includes('Agente UAT')) ?? null,
-      'la lista para elegir agente',
-    );
-    expect($('#delivery-assign-note').value).toBe('Llamar al llegar');
-    const ordenId = agente.dataset.orderId;
-    click(agente);
     await waitFor(async () => {
       const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-      const item = data.items.find((candidate) => candidate.id === ordenId);
+      const item = data.items.find((candidate) => {
+        const order = candidate?.order ?? (candidate?.order_json ? JSON.parse(candidate.order_json) : candidate?.orderJson);
+        return order?.delivery?.delivery_assignment_note === 'Llamar al llegar';
+      });
       const order = item?.order ?? (item?.order_json ? JSON.parse(item.order_json) : item?.orderJson);
       return order?.delivery?.delivery_user_id === agenteUatId ? order : null;
     }, 'el pedido creado y asignado al agente');
-  });
+    const aviso = await waitFor(
+      () =>
+        mockWhatsApp.sent
+          .slice(avisosAntes)
+          .find((message) => message.body === 'Ya pasé la orden al mensajero. Él te contactará para la entrega.'),
+      'el aviso discreto al cliente',
+    );
+    expect(aviso.body).toBe('Ya pasé la orden al mensajero. Él te contactará para la entrega.');
+  }, 10000);
 
   it('programa un mensaje (no es un seguimiento: lo intentará el sistema)', async () => {
+    if (!$('#sheet')?.hidden) click('[data-close-sheet]');
+    click('[data-tab="whatsapp"]');
+    click(await waitFor(() => $$('[data-conv]')[0], 'la conversación para programar'));
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     click('[data-scheduled-new]');

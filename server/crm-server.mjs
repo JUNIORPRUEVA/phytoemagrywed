@@ -7779,6 +7779,9 @@ async function handle(req, res, ctx) {
           body = {};
         }
         let rawMessageBody = longText(body.body, 1200);
+        const deliveryAssignmentNotice =
+          body.deliveryAssignmentNotice === true &&
+          rawMessageBody === 'Ya pasé la orden al mensajero. Él te contactará para la entrega.';
         /*
          * REVALIDACIÓN DE LA CONVERSACIÓN, EN EL SERVIDOR Y JUSTO ANTES DE ENVIAR.
          *
@@ -7882,7 +7885,7 @@ async function handle(req, res, ctx) {
         }
 
         const messageBody =
-          !template && deliveryOrderContext && messageNeedsDeliveryIdentity(deliveryOrderContext.order, actor)
+          !deliveryAssignmentNotice && !template && deliveryOrderContext && messageNeedsDeliveryIdentity(deliveryOrderContext.order, actor)
             ? withDeliveryIdentity(rawMessageBody, actor)
             : rawMessageBody;
         const templatePayload = template
@@ -7977,7 +7980,7 @@ async function handle(req, res, ctx) {
           ...messageActorFields(actor),
         });
         let deliveryOrder = null;
-        if (deliveryOrderContext) {
+        if (deliveryOrderContext && !deliveryAssignmentNotice) {
           deliveryOrder = await markDeliveryContacted(ctx, deliveryOrderContext.item, deliveryOrderContext.order, actor);
         }
         await ctx.customers.markConversationRead(conversation.id);
