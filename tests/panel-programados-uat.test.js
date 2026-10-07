@@ -354,10 +354,49 @@ describe('lo que se ve en la ficha del cliente', () => {
     for (const codigo of ['131026', '132000', '132001', 'SCHEDULED', 'PROCESSING', 'BLOCKED']) {
       expect(lista.textContent).not.toContain(codigo);
     }
+    expect(lista.textContent).toContain('Editar');
+  }, 25000);
+
+  it('se puede editar un mensaje programado pendiente y la ficha mantiene la lista', async () => {
+    const boton = await waitFor(() => $('.sch-item [data-scheduled-edit]'), 'el botón de editar');
+    click(boton);
+    await waitFor(() => $('#sch-edit-save'), 'la hoja de edición');
+    setValue('#sch-edit-text', 'Mensaje editado para seguimiento.');
+    click('#sch-edit-save');
+    await waitFor(() => $('.sch-list')?.textContent?.includes('Mensaje editado para seguimiento.'), 'el mensaje editado en la ficha');
+    const data = await programados();
+    const row = data.find((entry) => entry.id === ids.compraScheduled);
+    expect(row.template_components[0].parameters[1].text).toBe('Mensaje editado para seguimiento.');
+    expect(row.template_body).toContain('Mensaje editado para seguimiento.');
+    expect($$('.sch-item').length).toBeGreaterThanOrEqual(1);
+  }, 25000);
+
+  it('un cliente puede tener varios mensajes programados en su lista', async () => {
+    const extra = await adminJson('/api/admin/scheduled', {
+      method: 'POST',
+      body: JSON.stringify({
+        customerId: ids.compraCustomer,
+        conversationId: ids.compra,
+        scheduledAt: new Date(Date.now() + 2 * 24 * 3600_000).toISOString(),
+        type: 'template',
+        template: COMPRA_TEMPLATE,
+        templateValues: { 2: 'Segundo mensaje programado.' },
+      }),
+    });
+    expect(extra.response.status).toBe(201);
+    click('[data-tab="whatsapp"]');
+    click(`[data-conv="${ids.compra}"]`);
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
+    click('#wa-actions');
+    click(await waitFor(() => $('#sheet-body [data-customer]'), 'la acción de abrir la ficha'));
+    const lista = await waitFor(() => $('.sch-list')?.textContent?.includes('Segundo mensaje programado.') ? $('.sch-list') : null, 'la lista con dos programados');
+    expect($$('.sch-item').length).toBeGreaterThanOrEqual(2);
+    expect(lista.textContent).toContain('Mensaje editado para seguimiento.');
+    expect(lista.textContent).toContain('Segundo mensaje programado.');
   }, 25000);
 
   it('se puede CANCELAR y la ficha lo dice en palabras', async () => {
-    const boton = await waitFor(() => $('.sch-item [data-scheduled-cancel]'), 'el botón de cancelar');
+    const boton = await waitFor(() => $(`[data-scheduled-cancel="${ids.compraScheduled}"]`), 'el botón de cancelar');
     click(boton);
     await waitFor(async () => {
       const data = await programados();

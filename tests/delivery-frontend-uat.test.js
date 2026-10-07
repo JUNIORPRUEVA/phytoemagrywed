@@ -53,7 +53,8 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('Aceptar y contactar');
     expect(app).toContain('data-delivery-order-detail');
     expect(app).toContain('Ver pedido');
-    expect(app).toContain('Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.');
+    expect(app).toContain('-- *DELIVERY* --');
+    expect(app).toContain('Voy a salir para allá, para que estés pendiente, por favor.');
     expect(app).toContain("const DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE = 'Ya pasé la orden al mensajero. Él te contactará para la entrega.';");
     expect(app).toContain('function sendDeliveryAssignmentCustomerNotice');
     expect(app).toContain('deliveryAssignmentNotice: true');
@@ -119,8 +120,8 @@ describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
-    expect(html).toContain('/admin/app.js?v=tap-selection-62');
-    expect(html).toContain('/admin/admin.css?v=tap-selection-62');
+    expect(html).toContain('/admin/app.js?v=seguimiento-programados-63');
+    expect(html).toContain('/admin/admin.css?v=seguimiento-programados-63');
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');

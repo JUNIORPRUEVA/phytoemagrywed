@@ -1271,6 +1271,10 @@
     }).length;
     const sinAsignar = state.conversations.filter((row) => !row.assigned_user_id && row.status !== 'ARCHIVED').length;
     const scheduledProblems = Number(scheduled.blocked ?? 0) + Number(scheduled.failed ?? 0);
+    const clientes = state.customers ?? [];
+    const interesados = clientes.filter((row) => customerStageOf(row) === 'INTERESTED').length;
+    const compradores = clientes.filter((row) => customerStageOf(row) === 'CUSTOMER').length;
+    const programadosActivos = Number(scheduled.scheduled ?? 0) + Number(scheduled.due ?? 0);
     /*
      * HOY es un centro OPERATIVO: los contadores son trabajo que hacer ahora
      * (contestar, seguir, resolver un mensaje que no salió), no gráficas. Cada
@@ -1322,6 +1326,17 @@
         icon: ICONS.userCog,
         tone: 'amber',
       },
+      {
+        label: 'Programados activos',
+        value: programadosActivos,
+        alert: programadosActivos > 0,
+        goto: 'mensajes',
+        icon: ICONS.note,
+        tone: 'blue',
+      },
+      { label: 'Clientes', value: clientes.length, goto: 'clientes', icon: ICONS.person, tone: 'green' },
+      { label: 'Interesados', value: interesados, goto: 'clientes', icon: ICONS.spark, tone: 'amber' },
+      { label: 'Con compra', value: compradores, goto: 'clientes', icon: ICONS.bag, tone: 'purple' },
     ];
     $('#stats').innerHTML = cards
       .map(
@@ -1875,110 +1890,8 @@
     });
 
   function renderHoy() {
-    const today = todayISO();
-    const followups = state.followups ?? { today: [], overdue: [], upcoming: [] };
-    const hoy = state.hoy ?? {};
-
-    const pendientes = state.items
-      .filter(
-        (item) =>
-          item.next_action_at &&
-          item.next_action_at <= today &&
-          !['entregado', 'perdido'].includes(item.status ?? 'nuevo'),
-      )
-      .sort((a, b) => String(a.next_action_at).localeCompare(String(b.next_action_at)));
-
-    // Los que ya salen arriba no se repiten abajo (ver al mismo cliente dos veces
-    // en la misma pantalla hace dudar de si son dos cosas distintas).
-    const yaListados = new Set(pendientes.map((item) => item.id));
-    const nuevos = state.items
-      .filter((item) => (item.status ?? 'nuevo') === 'nuevo' && !yaListados.has(item.id))
-      .slice(0, 5);
-
-    // Conversaciones: lo que no se ha leído y lo que pide una persona. Una
-    // conversación que necesita una persona se lista UNA vez.
-    // “Sin contestar” = el último mensaje lo escribió el cliente y todavía no le
-    // hemos respondido. NO se apaga por abrir la conversación: solo al responder.
-    const sinLeer = state.conversations.filter((row) => row.awaiting_reply === true);
-    const humano = state.conversations.filter(
-      (row) => row.status === 'HUMAN_REQUIRED' && !sinLeer.some((other) => other.id === row.id),
-    );
-
-    const pedidosAbiertos = state.items.filter(
-      (item) => item.type === 'order_intent' && !['entregado', 'perdido'].includes(item.status ?? 'nuevo'),
-    );
-    const scheduled = state.scheduled ?? {};
-    const upcoming = scheduled.upcoming ?? [];
-    const mensajesHoy = upcoming.filter((row) => String(row.scheduled_at ?? '').slice(0, 10) === today);
-    const mensajesProblema = scheduled.problems ?? [];
-    const mensajesPorEnviar = Number(scheduled.scheduled ?? 0);
-    const mensajesVencidos = Number(scheduled.due ?? 0);
-
-    const bloques = [
-      followups.overdue?.length
-        ? section('Seguimientos vencidos', followups.overdue.length, followups.overdue.map(followupCard).join(''), {
-            tone: 'urgent',
-            open: true,
-          })
-        : '',
-      followups.today?.length
-        ? section('Seguimientos de hoy', followups.today.length, followups.today.map(followupCard).join(''), { tone: 'green' })
-        : '',
-      humano.length
-        ? section('Necesitan una persona', humano.length, humano.map(conversationCard).join(''), { tone: 'amber' })
-        : '',
-      sinLeer.length
-        ? section('Esperando respuesta', sinLeer.length, sinLeer.map(conversationCard).join(''), { tone: 'blue', open: true })
-        : '',
-      pendientes.length
-        ? section('Recordatorios de hoy', pendientes.length, pendientes.map(itemCard).join(''), { tone: 'green' })
-        : '',
-      mensajesVencidos
-        ? section(
-            'Mensajes por enviar ahora',
-            mensajesVencidos,
-            mensajesHoy.length
-              ? mensajesHoy.map(scheduledDashboardRow).join('')
-              : todayCountNotice(`${mensajesVencidos} mensaje${mensajesVencidos === 1 ? '' : 's'} vencido${mensajesVencidos === 1 ? '' : 's'} en la cola.`),
-            { tone: 'amber', open: true },
-          )
-        : '',
-      mensajesHoy.length
-        ? section('Mensajes programados hoy', mensajesHoy.length, mensajesHoy.map(scheduledDashboardRow).join(''), { tone: 'blue' })
-        : '',
-      mensajesProblema.length
-        ? section('Mensajes por revisar', mensajesProblema.length, mensajesProblema.map(scheduledDashboardRow).join(''), {
-            tone: 'urgent',
-            open: true,
-          })
-        : '',
-      nuevos.length
-        ? section('Sin contactar', nuevos.length, `<div class="dash-list">${nuevos.map(dashboardLeadRow).join('')}</div>`, {
-            tone: 'amber',
-            action: '<span class="dash-section__link" data-dashboard-tab="clientes" role="button" tabindex="0">Ver todos</span>',
-          })
-        : '',
-      pedidosAbiertos.length
-        ? section('Pedidos sin cerrar', pedidosAbiertos.length, pedidosAbiertos.slice(0, 5).map(itemCard).join(''), {
-            tone: 'purple',
-          })
-        : '',
-      mensajesPorEnviar && !mensajesHoy.length && !mensajesVencidos
-        ? section(
-            'Próximos mensajes',
-            mensajesPorEnviar,
-            upcoming.length
-              ? upcoming.map(scheduledDashboardRow).join('')
-              : todayCountNotice(`${mensajesPorEnviar} mensaje${mensajesPorEnviar === 1 ? '' : 's'} en cola.`),
-            { tone: 'blue' },
-          )
-        : '',
-    ]
-      .filter(Boolean)
-      .join('');
-
-    $('#list-hoy').innerHTML =
-      bloques || emptyState('Todo al día 👌 Nada pendiente y ningún mensaje sin contestar.');
+    const box = $('#list-hoy');
+    if (box) box.innerHTML = '';
     delete document.body.dataset.todayExpanded;
   }
 
@@ -2193,7 +2106,7 @@
       </span>
       <span class="order-row__bottom">
         <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
-        <span class="order-row__status">${escapeHtml(operationalStatusLabel(estado))}</span>
+        <span class="order-row__status" data-receipt="${escapeHtml(item.id)}" aria-label="Ver factura">${escapeHtml(operationalStatusLabel(estado))}</span>
       </span>
       <span class="order-row__ref">${escapeHtml(referencia)}</span>
     </button>`;
@@ -3373,14 +3286,12 @@
   function deliveryMessage(order) {
     const customer = order?.customer?.name || order?.customer_name || 'cliente';
     const deliveryName = currentUser()?.display_name || 'tu delivery';
-    const number = order?.order_number || order?.id || '';
     const items = (order?.items ?? [])
-      .map((line) => `${line.quantity ?? 1} x ${line.variantName ?? line.name ?? 'producto'}`)
+      .map((line) => `${line.quantity ?? 1} x ${line.variantName ?? line.name ?? 'producto'}`.replace(/^(\d+\s*x\s*)Frasco de\s+/i, '$1'))
       .join(', ');
     return [
-      `Hola ${customer}, soy ${deliveryName} de Phytoemagry.`,
-      number ? `Tengo tu pedido ${number}${items ? ` (${items})` : ''} asignado para entrega.` : '',
-      'Voy saliendo para allá. Por favor mantente pendiente para coordinar la entrega.',
+      '-- *DELIVERY* --',
+      `Hola ${customer}, soy ${deliveryName}. Tengo tu pedido${items ? ` de ${items}` : ''}. Voy a salir para allá, para que estés pendiente, por favor.`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -8726,7 +8637,14 @@
                 ${sinSalir ? `<p class="sch-item__reason">${escapeHtml(scheduledFriendlyReason(row))}</p>` : ''}
                 ${
                   scheduledIsPending(row)
-                    ? `<button class="btn btn--ghost btn--xs" data-scheduled-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>`
+                    ? `<div class="item__actions" style="margin-top:6px">
+                        ${
+                          scheduledCanEdit(row)
+                            ? `<button class="btn btn--ghost btn--xs" data-scheduled-edit="${escapeHtml(row.id)}" type="button">Editar</button>`
+                            : ''
+                        }
+                        <button class="btn btn--ghost btn--xs" data-scheduled-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>
+                      </div>`
                     : ''
                 }
               </article>`;
@@ -13269,6 +13187,7 @@
   const scheduledStateLabel = (status) => SCHEDULED_STATE_LABELS[String(status ?? '').toUpperCase()] ?? 'Programado';
   const scheduledStateTitle = (status) => SCHEDULED_STATE_TITLES[String(status ?? '').toUpperCase()] ?? 'Pendiente de envío';
   const scheduledIsPending = (row) => ['SCHEDULED', 'PROCESSING'].includes(String(row?.status ?? '').toUpperCase());
+  const scheduledCanEdit = (row) => String(row?.status ?? '').toUpperCase() === 'SCHEDULED';
 
   /**
    * POR QUÉ no salió, en palabras.
@@ -13301,6 +13220,29 @@
     if (row?.blocked_message) return String(row.blocked_message);
     if (code) return 'WhatsApp no aceptó el mensaje a esa hora.';
     return 'El mensaje no se pudo enviar.';
+  }
+
+  function scheduledEditableText(row) {
+    if (row?.type === 'template') {
+      const params = Array.isArray(row.template_components?.[0]?.parameters) ? row.template_components[0].parameters : [];
+      const texts = params.filter((param) => param?.type === 'text').map((param) => String(param.text ?? ''));
+      return texts[texts.length - 1] ?? '';
+    }
+    return String(row?.text ?? row?.template_body ?? '').trim();
+  }
+
+  function scheduledEditPayload(row, nextText) {
+    const clean = String(nextText ?? '').trim();
+    if (row?.type !== 'template') return { text: clean };
+    const components = JSON.parse(JSON.stringify(Array.isArray(row.template_components) ? row.template_components : []));
+    const params = Array.isArray(components?.[0]?.parameters) ? components[0].parameters : [];
+    const textParams = params.filter((param) => param?.type === 'text');
+    const last = textParams[textParams.length - 1];
+    const previous = last ? String(last.text ?? '') : '';
+    if (last) last.text = clean;
+    const currentBody = String(row.template_body ?? '').trim();
+    const templateBody = previous && currentBody.includes(previous) ? currentBody.replace(previous, clean) : currentBody || clean;
+    return { templateComponents: components, templateBody };
   }
 
   /*
@@ -13693,12 +13635,67 @@
         method: 'PATCH',
         body: JSON.stringify({ action, ...payload }),
       });
-      toast(action === 'cancel' ? 'Mensaje cancelado' : 'Mensaje reprogramado');
+      toast(action === 'cancel' ? 'Mensaje cancelado' : action === 'edit' ? 'Mensaje actualizado' : 'Mensaje reprogramado');
       await load({ keepTab: true });
       if (state.customerId) await openCustomer(state.customerId);
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo actualizar el mensaje');
     }
+  }
+
+  function openScheduledEdit(id) {
+    const row =
+      (state.customerProfile?.scheduled ?? []).find((entry) => entry.id === id) ??
+      [...(state.scheduled?.upcoming ?? []), ...(state.scheduled?.problems ?? [])].find((entry) => entry.id === id) ??
+      null;
+    if (!row || !scheduledCanEdit(row)) {
+      toast('Ese mensaje ya no se puede editar');
+      return;
+    }
+    const date = new Date(row.scheduled_at);
+    const valueDate = Number.isNaN(date.getTime())
+      ? todayISO()
+      : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const valueTime = Number.isNaN(date.getTime())
+      ? '09:00'
+      : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    openSheet(
+      'Editar mensaje programado',
+      `<p class="view__hint">Solo se puede editar mientras está pendiente. Si ya salió, queda como historial.</p>
+      <label class="field">
+        <span class="field__label">Mensaje</span>
+        <textarea class="field__area" id="sch-edit-text" rows="5">${escapeHtml(scheduledEditableText(row))}</textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">Fecha</span>
+        <input class="field__input" id="sch-edit-date" type="date" value="${escapeHtml(valueDate)}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Hora</span>
+        <input class="field__input" id="sch-edit-time" type="time" value="${escapeHtml(valueTime)}" />
+      </label>
+      <button class="btn btn--primary btn--block" id="sch-edit-save" type="button">Guardar cambios</button>`,
+    );
+    $('#sch-edit-save')?.addEventListener('click', async (event) => {
+      const text = String($('#sch-edit-text')?.value ?? '').trim();
+      const day = $('#sch-edit-date')?.value ?? '';
+      const hour = $('#sch-edit-time')?.value || '09:00';
+      if (!text) {
+        toast('Escribe el mensaje');
+        return;
+      }
+      if (!day) {
+        toast('Elige la fecha');
+        return;
+      }
+      await working(event.currentTarget, 'Guardando…', async () => {
+        await scheduledAction(row.id, 'edit', {
+          scheduledAt: new Date(`${day}T${hour}:00`).toISOString(),
+          ...scheduledEditPayload(row, text),
+        });
+        closeSheet();
+      });
+    });
   }
 
   /** Interruptores del plan de postventa (Ajustes). */
@@ -15168,6 +15165,11 @@
       const scheduledCancel = event.target.closest('[data-scheduled-cancel]');
       if (scheduledCancel) {
         scheduledAction(scheduledCancel.dataset.scheduledCancel, 'cancel', { reason: 'cancelado en el panel' });
+        return;
+      }
+      const scheduledEdit = event.target.closest('[data-scheduled-edit]');
+      if (scheduledEdit) {
+        openScheduledEdit(scheduledEdit.dataset.scheduledEdit);
         return;
       }
       const metricsChip = event.target.closest('[data-metrics]');

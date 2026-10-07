@@ -8613,8 +8613,16 @@ async function handle(req, res, ctx) {
       let updated = null;
       if (action === 'cancel') updated = await ctx.scheduler.cancel(scheduledId, { reason: text(body.reason, 200) });
       else if (action === 'reschedule') updated = await ctx.scheduler.reschedule(scheduledId, body.scheduledAt);
+      else if (action === 'edit') {
+        updated = await ctx.scheduler.edit(scheduledId, {
+          scheduledAt: body.scheduledAt,
+          text: body.text,
+          templateComponents: Array.isArray(body.templateComponents) ? body.templateComponents : undefined,
+          templateBody: typeof body.templateBody === 'string' ? body.templateBody : undefined,
+        });
+      }
       else {
-        json(res, 422, { ok: false, error: 'invalid_action', actions: ['cancel', 'reschedule'] });
+        json(res, 422, { ok: false, error: 'invalid_action', actions: ['cancel', 'reschedule', 'edit'] });
         return;
       }
       json(res, 200, { ok: true, message: updated });

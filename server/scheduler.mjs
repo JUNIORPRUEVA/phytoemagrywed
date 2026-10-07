@@ -279,6 +279,45 @@ export function createScheduler(deps) {
       });
     },
 
+    /** Edita fecha y contenido de un mensaje que todavía no ha salido. */
+    async edit(id, patch = {}) {
+      const current = await db.get('scheduled_messages', id);
+      if (!current) return null;
+      if (FINAL_SCHEDULED_STATUSES.includes(current.status) && current.status !== 'BLOCKED') return current;
+      const scheduledAt = patch.scheduledAt === undefined ? current.scheduled_at : isoDate(patch.scheduledAt);
+      if (!scheduledAt) return null;
+      const next = {
+        status: 'SCHEDULED',
+        scheduled_at: scheduledAt,
+        blocked_reason: null,
+        blocked_message: null,
+        error_code: null,
+        error_message: null,
+        processed_at: null,
+        claimed_token: null,
+      };
+      if (current.type === 'text') {
+        const text = long(patch.text);
+        if (!text) return null;
+        next.text = text;
+      } else if (current.type === 'template') {
+        const components = patch.templateComponents === undefined ? current.template_components : componentsOf(patch.templateComponents);
+        const body = patch.templateBody === undefined ? current.template_body : long(patch.templateBody, 1024);
+        if (!components.length || !body) return null;
+        next.template_components = components;
+        next.template_body = body;
+      }
+      const updated = await db.update('scheduled_messages', id, next);
+      await audit?.record({
+        entity: 'message',
+        entityId: id,
+        action: 'message.updated',
+        summary: 'Mensaje programado editado',
+        idempotencyKey: `message.updated:${id}:${clock().toISOString()}`,
+      });
+      return updated;
+    },
+
     /** Los mensajes de un cliente (para su ficha 360). */
     async listForCustomer(customerId) {
       const rows = await db.list('scheduled_messages', { by: 'scheduled_at', order: 'asc' });

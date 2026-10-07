@@ -265,12 +265,12 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     setValue('#login-token', TOKEN);
     $('#login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
     await waitFor(() => !$('#app').hidden, 'el panel abierto');
-    const hoy = await waitFor(() => {
-      const html = $('#list-hoy').innerHTML;
-      return html.includes('Ana UAT') ? html : null;
-    }, 'una conversación en HOY');
-    // «Esperando respuesta» es una fila con acción directa.
-    expect(hoy).toContain('Esperando respuesta');
+    const stats = await waitFor(() => ($('#stats')?.textContent?.includes('Sin responder') ? $('#stats').textContent : null), 'el panel Hoy');
+    expect(stats).toContain('Programados activos');
+    expect(stats).toContain('Clientes');
+    expect(stats).toContain('Interesados');
+    expect(stats).toContain('Con compra');
+    expect($('#list-hoy').innerHTML.trim()).toBe('');
     expect(dom.window.localStorage.getItem('pe_crm_snapshot')).toBeTruthy();
   });
 

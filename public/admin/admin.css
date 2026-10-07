@@ -239,6 +239,11 @@ body {
   }
 }
 
+/* Hoy queda como panel de indicadores: sin listview de actividades debajo. */
+body[data-tab='hoy'] #list-hoy {
+  display: none !important;
+}
+
 @keyframes splash-load {
   0% {
     transform: translateX(-110%);
