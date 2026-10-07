@@ -84,7 +84,93 @@ export const DEFAULT_MESSAGES = [
     name: 'Agradecimiento',
     body: '¡Gracias por tu compra, {nombre}! Cualquier cosa que necesites me escribes por aquí.',
   },
+  {
+    id: 'msg-precios-phyto',
+    name: 'Precios Phytoemagry',
+    body:
+      'Precios por frasco:\n' +
+      '5 cápsulas: RD$1,250\n' +
+      '7 cápsulas: RD$1,750\n' +
+      '10 cápsulas: RD$2,500\n' +
+      '15 cápsulas: RD$3,750\n' +
+      '20 cápsulas: RD$5,000\n' +
+      '30 cápsulas: RD$6,000\n' +
+      '60 cápsulas: RD$10,000\n\n' +
+      'Dime cuál deseas y te ayudo con el pedido.',
+  },
+  {
+    id: 'msg-bienvenida-phyto',
+    name: 'Bienvenida + grupos',
+    body:
+      'Saludos {nombre}, bienvenida a Phytoemagry. Es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria. Se toma 1 cápsula al día después del desayuno.\n\n' +
+      'También puedes unirte a nuestros grupos para ver resultados, testimonios y hacer tus preguntas con más confianza:\n' +
+      'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
+      'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
+      'Grupo 2: https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n' +
+      'Grupo 3: https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n' +
+      'Grupo 4: https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
+  },
+  {
+    id: 'msg-grupos-phyto',
+    name: 'Grupos de apoyo',
+    body:
+      'Si deseas, puedes unirte a uno de nuestros grupos de WhatsApp para ver resultados, testimonios y hacer tus preguntas. Son grupos de apoyo durante tu proceso.\n\n' +
+      'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
+      'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
+      'Grupo 2: https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n' +
+      'Grupo 3: https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n' +
+      'Grupo 4: https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
+  },
+  {
+    id: 'msg-cuentas-banco',
+    name: 'Cuentas de banco',
+    body:
+      'Cuentas disponibles:\n' +
+      'Popular: 0841088008 - FULLTECH SRL\n' +
+      'BHD: 28726660019 - Yunior Lopez de la Rosa\n' +
+      'Banreservas: 9600921403 - Yunior Lopez de la Rosa\n\n' +
+      'Cuando realices el pago, envíame el comprobante por aquí, por favor.',
+  },
+  {
+    id: 'msg-modo-uso',
+    name: 'Uso recomendado',
+    body: 'Modo de uso: 1 cápsula al día después del desayuno. Si deseas, dime cuál frasco te interesa y te ayudo con el pedido.',
+  },
+  {
+    id: 'msg-como-pedir',
+    name: 'Cómo pedir',
+    body:
+      'Para hacer tu pedido solo dime el frasco que deseas, tu nombre y tu ubicación. Te confirmo disponibilidad, total y forma de entrega antes de cerrar.',
+  },
+  {
+    id: 'msg-pago-entrega',
+    name: 'Pago y entrega',
+    body:
+      'Por WhatsApp coordinamos pago y entrega. Te confirmo el total primero, y luego enviamos tu pedido con el mensajero cuando esté listo.',
+  },
 ];
+
+function seedMissingDefaultMessages(store) {
+  const current = store.messages().list();
+  const known = new Set(current.map((message) => message.id));
+  let nextPosition = current.reduce((max, message) => Math.max(max, Number(message.position ?? -1)), -1) + 1;
+  for (const [index, message] of DEFAULT_MESSAGES.entries()) {
+    if (known.has(message.id)) continue;
+    store.messages().save({ ...message, position: nextPosition || index });
+    nextPosition += 1;
+  }
+}
+
+async function seedMissingDefaultMessagesAsync(store) {
+  const current = await store.messages().list();
+  const known = new Set(current.map((message) => message.id));
+  let nextPosition = current.reduce((max, message) => Math.max(max, Number(message.position ?? -1)), -1) + 1;
+  for (const [index, message] of DEFAULT_MESSAGES.entries()) {
+    if (known.has(message.id)) continue;
+    await store.messages().save({ ...message, position: nextPosition || index });
+    nextPosition += 1;
+  }
+}
 
 // ------------------------------------------------------------------ utilidades
 
@@ -475,9 +561,7 @@ async function createSqliteStore(file) {
     },
   };
 
-  if (store.messages().list().length === 0) {
-    DEFAULT_MESSAGES.forEach((message, index) => store.messages().save({ ...message, position: index }));
-  }
+  seedMissingDefaultMessages(store);
   return store;
 }
 
@@ -586,6 +670,7 @@ function createJsonlStore(file) {
     },
     close() {},
   };
+  seedMissingDefaultMessages(store);
   return store;
 }
 
@@ -868,12 +953,7 @@ async function createPostgresStore(url) {
     },
   };
 
-  const existing = await store.messages().list();
-  if (existing.length === 0) {
-    for (const [index, message] of DEFAULT_MESSAGES.entries()) {
-      await store.messages().save({ ...message, position: index });
-    }
-  }
+  await seedMissingDefaultMessagesAsync(store);
   return store;
 }
 

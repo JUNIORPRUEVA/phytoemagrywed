@@ -120,8 +120,8 @@ describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
-    expect(html).toContain('/admin/app.js?v=seguimiento-programados-63');
-    expect(html).toContain('/admin/admin.css?v=seguimiento-programados-63');
+    expect(html).toContain('/admin/app.js?v=wa-list-legible-64');
+    expect(html).toContain('/admin/admin.css?v=wa-list-legible-64');
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');

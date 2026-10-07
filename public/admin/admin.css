@@ -11014,13 +11014,13 @@ body[data-tab='whatsapp'] .wa-filter-panel__group {
 
 body[data-tab='whatsapp'] .conv-wrap {
   grid-template-columns: minmax(0, 1fr) 30px;
-  min-height: 66px;
+  min-height: 76px;
 }
 
 body[data-tab='whatsapp'] .conv {
   grid-template-columns: minmax(0, 1fr);
-  min-height: 66px;
-  padding: 8px 6px 7px 12px;
+  min-height: 76px;
+  padding: 10px 8px 9px 14px;
 }
 
 body[data-tab='whatsapp'] .conv:has(.conv__avatar) {
@@ -11029,7 +11029,7 @@ body[data-tab='whatsapp'] .conv:has(.conv__avatar) {
 
 body[data-tab='whatsapp'] .conv__body {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -11052,9 +11052,9 @@ body[data-tab='whatsapp'] .conv__preview > span:last-child {
 body[data-tab='whatsapp'] .conv__name {
   flex: 1 1 auto;
   color: #061b14;
-  font-size: 14.2px;
+  font-size: 15.6px;
   font-weight: 790;
-  line-height: 1.12;
+  line-height: 1.18;
 }
 
 body[data-tab='whatsapp'] .conv__when {
@@ -11062,7 +11062,7 @@ body[data-tab='whatsapp'] .conv__when {
   max-width: 112px;
   overflow: hidden;
   color: #506173;
-  font-size: 10.6px;
+  font-size: 11.4px;
   font-weight: 650;
   line-height: 1.1;
   text-overflow: ellipsis;
@@ -11086,8 +11086,8 @@ body[data-tab='whatsapp'] .conv__preview {
   min-width: 0;
   overflow: hidden;
   color: #54636f;
-  font-size: 12.2px;
-  line-height: 1.2;
+  font-size: 13.4px;
+  line-height: 1.28;
   white-space: nowrap;
 }
 
@@ -11098,8 +11098,8 @@ body[data-tab='whatsapp'] .conv__line--preview .conv__unread {
 body[data-tab='whatsapp'] .conv__flags {
   display: flex;
   align-items: center;
-  gap: 5px;
-  min-height: 15px;
+  gap: 6px;
+  min-height: 17px;
   margin: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -11115,9 +11115,9 @@ body[data-tab='whatsapp'] .conv__tag {
   border: 0;
   background: transparent;
   color: #4c5d69;
-  font-size: 9.6px;
+  font-size: 10.6px;
   font-weight: 720;
-  line-height: 1.1;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -11143,7 +11143,7 @@ body[data-tab='whatsapp'] .conv__await {
 
 body[data-tab='whatsapp'] .conv__more {
   width: 30px;
-  height: 42px;
+  height: 48px;
 }
 
 body[data-tab='whatsapp'] .conv__more-icon {
@@ -11259,8 +11259,8 @@ body[data-tab='whatsapp'] .conv__more-icon {
   }
 
   body[data-tab='whatsapp'] .conv {
-    min-height: 64px;
-    padding: 8px 4px 7px 12px;
+    min-height: 72px;
+    padding: 10px 6px 9px 14px;
   }
 
   body[data-tab='whatsapp'] .conv__when {
@@ -11270,7 +11270,7 @@ body[data-tab='whatsapp'] .conv__more-icon {
   body[data-tab='whatsapp'] .conv__assign,
   body[data-tab='whatsapp'] .conv__tag {
     max-width: 56%;
-    font-size: 9.3px;
+    font-size: 10.3px;
   }
 }
 

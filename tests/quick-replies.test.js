@@ -140,6 +140,20 @@ afterAll(async () => {
 });
 
 describe('las respuestas rápidas se guardan de verdad', () => {
+  it('trae respuestas base de precios, grupos y cuentas listas para usar', async () => {
+    const listado = await qr.list();
+    const byId = new Map(listado.messages.map((row) => [row.id, row]));
+
+    expect(byId.get('msg-precios-phyto')?.body).toContain('5 cápsulas: RD$1,250');
+    expect(byId.get('msg-precios-phyto')?.body).toContain('60 cápsulas: RD$10,000');
+    expect(byId.get('msg-grupos-phyto')?.body).toContain('chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC');
+    expect(byId.get('msg-bienvenida-phyto')?.body).toContain('1 cápsula al día después del desayuno');
+    expect(byId.get('msg-cuentas-banco')?.body).toContain('Popular: 0841088008 - FULLTECH SRL');
+    expect(byId.get('msg-cuentas-banco')?.body).toContain('BHD: 28726660019 - Yunior Lopez de la Rosa');
+    expect(byId.get('msg-cuentas-banco')?.body).toContain('Banreservas: 9600921403 - Yunior Lopez de la Rosa');
+    expect(byId.get('msg-cuentas-banco')?.body).not.toMatch(/C[eé]dula|40238377333/i);
+  });
+
   it('se crean, se listan y sobreviven a volver a entrar', async () => {
     const creada = await qr.create({ name: 'Modo de uso', body: 'Tomar 1 cápsula al día después del desayuno.' });
     expect(creada.status).toBe(200);
