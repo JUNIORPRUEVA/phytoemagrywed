@@ -340,4 +340,13 @@ describe('compositor y acciones del cliente', () => {
     expect(form).toMatch(/customer\s*\?\s*''/);
     expect(app).not.toContain('Cliente precargado de la conversación');
   });
+
+  it('el formulario de pedido se adapta al ancho disponible sin scroll horizontal', () => {
+    expect(css).toMatch(/\.sheet__body \{[\s\S]*?overflow-x: hidden;/);
+    expect(css).toMatch(/\.sheet\[data-variant='order-form'\] \.sheet__body,[\s\S]*?min-width: 0;/);
+    expect(css).toContain('grid-template-columns: minmax(132px, 1fr) minmax(130px, 0.58fr);');
+    expect(css).toContain('@media (max-width: 340px)');
+    expect(css).toMatch(/\.order-create-actions \.btn \{[\s\S]*?white-space: normal;/);
+    expect(css).toContain('grid-template-columns: 38px minmax(34px, 1fr) 38px;');
+  });
 });

@@ -1050,6 +1050,7 @@ body[data-tab='hoy'] .stat__label {
 .field {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .field__label {
@@ -1062,6 +1063,7 @@ body[data-tab='hoy'] .stat__label {
 .field__area,
 .field__select {
   width: 100%;
+  min-width: 0;
   min-height: 48px;
   padding: 10px 12px;
   border: 1px solid var(--pe-border);
@@ -1173,6 +1175,7 @@ body[data-tab='hoy'] .stat__label {
   background: var(--pe-surface);
   border-radius: var(--pe-radius-lg) var(--pe-radius-lg) 0 0;
   overflow: hidden;
+  max-width: 100vw;
 }
 
 .sheet__head {
@@ -1195,7 +1198,9 @@ body[data-tab='hoy'] .stat__label {
 }
 
 .sheet__body {
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 14px 14px calc(20px + env(safe-area-inset-bottom, 0px));
   display: grid;
@@ -1486,6 +1491,12 @@ body[data-tab='hoy'] .stat__label {
   font-size: 0.98rem;
 }
 
+.sheet[data-variant='order-form'] .sheet__body,
+.sheet[data-variant='order-form'] .sheet__body > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
 .order-note-tools {
   display: flex;
   align-items: center;
@@ -1523,7 +1534,9 @@ body[data-tab='hoy'] .stat__label {
 }
 
 .order-create-actions .btn {
+  min-width: 0;
   min-height: 48px;
+  white-space: normal;
 }
 
 .order-create-delivery {
@@ -1532,6 +1545,12 @@ body[data-tab='hoy'] .stat__label {
   gap: 8px;
   box-shadow: 0 14px 26px rgba(8, 122, 91, 0.22);
   animation: order-delivery-breathe 2.8s ease-in-out infinite;
+}
+
+.order-create-delivery span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .order-create-delivery::after {
@@ -1550,6 +1569,7 @@ body[data-tab='hoy'] .stat__label {
   top: 50%;
   left: 50%;
   width: min(380px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
   display: grid;
   justify-items: stretch;
   gap: 10px;
@@ -3270,10 +3290,11 @@ body[data-tab='whatsapp'] .content {
 
 /* Líneas del pedido: frasco + cantidad, con la X para quitarla. */
 .order-line {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 118px auto;
+  grid-template-columns: minmax(150px, 0.74fr) minmax(138px, 0.36fr) auto;
   align-items: end;
-  gap: 7px;
+  gap: 8px;
   padding: 9px;
   margin-bottom: 8px;
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(241, 250, 246, 0.92));
@@ -3286,32 +3307,53 @@ body[data-tab='whatsapp'] .content {
   margin: 0;
 }
 
+.order-line > *,
+.order-add-row > *,
+.order-form-grid > *,
+.order-compact-fields > * {
+  min-width: 0;
+}
+
 .order-line__qty .field__input {
   text-align: center;
 }
 
 .qty-stepper {
   display: grid;
-  grid-template-columns: 30px minmax(34px, 1fr) 30px;
+  grid-template-columns: 38px minmax(34px, 1fr) 38px;
   align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--pe-border);
-  border-radius: 10px;
-  background: var(--pe-surface);
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid rgba(13, 110, 80, 0.16);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(234, 248, 242, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  min-width: 0;
 }
 
 .qty-stepper__btn {
-  width: 30px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   border: 0;
-  border-radius: 8px;
-  background: rgba(15, 123, 93, 0.1);
+  border-radius: 10px;
+  background: rgba(15, 123, 93, 0.14);
   color: var(--pe-brand-900);
   font: inherit;
-  font-size: 1.05rem;
+  font-size: 1.12rem;
   font-weight: 900;
+  line-height: 1;
   cursor: pointer;
+  transition:
+    transform var(--pe-motion) var(--pe-ease),
+    background var(--pe-motion) var(--pe-ease),
+    box-shadow var(--pe-motion) var(--pe-ease);
+}
+
+.qty-stepper__btn:hover,
+.qty-stepper__btn:focus-visible {
+  background: var(--pe-brand-700);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(8, 122, 91, 0.22);
 }
 
 .qty-stepper__btn:active {
@@ -3320,10 +3362,11 @@ body[data-tab='whatsapp'] .content {
 
 .qty-stepper__input {
   min-width: 0;
-  height: 32px;
+  height: 38px;
   padding-inline: 4px;
   border: 0;
   background: transparent;
+  font-weight: 850;
 }
 
 .order-add-row {
@@ -3332,13 +3375,18 @@ body[data-tab='whatsapp'] .content {
   justify-content: space-between;
   gap: 10px;
   margin: 2px 0 8px;
+  min-width: 0;
 }
 
 .order-add-row strong {
-  flex: none;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
   color: var(--pe-brand-900);
   font-size: 0.92rem;
   font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .order-compact-fields {
@@ -3413,6 +3461,7 @@ body[data-tab='whatsapp'] .content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 
 .order-form-grid .field {
@@ -3657,7 +3706,60 @@ body[data-tab='whatsapp'] .content {
 
 @media (max-width: 420px) {
   .order-line {
-    grid-template-columns: minmax(0, 1fr) 112px auto;
+    grid-template-columns: minmax(132px, 1fr) minmax(130px, 0.58fr);
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .order-line > .icon-btn {
+    grid-column: 1 / -1;
+    justify-self: end;
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+
+  .qty-stepper {
+    grid-template-columns: 34px minmax(30px, 1fr) 34px;
+    gap: 4px;
+  }
+
+  .qty-stepper__btn {
+    width: 34px;
+    height: 36px;
+  }
+
+  .qty-stepper__input {
+    height: 36px;
+  }
+
+  .order-create-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(74px, 0.42fr);
+  }
+}
+
+@media (max-width: 340px) {
+  .order-line,
+  .order-form-grid,
+  .order-form-grid--payment {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .order-line__qty {
+    width: min(172px, 100%);
+  }
+
+  .order-add-row {
+    align-items: stretch;
+  }
+
+  .order-add-row .btn {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .order-create-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 /* ==========================================================================
