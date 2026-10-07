@@ -297,12 +297,23 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     expect($('#order-save')?.textContent).toContain('Crear');
     expect($('#order-save-delivery')?.textContent).toContain('Crear y pasar a delivery');
     expect($('#order-notes-field')?.hidden).toBe(true);
+    expect($('[data-line-decrease="0"]')).toBeTruthy();
+    expect($('[data-line-increase="0"]')).toBeTruthy();
+    expect($('[data-order-toggle-field="source"]')?.textContent).toContain('Origen');
+    expect($('[data-order-toggle-field="discount"]')?.textContent).toContain('Descuento');
+    expect($('#order-source-panel')?.hidden).toBe(true);
+    expect($('#order-discount-panel')?.hidden).toBe(true);
 
     setValue('[data-line-variant="0"]', 'capsules_10');
-    setValue('[data-line-qty="0"]', '3');
+    click('[data-line-increase="0"]');
+    click('[data-line-increase="0"]');
+    expect($('[data-line-qty="0"]').value).toBe('3');
+    click('[data-order-toggle-field="discount"]');
+    expect($('#order-discount-panel')?.hidden).toBe(false);
     setValue('#order-discount', '500');
     // 3 × RD$2,500 − RD$500 = RD$7,000
     expect($('#order-total').textContent).toContain('7,000');
+    expect($('#order-discount-label').textContent).toContain('500');
 
     click('#order-save');
     const receipt = await waitFor(() => {

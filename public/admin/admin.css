@@ -3160,7 +3160,7 @@ body[data-tab='whatsapp'] .content {
 /* Líneas del pedido: frasco + cantidad, con la X para quitarla. */
 .order-line {
   display: grid;
-  grid-template-columns: 1fr 88px auto;
+  grid-template-columns: 1fr 124px auto;
   align-items: end;
   gap: 8px;
   padding: 8px;
@@ -3176,6 +3176,92 @@ body[data-tab='whatsapp'] .content {
 
 .order-line__qty .field__input {
   text-align: center;
+}
+
+.qty-stepper {
+  display: grid;
+  grid-template-columns: 34px minmax(42px, 1fr) 34px;
+  align-items: center;
+  gap: 4px;
+}
+
+.qty-stepper__btn {
+  width: 34px;
+  height: 40px;
+  border: 1px solid var(--pe-border);
+  border-radius: 9px;
+  background: var(--pe-surface);
+  color: var(--pe-brand-900);
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.qty-stepper__btn:active {
+  transform: translateY(1px);
+}
+
+.qty-stepper__input {
+  min-width: 0;
+  padding-inline: 4px;
+}
+
+.order-compact-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.order-compact-field {
+  min-width: 0;
+}
+
+.order-compact-toggle {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  padding: 8px 10px;
+  border: 1px solid var(--pe-border);
+  border-radius: 10px;
+  background: var(--pe-surface);
+  color: var(--text-primary);
+  box-shadow: 0 8px 20px rgba(3, 31, 24, 0.06);
+  cursor: pointer;
+}
+
+.order-compact-toggle span {
+  font-size: 0.68rem;
+  font-weight: 900;
+  color: var(--pe-ink-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.order-compact-toggle strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--pe-brand-900);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-compact-panel {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--pe-border);
+  border-radius: 10px;
+  background: var(--pe-surface-alt);
+}
+
+.order-compact-panel .field:last-child {
+  margin-bottom: 0;
 }
 
 /* Tarjetas de pedido en la ficha del cliente. */
@@ -7403,6 +7489,42 @@ body[data-wa-view='chat'] .mobile-header {
   color: var(--pe-brand-800);
   box-shadow: 0 16px 36px rgba(4, 30, 24, 0.22);
   backdrop-filter: blur(10px);
+}
+
+.delivery-map-mode {
+  position: absolute;
+  z-index: 620;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 92px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--pe-brand-900);
+  box-shadow: 0 16px 36px rgba(4, 30, 24, 0.2);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.delivery-map-mode .svg {
+  width: 18px;
+  height: 18px;
+}
+
+.delivery-map-mode strong {
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.delivery-map-mode:active {
+  transform: translateY(1px) scale(0.99);
 }
 
 .delivery-detail-panel {

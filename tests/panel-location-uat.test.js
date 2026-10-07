@@ -308,6 +308,7 @@ describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () =
     expect($('#order-loc').textContent).toMatch(/Casa/);
     expect($('#order-loc').textContent).toMatch(/Compartida hoy/);
     expect($('#order-loc-clear')).not.toBe(null);
+    expect($('#order-loc-current')).toBe(null);
     // Total de 10 cápsulas (RD$2,500) sin delivery.
     expect($('#order-total').textContent).toContain('1,250');
   }, 20000);
@@ -323,7 +324,7 @@ describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () =
     // La ubicación venía puesta («la de siempre»): se quita a mano y el pedido se
     // guarda igual. Es el caso de un pedido que no se entrega en ese punto.
     click('#order-loc-clear');
-    await waitFor(() => $('#order-loc').textContent.includes('Sin ubicación'), 'la opción sin ubicación', 8000);
+    await waitFor(() => $('#order-loc-field')?.hidden === true, 'la ubicación oculta', 8000);
 
     let payload = null;
     const original = dom.window.fetch;

@@ -32,25 +32,32 @@
   const NEGOCIO = 'Phytoemagry';
   const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
 
+  function isMapGestureTarget(target) {
+    return Boolean(target?.closest?.('#orders-map, #delivery-detail-map'));
+  }
+
   function lockAppZoom() {
     let lastTouchEnd = 0;
     document.addEventListener(
       'touchmove',
       (event) => {
-        if (event.touches && event.touches.length > 1) event.preventDefault();
+        if (event.touches && event.touches.length > 1 && !isMapGestureTarget(event.target)) event.preventDefault();
       },
       { passive: false },
     );
     document.addEventListener(
       'touchend',
       (event) => {
+        if (isMapGestureTarget(event.target)) return;
         const now = Date.now();
         if (now - lastTouchEnd <= 300) event.preventDefault();
         lastTouchEnd = now;
       },
       { passive: false },
     );
-    document.addEventListener('gesturestart', (event) => event.preventDefault());
+    document.addEventListener('gesturestart', (event) => {
+      if (!isMapGestureTarget(event.target)) event.preventDefault();
+    });
   }
 
   /** Estado en memoria del panel. */
@@ -160,6 +167,8 @@
     deliveryDetailMap: {
       map: null,
       baseLayer: null,
+      labelLayer: null,
+      base: 'satelite',
       customerMarker: null,
       deliveryMarker: null,
       routeLine: null,
@@ -280,7 +289,7 @@
       attribution: 'Imágenes &copy; Esri, Maxar, Earthstar Geographics',
       provider: 'Esri World Imagery',
       maxNativeZoom: 18,
-      maxZoom: 20,
+      maxZoom: 22,
       labels: true,
       /*
        * Este proveedor sirve unos niveles en unas zonas y en otras no: el techo se
@@ -295,7 +304,7 @@
       attribution: '&copy; OpenStreetMap contributors',
       provider: 'OpenStreetMap',
       maxNativeZoom: 19,
-      maxZoom: 20,
+      maxZoom: 22,
       labels: false,
       probe: false,
     },
@@ -3411,7 +3420,7 @@
       </div>`;
     }
     const [lat, lng] = route.destination;
-    const tileUrl = tileUrlFor(MAP_BASE_LAYERS.calles.url, 16, lat, lng);
+    const tileUrl = tileUrlFor(MAP_BASE_LAYERS.satelite.url, 16, lat, lng);
     const title = `Entrega ${order.order_number ?? order.id}`;
     const facts = [
       route.distanceLabel && route.etaLabel ? `${route.distanceLabel} · ${route.etaLabel} aprox.` : null,
@@ -3441,6 +3450,7 @@
 
   function resetDeliveryDetailMap() {
     const detail = state.deliveryDetailMap;
+    const base = detail?.base && MAP_BASE_LAYERS[detail.base] ? detail.base : 'satelite';
     if (detail?.map) {
       try {
         detail.map.remove();
@@ -3451,11 +3461,78 @@
     state.deliveryDetailMap = {
       map: null,
       baseLayer: null,
+      labelLayer: null,
+      base,
       customerMarker: null,
       deliveryMarker: null,
       routeLine: null,
       orderId: null,
     };
+  }
+
+  function deliveryDetailBaseKey() {
+    return MAP_BASE_LAYERS[state.deliveryDetailMap?.base] ? state.deliveryDetailMap.base : 'satelite';
+  }
+
+  function deliveryDetailMapModeHtml() {
+    const base = deliveryDetailBaseKey();
+    const nextLabel = base === 'satelite' ? 'Normal' : 'Satélite';
+    return `<button class="delivery-map-mode" data-delivery-map-mode type="button" aria-label="Cambiar vista del mapa a ${escapeHtml(nextLabel)}" title="Cambiar a ${escapeHtml(nextLabel)}">
+      <span>${ICONS.pin}</span>
+      <strong>${escapeHtml(nextLabel)}</strong>
+    </button>`;
+  }
+
+  function syncDeliveryDetailMapModeButton() {
+    const button = $('[data-delivery-map-mode]');
+    if (!button) return;
+    const base = deliveryDetailBaseKey();
+    const nextLabel = base === 'satelite' ? 'Normal' : 'Satélite';
+    button.setAttribute('aria-label', `Cambiar vista del mapa a ${nextLabel}`);
+    button.setAttribute('title', `Cambiar a ${nextLabel}`);
+    const label = button.querySelector('strong');
+    if (label) label.textContent = nextLabel;
+  }
+
+  function addDeliveryDetailMapBase(map, key = deliveryDetailBaseKey()) {
+    if (!map || !window.L) return null;
+    const detail = state.deliveryDetailMap;
+    const configKey = MAP_BASE_LAYERS[key] ? key : 'satelite';
+    const config = MAP_BASE_LAYERS[configKey];
+    detail.baseLayer?.remove?.();
+    detail.labelLayer?.remove?.();
+    detail.labelLayer = null;
+    detail.base = configKey;
+    const layer = window.L.tileLayer(config.url, {
+      ...MAP_TILE_TUNING,
+      maxZoom: config.maxZoom,
+      maxNativeZoom: config.maxNativeZoom,
+      attribution: config.attribution,
+    });
+    layer.setZIndex?.(1);
+    layer.addTo(map);
+    detail.baseLayer = layer;
+    if (config.labels) {
+      const labels = window.L.tileLayer(MAP_LABEL_LAYER.url, {
+        ...MAP_TILE_TUNING,
+        maxNativeZoom: MAP_LABEL_LAYER.maxNativeZoom,
+        maxZoom: MAP_LABEL_LAYER.maxZoom,
+        attribution: MAP_LABEL_LAYER.attribution,
+        pane: 'overlayPane',
+      });
+      labels.setZIndex?.(4);
+      labels.addTo(map);
+      detail.labelLayer = labels;
+    }
+    syncDeliveryDetailMapModeButton();
+    return layer;
+  }
+
+  function toggleDeliveryDetailMapBase() {
+    const next = deliveryDetailBaseKey() === 'satelite' ? 'calles' : 'satelite';
+    state.deliveryDetailMap.base = next;
+    addDeliveryDetailMapBase(state.deliveryDetailMap.map, next);
+    syncDeliveryDetailMapModeButton();
   }
 
   function ensureDeliveryDetailMap(order) {
@@ -3468,7 +3545,12 @@
       map = window.L.map(el, {
         zoomControl: false,
         attributionControl: false,
-        scrollWheelZoom: false,
+        touchZoom: 'center',
+        doubleClickZoom: true,
+        scrollWheelZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        maxZoom: 22,
         tap: true,
       });
     } catch {
@@ -3477,16 +3559,21 @@
       } catch {
         /* nada que limpiar */
       }
-      map = window.L.map(el, { zoomControl: false, attributionControl: false, scrollWheelZoom: false, tap: true });
+      map = window.L.map(el, {
+        zoomControl: false,
+        attributionControl: false,
+        touchZoom: 'center',
+        doubleClickZoom: true,
+        scrollWheelZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        maxZoom: 22,
+        tap: true,
+      });
     }
-    const base = MAP_BASE_LAYERS.calles;
-    state.deliveryDetailMap.baseLayer = window.L.tileLayer(base.url, {
-      maxZoom: base.maxZoom,
-      maxNativeZoom: base.maxNativeZoom,
-      attribution: base.attribution,
-    }).addTo(map);
     state.deliveryDetailMap.map = map;
     state.deliveryDetailMap.orderId = order?.id ?? null;
+    addDeliveryDetailMapBase(map);
     return map;
   }
 
@@ -3721,6 +3808,7 @@
       box.innerHTML = `<div class="delivery-detail-screen">
         <div class="delivery-detail-map" id="delivery-detail-map" aria-label="Mapa de entrega"></div>
         <button class="icon-btn delivery-detail-back" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
+        ${deliveryDetailMapModeHtml()}
         ${deliveryDetailPanelHtml(active)}
       </div>`;
       if (visible) setTimeout(() => updateDeliveryDetailMap(active), 0);
@@ -9594,6 +9682,17 @@
         </div>`
       : '';
 
+    let chosenLocation = draftData?.chosenLocation && locationCoordsOk(draftData.chosenLocation)
+      ? { ...draftData.chosenLocation }
+      : location && locationCoordsOk(location)
+      ? { ...location }
+      : order?.delivery?.location
+        ? { ...order.delivery.location, id: order.delivery.location.source_location_id ?? null }
+        : customerId
+          ? preferredDeliveryLocation(customerId, customerLocations)
+          : null;
+    chosenLocation = chosenLocation && locationCoordsOk(chosenLocation) ? chosenLocation : null;
+
     openSheet(
       `${
         orderId
@@ -9634,38 +9733,53 @@
           : ''
       }
       <div id="order-lines"></div>
-      <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>      <label class="field">
-        <span class="field__label">Origen de la venta</span>
-        <select class="field__select" id="order-source">
-          ${['META_ADS', 'ORGANIC', 'REFERRAL', 'WHATSAPP', 'MANUAL', 'OTHER']
-            .map(
-              (value) =>
-                `<option value="${escapeHtml(value)}" ${value === defaultSource ? 'selected' : ''}>${escapeHtml(sourceLabel(value))}</option>`,
-            )
-            .join('')}
-        </select>
-      </label>
-      <div id="order-source-meta">
-        <label class="field">
-          <span class="field__label">Campaña (opcional)</span>
-          <input class="field__input" id="order-source-campaign" value="${escapeHtml(defaultCampaign)}" placeholder="Nombre o ID si existe" />
-        </label>
-        <label class="field">
-          <span class="field__label">Anuncio (opcional)</span>
-          <input class="field__input" id="order-source-ad" value="${escapeHtml(defaultAd)}" placeholder="Nombre o ID si existe" />
-        </label>
-        <label class="field">
-          <span class="field__label">Nota de origen (opcional)</span>
-        <input class="field__input" id="order-source-note" value="${escapeHtml(defaultSourceNote)}" />
-        </label>
+      <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+      <div class="order-compact-fields">
+        <div class="order-compact-field">
+          <button class="order-compact-toggle" data-order-toggle-field="source" type="button">
+            <span>Origen</span><strong id="order-source-label">${escapeHtml(sourceLabel(defaultSource))}</strong>
+          </button>
+          <div class="order-compact-panel" id="order-source-panel" hidden>
+            <label class="field">
+              <span class="field__label">Origen de la venta</span>
+              <select class="field__select" id="order-source">
+                ${['META_ADS', 'ORGANIC', 'REFERRAL', 'WHATSAPP', 'MANUAL', 'OTHER']
+                  .map(
+                    (value) =>
+                      `<option value="${escapeHtml(value)}" ${value === defaultSource ? 'selected' : ''}>${escapeHtml(sourceLabel(value))}</option>`,
+                  )
+                  .join('')}
+              </select>
+            </label>
+            <div id="order-source-meta">
+              <label class="field">
+                <span class="field__label">Campaña (opcional)</span>
+                <input class="field__input" id="order-source-campaign" value="${escapeHtml(defaultCampaign)}" placeholder="Nombre o ID si existe" />
+              </label>
+              <label class="field">
+                <span class="field__label">Anuncio (opcional)</span>
+                <input class="field__input" id="order-source-ad" value="${escapeHtml(defaultAd)}" placeholder="Nombre o ID si existe" />
+              </label>
+              <label class="field">
+                <span class="field__label">Nota de origen (opcional)</span>
+                <input class="field__input" id="order-source-note" value="${escapeHtml(defaultSourceNote)}" />
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="order-compact-field">
+          <button class="order-compact-toggle" data-order-toggle-field="discount" type="button">
+            <span>Descuento</span><strong id="order-discount-label">${defaultDiscount ? money(defaultDiscount) : 'Sin descuento'}</strong>
+          </button>
+          <div class="order-compact-panel" id="order-discount-panel" ${defaultDiscount ? '' : 'hidden'}>
+            <label class="field">
+              <span class="field__label">Descuento (RD$)</span>
+              <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${defaultDiscount}" placeholder="0" />
+            </label>
+          </div>
+        </div>
       </div>
-      <label class="field">
-        <span class="field__label">Descuento (opcional, RD$)</span>
-        <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${
-          defaultDiscount
-        }" />
-      </label>
-      <div class="field">
+      <div class="field" id="order-loc-field" ${chosenLocation ? '' : 'hidden'}>
         <span class="field__label">Ubicación de entrega (opcional)</span>
         <div id="order-loc"></div>
       </div>
@@ -9762,7 +9876,11 @@
           </label>
           <label class="field order-line__qty">
             <span class="field__label">Cantidad</span>
-            <input class="field__input" type="number" min="1" step="1" value="${line.quantity}" data-line-qty="${index}" />
+            <span class="qty-stepper">
+              <button class="qty-stepper__btn" data-line-decrease="${index}" type="button" aria-label="Disminuir cantidad">-</button>
+              <input class="field__input qty-stepper__input" type="number" min="1" step="1" value="${line.quantity}" data-line-qty="${index}" />
+              <button class="qty-stepper__btn" data-line-increase="${index}" type="button" aria-label="Aumentar cantidad">+</button>
+            </span>
           </label>
           ${
             lines.length > 1
@@ -9780,6 +9898,8 @@
         Number($('#order-discount')?.value) || 0,
         Number($('#order-fee')?.value) || 0,
       );
+      const discountLabel = $('#order-discount-label');
+      if (discountLabel) discountLabel.textContent = totals.discount ? money(totals.discount) : 'Sin descuento';
       const box = $('#order-total');
       if (!box) return;
       const stock = state.inventory;
@@ -9796,24 +9916,16 @@
         : 'Elige al menos un frasco del catálogo.';
     };
 
-    /*
-     * UBICACIÓN DE ENTREGA (opcional). Se elige DENTRO del propio formulario, sin
-     * abrir otra hoja: así no se pierde lo que ya estaba escrito (§9, §10, §24).
-     * Nunca se pide el permiso de ubicación al abrir: solo al pulsar el botón.
-     */
-    let chosenLocation = draftData?.chosenLocation && locationCoordsOk(draftData.chosenLocation)
-      ? { ...draftData.chosenLocation }
-      : location && locationCoordsOk(location)
-      ? { ...location }
-      : order?.delivery?.location
-        ? { ...order.delivery.location, id: order.delivery.location.source_location_id ?? null }
-        : customerId
-          ? preferredDeliveryLocation(customerId, customerLocations)
-          : null;
-    chosenLocation = chosenLocation && locationCoordsOk(chosenLocation) ? chosenLocation : null;
     const renderLocationBlock = () => {
       const box = $('#order-loc');
+      const field = $('#order-loc-field');
       if (!box) return;
+      if (!chosenLocation) {
+        box.innerHTML = '';
+        if (field) field.hidden = true;
+        return;
+      }
+      if (field) field.hidden = false;
       if (chosenLocation) {
         /*
          * La ubicación viene puesta (la de siempre), pero SIEMPRE con su edad a la
@@ -9831,46 +9943,6 @@
         });
         return;
       }
-      const visible = customerLocations.slice(0, 3);
-      const rest = customerLocations.slice(3);
-      const option = (location) => `
-        <label class="loc-option">
-          <input type="radio" name="order-loc-pick" value="${escapeHtml(location.id)}" />
-          <span class="loc-option__body"><strong>${escapeHtml(locationTitle(location))}</strong>
-          <small>${escapeHtml(locationContext(location).address ?? 'Solo coordenadas')}${
-            location.age_label ? ` · ${escapeHtml(location.age_label)}` : ''
-          }</small></span>
-          ${location.map_url ? `<a class="loc__link" href="${escapeHtml(location.map_url)}" target="_blank" rel="noopener noreferrer">Ver mapa</a>` : ''}
-        </label>`;
-      box.innerHTML = `
-        <p class="view__hint">Puede ir sin ubicación: el pedido se guarda igual.</p>
-        <label class="loc-option">
-          <input type="radio" name="order-loc-pick" value="" checked />
-          <span class="loc-option__body"><strong>Sin ubicación</strong><small>No hace falta dirección ni ciudad.</small></span>
-        </label>
-        ${visible.map(option).join('')}
-        ${rest.length ? `<details class="loc-history"><summary>Ver historial (${rest.length})</summary>${rest.map(option).join('')}</details>` : ''}
-        <button class="btn btn--ghost btn--sm" id="order-loc-current" type="button">Usar la ubicación de este dispositivo</button>`;
-      $('#order-loc-current').addEventListener('click', async (event) => {
-        await working(event.currentTarget, 'Buscando…', async () => {
-          const found = await getBrowserLocation();
-          if (!found.ok) {
-            toast(found.message);
-            return;
-          }
-          chosenLocation = found.location;
-          renderLocationBlock();
-          persistOrderDraft();
-        });
-      });
-      box.addEventListener('change', (event) => {
-        const value = event.target.closest('[name="order-loc-pick"]')?.value ?? '';
-        if (value) {
-          chosenLocation = customerLocations.find((row) => row.id === value) ?? null;
-          renderLocationBlock();
-          persistOrderDraft();
-        }
-      });
     };
     renderLocationBlock();
 
@@ -9887,6 +9959,16 @@
       }
     });
     linesBox.addEventListener('click', (event) => {
+      const increase = event.target.closest('[data-line-increase]');
+      const decrease = event.target.closest('[data-line-decrease]');
+      if (increase || decrease) {
+        const index = Number((increase ?? decrease).dataset.lineIncrease ?? (increase ?? decrease).dataset.lineDecrease);
+        const current = Math.max(1, Number(lines[index]?.quantity) || 1);
+        lines[index].quantity = increase ? current + 1 : Math.max(1, current - 1);
+        renderLines();
+        persistOrderDraft();
+        return;
+      }
       const remove = event.target.closest('[data-line-remove]');
       if (!remove) return;
       lines = lines.filter((_, index) => index !== Number(remove.dataset.lineRemove));
@@ -9900,9 +9982,23 @@
     });
     $('#order-discount').addEventListener('input', refreshOrderTotal);
     $('#order-fee').addEventListener('input', refreshOrderTotal);
+    document.querySelectorAll('[data-order-toggle-field]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const target = button.dataset.orderToggleField;
+        const panel = target === 'source' ? $('#order-source-panel') : $('#order-discount-panel');
+        if (!panel) return;
+        panel.hidden = !panel.hidden;
+        if (!panel.hidden) {
+          if (target === 'source') $('#order-source')?.focus();
+          else $('#order-discount')?.focus();
+        }
+      });
+    });
     const refreshSourceFields = () => {
       const box = $('#order-source-meta');
       if (box) box.hidden = $('#order-source')?.value !== 'META_ADS';
+      const label = $('#order-source-label');
+      if (label) label.textContent = sourceLabel($('#order-source')?.value ?? defaultSource);
     };
     $('#order-source')?.addEventListener('change', refreshSourceFields);
     refreshSourceFields();
@@ -11088,7 +11184,17 @@
      * already initialized») y la pantalla se quedaba muerta para siempre. Se limpia
      * la marca y se reintenta UNA vez: un fallo puntual no puede matar el mapa.
      */
-    const crearMapa = () => window.L.map(el, { zoomControl: true, attributionControl: true });
+    const crearMapa = () =>
+      window.L.map(el, {
+        zoomControl: true,
+        attributionControl: true,
+        touchZoom: 'center',
+        doubleClickZoom: true,
+        scrollWheelZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        maxZoom: 22,
+      });
     let map;
     try {
       map = crearMapa();
@@ -14260,6 +14366,10 @@
         delete document.body.dataset.deliveryDetail;
         setTab('delivery', { silent: true });
         renderDelivery();
+        return;
+      }
+      if (event.target.closest('[data-delivery-map-mode]')) {
+        toggleDeliveryDetailMapBase();
         return;
       }
       const deliveryFocus = event.target.closest('[data-delivery-focus]');

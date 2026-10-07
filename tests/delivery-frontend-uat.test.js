@@ -32,6 +32,9 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('if (meters === null || meters === undefined || meters === \'\') return \'\';');
     expect(app).toContain('const measuredDistance = current && destination ? metersBetween(current, destination) : null;');
     expect(app).toContain('class="delivery-detail-map" id="delivery-detail-map"');
+    expect(app).toContain('class="delivery-map-mode" data-delivery-map-mode');
+    expect(app).toContain("return MAP_BASE_LAYERS[state.deliveryDetailMap?.base] ? state.deliveryDetailMap.base : 'satelite';");
+    expect(app).toContain('function toggleDeliveryDetailMapBase');
     expect(app).toContain(".bindTooltip('Cliente'");
     expect(app).toContain(".bindTooltip('Tu ubicación'");
     expect(app).toContain('if (activeOrder && session.order_id === activeOrder.id) updateDeliveryDetailMap(activeOrder);');
@@ -39,6 +42,9 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('function deliveryDetailPanelHtml');
     expect(app).toContain("document.body.dataset.deliveryDetail = 'true'");
     expect(app).toContain('function openDeliveryOrderDetail');
+    expect(app).toContain("touchZoom: 'center'");
+    expect(app).toContain('scrollWheelZoom: true');
+    expect(app).toContain('maxZoom: 22');
     expect(app).toContain('Delivery cobrado');
     expect(app).toContain('Primero contacta al cliente');
     expect(app).toContain('Luego podrás iniciar la entrega.');
@@ -93,13 +99,15 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain("'touchmove'");
     expect(app).toContain("document.addEventListener('gesturestart'");
     expect(app).toContain('lockAppZoom();');
+    expect(app).toContain('function isMapGestureTarget');
+    expect(app).toContain("'#orders-map, #delivery-detail-map'");
   });
 
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
-    expect(html).toContain('/admin/app.js?v=order-draft-location-50');
-    expect(html).toContain('/admin/admin.css?v=order-draft-location-50');
+    expect(html).toContain('/admin/app.js?v=map-manual-zoom-53');
+    expect(html).toContain('/admin/admin.css?v=map-manual-zoom-53');
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');

@@ -799,7 +799,7 @@ describe('techo de imagen real por zona', () => {
       await irAZona(zona);
 
       expect(capaSatelite().options.maxNativeZoom).toBe(19);
-      expect(capaSatelite().options.maxZoom).toBe(20);
+      expect(capaSatelite().options.maxZoom).toBe(22);
       expect(capaSatelite().options.maxZoom).toBeGreaterThan(19);
       expect($('#mapa-estado').textContent).toContain('imagen z19');
 
