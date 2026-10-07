@@ -144,13 +144,15 @@ describe('las respuestas rápidas se guardan de verdad', () => {
     const listado = await qr.list();
     const byId = new Map(listado.messages.map((row) => [row.id, row]));
 
-    expect(byId.get('msg-precios-phyto')?.body).toContain('5 cápsulas: RD$1,250');
-    expect(byId.get('msg-precios-phyto')?.body).toContain('60 cápsulas: RD$10,000');
+    expect(byId.get('msg-precios-phyto')?.body).toContain('*Precios Phytoemagry*');
+    expect(byId.get('msg-precios-phyto')?.body).toContain('5 cápsulas - RD$1,250');
+    expect(byId.get('msg-precios-phyto')?.body).toContain('60 cápsulas - RD$10,000');
     expect(byId.get('msg-grupos-phyto')?.body).toContain('chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC');
+    expect(byId.get('msg-grupos-phyto')?.body).toContain('*Grupos de apoyo Phytoemagry*');
     expect(byId.get('msg-bienvenida-phyto')?.body).toContain('1 cápsula al día después del desayuno');
-    expect(byId.get('msg-cuentas-banco')?.body).toContain('Popular: 0841088008 - FULLTECH SRL');
-    expect(byId.get('msg-cuentas-banco')?.body).toContain('BHD: 28726660019 - Yunior Lopez de la Rosa');
-    expect(byId.get('msg-cuentas-banco')?.body).toContain('Banreservas: 9600921403 - Yunior Lopez de la Rosa');
+    expect(byId.get('msg-cuentas-banco')?.body).toContain('Banco Popular\nFULLTECH SRL\n0841088008');
+    expect(byId.get('msg-cuentas-banco')?.body).toContain('BHD\nYunior Lopez de la Rosa\n28726660019');
+    expect(byId.get('msg-cuentas-banco')?.body).toContain('Banreservas\nYunior Lopez de la Rosa\n9600921403');
     expect(byId.get('msg-cuentas-banco')?.body).not.toMatch(/C[eé]dula|40238377333/i);
   });
 

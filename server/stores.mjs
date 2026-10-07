@@ -88,73 +88,183 @@ export const DEFAULT_MESSAGES = [
     id: 'msg-precios-phyto',
     name: 'Precios Phytoemagry',
     body:
-      'Precios por frasco:\n' +
-      '5 cápsulas: RD$1,250\n' +
-      '7 cápsulas: RD$1,750\n' +
-      '10 cápsulas: RD$2,500\n' +
-      '15 cápsulas: RD$3,750\n' +
-      '20 cápsulas: RD$5,000\n' +
-      '30 cápsulas: RD$6,000\n' +
-      '60 cápsulas: RD$10,000\n\n' +
-      'Dime cuál deseas y te ayudo con el pedido.',
+      '*Precios Phytoemagry*\n\n' +
+      '5 cápsulas - RD$1,250\n' +
+      '7 cápsulas - RD$1,750\n' +
+      '10 cápsulas - RD$2,500\n' +
+      '15 cápsulas - RD$3,750\n' +
+      '20 cápsulas - RD$5,000\n' +
+      '30 cápsulas - RD$6,000\n' +
+      '60 cápsulas - RD$10,000\n\n' +
+      'Dime cuál frasco deseas y te ayudo con tu pedido.',
   },
   {
     id: 'msg-bienvenida-phyto',
     name: 'Bienvenida + grupos',
     body:
-      'Saludos {nombre}, bienvenida a Phytoemagry. Es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria. Se toma 1 cápsula al día después del desayuno.\n\n' +
-      'También puedes unirte a nuestros grupos para ver resultados, testimonios y hacer tus preguntas con más confianza:\n' +
-      'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
-      'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
-      'Grupo 2: https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n' +
-      'Grupo 3: https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n' +
-      'Grupo 4: https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
+      'Saludos {nombre}, bienvenida a *Phytoemagry*.\n\n' +
+      'Phytoemagry es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria.\n\n' +
+      '*Modo de uso*\n' +
+      '1 cápsula al día después del desayuno.\n\n' +
+      '*Grupos de apoyo*\n' +
+      'Puedes unirte para ver testimonios, resultados y hacer tus preguntas con más confianza:\n\n' +
+      'Grupo 5\n' +
+      'https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n\n' +
+      'Grupo 1\n' +
+      'https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n\n' +
+      'Grupo 2\n' +
+      'https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n\n' +
+      'Grupo 3\n' +
+      'https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n\n' +
+      'Grupo 4\n' +
+      'https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
   },
   {
     id: 'msg-grupos-phyto',
     name: 'Grupos de apoyo',
     body:
-      'Si deseas, puedes unirte a uno de nuestros grupos de WhatsApp para ver resultados, testimonios y hacer tus preguntas. Son grupos de apoyo durante tu proceso.\n\n' +
-      'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
-      'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
-      'Grupo 2: https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n' +
-      'Grupo 3: https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n' +
-      'Grupo 4: https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
+      '*Grupos de apoyo Phytoemagry*\n\n' +
+      'Puedes unirte para ver testimonios, resultados y hacer todas tus preguntas durante tu proceso.\n\n' +
+      'Grupo 5\n' +
+      'https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n\n' +
+      'Grupo 1\n' +
+      'https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n\n' +
+      'Grupo 2\n' +
+      'https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n\n' +
+      'Grupo 3\n' +
+      'https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n\n' +
+      'Grupo 4\n' +
+      'https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
   },
   {
     id: 'msg-cuentas-banco',
     name: 'Cuentas de banco',
     body:
-      'Cuentas disponibles:\n' +
-      'Popular: 0841088008 - FULLTECH SRL\n' +
-      'BHD: 28726660019 - Yunior Lopez de la Rosa\n' +
-      'Banreservas: 9600921403 - Yunior Lopez de la Rosa\n\n' +
+      '*Cuentas disponibles*\n\n' +
+      'Banco Popular\n' +
+      'FULLTECH SRL\n' +
+      '0841088008\n\n' +
+      'BHD\n' +
+      'Yunior Lopez de la Rosa\n' +
+      '28726660019\n\n' +
+      'Banreservas\n' +
+      'Yunior Lopez de la Rosa\n' +
+      '9600921403\n\n' +
       'Cuando realices el pago, envíame el comprobante por aquí, por favor.',
   },
   {
     id: 'msg-modo-uso',
     name: 'Uso recomendado',
-    body: 'Modo de uso: 1 cápsula al día después del desayuno. Si deseas, dime cuál frasco te interesa y te ayudo con el pedido.',
+    body:
+      '*Uso recomendado*\n\n' +
+      'Tomar 1 cápsula al día después del desayuno.\n\n' +
+      'Si deseas, dime cuál frasco te interesa y te ayudo con tu pedido.',
   },
   {
     id: 'msg-como-pedir',
     name: 'Cómo pedir',
     body:
-      'Para hacer tu pedido solo dime el frasco que deseas, tu nombre y tu ubicación. Te confirmo disponibilidad, total y forma de entrega antes de cerrar.',
+      '*Para hacer tu pedido*\n\n' +
+      'Envíame estos datos:\n' +
+      'Nombre\n' +
+      'Frasco que deseas\n' +
+      'Ubicación o sector\n\n' +
+      'Con eso te confirmo disponibilidad, total y forma de entrega antes de cerrar.',
   },
   {
     id: 'msg-pago-entrega',
     name: 'Pago y entrega',
     body:
-      'Por WhatsApp coordinamos pago y entrega. Te confirmo el total primero, y luego enviamos tu pedido con el mensajero cuando esté listo.',
+      '*Pago y entrega*\n\n' +
+      'Por WhatsApp coordinamos todo contigo.\n\n' +
+      'Primero te confirmo el total del pedido. Luego coordinamos el pago y enviamos tu pedido con el mensajero cuando esté listo.',
   },
 ];
 
+const LEGACY_DEFAULT_MESSAGE_BODIES = new Map([
+  [
+    'msg-precios-phyto',
+    [
+      'Precios por frasco:\n' +
+        '5 cápsulas: RD$1,250\n' +
+        '7 cápsulas: RD$1,750\n' +
+        '10 cápsulas: RD$2,500\n' +
+        '15 cápsulas: RD$3,750\n' +
+        '20 cápsulas: RD$5,000\n' +
+        '30 cápsulas: RD$6,000\n' +
+        '60 cápsulas: RD$10,000\n\n' +
+        'Dime cuál deseas y te ayudo con el pedido.',
+    ],
+  ],
+  [
+    'msg-bienvenida-phyto',
+    [
+      'Saludos {nombre}, bienvenida a Phytoemagry. Es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria. Se toma 1 cápsula al día después del desayuno.\n\n' +
+        'También puedes unirte a nuestros grupos para ver resultados, testimonios y hacer tus preguntas con más confianza:\n' +
+        'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
+        'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
+        'Grupo 2: https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n' +
+        'Grupo 3: https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n' +
+        'Grupo 4: https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
+    ],
+  ],
+  [
+    'msg-grupos-phyto',
+    [
+      'Si deseas, puedes unirte a uno de nuestros grupos de WhatsApp para ver resultados, testimonios y hacer tus preguntas. Son grupos de apoyo durante tu proceso.\n\n' +
+        'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
+        'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
+        'Grupo 2: https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n' +
+        'Grupo 3: https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n' +
+        'Grupo 4: https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
+    ],
+  ],
+  [
+    'msg-cuentas-banco',
+    [
+      'Cuentas disponibles:\n' +
+        'Popular: 0841088008 - FULLTECH SRL\n' +
+        'BHD: 28726660019 - Yunior Lopez de la Rosa\n' +
+        'Banreservas: 9600921403 - Yunior Lopez de la Rosa\n\n' +
+        'Cuando realices el pago, envíame el comprobante por aquí, por favor.',
+    ],
+  ],
+  [
+    'msg-modo-uso',
+    [
+      'Modo de uso: 1 cápsula al día después del desayuno. Si deseas, dime cuál frasco te interesa y te ayudo con el pedido.',
+    ],
+  ],
+  [
+    'msg-como-pedir',
+    [
+      'Para hacer tu pedido solo dime el frasco que deseas, tu nombre y tu ubicación. Te confirmo disponibilidad, total y forma de entrega antes de cerrar.',
+    ],
+  ],
+  [
+    'msg-pago-entrega',
+    [
+      'Por WhatsApp coordinamos pago y entrega. Te confirmo el total primero, y luego enviamos tu pedido con el mensajero cuando esté listo.',
+    ],
+  ],
+]);
+
+function shouldUpgradeDefaultMessage(current, next) {
+  if (!current) return false;
+  return (LEGACY_DEFAULT_MESSAGE_BODIES.get(next.id) ?? []).includes(String(current.body ?? ''));
+}
+
 function seedMissingDefaultMessages(store) {
   const current = store.messages().list();
-  const known = new Set(current.map((message) => message.id));
+  const currentById = new Map(current.map((message) => [message.id, message]));
+  const known = new Set(currentById.keys());
   let nextPosition = current.reduce((max, message) => Math.max(max, Number(message.position ?? -1)), -1) + 1;
   for (const [index, message] of DEFAULT_MESSAGES.entries()) {
+    const existing = currentById.get(message.id);
+    if (existing && shouldUpgradeDefaultMessage(existing, message)) {
+      store.messages().save({ ...message, position: existing.position ?? index });
+      continue;
+    }
     if (known.has(message.id)) continue;
     store.messages().save({ ...message, position: nextPosition || index });
     nextPosition += 1;
@@ -163,9 +273,15 @@ function seedMissingDefaultMessages(store) {
 
 async function seedMissingDefaultMessagesAsync(store) {
   const current = await store.messages().list();
-  const known = new Set(current.map((message) => message.id));
+  const currentById = new Map(current.map((message) => [message.id, message]));
+  const known = new Set(currentById.keys());
   let nextPosition = current.reduce((max, message) => Math.max(max, Number(message.position ?? -1)), -1) + 1;
   for (const [index, message] of DEFAULT_MESSAGES.entries()) {
+    const existing = currentById.get(message.id);
+    if (existing && shouldUpgradeDefaultMessage(existing, message)) {
+      await store.messages().save({ ...message, position: existing.position ?? index });
+      continue;
+    }
     if (known.has(message.id)) continue;
     await store.messages().save({ ...message, position: nextPosition || index });
     nextPosition += 1;
