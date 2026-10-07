@@ -4,7 +4,7 @@ import { parseCoordinates } from './locations.mjs';
 
 export const TRACKING_STATUSES = Object.freeze(['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED']);
 export const ACTIVE_TRACKING_STATUS = 'ACTIVE';
-export const STALE_LOCATION_MS = 60_000;
+export const STALE_LOCATION_MS = 5 * 60_000;
 export const ARRIVAL_RADIUS_M = 50;
 export const MIN_POINT_SECONDS = 5;
 export const MIN_POINT_METERS = 10;

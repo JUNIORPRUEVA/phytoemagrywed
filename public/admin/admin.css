@@ -64,6 +64,67 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body,
+button,
+a,
+[role='button'],
+.btn,
+.icon-btn,
+.tab,
+.chip,
+.stat,
+.item,
+.menu-item,
+.drawer__item,
+.client-row,
+.order-row,
+.delivery-card,
+.wa-row,
+.notice,
+.daily-close,
+.profile-earnings {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button,
+a,
+[role='button'],
+.btn,
+.icon-btn,
+.tab,
+.chip,
+.stat,
+.item,
+.menu-item,
+.drawer__item,
+.client-row,
+.order-row,
+.delivery-card,
+.wa-row {
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+select,
+[contenteditable='true'],
+.wa-message,
+.message,
+.bubble,
+.field__input,
+.field__select {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /*
  * `hidden` SIEMPRE oculta. Hacía falta porque una regla propia (por ejemplo
  * `.btn { display: inline-flex }`) le gana a la del navegador y un botón marcado
@@ -1873,6 +1934,85 @@ body[data-tab='hoy'] .stat__label {
 #profile-view .field__input[disabled] {
   background: var(--pe-surface-alt);
   color: var(--pe-ink-500);
+}
+
+.profile-earnings {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(8, 122, 91, 0.18);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(8, 122, 91, 0.1), rgba(255, 255, 255, 0.86)),
+    rgba(255, 255, 255, 0.82);
+  box-shadow: 0 14px 34px rgba(7, 61, 46, 0.08);
+}
+
+.profile-earnings__icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: rgba(8, 122, 91, 0.12);
+  color: var(--phyto-primary);
+}
+
+.profile-earnings__head {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-earnings__head strong,
+.profile-earnings__total {
+  color: var(--pe-ink-900);
+}
+
+.profile-earnings__head small,
+.profile-earnings p,
+.profile-earnings__grid small {
+  color: var(--pe-ink-500);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.profile-earnings__total {
+  justify-self: end;
+  font-size: 1.18rem;
+}
+
+.profile-earnings__grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.profile-earnings__grid span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(8, 104, 78, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.profile-earnings__grid strong {
+  overflow: hidden;
+  color: var(--pe-ink-900);
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-earnings p {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 /* ----------------------------------------------------------- CLIENTES */
@@ -7559,6 +7699,44 @@ body[data-wa-view='chat'] .mobile-header {
   white-space: nowrap;
 }
 
+.delivery-card__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.delivery-card__facts > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgba(8, 104, 78, 0.12);
+  border-radius: 7px;
+  background: rgba(8, 122, 91, 0.045);
+}
+
+.delivery-card__facts small {
+  overflow: hidden;
+  color: var(--pe-ink-500);
+  font-size: 0.62rem;
+  font-weight: 850;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.delivery-card__facts strong {
+  overflow: hidden;
+  color: var(--pe-ink-900);
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .delivery-card__actions,
 .delivery-actions,
 .delivery-card__detail {
@@ -8143,9 +8321,181 @@ body[data-wa-view='chat'] .mobile-header {
     padding: 10px 8px;
   }
 
+  .delivery-card__facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .delivery-card__actions,
   .delivery-actions {
     justify-content: flex-start;
+  }
+}
+
+.daily-close {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 84px;
+}
+
+.daily-close__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 4px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.daily-close__head span,
+.daily-close__block,
+.daily-close__settlement {
+  display: grid;
+  gap: 4px;
+}
+
+.daily-close__head strong {
+  color: var(--pe-ink-900);
+  font-size: 1.1rem;
+}
+
+.daily-close__head small,
+.daily-close__settlement small {
+  color: var(--pe-ink-500);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.daily-close__grid,
+.daily-close__totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.daily-close__grid > div,
+.daily-close__totals > span,
+.daily-close__settlement,
+.daily-close__block {
+  border: 1px solid rgba(8, 104, 78, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 24px rgba(14, 27, 22, 0.055);
+}
+
+.daily-close__grid > div,
+.daily-close__totals > span {
+  display: grid;
+  gap: 3px;
+  min-height: 72px;
+  padding: 10px;
+}
+
+.daily-close__grid span,
+.daily-close__totals small,
+.daily-close__sale small,
+.daily-close__delivery small {
+  color: var(--pe-ink-500);
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.daily-close__grid strong,
+.daily-close__totals strong {
+  color: var(--pe-ink-900);
+  font-size: 1.05rem;
+  line-height: 1.05;
+}
+
+.daily-close__settlement {
+  padding: 12px;
+  border-color: rgba(8, 122, 91, 0.22);
+  background: linear-gradient(135deg, rgba(8, 122, 91, 0.12), rgba(255, 255, 255, 0.84));
+}
+
+.daily-close__settlement strong {
+  color: var(--phyto-primary);
+  font-size: 1.05rem;
+}
+
+.daily-close__block {
+  padding: 12px;
+}
+
+.daily-close__block h3 {
+  margin: 0 0 8px;
+  color: var(--pe-ink-900);
+  font-size: 0.95rem;
+}
+
+.daily-close__block--green {
+  border-color: rgba(8, 122, 91, 0.22);
+  background: rgba(8, 122, 91, 0.075);
+}
+
+.daily-close__delivery,
+.daily-close__sale {
+  display: grid;
+  gap: 4px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.daily-close__delivery:first-of-type,
+.daily-close__sale:first-of-type {
+  border-top: 0;
+}
+
+.daily-close__delivery strong,
+.daily-close__sale strong {
+  color: var(--pe-ink-900);
+  font-size: 0.86rem;
+}
+
+.daily-close__delivery span {
+  color: var(--pe-ink-600);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.daily-close__sale {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 0.85fr);
+  align-items: start;
+}
+
+.daily-close__sale > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.daily-close__sale strong,
+.daily-close__sale small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .daily-close__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-close__sale {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-earnings {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-earnings__total {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .profile-earnings__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

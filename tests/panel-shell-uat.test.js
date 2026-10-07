@@ -70,6 +70,14 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/\.tab__icon,\n\s+\.tab--center \.tab__icon \{[\s\S]*?width: 23px;\n\s+height: 23px;/);
   });
 
+  it('la interfaz táctil no se queda azul como texto seleccionado', () => {
+    expect(css).toContain('-webkit-tap-highlight-color: transparent');
+    expect(css).toContain('-webkit-touch-callout: none');
+    expect(css).toContain('-webkit-user-select: none');
+    expect(css).toContain('touch-action: manipulation');
+    expect(css).toMatch(/input,\ntextarea,\nselect,\n\[contenteditable='true'\][\s\S]*?user-select: text;/);
+  });
+
   it('el drawer no repite el navbar y deja el mapa en Ventas', () => {
     // Lo principal (Hoy, WhatsApp, Pedidos, Clientes) vive abajo; el menú lateral
     // queda para pantallas secundarias.
@@ -83,10 +91,14 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(posicion('>Ventas</p>')).toBeLessThan(posicion('>Seguimiento</p>'));
     expect(posicion('>Seguimiento</p>')).toBeLessThan(posicion('>Sistema</p>'));
     // El mapa operativo sigue en Ventas, y el repartidor tiene su entrada directa.
-    expect(html).toContain('<button class="drawer__item" data-tab="mapa" type="button">');
+    expect(html).toContain('<button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">');
     expect(html).toContain('Mapa y entregas');
+    expect(app).toContain('const canUseMapScreen = () => hasPermission(\'delivery.tracking.manage_all\');');
     expect(html).toContain('data-tab="delivery"');
     expect(html).toContain('Mis entregas');
+    expect(html).toContain('data-tab="cierre"');
+    expect(html).toContain('Cierre diario');
+    expect(html).toContain('id="view-cierre"');
     expect(html).toContain('id="view-mapa"');
     expect(html).toContain('id="view-delivery"');
     expect(css).toMatch(/\.drawer \{[\s\S]*?display: flex;\n\s+flex-direction: column;/);

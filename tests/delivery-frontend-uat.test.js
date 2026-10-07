@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 const app = readFileSync(new URL('../public/admin/app.js', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 const html = readFileSync(new URL('../public/admin/index.html', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 const css = readFileSync(new URL('../public/admin/admin.css', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+const deliveryTrackingServer = readFileSync(new URL('../server/delivery-tracking.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 
 describe('delivery tracking frontend UAT guards', () => {
   it('Mis entregas abre el chat correcto con mensaje listo sin cambiar estado', () => {
@@ -118,8 +119,8 @@ describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
-    expect(html).toContain('/admin/app.js?v=order-qty-polish-57');
-    expect(html).toContain('/admin/admin.css?v=order-qty-polish-57');
+    expect(html).toContain('/admin/app.js?v=tap-selection-62');
+    expect(html).toContain('/admin/admin.css?v=tap-selection-62');
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');
@@ -208,6 +209,53 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain("map.on('dragstart zoomstart'");
     expect(app).toContain('state.deliveryMap.autoFollow = false');
     expect(app).toContain('map.panTo(currentLatLng');
+  });
+
+  it('blinda el mapa operativo para administración y confirma acciones críticas', () => {
+    expect(html).toContain('data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all"');
+    expect(app).toContain('const canUseMapScreen = () => hasPermission(\'delivery.tracking.manage_all\');');
+    expect(app).toContain("if (tab === 'mapa' && !canUseMapScreen())");
+    expect(app).toContain('Mapa y entregas disponible solo para administración');
+    expect(app).toContain('delivery: svg(');
+    expect(app).toContain("kind === 'customer' ? ICONS.pin : ICONS.delivery");
+    expect(app).toContain('aria-label="Centrar en el repartidor">${ICONS.delivery}');
+    expect(app).toContain('function confirmDeliveryStop');
+    expect(app).toContain('data-delivery-confirm-stop');
+    expect(app).toContain('¿Seguro que quieres detener el GPS de esta entrega?');
+    expect(app).toContain('¿Confirmas que el pedido fue entregado?');
+    expect(deliveryTrackingServer).toContain('export const STALE_LOCATION_MS = 5 * 60_000;');
+    expect(app).toContain('GPS activo · última señal');
+    expect(app).not.toContain('Ubicación desactualizada');
+  });
+
+  it('conecta mapa y pedido en ambas direcciones', () => {
+    expect(app).toContain('data-map-order="${escapeHtml(point.orderId)}"');
+    expect(app).toContain('function openOrderOnMap(orderId)');
+    expect(app).toContain('data-order-map');
+    expect(app).toContain('data-open-map-order="${escapeHtml(orderId)}"');
+    expect(app).toContain('orderId: anyMap.dataset.openMapOrder ||');
+    expect(app).toContain('Ver pedido');
+    expect(app).toContain('Ver en mapa');
+  });
+
+  it('el detalle del pedido usa estado operativo y se actualiza sin esperar recarga manual', () => {
+    expect(app).toContain('function applyServerOrderUpdate');
+    expect(app).toContain('Estado del pedido');
+    expect(app).toContain('operationalStatusLabel(operational)');
+    expect(app).toContain('applyServerOrderUpdate(data);');
+    expect(app).toContain('renderPedidos();');
+    expect(app).toContain('renderOrdersMap();');
+    expect(app).toContain('renderDelivery();');
+    expect(app).toContain('load({ keepTab: true }).catch(() => {});');
+  });
+
+  it('Mis entregas usa datos compactos en dos columnas', () => {
+    expect(app).toContain('class="delivery-card__facts"');
+    expect(app).toContain("['Estado', operationalStatusLabel(status)]");
+    expect(app).toContain("['Resumen', items || 'Producto']");
+    expect(app).toContain("['Pago', paymentMethodLabel(order.payment_method)]");
+    expect(css).toContain('.delivery-card__facts');
+    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
   });
 
   it('separa fallo de tiles del tracking realtime', () => {

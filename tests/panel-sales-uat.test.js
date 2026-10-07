@@ -531,6 +531,8 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const ficha = await waitFor(() => $('#sheet-body')?.textContent?.includes('Atendido por'), 'la ficha del pedido');
     const texto = $('#sheet-body').textContent;
     expect(texto).toMatch(/Atendido por/);
+    expect(texto).toMatch(/Estado del pedido/);
+    expect(texto).toMatch(/Pendiente|En proceso|En camino|Entregado|Cancelado/);
     expect(texto).toMatch(/PE-/);
     /*
      * LA HOJA SE LEE, NO SE LLENA DE BOTONES: las acciones están en el botón
@@ -852,6 +854,10 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     setValue('#manual-order-status', 'ENTREGADO');
     setValue('#manual-order-reason', 'Cliente confirmó la entrega por llamada');
     click('#manual-order-confirm');
+    await waitFor(
+      () => ($('#sheet-body')?.textContent?.includes('Entregado') ? $('#sheet-body') : null),
+      'el estado entregado reflejado al instante en la factura',
+    );
     const entregado = await esperar(
       async () => (await pedidos()).find((item) => item.status === 'entregado') ?? null,
       'el pedido entregado en el CRM',

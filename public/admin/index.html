@@ -19,7 +19,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=order-qty-polish-57" />
+    <link rel="stylesheet" href="/admin/admin.css?v=tap-selection-62" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -133,7 +133,7 @@
         <!-- Ventas: lo que se vende y a dónde va. Lo principal vive en el navbar. -->
         <p class="drawer__group">Ventas</p>
         <nav class="drawer__nav">
-          <button class="drawer__item" data-tab="mapa" type="button">
+          <button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
             <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
           </button>
           <button class="drawer__item" data-tab="delivery" type="button">
@@ -144,6 +144,9 @@
           </button>
           <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
             <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
+          </button>
+          <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
+            <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
           </button>
         </nav>
 
@@ -440,6 +443,11 @@
           <div class="list" id="sales-report-view"></div>
         </section>
 
+        <!-- CIERRE DIARIO -->
+        <section class="view" id="view-cierre" hidden>
+          <div class="daily-close" id="daily-close-view"></div>
+        </section>
+
         <!-- SEGUIMIENTOS (menú lateral) -->
         <section class="view" id="view-seguimientos" hidden>
           <h2 class="view__title">Seguimientos</h2>
@@ -624,6 +632,6 @@
     </div>
 
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
-    <script src="/admin/app.js?v=order-qty-polish-57" defer></script>
+    <script src="/admin/app.js?v=tap-selection-62" defer></script>
   </body>
 </html>

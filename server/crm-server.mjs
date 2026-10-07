@@ -5684,6 +5684,30 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route.startsWith('/api/admin/notifications/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(route.slice('/api/admin/notifications/'.length));
+      const current = await ctx.db.get('user_notifications', id);
+      if (!current) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      if (!hasPermission(actor, 'delivery.tracking.manage_all') && current.recipient_user_id !== actor?.id) {
+        forbid();
+        return;
+      }
+      const deleted = (await ctx.db.remove('user_notifications', id)) ? 1 : 0;
+      await ctx.audit?.record({
+        entity: 'notifications',
+        entityId: id,
+        action: 'notifications.deleted_one',
+        actor: actor?.display_name ?? null,
+        summary: 'Notificación eliminada al abrirla',
+        data: { recipient_user_id: current.recipient_user_id ?? null, type: current.type ?? null },
+      });
+      json(res, 200, { ok: true, deleted });
+      return;
+    }
+
     if (route.startsWith('/api/admin/notifications/') && route.endsWith('/read') && req.method === 'POST') {
       const id = decodeURIComponent(route.slice('/api/admin/notifications/'.length, -'/read'.length));
       const current = await ctx.db.get('user_notifications', id);

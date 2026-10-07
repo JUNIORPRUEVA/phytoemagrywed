@@ -412,6 +412,7 @@
     plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
     mic: svg('<rect x="9.2" y="2.8" width="5.6" height="10.8" rx="2.8"/><path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.4V21M9.4 21h5.2"/>'),
     send: svg('<path d="M4.6 12 20 4.6l-7.3 15-1.9-6.3z"/><path d="M10.8 13.3 20 4.6"/>'),
+    delivery: svg('<path d="M3.8 7.2h10.4v8.4H3.8z"/><path d="M14.2 10h3.2l2.8 3.2v2.4h-6"/><circle cx="7.3" cy="17.2" r="1.9"/><circle cx="17" cy="17.2" r="1.9"/><path d="M5.6 10h5.2"/>'),
     filter: svg('<path d="M4.5 6.2h15"/><path d="M7.4 12h9.2"/><path d="M10.3 17.8h3.4"/>'),
     spark: svg('<path d="M11.4 3.6l1.8 4.9 4.9 1.8-4.9 1.8-1.8 4.9-1.8-4.9L4.7 10.3l4.9-1.8z"/><path d="M18.4 15.6l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/>'),
     bag: svg('<path d="M4.6 7.4h14.8l-1.2 11.9a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8z"/><path d="M8.8 7.4V5.8a3.2 3.2 0 0 1 6.4 0v1.6"/>'),
@@ -478,6 +479,19 @@
     }).formatToParts(date);
     const part = (type) => parts.find((entry) => entry.type === type)?.value ?? '';
     return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+
+  function businessClockMinutes(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return 0;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: BUSINESS_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+    const part = (type) => parts.find((entry) => entry.type === type)?.value ?? '0';
+    return Number(part('hour')) * 60 + Number(part('minute'));
   }
 
   /** `YYYY-MM-DD` de hoy en la zona horaria del negocio. */
@@ -808,6 +822,17 @@
     return out;
   }
 
+  function applyServerOrderUpdate(data = {}) {
+    if (!data.item?.id) return null;
+    const index = state.items.findIndex((candidate) => candidate.id === data.item.id);
+    if (index >= 0) state.items[index] = { ...state.items[index], ...data.item };
+    else state.items.unshift(data.item);
+    const deliveryIndex = (state.deliveryOrders ?? []).findIndex((candidate) => candidate.id === data.item.id);
+    if (deliveryIndex >= 0) state.deliveryOrders[deliveryIndex] = { ...state.deliveryOrders[deliveryIndex], ...data.item };
+    saveSnapshot();
+    return state.items.find((candidate) => candidate.id === data.item.id) ?? data.item;
+  }
+
   /** Cambios pendientes aplicados en pantalla (mientras no hay red). */
   function applyOutbox(items) {
     const outbox = readOutbox();
@@ -943,6 +968,7 @@
     renderPedidos();
     renderProductos();
     renderReportes();
+    renderDailyClose();
     renderSeguimientos();
     renderMensajes();
     renderAjustes();
@@ -976,6 +1002,8 @@
   const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
   const permissions = () => state.auth?.permissions ?? [];
   const hasPermission = (permission) => isAdmin() || permissions().includes('*') || permissions().includes(permission);
+  const canUseMapScreen = () => hasPermission('delivery.tracking.manage_all');
+  const canUseDailyClose = () => isAdmin() || hasPermission('reports.profit.view') || ['AGENT', 'DELIVERY'].includes(currentUser()?.role);
   const roleLabel = (role) =>
     role === 'ADMIN'
       ? 'Administrador'
@@ -1216,13 +1244,19 @@
     $$('[data-permission]').forEach((node) => {
       node.hidden = node.dataset.tab === 'ajustes' ? false : !hasPermission(node.dataset.permission);
     });
+    $$('[data-daily-close-access]').forEach((node) => {
+      node.hidden = !canUseDailyClose();
+    });
     if (isDeliveryUser()) {
       $$('[data-tab]').forEach((node) => {
-        if (!['delivery', 'whatsapp', 'ajustes', 'perfil'].includes(node.dataset.tab)) node.hidden = true;
+        if (!['delivery', 'whatsapp', 'ajustes', 'perfil', 'cierre'].includes(node.dataset.tab)) node.hidden = true;
       });
     } else {
       $$('[data-tab]').forEach((node) => {
         if (!node.dataset.permission && !node.hasAttribute('data-admin-only')) node.hidden = false;
+      });
+      $$('[data-daily-close-access]').forEach((node) => {
+        node.hidden = !canUseDailyClose();
       });
     }
   }
@@ -2345,7 +2379,7 @@
     if (!position) return 'GPS activo · esperando posición';
     const accuracy = Number(position.accuracy);
     const age = position.recorded_at ? fmtWhen(position.recorded_at) : 'sin hora';
-    if (position.stale) return `Ubicación sin actualizar · ${age}`;
+    if (position.stale) return `GPS activo · última señal ${age}`;
     if (Number.isFinite(accuracy) && accuracy > 80) return `GPS débil · ±${Math.round(accuracy)} m`;
     return `GPS activo · ${age}`;
   }
@@ -2389,7 +2423,7 @@
     if (!window.L) return null;
     return window.L.divIcon({
       className: `delivery-leaflet-marker delivery-leaflet-marker--${kind}${stale ? ' delivery-leaflet-marker--stale' : ''}`,
-      html: `<span>${kind === 'customer' ? ICONS.pin : ICONS.send}</span>`,
+      html: `<span>${kind === 'customer' ? ICONS.pin : ICONS.delivery}</span>`,
       iconSize: [38, 38],
       iconAnchor: [19, 19],
       popupAnchor: [0, -18],
@@ -2516,7 +2550,7 @@
     }
     const position = session.last_position;
     const accuracy = deliveryAccuracyMeta(position);
-    const gps = position?.stale ? 'Ubicación desactualizada' : position ? 'GPS activo' : 'esperando posición';
+    const gps = position?.stale ? 'GPS activo · última señal' : position ? 'GPS activo' : 'esperando posición';
     set('delivery', session.delivery_user_name ?? 'Delivery');
     set('distance', session.distance_label ?? 'Sin distancia');
     set('eta', session.eta_label ?? 'Sin ETA');
@@ -2526,7 +2560,7 @@
     set('route', session.route_provider === 'haversine_fallback' ? 'Distancia aproximada' : 'Ruta');
     const badge = $('#delivery-accuracy-badge');
     if (badge) {
-      badge.textContent = position?.stale ? 'Ubicación desactualizada' : accuracy.warning || accuracy.label;
+      badge.textContent = position?.stale ? `Última señal ${position.recorded_at ? fmtWhen(position.recorded_at) : 'sin hora'}` : accuracy.warning || accuracy.label;
       badge.dataset.level = position?.stale ? 'stale' : accuracy.level;
       badge.hidden = !position;
     }
@@ -2662,7 +2696,7 @@
         </small>
       </div>
       <div class="map-live__tools">
-        <button class="icon-btn" data-delivery-center="driver" type="button" aria-label="Centrar en el repartidor">${ICONS.send}</button>
+        <button class="icon-btn" data-delivery-center="driver" type="button" aria-label="Centrar en el repartidor">${ICONS.delivery}</button>
         <button class="icon-btn" data-delivery-center="customer" type="button" aria-label="Centrar en el cliente">${ICONS.pin}</button>
         <button class="icon-btn" data-delivery-center="both" type="button" aria-label="Ver repartidor y cliente">${ICONS.search}</button>
         <button class="icon-btn" id="delivery-follow" data-delivery-center="driver" type="button" aria-label="Volver a seguir" hidden>${ICONS.retry}</button>
@@ -3018,10 +3052,20 @@
     });
   }
 
-  async function openDeliveryOrderFromNotification(notificationId, orderId) {
-    if (notificationId) {
+  async function dismissOpenedNotification(notificationId) {
+    if (!notificationId) return;
+    state.notifications = (state.notifications ?? []).filter((row) => row.id !== notificationId);
+    renderMobileHeader();
+    if (state.tab === 'hoy') renderHoy();
+    try {
+      await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}`, { method: 'DELETE' });
+    } catch {
       await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
     }
+  }
+
+  async function openDeliveryOrderFromNotification(notificationId, orderId) {
+    await dismissOpenedNotification(notificationId);
     if (orderId) {
       state.deliveryActiveOrderId = orderId;
       state.deliveryListRequested = false;
@@ -3038,19 +3082,15 @@
   async function openNotificationTarget(notificationId, entityId) {
     const row = state.notifications.find((candidate) => candidate.id === notificationId) ?? null;
     if (row?.entity_type === 'conversation' || row?.data?.conversation_id) {
-      if (notificationId) {
-        await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
-      }
       const conversationId = row.entity_id || row.data?.conversation_id;
+      await dismissOpenedNotification(notificationId);
       await openChat(conversationId);
       await load({ keepTab: true }).catch(() => {});
       closeSheet();
       return;
     }
     if (row?.deep_link) {
-      if (notificationId) {
-        await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
-      }
+      await dismissOpenedNotification(notificationId);
       await applyDeepLink(new URL(row.deep_link, location.origin).searchParams);
       await load({ keepTab: true }).catch(() => {});
       closeSheet();
@@ -3724,6 +3764,13 @@
       .filter(Boolean)
       .join(' · ');
     const items = (order.items ?? []).map((line) => `${line.quantity ?? 1} × ${line.variantName ?? line.name ?? 'Producto'}`).join(', ');
+    const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
+    const summary = [
+      ['Estado', operationalStatusLabel(status)],
+      ['Resumen', items || 'Producto'],
+      ['Pago', paymentMethodLabel(order.payment_method)],
+      ['Delivery', deliveryFee ? money(deliveryFee, order.currency) : 'Sin cargo'],
+    ];
     return `<article class="delivery-card delivery-card--${escapeHtml(status.toLowerCase())}" data-delivery-order-card="${escapeHtml(order.id)}">
       <button class="delivery-card__main" data-delivery-open="${escapeHtml(order.id)}" type="button">
         <span class="delivery-card__top">
@@ -3733,6 +3780,13 @@
         <span class="delivery-card__customer">${escapeHtml(customer.name ?? 'Cliente')}</span>
         <span class="delivery-card__meta">${escapeHtml(meta || 'Entrega asignada')}</span>
         ${items ? `<span class="delivery-card__items">${escapeHtml(items)}</span>` : ''}
+        <span class="delivery-card__facts">
+          ${summary
+            .map(
+              ([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value || '—')}</strong></span>`,
+            )
+            .join('')}
+        </span>
       </button>
       ${
         detail
@@ -3854,6 +3908,192 @@
     `;
   }
 
+  function orderDeliveredDay(order, item) {
+    return businessDayISO(order?.delivered_at ?? order?.updated_at ?? item?.updated_at ?? item?.received_at ?? order?.created_at);
+  }
+
+  function orderLineCapsules(line = {}) {
+    const direct = Number(line.totalCapsules ?? line.capsules ?? line.capsules_count);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const raw = `${line.variantId ?? line.variant_id ?? ''} ${line.variantName ?? line.name ?? line.label ?? ''}`;
+    const match = raw.match(/(\d+)/);
+    return match ? Number(match[1]) : 0;
+  }
+
+  function deliveryCommissionForLine(line = {}) {
+    const quantity = Math.max(1, Number(line.quantity ?? 1) || 1);
+    const capsules = orderLineCapsules(line);
+    const rate = capsules === 5 ? 150 : capsules === 10 ? 200 : capsules === 60 ? 200 : capsules > 10 ? 250 : 0;
+    return rate * quantity;
+  }
+
+  function dailyCloseModel(day = todayISO()) {
+    const user = currentUser();
+    const ownClose = !hasPermission('reports.profit.view');
+    const delivered = (state.items ?? [])
+      .filter((item) => item.type === 'order_intent')
+      .map((item) => ({ item, order: itemOrder(item) }))
+      .filter(
+        ({ item, order }) =>
+          getOrderOperationalStatus(order, deliverySessionForOrder(item.id)) === 'ENTREGADO' &&
+          orderDeliveredDay(order, item) === day &&
+          (!ownClose || String(order.delivery?.delivery_user_id ?? '') === String(user?.id ?? '')),
+      );
+    const model = {
+      day,
+      ownClose,
+      viewerName: user?.display_name ?? user?.username ?? '',
+      orders: [],
+      totals: {
+        sales: 0,
+        cash: 0,
+        transfer: 0,
+        noDelivery: 0,
+        deliveryFee: 0,
+        discount: 0,
+        commissions: 0,
+        cashHeldByDelivery: 0,
+      },
+      byDelivery: new Map(),
+    };
+    for (const { item, order } of delivered) {
+      const lines = order.items ?? [];
+      const total = Number(order.total ?? item.total ?? 0) || 0;
+      const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
+      const discount = Number(order.discount ?? 0) || 0;
+      const commission = lines.reduce((sum, line) => sum + deliveryCommissionForLine(line), 0);
+      const payment = String(order.payment_method ?? item.payment_method ?? '').toUpperCase();
+      const deliveryId = order.delivery?.delivery_user_id ?? '';
+      const deliveryName = order.delivery?.delivery_user_name_snapshot ?? 'Sin delivery';
+      const hasDelivery = Boolean(deliveryId);
+      if (!hasDelivery) model.totals.noDelivery += 1;
+      if (payment === 'CASH') model.totals.cash += total;
+      else if (payment === 'TRANSFER') model.totals.transfer += total;
+      model.totals.sales += total;
+      model.totals.deliveryFee += deliveryFee;
+      model.totals.discount += discount;
+      model.totals.commissions += commission;
+      if (hasDelivery && payment === 'CASH') model.totals.cashHeldByDelivery += total;
+      if (hasDelivery) {
+        const current = model.byDelivery.get(deliveryId) ?? {
+          id: deliveryId,
+          name: deliveryName,
+          orders: 0,
+          cash: 0,
+          transfer: 0,
+          deliveryFee: 0,
+          commissions: 0,
+          total: 0,
+        };
+        current.orders += 1;
+        current.total += total;
+        if (payment === 'CASH') current.cash += total;
+        if (payment === 'TRANSFER') current.transfer += total;
+        current.deliveryFee += deliveryFee;
+        current.commissions += commission;
+        model.byDelivery.set(deliveryId, current);
+      }
+      model.orders.push({
+        id: item.id,
+        number: order.order_number ?? item.order_number ?? item.id,
+        customer: item.name ?? order.customer?.name ?? 'Cliente',
+        lines: lines.map((line) => `${line.quantity ?? 1} x ${line.variantName ?? line.name ?? line.label ?? 'Producto'}`).join(', '),
+        payment,
+        total,
+        deliveryFee,
+        discount,
+        commission,
+        deliveryName,
+        hasDelivery,
+      });
+    }
+    return model;
+  }
+
+  function settlementLabel(value) {
+    if (value > 0) return `El delivery entrega ${money(value)} a la empresa`;
+    if (value < 0) return `La empresa le entrega ${money(Math.abs(value))} al delivery`;
+    return 'Cierre cuadrado';
+  }
+
+  function renderDailyClose() {
+    const box = $('#daily-close-view');
+    if (!box) return;
+    const model = dailyCloseModel();
+    const deliveryEarnings = model.totals.deliveryFee + model.totals.commissions;
+    const net = model.totals.cashHeldByDelivery - deliveryEarnings;
+    const minutesNow = businessClockMinutes();
+    const canManualClose = minutesNow >= 18 * 60;
+    const autoClosed = minutesNow >= 21 * 60;
+    const deliveryRows = [...model.byDelivery.values()];
+    const scopeLabel = model.ownClose ? 'Tus entregas' : 'Todo el equipo';
+    const closeStatus = autoClosed ? 'cerrado automático' : canManualClose ? 'listo para cierre manual' : 'vista previa';
+    box.innerHTML = `
+      <div class="daily-close__head">
+        <span>
+          <strong>Cierre de hoy</strong>
+          <small>${escapeHtml(scopeLabel)} · ${escapeHtml(fmtDay(model.day))} · desde las 6:00 p.m. puedes cerrarlo; a las 9:00 p.m. queda automático · ${escapeHtml(closeStatus)}</small>
+        </span>
+        <button class="btn btn--primary btn--sm" data-daily-close-now type="button" ${canManualClose ? '' : 'disabled aria-disabled="true"'}>${
+          autoClosed ? 'Ver cierre final' : 'Hacer cierre ahora'
+        }</button>
+      </div>
+      <div class="daily-close__grid">
+        <div><span>Ventas del día</span><strong>${model.orders.length}</strong><small>${money(model.totals.sales)}</small></div>
+        <div><span>Efectivo en mano</span><strong>${money(model.totals.cashHeldByDelivery)}</strong><small>Lo tiene el delivery</small></div>
+        <div><span>Transferencia</span><strong>${money(model.totals.transfer)}</strong><small>Dinero de la empresa</small></div>
+        <div><span>No delivery</span><strong>${model.totals.noDelivery}</strong><small>Sin mensajero asignado</small></div>
+        <div><span>Descuentos</span><strong>${money(model.totals.discount)}</strong><small>Rebaja aplicada</small></div>
+        <div><span>Cuadre</span><strong>${escapeHtml(net === 0 ? 'Listo' : net > 0 ? 'Entrega' : 'Recibe')}</strong><small>${escapeHtml(settlementLabel(net))}</small></div>
+      </div>
+      <section class="daily-close__settlement">
+        <strong>${escapeHtml(settlementLabel(net))}</strong>
+        <small>Cuadre claro: efectivo en mano ${money(model.totals.cashHeldByDelivery)} menos ganancia del delivery ${money(deliveryEarnings)}.</small>
+      </section>
+      <section class="daily-close__block daily-close__block--green">
+        <h3>Ganancia del delivery</h3>
+        <div class="daily-close__totals">
+          <span><small>Delivery cobrado</small><strong>${money(model.totals.deliveryFee)}</strong></span>
+          <span><small>Comisión por frascos</small><strong>${money(model.totals.commissions)}</strong></span>
+          <span><small>Total que se gana</small><strong>${money(deliveryEarnings)}</strong></span>
+        </div>
+      </section>
+      <section class="daily-close__block">
+        <h3>${model.ownClose ? 'Tu cuadre' : 'Por delivery'}</h3>
+        ${
+          deliveryRows.length
+            ? deliveryRows
+                .map((row) => {
+                  const rowNet = row.cash - row.deliveryFee - row.commissions;
+                  return `<article class="daily-close__delivery">
+                    <strong>${escapeHtml(row.name)}</strong>
+                    <span>${row.orders} entrega${row.orders === 1 ? '' : 's'} · efectivo ${money(row.cash)} · transferencia ${money(row.transfer)}</span>
+                    <small>Ganancia ${money(row.deliveryFee + row.commissions)} · ${escapeHtml(settlementLabel(rowNet))}</small>
+                  </article>`;
+                })
+                .join('')
+            : '<p class="view__hint">No hay entregas con mensajero en este día.</p>'
+        }
+      </section>
+      <section class="daily-close__block">
+        <h3>Ventas del día</h3>
+        ${
+          model.orders.length
+            ? model.orders
+                .map(
+                  (row) => `<article class="daily-close__sale">
+                    <span><strong>${escapeHtml(row.number)}</strong><small>${escapeHtml(row.customer)}</small></span>
+                    <span><strong>${escapeHtml(row.lines || 'Producto')}</strong><small>${escapeHtml(paymentMethodLabel(row.payment))}</small></span>
+                    <span><strong>${money(row.total)}</strong><small>${escapeHtml(row.hasDelivery ? row.deliveryName : 'No delivery')}</small></span>
+                    <span><strong>${money(row.commission)}</strong><small>Comisión</small></span>
+                  </article>`,
+                )
+                .join('')
+            : '<p class="view__hint">Todavía no hay ventas entregadas hoy.</p>'
+        }
+      </section>`;
+  }
+
   function openDeliveryOrder(orderId) {
     if (!orderId) return;
     state.deliveryActiveOrderId = orderId;
@@ -3883,6 +4123,27 @@
         <div class="sheet-actions">
           <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
           <button class="btn btn--primary" data-delivery-confirm-complete="${escapeHtml(session.id)}" type="button">Confirmar entrega</button>
+        </div>
+      </div>`,
+    );
+  }
+
+  function confirmDeliveryStop(sessionId) {
+    const session = (state.deliveryTracking ?? []).find((row) => row.id === sessionId) ?? selectedDeliverySession();
+    if (!session?.id) {
+      toast('No hay entrega activa para detener');
+      return;
+    }
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === session.order_id) ?? null;
+    openSheet(
+      'Detener seguimiento',
+      `<div class="delivery-confirm">
+        <p><strong>Cliente:</strong> ${escapeHtml(order?.customer?.name ?? session.customer?.name ?? 'Cliente')}</p>
+        <p><strong>Pedido:</strong> ${escapeHtml(order?.order_number ?? session.order?.order_number ?? session.order_id)}</p>
+        <p>¿Seguro que quieres detener el GPS de esta entrega?</p>
+        <div class="sheet-actions">
+          <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
+          <button class="btn btn--primary" data-delivery-confirm-stop="${escapeHtml(session.id)}" type="button">Detener seguimiento</button>
         </div>
       </div>`,
     );
@@ -4473,6 +4734,58 @@
     return error.body?.message ?? 'No se pudo actualizar el perfil';
   }
 
+  function deliveryEarningsForUser(userId) {
+    const result = {
+      orders: 0,
+      sales: 0,
+      cash: 0,
+      transfer: 0,
+      deliveryFee: 0,
+      commissions: 0,
+      earnings: 0,
+    };
+    if (!userId) return result;
+    for (const item of state.items ?? []) {
+      if (item.type !== 'order_intent') continue;
+      const order = itemOrder(item);
+      if (String(order.delivery?.delivery_user_id ?? '') !== String(userId)) continue;
+      if (getOrderOperationalStatus(order, deliverySessionForOrder(item.id)) !== 'ENTREGADO') continue;
+      const total = Number(order.total ?? item.total ?? 0) || 0;
+      const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
+      const commissions = (order.items ?? []).reduce((sum, line) => sum + deliveryCommissionForLine(line), 0);
+      const payment = String(order.payment_method ?? item.payment_method ?? '').toUpperCase();
+      result.orders += 1;
+      result.sales += total;
+      result.deliveryFee += deliveryFee;
+      result.commissions += commissions;
+      if (payment === 'CASH') result.cash += total;
+      if (payment === 'TRANSFER') result.transfer += total;
+    }
+    result.earnings = result.deliveryFee + result.commissions;
+    return result;
+  }
+
+  function profileDeliveryEarningsHtml(user) {
+    if (!['AGENT', 'DELIVERY'].includes(user?.role)) return '';
+    const earnings = deliveryEarningsForUser(user.id);
+    const net = earnings.cash - earnings.earnings;
+    return `<section class="profile-earnings">
+      <span class="profile-earnings__icon" aria-hidden="true">${ICONS.delivery}</span>
+      <span class="profile-earnings__head">
+        <strong>Ganancia acumulada por entregas</strong>
+        <small>Delivery cobrado + comisión por frascos entregados</small>
+      </span>
+      <strong class="profile-earnings__total">${money(earnings.earnings)}</strong>
+      <div class="profile-earnings__grid">
+        <span><small>Entregas</small><strong>${earnings.orders}</strong></span>
+        <span><small>Delivery cobrado</small><strong>${money(earnings.deliveryFee)}</strong></span>
+        <span><small>Comisiones</small><strong>${money(earnings.commissions)}</strong></span>
+        <span><small>Efectivo en mano</small><strong>${money(earnings.cash)}</strong></span>
+      </div>
+      <p>${escapeHtml(settlementLabel(net))}</p>
+    </section>`;
+  }
+
   function renderPerfil(force = false) {
     const box = $('#profile-view');
     if (!box) return;
@@ -4491,7 +4804,10 @@
       $('#profile-relogin')?.addEventListener('click', () => $('#logout').click());
       return;
     }
-    const sig = [user.id, user.display_name ?? '', user.first_name ?? '', user.last_name ?? '', user.username ?? ''].join('|');
+    const earningsSig = ['AGENT', 'DELIVERY'].includes(user.role)
+      ? Object.values(deliveryEarningsForUser(user.id)).join(':')
+      : '';
+    const sig = [user.id, user.display_name ?? '', user.first_name ?? '', user.last_name ?? '', user.username ?? '', earningsSig].join('|');
     if (!force && sig === profileSig) return;
     profileSig = sig;
     const name = user.display_name ?? user.username ?? '';
@@ -4503,6 +4819,8 @@
           <small>${escapeHtml(user.username ?? '')} · ${escapeHtml(roleLabel(user.role))}</small>
         </span>
       </article>
+
+      ${profileDeliveryEarningsHtml(user)}
 
       <div class="card">
         <p class="card__title">Datos personales</p>
@@ -4669,6 +4987,7 @@
       return;
     }
     const phone = digits(item.phone);
+    const operational = item.type === 'order_intent' ? orderOperational(item) : null;
     const reminders = [
       { label: 'Hoy', days: 0 },
       { label: 'Mañana', days: 1 },
@@ -4678,7 +4997,9 @@
     $('#sheet-title').textContent = item.name ?? label(item.type);
     $('#sheet-body').innerHTML = `
       <div>
-        <span class="tag tag--${escapeHtml(item.status ?? 'nuevo')}">${escapeHtml(statusLabel(item.status ?? 'nuevo'))}</span>
+        <span class="tag tag--${escapeHtml((operational ?? item.status ?? 'nuevo').toLowerCase())}">${escapeHtml(
+          operational ? operationalStatusLabel(operational) : statusLabel(item.status ?? 'nuevo'),
+        )}</span>
         <span class="tag">${escapeHtml(label(item.type))}</span>
         ${item.next_action_at ? `<span class="tag tag--recordatorio">${escapeHtml(fmtDay(item.next_action_at))}</span>` : ''}
       </div>
@@ -4687,7 +5008,8 @@
         ${item.order_number ? `<div class="fact"><dt>Pedido</dt><dd>${escapeHtml(item.order_number)}</dd></div>` : ''}
         ${
           item.type === 'order_intent'
-            ? `<div class="fact"><dt>Atendido por</dt><dd>${escapeHtml(orderAgent(item).label)}</dd></div>`
+            ? `<div class="fact"><dt>Estado del pedido</dt><dd>${escapeHtml(operationalStatusLabel(operational))}</dd></div>
+               <div class="fact"><dt>Atendido por</dt><dd>${escapeHtml(orderAgent(item).label)}</dd></div>`
             : ''
         }
         ${
@@ -11005,15 +11327,15 @@
    * centrado en el punto, con su ficha de acciones encima. Cualquier cosa que
    * necesite un mapa (el chat, la ficha, la factura) pasa por aquí.
    */
-  function openMapScreen({ location = null, title = 'Ubicación', conversationId = '', onUse = null } = {}) {
+  function openMapScreen({ location = null, title = 'Ubicación', conversationId = '', orderId = '', onUse = null } = {}) {
     const coords = mapLatLng(location);
     destroySheetWork();
     state.previousTab = state.tab === 'mapa' ? state.previousTab : state.tab;
-    if (coords) state.ordersMap.focus = { location, title, conversationId, onUse };
+    if (coords) state.ordersMap.focus = { location, title, conversationId, orderId, onUse };
     setTab('mapa');
     renderOrdersMap();
     if (coords) focusOrdersMapPoint({ latitude: coords[0], longitude: coords[1], location, title });
-    if (location) openMapPointSheet({ location, title, conversationId, onUse });
+    if (location) openMapPointSheet({ location, title, conversationId, orderId, onUse });
   }
 
   /** Si había otra hoja con trabajo vivo (una grabadora), se cierra bien. */
@@ -11041,7 +11363,7 @@
   }
 
   /** La ficha del punto enfocado: qué es y qué se puede hacer con él. */
-  function openMapPointSheet({ location, title = 'Ubicación', conversationId = '', onUse = null }) {
+  function openMapPointSheet({ location, title = 'Ubicación', conversationId = '', orderId = '', onUse = null }) {
     const url = locationMapUrl(location);
     openSheet(
       title,
@@ -11049,6 +11371,7 @@
       ${locationChip(location, { withActions: false, withMap: false })}
       <p class="view__hint">El mapa está centrado en este punto, aquí detrás.</p>
       <div class="map-actions">
+        ${orderId ? `<button class="btn btn--ghost btn--block" data-map-order="${escapeHtml(orderId)}" type="button">Ver pedido</button>` : ''}
         <button class="btn btn--ghost btn--block" data-map-action="aqui" type="button">¿A qué distancia estoy?</button>
         <button class="btn btn--ghost btn--block" id="map-point-measure" type="button">Medir distancia desde aquí</button>
         <button class="btn btn--ghost btn--block" id="map-point-use" type="button">Usar para un pedido</button>
@@ -11270,6 +11593,9 @@
     ].filter(Boolean);
     const acciones = [
       `<button class="btn btn--ghost btn--sm" data-map-open="${escapeHtml(point.key)}" type="button">Ver aquí dentro</button>`,
+      point.kind === 'order' && point.orderId
+        ? `<button class="btn btn--ghost btn--sm" data-map-order="${escapeHtml(point.orderId)}" type="button">Ver pedido</button>`
+        : '',
       `<button class="btn btn--ghost btn--sm" data-map-measure-point="${escapeHtml(point.key)}" type="button">Medir desde aquí</button>`,
       point.conversationId
         ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Abrir el chat</button>`
@@ -11956,13 +12282,14 @@
     const assignedToMe = Boolean(assignedUserId) && assignedUserId === currentUser()?.id;
     const canAssign = (state.deliveryUsers ?? []).length > 0;
     const hasDestination = Boolean(deliveryLatLng(order.delivery?.location));
+    const pedido = `<button class="btn btn--ghost btn--sm" data-map-order="${escapeHtml(item.id)}" type="button">Ver pedido</button>`;
     const canStart = ['PENDIENTE', 'INCIDENCIA'].includes(operational) && hasDestination && (esRepartidor ? assignedToMe : true);
     const chat = point.conversationId
       ? `<button class="btn btn--ghost btn--sm" data-map-chat="${escapeHtml(point.conversationId)}" type="button">Chat</button>`
       : '';
     const centro = `<button class="btn btn--ghost btn--sm" data-map-center="${escapeHtml(point.key)}" type="button">Centrar</button>`;
     if (operational === 'EN_CAMINO' && session) {
-      return `${chat}<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver en vivo</button>${
+      return `${pedido}${chat}<button class="btn btn--ghost btn--sm" data-delivery-focus="${escapeHtml(session.id)}" type="button">Ver en vivo</button>${
         esRepartidor && assignedToMe
           ? `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session.id)}" type="button">Finalizar</button>`
           : ''
@@ -11978,11 +12305,11 @@
         canStart ? '' : 'disabled'
       }>Iniciar entrega</button>`;
     }
-    if (esRepartidor) return `${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>${escapeHtml(assignedName ? `Asignado a ${assignedName}` : 'Sin asignar')}</button>`;
+    if (esRepartidor) return `${pedido}${chat}<button class="btn btn--ghost btn--sm" type="button" disabled>${escapeHtml(assignedName ? `Asignado a ${assignedName}` : 'Sin asignar')}</button>`;
     if (canAssign && ['PENDIENTE', 'INCIDENCIA'].includes(operational) && !session) {
       const retry = operational === 'INCIDENCIA' && assignedUserId ? `<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(item.id)}" type="button">Reintentar entrega</button>` : '';
       const cancel = operational === 'INCIDENCIA' ? `<button class="btn btn--ghost btn--sm" data-status-change="${escapeHtml(item.id)}" data-status-target="CANCELADO" type="button">Cancelar pedido</button>` : '';
-      return `${chat}${retry}${cancel}<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(
+      return `${pedido}${chat}${retry}${cancel}<span class="delivery-assign"><select class="field__select" data-delivery-assign="${escapeHtml(
         item.id,
       )}" aria-label="Asignar a un agente">
         <option value="">${assignedName ? 'Cambiar de agente' : 'Asignar a un agente'}</option>
@@ -11996,7 +12323,7 @@
           .join('')}
       </select></span>`;
     }
-    return `${chat}${centro}`;
+    return `${pedido}${chat}${centro}`;
   }
 
   /** La lista de puntos (con su distancia si hay punto de referencia). */
@@ -12150,6 +12477,7 @@
       },
       title: point.kind === 'order' ? `Pedido ${point.title}` : `Ubicación de ${point.title}`,
       conversationId: point.conversationId ?? '',
+      orderId: point.kind === 'order' ? point.orderId : '',
     });
   }
 
@@ -12160,6 +12488,28 @@
     if (!point || !map) return;
     map.setView([point.latitude, point.longitude], Math.max(map.getZoom(), 15), { animate: true });
     state.ordersMap.markers.get(key)?.openPopup();
+  }
+
+  function openOrderOnMap(orderId) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    const order = item ? itemOrder(item) : null;
+    const location = order?.delivery?.location ?? null;
+    if (!mapLatLng(location)) {
+      toast('Este pedido no tiene ubicación para mostrar en el mapa');
+      return;
+    }
+    closeSheet();
+    openMapScreen({
+      location: {
+        ...location,
+        order_id: orderId,
+        customer_id: item?.customer_id ?? order?.customer_id ?? location.customer_id ?? null,
+        source: location.source ?? 'order_delivery',
+      },
+      title: `Pedido ${order?.order_number ?? item?.order_number ?? orderId}`,
+      conversationId: order?.conversation_id ?? item?.conversation_id ?? '',
+      orderId,
+    });
   }
 
   /** Bloque de ubicaciones del cliente para su ficha (§13). */
@@ -12310,6 +12660,7 @@
   async function openReceipt(orderId) {
     try {
       const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
+      const item = applyServerOrderUpdate(data) ?? data.item ?? null;
       const receipt = data.receipt;
       const order = data.order ?? {};
       const integrity = data.integrity ?? {};
@@ -12340,7 +12691,9 @@
                 ? `<div class="fact"><dt>Método de pago</dt><dd>${escapeHtml(receipt.payment_method_label)}</dd></div>`
                 : ''
             }
-            <div class="fact"><dt>Estado</dt><dd>${escapeHtml(receipt.status_label)}</dd></div>
+            <div class="fact"><dt>Estado</dt><dd><span class="tag delivery-status delivery-status--${escapeHtml(
+              operational.toLowerCase(),
+            )}">${escapeHtml(operationalStatusLabel(operational))}</span></dd></div>
             <div class="fact"><dt>Origen</dt><dd>${escapeHtml(sourceLabel(order.source))}</dd></div>
             <div class="fact"><dt>Atribución</dt><dd>${escapeHtml(sourceOriginLabel(order.source_origin, order))}</dd></div>
             ${receipt.cancelled_at ? `<div class="fact"><dt>Cancelada</dt><dd>${escapeHtml(fmtWhen(receipt.cancelled_at))}</dd></div>` : ''}
@@ -12386,7 +12739,7 @@
                      mapLatLng(receipt.location ?? {})
                        ? `<button class="btn btn--ghost btn--sm" data-open-map="${mapLocationAttr(receipt.location)}" data-map-title="Ubicación del pedido ${escapeHtml(
                            receipt.order_number,
-                         )}" type="button">Ver en el mapa</button>`
+                         )}" data-open-map-order="${escapeHtml(orderId)}" type="button">Ver en el mapa</button>`
                        : ''
                    }
                  </div>`
@@ -12406,7 +12759,7 @@
         `,
       );
       // El menú de la factura necesita sus datos: se guardan con la hoja abierta.
-      state.receiptContext = { orderId, order, receipt, item: data.item ?? null };
+      state.receiptContext = { orderId, order, receipt, item };
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo abrir el comprobante');
     }
@@ -12539,6 +12892,7 @@
     const clienteId = customerIdForItem(item);
     const conversacionId = conversationForCustomer(clienteId)?.id ?? item.conversation_id ?? '';
     const estado = orderOperational(item);
+    const ubicacionPedido = esPedido ? itemOrder(item)?.delivery?.location ?? null : null;
     /*
      * Con el pedido YA ENTREGADO es cuando toca el seguimiento: se dice arriba, para
      * que las dos acciones de abajo (seguimiento y mensaje) no se pasen por alto.
@@ -12570,6 +12924,14 @@
               label: 'Ver factura',
               note: 'Comprobante con detalle y total',
               data: { 'data-receipt': item.id },
+            }
+          : null,
+        esPedido && mapLatLng(ubicacionPedido)
+          ? {
+              icon: ICONS.pin,
+              label: 'Ver en mapa',
+              note: 'Ubicación de entrega',
+              data: { 'data-order-map': item.id },
             }
           : null,
         esPedido && hasPermission('delivery.tracking.manage_all')
@@ -12663,6 +13025,7 @@
     if (!orderId) return;
     const operational = getOrderOperationalStatus(order);
     const abierto = receipt.status !== 'entregado' && receipt.status !== 'cancelado';
+    const ubicacionPedido = order?.delivery?.location ?? receipt?.location ?? null;
     openSheetActionMenu({
       title: receipt.order_number ? `Factura · ${receipt.order_number}` : 'Factura',
       acciones: [
@@ -12681,6 +13044,14 @@
           note: 'La manda el CRM al chat del cliente',
           data: { 'data-receipt-wa': orderId },
         },
+        mapLatLng(ubicacionPedido)
+          ? {
+              icon: ICONS.pin,
+              label: 'Ver en mapa',
+              note: 'Ubicación de entrega',
+              data: { 'data-order-map': orderId },
+            }
+          : null,
         hasPermission('delivery.tracking.manage_all') && abierto
           ? { icon: ICONS.send, label: 'Pasar a un delivery', data: { 'data-order-delivery': orderId } }
           : null,
@@ -12801,10 +13172,17 @@
           await api(`/api/admin/orders/${encodeURIComponent(orderId)}/status`, {
             method: 'PATCH',
             body: JSON.stringify({ status: target, reason, expectedStatus: current }),
+          }).then((data) => {
+            applyServerOrderUpdate(data);
+            renderPedidos();
+            renderStats();
+            renderHoy();
+            renderOrdersMap();
+            renderDelivery();
           });
           toast('Estado actualizado');
-          await load({ keepTab: true });
           await openReceipt(orderId);
+          load({ keepTab: true }).catch(() => {});
         } catch (error) {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo cambiar el estado');
         }
@@ -13912,7 +14290,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'cierre', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -13923,6 +14301,7 @@
     pedidos: 'Pedidos',
     productos: 'Inventario',
     reportes: 'Reportes',
+    cierre: 'Cierre diario',
     seguimientos: 'Seguimientos',
     mensajes: 'Plantillas',
     ajustes: 'Configuración',
@@ -13931,10 +14310,14 @@
   };
 
   function setTab(tab, options = {}) {
-    if ((tab === 'usuarios' && !isAdmin()) || (tab === 'reportes' && !hasPermission('reports.profit.view'))) {
+    if ((tab === 'usuarios' && !isAdmin()) || (tab === 'reportes' && !hasPermission('reports.profit.view')) || (tab === 'cierre' && !canUseDailyClose())) {
       tab = 'hoy';
     }
-    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil'].includes(tab)) tab = 'delivery';
+    if (tab === 'mapa' && !canUseMapScreen()) {
+      if (!options.silent) toast('Mapa y entregas disponible solo para administración');
+      tab = isDeliveryUser() ? 'delivery' : 'hoy';
+    }
+    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil', 'cierre'].includes(tab)) tab = 'delivery';
     if (tab !== 'whatsapp') {
       state.wa.searchOpen = false;
       state.wa.filtersOpen = false;
@@ -13992,6 +14375,7 @@
       }
       if (tab === 'productos') loadInventory().catch(() => {});
       if (tab === 'reportes' && hasPermission('reports.profit.view')) loadSalesReport(state.salesReportPeriod).catch(() => {});
+      if (tab === 'cierre') renderDailyClose();
       if (tab === 'usuarios') loadUsers().catch(() => {});
       // El perfil se relee del servidor: el nombre pudo cambiar en otro sitio.
       if (tab === 'perfil') refreshProfile().catch(() => {});
@@ -14222,6 +14606,11 @@
         openOrdersMapPoint(mapOpen.dataset.mapOpen);
         return;
       }
+      const mapOrder = event.target.closest('[data-map-order]');
+      if (mapOrder) {
+        openReceipt(mapOrder.dataset.mapOrder);
+        return;
+      }
       const mapCenter = event.target.closest('[data-map-center]');
       if (mapCenter) {
         centerOrdersMapPoint(mapCenter.dataset.mapCenter);
@@ -14240,6 +14629,7 @@
           location: mapLocationFromAttr(anyMap.dataset.openMap),
           title: anyMap.dataset.mapTitle || 'Ubicación',
           conversationId: anyMap.dataset.mapConversation || '',
+          orderId: anyMap.dataset.openMapOrder || '',
         });
         return;
       }
@@ -14508,9 +14898,7 @@
       }
       const deliveryStop = event.target.closest('[data-delivery-stop]');
       if (deliveryStop) {
-        stopDelivery(deliveryStop.dataset.deliveryStop, false).catch((error) => {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo detener');
-        });
+        confirmDeliveryStop(deliveryStop.dataset.deliveryStop);
         return;
       }
       const deliveryComplete = event.target.closest('[data-delivery-complete]');
@@ -14541,6 +14929,17 @@
         });
         return;
       }
+      const deliveryConfirmStop = event.target.closest('[data-delivery-confirm-stop]');
+      if (deliveryConfirmStop) {
+        const sessionId = deliveryConfirmStop.dataset.deliveryConfirmStop;
+        working(deliveryConfirmStop, 'Deteniendo…', async () => {
+          await stopDelivery(sessionId, false);
+          closeSheet();
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo detener');
+        });
+        return;
+      }
       const deliveryConfirmIssue = event.target.closest('[data-delivery-confirm-issue]');
       if (deliveryConfirmIssue) {
         const reason = $('#delivery-issue-reason')?.value ?? '';
@@ -14563,6 +14962,15 @@
       }
       if (event.target.closest('[data-delivery-refresh]')) {
         load({ keepTab: true }).catch(() => {});
+        return;
+      }
+      if (event.target.closest('[data-daily-close-now]')) {
+        if (businessClockMinutes() < 18 * 60) {
+          toast('Todavía es temprano: el cierre manual se habilita desde las 6:00 p.m.');
+          return;
+        }
+        renderDailyClose();
+        toast('Cierre calculado con las entregas de hoy');
         return;
       }
       if (event.target.closest('[data-open-drawer]')) {
@@ -14713,6 +15121,11 @@
       const orderEdit = event.target.closest('[data-order-edit]');
       if (orderEdit) {
         openOrderEditor(orderEdit.dataset.orderEdit);
+        return;
+      }
+      const orderMap = event.target.closest('[data-order-map]');
+      if (orderMap) {
+        openOrderOnMap(orderMap.dataset.orderMap);
         return;
       }
       const orderOpen = event.target.closest('[data-order-open]');

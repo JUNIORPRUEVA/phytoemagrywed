@@ -537,6 +537,10 @@ describe('el mapa se abre DENTRO de la app', () => {
     expect(fake.calls.maps.length).toBe(antes + 1);
     expect(fake.calls.maps.at(-1).id).toBe('orders-map');
     expect($('#sheet-title').textContent).toContain('Ubicación del pedido');
+    const verPedido = await waitFor(() => $('#sheet-body [data-map-order]'), 'volver al pedido desde el mapa');
+    expect(verPedido.textContent).toContain('Ver pedido');
+    click(verPedido);
+    await waitFor(() => $('#sheet-title')?.textContent?.includes('Factura'), 'la factura desde el mapa');
   }, 30000);
 });
 
