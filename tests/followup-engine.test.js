@@ -481,7 +481,9 @@ describe('cola de mensajes programados', () => {
       mode: 'historical_status',
       historicalStatus: 'COMPRO_REPORTADO',
       template: 'phyto_contacto_personalizado_v1',
-      templateValues: { 2: 'Hola {{nombre}}, este es un aviso importante.' },
+      customMessage:
+        'Hola {{nombre}}, te escribimos de Phytoemagry.\n\nEste es un aviso importante.\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+      requireExactBody: true,
       startAt,
       intervalMinutes: 2,
     };
@@ -508,8 +510,42 @@ describe('cola de mensajes programados', () => {
     expect(after).toHaveLength(before.length + 1);
     const created = after.find((row) => row.customer_id === ana.customer.id);
     expect(created?.status).toBe('SCHEDULED');
-    expect(created?.template_body).toContain('Ana Campaña');
+    expect(created?.template_body).toBe(
+      'Hola Ana Campaña, te escribimos de Phytoemagry.\n\nEste es un aviso importante.\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+    );
     expect(created?.scheduled_at).toBe(startAt);
+  });
+
+  it('campaña de clientes: bloquea si la plantilla cambiaría el mensaje escrito', async () => {
+    await call('/api/admin/wa-templates');
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'phyto_contacto_personalizado_v1', status: 'APPROVED' }),
+    });
+    const ana = await app.customers.findOrCreateByPhone({ phone: '18095559903', name: 'Ana Exacta', source: 'test' });
+    await app.customers.update(ana.customer.id, {
+      historicalWhatsAppImport: { status: 'COMPRO_REPORTADO', status_label: 'Compra reportada' },
+    });
+    const before = await app.collections.list('scheduled_messages');
+    const result = await json(
+      await call('/api/admin/customer-campaigns/schedule', {
+        method: 'POST',
+        body: JSON.stringify({
+          dryRun: false,
+          mode: 'historical_status',
+          historicalStatus: 'COMPRO_REPORTADO',
+          template: 'phyto_contacto_personalizado_v1',
+          customMessage: 'Hola {{nombre}}, este texto no incluye el cierre fijo de la plantilla.',
+          requireExactBody: true,
+          startAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+          intervalMinutes: 2,
+        }),
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.counts.scheduled).toBe(0);
+    expect(result.conflicts.some((row) => row.error === 'template_wraps_custom_message')).toBe(true);
+    expect(await app.collections.list('scheduled_messages')).toHaveLength(before.length);
   });
 
   it('si Meta la retira entre programar y enviar, NO se fuerza: queda BLOQUEADO', async () => {

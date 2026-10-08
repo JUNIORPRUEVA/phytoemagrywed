@@ -2059,19 +2059,19 @@
       id: 'mudanza',
       label: 'Aviso importante',
       body:
-        'Hola {{nombre}}, te avisamos que nos mudamos de establecimiento. Seguimos trabajando desde nuestra otra banca, con almacen en Higuey y servicio de delivery. Puedes escribirnos por aqui para coordinar tu pedido.',
+        'Nos mudamos temporalmente a La Otra Banda y ahora trabajamos de forma virtual, con almacen en Higuey. Tenemos delivery de 8 a. m. a 9 p. m. Para pedidos o consultas, escribenos por aqui. Entrega rapida.',
     },
     {
       id: 'oferta',
       label: 'Oferta',
       body:
-        'Hola {{nombre}}, tenemos una oferta especial de las pastillas Phytoemagry por tiempo limitado. Si quieres aprovecharla, respondeme por aqui y te confirmo disponibilidad y delivery.',
+        'Tenemos una oferta especial de las pastillas Phytoemagry por tiempo limitado. Si quieres aprovecharla, respondeme por aqui y te confirmo disponibilidad y delivery.',
     },
     {
       id: 'motivacion',
       label: 'Motivacion',
       body:
-        'Hola {{nombre}}, esperamos que estes bien. Si quieres retomar tu rutina con Phytoemagry, estamos disponibles para orientarte y coordinar entrega cuando lo necesites.',
+        'Esperamos que estes bien. Si quieres retomar tu rutina con Phytoemagry, estamos disponibles para orientarte y coordinar entrega cuando lo necesites.',
     },
   ];
 
@@ -2174,7 +2174,7 @@
         </select>
       </label>
       <label class="field">
-        <span class="field__label">Mensaje personalizado</span>
+        <span class="field__label">Mensaje final para el cliente</span>
         <textarea class="field__area" id="campaign-message" rows="5">${escapeHtml(preset.body)}</textarea>
       </label>
       <label class="field">
@@ -2221,16 +2221,50 @@
 
     const selectedTemplate = () => (state.templates ?? []).find((template) => template.name === $('#campaign-template')?.value) ?? null;
     const messageText = () => String($('#campaign-message')?.value ?? '').trim();
+    const campaignRenderDesired = (value, sampleName = 'cliente') =>
+      String(value ?? '')
+        .replace(/\{\{\s*nombre\s*\}\}/gi, sampleName)
+        .replace(/\{\s*nombre\s*\}/gi, sampleName)
+        .trim();
+    const campaignTemplateParts = (template, sampleName = 'cliente') => {
+      const libre = waTemplateFreeSlot(template);
+      if (!template || libre === null) return { ok: false, error: 'no_free_slot' };
+      const marker = '__CRM_CAMPAIGN_MESSAGE__';
+      let text = String(template.body ?? '');
+      waTemplateHuecos(template).forEach((key, index) => {
+        let value = '';
+        if (index === libre) value = marker;
+        else if (['customer_name', 'nombre'].includes(String(key ?? '').trim().toLowerCase())) value = sampleName;
+        text = text.replace(new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'), value);
+      });
+      const markerAt = text.indexOf(marker);
+      if (markerAt === -1) return { ok: false, error: 'no_marker' };
+      return { ok: true, libre, prefix: text.slice(0, markerAt), suffix: text.slice(markerAt + marker.length) };
+    };
+    const campaignFinalFromMiddle = (template, middle) => {
+      const parts = campaignTemplateParts(template, '{{nombre}}');
+      if (!parts.ok) return String(middle ?? '').trim();
+      return `${parts.prefix}${String(middle ?? '').trim()}${parts.suffix}`.trim();
+    };
+    const campaignValuesFromFinalMessage = (template, value, sampleName = 'cliente') => {
+      const parts = campaignTemplateParts(template, sampleName);
+      if (!parts.ok) return { ok: false, values: {}, reason: parts.error };
+      const desired = campaignRenderDesired(value, sampleName);
+      if (!desired.startsWith(parts.prefix) || !desired.endsWith(parts.suffix) || desired.length < parts.prefix.length + parts.suffix.length) {
+        return { ok: false, values: {}, reason: 'template_wraps_message', desired, parts };
+      }
+      const middle = desired.slice(parts.prefix.length, desired.length - parts.suffix.length).trim();
+      if (!middle) return { ok: false, values: {}, reason: 'empty_message', desired, parts };
+      return { ok: true, values: { [parts.libre]: middle }, desired, parts };
+    };
     const scope = () => {
       const [mode, historicalStatus = ''] = String($('#campaign-filter')?.value ?? 'all:').split(':');
       return { mode, historicalStatus };
     };
     const valuesForTemplate = () => {
       const template = selectedTemplate();
-      const libre = waTemplateFreeSlot(template);
-      const values = {};
-      if (libre !== null) values[libre] = messageText();
-      return values;
+      const exact = campaignValuesFromFinalMessage(template, messageText());
+      return exact.ok ? exact.values : {};
     };
     const oneBasedValues = () =>
       Object.fromEntries(Object.entries(valuesForTemplate()).map(([index, value]) => [String(Number(index) + 1), String(value).trim()]));
@@ -2259,24 +2293,25 @@
     const paint = () => {
       const template = selectedTemplate();
       const libre = waTemplateFreeSlot(template);
+      const exact = campaignValuesFromFinalMessage(template, messageText());
       const { mode, historicalStatus } = scope();
       $('#campaign-pick').hidden = mode !== 'selected';
       if (mode === 'selected') renderPickList();
       const count = recipients().length;
       const interval = Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2);
       const estimated = count > 0 ? new Date(new Date($('#campaign-start')?.value || Date.now()).getTime() + (count - 1) * interval * 60000) : null;
-      $('#campaign-preview').textContent = template
-        ? waRenderTemplatePreview(template, valuesForTemplate()).replaceAll('{{nombre}}', 'cliente')
-        : 'Elige una plantilla aprobada.';
+      $('#campaign-preview').textContent = template ? campaignRenderDesired(messageText()) : 'Elige una plantilla aprobada.';
       const filterText = CAMPAIGN_FILTERS.find(([m, s]) => m === mode && s === historicalStatus)?.[2] ?? 'Destinatarios';
       $('#campaign-summary').textContent =
         libre === null
           ? 'Esta plantilla no tiene hueco libre para tu mensaje. Elige otra plantilla.'
-          : `${count} destinatario(s) · ${filterText} · intervalo minimo ${interval} min${
+          : !exact.ok && messageText()
+            ? 'La plantilla aprobada agrega texto fijo. Ajusta el mensaje para que coincida con la vista previa final o usa otra plantilla.'
+            : `${count} destinatario(s) · ${filterText} · intervalo minimo ${interval} min${
               estimated ? ` · termina aprox. ${fmtWhen(estimated.toISOString())}` : ''
             }`;
       $('#campaign-review').disabled = libre === null || !messageText() || count === 0;
-      $('#campaign-schedule').disabled = !state.customerCampaignPreview || libre === null || !messageText() || count === 0;
+      $('#campaign-schedule').disabled = !state.customerCampaignPreview || libre === null || !messageText() || !exact.ok || count === 0;
     };
     const payload = (dryRun) => {
       const { mode, historicalStatus } = scope();
@@ -2287,6 +2322,8 @@
         customerIds: mode === 'selected' ? Array.from(selectedIds) : undefined,
         template: selectedTemplate()?.name,
         templateValues: oneBasedValues(),
+        customMessage: messageText(),
+        requireExactBody: true,
         startAt: new Date($('#campaign-start')?.value || Date.now()).toISOString(),
         intervalMinutes: Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2),
         timeZone: BUSINESS_TIME_ZONE,
@@ -2309,11 +2346,13 @@
 
     $('#campaign-preset')?.addEventListener('change', (event) => {
       const found = CAMPAIGN_PRESETS.find((row) => row.id === event.currentTarget.value) ?? CAMPAIGN_PRESETS[0];
-      $('#campaign-message').value = found.body;
+      $('#campaign-message').value = campaignFinalFromMiddle(selectedTemplate(), found.body);
       state.customerCampaignPreview = null;
       paint();
     });
     $('#campaign-template')?.addEventListener('change', () => {
+      const found = CAMPAIGN_PRESETS.find((row) => row.id === $('#campaign-preset')?.value) ?? CAMPAIGN_PRESETS[0];
+      $('#campaign-message').value = campaignFinalFromMiddle(selectedTemplate(), found.body);
       state.customerCampaignPreview = null;
       paint();
     });
@@ -2362,6 +2401,7 @@
         }
       });
     });
+    $('#campaign-message').value = campaignFinalFromMiddle(selectedTemplate(), preset.body);
     paint();
   }
 

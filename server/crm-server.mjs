@@ -3629,6 +3629,64 @@ function campaignCustomerLabel(customer) {
   return text(customer?.name, 80) ?? customer?.phone_e164 ?? customer?.phone ?? customer?.id ?? 'Cliente';
 }
 
+function campaignFreeTextIndex(template) {
+  return templateVariables(template).findIndex((key) =>
+    TEMPLATE_FREE_TEXT_KEYS.includes(String(key ?? '').trim().toLowerCase()),
+  );
+}
+
+function campaignDesiredMessageForCustomer(value, customer) {
+  const name = customer?.name || customer?.phone_e164 || customer?.phone || 'cliente';
+  const phone = customer?.phone_e164 || customer?.phone || '';
+  return String(value ?? '')
+    .replace(/\{\{\s*nombre\s*\}\}/gi, name)
+    .replace(/\{\s*nombre\s*\}/gi, name)
+    .replace(/\{\{\s*telefono\s*\}\}/gi, phone)
+    .replace(/\{\s*telefono\s*\}/gi, phone)
+    .trim();
+}
+
+function campaignAutoTemplateValue(key, customer) {
+  const normalized = String(key ?? '').trim().toLowerCase();
+  if (normalized === 'customer_name' || normalized === 'nombre') return customer?.name || customer?.phone_e164 || customer?.phone || 'cliente';
+  if (normalized === 'phone' || normalized === 'telefono') return customer?.phone_e164 || customer?.phone || '';
+  return null;
+}
+
+function campaignValuesForExactBody(template, desiredBody, customer) {
+  const variables = templateVariables(template);
+  const freeIndex = campaignFreeTextIndex(template);
+  if (freeIndex === -1) return { ok: false, error: 'no_free_slot', message: 'La plantilla no tiene hueco libre para el mensaje.' };
+  const marker = '__CRM_CAMPAIGN_MESSAGE__';
+  let skeleton = String(template?.body ?? '');
+  for (const [index, key] of variables.entries()) {
+    const value = index === freeIndex ? marker : campaignAutoTemplateValue(key, customer);
+    if (value === null || value === undefined || value === '') {
+      return {
+        ok: false,
+        error: 'missing_template_data',
+        message: 'Faltan datos para completar la plantilla.',
+        missing: [key],
+      };
+    }
+    skeleton = skeleton.replace(new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'), sanitizeTemplateParameter(value));
+  }
+  const markerAt = skeleton.indexOf(marker);
+  if (markerAt === -1) return { ok: false, error: 'no_free_slot', message: 'La plantilla no tiene hueco libre para el mensaje.' };
+  const prefix = skeleton.slice(0, markerAt);
+  const suffix = skeleton.slice(markerAt + marker.length);
+  if (!desiredBody.startsWith(prefix) || !desiredBody.endsWith(suffix) || desiredBody.length < prefix.length + suffix.length) {
+    return {
+      ok: false,
+      error: 'template_wraps_custom_message',
+      message: 'La plantilla aprobada agrega texto fijo; el mensaje final no coincide exactamente con lo escrito.',
+    };
+  }
+  const freeText = desiredBody.slice(prefix.length, desiredBody.length - suffix.length).trim();
+  if (!freeText) return { ok: false, error: 'empty_message', message: 'El mensaje editable está vacío.' };
+  return { ok: true, values: { [String(freeIndex + 1)]: freeText } };
+}
+
 function campaignValuesForCustomer(values, customer) {
   if (!values || typeof values !== 'object' || Array.isArray(values)) return null;
   const name = campaignCustomerLabel(customer);
@@ -8605,11 +8663,30 @@ async function handle(req, res, ctx) {
         body.templateValues && typeof body.templateValues === 'object' && !Array.isArray(body.templateValues)
           ? body.templateValues
           : null;
+      const customMessage = longText(body.customMessage, 2000);
+      const requireExactBody = body.requireExactBody === true;
+      if (requireExactBody && !customMessage) {
+        json(res, 422, { ok: false, error: 'message_required', message: 'Escribe el mensaje final que recibirá el cliente.' });
+        return;
+      }
       const campaignId = newId('cmp');
 
       for (const [index, customer] of candidates.entries()) {
         const conversation = dryRun ? await ctx.customers.conversationFor(customer.id, { create: false }) : await ctx.customers.conversationFor(customer.id);
-        const customerValues = campaignValuesForCustomer(templateValues, customer);
+        const desiredBody = requireExactBody ? campaignDesiredMessageForCustomer(customMessage, customer) : null;
+        const exactValues = requireExactBody ? campaignValuesForExactBody(check.template, desiredBody, customer) : null;
+        if (requireExactBody && !exactValues?.ok) {
+          conflicts.push({
+            id: customer.id,
+            name: campaignCustomerLabel(customer),
+            phone_e164: customer.phone_e164,
+            error: exactValues?.error ?? 'message_not_exact',
+            message: exactValues?.message ?? 'El mensaje final no coincide exactamente con lo escrito.',
+            missing: exactValues?.missing ?? undefined,
+          });
+          continue;
+        }
+        const customerValues = requireExactBody ? exactValues.values : campaignValuesForCustomer(templateValues, customer);
         const payload = await resolveTemplatePayload(ctx, {
           template: check.template,
           customer,
@@ -8625,6 +8702,16 @@ async function handle(req, res, ctx) {
             error: payload.error,
             message: payload.message,
             missing: payload.missing ?? undefined,
+          });
+          continue;
+        }
+        if (requireExactBody && payload.body !== desiredBody) {
+          conflicts.push({
+            id: customer.id,
+            name: campaignCustomerLabel(customer),
+            phone_e164: customer.phone_e164,
+            error: 'message_not_exact',
+            message: 'El mensaje que saldría por WhatsApp no coincide exactamente con el mensaje escrito.',
           });
           continue;
         }
