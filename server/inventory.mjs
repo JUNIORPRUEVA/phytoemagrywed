@@ -89,6 +89,33 @@ function rangeFor(period, now, timeZone, query = {}) {
   return { name: 'hoy', startDay: today, endDay: today };
 }
 
+function lineCapsules(line = {}) {
+  const direct = Number(line.totalCapsules ?? line.capsules ?? line.capsules_count);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const raw = `${line.variantId ?? line.variant_id ?? ''} ${line.variantName ?? line.name ?? line.label ?? ''}`;
+  const match = raw.match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function deliveryCommissionCentsForLine(line = {}) {
+  const quantity = Math.max(1, Number(line.quantity ?? 1) || 1);
+  const capsules = lineCapsules(line);
+  const ratePesos = capsules === 5 ? 150 : capsules === 10 ? 200 : capsules === 60 ? 200 : capsules > 10 ? 250 : 0;
+  return pesosToCents(ratePesos * quantity);
+}
+
+function deliveryPayoutForOrder(order = {}, lines = []) {
+  const hasDeliveryAgent = Boolean(order?.delivery?.delivery_user_id);
+  const deliveryFeeCents = pesosToCents(order?.delivery_fee ?? order?.delivery?.fee ?? 0);
+  const deliveryCommissionCents = hasDeliveryAgent ? lines.reduce((sum, line) => sum + deliveryCommissionCentsForLine(line), 0) : 0;
+  return {
+    delivery_fee_payout_cents: hasDeliveryAgent ? deliveryFeeCents : 0,
+    delivery_commission_cents: deliveryCommissionCents,
+    delivery_agent_payout_cents: hasDeliveryAgent ? deliveryFeeCents + deliveryCommissionCents : 0,
+    has_delivery_agent: hasDeliveryAgent,
+  };
+}
+
 function deliveredAtOf(row) {
   const order = orderOf(row);
   return order?.delivered_at ?? row.meta_purchase_sent_at ?? row.updated_at ?? row.received_at;
@@ -418,6 +445,8 @@ export function createInventoryService(deps) {
       const costCents = lines.reduce((sum, line) => sum + (Number(line.product_cost_snapshot_cents) || 0), 0);
       const capsules = lines.reduce((sum, line) => sum + (Number(line.totalCapsules) || 0), 0);
       const deliveryCents = pesosToCents(order?.delivery_fee ?? order?.delivery?.fee ?? 0);
+      const deliveryPayout = deliveryPayoutForOrder(order, lines);
+      const grossProductProfitCents = productRevenueCents - costCents;
       return {
         id: row.id,
         date: deliveredAtOf(row),
@@ -432,7 +461,9 @@ export function createInventoryService(deps) {
         delivery_revenue_cents: deliveryCents,
         total_collected_cents: productRevenueCents + deliveryCents,
         product_cost_cents: costCents,
-        gross_product_profit_cents: productRevenueCents - costCents,
+        gross_product_profit_cents: grossProductProfitCents,
+        ...deliveryPayout,
+        net_product_profit_cents: grossProductProfitCents - deliveryPayout.delivery_agent_payout_cents,
         status: row.status,
         lines,
       };
@@ -465,11 +496,27 @@ export function createInventoryService(deps) {
         acc.total_collected_cents += sale.total_collected_cents;
         acc.product_cost_cents += sale.product_cost_cents;
         acc.gross_product_profit_cents += sale.gross_product_profit_cents;
+        acc.delivery_fee_payout_cents += sale.delivery_fee_payout_cents;
+        acc.delivery_commission_cents += sale.delivery_commission_cents;
+        acc.delivery_agent_payout_cents += sale.delivery_agent_payout_cents;
+        acc.net_product_profit_cents += sale.net_product_profit_cents;
         acc.capsules_sold += sale.capsules;
         acc.orders += 1;
         return acc;
       },
-      { product_revenue_cents: 0, delivery_revenue_cents: 0, total_collected_cents: 0, product_cost_cents: 0, gross_product_profit_cents: 0, capsules_sold: 0, orders: 0 },
+      {
+        product_revenue_cents: 0,
+        delivery_revenue_cents: 0,
+        total_collected_cents: 0,
+        product_cost_cents: 0,
+        gross_product_profit_cents: 0,
+        delivery_fee_payout_cents: 0,
+        delivery_commission_cents: 0,
+        delivery_agent_payout_cents: 0,
+        net_product_profit_cents: 0,
+        capsules_sold: 0,
+        orders: 0,
+      },
     );
     return { period, summary, byPresentation: [...byPresentation.values()], sales: sales.slice(0, options.limit ?? 100) };
   }

@@ -115,6 +115,34 @@ describe('inventario, costo y reportes', () => {
     });
   });
 
+  it('reporta ganancia bruta sin delivery y ganancia neta descontando pago al delivery', async () => {
+    const app = await newApp();
+    await restock(app, 100);
+
+    const created = await deliveredOrder(app, { name: 'Neta Delivery', deliveryFee: 250 });
+    const assigned = await call(app, `/api/admin/orders/${created.item.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ delivery: { delivery_user_id: 'usr_delivery_test', delivery_user_name_snapshot: 'Delivery Reporte' } }),
+    });
+    expect(assigned.status).toBe(200);
+
+    const report = await json(await call(app, '/api/admin/reports/sales?period=hoy'));
+
+    expect(report.report.summary).toMatchObject({
+      gross_product_profit_cents: 123340,
+      delivery_revenue_cents: 25000,
+      delivery_fee_payout_cents: 25000,
+      delivery_commission_cents: 20000,
+      delivery_agent_payout_cents: 45000,
+      net_product_profit_cents: 78340,
+    });
+    expect(report.report.sales[0]).toMatchObject({
+      has_delivery_agent: true,
+      delivery_agent_payout_cents: 45000,
+      net_product_profit_cents: 78340,
+    });
+  });
+
   it('conserva el costo historico aunque cambie el costo vigente despues de vender', async () => {
     const app = await newApp();
     await restock(app, 100);

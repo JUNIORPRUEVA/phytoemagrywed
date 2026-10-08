@@ -53,6 +53,13 @@ describe('mobile navigation and floating actions', () => {
     expect(css).not.toContain("body[data-tab='clientes'] .client-fab {\n    display: none;");
   });
 
+  it('Delivery puede entrar a Clientes y abrir el chat del cliente asignado', () => {
+    expect(app).toContain("['delivery', 'whatsapp', 'clientes', 'ajustes', 'perfil', 'cierre']");
+    expect(app).toContain("['delivery', 'whatsapp', 'clientes', 'perfil', 'cierre']");
+    expect(app).toContain('data-customer-chat');
+    expect(app).toContain('async function openCustomerConversation');
+  });
+
   it('la barra de arriba de Pedidos se queda fija (no se va con el scroll)', () => {
     const plano = css.replaceAll('\r\n', '\n');
     // Igual que Clientes: pegada arriba, con fondo translúcido para que se lea

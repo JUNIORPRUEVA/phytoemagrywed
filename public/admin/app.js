@@ -1265,7 +1265,7 @@
     });
     if (isDeliveryUser()) {
       $$('[data-tab]').forEach((node) => {
-        if (!['delivery', 'whatsapp', 'ajustes', 'perfil', 'cierre'].includes(node.dataset.tab)) node.hidden = true;
+        if (!['delivery', 'whatsapp', 'clientes', 'ajustes', 'perfil', 'cierre'].includes(node.dataset.tab)) node.hidden = true;
       });
     } else {
       $$('[data-tab]').forEach((node) => {
@@ -1549,7 +1549,9 @@
           <div class="fact"><dt>Delivery cobrado</dt><dd>${moneyCents(s.delivery_revenue_cents)}</dd></div>
           <div class="fact"><dt>Total cobrado</dt><dd>${moneyCents(s.total_collected_cents)}</dd></div>
           <div class="fact"><dt>Costo producto</dt><dd>${moneyCents(s.product_cost_cents)}</dd></div>
-          <div class="fact"><dt>Utilidad bruta producto</dt><dd>${moneyCents(s.gross_product_profit_cents)}</dd></div>
+          <div class="fact"><dt>Ganancia bruta</dt><dd>${moneyCents(s.gross_product_profit_cents)}</dd></div>
+          <div class="fact"><dt>Comisión delivery</dt><dd>${moneyCents(s.delivery_agent_payout_cents)}</dd></div>
+          <div class="fact"><dt>Ganancia neta</dt><dd>${moneyCents(s.net_product_profit_cents)}</dd></div>
           <div class="fact"><dt>Cápsulas vendidas</dt><dd>${escapeHtml(s.capsules_sold ?? 0)}</dd></div>
         </dl>
       </div>
@@ -1581,9 +1583,9 @@
                     (row) =>
                       `<div class="fact"><dt>${escapeHtml(row.order_number ?? row.id)} · ${escapeHtml(fmtWhen(row.date))}</dt><dd>${escapeHtml(
                         row.presentation,
-                      )} · ${escapeHtml(row.payment_method_label ?? paymentMethodLabel(row.payment_method))} · cobrado ${moneyCents(row.total_collected_cents)} · utilidad ${moneyCents(
+                      )} · ${escapeHtml(row.payment_method_label ?? paymentMethodLabel(row.payment_method))} · cobrado ${moneyCents(row.total_collected_cents)} · bruta ${moneyCents(
                         row.gross_product_profit_cents,
-                      )}</dd></div>`,
+                      )} · neta ${moneyCents(row.net_product_profit_cents)}</dd></div>`,
                   )
                   .join('')
               : '<div class="fact"><dt>Sin ventas</dt><dd>No hay detalle para mostrar.</dd></div>'
@@ -15129,7 +15131,7 @@
       if (!options.silent) toast('Mapa y entregas disponible solo para administración');
       tab = isDeliveryUser() ? 'delivery' : 'hoy';
     }
-    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil', 'cierre'].includes(tab)) tab = 'delivery';
+    if (isDeliveryUser() && !['delivery', 'whatsapp', 'clientes', 'perfil', 'cierre'].includes(tab)) tab = 'delivery';
     if (tab !== 'whatsapp') {
       state.wa.searchOpen = false;
       state.wa.filtersOpen = false;
