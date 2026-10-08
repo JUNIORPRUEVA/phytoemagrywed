@@ -6948,31 +6948,145 @@
     box.innerHTML = rows.length ? rows.map(waRow).join('') : emptyState(empty);
   }
 
+  /**
+   * EL TELÉFONO SE CORRIGE SOLO.
+   *
+   * La MISMA regla con la que el CRM guarda el número (`server/meta-capi.mjs` →
+   * `normalizePhone`): fuera todo lo que no sean dígitos, se descarta el `00` de
+   * delante y, si quedan 10 dígitos, es un número dominicano y se le pone el `+1`.
+   * Así «809 555 1234», «(809) 555-1234», «+1 809 555 1234» o «0018095551234»
+   * acaban en el MISMO cliente y no se crean dos fichas de la misma persona.
+   *
+   * @returns {string|null} los dígitos completos (con país) o null si no es un número
+   */
+  function phoneDigitsWithCountry(raw) {
+    const limpio = digits(raw).replace(/^00/, '');
+    const completo = limpio.length === 10 ? `1${limpio}` : limpio;
+    return completo.length >= 8 && completo.length <= 15 ? completo : null;
+  }
+
+  /** El mismo número, escrito como se lee bien: +1 809 555 1234. */
+  function phonePretty(completeDigits) {
+    const valor = String(completeDigits ?? '');
+    return valor.length === 11 && valor.startsWith('1')
+      ? `+1 ${valor.slice(1, 4)} ${valor.slice(4, 7)} ${valor.slice(7)}`
+      : `+${valor}`;
+  }
+
+  /**
+   * NUEVO WHATSAPP: agregar un contacto es el caso normal.
+   *
+   * Solo teléfono y nombre (el nombre, una etiqueta pequeña en la misma
+   * tarjeta). El MENSAJE es OPCIONAL: se añade con un botón y hasta entonces no
+   * ocupa sitio. Si se escribe, el saludo se completa solo con el nombre mientras
+   * el texto siga sin tocarse («Hola Ana, te escribo de Phytoemagry…»).
+   */
   function openNewConversationSheet() {
-    $('#sheet-title').textContent = 'Nuevo WhatsApp';
-    $('#sheet-body').innerHTML = `
-      <label class="field">
-        <span class="field__label">Teléfono con WhatsApp</span>
-        <input class="field__input" id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+1 809 555 1234" />
-      </label>
-      <label class="field">
-        <span class="field__label">Nombre del cliente</span>
-        <input class="field__input" id="wa-start-name" autocomplete="name" placeholder="Nombre opcional" />
-      </label>
-      <label class="field">
-        <span class="field__label">Mensaje</span>
-        <textarea class="field__area" id="wa-start-body" rows="4" placeholder="Hola, te escribo de ${NEGOCIO}..."></textarea>
-      </label>
-      <p class="rule">Se abrirá la conversación y el texto quedará listo para revisar. El envío se confirma desde el chat.</p>
-      <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir conversación</button>
-    `;
-    $('#sheet').hidden = false;
-    $('#wa-start-phone')?.focus();
+    openSheet(
+      'Nuevo WhatsApp',
+      `
+      <div class="wa-new">
+        <div class="wa-new__card">
+          <label class="wa-new__row wa-new__row--phone">
+            <span class="ico" aria-hidden="true">${ICONS.chat}</span>
+            <input id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+1 809 555 1234" aria-label="Teléfono con WhatsApp" />
+          </label>
+          <label class="wa-new__row wa-new__row--name">
+            <span class="ico" aria-hidden="true">${ICONS.person}</span>
+            <input id="wa-start-name" autocomplete="name" placeholder="Nombre" aria-label="Nombre del cliente" />
+          </label>
+        </div>
+        <p class="wa-new__hint" id="wa-start-hint" hidden></p>
+        <button class="btn wa-new__toggle" id="wa-start-message-toggle" type="button" aria-expanded="false" aria-controls="wa-start-message">
+          <span class="ico" aria-hidden="true">${ICONS.note}</span><span>Añadir mensaje</span>
+        </button>
+        <div class="wa-new__message" id="wa-start-message" hidden>
+          <textarea id="wa-start-body" rows="3" placeholder="Hola, te escribo de ${NEGOCIO}…" aria-label="Mensaje"></textarea>
+        </div>
+        <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir conversación</button>
+      </div>
+    `,
+      { variant: 'wa-new' },
+    );
+
+    const campoTelefono = $('#wa-start-phone');
+    const campoNombre = $('#wa-start-name');
+    const campoMensaje = $('#wa-start-body');
+    const bloqueMensaje = $('#wa-start-message');
+    const botonMensaje = $('#wa-start-message-toggle');
+    const pista = $('#wa-start-hint');
+    const saludoDe = (quien) => `Hola ${quien}, te escribo de ${NEGOCIO}…`;
+    let mensajeTocado = false;
+
+    /*
+     * Teléfono: mientras se escribe se avisa del número que se va a guardar (si
+     * no es ya el definitivo) y al salir del campo queda escrito corregido.
+     */
+    const pintarPista = () => {
+      const normalizado = phoneDigitsWithCountry(campoTelefono.value);
+      const escrito = digits(campoTelefono.value).replace(/^00/, '');
+      const corrige = Boolean(normalizado) && normalizado !== escrito;
+      pista.hidden = !corrige;
+      pista.textContent = corrige ? `Se guardará como ${phonePretty(normalizado)}` : '';
+    };
+    campoTelefono.addEventListener('input', pintarPista);
+    campoTelefono.addEventListener('blur', () => {
+      const normalizado = phoneDigitsWithCountry(campoTelefono.value);
+      if (normalizado) campoTelefono.value = phonePretty(normalizado);
+      pintarPista();
+    });
+
+    /* El mensaje se añade a propósito (y se puede quitar). */
+    const pintarBotonMensaje = () => {
+      const abierto = !bloqueMensaje.hidden;
+      botonMensaje.setAttribute('aria-expanded', String(abierto));
+      botonMensaje.innerHTML = `<span class="ico" aria-hidden="true">${abierto ? ICONS.close : ICONS.note}</span><span>${
+        abierto ? 'Quitar mensaje' : 'Añadir mensaje'
+      }</span>`;
+    };
+    const pintarSaludo = () => {
+      if (mensajeTocado) return;
+      const quien = campoNombre.value.trim();
+      campoMensaje.value = quien ? saludoDe(quien) : '';
+    };
+    botonMensaje.addEventListener('click', () => {
+      bloqueMensaje.hidden = !bloqueMensaje.hidden;
+      pintarBotonMensaje();
+      if (bloqueMensaje.hidden) return;
+      pintarSaludo();
+      campoMensaje.focus();
+    });
+    pintarBotonMensaje();
+
+    campoNombre.addEventListener('input', () => {
+      /*
+       * El saludo se completa solo MIENTRAS el mensaje siga sin tocarse: en
+       * cuanto la persona escribe un mensaje propio, no se le pisa. Sin mensaje
+       * añadido no se rellena nada: eso es solo agregar el contacto.
+       */
+      if (bloqueMensaje.hidden) return;
+      pintarSaludo();
+    });
+    campoMensaje.addEventListener('input', () => {
+      if (campoMensaje.value.trim()) {
+        mensajeTocado = true;
+        return;
+      }
+      /*
+       * Se quedó VACÍO: no hay nada que respetar, así que el saludo vuelve (si
+       * hay nombre). Es lo que espera quien borra el mensaje para empezar de
+       * nuevo, y así no hay que volver a tocar la etiqueta del nombre.
+       */
+      mensajeTocado = false;
+      pintarSaludo();
+    });
+
+    campoTelefono.focus();
     $('#wa-start-open').addEventListener('click', async (event) => {
-      const phone = $('#wa-start-phone').value.trim();
-      const name = $('#wa-start-name').value.trim();
-      const body = $('#wa-start-body').value.trim();
-      if (!phone || digits(phone).length < 7) {
+      const normalizado = phoneDigitsWithCountry(campoTelefono.value);
+      const name = campoNombre.value.trim();
+      const body = campoMensaje.value.trim();
+      if (!normalizado) {
         toast('Escribe un teléfono válido');
         return;
       }
@@ -6980,7 +7094,7 @@
         try {
           const result = await api('/api/admin/conversations/start', {
             method: 'POST',
-            body: JSON.stringify({ phone, name, body }),
+            body: JSON.stringify({ phone: `+${normalizado}`, name, body }),
           });
           closeSheet();
           await refreshWhatsapp();

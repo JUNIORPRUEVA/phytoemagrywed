@@ -529,7 +529,73 @@ describe('nuevo chat desde la lista de WhatsApp', () => {
     expect($('#wa-start-phone')).not.toBeNull();
   });
 
+  it('el formulario es limpio: sin texto explicativo y con el nombre como etiqueta', () => {
+    click('#wa-new-chat');
+    const cuerpo = $('#sheet-body');
+    // Nada de párrafos explicando el flujo: la forma se entiende sola.
+    expect(cuerpo.querySelector('.rule')).toBeNull();
+    expect(cuerpo.textContent).not.toContain('Se abrirá la conversación');
+    expect(cuerpo.textContent).not.toContain('El envío se confirma desde el chat');
+    // Teléfono y nombre siempre a la vista (el caso normal es AGREGAR contacto).
+    expect(cuerpo.querySelector('.wa-new__card #wa-start-phone')).not.toBeNull();
+    expect(cuerpo.querySelector('.wa-new__card #wa-start-name')).not.toBeNull();
+  });
+
+  it('el mensaje es OPCIONAL y el saludo se completa solo con el nombre', () => {
+    click('#wa-new-chat');
+    // Arranca en modo «agregar»: solo teléfono y nombre.
+    expect($('#wa-start-message').hidden).toBe(true);
+    expect($('#wa-start-message-toggle').textContent).toContain('Añadir mensaje');
+    // Escribir el nombre SIN mensaje no rellena nada.
+    setValue('#wa-start-name', 'Ana');
+    expect($('#wa-start-body').value).toBe('');
+    // Se añade el mensaje con su botón y entonces sí aparece el saludo.
+    click('#wa-start-message-toggle');
+    expect($('#wa-start-message').hidden).toBe(false);
+    expect($('#wa-start-message-toggle').textContent).toContain('Quitar mensaje');
+    expect($('#wa-start-body').value).toContain('Hola Ana');
+    // Si se escribe un mensaje propio, no se pisa.
+    setValue('#wa-start-body', 'Texto propio');
+    setValue('#wa-start-name', 'Bea');
+    expect($('#wa-start-body').value).toBe('Texto propio');
+    // Al vaciarlo del todo, el saludo vuelve sin tocar nada más.
+    setValue('#wa-start-body', '');
+    expect($('#wa-start-body').value).toContain('Hola Bea');
+    // Y se puede quitar el mensaje otra vez.
+    click('#wa-start-message-toggle');
+    expect($('#wa-start-message').hidden).toBe(true);
+    expect($('#wa-start-message-toggle').textContent).toContain('Añadir mensaje');
+  });
+
+  it('el teléfono se corrige solo (código de país y formato)', () => {
+    click('#wa-new-chat');
+    const telefono = $('#wa-start-phone');
+    const salirDelCampo = () => telefono.dispatchEvent(new dom.window.Event('blur'));
+    // Sin código de país: avisa y al salir del campo queda el número completo.
+    setValue('#wa-start-phone', '809 555 1234');
+    expect($('#wa-start-hint').hidden).toBe(false);
+    expect($('#wa-start-hint').textContent).toContain('+1 809 555 1234');
+    salirDelCampo();
+    expect(telefono.value).toBe('+1 809 555 1234');
+    expect($('#wa-start-hint').hidden).toBe(true);
+    // Con el `00` delante: el MISMO número.
+    setValue('#wa-start-phone', '0018095551234');
+    salirDelCampo();
+    expect(telefono.value).toBe('+1 809 555 1234');
+    // Con paréntesis y guiones: el MISMO número.
+    setValue('#wa-start-phone', '(809) 555-1234');
+    salirDelCampo();
+    expect(telefono.value).toBe('+1 809 555 1234');
+    // Basura: no se inventa nada y no se puede abrir.
+    setValue('#wa-start-phone', '123');
+    salirDelCampo();
+    expect(telefono.value).toBe('123');
+  });
+
   it('pinta una conversación sin mensajes sin inventar hora', async () => {
+    // Se abre el formulario aquí mismo: el caso que se prueba es AGREGAR el
+    // contacto SIN mensaje, y no debe depender de la prueba anterior.
+    click('#wa-new-chat');
     $('#wa-start-phone').value = '18095550555';
     $('#wa-start-name').value = 'Cliente Sin Mensajes';
     $('#wa-start-body').value = '';

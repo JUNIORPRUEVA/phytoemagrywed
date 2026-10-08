@@ -1232,6 +1232,163 @@ body[data-tab='hoy'] .stat__label {
   color: var(--pe-ink-500, #6b7a75);
 }
 
+/* ------------------------------------ NUEVO WHATSAPP (limpio y profesional)
+ * AGREGAR un contacto es el caso normal: teléfono y nombre, nada más. El MENSAJE
+ * es OPCIONAL (se añade con un botón) y hasta entonces no ocupa sitio. El único
+ * adorno es que el bloque se enciende cuando escribes dentro.
+ */
+.wa-new {
+  display: grid;
+  gap: 10px;
+}
+
+.wa-new__card {
+  border: 1px solid var(--pe-border);
+  border-radius: 14px;
+  background: var(--pe-surface);
+  overflow: hidden;
+}
+
+.wa-new__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+}
+
+.wa-new__row + .wa-new__row {
+  border-top: 1px solid var(--border-soft, var(--pe-border));
+}
+
+.wa-new__row .svg {
+  flex: none;
+  width: 19px;
+  height: 19px;
+}
+
+.wa-new__row--phone .svg {
+  color: var(--pe-whatsapp);
+}
+
+.wa-new__row--name .svg {
+  color: var(--phyto-primary);
+}
+
+.wa-new__row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 50px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--pe-ink-900);
+}
+
+.wa-new__row--phone input {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.wa-new__row input:focus,
+.wa-new__row input:focus-visible,
+.wa-new__message textarea:focus,
+.wa-new__message textarea:focus-visible {
+  outline: none;
+}
+
+.wa-new__row input::placeholder,
+.wa-new__message textarea::placeholder {
+  font-weight: 500;
+  color: var(--pe-ink-500);
+  opacity: 0.6;
+}
+
+.wa-new__card:focus-within,
+.wa-new__message:focus-within {
+  border-color: var(--phyto-primary);
+  box-shadow: 0 0 0 3px rgba(11, 107, 79, 0.1);
+}
+
+/* Aviso del número que se va a guardar cuando lo escrito no es el definitivo. */
+.wa-new__hint {
+  margin: -4px 2px 0;
+  font-size: 0.78rem;
+  color: var(--pe-ink-500);
+}
+
+/* BOTÓN DEL MENSAJE: discreto y con guiones, para no competir con la acción. */
+.wa-new__toggle {
+  min-height: 44px;
+  border-style: dashed;
+  border-color: var(--pe-border);
+  background: transparent;
+  color: var(--pe-ink-700);
+}
+
+.wa-new__toggle .svg {
+  width: 18px;
+  height: 18px;
+  color: var(--phyto-primary);
+}
+
+.wa-new__toggle[aria-expanded='true'] {
+  border-style: solid;
+  border-color: transparent;
+  background: var(--phyto-primary-tint);
+  color: var(--phyto-primary);
+}
+
+.wa-new__message {
+  padding: 12px 14px;
+  border: 1px solid var(--pe-border);
+  border-radius: 14px;
+  background: var(--pe-surface);
+}
+
+.wa-new__message textarea {
+  display: block;
+  width: 100%;
+  min-height: 92px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  line-height: 1.5;
+  color: var(--pe-ink-900);
+  resize: none;
+}
+
+.sheet[data-variant='wa-new'] .sheet__body {
+  gap: 0;
+}
+
+/*
+ * En el móvil es una hoja que sube desde abajo (queda a mano del pulgar); en
+ * pantalla grande, una tarjeta centrada se ve mucho más cuidada que una hoja
+ * pegada al borde inferior.
+ */
+@media (min-width: 720px) {
+  .sheet[data-variant='wa-new'] .sheet__panel {
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    width: min(440px, calc(100vw - 40px));
+    border-radius: 18px;
+    box-shadow: 0 24px 70px rgba(7, 30, 23, 0.28);
+    transform: translate(-50%, -50%);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .wa-new__card,
+  .wa-new__message {
+    transition:
+      border-color 220ms cubic-bezier(0.2, 0.7, 0.3, 1),
+      box-shadow 220ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+}
+
 .chips {
   display: flex;
   gap: 8px;
