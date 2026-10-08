@@ -2105,7 +2105,8 @@
 
   function renderCustomerCampaignFab() {
     let button = $('#customer-campaign-fab');
-    const visible = state.tab === 'clientes' && isAdmin();
+    const visibleTabs = new Set(['hoy', 'whatsapp', 'clientes', 'seguimientos', 'mensajes']);
+    const visible = isAdmin() && visibleTabs.has(state.tab);
     if (!visible) {
       button?.remove();
       return;
