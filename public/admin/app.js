@@ -5865,9 +5865,10 @@
       const cargando = Boolean(media) && !mediaListo && !falló;
       const icono = WA_KIND_ICON[tipo] ?? '📄';
       const nombre = WA_KIND_LABEL[tipo] ?? 'Archivo';
+      const articulo = WA_KIND_ARTICLE[tipo] ?? 'el';
       if (falló) {
         cuerpo = `<span class="media-state media-state--failed"><span aria-hidden="true">${icono}</span>
-            <span>No se pudo descargar el ${escapeHtml(nombre.toLowerCase())}</span></span>
+            <span>No se pudo descargar ${escapeHtml(articulo)} ${escapeHtml(nombre.toLowerCase())}</span></span>
           ${
             media?.id
               ? `<button class="btn btn--ghost btn--sm" data-media-retry="${escapeHtml(media.id)}" type="button">Reintentar</button>`
@@ -5875,7 +5876,7 @@
           }`;
       } else if (cargando) {
         cuerpo = `<span class="media-state"><span aria-hidden="true">${icono}</span>
-            <span>Descargando ${escapeHtml(nombre.toLowerCase())}…</span></span>`;
+            <span>Descargando ${escapeHtml(articulo)} ${escapeHtml(nombre.toLowerCase())}…</span></span>`;
       } else {
         // Sin almacén (o mensaje antiguo): se describe, nunca se inventa el archivo.
         cuerpo = `<span class="media-fallback"><span aria-hidden="true">${icono}</span>${escapeHtml(
@@ -6109,6 +6110,16 @@
     sticker: 'Sticker',
     location: 'Ubicación',
   };
+  /* El artículo de cada nombre: «la nota de voz», «el audio» (nunca «el nota»). */
+  const WA_KIND_ARTICLE = {
+    image: 'la',
+    audio: 'el',
+    voice: 'la',
+    document: 'el',
+    video: 'el',
+    sticker: 'el',
+    location: 'la',
+  };
 
   const COMMERCIAL_HINTS = {
     NUEVO: 'Prospecto',
@@ -6279,6 +6290,18 @@
     const messages = data?.messages ?? [];
     const last = messages[messages.length - 1];
     const contactState = getConversationContactState(data);
+    /*
+     * MULTIMEDIA EN LA FIRMA (fallo real): el archivo de un audio o una foto se
+     * descarga DESPUÉS de entrar el mensaje (el webhook contesta al momento y la
+     * copia al almacén va en segundo plano). Si la firma no mirara el estado del
+     * archivo, al terminar la descarga el hilo NO se repintaba y la burbuja se
+     * quedaba diciendo «Descargando…» para siempre, aunque el audio ya estuviera
+     * guardado listo para oírse.
+     */
+    const archivos = messages
+      .filter((message) => message.media?.id)
+      .map((message) => `${message.media.id}:${message.media.status ?? ''}`)
+      .join(',');
     return [
       messages.length,
       last?.id ?? '',
@@ -6287,6 +6310,7 @@
       last?.read_at ?? '',
       data?.canSendFreeText ? 1 : 0,
       contactState,
+      archivos,
     ].join('|');
   };
 
@@ -11321,13 +11345,35 @@
       if (button) button.disabled = false;
     };
 
+    /*
+     * EL AVISO DE PEDIDO ABIERTO SE PIDE ANTES, NUNCA DESPUÉS.
+     *
+     * Ese aviso (con su casilla «Sí, es un pedido nuevo») vive en el cuerpo del
+     * formulario, y la tarjeta de la nota de entrega es FIJA y flota ENCIMA de la
+     * hoja: si se abriera la tarjeta primero, la casilla quedaría tapada y el
+     * pedido no se guardaría por más que la persona escriba su comentario. Era un
+     * callejón sin salida real («pongo el comentario y no me deja pasar»).
+     */
+    const openOrdersAckPending = () => liveOrders.length > 0 && $('#order-open-ack')?.checked !== true;
+    const pedirConfirmacionDePedidoAbierto = () => {
+      const aviso = $('#order-open-warning');
+      aviso?.scrollIntoView?.({ block: 'center' });
+      aviso?.classList.add('rule--attention');
+      setTimeout(() => aviso?.classList.remove('rule--attention'), 1800);
+      $('#order-open-ack')?.focus?.({ preventScroll: true });
+      toast(`Confirma que es un pedido nuevo: ${customerName(customer)} ya tiene uno abierto`);
+    };
+
     const saveOrder = async ({ button, assignAfter = false, deliveryNote = '', deliveryUserId = '' } = {}) => {
       /*
        * El aviso de pedido abierto se confirma AQUÍ (no solo se enseña): sin
-       * marcar la casilla no se guarda. Es la diferencia entre avisar y evitar.
+       * marcar la casilla no se guarda. Y si la tarjeta de la nota estuviera
+       * abierta se cierra, porque tapa la casilla que hay que marcar.
        */
-      if (liveOrders.length && $('#order-open-ack')?.checked !== true) {
-        toast(`Confirma que es un pedido nuevo: ${customerName(customer)} ya tiene uno abierto`);
+      if (openOrdersAckPending()) {
+        const panelNota = $('#order-delivery-note');
+        if (panelNota) panelNota.hidden = true;
+        pedirConfirmacionDePedidoAbierto();
         return;
       }
       const totals = orderTotals(
@@ -11478,6 +11524,15 @@
       if (!panel) return;
       if (!chosenLocation) {
         showMissingDeliveryLocation();
+        return;
+      }
+      /*
+       * Antes de abrir la tarjeta de la nota se pide la confirmación de pedido
+       * abierto: si no, la tarjeta (que flota encima) taparía la casilla y el
+       * pedido no se podría guardar.
+       */
+      if (openOrdersAckPending()) {
+        pedirConfirmacionDePedidoAbierto();
         return;
       }
       if (!panel.hidden) {

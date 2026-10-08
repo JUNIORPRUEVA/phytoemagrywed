@@ -390,6 +390,39 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     expect(aviso.body).toBe('Ya pasé la orden al mensajero. Él te contactará para la entrega.');
   }, 10000);
 
+  it('pide la confirmación de pedido abierto ANTES de abrir la nota (antes se quedaba bloqueado)', async () => {
+    if (!$('#sheet')?.hidden) click('[data-close-sheet]');
+    click('[data-tab="whatsapp"]');
+    click(await waitFor(() => $$('[data-conv]')[0], 'la conversación del cliente con pedido abierto'));
+    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
+    click('#wa-actions');
+    click('[data-order-new]');
+    const primero = await waitFor(() => $('#order-draft-continue') ?? $('#order-save-delivery'), 'el formulario de pedido');
+    if (primero.id === 'order-draft-continue') {
+      click(primero);
+      await waitFor(() => $('#order-save-delivery'), 'el formulario tras el borrador');
+    }
+
+    // El cliente ya tiene pedidos sin cerrar y la casilla NO está marcada (es lo
+    // normal: la persona acaba de abrir el formulario).
+    expect($('#order-open-ack')).toBeTruthy();
+    expect($('#order-open-ack').checked).toBe(false);
+
+    /*
+     * FALLO REAL: la tarjeta de la nota es FIJA y flota encima de la hoja, así que
+     * tapaba la casilla y el pedido no se guardaba nunca («pongo el comentario y
+     * no me deja pasar de ahí»). Ahora, sin la confirmación, ni se abre.
+     */
+    click('#order-save-delivery');
+    expect($('#order-delivery-note').hidden).toBe(true);
+    expect($('#order-open-warning').classList.contains('rule--attention')).toBe(true);
+
+    // Se marca la confirmación: ahora sí aparece la nota y se puede continuar.
+    $('#order-open-ack').click();
+    click('#order-save-delivery');
+    await waitFor(() => $('#order-delivery-note')?.hidden === false, 'la tarjeta de la nota de entrega');
+  }, 20000);
+
   it('programa un mensaje (no es un seguimiento: lo intentará el sistema)', async () => {
     if (!$('#sheet')?.hidden) click('[data-close-sheet]');
     click('[data-tab="whatsapp"]');

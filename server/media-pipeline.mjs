@@ -158,55 +158,81 @@ export function createMediaPipeline(deps) {
 
     await mediaStore.update(row.id, { status: MEDIA_STATUS.DOWNLOADING, errorCode: null, errorMessage: null });
 
-    // 2) Descarga desde Graph (dos pasos: URL temporal y luego el archivo).
-    const descarga = await whatsappMedia.downloadMedia(media.waMediaId);
-    if (!descarga.ok) {
-      const marcado = await mediaStore.markFailed(row.id, descarga.error);
-      log(`[media] no se pudo descargar ${mediaType} de ${messageId}: ${descarga.error?.code}`);
-      return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: descarga.error };
-    }
+    /*
+     * DE AQUÍ PARA ABAJO, TODO VA PROTEGIDO.
+     *
+     * Antes, una EXCEPCIÓN a mitad (una red que se corta, un 500 del almacén, un
+     * JSON raro de Graph) dejaba la fila en DOWNLOADING para siempre: el panel se
+     * quedaba diciendo «Descargando…» eternamente y el cliente parecía invisible.
+     * Ahora una excepción se marca como FAILED: se ve el motivo y el panel ofrece
+     * reintentar. Los caminos que ya devolvían `ok:false` se quedan igual.
+     */
+    try {
+      // 2) Descarga desde Graph (dos pasos: URL temporal y luego el archivo).
+      const descarga = await whatsappMedia.downloadMedia(media.waMediaId);
+      if (!descarga.ok) {
+        const marcado = await mediaStore.markFailed(row.id, descarga.error);
+        log(`[media] no se pudo descargar ${mediaType} de ${messageId}: ${descarga.error?.code}`);
+        return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: descarga.error };
+      }
 
-    // 3) Validación real del contenido (MIME por bytes + tamaño).
-    const valido = validateBinary(descarga.buffer, {
-      declaredMime: descarga.declaredMimeType ?? descarga.mimeType,
-      expect: mediaType === 'image' || mediaType === 'sticker' ? 'image' : mediaType === 'document' ? null : 'audio',
-    });
-    if (!valido.ok) {
-      const marcado = await mediaStore.markFailed(row.id, { code: valido.code, message: valido.message });
-      log(`[media] ${mediaType} rechazado en ${messageId}: ${valido.code}`);
-      return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: { code: valido.code, message: valido.message } };
-    }
+      // 3) Validación real del contenido (MIME por bytes + tamaño).
+      const valido = validateBinary(descarga.buffer, {
+        declaredMime: descarga.declaredMimeType ?? descarga.mimeType,
+        expect: mediaType === 'image' || mediaType === 'sticker' ? 'image' : mediaType === 'document' ? null : 'audio',
+      });
+      if (!valido.ok) {
+        const marcado = await mediaStore.markFailed(row.id, { code: valido.code, message: valido.message });
+        log(`[media] ${mediaType} rechazado en ${messageId}: ${valido.code}`);
+        return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: { code: valido.code, message: valido.message } };
+      }
 
-    // 4) Almacén (R2). Si esto falla, el mensaje ya está guardado: no se toca.
-    const objectKey = buildObjectKey({
-      domain: 'whatsapp',
-      at: now(),
-      conversationId: input.conversationId,
-      messageId,
-      mime: valido.mimeType,
-    });
-    const subida = await storage.put(objectKey, descarga.buffer, valido.mimeType);
-    if (!subida.ok) {
-      const marcado = await mediaStore.markFailed(row.id, { code: subida.error ?? 'storage_failed', message: 'No se pudo guardar el archivo.' });
-      log(`[media] almacén caído guardando ${mediaType} de ${messageId}: ${subida.error}`);
-      return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: { code: subida.error ?? 'storage_failed', message: 'No se pudo guardar el archivo.' } };
-    }
+      // 4) Almacén (R2). Si esto falla, el mensaje ya está guardado: no se toca.
+      const objectKey = buildObjectKey({
+        domain: 'whatsapp',
+        at: now(),
+        conversationId: input.conversationId,
+        messageId,
+        mime: valido.mimeType,
+      });
+      const subida = await storage.put(objectKey, descarga.buffer, valido.mimeType);
+      if (!subida.ok) {
+        const marcado = await mediaStore.markFailed(row.id, { code: subida.error ?? 'storage_failed', message: 'No se pudo guardar el archivo.' });
+        log(`[media] almacén caído guardando ${mediaType} de ${messageId}: ${subida.error}`);
+        return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: { code: subida.error ?? 'storage_failed', message: 'No se pudo guardar el archivo.' } };
+      }
 
-    // 5) Listo: metadata en PostgreSQL, binario en R2.
-    const guardado = await mediaStore.update(row.id, {
-      status: MEDIA_STATUS.STORED,
-      objectKey: subida.objectKey ?? objectKey,
-      bucket: storage.bucket,
-      storageProvider: storage.provider,
-      mimeType: valido.mimeType,
-      sizeBytes: descarga.buffer.length,
-      sha256: sha256hex(descarga.buffer),
-      durationMs: media.durationMs ?? row.duration_ms ?? null,
-      errorCode: null,
-      errorMessage: null,
-    });
-    log(`[media] ${mediaType} guardado (${kb(descarga.buffer.length)}) para ${messageId}`);
-    return { ok: true, status: MEDIA_STATUS.STORED, media: guardado.media };
+      // 5) Listo: metadata en PostgreSQL, binario en R2.
+      const guardado = await mediaStore.update(row.id, {
+        status: MEDIA_STATUS.STORED,
+        objectKey: subida.objectKey ?? objectKey,
+        bucket: storage.bucket,
+        storageProvider: storage.provider,
+        mimeType: valido.mimeType,
+        sizeBytes: descarga.buffer.length,
+        sha256: sha256hex(descarga.buffer),
+        durationMs: media.durationMs ?? row.duration_ms ?? null,
+        errorCode: null,
+        errorMessage: null,
+      });
+      log(`[media] ${mediaType} guardado (${kb(descarga.buffer.length)}) para ${messageId}`);
+      return { ok: true, status: MEDIA_STATUS.STORED, media: guardado.media };
+    } catch (error) {
+      const fallo = {
+        code: String(error?.code ?? 'download_failed').slice(0, 40),
+        message: 'No se pudo traer el archivo de WhatsApp.',
+      };
+      try {
+        const marcado = await mediaStore.markFailed(row.id, fallo);
+        log(`[media] excepción trayendo ${mediaType} de ${messageId}: ${fallo.code}`);
+        return { ok: false, status: MEDIA_STATUS.FAILED, media: marcado.media, error: fallo };
+      } catch (segundo) {
+        /* Si ni marcar el fallo se puede, la fila queda en DOWNLOADING: es lo
+           único honesto (el archivo no está) y el panel ofrece reintentar. */
+        log(`[media] no se pudo marcar el fallo de ${messageId}: ${segundo?.message ?? segundo}`);
+        return { ok: false, status: MEDIA_STATUS.FAILED, media: row, error: fallo };
+      }
+    }
   }
 
   /**

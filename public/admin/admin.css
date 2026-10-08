@@ -2019,6 +2019,16 @@ body[data-tab='hoy'] .stat__label {
   font-size: 0.95rem;
 }
 
+/*
+ * Cuando algo pide una acción para poder seguir (p. ej. marcar «Sí, es un pedido
+ * nuevo»), se enciende un momento para que se vea dónde está. Sin animación: es
+ * un borde y un halo, se lee igual con el movimiento reducido.
+ */
+.rule--attention {
+  border-color: var(--phyto-primary);
+  box-shadow: 0 0 0 3px rgba(11, 107, 79, 0.14);
+}
+
 .order-flow-panel__actions,
 .order-delivery-note__actions {
   display: grid;

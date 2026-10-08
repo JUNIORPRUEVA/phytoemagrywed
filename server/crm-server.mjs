@@ -4073,6 +4073,20 @@ export async function processWebhookPayload(ctx, body) {
           if (!outcome.ok) {
             console.warn(`[media] ${inbound.media.kind} de ${who} no se pudo guardar: ${outcome.error?.code ?? 'error'}`);
           }
+          /*
+           * AVISO EN VIVO: el archivo YA está guardado (o falló). El panel lo
+           * recibe al instante y repinta la burbuja con el reproductor, en vez de
+           * seguir diciendo «Descargando…» hasta el siguiente sondeo (o hasta
+           * cambiar de conversación).
+           */
+          emitChatEvent(ctx, {
+            type: 'status',
+            conversationId: result.conversation?.id ?? null,
+            customerId: result.customer?.id ?? null,
+            direction: 'inbound',
+            status: outcome.ok ? 'media_stored' : 'media_failed',
+            message: result.message,
+          });
         })
         .catch((error) => console.error('[media] entrante:', error?.message ?? error));
     }
