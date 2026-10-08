@@ -3607,6 +3607,44 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
   };
 }
 
+const CAMPAIGN_HISTORICAL_FILTERS = Object.freeze({
+  COMPRO_REPORTADO: new Set(['COMPRO_REPORTADO']),
+  NO_COMPRO: new Set(['NO_COMPRO']),
+  INTERESADO: new Set(['INTERESADO']),
+  POR_VERIFICAR: new Set(['POR_VERIFICAR']),
+  INTERESADOS_O_POR_VERIFICAR: new Set(['INTERESADO', 'POR_VERIFICAR']),
+});
+
+function historicalImportStatus(customer) {
+  return text(
+    customer?.historicalWhatsAppImport?.status ??
+      customer?.historical_whatsapp_import?.status ??
+      customer?.historical_import_status ??
+      customer?.historical_status,
+    40,
+  );
+}
+
+function campaignCustomerLabel(customer) {
+  return text(customer?.name, 80) ?? customer?.phone_e164 ?? customer?.phone ?? customer?.id ?? 'Cliente';
+}
+
+function campaignValuesForCustomer(values, customer) {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return null;
+  const name = campaignCustomerLabel(customer);
+  const phone = customer?.phone_e164 ?? customer?.phone ?? '';
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [
+      key,
+      String(value ?? '')
+        .replace(/\{\{\s*nombre\s*\}\}/gi, name)
+        .replace(/\{\s*nombre\s*\}/gi, name)
+        .replace(/\{\{\s*telefono\s*\}\}/gi, phone)
+        .replace(/\{\s*telefono\s*\}/gi, phone),
+    ]),
+  );
+}
+
 async function syncWaTemplatesIfStale(ctx) {
   if (!ctx.whatsapp?.listTemplates) return null;
   const templates = await ctx.db.list('wa_templates', { limit: 200 });
@@ -8465,6 +8503,204 @@ async function handle(req, res, ctx) {
               }
             : null,
         })),
+      });
+      return;
+    }
+
+    /*
+     * Campaña a clientes: SOLO administración y SOLO plantillas aprobadas.
+     *
+     * No envía nada al guardar: congela el texto revisado y crea trabajos en la
+     * cola persistente, espaciados. El scheduler vuelve a validar opt-out,
+     * plantilla y configuración justo antes de cada envío.
+     */
+    if (route === '/api/admin/customer-campaigns/schedule' && req.method === 'POST') {
+      if (!requireAdmin()) return;
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+
+      const mode = text(body.mode, 40) ?? 'selected';
+      const dryRun = body.dryRun === true;
+      const intervalMinutes = Math.max(2, Math.min(1440, Math.trunc(Number(body.intervalMinutes ?? 2)) || 2));
+      const maxRecipients = Math.min(500, Math.max(1, Math.trunc(Number(body.maxRecipients ?? 200)) || 200));
+      const templateName = text(body.template, 60);
+      const startAtParsed = Date.parse(body.startAt ?? '');
+      const startAt = Number.isFinite(startAtParsed) ? new Date(startAtParsed) : new Date(Date.now() + intervalMinutes * 60000);
+      if (!templateName) {
+        json(res, 422, { ok: false, error: 'template_required', message: 'Elige una plantilla aprobada.' });
+        return;
+      }
+
+      await refreshTemplateFromMeta(ctx, templateName).catch(() => null);
+      const check = await approvedTemplate(ctx, templateName);
+      if (!check.ok) {
+        json(res, 409, {
+          ok: false,
+          error: check.reason === 'unknown_template' ? 'unknown_template' : 'template_not_approved',
+          message:
+            check.reason === 'unknown_template'
+              ? 'Esa plantilla no existe en el CRM.'
+              : 'Esa plantilla todavía no está aprobada por Meta.',
+          template: check.template ?? null,
+        });
+        return;
+      }
+
+      const selectedIds = Array.isArray(body.customerIds)
+        ? new Set(body.customerIds.map((id) => text(id, 80)).filter(Boolean))
+        : new Set();
+      const statusFilter = text(body.historicalStatus, 40);
+      const allowedStatuses = statusFilter ? CAMPAIGN_HISTORICAL_FILTERS[statusFilter] ?? null : null;
+      if (mode === 'selected' && selectedIds.size === 0) {
+        json(res, 422, { ok: false, error: 'recipients_required', message: 'Selecciona al menos un cliente.' });
+        return;
+      }
+      if (mode === 'historical_status' && !allowedStatuses) {
+        json(res, 422, { ok: false, error: 'invalid_filter', message: 'Ese filtro histórico no es válido.' });
+        return;
+      }
+      if (!['all', 'selected', 'historical_status'].includes(mode)) {
+        json(res, 422, { ok: false, error: 'invalid_mode', message: 'Ese alcance no es válido.' });
+        return;
+      }
+
+      const allCustomers = await ctx.customers.list({ limit: 500 });
+      const matchesScope = (customer) => {
+        if (mode === 'all') return true;
+        if (mode === 'selected') return selectedIds.has(customer.id);
+        if (mode === 'historical_status') return allowedStatuses.has(historicalImportStatus(customer));
+        return false;
+      };
+      const candidates = allCustomers
+        .filter((customer) => {
+          if (!customer?.id || !matchesScope(customer) || !customer.phone_e164) return false;
+          if (customer.do_not_contact || customer.whatsapp_opt_out_at) return false;
+          return true;
+        })
+        .slice(0, maxRecipients);
+
+      const skipped = allCustomers
+        .filter((customer) => {
+          if (!matchesScope(customer)) return false;
+          return !customer.phone_e164 || customer.do_not_contact || customer.whatsapp_opt_out_at;
+        })
+        .map((customer) => ({
+          id: customer.id,
+          name: campaignCustomerLabel(customer),
+          reason: !customer.phone_e164 ? 'missing_phone' : 'do_not_contact',
+        }));
+
+      /** @type {Array<any>} */
+      const planned = [];
+      /** @type {Array<any>} */
+      const conflicts = [];
+      /** @type {Array<any>} */
+      const scheduled = [];
+      const templateValues =
+        body.templateValues && typeof body.templateValues === 'object' && !Array.isArray(body.templateValues)
+          ? body.templateValues
+          : null;
+      const campaignId = newId('cmp');
+
+      for (const [index, customer] of candidates.entries()) {
+        const conversation = dryRun ? await ctx.customers.conversationFor(customer.id, { create: false }) : await ctx.customers.conversationFor(customer.id);
+        const customerValues = campaignValuesForCustomer(templateValues, customer);
+        const payload = await resolveTemplatePayload(ctx, {
+          template: check.template,
+          customer,
+          conversation,
+          orderId: null,
+          provided: customerValues,
+        });
+        if (!payload.ok) {
+          conflicts.push({
+            id: customer.id,
+            name: campaignCustomerLabel(customer),
+            phone_e164: customer.phone_e164,
+            error: payload.error,
+            message: payload.message,
+            missing: payload.missing ?? undefined,
+          });
+          continue;
+        }
+        const scheduledAt = new Date(startAt.getTime() + index * intervalMinutes * 60000).toISOString();
+        const preview = {
+          id: customer.id,
+          name: campaignCustomerLabel(customer),
+          phone_e164: customer.phone_e164,
+          scheduled_at: scheduledAt,
+          historical_status: historicalImportStatus(customer) ?? null,
+          body: payload.body,
+        };
+        planned.push(preview);
+        if (dryRun) continue;
+        const result = await ctx.scheduler.schedule({
+          customerId: customer.id,
+          conversationId: conversation?.id ?? null,
+          scheduledAt,
+          type: 'template',
+          template: check.template.name,
+          templateComponents: payload.components,
+          templateBody: payload.body,
+          templateLanguage: check.template.language ?? 'es',
+          timeZone: text(body.timeZone, 60) ?? TIME_ZONE,
+          createdBy: actor?.display_name ?? 'panel',
+          scheduledByUserId: actor?.actor_type === 'USER' ? actor.id : null,
+          idempotencyKey: `campaign:${campaignId}:${customer.id}:${check.template.name}:${scheduledAt}`,
+        });
+        if (result.ok) scheduled.push({ ...preview, message_id: result.message?.id ?? null, duplicate: result.duplicate === true });
+        else conflicts.push({ ...preview, error: result.error, message: 'No se pudo programar este destinatario.' });
+      }
+
+      if (!dryRun) {
+        await ctx.audit?.record({
+          entity: 'message',
+          entityId: campaignId,
+          action: 'campaign.scheduled',
+          actor: actor?.display_name ?? null,
+          summary: `Campaña de WhatsApp programada (${scheduled.length})`,
+          data: {
+            mode,
+            historicalStatus: statusFilter ?? null,
+            template: check.template.name,
+            recipients: planned.length,
+            scheduled: scheduled.length,
+            conflicts: conflicts.length,
+            intervalMinutes,
+          },
+          idempotencyKey: `campaign.scheduled:${campaignId}`,
+        });
+      }
+
+      json(res, dryRun ? 200 : 201, {
+        ok: conflicts.length === 0,
+        dryRun,
+        campaignId,
+        template: { name: check.template.name, language: check.template.language ?? 'es' },
+        intervalMinutes,
+        startAt: startAt.toISOString(),
+        counts: {
+          candidates: candidates.length,
+          planned: planned.length,
+          scheduled: scheduled.length,
+          skipped: skipped.length,
+          conflicts: conflicts.length,
+        },
+        planned,
+        scheduled,
+        skipped,
+        conflicts,
+        message:
+          conflicts.length > 0
+            ? 'Hay destinatarios con conflicto. No se forzaron.'
+            : dryRun
+              ? 'Previsualización lista. No se programó ningún mensaje.'
+              : 'Campaña programada en cola segura.',
       });
       return;
     }

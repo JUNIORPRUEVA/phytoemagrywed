@@ -183,6 +183,7 @@
     customerProfile: null,
     customerProfileLoading: false,
     customerProfileOrderId: null,
+    customerCampaignPreview: null,
     tab: 'hoy',
     filter: 'todos',
     q: '',
@@ -976,6 +977,7 @@
     renderUsuarios();
     renderPerfil();
     renderCustomerProfile();
+    renderCustomerCampaignFab();
     updateBadge();
     renderOutboxBanner();
   }
@@ -1979,6 +1981,8 @@
           customer.document,
           customer.cedula,
           customer.commercial_state,
+          customer.historicalWhatsAppImport?.status_label,
+          customer.historicalWhatsAppImport?.observations,
         ]
           .filter(Boolean)
           .join(' ')
@@ -2020,6 +2024,7 @@
           </span>
           <span class="client-row__meta">
             <span class="tag client-row__tag">${escapeHtml(customerSegmentLabel(segment, summary))}</span>
+            ${customer.historicalWhatsAppImport?.status_label ? `<span class="tag client-row__tag">${escapeHtml(customer.historicalWhatsAppImport.status_label)}</span>` : ''}
             ${customer.do_not_contact ? '<span class="tag tag--perdido client-row__tag">No contactar</span>' : ''}
             ${next ? `<span class="tag tag--recordatorio client-row__tag">${escapeHtml(fmtDay(next.scheduled_at ?? next))}</span>` : ''}
             <span>${escapeHtml(customer.phone_e164 ?? customer.phone ?? 'sin teléfono')}</span>
@@ -2047,6 +2052,316 @@
     $('#list-clientes').innerHTML = customers.length
       ? customers.map(customerRow).join('')
       : emptyState('No hay clientes con este filtro.');
+  }
+
+  const CAMPAIGN_PRESETS = [
+    {
+      id: 'mudanza',
+      label: 'Aviso importante',
+      body:
+        'Hola {{nombre}}, te avisamos que nos mudamos de establecimiento. Seguimos trabajando desde nuestra otra banca, con almacen en Higuey y servicio de delivery. Puedes escribirnos por aqui para coordinar tu pedido.',
+    },
+    {
+      id: 'oferta',
+      label: 'Oferta',
+      body:
+        'Hola {{nombre}}, tenemos una oferta especial de las pastillas Phytoemagry por tiempo limitado. Si quieres aprovecharla, respondeme por aqui y te confirmo disponibilidad y delivery.',
+    },
+    {
+      id: 'motivacion',
+      label: 'Motivacion',
+      body:
+        'Hola {{nombre}}, esperamos que estes bien. Si quieres retomar tu rutina con Phytoemagry, estamos disponibles para orientarte y coordinar entrega cuando lo necesites.',
+    },
+  ];
+
+  const CAMPAIGN_FILTERS = [
+    ['all', '', 'Todos los clientes'],
+    ['historical_status', 'COMPRO_REPORTADO', 'Compraron reportado'],
+    ['historical_status', 'NO_COMPRO', 'No compraron'],
+    ['historical_status', 'INTERESADO', 'Interesados'],
+    ['historical_status', 'POR_VERIFICAR', 'Por verificar'],
+    ['historical_status', 'INTERESADOS_O_POR_VERIFICAR', 'Interesados o por verificar'],
+    ['selected', '', 'Seleccion manual'],
+  ];
+
+  const campaignHistoricalStatus = (customer) =>
+    customer?.historicalWhatsAppImport?.status ?? customer?.historical_whatsapp_import?.status ?? '';
+
+  function campaignCustomers(mode, historicalStatus, selected = new Set()) {
+    const byHistorical = (customer) => {
+      const status = campaignHistoricalStatus(customer);
+      if (historicalStatus === 'INTERESADOS_O_POR_VERIFICAR') return ['INTERESADO', 'POR_VERIFICAR'].includes(status);
+      return status === historicalStatus;
+    };
+    return (state.customers ?? []).filter((customer) => {
+      if (!customer.phone_e164 || customer.do_not_contact || customer.whatsapp_opt_out_at) return false;
+      if (mode === 'all') return true;
+      if (mode === 'historical_status') return byHistorical(customer);
+      if (mode === 'selected') return selected.has(customer.id);
+      return false;
+    });
+  }
+
+  function renderCustomerCampaignFab() {
+    let button = $('#customer-campaign-fab');
+    const visible = state.tab === 'clientes' && isAdmin();
+    if (!visible) {
+      button?.remove();
+      return;
+    }
+    if (!button) {
+      button = document.createElement('button');
+      button.id = 'customer-campaign-fab';
+      button.className = 'campaign-fab';
+      button.type = 'button';
+      button.dataset.customerCampaignOpen = '1';
+      button.setAttribute('aria-label', 'Programar campaña de WhatsApp');
+      button.title = 'Programar campaña de WhatsApp';
+      button.innerHTML = ICONS.send;
+      document.body.append(button);
+    }
+  }
+
+  async function openCustomerCampaignSheet() {
+    if (!isAdmin()) {
+      toast('Solo administracion puede programar campanas');
+      return;
+    }
+    try {
+      const plantillas = await api('/api/admin/wa-templates?sync=stale');
+      state.templates = plantillas.templates ?? state.templates;
+    } catch {
+      /* Se usa la ultima lista conocida. */
+    }
+    const approved = (state.templates ?? []).filter(waTemplateApproved);
+    const personal = waPersonalTemplate();
+    if (!approved.length || !personal) {
+      openSheet(
+        'Campaña WhatsApp',
+        `<p class="rule rule--warn">No hay una plantilla aprobada con hueco libre para mensaje. Fuera de la ventana de 24 h WhatsApp exige una plantilla aprobada por Meta.</p>
+        <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>`,
+        { variant: 'campaign' },
+      );
+      return;
+    }
+    const preset = CAMPAIGN_PRESETS[0];
+    const selectedIds = new Set();
+    const safeCustomers = (state.customers ?? []).filter((customer) => customer.phone_e164 && !customer.do_not_contact && !customer.whatsapp_opt_out_at);
+    state.customerCampaignPreview = null;
+    openSheet(
+      'Campaña WhatsApp',
+      `
+      <p class="view__hint">Programa una plantilla aprobada, espaciada por cliente. No se manda nada al guardar: queda en cola y el servidor vuelve a validar antes de cada envio.</p>
+      <label class="field">
+        <span class="field__label">Caso</span>
+        <select class="field__select" id="campaign-preset">
+          ${CAMPAIGN_PRESETS.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.label)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Plantilla aprobada</span>
+        <select class="field__select" id="campaign-template">
+          ${approved
+            .map(
+              (template) =>
+                `<option value="${escapeHtml(template.name)}"${template.name === personal.name ? ' selected' : ''}>${escapeHtml(
+                  waTemplateLabel(template),
+                )}</option>`,
+            )
+            .join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Mensaje personalizado</span>
+        <textarea class="field__area" id="campaign-message" rows="5">${escapeHtml(preset.body)}</textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">Destinatarios</span>
+        <select class="field__select" id="campaign-filter">
+          ${CAMPAIGN_FILTERS.map(
+            ([mode, status, label]) => `<option value="${escapeHtml(`${mode}:${status}`)}">${escapeHtml(label)}</option>`,
+          ).join('')}
+        </select>
+      </label>
+      <div class="campaign-pick" id="campaign-pick" hidden>
+        <input class="field__input" id="campaign-search" type="search" placeholder="Buscar cliente" />
+        <div class="campaign-pick__list" id="campaign-pick-list"></div>
+      </div>
+      <div class="campaign-grid">
+        <label class="field">
+          <span class="field__label">Inicio</span>
+          <input class="field__input" id="campaign-start" type="datetime-local" />
+        </label>
+        <label class="field">
+          <span class="field__label">Intervalo (min)</span>
+          <input class="field__input" id="campaign-interval" type="number" min="2" max="1440" step="1" value="2" />
+        </label>
+      </div>
+      <label class="field">
+        <span class="field__label">Vista previa</span>
+        <p class="wa-template-preview" id="campaign-preview"></p>
+      </label>
+      <p class="rule" id="campaign-summary"></p>
+      <div class="campaign-actions">
+        <button class="btn btn--ghost btn--block" id="campaign-review" type="button">Revisar destinatarios</button>
+        <button class="btn btn--primary btn--block" id="campaign-schedule" type="button" disabled>Programar campaña</button>
+      </div>
+      <div class="campaign-result" id="campaign-result"></div>
+      `,
+      { variant: 'campaign' },
+    );
+
+    const start = new Date(Date.now() + 2 * 60000);
+    $('#campaign-start').value = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(
+      2,
+      '0',
+    )}T${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+
+    const selectedTemplate = () => (state.templates ?? []).find((template) => template.name === $('#campaign-template')?.value) ?? null;
+    const messageText = () => String($('#campaign-message')?.value ?? '').trim();
+    const scope = () => {
+      const [mode, historicalStatus = ''] = String($('#campaign-filter')?.value ?? 'all:').split(':');
+      return { mode, historicalStatus };
+    };
+    const valuesForTemplate = () => {
+      const template = selectedTemplate();
+      const libre = waTemplateFreeSlot(template);
+      const values = {};
+      if (libre !== null) values[libre] = messageText();
+      return values;
+    };
+    const oneBasedValues = () =>
+      Object.fromEntries(Object.entries(valuesForTemplate()).map(([index, value]) => [String(Number(index) + 1), String(value).trim()]));
+    const recipients = () => {
+      const { mode, historicalStatus } = scope();
+      return campaignCustomers(mode, historicalStatus, selectedIds);
+    };
+    const renderPickList = () => {
+      const needle = String($('#campaign-search')?.value ?? '').trim().toLowerCase();
+      const rows = safeCustomers
+        .filter((customer) => [customerName(customer), customer.phone_e164, customer.historicalWhatsAppImport?.status_label].filter(Boolean).join(' ').toLowerCase().includes(needle))
+        .slice(0, 80);
+      $('#campaign-pick-list').innerHTML = rows.length
+        ? rows
+            .map(
+              (customer) => `<label class="campaign-choice">
+                <input type="checkbox" data-campaign-customer="${escapeHtml(customer.id)}"${selectedIds.has(customer.id) ? ' checked' : ''} />
+                <span><strong>${escapeHtml(customerName(customer))}</strong><small>${escapeHtml(customer.phone_e164 ?? '')}${
+                  customer.historicalWhatsAppImport?.status_label ? ` · ${escapeHtml(customer.historicalWhatsAppImport.status_label)}` : ''
+                }</small></span>
+              </label>`,
+            )
+            .join('')
+        : '<p class="view__hint">No hay clientes con ese filtro.</p>';
+    };
+    const paint = () => {
+      const template = selectedTemplate();
+      const libre = waTemplateFreeSlot(template);
+      const { mode, historicalStatus } = scope();
+      $('#campaign-pick').hidden = mode !== 'selected';
+      if (mode === 'selected') renderPickList();
+      const count = recipients().length;
+      const interval = Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2);
+      const estimated = count > 0 ? new Date(new Date($('#campaign-start')?.value || Date.now()).getTime() + (count - 1) * interval * 60000) : null;
+      $('#campaign-preview').textContent = template
+        ? waRenderTemplatePreview(template, valuesForTemplate()).replaceAll('{{nombre}}', 'cliente')
+        : 'Elige una plantilla aprobada.';
+      const filterText = CAMPAIGN_FILTERS.find(([m, s]) => m === mode && s === historicalStatus)?.[2] ?? 'Destinatarios';
+      $('#campaign-summary').textContent =
+        libre === null
+          ? 'Esta plantilla no tiene hueco libre para tu mensaje. Elige otra plantilla.'
+          : `${count} destinatario(s) · ${filterText} · intervalo minimo ${interval} min${
+              estimated ? ` · termina aprox. ${fmtWhen(estimated.toISOString())}` : ''
+            }`;
+      $('#campaign-review').disabled = libre === null || !messageText() || count === 0;
+      $('#campaign-schedule').disabled = !state.customerCampaignPreview || libre === null || !messageText() || count === 0;
+    };
+    const payload = (dryRun) => {
+      const { mode, historicalStatus } = scope();
+      return {
+        dryRun,
+        mode,
+        historicalStatus: historicalStatus || undefined,
+        customerIds: mode === 'selected' ? Array.from(selectedIds) : undefined,
+        template: selectedTemplate()?.name,
+        templateValues: oneBasedValues(),
+        startAt: new Date($('#campaign-start')?.value || Date.now()).toISOString(),
+        intervalMinutes: Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2),
+        timeZone: BUSINESS_TIME_ZONE,
+      };
+    };
+    const showResult = (result) => {
+      const rows = (result.planned ?? result.scheduled ?? []).slice(0, 8);
+      $('#campaign-result').innerHTML = `
+        <p class="rule ${result.conflicts?.length ? 'rule--warn' : ''}">${escapeHtml(result.message ?? 'Listo')} · ${Number(
+          result.counts?.planned ?? 0,
+        )} preparado(s), ${Number(result.counts?.conflicts ?? 0)} conflicto(s).</p>
+        ${
+          rows.length
+            ? `<div class="campaign-preview-list">${rows
+                .map((row) => `<span>${escapeHtml(row.name)} · ${escapeHtml(fmtWhen(row.scheduled_at))}</span>`)
+                .join('')}</div>`
+            : ''
+        }`;
+    };
+
+    $('#campaign-preset')?.addEventListener('change', (event) => {
+      const found = CAMPAIGN_PRESETS.find((row) => row.id === event.currentTarget.value) ?? CAMPAIGN_PRESETS[0];
+      $('#campaign-message').value = found.body;
+      state.customerCampaignPreview = null;
+      paint();
+    });
+    $('#campaign-template')?.addEventListener('change', () => {
+      state.customerCampaignPreview = null;
+      paint();
+    });
+    $('#campaign-message')?.addEventListener('input', () => {
+      state.customerCampaignPreview = null;
+      paint();
+    });
+    $('#campaign-filter')?.addEventListener('change', () => {
+      state.customerCampaignPreview = null;
+      paint();
+    });
+    $('#campaign-interval')?.addEventListener('input', paint);
+    $('#campaign-start')?.addEventListener('input', paint);
+    $('#campaign-search')?.addEventListener('input', renderPickList);
+    $('#campaign-pick-list')?.addEventListener('change', (event) => {
+      const box = event.target.closest?.('[data-campaign-customer]');
+      if (!box) return;
+      if (box.checked) selectedIds.add(box.dataset.campaignCustomer);
+      else selectedIds.delete(box.dataset.campaignCustomer);
+      state.customerCampaignPreview = null;
+      paint();
+    });
+    $('#campaign-review')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Revisando…', async () => {
+        try {
+          const result = await api('/api/admin/customer-campaigns/schedule', { method: 'POST', body: JSON.stringify(payload(true)) });
+          state.customerCampaignPreview = result;
+          showResult(result);
+          paint();
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo revisar la campaña');
+        }
+      });
+    });
+    $('#campaign-schedule')?.addEventListener('click', async (event) => {
+      const ok = window.confirm('¿Programar esta campaña? Los mensajes quedaran en cola y saldran separados por el intervalo elegido.');
+      if (!ok) return;
+      await working(event.currentTarget, 'Programando…', async () => {
+        try {
+          const result = await api('/api/admin/customer-campaigns/schedule', { method: 'POST', body: JSON.stringify(payload(false)) });
+          showResult(result);
+          toast(`Campaña programada: ${result.counts?.scheduled ?? 0} mensaje(s)`);
+          await load({ keepTab: true });
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo programar la campaña');
+        }
+      });
+    });
+    paint();
   }
 
   /** Los filtros de la lista de pedidos, con el estado operativo (no el técnico). */
@@ -8955,6 +9270,8 @@
       </label>
       <dl class="facts">
         <div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(customer.phone_e164 ?? customer.phone ?? '—')}</a></dd></div>
+        ${historicalImportLabel(customer) ? `<div class="fact"><dt>Estado histórico</dt><dd>${escapeHtml(historicalImportLabel(customer))}</dd></div>` : ''}
+        ${customer.historicalWhatsAppImport?.observations ? `<div class="fact"><dt>Observación histórica</dt><dd>${escapeHtml(customer.historicalWhatsAppImport.observations)}</dd></div>` : ''}
         ${customer.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(customer.location)}</dd></div>` : ''}
         <div class="fact"><dt>Compras entregadas</dt><dd>${totals.total_purchases}</dd></div>
         <div class="fact"><dt>Total entregado</dt><dd>${money(totals.total_spent)}</dd></div>
@@ -9308,6 +9625,7 @@
     PERDIDO: 'Perdido',
   };
   const commercialLabel = (value) => COMMERCIAL_LABELS[value] ?? value ?? '—';
+  const historicalImportLabel = (customer) => customer?.historicalWhatsAppImport?.status_label ?? null;
   const orderStatusLabel = (value) => state.orderStatuses.find((entry) => entry.value === value)?.label ?? value;
   const SOURCE_LABELS = {
     META_ADS: 'Facebook / Instagram Ads',
@@ -14584,6 +14902,10 @@
        */
       if (event.target.closest('#wa-sync-templates')) {
         syncWaTemplates(event.target.closest('#wa-sync-templates'));
+        return;
+      }
+      if (event.target.closest('[data-customer-campaign-open]')) {
+        openCustomerCampaignSheet();
         return;
       }
       /*

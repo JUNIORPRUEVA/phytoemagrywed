@@ -1273,6 +1273,108 @@ body[data-tab='hoy'] .stat__label {
   gap: 14px;
 }
 
+.sheet[data-variant='campaign'] .sheet__panel {
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  top: 50%;
+  width: min(720px, calc(100vw - 24px));
+  max-height: min(92dvh, 780px);
+  border-radius: 16px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 24px 70px rgba(7, 30, 23, 0.28);
+}
+
+.sheet[data-variant='campaign'] .sheet__body {
+  gap: 12px;
+}
+
+.campaign-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 10px;
+}
+
+.campaign-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.campaign-pick {
+  display: grid;
+  gap: 10px;
+}
+
+.campaign-pick__list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.campaign-choice {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--pe-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.campaign-choice span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.campaign-choice strong,
+.campaign-choice small,
+.campaign-preview-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.campaign-choice small {
+  color: var(--pe-ink-500);
+}
+
+.campaign-result {
+  display: grid;
+  gap: 8px;
+}
+
+.campaign-preview-list {
+  display: grid;
+  gap: 4px;
+  color: var(--pe-ink-700);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .sheet[data-variant='campaign'] .sheet__panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: auto;
+    max-height: 92dvh;
+    border-radius: var(--pe-radius-lg) var(--pe-radius-lg) 0 0;
+    transform: none;
+  }
+
+  .campaign-grid,
+  .campaign-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 /*
  * BOTÓN FLOTANTE DE ACCIONES DE LA HOJA.
  *
@@ -2294,6 +2396,34 @@ body[data-tab='hoy'] .stat__label {
 .list-fab:hover,
 .list-fab:focus-visible {
   background: var(--phyto-primary-dark);
+}
+
+.campaign-fab {
+  position: fixed;
+  right: 18px;
+  bottom: calc(var(--pe-tabbar) + 88px + env(safe-area-inset-bottom, 0px));
+  z-index: 36;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(11, 107, 79, 0.18);
+  border-radius: 16px;
+  background: #0f766e;
+  color: #fff;
+  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.25);
+  cursor: pointer;
+}
+
+.campaign-fab .svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.4;
+}
+
+.campaign-fab:hover,
+.campaign-fab:focus-visible {
+  background: #115e59;
 }
 
 /* ---------------------------------------------------- PERFIL VISUAL */

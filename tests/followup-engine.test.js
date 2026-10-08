@@ -459,6 +459,59 @@ describe('cola de mensajes programados', () => {
     expect(mockWhatsApp.sent[0].type).toBe('template');
   });
 
+  it('campaña de clientes: dry-run no escribe y apply solo deja mensajes programados espaciados', async () => {
+    await call('/api/admin/wa-templates');
+    await call('/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'phyto_contacto_personalizado_v1', status: 'APPROVED' }),
+    });
+
+    const ana = await app.customers.findOrCreateByPhone({ phone: '18095559901', name: 'Ana Campaña', source: 'test' });
+    const luis = await app.customers.findOrCreateByPhone({ phone: '18095559902', name: 'Luis Campaña', source: 'test' });
+    await app.customers.update(ana.customer.id, {
+      historicalWhatsAppImport: { status: 'COMPRO_REPORTADO', status_label: 'Compra reportada' },
+    });
+    await app.customers.update(luis.customer.id, {
+      historicalWhatsAppImport: { status: 'NO_COMPRO', status_label: 'No compró' },
+    });
+
+    const before = await app.collections.list('scheduled_messages');
+    const startAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const payload = {
+      mode: 'historical_status',
+      historicalStatus: 'COMPRO_REPORTADO',
+      template: 'phyto_contacto_personalizado_v1',
+      templateValues: { 2: 'Hola {{nombre}}, este es un aviso importante.' },
+      startAt,
+      intervalMinutes: 2,
+    };
+
+    const preview = await json(
+      await call('/api/admin/customer-campaigns/schedule', {
+        method: 'POST',
+        body: JSON.stringify({ ...payload, dryRun: true }),
+      }),
+    );
+    expect(preview.counts.planned).toBe(1);
+    expect(preview.planned[0].body).toContain('Ana Campaña');
+    expect(await app.collections.list('scheduled_messages')).toHaveLength(before.length);
+
+    const scheduled = await json(
+      await call('/api/admin/customer-campaigns/schedule', {
+        method: 'POST',
+        body: JSON.stringify({ ...payload, dryRun: false }),
+      }),
+    );
+    expect(scheduled.counts.scheduled).toBe(1);
+    expect(mockWhatsApp.sent).toHaveLength(0);
+    const after = await app.collections.list('scheduled_messages');
+    expect(after).toHaveLength(before.length + 1);
+    const created = after.find((row) => row.customer_id === ana.customer.id);
+    expect(created?.status).toBe('SCHEDULED');
+    expect(created?.template_body).toContain('Ana Campaña');
+    expect(created?.scheduled_at).toBe(startAt);
+  });
+
   it('si Meta la retira entre programar y enviar, NO se fuerza: queda BLOQUEADO', async () => {
     // Se programó con la plantilla aprobada...
     const programado = await json(
