@@ -1018,6 +1018,15 @@
   const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
   const permissions = () => state.auth?.permissions ?? [];
   const hasPermission = (permission) => isAdmin() || permissions().includes('*') || permissions().includes(permission);
+  /*
+   * QUIEN REPARTE NO LLEVA LA FICHA DEL CLIENTE.
+   *
+   * Sin `clients.read` la ficha no es su herramienta (etapa, etiquetas, editar
+   * foto… le responderían 403), pero SÍ puede hablar con su cliente. Por eso,
+   * para quien no lee clientes, tocar la fila abre el CHAT en vez del perfil.
+   * Con `clients.read` (agente, operador, administración) la fila abre la ficha.
+   */
+  const canSeeCustomerProfile = () => hasPermission('clients.read');
   const canUseMapScreen = () => hasPermission('delivery.tracking.manage_all');
   const canUseDailyClose = () => isAdmin() || hasPermission('reports.profit.view') || ['AGENT', 'DELIVERY'].includes(currentUser()?.role);
   const roleLabel = (role) =>
@@ -2047,10 +2056,20 @@
           ? `${summary.orders.length} pedido${summary.orders.length === 1 ? '' : 's'} en proceso`
           : 'Sin compra';
     const reference = summary.latest?.order_number ?? summary.latest?.id ?? '';
+    /*
+     * SIN FICHA, AL CHAT: quien no lee clientes (el repartidor) no tiene ficha
+     * que abrir, así que tocar la fila le lleva a la conversación, que es lo que
+     * necesita para coordinar la entrega.
+     */
+    const abreFicha = canSeeCustomerProfile();
+    const nombre = customerName(customer);
+    const destino = abreFicha
+      ? `data-customer="${escapeHtml(customer.id)}" aria-label="Abrir perfil de ${escapeHtml(nombre)}"`
+      : `data-customer-chat="${escapeHtml(customer.id)}" data-chat="${escapeHtml(
+          conversation?.id ?? '',
+        )}" aria-label="Abrir conversación con ${escapeHtml(nombre)}"`;
     return `<article class="client-row client-row--${escapeHtml(segment)}">
-      <button class="client-row__main" data-customer="${escapeHtml(customer.id)}" type="button" aria-label="Abrir perfil de ${escapeHtml(
-        customerName(customer),
-      )}">
+      <button class="client-row__main" ${destino} type="button">
         ${avatarHtml(customer, customerName(customer), 'client-row__avatar')}
         <span class="client-row__body">
           <span class="client-row__topline">
@@ -2081,9 +2100,13 @@
           aria-label="Abrir conversación"
           title="Abrir conversación"
         >${ICONS.chat}</button>
-        <button class="icon-btn client-row__icon" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversation?.id ?? '',
-        )}" type="button" aria-label="Crear pedido">${ICONS.bag}</button>
+        ${
+          hasPermission('orders.create')
+            ? `<button class="icon-btn client-row__icon" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+                conversation?.id ?? '',
+              )}" type="button" aria-label="Crear pedido">${ICONS.bag}</button>`
+            : ''
+        }
       </div>
     </article>`;
   }
@@ -2095,6 +2118,12 @@
     $('#list-clientes').innerHTML = customers.length
       ? customers.map(customerRow).join('')
       : emptyState('No hay clientes con este filtro.');
+    /*
+     * El botón de acciones (registrar compra, agregar cliente, ver pedidos) es
+     * de administración del catálogo de clientes: quien no lee clientes no lo ve.
+     */
+    const acciones = $('#clientes-acciones');
+    if (acciones) acciones.hidden = !canSeeCustomerProfile();
   }
 
   const CAMPAIGN_PRESETS = [
@@ -9041,6 +9070,17 @@
   /** Ficha 360 del cliente: compras, chat, seguimiento y consentimiento. */
   async function openCustomer(customerId) {
     if (!customerId) return;
+    /*
+     * QUIEN NO LEE CLIENTES VA AL CHAT (ver `canSeeCustomerProfile`): el
+     * repartidor entra desde Clientes a HABLAR con su cliente, no a su ficha.
+     * Se decide AQUÍ (y no solo en la fila) para que todos los caminos —el menú
+     * del chat, un pedido, un aviso— hagan lo mismo en vez de acabar en una
+     * ficha a medias que el servidor rechazaría.
+     */
+    if (!canSeeCustomerProfile()) {
+      await openCustomerConversation(customerId);
+      return;
+    }
     state.openId = null;
     state.chat = null;
     state.customerId = customerId;
@@ -10043,12 +10083,16 @@
       customerName(customer),
       `
       <div class="menu-list">
-        <button class="menu-item menu-item--primary" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
+        ${
+          hasPermission('orders.create')
+            ? `<button class="menu-item menu-item--primary" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+                conversationId ?? '',
+              )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
           <span><strong>Crear pedido</strong><small>Con lo que ya hablaron, listo para confirmar</small></span>
-        </button>
+        </button>`
+            : ''
+        }
 
         <p class="menu-list__label">Mensajes</p>
         <button class="menu-item" data-quick-replies="1" type="button">
@@ -10069,9 +10113,11 @@
         </button>
 
         <p class="menu-list__label">Seguimiento</p>
-        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
+        ${
+          hasPermission('followups.create')
+            ? `<button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+                conversationId ?? '',
+              )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
           <span><strong>Programar seguimiento</strong><small>Tarea para una persona</small></span>
         </button>
@@ -10080,21 +10126,34 @@
         )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
           <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
-        </button>
-
-        <p class="menu-list__label">Cliente</p>
+        </button>`
+            : ''
+        }
+        ${
+          canSeeCustomerProfile()
+            ? `<p class="menu-list__label">Cliente</p>
         <button class="menu-item" data-customer="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
           <span><strong>Ver cliente</strong><small>Ficha 360: compras, chat y seguimiento</small></span>
         </button>
-        <button class="menu-item" data-customer-stage-menu="${escapeHtml(customer.id)}" type="button">
+        ${
+          hasPermission('customer.stage.update')
+            ? `<button class="menu-item" data-customer-stage-menu="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
           <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(customer)))}</small></span>
-        </button>
-        <button class="menu-item" data-customer-tags="${escapeHtml(customer.id)}" type="button">
+        </button>`
+            : ''
+        }
+        ${
+          hasPermission('customer.tags.assign')
+            ? `<button class="menu-item" data-customer-tags="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
           <span><strong>Etiquetas</strong></span>
-        </button>
+        </button>`
+            : ''
+        }`
+            : ''
+        }
 
         <p class="menu-list__label">Conversación</p>
         <button class="menu-item" data-chat-assign-menu="${escapeHtml(conversationId ?? '')}" type="button">
