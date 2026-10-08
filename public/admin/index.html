@@ -156,7 +156,7 @@
           <button class="drawer__item" data-tab="seguimientos" type="button">
             <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
           </button>
-          <button class="drawer__item" data-tab="mensajes" type="button">
+          <button class="drawer__item" data-tab="mensajes" type="button" data-admin-only hidden>
             <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
           </button>
         </nav>
@@ -208,6 +208,7 @@
         cuando vuelva la red.
       </p>
       <p class="banner banner--warn" id="outbox-banner" hidden></p>
+      <div class="permission-banner" id="permission-banner" hidden></div>
 
       <main class="content">
         <!-- HOY -->

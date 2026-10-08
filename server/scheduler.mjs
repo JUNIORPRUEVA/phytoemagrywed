@@ -47,6 +47,7 @@ export const BLOCK_REASONS = Object.freeze({
   DO_NOT_CONTACT: 'El cliente pidió no recibir mensajes.',
   TEMPLATE_NOT_APPROVED: 'La plantilla no está aprobada en Meta.',
   WHATSAPP_NOT_CONFIGURED: 'WhatsApp no está configurado en el servidor.',
+  CAMPAIGN_OPT_OUT: 'El cliente no quiere recibir campañas.',
   UNKNOWN_TEMPLATE: 'La plantilla ya no existe.',
   CUSTOMER_MISSING: 'El cliente del mensaje ya no existe.',
   CONVERSATION_MISMATCH: 'La conversación guardada no es de este cliente: no se envía.',
@@ -171,6 +172,7 @@ export function createScheduler(deps) {
      *           scheduledAt: string, type?: 'text'|'template', text?: string|null,
      *           template?: string|null, createdBy?: string|null, idempotencyKey?: string|null,
      *           templateComponents?: any[]|null, templateBody?: string|null,
+     *           campaignId?: string|null,
      *           templateLanguage?: string|null, timeZone?: string|null }} input
      */
     async schedule(input) {
@@ -190,6 +192,7 @@ export function createScheduler(deps) {
         customer_id: customerId,
         conversation_id: short(input.conversationId, 80),
         order_id: short(input.orderId, 80),
+        campaign_id: short(input.campaignId, 80),
         type,
         text: type === 'text' ? text : null,
         template: type === 'template' ? template : null,
@@ -413,6 +416,7 @@ export function createScheduler(deps) {
       const customer = await customers.get(current.customer_id);
       if (!customer) return block(claimed, 'CUSTOMER_MISSING');
       if (customer.do_not_contact || customer.whatsapp_opt_out_at) return block(claimed, 'DO_NOT_CONTACT');
+      if (current.campaign_id && (customer.campaign_opt_out_at || customer.campaign_notifications_disabled_at)) return block(claimed, 'CAMPAIGN_OPT_OUT');
       if (!whatsapp?.enabled) return block(claimed, 'WHATSAPP_NOT_CONFIGURED');
 
       const conversation = current.conversation_id

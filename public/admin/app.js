@@ -94,6 +94,8 @@
     deliveryOrders: [],
     notifications: [],
     push: null,
+    devicePermissions: { loading: false, geolocation: 'unknown', notifications: 'unknown' },
+    orderReturn: null,
     nativePrinter: { available: false, status: null, loading: false, result: null },
     deliveryEvents: null,
     deliveryPollTimer: null,
@@ -760,6 +762,7 @@
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
+      refreshDevicePermissions().catch(() => {});
       autoSyncCrmPush();
       if (!options.keepTab) await flushOutbox();
     } catch (error) {
@@ -793,11 +796,13 @@
         state.syncedAt = snapshot.at ?? null;
         toast('Sin conexión: datos guardados en el teléfono');
         render();
+        refreshDevicePermissions().catch(() => {});
       } else {
         // Sin copia guardada: la bandeja tiene que decir que FALLÓ, no “no hay nada”.
         state.wa.listError = true;
         toast('No se pudieron cargar los datos');
         render();
+        refreshDevicePermissions().catch(() => {});
       }
     }
   }
@@ -932,7 +937,15 @@
     const found = (state.templates ?? []).find((template) => template.name === name) ?? null;
     return found ? waTemplateLabel(found) : String(name);
   };
-  const waTemplateLabel = (template) => template?.friendly_name || template?.friendlyName || template?.name || 'Plantilla';
+  const WA_TEMPLATE_LABELS = {
+    hello_world: 'Mensaje rápido',
+  };
+  const waTemplateLabel = (template) => {
+    const name = template?.name || '';
+    const friendly = template?.friendly_name || template?.friendlyName || '';
+    if (WA_TEMPLATE_LABELS[name] && (!friendly || friendly === name)) return WA_TEMPLATE_LABELS[name];
+    return friendly || WA_TEMPLATE_LABELS[name] || name || 'Plantilla';
+  };
   const waTemplateMetaSynced = (template) => template?.source === 'meta' || Boolean(template?.last_synced_at);
 
   function whatsappUrl(item, body) {
@@ -978,6 +991,7 @@
     renderPerfil();
     renderCustomerProfile();
     renderCustomerCampaignFab();
+    renderPermissionBanner();
     updateBadge();
     renderOutboxBanner();
   }
@@ -1407,7 +1421,15 @@
     const stockCapsules = Number(inv.stock ?? 0);
     const unitCostCents = Number(inv.product?.current_unit_cost_cents ?? 0);
     const inventoryValueCents = Number(inv.inventory_value_cents ?? stockCapsules * unitCostCents);
+    const returnCard = state.orderReturn
+      ? `<div class="card card--accent">
+          <p class="card__title">Pedido en espera</p>
+          <p class="card__text">El pedido quedó guardado. Agrega stock y vuelve para terminarlo sin perder los datos.</p>
+          <button class="btn btn--primary btn--block" id="inventory-return-order" type="button">Volver al pedido</button>
+        </div>`
+      : '';
     box.innerHTML = `
+      ${returnCard}
       ${
         canSeeCost
           ? `<section class="inventory-summary" aria-label="Recuento de inventario">
@@ -1488,6 +1510,17 @@
           }
         </dl>
       </div>`;
+    $('#inventory-return-order')?.addEventListener('click', () => {
+      const retorno = state.orderReturn;
+      if (!retorno) return;
+      setTab(retorno.fromTab || 'whatsapp', { silent: true });
+      const args = retorno.args ?? {};
+      openOrderForm({
+        ...args,
+        draft: args.draftKey ? readOrderDraft(args.draftKey) : null,
+        skipDraftPrompt: true,
+      });
+    });
   }
 
   function renderReportes() {
@@ -2026,6 +2059,7 @@
             <span class="tag client-row__tag">${escapeHtml(customerSegmentLabel(segment, summary))}</span>
             ${customer.historicalWhatsAppImport?.status_label ? `<span class="tag client-row__tag">${escapeHtml(customer.historicalWhatsAppImport.status_label)}</span>` : ''}
             ${customer.do_not_contact ? '<span class="tag tag--perdido client-row__tag">No contactar</span>' : ''}
+            ${customerCampaignOptOut(customer) ? '<span class="tag tag--recordatorio client-row__tag">Sin campañas</span>' : ''}
             ${next ? `<span class="tag tag--recordatorio client-row__tag">${escapeHtml(fmtDay(next.scheduled_at ?? next))}</span>` : ''}
             <span>${escapeHtml(customer.phone_e164 ?? customer.phone ?? 'sin teléfono')}</span>
           </span>
@@ -2037,7 +2071,14 @@
         </span>
       </button>
       <div class="client-row__actions">
-        ${conversation ? `<button class="icon-btn client-row__icon" data-chat="${escapeHtml(conversation.id)}" type="button" aria-label="Abrir chat">${ICONS.chat}</button>` : ''}
+        <button
+          class="icon-btn client-row__icon"
+          data-customer-chat="${escapeHtml(customer.id)}"
+          data-chat="${escapeHtml(conversation?.id ?? '')}"
+          type="button"
+          aria-label="Abrir conversación"
+          title="Abrir conversación"
+        >${ICONS.chat}</button>
         <button class="icon-btn client-row__icon" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversation?.id ?? '',
         )}" type="button" aria-label="Crear pedido">${ICONS.bag}</button>
@@ -2088,14 +2129,17 @@
   const campaignHistoricalStatus = (customer) =>
     customer?.historicalWhatsAppImport?.status ?? customer?.historical_whatsapp_import?.status ?? '';
 
-  function campaignCustomers(mode, historicalStatus, selected = new Set()) {
+  const customerCampaignOptOut = (customer) =>
+    Boolean(customer?.campaign_opt_out_at || customer?.campaignOptOutAt || customer?.campaign_notifications_disabled_at);
+
+  function campaignCustomers(mode, historicalStatus, selected = new Set(), excluded = new Set()) {
     const byHistorical = (customer) => {
       const status = campaignHistoricalStatus(customer);
       if (historicalStatus === 'INTERESADOS_O_POR_VERIFICAR') return ['INTERESADO', 'POR_VERIFICAR'].includes(status);
       return status === historicalStatus;
     };
     return (state.customers ?? []).filter((customer) => {
-      if (!customer.phone_e164 || customer.do_not_contact || customer.whatsapp_opt_out_at) return false;
+      if (!customer.phone_e164 || customer.do_not_contact || customer.whatsapp_opt_out_at || customerCampaignOptOut(customer) || excluded.has(customer.id)) return false;
       if (mode === 'all') return true;
       if (mode === 'historical_status') return byHistorical(customer);
       if (mode === 'selected') return selected.has(customer.id);
@@ -2105,8 +2149,7 @@
 
   function renderCustomerCampaignFab() {
     let button = $('#customer-campaign-fab');
-    const visibleTabs = new Set(['hoy', 'whatsapp', 'clientes', 'seguimientos', 'mensajes']);
-    const visible = isAdmin() && visibleTabs.has(state.tab);
+    const visible = isAdmin() && state.tab === 'clientes';
     if (!visible) {
       button?.remove();
       return;
@@ -2148,6 +2191,7 @@
     }
     const preset = CAMPAIGN_PRESETS[0];
     const selectedIds = new Set();
+    const excludedIds = new Set();
     const safeCustomers = (state.customers ?? []).filter((customer) => customer.phone_e164 && !customer.do_not_contact && !customer.whatsapp_opt_out_at);
     state.customerCampaignPreview = null;
     openSheet(
@@ -2188,6 +2232,13 @@
       <div class="campaign-pick" id="campaign-pick" hidden>
         <input class="field__input" id="campaign-search" type="search" placeholder="Buscar cliente" />
         <div class="campaign-pick__list" id="campaign-pick-list"></div>
+      </div>
+      <div class="campaign-pick">
+        <label class="field">
+          <span class="field__label">Excepciones</span>
+          <input class="field__input" id="campaign-exclude-search" type="search" placeholder="Buscar cliente que NO recibirá esta campaña" />
+        </label>
+        <div class="campaign-pick__list" id="campaign-exclude-list"></div>
       </div>
       <div class="campaign-grid">
         <label class="field">
@@ -2270,7 +2321,11 @@
       Object.fromEntries(Object.entries(valuesForTemplate()).map(([index, value]) => [String(Number(index) + 1), String(value).trim()]));
     const recipients = () => {
       const { mode, historicalStatus } = scope();
-      return campaignCustomers(mode, historicalStatus, selectedIds);
+      return campaignCustomers(mode, historicalStatus, selectedIds, excludedIds);
+    };
+    const campaignPool = () => {
+      const { mode, historicalStatus } = scope();
+      return campaignCustomers(mode, historicalStatus, selectedIds, new Set());
     };
     const renderPickList = () => {
       const needle = String($('#campaign-search')?.value ?? '').trim().toLowerCase();
@@ -2290,6 +2345,25 @@
             .join('')
         : '<p class="view__hint">No hay clientes con ese filtro.</p>';
     };
+    const renderExcludeList = () => {
+      const needle = String($('#campaign-exclude-search')?.value ?? '').trim().toLowerCase();
+      const pool = campaignPool();
+      const rows = pool
+        .filter((customer) => [customerName(customer), customer.phone_e164, customer.historicalWhatsAppImport?.status_label].filter(Boolean).join(' ').toLowerCase().includes(needle))
+        .slice(0, 80);
+      $('#campaign-exclude-list').innerHTML = rows.length
+        ? rows
+            .map(
+              (customer) => `<label class="campaign-choice campaign-choice--exclude">
+                <input type="checkbox" data-campaign-exclude="${escapeHtml(customer.id)}"${excludedIds.has(customer.id) ? ' checked' : ''} />
+                <span><strong>${escapeHtml(customerName(customer))}</strong><small>${escapeHtml(customer.phone_e164 ?? '')}${
+                  customer.historicalWhatsAppImport?.status_label ? ` · ${escapeHtml(customer.historicalWhatsAppImport.status_label)}` : ''
+                }</small></span>
+              </label>`,
+            )
+            .join('')
+        : '<p class="view__hint">No hay clientes disponibles para excluir con este filtro.</p>';
+    };
     const paint = () => {
       const template = selectedTemplate();
       const libre = waTemplateFreeSlot(template);
@@ -2297,7 +2371,9 @@
       const { mode, historicalStatus } = scope();
       $('#campaign-pick').hidden = mode !== 'selected';
       if (mode === 'selected') renderPickList();
+      renderExcludeList();
       const count = recipients().length;
+      const blocked = campaignPool().filter((customer) => customerCampaignOptOut(customer)).length;
       const interval = Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2);
       const estimated = count > 0 ? new Date(new Date($('#campaign-start')?.value || Date.now()).getTime() + (count - 1) * interval * 60000) : null;
       $('#campaign-preview').textContent = template ? campaignRenderDesired(messageText()) : 'Elige una plantilla aprobada.';
@@ -2307,7 +2383,9 @@
           ? 'Esta plantilla no tiene hueco libre para tu mensaje. Elige otra plantilla.'
           : !exact.ok && messageText()
             ? 'La plantilla aprobada agrega texto fijo. Ajusta el mensaje para que coincida con la vista previa final o usa otra plantilla.'
-            : `${count} destinatario(s) · ${filterText} · intervalo minimo ${interval} min${
+            : `${count} destinatario(s) · ${filterText}${excludedIds.size ? ` · ${excludedIds.size} excepcion(es)` : ''}${
+              blocked ? ` · ${blocked} sin campañas` : ''
+            } · intervalo minimo ${interval} min${
               estimated ? ` · termina aprox. ${fmtWhen(estimated.toISOString())}` : ''
             }`;
       $('#campaign-review').disabled = libre === null || !messageText() || count === 0;
@@ -2320,6 +2398,7 @@
         mode,
         historicalStatus: historicalStatus || undefined,
         customerIds: mode === 'selected' ? Array.from(selectedIds) : undefined,
+        excludeCustomerIds: Array.from(excludedIds),
         template: selectedTemplate()?.name,
         templateValues: oneBasedValues(),
         customMessage: messageText(),
@@ -2361,17 +2440,29 @@
       paint();
     });
     $('#campaign-filter')?.addEventListener('change', () => {
+      for (const id of [...excludedIds]) {
+        if (!campaignPool().some((customer) => customer.id === id)) excludedIds.delete(id);
+      }
       state.customerCampaignPreview = null;
       paint();
     });
     $('#campaign-interval')?.addEventListener('input', paint);
     $('#campaign-start')?.addEventListener('input', paint);
     $('#campaign-search')?.addEventListener('input', renderPickList);
+    $('#campaign-exclude-search')?.addEventListener('input', renderExcludeList);
     $('#campaign-pick-list')?.addEventListener('change', (event) => {
       const box = event.target.closest?.('[data-campaign-customer]');
       if (!box) return;
       if (box.checked) selectedIds.add(box.dataset.campaignCustomer);
       else selectedIds.delete(box.dataset.campaignCustomer);
+      state.customerCampaignPreview = null;
+      paint();
+    });
+    $('#campaign-exclude-list')?.addEventListener('change', (event) => {
+      const box = event.target.closest?.('[data-campaign-exclude]');
+      if (!box) return;
+      if (box.checked) excludedIds.add(box.dataset.campaignExclude);
+      else excludedIds.delete(box.dataset.campaignExclude);
       state.customerCampaignPreview = null;
       paint();
     });
@@ -2625,10 +2716,25 @@
     return order?.delivery?.location ?? null;
   }
 
-  function externalNavigationUrl(location) {
+  function externalNavigationUrl(location, origin = null) {
     const coords = mapLatLng(location);
     if (!coords) return '';
-    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${coords[0]},${coords[1]}`)}`;
+    const originCoords = mapLatLng(origin);
+    const originParam = originCoords ? `&origin=${encodeURIComponent(`${originCoords[0]},${originCoords[1]}`)}` : '';
+    return `https://www.google.com/maps/dir/?api=1${originParam}&destination=${encodeURIComponent(`${coords[0]},${coords[1]}`)}&travelmode=driving`;
+  }
+
+  function openExternalNavigation(location, origin = null) {
+    const url = externalNavigationUrl(location, origin);
+    if (!url) return false;
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    return true;
   }
 
   function manualOrderStatusOptions(current) {
@@ -3586,7 +3692,11 @@
     try {
       initialPosition = await getInitialDeliveryPosition();
     } catch (error) {
-      toast(error?.code === 1 ? 'Necesitas permitir acceso a tu ubicación para iniciar la entrega.' : 'No se pudo obtener tu GPS para iniciar la entrega.');
+      if (error?.code === 1) {
+        openDeliveryLocationPermissionSheet(orderId);
+      } else {
+        toast('No se pudo obtener tu GPS para iniciar la entrega.');
+      }
       if (button) {
         button.disabled = false;
         button.textContent = original;
@@ -3610,10 +3720,28 @@
     startDeliveryWatch(data.session.id, { sessionId: data.session.id, orderId, previousStatus });
     await load({ keepTab: true });
     setTab('delivery', { silent: true });
+    const startedOrder = (state.deliveryOrders ?? []).find((row) => row.id === orderId) ?? currentOrder;
+    openExternalNavigation(deliveryOrderLocation(startedOrder), {
+      latitude: initialPosition.coords.latitude,
+      longitude: initialPosition.coords.longitude,
+    });
     if (button) {
       button.disabled = false;
       button.textContent = original;
     }
+  }
+
+  function openDeliveryLocationPermissionSheet(orderId) {
+    openSheet(
+      'Permitir ubicación',
+      `<div class="delivery-permission">
+        <strong>Activa la ubicación para iniciar la entrega.</strong>
+        <p>El GPS se usa solo mientras esta entrega está en curso.</p>
+        <button class="btn btn--primary btn--block" data-delivery-permission="${escapeHtml(orderId)}" type="button">Permitir ubicación</button>
+        <button class="btn btn--ghost btn--block" data-close-sheet type="button">Volver</button>
+      </div>`,
+      { variant: 'delivery-permission' },
+    );
   }
 
   async function stopDelivery(sessionId, complete = false, options = {}) {
@@ -3646,7 +3774,6 @@
       .map((line) => `${line.quantity ?? 1} x ${line.variantName ?? line.name ?? 'producto'}`.replace(/^(\d+\s*x\s*)Frasco de\s+/i, '$1'))
       .join(', ');
     return [
-      '-- *DELIVERY* --',
       `Hola ${customer}, soy ${deliveryName}. Tengo tu pedido${items ? ` de ${items}` : ''}. Voy a salir para allá, para que estés pendiente, por favor.`,
     ]
       .filter(Boolean)
@@ -3672,17 +3799,36 @@
     const location = deliveryOrderLocation(order);
     const destination = mapLatLng(location);
     const preview = state.deliveryPreviewPoint?.orderId === order?.id ? state.deliveryPreviewPoint : null;
-    const current = mapLatLng(session?.last_position) ?? mapLatLng(preview);
-    const meters = Number(session?.distance_meters);
-    const measuredDistance = current && destination ? metersBetween(current, destination) : null;
+    const snapshot = order?.delivery?.route_snapshot ?? null;
+    const savedLast = order?.delivery?.delivery_last_location ?? snapshot?.last_location ?? null;
+    const savedStart = order?.delivery?.delivery_start_location ?? snapshot?.start_location ?? null;
+    const status = deliveryVisibleStatus(order, session);
+    const current =
+      mapLatLng(session?.last_position) ??
+      (status === 'ENTREGADO' || status === 'CANCELADO' || status === 'INCIDENCIA' ? mapLatLng(savedLast) ?? mapLatLng(savedStart) : null) ??
+      mapLatLng(preview);
+    const origin = mapLatLng(savedStart) ?? current;
+    const meters = Number(session?.distance_m ?? session?.distance_meters ?? order?.delivery?.delivery_route_distance_m ?? snapshot?.distance_m);
+    const closedRoute = ['ENTREGADO', 'CANCELADO', 'INCIDENCIA'].includes(status);
+    const measuredDistance = destination
+      ? closedRoute && origin
+        ? metersBetween(origin, destination)
+        : current
+          ? metersBetween(current, destination)
+          : null
+      : null;
     const distance = measuredDistance ?? (Number.isFinite(meters) ? meters : null);
+    const savedAt = order?.delivery?.delivery_route_saved_at ?? snapshot?.ended_at ?? snapshot?.started_at ?? null;
     return {
       destination,
       current,
+      origin,
       distanceLabel: fmtDistance(distance),
       etaLabel: fmtEta(distance),
       gpsLabel: session?.last_position?.recorded_at
         ? `GPS ${fmtWhen(session.last_position.recorded_at)}`
+        : savedAt
+          ? `Ruta guardada ${fmtWhen(savedAt)}`
         : preview?.loading
           ? 'Tomando tu ubicación...'
           : preview?.error
@@ -3906,9 +4052,10 @@
     const detail = state.deliveryDetailMap;
     const session = deliverySessionForOrder(order.id);
     const location = deliveryOrderLocation(order);
-    const destination = mapLatLng(location);
-    const preview = state.deliveryPreviewPoint?.orderId === order.id ? state.deliveryPreviewPoint : null;
-    const current = mapLatLng(session?.last_position) ?? mapLatLng(preview);
+    const route = deliveryRouteSummary(order, session);
+    const destination = route.destination;
+    const current = route.current;
+    const origin = route.origin;
     if (!destination) {
       map.setView([18.6157, -68.7071], 12);
       return;
@@ -3930,7 +4077,8 @@
       } else {
         detail.deliveryMarker.setLatLng(current);
       }
-      const points = [current, destination];
+      const routeStart = origin ?? current;
+      const points = routeStart && `${routeStart[0]},${routeStart[1]}` !== `${current[0]},${current[1]}` ? [routeStart, current, destination] : [current, destination];
       if (!detail.routeLine) {
         detail.routeLine = window.L.polyline(points, { color: '#0b6b4f', weight: 4, opacity: 0.72, dashArray: '8 8' }).addTo(map);
       } else if (typeof detail.routeLine.setLatLngs === 'function') {
@@ -4020,6 +4168,21 @@
     return '';
   }
 
+  function deliveryQuickActions(order, status, session = null) {
+    const customer = order?.customer ?? {};
+    const phone = digits(customer.phone_e164 || customer.phone || order?.customer_phone || '');
+    const navUrl = externalNavigationUrl(deliveryOrderLocation(order), order?.delivery?.delivery_start_location ?? order?.delivery?.route_snapshot?.start_location ?? session?.last_position);
+    const canRoute = navUrl && ['EN_PROCESO', 'EN_CAMINO', 'ENTREGADO'].includes(status);
+    const canMessage = Boolean(order?.conversation_id);
+    return [
+      phone ? `<a class="btn btn--ghost btn--sm" href="tel:${escapeHtml(phone)}">Llamar</a>` : '',
+      canMessage ? `<button class="btn btn--ghost btn--sm" data-delivery-chat="${escapeHtml(order.conversation_id)}" data-delivery-order-chat="${escapeHtml(order.id)}" type="button">Mensaje</button>` : '',
+      canRoute ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Ruta</a>` : '',
+    ]
+      .filter(Boolean)
+      .join('');
+  }
+
   function deliveryCard(order, { detail = false } = {}) {
     const session = deliverySessionForOrder(order.id);
     const status = deliveryVisibleStatus(order, session);
@@ -4080,6 +4243,7 @@
                       </div>`
                     : ''
                 }
+                ${deliveryQuickActions(order, status, session)}
                 ${deliveryPrimaryAction(order, session)}
               </div>
             </div>`
@@ -4091,7 +4255,6 @@
   function deliveryDetailPanelHtml(order) {
     const session = deliverySessionForOrder(order.id);
     const status = deliveryVisibleStatus(order, session);
-    const navUrl = externalNavigationUrl(deliveryOrderLocation(order));
     return `<section class="delivery-detail-panel" aria-label="Detalle de entrega">
       ${deliveryOrderSummaryHtml(order, session, status)}
       ${deliveryCompactFactsHtml(order, session, status)}
@@ -4100,12 +4263,12 @@
         <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
         <div>
           <strong>${status === 'PENDIENTE' ? 'Primero contacta al cliente' : 'Cliente contactado'}</strong>
-          <small>${status === 'PENDIENTE' ? 'Acepta y abre el chat con el mensaje listo.' : 'Ya puedes continuar con la entrega.'}</small>
+          <small>${status === 'PENDIENTE' ? 'Acepta y envía el aviso al cliente.' : 'Ya puedes continuar con la entrega.'}</small>
         </div>
       </div>
       <div class="delivery-actions">
         <button class="btn btn--ghost btn--sm" data-delivery-order-detail="${escapeHtml(order.id)}" type="button">Ver pedido</button>
-        ${deliveryVisibleStatus(order, session) === 'EN_CAMINO' && navUrl ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">Ruta</a>` : ''}
+        ${deliveryQuickActions(order, status, session)}
         ${
           status === 'INCIDENCIA'
             ? `<div class="delivery-issue">
@@ -5074,7 +5237,17 @@
     const earningsSig = ['AGENT', 'DELIVERY'].includes(user.role)
       ? Object.values(deliveryEarningsForUser(user.id)).join(':')
       : '';
-    const sig = [user.id, user.display_name ?? '', user.first_name ?? '', user.last_name ?? '', user.username ?? '', earningsSig].join('|');
+    const deliveryCapable = ['AGENT', 'DELIVERY'].includes(String(user.role ?? '').toUpperCase());
+    const sig = [
+      user.id,
+      user.display_name ?? '',
+      user.first_name ?? '',
+      user.last_name ?? '',
+      user.username ?? '',
+      user.personal_phone ?? '',
+      user.fleet_phone ?? '',
+      earningsSig,
+    ].join('|');
     if (!force && sig === profileSig) return;
     profileSig = sig;
     const name = user.display_name ?? user.username ?? '';
@@ -5111,6 +5284,18 @@
           <span class="field__label">Usuario</span>
           <input class="field__input" id="profile-username" value="${escapeHtml(user.username ?? '')}" disabled />
         </label>
+        ${
+          deliveryCapable
+            ? `<label class="field">
+                <span class="field__label">Teléfono personal para avisos</span>
+                <input class="field__input" id="profile-personal-phone" value="${escapeHtml(user.personal_phone ?? '')}" inputmode="tel" autocomplete="tel" />
+              </label>
+              <label class="field">
+                <span class="field__label">Teléfono de apoyo/flota</span>
+                <input class="field__input" id="profile-fleet-phone" value="${escapeHtml(user.fleet_phone ?? '')}" inputmode="tel" autocomplete="tel" />
+              </label>`
+            : ''
+        }
         <p class="view__hint">El usuario con el que entras no se cambia desde aquí.</p>
         <button class="btn btn--primary btn--block" id="profile-save" type="button">Guardar cambios</button>
       </div>
@@ -5149,6 +5334,12 @@
               displayName,
               firstName: ($('#profile-first')?.value ?? '').trim(),
               lastName: ($('#profile-last')?.value ?? '').trim(),
+              ...(deliveryCapable
+                ? {
+                    personalPhone: ($('#profile-personal-phone')?.value ?? '').trim(),
+                    fleetPhone: ($('#profile-fleet-phone')?.value ?? '').trim(),
+                  }
+                : {}),
             }),
           });
           state.auth = { ...state.auth, user: result.user ?? state.auth?.user ?? null };
@@ -5471,13 +5662,48 @@
     window.scrollTo({ top: 0 });
   }
 
+  async function openCustomerConversation(customerId, button = null) {
+    if (!customerId) return;
+    const cached = conversationForCustomer(customerId);
+    if (cached?.id) {
+      await openChat(cached.id);
+      return;
+    }
+    if (button) button.disabled = true;
+    try {
+      const profile = await api(`/api/admin/customers/${encodeURIComponent(customerId)}`);
+      const conversation = profile.conversation ?? null;
+      if (!conversation?.id) throw new Error('conversation_missing');
+      if (!state.conversations.some((row) => row.id === conversation.id)) {
+        state.conversations.unshift({ ...conversation, customer: profile.customer ?? customerById(customerId) ?? null });
+      }
+      await openChat(conversation.id);
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo abrir la conversación');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   async function contactDeliveryCustomer(orderId) {
     const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
     if (!order?.conversation_id) {
       toast('Este pedido no tiene conversación vinculada');
       return;
     }
-    await openChat(order.conversation_id, { draft: deliveryMessage(order), deliveryOrderId: order.id });
+    const body = deliveryMessage(order);
+    await openChat(order.conversation_id, { draft: body, deliveryOrderId: order.id });
+    const sent = await sendWaMessage(
+      {
+        body,
+        idempotencyKey: uploadKey(`delivery-contact-${order.id}-${order.delivery?.delivery_assignment_version ?? 1}`),
+      },
+      null,
+    );
+    if (sent) {
+      state.wa.deliveryStartReadyOrderId = order.id;
+      renderWaChat();
+    }
   }
 
   /**
@@ -6961,6 +7187,12 @@
    * sale con las palabras del operador.
    */
   const WA_FREE_VAR_KEYS = ['mensaje', 'texto', 'mensaje_libre', 'libre', 'personalizado'];
+  const isWaFreeVar = (key) => WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase());
+  function waTemplateValueForKey(key, value) {
+    const clean = String(value ?? '').trim();
+    if (!clean || !isWaFreeVar(key) || /[.!?¡¿…]$/.test(clean)) return clean;
+    return `${clean}.`;
+  }
   /** Plantilla aprobada con la que se pide la ubicación al cliente. */
   const LOCATION_TEMPLATE = 'phyto_ubicacion_entrega_v1';
   /** Plantilla con la que se le pide al cliente confirmar SU pedido. */
@@ -6974,9 +7206,7 @@
   /** «Pedir / confirmar ubicación» cuando el cliente NO tiene ninguna guardada. */
   const LOCATION_REQUEST_TEXT = 'Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.';
   function waTemplateFreeSlot(template) {
-    const index = waTemplateHuecos(template).findIndex((key) =>
-      WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase()),
-    );
+    const index = waTemplateHuecos(template).findIndex((key) => isWaFreeVar(key));
     return index === -1 ? null : index;
   }
   /** Plantilla aprobada que admite un mensaje escrito a mano (la de «hello world»). */
@@ -6986,11 +7216,18 @@
     );
   }
 
+  function waTemplateBody(template) {
+    return String(template?.body ?? '').replace(
+      'Cualquier duda, respóndenos por aquí y te ayudamos.',
+      'Respóndenos por aquí, por favor.',
+    );
+  }
+
   /** Cómo queda el mensaje con los huecos ya rellenos: lo que se va a enviar. */
   function waRenderTemplatePreview(template, values) {
-    let texto = String(template?.body ?? '');
+    let texto = waTemplateBody(template);
     waTemplateHuecos(template).forEach((key, index) => {
-      const valor = String(values[index] ?? '').trim();
+      const valor = waTemplateValueForKey(key, values[index]);
       // Un hueco vacío se ve COMO hueco (con lo que falta), no como un `{{2}}`
       // que parece un error: si el CRM no lo sabe, hay que escribirlo.
       const relleno = valor || `⟨falta ${waVariableLabel(key, index)}⟩`;
@@ -6999,50 +7236,58 @@
     return texto;
   }
 
+  function waPersonalTemplateDraft(text) {
+    const template = waPersonalTemplate();
+    if (!template) return null;
+    const auto = waTemplateAutoValues(state.wa.chat?.customer ?? null, state.wa.selectedId ?? null);
+    const huecos = waTemplateHuecos(template);
+    const libre = waTemplateFreeSlot(template);
+    if (libre === null) return null;
+    const values = {};
+    huecos.forEach((key, index) => {
+      values[index] = index === libre ? waTemplateValueForKey(key, text) : (auto[key] ?? '');
+    });
+    const templateValues = {};
+    for (const [index, value] of Object.entries(values)) {
+      if (String(value ?? '').trim()) templateValues[Number(index) + 1] = String(value).trim();
+    }
+    return {
+      template,
+      templateValues,
+      preview: waRenderTemplatePreview(template, values),
+    };
+  }
+
   function waTemplateSheetHtml(prefill = {}) {
     const approved = (state.templates ?? []).filter(waTemplateApproved);
-    /*
-     * LO QUE TODAVÍA NO SE PUEDE USAR SE DICE, no se esconde: si el negocio acaba
-     * de registrar una plantilla en Meta, aquí ve que está pendiente y que el envío
-     * se desbloquea solo cuando Meta la apruebe.
-     */
-    const pendientes = (state.templates ?? []).filter(waTemplatePending);
-    const avisoPendientes = pendientes.length
-      ? `<div class="wa-pending">
-        <strong>Pendientes de aprobación de Meta</strong>
-        <p>Estas todavía NO se pueden enviar. Se desbloquean solas cuando Meta las apruebe.</p>
-        <ul>${pendientes
-          .map((template) => `<li>${escapeHtml(waTemplateLabel(template))} <code>${escapeHtml(template.name)}</code></li>`)
-          .join('')}</ul>
-      </div>`
-      : '';
     if (!approved.length) {
-      return `<p class="rule rule--warn">No hay ninguna plantilla aprobada por Meta: fuera de la ventana de 24 h no se puede contactar al cliente.</p>
-        <p class="view__hint">Regístrala en Meta y pulsa «Sincronizar con Meta» en Ajustes > WhatsApp.</p>
-        ${avisoPendientes}`;
+      return `<p class="rule rule--warn">No hay plantillas aprobadas disponibles para enviar.</p>`;
     }
     const elegida = approved.find((template) => template.name === prefill.templateName) ?? approved[0];
-    return `<label class="field">
-        <span class="field__label">Plantilla aprobada</span>
-        <select class="field__select" id="wa-template">
-          ${approved
-            .map(
-              (template) =>
-                `<option value="${escapeHtml(template.name)}"${template.name === elegida.name ? ' selected' : ''}>${escapeHtml(
-                  waTemplateLabel(template),
-                )}</option>`,
-            )
-            .join('')}
-        </select>
-      </label>
-      <div id="wa-template-fields"></div>
-      <label class="field">
-        <span class="field__label">Mensaje que se enviará</span>
-        <p class="wa-template-preview" id="wa-template-preview"></p>
-      </label>
-      <button class="btn btn--whatsapp btn--block" id="wa-send-template" type="button">Enviar plantilla</button>
-      <p class="rule">Para escribir a alguien por primera vez WhatsApp solo admite una plantilla aprobada: el texto fijo no se puede cambiar, pero los huecos sí. El nombre del cliente y los datos del pedido se ponen solos.</p>
-      ${avisoPendientes}`;
+    return `<div class="wa-template-form">
+        <label class="field">
+          <span class="field__label">Plantilla</span>
+          <select class="field__select" id="wa-template">
+            ${approved
+              .map(
+                (template) =>
+                  `<option value="${escapeHtml(template.name)}"${template.name === elegida.name ? ' selected' : ''}>${escapeHtml(
+                    waTemplateLabel(template),
+                  )}</option>`,
+              )
+              .join('')}
+          </select>
+        </label>
+        <div id="wa-template-fields"></div>
+        <label class="field">
+          <span class="field__label">Vista previa</span>
+          <p class="wa-template-preview" id="wa-template-preview"></p>
+        </label>
+        <div class="wa-template-actions">
+          <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
+          <button class="btn btn--whatsapp" id="wa-send-template" type="button">Enviar</button>
+        </div>
+      </div>`;
   }
 
   /**
@@ -7067,9 +7312,10 @@
             // El hueco libre arranca con lo que se escribió en el compositor.
             const esLibre = index === libre;
             const valor = esLibre && prefill.freeText ? prefill.freeText : (auto[key] ?? '');
-            // El NOMBRE lo pone el CRM solo, desde el cliente de ESTA conversación.
-            const esNombre = ['customer_name', 'nombre'].includes(String(key ?? '').trim().toLowerCase());
-            const pista = esLibre ? ' · lo escribes tú' : esNombre ? ' · automático' : '';
+            const esAutoCompleto = !esLibre && String(valor ?? '').trim();
+            if (esAutoCompleto) {
+              return `<input type="hidden" data-wa-var="${index + 1}" value="${escapeHtml(valor)}" />`;
+            }
             // El hueco libre es donde la persona escribe SU mensaje: por eso va en
             // un campo amplio de varias líneas y no en un renglón suelto.
             const campo = esLibre
@@ -7077,8 +7323,13 @@
           placeholder="Escribe aquí lo que quieras decirle…">${escapeHtml(valor)}</textarea>`
               : `<input class="field__input" type="text" data-wa-var="${index + 1}" value="${escapeHtml(valor)}"
           placeholder="${escapeHtml(waVariablePlaceholder(key))}" />`;
+            const label = esLibre
+              ? `<span>${escapeHtml(waVariableLabel(key, index))}</span>${
+                  auto.nombre ? `<button class="wa-var-chip" data-wa-insert-customer-name type="button">Nombre</button>` : ''
+                }`
+              : escapeHtml(waVariableLabel(key, index));
             return `<label class="field">
-        <span class="field__label">${escapeHtml(waVariableLabel(key, index))}${pista}</span>
+        <span class="field__label${esLibre ? ' wa-var__head' : ''}">${label}</span>
         ${campo}
       </label>`;
           })
@@ -7104,6 +7355,22 @@
       if (preview) preview.textContent = waRenderTemplatePreview(template, recoger());
     };
     $$('#wa-template-fields [data-wa-var]').forEach((input) => input.addEventListener('input', pintar));
+    $('#wa-template-fields [data-wa-insert-customer-name]')?.addEventListener('click', () => {
+      const area = $('#wa-template-fields textarea[data-wa-var]');
+      const nombre = auto.nombre || auto.customer_name || '';
+      if (!area || !nombre) return;
+      const start = area.selectionStart ?? area.value.length;
+      const end = area.selectionEnd ?? area.value.length;
+      const before = area.value.slice(0, start);
+      const after = area.value.slice(end);
+      const prefix = before && !/\s$/.test(before) ? ' ' : '';
+      const suffix = after && !/^\s/.test(after) ? ' ' : '';
+      area.value = `${before}${prefix}${nombre}${suffix}${after}`;
+      const cursor = before.length + prefix.length + nombre.length + suffix.length;
+      area.focus();
+      area.setSelectionRange(cursor, cursor);
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     pintar();
     // Si el texto venía del compositor, el cursor ya está donde hay que escribir.
     if (prefill.freeText && libre !== null) $$('#wa-template-fields [data-wa-var]')[libre]?.focus();
@@ -7119,7 +7386,7 @@
    */
   async function openWaTemplateSheet(options = {}) {
     const borrador = String(state.wa.draft ?? '').trim();
-    openSheet('Enviar plantilla', '<p class="view__hint">Cargando plantillas aprobadas…</p>');
+    openSheet('Enviar plantilla', '<p class="view__hint">Cargando…</p>', { variant: 'wa-template' });
     try {
       const result = await api('/api/admin/wa-templates?sync=stale');
       state.templates = result.templates ?? state.templates;
@@ -7135,7 +7402,7 @@
       if (!aprobadas.some((template) => template.name === options.templateName)) {
         prefill.nota = `La plantilla «${options.templateName}» no está aprobada o no está sincronizada: elige otra o pulsa Sincronizar con Meta en Ajustes.`;
       }
-    } else if (borrador && personal) {
+    } else if (personal) {
       prefill.templateName = personal.name;
     }
     if (borrador && !personal && !options.templateName) {
@@ -7152,9 +7419,12 @@
       // Solo viajan los huecos RELLENOS: el resto los completa el servidor como
       // siempre (nombre del cliente, datos del pedido).
       const values = state.wa.templateValues ?? {};
+      const template = (state.templates ?? []).find((row) => row.name === $('#wa-template')?.value) ?? null;
+      const huecos = waTemplateHuecos(template);
       const templateValues = {};
       for (const [index, value] of Object.entries(values)) {
-        if (String(value ?? '').trim()) templateValues[Number(index) + 1] = String(value).trim();
+        const cleaned = waTemplateValueForKey(huecos[Number(index)] ?? '', value);
+        if (cleaned) templateValues[Number(index) + 1] = cleaned;
       }
       const sent = await sendWaMessage({ template: $('#wa-template')?.value || null, templateValues }, event.currentTarget);
       if (sent) closeSheet();
@@ -7406,19 +7676,18 @@
    * de mandarlo. Sin adjuntos: WhatsApp tampoco los admite fuera de la ventana.
    */
   function waClosedComposerHtml() {
-    const personal = waPersonalTemplate();
-    const aviso = personal
-      ? `Lo que escribas se envía dentro de la plantilla «${escapeHtml(waTemplateLabel(personal))}».`
-      : 'Fuera de la ventana de 24 h WhatsApp solo admite plantillas aprobadas: elige una para poder escribir.';
-    return `<div class="composer-bar">
+    return `<p class="wa-quick-preview" id="wa-quick-preview" hidden></p>
+      <div class="composer-bar">
+        <span class="composer-left">
+          <button class="composer-template-btn" id="wa-open-template" type="button">Plantilla</button>
+        </span>
         <textarea id="wa-text" rows="1" placeholder="Escribe lo que quieras decirle…"
           aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
         <span class="composer-end">
           <button class="composer-btn composer-btn--send" id="wa-send" type="button"
-            aria-label="Enviar con plantilla">${ICONS.send}</button>
+            aria-label="Enviar">${ICONS.send}</button>
         </span>
-      </div>
-      <p class="composer-rule">${aviso} Nada se envía solo.</p>`;
+      </div>`;
   }
 
   function waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate = null }) {
@@ -7430,9 +7699,7 @@
       return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      // El aviso dice POR QUÉ no se escribe libre, y debajo sigue habiendo dónde
-      // escribir: el texto entra en el hueco libre de una plantilla aprobada.
-      return `${waContactStateHtml(contactState, customer, lastTemplate)}${waClosedComposerHtml()}`;
+      return waClosedComposerHtml();
     }
     const puedeAdjuntar = state.media?.enabled === true;
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
@@ -7463,8 +7730,7 @@
             ICONS.send
           }</button>
         </span>
-      </div>
-      <p class="composer-rule">Enter envía · Shift+Enter salto de línea · Nada se envía solo.</p>`;
+      </div>`;
   }
 
   function waMessageSearchText(message) {
@@ -7498,6 +7764,12 @@
     const send = $('#wa-send');
     if (mic) mic.hidden = !vacio;
     if (send) send.hidden = vacio;
+    const preview = $('#wa-quick-preview');
+    if (preview) {
+      const draft = waPersonalTemplateDraft(area.value);
+      preview.textContent = draft && !vacio ? draft.preview : '';
+      preview.hidden = vacio || !draft;
+    }
   }
 
   function renderWaChat() {
@@ -7605,6 +7877,7 @@
       conversationAssignmentLabel(conversation),
       conversation?.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
       customer?.do_not_contact ? 'No contactar' : null,
+      customerCampaignOptOut(customer) ? 'Sin campañas' : null,
       data.nextFollowup ? `Seguimiento ${fmtDay(data.nextFollowup.scheduled_at)}` : null,
       ...headerTags,
     ]
@@ -7649,8 +7922,8 @@
 
     const emptyThread =
       contactState === CONTACT_STATE.NEW_CONTACT
-        ? '<div class="wa-empty"><strong>Todavía no has iniciado una conversación con este cliente.</strong><span>Usa una plantilla aprobada para enviar el primer mensaje.</span></div>'
-        : '<p class="view__hint">Todavía no hay mensajes.</p>';
+        ? ''
+        : '';
     const query = String(state.wa.threadQuery ?? '').trim().toLowerCase();
     if (!query) {
       $('#thread').innerHTML = hilo.length ? waThreadHtml(hilo) : emptyThread;
@@ -7712,7 +7985,12 @@
          * solo camino para «escribir» y «usar plantilla».
          */
         if (!canSendFreeText) {
-          openWaTemplateSheet();
+          const draft = waPersonalTemplateDraft(body);
+          if (!draft) {
+            openWaTemplateSheet();
+            return;
+          }
+          sendWaMessage({ template: draft.template.name, templateValues: draft.templateValues, body: draft.preview }, event.currentTarget);
           return;
         }
         sendWaMessage({ body }, event.currentTarget);
@@ -8819,6 +9097,7 @@
     const tags = [
       customerStageLabel(stage),
       customer.do_not_contact ? 'No contactar' : null,
+      customerCampaignOptOut(customer) ? 'Sin campañas' : null,
       ...customerTags.slice(0, 3).map((tag) => tag.label),
     ].filter(Boolean);
     const estado = {
@@ -9158,6 +9437,11 @@
             ? `<button class="btn btn--ghost btn--sm" data-optin="${escapeHtml(customer.id)}" type="button">Volver a permitir mensajes</button>`
             : `<button class="btn btn--danger btn--sm" data-optout="${escapeHtml(customer.id)}" type="button">No contactar nunca más</button>`
         }
+        ${
+          customerCampaignOptOut(customer)
+            ? `<button class="btn btn--ghost btn--sm" data-campaign-optin="${escapeHtml(customer.id)}" type="button">Permitir campañas</button>`
+            : `<button class="btn btn--ghost btn--sm" data-campaign-optout="${escapeHtml(customer.id)}" type="button">No campañas</button>`
+        }
       </div>`,
     );
 
@@ -9278,6 +9562,7 @@
       <div>
         <span class="tag tag--recordatorio">${escapeHtml(commercialLabel(commercial))}</span>
         ${customer.do_not_contact ? '<span class="tag tag--perdido">No contactar</span>' : ''}
+        ${customerCampaignOptOut(customer) ? '<span class="tag tag--recordatorio">Sin campañas</span>' : ''}
         <span class="tag">${escapeHtml(customer.source ?? 'origen desconocido')}</span>
         ${nextFollowup ? `<span class="tag tag--recordatorio">${escapeHtml(fmtDay(nextFollowup.scheduled_at))}</span>` : ''}
       </div>
@@ -9455,6 +9740,11 @@
               ? `<button class="btn btn--ghost btn--sm" data-optin="${escapeHtml(customer.id)}" type="button">Volver a permitir mensajes</button>`
               : `<button class="btn btn--danger btn--sm" data-optout="${escapeHtml(customer.id)}" type="button">No contactar nunca más</button>`
           }
+          ${
+            customerCampaignOptOut(customer)
+              ? `<button class="btn btn--ghost btn--sm" data-campaign-optin="${escapeHtml(customer.id)}" type="button">Permitir campañas</button>`
+              : `<button class="btn btn--ghost btn--sm" data-campaign-optout="${escapeHtml(customer.id)}" type="button">No campañas</button>`
+          }
           <button class="btn btn--danger btn--sm" data-customer-delete="${escapeHtml(customer.id)}" type="button">Eliminar cliente</button>
         </div>
         <p class="view__hint">Pausar detiene el seguimiento; «no contactar» cancela marketing. Eliminar solo se permite si no hay historial vinculado.</p>
@@ -9623,12 +9913,14 @@
       resume: ['/automation', { state: 'AUTOMATIC' }],
       optout: ['/opt-out', {}],
       optin: ['/opt-in', {}],
+      campaignOptout: ['', { campaignOptOut: true }],
+      campaignOptin: ['', { campaignOptOut: false }],
     };
     const [route, payload] = routes[action] ?? [];
     if (!route) return;
     try {
       const result = await api(`/api/admin/customers/${encodeURIComponent(customerId)}${route}`, {
-        method: 'POST',
+        method: route ? 'POST' : 'PATCH',
         body: JSON.stringify(payload),
       });
       toast(
@@ -9636,9 +9928,13 @@
           ? `Marcado como no contactar${result.cancelled ? ` · ${result.cancelled} tarea(s) cancelada(s)` : ''}`
           : action === 'optin'
             ? 'Puede volver a recibir mensajes'
-            : action === 'pause'
-              ? 'Seguimiento en pausa'
-              : 'Seguimiento reactivado',
+            : action === 'campaignOptout'
+              ? 'No recibirá campañas masivas'
+              : action === 'campaignOptin'
+                ? 'Puede recibir campañas'
+                : action === 'pause'
+                  ? 'Seguimiento en pausa'
+                  : 'Seguimiento reactivado',
       );
       await load({ keepTab: true });
       await openCustomer(customerId);
@@ -9712,14 +10008,16 @@
         const variant = catalogOf(line.variantId);
         if (!variant) return null;
         const quantity = Math.max(1, Number(line.quantity) || 1);
-        return { variant, quantity, subtotal: variant.price * quantity };
+        const capsules = Number(variant.capsule_quantity ?? variant.capsules ?? 0) || 0;
+        return { variant, quantity, capsules, subtotal: variant.price * quantity, totalCapsules: capsules * quantity };
       })
       .filter(Boolean);
     const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+    const totalCapsules = items.reduce((sum, item) => sum + item.totalCapsules, 0);
     const applied = Math.min(Math.max(0, Number(discount) || 0), subtotal);
     // El delivery es un importe APARTE (nunca una línea de producto falsa).
     const fee = Math.max(0, Math.trunc(Number(deliveryFee) || 0));
-    return { items, subtotal, discount: applied, deliveryFee: fee, total: subtotal - applied + fee };
+    return { items, subtotal, discount: applied, deliveryFee: fee, total: subtotal - applied + fee, totalCapsules };
   }
 
   function openChatActions(customerId, conversationId) {
@@ -9906,6 +10204,17 @@
             : `<button class="menu-item" data-pause="${escapeHtml(customer.id)}" type="button">
                 <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
                 <span><strong>Pausar seguimiento</strong></span>
+              </button>`
+        }
+        ${
+          customerCampaignOptOut(customer)
+            ? `<button class="menu-item" data-campaign-optin="${escapeHtml(customer.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.bell}</span>
+                <span><strong>Permitir campañas</strong><small>Puede entrar en campañas masivas</small></span>
+              </button>`
+            : `<button class="menu-item" data-campaign-optout="${escapeHtml(customer.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+                <span><strong>No campañas</strong><small>No recibe campañas, pero conserva el chat normal</small></span>
               </button>`
         }
         <button class="menu-item menu-item--danger" data-customer-delete="${escapeHtml(customer.id)}" type="button">
@@ -10391,11 +10700,11 @@
           : `<p class="view__hint">El teléfono identifica al cliente: si ya existe, el pedido se suma a su historial.</p>
              <label class="field">
                <span class="field__label">Teléfono del cliente</span>
-               <input class="field__input" id="order-phone" type="tel" inputmode="tel" placeholder="809 555 1234" />
+               <input class="field__input" id="order-phone" type="tel" inputmode="tel" placeholder="809 555 1234" value="${escapeHtml(draftData?.phone ?? '')}" />
              </label>
              <label class="field">
                <span class="field__label">Nombre</span>
-               <input class="field__input" id="order-name" placeholder="Nombre del cliente" />
+               <input class="field__input" id="order-name" placeholder="Nombre del cliente" value="${escapeHtml(draftData?.name ?? '')}" />
              </label>`
       }
       ${
@@ -10718,6 +11027,8 @@
     const collectOrderDraft = () => ({
       customerId: customer?.id ?? customerId ?? null,
       conversationId: conversationId || null,
+      phone: $('#order-phone')?.value.trim() || '',
+      name: $('#order-name')?.value.trim() || '',
       lines,
       discount: Number($('#order-discount')?.value) || 0,
       deliveryFee: Number($('#order-fee')?.value) || 0,
@@ -10789,6 +11100,52 @@
       });
     };
 
+    const goAddStockFromOrder = (totals) => {
+      persistOrderDraft();
+      state.orderReturn = {
+        fromTab: state.tab,
+        args: { customerId: effectiveCustomerId, conversationId, orderId: orderId ?? null, draftKey },
+        required: totals.totalCapsules,
+        at: new Date().toISOString(),
+      };
+      closeSheet();
+      setTab('productos');
+      renderProductos();
+      toast('Agrega stock y luego vuelve al pedido');
+      setTimeout(() => $('#inventory-restock input[name="quantity"]')?.focus(), 0);
+    };
+
+    const showInsufficientStock = (totals, button = null) => {
+      persistOrderDraft();
+      const available = Number(state.inventory?.stock ?? 0);
+      const message = `Stock insuficiente: hay ${available} cápsulas y el pedido requiere ${totals.totalCapsules}. Primero agrega stock.`;
+      toast(message);
+      openSheet(
+        'Stock insuficiente',
+        `<div class="order-flow-panel">
+          <span class="order-flow-panel__icon" aria-hidden="true">${ICONS.inventory}</span>
+          <strong>No se puede crear este pedido todavía</strong>
+          <p>${escapeHtml(message)}</p>
+          <div class="order-flow-panel__actions">
+            <button class="btn btn--primary btn--sm" id="order-go-stock" type="button">Agregar stock</button>
+            <button class="btn btn--ghost btn--sm" id="order-back-from-stock-warning" type="button">Volver al pedido</button>
+          </div>
+        </div>`,
+        { variant: 'order-stock' },
+      );
+      $('#order-go-stock')?.addEventListener('click', () => goAddStockFromOrder(totals));
+      $('#order-back-from-stock-warning')?.addEventListener('click', () =>
+        openOrderForm({
+          customerId: effectiveCustomerId,
+          conversationId,
+          orderId: orderId ?? null,
+          draft: draftKey ? readOrderDraft(draftKey) : null,
+          skipDraftPrompt: true,
+        }),
+      );
+      if (button) button.disabled = false;
+    };
+
     const saveOrder = async ({ button, assignAfter = false, deliveryNote = '', deliveryUserId = '' } = {}) => {
       /*
        * El aviso de pedido abierto se confirma AQUÍ (no solo se enseña): sin
@@ -10807,12 +11164,8 @@
         toast('Elige al menos un frasco');
         return;
       }
-      if (
-        $('#order-status')?.value === 'entregado' &&
-        state.inventory?.initialized === true &&
-        Number(state.inventory.stock) < Number(totals.totalCapsules)
-      ) {
-        toast(`Stock insuficiente: hay ${state.inventory.stock} cápsulas y el pedido requiere ${totals.totalCapsules}`);
+      if (state.inventory?.initialized === true && Number(state.inventory.stock) < Number(totals.totalCapsules)) {
+        showInsufficientStock(totals, button);
         return;
       }
       const typedPhone = customer ? null : $('#order-phone').value.trim();
@@ -10878,6 +11231,7 @@
             : await api('/api/admin/orders', { method: 'POST', body: JSON.stringify(payload) });
           const savedId = orderId ?? result.item?.id;
           if (savedId && draftKey && !orderId) clearOrderDraft(draftKey);
+          if (savedId && state.orderReturn?.args?.draftKey === draftKey) state.orderReturn = null;
           /*
            * GUARDAR LAS PREFERENCIAS: lo que se acaba de usar pasa a ser «lo de
            * siempre» de este cliente (frasco, cantidad, pago y ubicación), para
@@ -10932,7 +11286,13 @@
           }
           if (savedId && !assignAfter) await openReceipt(savedId);
         } catch (error) {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar el pedido');
+          if (error.message !== 'unauthorized') {
+            if (error.body?.error === 'insufficient_stock') {
+              showInsufficientStock({ ...totals, totalCapsules: Number(error.body.required ?? totals.totalCapsules) || totals.totalCapsules }, button);
+            } else {
+              toast(error.body?.message ?? 'No se pudo guardar el pedido');
+            }
+          }
         }
       });
     };
@@ -13573,6 +13933,7 @@
       return 'La ventana de atención de 24 h había terminado y este mensaje no iba dentro de una plantilla aprobada.';
     }
     if (reason === 'DO_NOT_CONTACT') return 'El cliente pidió no recibir mensajes.';
+    if (reason === 'CAMPAIGN_OPT_OUT') return 'El cliente no quiere recibir campañas.';
     if (reason === 'CONVERSATION_MISMATCH') return 'La conversación ya no era la de este cliente: no se envió para no cruzar datos.';
     if (reason === 'CUSTOMER_MISSING') return 'El cliente ya no existe en el CRM.';
     if (reason === 'WHATSAPP_NOT_CONFIGURED') return 'WhatsApp no estaba configurado en el servidor a esa hora.';
@@ -14183,6 +14544,7 @@
       toast(form.id === 'inventory-cost' ? 'Costo actualizado' : 'Inventario actualizado');
       await loadInventory();
       state.salesReport = null;
+      renderProductos();
     } catch (error) {
       if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo guardar inventario');
     }
@@ -14210,6 +14572,96 @@
     banner.textContent = count
       ? `${count} cambio(s) pendientes de enviar. Se enviarán solos cuando vuelva la conexión.`
       : '';
+  }
+
+  function needsLocationPermission() {
+    return isDeliveryUser() || state.tab === 'delivery' || Boolean(state.deliveryOrders?.length);
+  }
+
+  function needsNotificationPermission() {
+    return Boolean(state.push?.publicKey) && typeof Notification !== 'undefined' && Notification.permission !== 'granted';
+  }
+
+  function renderPermissionBanner() {
+    const box = $('#permission-banner');
+    if (!box) return;
+    const rows = [];
+    const geo = state.devicePermissions?.geolocation ?? 'unknown';
+    if (needsLocationPermission() && ['prompt', 'denied', 'unknown'].includes(geo) && navigator.geolocation?.getCurrentPosition) {
+      rows.push({
+        title: 'Permitir ubicación',
+        detail: geo === 'denied' ? 'El GPS está bloqueado en este teléfono.' : 'Hace falta para iniciar entregas y compartir el recorrido.',
+        action: 'location',
+        cta: geo === 'denied' ? 'Revisar permiso' : 'Permitir',
+      });
+    }
+    if (needsNotificationPermission()) {
+      const denied = Notification.permission === 'denied';
+      rows.push({
+        title: 'Activar notificaciones',
+        detail: denied ? 'Las notificaciones están bloqueadas en este teléfono.' : 'Recibe avisos de pedidos, chats y entregas.',
+        action: 'notifications',
+        cta: denied ? 'Revisar permiso' : 'Activar',
+      });
+    }
+    box.hidden = rows.length === 0;
+    box.innerHTML = rows
+      .map(
+        (row) => `<div class="permission-banner__row">
+          <span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.detail)}</small></span>
+          <button class="btn btn--primary btn--sm" data-permission-action="${escapeHtml(row.action)}" type="button">${escapeHtml(row.cta)}</button>
+        </div>`,
+      )
+      .join('');
+  }
+
+  async function readPermissionState(name) {
+    try {
+      if (!navigator.permissions?.query) return 'unknown';
+      const status = await navigator.permissions.query({ name });
+      status.onchange = () => refreshDevicePermissions().catch(() => {});
+      return status.state || 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  async function refreshDevicePermissions() {
+    const geolocation = await readPermissionState('geolocation');
+    const notifications =
+      typeof Notification === 'undefined' ? 'unsupported' : Notification.permission || (await readPermissionState('notifications'));
+    state.devicePermissions = { loading: false, geolocation, notifications };
+    renderPermissionBanner();
+  }
+
+  async function requestDeviceLocationPermission() {
+    if (!navigator.geolocation?.getCurrentPosition) {
+      toast('Este teléfono no permite usar GPS desde el navegador');
+      return false;
+    }
+    try {
+      await getDeliveryPreviewPosition();
+      await refreshDevicePermissions();
+      toast('Ubicación permitida');
+      return true;
+    } catch (error) {
+      await refreshDevicePermissions();
+      openLocationPermissionHelpSheet();
+      return false;
+    }
+  }
+
+  function openLocationPermissionHelpSheet() {
+    openSheet(
+      'Permitir ubicación',
+      `<div class="delivery-permission">
+        <strong>Este teléfono todavía no dejó usar la ubicación.</strong>
+        <p>Abre los permisos del sitio o de la app instalada y cambia Ubicación a Permitir. Luego vuelve y toca Iniciar entrega.</p>
+        <button class="btn btn--primary btn--block" data-permission-action="location" type="button">Intentar otra vez</button>
+        <button class="btn btn--ghost btn--block" data-close-sheet type="button">Volver</button>
+      </div>`,
+      { variant: 'delivery-permission' },
+    );
   }
 
   function setConnection(online) {
@@ -14666,7 +15118,11 @@
   };
 
   function setTab(tab, options = {}) {
-    if ((tab === 'usuarios' && !isAdmin()) || (tab === 'reportes' && !hasPermission('reports.profit.view')) || (tab === 'cierre' && !canUseDailyClose())) {
+    if (
+      ((tab === 'usuarios' || tab === 'mensajes') && !isAdmin()) ||
+      (tab === 'reportes' && !hasPermission('reports.profit.view')) ||
+      (tab === 'cierre' && !canUseDailyClose())
+    ) {
       tab = 'hoy';
     }
     if (tab === 'mapa' && !canUseMapScreen()) {
@@ -14765,6 +15221,7 @@
       refreshDeliveryTracking().then(() => renderDelivery()).catch(() => {});
       startDeliveryEvents();
     }
+    renderCustomerCampaignFab();
   }
 
   // ---------------------------------------------------------------- eventos
@@ -15197,7 +15654,9 @@
       }
       const deliveryContact = event.target.closest('[data-delivery-contact]');
       if (deliveryContact) {
-        contactDeliveryCustomer(deliveryContact.dataset.deliveryContact).catch(() => toast('No se pudo abrir el chat'));
+        working(deliveryContact, 'Contactando…', () => contactDeliveryCustomer(deliveryContact.dataset.deliveryContact)).catch(() =>
+          toast('No se pudo contactar al cliente'),
+        );
         return;
       }
       const deliveryOrderDetail = event.target.closest('[data-delivery-order-detail]');
@@ -15210,6 +15669,7 @@
         // «Solicitar ubicación» deja además el aviso listo para enviar.
         const opciones =
           deliveryChat.dataset.deliveryAsk === 'location' ? { openTemplate: LOCATION_TEMPLATE } : {};
+        if (deliveryChat.dataset.deliveryOrderChat) opciones.deliveryOrderId = deliveryChat.dataset.deliveryOrderChat;
         openChat(deliveryChat.dataset.deliveryChat, opciones).catch(() => toast('No se pudo abrir el chat'));
         return;
       }
@@ -15223,9 +15683,30 @@
         enableCrmPush().catch(() => toast('No se pudieron activar las notificaciones'));
         return;
       }
+      const permissionAction = event.target.closest('[data-permission-action]');
+      if (permissionAction) {
+        const action = permissionAction.dataset.permissionAction;
+        if (action === 'location') {
+          requestDeviceLocationPermission().catch(() => toast('No se pudo pedir ubicación'));
+        } else if (action === 'notifications') {
+          enableCrmPush()
+            .then(() => refreshDevicePermissions().catch(() => {}))
+            .catch(() => toast('No se pudieron activar las notificaciones'));
+        }
+        return;
+      }
       const deliveryStart = event.target.closest('[data-delivery-start]');
       if (deliveryStart) {
         startDelivery(deliveryStart.dataset.deliveryStart, deliveryStart).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo iniciar entrega');
+        });
+        return;
+      }
+      const deliveryPermission = event.target.closest('[data-delivery-permission]');
+      if (deliveryPermission) {
+        const orderId = deliveryPermission.dataset.deliveryPermission;
+        closeSheet();
+        startDelivery(orderId, deliveryPermission).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo iniciar entrega');
         });
         return;
@@ -15740,6 +16221,21 @@
         }
         pendingOptOut = null;
         customerAction(id, 'optout');
+        return;
+      }
+      const campaignOptout = event.target.closest('[data-campaign-optout]');
+      if (campaignOptout) {
+        customerAction(campaignOptout.dataset.campaignOptout, 'campaignOptout');
+        return;
+      }
+      const campaignOptin = event.target.closest('[data-campaign-optin]');
+      if (campaignOptin) {
+        customerAction(campaignOptin.dataset.campaignOptin, 'campaignOptin');
+        return;
+      }
+      const customerChat = event.target.closest('[data-customer-chat]');
+      if (customerChat) {
+        openCustomerConversation(customerChat.dataset.customerChat, customerChat);
         return;
       }
       const chat = event.target.closest('[data-chat]');

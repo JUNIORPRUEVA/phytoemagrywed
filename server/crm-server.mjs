@@ -151,6 +151,7 @@ import {
   buildSession as buildTrackingSession,
   orderDestination,
   publicTrackingSession,
+  routeSummary,
   shouldStorePoint,
   suspiciousJump,
   validateLocationUpdate,
@@ -291,6 +292,7 @@ const WHATSAPP_PHONE_NUMBER_ID = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? '').tr
 const WHATSAPP_PHONE_NUMBER = (process.env.WHATSAPP_PHONE_NUMBER ?? '').trim();
 /** Token de envío. SECRETO. */
 const WHATSAPP_ACCESS_TOKEN = (process.env.WHATSAPP_ACCESS_TOKEN ?? '').trim();
+const WHATSAPP_MOCK = ['1', 'true', 'yes', 'mock'].includes(String(process.env.PHYTO_WHATSAPP_MOCK ?? '').trim().toLowerCase());
 /** Secreto de la verificación del webhook (`hub.verify_token`). SECRETO. */
 const WHATSAPP_VERIFY_TOKEN = (process.env.WHATSAPP_VERIFY_TOKEN ?? '').trim();
 const WHATSAPP_WEBHOOK_URL = (process.env.WHATSAPP_WEBHOOK_URL ?? '').trim();
@@ -877,6 +879,98 @@ async function visibleDeliveryOrders(ctx, actor) {
   return orders;
 }
 
+function trackingPointFromSession(session) {
+  const latitude = Number(session?.last_latitude);
+  const longitude = Number(session?.last_longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    latitude,
+    longitude,
+    accuracy: session.last_accuracy ?? null,
+    heading: session.last_heading ?? null,
+    speed: session.last_speed ?? null,
+    recorded_at: session.last_position_at ?? session.updated_at ?? session.started_at ?? null,
+  };
+}
+
+function deliveryRouteSnapshot(session, order, status, at) {
+  const destination = session?.destination ?? orderDestination(order);
+  const current = trackingPointFromSession(session);
+  const start = order?.delivery?.delivery_start_location ?? order?.delivery?.route_snapshot?.start_location ?? current ?? null;
+  const summary = (start ?? current) && destination ? routeSummary(start ?? current, destination) : routeSummary(null, null);
+  return {
+    tracking_session_id: session?.id ?? null,
+    status,
+    started_at: session?.started_at ?? null,
+    ended_at: at,
+    delivery_user_id: session?.delivery_user_id ?? order?.delivery?.delivery_user_id ?? null,
+    delivery_user_name_snapshot: session?.delivery_user_name_snapshot ?? order?.delivery?.delivery_user_name_snapshot ?? null,
+    start_location: start,
+    last_location: current,
+    destination,
+    distance_m: summary.distance_m,
+    distance_label: summary.distance_label,
+    eta_seconds: summary.eta_seconds,
+    eta_label: summary.eta_label,
+    route_provider: summary.provider,
+  };
+}
+
+async function persistDeliveryRouteSnapshot(ctx, orderId, session, status, actor = null) {
+  const item = await findOrderItem(ctx.store, orderId);
+  const order = orderOf(item);
+  if (!item || !order) return null;
+  const at = session?.ended_at ?? ctx.clock().toISOString();
+  const snapshot = deliveryRouteSnapshot(session, order, status, at);
+  const next = {
+    ...order,
+    delivery: {
+      ...(order.delivery ?? {}),
+      route_snapshot: snapshot,
+      delivery_tracking_session_id: snapshot.tracking_session_id,
+      delivery_route_started_at: snapshot.started_at,
+      delivery_route_ended_at: snapshot.ended_at,
+      delivery_start_location: snapshot.start_location,
+      delivery_last_location: snapshot.last_location,
+      delivery_route_distance_m: snapshot.distance_m,
+      delivery_route_distance_label: snapshot.distance_label,
+      delivery_route_provider: snapshot.route_provider,
+      delivery_route_saved_at: at,
+      delivery_route_saved_by_user_id: actor?.actor_type === 'USER' ? actor.id : order.delivery?.delivery_route_saved_by_user_id ?? null,
+    },
+    updated_at: at,
+  };
+  const updated = await ctx.store.update(orderId, { orderJson: JSON.stringify(next) });
+  return orderOf(updated) ?? next;
+}
+
+async function rememberDeliveryStartLocation(ctx, orderId, point, session) {
+  const item = await findOrderItem(ctx.store, orderId);
+  const order = orderOf(item);
+  if (!item || !order || order.delivery?.delivery_start_location) return null;
+  const at = ctx.clock().toISOString();
+  const start = {
+    latitude: point.latitude,
+    longitude: point.longitude,
+    accuracy: point.accuracy ?? null,
+    heading: point.heading ?? null,
+    speed: point.speed ?? null,
+    recorded_at: point.recorded_at ?? at,
+  };
+  const next = {
+    ...order,
+    delivery: {
+      ...(order.delivery ?? {}),
+      delivery_tracking_session_id: session?.id ?? order.delivery?.delivery_tracking_session_id ?? null,
+      delivery_start_location: start,
+      delivery_route_started_at: session?.started_at ?? order.delivery?.delivery_route_started_at ?? at,
+    },
+    updated_at: at,
+  };
+  const updated = await ctx.store.update(orderId, { orderJson: JSON.stringify(next) });
+  return orderOf(updated) ?? next;
+}
+
 async function closeActiveTrackingForOrder(ctx, orderId, status, actor = null) {
   const sessions = await ctx.db.list('delivery_tracking_sessions', { limit: 1000 });
   const active = sessions.filter((row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS);
@@ -889,6 +983,7 @@ async function closeActiveTrackingForOrder(ctx, orderId, status, actor = null) {
       closed_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
     });
     closed.push(updated);
+    await persistDeliveryRouteSnapshot(ctx, orderId, updated, status, actor);
     await emitDeliveryEvent(ctx, status === 'COMPLETED' ? 'delivery.completed' : 'delivery.tracking_stopped', updated);
   }
   return closed;
@@ -1688,7 +1783,7 @@ async function notifyDeliveryOrderCancelled(ctx, item, order, actor = null) {
 
 function deliveryIdentityHeader(user) {
   const name = text(user?.display_name, 120) ?? 'Delivery';
-  return `*${name} · Delivery*`;
+  return `*DELIVERY · ${name}*`;
 }
 
 /**
@@ -1708,13 +1803,13 @@ function canDeliver(user) {
 function messageNeedsDeliveryIdentity(order, actor) {
   if (!order || !canDeliver(actor)) return false;
   if (order.delivery?.delivery_user_id !== actor.id) return false;
-  return order.delivery?.delivery_contacted_by_user_id !== actor.id;
+  return true;
 }
 
 function withDeliveryIdentity(body, actor) {
   const header = deliveryIdentityHeader(actor);
   const clean = longText(body, 1200) ?? '';
-  if (clean.trim().startsWith(header)) return clean;
+  if (/^\*?DELIVERY\b/i.test(clean.trim()) || clean.trim().startsWith(header)) return clean;
   return `${header}\n${clean}`.slice(0, 1200);
 }
 
@@ -1917,7 +2012,7 @@ async function ensureInventoryForSale(ctx, item) {
       ok: false,
       status: 409,
       error: 'insufficient_stock',
-      message: `Stock insuficiente: hay ${stock.current} cápsulas disponibles y este pedido requiere ${required}.`,
+      message: `Stock insuficiente: hay ${stock.current} cápsulas disponibles y este pedido requiere ${required}. Agrega stock antes de crear el pedido.`,
       available: stock.current,
       required,
     };
@@ -2145,6 +2240,11 @@ async function markOrderDelivered(ctx, item, actor = null, options = {}) {
     }
   }
   await closeActiveTrackingForOrder(ctx, item.id, 'COMPLETED', actor);
+  const refreshed = await findOrderItem(ctx.store, item.id);
+  if (refreshed) {
+    delivered.item = refreshed;
+    order = orderOf(refreshed) ?? order;
+  }
   return { ok: true, item: delivered.item ?? deliveredItem, order, delivered, duplicate: alreadyDelivered };
 }
 
@@ -2583,12 +2683,12 @@ async function createOrder(ctx, body = {}, actor = null) {
   built.order.created_by_display_name_snapshot = actor?.actor_type === 'USER' ? actor.display_name : null;
   built.order.updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
   built.row.orderJson = JSON.stringify(built.order);
+  const stockCheck = await ensureInventoryForSale(ctx, { ...built.row, status, order_json: built.row.orderJson });
+  if (!stockCheck.ok) return stockCheck;
   // Si el pedido nace ya ENTREGADO, queda registrada también su fecha de entrega.
   if (isCompletedPurchaseStatus(status)) {
     built.order.delivered_at = new Date().toISOString();
     built.row.orderJson = JSON.stringify(built.order);
-    const check = await ensureInventoryForSale(ctx, { ...built.row, status, order_json: built.row.orderJson });
-    if (!check.ok) return check;
   }
   const saved = await ctx.store.save(built.row);
   const item = await ctx.store.update(built.row.id, {
@@ -3192,7 +3292,7 @@ const WA_TEMPLATE_SEED = [
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
+    body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Respóndenos por aquí, por favor.',
     variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
@@ -4621,6 +4721,14 @@ async function handle(req, res, ctx) {
       if (body.lastName !== undefined || body.last_name !== undefined) {
         patch.lastName = body.lastName ?? body.last_name;
       }
+      if (canDeliver(currentUser)) {
+        if (body.personalPhone !== undefined || body.personal_phone !== undefined) {
+          patch.personalPhone = body.personalPhone ?? body.personal_phone;
+        }
+        if (body.fleetPhone !== undefined || body.fleet_phone !== undefined) {
+          patch.fleetPhone = body.fleetPhone ?? body.fleet_phone;
+        }
+      }
       if (!Object.keys(patch).length) {
         json(res, 422, { ok: false, error: 'nothing_to_update', message: 'No hay nada que cambiar.' });
         return;
@@ -4695,7 +4803,7 @@ async function handle(req, res, ctx) {
       const items = rawItems
         .filter((item) => !deliveryScope.restricted || (item.type === 'order_intent' && deliveryScope.orderIds.has(item.id)))
         .map((item) => sanitizeItemForPermissions(item, actor));
-      const messages = deliveryScope.restricted ? [] : await store.messages().list();
+      const messages = actor?.role === 'ADMIN' ? await store.messages().list() : [];
       const fullCustomerList = await ctx.customers.list({});
       const customerList = deliveryScope.restricted
         ? fullCustomerList.filter((customer) => deliveryScope.customerIds.has(customer.id))
@@ -5573,6 +5681,22 @@ async function handle(req, res, ctx) {
         if (body.name !== undefined) patch.name = text(body.name, 120);
         if (body.location !== undefined) patch.location = text(body.location, 120);
         if (body.notes !== undefined) patch.notes = longText(body.notes, 2000);
+        if (
+          body.campaignOptOut !== undefined ||
+          body.campaign_opt_out !== undefined ||
+          body.campaignNotificationsDisabled !== undefined ||
+          body.campaign_notifications_disabled !== undefined
+        ) {
+          const off = Boolean(
+            body.campaignOptOut ??
+              body.campaign_opt_out ??
+              body.campaignNotificationsDisabled ??
+              body.campaign_notifications_disabled,
+          );
+          patch.campaign_opt_out_at = off ? new Date().toISOString() : null;
+          patch.campaign_opt_out_by_user_id = off && actor?.actor_type === 'USER' ? actor.id : null;
+          patch.campaign_opt_out_by_display_name = off ? actor?.display_name ?? null : null;
+        }
         /*
          * Foto del cliente: WhatsApp no la entrega nunca (su API no expone la
          * foto de perfil de los contactos), así que la sube el equipo y se
@@ -6069,6 +6193,7 @@ async function handle(req, res, ctx) {
           updated_at: ctx.clock().toISOString(),
           suspicious_location: suspicious,
         });
+        if (!previous) await rememberDeliveryStartLocation(ctx, session.order_id, valid.point, session);
         if (shouldStorePoint(previous, valid.point)) {
           await ctx.db.insert('delivery_location_points', {
             id: newId('dlp'),
@@ -6138,30 +6263,32 @@ async function handle(req, res, ctx) {
           }),
           updated_at: ctx.clock().toISOString(),
         });
+        await persistDeliveryRouteSnapshot(ctx, session.order_id, ended, status, actor);
         let order = null;
         if (action === 'complete') {
           const item = await findOrderItem(store, session.order_id);
           if (item) {
-            const delivered = await markOrderDelivered(ctx, item, actor, { source: 'DELIVERY_ACTION' });
+            const itemWithRoute = (await findOrderItem(store, session.order_id)) ?? item;
+            const delivered = await markOrderDelivered(ctx, itemWithRoute, actor, { source: 'DELIVERY_ACTION' });
             order = delivered.order ?? null;
             if (!delivered.duplicate) {
               await auditOrderStatusTransition(ctx, {
-                orderId: item.id,
-                previousStatus: item.status ?? null,
+                orderId: itemWithRoute.id,
+                previousStatus: itemWithRoute.status ?? null,
                 newStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
                 actor,
                 reason: deliveryNote ? `Entrega completada por delivery: ${deliveryNote}` : 'Entrega completada por delivery',
                 changedAt: ctx.clock().toISOString(),
                 source: 'DELIVERY_ACTION',
-                idempotencyKey: `order.status:${item.id}:delivery-complete:${session.id}`,
+                idempotencyKey: `order.status:${itemWithRoute.id}:delivery-complete:${session.id}`,
               });
             }
             if (order) {
-              await notifyDeliveryCustomer(ctx, { item, order, actor, kind: 'delivered' }).catch(() => null);
-              const refreshed = await findOrderItem(store, item.id);
+              await notifyDeliveryCustomer(ctx, { item: itemWithRoute, order, actor, kind: 'delivered' }).catch(() => null);
+              const refreshed = await findOrderItem(store, itemWithRoute.id);
               order = refreshed ? orderOf(refreshed) ?? order : order;
-              await notifyAdminsDeliveryCompleted(ctx, refreshed ?? item, order, actor).catch(() => null);
-              const refreshedAfterAdmin = await findOrderItem(store, item.id);
+              await notifyAdminsDeliveryCompleted(ctx, refreshed ?? itemWithRoute, order, actor).catch(() => null);
+              const refreshedAfterAdmin = await findOrderItem(store, itemWithRoute.id);
               order = refreshedAfterAdmin ? orderOf(refreshedAfterAdmin) ?? order : order;
             }
           }
@@ -8398,11 +8525,13 @@ async function handle(req, res, ctx) {
      * que se escribe en el compositor y que una persona envía si quiere.
      */
     if (route === '/api/admin/messages' && req.method === 'GET') {
+      if (!requireAdmin()) return;
       json(res, 200, { ok: true, messages: await store.messages().list() });
       return;
     }
 
     if (route === '/api/admin/messages' && req.method === 'POST') {
+      if (!requireAdmin()) return;
       /** @type {any} */
       let body = {};
       try {
@@ -8448,6 +8577,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route.startsWith('/api/admin/messages/') && req.method === 'DELETE') {
+      if (!requireAdmin()) return;
       const id = decodeURIComponent(route.slice('/api/admin/messages/'.length));
       // Se lee ANTES de borrar para poder dejar constancia de qué se borró.
       const existing = (await store.messages().list()).find((row) => row.id === id) ?? null;
@@ -8612,6 +8742,9 @@ async function handle(req, res, ctx) {
       const selectedIds = Array.isArray(body.customerIds)
         ? new Set(body.customerIds.map((id) => text(id, 80)).filter(Boolean))
         : new Set();
+      const excludedIds = Array.isArray(body.excludeCustomerIds ?? body.excludedCustomerIds)
+        ? new Set((body.excludeCustomerIds ?? body.excludedCustomerIds).map((id) => text(id, 80)).filter(Boolean))
+        : new Set();
       const statusFilter = text(body.historicalStatus, 40);
       const allowedStatuses = statusFilter ? CAMPAIGN_HISTORICAL_FILTERS[statusFilter] ?? null : null;
       if (mode === 'selected' && selectedIds.size === 0) {
@@ -8637,7 +8770,8 @@ async function handle(req, res, ctx) {
       const candidates = allCustomers
         .filter((customer) => {
           if (!customer?.id || !matchesScope(customer) || !customer.phone_e164) return false;
-          if (customer.do_not_contact || customer.whatsapp_opt_out_at) return false;
+          if (excludedIds.has(customer.id)) return false;
+          if (customer.do_not_contact || customer.whatsapp_opt_out_at || customer.campaign_opt_out_at || customer.campaign_notifications_disabled_at) return false;
           return true;
         })
         .slice(0, maxRecipients);
@@ -8645,12 +8779,25 @@ async function handle(req, res, ctx) {
       const skipped = allCustomers
         .filter((customer) => {
           if (!matchesScope(customer)) return false;
-          return !customer.phone_e164 || customer.do_not_contact || customer.whatsapp_opt_out_at;
+          return (
+            excludedIds.has(customer.id) ||
+            !customer.phone_e164 ||
+            customer.do_not_contact ||
+            customer.whatsapp_opt_out_at ||
+            customer.campaign_opt_out_at ||
+            customer.campaign_notifications_disabled_at
+          );
         })
         .map((customer) => ({
           id: customer.id,
           name: campaignCustomerLabel(customer),
-          reason: !customer.phone_e164 ? 'missing_phone' : 'do_not_contact',
+          reason: excludedIds.has(customer.id)
+            ? 'excluded'
+            : !customer.phone_e164
+              ? 'missing_phone'
+              : customer.campaign_opt_out_at || customer.campaign_notifications_disabled_at
+                ? 'campaign_opt_out'
+                : 'do_not_contact',
         }));
 
       /** @type {Array<any>} */
@@ -8735,6 +8882,7 @@ async function handle(req, res, ctx) {
           templateComponents: payload.components,
           templateBody: payload.body,
           templateLanguage: check.template.language ?? 'es',
+          campaignId,
           timeZone: text(body.timeZone, 60) ?? TIME_ZONE,
           createdBy: actor?.display_name ?? 'panel',
           scheduledByUserId: actor?.actor_type === 'USER' ? actor.id : null,
@@ -8754,6 +8902,7 @@ async function handle(req, res, ctx) {
           data: {
             mode,
             historicalStatus: statusFilter ?? null,
+            excluded: excludedIds.size,
             template: check.template.name,
             recipients: planned.length,
             scheduled: scheduled.length,
@@ -9157,6 +9306,7 @@ export async function startCrmServer(config = {}) {
       phoneNumberId: config.whatsappPhoneNumberId ?? WHATSAPP_PHONE_NUMBER_ID,
       businessAccountId: config.whatsappBusinessAccountId ?? WHATSAPP_BUSINESS_ACCOUNT_ID,
       graphVersion: config.whatsappGraphVersion ?? WHATSAPP_GRAPH_VERSION,
+      mock: config.whatsappMock ?? WHATSAPP_MOCK,
       log: settings.quiet ? false : undefined,
     });
 

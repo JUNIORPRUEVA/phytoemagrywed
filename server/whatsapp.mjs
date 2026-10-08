@@ -145,6 +145,7 @@ function normalizeForMatch(text) {
  * @param {string} [options.phoneNumberId]
  * @param {string} [options.graphVersion]
  * @param {string} [options.businessAccountId]
+ * @param {boolean} [options.mock]
  * @param {number} [options.timeoutMs]
  * @param {typeof fetch} [options.fetchImpl]
  * @param {(message: string) => void} [options.log]
@@ -156,6 +157,7 @@ export function createWhatsAppClient(options = {}) {
   const graphVersion = String(options.graphVersion ?? '').trim() || DEFAULT_GRAPH_VERSION;
   const timeoutMs = Number(options.timeoutMs ?? 8000);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const mock = options.mock === true;
   // `log` admite una función, `false` (silencioso) o nada (consola). Pasarlo mal
   // no puede tumbar el arranque del CRM.
   const log =
@@ -165,7 +167,8 @@ export function createWhatsAppClient(options = {}) {
         ? () => {}
         : (message) => console.log(message);
 
-  const enabled = Boolean(accessToken && phoneNumberId && typeof fetchImpl === 'function');
+  const enabled = mock || Boolean(accessToken && phoneNumberId && typeof fetchImpl === 'function');
+  if (mock) log('[wa] API de WhatsApp en modo LOCAL MOCK: no se envía nada a Meta.');
   if (!enabled) log('[wa] API de WhatsApp desactivada: faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID.');
 
   /**
@@ -173,6 +176,15 @@ export function createWhatsAppClient(options = {}) {
    * @param {Record<string, any>} payload
    */
   async function send(payload) {
+    if (mock) {
+      return {
+        ok: true,
+        status: 200,
+        messageId: `wamid.LOCAL.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`,
+        waId: String(payload?.to ?? '') || null,
+        mock: true,
+      };
+    }
     if (!enabled) return { ok: false, skipped: true, reason: 'not_configured' };
     try {
       const response = await fetchImpl(`https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`, {
@@ -236,6 +248,7 @@ export function createWhatsAppClient(options = {}) {
     },
     /** Lista plantillas reales del WABA en Meta. Es read-only y no expone tokens. */
     async listTemplates(options = {}) {
+      if (mock) return { ok: false, skipped: true, reason: 'mock_mode' };
       if (!enabled || !businessAccountId) return { ok: false, skipped: true, reason: 'not_configured' };
       const fields = encodeURIComponent(
         String(options.fields ?? 'name,id,language,category,status,quality_score,components'),
