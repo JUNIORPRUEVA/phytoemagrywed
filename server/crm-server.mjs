@@ -245,6 +245,18 @@ const DELIVERY_REMINDER_TEMPLATE = 'phyto_delivery_pedido_pendiente_v1';
 const DELIVERY_ADMIN_ESCALATION_TEMPLATE = 'phyto_delivery_sin_atender_admin_v1';
 const DELIVERY_ADMIN_DELIVERED_TEMPLATE = 'phyto_delivery_entregado_admin_v1';
 const DELIVERY_CONTROL_SETTINGS_KEY = 'delivery_control';
+/*
+ * UN AVISO POR CLIENTE CADA VEZ QUE SE LE PASA UN PEDIDO AL MENSAJERO.
+ *
+ * El aviso es genérico («ya pasamos tu pedido al mensajero, él te va a
+ * contactar…»), así que si en unos minutos entran DOS pedidos del mismo cliente
+ * y los dos se pasan a delivery, al cliente le llegaban dos mensajes IDÉNTICOS
+ * seguidos y parecía un fallo del sistema (pasó de verdad: dos pedidos creados
+ * con 1,5 s de diferencia). Dentro de esta ventana solo se avisa UNA vez —el
+ * mensajero contacta una sola vez de todos modos— y pasada la ventana se vuelve
+ * a avisar con normalidad.
+ */
+const ASSIGNMENT_NOTICE_WINDOW_MS = 5 * 60 * 1000;
 const DELIVERY_CONTROL_DEFAULTS = Object.freeze({
   deliveryReminderMinutes: 5,
   deliveryAdminEscalationMinutes: 30,
@@ -1468,6 +1480,21 @@ async function notifyDeliveryCustomer(ctx, { item, order, actor = null, kind }) 
     return result;
   }
 
+  /*
+   * ¿YA SE LE AVISÓ HACE UN MOMENTO? El texto es el mismo para cualquier pedido,
+   * así que dos pedidos seguidos del mismo cliente producían dos mensajes
+   * idénticos seguidos. Dentro de la ventana se avisa una sola vez.
+   */
+  if (kind === 'assignment') {
+    const ultimo = conversation.delivery_assignment_notice_at ?? null;
+    const dentroDeLaVentana = Boolean(ultimo) && Number.isFinite(Date.parse(ultimo)) && ctx.clock().getTime() - Date.parse(ultimo) < ASSIGNMENT_NOTICE_WINDOW_MS;
+    if (dentroDeLaVentana) {
+      const result = { status: 'skipped', reason: 'aviso_reciente', since: ultimo };
+      await record(result);
+      return result;
+    }
+  }
+
   if (kind === 'delivered') {
     const receiptResult = await sendDeliveryReceiptToCustomer(ctx, { item, order, customer, conversation, actor });
     const result = {
@@ -1529,6 +1556,10 @@ async function notifyDeliveryCustomer(ctx, { item, order, actor = null, kind }) 
 
   const result = { status: 'sent', channel, template: template?.name ?? null, message_id: sendResult.messageId ?? null };
   await record(result);
+  // Queda anotado en la conversación para no repetir el mismo aviso enseguida.
+  if (kind === 'assignment' && conversation?.id && typeof ctx.db?.update === 'function') {
+    await ctx.db.update('conversations', conversation.id, { delivery_assignment_notice_at: ctx.clock().toISOString() }).catch(() => null);
+  }
   await ctx.audit?.record({ entity: 'order', entityId: item.id, action: sentAction, actor: actor?.display_name ?? null, summary: 'Cliente notificado por delivery', data: { ...data, channel, template: template?.name ?? null, message_id: sendResult.messageId ?? null } });
   return result;
 }
