@@ -24,6 +24,11 @@ const TOKEN = 'uat-panel-123';
 const APP_SECRET = 'uat-panel-secret';
 const PHONE = '18095559191';
 const ADMIN_DIR = path.join(process.cwd(), 'public', 'admin');
+/*
+ * El ÚNICO aviso que recibe el cliente al pasarle el pedido al mensajero. Lo
+ * manda el servidor al asignar; el panel ya no manda el suyo (eran dos seguidos).
+ */
+const AVISO_AL_MENSAJERO = 'Ya pasamos tu pedido al mensajero. Él te va a contactar cuando vaya a salir.';
 
 const mockWhatsApp = {
   enabled: true,
@@ -380,14 +385,23 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
       const order = item?.order ?? (item?.order_json ? JSON.parse(item.order_json) : item?.orderJson);
       return order?.delivery?.delivery_user_id === agenteUatId ? order : null;
     }, 'el pedido creado y asignado al agente');
-    const aviso = await waitFor(
-      () =>
-        mockWhatsApp.sent
-          .slice(avisosAntes)
-          .find((message) => message.body === 'Ya pasé la orden al mensajero. Él te contactará para la entrega.'),
-      'el aviso discreto al cliente',
+    /*
+     * AL CLIENTE LE LLEGA UN SOLO AVISO Y CORTO, y lo manda el SERVIDOR al
+     * asignar. El panel mandaba además el suyo desde aquí y el cliente recibía
+     * dos mensajes seguidos: por eso solo puede aparecer UNO.
+     */
+    const avisos = await waitFor(
+      () => {
+        const enviados = mockWhatsApp.sent.slice(avisosAntes);
+        return enviados.some((message) => message.body === AVISO_AL_MENSAJERO) ? enviados : null;
+      },
+      'el aviso al cliente de que el pedido va con el mensajero',
     );
-    expect(aviso.body).toBe('Ya pasé la orden al mensajero. Él te contactará para la entrega.');
+    expect(avisos.filter((message) => message.body === AVISO_AL_MENSAJERO), 'un solo mensaje, no dos').toHaveLength(1);
+    expect(
+      avisos.filter((message) => /mensajero|asignado a nuestro delivery|Ya pasé la orden/i.test(String(message.body ?? ''))),
+      'el panel no debe mandar su propio aviso: iba duplicado',
+    ).toHaveLength(1);
   }, 10000);
 
   it('programa un mensaje (no es un seguimiento: lo intentará el sistema)', async () => {

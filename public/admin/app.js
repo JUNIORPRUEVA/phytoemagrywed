@@ -3780,20 +3780,11 @@
       .join('\n');
   }
 
-  const DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE = 'Ya pasé la orden al mensajero. Él te contactará para la entrega.';
-
-  async function sendDeliveryAssignmentCustomerNotice(conversationId, orderId) {
-    if (!conversationId || !orderId) return false;
-    await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({
-        body: DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE,
-        deliveryAssignmentNotice: true,
-        idempotencyKey: uploadKey(`delivery-notice-${orderId}`),
-      }),
-    });
-    return true;
-  }
+  /*
+   * El aviso de «pedido pasado al mensajero» NO se manda desde el panel: lo
+   * manda el servidor al asignar (`notifyDeliveryCustomer`) una sola vez y en
+   * corto. Tenerlo también aquí hacía que el cliente recibiera dos mensajes.
+   */
 
   function deliveryRouteSummary(order, session = deliverySessionForOrder(order?.id)) {
     const location = deliveryOrderLocation(order);
@@ -11260,16 +11251,18 @@
               toast(`Pedido ${orderNumber} creado. No hay agentes activos para delivery`);
             } else if (activeUsers.length === 1 || deliveryUserId) {
               const selectedUserId = deliveryUserId || activeUsers[0].id;
+              /*
+               * EL AVISO AL CLIENTE LO MANDA EL SERVIDOR, UNA VEZ Y EN CORTO.
+               * Aquí se mandaba además un mensaje propio («Ya pasé la orden al
+               * mensajero…») y el cliente recibía DOS seguidos: el del servidor
+               * al asignar y este. Desde el panel ya no se manda nada: el
+               * servidor avisa solo cuando el pedido cambia de manos.
+               */
               await api(`/api/admin/orders/${encodeURIComponent(savedId)}/delivery/assign`, {
                 method: 'POST',
                 body: JSON.stringify({ deliveryUserId: selectedUserId, deliveryNote }),
               });
-              const avisado = await sendDeliveryAssignmentCustomerNotice(conversationId, savedId).catch((error) => {
-                if (error.message !== 'unauthorized') toast('Pedido asignado. No se pudo avisar al cliente.');
-                return false;
-              });
               toast(`Pedido ${orderNumber} creado y pasado a delivery`);
-              if (avisado) toast('Cliente avisado');
             } else {
               toast(`Pedido ${orderNumber} creado. Elige el agente`);
               await load({ keepTab: true });

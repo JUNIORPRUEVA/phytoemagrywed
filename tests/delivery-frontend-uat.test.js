@@ -55,10 +55,15 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('Ver pedido');
     expect(app).toContain('-- *DELIVERY* --');
     expect(app).toContain('Voy a salir para allá, para que estés pendiente, por favor.');
-    expect(app).toContain("const DELIVERY_ASSIGNMENT_CUSTOMER_NOTICE = 'Ya pasé la orden al mensajero. Él te contactará para la entrega.';");
-    expect(app).toContain('function sendDeliveryAssignmentCustomerNotice');
-    expect(app).toContain('deliveryAssignmentNotice: true');
-    expect(app).toContain("uploadKey(`delivery-notice-${orderId}`)");
+    /*
+     * EL AVISO AL CLIENTE LO MANDA EL SERVIDOR, UNA VEZ Y CORTO. El panel tenía
+     * su propio aviso («Ya pasé la orden al mensajero…») y el cliente recibía dos
+     * mensajes seguidos: el del servidor al asignar y el del panel.
+     */
+    expect(app).not.toContain('sendDeliveryAssignmentCustomerNotice');
+    expect(app).not.toContain('deliveryAssignmentNotice');
+    expect(app).not.toContain('Ya pasé la orden al mensajero');
+    expect(app.match(/\/delivery\/assign/g).length).toBeGreaterThanOrEqual(1);
     expect(app.match(/data-delivery-contact=/g)).toHaveLength(1);
     const renderBlock = app.slice(app.indexOf('function renderDelivery'), app.indexOf('function openDeliveryOrder'));
     expect(renderBlock).not.toContain('<div><h1>Entrega</h1>');

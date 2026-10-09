@@ -1277,12 +1277,17 @@ async function conversationForOrderCustomer(ctx, order) {
     .sort((a, b) => String(b.last_message_at ?? b.updated_at ?? b.created_at ?? '').localeCompare(String(a.last_message_at ?? a.updated_at ?? a.created_at ?? '')))[0] ?? null;
 }
 
-function deliveryNotificationText(kind, customer, order) {
-  const name = customer?.name || customer?.phone_e164 || 'cliente';
-  if (kind === 'assignment') {
-    const deliveryName = order?.delivery?.delivery_user_name_snapshot || 'nuestro delivery';
-    return `Hola ${name}, tu pedido ha sido asignado a nuestro delivery ${deliveryName}. Te estará contactando para coordinar la entrega.`;
-  }
+function deliveryNotificationText(kind) {
+  /*
+   * AL PASAR EL PEDIDO AL MENSAJERO SE AVISA UNA VEZ Y EN CORTO.
+   *
+   * Antes el cliente recibía DOS mensajes seguidos: el del servidor (con el
+   * nombre del repartidor) y, justo detrás, otro que mandaba el panel desde el
+   * flujo «crear y pasar a delivery». Ahora el aviso lo manda SOLO el servidor
+   * (una vez, cuando el pedido cambia de manos) y el texto es este, corto y sin
+   * nombres: el mensajero se presenta él mismo al contactar.
+   */
+  if (kind === 'assignment') return 'Ya pasamos tu pedido al mensajero. Él te va a contactar cuando vaya a salir.';
   return 'Gracias por tu compra, aquí está tu recibo.';
 }
 
@@ -6330,13 +6335,21 @@ async function handle(req, res, ctx) {
         return;
       }
       const assignmentNote = text(body.deliveryNote ?? body.delivery_note ?? body.note, 600);
+      /*
+       * ¿CAMBIA DE MANOS? El aviso al cliente se manda UNA sola vez por cambio:
+       * si se vuelve a asignar al MISMO repartidor (un toque repetido, un
+       * reintento del panel) no se le escribe otra vez. Antes cada llamada
+       * mandaba un mensaje más.
+       */
+      const repartidorAnterior = text(currentOrder?.delivery?.delivery_user_id, 80);
       const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor, { assignmentNote });
-      const customerNotification = deliveryUser
+      const cambiaDeRepartidor = Boolean(deliveryUser) && repartidorAnterior !== deliveryUser.id;
+      const customerNotification = cambiaDeRepartidor
         ? await notifyDeliveryCustomer(ctx, { item: assigned.item, order: assigned.order, actor, kind: 'assignment' }).catch((error) => ({
             status: 'failed',
             reason: error?.message ?? 'notification_failed',
           }))
-        : { status: 'not_applicable', reason: 'unassigned' };
+        : { status: 'not_applicable', reason: deliveryUser ? 'mismo_repartidor' : 'unassigned' };
       json(res, 200, { ok: true, order: assigned.order, deliveryUser, customerNotification });
       return;
     }

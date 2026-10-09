@@ -241,13 +241,22 @@ describe('delivery assignment notifications and contact flow', () => {
     const assignBody = await json(assign);
     expect(assignBody.customerNotification.status).toBe('sent');
     expect(assignBody.order.delivery.delivery_assignment_note).toBe('Cliente prefiere llamada al llegar');
-    expect(mockWhatsApp.sent.filter((row) => row.type === 'text' && row.body.includes('tu pedido ha sido asignado'))).toHaveLength(1);
+    /*
+     * UN SOLO MENSAJE Y CORTO. Antes el servidor mandaba «Hola …, tu pedido ha
+     * sido asignado a nuestro delivery <nombre>…» y el panel mandaba otro justo
+     * detrás desde «crear y pasar a delivery»: el cliente recibía dos seguidos.
+     */
+    expect(mockWhatsApp.sent.filter((row) => row.type === 'text').map((row) => row.body)).toEqual([
+      'Ya pasamos tu pedido al mensajero. Él te va a contactar cuando vaya a salir.',
+    ]);
     const duplicate = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     });
     expect(duplicate.status).toBe(200);
-    expect(mockWhatsApp.sent.filter((row) => row.type === 'text' && row.body.includes('tu pedido ha sido asignado'))).toHaveLength(1);
+    // Volver a asignar al MISMO repartidor no le escribe otra vez al cliente.
+    expect((await json(duplicate)).customerNotification.reason).toBe('mismo_repartidor');
+    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toHaveLength(1);
 
     const notifications = await json(await request('/api/admin/notifications', {}, deliveryCookie));
     const matching = notifications.notifications.filter((row) => row.entity_id === order.item.id && row.type === 'DELIVERY_ORDER_ASSIGNED');
