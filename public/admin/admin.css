@@ -12443,3 +12443,85 @@ body[data-tab='pedidos'] .order-row__status,
   font-size: 12px;
   color: var(--text-secondary);
 }
+/*
+ * ATAJO DEL CIERRE EN LA BARRA DE ARRIBA.
+ * El cierre diario y su historial se miran juntos: el atajo va a la derecha del
+ * título, con la misma altura del volver (44 px, medida de dedo) y sin robarle
+ * sitio al título (que se recorta con puntos suspensivos si hace falta).
+ */
+.simple-head__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.simple-head__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgba(11, 107, 79, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--phyto-primary-dark);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(7, 61, 46, 0.12);
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.simple-head__action .svg {
+  width: 18px;
+  height: 18px;
+}
+
+.simple-head__action:hover,
+.simple-head__action:focus-visible {
+  background: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.16);
+}
+
+.simple-head__action:active {
+  transform: scale(0.96);
+}
+
+/* En pantallas muy estrechas el atajo se queda en icono: el título manda. */
+@media (max-width: 340px) {
+  .simple-head__action {
+    width: 44px;
+    padding: 0;
+  }
+
+  .simple-head__action span {
+    display: none;
+  }
+}
+
+/* El título del cierre puede encogerse: el atajo no lo empuja fuera. */
+.simple-head strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+ * TARJETA DE AVISO (algo no cargó). Se distingue del resto sin salirse de la
+ * paleta: borde cálido y fondo apenas teñido, con el botón de reintentar dentro.
+ */
+.card--attention {
+  border-color: rgba(166, 84, 22, 0.32);
+  background: linear-gradient(180deg, #fffaf2, #fff);
+}
+
+.card--attention .card__title {
+  color: #9a4b12;
+}
+
+.card--attention .btn {
+  margin-top: 2px;
+}

@@ -250,4 +250,39 @@ describe('intervalo (desde/hasta) en reportes', () => {
     // La hoja sigue abierta para que corrija.
     expect($('#sheet')?.hidden).toBe(false);
   });
+
+  it('si el reporte no carga lo dice y deja reintentar (nunca deja la pantalla en blanco)', async () => {
+    await abrirReportes();
+    await waitFor(() => $('#sales-report-view').textContent.includes('Utilidad'), 'el reporte bueno');
+    // Se rompe SOLO la petición del reporte: el resto del panel sigue igual.
+    const original = dom.window.fetch;
+    dom.window.fetch = async (input, init = {}) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (String(url).includes('/api/admin/reports/sales')) {
+        const cuerpo = JSON.stringify({ ok: false, message: 'El servidor tardó demasiado' });
+        return {
+          ok: false,
+          status: 500,
+          headers: { get: () => 'application/json' },
+          text: async () => cuerpo,
+          json: async () => JSON.parse(cuerpo),
+        };
+      }
+      return original(input, init);
+    };
+    try {
+      click('[data-report-period="30d"]');
+      await waitFor(() => $('#sales-report-view').textContent.includes('No se pudo cargar el reporte'), 'el aviso del fallo');
+      expect($('#sales-report-view').textContent).toContain('El servidor tardó demasiado');
+      expect($('[data-report-retry]')).not.toBeNull();
+      // Y no deja la sección vacía: sigue habiendo contenido (el reporte anterior).
+      expect($('#sales-report-view').children.length).toBeGreaterThan(1);
+    } finally {
+      dom.window.fetch = original;
+    }
+    // Reintentar con el servidor bueno deja el reporte de vuelta y sin aviso.
+    click('[data-report-retry]');
+    await waitFor(() => !$('#sales-report-view').textContent.includes('No se pudo cargar el reporte'), 'el reporte de vuelta');
+    expect($('#sales-report-view').textContent).toContain('Utilidad');
+  });
 });

@@ -75,6 +75,9 @@
     salesReportPeriod: 'hoy',
     // Intervalo del reporte: dos fechas (desde/hasta) elegidas a mano.
     salesReportRange: { from: null, to: null },
+    /* Si el reporte no llega, se dice QUÉ pasó y se ofrece reintentar (antes se
+     * quedaba en «Cargando reporte…» para siempre, reintentando en cada pintado). */
+    salesReportError: null,
     // Historial de cierres: qué días se están mirando (7 días por defecto).
     closeHistoryPeriod: '7d',
     closeHistoryRange: { from: null, to: null },
@@ -984,30 +987,46 @@
 
   // ------------------------------------------------------------------ render
 
+  /**
+   * PINTA UNA SECCIÓN SIN TIRAR EL RESTO.
+   *
+   * Un fallo suelto (un dato raro, un nodo que ya no está) dejaba el panel en
+   * blanco a partir de ahí: se veían los títulos y ni una tarjeta. Ahora cada
+   * sección se pinta por su cuenta y, si una falla, se anota en la consola y las
+   * demás siguen. El error no se esconde: sale en la consola con su nombre.
+   */
+  const pintarSeccion = (nombre, pintar) => {
+    try {
+      pintar();
+    } catch (error) {
+      console.error(`[panel] no se pudo pintar «${nombre}»:`, error);
+    }
+  };
+
   function render() {
-    renderMobileHeader();
-    renderStats();
-    renderHoy();
-    renderWhatsapp();
-    renderClientes();
-    renderOrdersMap();
-    renderDelivery();
-    renderPedidos();
-    renderProductos();
-    renderReportes();
-    renderDailyClose();
-    renderCloseHistory();
-    renderSeguimientos();
-    renderMensajes();
-    renderAjustes();
-    renderCurrentUser();
-    renderUsuarios();
-    renderPerfil();
-    renderCustomerProfile();
-    renderCustomerCampaignFab();
-    renderPermissionBanner();
-    updateBadge();
-    renderOutboxBanner();
+    pintarSeccion('cabecera', renderMobileHeader);
+    pintarSeccion('resumen', renderStats);
+    pintarSeccion('hoy', renderHoy);
+    pintarSeccion('whatsapp', renderWhatsapp);
+    pintarSeccion('clientes', renderClientes);
+    pintarSeccion('mapa', renderOrdersMap);
+    pintarSeccion('entregas', renderDelivery);
+    pintarSeccion('pedidos', renderPedidos);
+    pintarSeccion('inventario', renderProductos);
+    pintarSeccion('reportes', renderReportes);
+    pintarSeccion('cierre diario', renderDailyClose);
+    pintarSeccion('historial de cierres', renderCloseHistory);
+    pintarSeccion('seguimientos', renderSeguimientos);
+    pintarSeccion('mensajes', renderMensajes);
+    pintarSeccion('ajustes', renderAjustes);
+    pintarSeccion('usuario', renderCurrentUser);
+    pintarSeccion('usuarios', renderUsuarios);
+    pintarSeccion('perfil', renderPerfil);
+    pintarSeccion('ficha del cliente', renderCustomerProfile);
+    pintarSeccion('campañas', renderCustomerCampaignFab);
+    pintarSeccion('permisos', renderPermissionBanner);
+    pintarSeccion('avisos', updateBadge);
+    pintarSeccion('cola offline', renderOutboxBanner);
   }
 
   const label = (type) => (type === 'order_intent' ? 'Pedido' : 'Contacto');
@@ -1248,9 +1267,26 @@
       </div>`;
       return;
     }
+    /*
+     * EL CIERRE DIARIO Y SU HISTORIAL SON DOS CARAS DE LO MISMO. En la barra de
+     * arriba va el atajo para pasar de uno a otro sin dar la vuelta por el menú:
+     * desde el cierre de hoy al historial, y del historial al cierre de hoy.
+     */
+    const cierreAtajos = [];
+    if (state.tab === 'cierre' && canUseDailyClose()) {
+      cierreAtajos.push(
+        `<button class="simple-head__action" data-close-history-go type="button" aria-label="Ver el historial de cierres">${ICONS.calendar}<span>Historial</span></button>`,
+      );
+    }
+    if (state.tab === 'historial-cierres' && canUseDailyClose()) {
+      cierreAtajos.push(
+        `<button class="simple-head__action" data-close-today-go type="button" aria-label="Ver el cierre de hoy">${ICONS.checkCircle}<span>Cierre de hoy</span></button>`,
+      );
+    }
     box.innerHTML = `<div class="simple-head">
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
       <strong>${escapeHtml(currentViewTitle())}</strong>
+      ${cierreAtajos.length ? `<div class="simple-head__actions">${cierreAtajos.join('')}</div>` : ''}
     </div>`;
   }
 
@@ -1548,7 +1584,27 @@
       ?.querySelectorAll('[data-report-period]')
       .forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.reportPeriod === state.salesReportPeriod)));
     const report = state.salesReport;
+    /*
+     * SI EL REPORTE NO LLEGA, SE DICE.
+     *
+     * Antes se quedaba en «Cargando reporte…» para siempre (y reintentando en
+     * cada pintado, que dejaba la pantalla dando vueltas sin explicar nada).
+     * Ahora: se cuenta qué pasó y se deja reintentar a mano. Si todavía hay un
+     * reporte anterior en pantalla, se conserva y el aviso va ENCIMA (nunca se
+     * cambia el dato viejo por una pantalla vacía).
+     */
+    const avisoFallo = state.salesReportError
+      ? `<div class="card card--attention">
+          <p class="card__title">No se pudo cargar el reporte</p>
+          <p class="card__text">${escapeHtml(state.salesReportError)}</p>
+          <button class="btn btn--primary btn--sm" data-report-retry type="button">Reintentar</button>
+        </div>`
+      : '';
     if (!report) {
+      if (state.salesReportError) {
+        box.innerHTML = avisoFallo;
+        return;
+      }
       box.innerHTML = '<div class="card"><p class="card__text">Cargando reporte…</p></div>';
       if (!state.salesReportLoading && state.online) loadSalesReport(state.salesReportPeriod).catch(() => {});
       return;
@@ -1564,6 +1620,7 @@
         ? `Del ${fmtShortDay(report.period.startDay)} al ${fmtShortDay(report.period.endDay)}`
         : '';
     box.innerHTML = `
+      ${avisoFallo}
       ${diasDelReporte ? `<p class="report-range" id="report-range-note">${escapeHtml(diasDelReporte)}</p>` : ''}
       <div class="card">
         <p class="card__title">Utilidad</p>
@@ -4663,7 +4720,11 @@
       ${
         cierres.length
           ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
-          : '<div class="card"><p class="card__text">No hay cierres en estos días. Prueba con otro intervalo.</p></div>'
+          : `<div class="card"><p class="card__text">${
+              hasPermission('reports.profit.view')
+                ? 'No hay cierres en estos días. Prueba con otro intervalo.'
+                : 'No tienes entregas cerradas en estos días. Prueba con otro intervalo.'
+            }</p></div>`
       }`;
   }
 
@@ -14782,8 +14843,12 @@
       }
       const data = await api(`/api/admin/reports/sales?${query.toString()}`);
       state.salesReport = data.report ?? null;
+      state.salesReportError = null;
     } catch (error) {
-      if (error.message !== 'unauthorized') toast('No se pudo cargar el reporte');
+      if (error.message !== 'unauthorized') {
+        state.salesReportError = error.body?.message ?? 'Revisa la conexión e inténtalo otra vez.';
+        toast('No se pudo cargar el reporte');
+      }
     } finally {
       state.salesReportLoading = false;
     }
@@ -16094,6 +16159,17 @@
         setTab('historial-cierres');
         return;
       }
+      /* Los atajos de la barra de arriba: cierre de hoy ↔ historial. */
+      if (event.target.closest('[data-close-history-go]')) {
+        state.closeDay = null;
+        setTab('historial-cierres');
+        return;
+      }
+      if (event.target.closest('[data-close-today-go]')) {
+        state.closeDay = null;
+        setTab('cierre');
+        return;
+      }
       if (event.target.closest('[data-open-drawer]')) {
         openDrawer();
         return;
@@ -16309,6 +16385,12 @@
           return;
         }
         loadSalesReport(reportChip.dataset.reportPeriod);
+        return;
+      }
+      if (event.target.closest('[data-report-retry]')) {
+        state.salesReportError = null;
+        renderReportes();
+        loadSalesReport(state.salesReportPeriod).catch(() => {});
         return;
       }
       const review = event.target.closest('[data-review]');

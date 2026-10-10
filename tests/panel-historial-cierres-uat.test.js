@@ -284,4 +284,44 @@ describe('historial de cierres', () => {
     await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
     expect($('#daily-close-view')?.textContent).toContain('Cliente de hoy');
   });
+
+  it('se salta del cierre de hoy al historial (y vuelta) con el atajo de la barra', async () => {
+    await waitFor(() => datosCargados, 'los datos del panel');
+    click('[data-tab="cierre"]');
+    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
+
+    // El atajo vive en la barra de arriba, junto al volver: si no está, no hay
+    // forma razonable de llegar al historial desde el cierre.
+    const atajoHistorial = $('[data-close-history-go]');
+    expect(atajoHistorial).not.toBeNull();
+    expect(atajoHistorial.textContent).toContain('Historial');
+    expect($('.simple-head__actions')?.contains(atajoHistorial)).toBe(true);
+
+    click(atajoHistorial);
+    await waitFor(() => $('#view-historial-cierres')?.hidden === false, 'el historial desde el atajo');
+    expect(filas().length).toBeGreaterThan(0);
+
+    // Y de vuelta al cierre de hoy con el atajo del historial.
+    const atajoCierre = await waitFor(() => $('[data-close-today-go]'), 'el atajo hacia el cierre de hoy');
+    expect(atajoCierre.textContent).toContain('Cierre de hoy');
+    click(atajoCierre);
+    await waitFor(() => $('#view-cierre')?.hidden === false, 'el cierre de hoy otra vez');
+    expect($('#daily-close-view')?.textContent).toContain('Cierre de hoy');
+  });
+
+  it('cuando no hay nada en el intervalo lo dice, no deja la página vacía', async () => {
+    await abrirHistorial();
+    click('[data-close-history-period="custom"]');
+    await waitFor(() => $('#close-range-form'), 'el calendario del historial');
+    setValue('#close-from', '2025-03-01');
+    setValue('#close-to', '2025-03-02');
+    click('#close-range-form button[type="submit"]');
+    await waitFor(() => $('#close-history-view')?.textContent?.includes('No hay cierres'), 'el aviso de intervalo vacío');
+    // La página sigue teniendo la nota y el resumen: nunca queda en blanco.
+    expect($('#close-history-note')).not.toBeNull();
+    expect($('#close-history-view')?.querySelector('.card')).not.toBeNull();
+    // Y se puede volver a un intervalo con datos.
+    click('[data-close-history-period="7d"]');
+    await waitFor(() => filas().length > 0, 'las filas de vuelta');
+  });
 });
