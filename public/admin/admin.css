@@ -12379,3 +12379,67 @@ body[data-tab='pedidos'] .order-row__status,
     box-shadow: var(--pe-shadow-float);
   }
 }
+/* ------------------------------------------------ historial de cierres
+   Cada día cerrado es una fila táctil: día, ventas, efectivo/transferencia y el
+   cuadre. Al tocarla se abre el cierre completo de ese día. */
+.close-history__note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.close-history {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.close-history:hover {
+  border-color: var(--phyto-primary);
+}
+
+.close-history:active {
+  transform: scale(0.995);
+}
+
+.close-history__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.close-history__day {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.close-history__meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.close-history__total {
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.close-history__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

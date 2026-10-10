@@ -148,6 +148,9 @@
           <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
             <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
           </button>
+          <button class="drawer__item" data-tab="historial-cierres" type="button" data-daily-close-access>
+            <span class="drawer__icon" aria-hidden="true" data-icon="calendar"></span>Historial de cierres
+          </button>
         </nav>
 
         <!-- Seguimiento: hablar con quien ya es cliente. -->
@@ -448,6 +451,18 @@
         <!-- CIERRE DIARIO -->
         <section class="view" id="view-cierre" hidden>
           <div class="daily-close" id="daily-close-view"></div>
+        </section>
+
+        <!-- HISTORIAL DE CIERRES: cada día cerrado, con su cuadre, y filtros. -->
+        <section class="view" id="view-historial-cierres" hidden>
+          <h2 class="view__title">Historial de cierres</h2>
+          <div class="chips" id="close-history-period">
+            <button class="chip" data-close-history-period="7d" aria-pressed="true" type="button">7 días</button>
+            <button class="chip" data-close-history-period="30d" type="button">30 días</button>
+            <button class="chip" data-close-history-period="mes" type="button">Este mes</button>
+            <button class="chip" data-close-history-period="custom" type="button">Intervalo</button>
+          </div>
+          <div class="list" id="close-history-view"></div>
         </section>
 
         <!-- SEGUIMIENTOS (menú lateral) -->
