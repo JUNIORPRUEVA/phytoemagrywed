@@ -410,4 +410,53 @@ describe('inventario, costo y reportes', () => {
     });
     expect(data.reconciliation.products[0].movementsWithBalance).toBe(2);
   });
+
+  /*
+   * INTERVALO (DESDE/HASTA) DEL REPORTE.
+   *
+   * El reporte de ganancia se puede pedir por rango de fechas
+   * (`period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD`). Aquí se comprueba que
+   * filtra DE VERDAD por el día de la entrega, que los dos extremos cuentan
+   * (incluidos) y que las fechas al revés se ordenan en vez de dejar el
+   * reporte vacío.
+   */
+  it('el intervalo desde/hasta cuenta solo las entregas de esos días (extremos incluidos)', async () => {
+    let now = new Date('2026-10-01T14:00:00.000Z');
+    const app = await startInventoryApp({ clock: () => now });
+    await restock(app, 500);
+
+    now = new Date('2026-09-28T14:00:00.000Z');
+    await deliveredOrder(app, { name: 'Antes del intervalo', phone: '8095550301' });
+    now = new Date('2026-10-01T14:00:00.000Z');
+    await deliveredOrder(app, { name: 'Primer día', phone: '8095550302' });
+    now = new Date('2026-10-03T14:00:00.000Z');
+    await deliveredOrder(app, { name: 'Último día', phone: '8095550303' });
+    now = new Date('2026-10-05T14:00:00.000Z');
+    await deliveredOrder(app, { name: 'Después del intervalo', phone: '8095550304' });
+
+    const rango = await json(await call(app, '/api/admin/reports/sales?period=custom&from=2026-10-01&to=2026-10-03'));
+    expect(rango.report.period).toMatchObject({ name: 'custom', startDay: '2026-10-01', endDay: '2026-10-03' });
+    expect(rango.report.summary.orders).toBe(2);
+    // El detalle viene de la entrega más reciente a la más vieja: se comparan.
+    expect(rango.report.sales.map((row) => row.customer_name).sort()).toEqual(['Primer día', 'Último día']);
+
+    // Un solo día: solo ese día.
+    const unDia = await json(await call(app, '/api/admin/reports/sales?period=custom&from=2026-10-03&to=2026-10-03'));
+    expect(unDia.report.summary.orders).toBe(1);
+    expect(unDia.report.sales[0].customer_name).toBe('Último día');
+
+    // Al revés: se ordenan (no devuelve vacío).
+    const alReves = await json(await call(app, '/api/admin/reports/sales?period=custom&from=2026-10-03&to=2026-10-01'));
+    expect(alReves.report.period).toMatchObject({ startDay: '2026-10-01', endDay: '2026-10-03' });
+    expect(alReves.report.summary.orders).toBe(2);
+
+    // Un rango que no toca ninguna entrega: cero (y sin inventar ventas).
+    const vacio = await json(await call(app, '/api/admin/reports/sales?period=custom&from=2026-10-20&to=2026-10-25'));
+    expect(vacio.report.summary.orders).toBe(0);
+    expect(vacio.report.sales).toEqual([]);
+
+    // El rango ancho sigue contando lo de dentro y no lo de fuera.
+    const ancho = await json(await call(app, '/api/admin/reports/sales?period=custom&from=2026-09-27&to=2026-10-05'));
+    expect(ancho.report.summary.orders).toBe(4);
+  });
 });

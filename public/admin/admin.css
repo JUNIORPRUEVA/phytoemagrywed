@@ -12346,3 +12346,36 @@ body[data-tab='pedidos'] .order-row__status,
     line-height: 1.22;
   }
 }
+
+/* ---------------------------------------------------------- intervalo del reporte
+   Deja a la vista QUÉ días está contando el reporte (el chip «Intervalo» no lo
+   decía y había que abrir el calendario para recordarlo). */
+.report-range {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+/* ------------------------------------------------- intervalo del reporte (hoja)
+   EL CALENDARIO VA EN EL MEDIO. Se pidió así: pulsar «Intervalo» y elegir las
+   dos fechas. En escritorio es una tarjeta centrada (no el popover de la
+   esquina que usan los menús); en móvil sigue siendo la hoja de abajo, que es
+   donde el pulgar llega bien. */
+@media (min-width: 720px) {
+  .sheet[data-variant='intervalo'] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .sheet[data-variant='intervalo'] .sheet__panel {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    width: min(420px, calc(100vw - 40px));
+    max-height: min(80dvh, 520px);
+    border-radius: 18px;
+    box-shadow: var(--pe-shadow-float);
+  }
+}

@@ -73,6 +73,8 @@
     inventory: null,
     salesReport: null,
     salesReportPeriod: 'hoy',
+    // Intervalo del reporte: dos fechas (desde/hasta) elegidas a mano.
+    salesReportRange: { from: null, to: null },
     whatsapp: null,
     templates: [],
     stats: null,
@@ -519,6 +521,12 @@
     if (day === today) return `hoy · ${label}`;
     if (day < today) return `vencido · ${label}`;
     return label;
+  };
+
+  /** Día suelto en corto: 2026-10-01 → 01/10/2026 (para el intervalo del reporte). */
+  const fmtShortDay = (day) => {
+    const [year, month, date] = String(day ?? '').split('-');
+    return year && month && date ? `${date}/${month}/${year}` : String(day ?? '');
   };
 
   const money = (value, currency) =>
@@ -1540,7 +1548,17 @@
       return;
     }
     const s = report.summary ?? {};
+    /*
+     * QUÉ DÍAS SE ESTÁN MIRANDO. El servidor devuelve el período resuelto
+     * (`period.startDay`→`endDay`), así que el intervalo elegido a mano se ve
+     * aquí tal cual: sin esto, «Intervalo» no decía por dónde iba.
+     */
+    const diasDelReporte =
+      report.period?.startDay && report.period?.endDay
+        ? `Del ${fmtShortDay(report.period.startDay)} al ${fmtShortDay(report.period.endDay)}`
+        : '';
     box.innerHTML = `
+      ${diasDelReporte ? `<p class="report-range" id="report-range-note">${escapeHtml(diasDelReporte)}</p>` : ''}
       <div class="card">
         <p class="card__title">Utilidad</p>
         <dl class="facts">
@@ -14511,11 +14529,67 @@
     renderProductos();
   }
 
-  async function loadSalesReport(period = state.salesReportPeriod) {
+  /*
+   * INTERVALO DEL REPORTE (desde/hasta).
+   *
+   * El servidor ya acepta `period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD` (y si
+   * las fechas vienen al revés, las ordena). Lo que faltaba era el panel: no
+   * mandaba `from`/`to` nunca, así que el intervalo no existía en la pantalla.
+   */
+  const reportRange = () => {
+    const rango = state.salesReportRange ?? {};
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.from ?? '')) ? String(rango.from) : null;
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.to ?? '')) ? String(rango.to) : null;
+    if (!desde || !hasta) return { from: addDaysISO(-6), to: todayISO() };
+    return desde <= hasta ? { from: desde, to: hasta } : { from: hasta, to: desde };
+  };
+
+  function openReportRangeSheet() {
+    const rango = reportRange();
+    openSheet(
+      'Intervalo',
+      `<form id="report-range-form" class="report-range">
+        <p class="rule">Elige <strong>desde</strong> y <strong>hasta</strong>: el reporte cuenta las ventas entregadas de esos días (los dos incluidos).</p>
+        <label class="field">
+          <span class="field__label">Desde</span>
+          <input class="field__input" type="date" id="report-from" name="from" value="${escapeHtml(rango.from)}" />
+        </label>
+        <label class="field">
+          <span class="field__label">Hasta</span>
+          <input class="field__input" type="date" id="report-to" name="to" value="${escapeHtml(rango.to)}" />
+        </label>
+        <button class="btn btn--primary btn--block" type="submit">Ver el intervalo</button>
+      </form>`,
+      // Centrada en escritorio: el calendario se pidió EN EL MEDIO de la pantalla.
+      { variant: 'intervalo' },
+    );
+    $('#report-range-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const from = String($('#report-from')?.value ?? '').trim();
+      const to = String($('#report-to')?.value ?? '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        toast('Elige las dos fechas: desde y hasta.');
+        return;
+      }
+      const elegido = from <= to ? { from, to } : { from: to, to: from };
+      state.salesReportRange = elegido;
+      closeSheet();
+      loadSalesReport('custom', elegido).catch(() => {});
+    });
+  }
+
+  async function loadSalesReport(period = state.salesReportPeriod, range = null) {
     state.salesReportPeriod = period;
+    if (period === 'custom' && range) state.salesReportRange = { from: range.from ?? null, to: range.to ?? null };
     state.salesReportLoading = true;
     try {
-      const data = await api(`/api/admin/reports/sales?period=${encodeURIComponent(period)}`);
+      const query = new URLSearchParams({ period });
+      if (period === 'custom') {
+        const rango = reportRange();
+        query.set('from', rango.from);
+        query.set('to', rango.to);
+      }
+      const data = await api(`/api/admin/reports/sales?${query.toString()}`);
       state.salesReport = data.report ?? null;
     } catch (error) {
       if (error.message !== 'unauthorized') toast('No se pudo cargar el reporte');
@@ -16016,6 +16090,11 @@
       }
       const reportChip = event.target.closest('[data-report-period]');
       if (reportChip) {
+        // «Intervalo» no es un período fijo: abre el calendario desde/hasta.
+        if (reportChip.dataset.reportPeriod === 'custom') {
+          openReportRangeSheet();
+          return;
+        }
         loadSalesReport(reportChip.dataset.reportPeriod);
         return;
       }

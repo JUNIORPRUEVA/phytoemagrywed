@@ -2723,7 +2723,9 @@ async function createOrder(ctx, body = {}, actor = null) {
   if (!stockCheck.ok) return stockCheck;
   // Si el pedido nace ya ENTREGADO, queda registrada también su fecha de entrega.
   if (isCompletedPurchaseStatus(status)) {
-    built.order.delivered_at = new Date().toISOString();
+    // La MISMA hora que usa el resto del CRM (en producción es la real; el reloj
+    // inyectable hace que esto se pueda probar con fechas concretas).
+    built.order.delivered_at = ctx.clock().toISOString();
     built.row.orderJson = JSON.stringify(built.order);
   }
   const saved = await ctx.store.save(built.row);
