@@ -3112,6 +3112,28 @@ const WA_TEMPLATE_SEED = [
   },
   {
     /*
+     * AVISO DE LA EMPRESA (lo que se manda en las CAMPAÑAS).
+     *
+     * Es la misma familia que `phyto_contacto_personalizado_v1` —un hueco libre
+     * para el mensaje— pero el texto FIJO dice quién escribe: Fulltech, el
+     * distribuidor de Phytoemagry en Higüey. El negocio pidió que las campañas
+     * salgan con esta presentación, y el texto fijo de una plantilla lo aprueba
+     * Meta: por eso vive con su propio nombre en vez de tocar la genérica (que
+     * sigue existiendo para el resto de los avisos).
+     *
+     *   {{1}} nombre real del cliente · {{2}} mensaje libre (lo escribe el agente).
+     */
+    name: 'phyto_aviso_fulltech_v1',
+    friendly_name: 'Aviso de Fulltech (campañas)',
+    group: 'SEGUIMIENTO',
+    category: 'MARKETING',
+    language: 'es',
+    body: 'Hola {{1}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.',
+    variables: ['customer_name', 'mensaje'],
+    buttons: [],
+  },
+  {
+    /*
      * SEGUIMIENTO DE COMPRA — MENSAJE PROGRAMADO para quien YA compró.
      *   {{1}} nombre real · {{2}} mensaje de seguimiento (lo sugiere el CRM).
      */
@@ -3891,15 +3913,28 @@ export async function syncWhatsAppTemplatesFromMeta(ctx) {
     else pending += 1;
     const components = Array.isArray(meta.components) ? meta.components : [];
     const existing = byMetaId.get(String(meta.id ?? '')) ?? byNameLanguage.get(`${name}:${language}`) ?? byNameLanguage.get(`${name}:`) ?? null;
+    /*
+     * QUIÉN MANDA EN QUÉ. Meta manda en el TEXTO, la categoría y el estado (es
+     * suya la plantilla). La ficha del CRM —nombre amable, grupo y sobre todo
+     * QUÉ HUECO ES EL LIBRE (`variables`)— sale del catálogo propio cuando la
+     * plantilla está en él: sin eso, una plantilla recién creada en Meta llega
+     * sin variables declaradas y el panel no sabe por dónde va el mensaje.
+     */
+    const variablesPropias = Array.isArray(seed?.variables) ? seed.variables : null;
     const doc = {
       id: existing?.id ?? `tpl_${name}`,
       name,
-      friendly_name: existing?.friendly_name ?? seed?.friendly_name ?? name,
-      group: existing?.group ?? seed?.group ?? 'OTRAS',
+      friendly_name: seed?.friendly_name ?? existing?.friendly_name ?? name,
+      group: seed?.group ?? existing?.group ?? 'OTRAS',
       category: text(meta.category, 30) ?? existing?.category ?? seed?.category ?? 'UTILITY',
       language,
       body: templateBodyFromComponents(components) ?? existing?.body ?? seed?.body ?? null,
-      variables: Array.isArray(existing?.variables) && existing.variables.length ? existing.variables : seed?.variables ?? [],
+      variables:
+        variablesPropias && variablesPropias.length
+          ? variablesPropias
+          : Array.isArray(existing?.variables) && existing.variables.length
+            ? existing.variables
+            : [],
       buttons: templateButtonsFromComponents(components),
       /*
        * La cabecera la manda Meta. Si Meta devolvió sus componentes y ninguno es

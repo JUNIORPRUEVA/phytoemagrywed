@@ -2273,7 +2273,11 @@
       /* Se usa la ultima lista conocida. */
     }
     const approved = (state.templates ?? []).filter(waTemplateApproved);
-    const personal = waPersonalTemplate();
+    /*
+     * La campaña sale con la presentación de Fulltech cuando Meta la ha aprobado;
+     * mientras no, se usa la plantilla personalizada de siempre.
+     */
+    const personal = waCampaignTemplate() ?? waPersonalTemplate();
     if (!approved.length || !personal) {
       openSheet(
         'Campaña WhatsApp',
@@ -7664,6 +7668,8 @@
    * sale con las palabras del operador.
    */
   const WA_FREE_VAR_KEYS = ['mensaje', 'texto', 'mensaje_libre', 'libre', 'personalizado'];
+  /* La presentación con la que salen las CAMPAÑAS (la aprueba Meta). */
+  const WA_CAMPAIGN_TEMPLATE = 'phyto_aviso_fulltech_v1';
   const isWaFreeVar = (key) => WA_FREE_VAR_KEYS.includes(String(key ?? '').trim().toLowerCase());
   function waTemplateValueForKey(key, value) {
     const clean = String(value ?? '').trim();
@@ -7690,6 +7696,22 @@
   function waPersonalTemplate() {
     return (
       (state.templates ?? []).filter(waTemplateApproved).find((template) => waTemplateFreeSlot(template) !== null) ?? null
+    );
+  }
+
+  /**
+   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe Fulltech.
+   *
+   * Mientras Meta no la apruebe, no se ofrece y la campaña usa la genérica de
+   * siempre (`waPersonalTemplate`): nunca se finge una aprobación. En cuanto esté
+   * aprobada, sale sola como opción por defecto de la campaña.
+   */
+  function waCampaignTemplate() {
+    return (
+      (state.templates ?? []).find(
+        (template) =>
+          template.name === WA_CAMPAIGN_TEMPLATE && waTemplateApproved(template) && waTemplateFreeSlot(template) !== null,
+      ) ?? null
     );
   }
 

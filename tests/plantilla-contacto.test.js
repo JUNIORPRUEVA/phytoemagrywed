@@ -40,6 +40,8 @@ const mockWhatsApp = {
   businessAccountId: 'WABA1',
   sent: [],
   failWith: null,
+  /** Plantillas que «están en Meta». Vacío = Meta no conoce ninguna todavía. */
+  metaTemplates: [],
   async sendText(to, body, options) {
     if (mockWhatsApp.failWith) return { ok: false, status: 400, error: mockWhatsApp.failWith };
     mockWhatsApp.sent.push({ to, body, options, type: 'text' });
@@ -52,7 +54,7 @@ const mockWhatsApp = {
   },
   async listTemplates() {
     // Meta todavía no conoce esta plantilla: no puede aparecer aprobada.
-    return { ok: true, templates: [] };
+    return { ok: true, templates: mockWhatsApp.metaTemplates };
   },
   async markAsRead() {
     return { ok: true };
@@ -372,5 +374,83 @@ describe('enviar un mensaje no toca nada más', () => {
 
     const despues = await json(await call('/api/admin/data'));
     expect(contar(despues)).toEqual(antesContado);
+  });
+});
+
+/*
+ * LA PLANTILLA DE LAS CAMPAÑAS (la que dice que escribe Fulltech).
+ *
+ * El negocio pidió que las campañas salgan con ESTA presentación y no con la
+ * genérica. El texto fijo de una plantilla lo aprueba Meta, así que vive como
+ * plantilla propia: aquí se sujeta el texto exacto y que, con el aviso de la
+ * mudanza, el mensaje final sea PALABRA POR PALABRA el que pidió el negocio.
+ */
+const CUERPO_FULLTECH =
+  'Hola {{1}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.';
+const AVISO_MUDANZA =
+  'Nos mudamos temporalmente a La Otra Banda y ahora trabajamos de forma virtual, con almacen en Higuey. Tenemos delivery de 8 a. m. a 9 p. m. Para pedidos o consultas, escribenos por aqui. Entrega rapida.';
+
+describe('la plantilla de las campañas (aviso de Fulltech)', () => {
+  it('está en el catálogo con DOS variables y su texto fijo exacto', async () => {
+    const data = await listaPlantillas();
+    const plantilla = data.templates.find((row) => row.name === 'phyto_aviso_fulltech_v1');
+    expect(plantilla).toBeTruthy();
+    expect(plantilla.friendly_name).toBe('Aviso de Fulltech (campañas)');
+    expect(plantilla.category).toBe('MARKETING');
+    expect(plantilla.language).toBe('es');
+    expect(plantilla.body).toBe(CUERPO_FULLTECH);
+    // El hueco LIBRE es el segundo: por ahí va el mensaje que escribe el agente.
+    expect(plantilla.variables).toEqual(['customer_name', 'mensaje']);
+  });
+
+  it('con el aviso de la mudanza, el mensaje final es EXACTAMENTE el que pidió el negocio', () => {
+    // Igual que lo monta el panel: texto fijo de delante + mensaje + texto fijo de detrás.
+    const [antes, despues] = CUERPO_FULLTECH.split('{{2}}');
+    const final = `${antes.replace('{{1}}', '{{nombre}}')}${AVISO_MUDANZA}${despues}`.trim();
+    expect(final).toBe(
+      'Hola {{nombre}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n' +
+        'Nos mudamos temporalmente a La Otra Banda y ahora trabajamos de forma virtual, con almacen en Higuey. ' +
+        'Tenemos delivery de 8 a. m. a 9 p. m. Para pedidos o consultas, escribenos por aqui. Entrega rapida.\n\n' +
+        'Cualquier duda, respóndenos por aquí y te ayudamos.',
+    );
+  });
+
+  it('NO nace aprobada: hasta que Meta no la apruebe no se puede usar en una campaña', async () => {
+    const plantilla = (await listaPlantillas()).templates.find((row) => row.name === 'phyto_aviso_fulltech_v1');
+    expect(plantilla.status).toBe('pending_approval');
+    expect(plantilla.sendable).toBe(false);
+  });
+
+  it('al sincronizar con Meta conserva la ficha del CRM (nombre amable y variables)', async () => {
+    /*
+     * Meta manda en el texto y el estado; el CRM manda en QUÉ HUECO ES EL LIBRE.
+     * Sin esto, una plantilla recién creada en Meta llega sin variables y el panel
+     * no sabría por dónde va el mensaje (ni ofrecería la campaña con ella).
+     */
+    mockWhatsApp.metaTemplates = [
+      {
+        name: 'phyto_aviso_fulltech_v1',
+        id: '900000000000001',
+        language: 'es',
+        category: 'MARKETING',
+        status: 'PENDING',
+        components: [{ type: 'BODY', text: CUERPO_FULLTECH }],
+      },
+    ];
+    try {
+      const sync = await json(await call('/api/admin/wa-templates/sync', { method: 'POST', body: '{}' }));
+      expect(sync.ok).toBe(true);
+      const plantilla = (await listaPlantillas()).templates.find((row) => row.name === 'phyto_aviso_fulltech_v1');
+      expect(plantilla.meta_template_id).toBe('900000000000001');
+      expect(plantilla.friendly_name).toBe('Aviso de Fulltech (campañas)');
+      expect(plantilla.variables).toEqual(['customer_name', 'mensaje']);
+      expect(plantilla.body).toBe(CUERPO_FULLTECH);
+      // Sigue SIN aprobar: la aprobación la decide Meta, no la sincronización.
+      // (Meta la reporta como «PENDING»; el CRM la enseña como pendiente.)
+      expect(plantilla.sendable).toBe(false);
+      expect(String(plantilla.status).toUpperCase()).not.toBe('APPROVED');
+    } finally {
+      mockWhatsApp.metaTemplates = [];
+    }
   });
 });
