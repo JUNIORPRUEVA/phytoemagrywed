@@ -324,4 +324,60 @@ describe('historial de cierres', () => {
     click('[data-close-history-period="7d"]');
     await waitFor(() => filas().length > 0, 'las filas de vuelta');
   });
+
+  it('el cierre diario deja elegir VARIOS días y da el resumen de todo el tramo', async () => {
+    await waitFor(() => datosCargados, 'los datos del panel');
+    click('[data-tab="cierre"]');
+    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
+
+    // Los dos modos están en la propia pantalla del cierre.
+    expect($$('[data-close-scope]').map((chip) => chip.textContent.trim())).toEqual(['Un día', 'Varios días']);
+    expect($('[data-close-scope="dia"]')?.getAttribute('aria-pressed')).toBe('true');
+
+    click('[data-close-scope="rango"]');
+    const form = await waitFor(() => $('#close-period-range-form'), 'el calendario de varios días');
+    expect([...form.querySelectorAll('.field__label')].map((el) => el.textContent.trim())).toEqual(['Desde', 'Hasta']);
+
+    // Tres días seguidos: hoy, ayer y anteayer (las tres ventas del UAT caen ahí).
+    const hoy = diaDeNegocio(new Date());
+    setValue('#close-period-from', restarDias(hoy, 3));
+    setValue('#close-period-to', hoy);
+    click('#close-period-range-form button[type="submit"]');
+
+    const resumen = await waitFor(
+      () => ($('#daily-close-view')?.textContent?.includes('Resumen de varios días') ? $('#daily-close-view') : null),
+      'el resumen de varios días',
+    );
+    expect($('[data-close-scope="rango"]')?.getAttribute('aria-pressed')).toBe('true');
+    // El cuadro suma los días elegidos: 3 ventas entregadas.
+    expect(resumen.textContent).toContain('Ventas entregadas');
+    expect(resumen.textContent).toMatch(/Ventas entregadas\s*3/);
+    expect(resumen.querySelectorAll('[data-close-history-day]')).toHaveLength(3);
+    // Y dice el cuadre del tramo y lo que se gana el delivery.
+    expect(resumen.textContent).toContain('Ganancia del delivery');
+    expect(resumen.textContent).toMatch(/El delivery entrega|La empresa le entrega|Cierre cuadrado/);
+    expect(resumen.textContent).toContain('Ruben Reparto');
+    expect($('#daily-close-view')?.textContent).toContain(`del ${fmt(restarDias(hoy, 3))} al ${fmt(hoy)}`);
+
+    // Tocar un día del resumen abre el cierre de ESE día (no el de hoy).
+    const ayer = restarDias(hoy, 1);
+    click($(`[data-close-history-day="${ayer}"]`));
+    await waitFor(() => $('#daily-close-view')?.textContent?.includes(`Cierre del ${fmt(ayer)}`), 'el cierre del día elegido');
+    expect($('[data-close-scope="dia"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect($('#daily-close-view')?.textContent).toContain('Cliente de ayer');
+
+    // Un tramo de UN SOLO día abre su cierre, no el resumen.
+    click('[data-close-scope="rango"]');
+    await waitFor(() => $('#close-period-range-form'), 'el calendario otra vez');
+    setValue('#close-period-from', ayer);
+    setValue('#close-period-to', ayer);
+    click('#close-period-range-form button[type="submit"]');
+    await waitFor(() => $('#daily-close-view')?.textContent?.includes(`Cierre del ${fmt(ayer)}`), 'el cierre del día único');
+    expect($('#daily-close-view')?.textContent).not.toContain('Resumen de varios días');
+
+    // Y «Un día» vuelve al cierre de hoy.
+    click('[data-close-scope="dia"]');
+    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy otra vez');
+    expect($('#daily-close-view')?.textContent).toContain('Cliente de hoy');
+  });
 });

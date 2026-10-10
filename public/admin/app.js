@@ -83,6 +83,9 @@
     closeHistoryRange: { from: null, to: null },
     // Cierre que se está mirando: `null` = el de hoy.
     closeDay: null,
+    // Cómo se mira el cierre: un DÍA (lo de siempre) o VARIOS días (el resumen).
+    closeScope: 'dia',
+    closeRange: { from: null, to: null },
     whatsapp: null,
     templates: [],
     stats: null,
@@ -4532,6 +4535,17 @@
     const box = $('#daily-close-view');
     if (!box) return;
     /*
+     * VARIOS DÍAS: la misma pantalla, pero con un solo cuadro que suma todo el
+     * tramo elegido (ventas, efectivo, transferencia, lo que se gana el delivery
+     * y el cuadre), el desglose por repartidor y la lista de cada día (que se
+     * puede abrir como siempre).
+     */
+    if (state.closeScope === 'rango') {
+      const { from, to } = closePeriodRange();
+      box.innerHTML = closeScopeChipsHtml() + closePeriodHtml(from, to);
+      return;
+    }
+    /*
      * EL CIERRE SE PUEDE MIRAR EN CUALQUIER DÍA. Desde el historial se abre el
      * cierre de un día pasado con la MISMA pantalla (`state.closeDay`); si es
      * hoy, la cabecera ofrece el cierre manual como siempre.
@@ -4553,7 +4567,7 @@
           ? 'listo para cierre manual'
           : 'vista previa'
       : 'cierre ya hecho';
-    box.innerHTML = `
+    box.innerHTML = closeScopeChipsHtml() + `
       <div class="daily-close__head">
         <span>
           <strong>${esHoy ? 'Cierre de hoy' : `Cierre del ${escapeHtml(fmtShortDay(day))}`}</strong>
@@ -4683,6 +4697,18 @@
 
   function closeHistoryData() {
     const { from, to } = closeHistoryRange();
+    return closeRangeData(from, to);
+  }
+
+  /**
+   * LOS NÚMEROS DE UN TRAMO DE DÍAS.
+   *
+   * Los usan las dos pantallas que miran varios días: el historial de cierres y
+   * el resumen de «Cierre diario». Se suman de los MISMOS modelos que el cierre de
+   * un día (`dailyCloseModel`), así que no hay dos verdades: lo que dice el resumen
+   * es exactamente lo que dicen los días, sumado.
+   */
+  function closeRangeData(from, to) {
     const conVentas = closeHistoryDaysWithSales(from, to);
     const cierres = closeHistoryDays(from, to)
       .filter((day) => conVentas.has(day))
@@ -4697,15 +4723,52 @@
         acc.sales += model.totals.sales;
         acc.cash += model.totals.cash;
         acc.transfer += model.totals.transfer;
-        acc.deliveryEarnings += model.totals.deliveryFee + model.totals.commissions;
+        acc.deliveryFee += model.totals.deliveryFee;
+        acc.commissions += model.totals.commissions;
         acc.cashHeldByDelivery += model.totals.cashHeldByDelivery;
         acc.discount += model.totals.discount;
         acc.noDelivery += model.totals.noDelivery;
         return acc;
       },
-      { days: 0, orders: 0, sales: 0, cash: 0, transfer: 0, deliveryEarnings: 0, cashHeldByDelivery: 0, discount: 0, noDelivery: 0 },
+      {
+        days: 0,
+        orders: 0,
+        sales: 0,
+        cash: 0,
+        transfer: 0,
+        deliveryFee: 0,
+        commissions: 0,
+        cashHeldByDelivery: 0,
+        discount: 0,
+        noDelivery: 0,
+      },
     );
-    return { from, to, cierres, total };
+    total.deliveryEarnings = total.deliveryFee + total.commissions;
+    total.net = total.cashHeldByDelivery - total.deliveryEarnings;
+    /* El desglose por repartidor de TODO el tramo (para saber quién lleva qué). */
+    const byDelivery = new Map();
+    for (const { model } of cierres) {
+      for (const fila of model.byDelivery.values()) {
+        const actual = byDelivery.get(fila.id) ?? {
+          id: fila.id,
+          name: fila.name,
+          orders: 0,
+          cash: 0,
+          transfer: 0,
+          deliveryFee: 0,
+          commissions: 0,
+          total: 0,
+        };
+        actual.orders += fila.orders;
+        actual.cash += fila.cash;
+        actual.transfer += fila.transfer;
+        actual.deliveryFee += fila.deliveryFee;
+        actual.commissions += fila.commissions;
+        actual.total += fila.total;
+        byDelivery.set(fila.id, actual);
+      }
+    }
+    return { from, to, cierres, total, byDelivery };
   }
 
   function closeHistoryRowHtml(day, model) {
@@ -4759,6 +4822,7 @@
           <div class="fact"><dt>Ganancia del delivery</dt><dd>${money(total.deliveryEarnings)}</dd></div>
           <div class="fact"><dt>Descuentos</dt><dd>${money(total.discount)}</dd></div>
           <div class="fact"><dt>Sin delivery</dt><dd>${total.noDelivery}</dd></div>
+          <div class="fact"><dt>Cuadre del intervalo</dt><dd>${escapeHtml(settlementLabel(total.net))}</dd></div>
         </dl>
       </div>
       ${
@@ -4772,9 +4836,123 @@
       }`;
   }
 
+  /**
+   * CÓMO SE MIRA EL CIERRE: un DÍA (lo de siempre) o VARIOS DÍAS (el resumen).
+   * El resumen se pidió expresamente: «si elijo dos o más, quiero un resumen de
+   * todo eso para saber exactamente cómo va todo».
+   */
+  function closeScopeChipsHtml() {
+    const enTramo = state.closeScope === 'rango';
+    return `<div class="chips close-scope" id="close-scope">
+      <button class="chip" data-close-scope="dia" type="button" aria-pressed="${enTramo ? 'false' : 'true'}">Un día</button>
+      <button class="chip" data-close-scope="rango" type="button" aria-pressed="${enTramo ? 'true' : 'false'}">Varios días</button>
+    </div>`;
+  }
+
+  /** El tramo de días del cierre (o los últimos 7 días si todavía no se eligió). */
+  const closePeriodRange = () => {
+    const rango = state.closeRange ?? {};
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.from ?? '')) ? String(rango.from) : null;
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.to ?? '')) ? String(rango.to) : null;
+    if (!desde || !hasta) return { from: addDaysISO(-6), to: todayISO() };
+    return desde <= hasta ? { from: desde, to: hasta } : { from: hasta, to: desde };
+  };
+
+  /** RESUMEN DE VARIOS DÍAS: un solo cuadro con todo el tramo. */
+  function closePeriodHtml(from, to) {
+    const { cierres, total, byDelivery } = closeRangeData(from, to);
+    const scopeLabel = hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas';
+    const planificados = closeHistoryDays(from, to).length;
+    const repartidores = [...byDelivery.values()].sort((a, b) => b.total - a.total);
+    return `
+      <div class="daily-close__head">
+        <span>
+          <strong>Resumen de varios días</strong>
+          <small>${escapeHtml(scopeLabel)} · del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(
+            fmtShortDay(to),
+          )} · ${planificados} día${planificados === 1 ? '' : 's'} mirado${planificados === 1 ? '' : 's'} · ${total.days} con cierre</small>
+        </span>
+        <button class="btn btn--ghost btn--sm" data-close-period-pick type="button">Cambiar días</button>
+      </div>
+      <div class="daily-close__grid">
+        <div><span>Ventas entregadas</span><strong>${total.orders}</strong><small>${total.days} día${
+          total.days === 1 ? '' : 's'
+        } con cierre</small></div>
+        <div><span>Total vendido</span><strong>${money(total.sales)}</strong><small>Todo lo entregado</small></div>
+        <div><span>Efectivo en mano</span><strong>${money(total.cashHeldByDelivery)}</strong><small>Lo tiene el delivery</small></div>
+        <div><span>Transferencia</span><strong>${money(total.transfer)}</strong><small>Dinero de la empresa</small></div>
+        <div><span>Descuentos</span><strong>${money(total.discount)}</strong><small>Rebaja aplicada</small></div>
+        <div><span>Sin delivery</span><strong>${total.noDelivery}</strong><small>Sin mensajero asignado</small></div>
+      </div>
+      <section class="daily-close__settlement">
+        <strong>${escapeHtml(settlementLabel(total.net))}</strong>
+        <small>Cuadre del tramo: efectivo en mano ${money(total.cashHeldByDelivery)} menos ganancia del delivery ${money(
+          total.deliveryEarnings,
+        )}.</small>
+      </section>
+      <section class="daily-close__block daily-close__block--green">
+        <h3>Ganancia del delivery</h3>
+        <div class="daily-close__totals">
+          <span><small>Delivery cobrado</small><strong>${money(total.deliveryFee)}</strong></span>
+          <span><small>Comisión por frascos</small><strong>${money(total.commissions)}</strong></span>
+          <span><small>Total que se gana</small><strong>${money(total.deliveryEarnings)}</strong></span>
+        </div>
+      </section>
+      <section class="daily-close__block">
+        <h3>Por delivery</h3>
+        ${
+          repartidores.length
+            ? repartidores
+                .map((row) => {
+                  const gana = row.deliveryFee + row.commissions;
+                  return `<article class="daily-close__delivery">
+                    <strong>${escapeHtml(row.name)}</strong>
+                    <span>${row.orders} entrega${row.orders === 1 ? '' : 's'} · efectivo ${money(row.cash)} · transferencia ${money(
+                      row.transfer,
+                    )}</span>
+                    <small>Ganancia ${money(gana)} · ${escapeHtml(settlementLabel(row.cash - gana))}</small>
+                  </article>`;
+                })
+                .join('')
+            : '<p class="view__hint">No hay entregas con mensajero en estos días.</p>'
+        }
+      </section>
+      <section class="daily-close__block">
+        <h3>Por día</h3>
+        ${
+          cierres.length
+            ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
+            : '<p class="view__hint">No hay ventas entregadas en estos días.</p>'
+        }
+      </section>`;
+  }
+
+  function openClosePeriodRangeSheet() {
+    const rango = closePeriodRange();
+    openRangeSheet({
+      title: 'Varios días',
+      hint: 'Elige <strong>desde</strong> y <strong>hasta</strong>: el resumen suma las ventas entregadas de esos días (los dos incluidos). Si eliges el mismo día, se abre el cierre de ese día.',
+      from: rango.from,
+      to: rango.to,
+      prefix: 'close-period',
+      onApply: (elegido) => {
+        if (elegido.from === elegido.to) {
+          state.closeScope = 'dia';
+          state.closeDay = elegido.from === todayISO() ? null : elegido.from;
+        } else {
+          state.closeScope = 'rango';
+          state.closeRange = elegido;
+          state.closeDay = null;
+        }
+        renderDailyClose();
+      },
+    });
+  }
+
   /** Abre el cierre de un día concreto (la MISMA pantalla que el cierre de hoy). */
   function openCloseHistoryDay(day) {
     if (!day) return;
+    state.closeScope = 'dia';
     state.closeDay = day === todayISO() ? null : day;
     setTab('cierre');
     renderDailyClose();
@@ -16189,8 +16367,7 @@
         toast('Cierre calculado con las entregas de hoy');
         return;
       }
-      const closeHistoryChip = event.target.closest('[data-close-history-period]');
-      if (closeHistoryChip) {
+      const closeHistoryChip = event.target.closest('[data-close-history-period]');      if (closeHistoryChip) {
         if (closeHistoryChip.dataset.closeHistoryPeriod === 'custom') {
           openCloseHistoryRangeSheet();
           return;
@@ -16216,8 +16393,27 @@
         return;
       }
       if (event.target.closest('[data-close-today-go]')) {
+        state.closeScope = 'dia';
         state.closeDay = null;
         setTab('cierre');
+        return;
+      }
+      /* «Un día» / «Varios días» dentro del cierre, y cómo elegir el tramo. */
+      const closeScopeChip = event.target.closest('[data-close-scope]');
+      if (closeScopeChip) {
+        if (closeScopeChip.dataset.closeScope === 'rango') {
+          state.closeScope = 'rango';
+          renderDailyClose();
+          openClosePeriodRangeSheet();
+          return;
+        }
+        state.closeScope = 'dia';
+        state.closeDay = null;
+        renderDailyClose();
+        return;
+      }
+      if (event.target.closest('[data-close-period-pick]')) {
+        openClosePeriodRangeSheet();
         return;
       }
       if (event.target.closest('[data-open-drawer]')) {

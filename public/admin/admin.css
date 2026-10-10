@@ -12525,3 +12525,15 @@ body[data-tab='pedidos'] .order-row__status,
 .card--attention .btn {
   margin-top: 2px;
 }
+
+/*
+ * LOS DOS MODOS DEL CIERRE (un día / varios días). La fila de chips va arriba
+ * del cierre, con el mismo aire que en el resto de las pantallas.
+ */
+.close-scope {
+  margin-bottom: 12px;
+}
+
+.daily-close__block .close-history {
+  margin-bottom: 8px;
+}
