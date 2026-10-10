@@ -12537,3 +12537,44 @@ body[data-tab='pedidos'] .order-row__status,
 .daily-close__block .close-history {
   margin-bottom: 8px;
 }
+
+/*
+ * LA FORMA DE PAGO EN LA LISTA DE PEDIDOS.
+ * Lo primero que se pregunta al cuadrar el día es si el dinero entró en efectivo
+ * o por transferencia: se pinta en la propia fila (efectivo en verde, transferencia
+ * en azul), sin tener que abrir la ficha.
+ */
+.order-row__pay {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.order-row__pay--cash {
+  border-color: rgba(11, 107, 79, 0.24);
+  background: rgba(11, 107, 79, 0.12);
+  color: #0b6b4f;
+}
+
+.order-row__pay--transfer {
+  border-color: rgba(25, 87, 224, 0.22);
+  background: rgba(25, 87, 224, 0.1);
+  color: #1957e0;
+}
+
+.order-row__pay--otro {
+  border-color: rgba(74, 90, 82, 0.2);
+  background: rgba(74, 90, 82, 0.1);
+  color: var(--text-secondary);
+}
+
+/* La línea de datos se encoge para dejar sitio a las dos etiquetas de la derecha. */
+.order-row__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}

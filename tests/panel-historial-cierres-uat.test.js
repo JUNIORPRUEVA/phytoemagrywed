@@ -180,7 +180,13 @@ afterAll(async () => {
 
 const abrirHistorial = async () => {
   await waitFor(() => datosCargados, 'los datos del panel');
-  click('[data-tab="historial-cierres"]');
+  /*
+   * El historial se entra DESDE EL CIERRE (el menú ya no lo lleva): su chip está
+   * en la misma pantalla del cierre, junto a «Un día» y «Varios días».
+   */
+  click('[data-tab="cierre"]');
+  await waitFor(() => $('[data-close-scope="historial"]'), 'el botón del historial dentro del cierre');
+  click('[data-close-scope="historial"]');
   const pintado = await waitFor(() => $('#close-history-view')?.children.length, 'el historial pintado');
   await sleep(150);
   return pintado;
@@ -189,12 +195,22 @@ const abrirHistorial = async () => {
 const filas = () => $$('[data-close-history-day]').map((fila) => fila.dataset.closeHistoryDay);
 
 describe('historial de cierres', () => {
-  it('está en el menú y tiene su propia página', async () => {
-    expect($('[data-tab="historial-cierres"]')?.textContent.trim()).toBe('Historial de cierres');
+  it('NO está en el menú: se entra desde «Cierre diario»', async () => {
+    // El menú ya no lo lleva (se pidió que solo se acceda a través del cierre).
+    expect($('[data-tab="historial-cierres"]')).toBe(null);
     expect($('#view-historial-cierres')).not.toBeNull();
+
+    await waitFor(() => datosCargados, 'los datos del panel');
+    click('[data-tab="cierre"]');
+    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
+    expect($$('[data-close-scope]').map((chip) => chip.textContent.trim())).toEqual(['Un día', 'Varios días', 'Historial']);
+
     await abrirHistorial();
     expect($('#view-historial-cierres')?.hidden).toBe(false);
     expect($$('[data-close-history-period]').map((chip) => chip.textContent.trim())).toEqual(['7 días', '30 días', 'Este mes', 'Intervalo']);
+    // Y el volver devuelve al cierre, que es de donde se viene.
+    click('.simple-head__back');
+    await waitFor(() => $('#view-cierre')?.hidden === false, 'de vuelta al cierre');
   });
 
   it('lista cada día cerrado con su total y el resumen del intervalo', async () => {
@@ -330,8 +346,8 @@ describe('historial de cierres', () => {
     click('[data-tab="cierre"]');
     await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
 
-    // Los dos modos están en la propia pantalla del cierre.
-    expect($$('[data-close-scope]').map((chip) => chip.textContent.trim())).toEqual(['Un día', 'Varios días']);
+    // Los modos están en la propia pantalla del cierre (y el historial se entra de ahí).
+    expect($$('[data-close-scope]').map((chip) => chip.textContent.trim())).toEqual(['Un día', 'Varios días', 'Historial']);
     expect($('[data-close-scope="dia"]')?.getAttribute('aria-pressed')).toBe('true');
 
     click('[data-close-scope="rango"]');

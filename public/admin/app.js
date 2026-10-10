@@ -2621,6 +2621,14 @@
     const agente = orderAgent(item);
     const entregado = ['ENTREGADO', 'CANCELADO'].includes(estado);
     const repartidor = order.delivery?.delivery_user_name_snapshot ?? null;
+    /*
+     * CÓMO SE COBRÓ. Al cuadrar el día lo primero que se pregunta es si el dinero
+     * entró en efectivo o por transferencia, así que tiene que verse EN LA PROPIA
+     * FILA (no solo abriendo la ficha). Si el pedido es antiguo y no lo trae, no
+     * se inventa nada: no se pinta la etiqueta.
+     */
+    const pago = orderPaymentMethodOf(item);
+    const pagoTono = pago === 'CASH' ? 'cash' : pago === 'TRANSFER' ? 'transfer' : 'otro';
     const meta = [
       item.order_number ?? order.order_number ?? null,
       item.variant_name ? `${item.variant_name}${item.quantity ? ` ×${item.quantity}` : ''}` : null,
@@ -2647,6 +2655,11 @@
       </span>
       <span class="order-row__bottom">
         <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
+        ${
+          pago
+            ? `<span class="order-row__pay order-row__pay--${pagoTono}">${escapeHtml(paymentMethodLabel(pago))}</span>`
+            : ''
+        }
         <span class="order-row__status" data-receipt="${escapeHtml(item.id)}" aria-label="Ver factura">${escapeHtml(operationalStatusLabel(estado))}</span>
       </span>
       <span class="order-row__ref">${escapeHtml(referencia)}</span>
@@ -4846,6 +4859,7 @@
     return `<div class="chips close-scope" id="close-scope">
       <button class="chip" data-close-scope="dia" type="button" aria-pressed="${enTramo ? 'false' : 'true'}">Un día</button>
       <button class="chip" data-close-scope="rango" type="button" aria-pressed="${enTramo ? 'true' : 'false'}">Varios días</button>
+      <button class="chip" data-close-scope="historial" type="button" aria-pressed="false">Historial</button>
     </div>`;
   }
 
@@ -16398,9 +16412,19 @@
         setTab('cierre');
         return;
       }
-      /* «Un día» / «Varios días» dentro del cierre, y cómo elegir el tramo. */
+      /* «Un día» / «Varios días» / «Historial» dentro del cierre, y cómo elegir el tramo. */
       const closeScopeChip = event.target.closest('[data-close-scope]');
       if (closeScopeChip) {
+        if (closeScopeChip.dataset.closeScope === 'historial') {
+          /*
+           * EL HISTORIAL SOLO SE ENTRA DESDE AQUÍ: el menú ya no lo lleva. Sus filtros
+           * (7 días / 30 días / Este mes / Intervalo) viven en esa página.
+           */
+          state.closeScope = 'dia';
+          state.closeDay = null;
+          setTab('historial-cierres');
+          return;
+        }
         if (closeScopeChip.dataset.closeScope === 'rango') {
           state.closeScope = 'rango';
           renderDailyClose();
@@ -16423,6 +16447,9 @@
       if (event.target.closest('[data-simple-back]')) {
         if (state.tab === 'perfil-cliente' || state.tab === 'mapa') {
           setTab(state.previousTab && state.previousTab !== state.tab ? state.previousTab : 'hoy');
+        } else if (state.tab === 'historial-cierres') {
+          // El historial se entra DESDE EL CIERRE: el volver lleva al cierre.
+          setTab('cierre');
         } else {
           setTab('hoy');
         }

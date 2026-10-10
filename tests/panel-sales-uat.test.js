@@ -536,6 +536,14 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     // La referencia del cliente (teléfono) y QUIÉN ATENDIÓ, en su línea corta.
     expect(fila.querySelector('.order-row__ref').textContent).toContain('+18095559191');
     expect(fila.querySelector('.order-row__ref').textContent).toMatch(/Atendido por .+/);
+    /*
+     * LA FORMA DE PAGO, EN LA LISTA: al cuadrar el día hay que saber si el dinero
+     * entró en efectivo o por transferencia sin abrir cada pedido.
+     */
+    const conPago = $$('#list-pedidos .order-row').find((row) => row.querySelector('.order-row__pay'));
+    expect(conPago, 'ninguna fila de pedido dice si fue efectivo o transferencia').toBeTruthy();
+    expect(conPago.querySelector('.order-row__pay').textContent).toMatch(/Efectivo|Transferencia/);
+    expect(conPago.querySelector('.order-row__pay').className).toMatch(/order-row__pay--(cash|transfer)/);
     // Nada de botones dentro de la fila: las acciones viven en la ficha.
     expect(fila.querySelectorAll('button')).toHaveLength(0);
   });
