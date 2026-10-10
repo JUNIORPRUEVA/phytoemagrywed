@@ -1605,8 +1605,18 @@
         box.innerHTML = avisoFallo;
         return;
       }
+      /* Sin conexión no se puede calcular (lo hace el servidor): se dice, en vez
+       * de dejar «Cargando reporte…» dando vueltas para siempre. */
+      if (!state.online) {
+        box.innerHTML = `<div class="card card--attention">
+          <p class="card__title">Sin conexión</p>
+          <p class="card__text">El reporte lo calcula el servidor. Cuando vuelvas a tener datos, pulsa Reintentar.</p>
+          <button class="btn btn--primary btn--sm" data-report-retry type="button">Reintentar</button>
+        </div>`;
+        return;
+      }
       box.innerHTML = '<div class="card"><p class="card__text">Cargando reporte…</p></div>';
-      if (!state.salesReportLoading && state.online) loadSalesReport(state.salesReportPeriod).catch(() => {});
+      if (!state.salesReportLoading) loadSalesReport(state.salesReportPeriod).catch(() => {});
       return;
     }
     const s = report.summary ?? {};
@@ -4647,9 +4657,35 @@
     return dias;
   }
 
+  /**
+   * QUÉ DÍAS DEL INTERVALO TIENEN ENTREGAS (una sola pasada por los datos).
+   *
+   * `dailyCloseModel` recorre TODAS las ventas por cada día que se le pide. Con
+   * un intervalo largo y años de historial, pedirlo día a día se nota (y el panel
+   * se repinta con cada aviso del servidor). Aquí se averigua primero qué días
+   * tienen algo y solo se calcula el cierre de esos: mismo resultado, mucho menos
+   * trabajo. Las condiciones son las MISMAS que las de `dailyCloseModel`.
+   */
+  function closeHistoryDaysWithSales(from, to) {
+    const user = currentUser();
+    const ownClose = !hasPermission('reports.profit.view');
+    const dias = new Set();
+    for (const item of state.items ?? []) {
+      if (item.type !== 'order_intent') continue;
+      const order = itemOrder(item);
+      if (getOrderOperationalStatus(order, deliverySessionForOrder(item.id)) !== 'ENTREGADO') continue;
+      if (ownClose && String(order.delivery?.delivery_user_id ?? '') !== String(user?.id ?? '')) continue;
+      const day = orderDeliveredDay(order, item);
+      if (day && day >= from && day <= to) dias.add(day);
+    }
+    return dias;
+  }
+
   function closeHistoryData() {
     const { from, to } = closeHistoryRange();
+    const conVentas = closeHistoryDaysWithSales(from, to);
     const cierres = closeHistoryDays(from, to)
+      .filter((day) => conVentas.has(day))
       .map((day) => ({ day, model: dailyCloseModel(day) }))
       .filter((row) => row.model.orders.length > 0)
       // El más reciente primero: es el que se mira casi siempre.
@@ -4695,6 +4731,14 @@
   function renderCloseHistory() {
     const box = $('#close-history-view');
     if (!box) return;
+    /*
+     * SOLO SE CALCULA CUANDO SE ESTÁ MIRANDO. Montar el historial recorre las
+     * ventas de todos los días del intervalo y el panel se repinta con cada aviso
+     * del servidor: calcularlo «por si acaso» en cada repintado era trabajo tirado
+     * (y con años de historial, un freeze en el móvil). Al entrar en la página,
+     * `setTab` vuelve a llamar aquí, así que nunca queda sin pintar.
+     */
+    if (state.tab !== 'historial-cierres') return;
     $$('[data-close-history-period]').forEach((chip) =>
       chip.setAttribute('aria-pressed', String(chip.dataset.closeHistoryPeriod === state.closeHistoryPeriod)),
     );
@@ -15512,7 +15556,6 @@
       if (tab === 'productos') loadInventory().catch(() => {});
       if (tab === 'reportes' && hasPermission('reports.profit.view')) loadSalesReport(state.salesReportPeriod).catch(() => {});
       if (tab === 'cierre') renderDailyClose();
-      if (tab === 'historial-cierres') renderCloseHistory();
       if (tab === 'usuarios') loadUsers().catch(() => {});
       // El perfil se relee del servidor: el nombre pudo cambiar en otro sitio.
       if (tab === 'perfil') refreshProfile().catch(() => {});
@@ -15542,6 +15585,13 @@
       refreshDeliveryTracking().catch(() => {});
       startDeliveryEvents();
     }
+    /*
+     * HISTORIAL DE CIERRES: se pinta SIEMPRE al entrar, también con enlace
+     * directo (`?v=historial-cierres`, que entra sin refrescar nada más).
+     * `renderCloseHistory` solo trabaja cuando la pestaña está abierta, así que
+     * fuera de esta llamada no se calcula nada.
+     */
+    if (tab === 'historial-cierres') renderCloseHistory();
     if (tab === 'delivery') {
       refreshDeliveryTracking().then(() => renderDelivery()).catch(() => {});
       startDeliveryEvents();
