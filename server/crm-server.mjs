@@ -223,7 +223,7 @@ const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
 const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
 const WEB_PUSH_PUBLIC_KEY = (process.env.PHYTO_WEB_PUSH_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? '').trim();
 const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.env.VAPID_PRIVATE_KEY ?? '').trim();
-const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT ?? 'mailto:admin@phytoemagry.local').trim();
+const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT || 'https://phytoemagryrd.lat').trim();
 if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
   webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
   console.log('[push] Web Push configurado (llaves VAPID presentes).');
@@ -1043,9 +1043,9 @@ async function listUserNotifications(ctx, actor, options = {}) {
     }));
 }
 
-async function sendPushForNotification(ctx, notification) {
+async function sendPushForNotification(ctx, notification, { subscriptionId = null } = {}) {
   const subscriptions = (await ctx.db.list('push_subscriptions', { limit: 1000 })).filter(
-    (row) => row.user_id === notification.recipient_user_id && row.active !== false,
+    (row) => row.user_id === notification.recipient_user_id && row.active !== false && (!subscriptionId || row.id === subscriptionId),
   );
   const summary = {
     configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
@@ -1056,8 +1056,9 @@ async function sendPushForNotification(ctx, notification) {
     expired: 0,
     notConfigured: 0,
     skipped: 0,
+    errors: [],
   };
-  const payload = JSON.stringify({
+  const payload = {
     title: notification.title,
     body: notification.body,
     notificationId: notification.id,
@@ -1066,7 +1067,7 @@ async function sendPushForNotification(ctx, notification) {
     deepLink: notification.deep_link,
     type: notification.type,
     vibrate: notification.data?.vibrate ?? null,
-  });
+  };
   for (const subscription of subscriptions) {
     const key = `push:${notification.id}:${subscription.endpoint}`;
     const existing = await ctx.db.findBy('push_jobs', 'idempotency_key', key);
@@ -1075,6 +1076,15 @@ async function sendPushForNotification(ctx, notification) {
       continue;
     }
     summary.attempted += 1;
+    // Se guarda antes del envío: el worker puede confirmar antes de que responda Apple.
+    const jobId = newId('psh');
+    const created = await ctx.db.insert('push_jobs', {
+      id: jobId, notification_id: notification.id, user_id: notification.recipient_user_id,
+      subscription_id: subscription.id, endpoint: subscription.endpoint, status: 'pending',
+      idempotency_key: key, created_at: ctx.clock().toISOString(), updated_at: ctx.clock().toISOString(),
+    });
+    if (created.duplicate) { summary.skipped += 1; continue; }
+    const receiptToken = createHmac('sha256', WEB_PUSH_PRIVATE_KEY || ctx.token).update(`push-receipt:${jobId}`).digest('hex');
     let status = 'not_configured';
     let error = null;
     if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
@@ -1084,13 +1094,21 @@ async function sendPushForNotification(ctx, notification) {
             endpoint: subscription.endpoint,
             keys: subscription.keys ?? {},
           },
-          payload,
+          JSON.stringify({ ...payload, receipt: { jobId, token: receiptToken } }),
+          { TTL: 86400, urgency: 'high', contentEncoding: 'aes128gcm', timeout: 15000 },
         );
         status = 'sent';
-        await ctx.db.update('push_subscriptions', subscription.id, { last_used_at: ctx.clock().toISOString(), active: true });
+        await ctx.db.update('push_subscriptions', subscription.id, { last_used_at: ctx.clock().toISOString(), active: true, last_error: null });
       } catch (err) {
         status = err?.statusCode === 404 || err?.statusCode === 410 ? 'expired' : 'failed';
-        error = { statusCode: err?.statusCode ?? null, message: err?.message ?? 'push_failed' };
+        let reason = null;
+        try {
+          const value = JSON.parse(String(err?.body ?? '{}')).reason;
+          if (typeof value === 'string' && /^[a-zA-Z0-9_]{1,80}$/.test(value)) reason = value;
+        } catch {}
+        error = { statusCode: err?.statusCode ?? null, message: err?.message ?? 'push_failed', reason };
+        summary.errors.push({ statusCode: error.statusCode, reason });
+        await ctx.db.update('push_subscriptions', subscription.id, { last_error: error });
         if (status === 'expired') await ctx.db.update('push_subscriptions', subscription.id, { active: false, disabled_at: ctx.clock().toISOString(), last_error: error });
       }
     }
@@ -1098,16 +1116,8 @@ async function sendPushForNotification(ctx, notification) {
     else if (status === 'expired') summary.expired += 1;
     else if (status === 'not_configured') summary.notConfigured += 1;
     else summary.failed += 1;
-    await ctx.db.insert('push_jobs', {
-      id: newId('psh'),
-      notification_id: notification.id,
-      user_id: notification.recipient_user_id,
-      endpoint: subscription.endpoint,
-      status,
-      error,
-      idempotency_key: key,
-      created_at: ctx.clock().toISOString(),
-      updated_at: ctx.clock().toISOString(),
+    await ctx.db.update('push_jobs', jobId, {
+      status, error, updated_at: ctx.clock().toISOString(),
     });
   }
   return summary;
@@ -1147,11 +1157,23 @@ async function pushOwnerUserId(ctx, actor) {
   return preferred?.id ?? null;
 }
 
+function pushConfigurationWarnings() {
+  try {
+    const subject = new URL(WEB_PUSH_SUBJECT);
+    const hostname = subject.protocol === 'mailto:' ? subject.pathname.split('@').pop() : subject.hostname;
+    if (!hostname || hostname === 'localhost' || !hostname.includes('.') || /\.(local|localhost|test|invalid|example)$/i.test(hostname)) {
+      return ['El contacto VAPID es local o de ejemplo. Configura PHYTO_WEB_PUSH_SUBJECT con un correo o una URL HTTPS públicos reales; Apple puede rechazar una identidad VAPID inválida.'];
+    }
+  } catch { return ['PHYTO_WEB_PUSH_SUBJECT no es una identidad VAPID válida.']; }
+  return [];
+}
+
 async function pushStatusForUser(ctx, userId) {
   if (!userId) {
     return {
       configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
       publicKey: WEB_PUSH_PUBLIC_KEY || null,
+      configurationWarnings: pushConfigurationWarnings(),
       activeSubscriptions: 0,
       inactiveSubscriptions: 0,
       subscriptions: [],
@@ -1163,6 +1185,7 @@ async function pushStatusForUser(ctx, userId) {
   return {
     configured: Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY),
     publicKey: WEB_PUSH_PUBLIC_KEY || null,
+    configurationWarnings: pushConfigurationWarnings(),
     activeSubscriptions: subscriptions.filter((row) => row.active !== false).length,
     inactiveSubscriptions: subscriptions.filter((row) => row.active === false).length,
     subscriptions: subscriptions.slice(0, 5).map((row) => ({
@@ -1179,6 +1202,10 @@ async function pushStatusForUser(ctx, userId) {
       notification_id: row.notification_id,
       status: row.status,
       error: row.error ?? null,
+      deviceStatus: row.device_status ?? null,
+      deviceReceivedAt: row.device_received_at ?? null,
+      deviceError: row.device_error ?? null,
+      workerVersion: row.worker_version ?? null,
       created_at: row.created_at,
     })),
   };
@@ -4416,6 +4443,40 @@ async function handle(req, res, ctx) {
     return;
   }
 
+  // Confirmación limitada a un envío: no requiere la cookie de una app cerrada.
+  if (route === '/api/push/receipts' && req.method === 'POST') {
+    const body = await readJsonBody(req, 2048);
+    const jobId = text(body?.jobId, 80);
+    const supplied = text(body?.token, 80);
+    const deviceStatus = body?.status;
+    if (!jobId || !/^[a-f0-9]{64}$/.test(supplied) || !['displayed', 'display_failed'].includes(deviceStatus)) {
+      json(res, 400, { ok: false, error: 'invalid_receipt' });
+      return;
+    }
+    const expected = createHmac('sha256', WEB_PUSH_PRIVATE_KEY || ctx.token).update(`push-receipt:${jobId}`).digest('hex');
+    if (!timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) {
+      json(res, 403, { ok: false, error: 'invalid_receipt' });
+      return;
+    }
+    const job = await ctx.db.get('push_jobs', jobId);
+    if (!job || ctx.clock().getTime() - Date.parse(job.created_at) > 7 * 86400000) {
+      json(res, 404, { ok: false, error: 'receipt_expired' });
+      return;
+    }
+    // No permitir que un reintento tardío degrade un aviso ya mostrado.
+    if (job.device_status !== 'displayed') {
+      const name = String(body?.error ?? '');
+      await ctx.db.update('push_jobs', jobId, {
+        device_status: deviceStatus,
+        device_received_at: ctx.clock().toISOString(),
+        device_error: deviceStatus === 'display_failed' ? (/^[A-Za-z]{1,64}$/.test(name) ? name : 'NotificationError') : null,
+        worker_version: text(body?.workerVersion, 80),
+      });
+    }
+    json(res, 200, { ok: true });
+    return;
+  }
+
   // ------------------------------------------------------ webhook de WhatsApp
   /*
    * Verificación (la hace Meta una sola vez, al configurar el webhook): manda
@@ -6072,6 +6133,15 @@ async function handle(req, res, ctx) {
         json(res, 409, { ok: false, error: 'no_push_owner', message: 'No hay un administrador activo al que asociar este teléfono.' });
         return;
       }
+      const body = await readJsonBody(req);
+      const subscriptionId = text(body.subscriptionId, 160) || null;
+      if (subscriptionId) {
+        const target = await ctx.db.get('push_subscriptions', subscriptionId);
+        if (!target || target.user_id !== ownerUserId || target.active === false) {
+          json(res, 409, { ok: false, error: 'device_not_registered', message: 'Este teléfono no está registrado: pulsa Activar.' });
+          return;
+        }
+      }
       const notification = await createUserNotification(ctx, {
         recipientUserId: ownerUserId,
         type: 'PUSH_TEST',
@@ -6083,7 +6153,7 @@ async function handle(req, res, ctx) {
         data: { vibrate: [120, 60, 120] },
         idempotencyKey: `push-test:${ownerUserId}:${ctx.clock().toISOString()}:${randomBytes(4).toString('hex')}`,
       });
-      const push = notification.notification ? await sendPushForNotification(ctx, notification.notification) : null;
+      const push = notification.notification ? await sendPushForNotification(ctx, notification.notification, { subscriptionId }) : null;
       const status = await pushStatusForUser(ctx, ownerUserId);
       /*
        * El mensaje dice lo que PASÓ, no lo que se intentó: «sent» significa que el
@@ -6100,7 +6170,9 @@ async function handle(req, res, ctx) {
             : push.expired > 0
               ? 'El teléfono registrado ya no acepta avisos: hay que registrarlo otra vez.'
               : push.failed > 0
-                ? 'El servicio de push rechazó el envío.'
+                ? (push.errors?.some((error) => error.reason === 'BadJwtToken')
+                  ? 'Apple rechazó la autenticación (BadJwtToken): revisa las llaves VAPID, PHYTO_WEB_PUSH_SUBJECT y el reloj del servidor.'
+                  : 'El servicio de push rechazó el envío. Revisa el último error del teléfono en el estado push.')
                 : 'No se envió nada: el teléfono ya había recibido esta prueba.';
       json(res, push?.subscriptions ? 200 : 409, {
         ok: Boolean(push?.sent),

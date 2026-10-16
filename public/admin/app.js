@@ -694,6 +694,7 @@
   }
 
   function showLogin(message = '') {
+    currentPushSubscription = null;
     $('#app').hidden = true;
     $('#login').hidden = false;
     hideSplash();
@@ -3310,7 +3311,8 @@
 
   /** Cómo se lee el último envío (y el resultado de la última prueba, si la hay). */
   const PUSH_JOB_LABEL = {
-    sent: 'enviado',
+    sent: 'aceptado por el servicio push',
+    pending: 'envío en curso',
     failed: 'falló',
     expired: 'el teléfono ya no acepta avisos',
     not_configured: 'sin llaves en el servidor',
@@ -3318,17 +3320,25 @@
   };
 
   function pushLastLine(job, resultado) {
-    if (resultado) return `Servidor: ${resultado.servidor} · ${resultado.local}`;
+    if (resultado) {
+      const confirmation = !resultado.notificationId ? ''
+        : job?.deviceStatus === 'displayed' ? ' · El teléfono confirmó la creación del aviso remoto'
+        : job?.deviceStatus === 'display_failed' ? ` · El teléfono recibió el push pero no pudo crear el aviso (${job.deviceError || 'error'})`
+        : ' · Sin confirmación del teléfono todavía';
+      return `Servidor: ${resultado.servidor} · ${resultado.local}${confirmation}`;
+    }
     if (!job) return 'Sin pruebas recientes · pulsa Probar';
     return `Último envío: ${PUSH_JOB_LABEL[job.status] ?? job.status} · ${fmtWhen(job.created_at)}`;
   }
 
   function pushConfigHtml({ compact = false } = {}) {
     const pushPermission = pushPermissionLabel();
-    const pushActive = Number(state.push?.activeSubscriptions ?? 0) > 0 || state.push?.subscribed === true;
-    const lastPushJob = state.push?.recentJobs?.[0] ?? null;
+    const pushActive = Boolean(currentPushSubscription) && !pushUnavailableReason();
     const resultado = state.pushResult ?? null;
-    const pushStatusText = !state.push?.configured
+    const lastPushJob = resultado?.notificationId
+      ? state.push?.recentJobs?.find((job) => job.notification_id === resultado.notificationId)
+      : state.push?.recentJobs?.[0] ?? null;
+    const pushStatusText = pushUnavailableReason() || (!state.push?.configured
       ? 'El servidor no tiene llaves push configuradas'
       : pushActive
         ? `Teléfono conectado · ${pushPermission}`
@@ -3336,7 +3346,7 @@
           ? 'Teléfono sin conectar: pulsa Activar para recibir los avisos aquí'
           : pushPermission === 'No disponible'
             ? 'Este navegador no admite push (en iPhone hay que añadir el panel a la pantalla de inicio)'
-            : `Teléfono sin conectar · ${pushPermission}`;
+            : `Teléfono sin conectar · ${pushPermission}`);
     return `<article class="notice notice--push ${compact ? 'notice--compact' : 'settings-push'}">
       <div class="notice__main">
         <strong>Notificaciones del teléfono</strong>
@@ -3348,10 +3358,15 @@
         <button class="btn btn--ghost btn--xs" data-push-enable type="button">${pushActive ? 'Revisar teléfono' : 'Activar'}</button>
       </div>
     </article>
+    ${(state.push?.configurationWarnings || []).map((warning) => `<p class="notice-hint">${escapeHtml(warning)}</p>`).join('')}
     ${
-      resultado
-        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa los avisos de Chrome en los ajustes del teléfono y quita el ahorro de batería.</p>'
-        : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
+      pushUnavailableReason()
+        ? `<p class="notice-hint">${escapeHtml(pushUnavailableReason())}</p>`
+        : resultado
+        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → CRM Phyto en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
+        : iphonePushDevice()
+          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → CRM Phyto activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
+          : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
       }`;
   }
 
@@ -15264,6 +15279,29 @@
     if (online) flushOutbox();
   }
 
+  // Solo se confirma tras registrar ESTE navegador; nunca se restaura del snapshot.
+  let currentPushSubscription = null;
+  let pushSyncError = '';
+
+  function iphonePushDevice() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function pushUnavailableReason() {
+    if (iphonePushDevice() && !(navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches)) {
+      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono CRM Phyto. Requiere iOS 16.4 o posterior.';
+    }
+    if (window.isSecureContext === false) return 'Las notificaciones requieren una conexión HTTPS segura.';
+    if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
+      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre CRM Phyto desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
+    }
+    if (Notification.permission === 'denied') {
+      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → CRM Phyto y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
+    }
+    return '';
+  }
+
   let installEvent = null;
   let swRegistration = null;
 
@@ -15296,9 +15334,16 @@
   }
 
   async function syncCrmPushSubscription(options = {}) {
+    pushSyncError = pushUnavailableReason();
+    if (pushSyncError) {
+      currentPushSubscription = null;
+      if (!options.quiet) toast(pushSyncError);
+      return false;
+    }
     const requestPermission = options.requestPermission !== false;
     if (!state.push?.publicKey) {
-      if (!options.quiet) toast('Push no está configurado en el servidor');
+      pushSyncError = 'Push no está configurado en el servidor';
+      if (!options.quiet) toast(pushSyncError);
       return false;
     }
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
@@ -15311,7 +15356,8 @@
       permission = await Notification.requestPermission();
     }
     if (permission !== 'granted') {
-      if (!options.quiet) toast(permission === 'denied' ? 'Notificaciones bloqueadas por navegador' : 'No se activaron las notificaciones');
+      pushSyncError = pushUnavailableReason() || 'No se activaron las notificaciones';
+      if (!options.quiet) toast(pushSyncError);
       renderMapLive();
       return false;
     }
@@ -15321,7 +15367,8 @@
      */
     const registration = await withTimeout(navigator.serviceWorker.ready, 8000);
     if (!registration) {
-      if (!options.quiet) toast('El panel no terminó de instalarse en este teléfono: cierra y vuelve a abrirlo');
+      pushSyncError = 'El panel no terminó de instalarse en este teléfono: cierra y vuelve a abrirlo';
+      if (!options.quiet) toast(pushSyncError);
       return false;
     }
     const applicationServerKey = urlBase64ToUint8Array(state.push.publicKey);
@@ -15330,17 +15377,21 @@
       await subscription.unsubscribe().catch(() => {});
       subscription = null;
     }
+    if (subscription?.expirationTime && subscription.expirationTime <= Date.now()) {
+      await subscription.unsubscribe();
+      subscription = null;
+    }
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey,
       });
     }
-    await api('/api/admin/push-subscriptions', {
+    const saved = await api('/api/admin/push-subscriptions', {
       method: 'POST',
       body: JSON.stringify(subscription),
     });
-    state.push = { ...state.push, subscribed: true, activeSubscriptions: Math.max(1, Number(state.push?.activeSubscriptions ?? 0)) };
+    currentPushSubscription = { id: saved.subscription.id, endpoint: subscription.endpoint };
     state.wa.notify = true;
     localStorage.setItem(WA_NOTIFY_KEY, '1');
     if (!options.quiet) toast('Notificaciones activadas');
@@ -15349,12 +15400,18 @@
   }
 
   async function enableCrmPush() {
-    const enabled = await syncCrmPushSubscription({ requestPermission: true });
+    let enabled = false;
+    try {
+      enabled = await syncCrmPushSubscription({ requestPermission: true });
+    } catch (error) {
+      currentPushSubscription = null;
+      pushSyncError = error.body?.message || error.message || 'No se pudo registrar este teléfono';
+    }
     if (enabled) await refreshPushStatus().catch(() => null);
     // El resultado se queda escrito en la hoja: pulsar no puede quedarse sin respuesta.
     state.pushResult = enabled
       ? { servidor: 'Teléfono registrado', local: 'listo para recibir avisos', at: new Date().toISOString() }
-      : { servidor: 'Este teléfono no quedó registrado', local: pushPermissionLabel().toLowerCase(), at: new Date().toISOString() };
+      : { servidor: 'Este teléfono no quedó registrado', local: pushSyncError || pushPermissionLabel().toLowerCase(), at: new Date().toISOString() };
     return enabled;
   }
 
@@ -15362,9 +15419,9 @@
     if (!state.push?.publicKey || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     syncCrmPushSubscription({ requestPermission: false, quiet: true })
       .then((enabled) => {
-        if (enabled) refreshPushStatus().catch(() => null);
+        if (enabled) refreshPushStatus().then(() => { if (state.tab === 'ajustes') renderAjustes(); }).catch(() => null);
       })
-      .catch(() => {});
+      .catch(() => { currentPushSubscription = null; });
   }
 
   /** Promesa con tope de tiempo: si el panel no termina de instalarse, se DICE. */
@@ -15406,16 +15463,25 @@
    *      deshabilitado o el service worker no arrancaba, no pasaba NADA).
    */
   async function testCrmPush() {
-    const registrado = await syncCrmPushSubscription({ requestPermission: true, quiet: true });
+    // La solicitud del permiso ocurre en el clic, antes de cualquier espera de red.
+    const registrado = await enableCrmPush();
+    if (!registrado) {
+      renderAjustes();
+      return state.pushResult;
+    }
     let servidor = 'El servidor no pudo enviar la prueba';
+    let notificationId = null;
+    let accepted = false;
     try {
-      const data = await api('/api/admin/push-subscriptions/test', { method: 'POST', body: '{}' });
+      const data = await api('/api/admin/push-subscriptions/test', { method: 'POST', body: JSON.stringify({ subscriptionId: currentPushSubscription.id }) });
       state.push = data.status ?? state.push;
       const push = data.push ?? {};
+      notificationId = data.notification?.id || null;
+      accepted = push.sent > 0;
       if (push.notConfigured > 0) servidor = 'El servidor no tiene llaves push: no salió nada';
-      else if (push.sent > 0) servidor = `Enviado desde el servidor a ${push.sent} teléfono${push.sent === 1 ? '' : 's'}`;
+      else if (push.sent > 0) servidor = 'El servicio push aceptó la prueba para este teléfono; confirma que la recibiste';
       else if (push.expired > 0) servidor = 'El teléfono registrado ya no acepta avisos: pulsa Activar';
-      else if (push.failed > 0) servidor = 'El servicio de push rechazó el envío';
+      else if (push.failed > 0) servidor = data.message || 'El servicio de push rechazó el envío';
       else servidor = data.message ?? 'El servidor no tiene un teléfono registrado';
     } catch (error) {
       servidor = error.body?.message ?? 'El servidor no pudo enviar la prueba';
@@ -15423,6 +15489,7 @@
     const local = registrado ? await showLocalPushTest() : false;
     state.pushResult = {
       servidor,
+      notificationId: accepted ? notificationId : null,
       local: local
         ? 'aviso mostrado aquí'
         : registrado
@@ -15434,7 +15501,18 @@
     // La prueba ya está creada en el CRM: se refresca para que aparezca aquí mismo.
     await load({ keepTab: true }).catch(() => {});
     renderAjustes();
+    if (accepted && notificationId) followPushConfirmation(notificationId);
     return state.pushResult;
+  }
+
+  async function followPushConfirmation(notificationId) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (state.pushResult?.notificationId !== notificationId || $('#app').hidden) return;
+      try { await refreshPushStatus(); } catch { return; }
+      if (state.tab === 'ajustes') renderAjustes();
+      if (state.push?.recentJobs?.some((job) => job.notification_id === notificationId && job.deviceStatus)) return;
+    }
   }
 
   /*
@@ -17302,6 +17380,7 @@
     $('#wa-back').addEventListener('click', () => setWaView('list'));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
+        autoSyncCrmPush();
         waPollTick();
         // La pestaña vuelve a estar delante: se asegura el canal en vivo (el
         // navegador suele haberlo mantenido, pero puede haberse caído).

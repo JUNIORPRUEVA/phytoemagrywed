@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v73-campana-fulltech';
+const VERSION = 'crm-v75-iphone-push-receipts';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -188,6 +188,21 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+// Nunca bloquear la presentación por una petición de diagnóstico.
+async function reportPushReceipt(receipt, status, error = null) {
+  if (!receipt?.jobId || !receipt?.token) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    await fetch('/api/push/receipts', {
+      method: 'POST', credentials: 'omit', cache: 'no-store', signal: controller.signal,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jobId: receipt.jobId, token: receipt.token, status, error: error?.name || null, workerVersion: VERSION }),
+    });
+  } catch { /* Sin red: la falta de confirmación no prueba falta de recepción. */ }
+  finally { clearTimeout(timeout); }
+}
+
 self.addEventListener('push', (event) => {
   let payload = {};
   try {
@@ -195,6 +210,8 @@ self.addEventListener('push', (event) => {
   } catch {
     payload = {};
   }
+  // Incluso un payload vacío o inválido debe producir un aviso visible en Safari.
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
   const title = payload.title || 'Phytoemagry';
   const deepLink =
     payload.deepLink ||
@@ -203,21 +220,27 @@ self.addEventListener('push', (event) => {
       : payload.orderId
         ? `/admin/?v=delivery&order=${encodeURIComponent(payload.orderId)}`
         : '/admin/');
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body: payload.body || 'Tienes una actualización en el CRM.',
-      tag: payload.notificationId || payload.conversationId || payload.orderId || 'phyto-crm',
-      data: {
-        deepLink,
-        orderId: payload.orderId || null,
-        conversationId: payload.conversationId || null,
-        notificationId: payload.notificationId || null,
-      },
-      icon: '/admin/icon-192.png',
-      badge: '/admin/icon-192.png',
-      vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
-    }),
-  );
+  event.waitUntil((async () => {
+    try {
+      await self.registration.showNotification(title, {
+        body: payload.body || 'Tienes una actualización en el CRM.',
+        tag: payload.notificationId || payload.conversationId || payload.orderId || 'phyto-crm',
+        data: {
+          deepLink,
+          orderId: payload.orderId || null,
+          conversationId: payload.conversationId || null,
+          notificationId: payload.notificationId || null,
+        },
+        icon: '/admin/icon-192.png',
+        badge: '/admin/icon-192.png',
+        vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
+      });
+    } catch (error) {
+      await reportPushReceipt(payload.receipt, 'display_failed', error);
+      throw error;
+    }
+    await reportPushReceipt(payload.receipt, 'displayed');
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
