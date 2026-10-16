@@ -38,7 +38,8 @@
     try { data = await response.json(); } catch { throw new Error(errors.network); }
     if (!response.ok || !data.ok) {
       if (response.status === 401) resetSession();
-      throw Object.assign(new Error(errors[data.error] || `No se pudo completar la llamada${data.code ? ` (Meta ${data.code})` : ''}.`), { code: data.error, data });
+      const diagnostic = Number.isInteger(data.code) ? ` (Meta ${data.code}${Number.isInteger(data.subcode) ? `/${data.subcode}` : ''})` : '';
+      throw Object.assign(new Error((errors[data.error] || 'No se pudo completar la llamada.') + diagnostic), { code: data.error, data });
     }
     return data;
   }

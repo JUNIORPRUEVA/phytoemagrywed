@@ -35,7 +35,8 @@ export function createCallingApi({ env = {}, enabled = false, fetchImpl = global
       if (!response.ok || body?.error) return { ok: false,
         error: payload && (response.status >= 500 || response.status === 408) ? 'meta_calling_unconfirmed' : 'meta_calling_error',
         ...(payload && (response.status >= 500 || response.status === 408) ? { uncertain: true } : {}),
-        status: response.status, code: typeof body?.error?.code === 'number' ? body.error.code : null };
+        status: response.status, code: typeof body?.error?.code === 'number' ? body.error.code : null,
+        ...(Number.isInteger(body?.error?.error_subcode) ? { subcode: body.error.error_subcode } : {}) };
       return { ok: true, body };
     } catch { return { ok: false, error: 'meta_calling_unconfirmed', uncertain: true }; }
   }
