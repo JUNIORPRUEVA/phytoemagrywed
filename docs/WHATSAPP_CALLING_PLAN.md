@@ -265,3 +265,11 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
   se comprobaron 25 pruebas de push y se volvió a publicar feat/whatsapp-calling
   en Easypanel con las correcciones de diagnóstico. Esta tarea no fusionó los
   cambios de diagnóstico a main. Falta validar recepción y audio reales.
+- Validación entrante completada: el registro real mostró `validId:true` y
+  `legacyIdValid:false`, confirmando el descarte por el formato del identificador.
+  El CRM mostró Contestar/Rechazar, se aceptó la llamada y el usuario confirmó
+  audio en ambos sentidos. Se colgó desde el CRM y el historial recibió la
+  terminación de Meta con duración de 23 segundos.
+- Reintento saliente posterior: el panel mostró Audio conectado y luego Llamada
+  finalizada. Pendiente la confirmación del usuario del audio saliente en ambos
+  sentidos antes de cerrar la validación completa.
