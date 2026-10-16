@@ -17,6 +17,7 @@ const SHELL = [
   '/admin/index.html',
   '/admin/admin.css',
   '/admin/app.js',
+  '/admin/calling.js',
   '/admin/manifest.json',
   '/admin/vendor/leaflet/leaflet.css',
   '/admin/vendor/leaflet/leaflet.js',

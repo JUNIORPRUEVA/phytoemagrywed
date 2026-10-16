@@ -374,3 +374,11 @@ real (el enlace de WhatsApp no muestra imagen sin él), datos fiscales y aviso a
 consumidor, horario de atención, endpoint del CRM y testimonios reales. La lista
 priorizada con el campo exacto de cada dato está en
 [`docs/PENDIENTE.md`](docs/PENDIENTE.md) (§7).
+
+
+## Llamadas de WhatsApp en el CRM
+
+El panel incluye llamadas de voz por la API oficial de Meta, con WebRTC,
+solicitud de permiso al cliente, controles de audio e historial por conversación.
+Requiere `WHATSAPP_CALLING_ENABLED=1`, configuración de llamadas y webhook de Meta.
+La guía de uso, despliegue y validación está en [docs/WHATSAPP_CALLING.md](docs/WHATSAPP_CALLING.md).

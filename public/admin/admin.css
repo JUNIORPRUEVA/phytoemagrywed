@@ -12578,3 +12578,13 @@ body[data-tab='pedidos'] .order-row__status,
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* Llamadas: dialogo accesible y controles persistentes durante la navegación. */
+.calling { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid #d5e5dc; border-radius: 18px; padding: 22px; color: #16382b; background: #fff; }
+.calling::backdrop { background: rgb(10 35 24 / 50%); }
+.calling__heading, .calling__incoming { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.calling__controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.calling__controls button { min-height: 48px; }
+.calling__incoming { padding: 12px 0; flex-wrap: wrap; border-bottom: 1px solid #d5e5dc; }
+.calling-dock { position: fixed; right: 18px; bottom: 90px; z-index: 1000; border: 0; border-radius: 24px; padding: 14px 20px; background: #087a5b; color: #fff; box-shadow: 0 4px 20px #16382b33; font: inherit; }
+.calling-dock[hidden] { display: none; }

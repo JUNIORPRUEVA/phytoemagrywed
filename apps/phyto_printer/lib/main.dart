@@ -67,7 +67,7 @@ class _CrmWebShellState extends State<CrmWebShell> {
   @override
   void initState() {
     super.initState();
-    _webController = WebViewController()
+    _webController = WebViewController(onPermissionRequest: _handleMediaPermission)
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent('PhytoemagryAndroid WebView')
       ..addJavaScriptChannel(
@@ -93,6 +93,25 @@ class _CrmWebShellState extends State<CrmWebShell> {
         ),
       )
       ..loadRequest(_crmUri);
+  }
+
+  Future<void> _handleMediaPermission(WebViewPermissionRequest request) async {
+    final audioOnly = request.types.isNotEmpty &&
+        request.types.every((type) => type == WebViewPermissionResourceType.microphone);
+    if (!audioOnly || !await _currentOriginIsTrusted() || _crmUri.scheme != 'https') {
+      await request.deny();
+      return;
+    }
+    try {
+      final allowed = await _nativeChannel.invokeMethod<bool>('requestMicrophone');
+      if (allowed == true && mounted && await _currentOriginIsTrusted()) {
+        await request.grant();
+      } else {
+        await request.deny();
+      }
+    } on PlatformException {
+      await request.deny();
+    }
   }
 
   Future<bool> _currentOriginIsTrusted() async {

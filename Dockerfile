@@ -205,6 +205,7 @@ http {
             add_header Referrer-Policy "strict-origin-when-cross-origin" always;
             add_header X-Robots-Tag "noindex, nofollow" always;
             add_header Service-Worker-Allowed "/admin/" always;
+            add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=()" always;
         }
 
         # ----------------------------------------------------------- rutas

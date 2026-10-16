@@ -269,6 +269,7 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
+                <button class="wa__head-icon" id="wa-calling-button" type="button" aria-label="Llamar por WhatsApp" title="Llamar por WhatsApp" hidden disabled>☎</button>
                 <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación">
                   <span class="ico" aria-hidden="true" data-icon="search"></span>
                 </button>
@@ -630,6 +631,26 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
+    <button class="calling-dock" id="wa-calling-dock" type="button" hidden></button>
+    <dialog class="calling" id="wa-calling-dialog" aria-labelledby="wa-calling-title">
+      <div class="calling__heading"><h2 id="wa-calling-title">Llamadas de WhatsApp</h2><button class="btn btn--ghost" id="wa-calling-close" type="button">Cerrar</button></div>
+      <p id="wa-calling-status" role="status">Llamadas de WhatsApp</p>
+      <p id="wa-calling-notice" role="status" aria-live="polite"></p>
+      <div id="wa-calling-incoming"></div>
+      <p id="wa-calling-permission-status"></p>
+      <div class="calling__controls">
+        <button class="btn btn--ghost" id="wa-calling-permission" type="button">Solicitar permiso</button>
+        <button class="btn btn--primary" id="wa-calling-connect" type="button">Llamar por WhatsApp</button>
+        <button class="btn btn--ghost" id="wa-calling-mute" type="button" aria-pressed="false" hidden>Silenciar</button>
+        <button class="btn btn--ghost" id="wa-calling-play" type="button">Reproducir audio</button>
+        <button class="btn btn--danger" id="wa-calling-hangup" type="button" hidden>Colgar</button>
+      </div>
+      <p>Usa auriculares y mantén el CRM abierto durante la llamada.</p>
+      <h3>Historial de esta conversación</h3>
+      <button class="btn btn--ghost" id="wa-calling-refresh" type="button">Actualizar permiso e historial</button>
+      <div id="wa-calling-history"></div>
+    </dialog>
+
 
     <!--
       Aviso de VERSIÓN NUEVA: en cuanto se publica un cambio en el servidor, el
@@ -647,5 +668,6 @@
 
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/app.js?v=iphone-push-receipts-68" defer></script>
+    <script src="/admin/calling.js?v=1" defer></script>
   </body>
 </html>

@@ -22,6 +22,8 @@ import java.util.UUID
 class MainActivity : FlutterActivity() {
     private val channelName = "phytoemagry/printer"
     private val sppUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+    private val requestMicrophone = 4209
+    private var pendingMicrophone: MethodChannel.Result? = null
     private val requestBluetooth = 4208
     private var channel: MethodChannel? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
@@ -33,6 +35,16 @@ class MainActivity : FlutterActivity() {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "requestMicrophone" -> {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        result.success(true)
+                    } else if (pendingMicrophone != null) {
+                        result.error("permission_pending", "Ya hay una solicitud de micrófono abierta.", null)
+                    } else {
+                        pendingMicrophone = result
+                        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), requestMicrophone)
+                    }
+                }
                 "bluetoothStatus" -> result.success(bluetoothStatus())
                 "requestPermissions" -> requestPermissions(result)
                 "getBondedDevices" -> getBondedDevices(result)
@@ -55,6 +67,11 @@ class MainActivity : FlutterActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == requestMicrophone) {
+            pendingMicrophone?.success(grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED })
+            pendingMicrophone = null
+            return
+        }
         if (requestCode != requestBluetooth) return
         val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
         pendingPermissionResult?.success(granted)

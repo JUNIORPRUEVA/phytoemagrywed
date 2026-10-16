@@ -415,6 +415,7 @@ export function parseWebhook(body) {
 
   for (const entry of body.entry) {
     for (const change of entry?.changes ?? []) {
+      if (change.field === 'calls') continue; // eventos de voz: persistidos por calling-service
       const value = change?.value ?? {};
       const contacts = new Map(
         (value.contacts ?? []).map((contact) => [String(contact.wa_id ?? ''), String(contact.profile?.name ?? '')]),
