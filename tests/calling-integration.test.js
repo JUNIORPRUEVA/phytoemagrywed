@@ -141,6 +141,15 @@ describe('voz: persistencia, concurrencia y recuperación', () => {
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(api.action.mock.calls.filter(([a]) => a === 'pre_accept')).toHaveLength(1);
   });
+  it('recibe y acepta identificadores opacos con caracteres Base64 sin descartarlos', async () => {
+    const id = 'wacid.ABC+/def==';
+    await service.ingest(payload([{ id, event: 'connect', from: '18095550001', session: { sdp_type: 'offer', sdp: SDP } }]));
+    await service.tick();
+    const [call] = await service.incoming();
+    expect(call.metaId).toBe(id);
+    expect((await service.perform(input('pre_accept', { id: call.id, sdp: SDP }))).ok).toBe(true);
+    expect(api.action).toHaveBeenCalledWith('pre_accept', { callId: id, sdp: SDP });
+  });
   it('un timeout de Meta se conserva como operación incierta para no repetir la llamada', async () => {
     api.action.mockResolvedValue({ ok: false, error: 'meta_calling_unconfirmed', uncertain: true });
     const body = { sdp: SDP, requestId: randomUUID() };

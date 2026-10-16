@@ -17,6 +17,9 @@ export function validCallSdp(sdp) {
     /^m=audio /m.test(sdp) && !/^m=(video|application) /m.test(sdp) && /a=rtpmap:\d+ opus\/48000/i.test(sdp);
 }
 
+// Identificador opaco de Meta: puede contener Base64 estándar o URL-safe.
+export const validCallId = (id) => typeof id === 'string' && /^[A-Za-z0-9_.:+/=-]{1,512}$/.test(id);
+
 export function createCallingApi({ env = {}, enabled = false, fetchImpl = globalThis.fetch, timeoutMs = 12000 } = {}) {
   const c = callingConfiguration(env);
   const configured = c.issues.length === 0;
@@ -68,7 +71,7 @@ export function createCallingApi({ env = {}, enabled = false, fetchImpl = global
     },
     async action(action, { phone, callId, sdp, reference } = {}) {
       if (!['connect', 'pre_accept', 'accept', 'reject', 'terminate'].includes(action)) return { ok: false, error: 'invalid_action' };
-      if (action === 'connect' ? !/^\d{8,15}$/.test(phone ?? '') : !/^[\w.:-]{1,250}$/.test(callId ?? '')) return { ok: false, error: 'invalid_call' };
+      if (action === 'connect' ? !/^\d{8,15}$/.test(phone ?? '') : !validCallId(callId)) return { ok: false, error: 'invalid_call' };
       const needsSdp = ['connect', 'pre_accept', 'accept'].includes(action);
       if (needsSdp && !validCallSdp(sdp)) return { ok: false, error: 'invalid_sdp' };
       const r = await request('calls', { action,

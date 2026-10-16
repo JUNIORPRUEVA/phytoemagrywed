@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { validCallSdp } from './calling-api.mjs';
+import { validCallSdp, validCallId } from './calling-api.mjs';
 
 const FINAL = new Set(['completed', 'failed', 'rejected', 'missed']);
 const RANK = { starting: 0, ringing: 1, connecting: 2, active: 3 };
@@ -70,6 +70,7 @@ export function createCallingService({ store, api, customers, db, audit, enabled
           // Solo metadatos técnicos: nunca teléfonos, SDP ni el cuerpo del proveedor.
           console.info('[calling] webhook', JSON.stringify({
             calls: (value.calls ?? []).map((c) => ({ event: c.event, status: c.status,
+              validId: validCallId(c.id), legacyIdValid: /^[\w.:-]{1,250}$/.test(c.id ?? ''),
               direction: c.direction, sessionType: c.session?.sdp_type,
               validSdp: c.session ? validCallSdp(c.session.sdp) : null,
               hasCallerPhone: /^\d{8,15}$/.test(digits(c.from)),
@@ -78,7 +79,7 @@ export function createCallingService({ store, api, customers, db, audit, enabled
             errors: (value.errors ?? []).map((e) => e.code).filter(Number.isInteger),
           }));
           for (const raw of [...(value.calls ?? []), ...(value.statuses ?? [])]) {
-            if (!/^[\w.:-]{1,250}$/.test(raw.id ?? '')) continue;
+            if (!validCallId(raw.id)) continue;
             if (!['connect', 'terminate'].includes(raw.event) && !['RINGING', 'ACCEPTED', 'REJECTED'].includes(raw.status)) continue;
             const inbound = raw.direction === 'USER_INITIATED' || raw.session?.sdp_type === 'offer';
             const session = raw.session && validCallSdp(raw.session.sdp) && ['offer', 'answer'].includes(raw.session.sdp_type)
@@ -120,7 +121,10 @@ export function createCallingService({ store, api, customers, db, audit, enabled
         if (clock() - lastPruned > 3600000) { await store.prune(clock()); lastPruned = clock(); }
       } finally { processing = false; }
     },
-    start() { if (ready && !timer) { timer = setInterval(() => service.tick().catch(() => {}), 1000); timer.unref?.(); } },
+    start() { if (ready && !timer) { timer = setInterval(() => service.tick().catch((error) => {
+      console.error('[calling] worker failed', JSON.stringify({ name: error?.name,
+        code: /^[a-zA-Z0-9_]{1,60}$/.test(error?.code ?? '') ? error.code : 'processing_failed' }));
+    }), 1000); timer.unref?.(); } },
     async stop() { clearInterval(timer); timer = null; while (processing) await new Promise((r) => setTimeout(r, 10)); },
     async list(conversationId, actor) {
       if (!ready) return { ok: true, enabled: false, calls: [] };
