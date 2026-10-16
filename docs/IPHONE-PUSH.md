@@ -90,3 +90,18 @@ Cambio de producción aplicado:
 - Se cambió también el respaldo del servidor en esta rama y el valor de ejemplo/Compose al dominio público verificado para prevenir la reincidencia por falta de variable.
 
 Pendiente: autorización explícita para enviar la prueba real a los dos iPhones registrados. No se envió esa prueba durante la auditoría. La corrección de configuración está activa; su efecto sobre la aceptación por Apple y la presentación física todavía requiere un nuevo envío. Las 46 pruebas locales y la validación de Compose pasan.
+
+
+## Integración, despliegue y prueba real autorizada — 16 de octubre de 2026
+
+El usuario solicitó integrar en main, desplegar y verificar la recepción real. Se publicó el commit push `27140f1` y después el merge `3b61fd5` en `origin/main`. Se incorporó la versión de llamadas WhatsApp `dd1ad45` que ya estaba publicada para no perder funcionalidad de producción. Los cambios locales pendientes de panel, tema, modo offline y pruebas se conservaron sin incluirlos en el despliegue; hay respaldos stash identificados por fecha.
+
+Easypanel quedó configurado con origen GitHub `main`, conservando el entorno y sin activar autodeploy. Se desplegó mediante su API `deployAppService`. El despliegue terminó correctamente, con commit verificado `3b61fd5369287b7867f1e58151274b2f20b6d27b` y nueva imagen `sha256:8d8d8e4dc060f999d2859677e7a5ffcef0401000042a71906ba2f69ad17ae354`. Worker publicado: `crm-v75-iphone-push-receipts`. Se compararon hashes del app.js, sw.js y calling.js servidos por HTTPS contra los archivos del contenedor y coincidieron exactamente.
+
+Se enviaron dos pruebas reales, una a cada suscripción Apple activa, con el título «Prueba de notificaciones Phytoemagry». Se ejecutó la función de envío del servidor desplegado sobre esas suscripciones, usando las mismas colecciones, claves y ruta de confirmación del worker. Se registraron dos notificaciones y dos trabajos de prueba. Los scripts temporales no contenían secretos y se eliminó la copia temporal del módulo del contenedor.
+
+Resultado a las 18:13 del cliente (22:13 UTC): Apple aceptó ambas pruebas: `sent: 1`, `failed: 0`, `expired: 0` para cada teléfono. Esto contrasta con los HTTP 403 anteriores y valida que el transporte ya autentica el envío. Las notificaciones de prueba tienen IDs `not_iphone_verify_965f1d58ff42` y `not_iphone_verify_6ba8df776238`.
+
+Aún no se ha recibido `deviceStatus` de esos dos trabajos. Un worker anterior puede mostrar el aviso sin enviar esa confirmación, ya que ese diagnóstico no existía. Se pidió al usuario confirmar si apareció el aviso y, si no, abrir y actualizar la app antes de repetir. No se asegura recepción física ni presentación en pantalla hasta obtener esa confirmación o una respuesta del worker nuevo.
+
+Validación: 63 pruebas relevantes pasan en la versión con llamadas preservadas. Se ejecutó además la suite completa de la rama push: 1015 pruebas pasaron, 26 fallaron y 2 se omitieron. Al repetir los seis archivos fallidos con el commit base `54f9108`, se reprodujeron 24 fallos idénticos. Las otras dos aserciones de `panel-sales-uat` pasaron al repetirlas aisladas con la corrección push. No se modificaron funcionalidades ajenas para ocultar esos resultados.
