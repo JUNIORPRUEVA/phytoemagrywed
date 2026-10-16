@@ -829,25 +829,42 @@ export function createCustomerService(deps) {
       const needle = String(options.q ?? '').trim().toLowerCase();
       const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.from ?? '')) ? String(options.from) : null;
       const toDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.to ?? '')) ? String(options.to) : null;
+      /*
+       * BUSCAR ES BUSCAR EN TODAS — también en las archivadas.
+       *
+       * Con texto en el buscador NO se aplica ningún filtro de estado (ni
+       * «Archivados», ni «Nuevos», ni «Pendientes»…) ni el rango de fechas: quien
+       * escribe «Yahaira» quiere ver a Yahaira, esté activa, archivada, asignada a
+       * otro o haya escrito la semana pasada. Antes, si la conversación estaba
+       * archivada, la búsqueda no la encontraba y parecía que la clienta había
+       * desaparecido.
+       *
+       * Los filtros siguen mandando cuando NO se está buscando, y en cuanto se
+       * borra el texto vuelven a mandar tal cual estaban puestos: buscar no los
+       * cambia.
+       */
+      const buscando = needle.length > 0;
       const filtered = items.filter((row) => {
         if (row.deleted_at) return false;
         const archived = Boolean(row.archived_at);
-        if (options.filter === 'archivados') {
-          if (!archived) return false;
-        } else if (archived) {
-          return false;
-        }
-        if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
-        if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
-        if (options.filter === 'clientes' && row.has_purchase !== true) return false;
-        if (options.filter === 'seguimiento' && !row.next_followup) return false;
-        if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
-        if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
-        if (fromDay || toDay) {
-          if (!row.last_message_at) return false;
-          const messageDay = dayIn(new Date(row.last_message_at), timeZone);
-          if (fromDay && messageDay < fromDay) return false;
-          if (toDay && messageDay > toDay) return false;
+        if (!buscando) {
+          if (options.filter === 'archivados') {
+            if (!archived) return false;
+          } else if (archived) {
+            return false;
+          }
+          if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
+          if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
+          if (options.filter === 'clientes' && row.has_purchase !== true) return false;
+          if (options.filter === 'seguimiento' && !row.next_followup) return false;
+          if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
+          if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
+          if (fromDay || toDay) {
+            if (!row.last_message_at) return false;
+            const messageDay = dayIn(new Date(row.last_message_at), timeZone);
+            if (fromDay && messageDay < fromDay) return false;
+            if (toDay && messageDay > toDay) return false;
+          }
         }
         if (needle) {
           const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]

@@ -13,15 +13,15 @@
    * Bloques de marca (verde natural) + superficies neutras. Los nombres `--pe-*`
    * se mantienen como alias para no reescribir cada regla ya existente.
    */
-  --phyto-primary: #0b6b4f;
-  --phyto-primary-dark: #073d2e;
-  --phyto-primary-soft: #dfeee8;
-  --phyto-primary-tint: #f1f8f5;
+  --phyto-primary: #145bd7;
+  --phyto-primary-dark: #103e91;
+  --phyto-primary-soft: #e5efff;
+  --phyto-primary-tint: #f1f6ff;
   --surface: #ffffff;
-  --surface-muted: #f5f8f6;
-  --text-primary: #0e1b16;
-  --text-secondary: #4a5a52;
-  --border: #dce6e1;
+  --surface-muted: #f4f7fc;
+  --text-primary: #14243d;
+  --text-secondary: #53647d;
+  --border: #dce5f2;
   --danger: #b3261e;
   --warning: #7a4c00;
   --success: #128c68;
@@ -32,13 +32,13 @@
   --shadow-md: 0 6px 18px rgba(14, 27, 22, 0.1);
 
   --pe-brand-900: var(--phyto-primary-dark);
-  --pe-brand-800: #0a5540;
+  --pe-brand-800: #124baa;
   --pe-brand-700: var(--phyto-primary);
-  --pe-brand-600: var(--success);
+  --pe-brand-600: var(--phyto-primary);
   --pe-brand-100: var(--phyto-primary-soft);
   --pe-whatsapp: #0e7a3d;
   --pe-ink-900: var(--text-primary);
-  --pe-ink-700: #2a3a33;
+  --pe-ink-700: #34465f;
   --pe-ink-500: var(--text-secondary);
   --pe-border: var(--border);
   --pe-surface: var(--surface);
@@ -168,7 +168,7 @@ body {
   content: '';
   position: absolute;
   inset: 18px;
-  border: 1px solid rgba(11, 107, 79, 0.12);
+  border: 1px solid rgba(20, 91, 215, 0.12);
   border-radius: 28px;
   pointer-events: none;
 }
@@ -185,7 +185,7 @@ body {
   height: 138px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 18px 48px rgba(7, 61, 46, 0.14);
+  box-shadow: 0 18px 48px rgba(20, 60, 120, 0.14);
   animation: splash-breathe 1.9s ease-in-out infinite;
 }
 
@@ -216,7 +216,7 @@ body {
   margin-top: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(11, 107, 79, 0.13);
+  background: rgba(20, 91, 215, 0.13);
 }
 
 .splash__bar::after {
@@ -268,7 +268,7 @@ code {
   padding: 24px 18px calc(24px + env(safe-area-inset-bottom, 0px));
   background:
     radial-gradient(circle at 50% -8%, rgba(201, 226, 101, 0.28), transparent 46%),
-    radial-gradient(circle at 88% 108%, rgba(11, 107, 79, 0.12), transparent 46%),
+    radial-gradient(circle at 88% 108%, rgba(20, 91, 215, 0.12), transparent 46%),
     var(--pe-surface-alt);
 }
 
@@ -293,9 +293,9 @@ code {
   width: 62px;
   height: 62px;
   border-radius: 16px;
-  border: 1px solid rgba(11, 107, 79, 0.22);
+  border: 1px solid rgba(20, 91, 215, 0.22);
   background: linear-gradient(160deg, #ffffff, var(--phyto-primary-tint));
-  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 24px rgba(20, 60, 120, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
 .login__logo {
@@ -393,7 +393,7 @@ code {
   cursor: pointer;
   position: relative;
   overflow: hidden;
-  box-shadow: 0 6px 16px rgba(11, 107, 79, 0.26);
+  box-shadow: 0 6px 16px rgba(20, 91, 215, 0.26);
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -413,7 +413,7 @@ code {
 .login .login__submit:hover,
 .login .login__submit:focus-visible {
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(11, 107, 79, 0.34);
+  box-shadow: 0 10px 22px rgba(20, 91, 215, 0.34);
 }
 
 .login .login__submit:hover::after,
@@ -423,7 +423,7 @@ code {
 
 .login .login__submit:active {
   transform: translateY(0);
-  box-shadow: 0 4px 10px rgba(11, 107, 79, 0.28);
+  box-shadow: 0 4px 10px rgba(20, 91, 215, 0.28);
 }
 
 @keyframes login-sheen {
@@ -611,7 +611,7 @@ body[data-delivery-detail='true'] .content {
     radial-gradient(circle at 76% 18%, rgba(68, 217, 177, 0.55), transparent 34%),
     linear-gradient(135deg, #006150 0%, #07846f 48%, #33d0a9 100%);
   color: #fff;
-  box-shadow: 0 20px 50px rgba(7, 61, 46, 0.22);
+  box-shadow: 0 20px 50px rgba(20, 60, 120, 0.22);
 }
 
 .dashboard-head::after {
@@ -639,7 +639,7 @@ body[data-delivery-detail='true'] .content {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.95);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 12px 26px rgba(7, 61, 46, 0.16);
+  box-shadow: 0 12px 26px rgba(20, 60, 120, 0.16);
   cursor: pointer;
 }
 
@@ -719,11 +719,11 @@ body[data-delivery-detail='true'] .content {
   place-items: center;
   width: 38px;
   height: 38px;
-  border: 1px solid rgba(11, 107, 79, 0.13);
+  border: 1px solid rgba(20, 91, 215, 0.13);
   border-radius: 50%;
   background: #fff;
   color: var(--phyto-primary-dark);
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.08);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.08);
   cursor: pointer;
 }
 
@@ -798,7 +798,7 @@ body[data-tab='hoy'] .stat::after {
   width: 112px;
   height: 80px;
   border-radius: 50%;
-  background: rgba(11, 107, 79, 0.06);
+  background: rgba(20, 91, 215, 0.06);
 }
 
 .stat__icon {
@@ -899,7 +899,7 @@ body[data-tab='hoy'] .stat__label {
   gap: 10px;
   min-height: 72px;
   padding: 10px 12px;
-  border: 1px solid rgba(11, 107, 79, 0.08);
+  border: 1px solid rgba(20, 91, 215, 0.08);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.95);
   box-shadow: 0 8px 20px rgba(14, 27, 22, 0.055);
@@ -1462,11 +1462,11 @@ body[data-tab='hoy'] .stat__label {
   place-items: center;
   width: 56px;
   height: 56px;
-  border: 1px solid rgba(11, 107, 79, 0.18);
+  border: 1px solid rgba(20, 91, 215, 0.18);
   border-radius: 16px;
   background: var(--phyto-primary);
   color: #fff;
-  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.25);
+  box-shadow: 0 16px 36px rgba(20, 60, 120, 0.25);
   cursor: pointer;
 }
 
@@ -1536,7 +1536,7 @@ body[data-tab='hoy'] .stat__label {
   gap: 4px;
   margin-bottom: 12px;
   padding: 18px;
-  border: 1px solid rgba(11, 107, 79, 0.12);
+  border: 1px solid rgba(20, 91, 215, 0.12);
   border-radius: 18px;
   background:
     radial-gradient(circle at 94% 12%, rgba(159, 202, 44, 0.2), transparent 32%),
@@ -1593,7 +1593,7 @@ body[data-tab='hoy'] .stat__label {
   width: 108px;
   height: 108px;
   font-size: 2rem;
-  box-shadow: 0 16px 34px rgba(7, 61, 46, 0.16);
+  box-shadow: 0 16px 34px rgba(20, 60, 120, 0.16);
 }
 
 .profile-hero__main {
@@ -1999,8 +1999,8 @@ body[data-tab='hoy'] .stat__label {
 
 .profile-order--open {
   background: #fff;
-  border-color: rgba(11, 107, 79, 0.24);
-  box-shadow: 0 8px 22px rgba(7, 61, 46, 0.08);
+  border-color: rgba(20, 91, 215, 0.24);
+  box-shadow: 0 8px 22px rgba(20, 60, 120, 0.08);
 }
 
 .profile-order__main,
@@ -2075,7 +2075,7 @@ body[data-tab='hoy'] .stat__label {
   gap: 14px;
   margin-bottom: 12px;
   padding: 14px 16px;
-  border: 1px solid rgba(11, 107, 79, 0.14);
+  border: 1px solid rgba(20, 91, 215, 0.14);
   border-radius: var(--pe-radius-lg);
   background: linear-gradient(145deg, rgba(246, 249, 247, 0.96), rgba(223, 238, 232, 0.7));
 }
@@ -2124,7 +2124,7 @@ body[data-tab='hoy'] .stat__label {
   background:
     linear-gradient(135deg, rgba(8, 122, 91, 0.1), rgba(255, 255, 255, 0.86)),
     rgba(255, 255, 255, 0.82);
-  box-shadow: 0 14px 34px rgba(7, 61, 46, 0.08);
+  box-shadow: 0 14px 34px rgba(20, 60, 120, 0.08);
 }
 
 .profile-earnings__icon {
@@ -2262,7 +2262,7 @@ body[data-tab='hoy'] .stat__label {
   width: 40px;
   height: 40px;
   font-size: 12px;
-  box-shadow: 0 6px 16px rgba(7, 61, 46, 0.09);
+  box-shadow: 0 6px 16px rgba(20, 60, 120, 0.09);
 }
 
 .client-row__body {
@@ -2343,7 +2343,7 @@ body[data-tab='hoy'] .stat__label {
 .user-row {
   margin: 0;
   border: 0;
-  border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+  border-bottom: 1px solid rgba(20, 91, 215, 0.08);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -2351,7 +2351,7 @@ body[data-tab='hoy'] .stat__label {
 }
 
 .user-row:focus-visible {
-  outline: 3px solid rgba(11, 107, 79, 0.18);
+  outline: 3px solid rgba(20, 91, 215, 0.18);
   outline-offset: -3px;
 }
 
@@ -2368,7 +2368,7 @@ body[data-tab='hoy'] .stat__label {
   width: 38px;
   height: 38px;
   border-radius: 12px;
-  background: rgba(11, 107, 79, 0.11);
+  background: rgba(20, 91, 215, 0.11);
   color: var(--phyto-primary-dark);
   font-size: 0.74rem;
   font-weight: 850;
@@ -2405,7 +2405,7 @@ body[data-tab='hoy'] .stat__label {
   overflow: hidden;
   padding: 2px 6px;
   border-radius: 999px;
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
   color: var(--phyto-primary-dark);
   font-size: 0.62rem;
   font-weight: 800;
@@ -2445,11 +2445,11 @@ body[data-tab='hoy'] .stat__label {
   place-items: center;
   width: 56px;
   height: 56px;
-  border: 1px solid rgba(11, 107, 79, 0.18);
+  border: 1px solid rgba(20, 91, 215, 0.18);
   border-radius: 16px;
   background: var(--phyto-primary);
   color: #fff;
-  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.25);
+  box-shadow: 0 16px 36px rgba(20, 60, 120, 0.25);
   cursor: pointer;
 }
 
@@ -2476,11 +2476,11 @@ body[data-tab='hoy'] .stat__label {
   place-items: center;
   width: 56px;
   height: 56px;
-  border: 1px solid rgba(11, 107, 79, 0.18);
+  border: 1px solid rgba(20, 91, 215, 0.18);
   border-radius: 16px;
   background: #0f766e;
   color: #fff;
-  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.25);
+  box-shadow: 0 16px 36px rgba(20, 60, 120, 0.25);
   cursor: pointer;
 }
 
@@ -2521,7 +2521,7 @@ body[data-tab='perfil-cliente'] .content {
   background:
     linear-gradient(180deg, rgba(7, 42, 32, 0.06) 0%, rgba(7, 42, 32, 0.52) 58%, rgba(7, 42, 32, 0.84) 100%),
     linear-gradient(145deg, #dceee5, #f7fbf8);
-  box-shadow: 0 14px 34px rgba(7, 61, 46, 0.14);
+  box-shadow: 0 14px 34px rgba(20, 60, 120, 0.14);
 }
 
 .profile-hero--photo {
@@ -2538,7 +2538,7 @@ body[data-tab='perfil-cliente'] .content {
   inset: 0;
   background:
     radial-gradient(circle at 22% 18%, rgba(159, 202, 44, 0.24), transparent 30%),
-    radial-gradient(circle at 86% 12%, rgba(11, 107, 79, 0.18), transparent 34%);
+    radial-gradient(circle at 86% 12%, rgba(20, 91, 215, 0.18), transparent 34%);
 }
 
 .profile-back {
@@ -2554,7 +2554,7 @@ body[data-tab='perfil-cliente'] .content {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.82);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 10px 22px rgba(7, 61, 46, 0.16);
+  box-shadow: 0 10px 22px rgba(20, 60, 120, 0.16);
   backdrop-filter: blur(8px);
   cursor: pointer;
 }
@@ -2574,7 +2574,7 @@ body[data-tab='perfil-cliente'] .content {
   height: 100%;
   border: 0;
   background: transparent;
-  color: rgba(7, 61, 46, 0.24);
+  color: rgba(20, 60, 120, 0.24);
   font-size: 5.2rem;
   font-weight: 850;
   cursor: zoom-in;
@@ -2616,11 +2616,11 @@ body[data-tab='perfil-cliente'] .content {
   place-items: center;
   width: 58px;
   height: 58px;
-  border: 1px solid rgba(11, 107, 79, 0.18);
+  border: 1px solid rgba(20, 91, 215, 0.18);
   border-radius: 18px;
   background: var(--phyto-primary);
   color: #fff;
-  box-shadow: 0 18px 38px rgba(7, 61, 46, 0.26);
+  box-shadow: 0 18px 38px rgba(20, 60, 120, 0.26);
   cursor: pointer;
 }
 
@@ -2897,7 +2897,7 @@ body[data-tab='whatsapp'] .content {
   max-width: 420px;
   margin: 32px auto;
   padding: 22px 18px;
-  border: 1px solid rgba(11, 107, 79, 0.14);
+  border: 1px solid rgba(20, 91, 215, 0.14);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.86);
   text-align: center;
@@ -2909,7 +2909,7 @@ body[data-tab='whatsapp'] .content {
   width: 46px;
   height: 46px;
   border-radius: 14px;
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
   color: var(--phyto-primary);
 }
 
@@ -3093,7 +3093,7 @@ body[data-tab='whatsapp'] .content {
 .scrim {
   position: fixed;
   inset: 0;
-  background: rgba(7, 61, 46, 0.38);
+  background: rgba(20, 60, 120, 0.38);
   opacity: 0;
   transition: opacity 0.18s ease;
   z-index: 40;
@@ -3152,7 +3152,7 @@ body[data-tab='whatsapp'] .content {
   flex: 0 0 auto;
   display: block;
   object-fit: contain;
-  filter: drop-shadow(0 4px 8px rgba(7, 61, 46, 0.1));
+  filter: drop-shadow(0 4px 8px rgba(20, 60, 120, 0.1));
 }
 
 .drawer__brand > span {
@@ -3265,7 +3265,7 @@ body[data-tab='whatsapp'] .content {
   border-radius: 50%;
   background: var(--phyto-primary);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(11, 107, 79, 0.32);
+  box-shadow: 0 4px 12px rgba(20, 91, 215, 0.32);
   font-size: 1.15rem;
 }
 
@@ -3315,10 +3315,10 @@ body[data-tab='whatsapp'] .content {
 .chat-bg {
   background-color: var(--phyto-primary-tint);
   background-image:
-    radial-gradient(ellipse 26px 12px at 18% 22%, rgba(11, 107, 79, 0.055) 40%, transparent 42%),
-    radial-gradient(ellipse 20px 10px at 72% 64%, rgba(11, 107, 79, 0.045) 40%, transparent 42%),
-    radial-gradient(circle 3px at 44% 82%, rgba(11, 107, 79, 0.05) 45%, transparent 46%),
-    radial-gradient(ellipse 30px 13px at 86% 12%, rgba(11, 107, 79, 0.035) 40%, transparent 42%);
+    radial-gradient(ellipse 26px 12px at 18% 22%, rgba(20, 91, 215, 0.055) 40%, transparent 42%),
+    radial-gradient(ellipse 20px 10px at 72% 64%, rgba(20, 91, 215, 0.045) 40%, transparent 42%),
+    radial-gradient(circle 3px at 44% 82%, rgba(20, 91, 215, 0.05) 45%, transparent 46%),
+    radial-gradient(ellipse 30px 13px at 86% 12%, rgba(20, 91, 215, 0.035) 40%, transparent 42%);
   background-size: 260px 260px, 300px 300px, 220px 220px, 340px 340px;
 }
 
@@ -3955,7 +3955,7 @@ body[data-tab='whatsapp'] .content {
   gap: 12px;
   margin: 0 0 12px;
   padding: 12px;
-  border: 1px solid rgba(11, 107, 79, 0.16);
+  border: 1px solid rgba(20, 91, 215, 0.16);
   border-radius: 14px;
   background: linear-gradient(145deg, rgba(246, 249, 247, 0.96), rgba(223, 238, 232, 0.72));
 }
@@ -4015,7 +4015,7 @@ body[data-tab='whatsapp'] .content {
   display: grid;
   gap: 2px;
   padding-left: 10px;
-  border-left: 3px solid rgba(11, 107, 79, 0.2);
+  border-left: 3px solid rgba(20, 91, 215, 0.2);
 }
 
 .order-timeline__item strong {
@@ -4557,7 +4557,7 @@ body {
   padding: 7px 10px 8px;
   overflow: visible;
   background:
-    radial-gradient(circle at 50% -15px, transparent 0 38px, rgba(11, 107, 79, 0.1) 39px 40px, transparent 41px),
+    radial-gradient(circle at 50% -15px, transparent 0 38px, rgba(20, 91, 215, 0.1) 39px 40px, transparent 41px),
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 248, 0.94));
   backdrop-filter: blur(18px) saturate(1.12);
   border: 1px solid rgba(208, 224, 216, 0.9);
@@ -4601,7 +4601,7 @@ body {
 
 .tab[aria-current='true'] {
   color: var(--phyto-primary);
-  background: rgba(11, 107, 79, 0.07);
+  background: rgba(20, 91, 215, 0.07);
   font-weight: 700;
 }
 
@@ -4799,7 +4799,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   min-height: 34px;
   padding: 6px 12px;
   border-color: transparent;
-  background: rgba(11, 107, 79, 0.06);
+  background: rgba(20, 91, 215, 0.06);
   font-size: 13px;
 }
 
@@ -4845,11 +4845,11 @@ body[data-wa-view='chat'] .float-btn--menu {
   width: 54px;
   height: 54px;
   padding: 0;
-  border: 1px solid rgba(11, 107, 79, 0.18);
+  border: 1px solid rgba(20, 91, 215, 0.18);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.96);
   color: var(--phyto-primary);
-  box-shadow: 0 14px 30px rgba(7, 61, 46, 0.18);
+  box-shadow: 0 14px 30px rgba(20, 60, 120, 0.18);
   backdrop-filter: blur(10px);
   cursor: pointer;
   touch-action: manipulation;
@@ -4862,7 +4862,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 .wa-new-chat:hover,
 .wa-new-chat:focus-visible {
   background: #fff;
-  box-shadow: 0 16px 36px rgba(7, 61, 46, 0.24);
+  box-shadow: 0 16px 36px rgba(20, 60, 120, 0.24);
 }
 
 .wa-new-chat:active {
@@ -4909,15 +4909,15 @@ body[data-wa-view='chat'] .float-btn--menu {
  * también ese botón.
  */
 .conv-wrap:hover {
-  background: rgba(11, 107, 79, 0.045);
+  background: rgba(20, 91, 215, 0.045);
 }
 
 .conv-wrap--selected {
-  background: rgba(11, 107, 79, 0.075);
+  background: rgba(20, 91, 215, 0.075);
 }
 
 .conv-wrap:has(.conv--active) {
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
 }
 
 /* La marca de la conversación abierta, pegada al borde izquierdo de la fila. */
@@ -4993,7 +4993,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 
 .conv__more:hover,
 .conv__more:focus-visible {
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
   color: var(--phyto-primary);
   opacity: 1;
 }
@@ -5085,7 +5085,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   background: var(--phyto-primary);
   font-size: 10.5px;
   line-height: 1.1;
-  box-shadow: 0 5px 13px rgba(11, 107, 79, 0.22);
+  box-shadow: 0 5px 13px rgba(20, 91, 215, 0.22);
 }
 
 .conv__unread .svg {
@@ -5158,19 +5158,19 @@ body[data-wa-view='chat'] .float-btn--menu {
   flex: 0 0 auto;
   width: 48px;
   height: 48px;
-  border: 2px solid rgba(11, 107, 79, 0.12);
+  border: 2px solid rgba(20, 91, 215, 0.12);
   background: linear-gradient(145deg, #f8fff9, #dff0e6);
   color: var(--phyto-primary-dark);
   font: inherit;
   font-size: 15px;
   font-weight: 850;
   cursor: pointer;
-  box-shadow: 0 9px 22px rgba(7, 61, 46, 0.14);
+  box-shadow: 0 9px 22px rgba(20, 60, 120, 0.14);
 }
 
 .wa__chat-avatar:hover,
 .wa__chat-avatar:focus-visible {
-  border-color: rgba(11, 107, 79, 0.28);
+  border-color: rgba(20, 91, 215, 0.28);
   background: #fff;
   transform: translateY(-1px);
 }
@@ -5197,11 +5197,11 @@ body[data-wa-view='chat'] .float-btn--menu {
   place-items: center;
   width: 40px;
   height: 40px;
-  border: 1px solid rgba(11, 107, 79, 0.12);
+  border: 1px solid rgba(20, 91, 215, 0.12);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.86);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.1);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.1);
   cursor: pointer;
   touch-action: manipulation;
 }
@@ -5457,7 +5457,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   background: linear-gradient(
     90deg,
     var(--phyto-primary) var(--audio-progress, 0%),
-    rgba(11, 107, 79, 0.18) var(--audio-progress, 0%)
+    rgba(20, 91, 215, 0.18) var(--audio-progress, 0%)
   );
 }
 
@@ -5475,7 +5475,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 .audio__seek::-moz-range-track {
   height: 4px;
   border-radius: 999px;
-  background: rgba(11, 107, 79, 0.18);
+  background: rgba(20, 91, 215, 0.18);
 }
 
 .audio__seek::-moz-range-progress {
@@ -5632,7 +5632,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   border: 1px solid rgba(12, 121, 88, 0.18);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 36px rgba(7, 61, 46, 0.16);
+  box-shadow: 0 18px 36px rgba(20, 60, 120, 0.16);
   backdrop-filter: blur(14px);
   animation: delivery-chat-cta-in 220ms var(--pe-ease) both;
 }
@@ -6109,7 +6109,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 
 .conv__assign--empty {
   padding: 0 6px;
-  border: 1px solid rgba(11, 107, 79, 0.14);
+  border: 1px solid rgba(20, 91, 215, 0.14);
   border-radius: 999px;
   color: var(--phyto-primary-dark);
   background: rgba(223, 238, 232, 0.5);
@@ -6145,7 +6145,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 }
 
 .wa-bulk__x:hover {
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
   color: var(--phyto-primary);
 }
 
@@ -6179,7 +6179,7 @@ body[data-wa-view='chat'] .float-btn--menu {
 }
 
 .wa-bulk__btn:hover {
-  background: rgba(11, 107, 79, 0.09);
+  background: rgba(20, 91, 215, 0.09);
 }
 
 .wa-bulk__btn--danger {
@@ -6211,10 +6211,10 @@ body[data-wa-view='chat'] .float-btn--menu {
   min-width: 178px;
   max-width: 100%;
   padding: 11px 12px;
-  border: 1px solid rgba(11, 107, 79, 0.14);
+  border: 1px solid rgba(20, 91, 215, 0.14);
   border-radius: 14px;
   background: linear-gradient(150deg, #ffffff 0%, #f1f8f5 100%);
-  box-shadow: 0 6px 16px rgba(7, 61, 46, 0.07);
+  box-shadow: 0 6px 16px rgba(20, 60, 120, 0.07);
   text-align: left;
 }
 .loc--empty {
@@ -6230,7 +6230,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: rgba(11, 107, 79, 0.1);
+  background: rgba(20, 91, 215, 0.1);
   font-size: 14px;
   line-height: 1;
 }
@@ -6250,19 +6250,19 @@ body[data-wa-view='chat'] .float-btn--menu {
   padding: 0 14px;
   border: 0;
   border-radius: 999px;
-  background: rgba(11, 107, 79, 0.09);
+  background: rgba(20, 91, 215, 0.09);
   font-size: 13.5px;
   font-weight: 650;
-  color: var(--pe-brand-700, #0b6b4f);
+  color: var(--pe-brand-700, #145bd7);
   text-decoration: none;
   touch-action: manipulation;
 }
-.loc__actions .loc__link:hover { background: rgba(11, 107, 79, 0.16); }
+.loc__actions .loc__link:hover { background: rgba(20, 91, 215, 0.16); }
 .loc__actions .loc__link:active { transform: scale(0.97); }
 .loc__link {
   font-size: 13px;
   font-weight: 600;
-  color: var(--pe-brand-700, #0b6b4f);
+  color: var(--pe-brand-700, #145bd7);
   text-decoration: none;
   border-bottom: 1px solid currentColor;
 }
@@ -6281,11 +6281,11 @@ body[data-wa-view='chat'] .float-btn--menu {
   height: 44px;
   padding: 0;
   margin-left: auto;
-  border: 1px solid rgba(11, 107, 79, 0.16);
+  border: 1px solid rgba(20, 91, 215, 0.16);
   border-radius: 50%;
   background: var(--surface, #fff);
-  color: var(--pe-brand-700, #0b6b4f);
-  box-shadow: 0 2px 6px rgba(7, 61, 46, 0.06);
+  color: var(--pe-brand-700, #145bd7);
+  box-shadow: 0 2px 6px rgba(20, 60, 120, 0.06);
   cursor: pointer;
   touch-action: manipulation;
   transition: background 160ms ease, transform 160ms ease;
@@ -6314,7 +6314,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  color: var(--pe-brand-700, #0b6b4f);
+  color: var(--pe-brand-700, #145bd7);
   padding: 6px 0;
 }
 .loc-coords { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -6397,10 +6397,10 @@ body[data-wa-view='chat'] .float-btn--menu {
   height: 42px;
   top: calc(9px + env(safe-area-inset-top, 0px));
   left: 16px;
-  border: 1px solid rgba(11, 107, 79, 0.18);
+  border: 1px solid rgba(20, 91, 215, 0.18);
   background: rgba(255, 255, 255, 0.92);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 10px 22px rgba(7, 61, 46, 0.12);
+  box-shadow: 0 10px 22px rgba(20, 60, 120, 0.12);
 }
 
 .topbar {
@@ -6424,10 +6424,10 @@ body[data-wa-view='chat'] .float-btn--menu {
 @keyframes menu-soft-pulse {
   0%,
   100% {
-    box-shadow: 0 10px 26px rgba(7, 61, 46, 0.16);
+    box-shadow: 0 10px 26px rgba(20, 60, 120, 0.16);
   }
   50% {
-    box-shadow: 0 12px 34px rgba(11, 107, 79, 0.26);
+    box-shadow: 0 12px 34px rgba(20, 91, 215, 0.26);
   }
 }
 
@@ -6468,7 +6468,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   min-height: 54px;
   margin: 6px 0 8px;
   padding: 8px 10px;
-  border-color: rgba(11, 107, 79, 0.12);
+  border-color: rgba(20, 91, 215, 0.12);
   background: rgba(255, 255, 255, 0.74);
 }
 
@@ -6550,7 +6550,7 @@ body[data-wa-view='chat'] .float-btn--menu {
   gap: 8px;
   margin-top: auto;
   padding-top: 10px;
-  border-top: 1px solid rgba(11, 107, 79, 0.1);
+  border-top: 1px solid rgba(20, 91, 215, 0.1);
 }
 
 .drawer__nav--bottom {
@@ -6590,7 +6590,7 @@ body[data-tab='hoy'] .view__title {
   margin: 18px auto 18px;
   padding: 5px 12px;
   border-radius: 999px;
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
   color: var(--phyto-primary-dark);
   font-size: 0.92rem;
   font-weight: 700;
@@ -6695,12 +6695,12 @@ body[data-tab='hoy'] .view__title {
   margin-top: -22px;
   border-radius: 50%;
   background:
-    linear-gradient(145deg, #14a66f 0%, var(--phyto-primary) 48%, #073d2e 100%);
+    linear-gradient(145deg, #378aff 0%, var(--phyto-primary) 48%, #103e91 100%);
   color: #fff;
   border: 3px solid rgba(255, 255, 255, 0.98);
   box-shadow:
-    0 16px 30px rgba(7, 61, 46, 0.3),
-    0 4px 10px rgba(7, 61, 46, 0.18),
+    0 16px 30px rgba(20, 60, 120, 0.3),
+    0 4px 10px rgba(20, 60, 120, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.28);
   animation: whatsapp-breathe 3.4s ease-in-out infinite;
 }
@@ -6835,7 +6835,7 @@ body[data-tab='hoy'] .view__title {
   margin: 22px auto 16px;
   padding: 8px 18px;
   border-radius: 999px;
-  background: linear-gradient(135deg, rgba(11, 107, 79, 0.12), rgba(51, 208, 169, 0.18));
+  background: linear-gradient(135deg, rgba(20, 91, 215, 0.12), rgba(51, 208, 169, 0.18));
   color: var(--phyto-primary-dark);
   font-size: 1rem;
 }
@@ -6997,13 +6997,13 @@ body[data-tab='hoy'] .dash-section__head h2 {
     min-height: 66px;
     padding: 7px 10px 8px;
     overflow: visible;
-    border: 1px solid rgba(11, 107, 79, 0.1);
+    border: 1px solid rgba(20, 91, 215, 0.1);
     border-radius: 28px;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 253, 251, 0.9)),
       rgba(255, 255, 255, 0.92);
     box-shadow:
-      0 18px 42px rgba(7, 61, 46, 0.18),
+      0 18px 42px rgba(20, 60, 120, 0.18),
       0 2px 10px rgba(14, 27, 22, 0.06),
       inset 0 1px 0 rgba(255, 255, 255, 0.72);
     backdrop-filter: blur(18px);
@@ -7021,7 +7021,7 @@ body[data-tab='hoy'] .dash-section__head h2 {
     background:
       radial-gradient(circle at 50% 36%, rgba(255, 255, 255, 0.98) 0 39px, transparent 40px),
       linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0));
-    filter: drop-shadow(0 -3px 10px rgba(7, 61, 46, 0.06));
+    filter: drop-shadow(0 -3px 10px rgba(20, 60, 120, 0.06));
     pointer-events: none;
   }
 
@@ -7038,7 +7038,7 @@ body[data-tab='hoy'] .dash-section__head h2 {
 
   .tab:hover,
   .tab:focus-visible {
-    background: rgba(11, 107, 79, 0.045);
+    background: rgba(20, 91, 215, 0.045);
   }
 
   .tab__icon,
@@ -7061,7 +7061,7 @@ body[data-tab='hoy'] .dash-section__head h2 {
   }
 
   .tab[aria-current='true'] {
-    background: rgba(11, 107, 79, 0.07);
+    background: rgba(20, 91, 215, 0.07);
     color: var(--phyto-primary);
     font-weight: 800;
   }
@@ -7082,8 +7082,8 @@ body[data-tab='hoy'] .dash-section__head h2 {
       linear-gradient(145deg, #0db27b, var(--phyto-primary-dark));
     color: #fff;
     box-shadow:
-      0 16px 30px rgba(7, 61, 46, 0.28),
-      0 3px 8px rgba(7, 61, 46, 0.18);
+      0 16px 30px rgba(20, 60, 120, 0.28),
+      0 3px 8px rgba(20, 60, 120, 0.18);
   }
 
   .tab--center .tab__icon .svg {
@@ -7113,7 +7113,7 @@ body[data-tab='hoy'] .dash-section__head h2 {
     transform: translateX(26px);
     border: 2px solid #fff;
     background: var(--phyto-primary);
-    box-shadow: 0 6px 14px rgba(7, 61, 46, 0.2);
+    box-shadow: 0 6px 14px rgba(20, 60, 120, 0.2);
   }
 }
 
@@ -7210,18 +7210,18 @@ body[data-wa-view='chat'] .mobile-header {
 .simple-head {
   gap: 12px;
   padding: calc(5px + env(safe-area-inset-top, 0px)) 14px 5px;
-  border-bottom: 1px solid rgba(11, 107, 79, 0.07);
+  border-bottom: 1px solid rgba(20, 91, 215, 0.07);
   background: rgba(250, 253, 251, 0.9);
-  box-shadow: 0 12px 26px -20px rgba(7, 61, 46, 0.5);
+  box-shadow: 0 12px 26px -20px rgba(20, 60, 120, 0.5);
 }
 
 .simple-head__back {
   flex: 0 0 auto;
   width: 44px;
   height: 44px;
-  border: 1px solid rgba(11, 107, 79, 0.16);
+  border: 1px solid rgba(20, 91, 215, 0.16);
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 20px rgba(7, 61, 46, 0.12);
+  box-shadow: 0 8px 20px rgba(20, 60, 120, 0.12);
   transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
@@ -7234,7 +7234,7 @@ body[data-wa-view='chat'] .mobile-header {
 .simple-head__back:focus-visible {
   background: #fff;
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.16);
+  box-shadow: 0 10px 24px rgba(20, 60, 120, 0.16);
 }
 
 .simple-head__back:active {
@@ -7282,7 +7282,7 @@ body[data-wa-view='chat'] .mobile-header {
     display: flex;
     height: 56px;
     padding: 0 176px 0 22px;
-    border: 1px solid rgba(11, 107, 79, 0.09);
+    border: 1px solid rgba(20, 91, 215, 0.09);
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.86);
     box-shadow: 0 14px 34px rgba(14, 27, 22, 0.09);
@@ -7309,7 +7309,7 @@ body[data-wa-view='chat'] .mobile-header {
     height: 54px;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.92);
-    box-shadow: 0 14px 32px rgba(7, 61, 46, 0.13);
+    box-shadow: 0 14px 32px rgba(20, 60, 120, 0.13);
   }
 
   body[data-tab] .presence,
@@ -7320,7 +7320,7 @@ body[data-wa-view='chat'] .mobile-header {
     display: inline-flex;
     padding: 8px 13px 8px 11px;
     background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 10px 24px rgba(7, 61, 46, 0.1);
+    box-shadow: 0 10px 24px rgba(20, 60, 120, 0.1);
   }
 
   .content,
@@ -7343,7 +7343,7 @@ body[data-wa-view='chat'] .mobile-header {
     height: calc(100dvh - 126px);
     min-height: 560px;
     overflow: hidden;
-    border: 1px solid rgba(11, 107, 79, 0.08);
+    border: 1px solid rgba(20, 91, 215, 0.08);
     border-radius: 22px;
     background: rgba(255, 255, 255, 0.72);
     box-shadow: 0 16px 38px rgba(14, 27, 22, 0.07);
@@ -7374,7 +7374,7 @@ body[data-wa-view='chat'] .mobile-header {
     grid-template-rows: auto auto;
     min-height: 116px;
     padding: 18px;
-    border: 1px solid rgba(11, 107, 79, 0.08);
+    border: 1px solid rgba(20, 91, 215, 0.08);
     border-radius: 18px;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 253, 251, 0.94));
@@ -7453,7 +7453,7 @@ body[data-wa-view='chat'] .mobile-header {
     gap: 10px;
     margin: 0 0 22px;
     padding: 16px;
-    border: 1px solid rgba(11, 107, 79, 0.08);
+    border: 1px solid rgba(20, 91, 215, 0.08);
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.78);
     box-shadow: 0 12px 30px rgba(14, 27, 22, 0.055);
@@ -7501,7 +7501,7 @@ body[data-wa-view='chat'] .mobile-header {
   margin: 0;
   padding: 7px 9px;
   border-radius: 10px;
-  background: rgba(11, 107, 79, 0.08);
+  background: rgba(20, 91, 215, 0.08);
   color: var(--phyto-primary-dark);
   font-size: 0.82rem;
   font-weight: 800;
@@ -7526,7 +7526,7 @@ body[data-wa-view='chat'] .mobile-header {
   border: 3px solid #fff;
   border-radius: 50%;
   color: #fff;
-  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.22);
+  box-shadow: 0 10px 24px rgba(20, 60, 120, 0.22);
   transition: transform 180ms ease;
 }
 
@@ -7539,7 +7539,7 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 .delivery-leaflet-marker--customer {
-  background: #0b6b4f;
+  background: #145bd7;
 }
 
 .delivery-leaflet-marker--delivery {
@@ -7657,7 +7657,7 @@ body[data-wa-view='chat'] .mobile-header {
   font-size: 0.82rem;
   font-weight: 800;
   text-decoration: none;
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.06);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.06);
 }
 
 .config-menu a:first-child {
@@ -7804,8 +7804,8 @@ body[data-wa-view='chat'] .mobile-header {
 }
 
 .delivery-status--entregado {
-  border-color: rgba(11, 107, 79, 0.2);
-  background: rgba(11, 107, 79, 0.1);
+  border-color: rgba(20, 91, 215, 0.2);
+  background: rgba(20, 91, 215, 0.1);
   color: #075e45;
 }
 
@@ -8834,9 +8834,9 @@ body[data-wa-view='chat'] .mobile-header {
     gap: 10px;
     min-height: 58px;
     padding: calc(6px + env(safe-area-inset-top, 0px)) 12px 6px;
-    border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+    border-bottom: 1px solid rgba(20, 91, 215, 0.08);
     color: var(--phyto-primary-dark);
-    box-shadow: 0 14px 26px -24px rgba(7, 61, 46, 0.55);
+    box-shadow: 0 14px 26px -24px rgba(20, 60, 120, 0.55);
   }
 
   .wa-appbar--search {
@@ -8851,11 +8851,11 @@ body[data-wa-view='chat'] .mobile-header {
     width: 40px;
     height: 40px;
     padding: 0;
-    border: 1px solid rgba(11, 107, 79, 0.13);
+    border: 1px solid rgba(20, 91, 215, 0.13);
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.94);
     color: var(--phyto-primary-dark);
-    box-shadow: 0 8px 18px rgba(7, 61, 46, 0.09);
+    box-shadow: 0 8px 18px rgba(20, 60, 120, 0.09);
     cursor: pointer;
     transition: transform 150ms ease, background 150ms ease, box-shadow 150ms ease;
     touch-action: manipulation;
@@ -8869,12 +8869,12 @@ body[data-wa-view='chat'] .mobile-header {
   .wa-appbar__icon:active {
     transform: scale(0.94);
     background: #fff;
-    box-shadow: 0 5px 12px rgba(7, 61, 46, 0.1);
+    box-shadow: 0 5px 12px rgba(20, 60, 120, 0.1);
   }
 
   .wa-appbar__icon[aria-pressed='true'] {
-    border-color: rgba(11, 107, 79, 0.24);
-    background: rgba(11, 107, 79, 0.1);
+    border-color: rgba(20, 91, 215, 0.24);
+    background: rgba(20, 91, 215, 0.1);
     color: var(--phyto-primary);
   }
 
@@ -8928,7 +8928,7 @@ body[data-wa-view='chat'] .mobile-header {
     min-width: 0;
     min-height: 40px;
     padding: 0 13px;
-    border: 1px solid rgba(11, 107, 79, 0.14);
+    border: 1px solid rgba(20, 91, 215, 0.14);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.96);
     color: var(--text-primary);
@@ -8939,8 +8939,8 @@ body[data-wa-view='chat'] .mobile-header {
   }
 
   .wa-appbar__search:focus {
-    border-color: rgba(11, 107, 79, 0.34);
-    box-shadow: 0 0 0 3px rgba(11, 107, 79, 0.08);
+    border-color: rgba(20, 91, 215, 0.34);
+    box-shadow: 0 0 0 3px rgba(20, 91, 215, 0.08);
   }
 
   body[data-tab='whatsapp'] .wa__list {
@@ -9399,7 +9399,7 @@ body[data-wa-view='chat'] .mobile-header {
     width: 44px;
     height: 44px;
     border-radius: 13px;
-    box-shadow: 0 8px 18px rgba(7, 61, 46, 0.12);
+    box-shadow: 0 8px 18px rgba(20, 60, 120, 0.12);
   }
 
   body[data-tab='hoy'] .dashboard-head__menu .drawer-menu-icon {
@@ -9442,7 +9442,7 @@ body[data-wa-view='chat'] .mobile-header {
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.17);
     color: #fff;
-    box-shadow: 0 8px 18px rgba(7, 61, 46, 0.1);
+    box-shadow: 0 8px 18px rgba(20, 60, 120, 0.1);
     backdrop-filter: blur(12px);
   }
 
@@ -9575,7 +9575,7 @@ body[data-wa-view='chat'] .mobile-header {
     inset: 7px 18px;
     z-index: -1;
     border-radius: 999px;
-    background: rgba(11, 107, 79, 0.08);
+    background: rgba(20, 91, 215, 0.08);
     opacity: 0;
     transform: scale(0.78);
     transition:
@@ -9602,8 +9602,8 @@ body[data-wa-view='chat'] .mobile-header {
   .tab--center:active .tab__icon {
     transform: scale(0.93);
     box-shadow:
-      0 10px 20px rgba(7, 61, 46, 0.24),
-      0 2px 6px rgba(7, 61, 46, 0.16);
+      0 10px 20px rgba(20, 60, 120, 0.24),
+      0 2px 6px rgba(20, 60, 120, 0.16);
     filter: saturate(1.06);
   }
 
@@ -9720,10 +9720,10 @@ body[data-wa-view='chat'] .mobile-header {
   position: relative;
   min-height: 380px;
   overflow: hidden;
-  border: 1px solid rgba(11, 107, 79, 0.12);
+  border: 1px solid rgba(20, 91, 215, 0.12);
   border-radius: 16px;
   background:
-    linear-gradient(135deg, rgba(11, 107, 79, 0.08), transparent 42%),
+    linear-gradient(135deg, rgba(20, 91, 215, 0.08), transparent 42%),
     linear-gradient(180deg, #f6fbf8, #eaf4ef);
 }
 
@@ -9742,7 +9742,7 @@ body[data-wa-view='chat'] .mobile-header {
 
 .map-view--measuring {
   cursor: crosshair;
-  outline: 2px dashed rgba(11, 107, 79, 0.35);
+  outline: 2px dashed rgba(20, 91, 215, 0.35);
   outline-offset: -3px;
 }
 
@@ -9780,7 +9780,7 @@ body[data-wa-view='chat'] .mobile-header {
   color: var(--phyto-primary-dark, #07402f);
   font-size: 0.78rem;
   font-weight: 800;
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.14);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.14);
   transform: translateX(-50%);
 }
 
@@ -9795,7 +9795,7 @@ body[data-wa-view='chat'] .mobile-header {
   padding: 7px 9px;
   border-radius: 15px;
   background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 12px 28px rgba(7, 61, 46, 0.18);
+  box-shadow: 0 12px 28px rgba(20, 60, 120, 0.18);
   backdrop-filter: blur(8px);
 }
 
@@ -9838,7 +9838,7 @@ body[data-wa-view='chat'] .mobile-header {
   overflow-y: auto;
   border-radius: 15px;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 16px 34px rgba(7, 61, 46, 0.2);
+  box-shadow: 0 16px 34px rgba(20, 60, 120, 0.2);
   backdrop-filter: blur(8px);
 }
 
@@ -9895,10 +9895,10 @@ body[data-wa-view='chat'] .mobile-header {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--phyto-primary, #0b6b4f);
+  background: var(--phyto-primary, #145bd7);
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 14px 30px rgba(7, 61, 46, 0.34);
+  box-shadow: 0 14px 30px rgba(20, 60, 120, 0.34);
   transition: transform 140ms ease, background 140ms ease;
 }
 
@@ -9933,7 +9933,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
   gap: 8px;
   margin-top: 12px;
   padding: 12px;
-  border: 1px solid rgba(11, 107, 79, 0.1);
+  border: 1px solid rgba(20, 91, 215, 0.1);
   border-radius: 16px;
   background: #fff;
 }
@@ -9961,7 +9961,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
 }
 
 .map-item--order {
-  border-left: 4px solid var(--phyto-primary, #0b6b4f);
+  border-left: 4px solid var(--phyto-primary, #145bd7);
 }
 
 .map-item--live {
@@ -10029,8 +10029,8 @@ body:has(> #sheet:not([hidden])) .map-fab {
 
 /* Marcadores propios: el que miramos, el mío y los de medición. */
 .delivery-leaflet-marker--focus {
-  background: #0b6b4f;
-  box-shadow: 0 0 0 6px rgba(11, 107, 79, 0.22);
+  background: #145bd7;
+  box-shadow: 0 0 0 6px rgba(20, 91, 215, 0.22);
 }
 
 .delivery-leaflet-marker--me {
@@ -10123,7 +10123,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
     overflow-y: auto;
     border: 0;
     border-radius: 20px 20px 0 0;
-    box-shadow: 0 -18px 44px rgba(7, 61, 46, 0.26);
+    box-shadow: 0 -18px 44px rgba(20, 60, 120, 0.26);
     transform: translateY(104%);
     transition: transform 220ms ease;
   }
@@ -10151,7 +10151,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
     inset: 0;
     z-index: 1290;
     display: block;
-    background: rgba(7, 61, 46, 0.42);
+    background: rgba(20, 60, 120, 0.42);
     opacity: 0;
     pointer-events: none;
     transition: opacity 200ms ease;
@@ -10236,7 +10236,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
 
 .order-row:hover,
 .order-row:focus-visible {
-  border-color: rgba(11, 107, 79, 0.24);
+  border-color: rgba(20, 91, 215, 0.24);
 }
 
 .order-row__top,
@@ -10288,7 +10288,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
   flex: 0 0 auto;
   padding: 1px 8px;
   border-radius: 999px;
-  background: rgba(11, 107, 79, 0.09);
+  background: rgba(20, 91, 215, 0.09);
   color: var(--phyto-primary);
   font-size: 0.68rem;
   font-weight: 700;
@@ -10455,7 +10455,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
 .menu-item--primary {
   min-height: 60px;
   border-radius: 14px;
-  border-color: rgba(11, 107, 79, 0.22);
+  border-color: rgba(20, 91, 215, 0.22);
   background: linear-gradient(135deg, var(--phyto-primary-tint), var(--phyto-primary-soft));
 }
 
@@ -10683,9 +10683,9 @@ body:has(> #sheet:not([hidden])) .map-fab {
   gap: 8px;
   min-height: 52px;
   padding: 6px 12px;
-  border-bottom: 1px solid rgba(11, 107, 79, 0.1);
+  border-bottom: 1px solid rgba(20, 91, 215, 0.1);
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 8px 18px -18px rgba(7, 61, 46, 0.55);
+  box-shadow: 0 8px 18px -18px rgba(20, 60, 120, 0.55);
   backdrop-filter: blur(12px);
 }
 
@@ -10733,7 +10733,7 @@ body:has(> #sheet:not([hidden])) .map-fab {
     min-height: calc(var(--pe-tabbar) + env(safe-area-inset-bottom, 0px));
     padding: 4px 0 max(4px, env(safe-area-inset-bottom, 0px));
     border: 0;
-    border-top: 1px solid rgba(11, 107, 79, 0.12);
+    border-top: 1px solid rgba(20, 91, 215, 0.12);
     border-radius: 0;
     background: rgba(255, 255, 255, 0.98);
     box-shadow: 0 -6px 18px rgba(14, 27, 22, 0.08);
@@ -10832,9 +10832,9 @@ body:has(> #sheet:not([hidden])) .map-fab {
     gap: 8px;
     min-height: 52px;
     padding: calc(5px + env(safe-area-inset-top, 0px)) 46px 5px 56px;
-    border-bottom: 1px solid rgba(11, 107, 79, 0.1);
+    border-bottom: 1px solid rgba(20, 91, 215, 0.1);
     background: rgba(255, 255, 255, 0.94);
-    box-shadow: 0 8px 18px -18px rgba(7, 61, 46, 0.55);
+    box-shadow: 0 8px 18px -18px rgba(20, 60, 120, 0.55);
     backdrop-filter: blur(12px);
   }
 
@@ -11020,7 +11020,7 @@ body[data-tab='hoy'] .today-section__count {
   height: 38px;
   padding: 0 8px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #0e7490, #0b6b4f);
+  background: linear-gradient(135deg, #0e7490, #145bd7);
   color: #fff;
   font-size: 1.05rem;
   font-weight: 850;
@@ -11052,7 +11052,7 @@ body[data-tab='hoy'] .today-section__arrow {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  color: #0b6b4f;
+  color: #145bd7;
   transition: transform 0.18s ease;
 }
 
@@ -11251,9 +11251,9 @@ body[data-tab='whatsapp'] .wa-appbar {
   grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 54px;
   padding: calc(7px + env(safe-area-inset-top, 0px)) 12px 7px;
-  border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+  border-bottom: 1px solid rgba(20, 91, 215, 0.08);
   background: rgba(248, 252, 250, 0.94);
-  box-shadow: 0 10px 24px -24px rgba(7, 61, 46, 0.5);
+  box-shadow: 0 10px 24px -24px rgba(20, 60, 120, 0.5);
   backdrop-filter: blur(14px);
 }
 
@@ -11261,11 +11261,11 @@ body[data-tab='whatsapp'] .wa-appbar__back,
 body[data-tab='whatsapp'] .wa-appbar__icon {
   width: 38px;
   height: 38px;
-  border: 1px solid rgba(11, 107, 79, 0.12);
+  border: 1px solid rgba(20, 91, 215, 0.12);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.08);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.08);
 }
 
 body[data-tab='whatsapp'] .wa-appbar__title {
@@ -11274,7 +11274,7 @@ body[data-tab='whatsapp'] .wa-appbar__title {
 }
 
 body[data-tab='whatsapp'] .wa-appbar__title strong {
-  color: #073d2e;
+  color: #103e91;
   font-size: 1rem;
   font-weight: 820;
   letter-spacing: 0;
@@ -11293,13 +11293,13 @@ body[data-tab='whatsapp'] .wa-new-chat {
   border: 0;
   background: var(--phyto-primary-dark);
   color: #fff;
-  box-shadow: 0 16px 34px rgba(7, 61, 46, 0.28);
+  box-shadow: 0 16px 34px rgba(20, 60, 120, 0.28);
 }
 
 body[data-tab='whatsapp'] .wa-new-chat:hover,
 body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
   background: #064533;
-  box-shadow: 0 18px 40px rgba(7, 61, 46, 0.34);
+  box-shadow: 0 18px 40px rgba(20, 60, 120, 0.34);
 }
 
 body[data-tab='whatsapp'] .wa-new-chat__icon {
@@ -11426,7 +11426,7 @@ body[data-tab='whatsapp'] .conv__tag {
 
 body[data-tab='whatsapp'] .conv__assign {
   flex: 0 1 auto;
-  color: #0b6b4f;
+  color: #145bd7;
 }
 
 body[data-tab='whatsapp'] .conv__assign--empty {
@@ -11472,10 +11472,10 @@ body[data-tab='whatsapp'] .conv__more-icon {
     gap: 10px;
     padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 14px;
     overflow-y: auto;
-    border-left: 1px solid rgba(11, 107, 79, 0.12);
+    border-left: 1px solid rgba(20, 91, 215, 0.12);
     border-radius: 18px 0 0 18px;
     background: rgba(255, 255, 255, 0.96);
-    box-shadow: -22px 0 42px rgba(7, 61, 46, 0.22);
+    box-shadow: -22px 0 42px rgba(20, 60, 120, 0.22);
     transform: translateX(110%);
     transition: transform 0.2s ease;
     backdrop-filter: blur(16px);
@@ -11496,7 +11496,7 @@ body[data-tab='whatsapp'] .conv__more-icon {
     justify-content: space-between;
     gap: 8px;
     padding-bottom: 6px;
-    border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+    border-bottom: 1px solid rgba(20, 91, 215, 0.08);
   }
 
   body[data-tab='whatsapp'] .wa-filter-panel__head span {
@@ -11505,7 +11505,7 @@ body[data-tab='whatsapp'] .conv__more-icon {
   }
 
   body[data-tab='whatsapp'] .wa-filter-panel__head strong {
-    color: #073d2e;
+    color: #103e91;
     font-size: 0.96rem;
   }
 
@@ -11521,7 +11521,7 @@ body[data-tab='whatsapp'] .conv__more-icon {
     width: 34px;
     height: 34px;
     padding: 0;
-    border: 1px solid rgba(11, 107, 79, 0.1);
+    border: 1px solid rgba(20, 91, 215, 0.1);
     border-radius: 11px;
     background: #fff;
     color: var(--phyto-primary-dark);
@@ -11537,9 +11537,9 @@ body[data-tab='whatsapp'] .conv__more-icon {
     width: 100%;
     min-height: 38px;
     padding: 8px 10px;
-    border: 1px solid rgba(11, 107, 79, 0.08);
+    border: 1px solid rgba(20, 91, 215, 0.08);
     border-radius: 11px;
-    background: rgba(11, 107, 79, 0.055);
+    background: rgba(20, 91, 215, 0.055);
     color: #082235;
     font-size: 13px;
     font-weight: 720;
@@ -11639,11 +11639,11 @@ body[data-tab='whatsapp'] .wa__head-icon {
   width: 38px;
   height: 38px;
   padding: 0;
-  border: 1px solid rgba(11, 107, 79, 0.12);
+  border: 1px solid rgba(20, 91, 215, 0.12);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.9);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.08);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.08);
   cursor: pointer;
 }
 
@@ -11674,7 +11674,7 @@ body[data-tab='whatsapp'] .wa__thread-search-input {
   min-width: 0;
   min-height: 38px;
   padding: 0 12px;
-  border: 1px solid rgba(11, 107, 79, 0.14);
+  border: 1px solid rgba(20, 91, 215, 0.14);
   border-radius: 12px;
   background: #fff;
   color: var(--text-primary);
@@ -11684,8 +11684,8 @@ body[data-tab='whatsapp'] .wa__thread-search-input {
 }
 
 body[data-tab='whatsapp'] .wa__thread-search-input:focus {
-  border-color: rgba(11, 107, 79, 0.38);
-  box-shadow: 0 0 0 3px rgba(11, 107, 79, 0.08);
+  border-color: rgba(20, 91, 215, 0.38);
+  box-shadow: 0 0 0 3px rgba(20, 91, 215, 0.08);
 }
 
 body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) {
@@ -11779,14 +11779,14 @@ body[data-tab='pedidos'] .order-row__status,
   height: 42px;
   border-radius: 10px;
   object-fit: cover;
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.12);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.12);
 }
 
 .drawer__brand strong {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: #073d2e;
+  color: #103e91;
   font-size: 0.98rem;
   font-weight: 850;
   line-height: 1.08;
@@ -11809,11 +11809,11 @@ body[data-tab='pedidos'] .order-row__status,
 .drawer__head .icon-btn {
   width: 42px;
   height: 42px;
-  border: 1px solid rgba(11, 107, 79, 0.14);
+  border: 1px solid rgba(20, 91, 215, 0.14);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.8);
   color: var(--phyto-primary-dark);
-  box-shadow: 0 8px 18px rgba(7, 61, 46, 0.08);
+  box-shadow: 0 8px 18px rgba(20, 60, 120, 0.08);
 }
 
 .drawer__user {
@@ -11844,7 +11844,7 @@ body[data-tab='pedidos'] .order-row__status,
 .drawer__item:focus-visible,
 .drawer__item[aria-current='true'] {
   background: rgba(255, 255, 255, 0.62);
-  box-shadow: inset 0 0 0 1px rgba(11, 107, 79, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(20, 91, 215, 0.08);
 }
 
 .drawer__icon {
@@ -11859,7 +11859,7 @@ body[data-tab='pedidos'] .order-row__status,
 .drawer__foot {
   margin-top: auto;
   padding-top: 14px;
-  border-top: 1px solid rgba(11, 107, 79, 0.12);
+  border-top: 1px solid rgba(20, 91, 215, 0.12);
 }
 
 .drawer__logout {
@@ -12131,7 +12131,7 @@ body[data-tab='pedidos'] .order-row__status,
     margin: 0;
     padding: 8px 10px 7px 14px;
     border: 0;
-    border-bottom: 1px solid rgba(11, 107, 79, 0.08);
+    border-bottom: 1px solid rgba(20, 91, 215, 0.08);
     border-left: 0;
     border-radius: 0;
     background: transparent;
@@ -12161,7 +12161,7 @@ body[data-tab='pedidos'] .order-row__status,
 
   body[data-tab='clientes'] .client-row__icon {
     border-radius: 10px;
-    background: rgba(11, 107, 79, 0.055);
+    background: rgba(20, 91, 215, 0.055);
   }
 
   body[data-tab='pedidos'] .order-row__status {
@@ -12182,10 +12182,10 @@ body[data-tab='pedidos'] .order-row__status,
     gap: 10px;
     padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 14px;
     overflow-y: auto;
-    border-left: 1px solid rgba(11, 107, 79, 0.12);
+    border-left: 1px solid rgba(20, 91, 215, 0.12);
     border-radius: 18px 0 0 18px;
     background: rgba(255, 255, 255, 0.97);
-    box-shadow: -22px 0 42px rgba(7, 61, 46, 0.2);
+    box-shadow: -22px 0 42px rgba(20, 60, 120, 0.2);
     transform: translateX(110%);
     transition: transform 0.2s ease;
     backdrop-filter: blur(16px);
@@ -12203,9 +12203,9 @@ body[data-tab='pedidos'] .order-row__status,
     width: 100%;
     min-height: 38px;
     padding: 8px 10px;
-    border: 1px solid rgba(11, 107, 79, 0.08);
+    border: 1px solid rgba(20, 91, 215, 0.08);
     border-radius: 11px;
-    background: rgba(11, 107, 79, 0.055);
+    background: rgba(20, 91, 215, 0.055);
     color: #082235;
     font-size: 13px;
     font-weight: 720;
@@ -12463,14 +12463,14 @@ body[data-tab='pedidos'] .order-row__status,
   gap: 6px;
   height: 44px;
   padding: 0 14px;
-  border: 1px solid rgba(11, 107, 79, 0.16);
+  border: 1px solid rgba(20, 91, 215, 0.16);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.96);
   color: var(--phyto-primary-dark);
   font: inherit;
   font-size: 0.86rem;
   font-weight: 600;
-  box-shadow: 0 8px 20px rgba(7, 61, 46, 0.12);
+  box-shadow: 0 8px 20px rgba(20, 60, 120, 0.12);
   cursor: pointer;
   transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
@@ -12484,7 +12484,7 @@ body[data-tab='pedidos'] .order-row__status,
 .simple-head__action:focus-visible {
   background: #fff;
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(7, 61, 46, 0.16);
+  box-shadow: 0 10px 24px rgba(20, 60, 120, 0.16);
 }
 
 .simple-head__action:active {
@@ -12556,9 +12556,9 @@ body[data-tab='pedidos'] .order-row__status,
 }
 
 .order-row__pay--cash {
-  border-color: rgba(11, 107, 79, 0.24);
-  background: rgba(11, 107, 79, 0.12);
-  color: #0b6b4f;
+  border-color: rgba(20, 91, 215, 0.24);
+  background: rgba(20, 91, 215, 0.12);
+  color: #145bd7;
 }
 
 .order-row__pay--transfer {
@@ -12586,5 +12586,667 @@ body[data-tab='pedidos'] .order-row__status,
 .calling__controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
 .calling__controls button { min-height: 48px; }
 .calling__incoming { padding: 12px 0; flex-wrap: wrap; border-bottom: 1px solid #d5e5dc; }
-.calling-dock { position: fixed; right: 18px; bottom: 90px; z-index: 1000; border: 0; border-radius: 24px; padding: 14px 20px; background: #087a5b; color: #fff; box-shadow: 0 4px 20px #16382b33; font: inherit; }
+.calling-dock { position: fixed; right: 18px; bottom: 90px; z-index: 1000; border: 0; border-radius: 24px; padding: 14px 20px; background: #145bd7; color: #fff; box-shadow: 0 4px 20px #16382b33; font: inherit; }
 .calling-dock[hidden] { display: none; }
+/* ==========================================================================
+   SIN CONEXIÓN — aviso de lo que falta por enviar y marca de cada cambio
+   --------------------------------------------------------------------------
+   El panel guarda en el teléfono lo que se hace sin red y lo manda solo después.
+   Aquí vive lo que hace visible ese estado: el aviso con su botón y la etiqueta
+   «Sin enviar» de cada pedido. Nada se finge: lo que no está en el CRM se ve.
+   ========================================================================== */
+
+/* `:not([hidden])` es imprescindible: un `display` propio ganaría al [hidden]. */
+#outbox-banner:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#outbox-banner strong {
+  font-weight: 750;
+}
+
+#outbox-banner .btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* «Sin enviar»: se lee como un aviso, no como un botón. */
+.order-pend {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(199, 138, 0, 0.16);
+  color: #8a5a00;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   PEDIDOS — filtros: ESTADO y FECHA en el mismo panel
+   --------------------------------------------------------------------------
+   En el móvil el panel se abre de lado y cada grupo es una columna de tarjetas
+   (como en la bandeja). En el escritorio los dos grupos se funden en la MISMA
+   fila de chips, con sus títulos, para no dejar la pantalla llena de alturas.
+   ========================================================================== */
+
+body[data-tab='pedidos'] #pedidos-filtros .wa-filter-panel__group {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+
+/* La cabecera del panel: título, subtítulo y la ✕ (estaban pegados). */
+body[data-tab='pedidos'] .wa-filter-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+body[data-tab='pedidos'] .wa-filter-panel__head > span {
+  display: grid;
+}
+
+body[data-tab='pedidos'] .wa-filter-panel__head strong {
+  color: var(--pe-ink-900);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+body[data-tab='pedidos'] .wa-filter-panel__head small {
+  color: var(--pe-ink-500);
+  font-size: 11.5px;
+}
+
+body[data-tab='pedidos'] .wa-filter-panel__close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(20, 91, 215, 0.1);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--phyto-primary-dark);
+  cursor: pointer;
+}
+
+.order-filters__label {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--pe-ink-500);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (min-width: 980px) {
+  /* Los títulos y sus chips pasan a la fila: «ESTADO [Todo 13] … FECHA [Hoy 0] …» */
+  body[data-tab='pedidos'] #pedidos-filtros .wa-filter-panel__group {
+    display: contents;
+  }
+
+  body[data-tab='pedidos'] #pedidos-filtros .order-filters__label {
+    align-self: center;
+    padding-left: 4px;
+  }
+}
+
+/* El chip de fecha del panel, cuando está puesto un rango a medida. */
+body[data-tab='pedidos'] #pedidos-filtros [data-order-date-custom][aria-pressed='true'] {
+  font-weight: 750;
+}
+
+/* ==========================================================================
+   PEDIDOS — semáforo de estado, botones al pie y selección múltiple
+   --------------------------------------------------------------------------
+   Lo que se pidió para trabajar el día: ver de un vistazo qué está hecho y qué
+   no (COLOR), cerrar un pedido sin abrir la ficha (botón Estado al pie de cada
+   fila), escribirle al cliente desde la lista, y marcar varios para resolverlos
+   de una vez. Todo esto se AÑADE: la fila de siempre se queda como estaba.
+   ========================================================================== */
+
+/* La tarjeta lleva el color del estado; el filo izquierdo lo remata. */
+body[data-tab='pedidos'] .order-card {
+  margin: 0 0 10px;
+  border: 1px solid var(--order-line, rgba(20, 91, 215, 0.12));
+  border-radius: 14px;
+  background: var(--order-bg, #fff);
+  box-shadow: 0 8px 20px rgba(14, 27, 22, 0.05);
+  overflow: hidden;
+}
+
+body[data-tab='pedidos'] .order-card--sel {
+  box-shadow:
+    0 0 0 2px rgba(20, 91, 215, 0.5),
+    0 8px 20px rgba(14, 27, 22, 0.06);
+}
+
+/*
+ * EL SEMÁFORO. Pendiente en ROJO (es lo que hay que resolver hoy), en camino en
+ * azul, entregado en verde con el aire de «ya está», cancelado en gris apagado.
+ */
+body[data-tab='pedidos'] .order-card--pendiente {
+  --order-bg: #fdf0ef;
+  --order-line: #f0c8c6;
+  --order-tone: #c93d3d;
+}
+
+body[data-tab='pedidos'] .order-card--en_camino {
+  --order-bg: #eef3fe;
+  --order-line: #c6d5f6;
+  --order-tone: #1c56d6;
+}
+
+body[data-tab='pedidos'] .order-card--incidencia {
+  --order-bg: #fff3e8;
+  --order-line: #f3d3b4;
+  --order-tone: #c05621;
+}
+
+body[data-tab='pedidos'] .order-card--entregado {
+  --order-bg: #ebf7ef;
+  --order-line: #c3e2cd;
+  --order-tone: #145bd7;
+}
+
+body[data-tab='pedidos'] .order-card--cancelado {
+  --order-bg: #f4f5f5;
+  --order-line: #dcdfde;
+  --order-tone: #7c8481;
+}
+
+body[data-tab='pedidos'] .order-card--cancelado .order-row {
+  opacity: 0.78;
+}
+
+/* La fila se apoya en la tarjeta: sin su propio borde ni fondo. */
+body[data-tab='pedidos'] .order-card .order-row {
+  margin: 0;
+  border: 0;
+  border-left: 4px solid var(--order-tone, rgba(20, 91, 215, 0.2));
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-tab='pedidos'] .order-card .order-row__status {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--order-tone, var(--phyto-primary));
+}
+
+/*
+ * LA LISTA FINA (y todo lo de cada pedido dentro del «⋯»).
+ * --------------------------------------------------------------------------
+ * Lo que había: debajo de cada pedido, una barra con «Marcar», «Estado»,
+ * «Escribir» y el «⋯» — dos alturas por pedido y medio móvil lleno de botones.
+ * Lo que hay: la fila con lo que se lee (quién, cuánto, cómo se cobró, en qué
+ * estado) y UN botón a la derecha con todo lo demás dentro. Se ve el doble de
+ * pedidos en la misma pantalla.
+ */
+/*
+ * CERO RELLENO EN LA TARJETA DE LA LISTA.
+ *
+ * La tarjeta traía 10 px de relleno arriba y abajo (el que usa la ficha del
+ * cliente para sus tarjetas de compra) y encima la fila pone el suyo: eran 20 px
+ * de aire por pedido, media tarjeta. Se quita SOLO en la lista de pedidos, que es
+ * la única cuyas tarjetas llevan fila; la ficha del cliente no cambia.
+ */
+#list-pedidos .order-card {
+  position: relative;
+  margin: 0 0 7px;
+  padding: 0;
+}
+
+/*
+ * La fila deja el hueco del «⋯» a la derecha y se aprieta: tres líneas de 17, 15
+ * y 12 píxeles, sin aire de más. Es lo que hace que en una pantalla de móvil
+ * entren los pedidos del día en vez de tres.
+ */
+body[data-tab='pedidos'] .order-card .order-row {
+  gap: 2px;
+  min-height: 0;
+  padding: 7px 44px 7px 11px;
+}
+
+/* Las dos líneas de arriba: alto de línea fijo para que no lo ponga el navegador. */
+body[data-tab='pedidos'] .order-card .order-row__top,
+body[data-tab='pedidos'] .order-card .order-row__bottom {
+  gap: 6px;
+  line-height: 1.2;
+}
+
+body[data-tab='pedidos'] .order-card .order-row__name {
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+body[data-tab='pedidos'] .order-card .order-row__when {
+  font-size: 0.65rem;
+}
+
+body[data-tab='pedidos'] .order-card .order-row__meta {
+  font-size: 0.7rem;
+}
+
+body[data-tab='pedidos'] .order-card .order-row__ref {
+  font-size: 0.62rem;
+  line-height: 1.15;
+}
+
+/* Los chips se achican en proporción: si no, mandan ellos la altura de la fila. */
+body[data-tab='pedidos'] .order-card .order-row__status,
+body[data-tab='pedidos'] .order-card .order-row__pay {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+body[data-tab='pedidos'] .order-card .order-pend {
+  padding: 0 6px;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+/* El «⋯»: pegado a la derecha y centrado. El dedo sigue teniendo 32 px. */
+body[data-tab='pedidos'] .order-card__more {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(20, 91, 215, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--pe-ink-500);
+  cursor: pointer;
+  transform: translateY(-50%);
+  touch-action: manipulation;
+}
+
+body[data-tab='pedidos'] .order-card__more .svg {
+  width: 18px;
+  height: 18px;
+}
+
+body[data-tab='pedidos'] .order-card__more:hover,
+body[data-tab='pedidos'] .order-card__more:focus-visible {
+  border-color: rgba(20, 91, 215, 0.3);
+  background: #fff;
+  color: var(--phyto-primary);
+}
+
+/* Un pedido marcado se nota en la fila entera (el «⋯» lo marca y lo desmarca). */
+body[data-tab='pedidos'] .order-card--sel .order-card__more {
+  border-color: transparent;
+  background: var(--phyto-primary);
+  color: #fff;
+}
+
+/* El botón de acciones de la lista, encima del de agregar pedido. */
+body[data-tab='pedidos'] #pedidos-acciones {
+  bottom: calc(var(--pe-tabbar) + 18px + 68px + env(safe-area-inset-bottom, 0px));
+  background: #fff;
+  color: var(--phyto-primary);
+}
+
+/* Aire al final: con dos botones flotantes hay que poder leer la última fila. */
+body[data-tab='pedidos'] .list--orders {
+  padding-bottom: calc(var(--pe-tabbar) + 168px);
+}
+
+body[data-tab='pedidos'] .chips--order-date {
+  padding: 2px 10px 6px;
+}
+
+body[data-tab='pedidos'] .empty--order-date {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+/* ------------------------------------------------- barra de la selección */
+.order-bulk {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: calc(var(--pe-tabbar) + 12px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(20, 91, 215, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 18px 40px rgba(20, 60, 120, 0.22);
+  backdrop-filter: blur(10px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.order-bulk::-webkit-scrollbar {
+  display: none;
+}
+
+/* Con la selección abierta, la barra ocupa el sitio de los botones flotantes. */
+body[data-tab='pedidos'][data-order-sel='on'] #compra-nueva-ped,
+body[data-tab='pedidos'][data-order-sel='on'] #pedidos-acciones {
+  display: none;
+}
+
+.order-bulk__x {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(20, 91, 215, 0.08);
+  color: var(--phyto-primary);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.order-bulk__count {
+  flex: 0 0 auto;
+  margin-right: auto;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.order-bulk__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(20, 91, 215, 0.18);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--phyto-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.order-bulk__btn .svg {
+  width: 17px;
+  height: 17px;
+}
+
+.order-bulk__btn--pick {
+  padding: 0 9px;
+}
+
+.order-bulk__btn--ok {
+  border-color: transparent;
+  background: var(--phyto-primary);
+  color: #fff;
+  font-weight: 700;
+}
+
+/*
+ * En un teléfono estrecho, la barra llena la pantalla: se quedan los ICONOS y solo
+ * «Finalizar» conserva su palabra, que es la acción que se busca a ciegas.
+ */
+@media (max-width: 620px) {
+  .order-bulk {
+    gap: 5px;
+    padding: 7px 8px;
+  }
+
+  .order-bulk__btn {
+    padding: 0 10px;
+  }
+
+  .order-bulk__btn:not(.order-bulk__btn--keep) span {
+    display: none;
+  }
+}
+
+@media (min-width: 980px) {
+  .order-bulk {
+    left: auto;
+    right: 18px;
+    width: min(640px, 64vw);
+  }
+}
+
+/* --------------------------------------------- hoja de cambio de estado */
+.order-status-options {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.order-status-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(20, 91, 215, 0.16);
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.order-status-option small {
+  display: block;
+  margin-top: 1px;
+  color: var(--pe-ink-500);
+  font-size: 0.78rem;
+}
+
+.order-status-option.is-on {
+  border-color: var(--phyto-primary);
+  box-shadow: 0 0 0 2px rgba(20, 91, 215, 0.16);
+}
+
+.order-status-option--danger.is-on {
+  border-color: #b23b3b;
+  box-shadow: 0 0 0 2px rgba(178, 59, 59, 0.16);
+}
+
+.order-status-option__icon .svg {
+  width: 20px;
+  height: 20px;
+  color: var(--phyto-primary);
+}
+
+.order-status-option__tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(20, 91, 215, 0.1);
+  color: var(--phyto-primary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.order-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-size: 0.92rem;
+}
+
+.order-switch input {
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--phyto-primary);
+}
+
+.order-switch small {
+  display: block;
+  margin-top: 2px;
+  color: var(--pe-ink-500);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 420px) {
+  body[data-tab='pedidos'] .order-act span {
+    display: none;
+  }
+
+  body[data-tab='pedidos'] .order-act {
+    padding: 0 10px;
+  }
+}
+
+/*
+ * ==========================================================================
+ *  HOY EN EL IPHONE: CLARO, LIMPIO Y TOCABLE
+ * ==========================================================================
+ *
+ * La pantalla de inicio se lee de un golpe y se usa con el pulgar:
+ *   - las tarjetas van de DOS en dos (se alcanzan y no se aprietan),
+ *   - manda el número; la etiqueta se corta como mucho en dos líneas,
+ *   - el toque se siente, sin el resaltado azul del sistema,
+ *   - y abajo se respeta la barra del iPhone (safe-area).
+ *
+ * Todo esto solo afecta a HOY: las listas y las demás pantallas ya tenían su
+ * propio tamaño y no se tocan desde aquí­.
+ */
+body[data-tab='hoy'] .stats {
+  gap: 10px;
+  padding: 0 2px calc(6px + env(safe-area-inset-bottom, 0px));
+}
+
+body[data-tab='hoy'] .stat {
+  /*
+   * DOS FILAS: arriba el icono, el número y la flecha; debajo la ETIQUETA a
+   * ancho completo. Con la etiqueta en su propia columna estrecha no cabía
+   * «Seguimientos vencidos» y el navegador la cortaba con puntos suspensivos
+   * («Seguimiento…»), que es justo lo que no puede pasar en la pantalla que se
+   * lee de un golpe.
+   */
+  grid-template-columns: 42px minmax(0, 1fr) 16px;
+  grid-template-rows: auto auto;
+  min-height: 82px;
+  padding: 12px 12px 11px;
+  gap: 4px 10px;
+  border-radius: 18px;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+body[data-tab='hoy'] .stat:active {
+  transform: scale(0.98);
+}
+
+body[data-tab='hoy'] .stat__icon {
+  /* El icono acompaña al número: ya no tiene que ocupar dos filas. */
+  grid-row: 1;
+  width: 42px;
+  height: 42px;
+}
+
+body[data-tab='hoy'] .stat__icon .svg {
+  width: 20px;
+  height: 20px;
+}
+
+body[data-tab='hoy'] .stat__value {
+  font-size: clamp(1.3rem, 5.6vw, 1.6rem);
+}
+
+body[data-tab='hoy'] .stat__label {
+  grid-column: 1 / -1;
+  display: block;
+  overflow: visible;
+  font-size: clamp(0.72rem, 3.2vw, 0.84rem);
+  line-height: 1.15;
+  /* Se puede partir en dos líneas; NUNCA se corta con puntos suspensivos. */
+  white-space: normal;
+  text-overflow: clip;
+}
+
+body[data-tab='hoy'] .stat__arrow {
+  grid-row: 1;
+}
+
+body[data-tab='hoy'] .stat__arrow .svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Cabecera algo más baja en el móvil: menos adorno y más trabajo a la vista. */
+@media (max-width: 430px) {
+  .dashboard-head {
+    min-height: 122px;
+    margin: 10px 12px 14px;
+    padding: calc(18px + env(safe-area-inset-top, 0px)) 16px 18px;
+    border-radius: 22px;
+  }
+
+  .dashboard-head__menu {
+    width: 54px;
+    height: 54px;
+  }
+}
+
+/* iPhone SE y mini (hasta 375 pt): cabe todo sin apretar y sin cortar nada. */
+@media (max-width: 375px) {
+  body[data-tab='hoy'] .stat {
+    grid-template-columns: 36px minmax(0, 1fr) 14px;
+    min-height: 78px;
+    padding: 10px 10px 9px;
+    gap: 3px 8px;
+  }
+
+  body[data-tab='hoy'] .stat__icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  body[data-tab='hoy'] .stat__icon .svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* En pantalla grande las tarjetas se reparten de cuatro en cuatro. */
+@media (min-width: 980px) {
+  body[data-tab='hoy'] .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 0;
+  }
+}
+
+/* Los filtros de Seguimientos: chips de la lista, con sitio para el pulgar. */
+#seguimientos-filtros {
+  padding: 8px 0 4px;
+}
+
+#seguimientos-filtros .chip {
+  min-height: 38px;
+}
+

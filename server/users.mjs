@@ -320,6 +320,11 @@ export function createUserService(deps) {
     for (const notification of notifications.filter((row) => row.recipient_user_id === id)) {
       await db.remove('user_notifications', notification.id);
     }
+    // Y las marcas de «esto ya lo borré»: sin la persona, no significan nada.
+    const deletionMarks = await db.list('notification_deletions', { limit: 5000 });
+    for (const mark of deletionMarks.filter((row) => row.user_id === id)) {
+      await db.remove('notification_deletions', mark.id);
+    }
     const deleted = await db.remove('crm_users', id);
     await audit?.record({
       entity: 'user',

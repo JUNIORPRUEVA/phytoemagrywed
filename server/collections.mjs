@@ -190,6 +190,33 @@ export const COLLECTIONS = Object.freeze({
     },
     unique: ['idempotency_key'],
   },
+  /*
+   * LO QUE SE BORRÓ, BORRADO SE QUEDA — Y EN EL SERVIDOR, NO EN EL TELÉFONO.
+   *
+   * Borrar un aviso solo en el teléfono (una lista de ids en `localStorage`) deja
+   * el aviso VIVO en el CRM: vuelve a aparecer en cuanto el panel se abre desde
+   * otro contexto (el icono instalado y el navegador no comparten almacén), en
+   * otro teléfono, o después de limpiar los datos del sitio. Y si el suceso que
+   * lo creó se vuelve a procesar, se crea OTRA fila con otro `id` y el borrado
+   * del teléfono ya no coincide con nada.
+   *
+   * Aquí se apunta el borrado por `notification_id` y por `event_key` (la clave
+   * de idempotencia del suceso). Con eso, `listUserNotifications` filtra los dos
+   * casos: el aviso que se borró y el mismo suceso recreado.
+   *
+   * `idempotency_key` es la marca única (`notif-del:<usuario>:<aviso>`): borrar
+   * dos veces el mismo aviso no duplica nada.
+   */
+  notification_deletions: {
+    indexed: {
+      user_id: 'text',
+      notification_id: 'text',
+      event_key: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
   push_subscriptions: {
     indexed: {
       user_id: 'text',

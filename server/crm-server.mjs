@@ -1027,11 +1027,103 @@ async function createUserNotification(ctx, input) {
   return result.duplicate ? { duplicate: true, notification: await ctx.db.findBy('user_notifications', 'idempotency_key', doc.idempotency_key) } : { duplicate: false, notification: result.doc };
 }
 
+/**
+ * CUÁNTOS BORRADOS SE RECUERDAN.
+ *
+ * Es una lista de «esto ya no lo quiero ver», no un histórico: `PER_USER` por
+ * persona sobra para cualquier uso real y la consulta sigue siendo barata. Al
+ * pasar el tope se van los MÁS VIEJOS (los borrados recientes son los que
+ * importan: son los que el usuario acaba de hacer y los que se encontraría otra
+ * vez al reabrir la app). `READ` es cuántas marcas se leen de una vez.
+ */
+const NOTIF_DELETIONS_PER_USER = 2000;
+const NOTIF_DELETIONS_READ = 5000;
+
+/**
+ * Las marcas de borrado, agrupadas por la persona a la que se le borró el aviso.
+ *
+ * Van por destinatario y no por «quien pulsa», porque un aviso pertenece a UNA
+ * persona: si administración borra los avisos de todo el equipo, cada uno tiene
+ * que dejar de verlos. Y al revés: que un agente borre el suyo no puede esconder
+ * el aviso de otro.
+ */
+async function notificationDeletionMarks(ctx) {
+  const porPersona = new Map();
+  const rows = await ctx.db.list('notification_deletions', { by: 'created_at', order: 'desc', limit: NOTIF_DELETIONS_READ });
+  for (const row of rows) {
+    if (!row.user_id) continue;
+    const suyas = porPersona.get(row.user_id) ?? { ids: new Set(), keys: new Set() };
+    if (row.notification_id) suyas.ids.add(row.notification_id);
+    if (row.event_key) suyas.keys.add(row.event_key);
+    porPersona.set(row.user_id, suyas);
+  }
+  return porPersona;
+}
+
+/** ¿Este aviso ya se le borró a su destinatario? */
+function borradoParaSuDestinatario(marcas, row) {
+  const suyas = marcas.get(row.recipient_user_id);
+  if (!suyas) return false;
+  if (suyas.ids.has(row.id)) return true;
+  // El MISMO suceso recreado (otra fila, otro `id`): se descarta igual.
+  return Boolean(row.idempotency_key && suyas.keys.has(row.idempotency_key));
+}
+
+/**
+ * Apunta que este aviso se borró para `userId` (su destinatario). Se guarda
+ * también la clave del suceso para que una recreación del mismo suceso tampoco
+ * lo resucite, y se poda la lista por persona.
+ *
+ * Importa que ocurra AQUÍ y no solo en el teléfono: el borrado del teléfono no
+ * viaja a los demás dispositivos, y es exactamente lo que hacía que los avisos
+ * «volvieran» al entrar desde el icono instalado o desde otro móvil.
+ */
+async function rememberNotificationDeletion(ctx, userId, notification) {
+  if (!userId || !notification?.id) return;
+  const at = ctx.clock().toISOString();
+  await ctx.db.insert('notification_deletions', {
+    id: newId('ndel'),
+    user_id: userId,
+    notification_id: notification.id,
+    event_key: notification.idempotency_key ?? null,
+    idempotency_key: `notif-del:${userId}:${notification.id}`,
+    created_at: at,
+    updated_at: at,
+  });
+  const suyas = (await ctx.db.list('notification_deletions', { by: 'created_at', order: 'desc', limit: NOTIF_DELETIONS_READ })).filter(
+    (row) => row.user_id === userId,
+  );
+  for (const vieja of suyas.slice(NOTIF_DELETIONS_PER_USER)) {
+    await ctx.db.remove('notification_deletions', vieja.id);
+  }
+}
+
+/** Los avisos que este actor puede borrar (filas crudas: hacen falta sus claves). */
+async function deletableNotifications(ctx, actor) {
+  if (!actor?.id) return [];
+  const rows = await ctx.db.list('user_notifications', { by: 'created_at', order: 'desc' });
+  return rows.filter((row) => hasPermission(actor, 'delivery.tracking.manage_all') || row.recipient_user_id === actor.id);
+}
+
 async function listUserNotifications(ctx, actor, options = {}) {
   if (!actor?.id) return [];
-  const rows = await ctx.db.list('user_notifications', { by: 'created_at', order: 'desc', limit: options.limit ?? 100 });
+  const limit = options.limit ?? 100;
+  /*
+   * Se lee un poco más de lo pedido porque el filtro (destinatario y borrados) se
+   * aplica DESPUÉS: si no, con muchos avisos borrados la lista se quedaría corta
+   * y el panel diría que no hay nada cuando sí lo hay. Al final se recorta al
+   * tope pedido, así que el contrato de `limit` no cambia.
+   */
+  const rows = await ctx.db.list('user_notifications', {
+    by: 'created_at',
+    order: 'desc',
+    limit: Number.isFinite(limit) ? limit + 200 : limit,
+  });
+  const marcas = await notificationDeletionMarks(ctx);
   return rows
     .filter((row) => hasPermission(actor, 'delivery.tracking.manage_all') || row.recipient_user_id === actor.id)
+    .filter((row) => !borradoParaSuDestinatario(marcas, row))
+    .slice(0, Number.isFinite(limit) ? limit : undefined)
     .map((row) => ({
       id: row.id,
       type: row.type,
@@ -4359,7 +4451,7 @@ function serveAdminFile(res, urlPath, adminDir) {
     // El panel y su service worker nunca se cachean: publicar = ver el cambio ya.
     'cache-control': 'no-cache, must-revalidate',
     'service-worker-allowed': '/admin/',
-    'permissions-policy': 'geolocation=(self), microphone=(self), camera=()',
+    'permissions-policy': 'geolocation=(self), microphone=(self), camera=(self)',
     'x-robots-tag': 'noindex, nofollow',
   });
   res.end(body);
@@ -6036,10 +6128,31 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/notifications' && req.method === 'DELETE') {
-      const notifications = await listUserNotifications(ctx, actor, { limit: 500 });
+      /*
+       * SE BORRAN TODAS DE VERDAD, NO LAS PRIMERAS 500… Y NO VUELVEN.
+       *
+       * Antes se listaba con `limit: 500` y, como el filtro por destinatario se
+       * aplica DESPUÉS del límite, quedaban filas vivas: el panel decía
+       * «eliminadas» y la notificación volvía a aparecer en el siguiente
+       * refresco. Ahora se leen TODAS las que el actor puede ver y se borra en
+       * tandas, con un tope de vueltas para no girar sin fin si algo falla.
+       *
+       * Y además se APUNTA el borrado (por aviso y por suceso): borrar en el
+       * teléfono no basta, porque el aviso volvía al abrir el panel desde el
+       * icono instalado, desde otro móvil o con los datos del sitio limpios.
+       */
       let deleted = 0;
-      for (const row of notifications) {
-        if (await ctx.db.remove('user_notifications', row.id)) deleted += 1;
+      for (let vuelta = 0; vuelta < 25; vuelta += 1) {
+        const pendientes = await deletableNotifications(ctx, actor);
+        if (!pendientes.length) break;
+        let borradasEnEstaVuelta = 0;
+        for (const row of pendientes) {
+          if (await ctx.db.remove('user_notifications', row.id)) borradasEnEstaVuelta += 1;
+          await rememberNotificationDeletion(ctx, row.recipient_user_id ?? actor?.id ?? null, row);
+        }
+        deleted += borradasEnEstaVuelta;
+        // Si no se borró ninguna, seguir dando vueltas no cambia nada.
+        if (!borradasEnEstaVuelta) break;
       }
       await ctx.audit?.record({
         entity: 'notifications',
@@ -6065,6 +6178,9 @@ async function handle(req, res, ctx) {
         return;
       }
       const deleted = (await ctx.db.remove('user_notifications', id)) ? 1 : 0;
+      // El borrado se recuerda aunque la fila ya no estuviera: es la promesa de
+      // que no vuelve, y cubre también una recreación del mismo suceso.
+      await rememberNotificationDeletion(ctx, current.recipient_user_id ?? actor?.id ?? null, current);
       await ctx.audit?.record({
         entity: 'notifications',
         entityId: id,
@@ -7145,6 +7261,69 @@ async function handle(req, res, ctx) {
         targetStatus: body.status,
         expectedStatus: body.expectedStatus ?? body.expected_status,
         reason: body.reason,
+        actor,
+        source: 'MANUAL_ADMIN',
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 422, {
+          ok: false,
+          error: result.error,
+          message: result.message,
+          currentStatus: result.currentStatus,
+          available: result.available,
+          required: result.required,
+        });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        duplicate: result.duplicate === true,
+        item: sanitizeItemForPermissions(result.item, actor),
+        order: sanitizeOrderForPermissions(result.order, actor),
+        delivered: hasPermission(actor, 'cost.view') ? result.delivered : stripSensitiveFinancials(result.delivered),
+        integrity: result.integrity,
+      });
+      return;
+    }
+
+    /*
+     * FINALIZAR UN PEDIDO SIN SER ADMIN.
+     *
+     * Cualquiera que atienda pedidos (admin, agente u operador) puede cerrar un
+     * pedido que ya salió: el repartidor lo llevó y no lo marcó, y obligar a
+     * buscar un admin para eso dejaba ventas abiertas para siempre.
+     *
+     * Es una ruta APARTE y a propósito: solo hace UNA cosa (pasar a entregado),
+     * no acepta el estado que le manden y no sirve para cancelar ni para revertir.
+     * El cambio queda auditado con el usuario y hace lo mismo que el cambio de
+     * estado completo: inventario, postventa, Meta y cierre del tracking.
+     */
+    if (
+      route.startsWith('/api/admin/orders/') &&
+      route.endsWith('/finish') &&
+      req.method === 'POST' &&
+      !route.slice('/api/admin/orders/'.length, -'/finish'.length).includes('/')
+    ) {
+      if (!requirePermission('orders.update_operational', 'No tienes permiso para finalizar pedidos.')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/finish'.length));
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const item = await findOrderItem(ctx.store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no existe.' });
+        return;
+      }
+      const order = orderOf(item);
+      const reason = manualReason(body.reason) ?? 'Finalizado desde la lista de pedidos';
+      const result = await transitionOrderStatus(ctx, {
+        orderId,
+        targetStatus: 'ENTREGADO',
+        expectedStatus: orderOperationalStatus(order, item, await activeTrackingSessionsForOrder(ctx, orderId)),
+        reason,
         actor,
         source: 'MANUAL_ADMIN',
       });
@@ -9856,8 +10035,14 @@ export async function startCrmServer(config = {}) {
    * de la base de datos y lo intenta cuando le toca. Con `schedulerIntervalMs: 0`
    * no arranca nada (los tests llaman a `tick()` a mano).
    */
+  // `PHYTO_CRM_NO_SCHEDULER=1` apaga el bucle en una instancia que comparte la
+  // base con otra que YA lo corre (p. ej. `npm run dev` en local mirando a
+  // producción): evita mandar dos veces el mismo mensaje programado. El `tick()`
+  // manual (tests, rutas de admin) sigue funcionando.
+  const schedulerDisabledByEnv = String(process.env.PHYTO_CRM_NO_SCHEDULER ?? '').trim() === '1';
   const schedulerInterval =
-    config.schedulerIntervalMs ?? (config.schedulerEnabled === false ? 0 : 30_000);
+    config.schedulerIntervalMs ??
+    (config.schedulerEnabled === false || schedulerDisabledByEnv ? 0 : 30_000);
   const stopScheduler = scheduler.start({ intervalMs: schedulerInterval });
   if (schedulerInterval && !settings.quiet) {
     console.log(

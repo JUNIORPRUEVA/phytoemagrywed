@@ -18,7 +18,7 @@
         android:usesPermissionFlags="neverForLocation" />
 
     <application
-        android:label="Phytoemagry"
+        android:label="Fulltech"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

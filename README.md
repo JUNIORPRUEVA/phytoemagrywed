@@ -19,11 +19,26 @@ medición propia, captura de UTM y arquitectura preparada para el mini-CRM.
 npm install          # solo herramientas de desarrollo (esbuild, vitest, jsdom)
 cp .env.example .env # completa lo que exista de verdad
 npm run dev          # http://localhost:5173
+npm run dev:datos    # SEGUIR DESARROLLANDO con TUS datos (copia local, sin envíos reales)
+npm run uat          # ambiente de PRUEBAS (base de datos aparte, datos de ejemplo)
 ```
+
+> Para **seguir desarrollando** el CRM y el panel sin tocar los datos de
+> producción: `npm run dev:datos`. Hace una **copia** de tu base real a
+> `data/uat/` (la original solo se lee, nunca se escribe) y levanta el panel en
+> `http://127.0.0.1:8790/admin/` con tus clientes y pedidos de verdad, pero con
+> WhatsApp simulado (los "envíos" se apuntan en `data/uat/envios.log`). Entras
+> con tus usuarios de siempre.
+>
+> `npm run uat` en cambio es un ambiente de **pruebas con datos de ejemplo**
+> (clientes, pedidos y usuarios inventados). Ver `docs/PANEL.md` → «Ambiente de pruebas».
 
 | Comando | Qué hace |
 | --- | --- |
 | `npm run dev` | Compila en watch y sirve `dist-dev/` con recarga automática (no toca `dist/`) |
+| `npm run dev:datos` | **Seguir desarrollando**: copia tu base real a `data/uat/` (solo lectura en el original) y levanta CRM + panel en `:8790` con tus datos y WhatsApp simulado |
+| `npm run uat` | **Ambiente de PRUEBAS**: CRM + panel con base de datos aparte (`data/uat/`), datos de ejemplo y WhatsApp simulado (no envía nada). Si ya existe la copia de `dev:datos`, la reutiliza tal cual |
+| `npm run uat:reset` | Borra la base de pruebas y la vuelve a sembrar de cero (borra también la copia). Parado antes, o Windows no dejará borrarla |
 | `npm run build` | Build de producción en `dist/` (minificado, con hash de contenido) |
 | `npm run preview` | Sirve el `dist/` ya construido en `:4173` |
 | `npm test` | Suite de pruebas (182 tests) |

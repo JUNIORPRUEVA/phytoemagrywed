@@ -145,11 +145,14 @@ describe('nada se envía solo', () => {
     // nunca envía: el envío lo pulsa siempre una persona. Delivery también usa
     // polling de lectura si SSE no está disponible, y el mapa de pedidos refresca
     // las ubicaciones (lectura) para que una ubicación recién llegada salga sola.
-    // El resto son `setTimeout`.
+    // La sincronía silenciosa (60 s) manda el trabajo que la persona hizo SIN
+    // conexión (un pedido, un estado, un cliente) y trae los datos nuevos: no
+    // escribe a nadie ni recarga la pantalla. El resto son `setTimeout`.
     const intervals = (app.match(/setInterval\([^)]*\)/g) ?? []).sort();
     expect(intervals).toEqual([
       'setInterval(()',
       'setInterval(deliveryPollTick, 8000)',
+      'setInterval(sincroniaSilenciosaTick, 60000)',
       'setInterval(tick, 200)',
       'setInterval(waPollTick, 8000)',
     ]);

@@ -19,14 +19,14 @@ class PhytoemagryApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xff087a5b);
+    const seed = Color(0xff145bd7);
     return MaterialApp(
-      title: 'Phytoemagry',
+      title: 'Fulltech',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: seed),
-        scaffoldBackgroundColor: const Color(0xfff4fbf8),
+        scaffoldBackgroundColor: const Color(0xfff4f7fd),
       ),
       home: const CrmWebShell(),
     );
@@ -272,7 +272,7 @@ class _LoadError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: const Color(0xfff4fbf8),
+      color: const Color(0xfff4f7fd),
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -282,7 +282,7 @@ class _LoadError extends StatelessWidget {
               const Icon(Icons.wifi_off_rounded, size: 44),
               const SizedBox(height: 12),
               const Text(
-                'No se pudo cargar Phytoemagry.',
+                'No se pudo cargar Fulltech.',
                 style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                 textAlign: TextAlign.center,
               ),

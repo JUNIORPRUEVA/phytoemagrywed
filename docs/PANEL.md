@@ -78,7 +78,211 @@ ayudaba a nadie: el motivo real es siempre uno de esos tres.
 
 ---
 
+## 1-ter. Ambiente de pruebas (base de datos aparte, sin envíos reales)
+
+`npm run dev` usa la MISMA base de datos y las MISMAS credenciales de WhatsApp que
+producción (`data/phytoemagry.sqlite` y lo que haya en `.env`). Para trabajar sin
+riesgo hay dos modos, con la misma garantía de aislamiento:
+
+```bash
+npm run dev:datos    # SEGUIR DESARROLLANDO: copia tus datos reales (recomendado)
+npm run uat          # ambiente de PRUEBAS con datos de ejemplo inventados
+npm run uat:reset    # borra lo que hay en data/uat/ y lo vuelve a sembrar de cero
+```
+
+### a) `npm run dev:datos` — tu base de verdad, copiada
+
+Es el modo para **seguir desarrollando la app**: levanta el CRM y el panel en
+**http://127.0.0.1:8790/admin/** con una **copia** de tus datos reales, así que ves
+tus clientes, pedidos, conversaciones y plantillas de siempre. Entras con **tus
+usuarios de siempre** (no hay cuentas nuevas).
+
+Cómo se protege la original:
+
+- La base real se abre **solo para leer** (`readOnly`) y se copia con
+  `VACUUM INTO` (seguro aunque haya un `-wal` activo). Nunca se abre para escribir.
+- **Todo lo que hagas cae en `data/uat/`**: base, archivos (`data/uat/media/`) y
+  el registro de envíos (`data/uat/envios.log`). Borrar `data/uat/` no afecta nada.
+- WhatsApp sigue simulado y Meta (CAPI) y el push siguen apagados: **no sale
+  ningún mensaje real** ni desde el panel ni desde el motor de programados.
+
+Detalles honestos:
+
+- La copia es un **retrato del momento** en que arrancas. Volver a ejecutar
+  `npm run dev:datos` **reemplaza** la copia por los datos de ahora: lo que hayas
+  hecho en el entorno de trabajo se pierde. Para volver a la misma copia sin
+  reemplazarla, usa `npm run uat` (reutiliza `data/uat/phyto-uat.sqlite` tal cual).
+- Las **fotos y audios viejos no vienen** en la copia: en producción viven en R2,
+  no en la base de datos. Los mensajes se ven, pero los adjuntos anteriores no
+  cargan; lo que subas desde este entorno sí se guarda y se abre con normalidad.
+- El arranque crea/actualiza la cuenta `admin@uat.local` (clave `UatLocal-123`)
+  dentro de la copia, como puerta de emergencia si no recuerdas una contraseña.
+  En tu base real no se crea nada.
+
+### b) `npm run uat` — datos de ejemplo
+
+Para probar flujos completos desde cero, con datos inventados que puedes romper
+sin pensar. Abre **http://127.0.0.1:8790/admin/** y entra con cualquiera de los
+cuatro usuarios (contraseña `UatLocal-123`):
+
+| Usuario | Rol | Para qué sirve |
+| --- | --- | --- |
+| `admin@uat.local` | ADMIN | todo: asignar reparto, cambiar estado, ajustes |
+| `agente@uat.local` | AGENT | atender clientes y entregar (el negocio no tiene reparto aparte) |
+| `reparto@uat.local` | DELIVERY | ver SOLO lo suyo, iniciar y cerrar la entrega |
+| `operador@uat.local` | OPERADOR | ventas sin reparto |
+
+**Qué garantiza** (el arranque lo comprueba y lo imprime):
+
+- **Base de datos propia**: `data/uat/phyto-uat.sqlite`. Postgres y la base de
+  producción se ignoran por completo.
+- **Nada sale a internet**: WhatsApp va en modo simulado (cada envío se anota en
+  `data/uat/envios.log`), la API de conversiones de Meta queda apagada y las
+  notificaciones push desactivadas.
+- **Los archivos** (fotos, audios, facturas) se guardan en `data/uat/media/`: se
+  abren desde el hilo como en producción y se borran con `--reset`.
+
+**Qué trae sembrado** (solo en este modo): 10 clientes (uno con la ventana de 24 h
+cerrada, otro que pidió no recibir mensajes), 9 pedidos (uno por estado y
+situación), una entrega **en vivo** con GPS en el mapa, una asignada y lista para
+«Iniciar entrega», un pedido sin ubicación, inventario cargado, y 2 mensajes
+programados (uno sale solo en 3 minutos; el del cliente con opt-out se bloquea).
+Las plantillas se marcan **aprobadas solo en esa base** para poder probar los
+flujos que Meta exige (ubicación, confirmación, factura fuera de ventana).
+
+Opciones útiles (`node scripts/uat-env.mjs --help`):
+
+| Opción | Qué hace |
+| --- | --- |
+| `--copiar-datos` | trabaja con una **copia de la base real** en vez de los datos de ejemplo (es lo que usa `npm run dev:datos`) |
+| `--port=8790` | cambia el puerto |
+| `--sin-scheduler` | no procesa los mensajes programados |
+| `--solo-sembrar` | prepara los datos y sale (no deja el servidor abierto) |
+| `--sembrar` | vuelve a sembrar los datos de ejemplo encima de lo que haya |
+| `--json` | salida resumida para scripts |
+
+Para la **web pública** contra este CRM:
+
+```bash
+PHYTO_CRM_PORT=8790 PHYTO_CRM_NO_AUTO=1 npm run dev
+```
+
+`PHYTO_CRM_NO_AUTO=1` evita que la web arranque **su propio** CRM apuntando a la
+base de producción: así las dos partes hablan con el mismo CRM aislado. El
+ambiente ya permite el origen `http://localhost:5173`.
+
+> El código del panel se sirve tal cual desde `public/admin/`: para desarrollar
+> basta guardar y recargar (sin compilar nada, y sin tocar el `dist/` de la web).
+
+---
+
+## 1-quater. Trabajar sin conexión (24 h o más)
+
+El CRM de verdad vive en la nube. El panel guarda en el teléfono **todo lo que
+hace falta para seguir trabajando** cuando no hay red, y manda lo que se hizo en
+cuanto vuelve.
+
+**Sin conexión SÍ funciona**
+
+- Abrir la app (incluso con el teléfono en modo avión y la app cerrada).
+- Ver **Hoy**, la lista de **pedidos**, **clientes**, **seguimientos**, el
+  **inventario**, las **entregas** y los **últimos informes vistos**.
+- **Registrar pedidos** (sale de la lista del teléfono, con su marca «sin enviar»).
+- **Finalizar o cambiar el estado** de un pedido (incluso en la calle, después de
+  entregar).
+- **Crear clientes** y **archivar chats**.
+- Crear y cerrar **tareas de seguimiento**.
+- Buscar y leer lo que ya está guardado.
+
+**Sin conexión NO funciona** (necesita internet a propósito)
+
+- **Enviar o recibir mensajes de WhatsApp** (los manda y los recibe Meta).
+- **Programar un mensaje**: lo envía el servidor a su hora. El panel lo dice en
+  vez de dejar prepararlo para nada.
+- La API de conversiones de Meta y las notificaciones push.
+- Las **fotos y audios viejos**: viven en el almacén (R2/S3), no en el teléfono.
+  Los mensajes se leen; los adjuntos anteriores no se pueden abrir sin conexión.
+
+**Cómo se comporta**
+
+- **La sesión no se vence por estar sin conexión.** La sesión dura 90 días y el
+  panel no la cierra cuando no puede preguntar: sin red se abre con la copia y el
+  rol que ya tenía. Solo vuelve a la pantalla de entrada si el servidor responde
+  que la sesión ya no vale.
+- **La app no se recarga sola.** Al volver a la app se sincroniza **por detrás**
+  (cada minuto y al recuperar el foco): misma pestaña, misma hoja abierta, mismo
+  texto escrito. La única recarga es la que pulsa una persona en el aviso
+  «Versión nueva».
+- **Nada se pierde ni se duplica.** Lo que se hace sin red va a una **cola de
+  envíos** y sale en orden al volver la conexión. Si el CRM lo **rechaza** (por
+  ejemplo, el pedido ya se había entregado), se dice **por qué** en un aviso que
+  hay que leer: no se descarta nada en silencio.
+- **Se ve lo que falta por enviar**: cada pedido hecho sin conexión lleva su
+  etiqueta **«Sin enviar»** y arriba aparece un aviso con el botón **Enviar
+  ahora**.
+
+**Cómo está hecho** (para quien mantenga esto)
+
+- El **armazón** de la app (HTML, CSS, JS, iconos) lo guarda el *service worker*;
+  por eso abre sin red. Se guarda archivo a archivo: que falte un icono no deja
+  al panel sin copia.
+- La **copia de datos** vive en el almacenamiento del navegador
+  (`localStorage` → `pe_crm_snapshot`): clientes, pedidos, catálogo, ajustes,
+  estados y formas de pago, entregas y los últimos informes y comprobantes
+  abiertos. Si el navegador se queda sin sitio, se guarda una copia **ligera**
+  (sin conversaciones ni avisos) antes que quedarse sin ninguna.
+- La **cola de envíos** (`pe_crm_outbox`) lleva el cambio, su motivo legible y una
+  clave por cosa: dos cambios del mismo pedido se funden en uno.
+- **No hace falta instalar nada más en el servidor** (ni Redis ni ninguna cola
+  externa): el CRM ya es un solo proceso y quien guarda el trabajo pendiente es el
+  teléfono, que es donde se pierde la conexión. Redis serviría para compartir
+  sesiones entre VARIOS servidores del CRM a la vez, y eso hoy no ocurre.
+
+**Límites honestos**
+
+- La copia es de **ese** teléfono y de **ese** navegador. Si se borran los datos
+  del sitio (o se entra en modo privado), no hay copia: sin red no habría qué
+  enseñar.
+- La copia es **un retrato**: tiene los datos de la última vez que hubo conexión.
+  Un pedido que otro compañero registre mientras tú estás sin red aparecerá al
+  volver la conexión.
+- Un mensaje de WhatsApp **escrito** sin conexión no se puede encolar: WhatsApp no
+  admite envíos diferidos desde aquí (para eso está «Programar mensaje», que sí
+  necesita red para dejarlo en el servidor).
+
+---
+
 ## 2. Las cuatro pestañas
+
+### Apariencia: claro, oscuro o como tu teléfono
+
+El panel se ve de día y de noche, y lo elige cada persona:
+
+- **Dónde**: *Mi perfil* (abajo del menú lateral, entra cualquier rol) y también en
+  *Configuración → Apariencia*.
+- **Tres opciones**: **Claro**, **Oscuro** y **Como el teléfono** (sigue el modo oscuro
+  del móvil, y cambia solo si el teléfono cambia, sin recargar).
+- **Se recuerda** en el propio teléfono: se abre ya con el tema elegido, sin fogonazo
+  blanco (el tema se aplica antes de pintar).
+- El oscuro no es «el claro en negro»: los grises son verdosos y las superficies se
+  separan por tono, no por sombras (una sombra negra sobre negro no se ve).
+
+### Lo que eliges se queda elegido
+
+Cerrar el panel y volver a abrirlo no devuelve la app a «todo en general»:
+
+- **La pestaña**: se abre donde lo dejaste (si estabas en WhatsApp, abre WhatsApp).
+  Un enlace directo (`?v=...`, una notificación) manda sobre esto, como es lógico.
+- **Los filtros**: el de la bandeja (por ejemplo **Archivados**), el de pedidos (estado
+  y fecha), el de seguimientos y el de clientes se quedan puestos, también sus fechas.
+- **Se ve lo que está filtrado**, sin abrir nada: el título de la bandeja dice
+  «Conversaciones · Archivados», Clientes dice «Personas · Interesados», y Pedidos ya
+  tenía sus dos chips (*Estado · …* y la fecha). Quitar el filtro también se recuerda.
+- **Lo que se escribe en un buscador NO se guarda**, a propósito: un texto de hace tres
+  días esconde datos sin que se vea de dónde salen. Los filtros se ven; un texto
+  olvidado, no.
+- Si en el teléfono quedara un valor raro (una versión vieja), se ignora y se usa el de
+  siempre: una preferencia rota no puede dejar la lista vacía.
 
 | Pestaña | Para qué sirve |
 | --- | --- |
@@ -140,6 +344,29 @@ El panel está pensado para ir por la calle. Si no hay conexión:
 ---
 
 ## 5. Detalles técnicos (para quien mantenga esto)
+
+### El armazón: barra de arriba, navbar y menú
+
+El sistema del armazón vive en **`public/admin/shell-v2-tema.css`**, que se carga
+**después** de `admin.css` a propósito: es la última palabra sobre estas piezas, sin
+tocar la lógica de ninguna pantalla.
+
+- **Barra de arriba**: fondo sólido del tema, una línea fina abajo y los dos iconos
+  (perfil y avisos) en un círculo con color de marca. Antes eran círculos translúcidos
+  con icono blanco sobre barra clara: en el móvil no se veían.
+- **Navbar inferior**: barra pegada abajo, a todo el ancho, con el icono y su nombre y
+  una pastilla de color de marca detrás del icono activo (el gesto de WhatsApp). Las
+  opciones no cambian: Hoy, WhatsApp, Pedidos y Clientes.
+- **Menú lateral**: el icono de menú son tres barras que se convierten en ✕ al abrir
+  (la animación se dispara con `body[data-drawer='open']`, así animan todos los botones
+  de menú a la vez).
+- **La marca** se escribe con una serif suave (variable `--pe-brand-font`) y el «CRM» es
+  una etiqueta, no un eco del nombre.
+
+Los colores salen de variables (`--pe-page-bg`, `--pe-appbar-bg`, `--pe-tabbar-bg`,
+`--pe-card-bg`, `--pe-brand-text`…). Si algo se ve mal de noche, se arregla cambiando
+una variable, no escribiendo un color nuevo. Las filas de conversación, los paneles de
+filtros y las burbujas tienen su bloque de oscuro en ese mismo archivo.
 
 - **Clave y sesión**: la clave del panel es `PHYTO_CRM_TOKEN`. Al entrar, el
   servidor devuelve una cookie **HttpOnly, SameSite=Strict** (y `Secure` si va por
@@ -205,6 +432,69 @@ abrir el chat, hecho, +3 días, cancelar, ver comprobante). El orden es el del d
 seguimientos vencidos, de hoy, «necesitan una persona», «esperando respuesta»,
 recordatorios y el aviso de los **mensajes programados que no salieron**.
 
+#### Las tarjetas de HOY (y por qué son estas)
+
+Son **ocho**, no un cuadro de mando: lo que se hace hoy y a quién se le escribe.
+
+| Tarjeta | Al tocarla se abre |
+| --- | --- |
+| Sin responder | WhatsApp con el filtro **Pendientes** (esperando respuesta) |
+| Sin asignar | WhatsApp con el filtro **Sin asignar** |
+| Pedidos pendientes | Pedidos con **Estado · Pendientes** y la fecha en **Hoy** |
+| Seguimientos vencidos | Seguimientos con el bloque **Vencidos** |
+| Seguimientos de hoy | Seguimientos con el bloque **Para hoy** |
+| Clientes / Interesados / Con compra | Clientes con ese filtro puesto |
+
+Dos reglas que no se rompen:
+
+- **El número de la tarjeta es exactamente lo que ves al entrar.** Se cuenta con la
+  misma regla que usa la lista de destino (el filtro de la bandeja, el estado
+  operativo del pedido, el segmento del cliente). Si no cuadra, la tarjeta solo hace
+  dudar.
+- **Nada de contadores internos.** «Enviados», «por enviar», «por revisar»,
+  «programados» y «entregas activas» eran el mismo trabajo contado por dentro: el
+  sistema hablándole al sistema. Lo que no salió se avisa en **Notificaciones**, y los
+  mensajes programados de un cliente están en su ficha.
+
+En el móvil van **de dos en dos**, con el número grande y la etiqueta completa (nunca
+cortada con puntos suspensivos); en el iPhone SE la tarjeta se estrecha en vez de
+apretar el texto. En pantalla grande se reparten de cuatro en cuatro.
+
+#### Notificaciones: lo que se borra, se borra
+
+«Eliminar todas» (y el botón **Borrar** de cada una) quitan la notificación de esta
+pantalla **y del servidor**: el aviso queda marcado como borrado para su destinatario,
+así que no vuelve a aparecer **en ningún sitio** — ni al abrir el panel desde el icono
+instalado, ni en otro móvil, ni con los datos del navegador limpios. Si el mismo suceso
+se procesara otra vez (una fila nueva con otro id), el recuerdo por *suceso* lo
+descarta igual. Y si en ese momento no había red, el borrado queda pendiente y se
+reintenta solo: **no se da por hecho sin confirmación del servidor**.
+
+El panel además apunta los ids borrados en el propio teléfono: mientras el servidor
+contesta (o si no hay red), la campana ya no los cuenta.
+
+Lo mismo con los avisos que calcula el panel (los mensajes que WhatsApp rechazó, los
+programados que no salieron): «Entendido» recuerda **el valor** que se dio por
+entendido, así que el mismo aviso no reaparece por el hecho de que el contador suba o
+el mensaje cambie de estado.
+
+#### Permisos: se piden una vez
+
+El aviso de «Activar notificaciones» (y el de ubicación) sale **una vez**, con un botón
+**Ahora no** al lado:
+
+- Si el permiso ya está concedido, no se vuelve a pedir.
+- Si el cliente dijo que no («Ahora no»), no se le insiste: queda en *Configuración →
+  Notificaciones* para cuando quiera.
+- Si el navegador no puede concederlo desde ahí (iPhone desde Safari: hay que añadir el
+  panel a la pantalla de inicio), no se enseña un botón que no puede cumplir lo que
+  promete: se explica qué hacer, **una vez**.
+- Si el estado cambia más adelante (el navegador lo bloquea, o lo quitan), se cuenta
+  una única vez más. Dentro de la misma visita el aviso se queda a la vista hasta que
+  el usuario haga algo.
+- El GPS se pide a quien entrega (rol Delivery) y en la pantalla de entregas, no en HOY
+  por el simple hecho de que haya pedidos cargados.
+
 ### Ajustes
 
 - **Plan de postventa**: interruptores por día (1, 3, 7, 14, 21, 30). Cambiarlo afecta a
@@ -248,6 +538,67 @@ Para pasarle el panel a otra persona (un vendedor, un repartidor, el socio):
 3. Para **entrar** necesita su propio usuario: se crea en **Usuarios** y se le dice el
    usuario y la contraseña. El enlace que se comparte **no da acceso a nada** — va sin la
    clave del panel a propósito.
+
+### Pedidos: cerrar el día sin abrir fichas
+
+La lista de **Pedidos** está hecha para trabajarla de arriba abajo, sin entrar en cada
+ficha:
+
+- **Abre en HOY.** El chip de fecha dice el rango que está puesto y se cambia desde ahí:
+  Hoy, Ayer, un día suelto de la semana, últimos 7 días, este mes, un intervalo o todos.
+  La cuenta de arriba dice siempre de dónde salen los que se ven («3 de 13 pedidos · hoy»)
+  y, si no hay pedidos de ese día, lo dice y ofrece **Ver todos los pedidos**.
+- **El estado va en el COLOR de la fila**: pendiente en rojo (es lo que hay que resolver
+  hoy), en camino en azul, entregado en verde y cancelado en gris apagado. El filo
+  izquierdo y la etiqueta de estado llevan el mismo color.
+- **La fila es FINA: 64 px, sin botones.** Un pedido ocupa lo que se lee de un vistazo
+  —**quién**, la referencia con el **pago** (efectivo o transferencia), **cuánto** y en qué
+  **estado**— y, debajo, una línea corta con el **teléfono**, **quién lo atiende** y si ya
+  tiene **repartidor** o va **sin delivery**. Caben diez pedidos en una pantalla de móvil
+  (antes, cuatro).
+- **Todo lo demás vive en el «⋯» de la fila**, el mismo gesto que en la lista de chats:
+  *Cambiar el estado* (dice cuál es el de ahora), *Escribir al cliente*, *Marcar para
+  acciones en lote*, ver el pedido completo, factura, mapa, pasar a un delivery, cancelar,
+  eliminar, ver al cliente, WhatsApp, seguimiento y mensaje. Arriba del menú se lee el dato
+  que en la fila puede quedar recortado: **teléfono · quién lo atiende · reparto**.
+- **Estado** ofrece los estados que ese pedido admite y que tu rol puede aplicar. Al
+  **finalizar** hay una casilla ya puesta para **avisar al cliente**: se abre su
+  conversación con el mensaje escrito y solo hay que enviarlo — el aviso **no sale solo**.
+  Finalizar hace el trabajo completo: inventario, cierre del tracking, postventa y Meta.
+- **Varios a la vez**: se marcan los pedidos y aparece una barra abajo con **Finalizar**,
+  Estado, Seguimiento y Mensaje. Se aplican **de uno en uno** (cada pedido mueve
+  inventario) y al terminar se dice cuántos entraron y por qué falló el resto.
+- El botón flotante **✦**, encima del de agregar pedido, tiene lo que es de TODA la lista:
+  seleccionar los que se ven, finalizar los seleccionados, marcar seguimiento, programar
+  un mensaje y filtrar por fecha.
+
+**Quién puede finalizar**: cualquiera que atienda pedidos (admin, agente u operador), por
+la ruta `POST /api/admin/orders/:id/finish`, que **solo** sirve para pasar a entregado. Los
+demás cambios de estado (cancelar, volver a pendiente) siguen siendo de ADMIN, porque
+mueven inventario y ventas. El motivo queda auditado con el usuario en todos los casos.
+
+### La barra de abajo (Hoy)
+
+El icono mide **26 px** y el nombre va a **12 px**, con el nombre bajo el icono y el icono
+activo dentro de su **pastilla** azul: es el gesto de WhatsApp, un punto más grande, para
+que la barra se lea de un toque y sin acercar la vista. El aviso de sin leer (el número
+rojo) va pegado a la esquina del icono. La barra se ve en **Hoy**; en las demás pantallas
+manda la cabecera con el menú, que deja el alto entero para la lista.
+
+### La lista de chats: archivados y buscador
+
+Dos reglas que se cumplen siempre, también desde el móvil:
+
+- **Un chat archivado que escribe VUELVE.** Si el cliente responde, la conversación sale
+  de *Archivados*, entra en la lista principal y **aparece la primera** con su aviso de
+  mensaje sin leer. Archivar es «apártamelo de la vista», no «no me avises de esto»: un
+  cliente que escribe no puede quedarse escondido.
+- **El buscador busca en TODAS.** Escribir un nombre o un teléfono busca en toda la
+  bandeja, aunque la conversación esté **archivada**, sea de otra persona o sea de otro
+  mes (los filtros de estado y de fecha **no** recortan la búsqueda mientras haya texto).
+  Si sale una archivada, la fila lo dice con la etiqueta **Archivado** y su estado se
+  puede cambiar con «⋯» → *Desarchivar*. Al borrar el texto, vuelven a mandar los filtros
+  que estuvieran puestos: buscar no cambia lo que el usuario había elegido.
 
 ### Reglas que no se rompen
 

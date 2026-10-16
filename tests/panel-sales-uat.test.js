@@ -271,10 +271,18 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     $('#login-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
     await waitFor(() => !$('#app').hidden, 'el panel abierto');
     const stats = await waitFor(() => ($('#stats')?.textContent?.includes('Sin responder') ? $('#stats').textContent : null), 'el panel Hoy');
-    expect(stats).toContain('Programados activos');
+    // HOY solo enseña lo que se hace hoy: los contadores internos («enviados»,
+    // «por enviar», «por revisar», «programados») ya no están.
+    expect(stats).toContain('Sin asignar');
+    expect(stats).toContain('Pedidos pendientes');
+    expect(stats).toContain('Seguimientos vencidos');
     expect(stats).toContain('Clientes');
     expect(stats).toContain('Interesados');
     expect(stats).toContain('Con compra');
+    expect(stats).not.toContain('Por enviar');
+    expect(stats).not.toContain('Por revisar');
+    expect(stats).not.toContain('Enviados');
+    expect(stats).not.toContain('Programados activos');
     expect($('#list-hoy').innerHTML.trim()).toBe('');
     expect(dom.window.localStorage.getItem('pe_crm_snapshot')).toBeTruthy();
   });
@@ -420,9 +428,14 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     click('#sch-save');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
 
-    const data = await (await fetch(`${app.url}/api/admin/scheduled`, { headers: { cookie } })).json();
-    const row = data.scheduled.find((entry) => entry.text === 'Hola Ana, ¿te ayudo con algo más?');
-    expect(row).toBeTruthy();
+    /*
+     * Se espera al CRM, no a la pantalla: el mensaje queda guardado en el servidor
+     * un instante después de que el panel cierre la hoja.
+     */
+    const row = await waitFor(async () => {
+      const data = await (await fetch(`${app.url}/api/admin/scheduled`, { headers: { cookie } })).json();
+      return data.scheduled.find((entry) => entry.text === 'Hola Ana, ¿te ayudo con algo más?') ?? null;
+    }, 'el mensaje programado en el CRM');
     expect(row.status).toBe('SCHEDULED');
   });
 
@@ -565,7 +578,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect($('#sheet-body [data-receipt]')).toBe(null);
     click(fab);
     const menu = await waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'el menú de acciones');
-    for (const accion of ['Ver cliente', 'Ver factura', 'Pasar a un delivery', 'Escribir por WhatsApp', 'Volver a la ficha']) {
+    for (const accion of ['Ver cliente', 'Ver factura', 'Pasar a un delivery', 'Escribir por WhatsApp', 'Ver el pedido completo']) {
       expect(menu.textContent).toContain(accion);
     }
 
@@ -757,7 +770,12 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
   });
 
   it('los filtros de estado se cuentan y filtran de verdad', async () => {
-    expect($$('#pedidos-filtros .chip')).toHaveLength(5);
+    // Cinco de ESTADO y, en el mismo panel, la FECHA (hoy, ayer, 7 días, mes,
+    // intervalo y todas): se elige todo desde el mismo sitio.
+    expect($$('#pedidos-filtros [data-order-filter]')).toHaveLength(5);
+    expect($$('#pedidos-filtros [data-order-date]')).toHaveLength(5);
+    expect($('#pedidos-filtros [data-order-date-custom]')).toBeTruthy();
+    expect($('#pedidos-filtros [data-order-date="today"]').textContent).toContain('Hoy');
     const total = (await pedidos()).length;
     expect($('#pedidos-filtros [data-order-filter="todo"]').textContent).toContain(String(total));
 
@@ -907,5 +925,189 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(menu.textContent).toContain('Programar mensaje al cliente');
     click('[data-close-sheet]');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+  });
+
+  /*
+   * TRABAJAR EL DÍA: la lista abre en HOY, cada pedido lleva su color y sus
+   * botones al pie, y varios se resuelven de una vez.
+   */
+  const abiertos = async () =>
+    (await pedidos()).filter((item) => !['entregado', 'cancelado', 'perdido'].includes(item.status ?? 'nuevo'));
+
+  it('la lista de pedidos abre en HOY y el filtro de fecha cambia lo que se ve', async () => {
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-card'), 'la lista de pedidos con sus tarjetas');
+    const chip = $('#pedidos-fecha-chip');
+    expect(chip.textContent.trim()).toBe('Hoy');
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    // Todos los pedidos de esta suite son de hoy, así que se ven todos… y se dice.
+    expect($$('#list-pedidos .order-row').length).toBe((await pedidos()).length);
+    expect($('#pedidos-count').textContent).toContain('hoy');
+
+    // El histórico completo está a un toque.
+    click('#pedidos-fecha-chip');
+    await waitFor(() => $('[data-order-date="all"]'), 'el menú de fechas');
+    click('[data-order-date="all"]');
+    await waitFor(() => $('#pedidos-fecha-chip').textContent.trim() === 'Fecha', 'el chip sin fecha puesta');
+    expect($$('#list-pedidos .order-row').length).toBe((await pedidos()).length);
+
+    /*
+     * LA FECHA SE ELIGE TAMBIÉN DESDE EL PROPIO PANEL DE FILTROS, con los mismos
+     * rangos: hoy, ayer, una semana, el mes, un intervalo y todas.
+     */
+    click($('#pedidos-filtros [data-order-date="today"]'));
+    await waitFor(() => $('#pedidos-fecha-chip').textContent.trim() === 'Hoy', 'Hoy puesto desde el panel');
+    expect($('#pedidos-filtros [data-order-date="today"]').getAttribute('aria-pressed')).toBe('true');
+    expect($$('#list-pedidos .order-row').length).toBe((await pedidos()).length);
+
+    // «Ayer» no tiene pedidos en esta suite: la lista lo dice y deja volver.
+    click($('#pedidos-filtros [data-order-date="yesterday"]'));
+    const ayerVacio = await waitFor(() => $('.empty--order-date'), 'el aviso de que ayer no hay pedidos');
+    expect(ayerVacio.textContent).toContain('ayer');
+    expect($('#pedidos-filtros [data-order-date="yesterday"]').getAttribute('aria-pressed')).toBe('true');
+    click($('#pedidos-filtros [data-order-date="7d"]'));
+    await waitFor(() => $$('#list-pedidos .order-row').length > 0, 'los últimos 7 días');
+
+    // El INTERVALO se elige desde el panel y filtra de verdad, día a día.
+    click($('#pedidos-filtros [data-order-date-custom]'));
+    const hoy = new Date().toISOString().slice(0, 10);
+    setValue('#order-date-from', hoy);
+    setValue('#order-date-to', hoy);
+    click('#order-date-apply');
+    await waitFor(() => $('#pedidos-fecha-chip').textContent.includes('–'), 'el intervalo puesto en el chip');
+    expect($$('#list-pedidos .order-row').length).toBe((await pedidos()).length);
+
+    // Un día sin pedidos lo dice claro y ofrece ver todos (nunca una lista vacía sin salida).
+    click($('#pedidos-filtros [data-order-date="7d"]'));
+    await waitFor(() => $$('#list-pedidos .order-row').length > 0, 'los últimos 7 días otra vez');
+    click('#pedidos-fecha-chip');
+    await waitFor(() => $('[data-order-date-day]'), 'los días sueltos');
+    click($$('[data-order-date-day]')[3]);
+    const vacio = await waitFor(() => $('.empty--order-date'), 'el aviso de que ese día no hay pedidos');
+    expect(vacio.textContent).toContain('No hay pedidos de');
+    click('.empty--order-date [data-order-date="all"]');
+    await waitFor(() => $$('#list-pedidos .order-row').length > 0, 'la lista otra vez');
+  });
+
+  it('cada pedido lleva el color de su estado y todo lo demás en su «⋯»', async () => {
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-card'), 'la lista de pedidos');
+    const tarjeta = $$('#list-pedidos .order-card')[0];
+    expect(tarjeta.querySelector('.order-row')).toBeTruthy();
+    //
+    // LA LISTA ES FINA: en la tarjeta solo está la fila y el botón «⋯». Los botones
+    // que iban al pie (Marcar, Estado, Escribir) viven ahora DENTRO del menú, así
+    // que cada pedido ocupa la mitad y se ven el doble en la misma pantalla.
+    //
+    expect(tarjeta.querySelector('.order-card__actions')).toBeNull();
+    expect(tarjeta.querySelector('[data-order-select]')).toBeNull();
+    expect(tarjeta.querySelector('[data-order-quick-status]')).toBeNull();
+    click(tarjeta.querySelector('[data-order-more]'));
+    await waitFor(() => $('#sheet-body [data-order-quick-status]'), 'el menú del pedido');
+    expect($('#sheet-body [data-order-quick-status]').textContent).toContain('Cambiar el estado');
+    expect($('#sheet-body [data-order-quick-chat]')).toBeTruthy();
+    expect($('#sheet-body [data-order-select-toggle]')).toBeTruthy();
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    // El color es del estado: lo entregado en verde y lo que falta, no.
+    const tonos = $$('#list-pedidos .order-card').map((card) => card.className.match(/order-card--(\w+)/)?.[1] ?? '');
+    expect(tonos).toContain('entregado');
+    expect(tonos.some((tono) => ['pendiente', 'en_camino', 'incidencia'].includes(tono))).toBe(true);
+  });
+
+  it('finalizar desde la lista: el botón Estado cierra el pedido y deja el aviso escrito', async () => {
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-card'), 'la lista de pedidos');
+    const objetivo = await esperar(async () => (await abiertos())[0] ?? null, 'un pedido abierto');
+    const tarjeta = await waitFor(
+      () => $$('#list-pedidos .order-card').find((card) => card.dataset.orderCard === objetivo.id) ?? null,
+      'la tarjeta del pedido abierto',
+    );
+    click(tarjeta.querySelector('[data-order-more]'));
+    const cambiar = await waitFor(() => $('#sheet-body [data-order-quick-status]'), 'el menú del pedido');
+    click(cambiar);
+    await waitFor(() => $('#order-qs-confirm'), 'la hoja de estado');
+    expect($('#sheet-body').textContent).toContain('Finalizar');
+    // El aviso al cliente viene puesto: al cerrar se le avisa (lo envía la persona).
+    expect($('#order-qs-notify')?.checked ?? false).toBe(true);
+    click('#order-qs-confirm');
+    await esperar(
+      async () => ((await pedidos()).find((item) => item.id === objetivo.id)?.status === 'entregado' ? true : null),
+      'el pedido finalizado en el CRM',
+    );
+    // Y el panel abre SU conversación con el mensaje ya escrito (no lo manda solo).
+    const texto = await esperar(
+      () => ($('#wa-text')?.value?.includes('ENTREGADO') ? $('#wa-text').value : null),
+      'el aviso escrito en la conversación',
+    );
+    expect(texto).toContain('Gracias por tu compra');
+  });
+
+  it('varios pedidos a la vez: se marcan y se finalizan de un tirón', async () => {
+    dom.window.confirm = () => true;
+    click('[data-tab="pedidos"]');
+    await waitFor(() => $('#list-pedidos .order-card'), 'la lista de pedidos');
+    const lote = (await abiertos()).slice(0, 2);
+    expect(lote.length).toBe(2);
+    for (const item of lote) {
+      const tarjeta = await waitFor(() => $(`[data-order-card="${item.id}"]`), `la tarjeta del pedido ${item.id}`);
+      click(tarjeta.querySelector('[data-order-more]'));
+      const marcar = await waitFor(() => $('#sheet-body [data-order-select-toggle]'), `la marca del pedido ${item.id}`);
+      click(marcar);
+    }
+    const barra = await waitFor(() => $('#pedidos-bulk:not([hidden]) .order-bulk'), 'la barra de la selección');
+    expect(barra.textContent).toContain('2 seleccionados');
+    click('[data-order-bulk="entregado"]');
+    await esperar(async () => {
+      const filas = await pedidos();
+      return lote.every((item) => filas.find((fila) => fila.id === item.id)?.status === 'entregado') ? true : null;
+    }, 'los dos pedidos finalizados');
+    // La selección se limpia sola al terminar: la barra se va.
+    await esperar(() => ($('#pedidos-bulk')?.hidden ? true : null), 'la barra de la selección escondida');
+  });
+
+  it('finalizar sin ser admin: cualquiera que atienda pedidos puede cerrarlos', async () => {
+    const entrada = await fetch(`${app.url}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'agente@phyto.local', password: 'Agente-12345' }),
+    });
+    const cookieAgente = entrada.headers.get('set-cookie').split(';')[0];
+    // Un pedido propio: no se depende de lo que hayan dejado las pruebas de antes.
+    await fetch(`${app.url}/api/crm`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: `pedido-finish-${Date.now()}`,
+        type: 'order_intent',
+        name: 'UAT Finalizar',
+        source: 'checkout',
+        status: 'nuevo',
+        variantName: '5 cápsulas',
+        quantity: 1,
+        total: 1250,
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    const objetivo = (await abiertos())[0];
+    expect(objetivo).toBeTruthy();
+
+    // El cambio de estado COMPLETO (cancelar, revertir…) sigue siendo de ADMIN.
+    const general = await fetch(`${app.url}/api/admin/orders/${objetivo.id}/status`, {
+      method: 'PATCH',
+      headers: { cookie: cookieAgente, 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'CANCELADO', reason: 'Prueba de permisos del panel' }),
+    });
+    expect(general.status).toBe(403);
+
+    // Finalizar, en cambio, sí puede: es el caso del repartidor que no lo marcó.
+    const finalizado = await fetch(`${app.url}/api/admin/orders/${objetivo.id}/finish`, {
+      method: 'POST',
+      headers: { cookie: cookieAgente, 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'Lo entregó y no lo marcó en la app' }),
+    });
+    expect(finalizado.status).toBe(200);
+    const cuerpo = await finalizado.json();
+    expect(cuerpo.ok).toBe(true);
+    expect(cuerpo.item.status).toBe('entregado');
   });
 });
