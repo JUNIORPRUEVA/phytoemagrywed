@@ -238,3 +238,12 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
   tiempo máximo para evitar una espera indefinida. No se da por validada una
   llamada que no haya conectado audio real.
 - No integrar a main hasta terminar la validación funcional acordada.
+- Comprobación posterior: micrófono operativo; el intento real saliente llegó a
+  Meta y fue rechazado con 131044/2593115. La documentación oficial de
+  `calling/troubleshooting` identifica 131044 como falta de un método de pago
+  válido y contempla el mismo bloqueo para llamadas iniciadas por el usuario.
+  El panel muestra ahora este motivo y códigos numéricos, sin errores crudos.
+- 42 pruebas específicas correctas, incluyendo recibir una oferta entrante,
+  responder con pre_accept/accept y finalizar desde el panel sin permiso saliente.
+  La recepción y el audio reales siguen pendientes; no se equiparan estas
+  pruebas simuladas con una llamada real conectada.

@@ -39,7 +39,8 @@
     if (!response.ok || !data.ok) {
       if (response.status === 401) resetSession();
       const diagnostic = Number.isInteger(data.code) ? ` (Meta ${data.code}${Number.isInteger(data.subcode) ? `/${data.subcode}` : ''})` : '';
-      throw Object.assign(new Error((errors[data.error] || 'No se pudo completar la llamada.') + diagnostic), { code: data.error, data });
+      const message = data.code === 131044 ? 'Meta requiere un método de pago válido en la cuenta de WhatsApp Business para habilitar la llamada.' : errors[data.error] || 'No se pudo completar la llamada.';
+      throw Object.assign(new Error(message + diagnostic), { code: data.error, data });
     }
     return data;
   }

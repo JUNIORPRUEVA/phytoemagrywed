@@ -92,3 +92,27 @@ it('al cerrar sesión libera el audio y borra el historial visible', async () =>
   expect(w.document.getElementById('wa-calling-dock').hidden).toBe(true);
   expect(w.document.getElementById('wa-calling-history').textContent).toBe('');
 });
+
+it('recibe una llamada, contesta con la oferta del cliente y permite colgar sin pedir permiso saliente', async () => {
+  const incomingCall = { id: 'in1', conversationId: 'conv1', customerName: 'Cliente entrante', direction: 'inbound', status: 'ringing' };
+  calls = [incomingCall];
+  const originalFetch = w.fetch.getMockImplementation();
+  w.fetch.mockImplementation(async (url, options) => {
+    if (url.includes('/state?')) return { ok: true, status: 200, json: async () => ({ ok: true, call: { ...incomingCall, remoteSession: { type: 'offer', sdp: SDP } } }) };
+    if (url.endsWith('/pre_accept') || url.endsWith('/accept')) {
+      sent.push({ url, body: JSON.parse(options.body) });
+      return { ok: true, status: 200, json: async () => ({ ok: true, call: { ...incomingCall, status: 'active' } }) };
+    }
+    return originalFetch(url, options);
+  });
+  await interval(); await flush();
+  expect(w.document.getElementById('wa-calling-dock').textContent).toContain('Cliente entrante');
+  w.document.querySelector('#wa-calling-incoming button').click(); await flush();
+  expect(peer.currentRemoteDescription).toEqual({ type: 'offer', sdp: SDP });
+  expect(sent.filter((r) => r.body).map((r) => r.url.split('/').at(-1))).toEqual(['pre_accept', 'accept']);
+  expect(sent.find((r) => r.url.endsWith('/accept')).body).toEqual({ id: 'in1', sdp: SDP });
+  expect(sent.some((r) => r.url.endsWith('/permission-state'))).toBe(false);
+  w.document.getElementById('wa-calling-hangup').click(); await flush();
+  expect(sent.find((r) => r.url.endsWith('/terminate')).body.id).toBe('in1');
+  expect(track.stop).toHaveBeenCalled();
+});
