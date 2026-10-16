@@ -1,6 +1,9 @@
 # Integración de llamadas de WhatsApp: requisitos y plan
 
-Revisión: 2026-10-16. Estado: diagnóstico implementado; llamadas todavía sin implementar.
+Revisión: 2026-10-16. Estado: módulo implementado; pendiente validación real y puesta en servicio.
+
+La guía vigente de uso y operación está en [WHATSAPP_CALLING.md](WHATSAPP_CALLING.md).
+Este documento conserva el análisis previo; las verificaciones pendientes se actualizan abajo.
 
 ## Entorno de trabajo
 
@@ -200,7 +203,29 @@ para mensajes o la ventana de atención de 24 horas no sustituyen el de llamadas
 - Documentación técnica de Meta que se debe contrastar antes del adaptador:
   https://developers.facebook.com/docs/whatsapp/cloud-api/calling/
 
-El acceso automatizado a la documentación técnica de Meta devolvió errores o
+En la investigación inicial, el acceso automatizado a la documentación técnica de Meta devolvió errores o
 limitación de acceso durante la investigación. No se considera validado el
 contrato exacto de endpoints y payloads por esa vía. Obtenerlo antes de escribir
 el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
+
+
+## Avance de implementación
+
+- Contratos oficiales verificados en el navegador, incluyendo señalización y permisos.
+- Implementados cliente Meta, almacenamiento SQL, worker de webhooks, reservas
+  atómicas, rutas autenticadas y controles WebRTC en el panel.
+- Soporte de micrófono implementado en Android; análisis y 20 pruebas Flutter
+  correctos; APK release compilado.
+- Meta: llamadas ENABLED, suscripción calls confirmada y messages preservada.
+  Icono entrante oculto durante la puesta en servicio. Plantilla de permiso
+  creada en estado PENDING al comprobarla inicialmente.
+- 39 pruebas específicas de diagnóstico, backend y panel de llamadas correctas.
+- Suite completa inicial del cambio: 1027 correctas, 25 fallidas y 2 omitidas.
+  Repetición sobre 1701b3f, antes del módulo: 1012 correctas, las mismas 25 fallidas
+  y 2 omitidas. No se cambiaron esas pruebas ajenas a esta integración.
+- 99 pruebas relevantes de llamadas, mensajería, webhook y permisos correctas
+  antes de agregar cuatro casos adicionales de regresión de llamadas.
+- Build web y comprobaciones de publicación correctos. El build local sin .env
+  muestra las advertencias esperadas por configuración pública ausente.
+- Pendiente: completar publicación de esta rama y probar audio real. No integrar
+  a main hasta terminar la validación funcional acordada.

@@ -694,6 +694,7 @@
   }
 
   function showLogin(message = '') {
+    window.dispatchEvent(new CustomEvent('phyto:calling-logout'));
     $('#app').hidden = true;
     $('#login').hidden = false;
     hideSplash();
@@ -8272,6 +8273,7 @@
   }
 
   function renderWaChat() {
+    window.dispatchEvent(new CustomEvent('phyto:calling-context', { detail: null }));
     const pane = $('#wa-chat-pane');
     const placeholder = $('#wa-placeholder');
     if (!pane || !placeholder) return;
@@ -8360,6 +8362,7 @@
     }
 
     const { customer, conversation, messages, canSendFreeText } = data;
+    window.dispatchEvent(new CustomEvent('phyto:calling-context', { detail: { id: conversation.id, customerId: customer?.id } }));
     const deliveryChatMode = Boolean(data.deliveryContext?.asDelivery || state.wa.deliveryOrderId);
     const contactState = getConversationContactState(data);
     /*

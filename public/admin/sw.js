@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v73-campana-fulltech';
+const VERSION = 'crm-v74-whatsapp-calling';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -17,6 +17,7 @@ const SHELL = [
   '/admin/index.html',
   '/admin/admin.css',
   '/admin/app.js',
+  '/admin/calling.js',
   '/admin/manifest.json',
   '/admin/vendor/leaflet/leaflet.css',
   '/admin/vendor/leaflet/leaflet.js',

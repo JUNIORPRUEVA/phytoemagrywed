@@ -72,6 +72,10 @@
  */
 
 import { createServer } from 'node:http';
+import { createCallingApi } from './calling-api.mjs';
+import { createCallingStore } from './calling-store.mjs';
+import { createCallingService } from './calling-service.mjs';
+import { handleCallingRoute } from './calling-routes.mjs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -4328,6 +4332,7 @@ function serveAdminFile(res, urlPath, adminDir) {
     // El panel y su service worker nunca se cachean: publicar = ver el cambio ya.
     'cache-control': 'no-cache, must-revalidate',
     'service-worker-allowed': '/admin/',
+    'permissions-policy': 'geolocation=(self), microphone=(self), camera=()',
     'x-robots-tag': 'noindex, nofollow',
   });
   res.end(body);
@@ -4464,6 +4469,12 @@ async function handle(req, res, ctx) {
       // Se atiende el mensaje igual (no se pierde una conversación real), pero se
       // deja claro que falta un secreto para poder comprobar quién llama.
       console.warn('[crm] webhook sin firma comprobada: falta META_APP_SECRET');
+    }
+    const hasCallEvents = incoming.json?.entry?.some((entry) => entry.changes?.some((change) => change.field === 'calls'));
+    if (ctx.calling?.enabled && hasCallEvents) {
+      if (!signatureCheck.ok) { json(res, 401, { ok: false, error: 'invalid_signature' }); return; }
+      // Persistencia durable ANTES de confirmar a Meta; el worker recupera pendientes.
+      await ctx.calling.ingest(incoming.json);
     }
     // Meta espera un 200 en pocos segundos y REINTENTA si tardas: se contesta ya
     // y se guarda después. El guardado es idempotente, así que un reintento no
@@ -4667,6 +4678,10 @@ async function handle(req, res, ctx) {
         }
       }
     }
+
+    if (await handleCallingRoute({ req, res, route, url, ctx, actor, can,
+      canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
+      readJson: readJsonBody, json })) return;
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
       json(res, 200, { ok: true, ...authPayload() });
@@ -9683,6 +9698,32 @@ export async function startCrmServer(config = {}) {
         })
       : null;
 
+  const callingEnabled = config.callingEnabled ?? process.env.WHATSAPP_CALLING_ENABLED === '1';
+  const callingApi = config.callingApi ?? createCallingApi({
+    enabled: callingEnabled && Boolean(ctx.appSecret),
+    env: {
+      WHATSAPP_ACCESS_TOKEN: config.whatsappAccessToken ?? WHATSAPP_ACCESS_TOKEN,
+      WHATSAPP_PHONE_NUMBER_ID: config.whatsappPhoneNumberId ?? WHATSAPP_PHONE_NUMBER_ID,
+      WHATSAPP_BUSINESS_ACCOUNT_ID: config.whatsappBusinessAccountId ?? WHATSAPP_BUSINESS_ACCOUNT_ID,
+      WHATSAPP_CALLING_GRAPH_VERSION: config.callingGraphVersion || process.env.WHATSAPP_CALLING_GRAPH_VERSION || WHATSAPP_GRAPH_VERSION,
+      WHATSAPP_CALLING_PERMISSION_TEMPLATE: config.callingPermissionTemplate ?? process.env.WHATSAPP_CALLING_PERMISSION_TEMPLATE,
+      WHATSAPP_CALLING_PERMISSION_LANGUAGE: process.env.WHATSAPP_CALLING_PERMISSION_LANGUAGE ?? 'es',
+    },
+  });
+  const rawIceServers = config.callingIceServers ?? process.env.WHATSAPP_CALLING_ICE_SERVERS;
+  let iceServers = [];
+  try { iceServers = typeof rawIceServers === 'string' ? JSON.parse(rawIceServers) : rawIceServers ?? []; } catch { throw new Error('invalid_calling_ice_servers'); }
+  if (!Array.isArray(iceServers) || iceServers.length > 5 || iceServers.some((entry) => {
+    const urls = Array.isArray(entry?.urls) ? entry.urls : [entry?.urls];
+    return !urls.length || urls.some((value) => typeof value !== 'string' || !/^(stun|stuns|turn|turns):[^\s]+$/.test(value));
+  })) throw new Error('invalid_calling_ice_servers');
+  ctx.callingIceServers = iceServers;
+  ctx.calling = createCallingService({
+    store: callingEnabled ? await createCallingStore(sqlQuery) : null,
+    api: callingApi, customers, db, audit, enabled: callingEnabled && Boolean(ctx.appSecret),
+  });
+  ctx.calling.start();
+
   const server = createServer((req, res) => {
     handle(req, res, ctx).catch((error) => {
       console.error('[crm] error:', error);
@@ -9759,9 +9800,11 @@ export async function startCrmServer(config = {}) {
     if (closed) return Promise.resolve();
     closed = true;
     stopScheduler();
+    const callingStopped = ctx.calling.stop();
     return new Promise((resolve, reject) => {
       server.close(async () => {
         try {
+          await callingStopped;
           await store.close();
           resolve();
         } catch (error) {
