@@ -247,3 +247,21 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
   responder con pre_accept/accept y finalizar desde el panel sin permiso saliente.
   La recepción y el audio reales siguen pendientes; no se equiparan estas
   pruebas simuladas con una llamada real conectada.
+- Validación posterior en Meta Business: portfolio propietario FULL TECH y cuenta
+  Phytoemagry coinciden con los identificadores del CRM. Inicialmente mostraba
+  saldo atrasado de USD 3,77; tras el pago del usuario muestra USD 0,00 y ya no
+  presenta el aviso de cuenta restringida. El primer reintento saliente todavía
+  devolvió 131044/2593115; no se supone un plazo de propagación.
+- Un intento entrante real entregó `connect`, `USER_INITIATED`, oferta SDP válida,
+  teléfono de origen presente y ningún error de Meta. No apareció en el panel.
+  La cola PostgreSQL consultada en modo lectura no contenía eventos. Se amplió
+  la validación de identificadores opacos de Meta para permitir Base64 estándar
+  y URL-safe, tanto en webhooks como en acciones; validación real aún pendiente.
+- Diagnóstico de webhook limitado a metadatos técnicos y códigos, sin teléfono,
+  SDP ni credenciales. El worker informa fallos de procesamiento sin errores
+  crudos. 43 pruebas específicas de llamadas correctas.
+- Durante la validación otra actualización integró las llamadas previas en main
+  junto con correcciones de push. Esta rama incorporó ese main para conservarlas;
+  se comprobaron 25 pruebas de push y se volvió a publicar feat/whatsapp-calling
+  en Easypanel con las correcciones de diagnóstico. Esta tarea no fusionó los
+  cambios de diagnóstico a main. Falta validar recepción y audio reales.
