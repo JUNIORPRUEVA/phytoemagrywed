@@ -257,3 +257,59 @@ describe('«Probar» y «Revisar» no se quedan sin respuesta', () => {
     expect($('#push-config .notice-hint')).not.toBeNull();
   }, 20000);
 });
+
+
+describe('diagnóstico de iPhone y registro del dispositivo actual', () => {
+  it('en una pestaña de Safari explica la instalación y no prueba otro teléfono', async () => {
+    Object.defineProperty(dom.window.navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
+    Object.defineProperty(dom.window.navigator, 'standalone', { configurable: true, value: false });
+    const before = (await pushStatusFromServer()).recentJobs.length;
+    click('[data-push-test]');
+    await waitFor(() => $('#push-config [data-push-result]')?.textContent.includes('Añadir a pantalla de inicio'), 'instrucciones de iPhone');
+    expect($('#push-config').textContent).not.toContain('Teléfono conectado');
+    expect((await pushStatusFromServer()).recentJobs).toHaveLength(before);
+  });
+
+  it('en la app instalada pide permiso durante el clic y registra el iPhone', async () => {
+    Object.defineProperty(dom.window.navigator, 'standalone', { configurable: true, value: true });
+    dom.window.Notification.permission = 'default';
+    let duringClick = false;
+    let requestedDuringClick = false;
+    dom.window.Notification.requestPermission = async () => {
+      requestedDuringClick = duringClick;
+      dom.window.Notification.permission = 'granted';
+      return 'granted';
+    };
+    duringClick = true;
+    click('[data-push-enable]');
+    duringClick = false;
+    await waitFor(() => $('#push-config [data-push-result]')?.textContent.includes('Teléfono registrado'), 'registro desde app instalada');
+    expect(requestedDuringClick).toBe(true);
+  });
+
+  it('un permiso bloqueado deja instrucciones de iOS sin pedir permiso otra vez', async () => {
+    dom.window.Notification.permission = 'denied';
+    dom.window.Notification.requestPermission = () => { throw new Error('No debe pedir permiso bloqueado'); };
+    click('[data-push-test]');
+    await waitFor(() => $('#push-config [data-push-result]')?.textContent.includes('Ajustes → Notificaciones → CRM Phyto'), 'instrucciones de permiso bloqueado');
+    expect($('#push-config').textContent).not.toContain('Teléfono conectado');
+    dom.window.Notification.permission = 'granted';
+  });
+});
+
+
+it('muestra un fallo de registro y no manda la prueba a los otros dispositivos', async () => {
+  const registration = await dom.window.navigator.serviceWorker.ready;
+  const original = { ...registration.pushManager };
+  const before = (await pushStatusFromServer()).recentJobs.length;
+  registration.pushManager.getSubscription = async () => null;
+  registration.pushManager.subscribe = async () => { throw new Error('Apple no pudo crear la suscripción'); };
+  try {
+    click('[data-push-test]');
+    await waitFor(() => $('#push-config [data-push-result]')?.textContent.includes('Apple no pudo crear la suscripción'), 'error de suscripción visible');
+    expect($('#push-config').textContent).not.toContain('Teléfono conectado');
+    expect((await pushStatusFromServer()).recentJobs).toHaveLength(before);
+  } finally {
+    Object.assign(registration.pushManager, original);
+  }
+});

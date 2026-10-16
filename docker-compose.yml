@@ -62,6 +62,10 @@ services:
       WHATSAPP_CALLING_PERMISSION_TEMPLATE: "${WHATSAPP_CALLING_PERMISSION_TEMPLATE:-phyto_permiso_llamada_v1}"
       WHATSAPP_CALLING_PERMISSION_LANGUAGE: "${WHATSAPP_CALLING_PERMISSION_LANGUAGE:-es}"
       WHATSAPP_CALLING_ICE_SERVERS: "${WHATSAPP_CALLING_ICE_SERVERS:-[]}"
+      # Web Push: secretos solo en runtime, nunca como argumentos del build.
+      PHYTO_WEB_PUSH_PUBLIC_KEY: "${PHYTO_WEB_PUSH_PUBLIC_KEY:-${VAPID_PUBLIC_KEY:-}}"
+      PHYTO_WEB_PUSH_PRIVATE_KEY: "${PHYTO_WEB_PUSH_PRIVATE_KEY:-${VAPID_PRIVATE_KEY:-}}"
+      PHYTO_WEB_PUSH_SUBJECT: "${PHYTO_WEB_PUSH_SUBJECT:-https://phytoemagryrd.lat}"
 
     # Puerto del servidor : puerto del contenedor.
     # Cámbialo con WEB_PORT en el `.env` si el 8080 está ocupado.
