@@ -20,6 +20,7 @@
   let context = null, current = null, pc = null, stream = null, audio = null;
   let config = null, busy = false, muted = false, polling = false, lastHeartbeat = 0, applying = false;
   let incoming = [], selectedConversation = null;
+  let audioGeneration = 0;
   const button = document.getElementById('wa-calling-button');
   const dialog = document.getElementById('wa-calling-dialog');
   const dock = document.getElementById('wa-calling-dock');
@@ -43,6 +44,7 @@
   }
   const note = (text) => { $('wa-calling-notice').textContent = text; };
   function cleanup() {
+    audioGeneration++;
     if (pc) { pc.onconnectionstatechange = null; pc.close(); }
     stream?.getTracks().forEach((t) => t.stop());
     if (audio) { audio.pause(); audio.srcObject = null; }
@@ -94,8 +96,24 @@
   async function prepareAudio(offer) {
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) throw new Error('Para llamar, abre el CRM con HTTPS en un navegador con micrófono.');
     cleanup();
+    const generation = audioGeneration;
+    let microphoneTimeout;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+      note('Preparando audio. Permite el micrófono si el navegador lo solicita.');
+      if (navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({ name: 'microphone' }).catch(() => null);
+        if (permission?.state === 'granted') note('Micrófono autorizado. Abriendo audio…');
+        if (permission?.state === 'denied') throw new Error('Chrome bloqueó el micrófono. Permítelo en los ajustes de este sitio y vuelve a llamar.');
+      }
+      const microphone = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false }).then((media) => {
+        if (generation !== audioGeneration) { media.getTracks().forEach((t) => t.stop()); throw new Error('Preparación de audio cancelada.'); }
+        return media;
+      });
+      stream = await Promise.race([microphone, new Promise((_, reject) => {
+        microphoneTimeout = setTimeout(() => reject(new Error('No se recibió permiso de micrófono. Revísalo en Chrome y vuelve a llamar.')), 30000);
+      })]);
+      clearTimeout(microphoneTimeout);
+      note('Preparando conexión de audio…');
       pc = new RTCPeerConnection({ iceServers: config?.iceServers ?? [] });
       const peer = pc;
       audio = new Audio(); audio.autoplay = true;
@@ -114,6 +132,7 @@
       };
       return pc.localDescription.sdp;
     } catch (e) {
+      clearTimeout(microphoneTimeout);
       cleanup();
       if (e.name === 'NotAllowedError') throw new Error('Permite el micrófono en el navegador para llamar.');
       if (e.name === 'NotFoundError') throw new Error('Conecta un micrófono para llamar.');
@@ -126,6 +145,7 @@
     if (selectedConversation) await refreshHistory();
   }
   async function refreshHistory() {
+    note('');
     const conversationId = selectedConversation;
     if (!conversationId) return;
     const data = await request(base(conversationId));
