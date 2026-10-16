@@ -273,3 +273,7 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
 - Reintento saliente posterior: el panel mostró Audio conectado y luego Llamada
   finalizada. Pendiente la confirmación del usuario del audio saliente en ambos
   sentidos antes de cerrar la validación completa.
+- Validación saliente completada: se repitió la llamada a petición del usuario;
+  el usuario contestó y confirmó audio en ambos sentidos. El panel confirmó
+  su finalización. Con entrada, salida, audio y cierre comprobados, la
+  corrección queda validada para integrar a main según lo acordado.
