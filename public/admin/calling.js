@@ -101,9 +101,13 @@
     try {
       note('Preparando audio. Permite el micrófono si el navegador lo solicita.');
       if (navigator.permissions?.query) {
-        const permission = await navigator.permissions.query({ name: 'microphone' }).catch(() => null);
-        if (permission?.state === 'granted') note('Micrófono autorizado. Abriendo audio…');
-        if (permission?.state === 'denied') throw new Error('Chrome bloqueó el micrófono. Permítelo en los ajustes de este sitio y vuelve a llamar.');
+        // Diagnóstico auxiliar: no debe detener la captura si el navegador
+        // demora o no implementa la consulta de permisos.
+        navigator.permissions.query({ name: 'microphone' }).then((permission) => {
+          if (generation !== audioGeneration || stream || pc) return;
+          if (permission.state === 'granted') note('Micrófono autorizado. Abriendo audio…');
+          if (permission.state === 'denied') note('Chrome bloqueó el micrófono. Permítelo en los ajustes de este sitio y vuelve a llamar.');
+        }).catch(() => {});
       }
       const microphone = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false }).then((media) => {
         if (generation !== audioGeneration) { media.getTracks().forEach((t) => t.stop()); throw new Error('Preparación de audio cancelada.'); }

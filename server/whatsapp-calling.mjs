@@ -42,12 +42,12 @@ export function createCallingDiagnostics({ env = {}, fetchImpl = globalThis.fetc
   const config = callingConfiguration(env);
   const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 30000) : 10000;
 
-  async function get(path) {
+  async function get(path, token = config.accessToken) {
     if (config.issues.length) return { ok: false, error: 'invalid_configuration', issues: config.issues };
     try {
       const response = await fetchImpl(`https://graph.facebook.com/${config.graphVersion}/${path}`, {
         method: 'GET',
-        headers: { authorization: `Bearer ${config.accessToken}`, accept: 'application/json' },
+        headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
         signal: AbortSignal.timeout(timeout),
         redirect: 'error',
       });
@@ -89,11 +89,17 @@ export function createCallingDiagnostics({ env = {}, fetchImpl = globalThis.fetc
       const result = await get(`${config.businessAccountId}/subscribed_apps`);
       if (!result.ok) return result;
       if (!Array.isArray(result.body?.data)) return { ok: false, error: 'unexpected_subscription_response' };
+      const currentAppSubscribed = result.body.data.some((entry) => String(entry?.whatsapp_business_api_data?.id ?? '') === config.appId);
+      let callsFieldVerified = false;
+      if (currentAppSubscribed && String(env.META_APP_SECRET ?? '').trim()) {
+        const app = await get(`${config.appId}/subscriptions`, `${config.appId}|${env.META_APP_SECRET}`);
+        const fields = app.body?.data?.find((entry) => entry.object === 'whatsapp_business_account')?.fields;
+        callsFieldVerified = app.ok && Array.isArray(fields) && fields.some((f) => (typeof f === 'string' ? f : f.name) === 'calls');
+      }
       return {
         ok: true,
-        currentAppSubscribed: result.body.data.some((entry) => String(entry?.whatsapp_business_api_data?.id ?? '') === config.appId),
-        // Esto confirma la suscripción al WABA, no el campo calls de la app.
-        callsFieldVerified: false,
+        currentAppSubscribed,
+        callsFieldVerified,
       };
     },
   };

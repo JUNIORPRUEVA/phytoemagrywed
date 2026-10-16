@@ -50,6 +50,7 @@ export async function createCallingStore(sql) {
     async done(id) { await sql.query('UPDATE phytoemagry_call_events_v1 SET done=1,payload=NULL WHERE id=$1', [id]); },
     async prune(now = Date.now()) {
       await sql.query('DELETE FROM phytoemagry_call_events_v1 WHERE created_at < $1', [now - 7 * 86400000]);
+      await sql.query('DELETE FROM phytoemagry_call_locks_v1 WHERE expires_at < $1', [now]);
     },
   };
   return store;

@@ -89,6 +89,14 @@ describe('preparación de Calling API', () => {
     const client = createCallingDiagnostics({ env, fetchImpl: async () => reply({ success: true }) });
     expect(await client.subscriptions()).toEqual({ ok: false, error: 'unexpected_subscription_response' });
   });
+  it('verifica el campo calls con la app real sin publicar su secreto', async () => {
+    const fetchImpl = vi.fn(async (url) => url.endsWith('/subscribed_apps')
+      ? reply({ data: [{ whatsapp_business_api_data: { id: env.META_APP_ID } }] })
+      : reply({ data: [{ object: 'whatsapp_business_account', fields: [{ name: 'messages' }, { name: 'calls' }] }] }));
+    const result = await createCallingDiagnostics({ env: { ...env, META_APP_SECRET: 'app-secret' }, fetchImpl }).subscriptions();
+    expect(result).toEqual({ ok: true, currentAppSubscribed: true, callsFieldVerified: true });
+    expect(JSON.stringify(result)).not.toContain('app-secret');
+  });
 
   it('lee solo claves de WhatsApp sin ejecutar contenido del archivo', () => {
     const parsed = parseCallingEnv('\uFEFFWHATSAPP_PHONE_NUMBER_ID=123 # comentario\nWHATSAPP_ACCESS_TOKEN="literal$(command)"\nPHYTO_CRM_DATABASE_URL=private\n');

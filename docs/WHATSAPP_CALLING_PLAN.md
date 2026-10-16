@@ -17,7 +17,7 @@ Este documento conserva el análisis previo; las verificaciones pendientes se ac
 - Se realizaron consultas autenticadas de solo lectura a Meta. No se enviaron
   mensajes, no se iniciaron llamadas y no se activaron ajustes.
 
-## Resultado de la comprobación real
+## Resultado de la comprobación inicial
 
 El usuario confirmó que el número usa solo Cloud API.
 
@@ -219,7 +219,7 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
 - Meta: llamadas ENABLED, suscripción calls confirmada y messages preservada.
   Icono entrante oculto durante la puesta en servicio. Plantilla de permiso
   creada en estado PENDING al comprobarla inicialmente.
-- 39 pruebas específicas de diagnóstico, backend y panel de llamadas correctas.
+- 41 pruebas específicas de diagnóstico, backend y panel de llamadas correctas.
 - Suite completa inicial del cambio: 1027 correctas, 25 fallidas y 2 omitidas.
   Repetición sobre 1701b3f, antes del módulo: 1012 correctas, las mismas 25 fallidas
   y 2 omitidas. No se cambiaron esas pruebas ajenas a esta integración.
@@ -227,5 +227,14 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
   antes de agregar cuatro casos adicionales de regresión de llamadas.
 - Build web y comprobaciones de publicación correctos. El build local sin .env
   muestra las advertencias esperadas por configuración pública ausente.
-- Pendiente: completar publicación de esta rama y probar audio real. No integrar
-  a main hasta terminar la validación funcional acordada.
+- Rama publicada y desplegada en el servicio `ventas/phytoemagrywed` de Easypanel.
+  `main` continúa intacta, sin fusión de la rama de llamadas.
+- Estado final de configuración comprobado: llamadas ENABLED, icono DEFAULT,
+  app suscrita al WABA y campo calls verificado. Plantilla de permiso APPROVED.
+- Se verificó en el CRM publicado el envío y entrega de la solicitud de permiso
+  a un contacto de prueba autorizado; Meta confirmó el permiso concedido.
+- Pendiente: validar audio bidireccional. Chrome no completó la captura de
+  micrófono durante el primer intento. Se añadieron mensajes de preparación y
+  tiempo máximo para evitar una espera indefinida. No se da por validada una
+  llamada que no haya conectado audio real.
+- No integrar a main hasta terminar la validación funcional acordada.

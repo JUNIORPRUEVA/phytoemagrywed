@@ -32,8 +32,10 @@ export function createCallingApi({ env = {}, enabled = false, fetchImpl = global
         ...(payload ? { body: JSON.stringify({ messaging_product: 'whatsapp', ...payload }) } : {}),
       });
       const body = await response.json();
-      if (!response.ok || body?.error) return { ok: false, error: 'meta_calling_error', status: response.status,
-        code: typeof body?.error?.code === 'number' ? body.error.code : null };
+      if (!response.ok || body?.error) return { ok: false,
+        error: payload && (response.status >= 500 || response.status === 408) ? 'meta_calling_unconfirmed' : 'meta_calling_error',
+        ...(payload && (response.status >= 500 || response.status === 408) ? { uncertain: true } : {}),
+        status: response.status, code: typeof body?.error?.code === 'number' ? body.error.code : null };
       return { ok: true, body };
     } catch { return { ok: false, error: 'meta_calling_unconfirmed', uncertain: true }; }
   }

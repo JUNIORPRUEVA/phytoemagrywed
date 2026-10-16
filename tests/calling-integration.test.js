@@ -43,6 +43,11 @@ describe('voz: permisos y transporte', () => {
     expect(fetchImpl.mock.calls[0][0]).toBe('https://graph.facebook.com/v21.0/123/calls');
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({ action: 'connect', to: '18095550001', session: { sdp_type: 'offer', sdp: SDP } });
   });
+  it('un error de servidor de Meta es incierto y no habilita un reenvío automático', async () => {
+    const api = createCallingApi({ enabled: true, env: { WHATSAPP_ACCESS_TOKEN: 'secret', WHATSAPP_PHONE_NUMBER_ID: '123' },
+      fetchImpl: async () => new Response(JSON.stringify({ error: { code: 1 } }), { status: 500 }) });
+    expect(await api.action('connect', { phone: '18095550001', sdp: SDP })).toMatchObject({ ok: false, uncertain: true, error: 'meta_calling_unconfirmed' });
+  });
 });
 
 describe('voz: persistencia, concurrencia y recuperación', () => {

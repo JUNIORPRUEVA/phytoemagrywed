@@ -44,7 +44,7 @@ async function main() {
     return;
   }
   if (values.help) {
-    console.log('Uso: node scripts/check-whatsapp-calling.mjs [--env-file archivo] [--online]\nSin --online no usa la red. Con --online solo consulta GET /settings y GET /subscribed_apps.\nNo activa llamadas, no envía mensajes y no modifica bases de datos.');
+    console.log('Uso: node scripts/check-whatsapp-calling.mjs [--env-file archivo] [--online]\nSin --online no usa la red. Con --online solo consulta GET /settings, GET /subscribed_apps y, si hay app secret, GET /subscriptions.\nNo activa llamadas, no envía mensajes y no modifica bases de datos.');
     return;
   }
   let fileEnv = {};
@@ -60,7 +60,7 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
   if (!report.configuration.configured || (values.online && (!report.settings?.ok || !report.subscriptions?.ok))) process.exitCode = 1;
   // Código 2: diagnóstico válido, pero todavía faltan condiciones verificables.
-  else if (values.online && (report.settings.blockers.length || !report.subscriptions.currentAppSubscribed)) process.exitCode = 2;
+  else if (values.online && (report.settings.blockers.length || !report.subscriptions.currentAppSubscribed || !report.subscriptions.callsFieldVerified)) process.exitCode = 2;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

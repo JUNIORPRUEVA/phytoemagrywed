@@ -92,7 +92,7 @@ export function createCallingService({ store, api, customers, db, audit, enabled
         for (const row of await store.pending()) {
           // No se intenta recuperar audio de una oferta que ya caducó en la cola.
           if (row.event.event === 'connect' && clock() - row.createdAt > 120000) { await store.done(row.id); continue; }
-          if (await eventToCall(row.event)) await store.done(row.id);
+          if (await eventToCall(row.event) || clock() - row.createdAt > 120000) await store.done(row.id);
         }
         for (const c of await store.active()) {
           if (c.sdpExpiresAt && c.sdpExpiresAt < clock() && c.remoteSdp) {
