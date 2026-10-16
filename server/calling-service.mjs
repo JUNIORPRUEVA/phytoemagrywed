@@ -67,6 +67,16 @@ export function createCallingService({ store, api, customers, db, audit, enabled
         for (const change of entry.changes ?? []) {
           const value = change.value;
           if (change.field !== 'calls' || String(value?.metadata?.phone_number_id) !== api.phoneNumberId) continue;
+          // Solo metadatos técnicos: nunca teléfonos, SDP ni el cuerpo del proveedor.
+          console.info('[calling] webhook', JSON.stringify({
+            calls: (value.calls ?? []).map((c) => ({ event: c.event, status: c.status,
+              direction: c.direction, sessionType: c.session?.sdp_type,
+              validSdp: c.session ? validCallSdp(c.session.sdp) : null,
+              hasCallerPhone: /^\d{8,15}$/.test(digits(c.from)),
+              errors: (c.errors ?? []).map((e) => e.code).filter(Number.isInteger) })),
+            statuses: (value.statuses ?? []).map((s) => ({ status: s.status, errors: (s.errors ?? []).map((e) => e.code).filter(Number.isInteger) })),
+            errors: (value.errors ?? []).map((e) => e.code).filter(Number.isInteger),
+          }));
           for (const raw of [...(value.calls ?? []), ...(value.statuses ?? [])]) {
             if (!/^[\w.:-]{1,250}$/.test(raw.id ?? '')) continue;
             if (!['connect', 'terminate'].includes(raw.event) && !['RINGING', 'ACCEPTED', 'REJECTED'].includes(raw.status)) continue;
