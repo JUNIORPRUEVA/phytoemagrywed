@@ -105,6 +105,7 @@ import {
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
+import { handlePosRoute } from './pos-routes.mjs';
 import { createScheduler } from './scheduler.mjs';
 import {
   INTEREST_FOLLOWUP_TEMPLATE,
@@ -653,6 +654,7 @@ async function updateOrderStatus(store, item, status, actor = null) {
   const next = {
     ...current,
     status,
+    ...(current.payment_status==='pending'&&isCompletedPurchaseStatus(status)?{payment_status:'paid'}:{}),
     updated_by_user_id: actor?.actor_type === 'USER' ? actor.id : current.updated_by_user_id ?? null,
     updated_by_display_name_snapshot:
       actor?.actor_type === 'USER' ? actor.display_name : current.updated_by_display_name_snapshot ?? null,
@@ -2850,6 +2852,7 @@ async function createOrderUnlocked(ctx, body = {}, actor = null) {
 
   const requested = text(body.status, 20);
   const status = requested && isOrderStatus(requested) ? requested : 'nuevo';
+  if(body.pos===true) built.order.payment_status=isCompletedPurchaseStatus(status)?'paid':'pending';
   built.order.created_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
   built.order.created_by_display_name_snapshot = actor?.actor_type === 'USER' ? actor.display_name : null;
   built.order.updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
@@ -5246,6 +5249,7 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (await handlePosRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,can:permission=>hasPermission(actor,permission),createOrder,findOrder:id=>findOrderItem(ctx.store,id)})) return;
     if (await handleStoreCatalogRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
       can:permission=>hasPermission(actor,permission),
       sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;

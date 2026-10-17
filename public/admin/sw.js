@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v90-fulltech-fixed-search';
+const VERSION = 'crm-v92-fulltech-pos';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -24,6 +24,9 @@ const SHELL = [
   '/admin/calling.js',
   '/admin/store.js',
   '/admin/store.css',
+  '/admin/pos.js',
+  '/admin/pos-math.js',
+  '/admin/pos.css',
   '/admin/manifest.json',
   '/admin/vendor/leaflet/leaflet.css',
   '/admin/vendor/leaflet/leaflet.js',

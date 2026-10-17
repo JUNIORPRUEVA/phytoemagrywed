@@ -139,3 +139,71 @@ que estén abiertos en `127.0.0.1` o `localhost` con puertos distintos.
 Se comprobó en navegador a 390 × 700 px y en escritorio que el listado
 se desplaza dentro de su panel, conservando fija la búsqueda; las tarjetas
 utilizan un contorno tenue de medio píxel sin sombra elevada.
+
+## Facturación, cotizaciones y pedidos (16/10/2026)
+
+El catálogo es ahora **Facturación** en el appbar. Se conserva la aplicación
+web existente; el documento de referencia menciona Flutter, pero no se ha
+introducido otro framework ni una segunda aplicación.
+
+- Imagen: abre la ficha. Nombre, precio o `+`: agregan al carrito. Un indicador
+  discreto muestra cuántas unidades se agregaron.
+- En móvil, el carrito enseña una línea compacta y se expande tocando o
+  deslizando su asa. En escritorio ocupa una columna lateral. La búsqueda y
+  el resumen permanecen fijos mientras se desplazan los artículos.
+- Cantidades, eliminación, descuento por línea y descuento general admiten
+  monto fijo o porcentaje. El monto fijo de una línea descuenta el conjunto de
+  sus unidades. Los cálculos comparten un módulo de centavos entre servidor y
+  navegador; el servidor verifica precios, cliente, conversación e inventario.
+- La ganancia estimada excluye el envío y solo se presenta al rol ADMIN. Los
+  agentes no reciben costos ni ganancias en las respuestas de cotizaciones.
+- **Cotizar** pide confirmación y guarda un documento independiente. No crea
+  ventas, no reserva stock y no dispara seguimientos ni conversiones Meta.
+  El icono de documento junto al cliente permite consultar, imprimir/guardar
+  PDF y reutilizar cotizaciones. Al convertirlas se verifican precios actuales.
+- **Guardar pedido** vive entre las opciones del carrito expandido. Guarda un
+  pedido pendiente, sin registrar pago ni descontar inventario. Después puede
+  continuarse la entrega mediante el circuito existente de asignación.
+- **Cobrar** confirma efectivo o transferencia, importe recibido y entrega.
+  Muestra cambio para efectivo; transferencia requiere el importe exacto. Se
+  registra una venta entregada en el circuito existente de inventario/reportes.
+  No se realiza captura de dinero con un banco o procesador de tarjetas.
+- Los accesos para crear pedidos desde Chats, Clientes y Pedidos llegan al POS
+  con cliente/conversación y ubicación conocida. Si se cambia de cliente con
+  artículos en el carrito se confirma la reasignación. Si el cliente tiene
+  pedidos abiertos se exige confirmar que se trata de un pedido nuevo.
+- La edición y operación de pedidos ya guardados conserva las herramientas
+  existentes. Se mantienen precios históricos y descuentos por línea al editar.
+- Los comprobantes son **comerciales**. Esta implementación no incorpora NCF,
+  e-CF ni una integración fiscal. El PDF existente ahora pagina pedidos largos
+  y muestra descuentos por línea.
+
+Persistencia: nueva colección `pos_documents` en el mismo backend SQL; su DDL
+se crea al iniciar. Cada operación tiene una clave persistente. Repetirla
+reutiliza su resultado; cambiar los datos con la misma clave se rechaza. Una
+cotización solo puede convertirse una vez. Las reclamaciones son únicas en
+base de datos, también entre instancias. Si una operación queda incompleta,
+se recupera el resultado cuando el pedido está guardado y finalizado; en los
+demás casos se pide revisar Pedidos antes de cobrar otra vez. No se reproduce
+automáticamente una operación de resultado incierto.
+
+El carrito se conserva en sessionStorage por usuario, sin costos ni ganancias,
+y se limpia al cerrar sesión. Guardar/cobrar requiere conexión. Los ajustes
+en vivo no reconstruyen el carrito si no cambió el catálogo.
+
+Validación de esta etapa:
+
+- 121 pruebas aprobadas en POS, catálogo, inventario/reportes, ventas y
+  conversaciones; una prueba de concurrencia se reserva para PostgreSQL.
+- PostgreSQL local aislado: 29 pruebas aprobadas, incluidas cotizaciones,
+  checkout, permisos, persistencia y concurrencia del catálogo.
+- UAT del panel adaptada al nuevo flujo: 21 aprobadas; conserva los mismos
+  cuatro fallos previos de filtros/acciones de Pedidos documentados arriba.
+- Verificación de contenido y compilación aprobadas. No se declara verde la
+  batería completa del repositorio.
+- Revisión en navegador móvil de 390 × 780: selección de cliente, carrito,
+  resumen, confirmación y guardado de cotización, recuperación y conversión a
+  cobro en efectivo con comprobante. Entorno con datos simulados.
+
+Todo permanece en `feat/fulltech-pos`, en el worktree separado. No se ha
+fusionado con principal ni desplegado a producción en esta etapa.

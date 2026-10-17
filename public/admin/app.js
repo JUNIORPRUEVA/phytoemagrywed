@@ -12593,7 +12593,7 @@
         if (!variant) return null;
         const quantity = Math.max(1, Number(line.quantity) || 1);
         const capsules = Number(variant.capsule_quantity ?? variant.capsules ?? 0) || 0;
-        return { variant, quantity, capsules, subtotal: Math.round(variant.price * 100) * quantity / 100, totalCapsules: capsules * quantity };
+        return { variant, quantity, capsules, subtotal: Math.max(0,Math.round(Number(line.unitPrice??variant.price) * 100) * quantity - Number(line.lineDiscountCents||0)) / 100, totalCapsules: capsules * quantity };
       })
       .filter(Boolean);
     const subtotal = items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0) / 100;
@@ -13144,6 +13144,13 @@
   }
 
   async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null, draft = null, skipDraftPrompt = false } = {}) {
+    if(!orderId && !draft) {
+      closeSheet();
+      const knownLocations=customerId?await fetchCustomerLocations(customerId):[];
+      setTab('catalogo');
+      window.dispatchEvent(new CustomEvent('fulltech:pos-context',{detail:{customerId,conversationId,location:location??knownLocations[0]??null,customer:customerById(customerId)??state.wa.chat?.customer??null}}));
+      return;
+    }
     if (navigator.onLine) {
       try {
         const fresh = await api('/api/admin/catalog');
@@ -13184,7 +13191,7 @@
       ? draftData.lines
           .filter((line) => catalog.some((variant) => variant.id === line.variantId))
           .map((line) => ({ variantId: line.variantId, quantity: Math.max(1, Number(line.quantity) || 1) }))
-      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
+      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity,unitPrice:line.unitPrice,...(line.line_discount_cents?{lineDiscountCents:line.line_discount_cents}:{}) })) ?? [
           { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
         ];
     if (!lines.length) lines = [{ variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) }];
@@ -13554,6 +13561,8 @@
       const select = event.target.closest('[data-line-variant]');
       if (select) {
         lines[Number(select.dataset.lineVariant)].variantId = select.value;
+        delete lines[Number(select.dataset.lineVariant)].unitPrice;
+        delete lines[Number(select.dataset.lineVariant)].lineDiscountCents;
         refreshOrderTotal();
       }
       const quantity = event.target.closest('[data-line-qty]');
@@ -18322,7 +18331,7 @@
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
-    catalogo: 'Productos y servicios',
+    catalogo: 'Facturación',
     inventario: 'Ajuste de stock',
     recuento: 'Recuento de inventario',
     reportes: 'Reportes',
@@ -18538,6 +18547,8 @@
     window.addEventListener('fulltech:catalog-updated', async () => {
       try { const fresh=await api('/api/admin/catalog');state.catalog=fresh.catalog;saveSnapshot(); } catch {}
     });
+    window.addEventListener('fulltech:pos-saved',()=>load({silent:true}));
+    window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const username = $('#login-username')?.value.trim() ?? '';

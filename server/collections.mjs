@@ -22,6 +22,9 @@
 
 /** Colecciones del dominio WhatsApp/CRM y sus índices. */
 export const COLLECTIONS = Object.freeze({
+  pos_documents: {
+    indexed: { kind: 'text', customer_id: 'text', created_at: 'text', status: 'text' },
+  },
   customers: {
     indexed: { phone_e164: 'text', do_not_contact: 'text', automation_state: 'text', created_at: 'text' },
     unique: ['phone_e164'],

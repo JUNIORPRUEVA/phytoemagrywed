@@ -101,7 +101,10 @@ export function computeOrderTotals(lines = [], options = {}) {
       Number.isFinite(explicit) && explicit >= 0 && line?.unitPrice !== undefined && line?.unitPrice !== null
         ? Math.round(explicit * 100) / 100
         : catalogItem.price;
-    const subtotal = Math.round(unitPrice * 100) * quantity / 100;
+    const grossCents = Math.round(unitPrice * 100) * quantity;
+    const lineDiscount = line?.lineDiscountCents === undefined ? 0 : Number(line.lineDiscountCents);
+    if (!Number.isSafeInteger(lineDiscount) || lineDiscount < 0 || lineDiscount > grossCents) throw new CatalogError('invalid_discount');
+    const subtotal = (grossCents - lineDiscount) / 100;
     return {
       variantId: catalogItem.id,
       capsules: catalogItem.capsules,
@@ -111,6 +114,7 @@ export function computeOrderTotals(lines = [], options = {}) {
       quantity,
       unitPrice,
       subtotal,
+      ...(lineDiscount ? {line_discount_cents:lineDiscount,gross_subtotal:grossCents/100} : {}),
       totalCapsules: catalogItem.capsules * quantity,
       completeBottle: catalogItem.completeBottle,
     };

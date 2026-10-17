@@ -29,6 +29,7 @@
       const nextSignature=JSON.stringify(data);
       const changed=signature!==nextSignature;signature=nextSignature;
       products=data.products;categoryRows=data.categories||[];movements=data.movements;canManage=data.canManage;authenticated=true;
+      if(changed||force)window.dispatchEvent(new CustomEvent('fulltech:pos-products',{detail:{products,canManage}}));
       if(force)render();else if(changed)renderPreservingInput();
       if(changed)window.dispatchEvent(new Event('fulltech:catalog-updated'));
     }catch(e){notice(e.message);}finally{loading=false;if(pending){pending=false;load();}}
@@ -58,9 +59,10 @@
     const rows=products.filter(p=>(kind==='all'||p.kind===kind)&&(!category||categoryKey(p)===category)&&(p.name+' '+p.sku+' '+(p.category||'')).toLocaleLowerCase().includes(search));
     const box=document.getElementById('store-product-grid');if(!box)return;
     box.dataset.layout=layout;
-    box.innerHTML=rows.length?`<div class="store-items">${rows.map(p=>`<a class="store-product${p.active?'':' store-product--inactive'}" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">
-      <div class="store-product__visual">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</div>
-      <div class="store-product__body"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong></div><span class="store-product__arrow" aria-hidden="true">↗</span></a>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+    box.innerHTML=rows.length?`<div class="store-items">${rows.map(p=>`<article class="store-product${p.active?'':' store-product--inactive'}" data-product-id="${esc(p.id)}">
+      <a class="store-product__visual" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</a>
+      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><span class="pos-card-plus" aria-hidden="true">+</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+    window.dispatchEvent(new Event('fulltech:pos-render'));
 
   }
   function detailId(){return new URLSearchParams(location.search).get('product');}
