@@ -338,7 +338,7 @@ describe('pedir confirmación del pedido (el pedido real, sin plantilla)', () =>
     expect(response.status).toBe(200);
     const data = await json(response);
     expect(data.text).toContain('este es tu pedido:');
-    expect(data.text).toContain('2 × Frasco de 10 cápsulas');
+    expect(data.text).toContain('2 × Phytoemagry · 10 cápsulas');
     expect(data.text).toContain('Total: RD$');
     expect(data.text).toContain('Forma de pago: Transferencia');
     expect(data.text).toContain('Por favor, revísalo y confírmanos si está correcto.');
@@ -359,7 +359,7 @@ describe('pedir confirmación del pedido (el pedido real, sin plantilla)', () =>
     expect(enviado.type).toBe('text');
     expect(enviado.template).toBeUndefined();
     expect(enviado.body).toContain('este es tu pedido');
-    expect(enviado.body).toContain('Frasco de 10 cápsulas');
+    expect(enviado.body).toContain('Phytoemagry · 10 cápsulas');
     expect(enviado.body).toContain('revísalo y confírmanos');
   });
 

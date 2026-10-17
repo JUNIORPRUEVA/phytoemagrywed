@@ -124,7 +124,7 @@ describe('catálogo: UNA sola fuente de precios', () => {
     const body = await json(response);
     expect(response.status).toBe(200);
     expect(body.catalog).toHaveLength(7);
-    expect(body.catalog[2]).toMatchObject({ id: 'capsules_10', price: 2500, label: 'Frasco de 10 cápsulas' });
+    expect(body.catalog[2]).toMatchObject({ id: 'capsules_10', price: 2500, label: 'Phytoemagry · 10 cápsulas' });
   });
 });
 

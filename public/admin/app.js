@@ -53,7 +53,7 @@
   const PREFS_KEY = 'pe_prefs';
   /** Los valores admitidos: si en el teléfono hay basura, se ignora y se usa el de siempre. */
   const PREF_VALUES = {
-    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
+    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
     waFilter: ['todos', 'mios', 'sin-asignar', 'no-leidos', 'pendientes', 'clientes', 'seguimiento', 'archivados'],
     pedidosFilter: ['todo', 'pendiente', 'en-camino', 'entregado', 'cancelado'],
     followupsFilter: ['todo', 'vencidos', 'hoy', 'proximos'],
@@ -776,7 +776,7 @@
   const money = (value, currency) =>
     value === null || value === undefined
       ? '—'
-      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 0 }).format(value)}`;
+      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 2 }).format(value)}`;
 
   const digits = (phone) => String(phone ?? '').replace(/\D/g, '');
 
@@ -1968,6 +1968,14 @@
   function renderMobileHeader() {
     const box = $('#mobile-header');
     if (!box) return;
+    if(state.tab==='catalogo'){
+      const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
+      const detail=new URLSearchParams(location.search).has('product');
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      if(search)$('#pos-search-host').append(search);
+      window.dispatchEvent(new Event('fulltech:pos-appbar'));
+      if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
+    }
     if (state.tab === 'delivery') {
       const orders = deliveryOrdersSorted();
       const hasActive = Boolean(state.deliveryActiveOrderId && orders.some((order) => order.id === state.deliveryActiveOrderId));
@@ -2116,6 +2124,7 @@
     $$('[data-admin-only]').forEach((node) => {
       node.hidden = !isAdmin();
     });
+    if ($('#store-menu')) $('#store-menu').hidden = isDeliveryUser();
     $$('[data-permission]').forEach((node) => {
       node.hidden = node.dataset.tab === 'ajustes' ? false : !hasPermission(node.dataset.permission);
     });
@@ -7830,8 +7839,8 @@
         }
         ${item.phone ? `<div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(item.phone)}</a></dd></div>` : ''}
         ${item.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(item.location)}</dd></div>` : ''}
-        ${item.variant_name ? `<div class="fact"><dt>Frasco</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
-        ${item.quantity ? `<div class="fact"><dt>Frascos</dt><dd>${escapeHtml(item.quantity)}</dd></div>` : ''}
+        ${item.variant_name ? `<div class="fact"><dt>Artículo</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
+        ${item.quantity ? `<div class="fact"><dt>Unidades</dt><dd>${escapeHtml(item.quantity)}</dd></div>` : ''}
         ${item.total ? `<div class="fact"><dt>Total</dt><dd>${money(item.total, item.currency)}</dd></div>` : ''}
         <div class="fact"><dt>Entrada</dt><dd>${escapeHtml(fmtWhen(item.received_at))}</dd></div>
         ${item.source ? `<div class="fact"><dt>Origen</dt><dd>${escapeHtml(item.source)}</dd></div>` : ''}
@@ -12256,7 +12265,7 @@
       'Preferencias del pedido',
       `<p class="view__hint">Lo que se repite en cada pedido. Al crear uno nuevo, el formulario ya viene con esto: solo confirmas la cantidad.</p>
        <label class="field">
-         <span class="field__label">Frasco de siempre</span>
+         <span class="field__label">Producto o servicio habitual</span>
          <select class="field__select" id="prefs-variant">
            <option value="">Sin preferencia</option>
            ${(state.catalog ?? [])
@@ -12997,19 +13006,19 @@
   function orderTotals(lines, discount = 0, deliveryFee = 0) {
     const items = lines
       .map((line) => {
-        const variant = catalogOf(line.variantId);
+        const variant = catalogOf(line.variantId)??line.manualSnapshot;
         if (!variant) return null;
         const quantity = Math.max(1, Number(line.quantity) || 1);
         const capsules = Number(variant.capsule_quantity ?? variant.capsules ?? 0) || 0;
-        return { variant, quantity, capsules, subtotal: variant.price * quantity, totalCapsules: capsules * quantity };
+        return { variant, quantity, capsules, subtotal: Math.max(0,Math.round(Number(line.unitPrice??variant.price) * 100) * quantity - Number(line.lineDiscountCents||0)) / 100, totalCapsules: capsules * quantity };
       })
       .filter(Boolean);
-    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+    const subtotal = items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0) / 100;
     const totalCapsules = items.reduce((sum, item) => sum + item.totalCapsules, 0);
     const applied = Math.min(Math.max(0, Number(discount) || 0), subtotal);
     // El delivery es un importe APARTE (nunca una línea de producto falsa).
     const fee = Math.max(0, Math.trunc(Number(deliveryFee) || 0));
-    return { items, subtotal, discount: applied, deliveryFee: fee, total: subtotal - applied + fee, totalCapsules };
+    return { items, subtotal, discount: applied, deliveryFee: fee, total: Math.round((subtotal - applied + fee) * 100) / 100, totalCapsules };
   }
 
   function openChatActions(customerId, conversationId) {
@@ -13540,12 +13549,26 @@
   }
 
   async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null, draft = null, skipDraftPrompt = false } = {}) {
+    if(!orderId && !draft) {
+      closeSheet();
+      const knownLocations=customerId?await fetchCustomerLocations(customerId):[];
+      setTab('catalogo');
+      window.dispatchEvent(new CustomEvent('fulltech:pos-context',{detail:{customerId,conversationId,location:location??knownLocations[0]??null,customer:customerById(customerId)??state.wa.chat?.customer??null}}));
+      return;
+    }
+    if (navigator.onLine) {
+      try {
+        const fresh = await api('/api/admin/catalog');
+        if (Array.isArray(fresh.catalog)) state.catalog = fresh.catalog;
+        if (fresh.inventory) state.inventory = fresh.inventory;
+      } catch (error) { if (error.status === 401) return; /* El borrador offline puede utilizar el catálogo guardado. */ }
+    }
     // Si no hay cliente, el formulario pinta id="order-phone"; desde chat, customer ? '' evita pedirlo.
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
       : null;
     const effectiveCustomerId = customer?.id ?? customerId ?? null;
-    const catalog = state.catalog ?? [];
+    const catalog = [...(state.catalog??[]),...(order?.items||[]).filter(i=>i.manual).map(i=>({id:i.variantId,label:i.label,name:i.label,price:i.unitPrice,capsules:0,general:true,kind:i.kind||'product'}))];
     if (!catalog.length) {
       toast('El catálogo todavía no está disponible');
       return;
@@ -13573,7 +13596,7 @@
       ? draftData.lines
           .filter((line) => catalog.some((variant) => variant.id === line.variantId))
           .map((line) => ({ variantId: line.variantId, quantity: Math.max(1, Number(line.quantity) || 1) }))
-      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
+      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity,unitPrice:line.unitPrice,...(line.line_discount_cents?{lineDiscountCents:line.line_discount_cents}:{}),...(line.manual?{manualSnapshot:catalog.find(v=>v.id===line.variantId)}:{}) })) ?? [
           { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
         ];
     if (!lines.length) lines = [{ variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) }];
@@ -13699,7 +13722,7 @@
       }
       <div id="order-lines"></div>
       <div class="order-add-row">
-        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro artículo</button>
         <strong id="order-products-total">${money(0)}</strong>
       </div>
       <div class="order-compact-fields">
@@ -13744,7 +13767,7 @@
             <button class="icon-btn order-compact-close" data-order-close-field="discount" type="button" aria-label="Cerrar descuento">${ICONS.close}</button>
             <label class="field">
               <span class="field__label">Descuento (RD$)</span>
-              <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${defaultDiscount}" placeholder="0" />
+              <input class="field__input" id="order-discount" type="number" min="0" step="0.01" value="${defaultDiscount}" placeholder="0" />
             </label>
           </div>
         </div>
@@ -13843,7 +13866,7 @@
           (line, index) => `
         <div class="order-line">
           <label class="field">
-            <span class="field__label">Frasco</span>
+            <span class="field__label">Producto o servicio</span>
             <select class="field__select" data-line-variant="${index}">
               ${catalog
                 .map(
@@ -13865,7 +13888,7 @@
           </label>
           ${
             lines.length > 1
-              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar frasco">✕</button>`
+              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar artículo">✕</button>`
               : ''
           }
         </div>`,
@@ -13892,11 +13915,12 @@
         ? `Productos ${money(totals.subtotal)}${totals.discount ? ` · Descuento −${money(totals.discount)}` : ''}${
             totals.deliveryFee ? ` · Delivery ${money(totals.deliveryFee)}` : ''
           } · <strong>Total ${money(totals.total)}</strong>${
-            strictStock
+            totals.totalCapsules > 0 ? strictStock
               ? ` · Stock ${escapeHtml(stock.stock)} cápsulas${insufficient ? ' · insuficiente para entregar' : ''}`
               : ' · Stock sin inicializar'
-          }`
-        : 'Elige al menos un frasco del catálogo.';
+              : ''
+          }${totals.items.filter(item => item.variant.general && item.variant.track_stock).map(item => ` · ${escapeHtml(item.variant.label)}: ${item.variant.stock} en stock`).join('')}`
+        : 'Elige al menos un producto o servicio del catálogo.';
     };
 
     const renderLocationBlock = () => {
@@ -13942,6 +13966,10 @@
       const select = event.target.closest('[data-line-variant]');
       if (select) {
         lines[Number(select.dataset.lineVariant)].variantId = select.value;
+        delete lines[Number(select.dataset.lineVariant)].unitPrice;
+        delete lines[Number(select.dataset.lineVariant)].lineDiscountCents;
+        if(select.value.startsWith('manual_'))lines[Number(select.dataset.lineVariant)].manualSnapshot=catalog.find(v=>v.id===select.value);
+        else delete lines[Number(select.dataset.lineVariant)].manualSnapshot;
         refreshOrderTotal();
       }
       const quantity = event.target.closest('[data-line-qty]');
@@ -14141,7 +14169,7 @@
         Number($('#order-fee').value) || 0,
       );
       if (!totals.items.length) {
-        toast('Elige al menos un frasco');
+        toast('Elige al menos un producto o servicio');
         return;
       }
       if (state.inventory?.initialized === true && Number(state.inventory.stock) < Number(totals.totalCapsules)) {
@@ -18585,6 +18613,7 @@
     const scrim = $('#scrim');
     if (!drawer || !scrim) return;
     if (state.drawer) return;
+    if ($('#store-menu')) $('#store-menu').open = false;
     drawerFocusBack = document.activeElement;
     drawerInertNodes = [...drawer.parentElement.children].filter((node) => node !== drawer && node !== scrim && !node.inert);
     drawerInertNodes.forEach((node) => { node.inert = true; });
@@ -18700,7 +18729,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -18709,7 +18738,11 @@
     mapa: 'Mapa y entregas',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
-    productos: 'Inventario',
+    productos: 'Cápsulas de Phytoemagry',
+    catalogo: 'Facturación',
+    cotizaciones: 'Cotizaciones',
+    inventario: 'Ajuste de stock',
+    recuento: 'Recuento de inventario',
     reportes: 'Reportes',
     cierre: 'Cierre diario',
     'historial-cierres': 'Historial de cierres',
@@ -18769,7 +18802,18 @@
       history.replaceState(null, '', location.pathname + location.search);
       settingsPage = '';
     }
+    const storeTabs = ['catalogo', 'inventario', 'recuento', 'cotizaciones'];
+    if (!options.fromHistory && (storeTabs.includes(tab) || storeTabs.includes(state.tab))) {
+      const nextUrl = new URL(location.href);
+      nextUrl.searchParams.set('v', tab);
+      nextUrl.searchParams.delete('conversation');
+      if (tab !== 'catalogo') nextUrl.searchParams.delete('product');
+      if (tab !== 'cotizaciones') {nextUrl.searchParams.delete('quote');nextUrl.searchParams.delete('ticket');}
+      if (storeTabs.includes(tab)) nextUrl.hash = '';
+      if (nextUrl.href !== location.href) history[options.replaceHistory?'replaceState':'pushState']({ tab }, '', nextUrl);
+    }
     state.tab = tab;
+    window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
     localStorage.setItem(TAB_KEY, tab);
     // Cambiar de pestaña tambien guarda los filtros que hubiera puestos: asi­ una
     // tarjeta de HOY que lleva a «Pedidos pendientes» deja puesto ese filtro.
@@ -18904,7 +18948,23 @@
   function initEvents() {
     if (eventosMontados) return;
     eventosMontados = true;
-
+    window.addEventListener('fulltech:session-expired',()=>showLogin('Tu sesión terminó. Vuelve a entrar.'));
+    window.addEventListener('popstate', () => {
+      const wanted = new URLSearchParams(location.search).get('v');
+      if (VIEWS.includes(wanted) && (['catalogo','inventario','recuento','cotizaciones'].includes(wanted) || ['catalogo','inventario','recuento','cotizaciones'].includes(state.tab))) setTab(wanted,{silent:true,fromHistory:true});
+    });
+    window.addEventListener('fulltech:catalog-updated', async () => {
+      try { const fresh=await api('/api/admin/catalog');state.catalog=fresh.catalog;saveSnapshot(); } catch {}
+    });
+    window.addEventListener('fulltech:pos-saved',()=>load({silent:true}));
+    window.addEventListener('fulltech:catalog-view',renderMobileHeader);
+    window.addEventListener('fulltech:pos-navigate',e=>setTab(e.detail.tab));
+    window.addEventListener('fulltech:main-drawer',e=>{
+      if(e.detail?.open===false){closeDrawer();return;}
+      if($('#app')?.hidden!==false)return;
+      window.dispatchEvent(new Event('fulltech:close-actions'));openDrawer();
+    });
+    window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const username = $('#login-username')?.value.trim() ?? '';
@@ -19636,6 +19696,11 @@
       }
       if (event.target.closest('[data-wa-chat-back]')) { setWaView('list'); return; }
       if (event.target.closest('[data-simple-back]')) {
+        if (['catalogo','inventario','recuento','cotizaciones'].includes(state.tab)) {
+          const backEvent=new CustomEvent('fulltech:back',{cancelable:true});window.dispatchEvent(backEvent);
+          if(!backEvent.defaultPrevented)setTab('hoy',{replaceHistory:true});
+          return;
+        }
         if (state.tab === 'perfil' && state.profileReturnToSettings) {
           state.profileReturnToSettings = false;
           openSettingsPage('');

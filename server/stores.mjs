@@ -389,6 +389,8 @@ export function record(row) {
 function normalize(item) {
   return {
     ...item,
+    unit_price: item?.unit_price == null ? null : Number(item.unit_price),
+    total: item?.total == null ? null : Number(item.total),
     status: item?.status ?? 'nuevo',
     notes: item?.notes ?? null,
     next_action_at: item?.next_action_at ?? null,
@@ -828,8 +830,8 @@ async function createPostgresStore(url) {
         variant_name  text,
         capsules      integer,
         quantity      integer,
-        unit_price    integer,
-        total         integer,
+        unit_price    numeric(14,2),
+        total         numeric(14,2),
         currency      text,
         source        text,
         session_id    text,
@@ -839,6 +841,13 @@ async function createPostgresStore(url) {
     `);
     await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_received_at ON ${TABLE} (received_at DESC)`);
     await first.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_type ON ${TABLE} (type)`);
+    // Ampliación sin pérdida: los pedidos históricos en pesos enteros conservan su valor.
+    const moneyColumns = await first.query('SELECT column_name,data_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND column_name IN ($2,$3)', [TABLE,'unit_price','total']);
+    for (const column of moneyColumns.rows) {
+      if (['integer','bigint','smallint'].includes(column.data_type)) {
+        await first.query(`ALTER TABLE ${TABLE} ALTER COLUMN ${column.column_name} TYPE numeric(14,2) USING ${column.column_name}::numeric`);
+      }
+    }
 
     // Campos de gestión del panel (el negocio los usa a diario).
     await first.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'nuevo'`);

@@ -355,6 +355,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     quantity: Number(line.quantity) || 1,
     unitPrice: Number(line.unitPrice) || 0,
     subtotal: Number(line.subtotal) || 0,
+    ...(line.line_discount_cents ? {line_discount:Number(line.line_discount_cents)/100} : {}),
   }));
   return {
     business: businessName,
@@ -390,7 +391,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     cancel_reason: order.cancel_reason ?? null,
     // Agradecimiento neutro: sin promesas, sin plazos y sin nada médico.
     thanks: 'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
-    note: 'Documento generado por Phytoemagry para confirmar los detalles de tu compra.',
+    note: `Documento generado por ${businessName} para confirmar los detalles de tu compra.`,
   };
 }
 
@@ -412,7 +413,7 @@ export function orderConfirmationText(order, customer = null) {
   for (const line of items) {
     const cantidad = Number(line.quantity) || 1;
     const label = line.label ?? (line.capsules ? `Frasco de ${line.capsules} cápsulas` : line.variantName) ?? 'Producto';
-    const importe = Number(line.subtotal) || (Number(line.unitPrice) || 0) * cantidad;
+    const importe = line.subtotal !== undefined && Number.isFinite(Number(line.subtotal)) ? Number(line.subtotal) : (Number(line.unitPrice) || 0) * cantidad;
     /*
      * Si el pedido no trae precio por línea (pedidos viejos), NO se le inventa un
      * «RD$ 0» al cliente: se enseña el producto y el total manda.
@@ -452,7 +453,7 @@ function esc(value) {
 /** Dinero en RD$ sin depender del locale del servidor. */
 function money(value, currency = 'DOP') {
   const number = Number(value) || 0;
-  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(number);
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(number);
   return `${currency === 'DOP' ? 'RD$' : currency} ${formatted}`;
 }
 
@@ -499,8 +500,10 @@ function pdfRule(y) {
  * @param {{ timeZone?: string }} [options]
  */
 export function receiptPdf(receipt, options = {}) {
-  const lines = [];
+  let lines = [];
+  const pages=[];
   let y = 790;
+  const nextPage=()=>{pages.push(lines.join(''));lines=[];y=790;lines.push(pdfLine(`${receipt.business} · ${receipt.order_number}`,50,y,12,'F2'));y-=30;};
   lines.push('0.043 0.42 0.31 rg\n');
   lines.push(pdfLine(receipt.business, 50, y, 22, 'F2'));
   y -= 24;
@@ -540,14 +543,20 @@ export function receiptPdf(receipt, options = {}) {
   y -= 18;
 
   for (const item of receipt.items ?? []) {
+    const words=String(item.label||'').split(/\s+/),wrapped=[''];
+    for(const word of words){const last=wrapped.length-1;if(wrapped[last].length+word.length>46&&wrapped[last])wrapped.push(word);else wrapped[last]+=(wrapped[last]?' ':'')+word;}
+    const height=Math.max(18,wrapped.length*12)+(item.line_discount?14:0);
+    if(y-height<180)nextPage();
     lines.push('0.09 0.13 0.11 rg\n');
-    lines.push(pdfLine(item.label, 50, y, 10, 'F1'));
+    wrapped.forEach((label,index)=>lines.push(pdfLine(label,50,y-index*12,10,'F1')));
     lines.push(pdfLine(item.quantity, 330, y, 10, 'F1'));
     lines.push(pdfLine(money(item.unitPrice, receipt.currency), 380, y, 10, 'F1'));
     lines.push(pdfLine(money(item.subtotal, receipt.currency), 470, y, 10, 'F2'));
-    y -= 18;
+    y -= Math.max(18,wrapped.length*12);
+    if(item.line_discount){lines.push(pdfLine(`Descuento: -${money(item.line_discount, receipt.currency)}`,50,y,8,'F1'));y-=14;}
   }
 
+  if(y<220)nextPage();
   y -= 8;
   lines.push(pdfRule(y));
   y -= 20;
@@ -579,15 +588,16 @@ export function receiptPdf(receipt, options = {}) {
   y -= 14;
   lines.push(pdfLine(receipt.note, 50, y, 9, 'F1'));
 
-  const stream = lines.join('');
+  pages.push(lines.join(''));
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>',
+    `<< /Type /Pages /Kids [${pages.map((_,i)=>`${5+i*2} 0 R`).join(' ')}] /Count ${pages.length} >>`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
-    `<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}endstream`,
   ];
+  pages.forEach((stream,index)=>objects.push(
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6+index*2} 0 R >>`,
+    `<< /Length ${Buffer.byteLength(stream,'latin1')} >>\nstream\n${stream}endstream`));
 
   let pdf = '%PDF-1.4\n';
   const offsets = [0];
@@ -619,7 +629,7 @@ export function receiptHtml(receipt, options = {}) {
   const rows = receipt.items
     .map(
       (line) => `<tr>
-        <td>${esc(line.label)}</td>
+        <td>${esc(line.label)}${line.line_discount?`<br><small>Descuento: −${esc(money(line.line_discount,receipt.currency))}</small>`:''}</td>
         <td class="num">${esc(line.quantity)}</td>
         <td class="num">${esc(money(line.unitPrice, receipt.currency))}</td>
         <td class="num">${esc(money(line.subtotal, receipt.currency))}</td>

@@ -38,15 +38,17 @@ export class CatalogError extends Error {
 export function catalogItems(product = productConfig) {
   const variants = Array.isArray(product?.variants) ? product.variants : [];
   return variants
-    .filter((variant) => Number(variant?.capsules) > 0 && Number.isFinite(Number(variant?.price)))
+    .filter((variant) => (Number(variant?.capsules) > 0 || variant?.general === true) && Number.isFinite(Number(variant?.price)))
     .map((variant) => ({
       id: variant.id,
-      capsules: Number(variant.capsules),
+      capsules: Number(variant.capsules) || 0,
       price: Number(variant.price),
       currency: CATALOG_CURRENCY,
       completeBottle: variant.completeBottle === true,
       available: variant.available !== false,
-      label: `Frasco de ${variant.capsules} cápsulas`,
+      label: variant.label || `Frasco de ${variant.capsules} cápsulas`,
+      ...(variant.general ? {general:true,name:variant.name,kind:variant.kind} : {}),
+      ...(variant.manual ? {manual:true,cost_cents:variant.cost_cents} : {}),
     }));
 }
 
@@ -98,29 +100,35 @@ export function computeOrderTotals(lines = [], options = {}) {
     const explicit = Number(line?.unitPrice);
     const unitPrice =
       Number.isFinite(explicit) && explicit >= 0 && line?.unitPrice !== undefined && line?.unitPrice !== null
-        ? Math.trunc(explicit)
+        ? Math.round(explicit * 100) / 100
         : catalogItem.price;
-    const subtotal = unitPrice * quantity;
+    const grossCents = Math.round(unitPrice * 100) * quantity;
+    const lineDiscount = Number(line?.lineDiscountCents ?? line?.line_discount_cents ?? 0);
+    if (!Number.isSafeInteger(lineDiscount) || lineDiscount < 0 || lineDiscount > grossCents) throw new CatalogError('invalid_discount');
+    const subtotal = (grossCents - lineDiscount) / 100;
     return {
       variantId: catalogItem.id,
       capsules: catalogItem.capsules,
-      variantName: `${catalogItem.capsules} cápsulas`,
+      variantName: catalogItem.general ? catalogItem.name : `${catalogItem.capsules} cápsulas`,
+      ...(catalogItem.general ? {general:true,kind:catalogItem.kind} : {}),
+      ...(catalogItem.manual ? {manual:true,unit_cost_snapshot_cents:catalogItem.cost_cents||0,product_cost_snapshot_cents:(catalogItem.cost_cents||0)*quantity,subtotal_snapshot_cents:Math.round(subtotal*100),unit_price_snapshot_cents:Math.round(unitPrice*100)} : {}),
       label: catalogItem.label,
       quantity,
       unitPrice,
       subtotal,
+      ...(lineDiscount ? {line_discount_cents:lineDiscount,gross_subtotal:grossCents/100} : {}),
       totalCapsules: catalogItem.capsules * quantity,
       completeBottle: catalogItem.completeBottle,
     };
   });
   if (items.length === 0) throw new CatalogError('empty_order', 'El pedido no tiene frascos.');
 
-  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const subtotal = items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0) / 100;
   const requestedDiscount = Number(options.discount);
   // El descuento nunca puede superar el subtotal: no se regala dinero por error.
   const discount =
     Number.isFinite(requestedDiscount) && requestedDiscount > 0
-      ? Math.min(Math.trunc(requestedDiscount), subtotal)
+      ? Math.min(Math.round(requestedDiscount * 100) / 100, subtotal)
       : 0;
 
   /*
@@ -147,7 +155,7 @@ export function computeOrderTotals(lines = [], options = {}) {
     subtotal,
     discount,
     deliveryFee,
-    total: subtotal - discount + deliveryFee,
+    total: Math.round((subtotal - discount + deliveryFee) * 100) / 100,
     currency,
   };
 }
