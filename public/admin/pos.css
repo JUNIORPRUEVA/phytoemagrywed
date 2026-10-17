@@ -124,3 +124,28 @@ body[data-tab=catalogo]:has(#update-bar.update-bar--show) .app,body[data-tab=cot
 .pos-tickets-dialog .pos-ticket-history{padding-top:16px;font-size:.75rem}
 @keyframes pos-actions-enter{from{transform:translateX(100%);opacity:.65}to{transform:translateX(0);opacity:1}}
 @media(prefers-reduced-motion:reduce){.pos-actions-drawer[open]{animation:none}}
+/* Facturación aprovecha el ancho disponible sin perder el desplazamiento táctil. */
+body[data-tab=catalogo] .app{padding-inline:0}
+body[data-tab=catalogo] .content{padding:4px;max-width:none;width:100%;box-sizing:border-box}
+body[data-tab=catalogo] #view-catalogo{max-width:none;margin-inline:0;width:100%;box-sizing:border-box}
+body[data-tab=catalogo] .mobile-header{padding-inline:0}
+.pos-appbar{max-width:none;margin:0;padding:6px!important}
+.pos-appbar-default{display:grid;grid-template-columns:88px minmax(0,1fr) 88px;gap:4px}
+.pos-appbar-default>strong{text-align:center;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pos-appbar-tools{display:flex;align-items:center;justify-content:flex-end;gap:4px}
+.pos-appbar .wa-appbar__back,.pos-appbar .wa-appbar__icon{border:.5px solid #7186a238;border-radius:6px;background:#7186a210}
+.pos-appbar .wa-appbar__back:hover,.pos-appbar .wa-appbar__icon:hover{background:#7186a225}
+body[data-tab=catalogo] #store-product-grid{margin-inline:0;padding-inline:0;scrollbar-width:none;-ms-overflow-style:none}
+body[data-tab=catalogo] #store-product-grid::-webkit-scrollbar,.pos-cart-lines::-webkit-scrollbar{display:none;width:0;height:0}
+.pos-cart-lines{scrollbar-width:none}
+body[data-tab=catalogo] .store-items{gap:6px}
+.pos-summary{padding-inline:2px}
+body[data-tab=catalogo] #view-catalogo:not(.store-is-detail) .store-fab{right:10px}
+body #drawer,.pos-actions-drawer,.store-filter-drawer{border-radius:0}
+body #drawer .drawer__head{min-height:42px;margin-bottom:8px;gap:8px}
+body #drawer .drawer__brand{gap:8px}
+body #drawer .drawer__avatar{display:grid;place-items:center;width:32px;height:32px;min-width:32px;border-radius:6px;font-size:.72rem}
+body #drawer .drawer__brand strong{font-size:.85rem;font-weight:600;line-height:1.2}
+body #drawer .drawer__brand span span{font-size:.65rem;font-weight:400;line-height:1.2}
+body #drawer .drawer__head .icon-btn{width:34px;height:34px;min-height:34px;border-radius:6px;box-shadow:none}
+@media(min-width:900px){#view-catalogo:not(.store-is-detail){column-gap:10px}#pos-root{padding-left:10px}body[data-tab=catalogo] #view-catalogo:not(.store-is-detail) .store-fab{right:380px}}

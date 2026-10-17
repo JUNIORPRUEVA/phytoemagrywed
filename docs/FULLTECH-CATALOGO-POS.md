@@ -268,3 +268,19 @@ fusionado con principal ni desplegado a producción en esta etapa.
   comercial y catálogo; incluye gestos sintéticos, navegación al menú principal,
   edición y eliminación desde los tres puntos. Revisión visual en navegador a
   390 × 780 y compilación aprobada. No se ha ensayado con un teléfono físico.
+
+### Ajuste de ancho y navegación de Facturación
+
+- Catálogo y resumen aprovechan el ancho con 4 px de margen lateral. La lista
+  conserva el desplazamiento táctil y por rueda, sin barra de scroll visible.
+- Título centrado y botones de regresar, búsqueda y acciones con fondo cuadrado
+  de esquinas discretas. Acciones abre el mismo drawer que el botón flotante.
+- Regresar sale con un toque aunque el carrito esté expandido, conservando el
+  ticket. Ya no consume el primer toque para contraerlo.
+- El menú principal muestra «Inventario», cerrado al abrir el drawer. Su panel
+  y el filtro tienen bordes rectos; nombre y rol del usuario usan una cabecera
+  más compacta y una tipografía más ligera.
+- Validación: 46 pruebas aprobadas, incluyendo regreso con carrito expandido,
+  conservación del cliente/ticket, acciones desde la cabecera y menú cerrado.
+  Compilación y revisión visual a 390 × 780 y 1280 × 800 aprobadas; en móvil se
+  verificaron 4 px de margen, título centrado y ausencia de desborde horizontal.

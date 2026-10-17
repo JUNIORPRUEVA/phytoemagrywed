@@ -1969,7 +1969,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong>${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button>`:''}</div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -18216,6 +18216,7 @@
     const scrim = $('#scrim');
     if (!drawer || !scrim) return;
     if (state.drawer) return;
+    if ($('#store-menu')) $('#store-menu').open = false;
     drawerFocusBack = document.activeElement;
     drawerInertNodes = [...drawer.parentElement.children].filter((node) => node !== drawer && node !== scrim && !node.inert);
     drawerInertNodes.forEach((node) => { node.inert = true; });
@@ -18415,7 +18416,6 @@
       if (nextUrl.href !== location.href) history[options.replaceHistory?'replaceState':'pushState']({ tab }, '', nextUrl);
     }
     state.tab = tab;
-    if (storeTabs.includes(tab) && $('#store-menu')) $('#store-menu').open = true;
     window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
     localStorage.setItem(TAB_KEY, tab);
     // Cambiar de pestaña tambien guarda los filtros que hubiera puestos: asi­ una

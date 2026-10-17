@@ -11,7 +11,7 @@ let draft=empty(),products=[],customers=[],isAdmin=false,canCreate=false,expande
 const root=$('#pos-root'),client=document.createElement('div');client.id='pos-client';root?.parentElement.prepend(client);
 const modal=document.createElement('dialog');modal.className='pos-dialog';document.body.append(modal);
 const actionsDrawer=document.createElement('dialog');actionsDrawer.className='pos-actions-drawer';actionsDrawer.setAttribute('aria-label','Acciones de facturación');document.body.append(actionsDrawer);
-function closeActions(){actionsDrawer.close();delete document.body.dataset.posActions;$('[data-pos-actions]')?.setAttribute('aria-expanded','false');}
+function closeActions(){actionsDrawer.close();delete document.body.dataset.posActions;document.querySelectorAll('[data-pos-actions]').forEach(b=>b.setAttribute('aria-expanded','false'));}
 actionsDrawer.addEventListener('cancel',e=>{e.preventDefault();closeActions();});
 actionsDrawer.addEventListener('click',e=>{
   if(e.target===actionsDrawer){const r=actionsDrawer.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right)closeActions();}
@@ -208,7 +208,7 @@ function actions(){
   if(busy||modal.open)return;
   window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
   actionsDrawer.innerHTML=`<header><strong>Acciones</strong><button class="pos-icon" type="button" data-actions-close aria-label="Cerrar acciones">×</button></header><nav class="pos-action-menu" aria-label="Acciones de venta"><span class="pos-action-section">Ventas</span><button type="button" data-pos-manual>${actionIcon('quick')}<span>Venta rápida<small>Fuera de inventario</small></span></button><button type="button" data-pos-new-ticket>${actionIcon('ticket')}<span>Nuevo ticket</span></button><button type="button" data-pos-save-ticket ${!draft.items.length?'disabled':''}>${actionIcon('save')}<span>Guardar ticket</span></button>${isAdmin?`<span class="pos-action-section">Catálogo</span><button type="button" data-pos-stock>${actionIcon('stock')}<span>Agregar stock</span></button><button type="button" data-pos-create-product>${actionIcon('product')}<span>Nuevo producto<small>Producto o servicio</small></span></button>`:''}</nav>`;
-  document.body.dataset.posActions='open';$('[data-pos-actions]')?.setAttribute('aria-expanded','true');actionsDrawer.showModal();
+  document.body.dataset.posActions='open';document.querySelectorAll('[data-pos-actions]').forEach(b=>b.setAttribute('aria-expanded','true'));actionsDrawer.showModal();
 }
 window.addEventListener('fulltech:close-actions',closeActions);
 
@@ -356,7 +356,7 @@ window.addEventListener('fulltech:pos-context',async e=>{
   const apply=()=>{draft.customer=customers.find(c=>c.id===context.customerId)||(context.customer?.id===context.customerId?context.customer:null);draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';changed();};
   if(draft.items.length&&draft.customer?.id!==context.customerId)show('Cambiar cliente del carrito','<p>Se conservarán los artículos y se asignarán al cliente seleccionado.</p>','Continuar',()=>{apply();modal.close();});else apply();
 });
-window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&expanded){expanded=false;render();e.preventDefault();}});
+window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}});
 window.addEventListener('phyto:calling-logout',()=>{generation++;quotesEpoch++;closeActions();actionsDrawer.innerHTML='';edgeGesture=null;clearTimeout(ticketSaveTimer);searchOpen=false;searchBar=null;quotesPage()?.replaceChildren();document.querySelector('.pos-document-toast')?.remove();loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});
 window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
 if(document.body.dataset.tab==='catalogo')initialize();
