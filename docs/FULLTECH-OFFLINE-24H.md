@@ -71,3 +71,20 @@ La suite completa registró 1.356 aprobadas, 29 fallidas y tres omitidas. De los
 fallos, 28 se reprodujeron en `main` sin esta integración (seis archivos de
 interfaz/chat/reparto); el restante fue un timeout de Configuración y pasó al
 repetirse de forma aislada. No se declara la suite completa aprobada.
+
+## Despliegue verificado — 17/10/2026
+
+- Integración publicada en `main`, código de producción hasta `0525c21`.
+- Imagen activa: `easypanel/ventas/phytoemagrywed:offline-0525c21`.
+- Service worker `crm-v115-offline-24h`. Se conservan las mejoras de arranque,
+  chat y la disposición de Pedidos incorporadas recientemente en `main`.
+- Contenedor saludable; `/api/health` responde HTTP 200 con almacenamiento
+  PostgreSQL y seis pedidos. Los archivos públicos coinciden con el código
+  publicado, normalizando únicamente los saltos de línea de Windows.
+- Copia de seguridad PostgreSQL y manifiesto restaurable verificados en
+  `/root/backups/fulltech-offline-20261017-122356`. Configuración del servicio e
+  imagen anterior conservadas para reversión; no están en Git.
+- No se crearon ventas, productos ni mensajes de prueba en producción. La
+  repetición de escrituras se probó en bases locales aisladas.
+- Pendiente: validación física del teléfono en modo avión después de descargar
+  la copia. Las pruebas automatizadas no sustituyen esta comprobación.
