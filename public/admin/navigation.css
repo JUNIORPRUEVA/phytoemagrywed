@@ -121,6 +121,7 @@ body[data-tab='whatsapp'] :is(#wa-back, #wa-calling-button):focus-visible {
 
 body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) > #wa-back {
   display: none;
+}
 
 /* Iconos aportados por el negocio: máscara transparente que sigue el tema. */
 body[data-tab='whatsapp'] :is(#wa-calling-button, #wa-thread-search-open) {

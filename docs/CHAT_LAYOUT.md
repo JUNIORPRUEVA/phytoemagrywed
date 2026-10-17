@@ -49,9 +49,7 @@ el resto del panel no cambia.
 Comprobado en navegador a 430×900, 360×640, 320×568, 1280×800 y en tema oscuro: filas de 72 px, sin
 desbordes horizontales, y abrir conversación, volver y la pulsación larga (selección) siguen igual.
 
-### Foto del cliente (por qué a veces se ven iniciales)
-
-La fila usa la foto del cliente **si la tiene guardada** (`photo_url`); si no, pinta sus iniciales sobre
+### Foto del cliente (por qué a veces se ven iniciales)La fila usa la foto del cliente **si la tiene guardada** (`photo_url`); si no, pinta sus iniciales sobre
 un color fijo. WhatsApp **no entrega la foto de perfil de los contactos por su API** (verificado: el
 webhook solo trae el nombre y no existe endpoint de foto de contacto), así que la foto la sube el equipo:
 
@@ -59,5 +57,24 @@ webhook solo trae el nombre y no existe endpoint de foto de contacto), así que 
 - En el chat: el avatar de la cabecera lleva una pestaña de cámara cuando no hay foto; al tocarlo se abre
   la ficha, donde está **Poner foto** (o **Cambiar foto** / **Quitar foto** si ya la tiene).
 - La imagen se reduce a 192 px antes de guardarse y se ve en la lista, en la cabecera del chat y en la ficha.
+
+### Compositor desajustado (corregido el 2026-10-17)
+
+El compositor salía partido: el «+»/«Plantilla» arriba del texto, el campo a media anchura y el botón
+redondo suelto. Eran **dos fallos de CSS**, no de `app.js`:
+
+1. `navigation.css` tenía **una llave `}` sin cerrar** en la regla de `#wa-back` con la búsqueda abierta.
+   Con la llave suelta, el navegador interpreta el resto como reglas anidadas de esa regla y **deja de
+   aplicar todo lo que viene después** (todo el compositor, los iconos de la cabecera y el layout de
+   Pedidos). Se cerró la llave y se añadió una prueba (`composer-mobile.test.js`) que vigila que las
+   hojas del chat tengan las llaves equilibradas.
+2. `composer-mobile.css` pedía **tres columnas** (`auto 1fr auto`) al `.composer-bar`, pero el marcado
+   actual mete el «+»/«Plantilla» y el textarea dentro de `.composer-field` (dos hijos). Ahora pide
+   **dos columnas** (`minmax(0,1fr) auto`) y el campo se queda con todo el ancho libre.
+
+Comprobado a 390×844 en claro y oscuro: ventana abierta (adjuntar · texto · micro/enviar) y ventana
+cerrada (Plantilla · texto · enviar), vacío y con texto, sin solapamientos. El corrector vuelve a
+mostrar su caja de sugerencias encima del campo.
+
 
 

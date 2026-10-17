@@ -7,10 +7,15 @@
     min-height: 0;
   }
   body[data-tab='whatsapp'] .wa__composer .composer-bar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    /*
+     * DOS columnas: el campo redondeado (que dentro lleva «+» y el texto) y el
+     * botón redondo. El campo se queda con todo el ancho libre. Antes se pedían
+     * tres columnas porque el «+» y el textarea eran hijos directos; ahora van
+     * dentro de `.composer-field`, y con tres columnas el campo se encogía y el
+     * texto salía partido.
+     */
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
-    padding: 3px 4px;
-    border-radius: 25px;
   }
   body[data-tab='whatsapp'] #wa-text {
     min-width: 0;

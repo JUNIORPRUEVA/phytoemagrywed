@@ -7,6 +7,38 @@ const script = readFileSync('public/admin/composer-mobile.js', 'utf8');
 let dom;
 afterEach(() => dom?.window.close());
 
+/*
+ * Una llave `}` que falta NO rompe solo esa regla: el navegador toma el resto
+ * del archivo como anidado y deja de aplicar todo lo que viene después. Así se
+ * quedó el compositor sin estilos (campo a media anchura, «+» encima del
+ * texto). Esta prueba vigila el equilibrio de llaves de las hojas del chat.
+ */
+describe('hojas de estilo del compositor', () => {
+  it('tienen las llaves equilibradas (una suelta desactiva medio archivo)', () => {
+    for (const archivo of [
+      'public/admin/navigation.css',
+      'public/admin/composer-mobile.css',
+      'public/admin/wa-lista.css',
+    ]) {
+      const css = readFileSync(archivo, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+        .replace(/'(?:[^'\\]|\\.)*'/g, "''");
+      let nivel = 0;
+      let cerradasDeMas = false;
+      for (const caracter of css) {
+        if (caracter === '{') nivel += 1;
+        else if (caracter === '}') {
+          nivel -= 1;
+          if (nivel < 0) cerradasDeMas = true;
+        }
+      }
+      expect(cerradasDeMas, `${archivo}: hay una llave } de más`).toBe(false);
+      expect(nivel, `${archivo}: faltan ${nivel} llave(s) }`).toBe(0);
+    }
+  });
+});
+
 async function setup({ visualViewport = true } = {}) {
   dom = new JSDOM(`<body data-tab="whatsapp" data-wa-view="chat"><div class="app">
     <div id="thread"></div><textarea id="wa-text"></textarea>
