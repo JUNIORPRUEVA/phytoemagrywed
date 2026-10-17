@@ -49,3 +49,19 @@ Esta iteración es local. No se ha desplegado, ni se ha instalado/verificado tod
   las barras/iconos nativos. En una PWA, el launcher puede tardar en refrescar el
   icono instalado; quitar únicamente el acceso y reinstalarlo desde Chrome fuerza
   la actualización, sin borrar datos del CRM.
+
+
+### Seguimiento de barra nativa PWA
+
+La captura del usuario muestra navegación de tres botones clara incluso con
+Android en oscuro. Se corrige la base de instalación: `theme_color` y
+`background_color` del manifiesto pasan a `#0b1424`. Chrome puede usar el color
+del manifiesto para la barra nativa, independientemente del meta dinámico.
+Esto fija una base nativa oscura; no promete alternancia de esa barra al cambiar
+solo el tema de la web. Las pantallas mantienen sus modos claro/oscuro.
+También se pinta explícitamente el fondo raíz antes de cargar el CSS y durante
+el cambio de tema, evitando un lienzo transparente con fondo claro por defecto.
+Referencia de Chromium: https://chromium.googlesource.com/chromium/src/+/0a6ab4f0e2ce17e572b05400ae6eacd7fc5389f0%5E%21/
+Falta verificar el resultado en el dispositivo del usuario y su versión de Chrome;
+la actualización del service worker no fuerza una actualización inmediata del
+WebAPK ni de su manifiesto de instalación.

@@ -156,6 +156,21 @@ describe('el tema se elige y se queda elegido', () => {
 });
 
 describe('el tema se aplica antes de pintar', () => {
+  it('el fondo raíz coincide con el tema guardado antes de cargar la app', () => {
+    for (const [theme, color] of [['dark', 'rgb(11, 20, 36)'], ['light', 'rgb(244, 247, 253)']]) {
+      const preview = new JSDOM(html, { url: 'https://fulltech.test/admin/', runScripts: 'outside-only' });
+      try {
+        preview.window.localStorage.setItem('pe_tema', theme);
+        preview.window.matchMedia = () => ({ matches: false });
+        preview.window.eval(preview.window.document.querySelector('head script').textContent);
+        expect(preview.window.getComputedStyle(preview.window.document.documentElement).backgroundColor).toBe(color);
+      } finally { preview.window.close(); }
+    }
+  });
+  it('la identidad instalada conserva una base oscura y el mismo alcance', () => {
+    const manifest = JSON.parse(readFileSync(path.join(ADMIN_DIR, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ id: '/admin/', start_url: '/admin/', scope: '/admin/', theme_color: '#0b1424', background_color: '#0b1424' });
+  });
   it('el <head> deja el tema puesto antes de la hoja de estilos', () => {
     const guion = html.indexOf("localStorage.getItem('pe_tema')");
     const hoja = html.indexOf('admin.css');
