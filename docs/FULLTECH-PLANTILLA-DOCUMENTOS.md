@@ -32,3 +32,20 @@ Compilación aprobada. Cotización y factura de muestra renderizadas e inspeccio
 visualmente contra la referencia; comprobados nombres largos, cien artículos,
 varias páginas, logo y conservación de importes. Las muestras quedan localmente
 en `output/pdf/`, excluidas de Git y del contexto Docker.
+
+## Despliegue verificado — 17 de octubre de 2026
+
+Código integrado en `main`: `aa8e1eb`, que incluye la plantilla `fa5ce21`
+y el último ajuste del carrito. Imagen publicada en el servicio
+`ventas_phytoemagrywed`: `easypanel/ventas/phytoemagrywed:template-aa8e1eb`.
+Respaldo previo de PostgreSQL validado con `pg_restore -l` en
+`/root/backups/fulltech-document-template-20261017-180345`; allí se conserva
+también la configuración y la imagen de reversión.
+
+La revisión final de main aprobó 55 pruebas en siete archivos y
+`npm run verify:deploy`. Un contenedor aislado creó una venta y generó su PDF
+con los datos comerciales esperados, sin escribir ventas de prueba en producción.
+Tras actualizar el servicio, el contenedor quedó saludable y `/api/health`
+confirmó PostgreSQL operativo. Se compararon nueve archivos publicados con main,
+incluidos el generador, logo, visor, carrito y service worker
+`crm-v118-carrito-elegante`; las tres fuentes del visor respondieron correctamente.
