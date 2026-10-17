@@ -306,3 +306,25 @@ fusionado con principal ni desplegado a producción en esta etapa.
   PostgreSQL local aislado, compilación aprobada y revisión móvil a 390 × 780.
   La suite completa no se declara verde: se contrasta con la base para registrar
   expectativas antiguas de interfaz que todavía apuntan al formulario anterior.
+
+
+### Resultado del despliegue
+
+- Publicados en `main` el merge `b7a79a3`, la conservación de la corrección de
+  contexto Docker `bf616d4` y la corrección final de imágenes `01659a5`.
+  `feat/fulltech-pos` es ancestro de `main`: se conserva su historia completa.
+- Desplegado `01659a5` en `ventas/phytoemagrywed`. Contenedor saludable, API pública
+  con `storage: postgres`, seis pedidos existentes conservados. También se
+  conservaron los 40 clientes, 40 conversaciones y registros de llamadas.
+- En el dominio real se comprobaron Facturación, las siete imágenes originales,
+  Tickets, Cotizaciones y el regreso del detalle con un solo botón, sin crear
+  ventas ni cotizaciones de prueba ni enviar mensajes a clientes.
+- La imagen Docker final compila y arranca contra PostgreSQL local aislado;
+  login, catálogo, imagen autenticada, cotizaciones y tickets responden HTTP 200.
+- Suite completa inicial: 1.319 pruebas aprobadas, 32 fallidas y tres omitidas.
+  De los fallos, 23 se reprodujeron en `bfff36d`; ocho pruebas buscan el formulario
+  de pedidos sustituido por POS (incluida su antigua cola offline); el restante
+  detectó el módulo ausente en Docker y se corrigió/verificó. No se declara la
+  suite completa aprobada. Las 185 pruebas críticas y 35 de PostgreSQL pasan;
+  la comprobación posterior de imágenes/runtime pasó con 19 aprobadas y una
+  omitida reservada a PostgreSQL. Cobrar/guardar en el POS requiere conexión.
