@@ -1,0 +1,128 @@
+/* Bandeja continua: los paneles ocupan la pantalla y solo las filas se desplazan. */
+body[data-tab='whatsapp'] {
+  height: 100dvh;
+  overflow: hidden;
+}
+body[data-tab='whatsapp'] .app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  padding: 0;
+}
+body[data-tab='whatsapp'] .app > :is(.mobile-header, .banner, .permission-banner) {
+  flex: 0 0 auto;
+}
+body[data-tab='whatsapp'] .content {
+  flex: 1 1 0;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+body[data-tab='whatsapp'] #view-whatsapp {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+body[data-tab='whatsapp'] #wa-status { flex: 0 0 auto; }
+body[data-tab='whatsapp'] .wa {
+  flex: 1 1 0;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+}
+body[data-tab='whatsapp'] .wa__list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  min-width: 0;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+}
+body[data-tab='whatsapp'] .wa__list::after { display: none; }
+body[data-tab='whatsapp'] :is(.wa__list-head, .wa__sel, .wa__error, #wa-filters) {
+  flex: 0 0 auto;
+}
+body[data-tab='whatsapp'] #wa-conversations {
+  display: block;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  max-height: none;
+  margin: 0;
+  padding: 0 var(--safe-right, 0px) calc(88px + var(--safe-bottom, 0px)) var(--safe-left, 0px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y pinch-zoom;
+  scroll-padding-bottom: 88px;
+  scrollbar-width: thin;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+body[data-tab='whatsapp'] #wa-conversations > .conv-wrap {
+  min-height: 76px;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--pe-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+body[data-tab='whatsapp'] #wa-conversations .conv {
+  min-height: 76px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+body[data-tab='whatsapp'] #wa-conversations .conv__name { font-weight: 600; }
+body[data-tab='whatsapp'] #wa-conversations .conv__more {
+  width: 100%;
+  height: 100%;
+  min-height: 44px;
+  border-radius: 0;
+}
+body[data-tab='whatsapp'] .wa-new-chat {
+  position: absolute;
+  right: calc(16px + var(--safe-right, 0px));
+  bottom: calc(16px + var(--safe-bottom, 0px));
+}
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'] .wa { grid-template-columns: minmax(0, 1fr); }
+  body[data-tab='whatsapp'] .wa[data-view='chat'] .wa__list { display: none; }
+  body[data-tab='whatsapp'] .wa__list-head { display: none; }
+}
+@media (min-width: 980px) {
+  body[data-tab='whatsapp'] .wa__list { border-right: 1px solid var(--pe-line); }
+}

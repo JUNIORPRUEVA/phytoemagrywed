@@ -229,6 +229,7 @@ beforeAll(async () => {
   const win = dom.window;
   win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   win.scrollTo = () => {};
+  win.requestAnimationFrame = (callback) => win.setTimeout(callback, 0);
   win.confirm = () => true;
   win.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, `${app.url}/admin/`).toString();
@@ -368,6 +369,7 @@ describe('HOY: las notificaciones borradas no vuelven', () => {
     await waitFor(() => $$('#sheet-body .notice').length >= 2, 'las notificaciones en la hoja');
     click('[data-notifications-delete-all]');
     await waitFor(() => $('#sheet-body').textContent.includes('No hay notificaciones'), 'la lista vacía');
+    await waitFor(async () => (await notificacionesEnServidor()).length === 0, 'el borrado sincronizado');
 
     const respuesta = await admin('/api/admin/notifications');
     const cuerpo = await respuesta.json();
@@ -424,5 +426,96 @@ describe('HOY: las notificaciones borradas no vuelven', () => {
       'el borrado real en el servidor',
       4000,
     );
+  });
+});
+
+
+describe('HOY: navegación independiente y finalizar chats', () => {
+  it('Sin responder vuelve a la lista aunque antes hubiera una conversación abierta', async () => {
+    click('[data-tab="hoy"]');
+    click('[data-goto="whatsapp"][data-wa-filter="pendientes"]');
+    await waitFor(() => $$('#wa-conversations [data-conv]').length === 2, 'los dos pendientes');
+    click($('#wa-conversations [data-conv]'));
+    await waitFor(() => $('#wa-text'), 'el chat abierto');
+    expect(dom.window.document.body.dataset.waView).toBe('chat');
+    click('[data-tab="hoy"]');
+    click('[data-goto="whatsapp"][data-wa-filter="pendientes"]');
+    expect(dom.window.document.body.dataset.waView).toBe('list');
+    expect($('#wa-chat-pane').hidden).toBe(true);
+    await waitFor(() => $$('#wa-conversations [data-conv]').length === 2, 'la lista filtrada');
+  });
+
+  it('las tarjetas limpian búsquedas anteriores de Pedidos y Clientes', async () => {
+    click('[data-tab="pedidos"]');
+    click('[data-order-search-open]');
+    setValue('#order-appbar-search', 'no-existe-este-pedido');
+    expect($$('#list-pedidos .order-row')).toHaveLength(0);
+    click('[data-tab="hoy"]');
+    click('[data-goto="pedidos"]');
+    await waitFor(() => $$('#list-pedidos .order-row').length === 3, 'los pedidos sin búsqueda antigua');
+    click('[data-tab="clientes"]');
+    setValue('#search', 'no-existe-este-cliente');
+    expect($$('#list-clientes .client-row')).toHaveLength(0);
+    click('[data-tab="hoy"]');
+    click('[data-goto="clientes"][data-client-filter="todos"]');
+    expect($('#search').value).toBe('');
+    expect($('#chips [data-filter="todos"]').getAttribute('aria-pressed')).toBe('true');
+    expect($$('#list-clientes .client-row').length).toBeGreaterThan(0);
+  });
+
+  it('los segmentos Clientes, Interesados y Con compra muestran las cantidades de sus tarjetas', async () => {
+    for (const filter of ['todos', 'interesados', 'clientes']) {
+      click('[data-tab="hoy"]');
+      const card = $('[data-goto="clientes"][data-client-filter="' + filter + '"]');
+      const expected = Number(card.querySelector('.stat__value').textContent);
+      click(card);
+      expect($$('#list-clientes .client-row')).toHaveLength(expected);
+      expect($('#chips [data-filter="' + filter + '"]').getAttribute('aria-pressed')).toBe('true');
+    }
+  });
+
+  it('Sin responder limpia una búsqueda de chats anterior', async () => {
+    click('[data-tab="whatsapp"]');
+    click('[data-wa-search-open]');
+    setValue('#wa-appbar-search', 'ningun-chat-coincide');
+    await waitFor(() => !$('#wa-conversations [data-conv]'), 'la búsqueda vacía');
+    click('[data-tab="hoy"]');
+    click('[data-goto="whatsapp"][data-wa-filter="pendientes"]');
+    expect(dom.window.document.body.dataset.waView).toBe('list');
+    await waitFor(() => $$('#wa-conversations [data-conv]').length === 2, 'los pendientes sin búsqueda');
+    expect($('#wa-search').value).toBe('');
+  });
+
+  it('finalizar desde las acciones del chat actualiza Sin responder y mantiene el compositor', async () => {
+    click('[data-tab="hoy"]');
+    click('[data-goto="whatsapp"][data-wa-filter="pendientes"]');
+    await waitFor(() => $('#wa-conversations [data-conv]'), 'un chat pendiente');
+    const id = $('#wa-conversations [data-conv]').dataset.conv;
+    click($('#wa-conversations [data-conv]'));
+    await waitFor(() => $('#wa-text') && !$('#wa-actions').disabled, 'el compositor');
+    const before = mockWhatsApp.sent.length;
+    click('#wa-actions');
+    const action = $('#sheet-body [data-conversation-resolution]');
+    expect(action.textContent).toContain('Marcar como finalizado');
+    click(action);
+    await waitFor(async () => {
+      const rows = await (await admin('/api/admin/conversations?filter=pendientes')).json();
+      return rows.counts.pendientes === 1;
+    }, 'el pendiente finalizado en el servidor');
+    await waitFor(() => $('#sheet').hidden && $('#wa-text'), 'el chat sigue abierto');
+    expect(mockWhatsApp.sent.length).toBe(before);
+    expect($('#wa-text').disabled).toBe(false);
+    click('[data-tab="hoy"]');
+    await waitFor(() => Number($('[data-goto="whatsapp"][data-wa-filter="pendientes"] .stat__value').textContent) === 1, 'el contador actualizado');
+    click('[data-goto="whatsapp"][data-wa-filter="pendientes"]');
+    await waitFor(() => $$('#wa-conversations [data-conv]').length === 1, 'solo queda el pendiente real');
+    expect($('#wa-conversations [data-conv]').dataset.conv).not.toBe(id);
+    click('[data-tab="hoy"]');
+    click('[data-goto="whatsapp"][data-wa-filter="sin-asignar"]');
+    await waitFor(() => $$('#wa-conversations [data-conv]').length === 2, 'los chats sin asignar');
+    click($$('#wa-conversations [data-conv-more]').find((button) => button.dataset.convMore === id));
+    expect($('#sheet-body [data-conversation-resolution]').textContent).toContain('Reabrir conversación');
+    click($('#sheet-body [data-conversation-resolution]'));
+    await waitFor(async () => (await (await admin('/api/admin/conversations?filter=pendientes')).json()).counts.pendientes === 2, 'reabrir recupera el pendiente');
   });
 });

@@ -1,0 +1,41 @@
+@media (max-width: 979px) {
+  body[data-wa-viewport='true'] .app {
+    position: fixed;
+    inset: var(--wa-viewport-top, 0px) 0 auto;
+    width: 100%;
+    height: var(--wa-viewport-height, 100dvh);
+    min-height: 0;
+  }
+  body[data-tab='whatsapp'] .wa__composer .composer-bar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: end;
+    padding: 3px 4px;
+    border-radius: 25px;
+  }
+  body[data-tab='whatsapp'] #wa-text {
+    min-width: 0;
+    min-height: 44px;
+    max-height: max(44px, min(132px, calc(var(--wa-viewport-height, 100dvh) * .25)));
+    padding: 10px 8px;
+    font-size: 16px;
+    line-height: 24px;
+    overflow-wrap: anywhere;
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 8px;
+  }
+  body[data-tab='whatsapp'] .composer-end,
+  body[data-tab='whatsapp'] .composer-btn {
+    width: 44px;
+    height: 44px;
+  }
+  body[data-tab='whatsapp'] .composer-template-btn { min-height: 44px; }
+  body[data-tab='whatsapp'] .composer-bar:focus-within {
+    border-color: var(--pe-brand-text);
+  }
+  body[data-tab='whatsapp'][data-wa-keyboard='open'] .wa__composer { padding-bottom: 6px; }
+  body[data-tab='whatsapp'][data-wa-keyboard='open'] .content { padding-bottom: 0; }
+  body[data-tab='whatsapp'] .wa-quick-preview {
+    max-height: 72px;
+    overflow-y: auto;
+  }
+}

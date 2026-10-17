@@ -63,6 +63,62 @@ body[data-tab='whatsapp'] .wa-fab { right: calc(12px + var(--safe-right, 0px)); 
   body[data-tab='whatsapp'] #wa-filters { display: flex; flex-wrap: wrap; max-width: 100%; overflow: visible; }
 }
 
-/* La navegación de retorno pertenece al appbar superior. */
-body[data-tab='whatsapp'] #wa-back { display: none; }
+/* El appbar del propio chat contiene la navegación de retorno. */
 body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head { padding-top: 6px; }
+
+/* Una sola barra de chat: volver, número del cliente y llamada. */
+body[data-tab='whatsapp'][data-wa-view='chat'] .mobile-header {
+  display: none;
+}
+
+body[data-tab='whatsapp'][data-wa-view='chat'] #wa-back {
+  display: grid;
+  place-items: center;
+}
+
+body[data-tab='whatsapp'] #wa-back .svg {
+  width: 24px;
+  height: 24px;
+}
+
+body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+body[data-tab='whatsapp'] .wa__chat-head > .wa__chat-avatar,
+body[data-tab='whatsapp'] .wa__chat-name,
+body[data-tab='whatsapp'] .wa__chat-meta,
+body[data-tab='whatsapp'] #wa-thread-search-open {
+  display: none;
+}
+
+body[data-tab='whatsapp'] .wa__chat-phone {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 550;
+  line-height: 1.4;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-tab='whatsapp'] #wa-calling-button .svg {
+  width: 22px;
+  height: 22px;
+}
+
+body[data-tab='whatsapp'] :is(#wa-back, #wa-calling-button):hover {
+  background: var(--pe-hover, rgba(127, 127, 127, .1));
+}
+
+body[data-tab='whatsapp'] :is(#wa-back, #wa-calling-button):focus-visible {
+  outline: 2px solid var(--pe-brand-text);
+  outline-offset: -2px;
+}
+
+body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) > #wa-back {
+  display: none;
+}

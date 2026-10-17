@@ -179,6 +179,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  dom?.window.close();
   await app?.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -254,5 +255,50 @@ describe('la hoja de plantilla del chat directo', () => {
     await waitFor(() => $('#thread').textContent.includes('Te escribimos de FullTECH'), 'el mensaje en el hilo');
     expect($('#thread').textContent).toContain(previsto.split('\n\n')[1]);
     expect($('#thread').textContent).not.toContain(PHONE);
+  }, 20000);
+});
+
+describe('nuevo chat desde Clientes', () => {
+  it('solo exige teléfono, con mensaje opcional y nombre oculto en detalles', () => {
+    // La hoja anterior puede estar cerrada; abrir Clientes funciona en ambos casos.
+    click('[data-tab="clientes"]'); click('#clientes-acciones'); click('[data-new-conversation]');
+    expect(dom.window.document.body.dataset.tab).toBe('clientes');
+    expect($('#wa-start-phone').required).toBe(true);
+    expect($('#wa-start-body').required).toBe(false);
+    expect($('#wa-start-name').required).toBe(false);
+    expect($('#wa-start-name').closest('details').open).toBe(false);
+    expect($('#wa-start-body').closest('label').textContent).toContain('Escribir mensaje (opcional)');
+    const previous = whatsapp.sent.length;
+    setValue('#wa-start-phone', '12'); click('#wa-start-open');
+    expect($('#wa-start-phone').value).toBe('12');
+    expect($('#sheet').hidden).toBe(false); expect(whatsapp.sent.length).toBe(previous);
+  });
+
+  it('abre un chat con el teléfono solamente, sin exigir nombre ni enviar nada', async () => {
+    const previous = whatsapp.sent.length;
+    setValue('#wa-start-phone', '18095559072'); click('#wa-start-open');
+    await waitFor(() => $('#wa-chat-phone')?.textContent === '+18095559072' && $('#wa-text'), 'chat solo con teléfono');
+    expect($('#sheet').hidden).toBe(true);
+    expect($('#wa-text').value).toBe(''); expect(whatsapp.sent.length).toBe(previous);
+  });
+
+  it('lleva el mensaje a la plantilla predeterminada y la deja lista para revisar', async () => {
+    click('[data-tab="clientes"]'); click('#clientes-acciones'); click('[data-new-conversation]');
+    const previous = whatsapp.sent.length;
+    const message = 'Hola, queremos ayudarte con tu consulta.';
+    setValue('#wa-start-phone', '18095559073'); setValue('#wa-start-body', message);
+    expect($('#wa-start-open').textContent).toBe('Continuar con mensaje');
+    click('#wa-start-open');
+    await waitFor(() => $('#wa-template-fields [data-wa-var="2"]'), 'vista previa automática');
+    expect($('#wa-template').value).toBe('fulltech_contacto_personalizado_v2');
+    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe(message);
+    expect($('#wa-template-preview').textContent).toContain(message);
+    expect($('#wa-template-preview').textContent).not.toContain('⟨falta');
+    expect(whatsapp.sent.length).toBe(previous);
+    click('#wa-send-template');
+    await waitFor(() => whatsapp.sent.length === previous + 1, 'envío confirmado');
+    expect(whatsapp.sent.at(-1).to).toBe('+18095559073');
+    expect(whatsapp.sent.at(-1).template.name).toBe('fulltech_contacto_personalizado_v2');
+    expect(whatsapp.sent.at(-1).template.components[0].parameters[1].text).toBe(message);
   }, 20000);
 });

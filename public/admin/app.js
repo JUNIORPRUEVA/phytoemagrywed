@@ -29,8 +29,9 @@
   const NOTIF_DELETED_KEY = 'pe_notif_borradas';
   /** Los que todavía hay que borrar en el servidor (sin red quedan aquí­). */
   const NOTIF_PENDING_KEY = 'pe_notif_pendientes';
-  /** Cuántos ids se recuerdan: más que de sobra y sin crecer sin fin. */
-  const NOTIF_DELETED_MAX = 500;
+  const NOTICE_PENDING_KEY = 'pe_notice_pending';
+  const NOTIF_CLEAR_KEY = 'pe_notif_clear';
+  const notificationFlushes = new Map();
 
   /*
    * ======================================================================
@@ -907,6 +908,7 @@
       deliveryTracking: state.deliveryTracking,
       conversations: state.conversations,
       notifications: state.notifications,
+      notificationSnapshotAt: state.notificationSnapshotAt,
       whatsapp: state.whatsapp,
       push: state.push,
       meta: state.meta,
@@ -1405,6 +1407,7 @@
    */
   function aplicarCopiaLocal(snapshot) {
     if (!snapshot) return false;
+    if (state.auth && notificationUserKey(state.auth) !== notificationUserKey(snapshot.auth)) return false;
     state.items = snapshot.items ?? [];
     state.messages = snapshot.messages ?? [];
     state.customers = snapshot.customers ?? [];
@@ -1427,6 +1430,7 @@
     state.deliveryUsers = snapshot.deliveryUsers ?? [];
     state.deliveryOrders = snapshot.deliveryOrders ?? [];
     state.notifications = snapshot.notifications ?? [];
+    state.notificationSnapshotAt = snapshot.notificationSnapshotAt ?? null;
     state.push = snapshot.push ?? null;
     state.meta = snapshot.meta ?? null;
     state.orderStatuses = snapshot.orderStatuses ?? [];
@@ -1477,6 +1481,9 @@
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
       state.auth = data.auth ?? null;
+      state.notificationSnapshotAt = data.notificationSnapshotAt ?? new Date().toISOString();
+      migrateNotificationStorage();
+      writeDismissedNotices(mergeNotificationDismissals(readDismissedNotices(), data.notificationDismissals ?? {}));
       state.templates = (await api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }))).templates ?? [];
       state.syncedAt = Date.now();
       saveSnapshot();
@@ -1746,6 +1753,37 @@
   const moneyCents = (value) => money((Number(value) || 0) / 100);
 
   const currentUser = () => state.auth?.user ?? null;
+  const notificationUserKey = (auth = state.auth) => auth?.user?.id ?? (auth?.legacy ? 'LEGACY_PANEL' : 'anonymous');
+  const notificationStorageKey = (key, owner = notificationUserKey()) => `${key}:${owner}`;
+  function readNotificationStorage(key, fallback, owner = notificationUserKey()) {
+    try { return JSON.parse(localStorage.getItem(notificationStorageKey(key, owner)) ?? 'null') ?? fallback; }
+    catch { return fallback; }
+  }
+  function writeNotificationStorage(key, value, owner = notificationUserKey()) {
+    try { localStorage.setItem(notificationStorageKey(key, owner), JSON.stringify(value)); } catch { /* La sincronización se reintenta mientras la sesión siga abierta. */ }
+  }
+  function mergeNotificationDismissals(previous, incoming) {
+    const merged = { ...previous };
+    for (const [key, value] of Object.entries(incoming)) {
+      if (merged[key] === true || value === true) merged[key] = true;
+      else if (typeof value === 'number' && typeof merged[key] === 'number') merged[key] = Math.max(merged[key], value);
+      else merged[key] = value;
+    }
+    return merged;
+  }
+  function migrateNotificationStorage() {
+    try {
+      const owner = notificationUserKey();
+      if (localStorage.getItem('pe_notif_legacy_owner') || notificationUserKey(readSnapshot()?.auth) !== owner) return;
+      for (const key of [NOTIF_DELETED_KEY, NOTIF_PENDING_KEY, NOTICE_DISMISSED_KEY]) {
+        const old = localStorage.getItem(key);
+        if (old && !localStorage.getItem(notificationStorageKey(key))) localStorage.setItem(notificationStorageKey(key), old);
+      }
+      localStorage.setItem('pe_notif_legacy_owner', owner);
+      const dismissed = readDismissedNotices();
+      if (Object.keys(dismissed).length) writeNotificationStorage(NOTICE_PENDING_KEY, dismissed);
+    } catch { /* Un almacén no disponible no impide abrir el panel. */ }
+  }
   const isDeliveryUser = () => currentUser()?.role === 'DELIVERY';
   const isAdmin = () => currentUser()?.role === 'ADMIN' || state.auth?.legacy === true;
   const permissions = () => state.auth?.permissions ?? [];
@@ -1783,7 +1821,7 @@
    */
   function readDismissedNotices() {
     try {
-      const raw = JSON.parse(localStorage.getItem(NOTICE_DISMISSED_KEY) ?? '{}');
+      const raw = readNotificationStorage(NOTICE_DISMISSED_KEY, {});
       // Formato viejo (lista de claves): se lee igual y se migra solo.
       if (Array.isArray(raw)) return Object.fromEntries(raw.filter((key) => typeof key === 'string').map((key) => [key, true]));
       return raw && typeof raw === 'object' ? raw : {};
@@ -1812,28 +1850,24 @@
    */
   function readNotifDeleted() {
     try {
-      const list = JSON.parse(localStorage.getItem(NOTIF_DELETED_KEY) ?? '[]');
+      const list = readNotificationStorage(NOTIF_DELETED_KEY, []);
       return new Set(Array.isArray(list) ? list.filter((id) => typeof id === 'string') : []);
     } catch {
       return new Set();
     }
   }
 
-  function readNotifPending() {
+  function readNotifPending(owner = notificationUserKey()) {
     try {
-      const list = JSON.parse(localStorage.getItem(NOTIF_PENDING_KEY) ?? '[]');
+      const list = readNotificationStorage(NOTIF_PENDING_KEY, [], owner);
       return Array.isArray(list) ? list.filter((id) => typeof id === 'string') : [];
     } catch {
       return [];
     }
   }
 
-  const guardarNotifListas = (key, lista) => {
-    try {
-      localStorage.setItem(key, JSON.stringify(lista.slice(-NOTIF_DELETED_MAX)));
-    } catch {
-      /* Sin sitio en el teléfono: se pierde la marca, no el trabajo. */
-    }
+  const guardarNotifListas = (key, lista, owner = notificationUserKey()) => {
+    writeNotificationStorage(key, lista, owner);
   };
 
   /** Marca una notificación como borrada (y pendiente de borrar en el servidor). */
@@ -1854,7 +1888,8 @@
   /** Las notificaciones del servidor, sin las que ya se borraron aquí­. */
   function notificacionesVisibles(rows = state.notifications ?? []) {
     const borradas = readNotifDeleted();
-    return rows.filter((row) => !borradas.has(row.id));
+    const clear = readNotificationStorage(NOTIF_CLEAR_KEY, null);
+    return rows.filter((row) => !borradas.has(row.id) && (!clear?.before || Date.parse(row.created_at) > Date.parse(clear.before)));
   }
 
   /**
@@ -1862,17 +1897,38 @@
    * como hecho (ya no está­); si falla por red se deja para la próxima vuelta.
    */
   async function flushNotificacionesBorradas() {
-    const pendientes = readNotifPending();
-    if (!pendientes.length) return;
-    const siguen = [];
-    for (const id of pendientes) {
-      try {
-        await api(`/api/admin/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      } catch (error) {
-        if (error?.status !== 404) siguen.push(id);
-      }
+    const owner = notificationUserKey();
+    if (owner === 'anonymous') return;
+    if (notificationFlushes.has(owner)) return notificationFlushes.get(owner);
+    const run = syncNotificationDeletions(owner);
+    notificationFlushes.set(owner, run);
+    try { await run; } finally { notificationFlushes.delete(owner); }
+  }
+
+  async function syncNotificationDeletions(owner) {
+    const stillOwner = () => notificationUserKey() === owner;
+    const clear = readNotificationStorage(NOTIF_CLEAR_KEY, null, owner);
+    if (clear?.pending && stillOwner()) {
+      await api('/api/admin/notifications', { method: 'DELETE', body: JSON.stringify({ before: clear.before }) });
+      const latest = readNotificationStorage(NOTIF_CLEAR_KEY, null, owner);
+      if (latest?.before === clear.before) writeNotificationStorage(NOTIF_CLEAR_KEY, { ...clear, pending: false }, owner);
     }
-    guardarNotifListas(NOTIF_PENDING_KEY, siguen);
+    for (const id of readNotifPending(owner)) {
+      if (!stillOwner()) return;
+      try { await api(`/api/admin/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+      catch (error) { if (error?.status !== 404) continue; }
+      // Leer de nuevo evita perder otro borrado realizado durante la petición.
+      guardarNotifListas(NOTIF_PENDING_KEY, readNotifPending(owner).filter((pending) => pending !== id), owner);
+    }
+    const pending = Object.entries(readNotificationStorage(NOTICE_PENDING_KEY, {}, owner));
+    for (let offset = 0; offset < pending.length && stillOwner(); offset += 500) {
+      const batch = Object.fromEntries(pending.slice(offset, offset + 500));
+      const result = await api('/api/admin/notification-dismissals', { method: 'POST', body: JSON.stringify({ dismissed: batch }) });
+      const latest = readNotificationStorage(NOTICE_PENDING_KEY, {}, owner);
+      for (const [key, value] of Object.entries(batch)) if (latest[key] === value) delete latest[key];
+      writeNotificationStorage(NOTICE_PENDING_KEY, latest, owner);
+      writeNotificationStorage(NOTICE_DISMISSED_KEY, mergeNotificationDismissals(readNotificationStorage(NOTICE_DISMISSED_KEY, {}, owner), result.dismissed ?? batch), owner);
+    }
   }
 
   async function syncWaTemplates(button = null) {
@@ -1892,11 +1948,13 @@
   }
 
   function writeDismissedNotices(map) {
-    try {
-      localStorage.setItem(NOTICE_DISMISSED_KEY, JSON.stringify(Object.fromEntries(Object.entries(map).slice(-200))));
-    } catch {
-      /* Si Storage falla, solo se pierde el descarte visual. */
-    }
+    writeNotificationStorage(NOTICE_DISMISSED_KEY, map);
+  }
+
+  function queueDismissedNotice(key, value) {
+    const pending = readNotificationStorage(NOTICE_PENDING_KEY, {});
+    pending[key] = key.startsWith('scheduled-problem:') ? true : value;
+    writeNotificationStorage(NOTICE_PENDING_KEY, pending);
   }
 
   function dismissNotice(key, valor = true) {
@@ -1904,7 +1962,10 @@
     // Un valor numérico se guarda como número: así­ «pasó de 2 a 3» se compara
     // bien y un estado («FAILED») se queda como texto.
     map[key] = typeof valor === 'string' && valor !== '' && !Number.isNaN(Number(valor)) ? Number(valor) : valor;
+    if (key.startsWith('scheduled-problem:')) map[key] = true;
     writeDismissedNotices(map);
+    queueDismissedNotice(key, map[key]);
+    flushNotificacionesBorradas().catch(() => {});
     renderMobileHeader();
     renderHoy();
     openNotificationsSheet();
@@ -1913,7 +1974,10 @@
   function dismissAllLocalNotices() {
     const map = readDismissedNotices();
     // Se guarda el VALOR de ahora: si el problema sigue igual, no vuelve a salir.
-    for (const row of localNoticeRows()) map[row.key] = row.valor ?? true;
+    for (const row of localNoticeRows()) {
+      map[row.key] = row.key.startsWith('scheduled-problem:') ? true : row.valor ?? true;
+      queueDismissedNotice(row.key, map[row.key]);
+    }
     writeDismissedNotices(map);
   }
 
@@ -2155,8 +2219,8 @@
      * sirve para decidir: solo hace dudar.
      */
     const conversaciones = (state.conversations ?? []).filter((row) => !row.archived_at);
-    const sinResponder = conversaciones.filter((row) => row.awaiting_reply === true).length;
-    const sinAsignar = conversaciones.filter((row) => !row.assigned_user_id).length;
+    const sinResponder = state.wa.counts?.pendientes ?? conversaciones.filter((row) => row.awaiting_reply === true).length;
+    const sinAsignar = state.wa.counts?.sin_asignar ?? conversaciones.filter((row) => !row.assigned_user_id).length;
     const pedidosPendientes = (state.items ?? []).filter(
       (item) =>
         item.type === 'order_intent' &&
@@ -5210,13 +5274,13 @@
      * servidor queda pendiente y se reintenta solo cuando vuelva la red.
      */
     for (const row of visibles) marcarNotificacionBorrada(row.id);
+    writeNotificationStorage(NOTIF_CLEAR_KEY, { before: state.notificationSnapshotAt ?? new Date().toISOString(), pending: true });
     dismissAllLocalNotices();
     openNotificationsSheet();
     renderMobileHeader();
     renderHoy();
     await working(button, 'Eliminando…', async () => {
       try {
-        await api('/api/admin/notifications', { method: 'DELETE' });
         /*
          * La cola de pendientes NO se vacía a ciegas: se reintenta una a una y
          * solo se quitan las que el servidor confirma (o ya no estaban). Antes se
@@ -7186,7 +7250,7 @@
       : `<p class="card__text">${
           state.audit?.total ? `${state.audit.total} operaciones registradas.` : 'Todavía no hay operaciones registradas.'
         }</p>`;
-    if (!state.auditEntries && !state.auditLoading && state.online) {
+    if (!state.auditEntries && !state.auditLoading && state.online && navigator.onLine && Date.now() >= (state.auditRetryAt ?? 0)) {
       state.auditLoading = true;
       loadAuditEntries();
     }
@@ -7776,7 +7840,8 @@
       const body = await api('/api/admin/audit?limit=10');
       state.auditEntries = body.entries ?? [];
     } catch {
-      /* sin auditoría el panel sigue funcionando */
+      // Evitar un bucle de peticiones y repintado cuando se pierde la conexión.
+      state.auditRetryAt = Date.now() + 30000;
     } finally {
       state.auditLoading = false;
       // Igual que las métricas: se pinta por el camino que aísla un fallo suelto.
@@ -9001,7 +9066,7 @@
         : '';
     const selected = state.wa.selected.has(row.id);
     const sello = waLastMessageStamp(row.last_message_at);
-    return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}">
+    return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}" data-conversation-row="${escapeHtml(row.id)}">
       <button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${unread ? 'conv--unread' : ''}" data-conv="${escapeHtml(
         row.id,
       )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
@@ -9159,6 +9224,7 @@
           <span><strong>Asignación</strong><small>${escapeHtml(conversationAssignmentLabel(row))}</small></span>
         </button>
         <p class="menu-list__label">Organizar conversación</p>
+        ${conversationResolutionButton(row.id, row.is_resolved)}
         ${Number(row.unread_count) > 0 ? `<button class="menu-item" data-conv-act="mark_read" data-conv-id="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
           <span><strong>Marcar como leída</strong></span></button>` : ''}
@@ -9417,7 +9483,10 @@
         ? 'No hay conversaciones activas: lo que hay está en «Archivados».'
         : 'No hay conversaciones con este filtro.');
     if (rows.length) {
-      box.innerHTML = rows.map(waRow).join('');
+      const html = rows.map(waRow).join('');
+      const scope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date]);
+      if (window.PhytoConversationList) window.PhytoConversationList.render(box, html, scope);
+      else box.innerHTML = html;
       return;
     }
     const filtroPuesto = state.wa.filter !== 'todos';
@@ -9427,31 +9496,36 @@
   }
 
   function openNewConversationSheet() {
-    $('#sheet-title').textContent = 'Nuevo WhatsApp';
-    $('#sheet-body').innerHTML = `
+    openSheet('Nuevo WhatsApp', `
       <label class="field">
         <span class="field__label">Teléfono con WhatsApp</span>
-        <input class="field__input" id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+1 809 555 1234" />
+        <input class="field__input" id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" required aria-describedby="wa-start-hint" placeholder="+1 809 555 1234" />
       </label>
       <label class="field">
-        <span class="field__label">Nombre del cliente</span>
-        <input class="field__input" id="wa-start-name" autocomplete="name" placeholder="Nombre opcional" />
+        <span class="field__label">Escribir mensaje (opcional)</span>
+        <textarea class="field__area" id="wa-start-body" rows="3" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" inputmode="text" enterkeyhint="enter" placeholder="Escribe tu mensaje…"></textarea>
       </label>
-      <label class="field">
-        <span class="field__label">Mensaje</span>
-        <textarea class="field__area" id="wa-start-body" rows="4" placeholder="Hola, te escribo de ${NEGOCIO}..."></textarea>
-      </label>
-      <p class="rule">Se abrirá la conversación y el texto quedará listo para revisar. El envío se confirma desde el chat.</p>
-      <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir conversación</button>
-    `;
-    $('#sheet').hidden = false;
+      <details class="wa-start-optional">
+        <summary>Agregar nombre (opcional)</summary>
+        <label class="field">
+          <span class="field__label">Nombre del cliente (opcional)</span>
+          <input class="field__input" id="wa-start-name" autocomplete="name" maxlength="120" placeholder="Nombre del cliente" />
+        </label>
+      </details>
+      <p class="rule" id="wa-start-hint">Solo necesitas el teléfono. Si escribes un mensaje, podrás revisarlo antes de enviarlo. Cuando se necesite, usaremos la plantilla de contacto predeterminada.</p>
+      <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir chat</button>
+    `);
     $('#wa-start-phone')?.focus();
+    $('#wa-start-body').addEventListener('input', (event) => {
+      $('#wa-start-open').textContent = event.target.value.trim() ? 'Continuar con mensaje' : 'Abrir chat';
+    });
     $('#wa-start-open').addEventListener('click', async (event) => {
       const phone = $('#wa-start-phone').value.trim();
       const name = $('#wa-start-name').value.trim();
       const body = $('#wa-start-body').value.trim();
       if (!phone || digits(phone).length < 7) {
         toast('Escribe un teléfono válido');
+        $('#wa-start-phone').focus();
         return;
       }
       await working(event.currentTarget, 'Abriendo...', async () => {
@@ -9477,6 +9551,12 @@
           return;
         }
         if (resultado.offline) {
+          if (body) {
+            render();
+            renderOutboxBanner();
+            toast('Cliente guardado. Tu mensaje sigue aquí; continúa cuando tengas conexión.');
+            return;
+          }
           closeSheet();
           render();
           renderOutboxBanner();
@@ -9484,6 +9564,7 @@
           return;
         }
         closeSheet();
+        setTab('whatsapp');
         await refreshWhatsapp();
         const conversationId = resultado.data.conversation?.id;
         if (!conversationId) {
@@ -9491,6 +9572,9 @@
           return;
         }
         await selectConversation(conversationId, { draft: body });
+        if (body && state.wa.selectedId === conversationId && state.wa.chat && !state.wa.chat.canSendFreeText) {
+          await openWaTemplateSheet();
+        }
         toast(resultado.data.created ? 'Cliente creado' : 'Conversación abierta');
       });
     });
@@ -10226,7 +10310,7 @@
         <span class="composer-left">
           <button class="composer-template-btn" id="wa-open-template" type="button">Plantilla</button>
         </span>
-        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocapitalize="sentences" placeholder="Escribe lo que quieras decirle…"
+        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" autocomplete="off" inputmode="text" enterkeyhint="enter" placeholder="Escribe lo que quieras decirle…"
           aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
         <span class="composer-end">
           <button class="composer-btn composer-btn--send" id="wa-send" type="button"
@@ -10260,7 +10344,7 @@
           <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
             title="Adjuntar y compartir: archivos, ubicación, cuentas y catálogos">${ICONS.plus}</button>
         </span>
-        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocapitalize="sentences" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
+        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" autocomplete="off" inputmode="text" enterkeyhint="enter" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
         <span class="composer-end">
           <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
             title="${
@@ -10299,7 +10383,11 @@
     const area = $('#wa-text');
     if (!area) return;
     area.style.height = 'auto';
-    area.style.height = `${Math.min(area.scrollHeight, 132)}px`;
+    const maxHeight = window.matchMedia('(max-width: 979px)').matches
+      ? Math.max(44, Math.min(132, (window.visualViewport?.height ?? window.innerHeight) * .25))
+      : 132;
+    area.style.height = `${Math.max(44, Math.min(area.scrollHeight, maxHeight))}px`;
+    area.style.overflowY = area.scrollHeight > maxHeight ? 'auto' : 'hidden';
     // Sin texto: micrófono. Con texto: Enviar. (El envío nunca es automático.)
     const vacio = !area.value.trim();
     const mic = $('#wa-mic');
@@ -10331,6 +10419,8 @@
     placeholder.hidden = true;
 
     const data = state.wa.chat;
+    const headerCustomer = data?.customer ?? waCustomer(state.conversations.find((row) => row.id === state.wa.selectedId) ?? {});
+    $('#wa-chat-phone').textContent = headerCustomer?.phone_e164 || '';
     if (!data) {
       /*
        * BLINDADA: la conversación no está a su nombre. Ni hilo, ni compositor, ni
@@ -10511,6 +10601,9 @@
           adjustWaComposer();
         });
         area.addEventListener('keydown', (event) => {
+          // Respetar dictado, autocorrección e IME; en móvil Enter crea una línea.
+          if (event.isComposing || event.keyCode === 229 || event.repeat) return;
+          if (window.matchMedia('(pointer: coarse)').matches && !event.ctrlKey && !event.metaKey) return;
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
             $('#wa-send')?.click();
@@ -11264,10 +11357,16 @@
 
   function setWaView(view) {
     const box = $('#wa');
+    const list = $('#wa-conversations');
+    const previousView = box?.dataset.view;
+    if (previousView === 'list' && view === 'chat' && list) state.wa.listScrollTop = list.scrollTop;
     if (box) box.dataset.view = view;
     /* La hoja de estilos necesita saberlo para el modo "conversación a pantalla
      * completa" (ahí no hay menú flotante: se vuelve con ←). */
     document.body.dataset.waView = view;
+    if (previousView === 'chat' && view === 'list' && list) {
+      list.scrollTop = state.wa.listScrollTop ?? 0;
+    }
     if (state.tab === 'whatsapp') renderMobileHeader();
   }
 
@@ -11799,6 +11898,7 @@
    * de verdad ha cambiado, para no borrar lo que una persona está escribiendo.
    */
   async function refreshWhatsapp() {
+    const requestedScope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date]);
     const params = new URLSearchParams();
     /*
      * AL BUSCAR, EL CRM RECIBE SOLO EL TEXTO. Así­ la búsqueda es general de
@@ -11817,6 +11917,7 @@
     }
     const list = await api(`/api/admin/conversations?${params.toString()}`);
     if (!domAlive()) return; // la pestaña se cerró mientras respondía el CRM
+    if (requestedScope !== JSON.stringify([state.wa.filter, state.wa.q, state.wa.date])) return;
     const rows = list.conversations ?? [];
     state.wa.counts = list.counts ?? state.wa.counts;
     const listSig = JSON.stringify(
@@ -11826,6 +11927,7 @@
         row.last_message_at,
         row.status,
         row.awaiting_reply === true,
+        row.is_resolved === true,
         row.archived_at ?? '',
         row.has_purchase === true,
         row.next_followup?.scheduled_at ?? '',
@@ -13041,6 +13143,10 @@
         </button>
 
         <p class="menu-list__label">Mensajes</p>
+        <button class="menu-item" data-wa-thread-search type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.search}</span>
+          <span><strong>Buscar en esta conversación</strong></span>
+        </button>
         <button class="menu-item" data-quick-replies="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Respuesta rápida</strong></span>
@@ -13087,6 +13193,7 @@
         </button>
 
         <p class="menu-list__label">Conversación</p>
+        ${conversationResolutionButton(conversationId, (state.conversations ?? []).find((row) => row.id === conversationId)?.is_resolved ?? Boolean(state.wa.chat?.conversation?.resolved_at))}
         <button class="menu-item" data-chat-assign-menu="${escapeHtml(conversationId ?? '')}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
           <span><strong>Asignación</strong><small>${escapeHtml(
@@ -13107,6 +13214,27 @@
     return openAssignSheet(conversationId || state.wa.selectedId || '');
   }
 
+  function conversationResolutionButton(id, resolved = false) {
+    return `<button class="menu-item" data-conversation-resolution="${escapeHtml(id ?? '')}" data-resolved="${resolved ? 'false' : 'true'}" type="button">
+      <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
+      <span><strong>${resolved ? 'Reabrir conversación' : 'Marcar como finalizado'}</strong><small>${resolved ? 'Volver a pendientes de respuesta' : 'Quitar de Sin responder; podrás seguir escribiendo'}</small></span>
+    </button>`;
+  }
+
+  async function resolveConversationFromPanel(id, resolved, button) {
+    await working(button, 'Guardando…', async () => {
+      try {
+        await api(`/api/admin/conversations/${encodeURIComponent(id)}/${resolved ? 'resolve' : 'reopen'}`, { method: 'POST' });
+        closeSheet();
+        await load({ keepTab: true });
+        if (state.tab === 'whatsapp') await refreshWhatsapp();
+        toast(resolved ? 'Chat finalizado. Puedes seguir escribiéndole.' : 'Conversación reabierta');
+      } catch (error) {
+        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo actualizar la conversación');
+      }
+    });
+  }
+
   function openClientsActions() {
     openSheet(
       'Clientes',
@@ -13117,7 +13245,7 @@
         </button>
         <button class="menu-item" data-new-conversation="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-          <span><strong>Agregar cliente / WhatsApp</strong><small>Crear o buscar por teléfono</small></span>
+          <span><strong>Nuevo chat</strong><small>Teléfono y mensaje opcional</small></span>
         </button>
         <button class="menu-item" data-tab="pedidos" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span>
@@ -18791,6 +18919,11 @@
     renderMobileHeader();
     if (!options.silent) {
       window.scrollTo({ top: 0 });
+      if (tab === 'hoy') {
+        renderStats();
+        renderHoy();
+        load({ keepTab: true, silent: true }).catch(() => {});
+      }
       // Al entrar en WhatsApp se refresca una vez y se abre el canal EN VIVO; el
       // sondeo sigue después como red de seguridad.
       if (tab === 'whatsapp') {
@@ -18864,16 +18997,35 @@
    */
   function abrirDesdeTarjeta(card) {
     const destino = card.dataset.goto ?? 'hoy';
+    closeSheet();
     if (card.dataset.waFilter) {
+      state.wa.selectedId = null;
+      state.wa.chat = null;
+      state.wa.chatSig = null;
+      state.wa.threadSeq = (state.wa.threadSeq ?? 0) + 1;
+      state.wa.searchOpen = false;
+      state.wa.filtersOpen = false;
+      state.wa.selected.clear();
+      state.wa.listSig = null;
+      state.wa.listScrollTop = 0;
+      setWaView('list');
       state.wa.filter = card.dataset.waFilter;
       state.wa.q = '';
       // Todas las fechas: si no, una conversación de ayer desaparecía de la lista.
       state.wa.date = { mode: 'all', from: '', to: '' };
     }
     if (card.dataset.orderFilter) state.pedidosFilter = card.dataset.orderFilter;
+    if (destino === 'pedidos') {
+      state.pedidosSearch = '';
+      state.pedidosSearchOpen = false;
+      state.pedidosFiltersOpen = false;
+      state.pedidosSel.clear();
+    }
     if (card.dataset.orderDate) state.pedidosDate = { mode: card.dataset.orderDate, from: '', to: '' };
     if (card.dataset.followupFilter) state.followupsFilter = card.dataset.followupFilter;
     if (card.dataset.clientFilter) {
+      state.clientSearchOpen = false;
+      state.clientFiltersOpen = false;
       state.filter = card.dataset.clientFilter;
       state.q = '';
       const search = $('#search');
@@ -18885,7 +19037,10 @@
       );
     }
     setTab(destino);
-    if (destino === 'whatsapp') renderWhatsapp();
+    if (destino === 'whatsapp') {
+      renderWhatsapp();
+      $('#wa-conversations').scrollTop = 0;
+    }
     if (destino === 'pedidos') renderPedidos();
     if (destino === 'clientes') renderClientes();
     if (destino === 'seguimientos') renderSeguimientos();
@@ -19118,6 +19273,11 @@
 
     document.addEventListener('click', (event) => {
       const settingsLink = event.target.closest('[data-settings-open]');
+      const resolution = event.target.closest('[data-conversation-resolution]');
+      if (resolution) {
+        resolveConversationFromPanel(resolution.dataset.conversationResolution, resolution.dataset.resolved === 'true', resolution);
+        return;
+      }
       if (settingsLink) { event.preventDefault(); openSettingsPage(settingsLink.dataset.settingsOpen); return; }
       if (event.target.closest('[data-settings-back]')) { openSettingsPage(SETTINGS_PAGES.find(page => page.key === settingsPage)?.parent || ''); return; }
       const permission = event.target.closest('[data-settings-permission-enable]');
@@ -19290,7 +19450,6 @@
       }
       if (event.target.closest('[data-new-conversation]')) {
         closeSheet();
-        setTab('whatsapp');
         openNewConversationSheet();
         return;
       }
@@ -20267,7 +20426,8 @@
         if (state.wa.selectedId) loadWaThread(state.wa.selectedId, { force: true });
         return;
       }
-      if (event.target.closest('#wa-thread-search-open')) {
+      if (event.target.closest('#wa-thread-search-open, [data-wa-thread-search]')) {
+        closeSheet();
         state.wa.threadSearchOpen = true;
         renderWaChat();
         requestAnimationFrame(() => $('#wa-thread-search-input')?.focus());
