@@ -100,6 +100,7 @@ body[data-tab='whatsapp'] :is(#wa-mic,#wa-send):focus-visible { outline: 2px sol
     display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 44px;
     padding: 8px; color: var(--text-primary); border: 0; border-radius: 50%; background: transparent;
   }
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head:has(.wa__thread-search:not([hidden])) #wa-back { display: none; }
   body[data-tab='whatsapp'][data-wa-view='chat'] #wa-back:focus-visible { outline: 2px solid var(--pe-brand-text); outline-offset: 1px; }
   body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head {
     padding-top: calc(6px + env(safe-area-inset-top,0px));
