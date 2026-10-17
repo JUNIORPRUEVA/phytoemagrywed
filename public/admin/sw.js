@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v105-fulltech-pos';
+const VERSION = 'crm-v106-fulltech-device-theme';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -47,11 +47,11 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
   '/admin/fulltech-logo.png',
-  '/admin/fulltech-favicon.png',
-  '/admin/fulltech-icon-192.png',
-  '/admin/fulltech-icon-512.png',
-  '/admin/fulltech-icon-maskable-512.png',
-  '/admin/fulltech-apple-touch-icon.png',
+  '/admin/fulltech-favicon.png?v=2',
+  '/admin/fulltech-icon-192.png?v=2',
+  '/admin/fulltech-icon-512.png?v=2',
+  '/admin/fulltech-icon-maskable-512.png?v=2',
+  '/admin/fulltech-apple-touch-icon.png?v=2',
 ];
 
 self.addEventListener('install', (event) => {
@@ -265,8 +265,8 @@ self.addEventListener('push', (event) => {
           conversationId: payload.conversationId || null,
           notificationId: payload.notificationId || null,
         },
-        icon: '/admin/fulltech-icon-192.png',
-        badge: '/admin/fulltech-icon-192.png',
+        icon: '/admin/fulltech-icon-192.png?v=2',
+        badge: '/admin/fulltech-icon-192.png?v=2',
         vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
       });
     } catch (error) {

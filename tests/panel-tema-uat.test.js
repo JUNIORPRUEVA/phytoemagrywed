@@ -119,6 +119,8 @@ describe('el tema se elige y se queda elegido', () => {
   });
 
   it('al elegir «Oscuro» se pone en el acto, se recuerda y el chip queda marcado', () => {
+    const nativeThemes = [];
+    dom.window.FulltechAppearance = { postMessage: value => nativeThemes.push(value) };
     click('[data-tema-picker] [data-tema="dark"]');
     expect(raiz().dataset.theme).toBe('dark');
     expect(raiz().dataset.tema).toBe('dark');
@@ -127,6 +129,9 @@ describe('el tema se elige y se queda elegido', () => {
     expect($('[data-tema-picker] [data-tema="light"]').getAttribute('aria-checked')).toBe('false');
     // La barra del sistema se avisa al navegador (Android/iPhone).
     expect($('meta[name="theme-color"]').getAttribute('content')).toBe('#0b1424');
+    expect($('meta[name="color-scheme"]').content).toBe('dark');
+    expect(raiz().style.colorScheme).toBe('dark');
+    expect(nativeThemes).toEqual(['dark']);
   });
 
   it('al elegir «Claro» vuelve al claro', () => {
@@ -134,6 +139,8 @@ describe('el tema se elige y se queda elegido', () => {
     expect(raiz().dataset.theme).toBe('light');
     expect(dom.window.localStorage.getItem('pe_tema')).toBe('light');
     expect($('meta[name="theme-color"]').getAttribute('content')).toBe('#145bd7');
+    expect($('meta[name="color-scheme"]').content).toBe('light');
+    expect(raiz().style.colorScheme).toBe('light');
   });
 
   it('«Como el teléfono» sigue al sistema (y también si el móvil cambia)', () => {

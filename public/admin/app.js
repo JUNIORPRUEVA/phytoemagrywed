@@ -202,6 +202,9 @@
     const pintado = temaPintado(elegido);
     document.documentElement.dataset.tema = elegido;
     document.documentElement.dataset.theme = pintado;
+    document.documentElement.style.colorScheme = pintado;
+    document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', pintado);
+    window.FulltechAppearance?.postMessage(pintado);
     if (guardar) {
       try {
         localStorage.setItem(TEMA_KEY, elegido);
