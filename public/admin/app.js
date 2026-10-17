@@ -461,6 +461,8 @@
       chatSig: null,
       counts: null,
       selected: new Set(),
+      /** El panel de acciones de la selección está desplegado. */
+      actionsOpen: false,
       notify: getStoredValue(WA_NOTIFY_KEY) === '1',
       sound: getStoredValue(WA_SOUND_KEY) === '1',
       seenMessages: new Set(),
@@ -2121,7 +2123,7 @@
       box.innerHTML = `<div class="wa-appbar">
         <button class="wa-appbar__back" ${inChat ? 'data-wa-chat-back' : 'data-simple-back'} type="button" aria-label="${inChat ? 'Volver a conversaciones' : 'Regresar'}">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>Chats${filtroPuesto(state.wa.filter, WA_FILTERS)}</strong>
+          <strong>WhatsApp${filtroPuesto(state.wa.filter, WA_FILTERS)}</strong>
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-wa-search-open type="button" aria-label="Buscar conversación">${ICONS.search}</button>
@@ -9202,25 +9204,64 @@
    * La barra de acciones de la selección. Vive en el sitio de la cabecera de la
    * lista, así que no hay dos barras compitiendo y el gesto es el de WhatsApp:
    * se eligen conversaciones y las acciones aparecen arriba.
+   *
+   * Las acciones van en una LISTA desplegada (icono grande + texto), no en una
+   * fila de iconos diminutos: así se ve de un vistazo qué se puede hacer
+   * (archivar, marcar leídas, eliminar…) y se acierta con el dedo.
    */
-  function waBulkBar() {
+  function waSelectionDrawer() {
     const count = state.wa.selected.size;
     if (!count) return '';
     const archived = state.wa.filter === 'archivados';
     const visibles = waVisibleConversations().length;
     const todas = visibles > 0 && count >= visibles;
-    return `<div class="wa-bulk" role="toolbar" aria-label="Acciones de las conversaciones seleccionadas">
-      <button class="wa-bulk__x" data-wa-sel-clear="1" type="button" aria-label="Cancelar la selección"><span aria-hidden="true">✕</span></button>
-      <span class="wa-bulk__count">${count} seleccionada${count === 1 ? '' : 's'}</span>
-      <button class="wa-bulk__btn" data-wa-sel-all="1" type="button" title="${
-        todas ? 'Quitar la selección' : 'Seleccionar todas'
-      }" aria-label="${todas ? 'Quitar la selección' : 'Seleccionar todas'}">${ICONS.users}</button>
-      <button class="wa-bulk__btn" data-wa-bulk="mark_read" type="button" title="Marcar como leídas" aria-label="Marcar como leídas">${ICONS.check}</button>
-      <button class="wa-bulk__btn" data-wa-bulk="${archived ? 'unarchive' : 'archive'}" type="button" title="${
-        archived ? 'Desarchivar' : 'Archivar'
-      }" aria-label="${archived ? 'Desarchivar' : 'Archivar'}">${ICONS.box}</button>
-      <button class="wa-bulk__btn wa-bulk__btn--danger" data-wa-bulk="delete" type="button" title="Eliminar chats" aria-label="Eliminar chats">${ICONS.trash}</button>
-      <button class="wa-bulk__btn" data-wa-bulk="message_preview" type="button" title="Mensaje a varios" aria-label="Mensaje a varios">${ICONS.send}</button>
+    const abierto = state.wa.actionsOpen === true;
+    const accion = (atributos, icono, titulo, detalle, clase = '') =>
+      `<button class="wa-bulk__item ${clase}" ${atributos} type="button" role="menuitem">
+        <span class="wa-bulk__icon" aria-hidden="true">${icono}</span>
+        <span class="wa-bulk__texto"><strong>${titulo}</strong>${detalle ? `<small>${detalle}</small>` : ''}</span>
+      </button>`;
+    return `<div class="wa-actions" data-open="${abierto ? '1' : '0'}">
+      <button class="wa-actions__backdrop" data-wa-actions-close="1" type="button" aria-label="Cerrar las acciones" tabindex="-1"></button>
+      <aside class="wa-actions__drawer" role="dialog" aria-label="Acciones de las conversaciones seleccionadas"${abierto ? '' : ' inert'}>
+        <header class="wa-actions__head">
+          <div>
+            <strong class="wa-bulk__count">${count} seleccionada${count === 1 ? '' : 's'}</strong>
+            <small>Elige qué hacer</small>
+          </div>
+          <button class="wa-actions__x" data-wa-sel-clear="1" type="button" aria-label="Cancelar la selección"><span aria-hidden="true">✕</span></button>
+        </header>
+        <div class="wa-actions__list" role="menu" aria-label="Qué quieres hacer con las conversaciones">
+          ${
+            count === 1
+              ? accion(
+                  `data-conv-more="${escapeHtml([...state.wa.selected][0])}"`,
+                  ICONS.more ?? ICONS.spark,
+                  'Más acciones de la conversación',
+                  'Pedido, ficha, seguimiento y asignación',
+                )
+              : ''
+          }
+          ${accion(
+            `data-wa-sel-all="1"`,
+            ICONS.users,
+            todas ? 'Quitar la selección' : 'Seleccionar todas',
+            todas ? `Hay ${count} seleccionada${count === 1 ? '' : 's'}` : `${visibles} a la vista`,
+          )}
+          ${accion('data-wa-bulk="mark_read"', ICONS.checkCircle, 'Marcar como leídas', 'Quita el contador de no leídos')}
+          ${accion(
+            `data-wa-bulk="${archived ? 'unarchive' : 'archive'}"`,
+            ICONS.box,
+            archived ? 'Desarchivar' : 'Archivar',
+            archived ? 'Vuelven a la bandeja' : 'Salen de la bandeja sin borrarse',
+          )}
+          ${accion('data-wa-bulk="delete"', ICONS.trash, 'Eliminar chats', 'Requiere confirmación', 'wa-bulk__item--danger')}
+          ${accion('data-wa-bulk="message_preview"', ICONS.send, 'Mensaje a varios', 'El mismo texto a los elegidos')}
+        </div>
+      </aside>
+      <button class="wa-actions__pill" data-wa-actions-open="1" type="button" aria-label="Abrir las acciones de la selección">
+        <span class="wa-actions__pill-icon" aria-hidden="true">${ICONS.spark}</span><span>Acciones</span><b>${count}</b>
+      </button>
     </div>`;
   }
 
@@ -9232,28 +9273,29 @@
   }
 
   /**
-   * Mientras hay selección, la cabecera (buscador y filtros) se retira y su
-   * sitio lo ocupa la barra de acciones. Se hace en un solo sitio, para que
-   * cualquier camino que repinte la lista deje la pantalla coherente.
+   * Mientras hay selección, la lista de acciones se abre ENCIMA de la bandeja,
+   * en un panel lateral derecho, sin tapar la cabecera (que sigue diciendo
+   * WhatsApp). Se hace en un solo sitio para que cualquier repintado deje la
+   * pantalla coherente.
    */
+  let seleccionAnterior = 0;
   function renderWaSelectionUi() {
-    const seleccionando = state.wa.selected.size > 0;
+    const count = state.wa.selected.size;
+    const seleccionando = count > 0;
+    /* La primera vez que se elige una fila se despliega el panel; si el usuario
+       lo cierra, no se vuelve a abrir solo al sumar otra conversación. */
+    if (seleccionando && seleccionAnterior === 0) state.wa.actionsOpen = true;
+    if (!seleccionando) state.wa.actionsOpen = false;
+    seleccionAnterior = count;
     const barra = $('#wa-sel');
     if (barra) {
       barra.hidden = !seleccionando;
-      barra.innerHTML = seleccionando ? waBulkBar() : '';
+      barra.innerHTML = seleccionando ? waSelectionDrawer() : '';
     }
     if (seleccionando) state.wa.filtersOpen = false;
     document.body.dataset.waFilters = state.wa.filtersOpen ? 'open' : 'closed';
-    /*
-     * En el móvil la barra de selección SUSTITUYE a la barra de arriba (como en
-     * WhatsApp): no se apilan dos cabeceras. El CSS esconde una y muestra la otra.
-     */
     document.body.dataset.waSelection = seleccionando ? '1' : '0';
-    const head = $('.wa__list-head');
-    if (head) head.hidden = seleccionando;
-    const chips = $('#wa-filters');
-    if (chips) chips.hidden = seleccionando;
+    /* La cabecera y los filtros NO se ocultan: el panel se abre por encima. */
     const box = $('#wa-conversations');
     if (box) box.classList.toggle('wa__convs--sel', seleccionando);
   }
@@ -20526,6 +20568,21 @@
         runConvAction(convAct.dataset.convAct, convAct.dataset.convId);
         return;
       }
+      /*
+       * El panel de acciones se cierra con su fondo o con la ✕, y se vuelve a
+       * abrir con la píldora «Acciones»: cerrar NO borra la selección, para poder
+       * seguir marcando conversaciones con el dedo.
+       */
+      if (event.target.closest('[data-wa-actions-close]')) {
+        state.wa.actionsOpen = false;
+        renderWaSelectionUi();
+        return;
+      }
+      if (event.target.closest('[data-wa-actions-open]')) {
+        state.wa.actionsOpen = true;
+        renderWaSelectionUi();
+        return;
+      }
       if (event.target.closest('[data-wa-sel-clear]')) {
         state.wa.selected.clear();
         renderWaList();
@@ -20861,6 +20918,12 @@
         }
         if (state.drawer) {
           closeDrawer();
+          return;
+        }
+        /* Esc cierra el panel de acciones pero deja la selección como estaba. */
+        if (state.wa.actionsOpen && state.wa.selected.size) {
+          state.wa.actionsOpen = false;
+          renderWaSelectionUi();
           return;
         }
         if (!$('#sheet')?.hidden) closeSheet();

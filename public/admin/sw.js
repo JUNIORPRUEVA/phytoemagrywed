@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v123-compositor';
+const VERSION = 'crm-v124-acciones';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;

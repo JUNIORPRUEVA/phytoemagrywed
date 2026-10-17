@@ -477,17 +477,39 @@ describe('el menú «⋯» de una conversación', () => {
 });
 
 describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
-  it('«Seleccionar varias» retira la cabecera y pone la barra de acciones', async () => {
+  it('«Seleccionar varias» abre el panel de acciones ENCIMA de la lista', async () => {
     click(`[data-conv-more="${ids.luis}"]`);
     click('#sheet-body [data-conv-act="select"]');
-    await waitFor(() => $('#wa-sel').hidden === false, 'la barra de selección visible');
-    expect($('.wa__list-head').hidden).toBe(true);
-    expect($('#wa-filters').hidden).toBe(true);
+    await waitFor(() => $('#wa-sel').hidden === false, 'el panel de selección visible');
+    /*
+     * El panel FLOTA sobre la lista: la cabecera (con «WhatsApp») y los filtros
+     * siguen ahí detrás; no se retiran ni se apilan dos barras.
+     */
+    expect($('.wa__list-head').hidden).toBe(false);
+    expect($('#wa-filters').hidden).toBe(false);
     expect($('#wa-conversations').classList.contains('wa__convs--sel')).toBe(true);
+    expect($('#wa-sel .wa-actions').dataset.open).toBe('1');
     expect($('#wa-sel .wa-bulk__count').textContent).toContain('1');
-    // Cinco acciones en iconos: seleccionar, leído, archivar, eliminar y mensaje a varios.
-    expect($$('#wa-sel .wa-bulk__btn').length).toBe(5);
+    /*
+     * Con una conversación elegida, la lista desplegada trae el menú completo de
+     * la fila (el «⋯» que ya no se pinta en el móvil) y las cinco acciones en
+     * lote. Todos con icono grande.
+     */
+    const acciones = $$('#wa-sel .wa-bulk__item');
+    expect(acciones.length).toBe(6);
+    expect($$('#wa-sel .wa-bulk__item .wa-bulk__icon svg').length).toBe(6);
+    expect(acciones[0].dataset.convMore).toBe(ids.luis);
     expect($(`[data-conv="${ids.luis}"] .conv__avatar svg`)).not.toBeNull();
+  });
+
+  it('cerrar el panel NO borra la selección y la píldora «Acciones» lo reabre', async () => {
+    click('[data-wa-actions-close]');
+    await waitFor(() => $('#wa-sel .wa-actions').dataset.open === '0', 'el panel cerrado');
+    expect($('#wa-sel').hidden).toBe(false);
+    expect($('#wa-sel .wa-bulk__count').textContent).toContain('1');
+    expect($('#wa-sel .wa-actions__pill')).not.toBeNull();
+    click('[data-wa-actions-open]');
+    await waitFor(() => $('#wa-sel .wa-actions').dataset.open === '1', 'el panel abierto otra vez');
   });
 
   it('con la selección abierta, tocar una fila selecciona o quita: NO abre el chat', async () => {
@@ -1152,7 +1174,7 @@ describe('la lista que se pinta es la nueva', () => {
     expect(css).toContain('position: fixed');
     expect(html).not.toContain('wa-new-chat__label');
     expect(css).toContain('.wa-bulk__btn');
-    expect(app_js).toContain('wa-bulk__btn');
+    expect(app_js).toContain('wa-bulk__item');
   });
 
   it('la lista tiene la piel de WhatsApp (avatar, dos líneas, contador verde)', () => {

@@ -39,17 +39,25 @@ el resto del panel no cambia.
   semana y `dd/mm/aaaa` para lo antiguo.
 - **Contador verde** de 20 px de alto; en la fila no se pintan las etiquetas de gestión (asignación,
   etapa, pedido): siguen en el DOM y en el menú «⋯», pero no ocupan línea.
-- **Barra superior** blanca (gris oscuro en tema oscuro) con el título «Chats» e iconos de buscar y
-  filtrar. Al seleccionar conversaciones, la barra verde de selección **sustituye** a la cabecera
-  (`body[data-wa-selection='1']`), sin apilar dos barras.
+- **Barra superior** blanca (gris oscuro en tema oscuro) con el título **«WhatsApp»** e iconos de buscar
+  y filtrar.
+- **Selección de conversaciones**: al elegir una fila (pulsación larga o menú «⋯» → Seleccionar varias)
+  se despliega un **panel lateral derecho que flota por encima de la lista**, con velo detrás. Lleva
+  icono grande (26 px), nombre y explicación corta por acción: Más acciones de la conversación,
+  Seleccionar todas, Marcar como leídas, Archivar, Eliminar chats y Mensaje a varios. La cabecera (con
+  «WhatsApp») y los filtros **no se ocultan**: el panel se abre encima. El velo cierra el panel **sin
+  borrar la selección** (queda una píldora verde «Acciones N» para reabrirlo); la ✕ cancela la
+  selección.
 - **Botón flotante** redondo y verde con el icono de chat, en la esquina.
-- En escritorio, la columna lleva título «Chats», buscador en píldora y filtros en una sola fila
+- En escritorio, la columna lleva título «WhatsApp», buscador en píldora y filtros en una sola fila
   deslizable; el «⋯» de cada fila solo aparece al pasar el ratón o al enfocar.
 
 Comprobado en navegador a 430×900, 360×640, 320×568, 1280×800 y en tema oscuro: filas de 72 px, sin
 desbordes horizontales, y abrir conversación, volver y la pulsación larga (selección) siguen igual.
 
-### Foto del cliente (por qué a veces se ven iniciales)La fila usa la foto del cliente **si la tiene guardada** (`photo_url`); si no, pinta sus iniciales sobre
+### Foto del cliente (por qué a veces se ven iniciales)
+
+La fila usa la foto del cliente **si la tiene guardada** (`photo_url`); si no, pinta sus iniciales sobre
 un color fijo. WhatsApp **no entrega la foto de perfil de los contactos por su API** (verificado: el
 webhook solo trae el nombre y no existe endpoint de foto de contacto), así que la foto la sube el equipo:
 
