@@ -12,6 +12,21 @@ La restauración del botón y las indicaciones de idioma pasan las 52 pruebas se
 
 En escritorio se retira la cabecera general que se superponía a la cabecera del chat y se añade un botón Volver a Hoy junto al buscador de la bandeja.
 
+## Escritorio: piel de WhatsApp Web (≥ 980 px)
+
+La vista de ordenador se ha vuelto una copia de WhatsApp Web sin tocar el móvil. Todo vive en `public/admin/wa-desktop.css`, que se carga después de `wa-lista.css` y cuyas reglas están **todas** dentro de `@media (min-width: 980px)`: por debajo de esa medida no se aplica ninguna, así que la pantalla del teléfono queda exactamente como estaba.
+
+- **Armazón**: el panel va de borde a borde (sin el relleno de 12 px ni las esquinas redondeadas), dos columnas de `clamp(340px, 27vw, 430px)` y el resto para el hilo.
+- **Bandeja**: cabecera gris `#f0f2f5` con «Chats» (se pinta con `::before` sobre `.wa__list-head`) y el botón Volver; buscador en píldora blanca con lupa; filtros en **una sola fila** que se desliza (los grupos no se parten) y las utilidades (avisos, sonido, fecha) al final, separadas por una línea. Solo se desplaza la lista: cabecera y filtros quedan fijos. Filas de 72 px con avatar de 49 px y separador desde 78 px.
+- **Conversación**: cabecera de 60 px sobre el mismo gris, con la foto del cliente siempre visible (el `hidden` del móvil se anula solo en escritorio), nombre de 16 px y meta de 13 px; iconos en círculos de 40 px. El papel tapizado es PROPIO (hojas, burbujas y estrellas dibujadas en un SVG en línea, blanco al 35 % sobre `#efeae2`), no el de WhatsApp.
+- **Burbujas**: 8 px de radio, entrantes blancas y salientes verde claro `#d9fdd3`, colita del mismo color con `clip-path` y la hora abajo a la derecha (11 px). El nombre del autor se oculta en los mensajes normales, como en un chat de una persona; se conserva en los avisos del sistema. Audio, documento y ubicación pierden la tarjeta doble: el contenido va dentro de la burbuja.
+- **Compositor**: barra `#f0f2f5`, campo redondeado de 44 px y botón circular verde `#00a884` para el micrófono/envío.
+- **Sin conversación**: marca de la casa centrada sobre el mismo papel, con el mensaje de siempre.
+- **Tema oscuro**: `#0b141a` de papel, `#111b21` de panel, `#202c33` en barras y burbujas entrantes, `#005c4b` en las salientes. Como `shell-v2-tema.css` trae reglas oscuras muy específicas para el chat viejo, al final de `wa-desktop.css` se vuelven a fijar esas superficies con más peso.
+- Se añaden barras de desplazamiento finas y se mantienen las áreas de toque de 40–44 px.
+
+Medido en el navegador a 1440 × 900 px: panel de 1425 × 900, bandeja de 389 px, cabecera de lista de 102 px, filtros de 50 px (una fila), filas de 72 px con avatar de 49 px, cabecera de chat de 60 px, burbuja de 14,2 px / 19 px con radio 8 px, compositor de 62 px y campo de 44 px. En 390 × 844 px se comprobó que el móvil conserva la burbuja de 16 px, el compositor de 61 px con micrófono azul de 48 px y el avatar oculto: `wa-desktop.css` no aplica.
+
 ## Validación local
 
 - 119 pruebas pasan en nueve archivos de shell, tema, configuración, preferencias, contraste, perfil y push/service worker. El caso nuevo recorre los destinos de la barra y comprueba que se oculta y regresa al volver a Hoy.
