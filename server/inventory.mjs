@@ -28,7 +28,7 @@ export function centsToMoney(cents) {
 }
 
 export function pesosToCents(value) {
-  return Math.trunc(Number(value) || 0) * 100;
+  return Math.round((Number(value) || 0) * 100);
 }
 
 export function centsToPesos(cents) {
@@ -101,6 +101,7 @@ function lineSnapshots(order, unitCostCents, previousOrder = null) {
       .map((line) => [line.variantId, line]),
   );
   return (order.items ?? []).map((line) => {
+    if (line.general && Number.isInteger(line.product_cost_snapshot_cents)) return line;
     const previous = previousByVariant.get(line.variantId) ?? null;
     const capsules = Number(line.capsules) || 0;
     const quantity = Number(line.quantity) || 1;

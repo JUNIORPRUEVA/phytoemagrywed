@@ -103,6 +103,8 @@ import {
   MIN_PASSWORD_LENGTH,
 } from './users.mjs';
 import { createInventoryService, centsToMoney } from './inventory.mjs';
+import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
+import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
 import { createScheduler } from './scheduler.mjs';
 import {
   INTEREST_FOLLOWUP_TEMPLATE,
@@ -1427,7 +1429,7 @@ function deliveryNotificationText(kind) {
 }
 
 async function sendDeliveryReceiptToCustomer(ctx, { item, order, customer, conversation, actor = null }) {
-  const receipt = buildReceipt({ order, customer });
+  const receipt = buildReceipt({ order, customer, businessName: 'Fulltech' });
   const filename = receiptFilename(receipt.order_number ?? item.id);
   const caption = deliveryNotificationText('delivered', customer, order);
   const actorFields = messageActorFields(actor);
@@ -2162,6 +2164,10 @@ function newId(prefix) {
 async function ensureInventoryForSale(ctx, item) {
   if (!ctx.inventory) return { ok: true };
   const order = orderOf(item);
+  if (ctx.storeCatalog && order) {
+    const checked = await ctx.storeCatalog.checkOrder(order);
+    if (!checked.ok) return checked;
+  }
   const required =
     Number(order?.total_capsules) ||
     (order?.items ?? []).reduce((sum, line) => sum + (Number(line.totalCapsules) || 0), 0);
@@ -2262,7 +2268,7 @@ async function validateOrderOperationalIntegrity(ctx, orderId) {
     if (activeSessions.length) reasons.push('delivered_has_active_tracking');
     if (!order.delivered_at) reasons.push('delivered_missing_delivered_at');
     if (!order.delivered_by_user_id && !order.delivery?.delivery_delivered_by_user_id) reasons.push('delivered_missing_delivered_by');
-    if (ctx.inventory) {
+    if (ctx.inventory && Number(order.total_capsules) > 0) {
       const stock = await ctx.inventory.stock();
       const saleMovements = stock.movements.filter((row) => row.order_id === orderId && row.type === 'SALE');
       if (!saleMovements.length) reasons.push('delivered_missing_inventory_sale');
@@ -2270,6 +2276,7 @@ async function validateOrderOperationalIntegrity(ctx, orderId) {
         reasons.push('delivered_multiple_inventory_sales');
       }
     }
+    if (ctx.storeCatalog) reasons.push(...await ctx.storeCatalog.integrity(order));
   }
   if (operationalStatus === 'CANCELADO' && activeSessions.length) reasons.push('cancelled_has_active_tracking');
   return {
@@ -2737,6 +2744,10 @@ function conversationDateRange(query, clock = () => new Date()) {
  * @param {any} body
  */
 async function createOrder(ctx, body = {}, actor = null) {
+  return ctx.storeCatalog ? ctx.storeCatalog.orderLock(()=>createOrderUnlocked(ctx,body,actor)) : createOrderUnlocked(ctx,body,actor);
+}
+
+async function createOrderUnlocked(ctx, body = {}, actor = null) {
   /** @type {any} */
   let customer = null;
   const customerId = text(body.customerId, 80);
@@ -2804,6 +2815,7 @@ async function createOrder(ctx, body = {}, actor = null) {
   try {
     built = purchaseRow({
       ...body,
+      product: ctx.storeCatalog ? await ctx.storeCatalog.product() : undefined,
       paymentMethod,
       customerId: customer.id,
       conversationId,
@@ -2821,7 +2833,7 @@ async function createOrder(ctx, body = {}, actor = null) {
       ok: false,
       status: 422,
       error: /** @type {any} */ (error).message,
-      message: 'Elige un frasco del catálogo.',
+      message: 'Elige un producto o servicio activo del catálogo.',
     };
   }
   /*
@@ -2891,7 +2903,16 @@ async function createOrder(ctx, body = {}, actor = null) {
 
   let delivered = null;
   if (isCompletedPurchaseStatus(status)) {
-    delivered = await afterPurchaseDelivered(ctx, finalItem);
+    try { delivered = await afterPurchaseDelivered(ctx, finalItem); }
+    catch(error) {
+      if (!error.inventory || error.inventory.ok) throw error;
+      // La última unidad pudo venderse en otra instancia después de comprobarla.
+      // La intención permanece pendiente; jamás queda como una venta completada.
+      const pendingOrder={...built.order,status:'nuevo',delivered_at:null};
+      await ctx.store.update(built.row.id,{status:'nuevo',orderJson:JSON.stringify(pendingOrder)});
+      return {ok:false,status:409,error:error.inventory.error||'inventory_error',
+        message:error.inventory.message||'El stock cambió mientras se registraba la venta. El pedido quedó pendiente; revisa el inventario.',orderId:built.row.id};
+    }
     await ctx.audit?.record({
       entity: 'order',
       entityId: built.row.id,
@@ -4146,12 +4167,15 @@ export async function afterPurchaseDelivered(ctx, item) {
   if (!customerId) return result; // pedido sin cliente enlazado (llegó sin teléfono)
   const refreshed = await ctx.customers.refreshTotals(customerId);
   result.totals = refreshed.totals;
+  // La postventa por consumo corresponde únicamente a las cápsulas de Phytoemagry.
+  const deliveredOrder = orderOf(item);
+  if (deliveredOrder && !Number(deliveredOrder.total_capsules)) return result;
   const schedule = await ctx.followups.scheduleForPurchase({
     customerId,
     purchaseId: item.id,
     deliveredAt: item.received_at,
-    capsules: item.capsules,
-    quantity: item.quantity,
+    capsules: deliveredOrder?.items?.[0]?.general ? deliveredOrder.total_capsules : item.capsules,
+    quantity: deliveredOrder?.items?.[0]?.general ? 1 : item.quantity,
     conversationId: item.conversation_id ?? null,
   });
   const next = await ctx.followups.nextForCustomer(customerId);
@@ -5222,6 +5246,10 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (await handleStoreCatalogRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
+      can:permission=>hasPermission(actor,permission),
+      sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
+
     if (route === '/api/admin/inventory' && req.method === 'GET') {
       const snapshot = await ctx.inventory.catalog();
       const stock = await ctx.inventory.stock();
@@ -6095,6 +6123,7 @@ async function handle(req, res, ctx) {
         return;
       }
       const receipt = buildReceipt({
+        businessName: 'Fulltech',
         order: orderOf(result.item) ?? result.order,
         customer: result.customer,
       });
@@ -6836,7 +6865,7 @@ async function handle(req, res, ctx) {
         return;
       }
 
-      const receipt = buildReceipt({ order, customer });
+      const receipt = buildReceipt({ order, customer, businessName: 'Fulltech' });
       const filename = invoiceFilename(receipt.order_number ?? orderId);
       const dentroDeVentana = ctx.customers.canSendFreeText(conversacion);
       const clave = text(body.idempotencyKey, 120);
@@ -7092,7 +7121,7 @@ async function handle(req, res, ctx) {
       }
       const order = orderOf(item);
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
-      const receipt = buildReceipt({ order, customer });
+      const receipt = buildReceipt({ order, customer, businessName: 'Fulltech' });
       /*
        * VISTA PREVIA del envío de la factura: EXACTAMENTE lo que va a salir, sin
        * enviarlo. El texto, el nombre del archivo y la ventana de 24 h los decide
@@ -7458,6 +7487,7 @@ async function handle(req, res, ctx) {
       let totals;
       try {
         totals = computeOrderTotals(Array.isArray(body.items) ? body.items : current.items, {
+          product: ctx.storeCatalog ? await ctx.storeCatalog.product({includeInactive:true}) : undefined,
           discount: body.discount !== undefined ? body.discount : current.discount,
           // El delivery es OPCIONAL e independiente de la ubicación (§26).
           deliveryFee: body.deliveryFee !== undefined ? body.deliveryFee : current.delivery_fee ?? current.delivery?.fee,
@@ -8948,7 +8978,8 @@ async function handle(req, res, ctx) {
     // -------------------------------------------------- catálogo (fuente única)
     if (route === '/api/admin/catalog' && req.method === 'GET') {
       const inventory = await ctx.inventory.catalog();
-      json(res, 200, { ok: true, currency: 'DOP', catalog: inventory.presentations, inventory });
+      json(res, 200, { ok: true, currency: 'DOP', catalog: hasPermission(actor,'cost.view')?inventory.presentations:stripSensitiveFinancials(inventory.presentations),
+        inventory: sanitizeInventoryForPermissions(inventory,actor) });
       return;
     }
 
@@ -9734,7 +9765,9 @@ export async function startCrmServer(config = {}) {
     lastName: config.bootstrapAdminLastName ?? 'Admin',
     displayName: config.bootstrapAdminDisplayName ?? 'Ana Admin',
   });
-  const inventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
+  const legacyInventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
+  const storeCatalog = await createStoreCatalog({backend:db.kind,handle:store.handle,legacyInventory,clock:config.clock});
+  const inventory = storeInventoryFacade(legacyInventory,storeCatalog);
 
   /*
    * La reconciliación de un envío AMBIGUO es una decisión humana excepcional, así
@@ -9826,6 +9859,7 @@ export async function startCrmServer(config = {}) {
     audit,
     users,
     inventory,
+    storeCatalog,
     settings: settingsService,
     scheduler,
     // Multimedia: metadata (BD), binario (R2), Graph y el pipeline que los une.

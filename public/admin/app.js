@@ -53,7 +53,7 @@
   const PREFS_KEY = 'pe_prefs';
   /** Los valores admitidos: si en el teléfono hay basura, se ignora y se usa el de siempre. */
   const PREF_VALUES = {
-    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
+    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'catalogo', 'inventario', 'recuento', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
     waFilter: ['todos', 'mios', 'sin-asignar', 'no-leidos', 'pendientes', 'clientes', 'seguimiento', 'archivados'],
     pedidosFilter: ['todo', 'pendiente', 'en-camino', 'entregado', 'cancelado'],
     followupsFilter: ['todo', 'vencidos', 'hoy', 'proximos'],
@@ -774,7 +774,7 @@
   const money = (value, currency) =>
     value === null || value === undefined
       ? '—'
-      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 0 }).format(value)}`;
+      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 2 }).format(value)}`;
 
   const digits = (phone) => String(phone ?? '').replace(/\D/g, '');
 
@@ -2113,6 +2113,7 @@
     $$('[data-admin-only]').forEach((node) => {
       node.hidden = !isAdmin();
     });
+    if ($('#store-menu')) $('#store-menu').hidden = isDeliveryUser();
     $$('[data-permission]').forEach((node) => {
       node.hidden = node.dataset.tab === 'ajustes' ? false : !hasPermission(node.dataset.permission);
     });
@@ -7820,8 +7821,8 @@
         }
         ${item.phone ? `<div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(item.phone)}</a></dd></div>` : ''}
         ${item.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(item.location)}</dd></div>` : ''}
-        ${item.variant_name ? `<div class="fact"><dt>Frasco</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
-        ${item.quantity ? `<div class="fact"><dt>Frascos</dt><dd>${escapeHtml(item.quantity)}</dd></div>` : ''}
+        ${item.variant_name ? `<div class="fact"><dt>Artículo</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
+        ${item.quantity ? `<div class="fact"><dt>Unidades</dt><dd>${escapeHtml(item.quantity)}</dd></div>` : ''}
         ${item.total ? `<div class="fact"><dt>Total</dt><dd>${money(item.total, item.currency)}</dd></div>` : ''}
         <div class="fact"><dt>Entrada</dt><dd>${escapeHtml(fmtWhen(item.received_at))}</dd></div>
         ${item.source ? `<div class="fact"><dt>Origen</dt><dd>${escapeHtml(item.source)}</dd></div>` : ''}
@@ -11847,7 +11848,7 @@
       'Preferencias del pedido',
       `<p class="view__hint">Lo que se repite en cada pedido. Al crear uno nuevo, el formulario ya viene con esto: solo confirmas la cantidad.</p>
        <label class="field">
-         <span class="field__label">Frasco de siempre</span>
+         <span class="field__label">Producto o servicio habitual</span>
          <select class="field__select" id="prefs-variant">
            <option value="">Sin preferencia</option>
            ${(state.catalog ?? [])
@@ -12592,15 +12593,15 @@
         if (!variant) return null;
         const quantity = Math.max(1, Number(line.quantity) || 1);
         const capsules = Number(variant.capsule_quantity ?? variant.capsules ?? 0) || 0;
-        return { variant, quantity, capsules, subtotal: variant.price * quantity, totalCapsules: capsules * quantity };
+        return { variant, quantity, capsules, subtotal: Math.round(variant.price * 100) * quantity / 100, totalCapsules: capsules * quantity };
       })
       .filter(Boolean);
-    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+    const subtotal = items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0) / 100;
     const totalCapsules = items.reduce((sum, item) => sum + item.totalCapsules, 0);
     const applied = Math.min(Math.max(0, Number(discount) || 0), subtotal);
     // El delivery es un importe APARTE (nunca una línea de producto falsa).
     const fee = Math.max(0, Math.trunc(Number(deliveryFee) || 0));
-    return { items, subtotal, discount: applied, deliveryFee: fee, total: subtotal - applied + fee, totalCapsules };
+    return { items, subtotal, discount: applied, deliveryFee: fee, total: Math.round((subtotal - applied + fee) * 100) / 100, totalCapsules };
   }
 
   function openChatActions(customerId, conversationId) {
@@ -13302,7 +13303,7 @@
       }
       <div id="order-lines"></div>
       <div class="order-add-row">
-        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro artículo</button>
         <strong id="order-products-total">${money(0)}</strong>
       </div>
       <div class="order-compact-fields">
@@ -13347,7 +13348,7 @@
             <button class="icon-btn order-compact-close" data-order-close-field="discount" type="button" aria-label="Cerrar descuento">${ICONS.close}</button>
             <label class="field">
               <span class="field__label">Descuento (RD$)</span>
-              <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${defaultDiscount}" placeholder="0" />
+              <input class="field__input" id="order-discount" type="number" min="0" step="0.01" value="${defaultDiscount}" placeholder="0" />
             </label>
           </div>
         </div>
@@ -13446,7 +13447,7 @@
           (line, index) => `
         <div class="order-line">
           <label class="field">
-            <span class="field__label">Frasco</span>
+            <span class="field__label">Producto o servicio</span>
             <select class="field__select" data-line-variant="${index}">
               ${catalog
                 .map(
@@ -13468,7 +13469,7 @@
           </label>
           ${
             lines.length > 1
-              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar frasco">✕</button>`
+              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar artículo">✕</button>`
               : ''
           }
         </div>`,
@@ -13495,11 +13496,12 @@
         ? `Productos ${money(totals.subtotal)}${totals.discount ? ` · Descuento −${money(totals.discount)}` : ''}${
             totals.deliveryFee ? ` · Delivery ${money(totals.deliveryFee)}` : ''
           } · <strong>Total ${money(totals.total)}</strong>${
-            strictStock
+            totals.totalCapsules > 0 ? strictStock
               ? ` · Stock ${escapeHtml(stock.stock)} cápsulas${insufficient ? ' · insuficiente para entregar' : ''}`
               : ' · Stock sin inicializar'
-          }`
-        : 'Elige al menos un frasco del catálogo.';
+              : ''
+          }${totals.items.filter(item => item.variant.general && item.variant.track_stock).map(item => ` · ${escapeHtml(item.variant.label)}: ${item.variant.stock} en stock`).join('')}`
+        : 'Elige al menos un producto o servicio del catálogo.';
     };
 
     const renderLocationBlock = () => {
@@ -13744,7 +13746,7 @@
         Number($('#order-fee').value) || 0,
       );
       if (!totals.items.length) {
-        toast('Elige al menos un frasco');
+        toast('Elige al menos un producto o servicio');
         return;
       }
       if (state.inventory?.initialized === true && Number(state.inventory.stock) < Number(totals.totalCapsules)) {
@@ -18303,7 +18305,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -18312,7 +18314,10 @@
     mapa: 'Mapa y entregas',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
-    productos: 'Inventario',
+    productos: 'Cápsulas de Phytoemagry',
+    catalogo: 'Productos y servicios',
+    inventario: 'Inventario',
+    recuento: 'Recuento de inventario',
     reportes: 'Reportes',
     cierre: 'Cierre diario',
     'historial-cierres': 'Historial de cierres',
@@ -18372,7 +18377,17 @@
       history.replaceState(null, '', location.pathname + location.search);
       settingsPage = '';
     }
+    const storeTabs = ['catalogo', 'inventario', 'recuento'];
+    if (!options.fromHistory && (storeTabs.includes(tab) || storeTabs.includes(state.tab))) {
+      const nextUrl = new URL(location.href);
+      nextUrl.searchParams.set('v', tab);
+      nextUrl.searchParams.delete('conversation');
+      if (storeTabs.includes(tab)) nextUrl.hash = '';
+      if (nextUrl.href !== location.href) history.pushState({ tab }, '', nextUrl);
+    }
     state.tab = tab;
+    if (storeTabs.includes(tab) && $('#store-menu')) $('#store-menu').open = true;
+    window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
     localStorage.setItem(TAB_KEY, tab);
     // Cambiar de pestaña tambien guarda los filtros que hubiera puestos: asi­ una
     // tarjeta de HOY que lleva a «Pedidos pendientes» deja puesto ese filtro.
@@ -18507,7 +18522,21 @@
   function initEvents() {
     if (eventosMontados) return;
     eventosMontados = true;
-
+    window.addEventListener('popstate', () => {
+      const wanted = new URLSearchParams(location.search).get('v');
+      if (VIEWS.includes(wanted) && (['catalogo','inventario','recuento'].includes(wanted) || ['catalogo','inventario','recuento'].includes(state.tab))) setTab(wanted,{silent:true,fromHistory:true});
+    });
+    window.addEventListener('fulltech:new-sale', async () => {
+      if (!hasPermission('orders.create')) return;
+      try {
+        const fresh = await api('/api/admin/catalog');
+        state.catalog = fresh.catalog;
+        await openOrderForm();
+      } catch (error) { toast(error.message || 'No se pudo abrir la venta.'); }
+    });
+    window.addEventListener('fulltech:catalog-updated', async () => {
+      try { const fresh=await api('/api/admin/catalog');state.catalog=fresh.catalog;saveSnapshot(); } catch {}
+    });
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const username = $('#login-username')?.value.trim() ?? '';

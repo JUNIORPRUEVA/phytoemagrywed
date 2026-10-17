@@ -46,6 +46,7 @@
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/admin/admin.css?v=campaign-exact-66" />
+    <link rel="stylesheet" href="/admin/store.css?v=1" />
     <!--
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
       DESPUÉS de admin.css a propósito: es la última palabra sobre esas piezas.
@@ -175,9 +176,14 @@
               <button class="drawer__item" data-tab="delivery" type="button">
                 <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
               </button>
-              <button class="drawer__item" data-tab="productos" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
-              </button>
+              <details class="store-menu" id="store-menu">
+                <summary class="drawer__item"><span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Catálogo e inventario</summary>
+                <nav aria-label="Catálogo e inventario">
+                  <button class="drawer__item" data-tab="catalogo" type="button">Productos y servicios</button>
+                  <button class="drawer__item" data-tab="inventario" type="button">Inventario</button>
+                  <button class="drawer__item" data-tab="recuento" type="button">Recuento</button>
+                </nav>
+              </details>
               <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
                 <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
               </button>
@@ -526,8 +532,21 @@
         </section>
 
         <!-- PRODUCTOS E INVENTARIO -->
+        <section class="view" id="view-catalogo" hidden>
+          <h2 class="view__title">Productos y servicios</h2>
+          <div id="store-catalogo"></div>
+        </section>
+        <section class="view" id="view-inventario" hidden>
+          <h2 class="view__title">Inventario</h2>
+          <div id="store-inventario"></div>
+        </section>
+        <section class="view" id="view-recuento" hidden>
+          <h2 class="view__title">Recuento de inventario</h2>
+          <div id="store-recuento"></div>
+        </section>
         <section class="view" id="view-productos" hidden>
-          <h2 class="view__title">Productos e inventario</h2>
+          <h2 class="view__title">Inventario de Phytoemagry</h2>
+          <button class="btn btn--ghost" data-tab="inventario" type="button">Volver al inventario de la tienda</button>
           <div class="list" id="inventory-view"></div>
         </section>
 
@@ -792,5 +811,6 @@
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/app.js?v=chat-layout-85" defer></script>
     <script src="/admin/calling.js?v=1" defer></script>
+    <script src="/admin/store.js?v=1" defer></script>
   </body>
 </html>

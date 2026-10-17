@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v86-pedidos-finos';
+const VERSION = 'crm-v87-fulltech-catalog';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -22,6 +22,8 @@ const SHELL = [
   '/admin/shell-v2-tema.css',
   '/admin/app.js',
   '/admin/calling.js',
+  '/admin/store.js',
+  '/admin/store.css',
   '/admin/manifest.json',
   '/admin/vendor/leaflet/leaflet.css',
   '/admin/vendor/leaflet/leaflet.js',

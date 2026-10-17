@@ -390,7 +390,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     cancel_reason: order.cancel_reason ?? null,
     // Agradecimiento neutro: sin promesas, sin plazos y sin nada médico.
     thanks: 'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
-    note: 'Documento generado por Phytoemagry para confirmar los detalles de tu compra.',
+    note: `Documento generado por ${businessName} para confirmar los detalles de tu compra.`,
   };
 }
 
@@ -452,7 +452,7 @@ function esc(value) {
 /** Dinero en RD$ sin depender del locale del servidor. */
 function money(value, currency = 'DOP') {
   const number = Number(value) || 0;
-  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(number);
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(number);
   return `${currency === 'DOP' ? 'RD$' : currency} ${formatted}`;
 }
 

@@ -38,15 +38,16 @@ export class CatalogError extends Error {
 export function catalogItems(product = productConfig) {
   const variants = Array.isArray(product?.variants) ? product.variants : [];
   return variants
-    .filter((variant) => Number(variant?.capsules) > 0 && Number.isFinite(Number(variant?.price)))
+    .filter((variant) => (Number(variant?.capsules) > 0 || variant?.general === true) && Number.isFinite(Number(variant?.price)))
     .map((variant) => ({
       id: variant.id,
-      capsules: Number(variant.capsules),
+      capsules: Number(variant.capsules) || 0,
       price: Number(variant.price),
       currency: CATALOG_CURRENCY,
       completeBottle: variant.completeBottle === true,
       available: variant.available !== false,
-      label: `Frasco de ${variant.capsules} cápsulas`,
+      label: variant.label || `Frasco de ${variant.capsules} cápsulas`,
+      ...(variant.general ? {general:true,name:variant.name,kind:variant.kind} : {}),
     }));
 }
 
@@ -98,13 +99,14 @@ export function computeOrderTotals(lines = [], options = {}) {
     const explicit = Number(line?.unitPrice);
     const unitPrice =
       Number.isFinite(explicit) && explicit >= 0 && line?.unitPrice !== undefined && line?.unitPrice !== null
-        ? Math.trunc(explicit)
+        ? Math.round(explicit * 100) / 100
         : catalogItem.price;
-    const subtotal = unitPrice * quantity;
+    const subtotal = Math.round(unitPrice * 100) * quantity / 100;
     return {
       variantId: catalogItem.id,
       capsules: catalogItem.capsules,
-      variantName: `${catalogItem.capsules} cápsulas`,
+      variantName: catalogItem.general ? catalogItem.name : `${catalogItem.capsules} cápsulas`,
+      ...(catalogItem.general ? {general:true,kind:catalogItem.kind} : {}),
       label: catalogItem.label,
       quantity,
       unitPrice,
@@ -115,12 +117,12 @@ export function computeOrderTotals(lines = [], options = {}) {
   });
   if (items.length === 0) throw new CatalogError('empty_order', 'El pedido no tiene frascos.');
 
-  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const subtotal = items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0) / 100;
   const requestedDiscount = Number(options.discount);
   // El descuento nunca puede superar el subtotal: no se regala dinero por error.
   const discount =
     Number.isFinite(requestedDiscount) && requestedDiscount > 0
-      ? Math.min(Math.trunc(requestedDiscount), subtotal)
+      ? Math.min(Math.round(requestedDiscount * 100) / 100, subtotal)
       : 0;
 
   /*
@@ -147,7 +149,7 @@ export function computeOrderTotals(lines = [], options = {}) {
     subtotal,
     discount,
     deliveryFee,
-    total: subtotal - discount + deliveryFee,
+    total: Math.round((subtotal - discount + deliveryFee) * 100) / 100,
     currency,
   };
 }

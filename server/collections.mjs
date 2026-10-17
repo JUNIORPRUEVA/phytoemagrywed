@@ -437,8 +437,9 @@ async function createSqliteCollections(db, prefix) {
 
 async function createPostgresCollections(pool, prefix) {
   const ready = new Set();
+  const initializing = new Map();
 
-  const ensure = async (name) => {
+  const ensureOnce = async (name) => {
     if (ready.has(name)) return;
     const schema = schemaOf(name);
     const table = `${prefix}${name}`;
@@ -481,6 +482,11 @@ async function createPostgresCollections(pool, prefix) {
       await pool.query(`CREATE INDEX IF NOT EXISTS ${table}_i_${column} ON ${table} (${column})`);
     }
     ready.add(name);
+  };
+  const ensure = (name) => {
+    if (ready.has(name)) return Promise.resolve();
+    if (!initializing.has(name)) initializing.set(name, ensureOnce(name).finally(() => initializing.delete(name)));
+    return initializing.get(name);
   };
 
   return {
