@@ -65,12 +65,14 @@ it('cerrar sesión borra el catálogo y cualquier edición con costos visibles',
   expect(w.document.querySelector('#store-product-form')).toBeNull();
   expect(sources.every(s=>s.closed)).toBe(true);
 });
-it('agrupa categorías sin distinguir mayúsculas y permite filtrarlas',async()=>{
+it('muestra productos sin grupos ni contadores y filtra categorías sin distinguir mayúsculas',async()=>{
   products[0].category='Phytoemagry';
   products.push({...products[0],id:'p2',name:'Frasco 10',category:' phytoemagry ',sku:'PHY-10'});
   products.push({...products[0],id:'p3',name:'Cable',category:'Accesorios',sku:'CAB-1'});
   await tab('catalogo');
-  expect(w.document.querySelectorAll('.store-category-group')).toHaveLength(2);
+  expect(w.document.querySelectorAll('.store-category-group,.store-group-heading,#store-result-count')).toHaveLength(0);
+  expect(w.document.querySelectorAll('#store-product-grid .store-items')).toHaveLength(1);
+  expect(w.document.querySelectorAll('[data-store-detail]')).toHaveLength(3);
   w.document.querySelector('[data-store-filters]').click();
   const radio=w.document.querySelector('input[name=category][value="phytoemagry"]');radio.checked=true;radio.dispatchEvent(new w.Event('change',{bubbles:true}));
   expect(w.document.querySelectorAll('[data-store-detail]')).toHaveLength(2);
@@ -100,7 +102,9 @@ it('abre una página de detalle con enlace propio, regresa y respeta la privacid
 });
 it('recibe cambios en vivo sin perder búsqueda ni un recuento en curso',async()=>{
   await tab('catalogo');const search=w.document.querySelector('#store-search');search.value='Cámara';search.dispatchEvent(new w.Event('input',{bubbles:true}));search.focus();search.setSelectionRange(2,2);
+  w.document.querySelector('#store-product-grid').scrollTop=120;
   products[0].price_cents=200000;sources.at(-1).listeners['catalog.changed']();await flush();
+  expect(w.document.querySelector('#store-product-grid').scrollTop).toBe(120);
   expect(w.document.querySelector('#store-search').value).toBe('Cámara');expect(w.document.activeElement.id).toBe('store-search');
   expect(w.document.querySelector('#store-search').selectionStart).toBe(2);expect(w.document.querySelector('.store-price').textContent).toContain('2,000.00');
   await tab('recuento');let form=w.document.querySelector('#store-stock-form');form.elements.quantity.value='2';form.elements.reason.value='Conteo físico';form.elements.reason.focus();

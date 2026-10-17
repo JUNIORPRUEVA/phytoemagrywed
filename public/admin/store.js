@@ -34,10 +34,12 @@
     }catch(e){notice(e.message);}finally{loading=false;if(pending){pending=false;load();}}
   }
   function renderPreservingInput() {
+    const listScroll=document.getElementById('store-product-grid')?.scrollTop||0;
     const form=document.getElementById('store-stock-form');
     const draft=form?{values:Object.fromEntries(new FormData(form)),...form.dataset}:null;
     const active=document.activeElement,focusId=active?.id,focusName=form?.contains(active)?active.name:null,start=active?.selectionStart,end=active?.selectionEnd;
     render();
+    const list=document.getElementById('store-product-grid');if(list)list.scrollTop=listScroll;
     const next=document.getElementById('store-stock-form');
     if(draft&&next&&draft.count===next.dataset.count){
       Object.entries(draft.values).forEach(([key,value])=>{if(next.elements[key])next.elements[key].value=value;});
@@ -55,13 +57,11 @@
     const search=query.toLocaleLowerCase();
     const rows=products.filter(p=>(kind==='all'||p.kind===kind)&&(!category||categoryKey(p)===category)&&(p.name+' '+p.sku+' '+(p.category||'')).toLocaleLowerCase().includes(search));
     const box=document.getElementById('store-product-grid');if(!box)return;
-    const groups=new Map();
-    for(const p of rows){const key=categoryKey(p);if(!groups.has(key))groups.set(key,{name:categoryName(p),items:[]});groups.get(key).items.push(p);}
     box.dataset.layout=layout;
-    box.innerHTML=[...groups.values()].sort((a,b)=>a.name.localeCompare(b.name,'es')).map(group=>`<section class="store-category-group" aria-label="${esc(group.name)}"><div class="store-group-heading"><h3>${esc(group.name)}</h3><span>${group.items.length} ${group.items.length===1?'artículo':'artículos'}</span></div><div class="store-items">${group.items.map(p=>`<a class="store-product${p.active?'':' store-product--inactive'}" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">
+    box.innerHTML=rows.length?`<div class="store-items">${rows.map(p=>`<a class="store-product${p.active?'':' store-product--inactive'}" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">
       <div class="store-product__visual">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</div>
-      <div class="store-product__body"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong></div><span class="store-product__arrow" aria-hidden="true">↗</span></a>`).join('')}</div></section>`).join('')||'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
-    const count=document.getElementById('store-result-count');if(count)count.textContent=`${rows.length} ${rows.length===1?'artículo':'artículos'}`;
+      <div class="store-product__body"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong></div><span class="store-product__arrow" aria-hidden="true">↗</span></a>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+
   }
   function detailId(){return new URLSearchParams(location.search).get('product');}
   function navigateProduct(id){
@@ -87,7 +87,7 @@
     if(page==='catalogo') {
       const selected=detailId();document.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
       if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));return;}
-      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'?'<span class="store-filter-dot"></span>':''}</button></div><span id="store-result-count" class="store-sr" aria-live="polite"></span>
+      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'?'<span class="store-filter-dot"></span>':''}</button></div>
       <div id="store-product-grid"></div>${canManage?`<button class="store-fab" type="button" data-store-new aria-label="Agregar producto o servicio" title="Agregar producto o servicio">${svg('plus')}</button>`:''}`;
       cards();
     }else {

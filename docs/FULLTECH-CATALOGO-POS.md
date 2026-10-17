@@ -9,9 +9,9 @@ Esta entrega es local; todavía no se fusionó con `main` ni se desplegó.
 
 En el menú lateral, abrir **Catálogo e inventario**:
 
-- **Productos y servicios**: artículos agrupados por categoría, con filtros,
+- **Productos y servicios**: listado continuo de artículos, sin grupos ni contadores de categoría, con filtros,
   búsqueda y vistas de lista o cuadrícula. El título aparece solo en el appbar;
-  la barra de búsqueda integra el botón que abre los filtros en un drawer derecho.
+  la barra de búsqueda permanece fija e integra el botón que abre los filtros en un drawer derecho. Solo se desplaza el listado, que conserva su posición ante actualizaciones en vivo.
   Allí se eligen categoría, producto/servicio y vista. El botón flotante **+**,
   situado abajo y respetando el área segura, agrega un
   artículo. Cada tarjeta abre una página de detalle con enlace propio y edición.
@@ -135,3 +135,7 @@ No copiar esos datos a producción.
 
 El host de prueba independiente evita compartir la cookie con otros CRM locales
 que estén abiertos en `127.0.0.1` o `localhost` con puertos distintos.
+
+Se comprobó en navegador a 390 × 700 px y en escritorio que el listado
+se desplaza dentro de su panel, conservando fija la búsqueda; las tarjetas
+utilizan un contorno tenue de medio píxel sin sombra elevada.
