@@ -66,3 +66,15 @@ body[data-tab='whatsapp'] .wa-fab { right: calc(12px + var(--safe-right, 0px)); 
 /* La navegación de retorno pertenece al appbar superior. */
 body[data-tab='whatsapp'] #wa-back { display: none; }
 body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head { padding-top: 6px; }
+
+/* Iconos aportados por el negocio: máscara transparente que sigue el tema. */
+body[data-tab='whatsapp'] :is(#wa-calling-button, #wa-thread-search-open) {
+  display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px;
+  padding: 10px; color: var(--pe-brand-text); cursor: pointer;
+}
+body[data-tab='whatsapp'] :is(#wa-calling-button, #wa-thread-search-open):hover { background: var(--pe-brand-soft); }
+body[data-tab='whatsapp'] :is(#wa-calling-button, #wa-thread-search-open):focus-visible { outline: 2px solid var(--pe-brand-text); outline-offset: 2px; }
+body[data-tab='whatsapp'] #wa-calling-button:disabled { opacity: .45; cursor: default; }
+.wa-header-glyph { display: block; flex: none; width: 21px; height: 21px; background-color: currentColor; -webkit-mask: var(--wa-header-icon) center / contain no-repeat; mask: var(--wa-header-icon) center / contain no-repeat; pointer-events: none; }
+.wa-header-glyph--call { --wa-header-icon: url('/admin/assets/icons/chat-call.png'); }
+.wa-header-glyph--search { --wa-header-icon: url('/admin/assets/icons/chat-search.png'); width: 20px; height: 20px; }
