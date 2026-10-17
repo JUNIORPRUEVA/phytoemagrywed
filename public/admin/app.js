@@ -18323,7 +18323,7 @@
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
     catalogo: 'Productos y servicios',
-    inventario: 'Inventario',
+    inventario: 'Ajuste de stock',
     recuento: 'Recuento de inventario',
     reportes: 'Reportes',
     cierre: 'Cierre diario',
@@ -18391,7 +18391,7 @@
       nextUrl.searchParams.delete('conversation');
       if (tab !== 'catalogo') nextUrl.searchParams.delete('product');
       if (storeTabs.includes(tab)) nextUrl.hash = '';
-      if (nextUrl.href !== location.href) history.pushState({ tab }, '', nextUrl);
+      if (nextUrl.href !== location.href) history[options.replaceHistory?'replaceState':'pushState']({ tab }, '', nextUrl);
     }
     state.tab = tab;
     if (storeTabs.includes(tab) && $('#store-menu')) $('#store-menu').open = true;
@@ -19222,6 +19222,11 @@
         return;
       }
       if (event.target.closest('[data-simple-back]')) {
+        if (['catalogo','inventario','recuento'].includes(state.tab)) {
+          const backEvent=new CustomEvent('fulltech:back',{cancelable:true});window.dispatchEvent(backEvent);
+          if(!backEvent.defaultPrevented)setTab('hoy',{replaceHistory:true});
+          return;
+        }
         if (state.tab === 'perfil' && state.profileReturnToSettings) {
           state.profileReturnToSettings = false;
           openSettingsPage('');

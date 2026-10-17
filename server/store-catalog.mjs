@@ -32,6 +32,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     CREATE TABLE IF NOT EXISTS fulltech_stock_movements_v1 (
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, order_id TEXT,
       created_at TEXT NOT NULL, operation_key TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)`);
+  await sql.query('CREATE TABLE IF NOT EXISTS fulltech_categories_v1 (id TEXT PRIMARY KEY, category_key TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)');
   for (const p of productConfig.variants) {
     const doc = { id: p.id, sku: `PHYTO-${p.capsules}`, kind: 'product', name: `Phytoemagry · ${p.capsules} cápsulas`,
       category: 'Phytoemagry', description: '', price_cents: p.price * 100, cost_cents: 0,
@@ -64,6 +65,36 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   const decode = r => r ? { ...JSON.parse(r.doc), quantity: Number(r.quantity), version: Number(r.version) } : null;
   const one = async (id, q = sql.query, lock = false) => decode((await q('SELECT * FROM fulltech_catalog_v1 WHERE id=$1'+(lock&&backend==='postgres'?' FOR UPDATE':''), [id])).rows[0]);
+  const categoryKey=name=>name.trim().replace(/\s+/g,' ').toLocaleLowerCase('es');
+  async function ensureCategory(q,name,imageUrl=null) {
+    name=clean(name,100).replace(/\s+/g,' ');if(!name)return null;
+    const id=`category_${randomUUID()}`,key=categoryKey(name);
+    const doc={id,name,image_url:imageUrl,created_at:clock().toISOString()};
+    await q('INSERT INTO fulltech_categories_v1(id,category_key,doc) VALUES($1,$2,$3) ON CONFLICT(category_key) DO NOTHING',[id,key,JSON.stringify(doc)]);
+    return JSON.parse((await q('SELECT doc FROM fulltech_categories_v1 WHERE category_key=$1',[key])).rows[0].doc);
+  }
+  // Importación aditiva de las categorías de las fichas existentes.
+  for(const row of (await sql.query('SELECT id,doc FROM fulltech_catalog_v1')).rows){
+    const p=JSON.parse(row.doc);if(!p.category||p.category_id)continue;
+    const c=await ensureCategory(sql.query,p.category,p.image_url?.startsWith('/assets/')?`/api/admin/store/products/${p.id}/image?v=1`:p.image_url);
+    if(c)await sql.query('UPDATE fulltech_catalog_v1 SET doc=$1 WHERE id=$2 AND doc=$3',[JSON.stringify({...p,category:c.name,category_id:c.id}),row.id,row.doc]);
+  }
+  async function categories(){return (await sql.query('SELECT doc FROM fulltech_categories_v1')).rows.map(r=>{
+    const c=JSON.parse(r.doc),seed=productConfig.variants.find(p=>c.image_url===`${p.image}-320.webp`);
+    return seed?{...c,image_url:`/api/admin/store/products/${seed.id}/image?v=1`}:c;
+  }).sort((a,b)=>a.name.localeCompare(b.name,'es'));}
+  async function createCategory(input,actor){
+    const name=clean(input.name,100).replace(/\s+/g,' ');if(!name)throw fail('category_name_required','Escribe el nombre de la categoría.');
+    const image=input.image?parseProductImage(input.image):null;
+    return transaction(async q=>{
+      const existing=(await q('SELECT id FROM fulltech_categories_v1 WHERE category_key=$1',[categoryKey(name)])).rows[0];
+      if(existing)throw fail('duplicate_category','Ya existe una categoría con ese nombre.',409);
+      const c={id:`category_${randomUUID()}`,name,image_url:null,created_at:clock().toISOString(),created_by:actor?.display_name||'Administración'};
+      if(image){await q('INSERT INTO fulltech_product_images_v1(id,mime,data) VALUES($1,$2,$3)',[c.id,image.mime,image.data]);c.image_url=`/api/admin/store/categories/${c.id}/image?v=1`;}
+      await q('INSERT INTO fulltech_categories_v1(id,category_key,doc) VALUES($1,$2,$3)',[c.id,categoryKey(name),JSON.stringify(c)]);
+      return c;
+    });
+  }
   async function list({ includeInactive = true } = {}) {
     const [rows, legacy] = await Promise.all([sql.query('SELECT * FROM fulltech_catalog_v1 ORDER BY sku'), legacyInventory.catalog()]);
     return rows.rows.map(decode).filter(p => includeInactive || p.active).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => p.legacy ? { ...p,
@@ -93,8 +124,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       if (!name || !/^[A-Z0-9][A-Z0-9._-]{0,59}$/.test(sku)) throw fail('invalid_product', 'Escribe un nombre y un código válido sin espacios.');
       if (kind === 'product' && !image && !previous?.image_url) throw fail('image_required', 'Agrega la imagen del producto.');
       if (!integer(input.min_stock ?? 0)) throw fail('invalid_quantity', 'El stock mínimo debe ser un número entero mayor o igual a cero.');
+      let category=null;
+      if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
+      else if(input.category_id===undefined)category=await ensureCategory(q,input.category||'');
       const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind,
-        description: clean(input.description, 2000), category: clean(input.category, 100), unit: 'unidad',
+        description: clean(input.description, 2000), category: category?.name||'',category_id:category?.id||null,unit: 'unidad',
         price_cents: money(input.price), cost_cents: previous?.legacy ? 0 : money(input.cost),
         track_stock: kind === 'product', active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
@@ -196,7 +230,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     }
     return [...new Set(issues)];
   }
-  return {list,save,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,
+  return {list,save,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

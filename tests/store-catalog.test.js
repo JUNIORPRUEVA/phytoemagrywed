@@ -125,6 +125,7 @@ it('solo administración modifica el catálogo y un agente no recibe costos inte
   expect(JSON.stringify(result.data)).not.toMatch(/cost_cents|unit_cost|presentation_cost/);
   const saleCatalog=await call('/api/admin/catalog',null,'GET',agent);expect(JSON.stringify(saleCatalog.data)).not.toMatch(/cost_cents|unit_cost|presentation_cost/);
   expect((await call('/api/admin/store/products',{kind:'service'},'POST',agent)).status).toBe(403);
+  expect((await call('/api/admin/store/categories',{name:'Categoría sin permiso'},'POST',agent)).status).toBe(403);
 });
 it('dos ventas concurrentes no pueden consumir la misma última unidad',async()=>{
   const p=(await create({quantity:1})).data.product;
@@ -132,6 +133,19 @@ it('dos ventas concurrentes no pueden consumir la misma última unidad',async()=
   expect(results.map(r=>r.status).sort()).toEqual([201,409]);
   expect((await list()).data.products.find(x=>x.id===p.id).quantity).toBe(0);
   expect((await list()).data.movements.filter(x=>x.type==='SALE')).toHaveLength(1);
+});
+it('crea categorías con imagen, evita duplicados y enlaza productos conservando el dato al reiniciar',async()=>{
+  const result=await call('/api/admin/store/categories',{name:'Cámaras y seguridad',image:IMAGE});expect(result.status).toBe(201);
+  const c=result.data.category;expect(c.image_url).toContain('/categories/');
+  expect((await call('/api/admin/store/categories',{name:'  cámaras y   seguridad '})).status).toBe(409);
+  expect((await call('/api/admin/store/categories',{name:''})).status).toBe(422);
+  expect((await create({category_id:'missing'})).status).toBe(422);
+  const product=await create({category_id:c.id});expect(product.status).toBe(201);expect(product.data.product).toMatchObject({category:c.name,category_id:c.id});
+  const image=await fetch(app.url+c.image_url,{headers:{cookie}});expect(image.status).toBe(200);expect(image.headers.get('content-type')).toBe('image/png');
+  expect((await fetch(app.url+c.image_url)).status).toBe(401);
+  await app.close();app=await startCrmServer({port:0,host:'127.0.0.1',databaseUrl,dataFile:path.join(dir,'catalog.sqlite'),token:'catalog-test-token',quiet:true,schedulerEnabled:false});
+  const listResult=await list();expect(listResult.data.categories.find(x=>x.id===c.id)).toMatchObject({name:c.name,image_url:c.image_url});
+  expect(listResult.data.products.find(p=>p.id===product.data.product.id).category_id).toBe(c.id);
 });
 it('notifica cambios del catálogo en vivo a sesiones autenticadas sin difundir datos financieros',async()=>{
   expect((await fetch(app.url+'/api/admin/store/events')).status).toBe(401);

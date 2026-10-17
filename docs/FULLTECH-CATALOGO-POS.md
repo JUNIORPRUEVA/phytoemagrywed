@@ -10,14 +10,19 @@ Esta entrega es local; todavía no se fusionó con `main` ni se desplegó.
 En el menú lateral, abrir **Catálogo e inventario**:
 
 - **Productos y servicios**: artículos agrupados por categoría, con filtros,
-  búsqueda y vistas de lista o cuadrícula. El botón flotante **+** agrega un
+  búsqueda y vistas de lista o cuadrícula. El título aparece solo en el appbar;
+  la barra de búsqueda integra el botón que abre los filtros en un drawer derecho.
+  Allí se eligen categoría, producto/servicio y vista. El botón flotante **+**,
+  situado abajo y respetando el área segura, agrega un
   artículo. Cada tarjeta abre una página de detalle con enlace propio y edición.
-  En el formulario se puede elegir una categoría existente o escribir una nueva.
+  En el formulario se puede elegir una categoría existente o usar **+** para
+  crear otra con nombre e imagen opcional, sin perder los campos del producto.
   Cada producto tiene imagen, descripción,
   precio de venta, costo unitario, cantidad inicial y stock mínimo. Los
   servicios tienen precio y costo, con imagen opcional y sin existencias.
-- **Inventario**: consultar existencias, valor a costo, stock bajo, entradas,
-  salidas y los últimos 200 movimientos de productos nuevos. Cada movimiento
+- **Ajuste de stock**: seleccionar producto, entrada o salida, cantidad y motivo.
+  Una comparación muestra saldo actual, ajuste y resultado. Las existencias
+  y los últimos 200 movimientos quedan plegados debajo. Cada movimiento
   conserva fecha, responsable, motivo y saldo.
 - **Recuento**: registrar la cantidad física de un producto. Si alguien cambia
   su stock mientras se cuenta, el servidor exige actualizar antes de guardar.
@@ -38,10 +43,9 @@ diferencia y conserva el costo histórico de las líneas existentes.
 ## Phytoemagry y la identidad del negocio
 
 Las siete presentaciones siguen disponibles. Comparten el inventario anterior
-por cápsulas: no son siete almacenes independientes. Desde Inventario se abre
-**Gestionar cápsulas**, y desde Recuento, **Contar cápsulas**. Los ajustes y
-movimientos de ese inventario siguen en su página original. El resumen de
-valoración cuenta ese saldo una sola vez.
+por cápsulas: no son siete almacenes independientes. Desde Ajuste de stock se
+abre **Gestionar**, y desde Recuento, **Contar cápsulas**. Los ajustes y
+movimientos de ese inventario siguen en su página original.
 
 La interfaz utiliza Fulltech y los comprobantes del CRM muestran Fulltech.
 La página pública comercial de Phytoemagry mantiene su catálogo estático y sus
@@ -57,8 +61,10 @@ El mismo CRM puede gestionar el catálogo general y los pedidos de Phytoemagry.
 
 - Requiere SQLite o PostgreSQL; el almacenamiento JSONL conserva el flujo
   anterior y devuelve catálogo no disponible para este módulo.
-- Tablas aditivas: `fulltech_catalog_v1`, `fulltech_product_images_v1` y
-  `fulltech_stock_movements_v1`. Los identificadores históricos se conservan.
+- Tablas aditivas: `fulltech_catalog_v1`, `fulltech_product_images_v1`,
+  `fulltech_stock_movements_v1` y `fulltech_categories_v1`. Los identificadores
+  históricos se conservan. Las categorías existentes se importan sin borrar
+  productos; las nuevas se enlazan por ID y tienen nombre único normalizado.
 - SKU único, cantidades enteras no negativas, versiones para detectar ediciones
   obsoletas y claves de operación para evitar duplicar movimientos manuales.
 - Precios/costos se guardan en centavos. En PostgreSQL, las columnas antiguas
@@ -84,11 +90,12 @@ El mismo CRM puede gestionar el catálogo general y los pedidos de Phytoemagry.
 
 ## Verificación
 
-- 82 pruebas aprobadas y una exclusiva de PostgreSQL omitida en la ejecución
+- 87 pruebas aprobadas y una exclusiva de PostgreSQL omitida en la ejecución
   SQLite: catálogo, panel, inventario, ventas, conversaciones y atribución.
-- 15 pruebas aprobadas contra PostgreSQL 17 real en una base local desechable;
+- 16 pruebas aprobadas contra PostgreSQL 17 real en una base local desechable;
   incluyen migración desde columnas de importes enteros, persistencia,
-  concurrencia por la última unidad, ventas con centavos y eventos SSE.
+  concurrencia por la última unidad, ventas con centavos, eventos SSE y
+  categorías con imagen que persisten tras reiniciar.
 - `npm run verify:deploy`: aprobado. Advierte configuraciones comerciales
   ausentes en este worktree local, que no contiene el `.env` de producción.
 - Revisión de navegador: submenú, imágenes existentes, tema claro y oscuro,
@@ -99,6 +106,11 @@ El mismo CRM puede gestionar el catálogo general y los pedidos de Phytoemagry.
 - Revisión del rediseño: lista, cuadrícula, ficha con URL propia, botón flotante
   y medidas móviles sin desbordamiento horizontal en el detalle. Se comprobó
   en navegador la actualización de una ficha tras modificarla desde otra sesión.
+- Revisión compacta en móvil: buscador único, filtros laterales, formulario de
+  categoría dentro del artículo conservando nombre/precio, Ajuste de stock y
+  Recuento. El appbar vuelve del detalle al catálogo con un toque, y otro toque
+  sale al inicio. Volver ya consume la entrada del detalle en lugar de crear
+  una nueva entrada de catálogo en el historial.
 - Se repitieron las pruebas de interfaz de ventas: 21 pasan y los cuatro fallos
   coinciden con los fallos previos registrados en la base de comparación.
 - La batería general detectó 31 fallos previos de WhatsApp/interfaz/reparto.
@@ -116,7 +128,10 @@ cd C:\Users\pc\DEV\PROYECTOS\INTERNO\FULLTECH-pos
 node scripts/uat-env.mjs --port=8817 --sin-scheduler
 ```
 
-Abrir `http://127.0.0.1:8817/admin/?v=catalogo` con `admin@uat.local` y la
+Abrir `http://fulltech-pos.localhost:8817/admin/?v=catalogo` con `admin@uat.local` y la
 contraseña de pruebas que imprime el script. Usa datos separados en
 `data/uat/`, WhatsApp simulado y sin conversiones Meta ni notificaciones reales.
 No copiar esos datos a producción.
+
+El host de prueba independiente evita compartir la cookie con otros CRM locales
+que estén abiertos en `127.0.0.1` o `localhost` con puertos distintos.
