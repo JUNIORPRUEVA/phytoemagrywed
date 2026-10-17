@@ -647,9 +647,12 @@ describe('UAT del panel con multimedia', () => {
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     const menu = $('#sheet-body').innerHTML;
-    for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente']) {
+    for (const accion of ['Crear pedido', 'Respuesta rápida', 'Enviar plantilla', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
+    // «Seguimiento» es un submenú y la búsqueda ya vive en la cabecera del chat.
+    expect(menu).toContain('data-chat-followup-menu');
+    expect(menu).not.toContain('Buscar en esta conversación');
 
     let context;
     dom.window.addEventListener('fulltech:pos-context',event=>{context=event.detail;},{once:true});

@@ -988,3 +988,92 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
   min-height: 44px;
 }
 
+/* ---------------------------- acciones del chat: cajón a la derecha cuadrado */
+/*
+ * Al pulsar «Acciones» en el chat, el menú NO sube desde abajo: entra desde la
+ * derecha como un cajón, cuadrado y a todo el alto de la pantalla.
+ *
+ * El selector lleva `#sheet` a propósito: `menus-safe-area.css` recorta todas
+ * las hojas con `:root body #sheet .sheet__panel { max-height: … }` y, sin el id,
+ * ese recorte le ganaba al cajón y lo dejaba 12 px corto.
+ */
+.sheet[data-variant='chat-actions'] .sheet__backdrop {
+  background: rgba(11, 20, 26, 0.34);
+}
+
+:root body #sheet[data-variant='chat-actions'] .sheet__panel {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: min(86%, 330px);
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-left: 1px solid var(--wa-line);
+  border-radius: 0;
+  box-shadow: -26px 0 54px rgba(11, 20, 26, 0.3);
+  transform: none;
+  animation: wa-chat-drawer-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes wa-chat-drawer-in {
+  from {
+    transform: translateX(102%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root body #sheet[data-variant='chat-actions'] .sheet__panel {
+    animation: none;
+  }
+}
+
+:root body #sheet[data-variant='chat-actions'] .sheet__head {
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 10px 10px 16px;
+  border-bottom: 1px solid var(--wa-line);
+}
+
+:root body #sheet[data-variant='chat-actions'] .sheet__title {
+  font-size: 16.5px;
+  font-weight: 600;
+}
+
+/* Filas finas: sin subtítulos, con el icono y el nombre de la acción. */
+:root body #sheet[data-variant='chat-actions'] .sheet__body {
+  gap: 2px;
+  padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item {
+  min-height: 46px;
+  border-radius: 12px;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item + .menu-item {
+  border-top: 1px solid var(--wa-line);
+  border-radius: 0;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item:hover {
+  border-radius: 12px;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-list__label {
+  margin: 10px 0 2px;
+  padding: 0 12px;
+  color: var(--wa-ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-back {
+  margin: 2px 0 6px;
+}
+

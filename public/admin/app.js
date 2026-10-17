@@ -13358,23 +13358,31 @@
     return { items, subtotal, discount: applied, deliveryFee: fee, total: Math.round((subtotal - applied + fee) * 100) / 100, totalCapsules };
   }
 
+  /**
+   * ACCIONES DEL CHAT: cajón (drawer) que entra desde la DERECHA.
+   *
+   * Es cuadrado y ocupa todo el alto (variante `chat-actions`), con animación de
+   * entrada. Las filas van SIN párrafos explicativos: el nombre de la acción ya
+   * dice qué hace y así la lista se lee de un vistazo.
+   *
+   * Orden por lo que se HACE:
+   *   1. Crear pedido (la acción principal, destacada).
+   *   2. Mensajes: respuesta rápida, plantilla, ubicación, confirmación.
+   *   3. Seguimiento: un SUBMENÚ con sus dos opciones (antes eran dos filas más).
+   *   4. Cliente: ficha, etapa, etiquetas.
+   *   5. Conversación: finalizar y asignación.
+   *
+   * «Buscar en esta conversación» NO va aquí: la lupa ya está en la cabecera del
+   * chat y tenerla dos veces era ruido.
+   */
   function openChatActions(customerId, conversationId) {
     const customer = customerById(customerId);
     if (!customer) return;
-    const conversation =
+    const clave = `${escapeHtml(customer.id)}|${escapeHtml(conversationId ?? '')}`;
+    const conversacion =
       state.wa.chat?.conversation?.id === conversationId
         ? state.wa.chat.conversation
         : state.conversations.find((row) => row.id === conversationId) ?? null;
-    /*
-     * MENÚ DEL CHAT, ordenado por lo que se HACE (no por cómo está hecho el CRM):
-     *
-     *   1. La acción principal va PRIMERO y destacada: crear el pedido.
-     *   2. Mensajes: escribir, plantilla, ubicación, confirmación.
-     *   3. Seguimiento: la tarea o el aviso que manda el sistema.
-     *   4. Cliente: ficha, etapa, etiquetas.
-     *   5. La CONVERSACIÓN en un SUBMENÚ (asignar, tomar, liberar, transferir):
-     *      antes esos cinco botones vivían aquí dentro y tapaban lo importante.
-     */
     openSheet(
       customerName(customer),
       `
@@ -13383,53 +13391,40 @@
           conversationId ?? '',
         )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
-          <span><strong>Crear pedido</strong><small>Con lo que ya hablaron, listo para confirmar</small></span>
+          <span><strong>Crear pedido</strong></span>
         </button>
 
         <p class="menu-list__label">Mensajes</p>
-        <button class="menu-item" data-wa-thread-search type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.search}</span>
-          <span><strong>Buscar en esta conversación</strong></span>
-        </button>
         <button class="menu-item" data-quick-replies="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Respuesta rápida</strong></span>
         </button>
         <button class="menu-item" data-wa-template="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
-          <span><strong>Enviar plantilla</strong><small>Elige entre las aprobadas</small></span>
+          <span><strong>Enviar plantilla</strong></span>
         </button>
         <button class="menu-item" data-wa-ask-location="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.pin}</span>
-          <span><strong>Pedir / confirmar ubicación</strong><small>Le enviamos la que tenemos o se la pedimos</small></span>
+          <span><strong>Pedir / confirmar ubicación</strong></span>
         </button>
         <button class="menu-item" data-wa-confirm-order="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.check}</span>
-          <span><strong>Pedir confirmación</strong><small>Le manda su pedido real, para que lo revise</small></span>
+          <span><strong>Pedir confirmación</strong></span>
         </button>
 
-        <p class="menu-list__label">Seguimiento</p>
-        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
+        <button class="menu-item menu-item--submenu" data-chat-followup-menu="${clave}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
-          <span><strong>Programar seguimiento</strong><small>Tarea para una persona</small></span>
-        </button>
-        <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
-          <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
+          <span><strong>Seguimiento</strong></span>
         </button>
 
         <p class="menu-list__label">Cliente</p>
         <button class="menu-item" data-customer="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-          <span><strong>Ver cliente</strong><small>Ficha 360: compras, chat y seguimiento</small></span>
+          <span><strong>Ver cliente</strong></span>
         </button>
         <button class="menu-item" data-customer-stage-menu="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-          <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(customer)))}</small></span>
+          <span><strong>Etapa del cliente</strong></span>
         </button>
         <button class="menu-item" data-customer-tags="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
@@ -13437,16 +13432,44 @@
         </button>
 
         <p class="menu-list__label">Conversación</p>
-        ${conversationResolutionButton(conversationId, (state.conversations ?? []).find((row) => row.id === conversationId)?.is_resolved ?? Boolean(state.wa.chat?.conversation?.resolved_at))}
+        ${conversationResolutionButton(
+          conversationId,
+          (state.conversations ?? []).find((row) => row.id === conversationId)?.is_resolved ??
+            Boolean(state.wa.chat?.conversation?.resolved_at),
+        )}
         <button class="menu-item" data-chat-assign-menu="${escapeHtml(conversationId ?? '')}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
-          <span><strong>Asignación</strong><small>${escapeHtml(
-            conversationAssignmentLabel(conversation),
-          )} · tomar, liberar o pasar</small></span>
+          <span><strong>Asignación</strong></span>
         </button>
       </div>
     `,
-      { variant: 'menu' },
+      { variant: 'chat-actions' },
+    );
+  }
+
+  /** SUBMENÚ «Seguimiento» del cajón: la tarea o el mensaje programado. */
+  function openChatFollowupMenu(customerId, conversationId) {
+    const customer = customerById(customerId);
+    if (!customer) return;
+    const clave = `${escapeHtml(customer.id)}|${escapeHtml(conversationId ?? '')}`;
+    openSheet(
+      'Seguimiento',
+      `<button class="menu-back" data-chat-actions-back="${clave}" type="button">${ICONS.back}<span>Volver a las acciones</span></button>
+      <div class="menu-list">
+        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
+          <span><strong>Programar seguimiento</strong></span>
+        </button>
+        <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
+          <span><strong>Programar mensaje</strong></span>
+        </button>
+      </div>`,
+      { variant: 'chat-actions' },
     );
   }
 
@@ -13461,7 +13484,7 @@
   function conversationResolutionButton(id, resolved = false) {
     return `<button class="menu-item" data-conversation-resolution="${escapeHtml(id ?? '')}" data-resolved="${resolved ? 'false' : 'true'}" type="button">
       <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
-      <span><strong>${resolved ? 'Reabrir conversación' : 'Marcar como finalizado'}</strong><small>${resolved ? 'Vuelve a pendientes de respuesta' : 'Sale de la bandeja y queda archivada'}</small></span>
+      <span><strong>${resolved ? 'Reabrir conversación' : 'Marcar como finalizado'}</strong></span>
     </button>`;
   }
 
@@ -20680,6 +20703,19 @@
       if (conversationDetails) {
         cerrarPanelSeleccionWa();
         openConversationDetailsMenu(conversationDetails.dataset.convClientMenu || conversationDetails.dataset.convFollowupMenu, Boolean(conversationDetails.dataset.convFollowupMenu));
+        return;
+      }
+      /* Submenú «Seguimiento» del cajón del chat, y su «volver». */
+      const chatFollowupMenu = event.target.closest('[data-chat-followup-menu]');
+      if (chatFollowupMenu) {
+        const [customerId, conversationId] = String(chatFollowupMenu.dataset.chatFollowupMenu ?? '').split('|');
+        openChatFollowupMenu(customerId, conversationId ?? '');
+        return;
+      }
+      const chatActionsBack = event.target.closest('[data-chat-actions-back]');
+      if (chatActionsBack) {
+        const [customerId, conversationId] = String(chatActionsBack.dataset.chatActionsBack ?? '').split('|');
+        openChatActions(customerId, conversationId ?? '');
         return;
       }
       const conversationMenuBack = event.target.closest('[data-conv-menu-back]');

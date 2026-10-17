@@ -23,6 +23,8 @@ const read = (name) => readFileSync(path.join(adminDir, name), 'utf8').replaceAl
 const html = read('index.html');
 const app = read('app.js');
 const css = read('admin.css');
+/** La piel de los chats vive en su propia hoja, cargada al final. */
+const cssWaLista = read('wa-lista.css');
 
 /** El trozo de HTML de la vista de WhatsApp (donde no debe quedar ruido). */
 const waHtml = html.slice(html.indexOf('id="view-whatsapp"'), html.indexOf('<!-- CLIENTES -->'));
@@ -325,17 +327,31 @@ describe('compositor y acciones del cliente', () => {
     expect(head).not.toContain('id="wa-actions"');
   });
 
-  it('el menú de acciones lleva las cuatro acciones, con cliente ya elegido', () => {
-    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatActions') + 5200);
-    for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente']) {
+  it('el cajón de acciones lleva las acciones, con cliente ya elegido', () => {
+    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatFollowupMenu'));
+    for (const accion of ['Crear pedido', 'Respuesta rápida', 'Enviar plantilla', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
+    // «Seguimiento» es un SUBMENÚ con sus dos opciones (antes eran dos filas más).
+    expect(menu).toContain('data-chat-followup-menu');
+    const submenu = app.slice(app.indexOf('function openChatFollowupMenu'), app.indexOf('function openChatFollowupMenu') + 2200);
+    expect(submenu).toContain('Programar seguimiento');
+    expect(submenu).toContain('Programar mensaje');
     // Cada acción viaja con el cliente y la conversación de los que viene.
     expect(menu).toContain('data-order-new="${escapeHtml(customer.id)}"');
     expect(menu).toContain('data-conversation="${escapeHtml(');
-    // Sin párrafos explicativos: solo la que envía sola avisa de que envía sola.
+    // Sin párrafos explicativos: ninguna fila lleva subtítulo.
+    expect(menu).not.toContain('<small>');
     expect(menu).not.toContain('Acciones de venta con este cliente');
-    expect(menu).toContain('Lo envía el sistema');
+    // La lupa ya está en la cabecera del chat: aquí no se repite.
+    expect(menu).not.toContain('Buscar en esta conversación');
+    // Sale como cajón por la derecha (cuadrado y a todo el alto), no como hoja.
+    expect(menu).toContain("variant: 'chat-actions'");
+    expect(cssWaLista).toContain("#sheet[data-variant='chat-actions'] .sheet__panel");
+    expect(cssWaLista).toContain('@keyframes wa-chat-drawer-in');
+    expect(cssWaLista).toContain('border-radius: 0;');
+    // A todo el alto de verdad: sin el recorte de 12 px de `menus-safe-area.css`.
+    expect(cssWaLista).toContain('max-height: none;');
   });
 
   it('los menús son popover en escritorio y hoja en el móvil', () => {

@@ -69,6 +69,22 @@ el resto del panel no cambia.
 Comprobado en navegador a 430×900, 360×640, 320×568, 1280×800 y en tema oscuro: filas de 72 px, sin
 desbordes horizontales, y abrir conversación, volver y la pulsación larga (selección) siguen igual.
 
+### Acciones del chat: cajón por la derecha (2026-10-17)
+
+El botón «Acciones» del chat ya no abre una hoja que sube desde abajo: entra un **cajón por la derecha**,
+**cuadrado** y a **todo el alto** de la pantalla (`variant: 'chat-actions'` en `openSheet`, estilos en
+`wa-lista.css`), con animación `wa-chat-drawer-in` y respeto a `prefers-reduced-motion`. El ancho es
+`min(86%, 330px)`.
+
+- **Sin ruido**: ninguna fila lleva subtítulo; el nombre de la acción ya dice qué hace. «Buscar en esta
+  conversación» se quitó del menú porque la lupa está en la cabecera del chat.
+- **Seguimiento es un submenú**: una sola fila «Seguimiento ›» abre «Programar seguimiento» y «Programar
+  mensaje» (`openChatFollowupMenu()`), con «Volver a las acciones».
+- Orden: Crear pedido (destacado) · Mensajes (respuesta rápida, plantilla, ubicación, confirmación) ·
+  Seguimiento · Cliente (ficha, etapa, etiquetas) · Conversación (finalizar, asignación).
+- El cajón lleva el `id` de la hoja en el selector CSS: `menus-safe-area.css` recorta todas las hojas con
+  `max-height: calc(100dvh - … - 12px)` y, sin el `#sheet`, el cajón quedaba 12 px corto.
+
 ### Foto del cliente (por qué a veces se ven iniciales)
 
 La fila usa la foto del cliente **si la tiene guardada** (`photo_url`); si no, pinta sus iniciales sobre

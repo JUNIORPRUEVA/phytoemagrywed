@@ -133,6 +133,8 @@ async function abrirProgramar(slot) {
   click(`[data-conv="${ids[slot]}"]`);
   await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
   click('#wa-actions');
+  // «Seguimiento» es un submenú: dentro están la tarea y el mensaje programado.
+  click(await waitFor(() => $('[data-chat-followup-menu]'), 'el submenú de seguimiento'));
   click(await waitFor(() => $('[data-scheduled-new]'), 'la acción de programar mensaje'));
   await waitFor(() => $('#sch-save'), 'la pantalla de programar mensaje');
   await waitFor(() => $('#sch-save')?.dataset?.schLoading === '0', 'la propuesta preparada');

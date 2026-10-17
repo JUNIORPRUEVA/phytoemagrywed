@@ -305,9 +305,14 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     const menu = $('#sheet-body').innerHTML;
-    for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente']) {
+    for (const accion of ['Crear pedido', 'Respuesta rápida', 'Enviar plantilla', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
+    // «Seguimiento» entra como SUBMENÚ: sus dos opciones viven dentro.
+    expect(menu).toContain('data-chat-followup-menu');
+    // Sin ruido: ni subtítulos por fila ni la búsqueda repetida del encabezado.
+    expect(menu).not.toContain('<small>');
+    expect(menu).not.toContain('Buscar en esta conversación');
   });
 
   it('crea el pedido desde Facturación con el cliente del chat y los descuentos exactos', async () => {
@@ -352,6 +357,8 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     click(await waitFor(() => $$('[data-conv]')[0], 'la conversación para programar'));
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
+    // «Seguimiento» es un submenú del cajón: ahí viven las dos acciones.
+    click(await waitFor(() => $('[data-chat-followup-menu]'), 'el submenú de seguimiento'));
     click('[data-scheduled-new]');
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
     // La pantalla propone una plantilla de seguimiento; aquí se prueba el TEXTO LIBRE.
