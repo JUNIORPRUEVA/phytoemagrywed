@@ -108,3 +108,8 @@ body[data-tab='whatsapp'] :is(#wa-mic,#wa-send):focus-visible { outline: 2px sol
     padding-right: calc(8px + env(safe-area-inset-right,0px));
   }
 }
+
+/* Imágenes reales para que los controles no dependan de máscaras del navegador. */
+body[data-tab='whatsapp'] .wa-header-image { display: block; width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; pointer-events: none; }
+:root[data-theme='dark'] .wa-header-image { filter: invert(1); }
+body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) > :is(#wa-thread-search-open,#wa-calling-button) { display: none; }

@@ -64,7 +64,7 @@
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=2" />
     <link rel="stylesheet" href="/admin/fulltech.css?v=2" />
-    <link rel="stylesheet" href="/admin/navigation.css?v=chat-back-112" />
+    <link rel="stylesheet" href="/admin/navigation.css?v=header-actions-113" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=2" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=7" />
   </head>
@@ -334,9 +334,11 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
-                <button class="wa__head-icon" id="wa-calling-button" type="button" aria-label="Llamar por WhatsApp" title="Llamar por WhatsApp" hidden disabled>☎</button>
                 <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación" title="Buscar en esta conversación">
-                  <span class="wa-header-glyph wa-header-glyph--search" aria-hidden="true"></span>
+                  <img class="wa-header-image" src="/admin/assets/icons/chat-search.png" alt="" aria-hidden="true" width="22" height="22" />
+                </button>
+                <button class="wa__head-icon" id="wa-calling-button" type="button" aria-label="Llamar por WhatsApp" title="Llamar por WhatsApp" disabled>
+                  <img class="wa-header-image" src="/admin/assets/icons/chat-call.png" alt="" aria-hidden="true" width="22" height="22" />
                 </button>
                 <div class="wa__thread-search" id="wa-thread-searchbar" hidden>
                   <button class="wa__head-icon" id="wa-thread-search-close" type="button" aria-label="Cerrar búsqueda">
@@ -865,7 +867,7 @@
     <script src="/admin/proofreading.js?v=7" defer></script>
     <script src="/admin/deepseek-settings.js?v=2" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=2" defer></script>
-    <script src="/admin/calling.js?v=1" defer></script>
+    <script src="/admin/calling.js?v=header-actions-113" defer></script>
     <script src="/admin/store.js?v=8" defer></script>
     <script src="/admin/pos.js?v=7" type="module"></script>
   </body>

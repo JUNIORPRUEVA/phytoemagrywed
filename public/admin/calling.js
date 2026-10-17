@@ -19,7 +19,7 @@
   };
   let context = null, current = null, pc = null, stream = null, audio = null;
   let config = null, busy = false, muted = false, polling = false, lastHeartbeat = 0, applying = false;
-  let incoming = [], selectedConversation = null;
+  let incoming = [], selectedConversation = null, callingEnabled = null;
   let audioGeneration = 0;
   const button = document.getElementById('wa-calling-button');
   const dialog = document.getElementById('wa-calling-dialog');
@@ -53,7 +53,7 @@
     pc = null; stream = null; audio = null; muted = false;
   }
   function resetSession() {
-    cleanup(); current = null; context = null; incoming = []; selectedConversation = null; config = null;
+    cleanup(); current = null; context = null; incoming = []; selectedConversation = null; config = null; callingEnabled = null;
     button.hidden = true; dialog.close(); render();
     $('wa-calling-history').replaceChildren(); note('');
   }
@@ -66,7 +66,9 @@
     $('wa-calling-mute').setAttribute('aria-pressed', String(muted));
     $('wa-calling-connect').disabled = busy || Boolean(live) || !selectedConversation;
     $('wa-calling-permission').disabled = busy || Boolean(live) || !selectedConversation;
-    button.disabled = !context || busy;
+    button.hidden = !context;
+    button.disabled = !context || busy || callingEnabled !== true;
+    button.title = callingEnabled === true ? 'Llamar por WhatsApp' : callingEnabled === false ? 'Las llamadas no están disponibles en este momento' : 'Comprobando disponibilidad de llamadas…';
     dock.hidden = !live && !incoming.length;
     dock.textContent = live ? labels[current.status] || 'Llamada de WhatsApp' : `Llamada entrante de ${incoming[0]?.customerName || 'cliente'}`;
     const list = $('wa-calling-incoming');
@@ -217,7 +219,7 @@
     try {
       const data = await request('/api/admin/calling/incoming');
       config ??= await request('/api/admin/calling/config');
-      button.hidden = !data.enabled;
+      callingEnabled = data.enabled === true;
       incoming = data.calls ?? [];
       if (current && !finalStates.has(current.status)) {
         const call = current;
