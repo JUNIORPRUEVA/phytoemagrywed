@@ -49,7 +49,7 @@ export function validateLocationUpdate(input = {}, options = {}) {
   if (Number.isNaN(date.getTime())) return { ok: false, code: 'invalid_timestamp', message: 'Timestamp inválido.' };
   const skew = date.getTime() - now.getTime();
   if (skew > 2 * 60_000) return { ok: false, code: 'timestamp_in_future', message: 'La ubicación viene del futuro.' };
-  if (now.getTime() - date.getTime() > 15 * 60_000) {
+  if (now.getTime() - date.getTime() > (options.maxAgeMs ?? 15 * 60_000)) {
     return { ok: false, code: 'stale_timestamp', message: 'La ubicación es demasiado vieja.' };
   }
 

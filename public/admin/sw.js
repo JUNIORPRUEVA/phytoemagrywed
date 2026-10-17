@@ -3,11 +3,12 @@
  *
  *  - El armazón de la app (HTML, CSS, JS, iconos) se guarda en caché: el panel
  *    abre al instante y sigue abriendo sin conexión.
- *  - Los datos (/api/…) NUNCA se cachean: el negocio necesita ver el último
- *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
+ *  - Los datos privados viven en IndexedDB, separados por cuenta y con acceso
+ *    local limitado a 24 horas. La red tiene prioridad cuando está disponible.
  */
 
-const VERSION = 'crm-v107-pwa-dark-shell';
+if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
+const VERSION = 'crm-v108-offline-24h';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -30,6 +31,11 @@ const SHELL = [
   '/admin/vendor/proofreading/es-DO.dic',
   '/admin/shell-v2-tema.css',
   '/admin/app.js',
+  '/admin/offline-storage.js',
+  '/admin/offline.js',
+  '/admin/offline-report.js',
+  '/admin/offline-ui.js',
+  '/admin/offline.css',
   '/admin/calling.js',
   '/admin/store.js',
   '/admin/store.css',
@@ -64,13 +70,15 @@ self.addEventListener('install', (event) => {
          * falte (un icono, un sonido) deja el armazón ENTERO sin guardar y el
          * panel no abre sin conexión. Así, lo que se pueda guardar se guarda.
          */
+        const missing=[];
         for (const url of SHELL) {
           try {
             await cache.add(url);
           } catch {
-            /* ese archivo no está: el resto del armazón sigue valiendo */
+            missing.push(url);
           }
         }
+        await globalThis.FulltechOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing});
       })
       .then(() => self.skipWaiting())
       .catch(() => self.skipWaiting()),
@@ -185,17 +193,29 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.origin !== self.location.origin) return;
 
-  // Datos: siempre a la red (y si falla, la app usa su copia local).
+  // Datos privados: red primero; copia particionada por cuenta y con acceso de 24 h.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(request).catch(
-        () =>
-          new Response(JSON.stringify({ ok: false, error: 'offline' }), {
-            status: 503,
-            headers: { 'content-type': 'application/json' },
-          }),
-      ),
-    );
+    event.respondWith((async()=>{
+      async function local(){
+        const store=globalThis.FulltechOfflineStore;if(!store)return null;
+        const identity=await store.get('identity');
+        if(!identity||Date.now()-identity.verifiedAt>86400000)return null;
+        const saved=await store.get('response:'+identity.key+':'+url.href);
+        if(!saved||saved.owner!==identity.key)return null;
+        return new Response(saved.body,{status:saved.status,headers:[...saved.headers,['x-fulltech-offline','1']]});
+      }
+      try{
+        const response=await fetch(request);
+        if(response.status===401){await globalThis.FulltechOfflineStore?.remove('identity');return response;}
+        if([502,503,504].includes(response.status)||url.pathname.startsWith('/api/admin/pos/local/'))return (await local())||response;
+        if(response.status===404&&/\/(receipt|pdf)$/.test(url.pathname)){
+          const store=globalThis.FulltechOfflineStore,identity=await store?.get('identity');
+          const queue=identity?await store.get('queue:'+identity.key)||[]:[];
+          if(queue.some(p=>url.pathname.includes(p.localId)))return (await local())||response;
+        }
+        return response;
+      }catch{return (await local())||new Response(JSON.stringify({ok:false,error:'offline'}),{status:503,headers:{'content-type':'application/json'}});}
+    })());
     return;
   }
 
@@ -212,10 +232,12 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       } catch {
-        const cached = await caches.match(request);
+        const cached = await caches.match(request,{ignoreSearch:true});
         if (cached) return cached;
-        const shell = await caches.match('/admin/index.html');
-        if (shell) return shell;
+        if(request.mode==='navigate'||request.headers?.get?.('accept')?.includes('text/html')){
+          const shell = await caches.match('/admin/index.html');
+          if (shell) return shell;
+        }
         return new Response('Sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
       }
     })(),

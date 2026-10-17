@@ -15,7 +15,6 @@
   const notice=text=>{const box=document.getElementById('store-notice');if(box)box.textContent=text;};
   async function request(path,body,method='POST') {
     const generation=epoch,wasAuthenticated=authenticated;
-    if(body&&!navigator.onLine)throw new Error('Conéctate a internet para guardar productos o movimientos de stock.');
     const r=await fetch(`/api/admin/store/${path}`,{credentials:'same-origin',cache:'no-store',
       method:body?method:'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
     if(r.status===401){if(generation===epoch&&wasAuthenticated)window.dispatchEvent(new Event('fulltech:session-expired'));throw new Error('Tu sesión terminó. Vuelve a entrar.');}

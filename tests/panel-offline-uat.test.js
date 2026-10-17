@@ -20,6 +20,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { IDBFactory } from 'fake-indexeddb';
+import { calculateSale } from '../public/admin/pos-math.js';
+import { offlineReport } from '../public/admin/offline-report.js';
+const indexedDB=new IDBFactory(),panels=[],connections=[];
 
 import { startCrmServer } from '../server/crm-server.mjs';
 
@@ -57,9 +61,14 @@ function montarPanel({ offline = false, snapshot = null, cookie = '' } = {}) {
   }, 30000);
   const win = dom.window;
   const estado = { cookie, offline, peticiones: [] };
+  connections.push(estado);
 
   win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   win.scrollTo = () => {};
+  win.HTMLElement.prototype.scrollIntoView=function(){};
+  win.HTMLDialogElement.prototype.showModal=function(){this.open=true;};win.HTMLDialogElement.prototype.close=function(){this.open=false;};
+  Object.assign(win,{indexedDB,structuredClone,Response,Headers,Request,AbortController,Blob,TextDecoder,calculateSale,offlineReport});
+  win.EventSource=class{addEventListener(){}close(){}};panels.push(win);
   Object.defineProperty(win.navigator, 'onLine', { configurable: true, get: () => !estado.offline });
   win.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, `${app.url}/admin/`).toString();
@@ -67,7 +76,7 @@ function montarPanel({ offline = false, snapshot = null, cookie = '' } = {}) {
       // Sin red: es lo que hace `fetch` de verdad (TypeError), no un 500.
       throw new TypeError('Failed to fetch');
     }
-    const headers = { ...(init.headers ?? {}) };
+    const headers = Object.fromEntries(new Headers(init.headers));
     if (estado.cookie) headers.cookie = estado.cookie;
     const response = await fetch(url, { ...init, headers });
     const setCookie = response.headers.get('set-cookie');
@@ -76,7 +85,11 @@ function montarPanel({ offline = false, snapshot = null, cookie = '' } = {}) {
     return response;
   };
   if (snapshot) win.localStorage.setItem('pe_crm_snapshot', snapshot);
+  win.eval(readFileSync(path.join(ADMIN_DIR,'offline-storage.js'),'utf8'));
+  win.eval(readFileSync(path.join(ADMIN_DIR,'offline.js'),'utf8').replace("await import('./pos-math.js')",'({calculateSale:window.calculateSale})').replace("await import('./offline-report.js')",'({offlineReport:window.offlineReport})'));
   win.eval(APP_JS);
+  win.eval(readFileSync(path.join(ADMIN_DIR,'store.js'),'utf8'));
+  win.eval(readFileSync(path.join(ADMIN_DIR,'pos.js'),'utf8').replace(/^import[^\n]+\n/,''));
   win.document.dispatchEvent(new win.Event('DOMContentLoaded', { bubbles: true }));
 
   const $ = (selector) => win.document.querySelector(selector);
@@ -134,15 +147,16 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  for(const win of panels)win.dispatchEvent(new win.Event('phyto:calling-logout'));
+  await sleep(50);panels.forEach(win=>win.close());
   await app?.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe('el panel trabaja sin conexión y sincroniza al volver', () => {
   it('en línea: entra, carga los datos y deja la copia en el teléfono', async () => {
-    const panel = montarPanel();
-    panel.setValue('#login-token', TOKEN);
-    panel.$('#login-form').dispatchEvent(new panel.win.Event('submit', { bubbles: true, cancelable: true }));
+    await api('/api/admin/inventory/restock',{method:'POST',body:JSON.stringify({quantity:100,unitCost:'10',reason:'Inventario UAT offline'})});
+    const panel = montarPanel({cookie:cookieAdmin});
     await waitFor(() => !panel.$('#app').hidden, 'el panel abierto');
 
     // Un cliente con su conversación (como cuando alguien escribe por WhatsApp).
@@ -203,12 +217,15 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
       }
     }, 'el informe de ventas guardado en la copia');
 
+    await panel.win.FulltechOffline.warm();
     capturado.snapshot = panel.win.localStorage.getItem('pe_crm_snapshot');
     expect(JSON.parse(capturado.snapshot).customers.length).toBeGreaterThan(0);
     expect(JSON.parse(capturado.snapshot).salesReports?.hoy?.report).toBeTruthy();
   }, 30000);
 
   it('sin conexión: abre en frío con la copia, sigue viendo todo y registra un pedido', async () => {
+    // Cortar la red de TODAS las ventanas del dispositivo simulado.
+    for(const connection of connections)connection.offline=true;
     // La MISMA copia que quedó en el teléfono, en una página nueva… y con la
     // sesión que el navegador ya tenía guardada (la cookie no la da la red).
     const { snapshot } = capturado;
@@ -218,7 +235,8 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
     // 1) Abre SIN pedir la clave (no puede: no hay red) y avisa de que está sin conexión.
     await waitFor(() => !panel.$('#app').hidden, 'el panel abierto sin conexión');
     expect(panel.$('#login').hidden).toBe(true);
-    await waitFor(() => panel.$('#offline-banner')?.hidden === false, 'el aviso de «sin conexión»');
+    await waitFor(() => panel.$('#state-pill')?.dataset.online === 'false', 'indicador discreto sin conexión');
+    expect(panel.$('#offline-banner').hidden).toBe(true);
 
     // 2) Clientes y pedidos: los de la copia.
     expect(panel.$('#stats').textContent).toContain('Pedidos pendientes');
@@ -232,31 +250,35 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
     // 3) VERIFICAR UN PEDIDO sin red: se abre su comprobante desde la copia.
     panel.click(pedidos.find((fila) => fila.textContent.includes('Ana Offline')).querySelector('.order-row__status'));
     const hoja = await waitFor(
-      () => (panel.$('#sheet-body')?.textContent ?? '').includes('copia sin conexión') ? panel.$('#sheet-body') : null,
+      () => (panel.$('#sheet-body')?.textContent ?? '').includes('Ana Offline') ? panel.$('#sheet-body') : null,
       'el comprobante desde la copia guardada',
     );
-    expect(hoja.textContent).toMatch(/copia sin conexi\u00f3n/i);
+    expect(hoja.textContent).toContain('Factura');
     expect(hoja.textContent).toMatch(/Ana Offline/);
     panel.click('#sheet button[aria-label="Cerrar"]');
     await waitFor(() => panel.$('#sheet').hidden, 'la hoja cerrada');
 
     // 4) REGISTRAR UN PEDIDO sin conexión: queda en la lista y en la cola de envíos.
     panel.click('#compra-nueva-ped');
-    await waitFor(() => panel.$('#order-lines'), 'el formulario de pedido');
-    panel.setValue('#order-phone', '8095559999');
-    panel.setValue('[data-line-variant="0"]', 'capsules_10');
-    panel.click('[data-line-increase="0"]');
-    const pago = panel.$('#order-payment');
-    if (pago) panel.setValue('#order-payment', pago.options[0].value);
-    panel.click('#order-save');
+    await waitFor(() => panel.$('[data-pos-client]'), 'Facturación');
+    panel.click('[data-pos-client]');
+    panel.setValue('.pos-modal-form [name=name]', 'Pedido Sin Red');
+    panel.setValue('.pos-modal-form [name=phone]', '8095559999');
+    panel.$('.pos-modal-form').dispatchEvent(new panel.win.Event('submit',{bubbles:true,cancelable:true}));
+    await waitFor(()=>panel.$('#pos-client').textContent.includes('Pedido Sin Red'),'cliente local del pedido');
+    panel.click('[data-pos-add="capsules_10"]');panel.click('[data-pos-add="capsules_10"]');
+    panel.click('[data-pos-expand]');panel.click('[data-pos-pending]');
+    await waitFor(()=>panel.$('.pos-dialog').getAttribute('aria-label')==='Guardar pedido','confirmar pedido local');
+    panel.$('.pos-modal-form').dispatchEvent(new panel.win.Event('submit',{bubbles:true,cancelable:true}));
+    try{await waitFor(()=>{const error=panel.$('.pos-modal-error')?.textContent;if(error)throw new Error(error);return panel.$('.pos-dialog').textContent.includes('Guardado en este dispositivo');},'pedido guardado');}catch(error){throw new Error(error.message+' '+JSON.stringify({queue:await panel.win.FulltechOffline.listQueue(),customers:await(await panel.win.fetch('/api/admin/pos/customers')).json()}));}
+    panel.click('[data-pos-close]');panel.click('[data-tab="pedidos"]');
     const nuevo = await waitFor(
       () => panel.$$('#list-pedidos .order-card').find((card) => card.textContent.includes('Sin enviar')) ?? null,
       'el pedido sin conexión en la lista, marcado como «Sin enviar»',
     );
-    expect(nuevo.textContent).toMatch(/OFF-/);
-    expect(panel.outbox().some((row) => row.kind === 'order-create')).toBe(true);
-    expect(panel.$('#outbox-banner').hidden).toBe(false);
-    expect(panel.$('#outbox-banner').textContent).toContain('sin enviar');
+    expect(nuevo.textContent).toMatch(/LOCAL-/);
+    expect((await panel.win.FulltechOffline.listQueue()).some(row=>row.path.endsWith('/checkout'))).toBe(true);
+    expect(panel.$('#toast').hidden).toBe(true);
 
     // 5) FINALIZAR ese pedido sin conexión (todo lo del pedido vive en su «⋯»).
     panel.click(nuevo.querySelector('[data-order-more]'));
@@ -268,7 +290,7 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
       () => panel.$$('#list-pedidos .order-card--entregado').length > 0,
       'el pedido finalizado en pantalla',
     );
-    expect(panel.outbox().some((row) => row.kind === 'order-status')).toBe(true);
+    expect((await panel.win.FulltechOffline.listQueue()).some(row=>row.body.status==='entregado'||row.path.endsWith('/finish'))).toBe(true);
   }, 30000);
 
   it('sin conexión: crear un cliente y archivar un chat también funcionan', async () => {
@@ -286,7 +308,7 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
       () => panel.$$('#list-clientes *').some((nodo) => nodo.textContent?.includes('Cliente Sin Red')) || panel.outbox().some((row) => row.kind === 'customer-start'),
       'el cliente guardado sin conexión',
     );
-    expect(panel.outbox().some((row) => row.kind === 'customer-start')).toBe(true);
+    expect((await panel.win.FulltechOffline.listQueue()).some(row=>row.path==='/api/admin/pos/customers'&&row.body.name==='Cliente Sin Red')).toBe(true);
 
     // Archivar un chat desde la lista (el «⋯» de la fila), sin conexión.
     panel.click(panel.$('[data-tab="whatsapp"]'));
@@ -306,12 +328,15 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
     panel.estado.offline = false;
     panel.win.dispatchEvent(new panel.win.Event('online'));
 
+    await panel.win.FulltechOffline.synchronize();
     await waitFor(() => panel.outbox().length === 0, 'la cola vacía', 12000);
+    const pending=await panel.win.FulltechOffline.listQueue();if(pending.length)throw new Error(JSON.stringify(pending.map(p=>({path:p.path,state:p.state,error:p.error}))));
+    expect(pending).toHaveLength(0);
     await waitFor(() => panel.$('#outbox-banner').hidden, 'el aviso de pendientes fuera');
 
     // Y ahora de verdad, en el CRM: el pedido, su estado y el cliente.
     const datos = await api('/api/admin/data');
-    const pedido = datos.body.items.find((row) => String(row.id).startsWith('off_'));
+    const pedido = datos.body.items.find((row) => String(row.name).includes('Pedido Sin Red'));
     expect(pedido, 'el pedido registrado sin conexión llegó al CRM').toBeTruthy();
     expect(pedido.status).toBe('entregado');
     expect(datos.body.customers.some((row) => String(row.name ?? '').includes('Cliente Sin Red'))).toBe(true);

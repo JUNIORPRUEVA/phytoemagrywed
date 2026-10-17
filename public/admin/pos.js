@@ -17,11 +17,10 @@ actionsDrawer.addEventListener('click',e=>{
   if(e.target===actionsDrawer){const r=actionsDrawer.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right)closeActions();}
   if(e.target.closest('button'))closeActions();
 });
-function persist(){try{if(draftKey)sessionStorage.setItem(draftKey,JSON.stringify({draft,operation}));}catch{}}
+function persist(){try{if(draftKey)localStorage.setItem(draftKey,JSON.stringify({draft,operation}));}catch{}}
 function changed(){operation=null;message='';draft.ticketDirty=true;persist();render();if(draft.ticketId)scheduleTicketSave();}
 async function api(path,body){
   const epoch=generation;
-  if(body&&!navigator.onLine)throw new Error('Conéctate a internet para guardar o cobrar. Tu carrito sigue disponible.');
   const response=await fetch(`/api/admin/pos/${path}`,{credentials:'same-origin',cache:'no-store',method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
   const data=await response.json();
   if(epoch!==generation)throw new Error('La sesión cambió.');
@@ -58,7 +57,7 @@ async function initialize(){
   try{
     const data=await api('customers');if(epoch!==generation)return;
     customers=data.customers;isAdmin=data.isAdmin;canCreate=data.canCreate;loaded=true;draftKey='fulltech.pos.draft.'+data.actorId;
-    try{const saved=JSON.parse(sessionStorage.getItem(draftKey));if(saved?.draft?.items){draft=saved.draft;operation=saved.operation;}}catch{}
+    try{const saved=JSON.parse(localStorage.getItem(draftKey)||sessionStorage.getItem(draftKey));if(saved?.draft?.items){draft=saved.draft;operation=saved.operation;}}catch{}
     if(!products.length){const response=await fetch('/api/admin/store/products',{credentials:'same-origin',cache:'no-store'});const catalog=await response.json();if(epoch!==generation)return;products=catalog.products||[];}
     render();
   }catch(e){if(epoch===generation){message=e.message;render();}}finally{initializing=null;}
@@ -118,7 +117,7 @@ async function complete(mode,paymentMethod,acknowledgeOpen=false){
   busy=true;persist();render();const epoch=generation;
   try{
     const result=await api(mode==='quote'?'quotes':'checkout',operation.payload);if(epoch!==generation)return;
-    const label=mode==='quote'?'Cotización guardada':mode==='order'?'Pedido guardado':'Venta cobrada';
+    const label=result.pending?'Guardado en este dispositivo':mode==='quote'?'Cotización guardada':mode==='order'?'Pedido guardado':'Venta cobrada';
     draft=empty();operation=null;expanded=false;persist();message=label;render();
     if(mode==='quote'){
       modal.close();const id=result.document?.id||result.quoteId;openQuote(id);notifyQuote(id,label);
@@ -349,6 +348,7 @@ document.addEventListener('click',e=>{
 });
 window.addEventListener('fulltech:pos-products',e=>{products=e.detail.products;render();initialize();});
 window.addEventListener('fulltech:pos-render',()=>{updateBadges();});
+window.addEventListener('fulltech:offline-synced',async e=>{const mapping=e.detail.mapping;if(draft.customer&&mapping[draft.customer.id])draft.customer.id=mapping[draft.customer.id];if(mapping[draft.ticketId])draft.ticketId=mapping[draft.ticketId];if(mapping[draft.quoteId])draft.quoteId=mapping[draft.quoteId];loaded=false;await initialize();render();});
 window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones')initialize().then(renderQuotesPage);}});
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;

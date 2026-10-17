@@ -1,3 +1,4 @@
+import { handleOfflineOperation } from './offline-operations.mjs';
 import { FULLTECH_CONTACT_TEMPLATE } from './fulltech-contact-template.mjs';
 /**
  * ============================================================================
@@ -4864,6 +4865,8 @@ async function handle(req, res, ctx) {
       }
     }
 
+    if (await handleOfflineOperation({req,res,route,ctx,actor,json,handle})) return;
+
     if (await handleCallingRoute({ req, res, route, url, ctx, actor, can,
       canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
       readJson: readJsonBody, json })) return;
@@ -5076,7 +5079,7 @@ async function handle(req, res, ctx) {
     // Todo lo que necesita el panel en una sola petición (móvil con mala señal).
     if (route === '/api/admin/data' && req.method === 'GET') {
       const deliveryScope = await deliveryAccessScope(ctx, actor);
-      const rawItems = await store.listAdmin({ limit: 500 });
+      const rawItems = await store.listAdmin({ limit: url.searchParams.get('offline') === '1' ? 5000 : 500 });
       const items = rawItems
         .filter((item) => !deliveryScope.restricted || (item.type === 'order_intent' && deliveryScope.orderIds.has(item.id)))
         .map((item) => sanitizeItemForPermissions(item, actor));
@@ -5378,7 +5381,7 @@ async function handle(req, res, ctx) {
         period,
         from: url.searchParams.get('from') ?? undefined,
         to: url.searchParams.get('to') ?? undefined,
-        limit: 500,
+        limit: url.searchParams.get('offline')==='1'?5000:500,
       });
       json(res, 200, { ok: true, report });
       return;
@@ -6487,7 +6490,9 @@ async function handle(req, res, ctx) {
         } catch {
           body = {};
         }
-        const valid = validateLocationUpdate(body, { now: ctx.clock() });
+        // El diario autenticado puede entregar puntos tomados durante una jornada sin red.
+        // Se conserva su hora real; publicTrackingSession los marca como antiguos.
+        const valid = validateLocationUpdate(body, { now: ctx.clock(), ...(req.fulltechReplay ? {maxAgeMs:24*60*60_000} : {}) });
         if (!valid.ok) {
           json(res, 422, { ok: false, error: valid.code, message: valid.message });
           return;

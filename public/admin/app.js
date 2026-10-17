@@ -785,6 +785,11 @@
 
   let toastTimer = null;
   function toast(message) {
+    if(window.FulltechOffline){
+      if(!/no se|error|falt|elige|escribe|permiso|necesit|inválid|revisa|requiere|confirma|caduc|rechaz|intént|no hay|no puede|activa/i.test(message))return;
+      const host=document.querySelector('dialog[open] .pos-modal-body,dialog[open] form')||(!$('#sheet')?.hidden?$('#sheet-body'):null)||document.querySelector('.view:not([hidden])');
+      if(host){host.querySelector('.inline-feedback')?.remove();const notice=document.createElement('p');notice.className='inline-feedback';notice.setAttribute('role','alert');notice.textContent=message;host.prepend(notice);setTimeout(()=>notice.remove(),8000);return;}
+    }
     const box = $('#toast');
     if (!box) return; // sin documento (página cerrándose) no hay nada que avisar
     box.textContent = message;
@@ -924,6 +929,7 @@
   }
 
   function saveSnapshot() {
+    window.FulltechOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
     try {
       localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload()));
     } catch {
@@ -941,6 +947,7 @@
   }
 
   function readSnapshot() {
+    if(window.FulltechOffline&&!window.FulltechOffline.valid())return null;
     try {
       const raw = localStorage.getItem(SNAPSHOT_KEY);
       return raw ? JSON.parse(raw) : null;
@@ -987,12 +994,12 @@
   }
 
   function writeOutbox(list) {
-    state.outbox = list;
     try {
       localStorage.setItem(OUTBOX_KEY, JSON.stringify(list));
     } catch {
-      /* sin sitio: la cola vive en memoria hasta que se pueda guardar */
+      throw new Error('No hay espacio para guardar el cambio. Libera almacenamiento antes de continuar.');
     }
+    state.outbox = list;
     renderOutboxBanner();
   }
 
@@ -1051,7 +1058,7 @@
   function queueMutation(entry) {
     const key = entry.key ?? `${entry.method} ${entry.path}`;
     const list = readOutbox().filter((row) => (row.key ?? `${row.method} ${row.path}`) !== key);
-    list.push({ ...entry, key, at: Date.now(), tries: 0 });
+    list.push({ ...entry, key, operationId: entry.operationId||crypto.randomUUID(), at: Date.now(), tries: 0 });
     writeOutbox(list);
   }
 
@@ -1080,39 +1087,43 @@
    *     está…): se DESCARTA y se dice por qué. Nada de reintentar en bucle algo
    *     que el servidor va a rechazar siempre.
    */
-  async function flushOutbox({ silent = false } = {}) {
+  let legacyFlushing=null;
+  function flushOutbox(options={}){return legacyFlushing ||= flushOutboxRun(options).finally(()=>{legacyFlushing=null;});}
+  async function flushOutboxRun({ silent = false } = {}) {
     const outbox = readOutbox();
     if (!outbox.length) return { sent: 0, pending: 0, dropped: 0, messages: [] };
     if (!state.online) return { sent: 0, pending: outbox.length, dropped: 0, messages: [] };
     const pendientes = [];
     const descartados = [];
     let enviados = 0;
-    for (const entry of outbox) {
+    for (const [index,entry] of outbox.entries()) {
       try {
         if (entry.kind === 'order-create') {
           // ¿Ya había llegado? (un reintento anterior pudo guardarlo sin respuesta)
           const yaEsta = await api(`/api/admin/orders/${encodeURIComponent(entry.id)}`)
             .then(() => true)
             .catch(() => false);
-          if (!yaEsta) await api(entry.path, { method: entry.method, body: JSON.stringify(entry.body) });
+          if (!yaEsta) await api(entry.path, { method: entry.method, headers:{'x-fulltech-legacy-outbox':'1','x-fulltech-operation':entry.operationId||entry.id}, body: JSON.stringify(entry.body) });
         } else {
           await api(entry.path, {
             method: entry.method,
+            headers:{'x-fulltech-legacy-outbox':'1',...(entry.operationId?{'x-fulltech-operation':entry.operationId}:{})},
             body: entry.body ? JSON.stringify(entry.body) : undefined,
           });
         }
         enviados += 1;
       } catch (error) {
         if (error.message === 'unauthorized' || error.offline === true) {
-          pendientes.push(entry);
-          continue;
+          pendientes.push(...outbox.slice(index));
+          break;
         }
         descartados.push({ ...entry, motivo: error.body?.message ?? 'El CRM lo rechazó' });
       }
     }
-    writeOutbox(pendientes);
+    const oldKeys=new Set(outbox.map(e=>e.operationId||String(e.at)+e.key));
+    const added=readOutbox().filter(e=>!oldKeys.has(e.operationId||String(e.at)+e.key));
+    writeOutbox([...pendientes,...added]);
     if (descartados.length) addOutboxProblems(descartados);
-    console.log('[debug] flush', JSON.stringify({ enviados, descartados: descartados.length, pendientes: pendientes.length, kinds: outbox.map((r) => r.kind) }));
     const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, messages: descartados.map((row) => row.motivo) };
     if (!silent) {
       if (enviados && !descartados.length) toast(`${enviados} cambio(s) enviados`);
@@ -1130,14 +1141,17 @@
    * hoja, avisar…). Nunca finge: si el servidor RECHAZA el dato (4xx), lo dice.
    */
   async function guardar({ path, method = 'POST', body = null, kind = '', key = '', id = '', label = '', aplicar = null }) {
+    const operationId=crypto.randomUUID();
     try {
-      const data = await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+      const data = await api(path, { method, headers:{'x-fulltech-legacy-outbox':'1','x-fulltech-operation':operationId}, body: body ? JSON.stringify(body) : undefined });
+      if(data.offline){if(typeof aplicar==='function')aplicar();return {ok:true,offline:true,data};}
       return { ok: true, offline: false, data };
     } catch (error) {
       if (error.message === 'unauthorized') return { ok: false, offline: false, message: '' };
       if (error.offline !== true) {
         return { ok: false, offline: false, message: error.body?.message ?? 'No se pudo guardar' };
       }
+      queueMutation({ kind, key: key || `${method} ${path}`, id, label: label || kind, method, path, body, operationId });
       if (typeof aplicar === 'function') {
         try {
           aplicar();
@@ -1145,10 +1159,11 @@
           /* si el cambio local falla, igual queda en la cola para el servidor */
         }
       }
-      queueMutation({ kind, key: key || `${method} ${path}`, id, label: label || kind, method, path, body });
       return { ok: true, offline: true };
     }
   }
+
+  window.FulltechLegacyOffline={synchronize:()=>flushOutbox({silent:true})};
 
   /** Etiqueta legible de lo que está esperando (para el aviso de la pantalla). */
   function outboxSummary() {
@@ -9473,6 +9488,12 @@
          * texto de WhatsApp no viaja en esa llamada: se escribe al abrir la
          * conversación, y eso sí necesita red.
          */
+        if (!navigator.onLine && window.FulltechOffline) {
+          const data = await api('/api/admin/pos/customers', {method:'POST',body:JSON.stringify({phone,name})});
+          aplicarClienteLocal(data.customer.id, phone, name);
+          closeSheet();render();
+          return;
+        }
         const clienteLocal = idLocal('loc');
         const resultado = await guardar({
           path: '/api/admin/conversations/start',
@@ -18179,7 +18200,7 @@
       '<span class="presence__dot" aria-hidden="true"></span>' +
       `<span class="presence__label">${online ? 'En línea' : 'Sin conexión'}</span>`;
     pill.setAttribute('aria-label', online ? 'Sistema en línea' : 'Sin conexión');
-    $('#offline-banner').hidden = online;
+    $('#offline-banner').hidden = true;
     renderMobileHeader();
     if (online) {
       // Volvió la red: primero lo que se hizo sin ella, después los datos frescos.
@@ -20817,14 +20838,16 @@
      * (clientes, pedidos, catálogo, ajustes y el rol de quien entró) y se puede
      * trabajar entero. Al volver la red, todo se manda solo.
      */
+    if(window.FulltechOffline)await window.FulltechOffline.ready;
     const cached = readSnapshot();
     if (!navigator.onLine && cached) {
       aplicarCopiaLocal(cached);
       showApp();
       render();
+      if(window.FulltechOffline)await load({keepTab:true});
       await applyDeepLink(query);
       renderOutboxBanner();
-      toast('Sin conexión: trabajando con los datos guardados en el teléfono');
+
       return;
     }
 
