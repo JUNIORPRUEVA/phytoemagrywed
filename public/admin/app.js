@@ -9208,6 +9208,11 @@
    * Las acciones van en una LISTA desplegada (icono grande + texto), no en una
    * fila de iconos diminutos: así se ve de un vistazo qué se puede hacer
    * (archivar, marcar leídas, eliminar…) y se acierta con el dedo.
+   *
+   * CON UNA SOLA CONVERSACIÓN elegida el panel trae TODO lo de esa conversación
+   * (abrir, crear pedido, cliente, foto, seguimiento, asignación, finalizar,
+   * archivar, eliminar…) directamente aquí: antes esto eran dos pantallas y la
+   * segunda repetía lo que ya estaba en la lista.
    */
   function waSelectionDrawer() {
     const count = state.wa.selected.size;
@@ -9221,42 +9226,106 @@
         <span class="wa-bulk__icon" aria-hidden="true">${icono}</span>
         <span class="wa-bulk__texto"><strong>${titulo}</strong>${detalle ? `<small>${detalle}</small>` : ''}</span>
       </button>`;
+    const grupo = (titulo, items) => {
+      const filas = items.filter(Boolean).join('');
+      return filas ? `<p class="wa-actions__label">${titulo}</p>${filas}` : '';
+    };
+    /* La conversación elegida, para poder ofrecer sus acciones de verdad. */
+    const unica = count === 1 ? [...state.wa.selected][0] : '';
+    const fila = unica ? state.conversations.find((candidate) => candidate.id === unica) ?? null : null;
+    const clienteId = fila?.customer_id ?? '';
+    const claveCliente = clienteId ? escapeHtml(clienteId) : '';
+    const cliente = clienteId ? customerById(clienteId) : null;
+    const archivada = Boolean(fila?.archived_at);
+    const sinLeer = Number(fila?.unread_count) > 0;
+    const id = unica ? escapeHtml(unica) : '';
+    const seleccionarTodas = accion(
+      'data-wa-sel-all="1"',
+      ICONS.users,
+      todas ? 'Quitar la selección' : 'Seleccionar todas',
+      todas ? `Hay ${count} seleccionada${count === 1 ? '' : 's'}` : `${visibles} a la vista`,
+    );
+    /* Lista completa de UNA conversación (lo mismo que el menú de la fila). */
+    const deUna = fila
+      ? [
+          grupo('Acciones principales', [
+            accion(`data-conv-act="open" data-conv-id="${id}"`, ICONS.chat, 'Abrir conversación', 'Leer y escribir en el chat'),
+            clienteId
+              ? accion(`data-order-new="${claveCliente}" data-conversation="${id}"`, ICONS.bag, 'Crear pedido', 'Para este cliente')
+              : '',
+          ]),
+          grupo('Gestión', [
+            clienteId
+              ? accion(`data-conv-client-menu="${id}"`, ICONS.person, 'Cliente', 'Ficha, etapa y etiquetas')
+              : '',
+            clienteId
+              ? accion(
+                  `data-customer="${claveCliente}"`,
+                  ICONS.image,
+                  customerPhotoUrl(cliente) ? 'Cambiar foto' : 'Poner foto',
+                  'Se ve en la lista y en el chat',
+                )
+              : '',
+            clienteId
+              ? accion(`data-conv-followup-menu="${id}"`, ICONS.clock, 'Seguimiento', 'Tareas y mensajes programados')
+              : '',
+            accion(
+              `data-conv-assign="${id}"`,
+              ICONS.users,
+              'Asignación',
+              escapeHtml(conversationAssignmentLabel(fila)),
+            ),
+          ]),
+          grupo('Organizar conversación', [
+            accion(
+              `data-conversation-resolution="${id}" data-resolved="${fila.is_resolved ? 'false' : 'true'}"`,
+              ICONS.checkCircle,
+              fila.is_resolved ? 'Reabrir conversación' : 'Marcar como finalizado',
+              fila.is_resolved ? 'Vuelve a pendientes de respuesta' : 'Quita Sin responder; podrás seguir escribiendo',
+            ),
+            sinLeer
+              ? accion(`data-conv-act="mark_read" data-conv-id="${id}"`, ICONS.checkCircle, 'Marcar como leída', 'Quita el contador de no leídos')
+              : '',
+            accion(
+              `data-conv-act="${archivada ? 'unarchive' : 'archive'}" data-conv-id="${id}"`,
+              ICONS.box,
+              archivada ? 'Desarchivar' : 'Archivar',
+              archivada ? 'Vuelve a la bandeja' : 'Sale de la bandeja sin borrarse',
+            ),
+            seleccionarTodas,
+          ]),
+          grupo('Eliminar', [
+            accion(`data-conv-act="delete" data-conv-id="${id}"`, ICONS.trash, 'Eliminar chat', 'Requiere confirmación', 'wa-bulk__item--danger'),
+          ]),
+        ].join('')
+      : '';
+    /* Varias conversaciones: sólo lo que se puede hacer en lote. */
+    const enLote = [
+      grupo('Selección', [seleccionarTodas]),
+      grupo('Organizar', [
+        accion('data-wa-bulk="mark_read"', ICONS.checkCircle, 'Marcar como leídas', 'Quita el contador de no leídos'),
+        accion(
+          `data-wa-bulk="${archived ? 'unarchive' : 'archive'}"`,
+          ICONS.box,
+          archived ? 'Desarchivar' : 'Archivar',
+          archived ? 'Vuelven a la bandeja' : 'Salen de la bandeja sin borrarse',
+        ),
+        accion('data-wa-bulk="message_preview"', ICONS.send, 'Mensaje a varios', 'El mismo texto a los elegidos'),
+      ]),
+      grupo('Eliminar', [accion('data-wa-bulk="delete"', ICONS.trash, 'Eliminar chats', 'Requiere confirmación', 'wa-bulk__item--danger')]),
+    ].join('');
     return `<div class="wa-actions" data-open="${abierto ? '1' : '0'}">
       <button class="wa-actions__backdrop" data-wa-actions-close="1" type="button" aria-label="Cerrar las acciones" tabindex="-1"></button>
       <aside class="wa-actions__drawer" role="dialog" aria-label="Acciones de las conversaciones seleccionadas"${abierto ? '' : ' inert'}>
         <header class="wa-actions__head">
           <div>
             <strong class="wa-bulk__count">${count} seleccionada${count === 1 ? '' : 's'}</strong>
-            <small>Elige qué hacer</small>
+            <small>${fila ? escapeHtml(waDisplayName(fila)) : 'Elige qué hacer'}</small>
           </div>
           <button class="wa-actions__x" data-wa-sel-clear="1" type="button" aria-label="Cancelar la selección"><span aria-hidden="true">✕</span></button>
         </header>
         <div class="wa-actions__list" role="menu" aria-label="Qué quieres hacer con las conversaciones">
-          ${
-            count === 1
-              ? accion(
-                  `data-conv-more="${escapeHtml([...state.wa.selected][0])}"`,
-                  ICONS.more ?? ICONS.spark,
-                  'Más acciones de la conversación',
-                  'Pedido, ficha, seguimiento y asignación',
-                )
-              : ''
-          }
-          ${accion(
-            `data-wa-sel-all="1"`,
-            ICONS.users,
-            todas ? 'Quitar la selección' : 'Seleccionar todas',
-            todas ? `Hay ${count} seleccionada${count === 1 ? '' : 's'}` : `${visibles} a la vista`,
-          )}
-          ${accion('data-wa-bulk="mark_read"', ICONS.checkCircle, 'Marcar como leídas', 'Quita el contador de no leídos')}
-          ${accion(
-            `data-wa-bulk="${archived ? 'unarchive' : 'archive'}"`,
-            ICONS.box,
-            archived ? 'Desarchivar' : 'Archivar',
-            archived ? 'Vuelven a la bandeja' : 'Salen de la bandeja sin borrarse',
-          )}
-          ${accion('data-wa-bulk="delete"', ICONS.trash, 'Eliminar chats', 'Requiere confirmación', 'wa-bulk__item--danger')}
-          ${accion('data-wa-bulk="message_preview"', ICONS.send, 'Mensaje a varios', 'El mismo texto a los elegidos')}
+          ${deUna || enLote}
         </div>
       </aside>
       <button class="wa-actions__pill" data-wa-actions-open="1" type="button" aria-label="Abrir las acciones de la selección">
@@ -9298,6 +9367,17 @@
     /* La cabecera y los filtros NO se ocultan: el panel se abre por encima. */
     const box = $('#wa-conversations');
     if (box) box.classList.toggle('wa__convs--sel', seleccionando);
+  }
+
+  /**
+   * Cierra el panel lateral SIN borrar la selección. Se usa cuando la acción
+   * elegida abre una hoja: si no, la hoja saldría encima del panel y se verían
+   * dos listas con lo mismo. La píldora «Acciones» lo vuelve a abrir.
+   */
+  function cerrarPanelSeleccionWa() {
+    if (!state.wa.actionsOpen) return;
+    state.wa.actionsOpen = false;
+    renderWaSelectionUi();
   }
 
   /**
@@ -9389,6 +9469,12 @@
   async function runConvAction(action, conversationId) {
     closeSheet();
     if (action === 'open') {
+      // Venir del panel de selección: se suelta la selección y se abre el chat.
+      if (state.wa.selected.size) {
+        state.wa.selected.clear();
+        state.wa.actionsOpen = false;
+        renderWaList();
+      }
       selectConversation(conversationId);
       return;
     }
@@ -9610,25 +9696,45 @@
   }
 
   function openNewConversationSheet() {
-    openSheet('Nuevo WhatsApp', `
-      <label class="field">
-        <span class="field__label">Teléfono con WhatsApp</span>
-        <input class="field__input" id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" required aria-describedby="wa-start-hint" placeholder="+1 809 555 1234" />
-      </label>
-      <label class="field">
-        <span class="field__label">Escribir mensaje (opcional)</span>
-        <textarea class="field__area" id="wa-start-body" rows="3" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" inputmode="text" enterkeyhint="enter" placeholder="Escribe tu mensaje…"></textarea>
-      </label>
-      <details class="wa-start-optional">
-        <summary>Agregar nombre (opcional)</summary>
+    openSheet(
+      'Nuevo WhatsApp',
+      `<div class="wa-new">
         <label class="field">
-          <span class="field__label">Nombre del cliente (opcional)</span>
-          <input class="field__input" id="wa-start-name" autocomplete="name" maxlength="120" placeholder="Nombre del cliente" />
+          <span class="field__label">Teléfono con WhatsApp</span>
+          <input class="field__input" id="wa-start-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="40" required placeholder="+1 809 555 1234" />
         </label>
-      </details>
-      <p class="rule" id="wa-start-hint">Solo necesitas el teléfono. Si escribes un mensaje, podrás revisarlo antes de enviarlo. Cuando se necesite, usaremos la plantilla de contacto predeterminada.</p>
-      <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir chat</button>
-    `);
+        <button class="wa-new__more" id="wa-start-more" type="button" aria-expanded="false" aria-controls="wa-start-extra">
+          <span>Más opciones</span>
+          <span class="wa-new__chevron" aria-hidden="true">${ICONS.plus}</span>
+        </button>
+        <div class="wa-new__extra" id="wa-start-extra" hidden>
+          <label class="field">
+            <span class="field__label">Nombre (opcional)</span>
+            <input class="field__input" id="wa-start-name" autocomplete="name" maxlength="120" placeholder="Nombre del cliente" />
+          </label>
+          <label class="field">
+            <span class="field__label">Mensaje (opcional)</span>
+            <textarea class="field__area" id="wa-start-body" rows="2" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" inputmode="text" enterkeyhint="enter" placeholder="Escribe tu mensaje…"></textarea>
+          </label>
+        </div>
+        <button class="btn btn--whatsapp btn--block" id="wa-start-open" type="button">Abrir chat</button>
+      </div>`,
+      { variant: 'wa-new' },
+    );
+    const mas = $('#wa-start-more');
+    mas?.addEventListener('click', () => {
+      const abierto = mas.getAttribute('aria-expanded') === 'true';
+      mas.setAttribute('aria-expanded', String(!abierto));
+      mas.classList.toggle('wa-new__more--open', !abierto);
+      const extra = $('#wa-start-extra');
+      if (extra) extra.hidden = abierto;
+      if (!abierto) {
+        // El foco espera al pintado; si no hay `requestAnimationFrame` (jsdom) va directo.
+        const enfocarNombre = () => $('#wa-start-name')?.focus({ preventScroll: true });
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(enfocarNombre);
+        else enfocarNombre();
+      }
+    });
     $('#wa-start-phone')?.focus();
     $('#wa-start-body').addEventListener('input', (event) => {
       $('#wa-start-open').textContent = event.target.value.trim() ? 'Continuar con mensaje' : 'Abrir chat';
@@ -20020,6 +20126,7 @@
       }
       const convAssign = event.target.closest('[data-conv-assign]');
       if (convAssign) {
+        cerrarPanelSeleccionWa();
         openAssignSheet(convAssign.dataset.convAssign || state.wa.selectedId);
         return;
       }
@@ -20060,6 +20167,7 @@
       }
       const orderNew = event.target.closest('[data-order-new]');
       if (orderNew) {
+        cerrarPanelSeleccionWa();
         openOrderForm({
           customerId: orderNew.dataset.orderNew,
           conversationId: orderNew.dataset.conversation ?? '',
@@ -20470,6 +20578,7 @@
       }
       const customer = event.target.closest('[data-customer]');
       if (customer) {
+        cerrarPanelSeleccionWa();
         openCustomer(customer.dataset.customer);
         return;
       }
@@ -20553,6 +20662,7 @@
       }
       const conversationDetails = event.target.closest('[data-conv-client-menu],[data-conv-followup-menu]');
       if (conversationDetails) {
+        cerrarPanelSeleccionWa();
         openConversationDetailsMenu(conversationDetails.dataset.convClientMenu || conversationDetails.dataset.convFollowupMenu, Boolean(conversationDetails.dataset.convFollowupMenu));
         return;
       }

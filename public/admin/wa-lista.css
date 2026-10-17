@@ -728,6 +728,21 @@ body[data-tab='whatsapp'] .wa-actions__list {
   scrollbar-width: thin;
 }
 
+/* Rótulo de cada grupo (Acciones principales, Gestión, Organizar…). */
+body[data-tab='whatsapp'] .wa-actions__label {
+  margin: 10px 0 4px;
+  padding: 0 12px;
+  color: var(--wa-ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+body[data-tab='whatsapp'] .wa-actions__label:first-child {
+  margin-top: 2px;
+}
+
 body[data-tab='whatsapp'] .wa-bulk__item {
   display: flex;
   align-items: center;
@@ -869,3 +884,107 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
   height: 28px;
   stroke-width: 1.9;
 }
+
+/* -------------------------------- hoja «Nuevo WhatsApp» (fina y estrecha) */
+/*
+ * Por defecto SOLO se pide el teléfono. «Más opciones» despliega el nombre y el
+ * mensaje. La tarjeta es estrecha y los campos bajos para que no ocupe media
+ * pantalla y se lea de un vistazo.
+ */
+.sheet[data-variant='wa-new'] .sheet__body {
+  gap: 10px;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 720px) {
+  .sheet[data-variant='wa-new'] .sheet__panel {
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    width: min(400px, calc(100vw - 28px));
+    max-height: min(88dvh, 560px);
+    border-radius: 16px;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 24px 70px rgba(7, 30, 23, 0.28);
+  }
+}
+
+.wa-new {
+  display: grid;
+  gap: 10px;
+}
+
+.wa-new .field {
+  gap: 4px;
+}
+
+.wa-new .field__label {
+  font-size: 0.78rem;
+}
+
+.wa-new .field__input,
+.wa-new .field__area {
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 15px;
+}
+
+.wa-new .field__area {
+  min-height: 66px;
+  resize: none;
+}
+
+/* «Más opciones»: fila fina con un + que gira al desplegar. */
+.wa-new__more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--pe-brand-text, #145bd7);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wa-new__more:hover,
+.wa-new__more:focus-visible {
+  background: rgba(20, 91, 215, 0.07);
+}
+
+.wa-new__chevron {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.wa-new__chevron .svg {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.18s ease;
+}
+
+.wa-new__more--open .wa-new__chevron .svg {
+  transform: rotate(45deg);
+}
+
+.wa-new__extra {
+  display: grid;
+  gap: 10px;
+}
+
+.wa-new__extra[hidden] {
+  display: none;
+}
+
+.wa-new #wa-start-open {
+  min-height: 44px;
+}
+

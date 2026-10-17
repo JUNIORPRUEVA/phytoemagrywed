@@ -43,12 +43,23 @@ el resto del panel no cambia.
   y filtrar.
 - **Selección de conversaciones**: al elegir una fila (pulsación larga o menú «⋯» → Seleccionar varias)
   se despliega un **panel lateral derecho que flota por encima de la lista**, con velo detrás. Lleva
-  icono grande (26 px), nombre y explicación corta por acción: Más acciones de la conversación,
-  Seleccionar todas, Marcar como leídas, Archivar, Eliminar chats y Mensaje a varios. La cabecera (con
-  «WhatsApp») y los filtros **no se ocultan**: el panel se abre encima. El velo cierra el panel **sin
-  borrar la selección** (queda una píldora verde «Acciones N» para reabrirlo); la ✕ cancela la
-  selección.
+  icono grande (26 px), nombre y explicación corta por acción, agrupadas por rótulos en minúscula
+  (Acciones principales, Gestión, Organizar conversación, Eliminar). La cabecera (con «WhatsApp») y los
+  filtros **no se ocultan**: el panel se abre encima. El velo cierra el panel **sin borrar la
+  selección** (queda una píldora verde «Acciones N» para reabrirlo); la ✕ cancela la selección.
+- **Una sola conversación**: el panel trae **todas sus acciones directamente** —Abrir conversación,
+  Crear pedido, Cliente, Poner/Cambiar foto, Seguimiento, Asignación, Marcar como finalizado, Archivar,
+  Seleccionar todas y Eliminar chat— para no abrir otra hoja que repita la misma lista. Si la acción
+  elegida abre una hoja (asignación, pedido, ficha, foto, seguimiento), **el panel se cierra antes** y
+  la selección se mantiene viva tras la píldora. «Abrir conversación» suelta la selección y abre el
+  chat.
+- **Varias conversaciones**: sólo lo que se puede hacer en lote (Seleccionar todas / Quitar la
+  selección, Marcar como leídas, Archivar/Desarchivar, Mensaje a varios y Eliminar chats).
 - **Botón flotante** redondo y verde con el icono de chat, en la esquina.
+- **Hoja «Nuevo WhatsApp»** (`openNewConversationSheet()`, variante `wa-new`): pide **solo el teléfono**;
+  «Más opciones» (con un + que gira a ✕) despliega nombre y mensaje. En móvil es una hoja baja de
+  ~264 px con el botón «Abrir chat» dentro; desde 720 px es una tarjeta centrada de 400 px de ancho.
+  No lleva párrafo de ayuda: la etiqueta del campo ya dice lo que hace falta.
 - En escritorio, la columna lleva título «WhatsApp», buscador en píldora y filtros en una sola fila
   deslizable; el «⋯» de cada fila solo aparece al pasar el ratón o al enfocar.
 

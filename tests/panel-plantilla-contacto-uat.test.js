@@ -259,15 +259,20 @@ describe('la hoja de plantilla del chat directo', () => {
 });
 
 describe('nuevo chat desde Clientes', () => {
-  it('solo exige teléfono, con mensaje opcional y nombre oculto en detalles', () => {
+  it('solo pide el teléfono y deja nombre y mensaje tras «Más opciones»', () => {
     // La hoja anterior puede estar cerrada; abrir Clientes funciona en ambos casos.
     click('[data-tab="clientes"]'); click('#clientes-acciones'); click('[data-new-conversation]');
     expect(dom.window.document.body.dataset.tab).toBe('clientes');
     expect($('#wa-start-phone').required).toBe(true);
-    expect($('#wa-start-body').required).toBe(false);
+    // Lo único que se ve al abrir es el teléfono: nada de nombre ni mensaje.
+    expect($('#wa-start-extra').hidden).toBe(true);
+    expect($('#wa-start-more').getAttribute('aria-expanded')).toBe('false');
     expect($('#wa-start-name').required).toBe(false);
-    expect($('#wa-start-name').closest('details').open).toBe(false);
-    expect($('#wa-start-body').closest('label').textContent).toContain('Escribir mensaje (opcional)');
+    expect($('#wa-start-body').required).toBe(false);
+    expect($('#wa-start-body').closest('label').textContent).toContain('Mensaje (opcional)');
+    click('#wa-start-more');
+    expect($('#wa-start-extra').hidden).toBe(false);
+    expect($('#wa-start-more').getAttribute('aria-expanded')).toBe('true');
     const previous = whatsapp.sent.length;
     setValue('#wa-start-phone', '12'); click('#wa-start-open');
     expect($('#wa-start-phone').value).toBe('12');
@@ -284,6 +289,7 @@ describe('nuevo chat desde Clientes', () => {
 
   it('lleva el mensaje a la plantilla predeterminada y la deja lista para revisar', async () => {
     click('[data-tab="clientes"]'); click('#clientes-acciones'); click('[data-new-conversation]');
+    click('#wa-start-more');
     const previous = whatsapp.sent.length;
     const message = 'Hola, queremos ayudarte con tu consulta.';
     setValue('#wa-start-phone', '18095559073'); setValue('#wa-start-body', message);

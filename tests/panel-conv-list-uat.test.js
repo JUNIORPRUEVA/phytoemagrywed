@@ -491,14 +491,22 @@ describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
     expect($('#wa-sel .wa-actions').dataset.open).toBe('1');
     expect($('#wa-sel .wa-bulk__count').textContent).toContain('1');
     /*
-     * Con una conversación elegida, la lista desplegada trae el menú completo de
-     * la fila (el «⋯» que ya no se pinta en el móvil) y las cinco acciones en
-     * lote. Todos con icono grande.
+     * Con UNA conversación elegida el panel trae TODAS sus acciones, sin abrir
+     * otra hoja que repita lo mismo: abrir, crear pedido, cliente, foto,
+     * seguimiento, asignación, finalizar, archivar y eliminar.
      */
-    const acciones = $$('#wa-sel .wa-bulk__item');
-    expect(acciones.length).toBe(6);
-    expect($$('#wa-sel .wa-bulk__item .wa-bulk__icon svg').length).toBe(6);
-    expect(acciones[0].dataset.convMore).toBe(ids.luis);
+    expect($('#wa-sel [data-conv-more]')).toBeNull();
+    expect($('#wa-sel [data-conv-act="open"]').dataset.convId).toBe(ids.luis);
+    expect($('#wa-sel [data-order-new]')).not.toBeNull();
+    expect($('#wa-sel [data-conv-client-menu]')).not.toBeNull();
+    expect($('#wa-sel [data-customer]')).not.toBeNull();
+    expect($('#wa-sel [data-conv-followup-menu]')).not.toBeNull();
+    expect($('#wa-sel [data-conv-assign]').dataset.convAssign).toBe(ids.luis);
+    expect($('#wa-sel [data-conversation-resolution]')).not.toBeNull();
+    expect($('#wa-sel [data-conv-act="archive"]')).not.toBeNull();
+    expect($('#wa-sel [data-conv-act="delete"]')).not.toBeNull();
+    expect($('#wa-sel .wa-actions__label').textContent).toBeTruthy();
+    expect($$('#wa-sel .wa-bulk__item .wa-bulk__icon svg').length).toBe($$('#wa-sel .wa-bulk__item').length);
     expect($(`[data-conv="${ids.luis}"] .conv__avatar svg`)).not.toBeNull();
   });
 
@@ -534,6 +542,32 @@ describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
     expect($('.wa__list-head').hidden).toBe(false);
     expect($('#wa-filters').hidden).toBe(false);
     expect($('#wa-conversations').classList.contains('wa__convs--sel')).toBe(false);
+  });
+
+  it('«Abrir conversación» desde el panel abre el chat y suelta la selección', async () => {
+    click(`[data-conv-more="${ids.luis}"]`);
+    click('#sheet-body [data-conv-act="select"]');
+    await waitFor(() => $('#wa-sel [data-conv-act="open"]'), 'el panel con la acción de abrir');
+    click('#wa-sel [data-conv-act="open"]');
+    await waitFor(() => $('#wa-chat-pane').hidden === false, 'el chat abierto');
+    // Al abrir el chat la selección se suelta: no queda un panel fantasma.
+    await waitFor(() => $('#wa-sel').hidden === true, 'el panel de selección retirado');
+  });
+
+  it('«Asignación» del panel lo cierra y abre UNA sola hoja', async () => {
+    click(`[data-conv-more="${ids.luis}"]`);
+    click('#sheet-body [data-conv-act="select"]');
+    await waitFor(() => $('#wa-sel [data-conv-assign]'), 'el panel con la asignación');
+    click('#wa-sel [data-conv-assign]');
+    await waitFor(() => $('#sheet').hidden === false, 'la hoja de asignación');
+    expect($('#sheet-title').textContent).toContain('Asignar');
+    // El panel no se queda detrás de la hoja: antes se veían dos listas iguales.
+    expect($('#wa-sel .wa-actions').dataset.open).toBe('0');
+    click('#sheet [data-close-sheet]');
+    // La selección sigue viva y la píldora permite volver a las acciones.
+    await waitFor(() => $('#wa-sel').hidden === false, 'la selección intacta');
+    click('[data-wa-sel-clear]');
+    await waitFor(() => $('#wa-sel').hidden === true, 'selección cancelada');
   });
 });
 
