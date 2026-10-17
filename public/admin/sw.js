@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v120-chat-escritorio';
+const VERSION = 'crm-v121-menu-escritorio';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -47,6 +47,7 @@ const SHELL = [
   '/admin/shell-v2-tema.css',
   '/admin/wa-lista.css',
   '/admin/wa-desktop.css',
+  '/admin/drawer-menu.css',
   '/admin/app.js',
   '/admin/offline-storage.js',
   '/admin/offline.js',

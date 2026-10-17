@@ -78,18 +78,37 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/input,\ntextarea,\nselect,\n\[contenteditable='true'\][\s\S]*?user-select: text;/);
   });
 
-  it('el drawer no repite el navbar y deja el mapa en Ventas', () => {
-    // Lo principal (Hoy, WhatsApp, Pedidos, Clientes) vive abajo; el menú lateral
-    // queda para pantallas secundarias.
-    for (const grupo of ['Ventas', 'Seguimiento', 'Sistema']) {
-      expect(html).toContain(`<p class="drawer__group">${grupo}</p>`);
+  it('el drawer lleva los cuatro destinos del navbar y ordena el resto en desplegables', () => {
+    /*
+     * En escritorio NO hay barra inferior (y en WhatsApp tampoco barra superior):
+     * el menú lateral es la única navegación, así que tiene que llevar los cuatro
+     * destinos de la barra. El resto se ordena en desplegables para que quepa.
+     */
+    for (const destino of ['hoy', 'whatsapp', 'pedidos', 'clientes']) {
+      expect(html).toMatch(new RegExp(`class="drawer__item" data-tab="${destino}"`));
     }
-    expect(html).not.toContain('drawer__group--primary');
-    expect(html).not.toContain('drawer__nav--primary');
-    expect(html).not.toContain('Pedidos y compras');
     const posicion = (texto) => html.indexOf(texto);
-    expect(posicion('>Ventas</p>')).toBeLessThan(posicion('>Seguimiento</p>'));
-    expect(posicion('>Seguimiento</p>')).toBeLessThan(posicion('>Sistema</p>'));
+    // «Principal» va primero: es lo que se usa todo el día.
+    expect(posicion('drawer__section--main')).toBeGreaterThan(-1);
+    expect(posicion('drawer__section--main')).toBeLessThan(posicion('aria-label="Ventas"'));
+    // Cada grupo es un desplegable con su cabecera, en el orden de siempre.
+    for (const grupo of ['Ventas', 'Seguimiento', 'Sistema']) {
+      expect(html).toContain(`<summary class="drawer__group">${grupo}</summary>`);
+    }
+    expect(posicion('>Ventas</summary>')).toBeLessThan(posicion('>Seguimiento</summary>'));
+    expect(posicion('>Seguimiento</summary>')).toBeLessThan(posicion('>Sistema</summary>'));
+    expect(html).not.toContain('Pedidos y compras');
+    // El móvil no cambia: los grupos ya no se pintan y «Principal» se oculta.
+    expect(html).toContain('/admin/drawer-menu.css');
+    const drawerCss = read('drawer-menu.css');
+    expect(drawerCss).toMatch(/@media \(max-width: 979px\)[\s\S]*?\.drawer__section--main \{\n\s+display: none;/);
+    // En escritorio se abre solo el grupo de la pantalla actual; en móvil, todos.
+    expect(app).toContain('function plegarMenuEscritorio');
+    expect(app).toContain("window.matchMedia('(min-width: 980px)').matches");
+    expect(app).toContain('fold.open = !escritorio');
+    // El menú también se abre desde la bandeja de WhatsApp en escritorio.
+    expect(html).toContain('class="wa__menu"');
+    expect(html).toContain('data-open-drawer');
     // El mapa operativo sigue en Ventas, y el repartidor tiene su entrada directa.
     expect(html).toContain('<button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">');
     expect(html).toContain('Mapa y entregas');

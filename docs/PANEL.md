@@ -363,6 +363,26 @@ tocar la lógica de ninguna pantalla.
 - **La marca** se escribe con una serif suave (variable `--pe-brand-font`) y el «CRM» es
   una etiqueta, no un eco del nombre.
 
+#### El menú lateral en escritorio
+
+La piel vive en **`public/admin/drawer-menu.css`** (se carga al final) y el orden lo
+decide `plegarMenuEscritorio()` en `app.js`.
+
+- En escritorio **no hay barra inferior** y, dentro de WhatsApp, tampoco barra superior:
+  el menú lateral es la única navegación. Por eso lleva **«Principal»**, con los cuatro
+  destinos de la barra (Hoy, Chats, Pedidos y Clientes) y **los mismos contadores**
+  (`data-drawer-badge`). En el móvil esa sección se oculta, porque la barra ya está abajo.
+- El resto se ordena en **desplegables**: Ventas, Seguimiento y Sistema. Al abrir el menú
+  se despliega solo el grupo de la pantalla actual (Inventario incluido si estás en
+  Productos, Cotizaciones, Stock o Recuento) y los demás quedan como cabeceras con su
+  flecha. Así todo cabe sin tener que desplazar el menú.
+- La marca, la apariencia y «Cerrar sesión» quedan fijos: solo se desplaza la lista de
+  opciones (`.drawer__body`), con barra fina.
+- En WhatsApp, el botón ☰ de la cabecera de la bandeja (`.wa__menu`) abre el menú; antes
+  en esa pantalla no había ninguna forma de abrirlo con ratón.
+- En el móvil no cambia nada visible: los grupos se abren enteros y las cabeceras se
+  pintan como siempre.
+
 Los colores salen de variables (`--pe-page-bg`, `--pe-appbar-bg`, `--pe-tabbar-bg`,
 `--pe-card-bg`, `--pe-brand-text`…). Si algo se ve mal de noche, se arregla cambiando
 una variable, no escribiendo un color nuevo. Las filas de conversación, los paneles de
