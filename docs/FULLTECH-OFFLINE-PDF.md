@@ -29,3 +29,19 @@ Se renderizó e inspeccionó visualmente un comprobante de prueba. No hubo un
 navegador conectado disponible; falta verificar la actualización en el teléfono.
 
 Referencia del visor: [ejemplos oficiales de PDF.js](https://mozilla.github.io/pdf.js/examples/).
+
+## Despliegue del 17/10/2026
+
+Código `6c71b52` publicado en `main`; imagen activa
+`easypanel/ventas/phytoemagrywed:offline-6c71b52`, contenedor saludable y service
+worker `crm-v116-offline-pdf`. El dominio entrega exactamente los módulos de la
+versión publicada, los módulos `.mjs` con MIME JavaScript y ambas fuentes locales.
+El API responde HTTP 200 con PostgreSQL y siete pedidos existentes.
+
+Antes de activar se validó una venta y su PDF en un contenedor aislado, que se
+eliminó al terminar. No se crearon registros de prueba en producción. Respaldo
+PostgreSQL validado, configuración e imagen anterior conservados en
+`/root/backups/fulltech-offline-pdf-20261017-124619`.
+
+El teléfono debe recibir la actualización y completar la preparación offline
+con internet antes de probar el nuevo visor en modo avión.
