@@ -163,7 +163,7 @@ export async function copyPublic(outDir) {
   for(const file of ['pdf.mjs','pdf.worker.mjs'])await cp(path.join(ROOT,'node_modules','pdfjs-dist','build',file),path.join(pdfDir,file));
   await cp(path.join(ROOT,'node_modules','pdfjs-dist','LICENSE'),path.join(pdfDir,'LICENSE'));
   await mkdir(path.join(pdfDir,'standard_fonts'),{recursive:true});
-  for(const file of ['LiberationSans-Regular.ttf','LiberationSans-Bold.ttf','LICENSE_LIBERATION'])await cp(path.join(ROOT,'node_modules','pdfjs-dist','standard_fonts',file),path.join(pdfDir,'standard_fonts',file));
+  for(const file of ['LiberationSans-Regular.ttf','LiberationSans-Bold.ttf','LiberationSans-Italic.ttf','LICENSE_LIBERATION'])await cp(path.join(ROOT,'node_modules','pdfjs-dist','standard_fonts',file),path.join(pdfDir,'standard_fonts',file));
 }
 
 /** Escribe todas las páginas + robots + sitemap. */

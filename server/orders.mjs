@@ -364,6 +364,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     order_number: order.order_number,
     date: order.created_at,
     customer_name: customer?.name ?? null,
+    notes: order.notes ?? '',
     // Enmascarado SIEMPRE: el comprobante se comparte con el cliente.
     phone_masked: maskPhone(customer?.phone_e164 ?? customer?.phone ?? null),
     items,

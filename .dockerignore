@@ -41,6 +41,7 @@ docs
 *.md
 .playwright-mcp
 .tmp
+output
 lighthouse-*.json
 
 # Editor

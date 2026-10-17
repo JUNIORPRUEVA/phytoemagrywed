@@ -63,7 +63,7 @@
       const key='receiptDocument:'+owner()+':'+localReceipt[1];
       let document=await db.get(key);
       if(!document){const entry=(await listQueue()).find(q=>q.localId===localReceipt[1]&&q.local);if(entry)try{document=JSON.parse(entry.local.body).document;}catch{}}
-      if(document&&!await db.get('receiptPdfReady:'+owner()+':'+document.id))await saveReceipt(document);
+      if(document&&await db.get('receiptPdfReady:'+owner()+':'+document.id)!==2)await saveReceipt(document);
     }
     let saved=await db.get(responseKey(url));
     if(requested.pathname==='/api/admin/reports/sales'&&identity.role==='ADMIN'){
@@ -105,7 +105,7 @@
   async function saveReceipt(document){
     const {receiptPdfBytes}=await import('./receipt-pdf.js');
     const {id,number,customer,sale,kind,created_at,input={}}=document,quote=kind==='quote';
-    const receipt={business:'FullTECH, SRL',document:quote?'Cotización':'Factura de compra',order_number:number,date:created_at,customer_name:customer.name,
+    const receipt={business:'FullTECH, SRL',document:quote?'Cotización':'Factura de compra',order_number:number,date:created_at,customer_name:customer.name,notes:input.notes||'',...(quote?{customer_phone:customer.phone_e164}:{phone_masked:String(customer.phone_e164||'').slice(0,5)+'••• ••'+String(customer.phone_e164||'').slice(-2)}),
       status_label:quote?'Cotización pendiente de sincronizar':kind==='order'?'Pedido pendiente':'Venta cobrada · pendiente de sincronizar',currency:'DOP',
       payment_method_label:kind==='invoice'?(input.paymentMethod==='TRANSFER'?'Transferencia':'Efectivo'):null,
       items:sale.items.map(i=>({label:i.name,quantity:i.quantity,unitPrice:i.unit_price_cents/100,subtotal:i.subtotal_cents/100,line_discount:i.discount_cents/100})),
@@ -118,7 +118,7 @@
     await remember(receiptUrl,new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));
     if(quote){await remember('/api/admin/pos/quotes/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/pos/quotes/'+id+'/pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
     else{await remember('/api/admin/orders/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/orders/'+id+'/receipt.pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
-    await db.put('receiptDocument:'+owner()+':'+id,document);await db.put('receiptPdfReady:'+owner()+':'+id,true);
+    await db.put('receiptDocument:'+owner()+':'+id,document);await db.put('receiptPdfReady:'+owner()+':'+id,2);
     return {receiptUrl:'/admin/receipt-viewer.html?pdf='+encodeURIComponent(pdfUrl),pdfUrl};
   }
   async function consumeStock(lines){

@@ -26,7 +26,7 @@ function inputOf(body,previous={}){
   return {customerId:String(body.customerId||''),conversationId:String(body.conversationId||''),items,discount:body.discount||{},deliveryFee:Number(body.deliveryFee||0),notes:String(body.notes||'').slice(0,2000),address:String(body.address||'').slice(0,240),paymentMethod:body.paymentMethod||'CASH',location:body.location||null};
 }
 export function quotationReceipt(doc){
-  return {business:'Fulltech',document:'Cotización',order_number:doc.number,date:doc.created_at,customer_name:doc.customer.name,
+  return {business:'Fulltech',document:'Cotización',order_number:doc.number,date:doc.created_at,customer_name:doc.customer.name,customer_phone:doc.customer.phone_e164,notes:doc.input?.notes||'',
     status_label:'Cotización',items:doc.sale.items.map(i=>({label:i.name,quantity:i.quantity,unitPrice:i.unit_price_cents/100,subtotal:i.subtotal_cents/100,line_discount:i.discount_cents/100})),
     subtotal:doc.sale.subtotal_cents/100,discount:doc.sale.discount_cents/100,delivery_fee:doc.sale.delivery_cents/100,total:doc.sale.total_cents/100,currency:'DOP',thanks:'Precios y disponibilidad sujetos a confirmación.',note:'Cotización comercial. No acredita pago ni reserva inventario.'};
 }
