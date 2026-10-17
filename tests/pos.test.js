@@ -117,6 +117,11 @@ it('desde el chat real abre Facturación con el cliente y guarda la cotización 
     w.eval(readFileSync('public/admin/app.js','utf8'));w.eval(readFileSync('public/admin/store.js','utf8'));w.eval(readFileSync('public/admin/pos.js','utf8').replace(/^import[^\n]+\n/,''));
     w.document.dispatchEvent(new w.Event('DOMContentLoaded',{bubbles:true}));
     await until(()=>!w.document.querySelector('#app').hidden,'inicio');
+    w.requestAnimationFrame=callback=>callback();
+    w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:true}}));
+    expect(w.document.querySelector('#drawer').hidden).toBe(false);expect(w.document.body.dataset.drawer).toBe('open');
+    w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
+    expect(w.document.body.dataset.drawer).toBeUndefined();
     w.document.querySelector('[data-tab="whatsapp"]').click();await until(()=>w.document.querySelector('[data-conv]'),'conversación');
     w.document.querySelector('[data-conv]').click();await until(()=>w.document.querySelector('#wa-actions')?.disabled===false,'acciones');
     w.document.querySelector('#wa-actions').click();await until(()=>w.document.querySelector('[data-order-new]'),'crear pedido');

@@ -20,8 +20,8 @@ beforeEach(async()=>{
   w.fetch=vi.fn(async(url,options={})=>{requests.push({url,...options});
     let data=url.endsWith('/store/products')?{products,categories:[],movements:[],canManage:admin}:url.endsWith('/pos/customers')?{customers,isAdmin:admin,canCreate:true,actorId:admin?'admin':'agent'}:{orderId:'order1',quoteId:'quote1',receiptUrl:'/api/admin/orders/order1/receipt'};
     if(url.includes('/pos/tickets')){
-      const body=options.body?JSON.parse(options.body):null,id=url.split('/tickets/')[1];
-      if(body){const key=id||'ticket_'+(++ticketCounter),old=tickets.get(key);const ticket={id:key,name:body.name||old?.name||'Ticket '+ticketCounter,version:(old?.version||0)+1,status:'open',draft:{...body.draft,customer:customers.find(c=>c.id===body.draft?.customerId)||null}};tickets.set(key,ticket);data={ticket};}
+      const body=options.body?JSON.parse(options.body):null,id=url.split('/tickets/')[1]?.split('/')[0];
+      if(body){const key=id||'ticket_'+(++ticketCounter),old=tickets.get(key);const ticket=url.endsWith('/discard')?{...old,status:'discarded',version:old.version+1}:{id:key,name:body.name||old?.name||'Ticket '+ticketCounter,version:(old?.version||0)+1,status:'open',draft:{...body.draft,customer:customers.find(c=>c.id===body.draft?.customerId)||null}};tickets.set(key,ticket);data={ticket};}
       else data=id?{ticket:tickets.get(id)}:{tickets:[...tickets.values()]};
     }
     return {ok:!fail,json:async()=>({ok:!fail,...data,...(fail?{message:'Prueba de conexión'}:{})})};
@@ -74,7 +74,7 @@ it('el carrito responde al gesto vertical y se conserva al actualizar catálogo'
 it('acciones permite guardar varias ventas y cambiar entre tickets sin perder artículos',async()=>{
   click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-new-ticket]');await flush();
   expect(tickets.size).toBe(2);expect(w.document.querySelector('.pos-total').textContent).toContain('0.00');
-  click('[data-pos-add]');click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-tickets]');await flush();
+  click('[data-pos-add]');click('[data-pos-add]');click('[data-pos-tickets]');await flush();
   expect(w.document.querySelector('.pos-dialog').textContent).toContain('Tickets');
   expect([...tickets.values()].map(t=>t.draft.items.reduce((n,i)=>n+i.quantity,0))).toEqual([1,2]);
   click('[data-pos-ticket="ticket_1"]');await flush();expect(w.document.querySelector('.pos-total').textContent).toContain('1,250.50');
@@ -85,4 +85,33 @@ it('acciones permite agregar una venta ocasional sin crear un producto de catál
   expect(w.document.querySelector('.pos-total').textContent).toContain('2,501.00');
   expect(w.document.querySelector('.pos-cart-lines').textContent).toContain('Trabajo ocasional');
   expect(requests.some(r=>r.url.endsWith('/store/products')&&r.body)).toBe(false);
+});
+it('acciones es un drawer separado, ordena venta rápida primero y no incluye gestión de tickets',()=>{
+  click('[data-pos-actions]');const drawer=w.document.querySelector('.pos-actions-drawer');
+  expect(drawer.open).toBe(true);expect(w.document.querySelector('.pos-dialog').open).toBe(false);
+  expect(drawer.querySelector('nav button').hasAttribute('data-pos-manual')).toBe(true);
+  expect(drawer.querySelector('nav button:nth-of-type(2)').hasAttribute('data-pos-new-ticket')).toBe(true);
+  expect(drawer.querySelector('[data-pos-tickets],[data-pos-ticket-rename],[data-pos-ticket-discard]')).toBeNull();
+  expect(w.document.querySelector('#pos-client [data-pos-tickets]').textContent).toContain('Tickets');
+  drawer.dispatchEvent(new w.Event('cancel',{cancelable:true}));expect(drawer.open).toBe(false);
+});
+it('los gestos de los bordes abren cada drawer y los gestos verticales o centrales no los abren',()=>{
+  Object.defineProperty(w,'innerWidth',{configurable:true,value:390});w.document.querySelector('#app').hidden=false;w.document.body.dataset.tab='catalogo';
+  const main=vi.fn();w.addEventListener('fulltech:main-drawer',main);
+  const swipe=(x1,y1,x2,y2)=>{for(const [type,x,y] of [['pointerdown',x1,y1],['pointermove',x2,y2],['pointerup',x2,y2]]){const event=new w.Event(type,{bubbles:true,cancelable:true});for(const [key,value] of Object.entries({clientX:x,clientY:y,pointerId:7,pointerType:'touch',isPrimary:true}))Object.defineProperty(event,key,{value});w.document.body.dispatchEvent(event);}};
+  swipe(4,200,8,320);swipe(140,200,250,205);expect(main).not.toHaveBeenCalled();
+  swipe(4,200,110,208);expect(main.mock.calls[0][0].detail.open).toBe(true);
+  swipe(387,200,270,207);expect(w.document.querySelector('.pos-actions-drawer').open).toBe(true);
+  swipe(260,200,370,205);expect(w.document.querySelector('.pos-actions-drawer').open).toBe(false);
+});
+it('cada ticket ofrece editar y eliminar en sus tres puntos, conservando el nombre',async()=>{
+  click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-new-ticket]');await flush();click('[data-pos-tickets]');await flush();
+  expect(w.document.querySelectorAll('.pos-ticket-more')).toHaveLength(2);
+  expect(w.document.querySelectorAll('.pos-ticket-menu:not([hidden])')).toHaveLength(0);
+  click('[data-pos-ticket-menu="ticket_1"]');expect(w.document.querySelector('.pos-ticket-menu:not([hidden])').textContent).toContain('Eliminar ticket');
+  click('[data-pos-ticket-rename="ticket_1"]');await flush();fill('name','Venta de María');await submit();
+  expect(w.document.querySelector('.pos-ticket-list').textContent).toContain('Venta de María');
+  click('[data-pos-ticket-menu="ticket_1"]');click('[data-pos-ticket-discard="ticket_1"]');await flush();await submit();
+  expect(w.document.querySelector('.pos-ticket-list').textContent).not.toContain('Venta de María');expect(tickets.get('ticket_1').status).toBe('discarded');
+  expect(requests.some(r=>r.url.endsWith('/checkout'))).toBe(false);
 });

@@ -6,9 +6,17 @@ const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).f
 const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:''});
 const personIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg>';
 const quotesIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h5"/></svg>';
+const actionIcon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({quick:'<path d="m13 2-9 12h7l-1 8 10-13h-8z"/>',ticket:'<path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zM15 5v3m0 3v2m0 3v3"/>',save:'<path d="M5 3h12l4 4v14H3V3h2zm2 0v6h10V3M7 21v-8h10v8"/>',stock:'<path d="m3 7 9-4 9 4v12l-9 3-9-3zM3 7l9 4 9-4M12 11v11M16 3v6M13 6h6"/>',product:'<path d="M4 5h16v15H4zM4 10h16M12 13v5m-2.5-2.5h5"/>',more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'})[name]||''}</svg>`;
 let draft=empty(),products=[],customers=[],isAdmin=false,canCreate=false,expanded=false,busy=false,loaded=false,generation=0,operation=null,message='',initializing=null,dragged=false,draftKey=null;
 const root=$('#pos-root'),client=document.createElement('div');client.id='pos-client';root?.parentElement.prepend(client);
 const modal=document.createElement('dialog');modal.className='pos-dialog';document.body.append(modal);
+const actionsDrawer=document.createElement('dialog');actionsDrawer.className='pos-actions-drawer';actionsDrawer.setAttribute('aria-label','Acciones de facturación');document.body.append(actionsDrawer);
+function closeActions(){actionsDrawer.close();delete document.body.dataset.posActions;$('[data-pos-actions]')?.setAttribute('aria-expanded','false');}
+actionsDrawer.addEventListener('cancel',e=>{e.preventDefault();closeActions();});
+actionsDrawer.addEventListener('click',e=>{
+  if(e.target===actionsDrawer){const r=actionsDrawer.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right)closeActions();}
+  if(e.target.closest('button'))closeActions();
+});
 function persist(){try{if(draftKey)sessionStorage.setItem(draftKey,JSON.stringify({draft,operation}));}catch{}}
 function changed(){operation=null;message='';draft.ticketDirty=true;persist();render();if(draft.ticketId)scheduleTicketSave();}
 async function api(path,body){
@@ -32,7 +40,7 @@ function render(){
   if(!root)return;
   const sale=totals(),quantity=draft.items.reduce((n,i)=>n+i.quantity,0),disabled=!draft.items.length||!!sale.error||!canCreate||busy;
   const wide=window.matchMedia?.('(min-width:900px)').matches;
-  client.innerHTML=`<button type="button" class="pos-client-button" data-pos-client><span class="pos-client-icon">${personIcon}</span><strong>${esc(draft.customer?.name||'Selecciona cliente')}</strong><span class="pos-client-chevron" aria-hidden="true">⌄</span></button>${draft.customer?'<button class="pos-icon" type="button" data-pos-remove-client aria-label="Quitar cliente">×</button>':''}`;
+  client.innerHTML=`<button type="button" class="pos-client-button" data-pos-client><span class="pos-client-icon">${personIcon}</span><strong>${esc(draft.customer?.name||'Selecciona cliente')}</strong><span class="pos-client-chevron" aria-hidden="true">⌄</span></button>${draft.customer?'<button class="pos-icon" type="button" data-pos-remove-client aria-label="Quitar cliente">×</button>':''}<button class="pos-tickets-trigger" type="button" data-pos-tickets aria-haspopup="dialog">${actionIcon('ticket')}<span>Tickets</span></button>`;
   root.classList.toggle('pos-expanded',expanded);
   root.innerHTML=`<section class="pos-cart" aria-label="Carrito de venta"><button class="pos-cart-handle" type="button" data-pos-expand aria-expanded="${expanded||wide}" ${wide?'disabled':''} aria-label="${expanded||wide?'Contraer':'Expandir'} carrito"><span class="pos-grip"></span><span>Carrito <small>${quantity} ${quantity===1?'artículo':'artículos'}</small></span><span>${expanded?'⌄':'⌃'}</span></button><div class="pos-cart-lines" ${expanded?'':'inert'}>${sale.items.length?sale.items.map((line,index)=>`<article class="pos-cart-line"><div class="pos-line-name"><strong>${esc(line.name)}</strong><small>${cash(line.unit_price_cents)} c/u</small><button type="button" class="pos-text" data-pos-discount="${index}">${line.discount_cents?`−${cash(line.discount_cents)}`:'Descuento'}</button></div><div class="pos-stepper"><button type="button" data-pos-minus="${index}" aria-label="Disminuir ${esc(line.name)}">−</button><button type="button" data-pos-quantity="${index}" aria-label="Cantidad de ${esc(line.name)}">${line.quantity}</button><button type="button" data-pos-plus="${index}" aria-label="Aumentar ${esc(line.name)}">+</button></div><div class="pos-line-total"><strong>${cash(line.subtotal_cents)}</strong><button class="pos-text" type="button" data-pos-delete="${index}" aria-label="Eliminar ${esc(line.name)}">Quitar</button></div></article>`).join(''):'<p class="pos-empty">Toca + en un artículo para comenzar.</p>'}</div><div class="pos-cart-tools" ${expanded?'':'hidden'}><button type="button" class="pos-text" data-pos-options>Envío y notas</button><button type="button" class="pos-text" data-pos-pending ${disabled?'disabled':''}>Guardar pedido</button><button type="button" class="pos-text" data-pos-clear ${!draft.items.length||busy?'disabled':''}>Vaciar</button></div></section><div class="pos-feedback" role="status" aria-live="polite">${esc(message||sale.error||'')}</div><section class="pos-summary" aria-label="Resumen de venta"><div class="pos-summary-values">${isAdmin?`<div class="pos-profit"><small>Ganancia</small><strong>${sale.profit_cents===undefined?'—':cash(sale.profit_cents)}</strong></div>`:'<span></span>'}<button type="button" class="pos-discount-total" data-pos-discount="total"><small>Descuento</small><strong>${cash(sale.discount_cents)}</strong></button><div class="pos-total"><small>Total</small><strong>${cash(sale.total_cents)}</strong></div></div><div class="pos-actions"><button type="button" class="btn btn--ghost" data-pos-quote ${disabled?'disabled':''}>Cotizar</button><button type="button" class="btn btn--primary" data-pos-pay ${disabled?'disabled':''}>${busy?'Guardando…':'Cobrar'}</button></div></section>`;
   root.querySelector('.pos-cart-lines')?.removeAttribute('inert');
@@ -57,6 +65,7 @@ async function initialize(){
   })();return initializing;
 }
 function show(title,body,submitText,onSubmit){
+  closeActions();modal.classList.toggle('pos-tickets-dialog',title==='Tickets');
   modal.innerHTML=`<form class="pos-modal-form"><header><h2>${esc(title)}</h2><button class="pos-icon" type="button" data-pos-close aria-label="Cerrar">×</button></header><div class="pos-modal-body">${body}<p class="pos-modal-error" role="alert"></p></div>${submitText?`<footer><button class="btn btn--primary" type="submit">${esc(submitText)}</button></footer>`:''}</form>`;
   modal.setAttribute('aria-label',title);if(!modal.open)modal.showModal();
   modal.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const epoch=generation,button=modal.querySelector('[type=submit]');if(button.disabled)return;button.disabled=true;try{await onSubmit(new FormData(e.target));}catch(err){const error=modal.querySelector('.pos-modal-error');if(error&&epoch===generation)error.textContent=err.message;}finally{button.disabled=false;}});
@@ -165,7 +174,8 @@ function ticketTotal(t){try{return cash(calculateSale(t.draft.items,products,t.d
 async function ticketList(){
   await saveActiveTicket();const data=await api('tickets');
   const active=data.tickets.filter(t=>['open','processing'].includes(t.status));
-  show('Tickets',`<button class="btn btn--primary btn--block" type="button" data-pos-new-ticket>Nuevo ticket</button><div class="pos-ticket-list">${active.map(t=>`<article><div><strong>${esc(t.name)}</strong><small>${esc(t.draft.customer?.name||'Sin cliente')} · ${t.draft.items.reduce((n,i)=>n+i.quantity,0)} artículos</small></div><strong>${ticketTotal(t)}</strong><div class="pos-ticket-actions">${t.status==='open'?`<button class="pos-text" type="button" data-pos-ticket="${esc(t.id)}">Abrir</button><button class="pos-text" type="button" data-pos-ticket-rename="${esc(t.id)}">Renombrar</button><button class="pos-text" type="button" data-pos-ticket-discard="${esc(t.id)}">Descartar</button>`:'<small>Operación en revisión</small>'}</div></article>`).join('')||'<p class="pos-empty">No tienes tickets pendientes.</p>'}</div><details class="pos-ticket-history"><summary>Tickets finalizados</summary>${data.tickets.filter(t=>t.status==='completed').map(t=>`<p>${esc(t.name)} <a class="pos-text" href="${esc(t.result?.receiptUrl||'#')}" target="_blank" rel="noopener">Ver documento</a></p>`).join('')||'<p>Todavía no hay tickets finalizados.</p>'}</details>`,null);
+  show('Tickets',`<div class="pos-ticket-list" role="list">${active.map(t=>`<article class="pos-ticket-row" role="listitem"><button class="pos-ticket-open" type="button" data-pos-ticket="${esc(t.id)}" ${t.status!=='open'?'disabled':''}><span><strong>${esc(t.name||'Ticket sin nombre')}</strong><small>${esc(t.draft.customer?.name||'Sin cliente')} · ${t.draft.items.reduce((n,i)=>n+i.quantity,0)} artículos${t.status==='processing'?' · En revisión':''}</small></span><strong>${ticketTotal(t)}</strong></button>${t.status==='open'?`<button class="pos-ticket-more" type="button" data-pos-ticket-menu="${esc(t.id)}" aria-label="Opciones de ${esc(t.name||'ticket')}" aria-haspopup="menu" aria-expanded="false">${actionIcon('more')}</button><div class="pos-ticket-menu" role="menu" aria-label="Acciones de ${esc(t.name||'ticket')}" data-ticket-menu="${esc(t.id)}" hidden><button type="button" role="menuitem" data-pos-ticket-rename="${esc(t.id)}">Editar ticket</button><button type="button" role="menuitem" class="pos-ticket-danger" data-pos-ticket-discard="${esc(t.id)}">Eliminar ticket</button></div>`:''}</article>`).join('')||'<p class="pos-empty">No tienes tickets pendientes.</p>'}</div><details class="pos-ticket-history"><summary>Tickets finalizados</summary>${data.tickets.filter(t=>t.status==='completed').map(t=>`<p>${esc(t.name)} <a class="pos-text" href="${esc(t.result?.receiptUrl||'#')}" target="_blank" rel="noopener">Ver documento</a></p>`).join('')||'<p>Todavía no hay tickets finalizados.</p>'}</details>`,null);
+  const add=document.createElement('button');add.type='button';add.className='pos-text pos-ticket-new';add.dataset.posNewTicket='';add.innerHTML=`${actionIcon('ticket')}Nuevo`;add.setAttribute('aria-label','Nuevo ticket');modal.querySelector('header h2').after(add);
 }
 async function openTicket(id){
   await saveActiveTicket();const {ticket}=await api('tickets/'+id);
@@ -173,14 +183,18 @@ async function openTicket(id){
 }
 async function renameTicket(id){
   await saveActiveTicket();const {ticket}=await api('tickets/'+id);
-  show('Nombre del ticket',`<label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="80" value="${esc(ticket.name)}" required></label>`,'Guardar',async form=>{
-    const result=await api('tickets/'+id,{version:ticket.version,name:form.get('name'),draft:ticket.draft});
-    if(draft.ticketId===id){draft.ticketName=result.ticket.name;draft.ticketVersion=result.ticket.version;persist();render();}await ticketList();
-  });
+  const saveName=async value=>{
+    const name=String(value||'').trim();if(!name)throw new Error('Escribe un nombre para el ticket.');
+    if(name===ticket.name)return;
+    const result=await api('tickets/'+id,{version:ticket.version,name,draft:ticket.draft});
+    if(draft.ticketId===id){draft.ticketName=result.ticket.name;draft.ticketVersion=result.ticket.version;persist();render();}
+  };
+  show('Editar ticket',`<label class="field"><span class="field__label">Nombre del ticket</span><input class="field__input" name="name" maxlength="80" value="${esc(ticket.name)}" required></label><button class="btn btn--ghost btn--block" type="button" data-ticket-edit-lines>Editar productos y cliente</button>`,'Guardar nombre',async form=>{await saveName(form.get('name'));await ticketList();});
+  modal.querySelector('[data-ticket-edit-lines]').addEventListener('click',()=>runAction(async()=>{await saveName(modal.querySelector('[name=name]').value);await openTicket(id);}));
 }
 async function discardTicket(id){
   const {ticket}=await api('tickets/'+id);
-  show('Descartar ticket',`<p>Se descartará ${esc(ticket.name)}. No se modifica inventario.</p>`,'Descartar',async()=>{
+  show('Eliminar ticket',`<p>¿Eliminar ${esc(ticket.name)} de los tickets pendientes?</p>`,'Eliminar',async()=>{
     await api('tickets/'+id+'/discard',{version:ticket.version});if(draft.ticketId===id){draft=empty();persist();render();}await ticketList();
   });
 }
@@ -191,8 +205,56 @@ function manualSale(){
   });
 }
 function actions(){
-  show('Acciones',`<div class="pos-action-menu"><button type="button" data-pos-new-ticket>Nuevo ticket <small>Guardar la venta actual y comenzar otra</small></button><button type="button" data-pos-save-ticket ${!draft.items.length?'disabled':''}>Guardar ticket <small>Continuar más tarde</small></button><button type="button" data-pos-tickets>Tickets guardados</button><button type="button" data-pos-manual>Venta fuera de inventario</button>${isAdmin?'<button type="button" data-pos-create-product>Nuevo producto o servicio</button><button type="button" data-pos-stock>Agregar / ajustar stock</button>':''}</div>`,null);
+  if(busy||modal.open)return;
+  window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
+  actionsDrawer.innerHTML=`<header><strong>Acciones</strong><button class="pos-icon" type="button" data-actions-close aria-label="Cerrar acciones">×</button></header><nav class="pos-action-menu" aria-label="Acciones de venta"><span class="pos-action-section">Ventas</span><button type="button" data-pos-manual>${actionIcon('quick')}<span>Venta rápida<small>Fuera de inventario</small></span></button><button type="button" data-pos-new-ticket>${actionIcon('ticket')}<span>Nuevo ticket</span></button><button type="button" data-pos-save-ticket ${!draft.items.length?'disabled':''}>${actionIcon('save')}<span>Guardar ticket</span></button>${isAdmin?`<span class="pos-action-section">Catálogo</span><button type="button" data-pos-stock>${actionIcon('stock')}<span>Agregar stock</span></button><button type="button" data-pos-create-product>${actionIcon('product')}<span>Nuevo producto<small>Producto o servicio</small></span></button>`:''}</nav>`;
+  document.body.dataset.posActions='open';$('[data-pos-actions]')?.setAttribute('aria-expanded','true');actionsDrawer.showModal();
 }
+window.addEventListener('fulltech:close-actions',closeActions);
+
+// Solo los gestos iniciados en un borde abren un menú; el centro conserva su scroll.
+const edgeZones=['left','right'].map(side=>{const zone=document.createElement('div');zone.className='pos-edge-zone pos-edge-zone--'+side;zone.setAttribute('aria-hidden','true');document.body.append(zone);return zone;});
+let edgeGesture=null;
+document.addEventListener('pointerdown',e=>{
+  if(!['touch','pen'].includes(e.pointerType)||e.isPrimary===false||window.innerWidth>979||$('#app')?.hidden!==false||busy)return;
+  if(modal.open||document.querySelector('dialog[open]:not(.pos-actions-drawer)')||$('#sheet')?.hidden===false)return;
+  const mode=actionsDrawer.open?'close-actions':document.body.dataset.drawer==='open'?'close-main':e.clientX<=20?'main':e.clientX>=window.innerWidth-20&&document.body.dataset.tab==='catalogo'?'actions':null;
+  if(!mode||e.target.closest('input,textarea,select,[contenteditable=true]'))return;
+  edgeGesture={id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now(),mode};
+  if(edgeZones.includes(e.target))e.target.setPointerCapture?.(e.pointerId);
+},{passive:true});
+document.addEventListener('pointermove',e=>{
+  if(!edgeGesture||edgeGesture.id!==e.pointerId)return;
+  const dx=e.clientX-edgeGesture.x,dy=e.clientY-edgeGesture.y;
+  if(Math.abs(dy)>20&&Math.abs(dy)>Math.abs(dx)){edgeGesture=null;return;}
+  if(Math.abs(dx)>25&&Math.abs(dx)>Math.abs(dy)*1.5&&e.cancelable)e.preventDefault();
+},{passive:false});
+document.addEventListener('pointerup',e=>{
+  const gesture=edgeGesture;edgeGesture=null;if(!gesture||gesture.id!==e.pointerId)return;
+  const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+  if(Date.now()-gesture.at>900||Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.5)return;
+  if(gesture.mode==='main'&&dx>0)window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:true}}));
+  if(gesture.mode==='actions'&&dx<0)actions();
+  if(gesture.mode==='close-actions'&&dx>0)closeActions();
+  if(gesture.mode==='close-main'&&dx<0)window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
+});
+document.addEventListener('pointercancel',()=>{edgeGesture=null;});
+
+function closeTicketMenus(){modal.querySelectorAll('[data-ticket-menu]').forEach(n=>n.hidden=true);modal.querySelectorAll('[data-pos-ticket-menu]').forEach(n=>n.setAttribute('aria-expanded','false'));}
+document.addEventListener('click',e=>{
+  const toggle=e.target.closest('[data-pos-ticket-menu]');
+  if(toggle){
+    const id=toggle.dataset.posTicketMenu,menu=[...modal.querySelectorAll('[data-ticket-menu]')].find(n=>n.dataset.ticketMenu===id),wasOpen=menu&&!menu.hidden;
+    closeTicketMenus();if(menu&&!wasOpen){menu.classList.toggle('pos-ticket-menu--above',modal.getBoundingClientRect().bottom-toggle.getBoundingClientRect().bottom<115);menu.hidden=false;toggle.setAttribute('aria-expanded','true');menu.querySelector('button')?.focus();}return;
+  }
+  if(!e.target.closest('.pos-ticket-menu'))closeTicketMenus();
+});
+modal.addEventListener('keydown',e=>{
+  const menu=modal.querySelector('[data-ticket-menu]:not([hidden])');if(!menu)return;
+  const buttons=[...menu.querySelectorAll('button')],index=buttons.indexOf(document.activeElement);
+  if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}
+  if(e.key==='Escape'){e.preventDefault();const id=menu.dataset.ticketMenu;closeTicketMenus();[...modal.querySelectorAll('[data-pos-ticket-menu]')].find(n=>n.dataset.posTicketMenu===id)?.focus();}
+});
 
 // Las cotizaciones tienen página y detalle propios, separados de la venta activa.
 let quotesEpoch=0,quoteQuery='',quoteRows=[];
@@ -253,7 +315,7 @@ document.addEventListener('click',e=>{
 window.addEventListener('fulltech:pos-appbar',syncSearchBar);
 window.addEventListener('fulltech:pos-render',syncSearchBar);
 window.addEventListener('popstate',()=>{if(document.body.dataset.tab==='cotizaciones')renderQuotesPage();else syncSearchBar();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&searchOpen&&!modal.open){setSearchOpen(false);e.preventDefault();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&searchOpen&&!modal.open&&!actionsDrawer.open){setSearchOpen(false);e.preventDefault();}});
 
 document.addEventListener('click',e=>{
   const mutation=e.target.closest('[data-pos-add],[data-pos-client],[data-pos-remove-client],[data-pos-customer],[data-pos-plus],[data-pos-minus],[data-pos-delete],[data-pos-quantity],[data-pos-discount],[data-pos-options],[data-pos-clear]');
@@ -287,15 +349,15 @@ document.addEventListener('click',e=>{
 });
 window.addEventListener('fulltech:pos-products',e=>{products=e.detail.products;render();initialize();});
 window.addEventListener('fulltech:pos-render',()=>{updateBadges();});
-window.addEventListener('fulltech:tab',e=>{if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones')initialize().then(renderQuotesPage);}});
+window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones')initialize().then(renderQuotesPage);}});
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;
   if(operation){message='Revisa el resultado de la operación anterior antes de iniciar otro pedido.';render();return;}
   const apply=()=>{draft.customer=customers.find(c=>c.id===context.customerId)||(context.customer?.id===context.customerId?context.customer:null);draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';changed();};
   if(draft.items.length&&draft.customer?.id!==context.customerId)show('Cambiar cliente del carrito','<p>Se conservarán los artículos y se asignarán al cliente seleccionado.</p>','Continuar',()=>{apply();modal.close();});else apply();
 });
-window.addEventListener('fulltech:back',e=>{if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&expanded){expanded=false;render();e.preventDefault();}});
-window.addEventListener('phyto:calling-logout',()=>{generation++;quotesEpoch++;clearTimeout(ticketSaveTimer);searchOpen=false;searchBar=null;quotesPage()?.replaceChildren();document.querySelector('.pos-document-toast')?.remove();loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});
+window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&expanded){expanded=false;render();e.preventDefault();}});
+window.addEventListener('phyto:calling-logout',()=>{generation++;quotesEpoch++;closeActions();actionsDrawer.innerHTML='';edgeGesture=null;clearTimeout(ticketSaveTimer);searchOpen=false;searchBar=null;quotesPage()?.replaceChildren();document.querySelector('.pos-document-toast')?.remove();loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});
 window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
 if(document.body.dataset.tab==='catalogo')initialize();
 if(document.body.dataset.tab==='cotizaciones')initialize().then(renderQuotesPage);

@@ -81,3 +81,46 @@ body[data-tab=catalogo]:has(#update-bar.update-bar--show) .app,body[data-tab=cot
 .pos-search-filtered{position:relative}.pos-search-filtered:after{content:'';position:absolute;right:8px;top:7px;width:5px;height:5px;border-radius:50%;background:#72a5ff}
 
 #pos-search-host input.field__input:focus{outline:none;box-shadow:none}#pos-search-host .store-search:focus-within{border-color:#7da6e866;box-shadow:0 0 0 1px #6c9df926}
+/* Acciones laterales y cabecera compacta de cliente/tickets. */
+#pos-client{flex-wrap:nowrap;overflow:visible;gap:6px}
+#pos-client .pos-client-button{flex:1 1 0;min-width:0;overflow:hidden}
+#pos-client .pos-client-button strong{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pos-client>[data-pos-remove-client]{flex:0 0 30px;min-width:30px;width:30px;font-size:20px}
+.pos-tickets-trigger{display:flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;white-space:nowrap;min-height:38px;padding:6px 10px;border:.5px solid #7186a245;border-radius:10px;background:#3478ef0c;color:inherit;font:inherit;font-size:.8rem;cursor:pointer}
+.pos-tickets-trigger svg{width:18px;height:18px;color:#79a7f7}
+.pos-tickets-trigger:hover{background:#3478ef1b}
+.pos-actions-drawer{position:fixed;inset:0 0 0 auto;margin:0;width:min(300px,max(176px,50vw));max-width:100vw;height:100dvh;max-height:100dvh;box-sizing:border-box;border:0;border-left:.5px solid #7186a240;border-radius:0;padding:0;background:var(--surface,#112039);color:var(--text-primary,#e8effa);box-shadow:-16px 0 60px #0003;overscroll-behavior:contain}
+.pos-actions-drawer[open]{display:flex;flex-direction:column;animation:pos-actions-enter .19s ease-out}
+.pos-actions-drawer::backdrop{background:#06101d88;backdrop-filter:blur(1px)}
+.pos-actions-drawer>header{display:flex;align-items:center;justify-content:space-between;gap:4px;flex-shrink:0;padding:calc(12px + env(safe-area-inset-top,0px)) 12px 10px;border-bottom:.5px solid #7186a226}
+.pos-actions-drawer>header>strong{font-size:.98rem;font-weight:650}
+.pos-actions-drawer>.pos-action-menu{display:flex;flex-direction:column;flex:1;min-height:0;overflow-y:auto;padding:10px 10px calc(20px + env(safe-area-inset-bottom,0px));gap:4px}
+.pos-actions-drawer .pos-action-menu>button{display:flex;align-items:center;gap:10px;flex-shrink:0;min-height:49px;border:0;border-radius:10px;padding:12px 9px;line-height:1.4;font-size:.83rem;overflow-wrap:anywhere}
+.pos-actions-drawer .pos-action-menu>button>svg{width:20px;height:20px;flex-shrink:0;color:#81a9f4}
+.pos-actions-drawer .pos-action-menu>button>span{min-width:0}
+.pos-actions-drawer .pos-action-menu>button:hover{background:#3577eb14;color:inherit}
+.pos-actions-drawer .pos-action-menu small{font-size:.68rem;line-height:1.4;margin-top:3px}
+.pos-action-section{margin:14px 9px 4px;font-size:.61rem;text-transform:uppercase;letter-spacing:.1em;opacity:.45}
+.pos-edge-zone{display:none;position:fixed;inset:0 auto 0 0;width:16px;z-index:55;touch-action:pan-y}
+.pos-edge-zone--right{left:auto;right:0}
+@media(max-width:979px) and (pointer:coarse){.pos-edge-zone{display:block}body{overscroll-behavior-x:none}}
+.pos-tickets-dialog .pos-modal-body{padding:0 16px 20px}
+.pos-tickets-dialog .pos-modal-form header{gap:12px}.pos-tickets-dialog .pos-modal-form header>h2{flex:1}
+.pos-ticket-new{display:flex;align-items:center;gap:5px;padding:8px 0}.pos-ticket-new svg{width:17px;height:17px}
+.pos-ticket-list .pos-ticket-row{position:relative;display:flex;align-items:center;flex-wrap:nowrap;gap:4px;padding:3px 0;border-bottom:.5px solid #7186a22c}
+.pos-ticket-open{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:1;min-width:0;min-height:76px;border:0;background:none;text-align:left;color:inherit;font:inherit;padding:12px 0;cursor:pointer}
+.pos-ticket-open>span{flex:1;min-width:0}.pos-ticket-open>span>strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pos-ticket-open>strong{font-size:.8rem;white-space:nowrap;flex-shrink:0;font-weight:650}
+.pos-ticket-open small{line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pos-ticket-open:disabled{cursor:default;opacity:.65}
+.pos-ticket-more{display:grid;place-items:center;flex:0 0 36px;width:36px;height:42px;border:0;background:none;color:inherit;border-radius:10px;cursor:pointer}
+.pos-ticket-more svg{width:23px;height:23px}
+.pos-ticket-more:hover,.pos-ticket-more[aria-expanded=true]{background:#3478ef18;color:#86b1ff}
+.pos-ticket-menu{position:absolute;right:0;top:calc(100% - 12px);min-width:176px;border:1px solid #7186a238;border-radius:12px;padding:5px;background:var(--surface,#17283f);box-shadow:0 8px 30px #0005;z-index:12}
+.pos-ticket-menu[hidden]{display:none}.pos-ticket-menu--above{top:auto;bottom:calc(100% - 12px)}
+.pos-ticket-menu>button{display:block;width:100%;min-height:42px;padding:10px;border:0;border-radius:8px;background:none;color:inherit;text-align:left;font:inherit;font-size:.82rem;cursor:pointer}
+.pos-ticket-menu>button:hover,.pos-ticket-menu>button:focus-visible{background:#7186a21a}
+.pos-ticket-menu>.pos-ticket-danger{color:#e68b88}
+.pos-tickets-dialog .pos-ticket-history{padding-top:16px;font-size:.75rem}
+@keyframes pos-actions-enter{from{transform:translateX(100%);opacity:.65}to{transform:translateX(0);opacity:1}}
+@media(prefers-reduced-motion:reduce){.pos-actions-drawer[open]{animation:none}}

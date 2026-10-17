@@ -244,3 +244,27 @@ fusionado con principal ni desplegado a producción en esta etapa.
   35 aprobadas; se repitieron las 19 de POS tras los últimos ajustes. La UAT
   general de ventas mantiene 21 aprobadas y los cuatro fallos previos descritos.
   Contenido y compilación aprobados. La vista local continúa en el puerto 8817.
+
+## Drawers por gestos y tickets en la cabecera
+
+- El flotante abre un drawer derecho de altura completa y aproximadamente
+  media pantalla móvil. Orden: Venta rápida fuera de inventario, Nuevo ticket,
+  Guardar ticket y, para admin, Agregar stock y Nuevo producto/servicio.
+- Cliente y **Tickets** comparten una fila fija encima del catálogo. El nombre
+  del cliente se trunca si es largo; el acceso a tickets siempre queda visible.
+- La lista de tickets muestra nombre, cliente, cantidad e importe. Cada ticket
+  editable tiene tres puntos con Editar ticket y Eliminar ticket. Editar permite
+  cambiar el nombre o continuar modificando productos/cliente en facturación.
+  Eliminar pide confirmación y retira el borrador de los pendientes conservando
+  su historial. Estas acciones no aparecen en el drawer de ventas.
+- En móvil, un gesto horizontal iniciado en los primeros 20 px del borde
+  izquierdo abre el menú principal; desde el borde derecho abre Acciones en
+  Facturación. Los gestos verticales, centrales, sobre formularios y durante
+  operaciones no abren menús. Se puede cerrar el drawer deslizando en el sentido
+  contrario, tocando fuera, con Cerrar o Escape. Los dos drawers son excluyentes.
+- Se conservan los diálogos nativos para foco/teclado y la preferencia de
+  movimiento reducido. Los menús de tres puntos también admiten flechas/Escape.
+- Validación de esta etapa: 46 pruebas aprobadas de interfaz POS, integración
+  comercial y catálogo; incluye gestos sintéticos, navegación al menú principal,
+  edición y eliminación desde los tres puntos. Revisión visual en navegador a
+  390 × 780 y compilación aprobada. No se ha ensayado con un teléfono físico.

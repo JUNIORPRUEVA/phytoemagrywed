@@ -18562,6 +18562,11 @@
     window.addEventListener('fulltech:pos-saved',()=>load({silent:true}));
     window.addEventListener('fulltech:catalog-view',renderMobileHeader);
     window.addEventListener('fulltech:pos-navigate',e=>setTab(e.detail.tab));
+    window.addEventListener('fulltech:main-drawer',e=>{
+      if(e.detail?.open===false){closeDrawer();return;}
+      if($('#app')?.hidden!==false)return;
+      window.dispatchEvent(new Event('fulltech:close-actions'));openDrawer();
+    });
     window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
