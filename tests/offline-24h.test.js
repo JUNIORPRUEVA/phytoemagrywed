@@ -117,6 +117,20 @@ it('el bloqueo de almacenamiento no impide trabajar en línea ni confirma soport
   expect(w.FulltechOffline.valid()).toBe(false);
   online=false;expect((await call(w,'store/products')).status).toBe(503);
 });
+it('muestra los cambios de ambas colas en el menú sin tapar la pantalla con avisos',async()=>{
+  const w=await page();await prepare(w);online=false;
+  await call(w,'store/categories',{name:'Categoría pendiente'});
+  w.localStorage.setItem('pe_crm_outbox',JSON.stringify([{kind:'followup-create',label:'Seguimiento pendiente'}]));
+  w.document.body.innerHTML='<footer class="drawer__foot"></footer><div id="update-bar">Actualizar</div>';
+  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+  w.eval(readFileSync('public/admin/offline-ui.js','utf8'));w.dispatchEvent(new w.Event('DOMContentLoaded'));
+  for(let i=0;i<100&&!w.document.querySelector('.offline-status')?.textContent.includes('2');i++)await new Promise(r=>setTimeout(r,10));
+  w.document.querySelector('.offline-status').click();
+  for(let i=0;i<100&&!w.document.querySelector('.offline-dialog')?.open;i++)await new Promise(r=>setTimeout(r,10));
+  const dialog=w.document.querySelector('.offline-dialog');expect(dialog.textContent).toContain('2 cambios pendientes');
+  expect(dialog.textContent).toContain('Categoría pendiente');expect(dialog.textContent).toContain('Seguimiento pendiente');
+  expect(w.document.querySelector('.drawer__foot #update-bar')).toBeTruthy();
+});
 it('mantiene varios tickets y convierte una cotización local en venta al reconectar',async()=>{
   const w=await page();await prepare(w);online=false;
   const draft={customerId:customer.id,customer,items:[{variantId:product.id,quantity:1}],discount:{}};
