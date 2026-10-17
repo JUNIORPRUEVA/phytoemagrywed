@@ -383,6 +383,41 @@ decide `plegarMenuEscritorio()` en `app.js`.
 - En el móvil no cambia nada visible: los grupos se abren enteros y las cabeceras se
   pintan como siempre.
 
+#### El lienzo de las pantallas en escritorio
+
+`public/admin/panel-desktop.css` (también la última) ordena el resto de pantallas. En
+el móvil no se aplica: **todo** va dentro de `@media (min-width: 980px)`.
+
+- **Lienzo centrado**: el contenido se limita a 1320 px y se centra con 24 px de aire.
+  Antes se estiraba a los 1400 px del monitor y las filas se leían de borde a borde.
+  WhatsApp (a pantalla completa) y Facturación (su propio tablero) quedan fuera.
+- **Hoy**: las ocho tarjetas pasan a dos filas parejas de cuatro (antes cinco y tres).
+- **Pedidos, Clientes, Usuarios, Seguimientos, Plantillas y Productos**: sus tarjetas se
+  reparten en **dos columnas** desde 1200 px. Lo que no es tarjeta (un título, un aviso,
+  el rango de fechas) ocupa la fila entera.
+- **Reportes**: el cuadro de utilidad va a todo el ancho y «Por presentación» y «Ventas»
+  comparten la fila de abajo. **Cierre diario**: cabecera y resumen a todo el ancho y los
+  bloques en pareja. **Mis entregas**: cada grupo (pendientes, en camino…) reparte sus
+  pedidos en dos columnas.
+- **Clientes**: buscador y filtros en la misma fila; en Pedidos y Clientes se oculta la
+  cabecera «Filtros · ×» (es del panel del móvil) y los chips se reparten en varias líneas
+  en vez de cortarse.
+- **Mapa**: mapa a la izquierda y lista a la derecha (410 px; 340 px en pantallas
+  medianas), con el alto de la ventana. Antes la lista caía debajo del mapa.
+- Detalles de acabado: barras de desplazamiento finas, botones flotantes alineados con el
+  borde del contenido en monitores anchos y el perfil centrado.
+- **Fantasma corregido**: `pos.css` fuerza `#view-catalogo { display: grid !important }` en
+  escritorio para su rejilla de dos columnas, y eso le ganaba al `[hidden]` del panel: la
+  vista de Facturación seguía ocupando ~94 px al final de TODAS las demás pantallas. Ahora
+  se apaga cuando no es la pantalla activa (`panel-desktop.css`), y las páginas cortas
+  vuelven a terminar en la ventana (scroll 900 px exactos a 1440 × 900).
+
+Medido en el navegador a 1440 × 900: contenido 1320 px (antes 1416), Pedidos 655 px de
+alto con dos columnas (antes 1018 en una), Clientes 588 (antes 998), Plantillas 1296
+(antes 1982) y Mis entregas 1524 (antes 2051). A 1024 × 768 las listas vuelven a una
+columna y el mapa mantiene la lista a 340 px. Sin desbordamiento horizontal en ninguna
+pantalla.
+
 Los colores salen de variables (`--pe-page-bg`, `--pe-appbar-bg`, `--pe-tabbar-bg`,
 `--pe-card-bg`, `--pe-brand-text`…). Si algo se ve mal de noche, se arregla cambiando
 una variable, no escribiendo un color nuevo. Las filas de conversación, los paneles de

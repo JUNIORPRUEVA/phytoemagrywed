@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v121-menu-escritorio';
+const VERSION = 'crm-v122-vista-pc';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -48,6 +48,7 @@ const SHELL = [
   '/admin/wa-lista.css',
   '/admin/wa-desktop.css',
   '/admin/drawer-menu.css',
+  '/admin/panel-desktop.css',
   '/admin/app.js',
   '/admin/offline-storage.js',
   '/admin/offline.js',
