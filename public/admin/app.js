@@ -16564,6 +16564,23 @@
             ? '<p class="rule rule--warn">Sin conexión: estás viendo la COPIA guardada en este teléfono. Se puede verificar el pedido y cambiar su estado; los cambios se enviarán solos.</p>'
             : ''
         }
+        <div class="receipt-pdf-card" aria-label="Factura lista para enviar">
+          <span class="receipt-pdf-card__icon" aria-hidden="true">${ICONS.doc}</span>
+          <span class="receipt-pdf-card__body">
+            <strong>Factura lista para enviar</strong>
+            <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
+          </span>
+          <span class="receipt-pdf-card__actions">
+            <a class="btn btn--ghost btn--sm" href="${escapeHtml(
+              `/admin/receipt-viewer.html?pdf=${encodeURIComponent(`/api/admin/orders/${orderId}/receipt.pdf`)}&order=${encodeURIComponent(
+                orderId,
+              )}`,
+            )}" target="_blank" rel="noopener">Ver PDF</a>
+            <button class="btn btn--primary btn--sm" data-invoice-send="${escapeHtml(
+              orderId,
+            )}" type="button">Enviar al cliente</button>
+          </span>
+        </div>
         <div class="receipt" aria-label="Comprobante de compra">
           <p class="receipt__brand">${escapeHtml(receipt.business)}</p>
           <p class="receipt__doc">${escapeHtml(receipt.document)}</p>
@@ -16633,13 +16650,6 @@
           }
           <p class="view__hint">${escapeHtml(receipt.thanks)}</p>
           <p class="view__hint">${escapeHtml(receipt.note)}</p>
-        </div>
-        <div class="receipt-pdf-card" aria-label="Factura lista para enviar">
-          <span class="receipt-pdf-card__icon" aria-hidden="true">${ICONS.doc}</span>
-          <span class="receipt-pdf-card__body">
-            <strong>Factura lista para enviar</strong>
-            <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
-          </span>
         </div>
         ${sheetFabHtml(`data-receipt-actions="${escapeHtml(orderId)}"`)}
         `,
@@ -16981,8 +16991,8 @@
           : null,
         {
           icon: ICONS.send,
-          label: 'Enviar factura por WhatsApp',
-          note: 'La manda el CRM al chat del cliente',
+          label: 'Enviar al cliente',
+          note: 'La factura sale por WhatsApp oficial y queda en el CRM',
           data: { 'data-receipt-wa': orderId },
         },
         mapLatLng(ubicacionPedido)
@@ -20068,10 +20078,18 @@
         openItemWhatsAppSheet(itemWa.dataset.itemWa);
         return;
       }
+      const invoiceSend = event.target.closest('[data-invoice-send]');
+      if (invoiceSend) {
+        openSendInvoiceSheet(invoiceSend.dataset.invoiceSend);
+        return;
+      }
       const receiptOpen = event.target.closest('[data-receipt-open]');
       if (receiptOpen) {
+        const id = receiptOpen.dataset.receiptOpen;
         window.open(
-          `/admin/receipt-viewer.html?pdf=${encodeURIComponent('/api/admin/orders/'+receiptOpen.dataset.receiptOpen+'/receipt.pdf')}`,
+          `/admin/receipt-viewer.html?pdf=${encodeURIComponent(`/api/admin/orders/${id}/receipt.pdf`)}&order=${encodeURIComponent(
+            id,
+          )}`,
           '_blank',
           'noopener',
         );

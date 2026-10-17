@@ -30,37 +30,40 @@
     status.textContent=`${pdf.numPages} página${pdf.numPages===1?'':'s'} · PDF guardado en este dispositivo`;
   }catch(error){status.textContent='La vista PDF no pudo cargarse. Puedes descargar el archivo o consultar el comprobante debajo.';}
   document.querySelector('[data-receipt-print]')?.addEventListener('click',()=>window.print());
-  document.querySelector('[data-receipt-share]')?.addEventListener('click',async()=>{
-    if(!objectUrl)return;
-    try{
-      const file=new File([await(await fetch(objectUrl)).blob()],root.dataset.filename,{type:'application/pdf'});
-      if(navigator.canShare?.({files:[file]}))await navigator.share({files:[file],title:file.name});
-      else document.querySelector('[data-receipt-download]')?.click();
-    }catch(error){if(error.name!=='AbortError')status.textContent='No se pudo compartir. Usa Descargar PDF.';}
-  });
   window.addEventListener('pagehide',()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);task?.destroy();},{once:true});
 
   /* ------------------------------------------------------------------------
-   * ENVIAR AL CLIENTE (cotizaciones): API oficial con plantilla.
-   * El botón solo aparece cuando el visor viene de una cotización (`?quote=`).
+   * ENVIAR AL CLIENTE (cotizaciones y facturas): API oficial con plantilla.
+   * El botón solo aparece cuando el visor viene de un documento del CRM
+   * (`?quote=` o `?order=`): a quién y qué PDF se envía lo decide el servidor.
    * Nunca se abre el WhatsApp personal ni la hoja de compartir del sistema.
    * --------------------------------------------------------------------- */
   const sendButton=document.querySelector('[data-receipt-send]');
   const sendStatus=document.querySelector('[data-receipt-message]');
-  const quoteId=new URLSearchParams(location.search).get('quote');
-  if(sendButton&&quoteId){
+  const params=new URLSearchParams(location.search);
+  const quoteId=params.get('quote'),orderId=params.get('order');
+  const target=quoteId
+    ?{doc:'cotización',endpoint:`/api/admin/pos/quotes/${encodeURIComponent(quoteId)}/send-whatsapp`}
+    :orderId
+      ?{doc:'factura',endpoint:`/api/admin/orders/${encodeURIComponent(orderId)}/invoice-whatsapp`}
+      :null;
+  if(sendButton&&target){
+    // UNA apertura del visor = UNA operación: si se reintenta desde aquí, va la
+    // MISMA clave y el servidor no manda el documento dos veces al cliente.
+    const idempotencyKey=crypto.randomUUID();
     sendButton.hidden=false;
     sendButton.addEventListener('click',async()=>{
       if(sendButton.disabled)return;
-      if(!window.confirm('¿Enviar esta cotización al cliente por WhatsApp? Sale por el número del negocio y queda escrita en el CRM.'))return;
+      if(!window.confirm(`¿Enviar esta ${target.doc} al cliente por WhatsApp? Sale por el número del negocio y queda escrita en el CRM.`))return;
       const label=sendButton.textContent;
       sendButton.disabled=true;sendButton.textContent='Enviando…';
-      if(sendStatus){sendStatus.textContent='Enviando la cotización por WhatsApp…';sendStatus.classList.remove('is-error');}
+      if(sendStatus){sendStatus.textContent=`Enviando la ${target.doc} por WhatsApp…`;sendStatus.classList.remove('is-error');}
       try{
-        const response=await fetch(`/api/admin/pos/quotes/${encodeURIComponent(quoteId)}/send-whatsapp`,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({idempotencyKey:crypto.randomUUID()})});
+        const response=await fetch(target.endpoint,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({idempotencyKey})});
         const data=await response.json().catch(()=>({}));
-        if(!response.ok||!data.ok)throw new Error(data.message||'No se pudo enviar la cotización.');
-        if(sendStatus)sendStatus.textContent=`Enviado a ${data.customer?.name||'el cliente'} por WhatsApp.`;
+        if(!response.ok||!data.ok)throw new Error(data.message||`No se pudo enviar la ${target.doc}.`);
+        const quien=data.customer?.name||'el cliente';
+        if(sendStatus)sendStatus.textContent=data.duplicate?`Ya se había enviado a ${quien}: no se duplicó.`:`Enviado a ${quien} por WhatsApp.`;
         sendButton.textContent='Enviado';
       }catch(error){
         if(sendStatus){sendStatus.textContent=error.message;sendStatus.classList.add('is-error');}

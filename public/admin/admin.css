@@ -3986,6 +3986,15 @@ body[data-tab='whatsapp'] .content {
   font-size: 0.78rem;
 }
 
+/* Ver PDF + Enviar al cliente, dentro de la tarjeta del documento. */
+.receipt-pdf-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
 /* Hoja «Enviar factura por WhatsApp»: lo que va a salir, antes de que salga. */
 .invoice-preview {
   margin: 0;

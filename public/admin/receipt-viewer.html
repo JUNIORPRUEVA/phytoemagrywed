@@ -16,11 +16,12 @@
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:#e8edf3;color:#14243b;font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
-  .rv{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:18px;max-width:1280px;margin:0 auto;padding:16px;align-items:start}
-  .rv__doc{min-width:0}
+  .rv{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:0;min-height:100vh;min-height:100dvh;margin:0;max-width:none;padding:0;align-items:stretch}
+  .rv__doc{min-width:0;padding:16px}
   .rv__status{margin:0 0 12px;color:#51627a;font-size:13px}
   .rv__pages canvas{display:block;max-width:100%;height:auto;margin:0 auto 14px;background:#fff;box-shadow:0 2px 12px #14243b18;border-radius:2px}
-  .rv__side{position:sticky;top:16px;display:grid;gap:12px;padding:16px;background:#fff;border:1px solid #d5deea;border-radius:16px;box-shadow:0 10px 26px #14243b14}
+  /* Columna de acciones: cuadrada (sin radios) y a todo el alto disponible. */
+  .rv__side{position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:12px;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;overflow:auto;padding:20px 18px;background:#fff;border:0;border-left:1px solid #d5deea;border-radius:0;box-shadow:none}
   .rv__eyebrow{margin:0;color:#5b6b84;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
   .rv__title{margin:3px 0 2px;color:#12233f;font-size:17px;font-weight:750;line-height:1.25;overflow-wrap:anywhere}
   .rv__sub{margin:0;color:#5b6b84;font-size:13px;overflow-wrap:anywhere}
@@ -32,12 +33,13 @@
   .rv__act button:disabled{opacity:.6;cursor:progress}
   .rv__msg{margin:0;min-height:1.2em;color:#0f7a51;font-size:13px;line-height:1.4}
   .rv__msg.is-error{color:#a12222}
-  .rv__note{margin:0;padding-top:10px;border-top:1px solid #e6ecf4;color:#5b6b84;font-size:12px;line-height:1.45}
+  .rv__note{margin:auto 0 0;padding-top:10px;border-top:1px solid #e6ecf4;color:#5b6b84;font-size:12px;line-height:1.45}
   .rv__back{justify-self:start;padding:4px 0;border:0;background:transparent;color:#51627a;font:inherit;font-size:13px;font-weight:650;text-decoration:none;cursor:pointer}
   .rv__back:hover{color:#153c70}
   @media (max-width:880px){
     .rv{grid-template-columns:1fr;gap:12px;padding:12px}
-    .rv__side{position:static;order:-1}
+    .rv__doc{padding:0}
+    .rv__side{position:static;order:-1;height:auto;max-height:none;border:1px solid #d5deea;border-radius:0}
     .rv__act{grid-template-columns:1fr 1fr}
     .rv__act .rv__primary{grid-column:1/-1}
   }
@@ -77,6 +79,6 @@
   </div>
   <script src="/admin/offline-storage.js?v=1" defer></script>
   <script src="/admin/offline.js?v=2" defer></script>
-  <script src="/admin/receipt-viewer.js?v=3" defer></script>
+  <script src="/admin/receipt-viewer.js?v=4" defer></script>
 </body>
 </html>

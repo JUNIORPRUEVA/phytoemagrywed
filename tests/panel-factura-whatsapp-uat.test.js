@@ -286,12 +286,25 @@ afterAll(async () => {
 describe('enviar la factura por WhatsApp desde el panel', () => {
   it('el menú de la factura ofrece ENVIARLA (ya no «compartir» con el sistema)', async () => {
     const menu = await abrirMenuFactura();
-    expect(menu.textContent).toContain('Enviar factura por WhatsApp');
+    expect(menu.textContent).toContain('Enviar al cliente');
     expect(menu.textContent).not.toContain('Compartir factura');
     // Y no queda ni rastro del camino viejo en el código del panel.
     expect(APP_JS).not.toContain('shareReceiptPdf');
     expect(APP_JS).not.toContain('data-receipt-share');
     expect(APP_JS).not.toContain('navigator.canShare');
+  });
+
+  it('el detalle de la factura lleva «Enviar al cliente» junto a «Ver PDF»', async () => {
+    click('[data-tab="pedidos"]');
+    const fila = await waitFor(() => $('#list-pedidos [data-receipt]'), 'el botón de factura del pedido');
+    click(fila);
+    const enviar = await waitFor(() => $('#sheet-body [data-invoice-send]'), 'el botón de enviar al cliente');
+    const visor = await waitFor(() => $('.receipt-pdf-card__actions a'), 'el enlace al visor PDF');
+    expect(enviar.textContent.trim()).toBe('Enviar al cliente');
+    expect(visor.textContent.trim()).toBe('Ver PDF');
+    // El visor recibe el pedido: es lo que le dice al servidor qué PDF enviar.
+    expect(visor.getAttribute('href')).toContain(`order=${ordenId}`);
+    expect(visor.getAttribute('href')).not.toContain('wa.me');
   });
 
   it('antes de enviar dice a quién, qué documento y con qué texto (vista previa)', async () => {
