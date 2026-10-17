@@ -2745,11 +2745,11 @@ function conversationDateRange(query, clock = () => new Date()) {
  * @param {any} ctx
  * @param {any} body
  */
-async function createOrder(ctx, body = {}, actor = null) {
-  return ctx.storeCatalog ? ctx.storeCatalog.orderLock(()=>createOrderUnlocked(ctx,body,actor)) : createOrderUnlocked(ctx,body,actor);
+async function createOrder(ctx, body = {}, actor = null, options = {}) {
+  return ctx.storeCatalog ? ctx.storeCatalog.orderLock(()=>createOrderUnlocked(ctx,body,actor,options)) : createOrderUnlocked(ctx,body,actor,options);
 }
 
-async function createOrderUnlocked(ctx, body = {}, actor = null) {
+async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
   /** @type {any} */
   let customer = null;
   const customerId = text(body.customerId, 80);
@@ -2817,7 +2817,7 @@ async function createOrderUnlocked(ctx, body = {}, actor = null) {
   try {
     built = purchaseRow({
       ...body,
-      product: ctx.storeCatalog ? await ctx.storeCatalog.product() : undefined,
+      product: ctx.storeCatalog ? {variants:[...(await ctx.storeCatalog.product()).variants,...(options.manualProducts||[])]} : undefined,
       paymentMethod,
       customerId: customer.id,
       conversationId,
@@ -7491,7 +7491,8 @@ async function handle(req, res, ctx) {
       let totals;
       try {
         totals = computeOrderTotals(Array.isArray(body.items) ? body.items : current.items, {
-          product: ctx.storeCatalog ? await ctx.storeCatalog.product({includeInactive:true}) : undefined,
+          product: ctx.storeCatalog ? {variants:[...(await ctx.storeCatalog.product({includeInactive:true})).variants,
+            ...current.items.filter(i=>i.manual).map(i=>({id:i.variantId,general:true,manual:true,kind:i.kind||'product',name:i.label,label:i.label,price:i.unitPrice,cost_cents:i.unit_cost_snapshot_cents||0}))]} : undefined,
           discount: body.discount !== undefined ? body.discount : current.discount,
           // El delivery es OPCIONAL e independiente de la ubicación (§26).
           deliveryFee: body.deliveryFee !== undefined ? body.deliveryFee : current.delivery_fee ?? current.delivery?.fee,

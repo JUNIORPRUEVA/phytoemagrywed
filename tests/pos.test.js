@@ -122,9 +122,17 @@ it('desde el chat real abre Facturación con el cliente y guarda la cotización 
     w.document.querySelector('#wa-actions').click();await until(()=>w.document.querySelector('[data-order-new]'),'crear pedido');
     w.document.querySelector('[data-order-new]').click();await until(()=>w.document.body.dataset.tab==='catalogo'&&w.document.querySelector('#pos-client').textContent.includes('Cliente de prueba'),'cliente en POS');
     expect(w.document.querySelector('#sheet').hidden).toBe(true);
+    expect(w.document.querySelector('#pos-client').textContent).not.toContain('Venta de mostrador');
+    expect(w.document.querySelector('#pos-client [data-pos-quotes]')).toBeNull();
+    w.document.querySelector('[data-pos-search-open]').click();
+    expect(w.document.querySelector('.pos-appbar').classList.contains('pos-search-open')).toBe(true);
+    expect(w.document.querySelector('#pos-search-host #store-search')).toBeTruthy();
+    expect(w.document.querySelector('#store-catalogo .store-search-line')).toBeNull();
+    w.document.querySelector('[data-pos-search-close]').click();
+    expect(w.document.querySelector('.pos-appbar').classList.contains('pos-search-open')).toBe(false);
     await until(()=>w.document.querySelector(`[data-pos-add="${p.id}"]`),'catálogo');w.document.querySelector(`[data-pos-add="${p.id}"]`).click();w.document.querySelector('[data-pos-quote]').click();
     w.document.querySelector('.pos-modal-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
-    await until(()=>w.document.querySelector('.pos-dialog').textContent.includes('Cotización guardada'),'cotización');
+    await until(()=>w.document.querySelector('.pos-document-toast')?.textContent.includes('Cotización guardada'),'cotización');
     const quote=(await call('pos/quotes')).data.quotes[0];expect(quote.input.conversationId).toBeTruthy();expect(quote.customer_id).toBe(customer.id);
   }finally{dom.window.close();}
 });
@@ -137,4 +145,61 @@ it('no expone ganancias ni costos en cotizaciones de un agente y no permite acce
   expect(JSON.stringify((await call('pos/quotes',null,agent)).data)).not.toMatch(/cost_cents|profit_cents/);
   const receipt=await fetch(app.url+quote.data.receiptUrl);expect(receipt.status).toBe(401);
   const adminQuote=await call('pos/quotes',body());expect((await call('pos/quotes',null,agent)).data.quotes.some(q=>q.id===adminQuote.data.document.id)).toBe(false);
+});
+it('guarda varios tickets sin ventas ni movimientos y conserva versiones al reiniciar',async()=>{
+  const a=await call('pos/tickets',{requestId:randomUUID(),name:'Mostrador A',draft:body()});
+  const b=await call('pos/tickets',{requestId:randomUUID(),name:'Mostrador B',draft:{items:[]}});
+  expect(a.status).toBe(201);expect(b.status).toBe(201);expect((await call('pos/tickets')).data.tickets).toHaveLength(2);
+  expect((await call('store/products')).data.movements).toHaveLength(0);
+  const t=a.data.ticket;
+  const updated=await call('pos/tickets/'+t.id,{version:t.version,name:'Mostrador A2',draft:t.draft});expect(updated.data.ticket.version).toBe(2);
+  expect((await call('pos/tickets/'+t.id,{version:t.version,name:'Cambio antiguo',draft:t.draft})).status).toBe(409);
+  await app.close();app=await startCrmServer({port:0,host:'127.0.0.1',databaseUrl,dataFile:path.join(dir,'pos.sqlite'),token:'pos-test-token',quiet:true,schedulerEnabled:false});
+  expect((await call('pos/tickets/'+t.id)).data.ticket).toMatchObject({name:'Mostrador A2',version:2,status:'open'});
+});
+it('el guardado concurrente de un ticket acepta una sola versión',async()=>{
+  const {ticket:t}=(await call('pos/tickets',{requestId:randomUUID(),draft:body()})).data;
+  const attempts=await Promise.all(['Primero','Segundo'].map(name=>call('pos/tickets/'+t.id,{version:t.version,name,draft:t.draft})));
+  expect(attempts.map(r=>r.status).sort()).toEqual([200,409]);expect((await call('pos/tickets/'+t.id)).data.ticket.version).toBe(2);
+});
+it('un ticket solo se factura una vez, con claves diferentes y conserva su comprobante',async()=>{
+  const {ticket:t}=(await call('pos/tickets',{requestId:randomUUID(),draft:body()})).data;
+  const input=body({ticketId:t.id,ticketVersion:t.version});
+  const first=await call('pos/checkout',input),second=await call('pos/checkout',{...input,requestId:randomUUID()});
+  expect(first.status).toBe(201);expect(second.status).toBe(200);expect(first.data.orderId).toBe(second.data.orderId);
+  expect((await call('pos/tickets/'+t.id)).data.ticket).toMatchObject({status:'completed',result:{orderId:first.data.orderId}});
+  expect((await call('pos/tickets/'+t.id,{version:t.version,draft:t.draft})).status).toBe(409);
+});
+it('cotización → ticket conserva líneas y genera un único ticket y una única factura',async()=>{
+  const q=(await call('pos/quotes',body())).data.document;
+  const a=await call('pos/tickets',{requestId:randomUUID(),quoteId:q.id});const b=await call('pos/tickets',{requestId:randomUUID(),quoteId:q.id});
+  expect(a.data.ticket.id).toBe(b.data.ticket.id);expect(a.data.ticket.draft.items).toEqual(q.input.items);
+  const result=await call('pos/checkout',body({ticketId:a.data.ticket.id,ticketVersion:a.data.ticket.version}));expect(result.status).toBe(201);
+  expect((await call('pos/quotes/'+q.id)).data.document.status).toBe('converted');
+  expect((await call('pos/tickets',{requestId:randomUUID(),quoteId:q.id})).status).toBe(409);
+  const pdf=await fetch(app.url+'/api/admin/pos/quotes/'+q.id+'/pdf',{headers:{cookie}});expect(pdf.headers.get('content-type')).toBe('application/pdf');expect((await pdf.text()).startsWith('%PDF')).toBe(true);
+  expect((await fetch(app.url+'/api/admin/pos/quotes/'+q.id+'/pdf')).status).toBe(401);
+});
+it('factura una venta fuera de inventario con costo, descuento y sin crear productos',async()=>{
+  const count=(await call('store/products')).data.products.length;
+  const manual={variantId:'manual_'+randomUUID(),quantity:2,discount:{type:'amount',value:0.01},manual:{name:'Trabajo ocasional',price:1250.50,cost:600.25}};
+  const result=await call('pos/checkout',body({items:[manual]}));expect(result.status).toBe(201);
+  const order=(await call('orders/'+result.data.orderId)).data.order;
+  expect(order.total).toBe(2250.89);expect(order.items[0]).toMatchObject({manual:true,product_cost_snapshot_cents:120050,subtotal_snapshot_cents:250099});
+  expect(order.items[0].label).toBe('Trabajo ocasional');
+  const catalog=(await call('store/products')).data;expect(catalog.products).toHaveLength(count);expect(catalog.movements).toHaveLength(0);
+  const report=(await call('reports/sales')).data.report;expect(report.sales.find(s=>s.id===result.data.orderId).product_cost_cents).toBe(120050);
+  const patch=await fetch(app.url+'/api/admin/orders/'+result.data.orderId,{method:'PATCH',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({notes:'Nota actualizada'})});
+  expect(patch.status).toBe(200);const unchanged=(await call('orders/'+result.data.orderId)).data.order;
+  expect(unchanged.total).toBe(2250.89);expect(unchanged.items[0].line_discount_cents).toBe(1);
+  expect((await call('pos/checkout',body({items:[{...manual,variantId:p.id}]}))).status).toBe(422);
+});
+it('descarta un ticket sin borrar su historial y los agentes no pueden abrir tickets ajenos',async()=>{
+  const t=(await call('pos/tickets',{requestId:randomUUID(),draft:body()})).data.ticket;
+  await call('users',{username:'ticket-agent',displayName:'Agente',role:'AGENT',password:'TicketTest-12345'});
+  const login=await fetch(app.url+'/api/admin/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'ticket-agent',password:'TicketTest-12345'})}),agent=login.headers.get('set-cookie').split(';')[0];
+  expect((await call('pos/tickets/'+t.id,null,agent)).status).toBe(404);expect((await call('pos/tickets',null,agent)).data.tickets).toHaveLength(0);
+  expect((await call('pos/tickets/'+t.id+'/discard',{version:t.version},agent)).status).toBe(404);
+  expect((await call('pos/tickets/'+t.id+'/discard',{version:t.version})).data.ticket.status).toBe('discarded');
+  expect((await call('pos/checkout',body({ticketId:t.id,ticketVersion:t.version}))).status).toBe(409);
 });

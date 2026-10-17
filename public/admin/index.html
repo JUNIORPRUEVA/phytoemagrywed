@@ -47,7 +47,7 @@
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/admin/admin.css?v=campaign-exact-66" />
     <link rel="stylesheet" href="/admin/store.css?v=4" />
-    <link rel="stylesheet" href="/admin/pos.css?v=2" />
+    <link rel="stylesheet" href="/admin/pos.css?v=4" />
     <!--
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
       DESPUÉS de admin.css a propósito: es la última palabra sobre esas piezas.
@@ -181,6 +181,7 @@
                 <summary class="drawer__item"><span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Catálogo e inventario</summary>
                 <nav aria-label="Catálogo e inventario">
                   <button class="drawer__item" data-tab="catalogo" type="button">Productos y servicios</button>
+                  <button class="drawer__item" data-tab="cotizaciones" type="button">Cotizaciones</button>
                   <button class="drawer__item" data-tab="inventario" type="button">Ajuste de stock</button>
                   <button class="drawer__item" data-tab="recuento" type="button">Recuento</button>
                 </nav>
@@ -542,6 +543,9 @@
           <h2 class="view__title">Ajuste de stock</h2>
           <div id="store-inventario"></div>
         </section>
+        <section class="view pos-documents-view" id="view-cotizaciones" hidden>
+          <div id="pos-quotes-page"></div>
+        </section>
         <section class="view" id="view-recuento" hidden>
           <h2 class="view__title">Recuento de inventario</h2>
           <div id="store-recuento"></div>
@@ -813,7 +817,7 @@
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/app.js?v=chat-layout-85" defer></script>
     <script src="/admin/calling.js?v=1" defer></script>
-    <script src="/admin/store.js?v=5" defer></script>
-    <script src="/admin/pos.js?v=2" type="module"></script>
+    <script src="/admin/store.js?v=7" defer></script>
+    <script src="/admin/pos.js?v=4" type="module"></script>
   </body>
 </html>

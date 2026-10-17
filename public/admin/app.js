@@ -53,7 +53,7 @@
   const PREFS_KEY = 'pe_prefs';
   /** Los valores admitidos: si en el teléfono hay basura, se ignora y se usa el de siempre. */
   const PREF_VALUES = {
-    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'catalogo', 'inventario', 'recuento', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
+    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
     waFilter: ['todos', 'mios', 'sin-asignar', 'no-leidos', 'pendientes', 'clientes', 'seguimiento', 'archivados'],
     pedidosFilter: ['todo', 'pendiente', 'en-camino', 'entregado', 'cancelado'],
     followupsFilter: ['todo', 'vencidos', 'hoy', 'proximos'],
@@ -1966,6 +1966,14 @@
   function renderMobileHeader() {
     const box = $('#mobile-header');
     if (!box) return;
+    if(state.tab==='catalogo'){
+      const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
+      const detail=new URLSearchParams(location.search).has('product');
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong>${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button>`:''}</div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      if(search)$('#pos-search-host').append(search);
+      window.dispatchEvent(new Event('fulltech:pos-appbar'));
+      if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
+    }
     if (state.tab === 'delivery') {
       const orders = deliveryOrdersSorted();
       const hasActive = Boolean(state.deliveryActiveOrderId && orders.some((order) => order.id === state.deliveryActiveOrderId));
@@ -12589,7 +12597,7 @@
   function orderTotals(lines, discount = 0, deliveryFee = 0) {
     const items = lines
       .map((line) => {
-        const variant = catalogOf(line.variantId);
+        const variant = catalogOf(line.variantId)??line.manualSnapshot;
         if (!variant) return null;
         const quantity = Math.max(1, Number(line.quantity) || 1);
         const capsules = Number(variant.capsule_quantity ?? variant.capsules ?? 0) || 0;
@@ -13163,7 +13171,7 @@
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
       : null;
     const effectiveCustomerId = customer?.id ?? customerId ?? null;
-    const catalog = state.catalog ?? [];
+    const catalog = [...(state.catalog??[]),...(order?.items||[]).filter(i=>i.manual).map(i=>({id:i.variantId,label:i.label,name:i.label,price:i.unitPrice,capsules:0,general:true,kind:i.kind||'product'}))];
     if (!catalog.length) {
       toast('El catálogo todavía no está disponible');
       return;
@@ -13191,7 +13199,7 @@
       ? draftData.lines
           .filter((line) => catalog.some((variant) => variant.id === line.variantId))
           .map((line) => ({ variantId: line.variantId, quantity: Math.max(1, Number(line.quantity) || 1) }))
-      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity,unitPrice:line.unitPrice,...(line.line_discount_cents?{lineDiscountCents:line.line_discount_cents}:{}) })) ?? [
+      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity,unitPrice:line.unitPrice,...(line.line_discount_cents?{lineDiscountCents:line.line_discount_cents}:{}),...(line.manual?{manualSnapshot:catalog.find(v=>v.id===line.variantId)}:{}) })) ?? [
           { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
         ];
     if (!lines.length) lines = [{ variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) }];
@@ -13563,6 +13571,8 @@
         lines[Number(select.dataset.lineVariant)].variantId = select.value;
         delete lines[Number(select.dataset.lineVariant)].unitPrice;
         delete lines[Number(select.dataset.lineVariant)].lineDiscountCents;
+        if(select.value.startsWith('manual_'))lines[Number(select.dataset.lineVariant)].manualSnapshot=catalog.find(v=>v.id===select.value);
+        else delete lines[Number(select.dataset.lineVariant)].manualSnapshot;
         refreshOrderTotal();
       }
       const quantity = event.target.closest('[data-line-qty]');
@@ -18321,7 +18331,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -18332,6 +18342,7 @@
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
     catalogo: 'Facturación',
+    cotizaciones: 'Cotizaciones',
     inventario: 'Ajuste de stock',
     recuento: 'Recuento de inventario',
     reportes: 'Reportes',
@@ -18393,12 +18404,13 @@
       history.replaceState(null, '', location.pathname + location.search);
       settingsPage = '';
     }
-    const storeTabs = ['catalogo', 'inventario', 'recuento'];
+    const storeTabs = ['catalogo', 'inventario', 'recuento', 'cotizaciones'];
     if (!options.fromHistory && (storeTabs.includes(tab) || storeTabs.includes(state.tab))) {
       const nextUrl = new URL(location.href);
       nextUrl.searchParams.set('v', tab);
       nextUrl.searchParams.delete('conversation');
       if (tab !== 'catalogo') nextUrl.searchParams.delete('product');
+      if (tab !== 'cotizaciones') {nextUrl.searchParams.delete('quote');nextUrl.searchParams.delete('ticket');}
       if (storeTabs.includes(tab)) nextUrl.hash = '';
       if (nextUrl.href !== location.href) history[options.replaceHistory?'replaceState':'pushState']({ tab }, '', nextUrl);
     }
@@ -18542,12 +18554,14 @@
     window.addEventListener('fulltech:session-expired',()=>showLogin('Tu sesión terminó. Vuelve a entrar.'));
     window.addEventListener('popstate', () => {
       const wanted = new URLSearchParams(location.search).get('v');
-      if (VIEWS.includes(wanted) && (['catalogo','inventario','recuento'].includes(wanted) || ['catalogo','inventario','recuento'].includes(state.tab))) setTab(wanted,{silent:true,fromHistory:true});
+      if (VIEWS.includes(wanted) && (['catalogo','inventario','recuento','cotizaciones'].includes(wanted) || ['catalogo','inventario','recuento','cotizaciones'].includes(state.tab))) setTab(wanted,{silent:true,fromHistory:true});
     });
     window.addEventListener('fulltech:catalog-updated', async () => {
       try { const fresh=await api('/api/admin/catalog');state.catalog=fresh.catalog;saveSnapshot(); } catch {}
     });
     window.addEventListener('fulltech:pos-saved',()=>load({silent:true}));
+    window.addEventListener('fulltech:catalog-view',renderMobileHeader);
+    window.addEventListener('fulltech:pos-navigate',e=>setTab(e.detail.tab));
     window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -19233,7 +19247,7 @@
         return;
       }
       if (event.target.closest('[data-simple-back]')) {
-        if (['catalogo','inventario','recuento'].includes(state.tab)) {
+        if (['catalogo','inventario','recuento','cotizaciones'].includes(state.tab)) {
           const backEvent=new CustomEvent('fulltech:back',{cancelable:true});window.dispatchEvent(backEvent);
           if(!backEvent.defaultPrevented)setTab('hoy',{replaceHistory:true});
           return;

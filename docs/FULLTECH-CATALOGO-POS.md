@@ -207,3 +207,40 @@ Validación de esta etapa:
 
 Todo permanece en `feat/fulltech-pos`, en el worktree separado. No se ha
 fusionado con principal ni desplegado a producción en esta etapa.
+
+## Appbar, tickets y página de cotizaciones
+
+- La lupa del appbar sustituye título/atrás por el buscador existente y su
+  filtro. Cerrar búsqueda recupera la cabecera, conservando búsqueda/filtros;
+  una marca en la lupa indica que siguen activos. La animación respeta la
+  preferencia de movimiento reducido. El aviso de actualización reserva su
+  altura para no tapar la cabecera.
+- La selección de cliente muestra únicamente «Selecciona cliente» o su nombre.
+- El botón flotante abre **Acciones**: nuevo ticket, guardar, lista de tickets,
+  venta fuera de inventario y, para administración, alta de artículo y stock.
+- Los tickets son borradores persistentes en `fulltech_pos_tickets_v1`, con
+  propietario y versión. Cambiar de ticket guarda la venta actual. Los tickets
+  abiertos se guardan automáticamente al modificarlos; se pueden renombrar y
+  descartar. No reservan ni descuentan inventario. Un cambio simultáneo devuelve
+  conflicto en lugar de sobrescribir datos. Facturar el mismo ticket reutiliza
+  su operación aunque cambie la clave enviada por el navegador.
+- La venta fuera de inventario admite descripción, tipo producto/servicio,
+  cantidad, precio y costo unitarios. Sus líneas conservan costos/descuentos
+  históricos, participan en reportes y comprobantes y no crean artículos ni
+  movimientos. Los costos permanecen ocultos al consultar documentos como
+  agente, incluso dentro del borrador de un ticket.
+- **Cotizaciones** tiene entrada propia en Catálogo e inventario, buscador y
+  detalle. Generar una cotización lleva a ese detalle y muestra una notificación
+  con acceso al documento. «Pasar a ticket» recupera sus líneas y cliente para
+  facturar posteriormente; cada cotización conserva un único ticket de origen
+  y una única operación de conversión.
+- El documento ofrece PDF real, impresión, compartir archivo, WhatsApp y
+  acceso a crear ticket. Compartir usa el diálogo del dispositivo cuando admite
+  archivos. Si el navegador no lo permite, descarga el PDF y explica que debe
+  adjuntarse al chat abierto con WhatsApp. No envía automáticamente por la API
+  de Meta ni comparte un enlace privado del CRM con el cliente.
+- Validación actual: 129 pruebas aprobadas y una reservada para PostgreSQL en
+  las suites de POS/catálogo/ventas/inventario/conversaciones. PostgreSQL aislado:
+  35 aprobadas; se repitieron las 19 de POS tras los últimos ajustes. La UAT
+  general de ventas mantiene 21 aprobadas y los cuatro fallos previos descritos.
+  Contenido y compilación aprobados. La vista local continúa en el puerto 8817.

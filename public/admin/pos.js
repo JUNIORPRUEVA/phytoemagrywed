@@ -3,14 +3,14 @@ import {calculateSale} from './pos-math.js';
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
-const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order'});
+const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:''});
 const personIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg>';
 const quotesIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h5"/></svg>';
 let draft=empty(),products=[],customers=[],isAdmin=false,canCreate=false,expanded=false,busy=false,loaded=false,generation=0,operation=null,message='',initializing=null,dragged=false,draftKey=null;
 const root=$('#pos-root'),client=document.createElement('div');client.id='pos-client';root?.parentElement.prepend(client);
 const modal=document.createElement('dialog');modal.className='pos-dialog';document.body.append(modal);
 function persist(){try{if(draftKey)sessionStorage.setItem(draftKey,JSON.stringify({draft,operation}));}catch{}}
-function changed(){operation=null;message='';persist();render();}
+function changed(){operation=null;message='';draft.ticketDirty=true;persist();render();if(draft.ticketId)scheduleTicketSave();}
 async function api(path,body){
   const epoch=generation;
   if(body&&!navigator.onLine)throw new Error('Conéctate a internet para guardar o cobrar. Tu carrito sigue disponible.');
@@ -22,7 +22,7 @@ async function api(path,body){
 }
 function totals(){try{return calculateSale(draft.items,products,draft.discount,draft.deliveryFee);}catch(e){
   // Conserva las líneas editables aunque un cambio de cantidad invalide un descuento fijo.
-  const items=draft.items.map(line=>{const p=products.find(p=>p.id===line.variantId);return {variantId:line.variantId,name:p?.name||'Artículo no disponible',quantity:line.quantity,unit_price_cents:p?.price_cents||0,subtotal_cents:(p?.price_cents||0)*line.quantity,discount_cents:0};});
+  const items=draft.items.map(line=>{const p=products.find(p=>p.id===line.variantId)||(line.manual?{name:line.manual.name,price_cents:Math.round(Number(line.manual.price)*100)}:null);return {variantId:line.variantId,name:p?.name||'Artículo no disponible',quantity:line.quantity,unit_price_cents:p?.price_cents||0,subtotal_cents:(p?.price_cents||0)*line.quantity,discount_cents:0};});
   return {items,total_cents:items.reduce((n,i)=>n+i.subtotal_cents,0),discount_cents:0,error:e.message};
 }}
 function updateBadges(){
@@ -32,11 +32,12 @@ function render(){
   if(!root)return;
   const sale=totals(),quantity=draft.items.reduce((n,i)=>n+i.quantity,0),disabled=!draft.items.length||!!sale.error||!canCreate||busy;
   const wide=window.matchMedia?.('(min-width:900px)').matches;
-  client.innerHTML=`<button type="button" class="pos-client-button" data-pos-client><span class="pos-client-icon">${personIcon}</span><span><strong>${esc(draft.customer?.name||'Seleccionar cliente')}</strong><small>${esc(draft.customer?.phone_e164||'Venta de mostrador')} · ${{quote:'Cotización',invoice:'Factura',order:'Pedido'}[draft.flow]||'Pedido'}</small></span><span aria-hidden="true">⌄</span></button>${draft.customer?'<button class="pos-icon" type="button" data-pos-remove-client aria-label="Quitar cliente">×</button>':''}<button class="pos-icon" type="button" data-pos-quotes aria-label="Cotizaciones guardadas" title="Cotizaciones guardadas">${quotesIcon}</button>`;
+  client.innerHTML=`<button type="button" class="pos-client-button" data-pos-client><span class="pos-client-icon">${personIcon}</span><strong>${esc(draft.customer?.name||'Selecciona cliente')}</strong><span class="pos-client-chevron" aria-hidden="true">⌄</span></button>${draft.customer?'<button class="pos-icon" type="button" data-pos-remove-client aria-label="Quitar cliente">×</button>':''}`;
   root.classList.toggle('pos-expanded',expanded);
   root.innerHTML=`<section class="pos-cart" aria-label="Carrito de venta"><button class="pos-cart-handle" type="button" data-pos-expand aria-expanded="${expanded||wide}" ${wide?'disabled':''} aria-label="${expanded||wide?'Contraer':'Expandir'} carrito"><span class="pos-grip"></span><span>Carrito <small>${quantity} ${quantity===1?'artículo':'artículos'}</small></span><span>${expanded?'⌄':'⌃'}</span></button><div class="pos-cart-lines" ${expanded?'':'inert'}>${sale.items.length?sale.items.map((line,index)=>`<article class="pos-cart-line"><div class="pos-line-name"><strong>${esc(line.name)}</strong><small>${cash(line.unit_price_cents)} c/u</small><button type="button" class="pos-text" data-pos-discount="${index}">${line.discount_cents?`−${cash(line.discount_cents)}`:'Descuento'}</button></div><div class="pos-stepper"><button type="button" data-pos-minus="${index}" aria-label="Disminuir ${esc(line.name)}">−</button><button type="button" data-pos-quantity="${index}" aria-label="Cantidad de ${esc(line.name)}">${line.quantity}</button><button type="button" data-pos-plus="${index}" aria-label="Aumentar ${esc(line.name)}">+</button></div><div class="pos-line-total"><strong>${cash(line.subtotal_cents)}</strong><button class="pos-text" type="button" data-pos-delete="${index}" aria-label="Eliminar ${esc(line.name)}">Quitar</button></div></article>`).join(''):'<p class="pos-empty">Toca + en un artículo para comenzar.</p>'}</div><div class="pos-cart-tools" ${expanded?'':'hidden'}><button type="button" class="pos-text" data-pos-options>Envío y notas</button><button type="button" class="pos-text" data-pos-pending ${disabled?'disabled':''}>Guardar pedido</button><button type="button" class="pos-text" data-pos-clear ${!draft.items.length||busy?'disabled':''}>Vaciar</button></div></section><div class="pos-feedback" role="status" aria-live="polite">${esc(message||sale.error||'')}</div><section class="pos-summary" aria-label="Resumen de venta"><div class="pos-summary-values">${isAdmin?`<div class="pos-profit"><small>Ganancia</small><strong>${sale.profit_cents===undefined?'—':cash(sale.profit_cents)}</strong></div>`:'<span></span>'}<button type="button" class="pos-discount-total" data-pos-discount="total"><small>Descuento</small><strong>${cash(sale.discount_cents)}</strong></button><div class="pos-total"><small>Total</small><strong>${cash(sale.total_cents)}</strong></div></div><div class="pos-actions"><button type="button" class="btn btn--ghost" data-pos-quote ${disabled?'disabled':''}>Cotizar</button><button type="button" class="btn btn--primary" data-pos-pay ${disabled?'disabled':''}>${busy?'Guardando…':'Cobrar'}</button></div></section>`;
   root.querySelector('.pos-cart-lines')?.removeAttribute('inert');
   root.classList.toggle('pos-has-items',!!sale.items.length);
+  const cartCaption=root.querySelector('.pos-cart-handle>span:nth-child(2)');if(cartCaption&&draft.ticketName)cartCaption.innerHTML=`${esc(draft.ticketName)} <small>${quantity} ${quantity===1?'artículo':'artículos'}</small>`;
   if(wide){root.querySelector('.pos-cart-tools')?.removeAttribute('hidden');}
   updateBadges();
   const handle=$('[data-pos-expand]');let startY=null;
@@ -101,15 +102,18 @@ async function confirmSale(mode){
 async function complete(mode,paymentMethod,acknowledgeOpen=false){
   const sale=totals();if(sale.error)throw new Error(sale.error);
   if(operation&&operation.mode!==mode)throw new Error('Primero revisa el resultado de la operación anterior.');
+  if(!operation&&draft.ticketId)await saveActiveTicket();
   operation ||= {mode,payload:{requestId:crypto.randomUUID(),mode,customerId:draft.customer.id,conversationId:draft.conversationId,
     items:structuredClone(draft.items),discount:draft.discount,deliveryFee:draft.deliveryFee,address:draft.address,notes:draft.notes,location:draft.location,
-    quoteId:mode==='quote'?null:draft.quoteId,expectedTotal:sale.total_cents,paymentMethod,acknowledgeOpen}};
+    quoteId:mode==='quote'?null:draft.quoteId,ticketId:draft.ticketId,ticketVersion:draft.ticketVersion,expectedTotal:sale.total_cents,paymentMethod,acknowledgeOpen}};
   busy=true;persist();render();const epoch=generation;
   try{
     const result=await api(mode==='quote'?'quotes':'checkout',operation.payload);if(epoch!==generation)return;
     const label=mode==='quote'?'Cotización guardada':mode==='order'?'Pedido guardado':'Venta cobrada';
     draft=empty();operation=null;expanded=false;persist();message=label;render();
-    show(label,`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(result.number||result.document?.number||'')}</span></p><a class="btn btn--primary" href="${esc(result.receiptUrl)}" target="_blank" rel="noopener">${mode==='quote'?'Ver cotización / PDF':'Ver comprobante / PDF'}</a>${mode==='order'?`<button class="btn btn--ghost" type="button" data-pos-delivery="${esc(result.orderId)}">Continuar entrega</button>`:''}<p class="pos-muted">${mode==='order'?'El pedido está pendiente. Puedes asignar su entrega ahora o desde Pedidos.':'Documento comercial guardado.'}</p>`,null);
+    if(mode==='quote'){
+      modal.close();const id=result.document?.id||result.quoteId;openQuote(id);notifyQuote(id,label);
+    }else show(label,`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(result.number||'')}</span></p><a class="btn btn--primary" href="${esc(result.receiptUrl)}" target="_blank" rel="noopener">Ver comprobante / PDF</a>${mode==='order'?`<button class="btn btn--ghost" type="button" data-pos-delivery="${esc(result.orderId)}">Continuar entrega</button>`:''}<p class="pos-muted">${mode==='order'?'El pedido está pendiente. Puedes asignar su entrega ahora o desde Pedidos.':'Documento comercial guardado.'}</p>`,null);
     window.dispatchEvent(new Event('fulltech:pos-saved'));window.dispatchEvent(new Event('fulltech:catalog-updated'));
   }catch(e){
     if(epoch!==generation)return;
@@ -117,20 +121,142 @@ async function complete(mode,paymentMethod,acknowledgeOpen=false){
     persist();throw e;
   }finally{if(epoch===generation){busy=false;render();}}
 }
-async function quotes(){
-  const epoch=generation;
-  try{const data=await api('quotes');
-    if(epoch!==generation)return;
-    show('Cotizaciones guardadas',`<div class="pos-quote-list">${data.quotes.length?data.quotes.map(q=>`<article><strong>${esc(q.number)}</strong><span>${esc(q.customer.name)} · ${cash(q.sale.total_cents)}</span><small>${esc(new Date(q.created_at).toLocaleDateString('es-DO'))} · ${q.status==='converted'?'Convertida a pedido':'Cotización'}</small><div><a class="pos-text" href="/api/admin/pos/quotes/${esc(q.id)}/receipt" target="_blank" rel="noopener">Ver / PDF</a>${q.status!=='converted'?`<button class="pos-text" type="button" data-pos-load-quote="${esc(q.id)}">Usar cotización</button>`:''}</div></article>`).join(''):'<p>Aquí aparecerán tus cotizaciones guardadas.</p>'}</div>`,null);
-    modal.querySelectorAll('[data-pos-load-quote]').forEach(b=>b.addEventListener('click',()=>{
-      const q=data.quotes.find(q=>q.id===b.dataset.posLoadQuote);if(operation){message='Revisa primero el resultado de la operación anterior.';render();modal.close();return;}
-      const load=()=>{draft={...empty(),...q.input,customer:q.customer,quoteId:q.id,flow:'quote'};expanded=true;changed();modal.close();};
-      if(draft.items.length)show('Reemplazar carrito','<p>Se reemplazará el carrito actual por la cotización seleccionada.</p>','Reemplazar',load);else load();
-    }));
-  }catch(e){message=e.message;render();}
+// Búsqueda en la cabecera; se reutiliza el mismo control y el mismo filtro.
+let searchOpen=false,searchBar=null;
+function syncSearchBar(){
+  searchBar=$('#store-catalogo .store-search-line')||$('#pos-search-host .store-search-line')||searchBar;
+  const host=$('#pos-search-host'),detail=new URLSearchParams(location.search).has('product');
+  if(host&&searchBar&&!detail)host.append(searchBar);
+  $('.pos-appbar')?.classList.toggle('pos-search-open',searchOpen&&!detail);
+  $('[data-pos-search-open]')?.classList.toggle('pos-search-filtered',!!searchBar?.querySelector('input')?.value||!!searchBar?.querySelector('.store-filter-dot'));
 }
+function setSearchOpen(value){searchOpen=value;syncSearchBar();if(value)$('#store-search')?.focus({preventScroll:true});else $('[data-pos-search-open]')?.focus({preventScroll:true});}
+
+// Tickets: guardado optimista por versión, antes de cambiar de venta.
+let ticketSaveTimer=null,ticketSaveTail=Promise.resolve();
+function packedDraft(){return {...structuredClone(draft),customerId:draft.customer?.id||''};}
+function scheduleTicketSave(){clearTimeout(ticketSaveTimer);ticketSaveTimer=setTimeout(()=>saveActiveTicket().catch(e=>{message=e.message;render();}),650);}
+function saveActiveTicket(){
+  clearTimeout(ticketSaveTimer);
+  ticketSaveTail=ticketSaveTail.catch(()=>{}).then(async()=>{
+    if(operation)throw new Error('Revisa la operación anterior antes de cambiar de ticket.');
+    if(!draft.items.length&&!draft.ticketId)return null;
+    if(draft.ticketId&&!draft.ticketDirty)return null;
+    const epoch=generation,id=draft.ticketId,snapshot=packedDraft();
+    const result=await api(id?'tickets/'+id:'tickets',{requestId:crypto.randomUUID(),version:draft.ticketVersion,name:draft.ticketName,draft:snapshot});
+    if(epoch!==generation)return;
+    const t=result.ticket;if(!t)throw new Error('No se pudo guardar el ticket.');
+    if(!id||draft.ticketId===id){
+      const unchanged=JSON.stringify(packedDraft())===JSON.stringify(snapshot);
+      draft.ticketId=t.id;draft.ticketVersion=t.version;draft.ticketName=t.name;draft.ticketDirty=!unchanged;persist();render();
+    }
+    return t;
+  });return ticketSaveTail;
+}
+function useTicket(ticket){
+  draft={...empty(),...ticket.draft,ticketId:ticket.id,ticketVersion:ticket.version,ticketName:ticket.name,ticketDirty:false};
+  operation=null;expanded=!!draft.items.length;persist();render();modal.close();
+  window.dispatchEvent(new CustomEvent('fulltech:pos-navigate',{detail:{tab:'catalogo'}}));
+}
+async function newTicket(){
+  await saveActiveTicket();const result=await api('tickets',{requestId:crypto.randomUUID(),draft:empty()});useTicket(result.ticket);
+}
+function ticketTotal(t){try{return cash(calculateSale(t.draft.items,products,t.draft.discount,t.draft.deliveryFee).total_cents);}catch{return 'Revisar artículos';}}
+async function ticketList(){
+  await saveActiveTicket();const data=await api('tickets');
+  const active=data.tickets.filter(t=>['open','processing'].includes(t.status));
+  show('Tickets',`<button class="btn btn--primary btn--block" type="button" data-pos-new-ticket>Nuevo ticket</button><div class="pos-ticket-list">${active.map(t=>`<article><div><strong>${esc(t.name)}</strong><small>${esc(t.draft.customer?.name||'Sin cliente')} · ${t.draft.items.reduce((n,i)=>n+i.quantity,0)} artículos</small></div><strong>${ticketTotal(t)}</strong><div class="pos-ticket-actions">${t.status==='open'?`<button class="pos-text" type="button" data-pos-ticket="${esc(t.id)}">Abrir</button><button class="pos-text" type="button" data-pos-ticket-rename="${esc(t.id)}">Renombrar</button><button class="pos-text" type="button" data-pos-ticket-discard="${esc(t.id)}">Descartar</button>`:'<small>Operación en revisión</small>'}</div></article>`).join('')||'<p class="pos-empty">No tienes tickets pendientes.</p>'}</div><details class="pos-ticket-history"><summary>Tickets finalizados</summary>${data.tickets.filter(t=>t.status==='completed').map(t=>`<p>${esc(t.name)} <a class="pos-text" href="${esc(t.result?.receiptUrl||'#')}" target="_blank" rel="noopener">Ver documento</a></p>`).join('')||'<p>Todavía no hay tickets finalizados.</p>'}</details>`,null);
+}
+async function openTicket(id){
+  await saveActiveTicket();const {ticket}=await api('tickets/'+id);
+  if(ticket.status!=='open')throw new Error('Este ticket ya se procesó o necesita revisión.');useTicket(ticket);
+}
+async function renameTicket(id){
+  await saveActiveTicket();const {ticket}=await api('tickets/'+id);
+  show('Nombre del ticket',`<label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="80" value="${esc(ticket.name)}" required></label>`,'Guardar',async form=>{
+    const result=await api('tickets/'+id,{version:ticket.version,name:form.get('name'),draft:ticket.draft});
+    if(draft.ticketId===id){draft.ticketName=result.ticket.name;draft.ticketVersion=result.ticket.version;persist();render();}await ticketList();
+  });
+}
+async function discardTicket(id){
+  const {ticket}=await api('tickets/'+id);
+  show('Descartar ticket',`<p>Se descartará ${esc(ticket.name)}. No se modifica inventario.</p>`,'Descartar',async()=>{
+    await api('tickets/'+id+'/discard',{version:ticket.version});if(draft.ticketId===id){draft=empty();persist();render();}await ticketList();
+  });
+}
+function manualSale(){
+  show('Venta fuera de inventario',`<label class="field"><span class="field__label">Descripción</span><input class="field__input" name="name" maxlength="150" required placeholder="Artículo o servicio ocasional"></label><label class="field"><span class="field__label">Tipo</span><select class="field__select" name="kind"><option value="product">Producto fuera de inventario</option><option value="service">Servicio ocasional</option></select></label><div class="pos-manual-grid"><label class="field"><span class="field__label">Cantidad</span><input class="field__input" name="quantity" type="number" min="1" max="9999" step="1" value="1" required></label><label class="field"><span class="field__label">Precio unitario (RD$)</span><input class="field__input" name="price" type="number" min="0" step="0.01" required></label></div><label class="field"><span class="field__label">Costo unitario (RD$)</span><input class="field__input" name="cost" type="number" min="0" step="0.01" value="0" required></label><p class="pos-muted">Aparecerá en el comprobante sin crear un producto ni modificar existencias.</p>`,'Agregar al ticket',form=>{
+    const item={variantId:'manual_'+crypto.randomUUID(),quantity:Number(form.get('quantity')),discount:{},manual:{name:String(form.get('name')).trim(),kind:form.get('kind'),price:Number(form.get('price')),cost:Number(form.get('cost'))}};
+    calculateSale([item],products);draft.items.push(item);changed();modal.close();
+  });
+}
+function actions(){
+  show('Acciones',`<div class="pos-action-menu"><button type="button" data-pos-new-ticket>Nuevo ticket <small>Guardar la venta actual y comenzar otra</small></button><button type="button" data-pos-save-ticket ${!draft.items.length?'disabled':''}>Guardar ticket <small>Continuar más tarde</small></button><button type="button" data-pos-tickets>Tickets guardados</button><button type="button" data-pos-manual>Venta fuera de inventario</button>${isAdmin?'<button type="button" data-pos-create-product>Nuevo producto o servicio</button><button type="button" data-pos-stock>Agregar / ajustar stock</button>':''}</div>`,null);
+}
+
+// Las cotizaciones tienen página y detalle propios, separados de la venta activa.
+let quotesEpoch=0,quoteQuery='',quoteRows=[];
+const quotesPage=()=>$('#pos-quotes-page');
+function openQuote(id){
+  if(!id)return;modal.close();const url=new URL(location.href);url.searchParams.set('v','cotizaciones');url.searchParams.set('quote',id);url.searchParams.delete('ticket');url.searchParams.delete('product');
+  if(url.href!==location.href)history.pushState({posQuote:true,posQuoteFromList:new URLSearchParams(location.search).get('v')==='cotizaciones'&&!new URLSearchParams(location.search).has('quote')},'',url);window.dispatchEvent(new CustomEvent('fulltech:pos-navigate',{detail:{tab:'cotizaciones'}}));renderQuotesPage();
+}
+function notifyQuote(id,text){
+  document.querySelector('.pos-document-toast')?.remove();const toast=document.createElement('div');toast.className='pos-document-toast';toast.setAttribute('role','status');
+  toast.innerHTML=`<span>${esc(text)}</span><button type="button" data-pos-open-quote="${esc(id)}">Ver cotización</button>`;document.body.append(toast);setTimeout(()=>toast.remove(),15000);
+}
+function quoteListRows(){
+  const list=$('#pos-quote-list');if(!list)return;
+  const q=quoteQuery.toLocaleLowerCase();const rows=quoteRows.filter(d=>(d.number+' '+d.customer.name+' '+d.customer.phone_e164).toLocaleLowerCase().includes(q));
+  list.innerHTML=rows.map(d=>`<button class="pos-quote-row" type="button" data-pos-open-quote="${esc(d.id)}"><span class="pos-document-icon">${quotesIcon}</span><span><strong>${esc(d.customer.name||d.customer.phone_e164)}</strong><small>${esc(d.number)} · ${esc(new Date(d.created_at).toLocaleDateString('es-DO'))}</small></span><span><strong>${cash(d.sale.total_cents)}</strong><small>${d.status==='converted'?'Facturada / pedido':'Cotización'}</small></span></button>`).join('')||'<div class="pos-empty">No hay cotizaciones para mostrar.</div>';
+}
+async function renderQuotesPage(){
+  const box=quotesPage();if(!box)return;const request=++quotesEpoch,epoch=generation;
+  try{
+    const id=new URLSearchParams(location.search).get('quote');
+    if(!id){
+      const data=await api('quotes');if(request!==quotesEpoch||epoch!==generation)return;quoteRows=data.quotes;
+      box.innerHTML=`<label class="field pos-document-search"><span class="sr-only">Buscar cotizaciones</span><input class="field__input" type="search" id="pos-quote-search" placeholder="Buscar cliente o cotización" value="${esc(quoteQuery)}"></label><div id="pos-quote-list"></div>`;
+      $('#pos-quote-search').addEventListener('input',e=>{quoteQuery=e.target.value;quoteListRows();});quoteListRows();return;
+    }
+    const {document:q}=await api('quotes/'+encodeURIComponent(id));if(request!==quotesEpoch||epoch!==generation)return;
+    box.innerHTML=`<div class="pos-quote-detail"><button class="pos-text" type="button" data-pos-quotes-list>‹ Todas las cotizaciones</button><header><span class="pos-document-icon">${quotesIcon}</span><div><small>${esc(q.number)}</small><h2>${esc(q.customer.name||q.customer.phone_e164)}</h2><p>${esc(q.customer.phone_e164)} · ${esc(new Date(q.created_at).toLocaleDateString('es-DO'))}</p></div></header><div class="pos-quote-detail-lines">${q.sale.items.map(i=>`<div><span><strong>${esc(i.name)}</strong><small>${i.quantity} × ${cash(i.unit_price_cents)}${i.discount_cents?' · −'+cash(i.discount_cents):''}</small></span><strong>${cash(i.subtotal_cents)}</strong></div>`).join('')}</div><div class="pos-quote-detail-total"><small>Descuento general ${cash(q.sale.discount_cents)} · Envío ${cash(q.sale.delivery_cents)}</small><strong>${cash(q.sale.total_cents)}</strong></div>${q.input.notes?`<p class="pos-muted">${esc(q.input.notes)}</p>`:''}<div class="pos-quote-detail-actions"><a class="btn btn--ghost" href="/api/admin/pos/quotes/${esc(q.id)}/receipt" target="_blank" rel="noopener">Ver PDF / compartir</a>${q.status==='converted'?`<a class="btn btn--primary" href="/api/admin/orders/${esc(q.order_id)}/receipt" target="_blank" rel="noopener">Ver venta</a>`:`<button class="btn btn--primary" type="button" data-pos-quote-ticket="${esc(q.id)}">Pasar a ticket</button>`}</div><p class="pos-muted">Cotización comercial. No registra pago ni reserva inventario.</p></div>`;
+    if(new URLSearchParams(location.search).get('ticket')==='1'){
+      const url=new URL(location.href);url.searchParams.delete('ticket');history.replaceState(history.state,'',url);
+      if(q.status!=='converted')await quoteToTicket(q.id);
+    }
+  }catch(e){if(request===quotesEpoch&&epoch===generation)box.innerHTML=`<p role="alert">${esc(e.message)}</p>`;}
+}
+async function quoteToTicket(id){await initialize();await saveActiveTicket();const {ticket}=await api('tickets',{requestId:crypto.randomUUID(),quoteId:id});if(ticket.status!=='open')throw new Error('El ticket de esta cotización ya está procesado o en revisión.');useTicket(ticket);}
+function quotesList(){if(history.state?.posQuoteFromList){history.back();return;}const url=new URL(location.href);url.searchParams.delete('quote');url.searchParams.delete('ticket');history.replaceState({tab:'cotizaciones'},'',url);renderQuotesPage();}
+function actionError(text){const error=modal.open?modal.querySelector('.pos-modal-error'):null;if(error)error.textContent=text;else if(document.body.dataset.tab==='cotizaciones'){let note=$('#pos-documents-error');if(!note){note=document.createElement('p');note.id='pos-documents-error';note.setAttribute('role','alert');quotesPage()?.prepend(note);}note.textContent=text;}else{message=text;render();}}
+async function runAction(action){if(busy)return;try{busy=true;await action();}catch(e){actionError(e.message);}finally{busy=false;render();}}
+
 document.addEventListener('click',e=>{
-  const mutation=e.target.closest('[data-pos-add],[data-pos-client],[data-pos-remove-client],[data-pos-customer],[data-pos-plus],[data-pos-minus],[data-pos-delete],[data-pos-quantity],[data-pos-discount],[data-pos-options],[data-pos-clear],[data-pos-load-quote]');
+  if(operation&&e.target.closest('[data-pos-new-ticket],[data-pos-save-ticket],[data-pos-manual],[data-pos-ticket],[data-pos-quote-ticket]')){actionError('Revisa la operación anterior antes de cambiar la venta.');return;}
+  if(e.target.closest('[data-pos-search-open]'))setSearchOpen(true);
+  if(e.target.closest('[data-pos-search-close]'))setSearchOpen(false);
+  if(e.target.closest('[data-pos-actions]'))actions();
+  if(e.target.closest('[data-pos-new-ticket]'))runAction(newTicket);
+  if(e.target.closest('[data-pos-save-ticket]'))runAction(async()=>{await saveActiveTicket();modal.close();message='Ticket guardado';render();});
+  if(e.target.closest('[data-pos-tickets]'))runAction(ticketList);
+  if(e.target.closest('[data-pos-manual]'))manualSale();
+  if(e.target.closest('[data-pos-create-product]')){modal.close();window.dispatchEvent(new Event('fulltech:store-create'));}
+  if(e.target.closest('[data-pos-stock]')){modal.close();window.dispatchEvent(new CustomEvent('fulltech:pos-navigate',{detail:{tab:'inventario'}}));}
+  const ticket=e.target.closest('[data-pos-ticket]');if(ticket)runAction(()=>openTicket(ticket.dataset.posTicket));
+  const rename=e.target.closest('[data-pos-ticket-rename]');if(rename)runAction(()=>renameTicket(rename.dataset.posTicketRename));
+  const discard=e.target.closest('[data-pos-ticket-discard]');if(discard)runAction(()=>discardTicket(discard.dataset.posTicketDiscard));
+  const quote=e.target.closest('[data-pos-open-quote]');if(quote)openQuote(quote.dataset.posOpenQuote);
+  const quoteTicket=e.target.closest('[data-pos-quote-ticket]');if(quoteTicket)runAction(()=>quoteToTicket(quoteTicket.dataset.posQuoteTicket));
+  if(e.target.closest('[data-pos-quotes-list]'))quotesList();
+});
+window.addEventListener('fulltech:pos-appbar',syncSearchBar);
+window.addEventListener('fulltech:pos-render',syncSearchBar);
+window.addEventListener('popstate',()=>{if(document.body.dataset.tab==='cotizaciones')renderQuotesPage();else syncSearchBar();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&searchOpen&&!modal.open){setSearchOpen(false);e.preventDefault();}});
+
+document.addEventListener('click',e=>{
+  const mutation=e.target.closest('[data-pos-add],[data-pos-client],[data-pos-remove-client],[data-pos-customer],[data-pos-plus],[data-pos-minus],[data-pos-delete],[data-pos-quantity],[data-pos-discount],[data-pos-options],[data-pos-clear]');
   if(operation&&!busy&&mutation){show('Revisar operación anterior','<p>Hay una operación sin confirmar. Vuelve a pulsar Cotizar, Cobrar o Guardar pedido para consultar su resultado con el mismo identificador. Antes de iniciar otra venta, comprueba el resultado en Pedidos.</p><label class="pos-check"><input type="checkbox" required> Revisé Pedidos y continuaré con una operación nueva.</label>','Continuar',()=>{operation=null;persist();modal.close();});return;}
   const add=e.target.closest('[data-pos-add]');if(add&&!busy){
     if(!canCreate){message='No tienes permiso para crear ventas.';render();return;}
@@ -157,20 +283,26 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-pos-quote]'))confirmSale('quote');
   if(e.target.closest('[data-pos-pay]'))confirmSale('invoice');
   if(e.target.closest('[data-pos-pending]'))confirmSale('order');
-  if(e.target.closest('[data-pos-quotes]'))quotes();
-  if(e.target.closest('[data-pos-clear]'))show('Vaciar carrito','<p>Se quitarán los artículos y descuentos del carrito.</p>','Vaciar',()=>{draft.items=[];draft.discount={};draft.quoteId=null;changed();modal.close();});
+  if(e.target.closest('[data-pos-clear]'))show('Vaciar carrito','<p>Se quitarán los artículos y descuentos del carrito.</p>','Vaciar',()=>{draft.items=[];draft.discount={};if(!draft.ticketId)draft.quoteId=null;changed();modal.close();});
 });
 window.addEventListener('fulltech:pos-products',e=>{products=e.detail.products;render();initialize();});
 window.addEventListener('fulltech:pos-render',()=>{updateBadges();});
-window.addEventListener('fulltech:tab',e=>{if(e.detail.tab==='catalogo'){initialize();render();}else modal.close();});
+window.addEventListener('fulltech:tab',e=>{if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones')initialize().then(renderQuotesPage);}});
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;
   if(operation){message='Revisa el resultado de la operación anterior antes de iniciar otro pedido.';render();return;}
   const apply=()=>{draft.customer=customers.find(c=>c.id===context.customerId)||(context.customer?.id===context.customerId?context.customer:null);draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';changed();};
   if(draft.items.length&&draft.customer?.id!==context.customerId)show('Cambiar cliente del carrito','<p>Se conservarán los artículos y se asignarán al cliente seleccionado.</p>','Continuar',()=>{apply();modal.close();});else apply();
 });
-window.addEventListener('fulltech:back',e=>{if(modal.open){modal.close();e.preventDefault();}else if(expanded){expanded=false;render();e.preventDefault();}});
-window.addEventListener('phyto:calling-logout',()=>{generation++;loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});
+window.addEventListener('fulltech:back',e=>{if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&expanded){expanded=false;render();e.preventDefault();}});
+window.addEventListener('phyto:calling-logout',()=>{generation++;quotesEpoch++;clearTimeout(ticketSaveTimer);searchOpen=false;searchBar=null;quotesPage()?.replaceChildren();document.querySelector('.pos-document-toast')?.remove();loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});
 window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
 if(document.body.dataset.tab==='catalogo')initialize();
+if(document.body.dataset.tab==='cotizaciones')initialize().then(renderQuotesPage);
 if(window.ResizeObserver&&root)new ResizeObserver(()=>root.parentElement.style.setProperty('--pos-height',root.offsetHeight+'px')).observe(root);
+const updateBar=$('#update-bar');
+if(updateBar){
+  const measure=()=>document.body.style.setProperty('--pos-update-height',(updateBar.classList.contains('update-bar--show')?updateBar.getBoundingClientRect().height:0)+'px');
+  if(window.ResizeObserver)new ResizeObserver(measure).observe(updateBar);
+  new MutationObserver(measure).observe(updateBar,{attributes:true,attributeFilter:['class']});measure();
+}

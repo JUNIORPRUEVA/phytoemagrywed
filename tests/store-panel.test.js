@@ -47,7 +47,7 @@ it('el recuento incluye la existencia esperada y una operación idempotente',asy
   expect(body).toMatchObject({type:'count',quantity:'2',expected:4,reason:'Conteo de cierre'});expect(body.requestId).toHaveLength(36);
 });
 it('permite crear un servicio sin inventario y conserva el formulario si el servidor falla',async()=>{
-  await tab('catalogo');w.document.querySelector('[data-store-new]').click();
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
   const form=w.document.querySelector('#store-product-form');form.elements.kind.value='service';
   form.elements.kind.dispatchEvent(new w.Event('change',{bubbles:true}));
   expect([...form.querySelectorAll('[data-stock-field]')].every(x=>x.hidden)).toBe(true);
@@ -58,7 +58,7 @@ it('permite crear un servicio sin inventario y conserva el formulario si el serv
   expect(w.document.querySelector('dialog.store-product-dialog').open).toBe(true);
 });
 it('cerrar sesión borra el catálogo y cualquier edición con costos visibles',async()=>{
-  await tab('catalogo');w.document.querySelector('[data-store-new]').click();
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
   w.dispatchEvent(new w.Event('phyto:calling-logout'));
   expect(w.document.querySelector('#store-catalogo').textContent).toBe('');
   expect(w.document.querySelector('dialog.store-product-dialog').open).toBe(false);
@@ -84,7 +84,7 @@ it('usa tarjetas compactas, alterna lista/cuadrícula y conserva la preferencia'
   const card=w.document.querySelector('[data-store-detail]');
   expect(card.textContent).not.toContain('600.25');expect(card.textContent).not.toContain('unidades');expect(card.textContent).not.toContain('CAM-1');
   expect(w.document.querySelector('[data-store-sale],[data-store-refresh]')).toBeNull();
-  expect(w.document.querySelector('[data-store-new]').getAttribute('aria-label')).toBe('Agregar producto o servicio');
+  expect(w.document.querySelector('[data-pos-actions]').getAttribute('aria-label')).toBe('Acciones de facturación');
   w.document.querySelector('[data-store-filters]').click();w.document.querySelector('[data-store-layout="list"]').click();
   expect(w.document.querySelector('#store-product-grid').dataset.layout).toBe('list');
   expect(w.localStorage.getItem('fulltech.catalog.layout')).toBe('list');
@@ -127,7 +127,7 @@ it('una sesión caducada cierra las conexiones y borra el contenido privado',asy
   expect(expired).toHaveBeenCalledOnce();expect(w.document.querySelector('#store-catalogo').textContent).toBe('');expect(sources.at(-1).closed).toBe(true);
 });
 it('crea una categoría desde el artículo sin perder sus campos ni cerrar su formulario',async()=>{
-  await tab('catalogo');w.document.querySelector('[data-store-new]').click();
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
   const productForm=w.document.querySelector('#store-product-form');productForm.elements.name.value='Cámara';productForm.elements.price.value='900.50';
   productForm.querySelector('[data-category-new]').click();
   const categoryForm=w.document.querySelector('#store-category-form');categoryForm.elements.name.value='Seguridad';
@@ -154,7 +154,7 @@ it('volver del detalle consume una sola entrada de historial y no vuelve a abrir
   const exit=new w.CustomEvent('fulltech:back',{cancelable:true});w.dispatchEvent(exit);expect(exit.defaultPrevented).toBe(false);
 });
 it('salir de la pantalla cierra formularios y filtros para no dejar una capa pendiente al volver',async()=>{
-  await tab('catalogo');w.document.querySelector('[data-store-new]').click();await tab('hoy');
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));await tab('hoy');
   expect(w.document.querySelector('.store-product-dialog').open).toBe(false);
   await tab('catalogo');w.document.querySelector('[data-store-filters]').click();await tab('hoy');
   expect(w.document.querySelector('.store-filter-drawer').open).toBe(false);

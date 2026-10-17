@@ -88,10 +88,11 @@
     const tracked=products.filter(p=>p.track_stock&&!p.legacy);
     if(page==='catalogo') {
       const selected=detailId();document.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
-      if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));return;}
+      if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));window.dispatchEvent(new Event('fulltech:catalog-view'));return;}
+      document.querySelector('#pos-search-host .store-search-line')?.remove();
       box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'?'<span class="store-filter-dot"></span>':''}</button></div>
-      <div id="store-product-grid"></div>${canManage?`<button class="store-fab" type="button" data-store-new aria-label="Agregar producto o servicio" title="Agregar producto o servicio">${svg('plus')}</button>`:''}`;
-      cards();
+      <div id="store-product-grid"></div>${`<button class="store-fab pos-actions-fab" type="button" data-pos-actions aria-label="Acciones de facturación" title="Acciones"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>`}`;
+      cards();window.dispatchEvent(new Event('fulltech:catalog-view'));
     }else {
       box.innerHTML=head()+`<div class="store-workspace">${canManage?movementForm(page==='recuento'):'<p class="store-empty">Solo administración puede registrar ajustes y recuentos.</p>'}
         ${legacy?`<div class="store-capsule-link"><div><strong>Phytoemagry</strong><small>${esc(legacy.base_quantity??'Sin inicializar')} cápsulas · saldo compartido</small></div><button class="btn btn--ghost" type="button" data-tab="productos">${page==='recuento'?'Contar cápsulas':'Gestionar'}</button></div>`:''}
@@ -249,6 +250,8 @@
   }
   function closeEditors(){filterDrawer.close();categoryDialog.close();dialog.close();}
   window.addEventListener('fulltech:tab',e=>{if(page!==e.detail.tab)closeEditors();page=e.detail.tab;stopLive();if(pages.includes(page)){render();load().then(startLive);}});
+  window.addEventListener('fulltech:store-create',()=>{if(canManage)edit();});
+  window.addEventListener('fulltech:store-filters',openFilters);
   window.addEventListener('popstate',()=>{closeEditors();if(page==='catalogo')render();});
   window.addEventListener('fulltech:back',e=>{
     if(categoryDialog.open){categoryDialog.close();e.preventDefault();}

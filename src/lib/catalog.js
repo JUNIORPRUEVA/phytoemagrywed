@@ -48,6 +48,7 @@ export function catalogItems(product = productConfig) {
       available: variant.available !== false,
       label: variant.label || `Frasco de ${variant.capsules} cápsulas`,
       ...(variant.general ? {general:true,name:variant.name,kind:variant.kind} : {}),
+      ...(variant.manual ? {manual:true,cost_cents:variant.cost_cents} : {}),
     }));
 }
 
@@ -102,7 +103,7 @@ export function computeOrderTotals(lines = [], options = {}) {
         ? Math.round(explicit * 100) / 100
         : catalogItem.price;
     const grossCents = Math.round(unitPrice * 100) * quantity;
-    const lineDiscount = line?.lineDiscountCents === undefined ? 0 : Number(line.lineDiscountCents);
+    const lineDiscount = Number(line?.lineDiscountCents ?? line?.line_discount_cents ?? 0);
     if (!Number.isSafeInteger(lineDiscount) || lineDiscount < 0 || lineDiscount > grossCents) throw new CatalogError('invalid_discount');
     const subtotal = (grossCents - lineDiscount) / 100;
     return {
@@ -110,6 +111,7 @@ export function computeOrderTotals(lines = [], options = {}) {
       capsules: catalogItem.capsules,
       variantName: catalogItem.general ? catalogItem.name : `${catalogItem.capsules} cápsulas`,
       ...(catalogItem.general ? {general:true,kind:catalogItem.kind} : {}),
+      ...(catalogItem.manual ? {manual:true,unit_cost_snapshot_cents:catalogItem.cost_cents||0,product_cost_snapshot_cents:(catalogItem.cost_cents||0)*quantity,subtotal_snapshot_cents:Math.round(subtotal*100),unit_price_snapshot_cents:Math.round(unitPrice*100)} : {}),
       label: catalogItem.label,
       quantity,
       unitPrice,
