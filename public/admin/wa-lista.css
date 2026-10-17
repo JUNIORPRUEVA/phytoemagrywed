@@ -600,6 +600,17 @@ body[data-tab='whatsapp'] #wa-sel {
   pointer-events: none;
 }
 
+/*
+ * En el teléfono la columna ocupa TODA la pantalla (también el alto de la barra
+ * superior): es un cajón de verdad, cuadrado, no una tarjeta flotante.
+ */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'] #wa-sel {
+    position: fixed;
+    inset: 0;
+  }
+}
+
 body[data-tab='whatsapp'] #wa-sel[hidden] {
   display: none;
 }
@@ -628,7 +639,7 @@ body[data-tab='whatsapp'] .wa-actions[data-open='1'] .wa-actions__backdrop {
   pointer-events: auto;
 }
 
-/* El panel: columna a la derecha, con sombra y esquina redondeada. */
+/* El panel: columna a la derecha, CUADRADA y a todo el alto de la lista. */
 body[data-tab='whatsapp'] .wa-actions__drawer {
   position: absolute;
   top: 0;
@@ -637,9 +648,11 @@ body[data-tab='whatsapp'] .wa-actions__drawer {
   display: flex;
   flex-direction: column;
   width: min(86%, 330px);
+  height: 100%;
   overflow: hidden;
+  border: 0;
   border-left: 1px solid var(--wa-line);
-  border-radius: 18px 0 0 18px;
+  border-radius: 0;
   background: var(--wa-page);
   box-shadow: -26px 0 54px rgba(11, 20, 26, 0.3);
   transform: translateX(102%);
