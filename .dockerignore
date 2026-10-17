@@ -21,7 +21,9 @@ data
 .env.local
 
 # Originales pesados (~15 MB): las versiones web ya están en public/
-assets
+assets/*
+!assets/licenses/
+!assets/licenses/**
 
 # Repositorio y metadatos
 .git
