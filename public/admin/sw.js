@@ -7,11 +7,12 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v107-pwa-dark-shell';
+const VERSION = 'crm-v108-mobile-startup';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
 const TILE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const REQUIRED_SHELL = new Set(['/admin/index.html', '/admin/app.js', '/admin/admin.css', '/admin/startup-recovery.js']);
 const SHELL = [
   '/admin/',
   '/admin/index.html',
@@ -30,6 +31,7 @@ const SHELL = [
   '/admin/vendor/proofreading/es-DO.dic',
   '/admin/shell-v2-tema.css',
   '/admin/app.js',
+  '/admin/startup-recovery.js',
   '/admin/calling.js',
   '/admin/store.js',
   '/admin/store.css',
@@ -67,13 +69,13 @@ self.addEventListener('install', (event) => {
         for (const url of SHELL) {
           try {
             await cache.add(url);
-          } catch {
-            /* ese archivo no está: el resto del armazón sigue valiendo */
+          } catch (error) {
+            // No activar una actualización incompleta ni borrar la versión útil.
+            if (REQUIRED_SHELL.has(url)) throw error;
           }
         }
       })
-      .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting()),
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -201,25 +203,30 @@ self.addEventListener('fetch', (event) => {
 
   if (!url.pathname.startsWith('/admin/')) return;
 
-  // Armazón: red primero (para recibir mejoras), caché como red de seguridad.
-  event.respondWith(
-    (async () => {
-      try {
-        const response = await fetch(request);
-        if (response.ok) {
-          const cache = await caches.open(VERSION);
-          cache.put(request, response.clone());
-        }
-        return response;
-      } catch {
-        const cached = await caches.match(request);
-        if (cached) return cached;
+  // Una página solo puede ser respaldo de otra navegación, nunca de JS/CSS.
+  const navigation = request.mode === 'navigate' || request.destination === 'document' || /\/(?:index\.html)?$/.test(url.pathname);
+  const resource = /\.(?:js|mjs|css|json)$/.test(url.pathname);
+  const usable = (response) => response && !(resource && /text\/html/i.test(response.headers.get('content-type') || ''));
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(request);
+      if (!response.ok || !usable(response)) throw new Error('shell_resource_unavailable');
+      const cache = await caches.open(VERSION);
+      await cache.put(request, response.clone()).catch(() => {});
+      return response;
+    } catch {
+      // El HTML usa ?v=…; install guarda las rutas base. Son el mismo recurso.
+      const exact = await caches.match(request);
+      if (usable(exact)) return exact;
+      const base = await caches.match(url.origin + url.pathname);
+      if (usable(base)) return base;
+      if (navigation) {
         const shell = await caches.match('/admin/index.html');
         if (shell) return shell;
-        return new Response('Sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
       }
-    })(),
-  );
+      return new Response('Recurso no disponible sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
+    }
+  })());
 });
 
 // Nunca bloquear la presentación por una petición de diagnóstico.

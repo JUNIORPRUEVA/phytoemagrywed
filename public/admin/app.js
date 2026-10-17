@@ -9,6 +9,7 @@
 
 (() => {
   'use strict';
+  function getStoredValue(key) { try { return localStorage.getItem(key); } catch { return null; } }
 
   const SNAPSHOT_KEY = 'pe_crm_snapshot';
   const OUTBOX_KEY = 'pe_crm_outbox';
@@ -63,7 +64,7 @@
 
   function leerPreferencias() {
     try {
-      const raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
+      const raw = JSON.parse(getStoredValue(PREFS_KEY) ?? '{}');
       return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     } catch {
       return {};
@@ -107,7 +108,7 @@
      * que vení­a de la versión anterior), se lee `pe_crm_tab`, que ya se escribí­a
      * aunque nadie lo leyera.
      */
-    const tab = preferenciaValida(prefs.tab, PREF_VALUES.tab) ?? preferenciaValida(localStorage.getItem(TAB_KEY), PREF_VALUES.tab);
+    const tab = preferenciaValida(prefs.tab, PREF_VALUES.tab) ?? preferenciaValida(getStoredValue(TAB_KEY), PREF_VALUES.tab);
     if (tab) state.tab = tab;
     const waFilter = preferenciaValida(prefs.waFilter, PREF_VALUES.waFilter);
     if (waFilter) state.wa.filter = waFilter;
@@ -459,8 +460,8 @@
       chatSig: null,
       counts: null,
       selected: new Set(),
-      notify: localStorage.getItem(WA_NOTIFY_KEY) === '1',
-      sound: localStorage.getItem(WA_SOUND_KEY) === '1',
+      notify: getStoredValue(WA_NOTIFY_KEY) === '1',
+      sound: getStoredValue(WA_SOUND_KEY) === '1',
       seenMessages: new Set(),
       loadingFor: null,
       /*
@@ -522,7 +523,7 @@
    */
   function mapLabelsPref() {
     try {
-      return localStorage.getItem('pe_orders_map_labels') !== '0';
+      return getStoredValue('pe_orders_map_labels') !== '0';
     } catch {
       return true;
     }
@@ -942,7 +943,7 @@
 
   function readSnapshot() {
     try {
-      const raw = localStorage.getItem(SNAPSHOT_KEY);
+      const raw = getStoredValue(SNAPSHOT_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -977,7 +978,7 @@
   function readOutbox() {
     if (!Array.isArray(state.outbox)) {
       try {
-        const raw = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
+        const raw = JSON.parse(getStoredValue(OUTBOX_KEY) ?? '[]');
         state.outbox = Array.isArray(raw) ? raw : [];
       } catch {
         state.outbox = [];
@@ -1013,7 +1014,7 @@
 
   function readOutboxProblems() {
     try {
-      const raw = JSON.parse(localStorage.getItem(OUTBOX_PROBLEMS_KEY) ?? '[]');
+      const raw = JSON.parse(getStoredValue(OUTBOX_PROBLEMS_KEY) ?? '[]');
       return Array.isArray(raw) ? raw : [];
     } catch {
       return [];
@@ -1353,6 +1354,7 @@
     $('#app').hidden = true;
     $('#login').hidden = false;
     hideSplash();
+    window.dispatchEvent(new Event('fulltech:startup-ready'));
     $('#login-error').hidden = !message;
     $('#login-error').textContent = message;
     ($('#login-username') ?? $('#login-token')).focus({ preventScroll: true });
@@ -1367,7 +1369,14 @@
 
   async function checkSession() {
     try {
-      const response = await fetch('/api/admin/session', { credentials: 'same-origin' });
+      let timer;
+      let response;
+      try {
+        response = await Promise.race([
+          fetch('/api/admin/session', { credentials: 'same-origin' }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('session_timeout')), 8000); }),
+        ]);
+      } finally { clearTimeout(timer); }
       const body = await response.json().catch(() => ({}));
       if (body.ok) state.auth = { user: body.user ?? null, legacy: body.legacy === true };
       /*
@@ -1484,6 +1493,7 @@
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
+      window.dispatchEvent(new Event('fulltech:startup-ready'));
       refreshDevicePermissions().catch(() => {});
       autoSyncCrmPush();
       if (!options.keepTab) await flushOutbox();
@@ -1786,7 +1796,7 @@
    */
   function readDismissedNotices() {
     try {
-      const raw = JSON.parse(localStorage.getItem(NOTICE_DISMISSED_KEY) ?? '{}');
+      const raw = JSON.parse(getStoredValue(NOTICE_DISMISSED_KEY) ?? '{}');
       // Formato viejo (lista de claves): se lee igual y se migra solo.
       if (Array.isArray(raw)) return Object.fromEntries(raw.filter((key) => typeof key === 'string').map((key) => [key, true]));
       return raw && typeof raw === 'object' ? raw : {};
@@ -1815,7 +1825,7 @@
    */
   function readNotifDeleted() {
     try {
-      const list = JSON.parse(localStorage.getItem(NOTIF_DELETED_KEY) ?? '[]');
+      const list = JSON.parse(getStoredValue(NOTIF_DELETED_KEY) ?? '[]');
       return new Set(Array.isArray(list) ? list.filter((id) => typeof id === 'string') : []);
     } catch {
       return new Set();
@@ -1824,7 +1834,7 @@
 
   function readNotifPending() {
     try {
-      const list = JSON.parse(localStorage.getItem(NOTIF_PENDING_KEY) ?? '[]');
+      const list = JSON.parse(getStoredValue(NOTIF_PENDING_KEY) ?? '[]');
       return Array.isArray(list) ? list.filter((id) => typeof id === 'string') : [];
     } catch {
       return [];
@@ -13507,7 +13517,7 @@
 
   function readOrderDraft(key) {
     try {
-      const draft = JSON.parse(localStorage.getItem(key) ?? 'null');
+      const draft = JSON.parse(getStoredValue(key) ?? 'null');
       return draft && typeof draft === 'object' ? draft : null;
     } catch {
       return null;
@@ -15113,7 +15123,7 @@
   /** Última vista del mapa (para volver donde estabas, igual que en reparto). */
   function ordersMapSavedView() {
     try {
-      const value = JSON.parse(localStorage.getItem(MAPS_VIEW_KEY) ?? 'null');
+      const value = JSON.parse(getStoredValue(MAPS_VIEW_KEY) ?? 'null');
       const lat = Number(value?.center?.[0]);
       const lng = Number(value?.center?.[1]);
       const zoom = Number(value?.zoom);
@@ -15143,7 +15153,7 @@
 
   function mapCachedLocations() {
     try {
-      const raw = JSON.parse(localStorage.getItem(MAPS_CACHE_KEY) ?? 'null');
+      const raw = JSON.parse(getStoredValue(MAPS_CACHE_KEY) ?? 'null');
       return Array.isArray(raw?.locations) ? raw.locations : [];
     } catch {
       return [];
@@ -15394,7 +15404,7 @@
   /** Qué capa base está elegida (se recuerda en el teléfono). */
   function ordersMapBaseKey() {
     try {
-      const guardada = localStorage.getItem(MAPS_BASE_KEY);
+      const guardada = getStoredValue(MAPS_BASE_KEY);
       if (guardada && MAP_BASE_LAYERS[guardada]) return guardada;
     } catch {
       /* sin almacén se usa la de por defecto */
@@ -15446,7 +15456,7 @@
   /** Techo de imagen real ya comprobado en otras visitas (celda -> nivel). */
   function ordersMapNativeStore() {
     try {
-      const crudo = JSON.parse(localStorage.getItem(MAP_NATIVE_STORE_KEY) ?? 'null');
+      const crudo = JSON.parse(getStoredValue(MAP_NATIVE_STORE_KEY) ?? 'null');
       return crudo && typeof crudo === 'object' ? crudo : {};
     } catch {
       return {};
@@ -17971,7 +17981,7 @@
 
   function leerMemoriaPermisos() {
     try {
-      const raw = JSON.parse(localStorage.getItem(PERMISOS_KEY) ?? '{}');
+      const raw = JSON.parse(getStoredValue(PERMISOS_KEY) ?? '{}');
       return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     } catch {
       return {};
@@ -20862,5 +20872,7 @@
     }
   }
 
-  document.addEventListener('DOMContentLoaded', boot);
+  document.addEventListener('DOMContentLoaded', () => boot().catch(() => {
+    window.dispatchEvent(new Event('fulltech:startup-failed'));
+  }));
 })();
