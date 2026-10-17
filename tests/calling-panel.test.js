@@ -116,3 +116,19 @@ it('recibe una llamada, contesta con la oferta del cliente y permite colgar sin 
   expect(sent.find((r) => r.url.endsWith('/terminate')).body.id).toBe('in1');
   expect(track.stop).toHaveBeenCalled();
 });
+
+it('muestra las imágenes dentro del encabezado en orden buscar y llamar',()=>{
+  const head=w.document.querySelector('.wa__chat-head');
+  const controls=[...head.children].filter(node=>['wa-thread-search-open','wa-calling-button'].includes(node.id));
+  expect(controls.map(node=>node.id)).toEqual(['wa-thread-search-open','wa-calling-button']);
+  expect(controls[0].querySelector('img').getAttribute('src')).toBe('/admin/assets/icons/chat-search.png');
+  expect(controls[1].querySelector('img').getAttribute('src')).toBe('/admin/assets/icons/chat-call.png');
+  expect(controls[1].hidden).toBe(false);
+});
+it('mantiene visible el teléfono sin habilitar llamadas cuando el servicio no está disponible',async()=>{
+  w.fetch.mockImplementation(async()=>({ok:true,status:200,json:async()=>({ok:true,enabled:false,calls:[]})}));
+  await interval();await flush();
+  const button=w.document.getElementById('wa-calling-button');
+  expect(button.hidden).toBe(false);expect(button.disabled).toBe(true);expect(button.querySelector('img')).toBeTruthy();
+  button.click();await flush();expect(w.navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+});

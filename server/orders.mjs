@@ -1,3 +1,4 @@
+import {receiptPdfBytes} from '../public/admin/receipt-pdf.js';
 /**
  * PEDIDOS Y COMPROBANTE — el corazón comercial del CRM (fase S4).
  *
@@ -355,6 +356,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     quantity: Number(line.quantity) || 1,
     unitPrice: Number(line.unitPrice) || 0,
     subtotal: Number(line.subtotal) || 0,
+    ...(line.line_discount_cents ? {line_discount:Number(line.line_discount_cents)/100} : {}),
   }));
   return {
     business: businessName,
@@ -362,6 +364,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     order_number: order.order_number,
     date: order.created_at,
     customer_name: customer?.name ?? null,
+    notes: order.notes ?? '',
     // Enmascarado SIEMPRE: el comprobante se comparte con el cliente.
     phone_masked: maskPhone(customer?.phone_e164 ?? customer?.phone ?? null),
     items,
@@ -390,7 +393,7 @@ export function buildReceipt({ order, customer = null, businessName = 'Phytoemag
     cancel_reason: order.cancel_reason ?? null,
     // Agradecimiento neutro: sin promesas, sin plazos y sin nada médico.
     thanks: 'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
-    note: 'Documento generado por Phytoemagry para confirmar los detalles de tu compra.',
+    note: `Documento generado por ${businessName} para confirmar los detalles de tu compra.`,
   };
 }
 
@@ -412,7 +415,7 @@ export function orderConfirmationText(order, customer = null) {
   for (const line of items) {
     const cantidad = Number(line.quantity) || 1;
     const label = line.label ?? (line.capsules ? `Frasco de ${line.capsules} cápsulas` : line.variantName) ?? 'Producto';
-    const importe = Number(line.subtotal) || (Number(line.unitPrice) || 0) * cantidad;
+    const importe = line.subtotal !== undefined && Number.isFinite(Number(line.subtotal)) ? Number(line.subtotal) : (Number(line.unitPrice) || 0) * cantidad;
     /*
      * Si el pedido no trae precio por línea (pedidos viejos), NO se le inventa un
      * «RD$ 0» al cliente: se enseña el producto y el total manda.
@@ -452,7 +455,7 @@ function esc(value) {
 /** Dinero en RD$ sin depender del locale del servidor. */
 function money(value, currency = 'DOP') {
   const number = Number(value) || 0;
-  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(number);
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(number);
   return `${currency === 'DOP' ? 'RD$' : currency} ${formatted}`;
 }
 
@@ -464,145 +467,7 @@ function prettyDate(value, timeZone = 'America/Santo_Domingo') {
   return new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(date);
 }
 
-function pdfText(value) {
-  return String(value ?? '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\x20-\x7e]/g, (char) => {
-      if (char === '×') return 'x';
-      if (char === '−' || char === '–' || char === '—') return '-';
-      if (char === '•') return '.';
-      return '';
-    })
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function pdfEsc(value) {
-  return pdfText(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-}
-
-function pdfLine(text, x, y, size = 11, font = 'F1') {
-  return `BT /${font} ${size} Tf ${x} ${y} Td (${pdfEsc(text)}) Tj ET\n`;
-}
-
-function pdfRule(y) {
-  return `0.78 0.84 0.8 RG 50 ${y} m 545 ${y} l S\n`;
-}
-
-/**
- * PDF sencillo de la factura para compartir desde el móvil.
- * Se mantiene sin dependencias: el PDF contiene texto vectorial y abre en
- * cualquier visor del navegador.
- *
- * @param {ReturnType<typeof buildReceipt>} receipt
- * @param {{ timeZone?: string }} [options]
- */
-export function receiptPdf(receipt, options = {}) {
-  const lines = [];
-  let y = 790;
-  lines.push('0.043 0.42 0.31 rg\n');
-  lines.push(pdfLine(receipt.business, 50, y, 22, 'F2'));
-  y -= 24;
-  lines.push('0.38 0.45 0.42 rg\n');
-  lines.push(pdfLine(receipt.document, 50, y, 10, 'F2'));
-  y -= 24;
-  lines.push(pdfRule(y));
-  y -= 22;
-
-  const facts = [
-    ['Pedido', receipt.order_number],
-    ['Fecha', prettyDate(receipt.date, options.timeZone)],
-    receipt.customer_name ? ['Cliente', receipt.customer_name] : null,
-    receipt.phone_masked ? ['Telefono', receipt.phone_masked] : null,
-    receipt.payment_method_label ? ['Pago', receipt.payment_method_label] : null,
-    ['Estado', receipt.status_label],
-  ].filter(Boolean);
-
-  for (const [label, value] of facts) {
-    lines.push('0.38 0.45 0.42 rg\n');
-    lines.push(pdfLine(label, 50, y, 10, 'F1'));
-    lines.push('0.09 0.13 0.11 rg\n');
-    lines.push(pdfLine(value, 170, y, 10, 'F2'));
-    y -= 16;
-  }
-
-  y -= 8;
-  lines.push(pdfRule(y));
-  y -= 20;
-  lines.push('0.38 0.45 0.42 rg\n');
-  lines.push(pdfLine('Detalle', 50, y, 9, 'F2'));
-  lines.push(pdfLine('Cant.', 320, y, 9, 'F2'));
-  lines.push(pdfLine('Precio', 380, y, 9, 'F2'));
-  lines.push(pdfLine('Importe', 470, y, 9, 'F2'));
-  y -= 14;
-  lines.push(pdfRule(y));
-  y -= 18;
-
-  for (const item of receipt.items ?? []) {
-    lines.push('0.09 0.13 0.11 rg\n');
-    lines.push(pdfLine(item.label, 50, y, 10, 'F1'));
-    lines.push(pdfLine(item.quantity, 330, y, 10, 'F1'));
-    lines.push(pdfLine(money(item.unitPrice, receipt.currency), 380, y, 10, 'F1'));
-    lines.push(pdfLine(money(item.subtotal, receipt.currency), 470, y, 10, 'F2'));
-    y -= 18;
-  }
-
-  y -= 8;
-  lines.push(pdfRule(y));
-  y -= 20;
-  const totals = [
-    ['Productos', money(receipt.subtotal, receipt.currency)],
-    receipt.discount ? ['Descuento', `-${money(receipt.discount, receipt.currency)}`] : null,
-    receipt.delivery_fee ? ['Delivery', money(receipt.delivery_fee, receipt.currency)] : null,
-    receipt.shipping ? ['Envio', money(receipt.shipping, receipt.currency)] : null,
-  ].filter(Boolean);
-  for (const [label, value] of totals) {
-    lines.push('0.38 0.45 0.42 rg\n');
-    lines.push(pdfLine(label, 330, y, 10, 'F1'));
-    lines.push('0.09 0.13 0.11 rg\n');
-    lines.push(pdfLine(value, 455, y, 10, 'F2'));
-    y -= 16;
-  }
-  y -= 4;
-  lines.push('0.043 0.42 0.31 rg\n');
-  lines.push(pdfLine('TOTAL', 330, y, 15, 'F2'));
-  lines.push(pdfLine(money(receipt.total, receipt.currency), 455, y, 15, 'F2'));
-
-  y -= 34;
-  if (receipt.has_location) {
-    lines.push('0.38 0.45 0.42 rg\n');
-    lines.push(pdfLine(`Ubicacion de entrega registrada${receipt.location_label ? `: ${receipt.location_label}` : ''}.`, 50, y, 9, 'F1'));
-    y -= 14;
-  }
-  lines.push(pdfLine(receipt.thanks, 50, y, 9, 'F1'));
-  y -= 14;
-  lines.push(pdfLine(receipt.note, 50, y, 9, 'F1'));
-
-  const stream = lines.join('');
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
-    `<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}endstream`,
-  ];
-
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf, 'latin1'));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(pdf, 'latin1');
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (let index = 1; index < offsets.length; index += 1) {
-    pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(pdf, 'latin1');
-}
+export function receiptPdf(receipt, options = {}) { return Buffer.from(receiptPdfBytes(receipt, options)); }
 
 /**
  * HTML ligero e imprimible de la factura. Es el documento que se abre para
@@ -619,7 +484,7 @@ export function receiptHtml(receipt, options = {}) {
   const rows = receipt.items
     .map(
       (line) => `<tr>
-        <td>${esc(line.label)}</td>
+        <td>${esc(line.label)}${line.line_discount?`<br><small>Descuento: −${esc(money(line.line_discount,receipt.currency))}</small>`:''}</td>
         <td class="num">${esc(line.quantity)}</td>
         <td class="num">${esc(money(line.unitPrice, receipt.currency))}</td>
         <td class="num">${esc(money(line.subtotal, receipt.currency))}</td>

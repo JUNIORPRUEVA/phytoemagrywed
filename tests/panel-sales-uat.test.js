@@ -17,6 +17,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import {calculateSale} from '../public/admin/pos-math.js';
 
 import { startCrmServer } from '../server/crm-server.mjs';
 
@@ -254,7 +255,14 @@ beforeAll(async () => {
     if (setCookie) cookie = setCookie.split(';')[0];
     return response;
   };
+  win.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  win.HTMLDialogElement.prototype.close=function(){this.open=false;};
+  win.HTMLElement.prototype.scrollIntoView=function(){};
+  win.structuredClone=structuredClone;win.calculateSale=calculateSale;
+  win.EventSource=class{addEventListener(){}close(){}};
   win.eval(readFileSync(path.join(ADMIN_DIR, 'app.js'), 'utf8'));
+  win.eval(readFileSync(path.join(ADMIN_DIR, 'store.js'), 'utf8'));
+  win.eval(readFileSync(path.join(ADMIN_DIR, 'pos.js'), 'utf8').replace(/^import[^\n]+\n/,''));
   win.document.dispatchEvent(new win.Event('DOMContentLoaded', { bubbles: true }));
   await waitFor(() => !$('#login').hidden || !$('#app').hidden, 'la pantalla de acceso');
 });
@@ -302,115 +310,41 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     }
   });
 
-  it('crea un pedido con el precio del catálogo y muestra el comprobante', async () => {
+  it('crea el pedido desde Facturación con el cliente del chat y los descuentos exactos', async () => {
     click('[data-order-new]');
-    const lineas = await waitFor(() => $('#order-lines')?.querySelector('select'), 'el formulario de pedido');
-    // El catálogo sale del servidor: 7 frascos reales.
-    expect(lineas.options).toHaveLength(7);
-    expect($('#order-save')?.textContent).toContain('Crear');
-    expect($('#order-save-delivery')?.textContent).toContain('Crear y pasar a delivery');
-    expect($('#order-notes-field')?.hidden).toBe(true);
-    expect($('[data-line-decrease="0"]')).toBeTruthy();
-    expect($('[data-line-increase="0"]')).toBeTruthy();
-    expect($('[data-order-toggle-field="source"]')?.textContent).toContain('Origen');
-    expect($('[data-order-toggle-field="discount"]')?.textContent).toContain('Descuento');
-    expect($('#order-source-panel')?.hidden).toBe(true);
-    expect($('#order-discount-panel')?.hidden).toBe(true);
-
-    setValue('[data-line-variant="0"]', 'capsules_10');
-    click('[data-line-increase="0"]');
-    click('[data-line-increase="0"]');
-    expect($('[data-line-qty="0"]').value).toBe('3');
-    click('[data-order-toggle-field="discount"]');
-    expect($('#order-discount-panel')?.hidden).toBe(false);
-    setValue('#order-discount', '500');
-    // 3 × RD$2,500 − RD$500 = RD$7,000
-    expect($('#order-total').textContent).toContain('7,000');
-    expect($('#order-discount-label').textContent).toContain('500');
-
-    click('#order-save');
-    const receipt = await waitFor(() => {
-      const html = $('#sheet-body').innerHTML;
-      return html.includes('Comprobante') || html.includes('Pedido'); 
-    }, 'el comprobante');
-    const title = $('#sheet-title').textContent;
-    expect(title).toMatch(/PE-/);
-
-    // El pedido quedó guardado en el servidor, ligado al cliente y a la conversación.
-    const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-    const order = data.items.find((item) => item.type === 'order_intent');
-    expect(order).toBeTruthy();
-    expect(order.total).toBe(7000);
-    expect(order.conversation_id).toBeTruthy();
-    expect(order.customer_id).toBeTruthy();
-    expect(order.order_number).toMatch(/^PE-/);
-    expect(receipt ?? true).toBeTruthy();
+    await waitFor(() => $('#pos-client')?.textContent.includes('Ana UAT') && $('[data-pos-add="capsules_10"]'), 'el POS con el cliente');
+    expect($('#sheet').hidden).toBe(true);
+    for(let i=0;i<3;i++)click('[data-pos-add="capsules_10"]');
+    click('[data-pos-discount="total"]');setValue('.pos-dialog [name=value]','500');
+    $('.pos-modal-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+    expect($('.pos-total').textContent).toContain('7,000');
+    click('[data-pos-expand]');click('[data-pos-pending]');
+    await waitFor(() => $('.pos-dialog').textContent.includes('Guardar pedido'),'confirmación');
+    $('.pos-modal-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+    await waitFor(() => $('.pos-dialog').textContent.includes('Pedido guardado'),'pedido guardado');
+    expect($('.pos-dialog a').getAttribute('href')).toMatch(/orders.*receipt/);
+    const data=await (await fetch(`${app.url}/api/admin/data`,{headers:{cookie}})).json();
+    const order=data.items.find(i=>i.type==='order_intent'&&i.total===7000);
+    expect(order.conversation_id).toBeTruthy();expect(order.customer_id).toBeTruthy();expect(order.order_number).toMatch(/^PE-/);
   });
 
-  it('crea un pedido y lo pasa a delivery desde el mismo formulario con nota opcional', async () => {
-    if (!$('#sheet')?.hidden) click('[data-close-sheet]');
-    click('#wa-actions');
-    click('[data-order-new]');
-    await waitFor(() => $('#order-save-delivery'), 'el botón de crear y pasar a delivery');
-    expect($('#order-save-delivery').compareDocumentPosition($('#order-save')) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    $('#order-open-ack')?.click();
-    setValue('[data-line-variant="0"]', 'capsules_10');
-    setValue('[data-line-qty="0"]', '1');
-
-    const enviadosAntes = mockWhatsApp.sent.length;
-    click('#order-save-delivery');
-    const pedirUbicacion = await waitFor(() => ($('#order-location-required')?.hidden === false ? $('#order-location-request') : null), 'solicitar ubicación antes del delivery');
-    click(pedirUbicacion);
-    await waitFor(() => mockWhatsApp.sent.length === enviadosAntes + 1, 'la solicitud de ubicación enviada');
-    expect(mockWhatsApp.sent.at(-1).body).toContain('envíanos tu ubicación');
-    click('[data-close-sheet]');
-
-    await inboundLocation('wamid.UATPANEL-LOC-DELIVERY', {
-      latitude: 18.4764,
-      longitude: -69.9362,
-      name: 'Ubicación cliente',
-      address: 'Av. Winston Churchill, Santo Domingo',
-    });
-    click('#wa-actions');
-    click('[data-order-new]');
-    click(await waitFor(() => $('#order-draft-continue'), 'continuar el borrador del pedido'));
-    await waitFor(() => $('#order-save-delivery'), 'el formulario recuperado');
-    $('#order-open-ack')?.click();
-
-    click('#order-save-delivery');
-    const nota = await waitFor(() => ($('#order-delivery-note')?.hidden === false ? $('#order-delivery-note-text') : null), 'la nota de entrega');
-    if ($('#order-delivery-user')) setValue('#order-delivery-user', agenteUatId);
-    setValue(nota, 'Llamar al llegar');
-    const avisosAntes = mockWhatsApp.sent.length;
-    click('#order-delivery-note-continue');
-
-    await waitFor(async () => {
-      const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-      const item = data.items.find((candidate) => {
-        const order = candidate?.order ?? (candidate?.order_json ? JSON.parse(candidate.order_json) : candidate?.orderJson);
-        return order?.delivery?.delivery_assignment_note === 'Llamar al llegar';
-      });
-      const order = item?.order ?? (item?.order_json ? JSON.parse(item.order_json) : item?.orderJson);
-      return order?.delivery?.delivery_user_id === agenteUatId ? order : null;
-    }, 'el pedido creado y asignado al agente');
-    /*
-     * AL CLIENTE LE LLEGA UN SOLO AVISO Y CORTO, y lo manda el SERVIDOR al
-     * asignar. El panel mandaba además el suyo desde aquí y el cliente recibía
-     * dos mensajes seguidos: por eso solo puede aparecer UNO.
-     */
-    const avisos = await waitFor(
-      () => {
-        const enviados = mockWhatsApp.sent.slice(avisosAntes);
-        return enviados.some((message) => message.body === AVISO_AL_MENSAJERO) ? enviados : null;
-      },
-      'el aviso al cliente de que el pedido va con el mensajero',
-    );
-    expect(avisos.filter((message) => message.body === AVISO_AL_MENSAJERO), 'un solo mensaje, no dos').toHaveLength(1);
-    expect(
-      avisos.filter((message) => /mensajero|asignado a nuestro delivery|Ya pasé la orden/i.test(String(message.body ?? ''))),
-      'el panel no debe mandar su propio aviso: iba duplicado',
-    ).toHaveLength(1);
-  }, 10000);
+  it('guarda desde POS y continúa la entrega con ubicación y nota sin duplicar el aviso', async () => {
+    await inboundLocation('wamid.UATPANEL-LOC-DELIVERY',{latitude:18.4764,longitude:-69.9362,name:'Ubicación cliente',address:'Av. Winston Churchill, Santo Domingo'});
+    click('[data-tab="whatsapp"]');click(await waitFor(() => $$('[data-conv]')[0],'conversación'));
+    await waitFor(() => $('#wa-actions')?.disabled===false,'acciones');click('#wa-actions');click('[data-order-new]');
+    await waitFor(() => documentReady(),'POS');
+    click('[data-pos-add="capsules_10"]');click('[data-pos-expand]');click('[data-pos-pending]');
+    await waitFor(() => $('.pos-dialog [name=acknowledgeOpen]'),'aviso de pedido abierto');
+    $('.pos-dialog [name=acknowledgeOpen]').checked=true;
+    $('.pos-modal-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+    click(await waitFor(() => $('[data-pos-delivery]'),'continuar entrega'));
+    await waitFor(() => $('#delivery-assign-note'),'asignación');setValue('#delivery-assign-note','Llamar al llegar');
+    const before=mockWhatsApp.sent.length;
+    click(await waitFor(() => $(`[data-order-delivery-user="${agenteUatId}"]`),'agente'));
+    await waitFor(() => mockWhatsApp.sent.slice(before).some(m=>m.body===AVISO_AL_MENSAJERO),'aviso');
+    expect(mockWhatsApp.sent.slice(before).filter(m=>m.body===AVISO_AL_MENSAJERO)).toHaveLength(1);
+    function documentReady(){return dom.window.document.body.dataset.tab==='catalogo'&&$('[data-pos-add="capsules_10"]');}
+  },10000);
 
   it('programa un mensaje (no es un seguimiento: lo intentará el sistema)', async () => {
     if (!$('#sheet')?.hidden) click('[data-close-sheet]');
@@ -526,9 +460,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
     click('[data-order-new]');
-    await waitFor(() => $('#order-lines') || $('#order-draft-new'), 'el formulario o el borrador');
-    if ($('#order-draft-new')) click('#order-draft-new');
-    return waitFor(() => $('#order-lines'), 'el formulario de pedido');
+    return waitFor(() => dom.window.document.body.dataset.tab==='catalogo'&&$('[data-pos-add="capsules_10"]'),'Facturación');
   };
 
   it('la lista de pedidos es una fila por pedido, sin repetir el título ni botones dentro', async () => {
@@ -805,30 +737,20 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     // Solo el icono: sin texto de botón grande.
     expect(fab.textContent.trim()).toBe('');
     click(fab);
-    await waitFor(() => $('#order-lines'), 'el formulario de pedido');
-    click('[data-close-sheet]');
-    await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+    await waitFor(() => dom.window.document.body.dataset.tab==='catalogo'&&$('[data-pos-add]'),'Facturación');
+    click('[data-simple-back]');
   });
 
-  it('avisa de que ya hay un pedido abierto y NO lo guarda sin confirmar', async () => {
-    const antes = (await pedidos()).length;
-    await abrirPedidoDeAna();
-    if ($('#order-draft-new')) click('#order-draft-new');
-    const aviso = await waitFor(() => $('#order-open-warning'), 'el aviso de pedido abierto');
-    expect(aviso.textContent).toMatch(/ya tiene (un pedido|\d+ pedidos) sin cerrar/);
-    expect(aviso.textContent).toMatch(/PE-/);
-
-    click('#order-save');
-    await sleep(200);
-    // Sigue abierto (no se guardó) y el servidor no tiene un pedido más.
-    expect($('#order-open-warning')).toBeTruthy();
+  it('avisa del pedido abierto y exige confirmar antes de guardar otro desde POS', async () => {
+    const antes=(await pedidos()).length;await abrirPedidoDeAna();
+    click('[data-pos-add="capsules_10"]');click('[data-pos-expand]');click('[data-pos-pending]');
+    const ack=await waitFor(() => $('.pos-dialog [name=acknowledgeOpen]'),'aviso');
+    expect($('.pos-dialog').textContent).toContain('sin cerrar');expect($('.pos-dialog').textContent).toMatch(/PE-/);
+    $('.pos-modal-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await sleep(150);
     expect((await pedidos()).length).toBe(antes);
-
-    // Con la confirmación marcada, el pedido nuevo sí se guarda.
-    $('#order-open-ack').checked = true;
-    click('#order-save');
-    await esperar(async () => (await pedidos()).length === antes + 1, 'el pedido nuevo guardado');
-    click('[data-close-sheet]');
+    ack.checked=true;$('.pos-modal-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+    await esperar(async () => (await pedidos()).length===antes+1,'pedido nuevo');
+    click('.pos-dialog [data-pos-close]');
   });
 
   it('la ubicación que manda el cliente se puede agregar al pedido abierto', async () => {

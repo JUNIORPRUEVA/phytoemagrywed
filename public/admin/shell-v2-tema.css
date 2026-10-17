@@ -129,6 +129,7 @@
 }
 
 /* El fondo de la app: plano y del color de la página (adiós al degradado). */
+html,
 body,
 body[data-tab='hoy'],
 body[data-tab] {

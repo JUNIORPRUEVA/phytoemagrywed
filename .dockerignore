@@ -11,6 +11,9 @@
 node_modules
 dist
 dist-dev
+# Artefactos locales de la app de impresión; el CRM web no los compila.
+apps/phyto_printer/build
+apps/phyto_printer/.dart_tool
 
 # Base de datos local del CRM (si has arrancado `npm run crm` en tu máquina):
 # en la imagen los datos viven en el volumen /data, nunca en el contexto de build.
@@ -38,6 +41,7 @@ docs
 *.md
 .playwright-mcp
 .tmp
+output
 lighthouse-*.json
 
 # Editor

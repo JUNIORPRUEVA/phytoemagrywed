@@ -63,12 +63,33 @@ class _CrmWebShellState extends State<CrmWebShell> {
 
   int _progress = 0;
   String? _loadError;
+  bool _dark =
+      WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+      Brightness.dark;
+  Color get _surface =>
+      _dark ? const Color(0xff0b1424) : const Color(0xfff4f7fd);
+
+  Future<void> _handleAppearance(JavaScriptMessage message) async {
+    if (!['dark', 'light'].contains(message.message) ||
+        !await _currentOriginIsTrusted() ||
+        !mounted) {
+      return;
+    }
+    final dark = message.message == 'dark';
+    if (_dark != dark) setState(() => _dark = dark);
+    await _webController.setBackgroundColor(_surface);
+  }
 
   @override
   void initState() {
     super.initState();
     _webController = WebViewController(onPermissionRequest: _handleMediaPermission)
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(_surface)
+      ..addJavaScriptChannel(
+        'FulltechAppearance',
+        onMessageReceived: _handleAppearance,
+      )
       ..setUserAgent('PhytoemagryAndroid WebView')
       ..addJavaScriptChannel(
         'PhytoDeviceBridge',
@@ -76,6 +97,13 @@ class _CrmWebShellState extends State<CrmWebShell> {
       )
       ..setNavigationDelegate(
         NavigationDelegate(
+          onPageFinished: (_) async {
+            if (await _currentOriginIsTrusted()) {
+              await _webController.runJavaScript(
+                "window.FulltechAppearance.postMessage(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');",
+              );
+            }
+          },
           onProgress: (progress) => setState(() => _progress = progress),
           onPageStarted: (_) => setState(() => _loadError = null),
           onWebResourceError: (error) {
@@ -96,14 +124,21 @@ class _CrmWebShellState extends State<CrmWebShell> {
   }
 
   Future<void> _handleMediaPermission(WebViewPermissionRequest request) async {
-    final audioOnly = request.types.isNotEmpty &&
-        request.types.every((type) => type == WebViewPermissionResourceType.microphone);
-    if (!audioOnly || !await _currentOriginIsTrusted() || _crmUri.scheme != 'https') {
+    final audioOnly =
+        request.types.isNotEmpty &&
+        request.types.every(
+          (type) => type == WebViewPermissionResourceType.microphone,
+        );
+    if (!audioOnly ||
+        !await _currentOriginIsTrusted() ||
+        _crmUri.scheme != 'https') {
       await request.deny();
       return;
     }
     try {
-      final allowed = await _nativeChannel.invokeMethod<bool>('requestMicrophone');
+      final allowed = await _nativeChannel.invokeMethod<bool>(
+        'requestMicrophone',
+      );
       if (allowed == true && mounted && await _currentOriginIsTrusted()) {
         await request.grant();
       } else {
@@ -235,27 +270,41 @@ class _CrmWebShellState extends State<CrmWebShell> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_handleBack());
-      },
-      child: Scaffold(
-        body: SafeArea(
-          child: Stack(
-            children: [
-              WebViewWidget(controller: _webController),
-              if (_progress < 100)
-                LinearProgressIndicator(
-                  value: _progress <= 0 ? null : _progress / 100,
-                  minHeight: 2,
-                ),
-              if (_loadError != null)
-                _LoadError(
-                  message: _loadError!,
-                  onRetry: () => _webController.loadRequest(_crmUri),
-                ),
-            ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: _surface,
+        statusBarIconBrightness: _dark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: _dark ? Brightness.dark : Brightness.light,
+        systemNavigationBarColor: _surface,
+        systemNavigationBarDividerColor: _surface,
+        systemNavigationBarIconBrightness: _dark
+            ? Brightness.light
+            : Brightness.dark,
+        systemNavigationBarContrastEnforced: false,
+      ),
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) unawaited(_handleBack());
+        },
+        child: Scaffold(
+          backgroundColor: _surface,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                WebViewWidget(controller: _webController),
+                if (_progress < 100)
+                  LinearProgressIndicator(
+                    value: _progress <= 0 ? null : _progress / 100,
+                    minHeight: 2,
+                  ),
+                if (_loadError != null)
+                  _LoadError(
+                    message: _loadError!,
+                    onRetry: () => _webController.loadRequest(_crmUri),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

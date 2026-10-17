@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#145bd7" />
+    <meta name="color-scheme" content="light dark" />
     <title>CRM · FullTECH, SRL</title>
     <meta name="description" content="Panel privado de FullTECH, SRL: clientes, WhatsApp, pedidos y seguimiento." />
 
@@ -26,6 +27,9 @@
           const oscuro = elegido === 'dark' || (elegido === 'auto' && sistemaOscuro);
           document.documentElement.dataset.tema = elegido;
           document.documentElement.dataset.theme = oscuro ? 'dark' : 'light';
+          document.documentElement.style.colorScheme = oscuro ? 'dark' : 'light';
+          document.querySelector('meta[name="color-scheme"]').content = oscuro ? 'dark' : 'light';
+          document.querySelector('meta[name="theme-color"]').content = oscuro ? '#0b1424' : '#145bd7';
         } catch (error) {
           /* Sin Storage (o modo raro) se abre en claro: nunca en blanco. */
           document.documentElement.dataset.tema = 'auto';
@@ -34,11 +38,15 @@
       })();
     </script>
 
+    <style>
+      html { background-color: #f4f7fd; }
+      html[data-theme="dark"] { background-color: #0b1424; }
+    </style>
     <!-- PWA: se instala en el móvil y abre a pantalla completa -->
     <link rel="manifest" href="/admin/manifest.json" />
-    <link rel="icon" href="/admin/fulltech-favicon.png" sizes="32x32" type="image/png" />
-    <link rel="icon" href="/admin/fulltech-icon-192.png" sizes="192x192" type="image/png" />
-    <link rel="apple-touch-icon" href="/admin/fulltech-apple-touch-icon.png" />
+    <link rel="icon" href="/admin/fulltech-favicon.png?v=2" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/admin/fulltech-icon-192.png?v=2" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="/admin/fulltech-apple-touch-icon.png?v=2" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="FullTECH, SRL" />
@@ -46,6 +54,9 @@
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/admin/admin.css?v=campaign-exact-66" />
+    <link rel="stylesheet" href="/admin/store.css?v=4" />
+    <link rel="stylesheet" href="/admin/pos.css?v=8" />
+    <link rel="stylesheet" href="/admin/offline.css?v=1" />
     <!--
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
       DESPUÉS de admin.css a propósito: es la última palabra sobre esas piezas.
@@ -54,7 +65,7 @@
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=2" />
     <link rel="stylesheet" href="/admin/fulltech.css?v=2" />
-    <link rel="stylesheet" href="/admin/navigation.css?v=5" />
+    <link rel="stylesheet" href="/admin/navigation.css?v=chat-finalizar-1" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=2" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=7" />
     <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
@@ -180,9 +191,15 @@
               <button class="drawer__item" data-tab="delivery" type="button">
                 <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
               </button>
-              <button class="drawer__item" data-tab="productos" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Productos e inventario
-              </button>
+              <details class="store-menu" id="store-menu">
+                <summary class="drawer__item"><span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Inventario</summary>
+                <nav aria-label="Inventario">
+                  <button class="drawer__item" data-tab="catalogo" type="button">Productos y servicios</button>
+                  <button class="drawer__item" data-tab="cotizaciones" type="button">Cotizaciones</button>
+                  <button class="drawer__item" data-tab="inventario" type="button">Ajuste de stock</button>
+                  <button class="drawer__item" data-tab="recuento" type="button">Recuento</button>
+                </nav>
+              </details>
               <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
                 <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
               </button>
@@ -321,9 +338,11 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
-                <button class="wa__head-icon" id="wa-calling-button" type="button" aria-label="Llamar por WhatsApp" title="Llamar por WhatsApp" hidden disabled><span class="ico" aria-hidden="true" data-icon="phone"></span></button>
-                <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación">
-                  <span class="ico" aria-hidden="true" data-icon="search"></span>
+                <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación" title="Buscar en esta conversación">
+                  <img class="wa-header-image" src="/admin/assets/icons/chat-search.png" alt="" aria-hidden="true" width="22" height="22" />
+                </button>
+                <button class="wa__head-icon" id="wa-calling-button" type="button" aria-label="Llamar por WhatsApp" title="Llamar por WhatsApp" disabled>
+                  <img class="wa-header-image" src="/admin/assets/icons/chat-call.png" alt="" aria-hidden="true" width="22" height="22" />
                 </button>
                 <div class="wa__thread-search" id="wa-thread-searchbar" hidden>
                   <button class="wa__head-icon" id="wa-thread-search-close" type="button" aria-label="Cerrar búsqueda">
@@ -534,8 +553,25 @@
         </section>
 
         <!-- PRODUCTOS E INVENTARIO -->
+        <section class="view" id="view-catalogo" hidden>
+          <h2 class="view__title">Productos y servicios</h2>
+          <div id="store-catalogo"></div>
+          <div id="pos-root"></div>
+        </section>
+        <section class="view" id="view-inventario" hidden>
+          <h2 class="view__title">Ajuste de stock</h2>
+          <div id="store-inventario"></div>
+        </section>
+        <section class="view pos-documents-view" id="view-cotizaciones" hidden>
+          <div id="pos-quotes-page"></div>
+        </section>
+        <section class="view" id="view-recuento" hidden>
+          <h2 class="view__title">Recuento de inventario</h2>
+          <div id="store-recuento"></div>
+        </section>
         <section class="view" id="view-productos" hidden>
-          <h2 class="view__title">Productos e inventario</h2>
+          <h2 class="view__title">Inventario de Phytoemagry</h2>
+          <button class="btn btn--ghost" data-tab="inventario" type="button">Volver al inventario de la tienda</button>
           <div class="list" id="inventory-view"></div>
         </section>
 
@@ -830,12 +866,19 @@
     </div>
 
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
+    <script src="/admin/startup-recovery.js?v=1" defer></script>
+    <script src="/admin/offline-storage.js?v=1" defer></script>
+    <script src="/admin/offline.js?v=3" defer></script>
+    <script src="/admin/offline-ui.js?v=1" defer></script>
+    <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=dashboard-resolve-95" defer></script>
+    <script src="/admin/app.js?v=chat-finalizar-117" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <script src="/admin/proofreading.js?v=7" defer></script>
     <script src="/admin/deepseek-settings.js?v=2" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=2" defer></script>
-    <script src="/admin/calling.js?v=1" defer></script>
+    <script src="/admin/calling.js?v=header-actions-113" defer></script>
+    <script src="/admin/store.js?v=9" defer></script>
+    <script src="/admin/pos.js?v=9" type="module"></script>
   </body>
 </html>

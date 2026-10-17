@@ -9,6 +9,7 @@
 
 (() => {
   'use strict';
+  function getStoredValue(key) { try { return localStorage.getItem(key); } catch { return null; } }
 
   const SNAPSHOT_KEY = 'pe_crm_snapshot';
   const OUTBOX_KEY = 'pe_crm_outbox';
@@ -54,7 +55,7 @@
   const PREFS_KEY = 'pe_prefs';
   /** Los valores admitidos: si en el teléfono hay basura, se ignora y se usa el de siempre. */
   const PREF_VALUES = {
-    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
+    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
     waFilter: ['todos', 'mios', 'sin-asignar', 'no-leidos', 'pendientes', 'clientes', 'seguimiento', 'archivados'],
     pedidosFilter: ['todo', 'pendiente', 'en-camino', 'entregado', 'cancelado'],
     followupsFilter: ['todo', 'vencidos', 'hoy', 'proximos'],
@@ -64,7 +65,7 @@
 
   function leerPreferencias() {
     try {
-      const raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
+      const raw = JSON.parse(getStoredValue(PREFS_KEY) ?? '{}');
       return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     } catch {
       return {};
@@ -108,7 +109,7 @@
      * que vení­a de la versión anterior), se lee `pe_crm_tab`, que ya se escribí­a
      * aunque nadie lo leyera.
      */
-    const tab = preferenciaValida(prefs.tab, PREF_VALUES.tab) ?? preferenciaValida(localStorage.getItem(TAB_KEY), PREF_VALUES.tab);
+    const tab = preferenciaValida(prefs.tab, PREF_VALUES.tab) ?? preferenciaValida(getStoredValue(TAB_KEY), PREF_VALUES.tab);
     if (tab) state.tab = tab;
     const waFilter = preferenciaValida(prefs.waFilter, PREF_VALUES.waFilter);
     if (waFilter) state.wa.filter = waFilter;
@@ -203,6 +204,9 @@
     const pintado = temaPintado(elegido);
     document.documentElement.dataset.tema = elegido;
     document.documentElement.dataset.theme = pintado;
+    document.documentElement.style.colorScheme = pintado;
+    document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', pintado);
+    window.FulltechAppearance?.postMessage(pintado);
     if (guardar) {
       try {
         localStorage.setItem(TEMA_KEY, elegido);
@@ -457,8 +461,8 @@
       chatSig: null,
       counts: null,
       selected: new Set(),
-      notify: localStorage.getItem(WA_NOTIFY_KEY) === '1',
-      sound: localStorage.getItem(WA_SOUND_KEY) === '1',
+      notify: getStoredValue(WA_NOTIFY_KEY) === '1',
+      sound: getStoredValue(WA_SOUND_KEY) === '1',
       seenMessages: new Set(),
       loadingFor: null,
       /*
@@ -520,7 +524,7 @@
    */
   function mapLabelsPref() {
     try {
-      return localStorage.getItem('pe_orders_map_labels') !== '0';
+      return getStoredValue('pe_orders_map_labels') !== '0';
     } catch {
       return true;
     }
@@ -777,12 +781,17 @@
   const money = (value, currency) =>
     value === null || value === undefined
       ? '—'
-      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 0 }).format(value)}`;
+      : `${currency || 'DOP'} ${new Intl.NumberFormat('es-DO', { maximumFractionDigits: 2 }).format(value)}`;
 
   const digits = (phone) => String(phone ?? '').replace(/\D/g, '');
 
   let toastTimer = null;
   function toast(message) {
+    if(window.FulltechOffline){
+      if(!/no se|error|falt|elige|escribe|permiso|necesit|inválid|revisa|requiere|confirma|caduc|rechaz|intént|no hay|no puede|activa/i.test(message))return;
+      const host=document.querySelector('dialog[open] .pos-modal-body,dialog[open] form')||(!$('#sheet')?.hidden?$('#sheet-body'):null)||document.querySelector('.view:not([hidden])');
+      if(host){host.querySelector('.inline-feedback')?.remove();const notice=document.createElement('p');notice.className='inline-feedback';notice.setAttribute('role','alert');notice.textContent=message;host.prepend(notice);setTimeout(()=>notice.remove(),8000);return;}
+    }
     const box = $('#toast');
     if (!box) return; // sin documento (página cerrándose) no hay nada que avisar
     box.textContent = message;
@@ -923,6 +932,7 @@
   }
 
   function saveSnapshot() {
+    window.FulltechOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
     try {
       localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload()));
     } catch {
@@ -940,8 +950,9 @@
   }
 
   function readSnapshot() {
+    if(window.FulltechOffline&&!window.FulltechOffline.valid())return null;
     try {
-      const raw = localStorage.getItem(SNAPSHOT_KEY);
+      const raw = getStoredValue(SNAPSHOT_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -976,7 +987,7 @@
   function readOutbox() {
     if (!Array.isArray(state.outbox)) {
       try {
-        const raw = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
+        const raw = JSON.parse(getStoredValue(OUTBOX_KEY) ?? '[]');
         state.outbox = Array.isArray(raw) ? raw : [];
       } catch {
         state.outbox = [];
@@ -986,12 +997,12 @@
   }
 
   function writeOutbox(list) {
-    state.outbox = list;
     try {
       localStorage.setItem(OUTBOX_KEY, JSON.stringify(list));
     } catch {
-      /* sin sitio: la cola vive en memoria hasta que se pueda guardar */
+      throw new Error('No hay espacio para guardar el cambio. Libera almacenamiento antes de continuar.');
     }
+    state.outbox = list;
     renderOutboxBanner();
   }
 
@@ -1012,7 +1023,7 @@
 
   function readOutboxProblems() {
     try {
-      const raw = JSON.parse(localStorage.getItem(OUTBOX_PROBLEMS_KEY) ?? '[]');
+      const raw = JSON.parse(getStoredValue(OUTBOX_PROBLEMS_KEY) ?? '[]');
       return Array.isArray(raw) ? raw : [];
     } catch {
       return [];
@@ -1050,7 +1061,7 @@
   function queueMutation(entry) {
     const key = entry.key ?? `${entry.method} ${entry.path}`;
     const list = readOutbox().filter((row) => (row.key ?? `${row.method} ${row.path}`) !== key);
-    list.push({ ...entry, key, at: Date.now(), tries: 0 });
+    list.push({ ...entry, key, operationId: entry.operationId||crypto.randomUUID(), at: Date.now(), tries: 0 });
     writeOutbox(list);
   }
 
@@ -1079,39 +1090,43 @@
    *     está…): se DESCARTA y se dice por qué. Nada de reintentar en bucle algo
    *     que el servidor va a rechazar siempre.
    */
-  async function flushOutbox({ silent = false } = {}) {
+  let legacyFlushing=null;
+  function flushOutbox(options={}){return legacyFlushing ||= flushOutboxRun(options).finally(()=>{legacyFlushing=null;});}
+  async function flushOutboxRun({ silent = false } = {}) {
     const outbox = readOutbox();
     if (!outbox.length) return { sent: 0, pending: 0, dropped: 0, messages: [] };
     if (!state.online) return { sent: 0, pending: outbox.length, dropped: 0, messages: [] };
     const pendientes = [];
     const descartados = [];
     let enviados = 0;
-    for (const entry of outbox) {
+    for (const [index,entry] of outbox.entries()) {
       try {
         if (entry.kind === 'order-create') {
           // ¿Ya había llegado? (un reintento anterior pudo guardarlo sin respuesta)
           const yaEsta = await api(`/api/admin/orders/${encodeURIComponent(entry.id)}`)
             .then(() => true)
             .catch(() => false);
-          if (!yaEsta) await api(entry.path, { method: entry.method, body: JSON.stringify(entry.body) });
+          if (!yaEsta) await api(entry.path, { method: entry.method, headers:{'x-fulltech-legacy-outbox':'1','x-fulltech-operation':entry.operationId||entry.id}, body: JSON.stringify(entry.body) });
         } else {
           await api(entry.path, {
             method: entry.method,
+            headers:{'x-fulltech-legacy-outbox':'1',...(entry.operationId?{'x-fulltech-operation':entry.operationId}:{})},
             body: entry.body ? JSON.stringify(entry.body) : undefined,
           });
         }
         enviados += 1;
       } catch (error) {
         if (error.message === 'unauthorized' || error.offline === true) {
-          pendientes.push(entry);
-          continue;
+          pendientes.push(...outbox.slice(index));
+          break;
         }
         descartados.push({ ...entry, motivo: error.body?.message ?? 'El CRM lo rechazó' });
       }
     }
-    writeOutbox(pendientes);
+    const oldKeys=new Set(outbox.map(e=>e.operationId||String(e.at)+e.key));
+    const added=readOutbox().filter(e=>!oldKeys.has(e.operationId||String(e.at)+e.key));
+    writeOutbox([...pendientes,...added]);
     if (descartados.length) addOutboxProblems(descartados);
-    console.log('[debug] flush', JSON.stringify({ enviados, descartados: descartados.length, pendientes: pendientes.length, kinds: outbox.map((r) => r.kind) }));
     const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, messages: descartados.map((row) => row.motivo) };
     if (!silent) {
       if (enviados && !descartados.length) toast(`${enviados} cambio(s) enviados`);
@@ -1129,14 +1144,17 @@
    * hoja, avisar…). Nunca finge: si el servidor RECHAZA el dato (4xx), lo dice.
    */
   async function guardar({ path, method = 'POST', body = null, kind = '', key = '', id = '', label = '', aplicar = null }) {
+    const operationId=crypto.randomUUID();
     try {
-      const data = await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+      const data = await api(path, { method, headers:{'x-fulltech-legacy-outbox':'1','x-fulltech-operation':operationId}, body: body ? JSON.stringify(body) : undefined });
+      if(data.offline){if(typeof aplicar==='function')aplicar();return {ok:true,offline:true,data};}
       return { ok: true, offline: false, data };
     } catch (error) {
       if (error.message === 'unauthorized') return { ok: false, offline: false, message: '' };
       if (error.offline !== true) {
         return { ok: false, offline: false, message: error.body?.message ?? 'No se pudo guardar' };
       }
+      queueMutation({ kind, key: key || `${method} ${path}`, id, label: label || kind, method, path, body, operationId });
       if (typeof aplicar === 'function') {
         try {
           aplicar();
@@ -1144,10 +1162,11 @@
           /* si el cambio local falla, igual queda en la cola para el servidor */
         }
       }
-      queueMutation({ kind, key: key || `${method} ${path}`, id, label: label || kind, method, path, body });
       return { ok: true, offline: true };
     }
   }
+
+  window.FulltechLegacyOffline={synchronize:()=>flushOutbox({silent:true})};
 
   /** Etiqueta legible de lo que está esperando (para el aviso de la pantalla). */
   function outboxSummary() {
@@ -1352,6 +1371,7 @@
     $('#app').hidden = true;
     $('#login').hidden = false;
     hideSplash();
+    window.dispatchEvent(new Event('fulltech:startup-ready'));
     $('#login-error').hidden = !message;
     $('#login-error').textContent = message;
     ($('#login-username') ?? $('#login-token')).focus({ preventScroll: true });
@@ -1366,7 +1386,14 @@
 
   async function checkSession() {
     try {
-      const response = await fetch('/api/admin/session', { credentials: 'same-origin' });
+      let timer;
+      let response;
+      try {
+        response = await Promise.race([
+          fetch('/api/admin/session', { credentials: 'same-origin' }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('session_timeout')), 8000); }),
+        ]);
+      } finally { clearTimeout(timer); }
       const body = await response.json().catch(() => ({}));
       if (body.ok) state.auth = { user: body.user ?? null, legacy: body.legacy === true };
       /*
@@ -1488,6 +1515,7 @@
       state.syncedAt = Date.now();
       saveSnapshot();
       render();
+      window.dispatchEvent(new Event('fulltech:startup-ready'));
       refreshDevicePermissions().catch(() => {});
       autoSyncCrmPush();
       if (!options.keepTab) await flushOutbox();
@@ -2032,6 +2060,14 @@
   function renderMobileHeader() {
     const box = $('#mobile-header');
     if (!box) return;
+    if(state.tab==='catalogo'){
+      const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
+      const detail=new URLSearchParams(location.search).has('product');
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      if(search)$('#pos-search-host').append(search);
+      window.dispatchEvent(new Event('fulltech:pos-appbar'));
+      if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
+    }
     if (state.tab === 'delivery') {
       const orders = deliveryOrdersSorted();
       const hasActive = Boolean(state.deliveryActiveOrderId && orders.some((order) => order.id === state.deliveryActiveOrderId));
@@ -2180,6 +2216,7 @@
     $$('[data-admin-only]').forEach((node) => {
       node.hidden = !isAdmin();
     });
+    if ($('#store-menu')) $('#store-menu').hidden = isDeliveryUser();
     $$('[data-permission]').forEach((node) => {
       node.hidden = node.dataset.tab === 'ajustes' ? false : !hasPermission(node.dataset.permission);
     });
@@ -7895,8 +7932,8 @@
         }
         ${item.phone ? `<div class="fact"><dt>Teléfono</dt><dd><a href="tel:${escapeHtml(phone)}">${escapeHtml(item.phone)}</a></dd></div>` : ''}
         ${item.location ? `<div class="fact"><dt>Ciudad</dt><dd>${escapeHtml(item.location)}</dd></div>` : ''}
-        ${item.variant_name ? `<div class="fact"><dt>Frasco</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
-        ${item.quantity ? `<div class="fact"><dt>Frascos</dt><dd>${escapeHtml(item.quantity)}</dd></div>` : ''}
+        ${item.variant_name ? `<div class="fact"><dt>Artículo</dt><dd>${escapeHtml(item.variant_name)}</dd></div>` : ''}
+        ${item.quantity ? `<div class="fact"><dt>Unidades</dt><dd>${escapeHtml(item.quantity)}</dd></div>` : ''}
         ${item.total ? `<div class="fact"><dt>Total</dt><dd>${money(item.total, item.currency)}</dd></div>` : ''}
         <div class="fact"><dt>Entrada</dt><dd>${escapeHtml(fmtWhen(item.received_at))}</dd></div>
         ${item.source ? `<div class="fact"><dt>Origen</dt><dd>${escapeHtml(item.source)}</dd></div>` : ''}
@@ -8077,17 +8114,20 @@
 
   /** Botón con estado "trabajando" (evita dos toques que envían dos mensajes). */
   async function working(button, label, task) {
+    const iconOnly = button?.id === 'wa-send';
     const original = button?.textContent;
     if (button) {
       button.disabled = true;
-      button.textContent = label;
+      if (iconOnly) button.setAttribute('aria-busy', 'true');
+      else button.textContent = label;
     }
     try {
       return await task();
     } finally {
       if (button) {
         button.disabled = false;
-        button.textContent = original;
+        if (iconOnly) button.removeAttribute('aria-busy');
+        else button.textContent = original;
       }
     }
   }
@@ -9535,6 +9575,12 @@
          * texto de WhatsApp no viaja en esa llamada: se escribe al abrir la
          * conversación, y eso sí necesita red.
          */
+        if (!navigator.onLine && window.FulltechOffline) {
+          const data = await api('/api/admin/pos/customers', {method:'POST',body:JSON.stringify({phone,name})});
+          aplicarClienteLocal(data.customer.id, phone, name);
+          closeSheet();render();
+          return;
+        }
         const clienteLocal = idLocal('loc');
         const resultado = await guardar({
           path: '/api/admin/conversations/start',
@@ -10307,14 +10353,16 @@
   function waClosedComposerHtml() {
     return `<p class="wa-quick-preview" id="wa-quick-preview" hidden></p>
       <div class="composer-bar">
+        <div class="composer-field">
         <span class="composer-left">
           <button class="composer-template-btn" id="wa-open-template" type="button">Plantilla</button>
         </span>
         <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" autocomplete="off" inputmode="text" enterkeyhint="enter" placeholder="Escribe lo que quieras decirle…"
           aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
+        </div>
         <span class="composer-end">
           <button class="composer-btn composer-btn--send" id="wa-send" type="button"
-            aria-label="Enviar">${ICONS.send}</button>
+            aria-label="Enviar"><span class="wa-compose-glyph wa-compose-glyph--send" aria-hidden="true"></span></button>
         </span>
       </div>`;
   }
@@ -10333,28 +10381,28 @@
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     /*
      * Un solo compositor: adjuntar · campo · (audio | enviar), todo dentro de la
-     * misma superficie. El micro y el envío viven en la MISMA casilla, así que el
+     * campo redondeado y botón circular aparte. Micro y envío viven en la MISMA casilla, así que el
      * cambio de uno a otro no mueve nada de sitio.
      *
      * «Enviar plantilla» NO va aquí a la izquierda: esa acción ya está en el menú
      * de acciones del chat (el botón flotante), y repetir el icono solo confundía.
      */
     return `<div class="composer-bar">
+        <div class="composer-field">
         <span class="composer-left">
           <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
             title="Adjuntar y compartir: archivos, ubicación, cuentas y catálogos">${ICONS.plus}</button>
         </span>
         <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" autocomplete="off" inputmode="text" enterkeyhint="enter" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
+        </div>
         <span class="composer-end">
           <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
             title="${
               puedeGrabar
                 ? 'Grabar nota de voz'
                 : 'Este navegador no permite grabar: usa + para adjuntar un audio'
-            }">${puedeGrabar ? ICONS.mic : ICONS.audio}</button>
-          <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden>${
-            ICONS.send
-          }</button>
+            }"><span class="wa-compose-glyph wa-compose-glyph--mic" aria-hidden="true"></span></button>
+          <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden><span class="wa-compose-glyph wa-compose-glyph--send" aria-hidden="true"></span></button>
         </span>
       </div>`;
   }
@@ -10394,6 +10442,8 @@
     const send = $('#wa-send');
     if (mic) mic.hidden = !vacio;
     if (send) send.hidden = vacio;
+    const end = send?.closest('.composer-end');
+    if (end) end.hidden = vacio && !mic;
     const preview = $('#wa-quick-preview');
     if (preview) {
       const draft = waPersonalTemplateDraft(area.value);
@@ -12358,7 +12408,7 @@
       'Preferencias del pedido',
       `<p class="view__hint">Lo que se repite en cada pedido. Al crear uno nuevo, el formulario ya viene con esto: solo confirmas la cantidad.</p>
        <label class="field">
-         <span class="field__label">Frasco de siempre</span>
+         <span class="field__label">Producto o servicio habitual</span>
          <select class="field__select" id="prefs-variant">
            <option value="">Sin preferencia</option>
            ${(state.catalog ?? [])
@@ -13099,19 +13149,19 @@
   function orderTotals(lines, discount = 0, deliveryFee = 0) {
     const items = lines
       .map((line) => {
-        const variant = catalogOf(line.variantId);
+        const variant = catalogOf(line.variantId)??line.manualSnapshot;
         if (!variant) return null;
         const quantity = Math.max(1, Number(line.quantity) || 1);
         const capsules = Number(variant.capsule_quantity ?? variant.capsules ?? 0) || 0;
-        return { variant, quantity, capsules, subtotal: variant.price * quantity, totalCapsules: capsules * quantity };
+        return { variant, quantity, capsules, subtotal: Math.max(0,Math.round(Number(line.unitPrice??variant.price) * 100) * quantity - Number(line.lineDiscountCents||0)) / 100, totalCapsules: capsules * quantity };
       })
       .filter(Boolean);
-    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+    const subtotal = items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0) / 100;
     const totalCapsules = items.reduce((sum, item) => sum + item.totalCapsules, 0);
     const applied = Math.min(Math.max(0, Number(discount) || 0), subtotal);
     // El delivery es un importe APARTE (nunca una línea de producto falsa).
     const fee = Math.max(0, Math.trunc(Number(deliveryFee) || 0));
-    return { items, subtotal, discount: applied, deliveryFee: fee, total: subtotal - applied + fee, totalCapsules };
+    return { items, subtotal, discount: applied, deliveryFee: fee, total: Math.round((subtotal - applied + fee) * 100) / 100, totalCapsules };
   }
 
   function openChatActions(customerId, conversationId) {
@@ -13623,7 +13673,7 @@
 
   function readOrderDraft(key) {
     try {
-      const draft = JSON.parse(localStorage.getItem(key) ?? 'null');
+      const draft = JSON.parse(getStoredValue(key) ?? 'null');
       return draft && typeof draft === 'object' ? draft : null;
     } catch {
       return null;
@@ -13668,12 +13718,26 @@
   }
 
   async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null, draft = null, skipDraftPrompt = false } = {}) {
+    if(!orderId && !draft) {
+      closeSheet();
+      const knownLocations=customerId?await fetchCustomerLocations(customerId):[];
+      setTab('catalogo');
+      window.dispatchEvent(new CustomEvent('fulltech:pos-context',{detail:{customerId,conversationId,location:location??knownLocations[0]??null,customer:customerById(customerId)??state.wa.chat?.customer??null}}));
+      return;
+    }
+    if (navigator.onLine) {
+      try {
+        const fresh = await api('/api/admin/catalog');
+        if (Array.isArray(fresh.catalog)) state.catalog = fresh.catalog;
+        if (fresh.inventory) state.inventory = fresh.inventory;
+      } catch (error) { if (error.status === 401) return; /* El borrador offline puede utilizar el catálogo guardado. */ }
+    }
     // Si no hay cliente, el formulario pinta id="order-phone"; desde chat, customer ? '' evita pedirlo.
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
       : null;
     const effectiveCustomerId = customer?.id ?? customerId ?? null;
-    const catalog = state.catalog ?? [];
+    const catalog = [...(state.catalog??[]),...(order?.items||[]).filter(i=>i.manual).map(i=>({id:i.variantId,label:i.label,name:i.label,price:i.unitPrice,capsules:0,general:true,kind:i.kind||'product'}))];
     if (!catalog.length) {
       toast('El catálogo todavía no está disponible');
       return;
@@ -13701,7 +13765,7 @@
       ? draftData.lines
           .filter((line) => catalog.some((variant) => variant.id === line.variantId))
           .map((line) => ({ variantId: line.variantId, quantity: Math.max(1, Number(line.quantity) || 1) }))
-      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity })) ?? [
+      : order?.items?.map((line) => ({ variantId: line.variantId, quantity: line.quantity,unitPrice:line.unitPrice,...(line.line_discount_cents?{lineDiscountCents:line.line_discount_cents}:{}),...(line.manual?{manualSnapshot:catalog.find(v=>v.id===line.variantId)}:{}) })) ?? [
           { variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) },
         ];
     if (!lines.length) lines = [{ variantId: prefsVariant ?? catalog[0].id, quantity: Math.max(1, Number(prefs?.quantity) || 1) }];
@@ -13827,7 +13891,7 @@
       }
       <div id="order-lines"></div>
       <div class="order-add-row">
-        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro frasco</button>
+        <button class="btn btn--ghost btn--sm" id="order-add" type="button">+ Añadir otro artículo</button>
         <strong id="order-products-total">${money(0)}</strong>
       </div>
       <div class="order-compact-fields">
@@ -13872,7 +13936,7 @@
             <button class="icon-btn order-compact-close" data-order-close-field="discount" type="button" aria-label="Cerrar descuento">${ICONS.close}</button>
             <label class="field">
               <span class="field__label">Descuento (RD$)</span>
-              <input class="field__input" id="order-discount" type="number" min="0" step="1" value="${defaultDiscount}" placeholder="0" />
+              <input class="field__input" id="order-discount" type="number" min="0" step="0.01" value="${defaultDiscount}" placeholder="0" />
             </label>
           </div>
         </div>
@@ -13971,7 +14035,7 @@
           (line, index) => `
         <div class="order-line">
           <label class="field">
-            <span class="field__label">Frasco</span>
+            <span class="field__label">Producto o servicio</span>
             <select class="field__select" data-line-variant="${index}">
               ${catalog
                 .map(
@@ -13993,7 +14057,7 @@
           </label>
           ${
             lines.length > 1
-              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar frasco">✕</button>`
+              ? `<button class="icon-btn" data-line-remove="${index}" type="button" aria-label="Quitar artículo">✕</button>`
               : ''
           }
         </div>`,
@@ -14020,11 +14084,12 @@
         ? `Productos ${money(totals.subtotal)}${totals.discount ? ` · Descuento −${money(totals.discount)}` : ''}${
             totals.deliveryFee ? ` · Delivery ${money(totals.deliveryFee)}` : ''
           } · <strong>Total ${money(totals.total)}</strong>${
-            strictStock
+            totals.totalCapsules > 0 ? strictStock
               ? ` · Stock ${escapeHtml(stock.stock)} cápsulas${insufficient ? ' · insuficiente para entregar' : ''}`
               : ' · Stock sin inicializar'
-          }`
-        : 'Elige al menos un frasco del catálogo.';
+              : ''
+          }${totals.items.filter(item => item.variant.general && item.variant.track_stock).map(item => ` · ${escapeHtml(item.variant.label)}: ${item.variant.stock} en stock`).join('')}`
+        : 'Elige al menos un producto o servicio del catálogo.';
     };
 
     const renderLocationBlock = () => {
@@ -14070,6 +14135,10 @@
       const select = event.target.closest('[data-line-variant]');
       if (select) {
         lines[Number(select.dataset.lineVariant)].variantId = select.value;
+        delete lines[Number(select.dataset.lineVariant)].unitPrice;
+        delete lines[Number(select.dataset.lineVariant)].lineDiscountCents;
+        if(select.value.startsWith('manual_'))lines[Number(select.dataset.lineVariant)].manualSnapshot=catalog.find(v=>v.id===select.value);
+        else delete lines[Number(select.dataset.lineVariant)].manualSnapshot;
         refreshOrderTotal();
       }
       const quantity = event.target.closest('[data-line-qty]');
@@ -14269,7 +14338,7 @@
         Number($('#order-fee').value) || 0,
       );
       if (!totals.items.length) {
-        toast('Elige al menos un frasco');
+        toast('Elige al menos un producto o servicio');
         return;
       }
       if (state.inventory?.initialized === true && Number(state.inventory.stock) < Number(totals.totalCapsules)) {
@@ -15210,7 +15279,7 @@
   /** Última vista del mapa (para volver donde estabas, igual que en reparto). */
   function ordersMapSavedView() {
     try {
-      const value = JSON.parse(localStorage.getItem(MAPS_VIEW_KEY) ?? 'null');
+      const value = JSON.parse(getStoredValue(MAPS_VIEW_KEY) ?? 'null');
       const lat = Number(value?.center?.[0]);
       const lng = Number(value?.center?.[1]);
       const zoom = Number(value?.zoom);
@@ -15240,7 +15309,7 @@
 
   function mapCachedLocations() {
     try {
-      const raw = JSON.parse(localStorage.getItem(MAPS_CACHE_KEY) ?? 'null');
+      const raw = JSON.parse(getStoredValue(MAPS_CACHE_KEY) ?? 'null');
       return Array.isArray(raw?.locations) ? raw.locations : [];
     } catch {
       return [];
@@ -15491,7 +15560,7 @@
   /** Qué capa base está elegida (se recuerda en el teléfono). */
   function ordersMapBaseKey() {
     try {
-      const guardada = localStorage.getItem(MAPS_BASE_KEY);
+      const guardada = getStoredValue(MAPS_BASE_KEY);
       if (guardada && MAP_BASE_LAYERS[guardada]) return guardada;
     } catch {
       /* sin almacén se usa la de por defecto */
@@ -15543,7 +15612,7 @@
   /** Techo de imagen real ya comprobado en otras visitas (celda -> nivel). */
   function ordersMapNativeStore() {
     try {
-      const crudo = JSON.parse(localStorage.getItem(MAP_NATIVE_STORE_KEY) ?? 'null');
+      const crudo = JSON.parse(getStoredValue(MAP_NATIVE_STORE_KEY) ?? 'null');
       return crudo && typeof crudo === 'object' ? crudo : {};
     } catch {
       return {};
@@ -18068,7 +18137,7 @@
 
   function leerMemoriaPermisos() {
     try {
-      const raw = JSON.parse(localStorage.getItem(PERMISOS_KEY) ?? '{}');
+      const raw = JSON.parse(getStoredValue(PERMISOS_KEY) ?? '{}');
       return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     } catch {
       return {};
@@ -18276,7 +18345,7 @@
       '<span class="presence__dot" aria-hidden="true"></span>' +
       `<span class="presence__label">${online ? 'En línea' : 'Sin conexión'}</span>`;
     pill.setAttribute('aria-label', online ? 'Sistema en línea' : 'Sin conexión');
-    $('#offline-banner').hidden = online;
+    $('#offline-banner').hidden = true;
     renderMobileHeader();
     if (online) {
       // Volvió la red: primero lo que se hizo sin ella, después los datos frescos.
@@ -18713,6 +18782,7 @@
     const scrim = $('#scrim');
     if (!drawer || !scrim) return;
     if (state.drawer) return;
+    if ($('#store-menu')) $('#store-menu').open = false;
     drawerFocusBack = document.activeElement;
     drawerInertNodes = [...drawer.parentElement.children].filter((node) => node !== drawer && node !== scrim && !node.inert);
     drawerInertNodes.forEach((node) => { node.inert = true; });
@@ -18828,7 +18898,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -18837,7 +18907,11 @@
     mapa: 'Mapa y entregas',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
-    productos: 'Inventario',
+    productos: 'Cápsulas de Phytoemagry',
+    catalogo: 'Facturación',
+    cotizaciones: 'Cotizaciones',
+    inventario: 'Ajuste de stock',
+    recuento: 'Recuento de inventario',
     reportes: 'Reportes',
     cierre: 'Cierre diario',
     'historial-cierres': 'Historial de cierres',
@@ -18897,7 +18971,18 @@
       history.replaceState(null, '', location.pathname + location.search);
       settingsPage = '';
     }
+    const storeTabs = ['catalogo', 'inventario', 'recuento', 'cotizaciones'];
+    if (!options.fromHistory && (storeTabs.includes(tab) || storeTabs.includes(state.tab))) {
+      const nextUrl = new URL(location.href);
+      nextUrl.searchParams.set('v', tab);
+      nextUrl.searchParams.delete('conversation');
+      if (tab !== 'catalogo') nextUrl.searchParams.delete('product');
+      if (tab !== 'cotizaciones') {nextUrl.searchParams.delete('quote');nextUrl.searchParams.delete('ticket');}
+      if (storeTabs.includes(tab)) nextUrl.hash = '';
+      if (nextUrl.href !== location.href) history[options.replaceHistory?'replaceState':'pushState']({ tab }, '', nextUrl);
+    }
     state.tab = tab;
+    window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
     localStorage.setItem(TAB_KEY, tab);
     // Cambiar de pestaña tambien guarda los filtros que hubiera puestos: asi­ una
     // tarjeta de HOY que lleva a «Pedidos pendientes» deja puesto ese filtro.
@@ -19059,7 +19144,23 @@
   function initEvents() {
     if (eventosMontados) return;
     eventosMontados = true;
-
+    window.addEventListener('fulltech:session-expired',()=>showLogin('Tu sesión terminó. Vuelve a entrar.'));
+    window.addEventListener('popstate', () => {
+      const wanted = new URLSearchParams(location.search).get('v');
+      if (VIEWS.includes(wanted) && (['catalogo','inventario','recuento','cotizaciones'].includes(wanted) || ['catalogo','inventario','recuento','cotizaciones'].includes(state.tab))) setTab(wanted,{silent:true,fromHistory:true});
+    });
+    window.addEventListener('fulltech:catalog-updated', async () => {
+      try { const fresh=await api('/api/admin/catalog');state.catalog=fresh.catalog;saveSnapshot(); } catch {}
+    });
+    window.addEventListener('fulltech:pos-saved',()=>load({silent:true}));
+    window.addEventListener('fulltech:catalog-view',renderMobileHeader);
+    window.addEventListener('fulltech:pos-navigate',e=>setTab(e.detail.tab));
+    window.addEventListener('fulltech:main-drawer',e=>{
+      if(e.detail?.open===false){closeDrawer();return;}
+      if($('#app')?.hidden!==false)return;
+      window.dispatchEvent(new Event('fulltech:close-actions'));openDrawer();
+    });
+    window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const username = $('#login-username')?.value.trim() ?? '';
@@ -19795,6 +19896,11 @@
       }
       if (event.target.closest('[data-wa-chat-back]')) { setWaView('list'); return; }
       if (event.target.closest('[data-simple-back]')) {
+        if (['catalogo','inventario','recuento','cotizaciones'].includes(state.tab)) {
+          const backEvent=new CustomEvent('fulltech:back',{cancelable:true});window.dispatchEvent(backEvent);
+          if(!backEvent.defaultPrevented)setTab('hoy',{replaceHistory:true});
+          return;
+        }
         if (state.tab === 'perfil' && state.profileReturnToSettings) {
           state.profileReturnToSettings = false;
           openSettingsPage('');
@@ -20015,7 +20121,7 @@
       const receiptOpen = event.target.closest('[data-receipt-open]');
       if (receiptOpen) {
         window.open(
-          `${app2Base()}/api/admin/orders/${encodeURIComponent(receiptOpen.dataset.receiptOpen)}/receipt`,
+          `/admin/receipt-viewer.html?pdf=${encodeURIComponent('/api/admin/orders/'+receiptOpen.dataset.receiptOpen+'/receipt.pdf')}`,
           '_blank',
           'noopener',
         );
@@ -20909,14 +21015,16 @@
      * (clientes, pedidos, catálogo, ajustes y el rol de quien entró) y se puede
      * trabajar entero. Al volver la red, todo se manda solo.
      */
+    if(window.FulltechOffline)await window.FulltechOffline.ready;
     const cached = readSnapshot();
     if (!navigator.onLine && cached) {
       aplicarCopiaLocal(cached);
       showApp();
       render();
+      if(window.FulltechOffline)await load({keepTab:true});
       await applyDeepLink(query);
       renderOutboxBanner();
-      toast('Sin conexión: trabajando con los datos guardados en el teléfono');
+
       return;
     }
 
@@ -20954,5 +21062,7 @@
     }
   }
 
-  document.addEventListener('DOMContentLoaded', boot);
+  document.addEventListener('DOMContentLoaded', () => boot().catch(() => {
+    window.dispatchEvent(new Event('fulltech:startup-failed'));
+  }));
 })();

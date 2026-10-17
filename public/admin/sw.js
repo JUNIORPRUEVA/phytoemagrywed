@@ -3,16 +3,28 @@
  *
  *  - El armazón de la app (HTML, CSS, JS, iconos) se guarda en caché: el panel
  *    abre al instante y sigue abriendo sin conexión.
- *  - Los datos (/api/…) NUNCA se cachean: el negocio necesita ver el último
- *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
+ *  - Los datos privados viven en IndexedDB, separados por cuenta y con acceso
+ *    local limitado a 24 horas. La red tiene prioridad cuando está disponible.
  */
 
-const VERSION = 'crm-v111-dashboard-resolve';
+if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
+const VERSION = 'crm-v119-chat-finalizar';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
 const TILE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const REQUIRED_SHELL = new Set(['/admin/index.html', '/admin/app.js', '/admin/admin.css', '/admin/startup-recovery.js', '/admin/offline-storage.js', '/admin/offline.js', '/admin/offline-ui.js', '/admin/pos.js', '/admin/store.js', '/admin/pos-math.js']);
 const SHELL = [
+  '/admin/receipt-pdf.js',
+  '/admin/receipt-brand.js',
+  '/admin/receipt-viewer.html',
+  '/admin/receipt-launcher.js',
+  '/admin/receipt-viewer.js',
+  '/admin/vendor/pdfjs/pdf.mjs',
+  '/admin/vendor/pdfjs/pdf.worker.mjs',
+  '/admin/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf',
+  '/admin/vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf',
+  '/admin/vendor/pdfjs/standard_fonts/LiberationSans-Italic.ttf',
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',
@@ -23,6 +35,10 @@ const SHELL = [
   '/admin/conversation-list.js',
   '/admin/composer-mobile.css',
   '/admin/composer-mobile.js',
+  '/admin/assets/icons/chat-call.png',
+  '/admin/assets/icons/chat-search.png',
+  '/admin/assets/icons/chat-microphone.png',
+  '/admin/assets/icons/chat-send.png',
   '/admin/menus-safe-area.css',
   '/admin/proofreading.css',
   '/admin/proofreading.js',
@@ -34,7 +50,19 @@ const SHELL = [
   '/admin/vendor/proofreading/es-DO.dic',
   '/admin/shell-v2-tema.css',
   '/admin/app.js',
+  '/admin/offline-storage.js',
+  '/admin/offline.js',
+  '/admin/offline-report.js',
+  '/admin/offline-ui.js',
+  '/admin/offline.css',
+  '/admin/startup-recovery.js',
   '/admin/calling.js',
+  '/admin/store.js',
+  '/admin/store.css',
+  '/admin/pos.js',
+  '/admin/pos-math.js',
+  '/admin/quote-document.js',
+  '/admin/pos.css',
   '/admin/manifest.json',
   '/admin/vendor/leaflet/leaflet.css',
   '/admin/vendor/leaflet/leaflet.js',
@@ -45,12 +73,13 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
   '/admin/fulltech-logo.png',
-  '/admin/fulltech-favicon.png',
-  '/admin/fulltech-icon-192.png',
-  '/admin/fulltech-icon-512.png',
-  '/admin/fulltech-icon-maskable-512.png',
-  '/admin/fulltech-apple-touch-icon.png',
+  '/admin/fulltech-favicon.png?v=2',
+  '/admin/fulltech-icon-192.png?v=2',
+  '/admin/fulltech-icon-512.png?v=2',
+  '/admin/fulltech-icon-maskable-512.png?v=2',
+  '/admin/fulltech-apple-touch-icon.png?v=2',
 ];
+for(const file of ['/admin/receipt-pdf.js','/admin/receipt-brand.js','/admin/receipt-viewer.html','/admin/receipt-launcher.js','/admin/receipt-viewer.js','/admin/vendor/pdfjs/pdf.mjs','/admin/vendor/pdfjs/pdf.worker.mjs','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Italic.ttf'])REQUIRED_SHELL.add(file);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -62,16 +91,18 @@ self.addEventListener('install', (event) => {
          * falte (un icono, un sonido) deja el armazón ENTERO sin guardar y el
          * panel no abre sin conexión. Así, lo que se pueda guardar se guarda.
          */
+        const missing=[];
         for (const url of SHELL) {
           try {
             await cache.add(url);
-          } catch {
-            /* ese archivo no está: el resto del armazón sigue valiendo */
+          } catch (error) {
+            missing.push(url);
+            if (REQUIRED_SHELL.has(url)) throw error;
           }
         }
+        await globalThis.FulltechOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing});
       })
-      .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting()),
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -183,41 +214,58 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.origin !== self.location.origin) return;
 
-  // Datos: siempre a la red (y si falla, la app usa su copia local).
+  // Datos privados: red primero; copia particionada por cuenta y con acceso de 24 h.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(request).catch(
-        () =>
-          new Response(JSON.stringify({ ok: false, error: 'offline' }), {
-            status: 503,
-            headers: { 'content-type': 'application/json' },
-          }),
-      ),
-    );
+    event.respondWith((async()=>{
+      async function local(){
+        const store=globalThis.FulltechOfflineStore;if(!store)return null;
+        const identity=await store.get('identity');
+        if(!identity||Date.now()-identity.verifiedAt>86400000)return null;
+        const saved=await store.get('response:'+identity.key+':'+url.href);
+        if(!saved||saved.owner!==identity.key)return null;
+        return new Response(saved.body,{status:saved.status,headers:[...saved.headers,['x-fulltech-offline','1']]});
+      }
+      try{
+        const response=await fetch(request);
+        if(response.status===401){await globalThis.FulltechOfflineStore?.remove('identity');return response;}
+        if([502,503,504].includes(response.status)||url.pathname.startsWith('/api/admin/pos/local/'))return (await local())||response;
+        if(response.status===404&&/\/(receipt|pdf)$/.test(url.pathname)){
+          const store=globalThis.FulltechOfflineStore,identity=await store?.get('identity');
+          const queue=identity?await store.get('queue:'+identity.key)||[]:[];
+          if(queue.some(p=>url.pathname.includes(p.localId)))return (await local())||response;
+        }
+        return response;
+      }catch{return (await local())||new Response(JSON.stringify({ok:false,error:'offline'}),{status:503,headers:{'content-type':'application/json'}});}
+    })());
     return;
   }
 
   if (!url.pathname.startsWith('/admin/')) return;
 
-  // Armazón: red primero (para recibir mejoras), caché como red de seguridad.
-  event.respondWith(
-    (async () => {
-      try {
-        const response = await fetch(request);
-        if (response.ok) {
-          const cache = await caches.open(VERSION);
-          cache.put(request, response.clone());
-        }
-        return response;
-      } catch {
-        const cached = await caches.match(request);
-        if (cached) return cached;
+  // Una página solo puede ser respaldo de otra navegación, nunca de JS/CSS.
+  const navigation = request.mode === 'navigate' || request.destination === 'document' || /\/(?:index\.html)?$/.test(url.pathname);
+  const resource = /\.(?:js|mjs|css|json)$/.test(url.pathname);
+  const usable = (response) => response && !(resource && /text\/html/i.test(response.headers.get('content-type') || ''));
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(request);
+      if (!response.ok || !usable(response)) throw new Error('shell_resource_unavailable');
+      const cache = await caches.open(VERSION);
+      await cache.put(request, response.clone()).catch(() => {});
+      return response;
+    } catch {
+      // El HTML usa ?v=…; install guarda las rutas base. Son el mismo recurso.
+      const exact = await caches.match(request);
+      if (usable(exact)) return exact;
+      const base = await caches.match(url.origin + url.pathname);
+      if (usable(base)) return base;
+      if (navigation) {
         const shell = await caches.match('/admin/index.html');
         if (shell) return shell;
-        return new Response('Sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
       }
-    })(),
-  );
+      return new Response('Recurso no disponible sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
+    }
+  })());
 });
 
 // Nunca bloquear la presentación por una petición de diagnóstico.
@@ -263,8 +311,8 @@ self.addEventListener('push', (event) => {
           conversationId: payload.conversationId || null,
           notificationId: payload.notificationId || null,
         },
-        icon: '/admin/fulltech-icon-192.png',
-        badge: '/admin/fulltech-icon-192.png',
+        icon: '/admin/fulltech-icon-192.png?v=2',
+        badge: '/admin/fulltech-icon-192.png?v=2',
         vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
       });
     } catch (error) {

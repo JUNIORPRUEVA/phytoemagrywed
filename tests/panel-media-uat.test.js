@@ -357,6 +357,31 @@ afterAll(async () => {
 });
 
 describe('UAT del panel con multimedia', () => {
+  it('al escribir cambia micrófono por enviar y al vaciar restaura el micrófono, sin enviar nada', () => {
+    const area=$('#wa-text'),mic=$('#wa-mic'),send=$('#wa-send'),before=sends;
+    expect(mic.querySelector('.wa-compose-glyph--mic')).toBeTruthy();
+    expect(send.querySelector('.wa-compose-glyph--send')).toBeTruthy();
+    expect(area.closest('.composer-field')).toBeTruthy();
+    for(const value of ['', '   ', 'Hola 👋', 'Mensaje pegado\ncon varias líneas', '']) {
+      area.value=value;area.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+      expect(mic.hidden).toBe(Boolean(value.trim()));expect(send.hidden).toBe(!value.trim());
+      expect(send.closest('.composer-end').hidden).toBe(false);
+      expect($('#wa-text')).toBe(area);expect(sends).toBe(before);
+    }
+  });
+
+  it('el icono de enviar permanece después del envío y queda listo para el siguiente mensaje', async () => {
+    dom.window.__PHYTO_UNDO_MS=0;
+    const area=$('#wa-text');area.value='Hola.';area.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+    click('#wa-send');
+    await waitFor(()=>textClient.sent.some(row=>row.body==='Hola.')&&$('#wa-send')?.disabled===false,'el mensaje enviado');
+    expect($('#wa-send .wa-compose-glyph--send')).toBeTruthy();
+    expect($('#wa-mic').hidden).toBe(false);
+    const next=$('#wa-text');next.value='Otro mensaje.';next.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+    expect($('#wa-send').hidden).toBe(false);expect($('#wa-send .wa-compose-glyph--send')).toBeTruthy();
+    next.value='';next.dispatchEvent(new dom.window.Event('input',{bubbles:true}));delete dom.window.__PHYTO_UNDO_MS;
+  });
+
   it('la imagen entrante se ve como miniatura y se abre en el visor', async () => {
     const thumb = await waitFor(() => $('[data-media-view]'), 'la miniatura', BOOT_TIMEOUT);
     const img = thumb.querySelector('img');
@@ -610,7 +635,7 @@ describe('UAT del panel con multimedia', () => {
     expect(audit.entries.some((entry) => entry.action === 'message.reconciled')).toBe(true);
   }, 30000);
 
-  it('el flujo comercial sigue intacto: menú ⋯, pedido y comprobante', async () => {
+  it('el menú comercial abre el POS con el cliente y la conversación correctos', async () => {
     click('[data-tab="whatsapp"]');
     const row = await waitFor(() => $$('[data-conv]')[0], 'la conversación');
     click(row);
@@ -626,14 +651,13 @@ describe('UAT del panel con multimedia', () => {
       expect(menu).toContain(accion);
     }
 
+    let context;
+    dom.window.addEventListener('fulltech:pos-context',event=>{context=event.detail;},{once:true});
     click('[data-order-new]');
-    await waitFor(() => $('#order-lines select'), 'el formulario de pedido');
-    click('#order-save');
-    const title = await waitFor(() => {
-      const value = $('#sheet-title').textContent;
-      return value.includes('PE-') ? value : null;
-    }, 'el comprobante');
-    expect(title).toMatch(/PE-/);
-    expect($('#sheet-body').innerHTML).toContain('Comprobante');
+    await waitFor(() => context, 'el pedido en el POS');
+    expect(context.customerId).toBeTruthy();
+    expect(context.conversationId).toBe(conversationId);
+    expect(dom.window.document.body.dataset.tab).toBe('catalogo');
+
   }, 30000);
 });
