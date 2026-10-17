@@ -75,9 +75,9 @@ describe('menú + real con datos guardados',()=>{
     win.eval(readFileSync('public/admin/app.js','utf8'));win.eval(readFileSync('public/admin/chat-sharing-settings.js','utf8'));win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
     await waitFor(()=>$('[data-conv]'));click(`[data-conv="${conversationId}"]`);await waitFor(()=>$('#wa-attach'));
   });
-  it('usa el botón superior para volver del chat a la lista',async()=>{
+  it('usa la flecha junto al cliente para volver del chat a la lista',async()=>{
     expect(dom.window.document.body.dataset.waView).toBe('chat');
-    click('[data-wa-chat-back]');
+    click('#wa-back');
     expect(dom.window.document.body.dataset.waView).toBe('list');
     expect(dom.window.document.body.dataset.tab).toBe('whatsapp');
     click(`[data-conv="${conversationId}"]`);

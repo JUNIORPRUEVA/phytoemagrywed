@@ -92,3 +92,18 @@ body[data-tab='whatsapp'] :is(#wa-mic,#wa-send):focus-visible { outline: 2px sol
 .wa-compose-glyph { display: block; width: 23px; height: 23px; background: currentColor; -webkit-mask: var(--wa-compose-icon) center / contain no-repeat; mask: var(--wa-compose-icon) center / contain no-repeat; pointer-events: none; }
 .wa-compose-glyph--mic { --wa-compose-icon: url('/admin/assets/icons/chat-microphone.png'); }
 .wa-compose-glyph--send { --wa-compose-icon: url('/admin/assets/icons/chat-send.png'); }
+
+/* En móvil, la conversación tiene su propio encabezado y un único regreso. */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'][data-wa-view='chat'] #mobile-header { display: none; }
+  body[data-tab='whatsapp'][data-wa-view='chat'] #wa-back {
+    display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 44px;
+    padding: 8px; color: var(--text-primary); border: 0; border-radius: 50%; background: transparent;
+  }
+  body[data-tab='whatsapp'][data-wa-view='chat'] #wa-back:focus-visible { outline: 2px solid var(--pe-brand-text); outline-offset: 1px; }
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head {
+    padding-top: calc(6px + env(safe-area-inset-top,0px));
+    padding-left: calc(8px + env(safe-area-inset-left,0px));
+    padding-right: calc(8px + env(safe-area-inset-right,0px));
+  }
+}
