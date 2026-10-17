@@ -78,3 +78,17 @@ body[data-tab='whatsapp'] #wa-calling-button:disabled { opacity: .45; cursor: de
 .wa-header-glyph { display: block; flex: none; width: 21px; height: 21px; background-color: currentColor; -webkit-mask: var(--wa-header-icon) center / contain no-repeat; mask: var(--wa-header-icon) center / contain no-repeat; pointer-events: none; }
 .wa-header-glyph--call { --wa-header-icon: url('/admin/assets/icons/chat-call.png'); }
 .wa-header-glyph--search { --wa-header-icon: url('/admin/assets/icons/chat-search.png'); width: 20px; height: 20px; }
+
+/* Campo redondeado y acción circular separada, sin mover el texto al escribir. */
+body[data-tab='whatsapp'] .composer-bar { display: grid; grid-template-columns: minmax(0,1fr) 48px; align-items: end; gap: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+body[data-tab='whatsapp'] .composer-bar:has(.composer-end[hidden]) { grid-template-columns: minmax(0,1fr); }
+body[data-tab='whatsapp'] .composer-field { display: flex; align-items: flex-end; min-width: 0; min-height: 48px; padding: 2px 8px 2px 4px; border: 1px solid var(--pe-line); border-radius: 25px; background: var(--pe-card-bg); box-sizing: border-box; }
+body[data-tab='whatsapp'] .composer-field textarea { flex: 1 1 0; width: 100%; min-width: 0; min-height: 42px; max-height: 132px; margin: 0; padding: 11px 6px; background: transparent; color: var(--text-primary); box-sizing: border-box; line-height: 20px; }
+body[data-tab='whatsapp'] .composer-left { flex: 0 0 auto; align-self: flex-end; min-height: 42px; }
+body[data-tab='whatsapp'] .composer-end { width: 48px; height: 48px; align-self: end; }
+body[data-tab='whatsapp'] :is(#wa-mic,#wa-send) { display: grid; place-items: center; width: 48px; height: 48px; padding: 12px; border: 0; border-radius: 50%; background: var(--pe-brand-text); color: var(--pe-on-brand); box-shadow: 0 2px 5px rgb(0 0 0 / 10%); touch-action: manipulation; }
+body[data-tab='whatsapp'] :is(#wa-mic,#wa-send):hover { filter: brightness(1.06); }
+body[data-tab='whatsapp'] :is(#wa-mic,#wa-send):focus-visible { outline: 2px solid var(--pe-brand-text); outline-offset: 3px; }
+.wa-compose-glyph { display: block; width: 23px; height: 23px; background: currentColor; -webkit-mask: var(--wa-compose-icon) center / contain no-repeat; mask: var(--wa-compose-icon) center / contain no-repeat; pointer-events: none; }
+.wa-compose-glyph--mic { --wa-compose-icon: url('/admin/assets/icons/chat-microphone.png'); }
+.wa-compose-glyph--send { --wa-compose-icon: url('/admin/assets/icons/chat-send.png'); }

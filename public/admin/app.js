@@ -8034,17 +8034,20 @@
 
   /** Botón con estado "trabajando" (evita dos toques que envían dos mensajes). */
   async function working(button, label, task) {
+    const iconOnly = button?.id === 'wa-send';
     const original = button?.textContent;
     if (button) {
       button.disabled = true;
-      button.textContent = label;
+      if (iconOnly) button.setAttribute('aria-busy', 'true');
+      else button.textContent = label;
     }
     try {
       return await task();
     } finally {
       if (button) {
         button.disabled = false;
-        button.textContent = original;
+        if (iconOnly) button.removeAttribute('aria-busy');
+        else button.textContent = original;
       }
     }
   }
@@ -10245,14 +10248,16 @@
   function waClosedComposerHtml() {
     return `<p class="wa-quick-preview" id="wa-quick-preview" hidden></p>
       <div class="composer-bar">
+        <div class="composer-field">
         <span class="composer-left">
           <button class="composer-template-btn" id="wa-open-template" type="button">Plantilla</button>
         </span>
         <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocapitalize="sentences" placeholder="Escribe lo que quieras decirle…"
           aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
+        </div>
         <span class="composer-end">
           <button class="composer-btn composer-btn--send" id="wa-send" type="button"
-            aria-label="Enviar">${ICONS.send}</button>
+            aria-label="Enviar"><span class="wa-compose-glyph wa-compose-glyph--send" aria-hidden="true"></span></button>
         </span>
       </div>`;
   }
@@ -10271,28 +10276,28 @@
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     /*
      * Un solo compositor: adjuntar · campo · (audio | enviar), todo dentro de la
-     * misma superficie. El micro y el envío viven en la MISMA casilla, así que el
+     * campo redondeado y botón circular aparte. Micro y envío viven en la MISMA casilla, así que el
      * cambio de uno a otro no mueve nada de sitio.
      *
      * «Enviar plantilla» NO va aquí a la izquierda: esa acción ya está en el menú
      * de acciones del chat (el botón flotante), y repetir el icono solo confundía.
      */
     return `<div class="composer-bar">
+        <div class="composer-field">
         <span class="composer-left">
           <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
             title="Adjuntar y compartir: archivos, ubicación, cuentas y catálogos">${ICONS.plus}</button>
         </span>
         <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocapitalize="sentences" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
+        </div>
         <span class="composer-end">
           <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
             title="${
               puedeGrabar
                 ? 'Grabar nota de voz'
                 : 'Este navegador no permite grabar: usa + para adjuntar un audio'
-            }">${puedeGrabar ? ICONS.mic : ICONS.audio}</button>
-          <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden>${
-            ICONS.send
-          }</button>
+            }"><span class="wa-compose-glyph wa-compose-glyph--mic" aria-hidden="true"></span></button>
+          <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden><span class="wa-compose-glyph wa-compose-glyph--send" aria-hidden="true"></span></button>
         </span>
       </div>`;
   }
@@ -10328,6 +10333,8 @@
     const send = $('#wa-send');
     if (mic) mic.hidden = !vacio;
     if (send) send.hidden = vacio;
+    const end = send?.closest('.composer-end');
+    if (end) end.hidden = vacio && !mic;
     const preview = $('#wa-quick-preview');
     if (preview) {
       const draft = waPersonalTemplateDraft(area.value);

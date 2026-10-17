@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v109-chat-header-icons';
+const VERSION = 'crm-v110-chat-composer';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -22,6 +22,8 @@ const SHELL = [
   '/admin/navigation.css',
   '/admin/assets/icons/chat-call.png',
   '/admin/assets/icons/chat-search.png',
+  '/admin/assets/icons/chat-microphone.png',
+  '/admin/assets/icons/chat-send.png',
   '/admin/menus-safe-area.css',
   '/admin/proofreading.css',
   '/admin/proofreading.js',
