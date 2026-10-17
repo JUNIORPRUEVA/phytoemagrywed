@@ -108,6 +108,31 @@ it('la nota del pedido se edita desde acciones y se refleja en el carrito',async
   fill('notes','Entregar por la tarde');await submit();
   expect(w.document.querySelector('.pos-cart-note').textContent).toContain('Entregar por la tarde');
 });
+it('cancelar o rechazar una edición inválida conserva la cantidad, el descuento y el total',async()=>{
+  click('[data-pos-add]');click('[data-pos-expand]');
+  click('[data-pos-quantity="0"]');fill('quantity','4');fill('value','25');click('[data-pos-close]');
+  expect(w.document.querySelector('[data-pos-quantity]').textContent).toBe('1');
+  expect(w.document.querySelector('.pos-total').textContent).toContain('1,250.50');
+  click('[data-pos-quantity="0"]');fill('quantity','0');await submit();
+  expect(w.document.querySelector('.pos-modal-error').textContent).toContain('cantidad');
+  fill('quantity','2');fill('type','percent');fill('value','101');await submit();
+  expect(w.document.querySelector('.pos-modal-error').textContent).toContain('100');
+  expect(w.document.querySelector('[data-pos-quantity]').textContent).toBe('1');
+  click('[data-pos-line-discount="10"]');await submit();
+  expect(w.document.querySelector('[data-pos-quantity]').textContent).toBe('2');
+  expect(w.document.querySelector('.pos-total').textContent).toContain('2,250.90');
+  click('[data-pos-quantity="0"]');
+  expect(w.document.querySelector('.pos-dialog [name=type]').value).toBe('percent');
+  expect(w.document.querySelector('.pos-dialog [name=value]').value).toBe('10');
+});
+it('conserva la nota al guardar y recuperar un ticket',async()=>{
+  click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-note]');
+  fill('notes','Llamar antes de entregar');await submit();
+  click('[data-pos-actions]');click('[data-pos-new-ticket]');await flush();
+  click('[data-pos-tickets]');await flush();click('[data-pos-ticket="ticket_1"]');await flush();
+  expect(w.document.querySelector('.pos-cart-note').textContent).toContain('Llamar antes de entregar');
+  expect(tickets.get('ticket_1').draft.notes).toBe('Llamar antes de entregar');
+});
 it('los gestos de los bordes abren cada drawer y los gestos verticales o centrales no los abren',()=>{
   Object.defineProperty(w,'innerWidth',{configurable:true,value:390});w.document.querySelector('#app').hidden=false;w.document.body.dataset.tab='catalogo';
   const main=vi.fn();w.addEventListener('fulltech:main-drawer',main);
