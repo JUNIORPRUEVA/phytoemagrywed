@@ -113,3 +113,21 @@ body[data-tab='whatsapp'] :is(#wa-mic,#wa-send):focus-visible { outline: 2px sol
 body[data-tab='whatsapp'] .wa-header-image { display: block; width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; pointer-events: none; }
 :root[data-theme='dark'] .wa-header-image { filter: invert(1); }
 body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) > :is(#wa-thread-search-open,#wa-calling-button) { display: none; }
+
+/* Pedidos: filtros y contador arriba; solo la lista ocupa y desplaza el resto. */
+@media (max-width: 979px) {
+  body[data-tab='pedidos'] .content { overflow: hidden; padding: 0; }
+  body[data-tab='pedidos'] #view-pedidos {
+    display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
+    height: 100%; min-height: 0; gap: 0; padding: 0;
+  }
+  body[data-tab='pedidos'] #view-pedidos > :is(.chips--order-date,#pedidos-count,#pedidos-bulk) { flex: 0 0 auto; }
+  body[data-tab='pedidos'] #pedidos-count { margin: 0; padding: 4px 12px 8px; }
+  body[data-tab='pedidos'] #list-pedidos {
+    flex: 1 1 0; min-height: 0; min-width: 0; margin: 0; box-sizing: border-box;
+    display: grid; align-content: start; align-items: start; grid-auto-rows: min-content;
+    overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
+    padding: 0 8px calc(152px + env(safe-area-inset-bottom,0px));
+    scroll-padding-bottom: calc(152px + env(safe-area-inset-bottom,0px));
+  }
+}
