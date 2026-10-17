@@ -282,22 +282,31 @@
     padding-bottom: 92px;
   }
 
-  /* La fila abierta, sin la marca azul: el fondo ya lo dice (como WhatsApp). */
-  body[data-tab='whatsapp'] .conv-wrap:has(.conv--active)::after,
-  body[data-tab='whatsapp'] .conv-wrap:has(.conv--active) {
+  /*
+   * La fila abierta y la que está bajo el puntero, sin la marca azul: el fondo
+   * ya lo dice (como WhatsApp). Se repite el `#wa-conversations >` de la hoja de
+   * la lista porque su ID pesa más que un simple `.conv-wrap`.
+   */
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:hover {
+    background: var(--wad-hover);
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap.conv-wrap--selected {
     background: var(--wad-active);
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:has(.conv--active),
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:has(.conv--active):hover {
+    background: var(--wad-active);
+  }
+
+  /* …pero el separador fino de la fila se queda (WhatsApp lo mantiene). */
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:has(.conv--active)::after {
+    background: var(--wad-line);
   }
 
   body[data-tab='whatsapp'] #wa-conversations > .conv-wrap::after {
     background: var(--wad-line);
-  }
-
-  body[data-tab='whatsapp'] .conv-wrap:hover {
-    background: var(--wad-hover);
-  }
-
-  body[data-tab='whatsapp'] .conv-wrap--selected {
-    background: var(--wad-active);
   }
 
   body[data-tab='whatsapp'] .conv__name {
