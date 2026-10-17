@@ -13,3 +13,7 @@ Fallos reproducidos y corregidos:
 No se dispone de acceso a las pantallas físicas de los teléfonos; estos fallos son reproducibles en pruebas y cubren causas de bloqueo, pero requieren confirmación del usuario tras actualizar en sus dispositivos. La conexión de navegador de automatización no estaba disponible durante esta revisión.
 
 Pruebas específicas: mobile-startup, sw-privacy, sw-push y panel-settings. La prueba antigua de pedidos offline contiene dos fallos de flujo en el estado integrado con POS; no se modificó ese flujo para esta corrección.
+
+Despliegue verificado: imagen `easypanel/ventas/phytoemagrywed:mobile-9a447a5`, actualización Swarm completada y contenedor saludable. Los cuatro archivos publicados (HTML, app, worker y recuperación) coinciden byte por byte con el commit `9a447a5`; API de salud 200. Respaldo privado de la especificación anterior en `/root/phytoemagry-deploys/mobile-9a447a5/`. Variables de entorno conservadas sin cambios.
+
+Validación final: 34 pruebas pasan en cuatro archivos y `verify:deploy` completa. Los dos fallos del flujo antiguo de pedidos offline se reprodujeron también al ejecutar esas pruebas con el app.js anterior `fab8859`; son previos a esta corrección. No se borraron datos de los teléfonos ni del servidor.

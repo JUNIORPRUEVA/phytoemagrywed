@@ -33,6 +33,14 @@ describe('arranque móvil: recursos de caché válidos',()=>{
   expect(await(await sw.fetch('/admin/?v=hoy')).text()).toContain('<html>');
  });
 });
+describe('actualización de la app instalada',()=>{
+ it.each([['/admin/app.js',false],['/admin/fulltech-logo.png',true]])('archivo ausente %s: activación=%s',async(missing,activated)=>{
+  const handlers=new Map(),skipWaiting=vi.fn();let install;
+  vm.runInNewContext(read('sw.js'),{self:{addEventListener:(key,fn)=>handlers.set(key,fn),skipWaiting},caches:{open:async()=>({add:async path=>{if(path===missing)throw new Error('network interrupted');}})}});
+  handlers.get('install')({waitUntil:promise=>install=promise});
+  if(activated){await install;expect(skipWaiting).toHaveBeenCalledTimes(1);}else{await expect(install).rejects.toThrow('network interrupted');expect(skipWaiting).not.toHaveBeenCalled();}
+ });
+});
 describe('salida visible ante fallos del inicio',()=>{
  it('muestra recuperación ante un fallo de arranque y no borra el borrador local',()=>{
   const dom=new JSDOM(read('index.html'),{url:'https://test.example/admin/',runScripts:'outside-only'}),win=dom.window;
