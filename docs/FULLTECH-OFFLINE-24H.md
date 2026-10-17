@@ -59,3 +59,15 @@ Validación inicial: 152 pruebas aprobadas en 13 archivos, incluyendo API real
 con PostgreSQL local aislado, UI con JSDOM y service worker en VM. Compilación y
 revisión de contenido aprobadas. La prueba móvil física en modo avión sigue
 siendo necesaria para comprobar almacenamiento, GPS e impresión del teléfono.
+
+Comprobación final: se conservaron los cambios recientes de `main` en arranque,
+chat y diseño de Pedidos. Pasaron 51 pruebas adicionales con PostgreSQL y 30
+pruebas de arranque, diario y flujo offline después de los últimos ajustes.
+Se probó una respuesta perdida después de escribir en el servidor: al volver a
+enviarse no se creó un segundo artículo. La imagen Docker arrancó con PostgreSQL
+aislado y devolvió la misma creación al repetir su clave de operación.
+
+La suite completa registró 1.356 aprobadas, 29 fallidas y tres omitidas. De los
+fallos, 28 se reprodujeron en `main` sin esta integración (seis archivos de
+interfaz/chat/reparto); el restante fue un timeout de Configuración y pasó al
+repetirse de forma aislada. No se declara la suite completa aprobada.

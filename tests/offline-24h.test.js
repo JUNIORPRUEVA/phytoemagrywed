@@ -168,6 +168,19 @@ it('un resultado incierto no vuelve a ejecutar la operación en el servidor',asy
   };
   expect((await invoke()).body.error).toBe('offline_operation_uncertain');expect((await invoke()).status).toBe(409);expect(executions).toBe(1);
 });
+it('si se pierde la respuesta después del guardado, reenvía la misma clave sin duplicar el artículo',async()=>{
+  const w=await page();await prepare(w);let lost=true;
+  w.offlineTransport=async(url,options)=>{
+    const response=await fetch(new URL(url,app.url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),cookie}});
+    if(lost&&options.method==='POST'){lost=false;online=false;throw new TypeError('Response lost');}
+    return response;
+  };
+  const created=await (await call(w,'store/products',{kind:'service',name:'Guardado antes del corte',sku:'LOST-1',price:'150',cost:'20'})).json();
+  expect(created.pending).toBe(true);expect(await w.FulltechOffline.listQueue()).toHaveLength(1);
+  online=true;await w.FulltechOffline.synchronize();
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+  const actual=await (await server('store/products')).json();expect(actual.products.filter(p=>p.sku==='LOST-1')).toHaveLength(1);
+});
 it('ajusta las cápsulas sin conexión y conserva el costo al sincronizar',async()=>{
   const w=await page();await prepare(w);await call(w,'inventory');online=false;
   const result=await (await call(w,'inventory/restock',{quantity:100,unitCost:'0.50',reason:'Entrada local'})).json();expect(result.inventory.stock).toBe(100);

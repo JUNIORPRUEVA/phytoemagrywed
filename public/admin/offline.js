@@ -271,7 +271,7 @@
     const cachedList=await data(base,{});
     if(Array.isArray(cachedList[resource]))cachedList[resource]=list;
     await save(base,cachedList);
-    const current=await data(path,{}),result={...current,...delta,ok:true,offline:true,pending:true,item:row,order:row,customer:row,followup:row,tracking:row,user:row,users:list};
+    const current=await data(path,target?await data('/api/admin/'+resource+'/'+target,{}):{}),result={...current,...delta,ok:true,offline:true,pending:true,item:row,order:row,customer:row,followup:row,tracking:row,user:row,users:list};
     if(resource==='messages')result.messages=list;
     if(resource==='settings'){result.settings={...(current.settings||{}),...body};await save(path,result);}
     if(path==='/api/admin/settings/deepseek'){result.deepseek={...(current.deepseek||{}),...body,pending:true};await save(path,result);}
@@ -428,9 +428,14 @@
   function saveLegacySnapshot(snapshot){
     const mine=owner();
     const run=async()=>{
-      if(!valid()||mine!==owner()||!JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length)return;
+      if(!valid()||mine!==owner())return;
+      if(!JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length&&!(await listQueue()).length)return;
       const all=await data('/api/admin/data',{});
-      for(const key of ['items','customers','conversations','followups','settings','scheduled','messages','deliveryTracking'])if(snapshot[key])all[key]=snapshot[key];
+      for(const key of ['items','customers','conversations','followups','settings','scheduled','messages','deliveryTracking','notifications'])if(snapshot[key]){
+        const value=clone(snapshot[key]);
+        if(Array.isArray(value)&&Array.isArray(all[key]))for(const row of all[key])if(row.pending&&!value.some(v=>v.id===row.id))value.push(row);
+        all[key]=value;
+      }
       await save('/api/admin/data',all);
     };
     const next=localTail.catch(()=>{}).then(run);localTail=next;return next;
