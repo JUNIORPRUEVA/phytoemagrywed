@@ -561,6 +561,7 @@ async function sembrar() {
     'phyto_confirmacion_pedido_v1',
     'phyto_envio_factura_v1',
     'phyto_delivery_asignado_v1',
+    'phyto_envio_cotizacion_v1',
   ];
   const plantillas = (await pedir('/api/admin/wa-templates')).body?.templates ?? [];
   for (const nombre of APROBADAS) {

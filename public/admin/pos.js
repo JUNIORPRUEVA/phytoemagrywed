@@ -405,16 +405,28 @@ async function renderQuotesPage(){
       syncQuotesAppbar();quoteListRows();return;
     }
     const {document:q}=await api('quotes/'+encodeURIComponent(id));if(request!==quotesEpoch||epoch!==generation)return;
-    box.innerHTML=`<div class="pos-quote-detail"><button class="pos-text" type="button" data-pos-quotes-list>‹ Todas las cotizaciones</button><header><span class="pos-document-icon">${quotesIcon}</span><div><small>${esc(q.number)}</small><h2>${esc(q.customer.name||q.customer.phone_e164)}</h2><p>${esc(q.customer.phone_e164)} · ${esc(new Date(q.created_at).toLocaleDateString('es-DO'))}</p></div></header><div class="pos-quote-detail-lines">${q.sale.items.map(i=>`<div><span><strong>${esc(i.name)}</strong><small>${i.quantity} × ${cash(i.unit_price_cents)}${i.discount_cents?' · −'+cash(i.discount_cents):''}</small></span><strong>${cash(i.subtotal_cents)}</strong></div>`).join('')}</div><div class="pos-quote-detail-total"><small>Descuento general ${cash(q.sale.discount_cents)} · Envío ${cash(q.sale.delivery_cents)}</small><strong>${cash(q.sale.total_cents)}</strong></div>${q.input.notes?`<p class="pos-muted">${esc(q.input.notes)}</p>`:''}<div class="pos-quote-detail-actions"><a class="btn btn--ghost" href="/api/admin/pos/quotes/${esc(q.id)}/receipt" target="_blank" rel="noopener">Ver PDF / compartir</a>${q.status==='converted'?`<a class="btn btn--primary" href="/api/admin/orders/${esc(q.order_id)}/receipt" target="_blank" rel="noopener">Ver venta</a>`:`<button class="btn btn--primary" type="button" data-pos-quote-ticket="${esc(q.id)}">Pasar a ticket</button>`}</div><p class="pos-muted">Cotización comercial. No registra pago ni reserva inventario.</p></div>`;
+    box.innerHTML=`<div class="pos-quote-detail"><button class="pos-text" type="button" data-pos-quotes-list>‹ Todas las cotizaciones</button><header><span class="pos-document-icon">${quotesIcon}</span><div><small>${esc(q.number)}</small><h2>${esc(q.customer.name||q.customer.phone_e164)}</h2><p>${esc(q.customer.phone_e164)} · ${esc(new Date(q.created_at).toLocaleDateString('es-DO'))}</p></div></header><div class="pos-quote-detail-lines">${q.sale.items.map(i=>`<div><span><strong>${esc(i.name)}</strong><small>${i.quantity} × ${cash(i.unit_price_cents)}${i.discount_cents?' · −'+cash(i.discount_cents):''}</small></span><strong>${cash(i.subtotal_cents)}</strong></div>`).join('')}</div><div class="pos-quote-detail-total"><small>Descuento general ${cash(q.sale.discount_cents)} · Envío ${cash(q.sale.delivery_cents)}</small><strong>${cash(q.sale.total_cents)}</strong></div>${q.input.notes?`<p class="pos-muted">${esc(q.input.notes)}</p>`:''}<div class="pos-quote-detail-actions"><a class="btn btn--ghost" href="/admin/receipt-viewer.html?pdf=${encodeURIComponent(`/api/admin/pos/quotes/${q.id}/pdf`)}&amp;quote=${encodeURIComponent(q.id)}" target="_blank" rel="noopener">Ver PDF</a><button class="btn btn--primary" type="button" data-pos-quote-send="${esc(q.id)}">Enviar al cliente</button>${q.status==='converted'?`<a class="btn btn--ghost" href="/api/admin/orders/${esc(q.order_id)}/receipt" target="_blank" rel="noopener">Ver venta</a>`:`<button class="btn btn--ghost" type="button" data-pos-quote-ticket="${esc(q.id)}">Pasar a ticket</button>`}</div><p class="pos-muted">Cotización comercial. No registra pago ni reserva inventario.</p></div>`;
     if(new URLSearchParams(location.search).get('ticket')==='1'){
       const url=new URL(location.href);url.searchParams.delete('ticket');history.replaceState(history.state,'',url);
       if(q.status!=='converted')await quoteToTicket(q.id);
     }
   }catch(e){if(request===quotesEpoch&&epoch===generation)box.innerHTML=`<p role="alert">${esc(e.message)}</p>`;}
 }
+async function sendQuoteToCustomer(id,button){
+  if(!id||busy||!button||button.disabled)return;
+  if(!window.confirm('¿Enviar esta cotización al cliente por WhatsApp? Sale por el número del negocio y queda escrita en el CRM.'))return;
+  const original=button.textContent;button.disabled=true;button.textContent='Enviando…';
+  try{
+    const data=await api(`quotes/${encodeURIComponent(id)}/send-whatsapp`,{idempotencyKey:crypto.randomUUID()});
+    toast(`Cotización enviada a ${data.customer?.name||'el cliente'} por WhatsApp`);
+    button.textContent='Enviado';
+  }catch(error){
+    button.disabled=false;button.textContent=original;
+    actionError(error.message||'No se pudo enviar la cotización.');
+  }
+}
 async function quoteToTicket(id){await initialize();await saveActiveTicket();const {ticket}=await api('tickets',{requestId:crypto.randomUUID(),quoteId:id});if(ticket.status!=='open')throw new Error('El ticket de esta cotización ya está procesado o en revisión.');useTicket(ticket);}
-function quotesList(){if(history.state?.posQuoteFromList){history.back();return;}const url=new URL(location.href);url.searchParams.delete('quote');url.searchParams.delete('ticket');history.replaceState({tab:'cotizaciones'},'',url);renderQuotesPage();}
-function actionError(text){const error=modal.open?modal.querySelector('.pos-modal-error'):null;if(error)error.textContent=text;else if(document.body.dataset.tab==='cotizaciones'){let note=$('#pos-documents-error');if(!note){note=document.createElement('p');note.id='pos-documents-error';note.setAttribute('role','alert');quotesPage()?.prepend(note);}note.textContent=text;}else{message=text;render();}}
+function quotesList(){if(history.state?.posQuoteFromList){history.back();return;}const url=new URL(location.href);url.searchParams.delete('quote');url.searchParams.delete('ticket');history.replaceState({tab:'cotizaciones'},'',url);renderQuotesPage();}function actionError(text){const error=modal.open?modal.querySelector('.pos-modal-error'):null;if(error)error.textContent=text;else if(document.body.dataset.tab==='cotizaciones'){let note=$('#pos-documents-error');if(!note){note=document.createElement('p');note.id='pos-documents-error';note.setAttribute('role','alert');quotesPage()?.prepend(note);}note.textContent=text;}else{message=text;render();}}
 async function runAction(action){if(busy)return;try{busy=true;await action();}catch(e){actionError(e.message);}finally{busy=false;render();}}
 
 document.addEventListener('click',e=>{
@@ -428,6 +440,8 @@ document.addEventListener('click',e=>{
   const quoteRangeChip=e.target.closest('[data-quote-range]');
   if(quoteRangeChip){quoteRange=quoteRangeChip.dataset.quoteRange;renderQuoteFilters();return;}
   if(e.target.closest('[data-quote-filters-clear]')){resetQuoteFilters();return;}
+  const quoteSend=e.target.closest('[data-pos-quote-send]');
+  if(quoteSend){sendQuoteToCustomer(quoteSend.dataset.posQuoteSend,quoteSend);return;}
   if(e.target.closest('[data-pos-search-open]'))setSearchOpen(true);
   if(e.target.closest('[data-pos-search-close]'))setSearchOpen(false);
   if(e.target.closest('[data-pos-actions]'))actions();

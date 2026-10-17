@@ -39,4 +39,33 @@
     }catch(error){if(error.name!=='AbortError')status.textContent='No se pudo compartir. Usa Descargar PDF.';}
   });
   window.addEventListener('pagehide',()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);task?.destroy();},{once:true});
+
+  /* ------------------------------------------------------------------------
+   * ENVIAR AL CLIENTE (cotizaciones): API oficial con plantilla.
+   * El botón solo aparece cuando el visor viene de una cotización (`?quote=`).
+   * Nunca se abre el WhatsApp personal ni la hoja de compartir del sistema.
+   * --------------------------------------------------------------------- */
+  const sendButton=document.querySelector('[data-receipt-send]');
+  const sendStatus=document.querySelector('[data-receipt-message]');
+  const quoteId=new URLSearchParams(location.search).get('quote');
+  if(sendButton&&quoteId){
+    sendButton.hidden=false;
+    sendButton.addEventListener('click',async()=>{
+      if(sendButton.disabled)return;
+      if(!window.confirm('¿Enviar esta cotización al cliente por WhatsApp? Sale por el número del negocio y queda escrita en el CRM.'))return;
+      const label=sendButton.textContent;
+      sendButton.disabled=true;sendButton.textContent='Enviando…';
+      if(sendStatus){sendStatus.textContent='Enviando la cotización por WhatsApp…';sendStatus.classList.remove('is-error');}
+      try{
+        const response=await fetch(`/api/admin/pos/quotes/${encodeURIComponent(quoteId)}/send-whatsapp`,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({idempotencyKey:crypto.randomUUID()})});
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok||!data.ok)throw new Error(data.message||'No se pudo enviar la cotización.');
+        if(sendStatus)sendStatus.textContent=`Enviado a ${data.customer?.name||'el cliente'} por WhatsApp.`;
+        sendButton.textContent='Enviado';
+      }catch(error){
+        if(sendStatus){sendStatus.textContent=error.message;sendStatus.classList.add('is-error');}
+        sendButton.disabled=false;sendButton.textContent=label;
+      }
+    });
+  }
 })();

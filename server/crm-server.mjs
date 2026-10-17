@@ -1,5 +1,6 @@
 import { handleOfflineOperation } from './offline-operations.mjs';
 import { FULLTECH_CONTACT_TEMPLATE } from './fulltech-contact-template.mjs';
+import { QUOTE_WHATSAPP_TEMPLATE } from './quote-template.mjs';
 /**
  * ============================================================================
  *  API del CRM + panel de administración (PWA).
@@ -107,7 +108,7 @@ import {
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
-import { handlePosRoute } from './pos-routes.mjs';
+import { handlePosRoute, quotationReceipt } from './pos-routes.mjs';
 import { createScheduler } from './scheduler.mjs';
 import {
   INTEREST_FOLLOWUP_TEMPLATE,
@@ -3336,6 +3337,14 @@ const WA_TEMPLATE_SEED = [
     variables: ['customer_name', 'order_number'],
     buttons: [],
   },
+  /*
+   * ENVÍO DE COTIZACIÓN — el PDF de la cotización viaja como documento.
+   *
+   * Se usa desde el detalle de la cotización y desde su visor. Igual que la
+   * factura: UTILITY (es un documento de una operación real) y con CABECERA DE
+   * DOCUMENTO, que es lo que permite adjuntar el PDF fuera de la ventana de 24 h.
+   */
+  QUOTE_WHATSAPP_TEMPLATE,
   {
     name: 'phyto_seguimiento_cliente_v1',
     friendly_name: 'Seguimiento al cliente',
@@ -5259,6 +5268,189 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/reports/sales-by-source' && req.method === 'GET') {
       const rows = await store.listAdmin({ limit: 5000 });
       json(res, 200, { ok: true, report: revenueBySourceReport(rows) });
+      return;
+    }
+
+    /*
+     * ENVIAR LA COTIZACIÓN POR WHATSAPP — con la plantilla oficial y el PDF.
+     *
+     * El destinatario y el PDF salen de la COTIZACIÓN guardada, nunca de lo que
+     * mande el navegador. La plantilla lleva CABECERA DE DOCUMENTO: el cliente
+     * recibe el archivo aunque la ventana de 24 h esté cerrada. No se abre
+     * WhatsApp Web ni el WhatsApp personal de nadie.
+     */
+    const quoteSendRoute = /^\/api\/admin\/pos\/quotes\/([a-z0-9_-]+)\/send-whatsapp$/.exec(route);
+    if (quoteSendRoute && req.method === 'POST') {
+      if (!requirePermission('chats.reply')) return;
+      /** @type {any} */
+      let quoteBody = {};
+      try {
+        quoteBody = await readJsonBody(req);
+      } catch {
+        quoteBody = {};
+      }
+      const quoteDoc = await ctx.db.get('pos_documents', quoteSendRoute[1]);
+      if (!quoteDoc || quoteDoc.kind !== 'quote' || !(actor.role === 'ADMIN' || quoteDoc.actor_id === actor.id)) {
+        json(res, 404, { ok: false, error: 'not_found', message: 'Esa cotización no existe.' });
+        return;
+      }
+      const customer = quoteDoc.customer?.id ? await ctx.customers.get(quoteDoc.customer.id) : null;
+      if (!customer) {
+        json(res, 409, { ok: false, error: 'quote_without_customer', message: 'Esa cotización no tiene cliente: no hay a quién enviarla.' });
+        return;
+      }
+      if (!customer.phone_e164) {
+        json(res, 409, { ok: false, error: 'missing_phone', message: 'Ese cliente no tiene teléfono de WhatsApp.' });
+        return;
+      }
+      if (customer.do_not_contact || customer.whatsapp_opt_out_at) {
+        json(res, 409, { ok: false, error: 'do_not_contact', message: 'Este cliente pidió no recibir mensajes. Respétalo.' });
+        return;
+      }
+      if (!ctx.whatsapp?.enabled) {
+        json(res, 503, {
+          ok: false,
+          error: 'whatsapp_not_configured',
+          message: 'WhatsApp todavía no está configurado en el servidor. La cotización NO se ha enviado.',
+        });
+        return;
+      }
+      const conversacion = await ctx.customers.conversationFor(customer.id, { create: false });
+      if (!conversacion || conversacion.customer_id !== customer.id) {
+        json(res, 409, {
+          ok: false,
+          error: 'no_conversation',
+          message: 'Este cliente todavía no tiene una conversación de WhatsApp en el CRM.',
+        });
+        return;
+      }
+      if (!(await canOpenConversation(ctx, actor, conversacion))) {
+        denyConversation(res, json, conversacion);
+        return;
+      }
+      const plantilla = await approvedTemplate(ctx, QUOTE_WHATSAPP_TEMPLATE.name);
+      if (!plantilla.ok) {
+        json(res, 409, {
+          ok: false,
+          error: plantilla.reason === 'unknown_template' ? 'quote_template_missing' : 'template_not_approved',
+          message:
+            `La cotización se envía con la plantilla «${QUOTE_WHATSAPP_TEMPLATE.name}», que todavía no está aprobada en Meta. ` +
+            'Regístrala en Meta y pulsa «Sincronizar con Meta» en Ajustes > WhatsApp.',
+          template: plantilla.template ?? null,
+        });
+        return;
+      }
+      if (String(plantilla.template?.header?.format ?? '').toUpperCase() !== 'DOCUMENT') {
+        json(res, 409, {
+          ok: false,
+          error: 'template_without_document_header',
+          message: `La plantilla «${QUOTE_WHATSAPP_TEMPLATE.name}» no lleva cabecera de documento en Meta, así que no puede transportar el PDF.`,
+          template: plantilla.template,
+        });
+        return;
+      }
+      if (!ctx.media?.whatsapp?.uploadMedia) {
+        json(res, 503, { ok: false, error: 'media_not_configured', message: 'No hay almacén de archivos para WhatsApp. La cotización NO se ha enviado.' });
+        return;
+      }
+      const clave = text(quoteBody.idempotencyKey, 120);
+      if (clave) {
+        const previo = await ctx.db.findBy('wa_messages', 'idempotency_key', clave);
+        if (previo) {
+          json(res, 200, { ok: true, duplicate: true, message: previo });
+          return;
+        }
+      }
+      const recibo = quotationReceipt(quoteDoc);
+      const nombreArchivo = `Cotizacion-${String(quoteDoc.number ?? quoteDoc.id).replace(/[^A-Za-z0-9_-]/g, '')}.pdf`;
+      const pdf = receiptPdf(recibo, { timeZone: TIME_ZONE });
+      const subida = await ctx.media.whatsapp.uploadMedia({ buffer: pdf, mimeType: 'application/pdf', filename: nombreArchivo });
+      if (!subida.ok) {
+        json(res, 502, {
+          ok: false,
+          error: 'upload_failed',
+          message: 'No se pudo preparar la cotización para WhatsApp. No se ha enviado nada.',
+          detail: subida.error ?? null,
+        });
+        return;
+      }
+      const totalTexto = new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(
+        Number(quoteDoc.sale?.total_cents ?? 0) / 100,
+      );
+      const payload = await resolveTemplatePayload(ctx, {
+        template: plantilla.template,
+        customer,
+        conversation: conversacion,
+        provided: {
+          1: customer.name || customer.phone_e164,
+          2: quoteDoc.number ?? quoteDoc.id,
+          3: totalTexto,
+        },
+      });
+      if (!payload.ok) {
+        json(res, payload.status ?? 422, { ok: false, error: payload.error, message: payload.message, missing: payload.missing ?? undefined });
+        return;
+      }
+      const components = [
+        { type: 'header', parameters: [{ type: 'document', document: { id: subida.mediaId, filename: nombreArchivo } }] },
+        ...(payload.components ?? []),
+      ];
+      const envio = await ctx.whatsapp.sendTemplate(customer.phone_e164, {
+        name: plantilla.template.name,
+        language: plantilla.template.language ?? 'es',
+        components,
+      });
+      const registrado = await ctx.customers.recordOutbound({
+        customer,
+        conversation: conversacion,
+        type: 'template',
+        template: plantilla.template.name,
+        body: payload.body,
+        waMessageId: envio.messageId ?? null,
+        status: envio.ok ? 'sent' : 'failed',
+        error: envio.ok ? null : (envio.error ?? { message: envio.reason ?? 'error' }),
+        idempotencyKey: clave,
+        meta: {
+          phoneNumberId: ctx.whatsapp.phoneNumberId,
+          to: customer.phone_e164,
+          quote_id: quoteDoc.id,
+          quote_number: quoteDoc.number ?? null,
+          filename: nombreArchivo,
+        },
+        ...messageActorFields(actor),
+      });
+      await ctx.audit?.record({
+        entity: 'message',
+        entityId: registrado.message?.id ?? null,
+        action: envio.ok ? 'message.sent' : 'message.failed',
+        actor: actor?.display_name ?? null,
+        summary: `Cotización ${nombreArchivo} ${envio.ok ? 'enviada' : 'rechazada'} a ${customer.name ?? customer.phone_e164}`,
+        data: {
+          quote_id: quoteDoc.id,
+          quote_number: quoteDoc.number ?? null,
+          filename: nombreArchivo,
+          template: plantilla.template.name,
+        },
+        idempotencyKey: registrado.message?.id
+          ? `${envio.ok ? 'message.sent' : 'message.failed'}:${registrado.message.id}`
+          : null,
+      });
+      if (!envio.ok) {
+        json(res, 502, {
+          ok: false,
+          error: 'send_failed',
+          message: 'WhatsApp rechazó el envío de la cotización. No se ha enviado nada.',
+          detail: envio.error ?? null,
+          message_record: registrado.message,
+        });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        filename: nombreArchivo,
+        customer: { id: customer.id, name: customer.name || customer.phone_e164 },
+        message: registrado.message,
+      });
       return;
     }
 

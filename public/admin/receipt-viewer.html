@@ -1,5 +1,82 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b1424"><title>Comprobante · FullTECH</title>
-<style>body{font:15px system-ui;margin:0;padding:12px;background:#e8edf3;color:#14243b}main,nav,p{max-width:900px;margin:12px auto}nav{display:flex;gap:8px;flex-wrap:wrap}a,button{font:inherit;padding:10px 12px;background:white;border:1px solid #ced7e2;border-radius:8px;color:#153c70;text-decoration:none;cursor:pointer}canvas{display:block;margin:12px 0;box-shadow:0 2px 12px #14243b18;background:white}[hidden]{display:none!important}@media print{body{padding:0;background:white}nav,[data-receipt-status]{display:none}canvas{box-shadow:none;break-after:page;margin:0;width:100%}}</style></head>
-<body><nav><a href="/admin/?v=pedidos">Volver al CRM</a><a data-receipt-download hidden>Descargar PDF</a><button data-receipt-share>Compartir PDF</button><button data-receipt-print>Imprimir</button></nav><p data-receipt-status role="status">Abriendo PDF guardado…</p><main data-receipt-pages></main>
-<script src="/admin/offline-storage.js?v=1" defer></script><script src="/admin/offline.js?v=2" defer></script><script src="/admin/receipt-viewer.js?v=1" defer></script></body></html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="theme-color" content="#0b1424" />
+<title>Comprobante · FullTECH</title>
+<style>
+  /* ------------------------------------------------------------------------
+   * VISOR DEL DOCUMENTO
+   * El PDF ocupa el espacio principal y las ACCIONES viven en una columna a la
+   * DERECHA (en el teléfono pasan arriba, para no tener que bajar). El envío se
+   * hace por la API oficial de WhatsApp con una plantilla; aquí no hay ningún
+   * enlace al WhatsApp personal.
+   * ---------------------------------------------------------------------- */
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:#e8edf3;color:#14243b;font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+  .rv{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:18px;max-width:1280px;margin:0 auto;padding:16px;align-items:start}
+  .rv__doc{min-width:0}
+  .rv__status{margin:0 0 12px;color:#51627a;font-size:13px}
+  .rv__pages canvas{display:block;max-width:100%;height:auto;margin:0 auto 14px;background:#fff;box-shadow:0 2px 12px #14243b18;border-radius:2px}
+  .rv__side{position:sticky;top:16px;display:grid;gap:12px;padding:16px;background:#fff;border:1px solid #d5deea;border-radius:16px;box-shadow:0 10px 26px #14243b14}
+  .rv__eyebrow{margin:0;color:#5b6b84;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+  .rv__title{margin:3px 0 2px;color:#12233f;font-size:17px;font-weight:750;line-height:1.25;overflow-wrap:anywhere}
+  .rv__sub{margin:0;color:#5b6b84;font-size:13px;overflow-wrap:anywhere}
+  .rv__act{display:grid;gap:8px}
+  .rv__act a,.rv__act button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px 12px;border:1px solid #cfd9e6;border-radius:11px;background:#fff;color:#153c70;font:inherit;font-size:14px;font-weight:650;text-decoration:none;cursor:pointer;touch-action:manipulation}
+  .rv__act a:hover,.rv__act button:hover{border-color:#9fb4d4;background:#f6f9ff}
+  .rv__act .rv__primary{border-color:#128c5d;background:#128c5d;color:#fff;font-weight:750}
+  .rv__act .rv__primary:hover{border-color:#0f7a51;background:#0f7a51}
+  .rv__act button:disabled{opacity:.6;cursor:progress}
+  .rv__msg{margin:0;min-height:1.2em;color:#0f7a51;font-size:13px;line-height:1.4}
+  .rv__msg.is-error{color:#a12222}
+  .rv__note{margin:0;padding-top:10px;border-top:1px solid #e6ecf4;color:#5b6b84;font-size:12px;line-height:1.45}
+  .rv__back{justify-self:start;padding:4px 0;border:0;background:transparent;color:#51627a;font:inherit;font-size:13px;font-weight:650;text-decoration:none;cursor:pointer}
+  .rv__back:hover{color:#153c70}
+  @media (max-width:880px){
+    .rv{grid-template-columns:1fr;gap:12px;padding:12px}
+    .rv__side{position:static;order:-1}
+    .rv__act{grid-template-columns:1fr 1fr}
+    .rv__act .rv__primary{grid-column:1/-1}
+  }
+  @media print{
+    body{background:#fff}
+    .rv{display:block;max-width:none;padding:0}
+    .rv__side,.rv__status{display:none}
+    .rv__pages canvas{box-shadow:none;margin:0;width:100%;break-after:page}
+  }
+</style>
+</head>
+<body>
+  <div class="rv">
+    <main class="rv__doc">
+      <p class="rv__status" data-receipt-status role="status">Abriendo PDF guardado…</p>
+      <div class="rv__pages" data-receipt-pages></div>
+    </main>
+
+    <aside class="rv__side" aria-label="Acciones del documento">
+      <div>
+        <p class="rv__eyebrow" data-receipt-kind>Comprobante</p>
+        <p class="rv__title" data-receipt-title>FullTECH, SRL</p>
+        <p class="rv__sub" data-receipt-sub></p>
+      </div>
+      <div class="rv__act">
+        <button class="rv__primary" type="button" data-receipt-send hidden>Enviar al cliente</button>
+        <a data-receipt-download hidden>Descargar PDF</a>
+        <button type="button" data-receipt-print>Imprimir</button>
+      </div>
+      <p class="rv__msg" data-receipt-message role="status"></p>
+      <p class="rv__note" data-receipt-hint>
+        El documento se envía por WhatsApp con la API oficial del CRM y queda
+        escrito en la conversación. Nunca se abre tu WhatsApp personal.
+      </p>
+      <a class="rv__back" data-receipt-close>← Volver al CRM</a>
+    </aside>
+  </div>
+  <script src="/admin/offline-storage.js?v=1" defer></script>
+  <script src="/admin/offline.js?v=2" defer></script>
+  <script src="/admin/receipt-viewer.js?v=3" defer></script>
+</body>
+</html>
