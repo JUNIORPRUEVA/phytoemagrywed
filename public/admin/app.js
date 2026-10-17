@@ -13144,6 +13144,13 @@
   }
 
   async function openOrderForm({ customerId, conversationId = '', orderId = null, order = null, location = null, draft = null, skipDraftPrompt = false } = {}) {
+    if (navigator.onLine) {
+      try {
+        const fresh = await api('/api/admin/catalog');
+        if (Array.isArray(fresh.catalog)) state.catalog = fresh.catalog;
+        if (fresh.inventory) state.inventory = fresh.inventory;
+      } catch (error) { if (error.status === 401) return; /* El borrador offline puede utilizar el catálogo guardado. */ }
+    }
     // Si no hay cliente, el formulario pinta id="order-phone"; desde chat, customer ? '' evita pedirlo.
     const customer = customerId
       ? customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null)
@@ -18382,6 +18389,7 @@
       const nextUrl = new URL(location.href);
       nextUrl.searchParams.set('v', tab);
       nextUrl.searchParams.delete('conversation');
+      if (tab !== 'catalogo') nextUrl.searchParams.delete('product');
       if (storeTabs.includes(tab)) nextUrl.hash = '';
       if (nextUrl.href !== location.href) history.pushState({ tab }, '', nextUrl);
     }
@@ -18522,17 +18530,10 @@
   function initEvents() {
     if (eventosMontados) return;
     eventosMontados = true;
+    window.addEventListener('fulltech:session-expired',()=>showLogin('Tu sesión terminó. Vuelve a entrar.'));
     window.addEventListener('popstate', () => {
       const wanted = new URLSearchParams(location.search).get('v');
       if (VIEWS.includes(wanted) && (['catalogo','inventario','recuento'].includes(wanted) || ['catalogo','inventario','recuento'].includes(state.tab))) setTab(wanted,{silent:true,fromHistory:true});
-    });
-    window.addEventListener('fulltech:new-sale', async () => {
-      if (!hasPermission('orders.create')) return;
-      try {
-        const fresh = await api('/api/admin/catalog');
-        state.catalog = fresh.catalog;
-        await openOrderForm();
-      } catch (error) { toast(error.message || 'No se pudo abrir la venta.'); }
     });
     window.addEventListener('fulltech:catalog-updated', async () => {
       try { const fresh=await api('/api/admin/catalog');state.catalog=fresh.catalog;saveSnapshot(); } catch {}

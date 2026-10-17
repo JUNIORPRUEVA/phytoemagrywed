@@ -3,38 +3,76 @@
   'use strict';
   const pages=['catalogo','inventario','recuento'];
   let page='',products=[],movements=[],canManage=false,loading=false,query='',kind='all',epoch=0;
+  let category='',layout='grid',signature='',source=null,poll=null,pending=false,authenticated=false;
+  try {layout=localStorage.getItem('fulltech.catalog.layout')==='list'?'list':'grid';}catch{}
+  const categoryName=p=>String(p.category||'').trim().replace(/\s+/g,' ')||'Sin categoría';
+  const categoryKey=p=>categoryName(p).toLocaleLowerCase('es');
+  const icon=name=>({grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',list:'<path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/>',arrow:'<path d="m14 7-5 5 5 5"/>',plus:'<path d="M12 5v14M5 12h14"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>'}[name]||'');
+  const svg=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${icon(name)}</svg>`;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
   const root=()=>document.getElementById(`store-${page}`);
   const notice=text=>{const box=document.getElementById('store-notice');if(box)box.textContent=text;};
   async function request(path,body,method='POST') {
+    const generation=epoch,wasAuthenticated=authenticated;
     if(body&&!navigator.onLine)throw new Error('Conéctate a internet para guardar productos o movimientos de stock.');
     const r=await fetch(`/api/admin/store/${path}`,{credentials:'same-origin',cache:'no-store',
       method:body?method:'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+    if(r.status===401){if(generation===epoch&&wasAuthenticated)window.dispatchEvent(new Event('fulltech:session-expired'));throw new Error('Tu sesión terminó. Vuelve a entrar.');}
     const data=await r.json();
     if(!r.ok||!data.ok)throw new Error(data.message||'No se pudo completar la operación. Actualiza y vuelve a intentarlo.');
     return data;
   }
-  async function load() {
-    if(loading)return;loading=true;const generation=epoch;
+  async function load(force=false) {
+    if(loading){pending=true;return;}loading=true;const generation=epoch;
     try { const data=await request('products');if(generation!==epoch)return;
-      products=data.products;movements=data.movements;canManage=data.canManage;render();
-    }catch(e){notice(e.message);}finally{loading=false;}
+      const nextSignature=JSON.stringify(data);
+      const changed=signature!==nextSignature;signature=nextSignature;
+      products=data.products;movements=data.movements;canManage=data.canManage;authenticated=true;
+      if(force)render();else if(changed)renderPreservingInput();
+      if(changed)window.dispatchEvent(new Event('fulltech:catalog-updated'));
+    }catch(e){notice(e.message);}finally{loading=false;if(pending){pending=false;load();}}
   }
-  function head() {return `<div class="store-toolbar"><p>Catálogo de la tienda Fulltech</p><button type="button" class="btn btn--ghost" data-store-refresh>Actualizar</button></div><p id="store-notice" role="status" aria-live="polite"></p>`;}
+  function renderPreservingInput() {
+    const form=document.getElementById('store-stock-form');
+    const draft=form?{values:Object.fromEntries(new FormData(form)),...form.dataset}:null;
+    const active=document.activeElement,focusId=active?.id,focusName=form?.contains(active)?active.name:null,start=active?.selectionStart,end=active?.selectionEnd;
+    render();
+    const next=document.getElementById('store-stock-form');
+    if(draft&&next&&draft.count===next.dataset.count){
+      Object.entries(draft.values).forEach(([key,value])=>{if(next.elements[key])next.elements[key].value=value;});
+      if(draft.expected!==undefined)next.dataset.expected=draft.expected;
+      if(draft.requestId)next.dataset.requestId=draft.requestId;
+      updateCount();
+    }
+    const node=focusId?document.getElementById(focusId):focusName?next?.elements.namedItem(focusName):null;
+    node?.focus({preventScroll:true});if(node?.setSelectionRange&&start!==null)try{node.setSelectionRange(start,end);}catch{}
+  }
+  function head() {return '<p id="store-notice" class="store-notice" role="status" aria-live="polite"></p>';}
   function photo(p){return p.image_url?`<img class="store-photo" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" width="96" height="96">`:'<div class="store-photo store-photo--empty" aria-label="Servicio">Servicio</div>';}
   function stockLabel(p){return p.kind==='service'?'Sin stock':p.quantity===null?'Sin inventario inicial':`${p.quantity} ${p.quantity===1?'unidad':'unidades'}${p.legacy?' disponibles':''}`;}
   function cards() {
     const search=query.toLocaleLowerCase();
-    const rows=products.filter(p=>(kind==='all'||p.kind===kind)&&(p.name+' '+p.sku+' '+p.category).toLocaleLowerCase().includes(search));
+    const rows=products.filter(p=>(kind==='all'||p.kind===kind)&&(!category||categoryKey(p)===category)&&(p.name+' '+p.sku+' '+(p.category||'')).toLocaleLowerCase().includes(search));
     const box=document.getElementById('store-product-grid');if(!box)return;
-    box.innerHTML=rows.map(p=>`<article class="card store-product${p.active?'':' store-product--inactive'}">
-      ${photo(p)}<div class="store-product__body"><span class="store-tag">${p.kind==='service'?'Servicio':'Producto'}${!p.active?' · Inactivo':''}</span>
-      <h3>${esc(p.name)}</h3><p class="store-muted">${esc(p.sku)}${p.category?' · '+esc(p.category):''}</p>
-      <strong class="store-price">${cash(p.price_cents)}</strong>
-      ${canManage?`<p>Costo: ${cash(p.cost_cents)}</p>`:''}<p>${esc(stockLabel(p))}</p>
-      ${p.legacy?'<small>Comparte el inventario de cápsulas de Phytoemagry.</small>':''}
-      ${canManage?`<button type="button" class="btn btn--ghost" data-store-edit="${esc(p.id)}">Editar</button>`:''}</div></article>`).join('')||'<div class="card"><p>No hay artículos que coincidan con la búsqueda.</p></div>';
+    const groups=new Map();
+    for(const p of rows){const key=categoryKey(p);if(!groups.has(key))groups.set(key,{name:categoryName(p),items:[]});groups.get(key).items.push(p);}
+    box.dataset.layout=layout;
+    box.innerHTML=[...groups.values()].sort((a,b)=>a.name.localeCompare(b.name,'es')).map(group=>`<section class="store-category-group" aria-label="${esc(group.name)}"><div class="store-group-heading"><h3>${esc(group.name)}</h3><span>${group.items.length} ${group.items.length===1?'artículo':'artículos'}</span></div><div class="store-items">${group.items.map(p=>`<a class="store-product${p.active?'':' store-product--inactive'}" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">
+      <div class="store-product__visual">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</div>
+      <div class="store-product__body"><span class="store-tag">${p.kind==='service'?'Servicio':'Producto'}</span><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong></div><span class="store-product__arrow" aria-hidden="true">↗</span></a>`).join('')}</div></section>`).join('')||'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+    const count=document.getElementById('store-result-count');if(count)count.textContent=`${rows.length} ${rows.length===1?'artículo':'artículos'}`;
+  }
+  function detailId(){return new URLSearchParams(location.search).get('product');}
+  function navigateProduct(id){const url=new URL(location.href);url.searchParams.set('v','catalogo');if(id)url.searchParams.set('product',id);else url.searchParams.delete('product');history.pushState({storeProduct:id||null},'',url);render();document.querySelector('#store-detail-title,#store-search')?.focus({preventScroll:true});document.getElementById('view-catalogo')?.scrollIntoView({block:'start'});}
+  function detail(p) {
+    if(!p)return `<div class="store-empty"><h2 id="store-detail-title" tabindex="-1">Artículo no encontrado</h2><p>Puede que ya no esté disponible para tu cuenta.</p><a class="btn btn--ghost" href="/admin/?v=catalogo" data-store-back>Volver al catálogo</a></div>`;
+    return `<div class="store-detail-nav"><a href="/admin/?v=catalogo" data-store-back>${svg('arrow')}Volver al catálogo</a><span>${esc(categoryName(p))}</span></div>
+      <article class="store-detail"><div class="store-detail__image">${photo(p)}</div><div class="store-detail__content"><div class="store-detail__eyebrow">${p.kind==='service'?'Servicio':'Producto'}<span class="store-status${p.active?' store-status--active':''}">${p.active?'Activo':'Inactivo'}</span></div>
+      <h2 id="store-detail-title" tabindex="-1">${esc(p.name)}</h2><p class="store-muted">${esc(p.sku)}</p><strong class="store-detail__price">${cash(p.price_cents)}</strong><p class="store-muted">Precio de venta</p>
+      <dl class="store-detail-facts"><div><dt>Categoría</dt><dd>${esc(categoryName(p))}</dd></div>${canManage?`<div><dt>Costo ${p.kind==='service'?'del servicio':'por unidad'}</dt><dd>${cash(p.cost_cents)}</dd></div>`:''}<div><dt>${p.kind==='service'?'Inventario':'Existencias'}</dt><dd>${esc(p.kind==='service'?'No aplica a servicios':stockLabel(p))}</dd></div>${p.kind==='product'&&!p.legacy?`<div><dt>Stock mínimo</dt><dd>${p.min_stock} unidades</dd></div>`:''}</dl>
+      ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el mismo inventario de cápsulas de Phytoemagry.</p>':''}<div class="store-actions">${canManage?`<button class="btn btn--primary" type="button" data-store-edit="${esc(p.id)}">Editar artículo</button>`:''}${p.track_stock?`<button class="btn btn--ghost" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver inventario</button>`:''}</div></div>
+      <section class="store-detail-description"><h3>Descripción</h3><p>${esc(p.description||'Este artículo todavía no tiene descripción.')}</p></section></article>`;
   }
   function render() {
     const box=root();if(!box)return;
@@ -42,11 +80,16 @@
     const legacy=products.find(p=>p.legacy);
     const tracked=products.filter(p=>p.track_stock&&!p.legacy);
     if(page==='catalogo') {
-      box.innerHTML=head()+`<div class="store-toolbar"><div class="store-actions">${canManage?'<button class="btn btn--primary" type="button" data-store-new>Crear producto o servicio</button>':''}
-      <button class="btn btn--ghost" type="button" data-store-sale>Crear venta</button></div></div>
-      <div class="store-filters"><label class="field"><span class="field__label">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" value="${esc(query)}"></label>
+      const selected=detailId();document.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
+      if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));return;}
+      const categories=new Map();for(const p of products){const key=categoryKey(p);if(!categories.has(key))categories.set(key,{name:categoryName(p),count:0});categories.get(key).count++;}
+      if(category&&!categories.has(category))category='';
+      box.innerHTML=head()+`<div class="store-catalog-intro"><p>Todo tu catálogo, en un solo lugar.</p><span id="store-result-count" aria-live="polite"></span></div>
+      <div class="store-catalog-tools"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar en tu catálogo" value="${esc(query)}"></label>
       <label class="field"><span class="field__label">Tipo</span><select class="field__select" id="store-kind"><option value="all">Todos</option><option value="product">Productos</option><option value="service">Servicios</option></select></label></div>
-      <div class="store-grid" id="store-product-grid"></div>`;
+      <div class="store-category-bar"><div class="store-category-filters" role="group" aria-label="Filtrar por categoría"><button type="button" class="store-category-chip" data-store-category="" aria-pressed="${!category}">Todo<span>${products.length}</span></button>${[...categories.entries()].sort((a,b)=>a[1].name.localeCompare(b[1].name,'es')).map(([key,c])=>`<button type="button" class="store-category-chip" data-store-category="${esc(key)}" aria-pressed="${category===key}">${esc(c.name)}<span>${c.count}</span></button>`).join('')}</div>
+      <div class="store-layout-switch" role="group" aria-label="Vista del catálogo"><button type="button" data-store-layout="grid" aria-label="Vista de cuadrícula" aria-pressed="${layout==='grid'}">${svg('grid')}</button><button type="button" data-store-layout="list" aria-label="Vista de lista" aria-pressed="${layout==='list'}">${svg('list')}</button></div></div>
+      <div id="store-product-grid"></div>${canManage?`<button class="store-fab" type="button" data-store-new aria-label="Agregar producto o servicio" title="Agregar producto o servicio">${svg('plus')}</button>`:''}`;
       document.getElementById('store-kind').value=kind;cards();
     }else if(page==='inventario') {
       const value=tracked.reduce((s,p)=>s+p.quantity*(p.cost_cents||0),0)+(legacy?(legacy.base_quantity||0)*((legacy.cost_cents||0)/legacy.capsules):0);
@@ -81,9 +124,11 @@
     const form=document.getElementById('store-stock-form');if(!form)return;
     const p=products.find(p=>p.id===form.elements.productId.value);if(!p)return;
     const count=form.dataset.count==='true';
+    form.dataset.expected ||= String(p.quantity);
+    const baseline=count?Number(form.dataset.expected):p.quantity;
     const qty=form.elements.quantity.value;
-    const delta=qty===''?null:count?Number(qty)-p.quantity:Number(qty)*(form.elements.type.value==='out'?-1:1);
-    document.getElementById('store-stock-preview').textContent=`Stock registrado: ${p.quantity} unidades${delta===null?'':` · Diferencia: ${delta>0?'+':''}${delta} · Quedará: ${p.quantity+delta}`}`;
+    const delta=qty===''?null:count?Number(qty)-baseline:Number(qty)*(form.elements.type.value==='out'?-1:1);
+    document.getElementById('store-stock-preview').textContent=`Stock registrado: ${baseline} unidades${delta===null?'':` · Diferencia: ${delta>0?'+':''}${delta} · Quedará: ${baseline+delta}`}${count&&baseline!==p.quantity?' · El stock cambió; guarda para validar o vuelve a abrir Recuento.':''}`;
   }
   const dialog=document.createElement('dialog');dialog.className='store-dialog';dialog.setAttribute('aria-label','Producto o servicio');document.body.append(dialog);
   let editing=null,imageData=null;
@@ -93,7 +138,7 @@
     <label class="field"><span class="field__label">Tipo</span><select class="field__select" name="kind" ${editing?'disabled':''}><option value="product">Producto</option><option value="service">Servicio</option></select></label>
     <label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" value="${esc(p.name)}" maxlength="160" required></label>
     <div class="store-form-grid"><label class="field"><span class="field__label">Código / SKU</span><input class="field__input" name="sku" value="${esc(p.sku)}" maxlength="60" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" required placeholder="Ej. CAM-001"></label>
-    <label class="field"><span class="field__label">Categoría</span><input class="field__input" name="category" value="${esc(p.category)}" maxlength="100" placeholder="Ej. Cámaras, accesorios"></label></div>
+    <label class="field"><span class="field__label">Categoría</span><input class="field__input" name="category" list="store-category-options" value="${esc(p.category)}" maxlength="100" placeholder="Selecciona o escribe una categoría"><datalist id="store-category-options">${[...new Set(products.map(p=>String(p.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es')).map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></label></div>
     <label class="field"><span class="field__label">Descripción</span><textarea class="field__input" name="description" maxlength="2000">${esc(p.description)}</textarea></label>
     <label class="field"><span class="field__label">Imagen del producto</span><input class="field__input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label>
     <div id="store-image-preview">${p.image_url?photo(p):''}</div><p id="store-image-help"></p>
@@ -131,27 +176,47 @@
     button.disabled=true;form.querySelector('[role=alert]').textContent='';
     const data=Object.fromEntries(new FormData(form));data.kind=editing?.kind||data.kind;data.active=form.elements.active.checked;
     delete data.image;if(imageData)data.image=imageData;if(editing)data.version=editing.version;
-    try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load();window.dispatchEvent(new Event('fulltech:catalog-updated'));notice('Artículo guardado.');}
+    try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load(true);notice('Artículo guardado.');}
     catch(err){form.querySelector('[role=alert]').textContent=err.message;}finally{button.disabled=false;}
   });
   document.addEventListener('click',e=>{
     if(!e.target.closest('#view-catalogo,#view-inventario,#view-recuento'))return;
+    const link=e.target.closest('[data-store-detail],[data-store-back]');
+    if(link&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey&&e.button===0){e.preventDefault();navigateProduct(link.dataset.storeDetail||null);return;}
+    const categoryButton=e.target.closest('[data-store-category]');if(categoryButton){category=categoryButton.dataset.storeCategory;render();return;}
+    const layoutButton=e.target.closest('[data-store-layout]');if(layoutButton){layout=layoutButton.dataset.storeLayout;try{localStorage.setItem('fulltech.catalog.layout',layout);}catch{}render();document.querySelector(`[data-store-layout="${layout}"]`)?.focus({preventScroll:true});return;}
+    if(e.target.closest('[data-store-clear]')){query='';kind='all';category='';render();return;}
     if(e.target.closest('[data-store-new]'))edit();
     const editButton=e.target.closest('[data-store-edit]');if(editButton)edit(editButton.dataset.storeEdit);
-    if(e.target.closest('[data-store-refresh]'))load();
-    if(e.target.closest('[data-store-sale]'))window.dispatchEvent(new Event('fulltech:new-sale'));
   });
   document.addEventListener('input',e=>{if(e.target.id==='store-search'){query=e.target.value;cards();}if(e.target.closest('#store-stock-form'))updateCount();});
-  document.addEventListener('change',e=>{if(e.target.id==='store-kind'){kind=e.target.value;cards();}if(e.target.closest('#store-stock-form'))updateCount();});
+  document.addEventListener('change',e=>{if(e.target.id==='store-kind'){kind=e.target.value;cards();}if(e.target.closest('#store-stock-form')){if(e.target.name==='productId'){delete e.target.form.dataset.expected;delete e.target.form.dataset.requestId;}updateCount();}});
   document.addEventListener('submit',async e=>{
     if(e.target.id!=='store-stock-form')return;e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');button.disabled=true;
     const data=Object.fromEntries(new FormData(form));const p=products.find(p=>p.id===data.productId);
-    data.type=form.dataset.count==='true'?'count':data.type;data.expected=p.quantity;
+    data.type=form.dataset.count==='true'?'count':data.type;data.expected=Number(form.dataset.expected??p.quantity);
     form.dataset.requestId ||= crypto.randomUUID();data.requestId=form.dataset.requestId;
-    try{await request(`products/${encodeURIComponent(p.id)}/stock`,data);await load();notice('Inventario actualizado.');window.dispatchEvent(new Event('fulltech:catalog-updated'));}
+    try{await request(`products/${encodeURIComponent(p.id)}/stock`,data);form.reset();delete form.dataset.expected;delete form.dataset.requestId;await load(true);notice('Inventario actualizado.');}
     catch(err){form.querySelector('[role=alert]').textContent=err.message;button.disabled=false;}
   });
-  window.addEventListener('fulltech:tab',e=>{page=e.detail.tab;if(pages.includes(page)){render();load();}});
-  window.addEventListener('phyto:calling-logout',()=>{epoch++;products=[];movements=[];canManage=false;dialog.close();dialog.innerHTML='';pages.forEach(p=>{document.getElementById(`store-${p}`)?.replaceChildren();});});
-  if(pages.includes(document.body.dataset.tab)){page=document.body.dataset.tab;render();load();}
+  function stopLive(){source?.close();source=null;if(poll)clearInterval(poll);poll=null;}
+  function startLive(){
+    if(!pages.includes(page)||!authenticated||document.hidden)return;
+    if(!source&&typeof EventSource==='function'){
+      source=new EventSource('/api/admin/store/events');
+      source.addEventListener('catalog.changed',()=>load());
+      source.addEventListener('ready',()=>load());
+    }
+    // Respaldo para reconexiones, navegadores sin SSE y otras instancias del servidor.
+    poll ||= setInterval(()=>{if(!document.hidden&&pages.includes(page))load();},5000);
+  }
+  window.addEventListener('fulltech:tab',e=>{page=e.detail.tab;stopLive();if(pages.includes(page)){render();load().then(startLive);}});
+  window.addEventListener('popstate',()=>{if(page==='catalogo')render();});
+  window.addEventListener('online',()=>{if(pages.includes(page)){load().then(startLive);}});
+  window.addEventListener('focus',()=>{if(pages.includes(page)&&authenticated)load();});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLive();else if(pages.includes(page)&&authenticated)load().then(startLive);});
+  window.addEventListener('pagehide',stopLive);
+  window.addEventListener('pageshow',()=>{if(pages.includes(page)&&authenticated)load().then(startLive);});
+  window.addEventListener('phyto:calling-logout',()=>{epoch++;pending=false;authenticated=false;signature='';stopLive();products=[];movements=[];canManage=false;dialog.close();dialog.innerHTML='';pages.forEach(p=>{document.getElementById(`store-${p}`)?.replaceChildren();});});
+  if(pages.includes(document.body.dataset.tab)){page=document.body.dataset.tab;render();load().then(startLive);}
 })();

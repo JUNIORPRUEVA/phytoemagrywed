@@ -133,6 +133,18 @@ it('dos ventas concurrentes no pueden consumir la misma última unidad',async()=
   expect((await list()).data.products.find(x=>x.id===p.id).quantity).toBe(0);
   expect((await list()).data.movements.filter(x=>x.type==='SALE')).toHaveLength(1);
 });
+it('notifica cambios del catálogo en vivo a sesiones autenticadas sin difundir datos financieros',async()=>{
+  expect((await fetch(app.url+'/api/admin/store/events')).status).toBe(401);
+  const response=await fetch(app.url+'/api/admin/store/events',{headers:{cookie},signal:AbortSignal.timeout(5000)});
+  expect(response.headers.get('content-type')).toContain('text/event-stream');
+  const reader=response.body.getReader(),decoder=new TextDecoder();
+  try {
+    expect(decoder.decode((await reader.read()).value)).toContain('event: ready');
+    expect((await create()).status).toBe(201);
+    const event=decoder.decode((await reader.read()).value);
+    expect(event).toContain('event: catalog.changed');expect(event).toContain('data: {}');expect(event).not.toContain('cost');
+  }finally{await reader.cancel();}
+});
 it('editar una venta entregada solo mueve la diferencia y conserva su costo histórico',async()=>{
   const p=(await create({quantity:10})).data.product;
   const r=await sale([{variantId:p.id,quantity:2}]);expect(r.status).toBe(201);

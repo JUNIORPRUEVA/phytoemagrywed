@@ -40,6 +40,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     await sql.query('INSERT INTO fulltech_catalog_v1(id,sku,doc) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING', [p.id, doc.sku, JSON.stringify(doc)]);
   }
   let tail = Promise.resolve();
+  const listeners = new Set();
+  function changed() { for (const listener of listeners) { try { listener(); } catch {} } }
   let ordersTail = Promise.resolve();
   async function orderLock(fn) {
     const before=ordersTail;let release;ordersTail=new Promise(r=>{release=r;});await before;
@@ -55,7 +57,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       const q = client ? (text, args) => client.query(text, args) : (text, args) => sql.query(text, args);
       let started = false;
       try { await q(backend === 'postgres' ? 'BEGIN' : 'BEGIN IMMEDIATE'); started = true;
-        const result = await fn(q); await q('COMMIT'); return result; }
+        const result = await fn(q); await q('COMMIT'); changed(); return result; }
       catch (e) { if (started) await q('ROLLBACK'); throw e; }
       finally { client?.release(); }
     });
@@ -194,7 +196,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     }
     return [...new Set(issues)];
   }
-  return {list,save,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,
+  return {list,save,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,
+    subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),
     image:async id=>{
@@ -211,11 +214,12 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
 export function storeInventoryFacade(legacy, catalog) {
   if(!catalog)return legacy;
   const safely = promise => promise.catch(e=>({ok:false,error:e.code||'inventory_error',message:e.message,status:e.status||409}));
+  const legacyChange=fn=>catalog.exclusive(async()=>{const result=await fn();catalog.changed();return result;});
   return {...legacy,
-    addStock:input=>catalog.exclusive(()=>legacy.addStock(input)),
-    adjust:input=>catalog.exclusive(()=>legacy.adjust(input)),
-    countStock:input=>catalog.exclusive(()=>legacy.countStock(input)),
-    updateCost:(value,actor)=>catalog.exclusive(()=>legacy.updateCost(value,actor)),
+    addStock:input=>legacyChange(()=>legacy.addStock(input)),
+    adjust:input=>legacyChange(()=>legacy.adjust(input)),
+    countStock:input=>legacyChange(()=>legacy.countStock(input)),
+    updateCost:(value,actor)=>legacyChange(()=>legacy.updateCost(value,actor)),
     catalog:async()=>{
       const base=await legacy.catalog();
       return {...base,presentations:(await catalog.saleItems()).map(p=>({...base.presentations.find(old=>old.id===p.id),...p}))};

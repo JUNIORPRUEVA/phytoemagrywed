@@ -4,6 +4,15 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
   if(!can('orders.read'))return send(403,{ok:false,error:'forbidden'});
   if(!ctx.storeCatalog)return send(503,{ok:false,error:'catalog_unavailable',message:'El catálogo necesita almacenamiento SQL.'});
   const catalog=ctx.storeCatalog;
+  if(route==='/api/admin/store/events'&&req.method==='GET') {
+    res.writeHead(200,{'content-type':'text/event-stream; charset=utf-8','cache-control':'no-store',connection:'keep-alive','x-accel-buffering':'no'});
+    const write=()=>res.write('event: catalog.changed\ndata: {}\n\n');
+    const unsubscribe=catalog.subscribe(write);
+    res.write('event: ready\ndata: {}\n\n');
+    const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),25000);
+    req.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
+    return true;
+  }
   const match=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)(?:\/(image|stock))?$/.exec(route);
   try {
     if(match?.[2]==='image'&&req.method==='GET') {
