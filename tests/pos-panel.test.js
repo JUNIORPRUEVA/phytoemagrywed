@@ -38,10 +38,15 @@ it('sin carrito deshabilita acciones, imagen abre detalle y el nombre agrega sin
 it('permite cantidades, descuentos por línea y total, y eliminar artículos',async()=>{
   click('[data-pos-add]');click('[data-pos-add]');click('[data-pos-expand]');
   expect(w.document.querySelector('[data-pos-quantity]').textContent).toBe('2');
-  click('[data-pos-discount="0"]');fill('type','amount');fill('value','0.01');await submit();
+  expect(w.document.querySelector('.pos-stepper')).toBeNull();expect(w.document.querySelector('[data-pos-discount="0"]')).toBeNull();
+  click('[data-pos-quantity="0"]');await flush();
+  expect(w.document.querySelector('.pos-dialog').textContent).toContain('Editar artículo');
+  click('[data-pos-line-step="1"]');expect(w.document.querySelector('.pos-dialog [name=quantity]').value).toBe('3');
+  fill('quantity','2');fill('type','amount');fill('value','0.01');await submit();
   click('[data-pos-discount="total"]');fill('type','percent');fill('value','10');await submit();
   expect(w.document.querySelector('.pos-total').textContent).toContain('2,250.89');expect(w.document.querySelector('.pos-profit').textContent).toContain('1,050.39');
-  click('[data-pos-delete]');expect(w.document.querySelector('[data-pos-pay]').disabled).toBe(true);
+  click('[data-pos-quantity="0"]');await flush();click('[data-pos-line-remove]');await flush();await submit();
+  expect(w.document.querySelector('[data-pos-pay]').disabled).toBe(true);
 });
 it('recibe cliente y chat, confirma la cotización y envía el contexto y total exactos',async()=>{
   w.dispatchEvent(new w.CustomEvent('fulltech:pos-context',{detail:{customerId:'c1',conversationId:'chat1'}}));await flush();
@@ -86,14 +91,22 @@ it('acciones permite agregar una venta ocasional sin crear un producto de catál
   expect(w.document.querySelector('.pos-cart-lines').textContent).toContain('Trabajo ocasional');
   expect(requests.some(r=>r.url.endsWith('/store/products')&&r.body)).toBe(false);
 });
-it('acciones es un drawer separado, ordena venta rápida primero y no incluye gestión de tickets',()=>{
+it('acciones es un drawer separado, ordena venta rápida primero y no incluye guardar ticket ni gestión de tickets',()=>{
   click('[data-pos-actions]');const drawer=w.document.querySelector('.pos-actions-drawer');
   expect(drawer.open).toBe(true);expect(w.document.querySelector('.pos-dialog').open).toBe(false);
   expect(drawer.querySelector('nav button').hasAttribute('data-pos-manual')).toBe(true);
   expect(drawer.querySelector('nav button:nth-of-type(2)').hasAttribute('data-pos-new-ticket')).toBe(true);
+  expect(drawer.querySelector('[data-pos-save-ticket]')).toBeNull();
+  expect(drawer.querySelector('nav button:nth-of-type(3)').hasAttribute('data-pos-note')).toBe(true);
   expect(drawer.querySelector('[data-pos-tickets],[data-pos-ticket-rename],[data-pos-ticket-discard]')).toBeNull();
   expect(w.document.querySelector('#pos-client [data-pos-tickets]').textContent).toContain('Tickets');
   drawer.dispatchEvent(new w.Event('cancel',{cancelable:true}));expect(drawer.open).toBe(false);
+});
+it('la nota del pedido se edita desde acciones y se refleja en el carrito',async()=>{
+  click('[data-pos-actions]');await flush();click('[data-pos-note]');await flush();
+  expect(w.document.querySelector('.pos-dialog').textContent).toContain('Nota del pedido');
+  fill('notes','Entregar por la tarde');await submit();
+  expect(w.document.querySelector('.pos-cart-note').textContent).toContain('Entregar por la tarde');
 });
 it('los gestos de los bordes abren cada drawer y los gestos verticales o centrales no los abren',()=>{
   Object.defineProperty(w,'innerWidth',{configurable:true,value:390});w.document.querySelector('#app').hidden=false;w.document.body.dataset.tab='catalogo';

@@ -149,3 +149,53 @@ body #drawer .drawer__brand strong{font-size:.85rem;font-weight:600;line-height:
 body #drawer .drawer__brand span span{font-size:.65rem;font-weight:400;line-height:1.2}
 body #drawer .drawer__head .icon-btn{width:34px;height:34px;min-height:34px;border-radius:6px;box-shadow:none}
 @media(min-width:900px){#view-catalogo:not(.store-is-detail){column-gap:10px}#pos-root{padding-left:10px}body[data-tab=catalogo] #view-catalogo:not(.store-is-detail) .store-fab{right:380px}}
+
+/* Carrito elegante: cantidad compacta y editor de línea. */
+.pos-cart-line{align-items:center;gap:10px;padding:10px 2px;border-top:.5px solid #7186a22c}
+.pos-cart-line:first-child{border-top:0}
+.pos-line-edit{display:flex;align-items:center;gap:11px;flex:1;min-width:0;padding:2px 0;border:0;border-radius:10px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.pos-line-edit:focus-visible{outline:2px solid #5c95ff;outline-offset:2px}
+.pos-line-qty{display:grid;place-items:center;min-width:34px;height:34px;padding:0 7px;flex-shrink:0;border:.5px solid #5c95ff3d;border-radius:10px;background:#3574ef18;color:#8ab4ff;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums;transition:background .15s ease,border-color .15s ease,transform .15s ease}
+.pos-line-edit:hover .pos-line-qty,.pos-line-edit:focus-visible .pos-line-qty{background:#3574ef2b;border-color:#5c95ff70;transform:translateY(-1px)}
+.pos-line-info{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.pos-line-info strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem;font-weight:600;line-height:1.35}
+.pos-line-info small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.68rem;opacity:.62}
+.pos-line-save{display:inline-block;padding:1px 6px;border-radius:999px;background:#46b9921f;color:#5fd0a4;font-size:.62rem;font-weight:650;opacity:1}
+.pos-line-total{display:flex;align-items:center;justify-content:flex-end;min-width:78px;flex-shrink:0;text-align:right}
+.pos-line-total strong{font-size:.79rem;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pos-cart-note{display:flex;align-items:center;gap:7px;width:100%;margin:3px 0 1px;padding:7px 9px;border:0;border-radius:9px;background:#c68a191a;color:#e5b96f;font:inherit;font-size:.69rem;text-align:left;cursor:pointer}
+.pos-cart-note svg{width:15px;height:15px;flex-shrink:0}
+.pos-cart-note span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pos-cart-tools{gap:6px;padding:8px 0 0;margin-top:6px;border-top:.5px solid #7186a22c}
+.pos-cart-tools .pos-text{padding:7px 9px;border-radius:9px;background:#7186a212;color:inherit;font-size:.69rem;font-weight:550}
+.pos-cart-tools .pos-text:hover{background:#7186a225;color:#9fc1ff}
+.pos-cart-tools>button:last-child{color:#e08b86}
+.pos-cart-tools>button:last-child:hover{background:#e0685e18;color:#f0a19b}
+
+/* Editor de línea: cantidad, descuento y total en una sola tarjeta. */
+.pos-line-editor{display:flex;flex-direction:column;gap:18px}
+.pos-editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:2px 0 14px;border-bottom:.5px solid #7186a22c}
+.pos-editor-head>div{min-width:0}
+.pos-editor-head strong{display:block;font-size:.92rem;line-height:1.35;overflow-wrap:anywhere}
+.pos-editor-head small{display:block;margin-top:4px;font-size:.73rem;opacity:.6}
+#pos-line-preview{padding:6px 11px;border-radius:10px;background:#3574ef16;color:#8ab4ff;font-size:.8rem;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pos-editor-section{display:flex;flex-direction:column;gap:9px}
+.pos-editor-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;opacity:.55;font-weight:650}
+.pos-qty-control{display:flex;align-items:center;gap:8px}
+.pos-qty-control button{width:46px;height:46px;flex-shrink:0;border:.5px solid #7186a24a;border-radius:12px;background:#7186a212;color:inherit;font:inherit;font-size:22px;line-height:1;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.pos-qty-control button:hover{background:#3574ef1c;border-color:#5c95ff55}
+.pos-qty-input{flex:1;min-width:0;height:46px;padding:0 10px;border:.5px solid #7186a24a;border-radius:12px;background:#7186a20c;color:inherit;text-align:center;font:inherit;font-size:1.25rem;font-weight:700;font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield}
+.pos-qty-input::-webkit-outer-spin-button,.pos-qty-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.pos-qty-input:focus{outline:none;border-color:#5c95ff88;box-shadow:0 0 0 2px #3574ef1f}
+.pos-discount-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:10px}
+.pos-discount-grid .field{margin:0}
+.pos-discount-chips{display:flex;flex-wrap:wrap;gap:6px}
+.pos-discount-chips button{padding:5px 10px;border:.5px solid #7186a23d;border-radius:999px;background:#7186a20f;color:inherit;font:inherit;font-size:.68rem;cursor:pointer}
+.pos-discount-chips button:hover{background:#3574ef1c;border-color:#5c95ff55;color:#9fc1ff}
+.pos-editor-total{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 2px 2px;border-top:.5px solid #7186a22c;font-size:.8rem}
+.pos-editor-total strong{font-size:1.15rem;font-weight:750;font-variant-numeric:tabular-nums}
+.pos-editor-remove{display:flex;align-items:center;justify-content:center;width:100%;min-height:42px;border:.5px solid #e0685e4a;border-radius:11px;background:#e0685e12;color:#eb8d86;font:inherit;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.pos-editor-remove:hover{background:#e0685e20;border-color:#e0685e70}
+.pos-modal-form footer .btn.pos-danger{background:#b8453d;border-color:#b8453d;color:#fff}
+.pos-modal-form footer .btn.pos-danger:hover{background:#c9544b;border-color:#c9544b}
+@media(max-width:360px){.pos-discount-grid{grid-template-columns:1fr}}
