@@ -52,7 +52,8 @@ el resto del panel no cambia.
   Seleccionar todas y Eliminar chat— para no abrir otra hoja que repita la misma lista. Si la acción
   elegida abre una hoja (asignación, pedido, ficha, foto, seguimiento), **el panel se cierra antes** y
   la selección se mantiene viva tras la píldora. «Abrir conversación» suelta la selección y abre el
-  chat.
+  chat. **Marcar como finalizado archiva** la conversación (sale de la bandeja y queda en *Archivados*);
+  el hilo abierto se queda abierto para poder seguir leyendo y escribiendo.
 - **Varias conversaciones**: sólo lo que se puede hacer en lote (Seleccionar todas / Quitar la
   selección, Marcar como leídas, Archivar/Desarchivar, Mensaje a varios y Eliminar chats).
 - **Botón flotante** redondo y verde con el icono de chat, en la esquina.

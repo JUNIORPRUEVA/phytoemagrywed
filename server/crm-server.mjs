@@ -8307,7 +8307,7 @@ async function handle(req, res, ctx) {
           entity: 'conversation', entityId: conversation.id,
           action: action === 'resolve' ? 'conversation.resolved' : 'conversation.reopened',
           actor: actor?.display_name ?? null,
-          summary: action === 'resolve' ? 'Conversación marcada como finalizada' : 'Conversación reabierta',
+          summary: action === 'resolve' ? 'Conversación finalizada y archivada' : 'Conversación reabierta',
           data: { customer_id: conversation.customer_id, message_id: updated.resolved_message_id },
         });
         json(res, 200, { ok: true, conversation: updated }); return;

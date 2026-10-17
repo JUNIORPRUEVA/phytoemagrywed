@@ -512,8 +512,14 @@ describe('HOY: navegación independiente y finalizar chats', () => {
     expect($('#wa-conversations [data-conv]').dataset.conv).not.toBe(id);
     click('[data-tab="hoy"]');
     click('[data-goto="whatsapp"][data-wa-filter="sin-asignar"]');
-    await waitFor(() => $$('#wa-conversations [data-conv]').length === 2, 'los chats sin asignar');
-    click($$('#wa-conversations [data-conv-more]').find((button) => button.dataset.convMore === id));
+    await waitFor(() => $$('#wa-conversations [data-conv]').length === 1, 'sin asignar ya no incluye el finalizado');
+    /*
+     * Finalizar ARCHIVA: el chat sale de la bandeja y se encuentra en «Archivados»,
+     * desde donde se puede reabrir (que además lo desarchiva).
+     */
+    click('[data-wa-filter="archivados"]');
+    await waitFor(() => $(`#wa-conversations [data-conv="${id}"]`), 'el chat finalizado está en Archivados');
+    click($$(`#wa-conversations [data-conv-more]`).find((button) => button.dataset.convMore === id));
     expect($('#sheet-body [data-conversation-resolution]').textContent).toContain('Reabrir conversación');
     click($('#sheet-body [data-conversation-resolution]'));
     await waitFor(async () => (await (await admin('/api/admin/conversations?filter=pendientes')).json()).counts.pendientes === 2, 'reabrir recupera el pendiente');

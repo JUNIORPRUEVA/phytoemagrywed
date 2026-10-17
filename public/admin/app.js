@@ -9281,7 +9281,7 @@
               `data-conversation-resolution="${id}" data-resolved="${fila.is_resolved ? 'false' : 'true'}"`,
               ICONS.checkCircle,
               fila.is_resolved ? 'Reabrir conversación' : 'Marcar como finalizado',
-              fila.is_resolved ? 'Vuelve a pendientes de respuesta' : 'Quita Sin responder; podrás seguir escribiendo',
+              fila.is_resolved ? 'Vuelve a pendientes de respuesta' : 'Sale de la bandeja y queda archivada',
             ),
             sinLeer
               ? accion(`data-conv-act="mark_read" data-conv-id="${id}"`, ICONS.checkCircle, 'Marcar como leída', 'Quita el contador de no leídos')
@@ -13456,7 +13456,7 @@
   function conversationResolutionButton(id, resolved = false) {
     return `<button class="menu-item" data-conversation-resolution="${escapeHtml(id ?? '')}" data-resolved="${resolved ? 'false' : 'true'}" type="button">
       <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
-      <span><strong>${resolved ? 'Reabrir conversación' : 'Marcar como finalizado'}</strong><small>${resolved ? 'Volver a pendientes de respuesta' : 'Quitar de Sin responder; podrás seguir escribiendo'}</small></span>
+      <span><strong>${resolved ? 'Reabrir conversación' : 'Marcar como finalizado'}</strong><small>${resolved ? 'Vuelve a pendientes de respuesta' : 'Sale de la bandeja y queda archivada'}</small></span>
     </button>`;
   }
 
@@ -13465,9 +13465,20 @@
       try {
         await api(`/api/admin/conversations/${encodeURIComponent(id)}/${resolved ? 'resolve' : 'reopen'}`, { method: 'POST' });
         closeSheet();
+        /*
+         * FINALIZAR ARCHIVA: el chat sale de la bandeja y aparece en «Archivados».
+         * Se suelta la selección para que el panel de acciones no quede contando
+         * una fila que ya no está a la vista. El hilo abierto se queda abierto:
+         * se puede seguir leyendo y escribiendo.
+         */
+        if (resolved) state.wa.selected.delete(id);
         await load({ keepTab: true });
         if (state.tab === 'whatsapp') await refreshWhatsapp();
-        toast(resolved ? 'Chat finalizado. Puedes seguir escribiéndole.' : 'Conversación reabierta');
+        toast(
+          resolved
+            ? 'Chat finalizado y archivado. Si el cliente escribe, vuelve a la bandeja.'
+            : 'Conversación reabierta',
+        );
       } catch (error) {
         if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo actualizar la conversación');
       }

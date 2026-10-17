@@ -630,6 +630,10 @@ Dos reglas que se cumplen siempre, también desde el móvil:
   Si sale una archivada, la fila lo dice con la etiqueta **Archivado** y su estado se
   puede cambiar con «⋯» → *Desarchivar*. Al borrar el texto, vuelven a mandar los filtros
   que estuvieran puestos: buscar no cambia lo que el usuario había elegido.
+- **Finalizar archiva.** «Marcar como finalizado» deja la conversación en *Archivados* y
+  la saca de la bandeja, sin borrar nada: el hilo, el historial y el compositor siguen
+  disponibles. Reabrirla (o desarchivarla) la devuelve a la bandeja. Si el cliente vuelve
+  a escribir, las dos reglas de arriba la traen de vuelta arriba del todo.
 
 ### Reglas que no se rompen
 

@@ -1330,12 +1330,23 @@ export function createCustomerService(deps) {
     async resolveConversation(conversationId, resolved = true, userId = null) {
       const rows = await db.list('wa_messages', { by: 'created_at', order: 'desc' });
       const last = rows.find((row) => row.conversation_id === conversationId && !row.deleted_at);
+      const now = new Date().toISOString();
       return db.update('conversations', conversationId, {
-        resolved_at: resolved ? new Date().toISOString() : null,
+        resolved_at: resolved ? now : null,
         resolved_message_id: resolved ? last?.id ?? null : null,
         resolved_by_user_id: resolved ? userId : null,
         ...(resolved ? { unread_count: 0 } : {}),
-        updated_at: new Date().toISOString(),
+        /*
+         * FINALIZAR TAMBIÉN ARCHIVA: la conversación sale de la bandeja y queda en
+         * «Archivados» (se puede reabrir o desarchivar). No borra nada: el hilo y
+         * el contador se conservan. Al reabrir se desarchiva.
+         *
+         * Si el cliente vuelve a escribir, `recordInbound` limpia `archived_at` y
+         * `resolved_at`, así que el chat reaparece en la bandeja en la primera
+         * fila (la lista va por `last_message_at` descendente).
+         */
+        archived_at: resolved ? now : null,
+        updated_at: now,
       });
     },
 

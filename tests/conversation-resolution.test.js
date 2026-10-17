@@ -29,41 +29,77 @@ beforeAll(async () => {
 afterAll(async () => { await app?.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('finalizar una conversación sin bloquear el contacto', () => {
-  it('quita el chat de pendientes y sus contadores, conserva historial y registra auditoría', async () => {
+  it('quita el chat de pendientes, lo archiva, conserva historial y registra auditoría', async () => {
     expect((await json('/api/admin/conversations?filter=pendientes')).conversations).toHaveLength(1);
     const response = await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST');
     expect(response.status).toBe(200);
     const pending = await json('/api/admin/conversations?filter=pendientes');
     expect(pending.conversations).toHaveLength(0); expect(pending.counts.pendientes).toBe(0);
-    const row = (await json('/api/admin/conversations')).conversations[0];
-    expect(row.is_resolved).toBe(true); expect(row.archived_at).toBeNull();
+    // Finalizar ARCHIVA: sale de la bandeja y queda en «Archivados».
+    expect((await json('/api/admin/conversations')).conversations).toHaveLength(0);
+    const archivadas = (await json('/api/admin/conversations?filter=archivados')).conversations;
+    expect(archivadas).toHaveLength(1);
+    expect(archivadas[0].is_resolved).toBe(true);
+    expect(archivadas[0].archived_at).toBeTruthy();
     const thread = await json(`/api/admin/conversations/${conversation.id}/messages`);
     expect(thread.messages.some((message) => message.id === first.message.id)).toBe(true);
     expect(thread.canSendFreeText).toBe(true); expect(sent).toHaveLength(0);
     expect((await app.audit.list()).some((row) => row.action === 'conversation.resolved')).toBe(true);
   });
 
-  it('reabrir devuelve el pendiente, y puede finalizarse de nuevo', async () => {
+  it('reabrir devuelve el pendiente y lo saca de archivados', async () => {
     expect((await request(`/api/admin/conversations/${conversation.id}/reopen`, 'POST')).status).toBe(200);
     expect((await json('/api/admin/conversations?filter=pendientes')).conversations).toHaveLength(1);
+    expect((await json('/api/admin/conversations?filter=archivados')).conversations).toHaveLength(0);
+    const reabierta = (await json('/api/admin/conversations')).conversations[0];
+    expect(reabierta.archived_at).toBeNull(); expect(reabierta.is_resolved).toBe(false);
     await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST');
     expect((await json('/api/admin/conversations?filter=pendientes')).counts.pendientes).toBe(0);
   });
 
-  it('un webhook repetido no reabre; un mensaje entrante nuevo sí', async () => {
+  it('un webhook repetido no reabre; un mensaje entrante nuevo sí, y vuelve en la primera fila', async () => {
     expect((await inbound('wamid.resolve-first')).duplicate).toBe(true);
     expect((await json('/api/admin/conversations?filter=pendientes')).counts.pendientes).toBe(0);
-    await inbound('wamid.resolve-new');
+    expect((await json('/api/admin/conversations')).conversations).toHaveLength(0);
+    /*
+     * Otra clienta escribe DESPUÉS de la conversación archivada. Mientras la
+     * finalizada siga archivada, la más reciente es la de esta otra clienta.
+     */
+    const base = Date.now();
+    const otra = await app.customers.recordInbound({ waMessage: {
+      waMessageId: 'wamid.resolve-otra', from: '18095557892', profileName: 'Otra clienta', body: 'Buenas',
+      type: 'text', receivedAt: new Date(base).toISOString(),
+    } });
+    let bandeja = (await json('/api/admin/conversations')).conversations;
+    expect(bandeja).toHaveLength(1);
+    expect(bandeja[0].id).toBe(otra.conversation.id);
+    // Ahora vuelve a escribir la clienta finalizada: releva a la otra y sale arriba.
+    await app.customers.recordInbound({ waMessage: {
+      waMessageId: 'wamid.resolve-new', from: phone, profileName: 'Cliente finalizable', body: 'Otra consulta',
+      type: 'text', receivedAt: new Date(base + 5000).toISOString(),
+    } });
     const pending = await json('/api/admin/conversations?filter=pendientes');
-    expect(pending.conversations).toHaveLength(1); expect(pending.counts.pendientes).toBe(1);
+    expect(pending.conversations).toHaveLength(2); expect(pending.counts.pendientes).toBe(2);
+    expect(pending.conversations[0].id).toBe(conversation.id);
     expect(pending.conversations[0].is_resolved).toBe(false);
+    // Vuelve a la bandeja (no archivada) y arriba del todo.
+    bandeja = (await json('/api/admin/conversations')).conversations;
+    expect(bandeja).toHaveLength(2);
+    expect(bandeja[0].id).toBe(conversation.id);
+    expect(bandeja[0].archived_at).toBeNull();
+    expect(bandeja[0].is_resolved).toBe(false);
+    expect((await json('/api/admin/conversations?filter=archivados')).conversations).toHaveLength(0);
   });
 
   it('permite escribir después de finalizar', async () => {
     await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST');
     const response = await request(`/api/admin/conversations/${conversation.id}/messages`, 'POST', { body: 'Podemos continuar cuando quieras.', idempotencyKey: 'manual-resolution-send' });
     expect(response.status).toBe(200); expect(sent).toHaveLength(1);
-    expect((await json('/api/admin/conversations?filter=pendientes')).counts.pendientes).toBe(0);
+    // Escribir a un chat archivado no lo reabre ni lo devuelve a la bandeja.
+    const pending = await json('/api/admin/conversations?filter=pendientes');
+    expect(pending.conversations.some((row) => row.id === conversation.id)).toBe(false);
+    const archivadas = await json('/api/admin/conversations?filter=archivados');
+    expect(archivadas.conversations.some((row) => row.id === conversation.id)).toBe(true);
   });
 
   it('un agente sin acceso no puede finalizar conversaciones ajenas', async () => {
