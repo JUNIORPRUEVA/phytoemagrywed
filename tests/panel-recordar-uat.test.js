@@ -261,7 +261,7 @@ describe('los filtros y la pestaña se quedan puestos', () => {
     expect(panel.$('#view-hoy').hidden).toBe(true);
     // El filtro está puesto (y se ve: el título dice cuál).
     expect(panel.$('#wa-filters [data-wa-filter="archivados"]').getAttribute('aria-pressed')).toBe('true');
-    expect(panel.$('#mobile-header').textContent).toContain('Conversaciones · Archivados');
+    expect(panel.$('#mobile-header').textContent).toContain('Chats · Archivados');
 
     panel.click('.tab[data-tab="pedidos"]');
     expect(panel.$('#pedidos-filtros [data-order-filter="pendiente"]').getAttribute('aria-pressed')).toBe('true');
@@ -286,7 +286,7 @@ describe('los filtros y la pestaña se quedan puestos', () => {
 
     const otra = await abrirPanel({ storage: { pe_prefs: quitado } });
     expect(otra.$('#wa-filters [data-wa-filter="todos"]').getAttribute('aria-pressed')).toBe('true');
-    expect(otra.$('#mobile-header').textContent).not.toContain('Conversaciones · ');
+    expect(otra.$('#mobile-header').textContent).not.toContain('Chats · ');
     otra.cerrar();
   });
 
@@ -482,7 +482,7 @@ describe('una lista vacía por filtro recordado no es un callejón sin salida', 
     const panel = await abrirPanel({ storage: { pe_prefs: { tab: 'whatsapp', waFilter: 'archivados' } } });
     expect(panel.doc.body.dataset.tab).toBe('whatsapp');
     await waitFor(() => panel.$('#wa-conversations').textContent.includes('No hay conversaciones archivadas'), 'el aviso de lista vacía');
-    expect(panel.$('#mobile-header').textContent).toContain('Conversaciones · Archivados');
+    expect(panel.$('#mobile-header').textContent).toContain('Chats · Archivados');
 
     panel.click('[data-wa-filter-clear]');
     await waitFor(() => panel.$$('#wa-conversations [data-conv]').length === 1, 'la conversación a la vista');

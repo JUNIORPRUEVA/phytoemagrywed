@@ -22,3 +22,42 @@ En escritorio se retira la cabecera general que se superponía a la cabecera del
 La revisión ampliada de `panel-conv-list-uat.test.js` da 25 pruebas correctas y 13 fallos sobre ventanas, plantillas y envío. Al reconstruir el HTML con las acciones en su posición anterior y sin la nueva hoja de distribución se repiten esos 13 fallos. Una comprobación aislada con la lógica anterior de visibilidad de la barra también reproduce el timeout de NEW_CONTACT. Entre las diferencias aparecen la plantilla esperada `phyto_followup_checkin` frente a `phyto_mensaje_personalizado_v1` y rechazos por número de parámetros. Se conserva esa lógica de negocio para resolverla por separado. También existe una aserción antigua de texto en `panel-whatsapp.test.js` que busca «Nada se envía solo.», texto que el panel actual ya no contiene.
 
 Los cambios siguen siendo locales, sin despliegue. Vista previa UAT: http://127.0.0.1:8792/admin/?v=whatsapp.
+
+## Lista de chats con el aspecto de WhatsApp (2026-10-17)
+
+La bandeja se rediseñó para que se vea como la lista de chats de WhatsApp. La piel vive en
+`public/admin/wa-lista.css`, que se carga **la última** y solo actúa sobre `body[data-tab='whatsapp']`;
+el resto del panel no cambia.
+
+- **Filas de 72 px de lado a lado**, sin tarjetas ni bordes redondeados. Separador de 1 px que empieza
+  donde termina el avatar (78 px), para que el texto quede alineado.
+- **Avatar redondo de 49 px** a la izquierda: la foto del cliente si la tiene y, si no, sus iniciales
+  sobre un color fijo por cliente (`waAvatarTone()` en `app.js`, suma del id: siempre el mismo color).
+  Al seleccionar, el visto tapa el avatar, como en WhatsApp.
+- **Dos líneas**: nombre (16,5 px) y hora arriba; último mensaje (14 px) y contador de no leídos abajo.
+  La hora usa el formato de WhatsApp: la hora si es de hoy, «Ayer», el día de la semana dentro de la
+  semana y `dd/mm/aaaa` para lo antiguo.
+- **Contador verde** de 20 px de alto; en la fila no se pintan las etiquetas de gestión (asignación,
+  etapa, pedido): siguen en el DOM y en el menú «⋯», pero no ocupan línea.
+- **Barra superior** blanca (gris oscuro en tema oscuro) con el título «Chats» e iconos de buscar y
+  filtrar. Al seleccionar conversaciones, la barra verde de selección **sustituye** a la cabecera
+  (`body[data-wa-selection='1']`), sin apilar dos barras.
+- **Botón flotante** redondo y verde con el icono de chat, en la esquina.
+- En escritorio, la columna lleva título «Chats», buscador en píldora y filtros en una sola fila
+  deslizable; el «⋯» de cada fila solo aparece al pasar el ratón o al enfocar.
+
+Comprobado en navegador a 430×900, 360×640, 320×568, 1280×800 y en tema oscuro: filas de 72 px, sin
+desbordes horizontales, y abrir conversación, volver y la pulsación larga (selección) siguen igual.
+
+### Foto del cliente (por qué a veces se ven iniciales)
+
+La fila usa la foto del cliente **si la tiene guardada** (`photo_url`); si no, pinta sus iniciales sobre
+un color fijo. WhatsApp **no entrega la foto de perfil de los contactos por su API** (verificado: el
+webhook solo trae el nombre y no existe endpoint de foto de contacto), así que la foto la sube el equipo:
+
+- En la lista: menú «⋯» de la conversación → **Poner foto / Cambiar foto**.
+- En el chat: el avatar de la cabecera lleva una pestaña de cámara cuando no hay foto; al tocarlo se abre
+  la ficha, donde está **Poner foto** (o **Cambiar foto** / **Quitar foto** si ya la tiene).
+- La imagen se reduce a 192 px antes de guardarse y se ve en la lista, en la cabecera del chat y en la ficha.
+
+

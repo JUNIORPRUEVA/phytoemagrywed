@@ -375,17 +375,17 @@ afterAll(async () => {
 });
 
 describe('la fila de la lista', () => {
-  it('muestra Hoy + hora del último mensaje', () => {
+  it('muestra la hora del último mensaje cuando es de hoy (como WhatsApp)', () => {
     const row = $(`[data-conv="${ids.ana}"]`);
     const stamps = row.querySelector('.conv__stamps');
     const when = stamps.querySelector('.conv__when');
-    expect(when.textContent).toMatch(/^Hoy · \d{1,2}:\d{2} (AM|PM)$/);
+    expect(when.textContent).toMatch(/^\d{1,2}:\d{2} (AM|PM)$/);
     expect(stamps.getAttribute('title')).toMatch(/\d{1,2}:\d{2}/);
   });
 
-  it('muestra Ayer + hora del último mensaje', () => {
+  it('muestra «Ayer» cuando el último mensaje fue ayer (sin la hora)', () => {
     const row = $(`[data-conv="${ids.luis}"]`);
-    expect(row.querySelector('.conv__when').textContent).toMatch(/^Ayer · \d{1,2}:\d{2} (AM|PM)$/);
+    expect(row.querySelector('.conv__when').textContent).toBe('Ayer');
   });
 
   it('muestra fecha corta para conversaciones antiguas', () => {
@@ -1071,15 +1071,19 @@ describe('la foto del cliente', () => {
     expect((await clienteDe(PHONES.ana))?.photo_url).toBe(FOTO);
   });
 
-  it('la foto aparece en la cabecera del chat y en la ficha, NO en la lista', async () => {
+  it('la foto aparece en la cabecera del chat, en la lista y en la ficha', async () => {
     click('[data-wa-filter="todos"]');
     await waitFor(() => $(`[data-conv="${ids.ana}"]`), 'la fila de la conversación', 9000);
     /*
-     * La lista YA NO pinta fotos: lo que se lee es el nombre y lo último que dijo,
-     * y el cuadro de la izquierda solo vuelve al SELECCIONAR (con el visto). La foto
-     * vive donde de verdad se mira: la cabecera del chat y la ficha del cliente.
+     * La lista es la de WhatsApp: el avatar redondo va delante del nombre y usa la
+     * foto del cliente cuando la tiene (si no, las iniciales sobre un color fijo).
      */
-    expect($(`[data-conv="${ids.ana}"] .conv__avatar`)).toBeNull();
+    const enLista = await waitFor(
+      () => $(`[data-conv="${ids.ana}"] .conv__avatar img`),
+      'la foto del cliente como avatar de la fila',
+      9000,
+    );
+    expect(enLista.getAttribute('src')).toBe(FOTO);
 
     click(`[data-conv="${ids.ana}"]`);
     const enCabecera = await waitFor(() => $('#wa-chat-avatar img'), 'la foto en la cabecera del chat', 9000);
@@ -1139,9 +1143,8 @@ describe('la lista que se pinta es la nueva', () => {
     expect(css).toContain('.wa__list-head[hidden]');
     expect(css).toContain('.wa__convs--sel .conv__more');
     /*
-     * La lista se lee: sin foto en la fila y la fila ENTERA es la tarjeta (el «⋯»
-     * queda dentro, con su fondo). Agregar cliente es un botón FLOTANTE redondo,
-     * solo el icono (estilo AppSheet), en la esquina.
+     * La fila ENTERA es la tarjeta (el «⋯» queda dentro). Agregar cliente es un
+     * botón FLOTANTE redondo, solo el icono, en la esquina.
      */
     expect(app_js).not.toContain('conv__avatar--profile');
     expect(css).toContain('.conv-wrap:has(.conv--active)');
@@ -1150,6 +1153,24 @@ describe('la lista que se pinta es la nueva', () => {
     expect(html).not.toContain('wa-new-chat__label');
     expect(css).toContain('.wa-bulk__btn');
     expect(app_js).toContain('wa-bulk__btn');
+  });
+
+  it('la lista tiene la piel de WhatsApp (avatar, dos líneas, contador verde)', () => {
+    const wa = readFileSync(path.join(ADMIN_DIR, 'wa-lista.css'), 'utf8');
+    // La hoja va la última y solo toca la pantalla de chats.
+    expect(html).toContain('/admin/wa-lista.css');
+    expect(wa).toContain("body[data-tab='whatsapp']");
+    // Medidas de WhatsApp: fila 72, avatar 49, nombre 16,5 y vista previa 14.
+    expect(wa).toContain('min-height: 72px');
+    expect(wa).toContain('width: 49px');
+    expect(wa).toContain('font-size: 16.5px');
+    expect(wa).toContain('font-size: 14px');
+    // El contador de no leídos es verde y redondo, y las etiquetas de gestión no
+    // ocupan línea en la fila.
+    expect(wa).toContain('background: var(--wa-accent)');
+    expect(wa).toContain('.conv__flags');
+    expect(app_js).toContain('conv__avatar');
+    expect(app_js).toContain('waAvatarTone');
   });
 
   it('la barra de selección vive en la cabecera de la lista', () => {

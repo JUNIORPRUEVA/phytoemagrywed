@@ -2121,7 +2121,7 @@
       box.innerHTML = `<div class="wa-appbar">
         <button class="wa-appbar__back" ${inChat ? 'data-wa-chat-back' : 'data-simple-back'} type="button" aria-label="${inChat ? 'Volver a conversaciones' : 'Regresar'}">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>Conversaciones${filtroPuesto(state.wa.filter, WA_FILTERS)}</strong>
+          <strong>Chats${filtroPuesto(state.wa.filter, WA_FILTERS)}</strong>
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-wa-search-open type="button" aria-label="Buscar conversación">${ICONS.search}</button>
@@ -8638,6 +8638,21 @@
     PERDIDO: 'Perdido',
   };
 
+  /*
+   * COLOR DEL AVATAR (como WhatsApp).
+   *
+   * Un contacto sin foto se pinta con sus iniciales sobre un color de una paleta
+   * corta. El color se elige con una suma del id del cliente, así que SIEMPRE es
+   * el mismo para la misma persona y no cambia cuando se reordena la lista.
+   */
+  const WA_AVATAR_TONES = ['#0a7c66', '#1f7a8c', '#4a6fa5', '#7b5ea7', '#a4557a', '#a56a2c', '#5c7a29', '#37597a'];
+  function waAvatarTone(seed) {
+    const texto = String(seed ?? '');
+    let suma = 0;
+    for (let i = 0; i < texto.length; i += 1) suma = (suma * 31 + texto.charCodeAt(i)) % 1000003;
+    return WA_AVATAR_TONES[suma % WA_AVATAR_TONES.length];
+  }
+
   /** Iniciales para el avatar cuando no hay foto de perfil. */
   const waInitials = (value) => {
     const parts = String(value ?? '').trim().split(/\s+/).filter(Boolean);
@@ -8899,13 +8914,18 @@
     const today = todayISO();
     const diff = daysBetweenISO(today, messageDay);
     const time = formatWaTime(date);
+    /*
+     * Sello EXACTAMENTE como WhatsApp: la hora solo cuando es de hoy, «Ayer» al
+     * día siguiente, el día de la semana dentro de la semana y la fecha corta
+     * para lo antiguo. Menos texto = el nombre respira.
+     */
     const label =
       diff === 0
-        ? `Hoy · ${time}`
+        ? time
         : diff === 1
-          ? `Ayer · ${time}`
+          ? 'Ayer'
           : diff > 1 && diff < 7
-            ? `${shortWeekday(date)} · ${time}`
+            ? shortWeekday(date)
             : formatShortDate(messageDay);
     return {
       label,
@@ -9106,21 +9126,25 @@
         : '';
     const selected = state.wa.selected.has(row.id);
     const sello = waLastMessageStamp(row.last_message_at);
+    /*
+     * FOTO DEL CONTACTO, como WhatsApp: redonda y a la izquierda. Si el cliente
+     * todavía no tiene foto, se pintan sus iniciales sobre un color fijo. Al
+     * seleccionar, la foto se sustituye por el visto (el gesto de WhatsApp).
+     */
+    const foto = customerPhotoUrl(customer);
+    const tono = waAvatarTone(row.customer_id || nombre);
     return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}" data-conversation-row="${escapeHtml(row.id)}">
       <button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${unread ? 'conv--unread' : ''}" data-conv="${escapeHtml(
         row.id,
       )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
-        ${
-          /*
-           * SIN FOTO EN LA LISTA: lo que se lee es el nombre y lo último que dijo.
-           * El cuadro de la izquierda solo vuelve al SELECCIONAR (con el visto), que
-           * es la única razón para tener algo ahí; la foto vive en la cabecera del
-           * chat y en la ficha del cliente, que es donde de verdad se mira.
-           */
-          selected
-            ? `<span class="avatar conv__avatar conv__avatar--sel" aria-hidden="true">${ICONS.check}</span>`
-            : ''
-        }
+        <span class="conv__avatar" style="--conv-tone: ${tono}" aria-hidden="true">
+          ${
+            foto
+              ? `<img class="conv__avatar-photo" src="${escapeHtml(foto)}" alt="" loading="lazy" decoding="async" />`
+              : `<span class="conv__avatar-initials">${escapeHtml(waInitials(nombre))}</span>`
+          }
+          ${selected ? `<span class="conv__avatar-check">${ICONS.check}</span>` : ''}
+        </span>
         <span class="conv__body">
           <span class="conv__line conv__line--top">
             <span class="conv__name">${escapeHtml(nombre)}</span>
@@ -9221,6 +9245,11 @@
     }
     if (seleccionando) state.wa.filtersOpen = false;
     document.body.dataset.waFilters = state.wa.filtersOpen ? 'open' : 'closed';
+    /*
+     * En el móvil la barra de selección SUSTITUYE a la barra de arriba (como en
+     * WhatsApp): no se apilan dos cabeceras. El CSS esconde una y muestra la otra.
+     */
+    document.body.dataset.waSelection = seleccionando ? '1' : '0';
     const head = $('.wa__list-head');
     if (head) head.hidden = seleccionando;
     const chips = $('#wa-filters');
@@ -9256,6 +9285,9 @@
         ${customerId ? `<button class="menu-item menu-item--submenu" data-conv-client-menu="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
           <span><strong>Cliente</strong><small>Ficha, etapa y etiquetas</small></span></button>
+        <button class="menu-item" data-customer="${customerKey}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.image}</span>
+          <span><strong>${customerPhotoUrl(customer) ? 'Cambiar foto' : 'Poner foto'}</strong><small>Se ve en la lista y en el chat</small></span></button>
         <button class="menu-item menu-item--submenu" data-conv-followup-menu="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
           <span><strong>Seguimiento</strong><small>Tareas y mensajes programados</small></span></button>` : ''}
@@ -10589,12 +10621,21 @@
     if (avatar) {
       const photo = customerPhotoUrl(customer);
       setAvatarContent(avatar, customer, (customer?.name ?? '').trim() || customer?.phone_e164);
-      avatar.hidden = !photo;
+      /*
+       * El avatar se ve SIEMPRE, como en WhatsApp: con foto si la hay y, si no,
+       * con las iniciales y una pista de cámara que lleva a ponerle foto.
+       */
+      avatar.hidden = !customer?.id;
+      avatar.classList.toggle('wa__chat-avatar--empty', Boolean(customer?.id) && !photo);
       avatar.dataset.customer = customer?.id ?? '';
       avatar.disabled = !customer?.id;
       avatar.setAttribute(
         'aria-label',
-        customer?.id ? `Ver perfil de ${((customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente')}` : 'Perfil del cliente',
+        customer?.id
+          ? `Ver perfil de ${((customer?.name ?? '').trim() || customer?.phone_e164 || 'cliente')}${
+              photo ? '' : '. Sin foto: puedes ponerle una desde su ficha'
+            }`
+          : 'Perfil del cliente',
       );
     }
     const searchBar = $('#wa-thread-searchbar');

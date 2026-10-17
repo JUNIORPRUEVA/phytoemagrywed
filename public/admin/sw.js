@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v119-chat-finalizar';
+const VERSION = 'crm-v122-lista-whatsapp';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -49,6 +49,7 @@ const SHELL = [
   '/admin/vendor/proofreading/es-DO.aff',
   '/admin/vendor/proofreading/es-DO.dic',
   '/admin/shell-v2-tema.css',
+  '/admin/wa-lista.css',
   '/admin/app.js',
   '/admin/offline-storage.js',
   '/admin/offline.js',

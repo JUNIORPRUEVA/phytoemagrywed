@@ -1,0 +1,642 @@
+/*
+ * LISTA DE CHATS — piel de WhatsApp.
+ *
+ * Se carga al FINAL de todas las hojas de estilo del panel, así que manda sobre
+ * ellas. Solo toca la pantalla de chats (`body[data-tab='whatsapp']`): el resto
+ * del CRM no cambia.
+ *
+ * QUÉ HACE
+ *   - Barra superior blanca (o gris oscuro en tema oscuro) con el título «Chats».
+ *   - Filas de 72 px de lado a lado, con avatar redondo, nombre, hora, último
+ *     mensaje y contador verde. Sin etiquetas de colores: la información de
+ *     gestión (asignación, etapa, pedido) vive en el «⋯» y en la cabecera del
+ *     chat, que es donde se trabaja.
+ *   - Separador fino que empieza donde termina el avatar (como WhatsApp).
+ *   - Botón «Agregar cliente» redondo, verde, en la esquina.
+ *
+ * MEDIDAS (las de WhatsApp): avatar 49 px, fila 72 px, hueco avatar/texto 13 px,
+ * separador desde 78 px, nombre 16,5 px, vista previa 14 px, hora 12 px.
+ */
+
+body[data-tab='whatsapp'] {
+  --wa-page: #ffffff;
+  --wa-row: #ffffff;
+  --wa-row-hover: #f5f6f6;
+  --wa-row-active: #f0f2f5;
+  --wa-ink: #111b21;
+  --wa-ink-soft: #667781;
+  --wa-line: #e9edef;
+  --wa-accent: #25d366;
+  --wa-accent-ink: #1da851;
+  --wa-teal: #00a884;
+  --wa-appbar-bg: #ffffff;
+  --wa-icon: #54656f;
+  --wa-chip-bg: #f0f2f5;
+  --wa-chip-on-bg: #d9fdd3;
+  --wa-chip-on-ink: #0b3d2c;
+}
+
+:root[data-theme='dark'] body[data-tab='whatsapp'] {
+  --wa-page: #0b141a;
+  --wa-row: #111b21;
+  --wa-row-hover: #182229;
+  --wa-row-active: #202c33;
+  --wa-ink: #e9edef;
+  --wa-ink-soft: #8696a0;
+  --wa-line: #222d34;
+  --wa-accent: #00d95f;
+  --wa-accent-ink: #00d95f;
+  --wa-teal: #00a884;
+  --wa-appbar-bg: #202c33;
+  --wa-icon: #aebac1;
+  --wa-chip-bg: #202c33;
+  --wa-chip-on-bg: #005c4b;
+  --wa-chip-on-ink: #d9fdd3;
+}
+
+/* ------------------------------------------------ barra superior (app bar) */
+body[data-tab='whatsapp'] .mobile-header,
+body[data-tab='whatsapp'] .wa-appbar {
+  background: var(--wa-appbar-bg);
+}
+
+body[data-tab='whatsapp'] .wa-appbar {
+  min-height: 56px;
+  gap: 4px;
+  padding: calc(4px + env(safe-area-inset-top, 0px)) 8px 4px 6px;
+  border-bottom: 0;
+  color: var(--wa-ink);
+  box-shadow: 0 1px 0 var(--wa-line);
+}
+
+body[data-tab='whatsapp'] .wa-appbar__title strong {
+  color: var(--wa-ink);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+
+body[data-tab='whatsapp'] .wa-appbar__title span {
+  color: var(--wa-ink-soft);
+  font-weight: 500;
+}
+
+body[data-tab='whatsapp'] .wa-appbar__back,
+body[data-tab='whatsapp'] .wa-appbar__icon {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--wa-icon);
+  box-shadow: none;
+}
+
+body[data-tab='whatsapp'] .wa-appbar__back:active,
+body[data-tab='whatsapp'] .wa-appbar__icon:active {
+  background: rgba(11, 20, 26, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+body[data-tab='whatsapp'] .wa-appbar__search {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--wa-chip-bg);
+  color: var(--wa-ink);
+}
+
+/* ------------------------------------------------------------- la lista */
+body[data-tab='whatsapp'],
+body[data-tab='whatsapp'] .content,
+body[data-tab='whatsapp'] #view-whatsapp,
+body[data-tab='whatsapp'] .wa,
+body[data-tab='whatsapp'] .wa__list {
+  background: var(--wa-page);
+}
+
+body[data-tab='whatsapp'] #wa-conversations {
+  display: grid;
+  grid-auto-rows: min-content;
+  gap: 0;
+  padding: 0 var(--safe-right, 0px) calc(88px + env(safe-area-inset-bottom, 0px)) var(--safe-left, 0px);
+  background: var(--wa-page);
+}
+
+body[data-tab='whatsapp'] #wa-conversations > .conv-wrap {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 72px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--wa-row);
+  box-shadow: none;
+}
+
+/* Separador que arranca donde acaba el avatar (16 + 49 + 13 = 78 px). */
+body[data-tab='whatsapp'] #wa-conversations > .conv-wrap::after {
+  content: '';
+  position: absolute;
+  left: 78px;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--wa-line);
+  pointer-events: none;
+}
+
+body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:last-child::after {
+  display: none;
+}
+
+/* La fila entera es el botón, con el avatar delante del texto. */
+body[data-tab='whatsapp'] .conv,
+body[data-tab='whatsapp'] .conv:has(.conv__avatar) {
+  display: grid;
+  grid-template-columns: 49px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 13px;
+  min-height: 72px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+body[data-tab='whatsapp'] .conv:hover,
+body[data-tab='whatsapp'] .conv--active,
+body[data-tab='whatsapp'] .conv--active:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-tab='whatsapp'] .conv-wrap:hover {
+  background: var(--wa-row-hover);
+}
+
+body[data-tab='whatsapp'] .conv-wrap--selected,
+body[data-tab='whatsapp'] .conv-wrap:has(.conv--active) {
+  background: var(--wa-row-active);
+}
+
+/* La marca azul de la izquierda de antes estorba: el fondo ya lo dice. */
+body[data-tab='whatsapp'] .conv-wrap:has(.conv--active)::after {
+  content: '';
+  left: 78px;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: auto;
+  height: 1px;
+  background: var(--wa-line);
+}
+
+/* El título «Chats» de la columna solo se ve en el escritorio. */
+body[data-tab='whatsapp'] .wa__list-title {
+  display: none;
+}
+
+/* --------------------------------------------------------------- avatar */
+body[data-tab='whatsapp'] .conv__avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 49px;
+  height: 49px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--conv-tone, var(--wa-teal));
+  color: #fff;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+
+body[data-tab='whatsapp'] .conv__avatar-initials {
+  display: block;
+  transform: translateY(1px);
+}
+
+body[data-tab='whatsapp'] .conv__avatar-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Seleccionada: el visto tapa el avatar, como en WhatsApp. */
+body[data-tab='whatsapp'] .conv__avatar-check {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--wa-teal);
+}
+
+body[data-tab='whatsapp'] .conv__avatar-check .svg {
+  width: 26px;
+  height: 26px;
+  color: #fff;
+}
+
+/* --------------------------------------------------------------- textos */
+body[data-tab='whatsapp'] .conv__body {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+body[data-tab='whatsapp'] .conv__line {
+  gap: 8px;
+}
+
+body[data-tab='whatsapp'] .conv__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wa-ink);
+  font-size: 16.5px;
+  font-weight: 400;
+  line-height: 1.28;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv--unread .conv__name {
+  font-weight: 600;
+}
+
+body[data-tab='whatsapp'] .conv__stamps {
+  flex: 0 0 auto;
+  max-width: 96px;
+  padding: 0;
+}
+
+body[data-tab='whatsapp'] .conv__when {
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--wa-ink-soft);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv--unread .conv__when {
+  color: var(--wa-accent-ink);
+  font-weight: 600;
+}
+
+body[data-tab='whatsapp'] .conv__preview {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wa-ink-soft);
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv__preview > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv__kind {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--wa-ink-soft);
+}
+
+body[data-tab='whatsapp'] .conv__kind .svg {
+  width: 15px;
+  height: 15px;
+}
+
+/*
+ * Las etiquetas de gestión (asignación, etapa, pedido, seguimiento) NO se pintan
+ * en la fila: WhatsApp no las tiene y robaban el sitio al último mensaje. Siguen
+ * en el DOM (las usa el «⋯» y la cabecera del chat), solo que sin ocupar línea.
+ */
+body[data-tab='whatsapp'] .conv__flags {
+  display: none;
+}
+
+/* Contador de no leídos: círculo verde, sin campana ni borde. */
+body[data-tab='whatsapp'] .conv__unread {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--wa-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: none;
+}
+
+body[data-tab='whatsapp'] .conv__unread .svg {
+  display: none;
+}
+
+/* --------------------------------------------------- «⋯» solo en escritorio */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'] .conv__more {
+    display: none;
+  }
+}
+
+@media (min-width: 980px) {
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap {
+    grid-template-columns: minmax(0, 1fr) 36px;
+  }
+
+  body[data-tab='whatsapp'] .conv__more {
+    width: 36px;
+    height: 72px;
+    opacity: 0;
+    color: var(--wa-ink-soft);
+    transition: opacity 120ms ease;
+  }
+
+  body[data-tab='whatsapp'] .conv-wrap:hover .conv__more,
+  body[data-tab='whatsapp'] .conv-wrap:focus-within .conv__more {
+    opacity: 1;
+  }
+
+  body[data-tab='whatsapp'] .conv__more:hover,
+  body[data-tab='whatsapp'] .conv__more:focus-visible {
+    background: rgba(11, 20, 26, 0.06);
+    color: var(--wa-ink);
+    opacity: 1;
+  }
+
+  body[data-tab='whatsapp'] .conv__more-icon {
+    filter: none;
+    opacity: 0.65;
+  }
+
+  body[data-tab='whatsapp'] .wa__list {
+    border-right: 1px solid var(--wa-line);
+  }
+
+  /* Buscador y filtros del escritorio, en píldora como WhatsApp Web. */
+  body[data-tab='whatsapp'] .wa__list-head {
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-areas:
+      'home title'
+      'search search';
+    gap: 4px 8px;
+    padding: 10px 14px 6px;
+  }
+
+  body[data-tab='whatsapp'] .wa__home {
+    grid-area: home;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--wa-icon);
+  }
+
+  body[data-tab='whatsapp'] .wa__list-title {
+    grid-area: title;
+    display: block;
+    align-self: center;
+    color: var(--wa-ink);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+  }
+
+  body[data-tab='whatsapp'] .wa__search {
+    grid-area: search;
+    min-height: 38px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--wa-chip-bg);
+    color: var(--wa-ink);
+    font-size: 14.5px;
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] .wa__search::placeholder {
+    color: var(--wa-ink-soft);
+  }
+
+  body[data-tab='whatsapp'] #wa-filters {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 8px;
+    min-height: 38px;
+    max-height: none;
+    padding: 2px 14px 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters::-webkit-scrollbar {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip {
+    flex: 0 0 auto;
+    min-height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--wa-chip-bg);
+    color: var(--wa-ink);
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip[aria-pressed='true'] {
+    background: var(--wa-chip-on-bg);
+    color: var(--wa-chip-on-ink);
+  }
+}
+
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__more-icon {
+  filter: invert(1);
+}
+
+/* ---------------------------------------- avatar de la cabecera del chat */
+/*
+ * El avatar del chat se ve siempre. Cuando el cliente todavía no tiene foto, una
+ * pestaña de cámara sobre el avatar avisa de que se le puede poner una (se toca
+ * y se abre su ficha, donde está «Poner foto»).
+ */
+body[data-tab='whatsapp'] .wa__chat-avatar {
+  position: relative;
+  overflow: visible;
+}
+
+/* La foto se recorta en círculo aunque el avatar deje salir la pestaña. */
+body[data-tab='whatsapp'] .wa__chat-avatar img {
+  border-radius: 50%;
+}
+
+/* En móvil el avatar del chat también se ve (WhatsApp lo muestra). */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-avatar {
+    display: grid;
+  }
+}
+
+body[data-tab='whatsapp'] .wa__chat-avatar--empty::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--wa-appbar-bg);
+  border-radius: 50%;
+  background-color: var(--wa-teal);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/><circle cx='12' cy='13' r='4'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 11px 11px;
+}
+
+/* ------------------------------------------ filtros (panel lateral en móvil) */
+/*
+ * El panel de filtros mantiene su sitio (se abre con el icono de filtrar), pero
+ * con la piel de WhatsApp: fondo de la lista, píldoras grises y la elegida en
+ * verde claro con texto verde oscuro.
+ */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'] #wa-filters {
+    border-left: 1px solid var(--wa-line);
+    border-radius: 16px 0 0 16px;
+    background: var(--wa-page);
+    box-shadow: -18px 0 40px rgba(11, 20, 26, 0.18);
+  }
+
+  body[data-tab='whatsapp'] .wa-filter-panel__head {
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--wa-line);
+  }
+
+  body[data-tab='whatsapp'] .wa-filter-panel__head strong {
+    color: var(--wa-ink);
+  }
+
+  body[data-tab='whatsapp'] .wa-filter-panel__head small {
+    color: var(--wa-ink-soft);
+  }
+
+  body[data-tab='whatsapp'] .wa-filter-panel__close {
+    border: 0;
+    background: transparent;
+    color: var(--wa-icon);
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip {
+    min-height: 38px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--wa-chip-bg);
+    color: var(--wa-ink);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip[aria-pressed='true'] {
+    background: var(--wa-chip-on-bg);
+    color: var(--wa-chip-on-ink);
+    font-weight: 600;
+  }
+}
+
+/* ------------------------------------------------ barra de selección verde */
+/*
+ * Con una o varias conversaciones elegidas, la barra verde OCUPA el sitio de la
+ * cabecera (una sola barra, como WhatsApp), no se apila debajo.
+ */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'][data-wa-selection='1'] .mobile-header {
+    display: none;
+  }
+}
+
+body[data-tab='whatsapp'] .wa-bulk {
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 8px 10px;
+  border-bottom: 0;
+  background: var(--wa-teal);
+  color: #fff;
+  backdrop-filter: none;
+}
+
+body[data-tab='whatsapp'] .wa-bulk__count,
+body[data-tab='whatsapp'] .wa-bulk__x,
+body[data-tab='whatsapp'] .wa-bulk__btn {
+  color: #fff;
+}
+
+body[data-tab='whatsapp'] .wa-bulk__x:hover,
+body[data-tab='whatsapp'] .wa-bulk__btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+body[data-tab='whatsapp'] .wa-bulk__btn--danger {
+  color: #ffe9e9;
+}
+
+/* ------------------------------------- botón «Agregar cliente» tipo WhatsApp */
+body[data-tab='whatsapp'] .wa-new-chat {
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--wa-teal);
+  box-shadow: 0 4px 12px rgba(11, 20, 26, 0.28);
+}
+
+body[data-tab='whatsapp'] .wa-new-chat:hover,
+body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
+  background: #06cf9c;
+  box-shadow: 0 6px 16px rgba(11, 20, 26, 0.32);
+}
+
+body[data-tab='whatsapp'] .wa-new-chat__icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #fff;
+}
+
+body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.9;
+}

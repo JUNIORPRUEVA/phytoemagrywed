@@ -70,6 +70,11 @@
     <link rel="stylesheet" href="/admin/proofreading.css?v=7" />
     <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
     <link rel="stylesheet" href="/admin/composer-mobile.css?v=1" />
+    <!--
+      La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
+      sobre la geometría y los colores de esa pantalla.
+    -->
+    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-4" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -298,6 +303,7 @@
                 <button class="wa__home" data-simple-back type="button" aria-label="Volver a Hoy">
                   <span class="ico" aria-hidden="true" data-icon="back"></span>
                 </button>
+                <span class="wa__list-title" aria-hidden="true">Chats</span>
                 <input
                   class="field__input wa__search"
                   id="wa-search"
@@ -315,7 +321,7 @@
                 como el resto de acciones rápidas.
               -->
               <button class="wa-new-chat" id="wa-new-chat" type="button" aria-label="Agregar cliente para WhatsApp" title="Agregar cliente">
-                <img class="wa-new-chat__icon" src="/admin/icon-add-contact.png" alt="" aria-hidden="true" width="28" height="28" />
+                <span class="ico wa-new-chat__icon" aria-hidden="true" data-icon="chat"></span>
               </button>
             </div>
 
@@ -872,7 +878,7 @@
     <script src="/admin/offline-ui.js?v=1" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=chat-finalizar-117" defer></script>
+    <script src="/admin/app.js?v=wa-lista-119" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <script src="/admin/proofreading.js?v=7" defer></script>
     <script src="/admin/deepseek-settings.js?v=2" defer></script>
