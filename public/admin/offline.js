@@ -2,9 +2,9 @@
 (() => {
   'use strict';
   const db=window.FulltechOfflineStore, network=window.fetch.bind(window), DAY=86400000;
-  let identity=null,warming=null,syncing=null,epoch=0,localTail=Promise.resolve();
-  const ready=db.get('identity').then(value=>{identity=value||null;}).catch(()=>{});
-  const valid=()=>!!identity&&Date.now()-identity.verifiedAt<=DAY;
+  let identity=null,warming=null,syncing=null,epoch=0,localTail=Promise.resolve(),storageAvailable=true;
+  const ready=db.get('identity').then(value=>{identity=value||null;}).catch(()=>{storageAvailable=false;});
+  const valid=()=>storageAvailable&&!!identity&&Date.now()-identity.verifiedAt<=DAY;
   const owner=()=>identity?.key;
   const responseKey=url=>'response:'+owner()+':'+new URL(url,location.href).href;
   const queueKey=()=> 'queue:'+owner();
@@ -16,6 +16,8 @@
   function signal(){window.dispatchEvent(new Event('fulltech:offline-status'));}
   async function identify(payload){
     await localTail.catch(()=>{});
+    if(!storageAvailable)return;
+    try{
     const auth=payload.auth||payload;
     if(!auth.user&&!auth.legacy)return;
     const key=JSON.stringify([auth.user?.id||'LEGACY_PANEL',auth.user?.role||'ADMIN',auth.permissions||[]]);
@@ -34,13 +36,14 @@
     await db.put('identity',identity).catch(()=>signal());
     navigator.serviceWorker?.controller?.postMessage({type:'FULLTECH_OFFLINE_IDENTITY'});
     signal();
+    }catch{storageAvailable=false;identity=null;await db.remove('identity').catch(()=>{});signal();}
   }
   async function forget(){
     await localTail.catch(()=>{});
     epoch++;
-    if(identity)await db.put('legacyQueue:'+identity.key,{queue:localStorage.getItem('pe_crm_outbox'),problems:localStorage.getItem('pe_crm_outbox_problems')}).catch(()=>{});
-    identity=null;await db.remove('identity');
-    for(const key of ['pe_crm_snapshot','pe_crm_outbox','pe_crm_outbox_problems','fulltech.offline.legacy-owner'])localStorage.removeItem(key);
+    try{if(identity)await db.put('legacyQueue:'+identity.key,{queue:localStorage.getItem('pe_crm_outbox'),problems:localStorage.getItem('pe_crm_outbox_problems')}).catch(()=>{});}catch{}
+    identity=null;await db.remove('identity').catch(()=>{});
+    try{for(const key of ['pe_crm_snapshot','pe_crm_outbox','pe_crm_outbox_problems','fulltech.offline.legacy-owner'])localStorage.removeItem(key);}catch{}
     signal();
   }
   async function remember(url,response,remote=false){
@@ -385,9 +388,9 @@
   async function warm(force=false){
     if(warming)return warming;
     if(!navigator.onLine||!valid())return;
-    if((await listQueue()).length)return;
-    try{if(JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length)return;}catch{}
     warming=(async()=>{
+      if((await listQueue()).length)return;
+      try{if(JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length)return;}catch{}
       const mine=owner(),todo=ROOTS.map(p=>'/api/admin/'+p),seen=new Set();let completed=0,failed=0;
       await navigator.storage?.persist?.().catch(()=>{});
       while(todo.length&&mine===owner()&&navigator.onLine){

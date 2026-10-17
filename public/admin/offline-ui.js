@@ -6,7 +6,7 @@
     const status=await window.FulltechOffline.status();
     let old=[],problems=[];try{old=JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]');problems=JSON.parse(localStorage.getItem('pe_crm_outbox_problems')||'[]');}catch{}
     const review=[...status.queue.filter(q=>q.state!=='pending'),...problems],count=status.queue.length+old.length;
-    button.textContent=review.length?`Revisar ${review.length} cambio(s)`:count?`${count} cambio(s) pendientes`:status.preparation?.remaining===0&&status.valid&&status.shell&&!status.shell.missing.length?'Datos sin conexión':'Preparar datos sin conexión';
+    button.textContent=review.length?`Revisar ${review.length} cambio(s)`:count?`${count} cambio(s) pendientes`:status.preparation?.remaining===0&&!status.preparation.failed&&status.valid&&status.shell&&!status.shell.missing.length?'Datos sin conexión':'Preparar datos sin conexión';
     button.dataset.review=String(!!review.length);
     document.querySelector('#state-pill')?.setAttribute('title',count?`${count} cambios guardados en el dispositivo`:status.valid?'Copia local disponible':'Conecta para descargar una copia local');
   }
@@ -35,7 +35,7 @@
           const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Fulltech-cambios-pendientes.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
         }
         await show();
-      }catch(error){dialog.querySelector('[role=alert]').textContent=error.message;}finally{action.disabled=false;}
+      }catch(error){dialog.querySelector('.offline-dialog-error').textContent=error.message;}finally{action.disabled=false;}
     });
     render().catch(()=>{});
   });

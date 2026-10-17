@@ -348,7 +348,7 @@ document.addEventListener('click',e=>{
 });
 window.addEventListener('fulltech:pos-products',e=>{products=e.detail.products;render();initialize();});
 window.addEventListener('fulltech:pos-render',()=>{updateBadges();});
-window.addEventListener('fulltech:offline-synced',async e=>{const mapping=e.detail.mapping;if(draft.customer&&mapping[draft.customer.id])draft.customer.id=mapping[draft.customer.id];if(mapping[draft.ticketId])draft.ticketId=mapping[draft.ticketId];if(mapping[draft.quoteId])draft.quoteId=mapping[draft.quoteId];loaded=false;await initialize();render();});
+window.addEventListener('fulltech:offline-synced',async e=>{const mapping=e.detail.mapping;if(draft.customer&&mapping[draft.customer.id])draft.customer.id=mapping[draft.customer.id];if(mapping[draft.ticketId])draft.ticketId=mapping[draft.ticketId];if(mapping[draft.quoteId])draft.quoteId=mapping[draft.quoteId];persist();loaded=false;await initialize();render();});
 window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones')initialize().then(renderQuotesPage);}});
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;

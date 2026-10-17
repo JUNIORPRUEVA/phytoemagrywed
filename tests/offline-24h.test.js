@@ -111,6 +111,12 @@ it('no confirma un guardado si el diario local no tiene espacio',async()=>{
   w.FulltechOfflineStore.update=update;expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
   expect((await (await call(w,'store/products')).json()).categories.some(c=>c.name==='No guardada')).toBe(false);
 });
+it('el bloqueo de almacenamiento no impide trabajar en línea ni confirma soporte offline',async()=>{
+  const w=await page();Object.defineProperty(w,'localStorage',{get(){throw new w.DOMException('Blocked','SecurityError');}});
+  expect((await call(w,'session')).status).toBe(200);expect((await call(w,'data')).status).toBe(200);
+  expect(w.FulltechOffline.valid()).toBe(false);
+  online=false;expect((await call(w,'store/products')).status).toBe(503);
+});
 it('mantiene varios tickets y convierte una cotización local en venta al reconectar',async()=>{
   const w=await page();await prepare(w);online=false;
   const draft={customerId:customer.id,customer,items:[{variantId:product.id,quantity:1}],discount:{}};
