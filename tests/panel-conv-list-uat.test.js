@@ -525,9 +525,19 @@ describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
     await waitFor(() => $('#wa-sel .wa-bulk__count').textContent.includes('2'), 'la segunda conversación elegida');
     // Abrir el chat dejaría de ocultar el panel de la conversación: no pasó.
     expect($('#wa-chat-pane').hidden).toBe(true);
+    /*
+     * Con VARIAS elegidas se ofrece la MISMA acción de organizar que con una
+     * sola (finalizar); no hay dos botones distintos («marcar como leídas»
+     * desaparece del panel).
+     */
+    expect($('#wa-sel [data-wa-bulk="resolve"]')).not.toBeNull();
+    expect($('#wa-sel [data-wa-bulk="mark_read"]')).toBeNull();
     click(`[data-conv="${ids.ana}"]`);
     await waitFor(() => $('#wa-sel .wa-bulk__count').textContent.includes('1'), 'la conversación quitada');
     expect($('#wa-chat-pane').hidden).toBe(true);
+    // Y con una sola, la misma acción (aquí en su forma de fila única).
+    expect($('#wa-sel [data-conversation-resolution]')).not.toBeNull();
+    expect($('#wa-sel [data-conv-act="mark_read"]')).toBeNull();
   });
 
   it('«Todas» elige todas las visibles y la ✕ cancela la selección', async () => {

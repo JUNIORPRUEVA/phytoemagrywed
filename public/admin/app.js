@@ -9237,7 +9237,6 @@
     const claveCliente = clienteId ? escapeHtml(clienteId) : '';
     const cliente = clienteId ? customerById(clienteId) : null;
     const archivada = Boolean(fila?.archived_at);
-    const sinLeer = Number(fila?.unread_count) > 0;
     const id = unica ? escapeHtml(unica) : '';
     const seleccionarTodas = accion(
       'data-wa-sel-all="1"',
@@ -9283,9 +9282,6 @@
               fila.is_resolved ? 'Reabrir conversación' : 'Marcar como finalizado',
               fila.is_resolved ? 'Vuelve a pendientes de respuesta' : 'Sale de la bandeja y queda archivada',
             ),
-            sinLeer
-              ? accion(`data-conv-act="mark_read" data-conv-id="${id}"`, ICONS.checkCircle, 'Marcar como leída', 'Quita el contador de no leídos')
-              : '',
             accion(
               `data-conv-act="${archivada ? 'unarchive' : 'archive'}" data-conv-id="${id}"`,
               ICONS.box,
@@ -9299,11 +9295,12 @@
           ]),
         ].join('')
       : '';
-    /* Varias conversaciones: sólo lo que se puede hacer en lote. */
+    /* Varias conversaciones: sólo lo que se puede hacer en lote. La acción de
+       organizar es LA MISMA que con una sola: finalizar (que además archiva). */
     const enLote = [
       grupo('Selección', [seleccionarTodas]),
       grupo('Organizar', [
-        accion('data-wa-bulk="mark_read"', ICONS.checkCircle, 'Marcar como leídas', 'Quita el contador de no leídos'),
+        accion('data-wa-bulk="resolve"', ICONS.checkCircle, 'Marcar como finalizados', 'Salen de la bandeja y quedan archivadas'),
         accion(
           `data-wa-bulk="${archived ? 'unarchive' : 'archive'}"`,
           ICONS.box,
@@ -12120,11 +12117,19 @@
         );
         return;
       }
-      toast(`${result.processed} procesados${result.failed ? `, ${result.failed} fallaron` : ''}`);
+      const esFinalizar = action === 'resolve';
+      toast(
+        esFinalizar
+          ? `${result.processed} chat${result.processed === 1 ? '' : 's'} finalizado${result.processed === 1 ? '' : 's'} y archivado${
+              result.processed === 1 ? '' : 's'
+            }. Si el cliente escribe, vuelve a la bandeja.`
+          : `${result.processed} procesados${result.failed ? `, ${result.failed} fallaron` : ''}`,
+      );
       if (!explicitIds) state.wa.selected.clear();
-      if (action === 'delete' && ids.includes(state.wa.selectedId)) {
+      if ((action === 'delete' || esFinalizar) && ids.includes(state.wa.selectedId)) {
         state.wa.selectedId = null;
         state.wa.chat = null;
+        if (esFinalizar) setWaView('list');
       }
       await refreshWhatsapp();
     } catch (error) {

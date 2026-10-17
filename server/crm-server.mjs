@@ -7963,7 +7963,7 @@ async function handle(req, res, ctx) {
       }
       const action = text(body.action, 40);
       const ids = Array.isArray(body.ids) ? body.ids.map((id) => text(id, 80)).filter(Boolean).slice(0, 100) : [];
-      if (!ids.length || !['mark_read', 'archive', 'unarchive', 'delete', 'message_preview'].includes(action)) {
+      if (!ids.length || !['mark_read', 'resolve', 'archive', 'unarchive', 'delete', 'message_preview'].includes(action)) {
         json(res, 422, { ok: false, error: 'invalid_bulk_action' });
         return;
       }
@@ -7985,6 +7985,12 @@ async function handle(req, res, ctx) {
         }
         if (action === 'mark_read') {
           const updated = await ctx.customers.markConversationRead(id);
+          results.push({ id, ok: Boolean(updated) });
+          continue;
+        }
+        if (action === 'resolve') {
+          // Finalizar de a varios: la misma operación que de a una (finaliza y archiva).
+          const updated = await ctx.customers.resolveConversation(id, true, actor?.id ?? null);
           results.push({ id, ok: Boolean(updated) });
           continue;
         }

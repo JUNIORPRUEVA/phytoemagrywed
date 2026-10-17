@@ -102,6 +102,26 @@ describe('finalizar una conversación sin bloquear el contacto', () => {
     expect(archivadas.conversations.some((row) => row.id === conversation.id)).toBe(true);
   });
 
+  it('finalizar de a varios es la misma acción: archiva todos los elegidos', async () => {
+    // Al llegar aquí hay dos conversaciones abiertas (la principal y la otra).
+    await request(`/api/admin/conversations/${conversation.id}/reopen`, 'POST');
+    const bandeja = (await json('/api/admin/conversations')).conversations;
+    expect(bandeja.length).toBeGreaterThanOrEqual(2);
+    const ids = bandeja.slice(0, 2).map((row) => row.id);
+    const lote = await request('/api/admin/conversations/bulk', 'POST', { action: 'resolve', ids });
+    expect(lote.status).toBe(200);
+    const cuerpo = await lote.json();
+    expect(cuerpo.processed).toBe(2); expect(cuerpo.failed).toBe(0);
+    const activas = (await json('/api/admin/conversations')).conversations;
+    for (const id of ids) expect(activas.some((row) => row.id === id)).toBe(false);
+    const archivadas = (await json('/api/admin/conversations?filter=archivados')).conversations;
+    for (const id of ids) {
+      const fila = archivadas.find((row) => row.id === id);
+      expect(fila?.archived_at).toBeTruthy();
+      expect(fila?.is_resolved).toBe(true);
+    }
+  });
+
   it('un agente sin acceso no puede finalizar conversaciones ajenas', async () => {
     const created = await (await request('/api/admin/users', 'POST', { username: 'resolution-agent@test.local', password: 'Resolution-12345', displayName: 'Agente', role: 'AGENT' })).json();
     expect(created.user.id).toBeTruthy();

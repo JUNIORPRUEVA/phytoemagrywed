@@ -55,7 +55,9 @@ el resto del panel no cambia.
   chat. **Marcar como finalizado archiva** la conversación (sale de la bandeja y queda en *Archivados*);
   el hilo abierto se queda abierto para poder seguir leyendo y escribiendo.
 - **Varias conversaciones**: sólo lo que se puede hacer en lote (Seleccionar todas / Quitar la
-  selección, Marcar como leídas, Archivar/Desarchivar, Mensaje a varios y Eliminar chats).
+  selección, **Marcar como finalizados** —la misma acción que con una sola, que archiva—,
+  Archivar/Desarchivar, Mensaje a varios y Eliminar chats). No hay dos botones para lo mismo: el panel
+  nunca ofrece «marcar como leídas» y «finalizar» a la vez.
 - **Botón flotante** redondo y verde con el icono de chat, en la esquina.
 - **Hoja «Nuevo WhatsApp»** (`openNewConversationSheet()`, variante `wa-new`): pide **solo el teléfono**;
   «Más opciones» (con un + que gira a ✕) despliega nombre y mensaje. En móvil es una hoja baja de
