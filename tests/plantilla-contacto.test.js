@@ -163,6 +163,14 @@ afterAll(async () => {
 });
 
 describe('la plantilla principal del chat directo', () => {
+  it('la nueva versión FullTECH es breve y espera aprobación sin alterar la anterior', async () => {
+    const template=(await listaPlantillas()).templates.find(row=>row.name==='fulltech_contacto_personalizado_v2');
+    expect(template.body).toBe('Hola, {{1}}. Te escribimos de FullTECH.\n\n{{2}}\n\nQuedo atento a tu respuesta.');
+    expect(template.variables).toEqual(['customer_name','mensaje']);
+    expect(template.status).toBe('pending_approval');expect(template.sendable).toBe(false);
+    const response=await enviar({template:template.name,templateValues:{2:'Tenemos el equipo disponible.'}});
+    expect(response.ok).toBe(false);
+  });
   it('está declarada con DOS variables y el cuerpo exacto de Meta', async () => {
     const data = await listaPlantillas();
     const plantilla = data.templates.find((row) => row.name === 'phyto_contacto_personalizado_v1');

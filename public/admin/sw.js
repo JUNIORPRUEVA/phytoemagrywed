@@ -7,7 +7,7 @@
  *    pedido, no una copia vieja. Los datos offline los guarda la propia app.
  */
 
-const VERSION = 'crm-v75-iphone-push-receipts';
+const VERSION = 'crm-v104-fulltech-contact';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -16,6 +16,19 @@ const SHELL = [
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',
+  '/admin/settings.css',
+  '/admin/fulltech.css',
+  '/admin/navigation.css',
+  '/admin/menus-safe-area.css',
+  '/admin/proofreading.css',
+  '/admin/proofreading.js',
+  '/admin/deepseek-settings.js',
+  '/admin/chat-sharing-settings.js',
+  '/admin/chat-sharing.css',
+  '/admin/vendor/proofreading/worker.js',
+  '/admin/vendor/proofreading/es-DO.aff',
+  '/admin/vendor/proofreading/es-DO.dic',
+  '/admin/shell-v2-tema.css',
   '/admin/app.js',
   '/admin/calling.js',
   '/admin/manifest.json',
@@ -27,18 +40,32 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-icon.png',
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
-  '/admin/logo-phytoemagry.png',
-  '/admin/icon-192.png',
-  '/admin/icon-512.png',
-  '/admin/icon-maskable-512.png',
-  '/admin/apple-touch-icon.png',
+  '/admin/fulltech-logo.png',
+  '/admin/fulltech-favicon.png',
+  '/admin/fulltech-icon-192.png',
+  '/admin/fulltech-icon-512.png',
+  '/admin/fulltech-icon-maskable-512.png',
+  '/admin/fulltech-apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(VERSION)
-      .then((cache) => cache.addAll(SHELL))
+      .then(async (cache) => {
+        /*
+         * ARCHIVO A ARCHIVO, no con `addAll`: con `addAll` un solo archivo que
+         * falte (un icono, un sonido) deja el armazón ENTERO sin guardar y el
+         * panel no abre sin conexión. Así, lo que se pueda guardar se guarda.
+         */
+        for (const url of SHELL) {
+          try {
+            await cache.add(url);
+          } catch {
+            /* ese archivo no está: el resto del armazón sigue valiendo */
+          }
+        }
+      })
       .then(() => self.skipWaiting())
       .catch(() => self.skipWaiting()),
   );
@@ -213,7 +240,7 @@ self.addEventListener('push', (event) => {
   }
   // Incluso un payload vacío o inválido debe producir un aviso visible en Safari.
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
-  const title = payload.title || 'Phytoemagry';
+  const title = payload.title || 'FullTECH, SRL';
   const deepLink =
     payload.deepLink ||
     (payload.conversationId
@@ -232,8 +259,8 @@ self.addEventListener('push', (event) => {
           conversationId: payload.conversationId || null,
           notificationId: payload.notificationId || null,
         },
-        icon: '/admin/icon-192.png',
-        badge: '/admin/icon-192.png',
+        icon: '/admin/fulltech-icon-192.png',
+        badge: '/admin/fulltech-icon-192.png',
         vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
       });
     } catch (error) {

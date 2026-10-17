@@ -1,0 +1,1098 @@
+
+/* ==========================================================================
+   SHELL v2 + TEMA — «que se entienda y se sienta bien»
+   ==========================================================================
+
+   QUÉ HAY AQUÍ Y POR QUÉ ESTÁ AL FINAL DEL ARCHIVO
+   ------------------------------------------------
+   Este bloque es la última palabra sobre: el TEMA (claro/oscuro/automático),
+   la BARRA SUPERIOR, la NAVBAR inferior (diseño de WhatsApp), el DRAWER con su
+   icono animado y la MARCA. Va al final a propósito: los estilos del panel se
+   fueron apilando en varias tandas y aquí se cierra el sistema con un solo
+   criterio, sin tocar la lógica ni las opciones de ninguna pantalla.
+
+   REGLAS DE LA CASA (para quien siga tocando esto):
+     1. Los colores salen de variables. Si algo se ve mal de noche, se arregla
+        cambiando una variable, no escribiendo un color nuevo.
+     2. Ningún icono puede depender de un fondo translúcido: en la barra clara
+        los iconos translúcidos desaparecían (era el fallo real de la foto).
+     3. El texto de la etiqueta se puede partir en dos líneas; nunca se corta.
+     4. La navbar y la cabecera miden lo mismo en claro y en oscuro: cambia el
+        color, no la geometría. Así nada «salta» al cambiar de tema.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. LAS VARIABLES DEL TEMA
+   -------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+
+  /* Piezas nuevas del shell, en claro. */
+  --pe-page-bg: #f4f7fd;
+  --pe-appbar-bg: rgba(255, 255, 255, 0.97);
+  --pe-appbar-ink: var(--text-primary);
+  --pe-tabbar-bg: rgba(255, 255, 255, 0.98);
+  --pe-card-bg: #ffffff;
+  --pe-chip-bg: #edf3fc;
+  --pe-line: #dfe7f4;
+  /*
+   * LA RAYA DE SEPARACIÓN (navbar, cabecera, menú).
+   *
+   * `--pe-line` sirve para dibujar CONTROLES (un botón, un chip), y para eso está
+   * bien su gris. Pero una barra que separa dos zonas no lleva un borde: lleva una
+   * raya que solo se intuye, como en WhatsApp. Esta variable es esa raya.
+   */
+  --pe-hairline: rgba(23, 43, 77, 0.06);
+  --pe-brand-text: var(--phyto-primary);
+  --pe-brand-soft: #e5efff;
+  --pe-brand-font: var(--pe-font);
+  --pe-danger-soft: #fdeaea;
+  --pe-on-brand: #ffffff;
+  --pe-control-bg: #eef3fa;
+  --pe-focus: #145bd7;
+  --pe-ink-600: #53647d;
+  --pe-ink-800: #243b5a;
+  /*
+   * LA LÍNEA FINA del panel (separadores y contornos de tarjeta).
+   *
+   * Era un gris OPACO: sobre el fondo blanco se veía como un borde dibujado, que
+   * es justo lo que hace que una lista parezca vieja. En translúcido se mezcla con
+   * lo que tenga debajo (blanco, azul suave, la tarjeta que sea) y queda una raya
+   * que solo se intuye. Para lo que SÍ tiene que verse —la línea de un campo de
+   * texto, la de un botón— está `--border`, que no cambia.
+   */
+  --border-soft: rgba(23, 43, 77, 0.08);
+  --surface-tint: #edf4ff;
+}
+
+/*
+ * EL OSCURO NO ES «el claro en negro»: los grises son verdosos (el mismo aire
+ * del claro), el verde sube de luminosidad para que se lea sobre oscuro, y las
+ * superficies se separan por TONO (fondo < tarjeta < hoja), no por sombras:
+ * una sombra negra sobre negro no se ve.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --phyto-primary: #8dbbff;
+  --phyto-primary-dark: #b3d2ff;
+  --phyto-primary-soft: #203b60;
+  --phyto-primary-tint: #152b47;
+  --surface: #111d30;
+  --surface-muted: #18263c;
+  --surface-tint: #18263c;
+  --text-primary: #eaf1fd;
+  --text-secondary: #afc0d9;
+  --border: #354866;
+  --border-soft: rgba(255, 255, 255, 0.09);
+  --danger: #ff7a6e;
+  --warning: #f0c274;
+  --success: #8dbbff;
+
+  --pe-brand-800: #8dbbff;
+  --pe-brand-700: #8dbbff;
+  --pe-brand-600: #8dbbff;
+  --pe-brand-100: #203b60;
+  --pe-ink-900: #eaf1fd;
+  --pe-ink-700: #cfdbed;
+  --pe-ink-600: #bbcae0;
+  --pe-ink-800: #dce7f7;
+  --pe-ink-500: #afc0d9;
+  --pe-brand-900: #b3d2ff;
+  --pe-whatsapp: #54dda2;
+  --pe-warn-bg: #3a2f16;
+  --pe-warn: #f3c778;
+  --pe-info-bg: #12313d;
+  --pe-info: #9ad8f0;
+  --pe-bubble-in: #1c2a40;
+  --pe-bubble-out: #1c4170;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 10px 26px rgba(0, 0, 0, 0.5);
+  --pe-shadow-soft: 0 2px 12px rgba(0, 0, 0, 0.45);
+  --pe-shadow-float: 0 12px 30px rgba(0, 0, 0, 0.55);
+
+  --pe-page-bg: #0b1424;
+  --pe-appbar-bg: rgba(17, 29, 48, 0.97);
+  --pe-appbar-ink: #eaf1fd;
+  --pe-tabbar-bg: rgba(17, 29, 48, 0.98);
+  --pe-card-bg: #152339;
+  --pe-chip-bg: #1e304a;
+  --pe-line: #30425e;
+  --pe-hairline: rgba(255, 255, 255, 0.09);
+  --pe-brand-text: #8dbbff;
+  --pe-brand-soft: #203b60;
+  --pe-danger-soft: #3a2628;
+  --pe-on-brand: #0b2142;
+  --pe-control-bg: #21324b;
+  --pe-focus: #a8ceff;
+}
+
+/* El fondo de la app: plano y del color de la página (adiós al degradado). */
+body,
+body[data-tab='hoy'],
+body[data-tab] {
+  background: var(--pe-page-bg);
+}
+
+body[data-tab='hoy'] .app,
+body[data-tab] .app {
+  background: transparent;
+}
+
+/* --------------------------------------------------------------------------
+   2. LA BARRA SUPERIOR DE HOY (cabecera)
+   --------------------------------------------------------------------------
+   Antes era un cartel con degradado y, encima, dos círculos translúcidos con
+   iconos blancos: en el móvil no se veían. Ahora es una BARRA: fondo sólido,
+   una línea fina abajo, y los iconos en un círculo con color de marca (nunca
+   blanco sobre blanco).
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 979px) {
+  body[data-tab='hoy'] .mobile-header {
+    min-height: 0;
+    background: transparent;
+  }
+
+  body[data-tab='hoy'] .dashboard-head {
+    min-height: 0;
+    margin: 0;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 14px 9px;
+    gap: 12px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    border-radius: 0;
+    background: var(--pe-appbar-bg);
+    color: var(--pe-appbar-ink);
+    box-shadow: 0 1px 0 var(--pe-hairline);
+    backdrop-filter: blur(14px) saturate(1.1);
+    overflow: visible;
+  }
+
+  /* El adorno del degradado ya no tiene sentido en una barra. */
+  body[data-tab='hoy'] .dashboard-head::after {
+    display: none;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__menu,
+  body[data-tab='hoy'] .dashboard-head__quick {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--pe-line);
+    border-radius: 14px;
+    background: var(--pe-chip-bg);
+    color: var(--pe-brand-text);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__menu:active .burger,
+  body[data-tab='hoy'] .dashboard-head__quick:active {
+    transform: scale(0.92);
+  }
+
+  body[data-tab='hoy'] .dashboard-head__quick .svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__quick--alert {
+    background: var(--pe-brand-soft);
+    color: var(--pe-brand-text);
+  }
+
+  /* El aviso de notificaciones: rojo, con anillo del color de la barra. */
+  body[data-tab='hoy'] .dashboard-head__badge {
+    top: -6px;
+    right: -6px;
+    min-width: 19px;
+    height: 19px;
+    padding: 0 5px;
+    border: 2px solid var(--pe-appbar-bg);
+    background: #e64b57;
+    font-size: 0.62rem;
+    line-height: 15px;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__title {
+    gap: 3px;
+  }
+
+  body[data-tab='hoy'] .dashboard-head__title strong {
+    font-family: var(--pe-brand-font);
+    font-size: 1.24rem;
+    font-weight: 700;
+    letter-spacing: 0.005em;
+    line-height: 1.05;
+    color: var(--pe-appbar-ink);
+  }
+
+  /* «CRM» deja de ser un eco del nombre y pasa a ser una etiqueta. */
+  body[data-tab='hoy'] .dashboard-head__title span {
+    justify-self: start;
+    margin: 0;
+    padding: 1px 7px 2px;
+    border-radius: 999px;
+    background: var(--pe-brand-soft);
+    color: var(--pe-brand-text);
+    font-size: 0.6rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  /*
+   * La BARRA mide lo que mide la barra: el contenido empieza justo debajo (antes
+   * se le metía -190px de margen para colar las tarjetas dentro de un cartel de
+   * 286px, y cualquier retoque movía todo).
+   */
+  body[data-tab='hoy'] .content {
+    --dash-content-top: calc(62px + env(safe-area-inset-top, 0px));
+    margin-top: 0;
+    height: calc(100dvh - var(--dash-content-top) - 8px - env(safe-area-inset-bottom, 0px));
+    padding: 8px 10px 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   3. LA NAVBAR INFERIOR (diseño de WhatsApp)
+   --------------------------------------------------------------------------
+   Barra pegada abajo, a todo el ancho, con línea fina arriba y sin sombra de
+   caja flotante. Icono + nombre, y el que está abierto con una PASTILLA detrás
+   del icono y el color de la marca: el gesto de WhatsApp. Las opciones no
+   cambian (Hoy, WhatsApp, Pedidos, Clientes).
+   -------------------------------------------------------------------------- */
+
+.tabs {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: 0;
+  padding: 6px 4px calc(5px + env(safe-area-inset-bottom, 0px));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  border: 0;
+  /*
+   * UNA SOLA RAYA, Y CASI INVISIBLE.
+   *
+   * Antes había dos líneas superpuestas (`border-top` + un `box-shadow` del mismo
+   * color): se sumaban y el ojo veía un borde gris grueso, que es lo que no se ve
+   * bien en ninguna app. Ahora queda una raya al 6 % que solo marca dónde termina
+   * el contenido, más una sombra imperceptible que da el aire de barra flotante.
+   */
+  border-top: 1px solid var(--pe-hairline);
+  border-radius: 0;
+  background: var(--pe-tabbar-bg);
+  box-shadow: 0 -1px 2px rgb(23 43 77 / 2%);
+  backdrop-filter: blur(16px) saturate(1.1);
+  overflow: visible;
+}
+
+.tab {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  min-height: 0;
+  padding: 5px 2px 5px;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--pe-ink-500);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  transition: color 180ms var(--pe-ease);
+}
+
+/* La pastilla del icono activo (el detalle de WhatsApp). */
+.tab::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  width: 58px;
+  height: 32px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 200ms var(--pe-ease);
+}
+
+.tab[aria-current='true']::before {
+  background: var(--pe-brand-soft);
+}
+
+/*
+ * EL ICONO Y EL NOMBRE, UN POCO MÁS GRANDES (como en WhatsApp).
+ *
+ * Iban a 23 px y el nombre apretado debajo: se veían pequeños en el móvil. Ahora
+ * el icono es de 26 px (WhatsApp usa 24 en sus barras y el panel venía de 22) y
+ * el nombre va a 12 px, que es lo que hace que el conjunto se lea «de app» y no
+ * de página. El detalle de WhatsApp —el nombre bajo el icono y el icono activo
+ * dentro de su pastilla— ya estaba; esto solo lo agranda.
+ *
+ * La especificidad no es capricho: `navigation.css` carga DESPUÉS de este archivo
+ * y trae su propia talla para la barra de abajo. Con `body[data-tab] .tabs …`
+ * esta regla gana sin pelearse con nada más ni tocar la estructura.
+ */
+.tab__icon,
+.tab--center .tab__icon,
+body[data-tab] .tabs .tab .tab__icon {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  animation: none;
+}
+
+.tab__icon .svg,
+body[data-tab] .tabs .tab .tab__icon .svg {
+  width: 26px;
+  height: 26px;
+}
+
+body[data-tab] .tabs .tab > span:not(.tab__icon):not(.tab__badge) {
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.tab[aria-current='true'] {
+  background: transparent;
+  color: var(--pe-brand-text);
+  font-weight: 750;
+}
+
+.tab:active .tab__icon {
+  transform: scale(0.9);
+}
+
+/*
+ * El aviso (sin leer / por hacer): pegado a la esquina del icono, con el anillo
+ * del color de la barra. Se coloca desde el CENTRO hacia la derecha (no por su
+ * ancho), así el «1» y el «16» caen en el mismo sitio.
+ */
+.tab__badge {
+  top: -3px;
+  right: auto;
+  left: 50%;
+  z-index: 3;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  transform: translateX(5px);
+  border: 2px solid var(--pe-tabbar-bg);
+  border-radius: 999px;
+  background: #e64b57;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+   4. EL ICONO DEL MENÚ (animado) Y LA MARCA
+   --------------------------------------------------------------------------
+   El icono deja de ser un PNG pegado: son tres barras de verdad que se juntan
+   en ✕ al abrir el menú. La marca pasa a una serif suave (verde, natural) con
+   el «CRM» en una etiqueta: se lee como una casa, no como un fichero.
+   -------------------------------------------------------------------------- */
+
+.burger {
+  display: grid;
+  width: 18px;
+  gap: 4px;
+  transition: transform 200ms var(--pe-ease);
+}
+
+.burger span {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  transition:
+    transform 240ms var(--pe-ease),
+    opacity 160ms ease,
+    width 240ms var(--pe-ease);
+}
+
+/*
+ * Abierto: las barras de arriba y abajo cruzan en ✕ y la del medio se apaga.
+ * Se cubren las dos formas de marcar «abierto» (el estado del <body> y el
+ * aria-expanded del botón flotante) para que TODOS los iconos de menú animen
+ * igual, sin tener que ir botón por botón.
+ */
+body[data-drawer='open'] .burger span:nth-child(1),
+.float-btn[aria-expanded='true'] .burger span:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+
+body[data-drawer='open'] .burger span:nth-child(2),
+.float-btn[aria-expanded='true'] .burger span:nth-child(2) {
+  width: 60%;
+  opacity: 0;
+}
+
+body[data-drawer='open'] .burger span:nth-child(3),
+.float-btn[aria-expanded='true'] .burger span:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+/* Un latido corto al pulsar: se nota que el menú va a abrirse. */
+@keyframes pe-burger-tap {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(0.86);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+[data-open-drawer]:active .burger,
+.float-btn--menu:active .burger {
+  animation: pe-burger-tap 320ms var(--pe-ease);
+}
+
+/* El botón flotante del menú (pantallas de WhatsApp): círculo limpio. */
+.float-btn--menu {
+  border: 1px solid var(--pe-line);
+  background: var(--pe-card-bg);
+  color: var(--pe-brand-text);
+  box-shadow: var(--pe-shadow-soft);
+}
+
+/* La marca, con la misma voz en la barra, en el drawer y en la entrada. */
+.dashboard-head__title strong,
+.drawer__brand strong,
+.topbar__brand,
+.splash__brand {
+  font-family: var(--pe-brand-font);
+  letter-spacing: 0.005em;
+}
+
+.drawer__brand strong {
+  font-size: 1.22rem;
+  line-height: 1.1;
+  /* Del tema, no un verde oscuro escrito a mano: en oscuro era invisible. */
+  color: var(--text-primary);
+}
+
+.drawer__brand > span > span,
+.drawer__brand span span {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 7px 2px;
+  border-radius: 999px;
+  background: var(--pe-brand-soft);
+  color: var(--pe-brand-text);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* --------------------------------------------------------------------------
+   5. EL SELECTOR DE TEMA (Mi perfil y Ajustes)
+   -------------------------------------------------------------------------- */
+
+.tema-card {
+  display: grid;
+  gap: 12px;
+}
+
+.tema-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tema-card__icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  background: var(--pe-brand-soft);
+  color: var(--pe-brand-text);
+}
+
+.tema-card__copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tema-card__copy strong {
+  font-size: 0.96rem;
+  color: var(--text-primary);
+}
+
+.tema-card__copy small {
+  color: var(--pe-ink-500);
+  font-size: 0.78rem;
+}
+
+.tema-opts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tema-opt {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 10px 6px;
+  border: 1px solid var(--pe-border);
+  border-radius: 14px;
+  background: var(--pe-surface);
+  color: var(--pe-ink-500);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.tema-opt__icon {
+  display: grid;
+  place-items: center;
+}
+
+.tema-opt__icon .svg {
+  width: 20px;
+  height: 20px;
+}
+
+.tema-opt[aria-checked='true'] {
+  border-color: var(--pe-brand-text);
+  background: var(--pe-brand-soft);
+  color: var(--pe-brand-text);
+}
+
+.tema-opt:active {
+  transform: scale(0.97);
+}
+
+/* --------------------------------------------------------------------------
+   6. EL OSCURO, PIEZA A PIEZA
+   --------------------------------------------------------------------------
+   Todo lo que tenía el color escrito a mano y se ve en el día a día: tarjetas,
+   listas, hojas, fichas, campos, chips y burbujas. Se hace aquí y no en cada
+   regla original para que el claro siga intacto.
+   -------------------------------------------------------------------------- */
+
+:root[data-theme='dark'] body[data-tab='hoy'] .stat {
+  background: var(--pe-card-bg);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme='dark'] body[data-tab='hoy'] .stat::after {
+  background: rgba(65, 145, 255, 0.08);
+}
+
+:root[data-theme='dark'] body[data-tab='hoy'] .stat__value {
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] body[data-tab='hoy'] .stat__label {
+  color: var(--pe-ink-500);
+}
+
+:root[data-theme='dark'] .stat,
+:root[data-theme='dark'] .card,
+:root[data-theme='dark'] .item,
+:root[data-theme='dark'] .notice,
+:root[data-theme='dark'] .client-row,
+:root[data-theme='dark'] .order-card,
+:root[data-theme='dark'] .delivery-card,
+:root[data-theme='dark'] .daily-close,
+:root[data-theme='dark'] .profile-earnings,
+:root[data-theme='dark'] .today-section,
+:root[data-theme='dark'] .menu-list,
+:root[data-theme='dark'] .wa-filter-panel,
+:root[data-theme='dark'] .config-card {
+  border-color: var(--pe-border);
+  background: var(--pe-card-bg);
+}
+
+:root[data-theme='dark'] .sheet__panel,
+:root[data-theme='dark'] .sheet__body,
+:root[data-theme='dark'] .drawer,
+:root[data-theme='dark'] .sheet__head {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .field__input,
+:root[data-theme='dark'] .field__area,
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] textarea,
+:root[data-theme='dark'] input {
+  border-color: var(--pe-border);
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .chip {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pe-ink-700);
+}
+
+:root[data-theme='dark'] .chip[aria-pressed='true'] {
+  background: var(--pe-brand-soft);
+  border-color: var(--pe-brand-text);
+  color: var(--pe-brand-text);
+}
+
+:root[data-theme='dark'] .btn--ghost {
+  border-color: var(--pe-border);
+  background: transparent;
+  color: var(--pe-ink-700);
+}
+
+:root[data-theme='dark'] .btn--primary {
+  background: var(--pe-brand-text);
+  color: var(--pe-on-brand);
+}
+
+:root[data-theme='dark'] .fact,
+:root[data-theme='dark'] .facts dt,
+:root[data-theme='dark'] .view__hint,
+:root[data-theme='dark'] .view__count,
+:root[data-theme='dark'] .item__meta,
+:root[data-theme='dark'] .empty {
+  color: var(--pe-ink-500);
+}
+
+:root[data-theme='dark'] .drawer__item,
+:root[data-theme='dark'] .drawer__user-btn,
+:root[data-theme='dark'] .menu-item {
+  color: var(--pe-ink-700);
+}
+
+:root[data-theme='dark'] .drawer__item:hover,
+:root[data-theme='dark'] .drawer__item:focus-visible,
+:root[data-theme='dark'] .drawer__item[aria-current='true'] {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pe-brand-text);
+}
+
+/* WhatsApp: burbujas, cabecera del hilo y fondo del chat. */
+:root[data-theme='dark'] .wa {
+  background: var(--pe-page-bg);
+}
+
+:root[data-theme='dark'] .wa__chat,
+:root[data-theme='dark'] .wa__list {
+  border-color: var(--pe-border);
+  background: var(--pe-card-bg);
+}
+
+:root[data-theme='dark'] .wa__list-head,
+:root[data-theme='dark'] .wa-appbar,
+:root[data-theme='dark'] .simple-head {
+  border-color: var(--pe-border);
+  background: var(--pe-appbar-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .bubble--in {
+  background: var(--pe-bubble-in);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .bubble--out {
+  background: var(--pe-bubble-out);
+  color: #eaf2ff;
+}
+
+/* La franja de aviso (sin conexión, cola) también en oscuro. */
+:root[data-theme='dark'] .banner,
+:root[data-theme='dark'] #offline-banner {
+  border-color: #5a4a1f;
+  background: #2f2a17;
+  color: #f6e3b2;
+}
+
+/* Nada de sombras negras encima de negro: en oscuro, las tarjetas no flotan. */
+:root[data-theme='dark'] .item,
+:root[data-theme='dark'] .card,
+:root[data-theme='dark'] .client-row,
+:root[data-theme='dark'] .order-card,
+:root[data-theme='dark'] .notice,
+:root[data-theme='dark'] .delivery-card {
+  box-shadow: none;
+}
+
+/* --------------------------------------------------------------------------
+   7. EL OSCURO Y LAS SUPERFICIES CON DEGRADADO CLARO
+   --------------------------------------------------------------------------
+   Estas piezas se pintaban con un degradado claro escrito a mano (tarjetas de
+   cuenta, resúmenes, líneas de pedido, la propia navbar). En oscuro eso es una
+   losa blanca con texto claro encima: aquí se les quita el degradado y se les
+   da el color de tarjeta del tema. El claro no se toca.
+   -------------------------------------------------------------------------- */
+
+:root[data-theme='dark'] .profile-account,
+:root[data-theme='dark'] .inventory-summary,
+:root[data-theme='dark'] .order-line,
+:root[data-theme='dark'] .qty-stepper,
+:root[data-theme='dark'] .receipt-pdf-card,
+:root[data-theme='dark'] .config-card--active,
+:root[data-theme='dark'] .printer-settings__hero,
+:root[data-theme='dark'] .order-location-required {
+  background: var(--pe-card-bg);
+  background-image: none;
+  border-color: var(--pe-border);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .profile-account strong,
+:root[data-theme='dark'] .profile-account b {
+  color: var(--text-primary);
+}
+
+/* Los brillos blancos de la navbar, el drawer y la lista de Hoy. */
+:root[data-theme='dark'] .tabs::before,
+:root[data-theme='dark'] .drawer::before,
+:root[data-theme='dark'] body[data-tab='hoy'] #list-hoy::before {
+  background: none;
+}
+
+:root[data-theme='dark'] .drawer {
+  background: var(--surface);
+  background-image: none;
+}
+
+/* La barra de escritorio también de noche (móvil ya va aparte). */
+@media (min-width: 980px) {
+  :root[data-theme='dark'] .topbar {
+    border-color: var(--pe-border);
+    background: var(--pe-appbar-bg);
+    color: var(--text-primary);
+  }
+
+  :root[data-theme='dark'] .topbar__sub {
+    color: var(--pe-ink-500);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   8. EL OSCURO EN LAS LISTAS Y LOS PANELES DE FILTROS
+   --------------------------------------------------------------------------
+   Nombres de conversación, etiquetas, asignaciones, paneles de filtros y
+   avatares tenían el color escrito a mano (grises y verdes oscuros que sobre un
+   fondo oscuro desaparecen). Se comprobó midiendo contraste real por pantalla.
+   -------------------------------------------------------------------------- */
+
+:root[data-theme='dark'] .conv,
+:root[data-theme='dark'] .conv--pending,
+:root[data-theme='dark'] .conv--active {
+  border-color: var(--pe-border);
+  background: var(--pe-card-bg);
+}
+
+:root[data-theme='dark'] .conv__name,
+:root[data-theme='dark'] .wa-appbar__title strong,
+:root[data-theme='dark'] .wa-appbar strong,
+:root[data-theme='dark'] .simple-head strong,
+:root[data-theme='dark'] .wa-filter-panel__head strong {
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .conv__preview {
+  color: var(--pe-ink-700);
+}
+
+:root[data-theme='dark'] .conv__when,
+:root[data-theme='dark'] .wa-filter-panel__head small {
+  color: var(--pe-ink-500);
+}
+
+:root[data-theme='dark'] .conv__tag {
+  border-color: var(--pe-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pe-ink-700);
+}
+
+:root[data-theme='dark'] .conv__assign {
+  color: var(--pe-brand-text);
+}
+
+:root[data-theme='dark'] .conv__await {
+  background: var(--pe-warn-bg);
+  color: var(--pe-warn);
+}
+
+/* Los tres paneles de filtros: el mismo fondo de hoja, en oscuro. */
+:root[data-theme='dark'] #wa-filters,
+:root[data-theme='dark'] #chips,
+:root[data-theme='dark'] #pedidos-filtros {
+  border-color: var(--pe-border);
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] #wa-filters .chip,
+:root[data-theme='dark'] #chips .chip,
+:root[data-theme='dark'] #pedidos-filtros .chip {
+  border-color: var(--pe-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--pe-ink-700);
+}
+
+:root[data-theme='dark'] #wa-filters .chip[aria-pressed='true'],
+:root[data-theme='dark'] #chips .chip[aria-pressed='true'],
+:root[data-theme='dark'] #pedidos-filtros .chip[aria-pressed='true'] {
+  border-color: var(--pe-brand-text);
+  background: var(--pe-brand-soft);
+  color: var(--pe-brand-text);
+}
+
+/* Las iniciales del avatar: color de marca sobre su propio tono, no verde
+   oscuro sobre una pastilla clara (que en oscuro se perdía). */
+:root[data-theme='dark'] .avatar {
+  background-image: none;
+  background: var(--pe-brand-soft);
+  color: var(--pe-brand-text);
+}
+
+/* --------------------------------------------------------------------------
+   9. EL OSCURO DENTRO DE UNA CONVERSACIÓN
+   --------------------------------------------------------------------------
+   La cabecera del hilo era blanca y el texto claro (invisible), y las burbujas
+   grises llevaban su gris escrito a mano, que sobre el verde oscuro del negocio
+   tampoco se leía. Los dos avisos de burbuja (automática y fallida) también
+   tienen su versión de noche.
+   -------------------------------------------------------------------------- */
+
+/*
+ * `body` delante a propósito: la cabecera del hilo y la lista tienen reglas
+ * propias del panel con más peso (`body[data-tab='whatsapp'] …`), y sin esto
+ * ganaba el blanco del tema claro.
+ */
+:root[data-theme='dark'] body .wa__chat-head {
+  border-color: var(--pe-border);
+  background: var(--pe-appbar-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] body .wa__chat-name {
+  /* Traía su propio fondo blanco: en oscuro se quita (queda la barra). */
+  background: none;
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] body .wa__chat-meta {
+  color: var(--pe-ink-500);
+}
+
+:root[data-theme='dark'] body .wa__chat-menu {
+  border-color: var(--pe-border);
+  background: var(--pe-chip-bg);
+  color: var(--pe-brand-text);
+}
+
+:root[data-theme='dark'] .bubble {
+  background: var(--pe-bubble-in);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .bubble--out {
+  background: var(--pe-bubble-out);
+  color: #eaf2ff;
+}
+
+:root[data-theme='dark'] .bubble__who,
+:root[data-theme='dark'] .bubble__meta {
+  color: rgba(233, 240, 237, 0.62);
+}
+
+:root[data-theme='dark'] .bubble--out .bubble__who,
+:root[data-theme='dark'] .bubble--out .bubble__meta {
+  color: rgba(234, 255, 246, 0.74);
+}
+
+:root[data-theme='dark'] .bubble--auto {
+  background: #24304a;
+}
+
+:root[data-theme='dark'] .bubble--failed {
+  background: #4a2320;
+}
+
+/* El aviso de plantilla que no salió: antes rojo oscuro sobre verde oscuro. */
+:root[data-theme='dark'] .template-fail,
+:root[data-theme='dark'] .template-fail strong,
+:root[data-theme='dark'] .template-fail code {
+  color: #ffd9d4;
+}
+
+/* El menú de configuración (las pastillas de arriba) traía fondo blanco. */
+:root[data-theme='dark'] .config-menu a {
+  border-color: var(--pe-border);
+  background: var(--pe-chip-bg);
+  color: var(--pe-ink-700);
+}
+
+/*
+ * «VER TODAS» BAJO UN ESTADO VACÍO.
+ *
+ * Ahora el filtro de la bandeja se recuerda entre visitas, así que una lista
+ * vacía puede ser una lista FILTRADA. Cuando lo es, debajo del recuadro va un
+ * botón para quitarlo de un toque: el aviso no puede ser un callejón sin salida.
+ */
+.empty__actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0 2px;
+}
+
+/* =========================== fin de SHELL v2 + TEMA ======================= */
+
+
+/* Menú lateral: perfil, navegación desplazable y acciones al alcance. */
+#drawer {
+  width: min(340px, calc(100vw - 36px));
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  border: 0;
+  border-right: 1px solid var(--pe-hairline);
+  border-radius: 0 24px 24px 0;
+  background: var(--pe-card-bg);
+  background-image: none;
+  color: var(--text-primary);
+  box-shadow: 12px 0 48px rgb(0 0 0 / 16%);
+  overflow: hidden;
+  isolation: isolate;
+}
+#drawer[hidden] { display: none; }
+#drawer::before { display: none; }
+#drawer .drawer__eyebrow { flex: 0 0 auto; margin: 0 24px 14px; color: var(--text-secondary); font-size: .61rem; font-weight: 650; letter-spacing: .17em; }
+#drawer .drawer__head { flex: 0 0 auto; display: flex; gap: 6px; margin: 0 16px 18px; min-height: 58px; padding: 0; }
+#drawer .drawer__brand { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 60px; padding: 4px 8px; border: 0; border-radius: 13px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+#drawer .drawer__brand > span:last-child { display: grid; gap: 5px; min-width: 0; }
+#drawer .drawer__brand strong { font-family: var(--pe-font); font-size: 1rem; font-weight: 650; letter-spacing: -.02em; line-height: 1.35; color: var(--text-primary); overflow-wrap: anywhere; white-space: normal; }
+#drawer .drawer__brand span span { display: block; width: fit-content; max-width: 100%; padding: 0; margin: 0; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: .73rem; font-weight: 400; line-height: 1.4; letter-spacing: 0; text-transform: none; }
+#drawer .drawer__avatar { display: grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; border: 1px solid var(--pe-line); border-radius: 50%; background: var(--pe-brand-soft); color: var(--pe-brand-text); font-size: .92rem; font-weight: 600; }
+#drawer .drawer__head .icon-btn { width: 40px; height: 40px; min-width: 40px; align-self: center; border: 0; border-radius: 50%; background: transparent; box-shadow: none; color: var(--text-secondary); }
+#drawer .drawer__head .icon-btn .svg { width: 20px; height: 20px; }
+#drawer .drawer__body { flex: 1 1 auto; min-height: 0; padding: 0 12px 14px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--pe-line) transparent; }
+#drawer .drawer__section + .drawer__section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--pe-hairline); }
+#drawer .drawer__section[hidden] { display: none; }
+#drawer .drawer__group { display: block; margin: 0; padding: 3px 14px 8px; font-size: .69rem; font-weight: 550; color: var(--text-secondary); text-transform: none; letter-spacing: .025em; }
+#drawer .drawer__nav { display: grid; gap: 2px; }
+#drawer .drawer__item { position: relative; display: flex; align-items: center; width: 100%; gap: 14px; min-height: 46px; padding: 11px 14px; border: 0; border-radius: 12px; background: transparent; color: var(--text-primary); box-shadow: none; font-size: .86rem; line-height: 1.4; font-weight: 450; text-decoration: none; transition: background .14s ease, color .14s ease; }
+#drawer .drawer__item[hidden] { display: none; }
+#drawer .drawer__icon { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; color: var(--text-secondary); }
+#drawer .drawer__icon .svg { width: 21px; height: 21px; stroke-width: 1.65; }
+#drawer .drawer__out { color: var(--text-secondary); font-size: 1rem; }
+#drawer .drawer__item:hover, #drawer .drawer__brand:hover, #drawer .drawer__head .icon-btn:hover { background: var(--pe-chip-bg); }
+#drawer .drawer__item[aria-current='true'] { background: var(--pe-brand-soft); color: var(--pe-brand-text); font-weight: 600; }
+#drawer .drawer__item[aria-current='true'] .drawer__icon { color: var(--pe-brand-text); }
+#drawer :is(button,a):focus-visible { outline: 2px solid var(--pe-focus); outline-offset: -2px; }
+#drawer .drawer__foot { flex: 0 0 auto; display: grid; gap: 10px; margin: 0; padding: 13px 20px 0; border-top: 1px solid var(--pe-hairline); }
+#drawer .drawer__appearance { display: grid; gap: 9px; }
+#drawer .drawer__appearance-label { padding-left: 4px; color: var(--text-secondary); font-size: .7rem; font-weight: 500; }
+#drawer .drawer__themes { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 3px; padding: 4px; border: 1px solid var(--pe-line); border-radius: 12px; background: var(--pe-page-bg); }
+#drawer .drawer__theme { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 7px 3px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font: inherit; font-size: .69rem; font-weight: 500; cursor: pointer; }
+#drawer .drawer__theme .svg { display: block; width: 16px; height: 16px; }
+#drawer .drawer__theme[aria-checked='true'] { border-color: var(--pe-line); background: var(--pe-card-bg); color: var(--pe-brand-text); box-shadow: 0 1px 3px rgb(0 0 0 / 5%); }
+#drawer .drawer__logout { display: flex; justify-self: stretch; align-items: center; justify-content: flex-start; width: 100%; min-height: 44px; height: auto; gap: 13px; padding: 10px 12px; margin: 0; border: 0; border-radius: 12px; background: transparent; color: var(--danger); box-shadow: none; font: inherit; font-size: .83rem; font-weight: 500; }
+#drawer .drawer__logout .drawer__icon { color: inherit; }
+#drawer .drawer__logout:hover { background: var(--pe-danger-soft); box-shadow: none; }
+body[data-drawer='open'] { overflow: hidden; }
+.scrim { background: rgb(7 17 20 / 48%); backdrop-filter: blur(2px); }
+@media (max-height: 650px) {
+  #drawer { padding-top: calc(12px + env(safe-area-inset-top,0px)); }
+  #drawer .drawer__eyebrow { margin-bottom: 5px; }
+  #drawer .drawer__head { margin-bottom: 9px; }
+  #drawer .drawer__foot { padding-top: 9px; gap: 6px; }
+  #drawer .drawer__appearance-label { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #drawer, .scrim, #drawer .drawer__item { transition: none; }
+}
+
+/* Controles y cabeceras: el mismo significado en ambos temas. */
+body .topbar__brand { color: var(--text-primary); }
+body .presence { background: var(--pe-brand-soft); border-color: var(--pe-line); color: var(--pe-brand-text); }
+body .presence[data-online="false"] { background: var(--pe-warn-bg); color: var(--pe-warn); }
+body .icon-btn { color: var(--text-primary); }
+body .field__input::placeholder, body .field__area::placeholder, body input::placeholder, body textarea::placeholder { color: var(--text-secondary); opacity: .85; }
+body input, body select, body textarea { accent-color: var(--phyto-primary); }
+body :is(button,a,input,textarea,select):focus-visible { outline-color: var(--pe-focus); }
+
+/* Oscuro: corregir superficies y tintas fijas de las vistas operativas. */
+:root[data-theme='dark'] body { color: var(--text-primary); }
+:root[data-theme='dark'] body :is(.wa-appbar,.simple-head,.wa__composer,.wa__chat-head,.wa__thread-search,.wa__list-head) { background: var(--pe-appbar-bg); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.wa-appbar__back,.wa-appbar__icon,.simple-head__back,.simple-head__action,.wa__back,.wa__head-icon,.wa__chat-menu,.wa__chat-name) { background: transparent; color: var(--text-primary); border-color: var(--pe-line); box-shadow: none; }
+:root[data-theme='dark'] body :is(.wa-appbar__search,.wa__input,.wa__thread-search input,.search input,.search,.input) { background: var(--pe-control-bg); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.wa__list,.wa__chat,.wa__thread,.wa) { background-color: var(--pe-page-bg); border-color: var(--pe-line); }
+:root[data-theme='dark'] body .wa__composer { border-top-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.wa__composer .btn--primary,.float-btn--primary,.fab) { background: var(--pe-brand-text); color: var(--pe-on-brand); }
+:root[data-theme='dark'] body :is(.conv__more,.conv__more-icon,.client-row__icon,.wa__attach,.wa__mic,.wa__send) { color: var(--pe-brand-text); filter: none; }
+:root[data-theme='dark'] body .conv__more-icon { filter: brightness(0) invert(1); }
+:root[data-theme='dark'] body .conv--active { background: #203b60; border-color: #426b9e; }
+:root[data-theme='dark'] body :is(.client-row,.profile-card,.profile-section,.user-row,.empty,.notice,.menu-list,.menu-item,.wa-status) { background: var(--pe-card-bg); color: var(--text-primary); border-color: var(--pe-line); box-shadow: none; }
+:root[data-theme='dark'] body :is(.client-row__topline strong,.client-row__body strong,.item__name,.item__title,.menu-item strong,.view__title,.card__title,.profile-account strong,.profile-name,.facts dd,.fact dd) { color: var(--text-primary); }
+:root[data-theme='dark'] body :is(.client-row__meta,.client-row__sales,.client-row__when,.menu-item small,.card__text,.profile-account small,.profile-account span,.empty p,.field__hint,.help-text) { color: var(--text-secondary); }
+:root[data-theme='dark'] body :is(.client-row__avatar,.client-row__tag,.tag,.client-tag,.user-row__permissions span) { background: var(--pe-brand-soft); color: var(--pe-brand-text); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.btn--danger,.menu-item--danger) { color: var(--danger); background: var(--pe-danger-soft); border-color: #693d40; }
+:root[data-theme='dark'] body :is(.banner,.permission-banner,.notice-hint,.offline-notice) { border-color: var(--pe-line); color: var(--text-secondary); }
+:root[data-theme='dark'] body .permission-banner { background: var(--surface-muted); }
+:root[data-theme='dark'] body .banner { background: var(--pe-info-bg); color: var(--pe-info); }
+:root[data-theme='dark'] body .banner--warn { background: var(--pe-warn-bg); color: var(--pe-warn); }
+:root[data-theme='dark'] body :is(.mini-table,.table-wrap) { background: var(--pe-card-bg); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.mini-table th,.mini-table td) { border-color: var(--pe-line); }
+:root[data-theme='dark'] body .mini-table th { color: var(--text-secondary); background: var(--surface-muted); }
+:root[data-theme='dark'] body .calling { background: var(--surface); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.calling__status,.calling__incoming) { border-color: var(--pe-line); }
+
+/* Estados de pedidos: colores legibles conservando el semáforo. */
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card { background: var(--order-bg,var(--pe-card-bg)); border-color: var(--order-line,var(--pe-line)); box-shadow: none; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card--pendiente { --order-bg: #302326; --order-line: #664044; --order-tone: #ffa7a7; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card--en_camino { --order-bg: #202c40; --order-line: #3a527d; --order-tone: #acc9ff; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card--incidencia { --order-bg: #342c22; --order-line: #6b5134; --order-tone: #f7c488; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card--entregado { --order-bg: #1b332b; --order-line: #325d4a; --order-tone: #8ce0b8; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card--cancelado { --order-bg: #252c30; --order-line: #3d494f; --order-tone: #bcc8ce; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card .order-row { background: transparent; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card .order-row__status { background: var(--order-bg); color: var(--order-tone); border: 1px solid var(--order-line); }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-card__actions { background: rgb(0 0 0 / 10%); border-top-color: var(--order-line,var(--pe-line)); }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-row__pay--cash { background: #203d31; color: #a4e4c1; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-row__pay--transfer { background: #26364d; color: #bbd3ff; }
+:root[data-theme='dark'] body[data-tab='pedidos'] .order-row__pay--otro { background: #34313f; color: #d4caed; }
+:root[data-theme='dark'] body .order-row--cancelado, :root[data-theme='dark'] body[data-tab='pedidos'] .order-card--cancelado .order-row { opacity: 1; }
+:root[data-theme='dark'] body .order-card--sel { outline: 2px solid var(--pe-focus); outline-offset: 2px; }
+
+/* Detalles que no deben heredar blanco o verde oscuro en hojas de noche. */
+:root[data-theme='dark'] body :is(.qty-stepper button,.inventory-summary,.order-line,.profile-account,.printer-settings__hero,.receipt-pdf-card,.delivery-permission,.order-location-required) { background: var(--pe-card-bg); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.sheet__head .icon-btn,.sheet__panel .pass__eye,.password-toggle) { background: var(--pe-control-bg); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body .field__input:focus, :root[data-theme='dark'] body .field__area:focus { border-color: var(--pe-focus); box-shadow: 0 0 0 3px var(--pe-brand-soft); }
+:root[data-theme='dark'] body :is(input[type='checkbox'],input[type='radio']) { accent-color: var(--pe-brand-text); }
+/* Las etiquetas conservan su significado; un bloqueo no se vuelve verde. */
+:root[data-theme='dark'] body :is(.tag--nuevo,.tag--recordatorio,.delivery-status--contacted,.delivery-status--ready_for_delivery) { background: var(--pe-warn-bg); color: var(--pe-warn); border-color: #665331; }
+:root[data-theme='dark'] body :is(.tag--contactado,.tag--confirmado,.delivery-status--in_transit,.delivery-status--en_camino) { background: #21354a; color: #b5d7fa; border-color: #3a587a; }
+:root[data-theme='dark'] body .tag--interesado { background: #342d4b; color: #d4c3fa; }
+:root[data-theme='dark'] body :is(.tag--entregado,.delivery-status--entregado) { background: #203d31; color: #a4e4c1; border-color: #3d6551; }
+:root[data-theme='dark'] body :is(.tag--perdido,.delivery-status--cancelado) { background: #30393e; color: #cad4da; border-color: #4c5b64; }
+:root[data-theme='dark'] body :is(.delivery-status--pendiente,.delivery-status--pending_contact) { background: #3c282e; color: #ffb3c5; border-color: #744453; }

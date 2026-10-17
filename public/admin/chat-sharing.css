@@ -1,0 +1,24 @@
+.sharing-editor-group + .sharing-editor-group { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--pe-line); }
+.sharing-editor-group > h3 { margin: 0 0 6px; font-size: 1rem; }
+.sharing-editor-row, .sharing-option { min-width: 0; margin: 12px 0; padding: 14px; border: 1px solid var(--pe-line); border-radius: 14px; background: var(--pe-card-bg); }
+.sharing-editor-row > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.sharing-editor-row h4, .sharing-option h3 { margin: 0; font-size: .95rem; }
+.sharing-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 12px; }
+.sharing-fields .field { min-width: 0; margin: 0; }
+.sharing-fields .field__input, .sharing-fields .field__select { width: 100%; box-sizing: border-box; }
+.sharing-editor-row .btn, .sharing-actions .btn { min-height: 44px; }
+.sharing-option p { margin: 6px 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: .85rem; }
+.sharing-option .sharing-account { color: var(--text-primary); font-size: 1rem; font-weight: 650; font-variant-numeric: tabular-nums; user-select: all; }
+.sharing-account small { font-size: .75rem; font-weight: 400; }
+.sharing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.sharing-empty { padding: 16px 4px; font-size: .9rem; color: var(--text-secondary); line-height: 1.5; }
+@media(max-width:480px) { .sharing-fields { grid-template-columns: minmax(0,1fr); } .sharing-editor-row, .sharing-option { padding: 12px; } }
+
+.sharing-editor-group[hidden], #chat-sharing-form[hidden], #sharing-settings-home[hidden] { display: none; }
+.sharing-editor-group { margin: 0; }
+.sharing-editor-group + .sharing-editor-group { margin-top: 0; padding-top: 0; border-top: 0; }
+.sharing-map-picker { margin-top: 14px; padding: 12px; border: 1px solid var(--pe-line); border-radius: 14px; background: var(--pe-card-bg); }
+.sharing-map-picker p { font-size: .85rem; line-height: 1.5; color: var(--text-secondary); }
+.sharing-map-canvas { height: min(45dvh,360px); min-height: 240px; border-radius: 12px; isolation: isolate; }
+#sharing-settings-home ul { list-style: none; padding: 0; margin: 0; }
+#sharing-settings-home .settings-row { text-decoration: none; }

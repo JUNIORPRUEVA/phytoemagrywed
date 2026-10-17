@@ -794,11 +794,22 @@ function createJsonlStore(file) {
 
 async function createPostgresStore(url) {
   const { Pool } = await import('pg');
+  /*
+   * El pool por defecto (4 conexiones, 8 s de espera) está pensado para la red
+   * interna del servidor (latencia ~0). Trabajando contra la base por un túnel
+   * remoto la latencia sube y las ráfagas de `/api/admin/data` agotan el pool,
+   * lo que puede dejar la petición colgada. Se puede ajustar sin tocar el
+   * comportamiento por defecto con PHYTO_CRM_PG_MAX / PHYTO_CRM_PG_CONNECT_TIMEOUT_MS.
+   */
+  const positiveInt = (raw, fallback) => {
+    const n = Number.parseInt(String(raw ?? ''), 10);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
   const pool = new Pool({
     connectionString: url,
-    max: 4,
+    max: positiveInt(process.env.PHYTO_CRM_PG_MAX, 4),
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 8_000,
+    connectionTimeoutMillis: positiveInt(process.env.PHYTO_CRM_PG_CONNECT_TIMEOUT_MS, 8_000),
     application_name: 'phytoemagry-crm',
   });
 

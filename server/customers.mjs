@@ -357,6 +357,16 @@ export function createCustomerService(deps) {
       followupsByCustomer.set(row.customer_id, list);
     }
     for (const message of messages) {
+      /*
+       * UN MENSAJE QUITADO DEL CRM NO ES «LO ÚLTIMO QUE SE DIJO».
+       *
+       * Aquí se decide el resumen de la fila en la bandeja y si la conversación
+       * espera respuesta. Si alguien quitó ese mensaje del CRM, no puede seguir
+       * mandando en la lista: se busca el anterior que siga a la vista. El mensaje
+       * no se borra de la base (el cliente lo tiene en su WhatsApp): solo se
+       * aparta de la vista, con el registro de quién lo quitó y cuándo.
+       */
+      if (message.deleted_at) continue;
       if (!messagesByConversation.has(message.conversation_id)) messagesByConversation.set(message.conversation_id, message);
     }
     const states = new Map();
@@ -777,7 +787,7 @@ export function createCustomerService(deps) {
       const context = await inboxContext(customers);
       const items = conversations.map((conversation) => {
         const customer = byCustomer.get(conversation.customer_id) ?? null;
-        const last = context.messagesByConversation.get(conversation.id) ?? messages.find((message) => message.conversation_id === conversation.id) ?? null;
+        const last = context.messagesByConversation.get(conversation.id) ?? messages.find((message) => message.conversation_id === conversation.id && !message.deleted_at) ?? null;
         const purchases = context.purchasesByCustomer.get(conversation.customer_id) ?? [];
         const followupList = (context.followupsByCustomer.get(conversation.customer_id) ?? []).sort((a, b) =>
           String(a.scheduled_at).localeCompare(String(b.scheduled_at)),
@@ -829,25 +839,42 @@ export function createCustomerService(deps) {
       const needle = String(options.q ?? '').trim().toLowerCase();
       const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.from ?? '')) ? String(options.from) : null;
       const toDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.to ?? '')) ? String(options.to) : null;
+      /*
+       * BUSCAR ES BUSCAR EN TODAS — también en las archivadas.
+       *
+       * Con texto en el buscador NO se aplica ningún filtro de estado (ni
+       * «Archivados», ni «Nuevos», ni «Pendientes»…) ni el rango de fechas: quien
+       * escribe «Yahaira» quiere ver a Yahaira, esté activa, archivada, asignada a
+       * otro o haya escrito la semana pasada. Antes, si la conversación estaba
+       * archivada, la búsqueda no la encontraba y parecía que la clienta había
+       * desaparecido.
+       *
+       * Los filtros siguen mandando cuando NO se está buscando, y en cuanto se
+       * borra el texto vuelven a mandar tal cual estaban puestos: buscar no los
+       * cambia.
+       */
+      const buscando = needle.length > 0;
       const filtered = items.filter((row) => {
         if (row.deleted_at) return false;
         const archived = Boolean(row.archived_at);
-        if (options.filter === 'archivados') {
-          if (!archived) return false;
-        } else if (archived) {
-          return false;
-        }
-        if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
-        if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
-        if (options.filter === 'clientes' && row.has_purchase !== true) return false;
-        if (options.filter === 'seguimiento' && !row.next_followup) return false;
-        if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
-        if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
-        if (fromDay || toDay) {
-          if (!row.last_message_at) return false;
-          const messageDay = dayIn(new Date(row.last_message_at), timeZone);
-          if (fromDay && messageDay < fromDay) return false;
-          if (toDay && messageDay > toDay) return false;
+        if (!buscando) {
+          if (options.filter === 'archivados') {
+            if (!archived) return false;
+          } else if (archived) {
+            return false;
+          }
+          if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
+          if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
+          if (options.filter === 'clientes' && row.has_purchase !== true) return false;
+          if (options.filter === 'seguimiento' && !row.next_followup) return false;
+          if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
+          if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
+          if (fromDay || toDay) {
+            if (!row.last_message_at) return false;
+            const messageDay = dayIn(new Date(row.last_message_at), timeZone);
+            if (fromDay && messageDay < fromDay) return false;
+            if (toDay && messageDay > toDay) return false;
+          }
         }
         if (needle) {
           const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
@@ -1233,6 +1260,60 @@ export function createCustomerService(deps) {
     /** Marca la conversación como leída (la insignia del panel). */
     async markConversationRead(conversationId) {
       return db.update('conversations', conversationId, { unread_count: 0, updated_at: new Date().toISOString() });
+    },
+
+    /** Un mensaje por su id. Nunca se expone sin comprobar la conversación antes. */
+    async getMessage(id) {
+      if (!id) return null;
+      return db.get('wa_messages', String(id));
+    },
+
+    /**
+     * QUITAR UN MENSAJE DEL CRM — borrado SUAVE y con rastro.
+     *
+     * LO QUE ESTO **NO** HACE, Y NO SE PUEDE HACER: borrarlo en WhatsApp. La API
+     * oficial no tiene forma de eliminar (ni de editar) un mensaje ya enviado: el
+     * cliente lo tiene en su teléfono y ahí se queda. Así que aquí no se finge
+     * nada: el mensaje se APARTA de la vista del CRM (su cuerpo deja de mostrarse
+     * y deja de ser el resumen de la conversación), y se guarda quién lo quitó,
+     * cuándo y por qué. La fila sigue existiendo: el hilo no se rompe, la
+     * auditoría no se pierde y el mensaje se puede devolver con `restore: true`
+     * si alguien se equivocó al quitarlo.
+     *
+     * @param {{ messageId: string, conversationId?: string|null, byUserId?: string|null,
+     *           byDisplayName?: string|null, reason?: string|null, restore?: boolean }} input
+     */
+    async removeMessageFromCrm(input) {
+      const message = await this.getMessage(input?.messageId);
+      if (!message) return { ok: false, error: 'unknown_message' };
+      /*
+       * La conversación manda: un mensaje de OTRA conversación no se toca, ni
+       * siquiera para quitarlo. Es la misma comprobación que hace el servidor
+       * antes de enviar y evita que una pestaña vieja apunte a un hilo ajeno.
+       */
+      if (input?.conversationId && message.conversation_id && message.conversation_id !== input.conversationId) {
+        return { ok: false, error: 'wrong_conversation' };
+      }
+      const now = new Date().toISOString();
+      if (input?.restore === true) {
+        const restored = await db.update('wa_messages', message.id, {
+          deleted_at: null,
+          deleted_by_user_id: null,
+          deleted_by_display_name_snapshot: null,
+          deleted_reason: null,
+          updated_at: now,
+        });
+        return { ok: true, restored: true, message: restored };
+      }
+      if (message.deleted_at) return { ok: true, duplicate: true, message };
+      const updated = await db.update('wa_messages', message.id, {
+        deleted_at: now,
+        deleted_by_user_id: input?.byUserId ?? null,
+        deleted_by_display_name_snapshot: input?.byDisplayName ?? null,
+        deleted_reason: short(input?.reason, 200) ?? null,
+        updated_at: now,
+      });
+      return { ok: true, duplicate: false, message: updated };
     },
 
     async archiveConversation(conversationId, archived = true) {

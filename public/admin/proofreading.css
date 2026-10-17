@@ -1,0 +1,19 @@
+.wa-proofreading { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; box-sizing: border-box; width: calc(100% - 4px); min-width: 0; margin: 0 2px 6px; padding: 8px 10px 3px; border: 1px solid var(--pe-line); border-radius: 12px; background: var(--pe-chip-bg); color: var(--text-secondary); }
+.wa-proofreading[hidden] { display: none; }
+.wa-proofreading__text { flex: 1 1 100%; min-width: 0; max-height: min(140px, 20dvh); overflow-y: auto; white-space: pre-wrap; font-size: .8rem; line-height: 1.4; overflow-wrap: anywhere; }
+.wa-proofreading [data-proofreading="accept"] { margin-left: auto; }
+.wa-proofreading button[hidden] { display: none; }
+.wa-proofreading [data-proofreading="accept"][hidden] + button { margin-left: auto; }
+.wa-proofreading button { flex: 0 0 auto; min-height: 36px; padding: 6px 9px; border: 0; border-radius: 9px; background: transparent; color: var(--pe-brand-text); font: inherit; font-size: .75rem; font-weight: 600; cursor: pointer; }
+.wa-proofreading button:last-child { color: var(--text-secondary); font-weight: 400; }
+.wa-proofreading button:hover { background: var(--pe-brand-soft); }
+.wa-proofreading button:disabled { opacity: .5; cursor: default; }
+.wa-proofreading button:focus-visible { outline: 2px solid var(--pe-focus); outline-offset: -2px; }
+@media (pointer: coarse) { .wa-proofreading button { min-height: 44px; } }
+.wa-proofreading-confirm { margin: 0 2px 8px; padding: 10px 12px; border: 1px solid var(--pe-line); border-radius: 12px; background: var(--pe-chip-bg); color: var(--text-secondary); }
+.wa-proofreading-confirm p { margin: 0 0 4px; font-size: .8rem; line-height: 1.4; }
+.wa-proofreading-confirm__actions { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.wa-proofreading-confirm button { min-height: 44px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--pe-brand-text); font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.wa-proofreading-confirm button:last-child { color: var(--text-secondary); font-weight: 400; }
+.wa-proofreading-confirm button:hover { background: var(--pe-brand-soft); }
+.wa-proofreading-confirm button:focus-visible { outline: 2px solid var(--pe-focus); outline-offset: -2px; }

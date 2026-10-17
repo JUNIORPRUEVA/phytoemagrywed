@@ -589,6 +589,7 @@ describe('UAT del panel con multimedia', () => {
 
     // En Ajustes sí, como recuperación de administración.
     click('[data-tab="ajustes"]');
+    click('[data-settings-open="multimedia"]');
     const review = await waitFor(() => {
       const box = $('#media-review');
       return box.innerHTML.includes('SEND_UNKNOWN') ? box : null;

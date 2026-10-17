@@ -330,12 +330,14 @@ describe('blindaje en el panel', () => {
   it('el «⋯» ofrece PEDIRLA (y no asignársela sola)', async () => {
     click(`[data-conv-more="${ids.ajena}"]`);
     await waitFor(() => $('#sheet').hidden === false, 'la hoja del menú');
+    click('[data-conv-assign]');
+    await waitFor(() => $('#sheet-title').textContent === 'Asignar conversación', 'el selector de responsable');
     const pedir = $('[data-conv-ask-assign]');
     expect(pedir).toBeTruthy();
     expect(pedir.textContent).toContain('Solicitar que me la asignen');
     expect($('[data-conv-take]')).toBeNull();
     expect($('[data-conv-reassign]')).toBeNull();
-    expect($('#sheet').textContent).toContain('Asignada a otra persona');
+    expect($('#sheet').textContent).toContain('Atiende Pedro');
     click('[data-close-sheet]');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
   });
@@ -343,6 +345,8 @@ describe('blindaje en el panel', () => {
   it('pedirla avisa a administración y NO le asigna nada', async () => {
     click(`[data-conv-more="${ids.ajena}"]`);
     await waitFor(() => $('#sheet').hidden === false, 'la hoja del menú');
+    click('[data-conv-assign]');
+    await waitFor(() => $('#sheet-title').textContent === 'Asignar conversación', 'el selector de responsable');
     click('[data-conv-ask-assign]');
     const peticion = await waitFor(
       () => llamadasA((row) => row.ruta === `/api/admin/conversations/${ids.ajena}/assignment-request`).at(-1),
@@ -378,6 +382,12 @@ describe('blindaje en el panel', () => {
     expect($('#thread').textContent).toContain('30 cápsulas');
 
     setValue('#wa-text', 'Ya me la asignaron, aquí estoy');
+    /*
+     * Contesta de verdad. En el panel hay una ventana de 8 s para poder retirar un
+     * mensaje escrito a prisa; aquí se apaga para no esperarla: lo que se prueba es
+     * que el mensaje SALE, no la ventana (esa tiene su prueba en `panel-mensajes-uat`).
+     */
+    dom.window.__PHYTO_UNDO_MS = 0;
     click('#wa-send');
     await waitFor(() => whatsapp.sent.length > 0, 'el mensaje enviado a WhatsApp');
     expect(whatsapp.sent.at(-1)).toMatchObject({ to: `+${PHONES.ajena}` });

@@ -15,6 +15,7 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promi
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as esbuild from 'esbuild';
+import { buildProofreading } from './build-proofreading.mjs';
 
 export const ROOT = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 /** Carpeta publicable (solo la genera `npm run build`). */
@@ -259,6 +260,7 @@ function pendingChecklist(view) {
 
 async function main() {
   const started = Date.now();
+  await buildProofreading();
   // Build publicable: NO se leen los overrides locales (.env.local).
   await loadEnv();
   if (existsSync(path.join(ROOT, '.env.local'))) {

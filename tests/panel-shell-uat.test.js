@@ -154,7 +154,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
   });
 
   it('Configuración incluye Impresora y usa el bridge nativo sin deep links', () => {
-    expect(html).toContain('href="#config-impresora"');
+    expect(html).toContain('id="settings-menu"');
     expect(html).toContain('id="config-impresora"');
     expect(html).toContain('id="printer-config"');
     expect(app).toContain('PhytoDeviceBridge');
@@ -164,7 +164,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(app).toContain("nativePrinterRequest('printReceipt'");
     expect(app).toContain('data-native-printer="configure"');
     expect(app).toContain('data-native-printer="test"');
-    expect(app).toContain('Para imprimir por Bluetooth desde el teléfono, instala la app de Phytoemagry para Android.');
+    expect(app).toContain('Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH, SRL para Android.');
     expect(app).toContain('/api/admin/android-apk/download');
     expect(app).toContain('Descargar app para Android');
     expect(app).toContain('Cómo instalar y probar la impresora');
@@ -240,7 +240,7 @@ describe('WhatsApp: la conversación es la pantalla', () => {
     expect(css).toMatch(/\.simple-head__back \{[\s\S]*?border-radius: 50%/);
     // Alineado con el borde del contenido (los 14 px de `.content`) y sin barra dura.
     expect(css).toMatch(/\.simple-head \{[\s\S]*?padding: calc\(5px \+ env\(safe-area-inset-top, 0px\)\) 14px 5px;/);
-    expect(css).toMatch(/\.simple-head \{[\s\S]*?border-bottom: 1px solid rgba\(11, 107, 79, 0\.07\)/);
+    expect(css).toMatch(/\.simple-head \{[\s\S]*?border-bottom: 1px solid rgba\(20, 91, 215, 0\.07\)/);
     // Volver lleva al inicio, que es donde está el menú.
     expect(app).toContain("setTab('hoy')");
   });
@@ -314,15 +314,15 @@ describe('compositor y acciones del cliente', () => {
     expect(app).toContain('if (!canSendFreeText) {');
   });
 
-  it('las acciones del chat son un botón flotante inferior, sin tarjeta grande', () => {
+  it('las acciones del chat flotan sobre el compositor, sin duplicarse en la cabecera', () => {
     expect(waHtml).not.toContain('id="compra-nueva-wa"');
     expect(app).not.toContain('compra-nueva-wa');
     expect(waHtml).toContain('class="wa__fab-row"');
     expect(waHtml).toContain('class="wa-fab"');
     expect(waHtml).not.toContain('class="wa__chat-menu"');
     expect(waHtml).toContain('id="wa-actions"');
-    expect(css).toMatch(/\.thread \{[\s\S]*?padding: 12px 12px 56px;/);
-    expect(css).toMatch(/\.wa__fab-row \{\n\s+position: relative;\n\s+height: 0;/);
+    const head = waHtml.slice(waHtml.indexOf('class="wa__chat-head"'), waHtml.indexOf('class="thread thread--wa'));
+    expect(head).not.toContain('id="wa-actions"');
   });
 
   it('el menú de acciones lleva las cuatro acciones, con cliente ya elegido', () => {

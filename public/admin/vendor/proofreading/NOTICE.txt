@@ -1,0 +1,3 @@
+Motor: nspell 2.1.5 (MIT), https://github.com/wooorm/nspell
+Diccionario: dictionary-es-do 2.0.0, español de República Dominicana, Santiago Bosio y colaboradores. Distribuido bajo MPL-1.1 (opción de licencia). Fuente sin modificar: https://www.npmjs.com/package/dictionary-es-do/v/2.0.0
+Ver DICTIONARY-LICENSE.txt y NSPELL-LICENSE.txt.

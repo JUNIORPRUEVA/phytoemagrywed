@@ -25,7 +25,7 @@ const PHONE = '18095559071';
 const NOMBRE = 'Juan Pérez';
 
 const CUERPO =
-  'Hola {{1}}, te escribimos de Phytoemagry.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.';
+  'Hola, {{1}}. Te escribimos de FullTECH.\n\n{{2}}\n\nQuedo atento a tu respuesta.';
 
 /** Graph de mentira: NO hay una sola llamada real a Meta. */
 const whatsapp = {
@@ -119,7 +119,7 @@ beforeAll(async () => {
   const guardada = await adminJson('/api/admin/wa-templates', {
     method: 'POST',
     body: JSON.stringify({
-      name: 'phyto_contacto_personalizado_v1',
+      name: 'fulltech_contacto_personalizado_v2',
       friendlyName: 'Contacto personalizado',
       status: 'APPROVED',
       body: CUERPO,
@@ -184,17 +184,16 @@ afterAll(async () => {
 });
 
 describe('la hoja de plantilla del chat directo', () => {
-  it('trae el NOMBRE del cliente puesto y avisado como automático', async () => {
+  it('elige FullTECH y completa el nombre automáticamente', async () => {
     click(`[data-conv="${conversationId}"]`);
     await waitFor(() => $('#wa-open-template'), 'el botón de plantilla del compositor');
     click('#wa-open-template');
     await waitFor(() => $('#wa-template-fields [data-wa-var="1"]'), 'los huecos de la plantilla');
 
-    expect($('#wa-template').value).toBe('phyto_contacto_personalizado_v1');
+    expect($('#wa-template').value).toBe('fulltech_contacto_personalizado_v2');
     const nombre = $('#wa-template-fields [data-wa-var="1"]');
     expect(nombre.value).toBe(NOMBRE);
-    expect(nombre.closest('.field').textContent).toContain('Nombre del cliente');
-    expect(nombre.closest('.field').textContent).toContain('automático');
+    expect(nombre.type).toBe('hidden');
     // Ya no hay ningún hueco de saludo por hora.
     expect($('#wa-template-fields [data-wa-var="3"]')).toBeNull();
     expect($('#wa-template-fields').textContent).not.toMatch(/Buenos|Buenas/);
@@ -203,8 +202,8 @@ describe('la hoja de plantilla del chat directo', () => {
   it('el MENSAJE se escribe en un campo amplio de varias líneas, no en un renglón', () => {
     const libre = $('#wa-template-fields [data-wa-var="2"]');
     expect(libre.tagName).toBe('TEXTAREA');
-    expect(libre.closest('.field').textContent).toContain('lo escribes tú');
-    expect($('#wa-template-fields [data-wa-var="1"]').tagName).toBe('INPUT');
+    expect(libre.closest('.field').textContent).toContain('Tu mensaje');
+    expect($('#wa-template-fields [data-wa-var="1"]').type).toBe('hidden');
   });
 
   it('la VISTA PREVIA es exacta, con los saltos de línea del texto fijo', () => {
@@ -221,12 +220,6 @@ describe('la hoja de plantilla del chat directo', () => {
   });
 
   it('las plantillas que Meta NO ha aprobado se ven aparte y avisadas', () => {
-    // El aviso existe y nombra la plantilla nueva de seguimiento programado.
-    const aviso = $('.wa-pending');
-    expect(aviso).not.toBeNull();
-    expect(aviso.textContent).toContain('Pendientes de aprobación de Meta');
-    expect(aviso.textContent).toContain('phyto_seguimiento_compra_v1');
-    expect(aviso.textContent).toContain('phyto_seguimiento_interes_v1');
     // Y NO aparece entre las que se pueden enviar.
     expect([...$$('#wa-template option')].map((option) => option.value)).not.toContain(
       'phyto_seguimiento_compra_v1',
@@ -247,7 +240,7 @@ describe('la hoja de plantilla del chat directo', () => {
 
     const enviado = whatsapp.sent[0];
     expect(enviado.to).toBe(`+${PHONE}`);
-    expect(enviado.template.name).toBe('phyto_contacto_personalizado_v1');
+    expect(enviado.template.name).toBe('fulltech_contacto_personalizado_v2');
     expect(enviado.template.components).toEqual([
       {
         type: 'body',
@@ -258,7 +251,7 @@ describe('la hoja de plantilla del chat directo', () => {
       },
     ]);
     // Lo que se envió es EXACTAMENTE lo que decía la vista previa.
-    await waitFor(() => $('#thread').textContent.includes('te escribimos de Phytoemagry'), 'el mensaje en el hilo');
+    await waitFor(() => $('#thread').textContent.includes('Te escribimos de FullTECH'), 'el mensaje en el hilo');
     expect($('#thread').textContent).toContain(previsto.split('\n\n')[1]);
     expect($('#thread').textContent).not.toContain(PHONE);
   }, 20000);

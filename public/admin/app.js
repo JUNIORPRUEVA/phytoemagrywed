@@ -16,6 +16,213 @@
   const WA_NOTIFY_KEY = 'pe_wa_notify';
   const WA_SOUND_KEY = 'pe_wa_sound';
   const NOTICE_DISMISSED_KEY = 'pe_notice_dismissed';
+  /*
+   * LO QUE SE BORRA, SE BORRA.
+   *
+   * Aquí queda anotado cada aviso que se borró (los locales, por su clave, y los
+   * del servidor, por su id). Sirve para dos cosas: que no vuelva a pintarse en
+   * este teléfono aunque el servidor todavía lo tenga, y para reintentar el
+   * borrado en el servidor si en ese momento no había red. Sin esto, borrar una
+   * notificación sin conexión —o mientras el servidor no responde— la hacía
+   * reaparecer en el siguiente refresco, que es exactamente lo que pasaba.
+   */
+  const NOTIF_DELETED_KEY = 'pe_notif_borradas';
+  /** Los que todavía hay que borrar en el servidor (sin red quedan aquí­). */
+  const NOTIF_PENDING_KEY = 'pe_notif_pendientes';
+  /** Cuántos ids se recuerdan: más que de sobra y sin crecer sin fin. */
+  const NOTIF_DELETED_MAX = 500;
+
+  /*
+   * ======================================================================
+   *  LO QUE SE ELIGE, SE QUEDA ELEGIDO
+   * ======================================================================
+   *
+   * Antes, todo lo que el usuario ponía (la pestaña, el filtro de la bandeja, el
+   * de pedidos, el de seguimientos, el de clientes y las fechas) vivía SOLO en
+   * memoria. Al cerrar el panel y volver a entrar aparecía todo «en general» otra
+   * vez: quien dejaba la bandeja en Archivados volvía y no lo encontraba, y
+   * parecía que la app se hubiera olvidado de su elección.
+   *
+   * Aquí­ se guarda esa elección en el teléfono y se vuelve a poner al abrir.
+   *
+   * LO QUE NO SE GUARDA, a propósito: lo que se ESCRIBE en un buscador. Un texto
+   * viejo esconde datos sin que se vea de dónde salen, y el usuario no tiene por
+   * qué recordar que buscó algo hace tres días. Los filtros se ven (los chips
+   * dicen cuál está puesto, con su número); un texto olvidado, no.
+   */
+  const PREFS_KEY = 'pe_prefs';
+  /** Los valores admitidos: si en el teléfono hay basura, se ignora y se usa el de siempre. */
+  const PREF_VALUES = {
+    tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
+    waFilter: ['todos', 'mios', 'sin-asignar', 'no-leidos', 'pendientes', 'clientes', 'seguimiento', 'archivados'],
+    pedidosFilter: ['todo', 'pendiente', 'en-camino', 'entregado', 'cancelado'],
+    followupsFilter: ['todo', 'vencidos', 'hoy', 'proximos'],
+    clientFilter: ['todos', 'clientes', 'interesados', 'prospectos', 'seguimiento'],
+    dateMode: ['all', 'today', 'yesterday', '7d', 'month', 'custom'],
+  };
+
+  function leerPreferencias() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Guarda un trozo de preferencias sin perder las demás. */
+  function guardarPreferencias(patch = {}) {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ ...leerPreferencias(), ...patch }));
+    } catch {
+      /* Sin sitio en el teléfono: se pierde el recuerdo, no el trabajo. */
+    }
+  }
+
+  /** El valor guardado, solo si sigue siendo un valor válido de hoy. */
+  function preferenciaValida(valor, permitidos) {
+    return typeof valor === 'string' && permitidos.includes(valor) ? valor : null;
+  }
+
+  /** Un rango de fechas guardado (modo + desde/hasta), saneado. */
+  function preferenciaRango(guardado, porDefecto) {
+    if (!guardado || typeof guardado !== 'object') return null;
+    const mode = preferenciaValida(guardado.mode, PREF_VALUES.dateMode);
+    if (!mode) return null;
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(guardado.from ?? '') ? guardado.from : '';
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(guardado.to ?? '') ? guardado.to : '';
+    if (mode === 'custom' && (!from || !to)) return null;
+    return { mode, from: mode === 'custom' ? from : '', to: mode === 'custom' ? to : '' };
+  }
+
+  /**
+   * Pone en el estado lo que el usuario había elegido. Se llama UNA vez, al
+   * arrancar y ANTES de montar nada: así­ lo primero que se pinta (los chips, las
+   * listas) ya sale con su filtro puesto, sin parpadeos ni repintados.
+   */
+  function aplicarPreferenciasAlEstado() {
+    const prefs = leerPreferencias();
+    /*
+     * La pestaña: primero lo guardado por este sistema. Si no hay nada (teléfono
+     * que vení­a de la versión anterior), se lee `pe_crm_tab`, que ya se escribí­a
+     * aunque nadie lo leyera.
+     */
+    const tab = preferenciaValida(prefs.tab, PREF_VALUES.tab) ?? preferenciaValida(localStorage.getItem(TAB_KEY), PREF_VALUES.tab);
+    if (tab) state.tab = tab;
+    const waFilter = preferenciaValida(prefs.waFilter, PREF_VALUES.waFilter);
+    if (waFilter) state.wa.filter = waFilter;
+    const waDate = preferenciaRango(prefs.waDate);
+    if (waDate) state.wa.date = waDate;
+    const pedidosFilter = preferenciaValida(prefs.pedidosFilter, PREF_VALUES.pedidosFilter);
+    if (pedidosFilter) state.pedidosFilter = pedidosFilter;
+    const pedidosDate = preferenciaRango(prefs.pedidosDate);
+    if (pedidosDate) state.pedidosDate = pedidosDate;
+    const followupsFilter = preferenciaValida(prefs.followupsFilter, PREF_VALUES.followupsFilter);
+    if (followupsFilter) state.followupsFilter = followupsFilter;
+    const clientFilter = preferenciaValida(prefs.clientFilter, PREF_VALUES.clientFilter);
+    if (clientFilter) state.filter = clientFilter;
+  }
+
+  /** Guarda de golpe lo que hay puesto ahora: se llama cuando algo cambia. */
+  function guardarFiltrosActuales() {
+    guardarPreferencias({
+      tab: state.tab,
+      waFilter: state.wa.filter,
+      waDate: state.wa.date,
+      pedidosFilter: state.pedidosFilter,
+      pedidosDate: state.pedidosDate,
+      followupsFilter: state.followupsFilter,
+      clientFilter: state.filter,
+    });
+  }
+
+  /*
+   * ======================================================================
+   *  TEMA: CLARO · OSCURO · COMO EL TELÉFONO
+   * ======================================================================
+   *
+   * La elección vive en el propio teléfono (`pe_tema`) y se aplica ANTES de
+   * pintar (el script del <head>), para que no haya fogonazo blanco al abrir de
+   * noche. Aquí­ queda lo demás: resolver «como el teléfono», avisar al navegador
+   * del color de la barra del sistema, y dibujar el selector.
+   *
+   * En «como el teléfono» se ESCUCHA al sistema: si el móvil cambia de tema a
+   * las 8 de la tarde, el panel cambia solo, sin recargar.
+   */
+  const TEMA_KEY = 'pe_tema';
+  const TEMAS = [
+    ['light', 'Claro', 'sun'],
+    ['dark', 'Oscuro', 'moon'],
+    ['auto', 'Como el teléfono', 'contrast'],
+  ];
+  const TEMA_BARRA = { light: '#145bd7', dark: '#0b1424' };
+
+  const temaDeLaPersona = () => document.documentElement.dataset.tema ?? 'auto';
+  const temaDelTelefono = () =>
+    window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light';
+  const temaPintado = (elegido) => (elegido === 'dark' || elegido === 'light' ? elegido : temaDelTelefono());
+
+  function renderTemaPicker() {
+    const cajas = $$('[data-tema-picker]');
+    if (!cajas.length) return;
+    const elegido = temaDeLaPersona();
+    const html = `<div class="tema-card">
+      <div class="tema-card__head">
+        <span class="tema-card__icon" aria-hidden="true">${ICONS.contrast}</span>
+        <span class="tema-card__copy"><strong>Apariencia</strong><small>Claro, oscuro o como tu teléfono</small></span>
+      </div>
+      <div class="tema-opts" role="radiogroup" aria-label="Tema del panel">
+        ${TEMAS.map(
+          ([valor, texto, icono]) => `<button class="tema-opt" data-tema="${valor}" type="button" role="radio" aria-checked="${
+            valor === elegido
+          }">
+              <span class="tema-opt__icon" aria-hidden="true">${ICONS[icono]}</span>
+              <span class="tema-opt__label">${escapeHtml(texto)}</span>
+            </button>`,
+        ).join('')}
+      </div>
+    </div>`;
+    for (const caja of cajas) caja.innerHTML = html;
+  }
+
+  function renderDrawerTheme() {
+    const box = $('#drawer-theme');
+    if (!box) return;
+    if (!box.children.length) box.innerHTML = TEMAS.map(([key, label, icon]) =>
+      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${ICONS[icon]}</span><span>${key === 'auto' ? 'Sistema' : label}</span></button>`
+    ).join('');
+    box.querySelectorAll('[data-tema]').forEach((button) => {
+      button.setAttribute('aria-checked', String(button.dataset.tema === temaDeLaPersona()));
+    });
+  }
+
+  /** Pone el tema (y lo recuerda si lo eligió una persona). */
+  function aplicarTema(preferencia, guardar = false) {
+    const elegido = ['light', 'dark', 'auto'].includes(preferencia) ? preferencia : 'auto';
+    const pintado = temaPintado(elegido);
+    document.documentElement.dataset.tema = elegido;
+    document.documentElement.dataset.theme = pintado;
+    if (guardar) {
+      try {
+        localStorage.setItem(TEMA_KEY, elegido);
+      } catch {
+        /* Sin Storage se queda para esta sesión; no se pierde nada más. */
+      }
+    }
+    // La barra del sistema (Android/iOS) del color del tema, no siempre verde.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', TEMA_BARRA[pintado] ?? TEMA_BARRA.light);
+    renderTemaPicker();
+    renderDrawerTheme();
+  }
+
+  /** Mientras esté en «como el teléfono», se sigue al sistema en vivo. */
+  function seguirTemaDelTelefono() {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media?.addEventListener) return;
+    media.addEventListener('change', () => {
+      if (temaDeLaPersona() === 'auto') aplicarTema('auto');
+    });
+  }
   const ORDER_DRAFT_PREFIX = 'pe_order_draft_v1:';
   /*
    * MAPA DE PEDIDOS: la última vista del mapa y los últimos puntos vistos se
@@ -29,7 +236,7 @@
   const DELIVERY_TILE_PREFETCH_REASON =
     'Neither the OSM nor the Esri tile service allows automatic area prefetch; caching visited tiles is fine.';
   const DELIVERY_TILE_SLOW_MS = 4500;
-  const NEGOCIO = 'Phytoemagry';
+  const NEGOCIO = 'FullTECH, SRL';
   const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
 
   function isMapGestureTarget(target) {
@@ -205,10 +412,29 @@
     clientSearchOpen: false,
     clientFiltersOpen: false,
     // Filtro de la lista de pedidos, por ESTADO OPERATIVO (pendiente, en camino…).
-    pedidosFilter: 'todo',
+    pedidosFilter: 'todo',    /*
+     * …y por FECHA. Por defecto HOY: la lista de pedidos se abre en el día que se
+     * está trabajando, no en un histórico de meses. Se cambia en un toque (chip
+     * «Hoy») y el vocabulario es el MISMO que el de la bandeja de WhatsApp.
+     */
+    pedidosDate: { mode: 'today', from: '', to: '' },
+    /** Pedidos marcados para resolverlos en bloque (misma idea que en la bandeja). */
+    pedidosSel: new Set(),
     pedidosFiltersOpen: false,
     pedidosSearchOpen: false,
     pedidosSearch: '',
+    /*
+     * TRABAJO SIN CONEXIÓN.
+     *   `outbox`        → lo que se hizo sin red y falta por mandar (se hidrata del
+     *                     almacén al abrir; la pantalla lo pregunta muchas veces).
+     *   `salesReports`  → últimos informes vistos, para poder enseñarlos sin red.
+     *   `orderViews`    → últimas fichas de pedido abiertas (comprobante sin red).
+     *   `customerViews` → últimas fichas de cliente abiertas.
+     */
+    outbox: null,
+    salesReports: {},
+    orderViews: {},
+    customerViews: {},
     // Datos de la factura abierta (los usa el menú de su botón flotante).
     receiptContext: null,
     openId: null,
@@ -410,6 +636,9 @@
 
   const ICONS = {
     sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>'),
+    moon: svg('<path d="M20 14.4A8.4 8.4 0 0 1 9.6 4 8.6 8.6 0 1 0 20 14.4z"/>'),
+    /* Mitad clara y mitad oscura: «como el teléfono». */
+    contrast: svg('<circle cx="12" cy="12" r="8.6"/><path d="M12 3.4v17.2a8.6 8.6 0 0 0 0-17.2z" fill="currentColor" stroke="none"/>'),
     chat: svg('<path d="M21 11.6a8 8 0 0 1-8 8H8.2L3 22.5l1.3-4.4A8 8 0 1 1 21 11.6z"/>'),
     users: svg('<path d="M15.5 20v-1.4a4 4 0 0 0-4-4H7.2a4 4 0 0 0-4 4V20"/><circle cx="9.3" cy="7.6" r="3.1"/><path d="M17.4 15.4a3.9 3.9 0 0 1 2.6 3.7V20M15.8 4.6a3.1 3.1 0 0 1 0 6"/>'),
     box: svg('<path d="M20.5 8.4v7.2L12 20.4l-8.5-4.8V8.4L12 3.6z"/><path d="M3.5 8.4 12 13l8.5-4.6M12 13v7.4"/>'),
@@ -436,6 +665,8 @@
     lock: svg('<rect x="5.5" y="10" width="13" height="10" rx="2"/><path d="M8.5 10V7.6a3.5 3.5 0 0 1 7 0V10"/>'),
     logout: svg('<path d="M9.8 5.2H6.2a2 2 0 0 0-2 2v9.6a2 2 0 0 0 2 2h3.6"/><path d="M14.2 16.2 18.4 12l-4.2-4.2"/><path d="M18.4 12H9.2"/>'),
     trash: svg('<path d="M4.5 6.6h15"/><path d="M9.4 6.6V4.8h5.2v1.8"/><path d="M7.2 6.6l.8 13h8l.8-13"/><path d="M10.3 10.2v5.8M13.7 10.2v5.8"/>'),
+    /* Lápiz: corregir un mensaje que ya salió (traerlo al compositor). */
+    edit: svg('<path d="M4.6 19.4h3.3L19 8.4a2 2 0 0 0-2.9-2.9L4.6 16.6z"/><path d="M14.9 6.5l2.9 2.9"/>'),
     person: svg('<circle cx="12" cy="7.9" r="3.9"/><path d="M4.8 20.4c1.3-3.3 4-4.9 7.2-4.9s5.9 1.6 7.2 4.9"/>'),
     userCog: svg('<circle cx="10" cy="7.8" r="3.4"/><path d="M3.8 19.4c1.1-3 3.4-4.5 6.2-4.5 1.1 0 2.1.2 3 .7"/><circle cx="17.6" cy="16.8" r="2.1"/><path d="M17.6 13.5v1M17.6 18.9v1M14.7 15.1l.9.5M19.6 18l.9.5M14.7 18.5l.9-.5M19.6 15.6l.9-.5"/>'),
     image: svg('<rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6"/><circle cx="9" cy="10" r="1.6"/><path d="M3.6 17.2l4.9-4.9 4.4 4.4 2.8-2.7 4.7 4.6"/>'),
@@ -449,6 +680,8 @@
        distintos no pueden compartir el mismo dibujo. */
     check: svg('<path d="M5 12.6l4.4 4.4L19 6.8"/>'),
     checkCircle: svg('<circle cx="12" cy="12" r="8.6"/><path d="M8.3 12.2l2.6 2.6 4.8-5.1"/>'),
+    printer: svg('<path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7z"/><path d="M16 11h1"/>'),
+    camera: svg('<path d="M8 5l1.5-2h5L16 5h4v15H4V5z"/><circle cx="12" cy="12" r="4"/>'),
     phone: svg('<path d="M6.4 3.6h3.1l1.5 3.6-2 1.5a11.7 11.7 0 0 0 5.8 5.8l1.5-2 3.6 1.5v3.1a1.7 1.7 0 0 1-1.9 1.7A15.9 15.9 0 0 1 4.7 5.5 1.7 1.7 0 0 1 6.4 3.6Z"/>'),
     /* Ojo abierto y ojo tachado: ver / ocultar la contraseña que se está escribiendo. */
     eye: svg('<path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.9"/>'),
@@ -562,11 +795,25 @@
   // ---------------------------------------------------------------------- API
 
   async function api(path, options = {}) {
-    const response = await fetch(path, {
-      ...options,
-      headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
-      credentials: 'same-origin',
-    });
+    let response;
+    try {
+      response = await fetch(path, {
+        ...options,
+        headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
+        credentials: 'same-origin',
+      });
+    } catch (error) {
+      /*
+       * NO HAY RED. Es distinto de «el servidor dijo que no»: sin red no se puede
+       * saber nada (ni si la sesión vale), así que se marca para que el panel
+       * siga con la copia guardada y ponga el cambio en la cola de envíos.
+       */
+      throw Object.assign(new Error('offline'), {
+        offline: true,
+        cause: error,
+        body: { error: 'offline', message: 'Sin conexión con el CRM' },
+      });
+    }
 
     // La respuesta puede NO ser JSON: si el CRM no está en marcha, delante
     // contesta el servidor de ficheros y devuelve un 404 en HTML. Sin mirar el
@@ -583,9 +830,18 @@
 
     if (response.status === 401) {
       showLogin(body.message ?? 'Tu sesión ha caducado. Vuelve a entrar.');
-      throw Object.assign(new Error('unauthorized'), { body });
+      throw Object.assign(new Error('unauthorized'), { body, status: 401 });
     }
-    if (!response.ok) throw Object.assign(new Error(body.message ?? 'error'), { body });
+    if (!response.ok) {
+      // 502/503/504 = el CRM no está (caída momentánea): eso se trata como «sin red»
+      // y el cambio se queda en la cola en vez de perderse.
+      const caido = [502, 503, 504].includes(response.status);
+      throw Object.assign(new Error(body.message ?? 'error'), {
+        body,
+        status: response.status,
+        offline: caido,
+      });
+    }
     return body;
   }
 
@@ -603,32 +859,81 @@
   }
 
   // ------------------------------------------------------- copia local (offline)
+  /*
+   * ==========================================================================
+   *  TRABAJAR SIN CONEXIÓN
+   * ==========================================================================
+   *
+   * El CRM de verdad vive en la nube (SQLite/Postgres en el servidor). El panel
+   * guarda en el teléfono TODO lo que hace falta para seguir trabajando cuando no
+   * hay red: clientes, pedidos, conversaciones, catálogo, inventario, ajustes,
+   * estados de pedido, formas de pago, entregas y avisos. Con esa copia se puede
+   * ver, buscar, registrar pedidos, cambiar estados, crear y archivar clientes,
+   * programar seguimientos y ver los informes que ya se hayan visto.
+   *
+   * Sólo necesita internet para lo que de verdad sale del teléfono: enviar y
+   * recibir mensajes de WhatsApp, consultar Meta y hablar con el servidor para
+   * sincronizar. Todo lo demás funciona 24 horas (o más) sin red.
+   *
+   * Lo que se hace sin red NO se pierde: va a la COLA DE ENVÍOS y se manda sola
+   * cuando vuelve la conexión (en orden, sin duplicar).
+   */
+  const SNAPSHOT_VERSION = 2;
+  /** Lo que se cae primero si el teléfono se queda sin sitio (pesa mucho y se puede reponer). */
+  const SNAPSHOT_HEAVY = ['conversations', 'notifications', 'deliveryTracking', 'meta'];
+
+  function snapshotPayload({ light = false } = {}) {
+    const data = {
+      version: SNAPSHOT_VERSION,
+      at: Date.now(),
+      items: state.items,
+      customers: state.customers,
+      catalog: state.catalog,
+      inventory: state.inventory,
+      followups: state.followups,
+      hoy: state.hoy,
+      stats: state.stats,
+      settings: state.settings,
+      scheduled: state.scheduled,
+      messages: state.messages,
+      commercial: state.commercial,
+      /* El formulario de pedido los usa: sin ellos no se puede registrar offline. */
+      orderStatuses: state.orderStatuses,
+      paymentMethods: state.paymentMethods,
+      customerStages: state.customerStages,
+      customerTags: state.customerTags,
+      deliveryUsers: state.deliveryUsers,
+      deliveryOrders: state.deliveryOrders,
+      deliveryTracking: state.deliveryTracking,
+      conversations: state.conversations,
+      notifications: state.notifications,
+      whatsapp: state.whatsapp,
+      push: state.push,
+      meta: state.meta,
+      auth: state.auth,
+      /* Últimas cosas que se abrieron (para volver a verlas sin red). */
+      salesReports: state.salesReports,
+      orderViews: state.orderViews,
+      customerViews: state.customerViews,
+    };
+    if (light) for (const key of SNAPSHOT_HEAVY) delete data[key];
+    return data;
+  }
 
   function saveSnapshot() {
     try {
-      localStorage.setItem(
-        SNAPSHOT_KEY,
-        JSON.stringify({
-          items: state.items,
-          messages: state.messages,
-          customers: state.customers,
-          conversations: state.conversations,
-          followups: state.followups,
-          hoy: state.hoy,
-          catalog: state.catalog,
-          inventory: state.inventory,
-          whatsapp: state.whatsapp,
-          stats: state.stats,
-          deliveryTracking: state.deliveryTracking,
-          deliveryUsers: state.deliveryUsers,
-          deliveryOrders: state.deliveryOrders,
-          notifications: state.notifications,
-          push: state.push,
-          at: Date.now(),
-        }),
-      );
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload()));
     } catch {
-      /* sin espacio: el panel sigue funcionando en línea */
+      /*
+       * Sin sitio (datos de un negocio grande): se guarda una copia LIGERA con lo
+       * imprescindible en vez de quedarse sin ninguna. Es mejor poder ver clientes
+       * y pedidos sin conexión que no poder abrir la app.
+       */
+      try {
+        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload({ light: true })));
+      } catch {
+        /* sin copia: el panel sigue funcionando en línea */
+      }
     }
   }
 
@@ -641,56 +946,402 @@
     }
   }
 
-  const readOutbox = () => {
+  /** Edad legible de la copia local («hace 3 h»), para poder decir de cuándo son los datos. */
+  function snapshotAgeLabel(at = readSnapshot()?.at) {
+    if (!at) return '';
+    return fmtWhen(new Date(at).toISOString());
+  }
+
+  /*
+   * LA COLA DE ENVÍOS.
+   *
+   * Cada entrada es UNA cosa que hay que mandar al CRM. Lleva una CLAVE (para no
+   * acumular diez cambios del mismo pedido: se funden en uno), la ruta, el método
+   * y el cuerpo. Se aplica en pantalla al instante para poder seguir trabajando y
+   * se manda en orden cuando hay red.
+   */
+  const OUTBOX_LABELS = {
+    'order-create': 'Pedido nuevo',
+    'order-status': 'Estado de un pedido',
+    'item-patch': 'Cambio en un pedido',
+    'customer-start': 'Cliente nuevo',
+    'customer-update': 'Datos del cliente',
+    'conv-archive': 'Archivar un chat',
+    'followup-create': 'Seguimiento',
+    'followup-update': 'Cambio en un seguimiento',
+  };
+
+  function readOutbox() {
+    if (!Array.isArray(state.outbox)) {
+      try {
+        const raw = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
+        state.outbox = Array.isArray(raw) ? raw : [];
+      } catch {
+        state.outbox = [];
+      }
+    }
+    return state.outbox;
+  }
+
+  function writeOutbox(list) {
+    state.outbox = list;
     try {
-      return JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? '[]');
+      localStorage.setItem(OUTBOX_KEY, JSON.stringify(list));
+    } catch {
+      /* sin sitio: la cola vive en memoria hasta que se pueda guardar */
+    }
+    renderOutboxBanner();
+  }
+
+  /** ¿Este elemento tiene cambios esperando a salir? (lo pinta la lista) */
+  function isPending(id) {
+    return readOutbox().some((entry) => entry.id === id);
+  }
+
+  /*
+   * LO QUE EL CRM RECHAZÓ.
+   *
+   * Un cambio hecho sin conexión se puede quedar viejo: el pedido ya se había
+   * entregado, el cliente ya no existe… Cuando el servidor lo rechaza NO se pierde
+   * en silencio (eso sería mentir a quien lo hizo): se guarda el motivo y se enseña
+   * en el aviso hasta que la persona lo lea.
+   */
+  const OUTBOX_PROBLEMS_KEY = 'pe_crm_outbox_problems';
+
+  function readOutboxProblems() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(OUTBOX_PROBLEMS_KEY) ?? '[]');
+      return Array.isArray(raw) ? raw : [];
     } catch {
       return [];
     }
-  };
+  }
 
-  const writeOutbox = (list) => {
-    localStorage.setItem(OUTBOX_KEY, JSON.stringify(list));
+  function addOutboxProblems(list) {
+    if (!list.length) return;
+    const nuevas = list.map((row) => ({
+      at: Date.now(),
+      label: row.label || OUTBOX_LABELS[row.kind] || 'Un cambio',
+      motivo: row.motivo ?? 'El CRM lo rechazó',
+    }));
+    try {
+      localStorage.setItem(OUTBOX_PROBLEMS_KEY, JSON.stringify([...nuevas, ...readOutboxProblems()].slice(0, 10)));
+    } catch {
+      /* sin sitio: queda en memoria para esta sesión */
+    }
     renderOutboxBanner();
-  };
+  }
+
+  function clearOutboxProblems() {
+    try {
+      localStorage.removeItem(OUTBOX_PROBLEMS_KEY);
+    } catch {
+      /* nada que limpiar */
+    }
+    renderOutboxBanner();
+  }
+
+  /**
+   * Deja un cambio en la cola. Si ya había uno para lo mismo, se FUNDE: lo último
+   * manda (mandar dos veces el mismo cambio es perder el tiempo y confundir).
+   */
+  function queueMutation(entry) {
+    const key = entry.key ?? `${entry.method} ${entry.path}`;
+    const list = readOutbox().filter((row) => (row.key ?? `${row.method} ${row.path}`) !== key);
+    list.push({ ...entry, key, at: Date.now(), tries: 0 });
+    writeOutbox(list);
+  }
 
   /** Cambio que no se pudo enviar (sin red): se aplica en pantalla y se reintenta. */
   function queuePatch(id, patch) {
-    const outbox = readOutbox().filter((entry) => entry.id !== id);
-    const previous = readOutbox().find((entry) => entry.id === id)?.patch ?? {};
-    outbox.push({ id, patch: { ...previous, ...patch }, at: Date.now() });
-    writeOutbox(outbox);
+    const anterior = readOutbox().find((entry) => entry.kind === 'item-patch' && entry.id === id);
+    const body = { ...(anterior?.body ?? {}), ...patch };
+    queueMutation({
+      kind: 'item-patch',
+      key: `item:${id}`,
+      id,
+      label: OUTBOX_LABELS['item-patch'],
+      method: 'PATCH',
+      path: `/api/admin/items/${encodeURIComponent(id)}`,
+      body,
+    });
   }
 
-  async function flushOutbox() {
+  /**
+   * MANDA LA COLA.
+   *
+   * De una en una y en orden. Cada resultado se decide por lo que dice el SERVIDOR:
+   *   · 401 → la sesión no vale: se deja todo y no se insiste.
+   *   · sin red / 5xx → el CRM no está: se deja todo para el próximo intento.
+   *   · 4xx → ese cambio ya no aplica (el pedido cambió de estado, el cliente no
+   *     está…): se DESCARTA y se dice por qué. Nada de reintentar en bucle algo
+   *     que el servidor va a rechazar siempre.
+   */
+  async function flushOutbox({ silent = false } = {}) {
     const outbox = readOutbox();
-    if (outbox.length === 0 || !state.online) return;
-    const pending = [];
+    if (!outbox.length) return { sent: 0, pending: 0, dropped: 0, messages: [] };
+    if (!state.online) return { sent: 0, pending: outbox.length, dropped: 0, messages: [] };
+    const pendientes = [];
+    const descartados = [];
+    let enviados = 0;
     for (const entry of outbox) {
       try {
-        await api(`/api/admin/items/${encodeURIComponent(entry.id)}`, {
-          method: 'PATCH',
-          body: JSON.stringify(entry.patch),
-        });
+        if (entry.kind === 'order-create') {
+          // ¿Ya había llegado? (un reintento anterior pudo guardarlo sin respuesta)
+          const yaEsta = await api(`/api/admin/orders/${encodeURIComponent(entry.id)}`)
+            .then(() => true)
+            .catch(() => false);
+          if (!yaEsta) await api(entry.path, { method: entry.method, body: JSON.stringify(entry.body) });
+        } else {
+          await api(entry.path, {
+            method: entry.method,
+            body: entry.body ? JSON.stringify(entry.body) : undefined,
+          });
+        }
+        enviados += 1;
       } catch (error) {
-        if (error.message !== 'unauthorized') pending.push(entry);
+        if (error.message === 'unauthorized' || error.offline === true) {
+          pendientes.push(entry);
+          continue;
+        }
+        descartados.push({ ...entry, motivo: error.body?.message ?? 'El CRM lo rechazó' });
       }
     }
-    writeOutbox(pending);
-    if (pending.length === 0) toast('Cambios enviados');
-    else return;
-    await load({ keepTab: true });
+    writeOutbox(pendientes);
+    if (descartados.length) addOutboxProblems(descartados);
+    console.log('[debug] flush', JSON.stringify({ enviados, descartados: descartados.length, pendientes: pendientes.length, kinds: outbox.map((r) => r.kind) }));
+    const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, messages: descartados.map((row) => row.motivo) };
+    if (!silent) {
+      if (enviados && !descartados.length) toast(`${enviados} cambio(s) enviados`);
+      else if (descartados.length) toast(descartados[0].motivo);
+    }
+    return resumen;
+  }
+
+  /**
+   * GUARDAR ALGO QUE TAMBIÉN SE PUEDE HACER SIN CONEXIÓN.
+   *
+   * Intenta la red; si no la hay (o el CRM no contesta), aplica el cambio en
+   * pantalla con `aplicar` y lo deja en la cola. Devuelve `{ ok, offline }` para
+   * que cada pantalla decida qué hacer después (abrir el comprobante, cerrar la
+   * hoja, avisar…). Nunca finge: si el servidor RECHAZA el dato (4xx), lo dice.
+   */
+  async function guardar({ path, method = 'POST', body = null, kind = '', key = '', id = '', label = '', aplicar = null }) {
+    try {
+      const data = await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+      return { ok: true, offline: false, data };
+    } catch (error) {
+      if (error.message === 'unauthorized') return { ok: false, offline: false, message: '' };
+      if (error.offline !== true) {
+        return { ok: false, offline: false, message: error.body?.message ?? 'No se pudo guardar' };
+      }
+      if (typeof aplicar === 'function') {
+        try {
+          aplicar();
+        } catch {
+          /* si el cambio local falla, igual queda en la cola para el servidor */
+        }
+      }
+      queueMutation({ kind, key: key || `${method} ${path}`, id, label: label || kind, method, path, body });
+      return { ok: true, offline: true };
+    }
+  }
+
+  /** Etiqueta legible de lo que está esperando (para el aviso de la pantalla). */
+  function outboxSummary() {
+    const list = readOutbox();
+    if (!list.length) return '';
+    const primera = OUTBOX_LABELS[list[0].kind] ?? 'Cambio';
+    return list.length === 1 ? `${primera} sin enviar` : `${list.length} cambios sin enviar`;
+  }
+
+  /* ------------------------------------------------------------------------
+   *  LO QUE SE HACE SIN CONEXIÓN SE VE EN PANTALLA AL INSTANTE
+   *
+   *  Cada una de estas funciones deja el resultado en la copia local para poder
+   *  seguir trabajando, y marca el elemento como «sin enviar». El servidor manda
+   *  cuando vuelva la red; entonces la copia se reemplaza con la de verdad.
+   * ---------------------------------------------------------------------- */
+
+  const idLocal = (prefijo) => `${prefijo}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+
+  /** Cambio de estado hecho sin conexión: se ve igual que si se hubiera guardado. */
+  function aplicarEstadoLocal(orderId, target) {
+    const item = state.items.find((row) => row.id === orderId) ?? null;
+    if (!item) return;
+    const status =
+      target === 'ENTREGADO' ? 'entregado' : target === 'CANCELADO' ? 'cancelado' : target === 'EN_CAMINO' ? 'enviado' : 'nuevo';
+    const at = new Date().toISOString();
+    item.status = status;
+    item.pending = true;
+    item.updated_at = at;
+    const order = itemOrder(item);
+    if (order) {
+      order.status = status;
+      order.status_history = [
+        ...(order.status_history ?? []),
+        { status, at, reason: MOTIVO_LISTA[target] ?? 'Cambio sin conexión', source: 'OFFLINE_PANEL' },
+      ];
+      if (status === 'entregado') {
+        order.delivered_at = order.delivered_at ?? at;
+        order.delivery = { ...(order.delivery ?? {}), delivery_status: 'DELIVERED' };
+      }
+      if (status === 'cancelado') order.cancelled_at = order.cancelled_at ?? at;
+      item.order_json = JSON.stringify(order);
+    }
+    saveSnapshot();
+  }
+
+  /**
+   * PEDIDO CREADO SIN CONEXIÓN.
+   *
+   * Se construye con el catálogo guardado en el teléfono (precio y nombre del
+   * frasco salen de ahí, no se inventan) y se deja en la lista con su número
+   * provisional. Cuando vuelva la red se manda con ESTE MISMO id, así que si el
+   * envío se repite no se duplica.
+   */
+  function aplicarPedidoLocal(payload, customer, conversationId, typedPhone) {
+    const catalogo = state.catalog ?? [];
+    const lineas = (payload.items ?? []).map((line) => {
+      const variante = catalogo.find((row) => row.id === line.variantId) ?? null;
+      const cantidad = Math.max(1, Number(line.quantity) || 1);
+      const precio = Number(line.unitPrice ?? variante?.price) || 0;
+      return {
+        variantId: line.variantId,
+        variantName: variante?.name ?? 'Frasco',
+        capsules: variante?.capsules ?? null,
+        quantity: cantidad,
+        unitPrice: precio,
+        label: variante?.name ?? 'Frasco',
+        subtotal: precio * cantidad,
+      };
+    });
+    const subtotal = lineas.reduce((sum, linea) => sum + linea.subtotal, 0);
+    const total = Math.max(0, subtotal - (Number(payload.discount) || 0) + (Number(payload.deliveryFee) || 0));
+    const currency = state.catalog?.[0]?.currency ?? 'DOP';
+    const nombre = customer ? customerName(customer) : payload.name || typedPhone || 'Cliente';
+    const numero = `OFF-${String(Date.now()).slice(-6)}`;
+    const at = new Date().toISOString();
+    const order = {
+      id: payload.id,
+      order_number: numero,
+      customer_id: customer?.id ?? null,
+      conversation_id: conversationId || null,
+      items: lineas,
+      subtotal,
+      discount: Number(payload.discount) || 0,
+      delivery_fee: Number(payload.deliveryFee) || 0,
+      total,
+      currency,
+      payment_method: payload.paymentMethod ?? null,
+      source: payload.source ?? null,
+      notes: payload.notes ?? '',
+      status: payload.status ?? 'nuevo',
+      created_at: at,
+      pending: true,
+    };
+    state.items = [
+      {
+        id: payload.id,
+        type: 'order_intent',
+        name: nombre,
+        phone: customer?.phone_e164 ?? customer?.phone ?? payload.phone ?? typedPhone ?? null,
+        variant_name: lineas[0]?.variantName ?? null,
+        quantity: lineas[0]?.quantity ?? null,
+        total,
+        currency,
+        status: order.status,
+        order_number: numero,
+        customer_id: customer?.id ?? null,
+        conversation_id: conversationId || null,
+        received_at: at,
+        updated_at: at,
+        order_json: JSON.stringify(order),
+        pending: true,
+      },
+      ...state.items,
+    ];
+    saveSnapshot();
+  }
+
+  /**
+   * CLIENTE CREADO SIN CONEXIÓN.
+   *
+   * Se guarda con teléfono y nombre para poder registrarle un pedido en el acto.
+   * La conversación de WhatsApp NO se puede abrir sin red: se avisa y se abre al
+   * volver (el servidor la crea al recibir el cliente).
+   */
+  function aplicarClienteLocal(id, phone, name) {
+    const e164 = `+${digits(phone)}`;
+    if (state.customers.some((row) => digits(row.phone_e164 ?? row.phone ?? '') === digits(phone))) return;
+    state.customers = [
+      {
+        id,
+        name: name || null,
+        phone: e164,
+        phone_e164: e164,
+        city: null,
+        notes: null,
+        customer_stage: 'PROSPECT',
+        created_at: new Date().toISOString(),
+        pending: true,
+      },
+      ...state.customers,
+    ];
+    saveSnapshot();
+  }
+
+  /** Archivar / desarchivar un chat sin conexión. */
+  function aplicarArchivoLocal(conversationId, archivado) {
+    const row = state.conversations.find((entry) => entry.id === conversationId) ?? null;
+    if (!row) return;
+    row.archived_at = archivado ? new Date().toISOString() : null;
+    row.pending = true;
+    saveSnapshot();
+  }
+
+  /** Datos del cliente (pausar seguimiento, no contactar, etapa, etiquetas…). */
+  function aplicarClienteDatosLocal(customerId, patch) {
+    const row = state.customers.find((entry) => entry.id === customerId) ?? null;
+    if (!row) return;
+    Object.assign(row, patch, { pending: true });
+    const perfil = state.customerViews?.[customerId];
+    if (perfil?.customer) Object.assign(perfil.customer, patch, { pending: true });
+    saveSnapshot();
+  }
+
+  /** Seguimiento creado sin conexión: aparece en su lista como pendiente de enviar. */
+  function aplicarSeguimientoLocal(id, input) {
+    const fila = {
+      id,
+      customer_id: input.customerId ?? null,
+      conversation_id: input.conversationId ?? null,
+      order_id: input.orderId ?? null,
+      scheduled_at: input.scheduledAt,
+      reason: input.reason,
+      status: 'pending',
+      type: 'manual',
+      pending: true,
+    };
+    const actuales = Array.isArray(state.followups) ? state.followups : state.followups?.items ?? [];
+    if (Array.isArray(state.followups)) state.followups = [...actuales, fila];
+    else if (state.followups) state.followups = { ...state.followups, items: [...actuales, fila] };
+    saveSnapshot();
   }
 
   // ------------------------------------------------------------------ sesión
 
+  const splashStartedAt = performance.now();
+  let splashClosing = false;
   function hideSplash() {
     const splash = $('#splash');
-    if (!splash) return;
-    splash.classList.add('splash--hide');
+    if (!splash || splashClosing) return;
+    splashClosing = true;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     setTimeout(() => {
-      splash.hidden = true;
-    }, 260);
+      splash.classList.add('splash--hide');
+      setTimeout(() => { splash.hidden = true; }, reducedMotion ? 0 : 260);
+    }, reducedMotion ? 0 : Math.max(0, 650 - (performance.now() - splashStartedAt)));
   }
 
   function showLogin(message = '') {
@@ -744,6 +1395,53 @@
 
   // -------------------------------------------------------------------- datos
 
+  /**
+   * PONER EN PANTALLA LA COPIA GUARDADA.
+   *
+   * Es el camino de «no hay red»: se carga TODO lo que las pantallas necesitan
+   * (incluido el rol de quien entró, que sin él un administrador vería un panel
+   * recortado) y se sigue trabajando. Se usa al abrir la app sin conexión y cuando
+   * una recarga se queda sin respuesta.
+   */
+  function aplicarCopiaLocal(snapshot) {
+    if (!snapshot) return false;
+    state.items = snapshot.items ?? [];
+    state.messages = snapshot.messages ?? [];
+    state.customers = snapshot.customers ?? [];
+    state.conversations = snapshot.conversations ?? [];
+    for (const row of state.conversations) {
+      if (row.last_message?.direction === 'inbound') {
+        state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
+      }
+    }
+    state.followups = snapshot.followups ?? null;
+    state.hoy = snapshot.hoy ?? null;
+    state.catalog = snapshot.catalog ?? [];
+    state.inventory = snapshot.inventory ?? null;
+    state.whatsapp = snapshot.whatsapp ?? null;
+    state.stats = snapshot.stats ?? null;
+    state.scheduled = snapshot.scheduled ?? null;
+    state.settings = snapshot.settings ?? null;
+    state.commercial = snapshot.commercial ?? null;
+    state.deliveryTracking = snapshot.deliveryTracking ?? [];
+    state.deliveryUsers = snapshot.deliveryUsers ?? [];
+    state.deliveryOrders = snapshot.deliveryOrders ?? [];
+    state.notifications = snapshot.notifications ?? [];
+    state.push = snapshot.push ?? null;
+    state.meta = snapshot.meta ?? null;
+    state.orderStatuses = snapshot.orderStatuses ?? [];
+    state.paymentMethods = snapshot.paymentMethods ?? [];
+    state.customerStages = snapshot.customerStages ?? [];
+    state.customerTags = snapshot.customerTags ?? [];
+    state.salesReports = snapshot.salesReports ?? {};
+    state.orderViews = snapshot.orderViews ?? {};
+    state.customerViews = snapshot.customerViews ?? {};
+    // El rol se recuerda: sin él, quien administra vería un panel recortado.
+    if (snapshot.auth) state.auth = state.auth ?? snapshot.auth;
+    state.syncedAt = snapshot.at ?? null;
+    return true;
+  }
+
   async function load(options = {}) {
     try {
       const data = await api('/api/admin/data');
@@ -786,44 +1484,25 @@
       refreshDevicePermissions().catch(() => {});
       autoSyncCrmPush();
       if (!options.keepTab) await flushOutbox();
+      /*
+       * SIEMPRE QUE SE HABLA CON EL CRM SE APROVECHA PARA VACIAR LA COLA. Va al
+       * final y en silencio: lo que se hizo sin conexión sale sin que nadie tenga
+       * que pulsar nada.
+       */
+      if (readOutbox().length) flushOutbox({ silent: true }).then(() => render()).catch(() => {});
+      // Y los borrados de notificaciones que quedaron sin red, igual.
+      flushNotificacionesBorradas().catch(() => {});
     } catch (error) {
       if (error.message === 'unauthorized') return;
-      const snapshot = readSnapshot();
-      if (snapshot) {
-        state.items = snapshot.items ?? [];
-        state.messages = snapshot.messages ?? [];
-        state.customers = snapshot.customers ?? [];
-        state.conversations = snapshot.conversations ?? [];
-        for (const row of state.conversations) {
-          if (row.last_message?.direction === 'inbound') state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
-        }
-        state.followups = snapshot.followups ?? null;
-        state.hoy = snapshot.hoy ?? null;
-        state.catalog = snapshot.catalog ?? [];
-        state.inventory = snapshot.inventory ?? null;
-        state.whatsapp = snapshot.whatsapp ?? null;
-        state.stats = snapshot.stats ?? null;
-        state.scheduled = snapshot.scheduled ?? null;
-        state.settings = snapshot.settings ?? null;
-        state.deliveryTracking = snapshot.deliveryTracking ?? [];
-        state.deliveryUsers = snapshot.deliveryUsers ?? [];
-        state.deliveryOrders = snapshot.deliveryOrders ?? [];
-        state.notifications = snapshot.notifications ?? [];
-        state.push = snapshot.push ?? null;
-        state.orderStatuses = snapshot.orderStatuses ?? [];
-        state.paymentMethods = snapshot.paymentMethods ?? [];
-        state.customerStages = snapshot.customerStages ?? [];
-        state.customerTags = snapshot.customerTags ?? [];
-        state.syncedAt = snapshot.at ?? null;
-        toast('Sin conexión: datos guardados en el teléfono');
+      if (aplicarCopiaLocal(readSnapshot())) {
+        if (!options.silent) toast('Sin conexión: datos guardados en el teléfono');
         render();
         refreshDevicePermissions().catch(() => {});
       } else {
-        // Sin copia guardada: la bandeja tiene que decir que FALLÓ, no “no hay nada”.
+        // Sin copia guardada: la bandeja tiene que decir que FALLÓ, no "no hay nada".
         state.wa.listError = true;
-        toast('No se pudieron cargar los datos');
+        if (!options.silent) toast('No se pudieron cargar los datos');
         render();
-        refreshDevicePermissions().catch(() => {});
       }
     }
   }
@@ -866,7 +1545,14 @@
     if (outbox.length === 0) return items;
     return items.map((item) => {
       const entry = outbox.find((candidate) => candidate.id === item.id);
-      return entry ? { ...item, ...toStatePatch(entry.patch) } : item;
+      /*
+       * Las entradas de la cola llevan el cambio en `patch` (los de siempre) o en
+       * `body` (los que se mandan enteros, como un pedido nuevo): sin esto, un
+       * pedido recién hecho sin conexión rompía el pintado de la lista.
+       */
+      const patch = entry?.patch ?? entry?.body ?? null;
+      if (!patch || typeof patch !== 'object') return item;
+      return { ...item, ...toStatePatch(patch) };
     });
   }
 
@@ -1002,6 +1688,13 @@
    */
   const pintarSeccion = (nombre, pintar) => {
     try {
+      /*
+       * TRABAJO TARDÍO SIN PÁGINA. Una petición que vuelve cuando la pestaña ya
+       * se cerró (o el panel se desmontó) no tiene documento: `$` devuelve null
+       * y cualquier `innerHTML` reventaría. No hay nada que pintar, así que se
+       * termina en paz en vez de dejar un error suelto en la consola.
+       */
+      if (typeof document === 'undefined' || !document.body) return;
       pintar();
     } catch (error) {
       console.error(`[panel] no se pudo pintar «${nombre}»:`, error);
@@ -1032,6 +1725,7 @@
     pintarSeccion('permisos', renderPermissionBanner);
     pintarSeccion('avisos', updateBadge);
     pintarSeccion('cola offline', renderOutboxBanner);
+    pintarSeccion('tema', renderTemaPicker);
   }
 
   const label = (type) => (type === 'order_intent' ? 'Pedido' : 'Contacto');
@@ -1077,13 +1771,108 @@
       .join('')
       .toUpperCase() || 'U';
 
+  /*
+   * LOS DESCARTES SE GUARDAN CON SU «VALOR», NO SOLO CON SU CLAVE.
+   *
+   * Antes la clave del aviso agregado llevaba el número dentro (`wa-failed:2`):
+   * al llegar el tercer fallo el descarte ya no coincidía y el aviso volví­a
+   * aunque se hubiera dado por entendido. Ahora la clave es ESTABLE
+   * (`wa-failed`) y se recuerda el valor descartado (2): el aviso solo vuelve si
+   * pasa de ese valor. Un mensaje programado guarda el estado descartado, así que
+   * un reintento del MISMO problema tampoco lo resucita.
+   */
   function readDismissedNotices() {
     try {
-      const list = JSON.parse(localStorage.getItem(NOTICE_DISMISSED_KEY) ?? '[]');
-      return new Set(Array.isArray(list) ? list : []);
+      const raw = JSON.parse(localStorage.getItem(NOTICE_DISMISSED_KEY) ?? '{}');
+      // Formato viejo (lista de claves): se lee igual y se migra solo.
+      if (Array.isArray(raw)) return Object.fromEntries(raw.filter((key) => typeof key === 'string').map((key) => [key, true]));
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** ¿Sigue descartado este aviso, con el valor que tiene AHORA? */
+  function noticeDismissed(descartados, key, valor) {
+    if (!(key in descartados)) return false;
+    const guardado = descartados[key];
+    // `true` = descarte del formato viejo o «entendido» sin valor: manda la clave.
+    if (guardado === true) return true;
+    if (typeof valor === 'number' && typeof guardado === 'number') return valor <= guardado;
+    return String(guardado) === String(valor);
+  }
+
+  /*
+   * NOTIFICACIONES BORRADAS EN ESTE TELÉFONO.
+   *
+   * Se apunta el id de cada una y no se vuelve a pintar aquí­, tenga el servidor
+   * lo que tenga. Los que no se pudieron borrar en el servidor (sin red, o el
+   * servidor no contestó) quedan PENDIENTES y se reintentan solos: así­ una
+   * notificación borrada nunca «vuelve» en el siguiente refresco.
+   */
+  function readNotifDeleted() {
+    try {
+      const list = JSON.parse(localStorage.getItem(NOTIF_DELETED_KEY) ?? '[]');
+      return new Set(Array.isArray(list) ? list.filter((id) => typeof id === 'string') : []);
     } catch {
       return new Set();
     }
+  }
+
+  function readNotifPending() {
+    try {
+      const list = JSON.parse(localStorage.getItem(NOTIF_PENDING_KEY) ?? '[]');
+      return Array.isArray(list) ? list.filter((id) => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  const guardarNotifListas = (key, lista) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(lista.slice(-NOTIF_DELETED_MAX)));
+    } catch {
+      /* Sin sitio en el teléfono: se pierde la marca, no el trabajo. */
+    }
+  };
+
+  /** Marca una notificación como borrada (y pendiente de borrar en el servidor). */
+  function marcarNotificacionBorrada(notificationId) {
+    if (!notificationId) return;
+    const borradas = readNotifDeleted();
+    if (!borradas.has(notificationId)) {
+      borradas.add(notificationId);
+      guardarNotifListas(NOTIF_DELETED_KEY, [...borradas]);
+    }
+    const pendientes = readNotifPending();
+    if (!pendientes.includes(notificationId)) {
+      pendientes.push(notificationId);
+      guardarNotifListas(NOTIF_PENDING_KEY, pendientes);
+    }
+  }
+
+  /** Las notificaciones del servidor, sin las que ya se borraron aquí­. */
+  function notificacionesVisibles(rows = state.notifications ?? []) {
+    const borradas = readNotifDeleted();
+    return rows.filter((row) => !borradas.has(row.id));
+  }
+
+  /**
+   * Reintenta en el servidor los borrados que quedaron pendientes. Un 404 cuenta
+   * como hecho (ya no está­); si falla por red se deja para la próxima vuelta.
+   */
+  async function flushNotificacionesBorradas() {
+    const pendientes = readNotifPending();
+    if (!pendientes.length) return;
+    const siguen = [];
+    for (const id of pendientes) {
+      try {
+        await api(`/api/admin/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      } catch (error) {
+        if (error?.status !== 404) siguen.push(id);
+      }
+    }
+    guardarNotifListas(NOTIF_PENDING_KEY, siguen);
   }
 
   async function syncWaTemplates(button = null) {
@@ -1102,38 +1891,42 @@
     });
   }
 
-  function writeDismissedNotices(list) {
+  function writeDismissedNotices(map) {
     try {
-      localStorage.setItem(NOTICE_DISMISSED_KEY, JSON.stringify([...list].slice(-200)));
+      localStorage.setItem(NOTICE_DISMISSED_KEY, JSON.stringify(Object.fromEntries(Object.entries(map).slice(-200))));
     } catch {
       /* Si Storage falla, solo se pierde el descarte visual. */
     }
   }
 
-  function dismissNotice(key) {
-    const list = readDismissedNotices();
-    list.add(key);
-    writeDismissedNotices(list);
+  function dismissNotice(key, valor = true) {
+    const map = readDismissedNotices();
+    // Un valor numérico se guarda como número: así­ «pasó de 2 a 3» se compara
+    // bien y un estado («FAILED») se queda como texto.
+    map[key] = typeof valor === 'string' && valor !== '' && !Number.isNaN(Number(valor)) ? Number(valor) : valor;
+    writeDismissedNotices(map);
     renderMobileHeader();
     renderHoy();
     openNotificationsSheet();
   }
 
   function dismissAllLocalNotices() {
-    const list = readDismissedNotices();
-    for (const row of localNoticeRows()) list.add(row.key);
-    writeDismissedNotices(list);
+    const map = readDismissedNotices();
+    // Se guarda el VALOR de ahora: si el problema sigue igual, no vuelve a salir.
+    for (const row of localNoticeRows()) map[row.key] = row.valor ?? true;
+    writeDismissedNotices(map);
   }
 
   function localNoticeRows() {
-    const dismissed = readDismissedNotices();
+    const descartados = readDismissedNotices();
     const rows = [];
     const failedCount = Number(state.hoy?.mensajesFallidos ?? 0);
     if (failedCount > 0) {
-      const key = `wa-failed:${failedCount}`;
-      if (!dismissed.has(key)) {
+      const key = 'wa-failed';
+      if (!noticeDismissed(descartados, key, failedCount)) {
         rows.push({
           key,
+          valor: failedCount,
           title: `WhatsApp rechazó ${failedCount} mensaje${failedCount === 1 ? '' : 's'}`,
           body: 'Revisa el número y vuelve a intentarlo desde la conversación.',
           meta: 'WhatsApp',
@@ -1142,12 +1935,16 @@
       }
     }
     for (const row of state.scheduled?.problems ?? []) {
-      const key = `scheduled-problem:${row.id}:${row.status}`;
-      if (dismissed.has(key)) continue;
+      // La clave NO lleva el estado: el estado es el VALOR. Así­ un reintento del
+      // mismo mensaje no crea un aviso «nuevo» cada vez que cambia de estado.
+      const key = `scheduled-problem:${row.id}`;
+      const valor = String(row.status ?? '');
+      if (noticeDismissed(descartados, key, valor)) continue;
       const customer = customerById(row.customer_id);
       const conversation = conversationForCustomer(row.customer_id);
       rows.push({
         key,
+        valor,
         title: row.status === 'BLOCKED' ? 'Mensaje programado sin enviar' : 'Mensaje programado no se pudo enviar',
         // El motivo, en palabras: los códigos de Meta no salen al agente.
         body: scheduledFriendlyReason(row),
@@ -1161,7 +1958,7 @@
   }
 
   const unreadNotificationCount = () =>
-    (state.notifications ?? []).filter((row) => row.status !== 'read').length + localNoticeRows().length;
+    notificacionesVisibles().filter((row) => row.status !== 'read').length + localNoticeRows().length;
 
   function currentViewTitle() {
     if (state.tab === 'perfil-cliente' && state.customerProfile?.customer) return customerName(state.customerProfile.customer);
@@ -1181,21 +1978,27 @@
         return;
       }
     }
+    if (state.tab === 'ajustes') {
+      const page = SETTINGS_PAGES.find((entry) => entry.key === settingsPage);
+      box.innerHTML = `<div class="wa-appbar settings-appbar"><button class="wa-appbar__back" ${page ? 'data-settings-back' : 'data-simple-back'} type="button" aria-label="${page ? 'Volver a Configuración' : 'Regresar'}">${ICONS.back}</button><div class="wa-appbar__title"><h2 class="settings-mobile-title" tabindex="-1">${escapeHtml(page?.title || 'Configuración')}</h2></div></div>`;
+      return;
+    }
     if (state.tab === 'hoy') {
       const unreadNotifications = unreadNotificationCount();
       box.innerHTML = `<div class="dashboard-head">
-        <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú">
-          <img class="drawer-menu-icon" src="/admin/icon-menu.png" alt="" aria-hidden="true" width="26" height="26" />
+        <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
+          <!-- Tres barras que se convierten en ✕ al abrir: se ve que hay menú. -->
+          <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="dashboard-head__title">
-          <strong>Phytoemagry</strong>
+          <strong>FullTECH, SRL</strong>
           <span>CRM</span>
         </div>
         <div class="dashboard-head__actions">
-          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir perfil">${ICONS.person}</button>
+          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil">${ICONS.person}</button>
           <button class="dashboard-head__quick ${unreadNotifications ? 'dashboard-head__quick--alert' : ''}" data-dashboard-notifications type="button" aria-label="${
             unreadNotifications ? `${unreadNotifications} notificación(es)` : 'Sin notificaciones'
-          }">
+          }" title="Notificaciones">
             ${ICONS.bell}
             ${unreadNotifications ? `<span class="dashboard-head__badge">${unreadNotifications > 99 ? '99+' : unreadNotifications}</span>` : ''}
           </button>
@@ -1214,10 +2017,11 @@
         </div>`;
         return;
       }
+      const inChat = document.body.dataset.waView === 'chat';
       box.innerHTML = `<div class="wa-appbar">
-        <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+        <button class="wa-appbar__back" ${inChat ? 'data-wa-chat-back' : 'data-simple-back'} type="button" aria-label="${inChat ? 'Volver a conversaciones' : 'Regresar'}">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>Conversaciones</strong>
+          <strong>Conversaciones${filtroPuesto(state.wa.filter, WA_FILTERS)}</strong>
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-wa-search-open type="button" aria-label="Buscar conversación">${ICONS.search}</button>
@@ -1240,7 +2044,7 @@
       box.innerHTML = `<div class="wa-appbar client-appbar">
         <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
         <div class="wa-appbar__title">
-          <strong>Personas</strong>
+          <strong>Personas${filtroPuesto(state.filter, CLIENT_FILTERS)}</strong>
         </div>
         <div class="wa-appbar__actions">
           <button class="wa-appbar__icon" data-client-search-open type="button" aria-label="Buscar cliente">${ICONS.search}</button>
@@ -1302,7 +2106,7 @@
     if (brand) {
       const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : 'Usuario');
       brand.innerHTML = `
-        <img class="drawer__logo" src="/admin/logo-phytoemagry.png" alt="" width="38" height="38" />
+        <span class="drawer__avatar" aria-hidden="true">${escapeHtml(name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase())}</span>
         <span><strong>${escapeHtml(name)}</strong><span>${escapeHtml(roleLabel(user?.role ?? 'ADMIN'))}</span></span>`;
     }
     if (box) {
@@ -1330,88 +2134,116 @@
         node.hidden = !canUseDailyClose();
       });
     }
+    $$('#drawer .drawer__section').forEach((section) => {
+      section.hidden = ![...section.querySelectorAll('.drawer__item')].some((item) => !item.hidden);
+    });
   }
 
   function renderStats() {
-    const hoy = state.hoy ?? {};
-    const scheduled = state.scheduled ?? {};
-    const deliveryOrders = state.deliveryOrders ?? [];
-    const deliveryActivas = deliveryOrders.filter((order) => {
-      const status = deliveryVisibleStatus(order, deliverySessionForOrder(order.id));
-      return ['PENDIENTE', 'EN_PROCESO', 'EN_CAMINO'].includes(status);
-    }).length;
-    const sinAsignar = state.conversations.filter((row) => !row.assigned_user_id && row.status !== 'ARCHIVED').length;
-    const scheduledProblems = Number(scheduled.blocked ?? 0) + Number(scheduled.failed ?? 0);
-    const clientes = state.customers ?? [];
-    const interesados = clientes.filter((row) => customerStageOf(row) === 'INTERESTED').length;
-    const compradores = clientes.filter((row) => customerStageOf(row) === 'CUSTOMER').length;
-    const programadosActivos = Number(scheduled.scheduled ?? 0) + Number(scheduled.due ?? 0);
     /*
-     * HOY es un centro OPERATIVO: los contadores son trabajo que hacer ahora
-     * (contestar, seguir, resolver un mensaje que no salió), no gráficas. Cada
-     * tarjeta lleva a la lista donde se resuelve.
+     * HOY ES UNA PANTALLA DE TRABAJO, NO UN CUADRO DE MANDO.
+     *
+     * Solo lo que se hace HOY (contestar, seguir, preparar un pedido) y a quién
+     * se le escribe. Los contadores de «enviado», «por enviar», «por revisar» y
+     * «programados» eran el mismo trabajo contado por dentro —el sistema hablando
+     * de sí mismo— y llenaban la pantalla sin decirle a nadie qué hacer ahora.
+     *
+     * EL NÚMERO DE CADA TARJETA ES EXACTAMENTE LO QUE VERÁS AL ENTRAR: se cuenta
+     * con la MISMA regla que usa la pantalla de destino (el filtro de la bandeja,
+     * el estado operativo del pedido, el segmento del cliente). Antes el contador
+     * decía 7 y la lista enseñaba 5, y una tarjeta que no cuadra con su lista no
+     * sirve para decidir: solo hace dudar.
      */
+    const conversaciones = (state.conversations ?? []).filter((row) => !row.archived_at);
+    const sinResponder = conversaciones.filter((row) => row.awaiting_reply === true).length;
+    const sinAsignar = conversaciones.filter((row) => !row.assigned_user_id).length;
+    const pedidosPendientes = (state.items ?? []).filter(
+      (item) =>
+        item.type === 'order_intent' &&
+        orderOperational(item) === 'PENDIENTE' &&
+        // El MISMO día que se verá al entrar: HOY, que es la lista de trabajo del
+        // día. Un pedido pendiente de la semana pasada no se pierde: está en
+        // «Todas», a un toque.
+        orderInDateRange(item, orderDateRange({ mode: 'today', from: '', to: '' })),
+    ).length;
+    const followups = state.followups ?? {};
+    const seguimientosVencidos = Number(followups.overdue?.length ?? 0);
+    const seguimientosHoy = Number(followups.today?.length ?? 0);
+    const clientes = state.customers ?? [];
+    const interesados = clientes.filter((row) => customerSegment(row) === 'interesado').length;
+    const compradores = clientes.filter((row) => customerSegment(row) === 'cliente').length;
     const cards = [
       {
         label: 'Sin responder',
-        value: hoy.sinResponder ?? 0,
-        alert: (hoy.sinResponder ?? 0) > 0,
+        value: sinResponder,
+        alert: sinResponder > 0,
         goto: 'whatsapp',
+        waFilter: 'pendientes',
         icon: ICONS.chat,
         tone: 'blue',
       },
-      { label: 'Seguimientos hoy', value: hoy.seguimientosHoy ?? 0, goto: 'seguimientos', icon: ICONS.users, tone: 'green' },
-      {
-        label: 'Seguimientos vencidos',
-        value: hoy.seguimientosVencidos ?? 0,
-        alert: (hoy.seguimientosVencidos ?? 0) > 0,
-        goto: 'seguimientos',
-        icon: ICONS.clock,
-        tone: 'amber',
-      },
-      { label: 'Pedidos abiertos', value: hoy.pedidosPendientes ?? 0, goto: 'pedidos', icon: ICONS.box, tone: 'purple' },
-      {
-        label: 'Programados hoy',
-        value: scheduled.due ?? 0,
-        alert: (scheduled.due ?? 0) > 0,
-        goto: 'hoy',
-        icon: ICONS.calendar,
-        tone: 'blue',
-      },
-      { label: 'Por enviar', value: scheduled.scheduled ?? 0, goto: 'hoy', icon: ICONS.clock, tone: 'green' },
-      { label: 'Enviados', value: scheduled.sent ?? 0, goto: 'hoy', icon: ICONS.checkCircle, tone: 'green' },
-      {
-        label: 'Por revisar',
-        value: scheduledProblems,
-        alert: scheduledProblems > 0,
-        goto: 'hoy',
-        icon: ICONS.bell,
-        tone: 'red',
-      },
-      { label: 'Entregas activas', value: deliveryActivas, goto: 'delivery', icon: ICONS.pin, tone: 'blue' },
       {
         label: 'Sin asignar',
         value: sinAsignar,
         alert: sinAsignar > 0,
         goto: 'whatsapp',
+        waFilter: 'sin-asignar',
         icon: ICONS.userCog,
         tone: 'amber',
       },
       {
-        label: 'Programados activos',
-        value: programadosActivos,
-        alert: programadosActivos > 0,
-        goto: 'mensajes',
-        icon: ICONS.note,
-        tone: 'blue',
+        label: 'Pedidos pendientes',
+        value: pedidosPendientes,
+        alert: pedidosPendientes > 0,
+        goto: 'pedidos',
+        orderFilter: 'pendiente',
+        /*
+         * El día, explícito y en HOY: la tarjeta entra en la lista de trabajo del
+         * día, la misma que se ve al abrir Pedidos. Si antes se había dejado la
+         * fecha en «Ayer» o «Todas», la tarjeta la devuelve al día de hoy en vez
+         * de arrastrar un filtro viejo (y el número cuadra con lo que se ve).
+         */
+        orderDate: 'today',
+        icon: ICONS.box,
+        tone: 'purple',
       },
-      { label: 'Clientes', value: clientes.length, goto: 'clientes', icon: ICONS.person, tone: 'green' },
-      { label: 'Interesados', value: interesados, goto: 'clientes', icon: ICONS.spark, tone: 'amber' },
-      { label: 'Con compra', value: compradores, goto: 'clientes', icon: ICONS.bag, tone: 'purple' },
+      {
+        label: 'Seguimientos vencidos',
+        value: seguimientosVencidos,
+        alert: seguimientosVencidos > 0,
+        goto: 'seguimientos',
+        followupFilter: 'vencidos',
+        icon: ICONS.clock,
+        tone: 'red',
+      },
+      {
+        label: 'Seguimientos de hoy',
+        value: seguimientosHoy,
+        goto: 'seguimientos',
+        followupFilter: 'hoy',
+        icon: ICONS.users,
+        tone: 'green',
+      },
+      { label: 'Clientes', value: clientes.length, goto: 'clientes', clientFilter: 'todos', icon: ICONS.person, tone: 'green' },
+      { label: 'Interesados', value: interesados, goto: 'clientes', clientFilter: 'interesados', icon: ICONS.spark, tone: 'amber' },
+      { label: 'Con compra', value: compradores, goto: 'clientes', clientFilter: 'clientes', icon: ICONS.bag, tone: 'purple' },
     ];
+    /* Los filtros viajan CON la tarjeta: al llegar ya están puestos. */
+    const filtrosDeLaTarjeta = (card) =>
+      [
+        card.waFilter ? `data-wa-filter="${card.waFilter}"` : '',
+        card.orderFilter ? `data-order-filter="${card.orderFilter}"` : '',
+        card.orderDate ? `data-order-date="${card.orderDate}"` : '',
+        card.followupFilter ? `data-followup-filter="${card.followupFilter}"` : '',
+        card.clientFilter ? `data-client-filter="${card.clientFilter}"` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
     $('#stats').innerHTML = cards
       .map(
-        (card) => `<button class="stat stat--${card.tone} ${card.alert ? 'stat--alert' : ''}" data-goto="${card.goto}" type="button">
+        (card) => `<button class="stat stat--${card.tone} ${card.alert ? 'stat--alert' : ''}" data-goto="${card.goto}" ${filtrosDeLaTarjeta(
+          card,
+        )} type="button">
             <span class="stat__icon" aria-hidden="true">${card.icon}</span>
             <span class="stat__value">${card.value}</span>
             <span class="stat__label">${escapeHtml(card.label)}</span>
@@ -2276,7 +3108,7 @@
     }
     const approved = (state.templates ?? []).filter(waTemplateApproved);
     /*
-     * La campaña sale con la presentación de Fulltech cuando Meta la ha aprobado;
+     * La campaña sale con la presentación de FullTECH, SRL cuando Meta la ha aprobado;
      * mientras no, se usa la plantilla personalizada de siempre.
      */
     const personal = waCampaignTemplate() ?? waPersonalTemplate();
@@ -2612,6 +3444,789 @@
   const orderOperational = (item) =>
     getOrderOperationalStatus(itemOrder(item), deliverySessionForOrder(item.id));
 
+  /*
+   * FILTRO POR FECHA DE LOS PEDIDOS.
+   *
+   * Usa el MISMO vocabulario que la bandeja de WhatsApp (hoy, ayer, 7 días, este
+   * mes, un intervalo): dos formas de decir lo mismo en la misma app solo hacen
+   * que haya que pensarlo dos veces. Y por defecto HOY, porque esta lista es la
+   * lista de trabajo del día, no un archivo histórico.
+   *
+   * La fecha que cuenta es la de ENTRADA del pedido (`received_at`) leída en el
+   * día del NEGOCIO: un pedido de las 9 de la noche no puede caer «mañana».
+   */
+  const ORDER_DATE_DEFAULT = { mode: 'today', from: '', to: '' };
+  /** Los MISMOS nombres que la bandeja: hoy, ayer, una semana, el mes, todas. */
+  const ORDER_DATE_LABELS = {
+    today: 'Hoy',
+    yesterday: 'Ayer',
+    '7d': '7 días',
+    month: 'Este mes',
+    all: 'Todas',
+  };
+  const orderDateRange = (filter = state.pedidosDate) => waDateRange(filter ?? ORDER_DATE_DEFAULT);
+  const orderDayOf = (item) => businessDayISO(item?.received_at ?? item?.receivedAt ?? item?.updated_at ?? '');
+  const orderDateName = (range = orderDateRange()) => (range.mode === 'today' ? 'hoy' : String(range.label ?? '').toLowerCase());
+
+  function orderInDateRange(item, range = orderDateRange()) {
+    if (range.mode === 'all') return true;
+    const day = orderDayOf(item);
+    if (!day) return false;
+    if (range.from && day < range.from) return false;
+    if (range.to && day > range.to) return false;
+    return true;
+  }
+
+  function setOrderDateFilter(mode, patch = {}) {
+    const next = { mode, from: '', to: '', ...patch };
+    if (next.mode === 'custom') {
+      if (!next.from || !next.to) {
+        toast('Elige desde y hasta');
+        return false;
+      }
+      if (next.from > next.to) {
+        toast('Desde no puede ser mayor que hasta');
+        return false;
+      }
+    }
+    state.pedidosDate = next;
+    guardarFiltrosActuales();
+    renderPedidos();
+    return true;
+  }
+
+  /** El chip de fecha dice SIEMPRE el rango puesto («Hoy», «Ayer», «Todos»…). */
+  function renderOrderDateChip() {
+    const chip = $('#pedidos-fecha-chip');
+    if (!chip) return;
+    const range = orderDateRange();
+    chip.textContent = range.mode === 'all' ? 'Fecha' : range.label;
+    chip.setAttribute('aria-pressed', String(range.mode !== 'all'));
+  }
+
+  /*
+   * El chip de ESTADO, fuera del panel.
+   *
+   * El estado se filtra dentro del panel de filtros, así que al entrar desde una
+   * tarjeta de HOY («Pedidos pendientes») la lista salía recortada y sin nada en
+   * pantalla que lo explicara. Este chip dice el estado puesto —y que hay un
+   * filtro activo— sin tener que abrir nada.
+   */
+  function renderOrderStatusChip() {
+    const chip = $('#pedidos-estado-chip');
+    if (!chip) return;
+    const filtro = state.pedidosFilter ?? 'todo';
+    const etiqueta = ORDER_FILTERS.find(([value]) => value === filtro)?.[1] ?? 'Todo';
+    chip.textContent = `Estado · ${etiqueta}`;
+    chip.setAttribute('aria-pressed', String(filtro !== 'todo'));
+  }
+
+  function openOrderDateMenu() {
+    const active = orderDateRange();
+    const fijo = (mode, label) => `<button class="menu-item" data-order-date="${mode}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${active.mode === mode ? ICONS.check : ''}</span>
+        <span><strong>${escapeHtml(label)}</strong></span>
+      </button>`;
+    // Los días sueltos de la semana, que es como se busca «el del martes».
+    const recientes = [1, 2, 3, 4]
+      .map((offset) => {
+        const day = addDaysToISO(todayISO(), -offset);
+        const selected = active.mode === 'custom' && active.from === day && active.to === day;
+        return `<button class="menu-item" data-order-date-day="${day}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${selected ? ICONS.check : ''}</span>
+          <span><strong>${escapeHtml(shortWeekday(new Date(`${day}T12:00:00`)))}</strong><small>${escapeHtml(
+            formatShortDate(day),
+          )}</small></span>
+        </button>`;
+      })
+      .join('');
+    openSheet(
+      'Pedidos por fecha',
+      `<div class="menu-list">
+        ${fijo('today', 'Hoy')}
+        ${fijo('yesterday', 'Ayer')}
+        ${recientes}
+        ${fijo('7d', 'Últimos 7 días')}
+        ${fijo('month', 'Este mes')}
+        <button class="menu-item" data-order-date-custom="1" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${active.mode === 'custom' ? ICONS.check : ICONS.clock}</span>
+          <span><strong>Intervalo</strong><small>Elegir desde y hasta</small></span>
+        </button>
+        ${fijo('all', 'Todos los pedidos')}
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  function openOrderCustomDateSheet() {
+    const current = orderDateRange({ mode: 'custom', from: state.pedidosDate?.from, to: state.pedidosDate?.to });
+    openSheet(
+      'Intervalo de fechas',
+      `<label class="field">
+        <span class="field__label">Desde</span>
+        <input class="field__input" id="order-date-from" type="date" value="${escapeHtml(current.from || todayISO())}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Hasta</span>
+        <input class="field__input" id="order-date-to" type="date" value="${escapeHtml(current.to || todayISO())}" />
+      </label>
+      <p class="rule">Se usa la fecha en que ENTRÓ el pedido, en la zona del negocio (${escapeHtml(BUSINESS_TIME_ZONE)}).</p>
+      <button class="btn btn--primary btn--block" id="order-date-apply" type="button">Aplicar intervalo</button>`,
+    );
+    $('#order-date-apply')?.addEventListener('click', () => {
+      const from = $('#order-date-from')?.value ?? '';
+      const to = $('#order-date-to')?.value ?? '';
+      if (setOrderDateFilter('custom', { from, to })) closeSheet();
+    });
+  }
+
+  /*
+   * VARIOS PEDIDOS A LA VEZ.
+   *
+   * Igual que en la bandeja de WhatsApp: se marcan y aparece una barra con lo que
+   * se puede hacer con todos. La selección guarda ids (no posiciones), así que
+   * cambiar de filtro o refrescar no marca el pedido equivocado.
+   */
+  let pedidosVisibles = [];
+
+  function toggleOrderSelect(orderId) {
+    if (state.pedidosSel.has(orderId)) state.pedidosSel.delete(orderId);
+    else state.pedidosSel.add(orderId);
+    renderPedidos();
+  }
+
+  /** Selecciona (o quita) TODOS los pedidos que se están viendo ahora. */
+  function toggleOrderSelectAll() {
+    const visibles = pedidosVisibles.map((row) => row.id);
+    const todos = visibles.length > 0 && visibles.every((id) => state.pedidosSel.has(id));
+    state.pedidosSel.clear();
+    if (!todos) visibles.forEach((id) => state.pedidosSel.add(id));
+    renderPedidos();
+  }
+
+  function orderBulkBar() {
+    const count = state.pedidosSel.size;
+    if (!count) return '';
+    const visibles = pedidosVisibles.length;
+    const todos = visibles > 0 && count >= visibles;
+    const plural = count === 1 ? '' : 's';
+    return `<div class="order-bulk" role="toolbar" aria-label="Acciones de los pedidos seleccionados">
+      <button class="order-bulk__x" data-order-sel-clear="1" type="button" aria-label="Quitar la selección"><span aria-hidden="true">✕</span></button>
+      <span class="order-bulk__count">${count} seleccionado${plural}</span>
+      <button class="order-bulk__btn order-bulk__btn--pick" data-order-sel-all="1" type="button" aria-label="${
+        todos ? 'Quitar la selección' : 'Seleccionar los que se ven'
+      }" title="${todos ? 'Quitar la selección' : `Seleccionar los ${visibles} que se ven`}">${ICONS.users}</button>
+      <button class="order-bulk__btn order-bulk__btn--ok order-bulk__btn--keep" data-order-bulk="entregado" type="button" title="Finalizar los seleccionados">${
+        ICONS.check
+      }<span>Finalizar</span></button>
+      <button class="order-bulk__btn" data-order-bulk="estado" type="button" title="Cambiar el estado de los seleccionados">${
+        ICONS.retry
+      }<span>Estado</span></button>
+      <button class="order-bulk__btn" data-order-bulk="seguimiento" type="button" title="Marcar seguimiento a los clientes">${
+        ICONS.clock
+      }<span>Seguir</span></button>
+      <button class="order-bulk__btn" data-order-bulk="mensaje" type="button" title="Programar un mensaje a los clientes">${
+        ICONS.send
+      }<span>Mensaje</span></button>
+    </div>`;
+  }
+
+  /** La barra de la selección: aparece solo cuando hay algo marcado. */
+  function renderOrderBulk() {
+    const box = $('#pedidos-bulk');
+    const count = state.pedidosSel.size;
+    if (box) {
+      box.hidden = count === 0;
+      box.innerHTML = count ? orderBulkBar() : '';
+    }
+    document.body.dataset.orderSel = count ? 'on' : 'off';
+    if (count === 0) state.pedidosSel.clear();
+  }
+
+  /**
+   * UNA FILA DE PEDIDO, FINA, CON UN SOLO BOTÓN.
+   *
+   * Antes, debajo de cada pedido iba una barra con «Marcar», «Estado», «Escribir»
+   * y el «⋯»: la lista medía el doble y lo que se leía eran BOTONES. Ahora todo
+   * eso vive dentro del «⋯» (el mismo gesto que en la lista de chats) y la
+   * tarjeta se queda con lo que hay que leer para decidir: quién, cuánto, cómo se
+   * cobró y en qué estado está.
+   */
+  function orderCard(item) {
+    const id = escapeHtml(item.id);
+    const marcado = state.pedidosSel.has(item.id);
+    /*
+     * Un pedido hecho sin conexión se queda visible y MARCADO como tal: no se
+     * finge que ya está en el CRM, porque eso es justo lo que hay que saber.
+     */
+    const sinEnviar = item.pending === true || isPending(item.id);
+    // El color de la tarjeta es el del estado: se pinta aquí, no en el CSS, que
+    // no puede adivinar el estado del pedido.
+    const tono = orderOperational(item).toLowerCase();
+    return `<div class="order-card order-card--${escapeHtml(tono)}${marcado ? ' order-card--sel' : ''}" data-order-card="${id}"${
+      marcado ? ' data-marcado="1"' : ''
+    }>
+      ${orderRow(item, { pendiente: sinEnviar })}
+      <button class="order-card__more" data-order-more="${id}" type="button" aria-label="Más acciones del pedido" title="Más acciones">${ICONS.more}</button>
+    </div>`;
+  }
+
+  /*
+   * EL MOTIVO SIEMPRE VIAJA.
+   *
+   * El cambio de estado queda auditado y el motivo es obligatorio en el servidor.
+   * Desde la lista no se le pide a nadie que escriba una frase para cerrar un
+   * pedido (eso es justo lo que hace que la gente no lo cierre): se pone uno claro
+   * por defecto, y quien quiera detallarlo lo escribe en la hoja.
+   */
+  const MOTIVO_LISTA = {
+    ENTREGADO: 'Finalizado desde la lista de pedidos',
+    PENDIENTE: 'Devuelto a pendiente desde la lista de pedidos',
+    EN_CAMINO: 'Marcado en camino desde la lista de pedidos',
+    CANCELADO: 'Cancelado desde la lista de pedidos',
+  };
+
+  /** Repinta todo lo que depende del estado de un pedido (una sola vía). */
+  function refrescarPedidos() {
+    pintarSeccion('pedidos', renderPedidos);
+    pintarSeccion('resumen', renderStats);
+    pintarSeccion('hoy', renderHoy);
+    pintarSeccion('mapa', renderOrdersMap);
+    pintarSeccion('entregas', renderDelivery);
+  }
+
+  /**
+   * Cambiar el estado de UN pedido desde la lista.
+   *
+   * · Finalizar va por `/finish`: es la única ruta que puede usar cualquiera que
+   *   atienda pedidos (admin, agente u operador), porque dejar una venta abierta
+   *   por no encontrar un admin es peor que el riesgo de cerrarla.
+   * · Los demás estados siguen por la ruta de siempre, que es de ADMIN.
+   */
+  async function cambiarEstadoPedido(orderId, target, { reason = '' } = {}) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    if (!item) return { ok: false, message: 'Ese pedido ya no está en la lista.' };
+    const finalizar = target === 'ENTREGADO';
+    const motivo = String(reason ?? '').trim() || MOTIVO_LISTA[target] || 'Cambio desde la lista de pedidos';
+    /*
+     * El `expectedStatus` (la comprobación de «nadie lo cambió mientras tanto») solo
+     * viaja cuando se está en línea: un cambio guardado para más tarde no puede
+     * llevar «cómo estaba el pedido hace tres horas» sin rechazarse solo.
+     */
+    const cuerpo = finalizar
+      ? { reason: motivo }
+      : { status: target, reason: motivo, ...(state.online ? { expectedStatus: orderOperational(item) } : {}) };
+    const resultado = await guardar({
+      path: finalizar
+        ? `/api/admin/orders/${encodeURIComponent(orderId)}/finish`
+        : `/api/admin/orders/${encodeURIComponent(orderId)}/status`,
+      method: finalizar ? 'POST' : 'PATCH',
+      body: cuerpo,
+      kind: 'order-status',
+      key: `order-status:${orderId}`,
+      id: orderId,
+      label: `Estado de ${item.order_number ?? item.name ?? 'un pedido'}`,
+      aplicar: () => aplicarEstadoLocal(orderId, target),
+    });
+    if (!resultado.ok) return { ok: false, message: resultado.message };
+    if (resultado.offline) return { ok: true, offline: true };
+    applyServerOrderUpdate(resultado.data);
+    return { ok: true, duplicate: resultado.data?.duplicate === true };
+  }
+
+  /**
+   * EL AVISO AL CLIENTE, LISTO PARA ENVIAR.
+   *
+   * Se abre SU conversación con el mensaje escrito: no se envía solo. Un mensaje
+   * que sale sin que nadie lo mire, fuera de la ventana de 24 h, lo rechaza
+   * WhatsApp; y el CRM tiene una regla que no se rompe: enviar lo pulsa una
+   * persona. Así el aviso cuesta UN toque (enviar) en vez de tres pantallas.
+   */
+  async function avisarClienteEntrega(item) {
+    const clienteId = customerIdForItem(item);
+    const conversacion = clienteId ? conversationForCustomer(clienteId) : null;
+    if (!conversacion?.id) {
+      toast('Pedido finalizado. Este pedido no tiene conversación: avísale desde la ficha del cliente.');
+      return false;
+    }
+    const primerNombre = String(item?.name ?? '').trim().split(/\s+/)[0] ?? '';
+    const numero = item?.order_number ?? itemOrder(item)?.order_number ?? '';
+    const texto = [
+      primerNombre ? `Hola ${primerNombre},` : 'Hola,',
+      `tu pedido${numero ? ` ${numero}` : ''} quedó ENTREGADO. ¡Gracias por tu compra!`,
+      'Cualquier cosa que necesites, escríbeme por aquí.',
+    ]
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    await openChat(conversacion.id, { draft: texto });
+    return true;
+  }
+
+  /** Escribirle al cliente del pedido: su conversación, sin inventar el texto. */
+  async function openOrderQuickChat(orderId) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    if (!item) return;
+    const clienteId = customerIdForItem(item);
+    const conversacion = clienteId ? conversationForCustomer(clienteId) : null;
+    if (conversacion?.id) {
+      await openChat(conversacion.id);
+      return;
+    }
+    if (clienteId) {
+      await openCustomer(clienteId);
+      return;
+    }
+    toast('Este pedido no trae teléfono ni cliente: no hay a quién escribirle');
+  }
+
+  /**
+   * LA HOJA DE ESTADO: el botón «Estado» de cada fila.
+   *
+   * Solo se ofrecen los estados que ESTE pedido admite y que ESTA persona puede
+   * cambiar: nada de opciones que el servidor va a rechazar después.
+   */
+  function openOrderQuickStatus(orderId) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    if (!item) return;
+    const actual = orderOperational(item);
+    const admin = isAdmin();
+    const clienteId = customerIdForItem(item);
+    const conversacion = clienteId ? conversationForCustomer(clienteId) : null;
+    const puedeAvisar = Boolean(clienteId && conversacion?.id);
+    const opciones = [
+      actual !== 'ENTREGADO'
+        ? {
+            target: 'ENTREGADO',
+            label: 'Finalizar · Entregado',
+            note: 'Cierra la venta: inventario, postventa y aviso al cliente',
+            icon: ICONS.checkCircle,
+            rapido: true,
+          }
+        : null,
+      admin && actual !== 'PENDIENTE' && actual !== 'ENTREGADO'
+        ? { target: 'PENDIENTE', label: 'Pendiente', note: 'Aún hay que atenderlo (sin entrega en curso)', icon: ICONS.clock }
+        : null,
+      admin && actual !== 'EN_CAMINO' && actual !== 'ENTREGADO'
+        ? { target: 'EN_CAMINO', label: 'En camino', note: 'Necesita una entrega activa con GPS', icon: ICONS.delivery }
+        : null,
+      admin && actual !== 'CANCELADO' && actual !== 'ENTREGADO'
+        ? { target: 'CANCELADO', label: 'Cancelado', note: 'No cuenta como venta', icon: ICONS.close, danger: true }
+        : null,
+    ].filter(Boolean);
+
+    const plan = { target: opciones[0]?.target ?? '', avisar: true, motivo: '' };
+    const guardarMotivo = () => {
+      const campo = $('#order-qs-reason');
+      if (campo) plan.motivo = campo.value;
+    };
+
+    const cuerpo = () => {
+      const elegida = opciones.find((op) => op.target === plan.target) ?? null;
+      return `
+      <dl class="facts">
+        <div class="fact"><dt>Cliente</dt><dd>${escapeHtml(item.name ?? '—')}</dd></div>
+        <div class="fact"><dt>Pedido</dt><dd>${escapeHtml(item.order_number ?? item.id)}</dd></div>
+        <div class="fact"><dt>Ahora</dt><dd>${escapeHtml(operationalStatusLabel(actual))}</dd></div>
+      </dl>
+      ${
+        opciones.length
+          ? `<div class="order-status-options">${opciones
+              .map(
+                (op) => `<button class="order-status-option${plan.target === op.target ? ' is-on' : ''}${
+                  op.danger ? ' order-status-option--danger' : ''
+                }" data-order-target="${op.target}" type="button">
+          <span class="order-status-option__icon" aria-hidden="true">${op.icon}</span>
+          <span><strong>${escapeHtml(op.label)}</strong><small>${escapeHtml(op.note)}</small></span>
+          ${op.rapido ? '<span class="order-status-option__tag">Rápido</span>' : ''}
+        </button>`,
+              )
+              .join('')}</div>`
+          : `<p class="rule">Este pedido ya está cerrado (${
+              actual === 'ENTREGADO' ? 'entregado' : 'cancelado'
+            }). Para reabrirlo hay que usar la reversión protegida de la factura.</p>`
+      }
+      ${
+        admin
+          ? ''
+          : '<p class="view__hint">Con tu usuario puedes <strong>finalizar</strong> el pedido. Cancelarlo o devolverlo a pendiente lo hace un administrador.</p>'
+      }
+      ${
+        plan.target === 'ENTREGADO' && puedeAvisar
+          ? `<label class="order-switch">
+              <input type="checkbox" id="order-qs-notify" ${plan.avisar ? 'checked' : ''} />
+              <span>Avisar al cliente por WhatsApp<small>Te abre su conversación con el mensaje escrito: solo tienes que enviarlo</small></span>
+            </label>`
+          : ''
+      }
+      <label class="field">
+        <span class="field__label">Motivo (queda auditado)</span>
+        <input class="field__input" id="order-qs-reason" type="text" value="${escapeHtml(
+          plan.motivo,
+        )}" placeholder="${escapeHtml(MOTIVO_LISTA[plan.target] ?? 'Cambio desde la lista de pedidos')}" />
+      </label>
+      <button class="btn btn--primary btn--block" id="order-qs-confirm" type="button" ${
+        opciones.length ? '' : 'disabled'
+      }>${elegida ? `Confirmar: ${escapeHtml(elegida.label)}` : 'Confirmar cambio'}</button>
+      ${plan.target === 'ENTREGADO' ? '<p class="rule">Al finalizar se descuenta el inventario, se cierra el tracking y se registra la postventa.</p>' : ''}
+    `;
+    };
+
+    const enganchar = () => {
+      $$('[data-order-target]').forEach((boton) =>
+        boton.addEventListener('click', () => {
+          guardarMotivo();
+          plan.target = boton.dataset.orderTarget;
+          pintar();
+        }),
+      );
+      $('#order-qs-notify')?.addEventListener('change', (event) => {
+        plan.avisar = event.currentTarget.checked;
+      });
+      $('#order-qs-confirm')?.addEventListener('click', (event) => confirmar(event.currentTarget));
+    };
+
+    const pintar = () => {
+      openSheet(`Estado · ${item.order_number ?? item.name ?? 'Pedido'}`, cuerpo());
+      enganchar();
+    };
+
+    const confirmar = async (boton) => {
+      if (!plan.target) return;
+      guardarMotivo();
+      const avisar = plan.target === 'ENTREGADO' && puedeAvisar && plan.avisar;
+      await working(boton, 'Cambiando…', async () => {
+        const result = await cambiarEstadoPedido(orderId, plan.target, { reason: plan.motivo });
+        if (!result.ok) {
+          if (result.message) toast(result.message);
+          return;
+        }
+        const etiqueta = operationalStatusLabel(plan.target);
+        closeSheet();
+        refrescarPedidos();
+        /*
+         * SIN CONEXIÓN el cambio queda guardado en el teléfono y se manda solo. El
+         * aviso al cliente no se puede ni preparar (su chat vive en el servidor):
+         * se dice claro en vez de abrir una conversación que no cargará.
+         */
+        if (result.offline) {
+          renderOutboxBanner();
+          toast(`Sin conexión: ${etiqueta.toLowerCase()} guardado aquí · se enviará solo`);
+          return;
+        }
+        // El aviso se abre DESPUÉS de cerrar y repintar: la lista queda al día.
+        const avisado = avisar ? await avisarClienteEntrega(item) : false;
+        if (!avisado) toast(`Pedido ${etiqueta.toLowerCase()}`);
+        load({ keepTab: true }).catch(() => {});
+      });
+    };
+
+    pintar();
+  }
+
+  /**
+   * Aplicar el mismo estado a VARIOS pedidos, de uno en uno.
+   *
+   * En serie a propósito: cada pedido mueve inventario y cierra tracking, y dos
+   * cambios a la vez sobre el mismo cliente se pisan. Se informa del resultado
+   * real (cuántos entraron y el primer motivo de fallo), sin decir «listo» cuando
+   * alguno no se pudo.
+   */
+  async function aplicarEstadoVarios(ids, target, { button = null } = {}) {
+    const pedidos = ids.filter((id) => state.items.some((item) => item.id === id));
+    if (!pedidos.length) {
+      toast('Marca primero los pedidos');
+      return;
+    }
+    const etiqueta = operationalStatusLabel(target);
+    const plural = pedidos.length === 1 ? '' : 's';
+    const ok = window.confirm(`¿Marcar ${pedidos.length} pedido${plural} como ${etiqueta.toLowerCase()}? Queda auditado con tu usuario.`);
+    if (!ok) return;
+    await working(button, 'Aplicando…', async () => {
+      let hechos = 0;
+      let sinEnviar = 0;
+      const fallos = [];
+      for (const id of pedidos) {
+        const result = await cambiarEstadoPedido(id, target);
+        if (result.ok && result.offline) sinEnviar += 1;
+        else if (result.ok) hechos += 1;
+        else if (result.message && !fallos.includes(result.message)) fallos.push(result.message);
+      }
+      state.pedidosSel.clear();
+      refrescarPedidos();
+      renderOutboxBanner();
+      if (sinEnviar) {
+        toast(`${sinEnviar} pedido${sinEnviar === 1 ? '' : 's'} guardado${sinEnviar === 1 ? '' : 's'} sin conexión · se enviará solo`);
+        return;
+      }
+      await load({ keepTab: true }).catch(() => {});
+      toast(
+        fallos.length
+          ? `${hechos} de ${pedidos.length} actualizados · ${fallos[0]}`
+          : `${hechos} pedido${hechos === 1 ? '' : 's'} ${target === 'ENTREGADO' ? `finalizado${hechos === 1 ? '' : 's'}` : 'actualizados'}`,
+      );
+    });
+  }
+
+  /** Cambiar el estado de los seleccionados, eligiendo cuál (solo ADMIN). */
+  function openOrderBulkStatusSheet(ids) {
+    if (!isAdmin()) {
+      toast('Con tu usuario puedes finalizar. Los demás estados son de un administrador.');
+      return;
+    }
+    if (!ids.length) {
+      toast('Marca primero los pedidos');
+      return;
+    }
+    openSheetActionMenu({
+      title: 'Cambiar el estado',
+      nota: `${ids.length} pedido(s) seleccionado(s). Se aplica a cada uno y queda auditado.`,
+      acciones: [
+        { icon: ICONS.checkCircle, label: 'Finalizar (entregado)', note: 'Cierra la venta de cada pedido', data: { 'data-order-bulk': 'entregado' } },
+        { icon: ICONS.clock, label: 'Pendiente', note: 'Solo si no tienen entrega en curso', data: { 'data-order-bulk-set': 'PENDIENTE' } },
+        { icon: ICONS.delivery, label: 'En camino', note: 'Solo si tienen entrega activa con GPS', data: { 'data-order-bulk-set': 'EN_CAMINO' } },
+        { icon: ICONS.close, label: 'Cancelado', note: 'No cuentan como venta', data: { 'data-order-bulk-set': 'CANCELADO' } },
+      ],
+    });
+  }
+
+  /** Los clientes de los pedidos marcados (una sola vía para las acciones masivas). */
+  function clientesDePedidos(ids) {
+    const vistos = new Set();
+    const filas = [];
+    for (const id of ids) {
+      const item = state.items.find((candidate) => candidate.id === id) ?? null;
+      const clienteId = item ? customerIdForItem(item) : '';
+      if (!clienteId || vistos.has(clienteId)) continue;
+      vistos.add(clienteId);
+      filas.push({ item, clienteId, conversacionId: conversationForCustomer(clienteId)?.id ?? '' });
+    }
+    return filas;
+  }
+
+  /** Marcar seguimiento a los clientes de los pedidos marcados. */
+  async function seguimientoDePedidos(ids, { button = null } = {}) {
+    const filas = clientesDePedidos(ids);
+    if (!filas.length) {
+      toast('Estos pedidos no tienen cliente al que hacerle seguimiento');
+      return;
+    }
+    if (filas.length === 1) {
+      closeSheet();
+      openFollowupForm({ customerId: filas[0].clienteId, conversationId: filas[0].conversacionId, orderId: filas[0].item.id });
+      return;
+    }
+    const cuando = addDaysISO(1);
+    const ok = window.confirm(
+      `¿Crear ${filas.length} tareas de seguimiento para mañana (${cuando})? Son TAREAS: el sistema no envía nada solo.`,
+    );
+    if (!ok) return;
+    await working(button, 'Creando…', async () => {
+      let hechos = 0;
+      const fallos = [];
+      for (const fila of filas) {
+        const idLocalSeguimiento = idLocal('fu');
+        const cuerpo = {
+          customerId: fila.clienteId,
+          conversationId: fila.conversacionId || undefined,
+          orderId: fila.item.id,
+          scheduledAt: cuando,
+          reason: 'Seguimiento desde la lista de pedidos',
+        };
+        const resultado = await guardar({
+          path: '/api/admin/followups',
+          method: 'POST',
+          body: cuerpo,
+          kind: 'followup-create',
+          key: `followup:${fila.clienteId}:${cuando}`,
+          id: idLocalSeguimiento,
+          label: 'Seguimiento desde la lista de pedidos',
+          aplicar: () => aplicarSeguimientoLocal(idLocalSeguimiento, cuerpo),
+        });
+        if (resultado.ok) hechos += 1;
+        else if (resultado.message && !fallos.includes(resultado.message)) fallos.push(resultado.message);
+      }
+      state.pedidosSel.clear();
+      refrescarPedidos();
+      renderOutboxBanner();
+      await load({ keepTab: true }).catch(() => {});
+      toast(fallos.length ? `${hechos} de ${filas.length} seguimientos · ${fallos[0]}` : `${hechos} seguimiento(s) creados para mañana`);
+    });
+  }
+
+  /**
+   * PROGRAMAR UN MENSAJE A LOS CLIENTES DE LOS PEDIDOS MARCADOS.
+   *
+   * Con uno marcado se abre el formulario completo (con su propuesta y su vista
+   * previa). Con varios, una hoja corta: la misma plantilla aprobada y el mismo
+   * día para todos, que es lo que se necesita para «avisarles a los tres que
+   * salieron hoy». Nada sale hasta la hora dicha y cada mensaje va a su chat.
+   */
+  function programarMensajeDePedidos(ids) {
+    const filas = clientesDePedidos(ids);
+    if (!filas.length) {
+      toast('Estos pedidos no tienen cliente al que escribirle');
+      return;
+    }
+    if (filas.length === 1) {
+      closeSheet();
+      openScheduledForm({ customerId: filas[0].clienteId, conversationId: filas[0].conversacionId, orderId: filas[0].item.id });
+      return;
+    }
+    const aprobadas = (state.templates ?? []).filter(waTemplateApproved);
+    if (!aprobadas.length) {
+      toast('No hay plantillas aprobadas para programar');
+      return;
+    }
+    const manana = addDaysISO(1);
+    openSheet(
+      `Programar mensaje · ${filas.length} clientes`,
+      `<p class="view__hint">El mismo mensaje para los ${filas.length} clientes de los pedidos marcados. Sale <strong>solo</strong> a la hora que elijas; si al llegar el momento ya no se puede (ventana de 24 h, «no contactar», plantilla sin aprobar), no se fuerza.</p>
+      <label class="field">
+        <span class="field__label">Plantilla</span>
+        <select class="field__select" id="bulk-sch-template">
+          ${aprobadas.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(waTemplateLabel(t))}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field" id="bulk-sch-text-field">
+        <span class="field__label">Mensaje</span>
+        <textarea class="field__area" id="bulk-sch-text" rows="3" placeholder="Lo que quieras decirle a cada cliente…"></textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">Fecha</span>
+        <input class="field__input" id="bulk-sch-date" type="date" value="${escapeHtml(manana)}" />
+      </label>
+      <label class="field">
+        <span class="field__label">Hora</span>
+        <input class="field__input" id="bulk-sch-time" type="time" value="09:00" />
+      </label>
+      <p class="rule" id="bulk-sch-note"></p>
+      <button class="btn btn--primary btn--block" id="bulk-sch-save" type="button">Programar ${filas.length} mensajes</button>`,
+    );
+    const plantilla = () => aprobadas.find((t) => t.name === $('#bulk-sch-template')?.value) ?? aprobadas[0];
+    const libreDe = (t) => waTemplateFreeSlot(t);
+    const pintar = () => {
+      const t = plantilla();
+      const libre = t ? libreDe(t) : null;
+      const campo = $('#bulk-sch-text-field');
+      if (campo) campo.hidden = libre === null;
+      const nota = $('#bulk-sch-note');
+      if (nota) {
+        nota.textContent =
+          libre === null
+            ? 'Esta plantilla no tiene hueco para un mensaje propio: sale tal cual está aprobada.'
+            : 'El texto va en el hueco libre de la plantilla; el nombre del cliente lo pone el CRM.';
+      }
+    };
+    $('#bulk-sch-template')?.addEventListener('change', pintar);
+    pintar();
+    $('#bulk-sch-save')?.addEventListener('click', async (event) => {
+      const t = plantilla();
+      const libre = t ? libreDe(t) : null;
+      const texto = $('#bulk-sch-text')?.value.trim() ?? '';
+      const fecha = $('#bulk-sch-date')?.value ?? '';
+      const hora = $('#bulk-sch-time')?.value || '09:00';
+      if (!fecha) {
+        toast('Elige la fecha');
+        return;
+      }
+      if (libre !== null && !texto) {
+        toast('Escribe el mensaje');
+        return;
+      }
+      const valores = libre === null ? {} : { [libre + 1]: texto };
+      const scheduledAt = new Date(`${fecha}T${hora}:00`).toISOString();
+      await working(event.currentTarget, 'Programando…', async () => {
+        let hechos = 0;
+        const fallos = [];
+        for (const fila of filas) {
+          try {
+            await api('/api/admin/scheduled', {
+              method: 'POST',
+              body: JSON.stringify({
+                customerId: fila.clienteId,
+                conversationId: fila.conversacionId || undefined,
+                orderId: fila.item.id,
+                scheduledAt,
+                timeZone: BUSINESS_TIME_ZONE,
+                type: 'template',
+                template: t.name,
+                templateValues: valores,
+              }),
+            });
+            hechos += 1;
+          } catch (error) {
+            if (error.message === 'unauthorized') return;
+            const mensaje = error.body?.message ?? 'No se pudo programar';
+            if (!fallos.includes(mensaje)) fallos.push(mensaje);
+          }
+        }
+        state.pedidosSel.clear();
+        closeSheet();
+        refrescarPedidos();
+        await load({ keepTab: true }).catch(() => {});
+        toast(
+          fallos.length ? `${hechos} de ${filas.length} programados · ${fallos[0]}` : `${hechos} mensaje(s) programados para ${fmtDay(fecha)}`,
+        );
+      });
+    });
+  }
+
+  /**
+   * EL BOTÓN FLOTANTE DE LA LISTA: las acciones que son de TODA la lista.
+   *
+   * Es el gemelo del de Clientes (mismo estilo, encima del de agregar pedido): lo
+   * que no es de un pedido suelto vive aquí, para no llenar la pantalla de botones.
+   */
+  function openPedidosAcciones() {
+    const ids = [...state.pedidosSel];
+    const n = ids.length;
+    const visibles = pedidosVisibles.length;
+    const plural = n === 1 ? '' : 's';
+    const sinSeleccion = `Marca primero los pedidos (el «⋯» de cada uno → Marcar para acciones en lote). Ahora hay ${visibles} a la vista.`;
+    openSheetActionMenu({
+      title: 'Pedidos',
+      nota: n ? `${n} pedido${plural} seleccionado${plural}: las acciones de abajo se aplican a esos.` : sinSeleccion,
+      acciones: [
+        {
+          icon: ICONS.users,
+          label: n ? 'Quitar la selección' : 'Seleccionar los que se ven',
+          note: n ? `${n} marcado${plural}` : `Los ${visibles} de la lista`,
+          data: { 'data-order-sel-all': '1' },
+        },
+        {
+          icon: ICONS.checkCircle,
+          label: 'Finalizar los seleccionados',
+          note: n ? 'Pasa a entregado cada uno y cierra su venta' : 'Elige primero los pedidos',
+          data: n ? { 'data-order-bulk': 'entregado' } : {},
+          disabled: !n,
+        },
+        {
+          icon: ICONS.retry,
+          label: 'Cambiar el estado de los seleccionados',
+          note: n ? 'Pendiente, en camino o cancelado' : 'Elige primero los pedidos',
+          data: n ? { 'data-order-bulk': 'estado' } : {},
+          disabled: !n,
+        },
+        {
+          icon: ICONS.clock,
+          label: 'Marcar seguimiento a los clientes',
+          note: n ? 'Una tarea para cada cliente (no envía nada solo)' : 'Elige primero los pedidos',
+          data: n ? { 'data-order-bulk': 'seguimiento' } : {},
+          disabled: !n,
+        },
+        {
+          icon: ICONS.send,
+          label: 'Programar un mensaje a los clientes',
+          note: n ? 'El mismo mensaje para todos, a la hora que elijas' : 'Elige primero los pedidos',
+          data: n ? { 'data-order-bulk': 'mensaje' } : {},
+          disabled: !n,
+        },
+        { icon: ICONS.calendar, label: 'Filtrar por fecha', note: `Ahora: ${orderDateName()}`, data: { 'data-order-date-open': '1' } },
+      ],
+    });
+  }
+
   /**
    * UNA FILA DE PEDIDO: dos líneas de datos y una tercera corta con el contacto y
    * quién lo atiende.
@@ -2621,7 +4236,7 @@
    * la ficha del pedido, que se abre tocando la fila: en una lista larga, eso es la
    * diferencia entre leerla y no leerla.
    */
-  function orderRow(item) {
+  function orderRow(item, { pendiente = false } = {}) {
     const estado = orderOperational(item);
     const order = itemOrder(item) ?? {};
     const agente = orderAgent(item);
@@ -2662,6 +4277,11 @@
       <span class="order-row__bottom">
         <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
         ${
+          pendiente
+            ? '<span class="order-pend" title="Guardado en este teléfono: falta enviarlo al CRM">Sin enviar</span>'
+            : ''
+        }
+        ${
           pago
             ? `<span class="order-row__pay order-row__pay--${pagoTono}">${escapeHtml(paymentMethodLabel(pago))}</span>`
             : ''
@@ -2694,38 +4314,70 @@
     const box = $('#list-pedidos');
     if (!box) return;
     document.body.dataset.orderFilters = state.pedidosFiltersOpen ? 'open' : 'closed';
+    renderOrderDateChip();
+    renderOrderStatusChip();
     const items = ordersNewestFirst(applyOutbox(state.items.filter((item) => item.type === 'order_intent')));
     const filter = state.pedidosFilter ?? 'todo';
-    const byFilter = (value) =>
-      value === 'todo' ? items : items.filter((item) => orderOperational(item) === orderFilterValue(value));
-    const byStatus = byFilter(filter);
-    const query = state.pedidosSearch.trim().toLowerCase();
-    const visibles = query ? byStatus.filter((item) => orderMatchesSearch(item, query)) : byStatus;
-    // Cada chip lleva su cuenta: se ve cuántos hay sin abrir el filtro.
+    const range = orderDateRange();
+    const porFecha = items.filter((item) => orderInDateRange(item, range));
+    const byFilter = (value, pool) =>
+      value === 'todo' ? pool : pool.filter((item) => orderOperational(item) === orderFilterValue(value));
+    /*
+     * Los chips de estado cuentan sobre TODOS los pedidos, no sobre los del día:
+     * un contador que baila al cambiar la fecha no sirve para decidir nada.
+     */
     $$('#pedidos-filtros [data-order-filter]').forEach((chip) => {
       const value = chip.dataset.orderFilter;
-      const total = byFilter(value).length;
+      const total = byFilter(value, items).length;
       const base = ORDER_FILTERS.find(([known]) => known === value)?.[1] ?? 'Pedidos';
       chip.textContent = total ? `${base} ${total}` : base;
       chip.setAttribute('aria-pressed', String(value === filter));
     });
+    const byStatus = byFilter(filter, porFecha);
+    /*
+     * LOS CHIPS DE FECHA VIVEN EN EL MISMO PANEL que los de estado y se marcan
+     * igual, con su cuenta: se ve cuántos pedidos hay hoy, ayer o este mes sin
+     * tener que probar uno por uno.
+     */
+    $$('#pedidos-filtros [data-order-date]').forEach((chip) => {
+      const modo = chip.dataset.orderDate;
+      const total = items.filter((item) => orderInDateRange(item, orderDateRange({ mode: modo, from: '', to: '' }))).length;
+      const base = ORDER_DATE_LABELS[modo] ?? 'Fecha';
+      chip.textContent = total ? `${base} ${total}` : base;
+      chip.setAttribute('aria-pressed', String(range.mode === modo));
+    });
+    const chipIntervalo = $('#pedidos-filtros [data-order-date-custom]');
+    if (chipIntervalo) {
+      chipIntervalo.textContent = range.mode === 'custom' ? `Intervalo · ${range.label}` : 'Intervalo…';
+      chipIntervalo.setAttribute('aria-pressed', String(range.mode === 'custom'));
+    }
+    const query = state.pedidosSearch.trim().toLowerCase();
+    const visibles = query ? byStatus.filter((item) => orderMatchesSearch(item, query)) : byStatus;
+    pedidosVisibles = visibles;
     const count = $('#pedidos-count');
     if (count) {
-      count.textContent = !items.length
+      const total = items.length;
+      // La cuenta dice SIEMPRE de dónde salen los que se ven (si no, la lista
+      // parece vacía sin motivo cuando el filtro de fecha deja fuera lo demás).
+      count.textContent = !total
         ? ''
-        : visibles.length === items.length && !query
-          ? `${items.length} ${items.length === 1 ? 'pedido' : 'pedidos'}`
-          : `${visibles.length} de ${items.length} pedidos`;
+        : visibles.length === total && !query && range.mode === 'all'
+          ? `${total} ${total === 1 ? 'pedido' : 'pedidos'}`
+          : `${visibles.length} de ${total} pedidos · ${orderDateName(range)}`;
     }
+    renderOrderBulk();
     box.innerHTML = visibles.length
-      ? visibles.map(orderRow).join('')
-      : emptyState(
-          items.length
-            ? query
-              ? 'Ningún pedido coincide con la búsqueda.'
-              : 'Ningún pedido con ese estado.'
-            : 'Todavía no hay pedidos registrados.',
-        );
+      ? visibles.map(orderCard).join('')
+      : items.length === 0
+        ? emptyState('Todavía no hay pedidos registrados.')
+        : query
+          ? emptyState('Ningún pedido coincide con la búsqueda.')
+          : range.mode !== 'all' && porFecha.length === 0
+            ? `<div class="empty empty--order-date">
+                <p>No hay pedidos de ${escapeHtml(orderDateName(range))}.</p>
+                <button class="btn btn--ghost btn--sm" data-order-date="all" type="button">Ver todos los pedidos</button>
+              </div>`
+            : emptyState('Ningún pedido con ese estado.');
   }
 
   function orderMatchesSearch(item, query) {
@@ -3364,9 +5016,9 @@
       pushUnavailableReason()
         ? `<p class="notice-hint">${escapeHtml(pushUnavailableReason())}</p>`
         : resultado
-        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → CRM Phyto en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
+        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → FullTECH, SRL en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
         : iphonePushDevice()
-          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → CRM Phyto activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
+          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → FullTECH, SRL activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
           : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
       }`;
   }
@@ -3395,7 +5047,7 @@
 
   function nativePrinterRequest(action, payload = {}) {
     if (!nativePrinterAvailable()) {
-      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación Phytoemagry para Android.'));
+      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación FullTECH, SRL para Android.'));
     }
     const id = `printer-${Date.now()}-${++nativePrinterRequestSeq}`;
     return new Promise((resolve, reject) => {
@@ -3417,13 +5069,13 @@
           <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
           <div>
             <strong>Impresora térmica</strong>
-            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de Phytoemagry para Android.</p>
+            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH, SRL para Android.</p>
           </div>
         </div>
         <dl class="facts printer-settings__facts">
           <div class="fact"><dt>Estado</dt><dd>Usando el CRM desde el navegador</dd></div>
           <div class="fact"><dt>Impresión Bluetooth</dt><dd>Disponible en la app Android</dd></div>
-          <div class="fact"><dt>Nombre de la app</dt><dd>Phytoemagry</dd></div>
+          <div class="fact"><dt>Nombre de la app</dt><dd>FullTECH, SRL</dd></div>
         </dl>
         <div class="item__actions printer-settings__actions">
           <a class="btn btn--primary" href="/api/admin/android-apk/download">Descargar app para Android</a>
@@ -3434,7 +5086,7 @@
             <li>Desde el teléfono Android, toca <strong>Descargar app para Android</strong>.</li>
             <li>Cuando termine la descarga, abre el archivo y toca <strong>Instalar</strong>.</li>
             <li>Si el teléfono pide permiso para instalar, toca <strong>Permitir</strong> y vuelve a abrir el archivo descargado.</li>
-            <li>Abre la app <strong>Phytoemagry</strong> e inicia sesión en el CRM.</li>
+            <li>Abre la app <strong>FullTECH, SRL</strong> e inicia sesión en el CRM.</li>
             <li>Entra a <strong>Configuración → Impresora</strong> y toca <strong>Seleccionar impresora</strong>.</li>
             <li>Elige tu impresora térmica Bluetooth. Si no aparece, primero vincúlala en los ajustes Bluetooth del teléfono.</li>
             <li>Toca <strong>Imprimir prueba</strong>. Si sale bien, ya puedes imprimir facturas desde los pedidos.</li>
@@ -3491,7 +5143,9 @@
 
   function openNotificationsSheet() {
     $('#sheet-title').textContent = 'Notificaciones';
-    const rows = state.notifications ?? [];
+    // Lo ya borrado en este teléfono no se pinta nunca más (aunque el servidor
+    // todavía lo tenga, que es lo que hacía que «volvieran»).
+    const rows = notificacionesVisibles();
     const localRows = localNoticeRows();
     const hasNotices = rows.length > 0 || localRows.length > 0;
     const html = [
@@ -3510,7 +5164,9 @@
           <div class="notice__actions">
             ${row.conversationId ? `<button class="btn btn--whatsapp btn--xs" data-chat="${escapeHtml(row.conversationId)}" type="button">Abrir</button>` : ''}
             ${row.scheduledId ? `<button class="btn btn--ghost btn--xs" data-scheduled-cancel="${escapeHtml(row.scheduledId)}" type="button">Cancelar</button>` : ''}
-            <button class="btn btn--ghost btn--xs" data-notice-dismiss="${escapeHtml(row.key)}" type="button">Entendido</button>
+            <button class="btn btn--ghost btn--xs" data-notice-dismiss="${escapeHtml(row.key)}" data-notice-value="${escapeHtml(
+              String(row.valor ?? ''),
+            )}" type="button">Entendido</button>
           </div>
         </article>`,
       ),
@@ -3521,11 +5177,16 @@
             <p>${escapeHtml(row.body ?? '')}</p>
             <small>${escapeHtml(fmtWhen(row.created_at))}${row.status === 'read' ? ' · leída' : ' · nueva'}</small>
           </div>
-          ${
-            row.deep_link
-              ? `<div class="notice__actions"><button class="btn btn--primary btn--xs" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(row.entity_id ?? '')}" type="button">Abrir</button></div>`
-              : ''
-          }
+          <div class="notice__actions">
+            ${
+              row.deep_link
+                ? `<button class="btn btn--primary btn--xs" data-notification-open="${escapeHtml(row.id)}" data-notification-entity="${escapeHtml(
+                    row.entity_id ?? '',
+                  )}" type="button">Abrir</button>`
+                : ''
+            }
+            <button class="btn btn--ghost btn--xs" data-notification-delete="${escapeHtml(row.id)}" type="button">Borrar</button>
+          </div>
         </article>`,
       ),
     ].join('');
@@ -3538,15 +5199,39 @@
   }
 
   async function deleteAllNotifications(button = null) {
+    const visibles = notificacionesVisibles();
     const ok = window.confirm('¿Eliminar todas las notificaciones de esta lista?');
     if (!ok) return;
+    /*
+     * SE MARCAN COMO BORRADAS ANTES DE LLAMAR AL SERVIDOR.
+     *
+     * Así­ no reaparecen ni mientras viaja la petición ni si el servidor no
+     * contesta: el panel ya sabe que esas no se pintan, y el borrado en el
+     * servidor queda pendiente y se reintenta solo cuando vuelva la red.
+     */
+    for (const row of visibles) marcarNotificacionBorrada(row.id);
+    dismissAllLocalNotices();
+    openNotificationsSheet();
+    renderMobileHeader();
+    renderHoy();
     await working(button, 'Eliminando…', async () => {
-      await api('/api/admin/notifications', { method: 'DELETE' });
-      dismissAllLocalNotices();
-      state.notifications = [];
+      try {
+        await api('/api/admin/notifications', { method: 'DELETE' });
+        /*
+         * La cola de pendientes NO se vacía a ciegas: se reintenta una a una y
+         * solo se quitan las que el servidor confirma (o ya no estaban). Antes se
+         * vaciaba con el simple «ok» del borrado en bloque y, si alguna se había
+         * quedado viva en el servidor, ya no había forma de reintentarla: el aviso
+         * volvía a aparecer al entrar desde otro teléfono o con el almacén limpio.
+         */
+        await flushNotificacionesBorradas().catch(() => {});
+      } catch (error) {
+        // Sin red no se pierde nada: queda pendiente y se reintenta en el próximo
+        // refresco (o al recuperar la conexión).
+        if (!error?.offline) throw error;
+      }
       await load({ keepTab: true }).catch(() => {});
       renderMobileHeader();
-      renderHoy();
       openNotificationsSheet();
       toast('Notificaciones eliminadas');
     }).catch((error) => {
@@ -3554,16 +5239,26 @@
     });
   }
 
+  /** Borra UNA notificación: primero de esta pantalla, después del servidor. */
+  async function borrarNotificacion(notificationId) {
+    if (!notificationId) return;
+    marcarNotificacionBorrada(notificationId);
+    state.notifications = (state.notifications ?? []).filter((row) => row.id !== notificationId);
+    renderMobileHeader();
+    renderHoy();
+    openNotificationsSheet();
+    await flushNotificacionesBorradas().catch(() => {});
+  }
+
   async function dismissOpenedNotification(notificationId) {
     if (!notificationId) return;
+    // Se borra de verdad (y se recuerda): abrir un aviso no puede dejarlo vivo
+    // para que reaparezca en el siguiente refresco.
+    marcarNotificacionBorrada(notificationId);
     state.notifications = (state.notifications ?? []).filter((row) => row.id !== notificationId);
     renderMobileHeader();
     if (state.tab === 'hoy') renderHoy();
-    try {
-      await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}`, { method: 'DELETE' });
-    } catch {
-      await api(`/api/admin/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: '{}' }).catch(() => {});
-    }
+    await flushNotificacionesBorradas().catch(() => {});
   }
 
   async function openDeliveryOrderFromNotification(notificationId, orderId) {
@@ -5104,22 +6799,62 @@
   }
 
   /** Seguimientos (menú lateral): vencidos, de hoy y los que vienen. */
+  /*
+   * Los seguimientos se ven por bloques: vencidos, los de hoy y los próximos.
+   * El filtro deja a la vista SOLO el bloque pedido, para que una tarjeta de HOY
+   * («Seguimientos vencidos») lleve exactamente a esos y no a una lista mezclada
+   * donde hay que buscar los vencidos a ojo.
+   */
+  const FOLLOWUP_FILTERS = [
+    ['todo', 'Todos'],
+    ['vencidos', 'Vencidos'],
+    ['hoy', 'Para hoy'],
+    ['proximos', 'Próximos'],
+  ];
+  const followupBulk = (id, followups = state.followups ?? {}) => {
+    if (id === 'vencidos') return followups.overdue ?? [];
+    if (id === 'hoy') return followups.today ?? [];
+    if (id === 'proximos') return followups.upcoming ?? [];
+    return [...(followups.overdue ?? []), ...(followups.today ?? []), ...(followups.upcoming ?? [])];
+  };
+
   function renderSeguimientos() {
     const box = $('#list-seguimientos');
     if (!box) return;
     const followups = state.followups ?? {};
+    const filtro = state.followupsFilter ?? 'todo';
+    const chips = $('#seguimientos-filtros');
+    if (chips) {
+      chips.innerHTML = FOLLOWUP_FILTERS.map(([value, text]) => {
+        const total = followupBulk(value, followups).length;
+        return `<button class="chip chip--filter" data-followup-filter="${value}" aria-pressed="${value === filtro}" type="button">${
+          total ? `${text} ${total}` : text
+        }</button>`;
+      }).join('');
+    }
     const bloque = (titulo, filas) =>
       filas?.length
         ? `<h2 class="view__title">${escapeHtml(titulo)} (${filas.length})</h2>${filas.map(followupCard).join('')}`
         : '';
     const html = [
-      bloque('Vencidos', followups.overdue),
-      bloque('Para hoy', followups.today),
-      bloque('Próximos', followups.upcoming),
+      ['vencidos', 'Vencidos', followups.overdue],
+      ['hoy', 'Para hoy', followups.today],
+      ['proximos', 'Próximos', followups.upcoming],
     ]
+      .filter(([id]) => filtro === 'todo' || filtro === id)
+      .map(([, titulo, filas]) => bloque(titulo, filas))
       .filter(Boolean)
       .join('');
-    box.innerHTML = html || emptyState('No hay seguimientos pendientes. Se crean solos al entregar una compra.');
+    box.innerHTML =
+      html ||
+      (filtro === 'todo'
+        ? emptyState('No hay seguimientos pendientes. Se crean solos al entregar una compra.')
+        : `<div class="empty">
+            <p>No hay seguimientos en «${escapeHtml(
+              FOLLOWUP_FILTERS.find(([value]) => value === filtro)?.[1] ?? '',
+            )}».</p>
+            <button class="btn btn--ghost btn--sm" data-followup-filter="todo" type="button">Ver todos</button>
+          </div>`);
   }
 
   /** Plantilla marcada para borrar (segundo toque confirma). */
@@ -5147,31 +6882,159 @@
     $('#list-mensajes').innerHTML = list;
   }
 
+  const SETTINGS_PAGES = [
+    { key: 'permisos', title: 'Permisos', detail: 'Notificaciones, ubicación, micrófono y cámara', icon: 'lock', group: 'En este dispositivo', cards: ['config-permisos'] },
+    { key: 'notificaciones', title: 'Notificaciones', detail: 'Avisos de mensajes, pedidos y entregas', icon: 'bell', group: 'En este dispositivo', cards: ['config-notificaciones'] },
+    { key: 'apariencia', title: 'Apariencia', detail: 'Un tema que se sienta como tú', icon: 'contrast', group: 'En este dispositivo', cards: ['config-tema'] },
+    { key: 'aplicacion', title: 'La aplicación', detail: 'Instalación y actualizaciones', icon: 'box', group: 'En este dispositivo', cards: ['install-card'] },
+    { key: 'whatsapp', title: 'WhatsApp', detail: 'Conexión y estado de tu número', icon: 'chat', group: 'Tu negocio', admin: true, cards: ['config-whatsapp'] },
+    { key: 'plantillas', title: 'Plantillas de WhatsApp', detail: 'Mensajes aprobados y sincronización', icon: 'note', group: 'Tu negocio', admin: true, cards: ['config-wa-templates'] },
+    { key: 'seguimiento', title: 'Seguimiento postventa', detail: 'Días y tareas para cuidar a tus clientes', icon: 'calendar', group: 'Tu negocio', admin: true, cards: ['config-seguimiento'] },
+    { key: 'deepseek', title: 'API key DeepSeek', detail: 'Correcciones de mensajes y consumo', icon: 'gear', group: 'Tu negocio', admin: true, cards: ['config-deepseek'] },
+    { key: 'compartir', title: 'Opciones para compartir', detail: 'Ubicaciones, cuentas bancarias y catálogos', icon: 'send', group: 'Tu negocio', admin: true, cards: ['config-chat-sharing'] },
+    { key: 'compartir-ubicaciones', parent: 'compartir', title: 'Ubicaciones del negocio', admin: true, cards: ['config-chat-sharing'] },
+    { key: 'compartir-bancos', parent: 'compartir', title: 'Cuentas bancarias', admin: true, cards: ['config-chat-sharing'] },
+    { key: 'compartir-catalogos', parent: 'compartir', title: 'Catálogos y páginas web', admin: true, cards: ['config-chat-sharing'] },
+    { key: 'impresora', title: 'Impresora', detail: 'Conexión y prueba de impresión', icon: 'printer', group: 'Tu negocio', admin: true, cards: ['config-impresora'] },
+    { key: 'multimedia', title: 'Archivos y multimedia', detail: 'Almacenamiento y envíos por revisar', icon: 'image', group: 'Tu negocio', admin: true, cards: ['config-media', 'media-review-card'] },
+    { key: 'metricas', title: 'Métricas de ventas', detail: 'La actividad de tu negocio por período', icon: 'chart', group: 'Información y datos', admin: true, cards: ['config-metricas'] },
+    { key: 'auditoria', title: 'Actividad reciente', detail: 'Cambios y movimientos del equipo', icon: 'clock', group: 'Información y datos', admin: true, cards: ['config-auditoria'] },
+    { key: 'datos', title: 'Datos del negocio', detail: 'Registros, clientes y sincronización', icon: 'inventory', group: 'Información y datos', admin: true, cards: ['config-datos'] },
+    { key: 'exportar', title: 'Exportar datos', detail: 'Descargar contactos y pedidos', icon: 'doc', group: 'Información y datos', admin: true, cards: ['config-exportar'] },
+  ];
+  let settingsPage = '';
+  let permissionBusy = '';
+  let permissionFeedback = '';
+  const SETTINGS_PERMISSIONS = [
+    { key: 'notifications', title: 'Notificaciones', detail: 'Entérate de mensajes, pedidos y entregas.', icon: 'bell' },
+    { key: 'geolocation', title: 'Ubicación', detail: 'Comparte tu recorrido durante las entregas.', icon: 'pin' },
+    { key: 'microphone', title: 'Micrófono', detail: 'Graba notas de voz y realiza llamadas.', icon: 'mic' },
+    { key: 'camera', title: 'Cámara', detail: 'Toma fotos para compartir en tus conversaciones.', icon: 'camera' },
+  ];
+
+  function settingsRoute() {
+    const match = location.hash.match(/^#config(?:\/([a-z-]+))?$/);
+    return match ? match[1] || '' : '';
+  }
+
+  function openSettingsPage(key = '', { focus = true } = {}) {
+    const page = SETTINGS_PAGES.find((entry) => entry.key === key && (!entry.admin || isAdmin()));
+    settingsPage = page?.key || '';
+    const hash = settingsPage ? `#config/${settingsPage}` : '#config';
+    if (location.hash !== hash) history.pushState({ settingsPage }, '', hash);
+    if (state.tab !== 'ajustes') setTab('ajustes');
+    renderAjustes();
+    renderTemaPicker();
+    renderMobileHeader();
+    if (settingsPage === 'permisos') refreshDevicePermissions().catch(() => {});
+    if (settingsPage === 'deepseek') window.dispatchEvent(new Event('fulltech:deepseek-settings'));
+    window.scrollTo({ top: 0 });
+    if (focus) {
+      if (settingsPage) {
+        const title = window.matchMedia('(max-width: 700px)').matches ? $('#mobile-header .settings-mobile-title') : $('#settings-title');
+        title?.focus({ preventScroll: true });
+      }
+      else $('#settings-menu a')?.focus({ preventScroll: true });
+    }
+  }
+
+  function renderSettingsNavigation() {
+    const selected = SETTINGS_PAGES.find((page) => page.key === settingsPage && (!page.admin || isAdmin()));
+    settingsPage = selected?.key || '';
+    $('#settings-home').hidden = Boolean(selected);
+    $('#settings-title').textContent = selected?.title || 'Configuración';
+    $('#settings-eyebrow').textContent = selected ? 'CONFIGURACIÓN' : 'TU ESPACIO';
+    const back = $('#view-ajustes [data-settings-back]');
+    back.hidden = !selected;
+    back.innerHTML = ICONS.back;
+    document.body.dataset.settingsPage = settingsPage || 'inicio';
+    for (const id of new Set(SETTINGS_PAGES.flatMap(page => page.cards))) {
+      const node = $(`#${id}`);
+      if (node) node.hidden = !selected?.cards.includes(id);
+    }
+    window.dispatchEvent(new Event('fulltech:sharing-page'));
+    $('#logout').hidden = Boolean(selected);
+    $('#build-info').hidden = Boolean(selected);
+    const user = state.auth?.user || {};
+    const name = user.display_name || user.username || 'Mi perfil';
+    $('#settings-name').textContent = name;
+    $('#settings-avatar').textContent = name === 'Mi perfil' ? 'P' : name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+    const pages = SETTINGS_PAGES.filter((page) => !page.parent && (!page.admin || isAdmin()));
+    $('#settings-menu').innerHTML = [...new Set(pages.map((page) => page.group))].map((group) => `
+      <section class="settings-group" aria-label="${escapeHtml(group)}">
+        <h3>${escapeHtml(group)}</h3>
+        <ul>${pages.filter((page) => page.group === group).map((page) => `
+          <li><a class="settings-row" href="#config/${page.key}" data-settings-open="${page.key}">
+            <span class="settings-row__icon" aria-hidden="true">${ICONS[page.icon] || ICONS.gear}</span>
+            <span class="settings-row__copy"><strong>${escapeHtml(page.title)}</strong><small>${escapeHtml(page.detail)}</small></span>
+            <span class="settings-chevron" aria-hidden="true">›</span>
+          </a></li>`).join('')}</ul>
+      </section>`).join('');
+    renderSettingsPermissions();
+  }
+
+  function renderSettingsPermissions() {
+    const target = $('#settings-permission-list');
+    if (!target) return;
+    const labels = { granted: 'Permitido', denied: 'Bloqueado', prompt: 'Sin activar', unknown: 'Sin comprobar', unsupported: 'No disponible' };
+    target.innerHTML = SETTINGS_PERMISSIONS.map((entry) => {
+      const status = state.devicePermissions?.[entry.key] || 'unknown';
+      const allowed = status === 'granted';
+      const unavailable = status === 'unsupported';
+      const busy = permissionBusy === entry.key;
+      return `<article class="settings-permission" data-settings-permission="${entry.key}">
+        <span class="settings-row__icon" aria-hidden="true">${ICONS[entry.icon] || ICONS.gear}</span>
+        <div class="settings-row__copy"><strong>${entry.title}</strong><small>${entry.detail}</small>
+          <span class="settings-permission__state" data-status="${status}">${allowed ? '✓ ' : ''}${labels[status] || labels.unknown}</span>
+        </div>
+        <button class="settings-permission__button" type="button" data-settings-permission-enable="${entry.key}" ${allowed || unavailable || permissionBusy ? 'disabled' : ''}>${busy ? 'Comprobando…' : allowed ? 'Activo' : unavailable ? 'No disponible' : status === 'denied' ? 'Revisar' : 'Activar'}</button>
+      </article>`;
+    }).join('');
+    $('#settings-permission-feedback').textContent = permissionFeedback;
+  }
+
+  async function enableSettingsPermission(key) {
+    if (permissionBusy || !SETTINGS_PERMISSIONS.some((entry) => entry.key === key)) return;
+    if (state.devicePermissions?.[key] === 'granted') return;
+    permissionBusy = key;
+    permissionFeedback = '';
+    renderSettingsPermissions();
+    try {
+      if (state.devicePermissions?.[key] === 'denied') {
+        permissionFeedback = `Permite ${SETTINGS_PERMISSIONS.find((entry) => entry.key === key).title.toLowerCase()} en los ajustes de este sitio o de FullTECH, SRL en tu teléfono. Después vuelve aquí y pulsa Comprobar permisos.`;
+      } else if (key === 'notifications') {
+        // Se invoca directamente desde el clic para conservar el gesto que exige iOS.
+        const enabled = await enableCrmPush();
+        permissionFeedback = enabled ? 'Notificaciones activadas en este dispositivo.' : state.pushResult?.local || 'No se pudo activar este permiso.';
+      } else if (key === 'geolocation') {
+        const enabled = await requestDeviceLocationPermission();
+        permissionFeedback = enabled ? 'Ubicación permitida. Solo se comparte cuando inicias una entrega.' : 'Revisa el permiso de ubicación en los ajustes del teléfono.';
+      } else {
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(key === 'microphone' ? { audio: true } : { video: true });
+          recordarPermiso(key, { estado: 'granted', pedido: new Date().toISOString() });
+          permissionFeedback = `${key === 'camera' ? 'Cámara permitida' : 'Micrófono permitido'}. Ya está listo para cuando lo necesites.`;
+        } finally { stream?.getTracks().forEach((track) => track.stop()); }
+      }
+    } catch (error) {
+      permissionFeedback = ['NotAllowedError', 'SecurityError'].includes(error.name)
+        ? 'El teléfono no permitió el acceso. Puedes activarlo en los ajustes de este sitio o de FullTECH, SRL.'
+        : error.name === 'NotFoundError' ? 'No se encontró este dispositivo. Comprueba que está conectado.'
+        : 'No se pudo acceder al dispositivo. Comprueba que no lo esté usando otra aplicación.';
+    } finally {
+      permissionBusy = '';
+      await refreshDevicePermissions();
+      renderSettingsPermissions();
+    }
+  }
+
   function renderAjustes() {
     const stats = state.stats ?? {};
     const outbox = readOutbox().length;
     const wa = state.whatsapp ?? {};
     const admin = isAdmin();
-    const adminOnlyCards = [
-      'config-impresora',
-      'config-seguimiento',
-      'config-metricas',
-      'config-auditoria',
-      'config-media',
-      'media-review-card',
-      'config-datos',
-      'config-whatsapp',
-      'config-wa-templates',
-      'config-exportar',
-    ];
-    adminOnlyCards.forEach((id) => {
-      const node = $(`#${id}`);
-      if (node) node.hidden = !admin;
-    });
-    $$('.config-menu a').forEach((link) => {
-      const target = String(link.getAttribute('href') ?? '').replace('#', '');
-      link.hidden = !admin && target !== 'config-notificaciones';
-    });
+    renderSettingsNavigation();
     const pushConfig = $('#push-config');
     if (pushConfig) pushConfig.innerHTML = pushConfigHtml();
     if (!admin) {
@@ -5346,7 +7209,7 @@
 
     // Recuperación de envíos ambiguos: SOLO administración, nunca en el chat.
     const review = media.review ?? [];
-    $('#media-review-card').hidden = review.length === 0;
+    $('#media-review-card').hidden = review.length === 0 || settingsPage !== 'multimedia';
     $('#media-review').innerHTML = review
       .map(
         (row) => `<div class="review-item">
@@ -5916,7 +7779,8 @@
       /* sin auditoría el panel sigue funcionando */
     } finally {
       state.auditLoading = false;
-      renderAjustes();
+      // Igual que las métricas: se pinta por el camino que aísla un fallo suelto.
+      pintarSeccion('ajustes', renderAjustes);
     }
   }
 
@@ -6091,9 +7955,40 @@
    * menú no sube desde abajo en una pantalla grande); en el móvil es la misma
    * hoja de siempre.
    */
+  function organizeActionMenus(container) {
+    container.querySelectorAll('.menu-list').forEach((list) => {
+      const entries = [...list.children];
+      if (!entries.length || !entries.every((entry) => entry.matches('.menu-item,.menu-list__label'))) return;
+      let group;
+      let rows;
+      const beginGroup = (label = '') => {
+        group = document.createElement('section');
+        group.className = 'menu-group';
+        group.setAttribute('aria-label', label || 'Acciones');
+        if (label) {
+          const heading = document.createElement('h3');
+          heading.className = 'menu-list__label';
+          heading.textContent = label;
+          group.append(heading);
+        }
+        rows = document.createElement('div');
+        rows.className = 'menu-group__items';
+        group.append(rows);
+        list.append(group);
+      };
+      list.replaceChildren();
+      entries.forEach((entry) => {
+        if (entry.matches('.menu-list__label')) { beginGroup(entry.textContent.trim()); return; }
+        if (!group || (entry.matches('.menu-item--danger') && rows.children.length)) beginGroup(entry.matches('.menu-item--danger') ? 'Acciones delicadas' : '');
+        rows.append(entry);
+      });
+    });
+  }
+
   function openSheet(title, html, { variant = '' } = {}) {
     $('#sheet-title').textContent = title;
     $('#sheet-body').innerHTML = html;
+    organizeActionMenus($('#sheet-body'));
     const sheet = $('#sheet');
     if (variant) sheet.dataset.variant = variant;
     else delete sheet.dataset.variant;
@@ -6238,6 +8133,18 @@
     const inbound = message.direction === 'inbound';
     const auto = !inbound && message.actor_type === 'SYSTEM';
     /*
+     * QUITADO DEL CRM (y EN EL AIRE, con su «Deshacer»).
+     *
+     * `quitado`: alguien apartó este mensaje de la vista del CRM. Se dice tal cual
+     * y NO se pinta el cuerpo (para eso se quitó), pero el hueco se queda para que
+     * el hilo se entienda y se sepa quién lo hizo: nada de borrados invisibles.
+     *
+     * `enVuelo`: es el que se acaba de escribir y todavía se puede deshacer. Lleva
+     * el botón que BORRA DE VERDAD (no llega a salir de aquí).
+     */
+    const quitado = Boolean(message.deleted_at);
+    const enVuelo = message.local === true && message.status === 'sending' && !quitado;
+    /*
      * El cliente ve “Enviando / Enviado / Entregado / Leído / Fallido”, como en
      * WhatsApp. OJO: `sent` solo significa que WhatsApp ACEPTÓ el mensaje, no que
      * le haya llegado al cliente; en una plantilla (el primer contacto) se dice
@@ -6268,7 +8175,17 @@
      */
     let soloArchivo = false;
     const templateName = message.template_name ? waTemplateLabel((state.templates ?? []).find((template) => template.name === message.template_name) ?? { name: message.template_name }) : null;
-    if (isTemplateMessage(message) && message.status === 'failed') {
+    if (quitado) {
+      /*
+       * Ni texto ni archivo: el mensaje está apartado a propósito (puede llevar un
+       * dato que no debía salir, o una foto). Se dice QUIÉN y CUÁNDO, y que el
+       * cliente lo conserva: eso es lo que hay que saber al leer el hilo.
+       */
+      const autor = String(message.deleted_by_display_name_snapshot ?? '').trim();
+      cuerpo = `<span class="bubble__removed">Mensaje quitado del CRM${
+        autor ? ` por ${escapeHtml(autor)}` : ''
+      } · el cliente lo conserva</span>`;
+    } else if (isTemplateMessage(message) && message.status === 'failed') {
       const friendly = waFriendlyTemplateError(message);
       cuerpo = `<span class="template-fail">
         <strong>Plantilla no enviada</strong>
@@ -6380,10 +8297,19 @@
       message.status === 'failed' ? 'bubble--failed' : '',
       grouped ? 'bubble--grouped' : '',
       soloArchivo ? 'bubble--media' : '',
+      quitado ? 'bubble--removed' : '',
     ]
       .filter(Boolean)
       .join(' ');
-    return `<div class="${clases}">${quien}${cuerpo}${hora}</div>`;
+    /*
+     * El botón de deshacer vive DENTRO de la burbuja que está en el aire: es el
+     * único sitio donde se sabe que ese mensaje todavía no ha salido. Su id en el
+     * `data-undo` es el que usa la ventana para encontrarlo.
+     */
+    const deshacer = enVuelo
+      ? `<button class="bubble__undo" data-undo="${escapeHtml(message.id)}" type="button">Deshacer</button>`
+      : '';
+    return `<div class="${clases}" data-message="${escapeHtml(message.id)}">${quien}${cuerpo}${hora}${deshacer}</div>`;
   }
 
   // --------------------------------------------------- bandeja de WhatsApp
@@ -6404,6 +8330,25 @@
     ['seguimiento', 'Seguimiento'],
     ['archivados', 'Archivados'],
   ];
+
+  /** Los filtros de la lista de Clientes, en un solo sitio (chips y título). */
+  const CLIENT_FILTERS = [
+    ['todos', 'Todos'],
+    ['clientes', 'Clientes'],
+    ['interesados', 'Interesados'],
+    ['prospectos', 'Prospectos'],
+    ['seguimiento', 'Seguimiento'],
+  ];
+
+  /**
+   * « · Archivados» cuando hay un filtro puesto, y nada cuando es «todos».
+   * Ahora que el filtro se recuerda entre visitas, el título tiene que decir cuál
+   * está puesto: si no, una lista corta parece una lista perdida.
+   */
+  function filtroPuesto(valor, lista = []) {
+    const etiqueta = lista.find(([value]) => value === valor)?.[1];
+    return etiqueta && valor !== 'todos' ? ` · ${etiqueta}` : '';
+  }
 
   const waFilterCount = (value) => {
     const counts = state.wa.counts ?? {};
@@ -6745,8 +8690,17 @@
     const messages = data?.messages ?? [];
     const last = messages[messages.length - 1];
     const contactState = getConversationContactState(data);
+    /*
+     * LOS MENSAJES QUITADOS TAMBIÉN ENTRAN EN LA FIRMA.
+     *
+     * Mirando solo el ÚLTIMO mensaje, quitar uno del medio no cambiaba nada: la
+     * firma seguía igual, el hilo no se volvía a pintar y su texto seguía a la
+     * vista (que es justo lo que se acaba de pedir que desaparezca). Con el número
+     * de quitados en la firma, quitar y devolver repintan al instante.
+     */
     return [
       messages.length,
+      messages.filter((row) => row.deleted_at).length,
       last?.id ?? '',
       last?.status ?? '',
       last?.delivered_at ?? '',
@@ -6760,16 +8714,27 @@
   function waVisibleConversations() {
     const { filter, q } = state.wa;
     let rows = state.conversations.slice();
-    if (filter === 'mios') rows = rows.filter((row) => row.assigned_user_id === currentUser()?.id);
-    if (filter === 'sin-asignar') rows = rows.filter((row) => !row.assigned_user_id);
-    if (filter === 'pendientes') rows = rows.filter(waAwaiting);
-    if (filter === 'no-leidos') rows = rows.filter((row) => Number(row.unread_count) > 0);
-    if (filter === 'clientes') rows = rows.filter((row) => row.has_purchase === true);
-    if (filter === 'seguimiento') rows = rows.filter((row) => row.next_followup);
-    if (filter === 'archivados') rows = rows.filter((row) => row.archived_at);
-    if (filter !== 'archivados') rows = rows.filter((row) => !row.archived_at);
-    const dateRange = waDateRange();
-    rows = rows.filter((row) => rowInWaDateRange(row, dateRange));
+    /*
+     * BUSCAR ES BUSCAR EN TODAS.
+     *
+     * Con texto en el buscador no se mira el filtro ni la fecha: se busca en TODAS
+     * las conversaciones, incluidas las archivadas. Si Yahaira está archivada y se
+     * escribe «yahaira», tiene que salir. Los filtros siguen puestos (y vuelven a
+     * mandar en cuanto se borra el texto), pero mientras se busca no recortan.
+     */
+    const buscando = Boolean(q);
+    if (!buscando) {
+      if (filter === 'mios') rows = rows.filter((row) => row.assigned_user_id === currentUser()?.id);
+      if (filter === 'sin-asignar') rows = rows.filter((row) => !row.assigned_user_id);
+      if (filter === 'pendientes') rows = rows.filter(waAwaiting);
+      if (filter === 'no-leidos') rows = rows.filter((row) => Number(row.unread_count) > 0);
+      if (filter === 'clientes') rows = rows.filter((row) => row.has_purchase === true);
+      if (filter === 'seguimiento') rows = rows.filter((row) => row.next_followup);
+      if (filter === 'archivados') rows = rows.filter((row) => row.archived_at);
+      if (filter !== 'archivados') rows = rows.filter((row) => !row.archived_at);
+      const dateRange = waDateRange();
+      rows = rows.filter((row) => rowInWaDateRange(row, dateRange));
+    }
     if (q) {
       const needle = q.toLowerCase();
       rows = rows.filter((row) => {
@@ -6953,7 +8918,8 @@
     };
     openSheet(
       'Asignar conversación',
-      `<div class="menu-list">
+      `<p class="menu-context">${escapeHtml(conversationAssignmentLabel(conversation))}</p>
+      <div class="menu-list">
         ${
           canTake
             ? `<button class="menu-item" data-conv-assign-me="${escapeHtml(id)}" type="button">
@@ -7016,6 +8982,12 @@
     const assignment = conversationAssignmentLabel(row);
     const compactFlags = [customerStageLabel(stage), activeOrder, followupText].filter(Boolean).slice(0, 3);
     const stateFlags = [
+      /*
+       * «Archivado» se dice cuando la fila aparece FUERA de la lista de archivados
+       * (por ejemplo, porque la trajo una búsqueda general): así­ se entiende por
+       * qué está ahí­. Dentro de esa lista sobra.
+       */
+      row.archived_at && state.wa.filter !== 'archivados' ? 'Archivado' : null,
       awaiting ? 'Pendiente' : null,
       row.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
       ...compactFlags,
@@ -7162,88 +9134,75 @@
     if (!row) return;
     const customerId = row.customer_id ?? '';
     const customer = customerId ? customerById(customerId) : null;
-    const unread = Number(row.unread_count) || 0;
+    const id = escapeHtml(conversationId);
+    const customerKey = escapeHtml(customerId);
     const archived = Boolean(row.archived_at);
-    const stages = state.customerStages.length
-      ? state.customerStages
-      : [
-          { value: 'PROSPECT', label: 'Prospecto' },
-          { value: 'INTERESTED', label: 'Interesado' },
-          { value: 'CUSTOMER', label: 'Cliente' },
-          { value: 'INACTIVE', label: 'Inactivo' },
-        ];
-    openSheet(
-      customer ? customerName(customer) : waDisplayName(row),
-      `<div class="menu-list">
-        <button class="menu-item" data-conv-act="open" data-conv-id="${escapeHtml(conversationId)}" type="button">
+    openSheet(customer ? customerName(customer) : waDisplayName(row), `
+      <div class="menu-list">
+        <p class="menu-list__label">Acciones principales</p>
+        <button class="menu-item menu-item--primary" data-conv-act="open" data-conv-id="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.chat}</span>
           <span><strong>Abrir conversación</strong></span>
         </button>
-        ${assignmentMenuHtml(row, { conversationId })}
-        ${
-          customerId
-            ? `<div class="menu-item menu-item--static">
-                <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-                <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(row)))}</small></span>
-              </div>
-              ${stages
-                .map(
-                  (entry) => `<button class="menu-item" data-customer-stage="${escapeHtml(customerId)}" data-stage="${escapeHtml(
-                    entry.value,
-                  )}" type="button"><span></span><span>${escapeHtml(entry.label)}</span></button>`,
-                )
-                .join('')}
-              <button class="menu-item" data-customer-tags="${escapeHtml(customerId)}" type="button">
-                <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
-                <span><strong>Etiquetas</strong><small>Administrar etiquetas</small></span>
-              </button>
-              <button class="menu-item" data-followup-new="${escapeHtml(customerId)}" data-conversation="${escapeHtml(
-                conversationId,
-              )}" type="button">
-                <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
-                <span><strong>Seguimiento</strong><small>Crear/ver seguimiento</small></span>
-              </button>`
-            : ''
-        }
-        ${
-          unread
-            ? `<button class="menu-item" data-conv-act="mark_read" data-conv-id="${escapeHtml(conversationId)}" type="button">
-                <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
-                <span><strong>Marcar como leída</strong></span>
-              </button>`
-            : ''
-        }
-        <button class="menu-item" data-conv-act="${archived ? 'unarchive' : 'archive'}" data-conv-id="${escapeHtml(
-          conversationId,
-        )}" type="button">
+        ${customerId ? `<button class="menu-item" data-order-new="${customerKey}" data-conversation="${id}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+          <span><strong>Crear pedido</strong></span></button>` : ''}
+        <p class="menu-list__label">Gestión</p>
+        ${customerId ? `<button class="menu-item menu-item--submenu" data-conv-client-menu="${id}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+          <span><strong>Cliente</strong><small>Ficha, etapa y etiquetas</small></span></button>
+        <button class="menu-item menu-item--submenu" data-conv-followup-menu="${id}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
+          <span><strong>Seguimiento</strong><small>Tareas y mensajes programados</small></span></button>` : ''}
+        <button class="menu-item menu-item--submenu" data-conv-assign="${id}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+          <span><strong>Asignación</strong><small>${escapeHtml(conversationAssignmentLabel(row))}</small></span>
+        </button>
+        <p class="menu-list__label">Organizar conversación</p>
+        ${Number(row.unread_count) > 0 ? `<button class="menu-item" data-conv-act="mark_read" data-conv-id="${id}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.checkCircle}</span>
+          <span><strong>Marcar como leída</strong></span></button>` : ''}
+        <button class="menu-item" data-conv-act="${archived ? 'unarchive' : 'archive'}" data-conv-id="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span>
           <span><strong>${archived ? 'Desarchivar' : 'Archivar'}</strong></span>
         </button>
-        <button class="menu-item menu-item--danger" data-conv-act="delete" data-conv-id="${escapeHtml(conversationId)}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.trash}</span>
-          <span><strong>Eliminar chat</strong><small>Borra la conversación y sus mensajes del CRM</small></span>
-        </button>
-        ${
-          customerId
-            ? `<button class="menu-item" data-scheduled-new="${escapeHtml(customerId)}" data-conversation="${escapeHtml(
-                conversationId,
-              )}" type="button">
-                <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
-                <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span>
-              </button>
-              <button class="menu-item" data-customer="${escapeHtml(customerId)}" type="button">
-                <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-                <span><strong>Abrir ficha</strong></span>
-              </button>`
-            : ''
-        }
-        <button class="menu-item" data-conv-act="select" data-conv-id="${escapeHtml(conversationId)}" type="button">
+        <button class="menu-item" data-conv-act="select" data-conv-id="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
           <span><strong>Seleccionar varias</strong></span>
         </button>
-      </div>`,
-      { variant: 'menu' },
-    );
+        <p class="menu-list__label">Eliminar</p>
+        <button class="menu-item menu-item--danger" data-conv-act="delete" data-conv-id="${id}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.trash}</span>
+          <span><strong>Eliminar chat</strong><small>Requiere confirmación</small></span>
+        </button>
+      </div>`, { variant: 'menu' });
+  }
+
+  function openConversationDetailsMenu(conversationId, followup = false) {
+    const row = state.conversations.find((candidate) => candidate.id === conversationId);
+    if (!row?.customer_id) return;
+    const customerId = escapeHtml(row.customer_id);
+    const id = escapeHtml(conversationId);
+    const back = `<button class="menu-back" data-conv-menu-back="${id}" type="button">${ICONS.back}<span>Volver a las acciones</span></button>`;
+    const actions = followup ? `
+      <p class="menu-list__label">Seguimiento</p>
+      <button class="menu-item" data-followup-new="${customerId}" data-conversation="${id}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
+        <span><strong>Programar seguimiento</strong><small>Tarea para el equipo</small></span></button>
+      <button class="menu-item" data-scheduled-new="${customerId}" data-conversation="${id}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
+        <span><strong>Programar mensaje</strong><small>Lo envía el sistema</small></span></button>` : `
+      <p class="menu-list__label">Cliente</p>
+      <button class="menu-item" data-customer="${customerId}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+        <span><strong>Ver cliente</strong><small>Ficha, compras y actividad</small></span></button>
+      <button class="menu-item menu-item--submenu" data-customer-stage-menu="${customerId}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
+        <span><strong>Etapa del cliente</strong><small>${escapeHtml(customerStageLabel(customerStageOf(row)))}</small></span></button>
+      <button class="menu-item" data-customer-tags="${customerId}" type="button">
+        <span class="menu-item__icon" aria-hidden="true">${ICONS.tagIcon}</span>
+        <span><strong>Etiquetas</strong></span></button>`;
+    openSheet(waDisplayName(row), `${back}<div class="menu-list">${actions}</div>`, { variant: 'menu' });
   }
 
   /** Ejecuta una acción del menú «⋯» de una fila (nunca manda nada sola). */
@@ -7259,17 +9218,33 @@
       return;
     }
     if (action === 'archive' || action === 'unarchive') {
-      try {
-        await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/${action}`, { method: 'POST' });
-        toast(action === 'archive' ? 'Chat archivado' : 'Chat desarchivado');
-        if (conversationId === state.wa.selectedId && action === 'archive') {
-          state.wa.selectedId = null;
-          state.wa.chat = null;
-        }
-        await refreshWhatsapp();
-      } catch (error) {
-        if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo archivar el chat');
+      const resultado = await guardar({
+        path: `/api/admin/conversations/${encodeURIComponent(conversationId)}/${action}`,
+        method: 'POST',
+        kind: 'conv-archive',
+        key: `conv-archive:${conversationId}`,
+        id: conversationId,
+        label: action === 'archive' ? 'Archivar un chat' : 'Desarchivar un chat',
+        aplicar: () => aplicarArchivoLocal(conversationId, action === 'archive'),
+      });
+      if (!resultado.ok) {
+        if (resultado.message) toast(resultado.message);
+        return;
       }
+      toast(
+        resultado.offline
+          ? 'Sin conexión: el chat quedó archivado aquí y se enviará solo'
+          : action === 'archive'
+            ? 'Chat archivado'
+            : 'Chat desarchivado',
+      );
+      if (conversationId === state.wa.selectedId && action === 'archive') {
+        state.wa.selectedId = null;
+        state.wa.chat = null;
+      }
+      renderOutboxBanner();
+      if (resultado.offline) renderWaList();
+      else await refreshWhatsapp();
       return;
     }
     if (action === 'delete') {
@@ -7399,19 +9374,56 @@
     }
     error.hidden = true;
 
-    if (!state.conversations.length) {
+    /*
+     * EL VACÍO SE EXPLICA POR LO QUE EL USUARIO ESTÁ HACIENDO, en este orden:
+     *   1. si estaba BUSCANDO y no hay coincidencias, se habla de la búsqueda;
+     *   2. si la bandeja no tiene ninguna conversación, se dice que no hay nada;
+     *   3. si la lista sale vacía por un FILTRO puesto, se dice cuál y se ofrece
+     *      quitarlo (el filtro ahora se recuerda entre visitas y una lista vacía
+     *      puede ser una lista filtrada).
+     * Antes de esto, buscar algo que no existe decía «no hay conversaciones con
+     * este filtro», que despista: parece que el chat no existe.
+     */
+    const rows = waVisibleConversations();
+    const buscando = Boolean(state.wa.q);
+    const vacioPorBusqueda = buscando && !rows.length;
+    /*
+     * ¿HAY ALGO EN LA BANDEJA? Se pregunta a los contadores del CRM (que cuentan
+     * TODAS, archivadas incluidas), no a la lista que se acaba de recibir: cuando
+     * el filtro lo aplica el servidor, la lista llega ya recortada y confundiría
+     * «no hay nada» con «el filtro no deja ver nada».
+     *
+     * Sin conexión no hay contadores (la copia guardada no los trae), así que
+     * manda la lista que se está viendo: si tiene conversaciones, hay algo.
+     */
+    const cuentaTotal = Number(state.wa.counts?.todos ?? 0) + Number(state.wa.counts?.archivados ?? 0);
+    const hayEnLaBandeja = cuentaTotal > 0 || state.conversations.length > 0;
+    if (vacioPorBusqueda) {
+      box.innerHTML = `${emptyState(`Nadie coincide con «${state.wa.q}».`)}<div class="empty__actions"><button class="btn btn--ghost btn--sm" data-wa-search-clear type="button">Quitar la búsqueda</button></div>`;
+      return;
+    }
+    if (!hayEnLaBandeja) {
       box.innerHTML = emptyState('Aún no hay conversaciones. Cuando un cliente escriba por WhatsApp, aparecerá aquí.');
       return;
     }
-    const rows = waVisibleConversations();
     const empty = {
       'no-leidos': 'No tienes mensajes nuevos.',
       pendientes: 'No tienes mensajes pendientes.',
       clientes: 'Todavía no hay clientes con compra entregada en esta vista.',
       seguimiento: 'No hay seguimientos pendientes.',
       archivados: 'No hay conversaciones archivadas.',
-    }[state.wa.filter] ?? 'No hay conversaciones con este filtro.';
-    box.innerHTML = rows.length ? rows.map(waRow).join('') : emptyState(empty);
+    }[state.wa.filter] ??
+      (Number(state.wa.counts?.archivados ?? 0) > 0
+        ? 'No hay conversaciones activas: lo que hay está en «Archivados».'
+        : 'No hay conversaciones con este filtro.');
+    if (rows.length) {
+      box.innerHTML = rows.map(waRow).join('');
+      return;
+    }
+    const filtroPuesto = state.wa.filter !== 'todos';
+    box.innerHTML = filtroPuesto
+      ? `${emptyState(empty)}<div class="empty__actions"><button class="btn btn--ghost btn--sm" data-wa-filter-clear type="button">Ver todas</button></div>`
+      : emptyState(empty);
   }
 
   function openNewConversationSheet() {
@@ -7443,23 +9455,43 @@
         return;
       }
       await working(event.currentTarget, 'Abriendo...', async () => {
-        try {
-          const result = await api('/api/admin/conversations/start', {
-            method: 'POST',
-            body: JSON.stringify({ phone, name, body }),
-          });
-          closeSheet();
-          await refreshWhatsapp();
-          const conversationId = result.conversation?.id;
-          if (!conversationId) {
-            toast('No se pudo abrir la conversación');
-            return;
-          }
-          await selectConversation(conversationId, { draft: body });
-          toast(result.created ? 'Cliente creado' : 'Conversación abierta');
-        } catch (error) {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo abrir');
+        /*
+         * CREAR UN CLIENTE TAMBIÉN SE PUEDE SIN CONEXIÓN: queda guardado con su
+         * teléfono y su nombre (para poder registrarle un pedido en el acto). El
+         * texto de WhatsApp no viaja en esa llamada: se escribe al abrir la
+         * conversación, y eso sí necesita red.
+         */
+        const clienteLocal = idLocal('loc');
+        const resultado = await guardar({
+          path: '/api/admin/conversations/start',
+          method: 'POST',
+          body: { phone, name },
+          kind: 'customer-start',
+          key: `customer:${digits(phone)}`,
+          id: clienteLocal,
+          label: `Cliente nuevo · ${name || phone}`,
+          aplicar: () => aplicarClienteLocal(clienteLocal, phone, name),
+        });
+        if (!resultado.ok) {
+          if (resultado.message) toast(resultado.message);
+          return;
         }
+        if (resultado.offline) {
+          closeSheet();
+          render();
+          renderOutboxBanner();
+          toast('Sin conexión: el cliente quedó guardado en el teléfono');
+          return;
+        }
+        closeSheet();
+        await refreshWhatsapp();
+        const conversationId = resultado.data.conversation?.id;
+        if (!conversationId) {
+          toast('No se pudo abrir la conversación');
+          return;
+        }
+        await selectConversation(conversationId, { draft: body });
+        toast(resultado.data.created ? 'Cliente creado' : 'Conversación abierta');
       });
     });
   }
@@ -7477,6 +9509,7 @@
       }
     }
     state.wa.date = next;
+    guardarFiltrosActuales();
     state.wa.selected.clear();
     state.wa.listSig = null;
     refreshWhatsapp().catch(() => renderWaList());
@@ -7711,12 +9744,12 @@
   /** Plantilla aprobada que admite un mensaje escrito a mano (la de «hello world»). */
   function waPersonalTemplate() {
     return (
-      (state.templates ?? []).filter(waTemplateApproved).find((template) => waTemplateFreeSlot(template) !== null) ?? null
+      (state.templates ?? []).filter(waTemplateApproved).sort((a, b) => Number(b.name === 'fulltech_contacto_personalizado_v2') - Number(a.name === 'fulltech_contacto_personalizado_v2')).find((template) => waTemplateFreeSlot(template) !== null) ?? null
     );
   }
 
   /**
-   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe Fulltech.
+   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe FullTECH, SRL.
    *
    * Mientras Meta no la apruebe, no se ofrece y la campaña usa la genérica de
    * siempre (`waPersonalTemplate`): nunca se finge una aprobación. En cuanto esté
@@ -7732,10 +9765,7 @@
   }
 
   function waTemplateBody(template) {
-    return String(template?.body ?? '').replace(
-      'Cualquier duda, respóndenos por aquí y te ayudamos.',
-      'Respóndenos por aquí, por favor.',
-    );
+    return String(template?.body ?? '');
   }
 
   /** Cómo queda el mensaje con los huecos ya rellenos: lo que se va a enviar. */
@@ -8196,7 +10226,7 @@
         <span class="composer-left">
           <button class="composer-template-btn" id="wa-open-template" type="button">Plantilla</button>
         </span>
-        <textarea id="wa-text" rows="1" placeholder="Escribe lo que quieras decirle…"
+        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocapitalize="sentences" placeholder="Escribe lo que quieras decirle…"
           aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
         <span class="composer-end">
           <button class="composer-btn composer-btn--send" id="wa-send" type="button"
@@ -8216,7 +10246,6 @@
     if (!canSendFreeText) {
       return waClosedComposerHtml();
     }
-    const puedeAdjuntar = state.media?.enabled === true;
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     /*
      * Un solo compositor: adjuntar · campo · (audio | enviar), todo dentro de la
@@ -8228,12 +10257,10 @@
      */
     return `<div class="composer-bar">
         <span class="composer-left">
-          <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar imagen o audio"
-            title="${
-              puedeAdjuntar ? 'Adjuntar imagen o audio' : 'Adjuntar: la multimedia no está activa en el servidor'
-            }">${ICONS.plus}</button>
+          <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
+            title="Adjuntar y compartir: archivos, ubicación, cuentas y catálogos">${ICONS.plus}</button>
         </span>
-        <textarea id="wa-text" rows="1" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
+        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocapitalize="sentences" placeholder="Escribe un mensaje..." aria-label="Mensaje"></textarea>
         <span class="composer-end">
           <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
             title="${
@@ -8846,9 +10873,12 @@
         }
         <button class="menu-item" id="attach-location" type="button">
           <span class="menu-item__icon" aria-hidden="true">📍</span>
-          <span><strong>Ubicación</strong><small>Elegir, previsualizar y confirmar antes de enviar</small></span>
+          <span><strong>Ubicación</strong><small>Ubicaciones del negocio y otras ubicaciones</small></span>
         </button>
+        <button class="menu-item" id="attach-banks" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.doc}</span><span><strong>Cuentas bancarias</strong><small>Copiar una cuenta o preparar los datos para enviar</small></span></button>
+        <button class="menu-item" id="attach-catalogs" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span><span><strong>Catálogo</strong><small>Elegir la página web que quieres compartir</small></span></button>
       </div>
+      ${isAdmin() ? '<button class="btn btn--ghost btn--block" id="attach-configure" type="button">Configurar opciones para compartir</button>' : ''}
       <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
       <input id="attach-audio-input" type="file" accept="${AUDIO_ACCEPT}" hidden />
       `,
@@ -8856,10 +10886,13 @@
     );
 
     $('#attach-location').addEventListener('click', () => {
-      const customer = waCustomer(state.conversations.find((row) => row.id === conversationId) ?? {});
       closeSheet();
-      openSendLocation({ conversationId, customerId: customer?.id ?? null });
+      openBusinessSharing(conversationId, 'locations');
     });
+
+    $('#attach-banks').addEventListener('click', () => openBusinessSharing(conversationId, 'banks'));
+    $('#attach-catalogs').addEventListener('click', () => openBusinessSharing(conversationId, 'catalogs'));
+    $('#attach-configure')?.addEventListener('click', () => { closeSheet(); openSettingsPage('compartir'); });
 
     if (soloUbicacion) return;
 
@@ -8874,6 +10907,79 @@
     };
     $('#attach-image').addEventListener('click', () => pick('#attach-image-input', 'image'));
     $('#attach-audio').addEventListener('click', () => pick('#attach-audio-input', 'audio'));
+  }
+
+  function sharingDraft(conversationId, text) {
+    if (state.wa.selectedId !== conversationId || !$('#wa-text')) { closeSheet(); toast('Vuelve a abrir la conversación para preparar el mensaje.'); return; }
+    const input = $('#wa-text');
+    const combined = input.value.trim() ? `${input.value}\n\n${text}` : text;
+    if (combined.length > 4000) { toast('El mensaje es demasiado largo. Envía las cuentas por separado.'); return; }
+    input.value = combined;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    closeSheet(); input.focus({ preventScroll: true });
+    toast('Mensaje preparado. Revísalo y pulsa Enviar.');
+  }
+
+  async function copySharingText(text, button) {
+    try { await navigator.clipboard.writeText(text); const original=button.textContent;button.textContent='Copiado';setTimeout(()=>{if(button.isConnected)button.textContent=original;},1600); }
+    catch {
+      // Fallback visible y seleccionable cuando el navegador no da portapapeles.
+      openSheet('Copiar datos', `<p class="view__hint">Mantén pulsado el texto o selecciónalo para copiarlo.</p><textarea class="field__input" id="sharing-copy-text" readonly rows="4">${escapeHtml(text)}</textarea>`);
+      $('#sharing-copy-text').focus(); $('#sharing-copy-text').select();
+    }
+  }
+
+  async function openBusinessSharing(conversationId, kind) {
+    const title = { locations:'Ubicación', banks:'Cuentas bancarias', catalogs:'Catálogo' }[kind];
+    openSheet(title, '<p class="view__hint" role="status">Cargando opciones…</p>');
+    const panel = $('#sheet-body');
+    const token = uploadKey('sharing'); panel.dataset.sharingRequest=token;
+    try {
+      const result = await api('/api/admin/chat-sharing');
+      if ($('#sheet').hidden || panel.dataset.sharingRequest!==token || $('#sheet-title').textContent!==title || state.wa.selectedId!==conversationId) return;
+      const rows = result.sharing?.[kind] || [];
+      const configure = isAdmin() ? '<button class="btn btn--ghost btn--block" data-sharing-configure type="button">Configurar estas opciones</button>' : '';
+      let html = '<p class="view__hint">Elige qué compartir. El mensaje se prepara para que lo revises antes de enviarlo.</p>';
+      if (!rows.length) html += '<p class="sharing-empty">Todavía no hay opciones guardadas. Administración puede agregarlas en Configuración → Opciones para compartir.</p>';
+      if (kind === 'banks') {
+        html += rows.map((row,i)=>`<article class="sharing-option"><h3>${escapeHtml(row.bank)}</h3><p>${escapeHtml(row.holder)}${row.type?` · ${escapeHtml(row.type)}`:''}</p><p class="sharing-account">${escapeHtml(row.number)} <small>${escapeHtml(row.currency)}</small></p>${row.note?`<p>${escapeHtml(row.note)}</p>`:''}<div class="sharing-actions"><button class="btn btn--ghost" data-sharing-copy="${i}" type="button">Copiar número</button><button class="btn btn--primary" data-sharing-use="${i}" type="button">Usar esta cuenta</button></div></article>`).join('');
+        if (rows.length>1) html += '<button class="btn btn--primary btn--block" data-sharing-all type="button">Usar todas las cuentas</button>';
+      } else {
+        html += `<div class="menu-list">${rows.map((row,i)=>`<button class="menu-item" data-sharing-use="${i}" type="button"><span class="menu-item__icon" aria-hidden="true">${kind==='locations'?'📍':ICONS.box}</span><span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(kind==='locations'?row.address||'Ver ubicación y confirmar':row.url)}</small></span></button>`).join('')}</div>`;
+      }
+      if (kind==='locations') html += '<button class="btn btn--ghost btn--block" data-sharing-other-location type="button">Elegir otra ubicación</button>';
+      panel.innerHTML=html+configure;
+      panel.querySelector('[data-sharing-configure]')?.addEventListener('click',()=>{closeSheet();openSettingsPage('compartir');});
+      panel.querySelector('[data-sharing-other-location]')?.addEventListener('click',()=>{
+        const customer=waCustomer(state.conversations.find(row=>row.id===conversationId)||{});
+        closeSheet();openSendLocation({conversationId,customerId:customer?.id||null});
+      });
+      panel.querySelectorAll('[data-sharing-copy]').forEach(button=>button.addEventListener('click',()=>copySharingText(rows[Number(button.dataset.sharingCopy)].number,button)));
+      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>sharingDraft(conversationId,`Cuentas bancarias — FullTECH, SRL\n\n${rows.map(row=>row.message).join('\n\n')}`));
+      panel.querySelectorAll('[data-sharing-use]').forEach(button=>button.addEventListener('click',()=>{
+        const row=rows[Number(button.dataset.sharingUse)];
+        if(kind==='banks') sharingDraft(conversationId,row.message);
+        else if(kind==='catalogs') {
+          openSheet(row.name,`<p class="view__hint">Revisa el catálogo antes de agregarlo al mensaje.</p><div class="wa-preview">${escapeHtml(row.text)}</div><a class="btn btn--ghost btn--block" href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">Abrir página web</a><button class="btn btn--primary btn--block" id="sharing-catalog-use" type="button">Usar este catálogo</button>`);
+          $('#sharing-catalog-use').addEventListener('click',()=>sharingDraft(conversationId,row.text));
+        } else openBusinessLocationPreview(conversationId,row);
+      }));
+    } catch { if(panel.dataset.sharingRequest===token)panel.innerHTML='<p class="rule" role="status">No se pudieron cargar las opciones. Cierra y vuelve a intentarlo.</p>'; }
+  }
+
+  function openBusinessLocationPreview(conversationId,row) {
+    const location={...row,id:row.referenceId};
+    openSheet('Ubicación del negocio',`<p class="view__hint">Se compartirá esta ubicación como mapa de WhatsApp con el cliente de esta conversación.</p>${locationChip(location,{withActions:false})}<a class="btn btn--ghost btn--block" href="${escapeHtml(locationMapUrl(location))}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a><button class="btn btn--primary btn--block" id="sharing-location-send" type="button">Enviar ubicación</button>`);
+    const key=uploadKey('business-location');
+    $('#sharing-location-send').addEventListener('click',async event=>{
+      if(state.wa.selectedId!==conversationId){closeSheet();toast('La conversación cambió. Vuelve a elegir la ubicación.');return;}
+      await working(event.currentTarget,'Enviando…',async()=>{
+        try {
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/location`,{method:'POST',body:JSON.stringify({locationId:row.referenceId,confirmed:true,idempotencyKey:key})});
+          closeSheet();toast('Ubicación enviada');await loadWaThread(conversationId,{force:true});refreshWhatsapp().catch(()=>{});
+        } catch(error){if(error.message!=='unauthorized')toast(error.body?.message||'No se pudo enviar la ubicación.');}
+      });
+    });
   }
 
   /** Previsualización de un archivo elegido, con ENVIAR explícito. */
@@ -9162,6 +11268,7 @@
     /* La hoja de estilos necesita saberlo para el modo "conversación a pantalla
      * completa" (ahí no hay menú flotante: se vuelve con ←). */
     document.body.dataset.waView = view;
+    if (state.tab === 'whatsapp') renderMobileHeader();
   }
 
   /** Abre una conversación: carga el hilo y apaga la insignia de no leído. */
@@ -9250,6 +11357,247 @@
     if (thread) thread.scrollTop = thread.scrollHeight;
   }
 
+  /**
+   * CUÁNTOS SEGUNDOS SE PUEDE DESHACER UN MENSAJE ESCRITO A MANO.
+   *
+   * Ocho segundos: da tiempo a ver el error delante (un nombre mal escrito, el chat
+   * equivocado) sin que enviar se sienta lento. Se puede ajustar sin tocar el código
+   * con `globalThis.__PHYTO_UNDO_MS` —así lo apagan las pruebas— y con 0 el mensaje
+   * sale de inmediato, como antes.
+   */
+  const waUndoMs = () => {
+    const valor = Number(globalThis.__PHYTO_UNDO_MS);
+    return Number.isFinite(valor) && valor >= 0 ? valor : 8000;
+  };
+
+  /**
+   * LA VENTANA DE DESHACER: lo único que BORRA DE VERDAD.
+   *
+   * Devuelve `true` si la persona pulsó «Deshacer». Mientras corre, el mensaje se ve
+   * en el hilo con su botón y el contador (se cambia solo el texto del botón:
+   * repintar el hilo perdería el scroll y el foco del compositor).
+   *
+   * Si se deshace NO se llama a WhatsApp, así que el cliente no lo recibe nunca: es
+   * la única forma de «eliminar un mensaje» que la API oficial permite. Una vez
+   * enviado, ni se borra ni se edita (eso lo dice también el servidor).
+   */
+  function ventanaDeshacer(provisional) {
+    return new Promise((resolve) => {
+      const total = waUndoMs();
+      let restante = Math.ceil(total / 1000);
+      let tic = null;
+      let fin = null;
+      let terminado = false;
+      const pintar = () => {
+        const el = $(`[data-undo="${provisional.id}"]`);
+        if (el) el.textContent = `Deshacer · ${restante}s`;
+      };
+      const terminar = (cancelado) => {
+        if (terminado) return;
+        terminado = true;
+        if (tic) clearInterval(tic);
+        if (fin) clearTimeout(fin);
+        document.removeEventListener('click', alPulsar);
+        resolve(cancelado);
+      };
+      const alPulsar = (event) => {
+        const el = event.target?.closest?.('[data-undo]');
+        if (!el || el.dataset.undo !== provisional.id) return;
+        event.preventDefault();
+        event.stopPropagation();
+        terminar(true);
+      };
+      pintar();
+      tic = setInterval(() => {
+        restante -= 1;
+        if (restante <= 0) terminar(false);
+        else pintar();
+      }, 1000);
+      fin = setTimeout(() => terminar(false), total);
+      document.addEventListener('click', alPulsar);
+    });
+  }
+
+  /**
+   * Al deshacer, el texto vuelve al compositor: no se pierde lo que se escribió.
+   *
+   * Si la persona ya está escribiendo OTRA cosa, no se pisa nada (lo suyo manda) y
+   * se le dice que el mensaje no salió, para que no se quede esperando.
+   */
+  function devolverBorrador(texto, avisar = true) {
+    const area = $('#wa-text');
+    if (!area) return;
+    if (!String(area.value ?? '').trim()) {
+      area.value = String(texto ?? '');
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+      state.wa.draft = area.value;
+      adjustWaComposer();
+      area.focus();
+      return;
+    }
+    if (avisar) toast('No se envió. El texto no se puso en el compositor porque ya estabas escribiendo.');
+  }
+
+  /**
+   * Vacía el compositor SOLO si sigue teniendo el mismo texto. Si la persona ya
+   * escribió otra cosa, se respeta lo suyo: borrar lo que alguien está escribiendo
+   * es de las cosas que más molestan y no se recupera.
+   */
+  function limpiarCompositorSiCoincide(texto) {
+    const area = $('#wa-text');
+    if (!area) return;
+    if (String(area.value ?? '').trim() !== String(texto ?? '').trim()) return;
+    area.value = '';
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+    state.wa.draft = '';
+    adjustWaComposer();
+  }
+
+  /**
+   * LAS ACCIONES DE UN MENSAJE (pulsación larga, o clic derecho en el ordenador).
+   *
+   * AQUÍ ESTÁ LA RESPUESTA HONESTA a «¿puedo borrarlo o editarlo?».
+   *
+   * En WhatsApp, NO: la API oficial no borra ni edita un mensaje que ya salió y el
+   * cliente lo tiene en su teléfono. Por eso el panel no finge un borrado que no
+   * existe. Lo que sí se puede hacer, y se hace desde aquí:
+   *
+   *   · Editar y reenviar: el texto vuelve al compositor para corregirlo y mandarlo
+   *     otra vez. El original se queda como está (su estado no cambia).
+   *   · Quitar del CRM: se aparta de NUESTRA vista —deja de mostrarse en el hilo y
+   *     deja de ser el resumen de la conversación— y queda registrado quién lo hizo
+   *     y cuándo. Sirve para un dato que no debía salir.
+   *   · Devolverlo al hilo: si alguien se equivocó al quitarlo, administración lo
+   *     trae de vuelta. Quitar del CRM nunca destruye nada.
+   */
+  function openMessageActionsMenu(messageId) {
+    const hilo = state.wa.chat?.conversation?.id === state.wa.selectedId ? state.wa.chat?.messages ?? [] : [];
+    const mensaje =
+      hilo.find((row) => row.id === messageId) ?? (state.wa.pending ?? []).find((row) => row.id === messageId) ?? null;
+    if (!mensaje) return;
+    const conversacionId = mensaje.conversation_id ?? state.wa.selectedId ?? '';
+    const propio = mensaje.direction !== 'inbound';
+    const quitado = Boolean(mensaje.deleted_at);
+    const enVuelo = mensaje.local === true;
+    const conArchivo = ['image', 'audio', 'voice', 'video', 'document', 'sticker', 'location'].includes(
+      String(mensaje.type ?? 'text'),
+    );
+    const reescribible = Boolean(String(mensaje.body ?? '').trim()) && !conArchivo;
+    const esAutor = Boolean(mensaje.sent_by_user_id) && mensaje.sent_by_user_id === currentUser()?.id;
+    const enganche = { 'data-conversation': conversacionId };
+    openSheetActionMenu({
+      title: 'Este mensaje',
+      nota: quitado
+        ? 'Quitado del CRM: aquí ya no se lee. El cliente lo conserva en su WhatsApp.'
+        : 'WhatsApp no deja borrar ni cambiar un mensaje ya enviado. Lo que se hace después es corregirlo o apartarlo de este panel.',
+      acciones: [
+        propio && reescribible && !quitado
+          ? {
+              icon: ICONS.edit,
+              label: 'Editar y reenviar',
+              note: 'Trae el texto al compositor para corregirlo',
+              data: { 'data-message-resend': mensaje.id, ...enganche },
+            }
+          : null,
+        !quitado && !enVuelo && (isAdmin() || (propio && esAutor))
+          ? {
+              icon: ICONS.trash,
+              label: 'Quitar del CRM',
+              note: 'Desaparece de este panel (el cliente lo conserva) y queda registrado',
+              data: { 'data-message-remove': mensaje.id, ...enganche },
+              danger: true,
+            }
+          : null,
+        quitado && isAdmin()
+          ? {
+              icon: ICONS.retry,
+              label: 'Devolver al hilo',
+              note: 'Vuelve a verse la conversación de este mensaje',
+              data: { 'data-message-restore': mensaje.id, ...enganche },
+            }
+          : null,
+      ].filter(Boolean),
+    });
+  }
+
+  /**
+   * QUITAR UN MENSAJE DEL CRM. Se confirma y se dice lo que de verdad pasa: esto
+   * solo lo aparta de nuestro panel; en el teléfono del cliente sigue igual.
+   */
+  async function quitarMensajeDelCrm(messageId, conversationId) {
+    const ok = window.confirm(
+      '¿Quitar este mensaje de la conversación del CRM?\n\nSolo desaparece de este panel: el cliente lo sigue teniendo en su WhatsApp. Queda registrado quién lo quitó y administración puede devolverlo.',
+    );
+    if (!ok) return false;
+    try {
+      const resultado = await api(
+        `/api/admin/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+        { method: 'DELETE' },
+      );
+      closeSheet();
+      toast(resultado?.note ?? 'Mensaje quitado del CRM');
+      if (conversationId) await loadWaThread(conversationId, { force: true });
+      refreshWhatsapp().catch(() => {});
+      return true;
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo quitar el mensaje');
+      return false;
+    }
+  }
+
+  /** Devolver al hilo un mensaje quitado (administración). */
+  async function devolverMensajeAlCrm(messageId, conversationId) {
+    try {
+      await api(
+        `/api/admin/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+        { method: 'POST', body: JSON.stringify({ restore: true, conversationId }) },
+      );
+      closeSheet();
+      toast('Mensaje devuelto a la conversación');
+      if (conversationId) await loadWaThread(conversationId, { force: true });
+      refreshWhatsapp().catch(() => {});
+      return true;
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo devolver el mensaje');
+      return false;
+    }
+  }
+
+  /**
+   * EDITAR Y REENVIAR: trae el texto al compositor, con el cursor al final, para
+   * corregirlo y mandarlo. El original NO se marca como cambiado: eso WhatsApp no
+   * lo permite, y decirlo en pantalla sería mentir.
+   */
+  function reescribirMensaje(messageId) {
+    const mensaje =
+      (state.wa.chat?.messages ?? []).find((row) => row.id === messageId) ??
+      (state.wa.pending ?? []).find((row) => row.id === messageId) ??
+      null;
+    const area = $('#wa-text');
+    const texto = String(mensaje?.body ?? '');
+    if (!area || !texto.trim()) {
+      closeSheet();
+      toast('Este mensaje no se puede reescribir aquí: era una plantilla o un archivo');
+      return;
+    }
+    area.value = texto;
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+    state.wa.draft = area.value;
+    adjustWaComposer();
+    area.focus();
+    if (typeof area.setSelectionRange === 'function') area.setSelectionRange(texto.length, texto.length);
+    closeSheet();
+    toast('Corrígelo y envíalo: saldrá como un mensaje nuevo.');
+  }
+
+  /*
+   * Nada se envía solo. Un mensaje sale SOLO si una persona pulsa Enviar: ni un
+   * temporizador, ni un reintento, ni la cola de sin conexión escriben a nadie.
+   * Lo único que hace este archivo por su cuenta es LEER (sondeos de la bandeja,
+   * del reparto y del mapa) y pintar. Y lo que se escribe a mano se puede retirar
+   * durante unos segundos antes de salir, que es la única forma de «borrarlo» que
+   * WhatsApp permite: después de salir, ni borrar ni editar.
+   */
   /** Envío MANUAL: solo se llama desde el botón Enviar. */
   async function sendWaMessage(payload, button) {
     const conversationId = state.wa.selectedId;
@@ -9282,6 +11630,34 @@
       renderWaChat();
       scrollThreadToEnd();
     }
+    /*
+     * El compositor se vacía YA (como en WhatsApp) y lo que había se guarda: si se
+     * deshace o si el envío falla, el texto VUELVE al sitio. Nunca se pierde lo
+     * escrito. Y si mientras tanto la persona ya escribió otra cosa, eso no se
+     * toca: manda lo suyo.
+     */
+    const borrador = String($('#wa-text')?.value ?? payload.body ?? '');
+    limpiarCompositorSiCoincide(payload.body);
+    /*
+     * DESHACER ANTES DE QUE SALGA (solo lo escrito a mano en el compositor).
+     *
+     * La plantilla ya pasa por su vista previa y el aviso de entrega lo manda un
+     * flujo del servidor: ahí el «estoy seguro» ya se pidió (por eso llevan clave).
+     * El mensaje libre, en cambio, se escribe a toda prisa y es el que sale por
+     * error. Durante unos segundos se puede deshacer y BORRA DE VERDAD: no se llama
+     * a WhatsApp, así que el cliente no lo recibe. Después de salir, ni borrar ni
+     * editar: eso es WhatsApp, no el panel.
+     */
+    if (conHilo && !payload.template && !payload.idempotencyKey && waUndoMs() > 0) {
+      const deshecho = await ventanaDeshacer(provisional);
+      if (deshecho) {
+        quitarPendiente(provisional.id);
+        if (conHilo) renderWaChat();
+        devolverBorrador(borrador);
+        toast('Mensaje no enviado: se quedó aquí, el cliente no lo ha visto.');
+        return false;
+      }
+    }
     await working(button, 'Enviando…', async () => {
       try {
         const resultado = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
@@ -9293,16 +11669,7 @@
            */
           body: JSON.stringify({ ...payload, conversationId }),
         });
-        state.wa.draft = '';
-        /*
-         * El campo de texto se vacía A MANO: el compositor ya no se repinta en
-         * cada refresco, así que no basta con borrar el borrador.
-         */
-        const compositor = $('#wa-text');
-        if (compositor) {
-          compositor.value = '';
-          adjustWaComposer();
-        }
+        state.wa.draft = String($('#wa-text')?.value ?? '');
         const followupId = state.wa.followupId;
         state.wa.followupId = null;
         /*
@@ -9331,6 +11698,12 @@
         // El mensaje no salió: la burbuja provisional no puede quedarse.
         quitarPendiente(provisional.id);
         if (conHilo) renderWaChat();
+        /*
+         * Y el texto VUELVE al compositor: si no salió, tiene que poder
+         * reintentarse sin escribirlo otra vez (ni copiarlo de la burbuja que se
+         * acaba de quitar). Sin aviso: el motivo real lo dice el toast de abajo.
+         */
+        devolverBorrador(borrador, false);
         if (error.message !== 'unauthorized') {
           if (error.body?.message_record) {
             await loadWaThread(conversationId, { force: true });
@@ -9358,6 +11731,35 @@
           : `¿Eliminar ${ids.length} chats? Se borrarán las conversaciones y sus mensajes del CRM.`,
       );
       if (!ok) return;
+    }
+    /*
+     * ARCHIVAR NO ES ENVIAR: es una decisión sobre la lista, así que también se
+     * puede tomar sin conexión. Se marca aquí y se manda al CRM al volver.
+     */
+    if (action === 'archive' || action === 'unarchive') {
+      const archivado = action === 'archive';
+      for (const id of ids) {
+        await guardar({
+          path: `/api/admin/conversations/${encodeURIComponent(id)}/${action}`,
+          method: 'POST',
+          kind: 'conv-archive',
+          key: `conv-archive:${id}`,
+          id,
+          label: archivado ? 'Archivar un chat' : 'Desarchivar un chat',
+          aplicar: () => aplicarArchivoLocal(id, archivado),
+        });
+      }
+      if (!explicitIds) state.wa.selected.clear();
+      if (archivado && ids.includes(state.wa.selectedId)) {
+        state.wa.selectedId = null;
+        state.wa.chat = null;
+      }
+      toast(archivado ? 'Chat archivado' : 'Chat desarchivado');
+      renderOutboxBanner();
+      renderWaList();
+      renderWaSelectionUi();
+      if (state.online) await refreshWhatsapp().catch(() => {});
+      return;
     }
     try {
       const result = await api('/api/admin/conversations/bulk', {
@@ -9398,12 +11800,20 @@
    */
   async function refreshWhatsapp() {
     const params = new URLSearchParams();
-    params.set('filter', state.wa.filter);
-    if (state.wa.q) params.set('q', state.wa.q);
-    const dateRange = waDateRange();
-    if (dateRange.mode !== 'all') {
-      if (dateRange.from) params.set('from', dateRange.from);
-      if (dateRange.to) params.set('to', dateRange.to);
+    /*
+     * AL BUSCAR, EL CRM RECIBE SOLO EL TEXTO. Así­ la búsqueda es general de
+     * verdad (también encuentra las archivadas) y queda claro en una sola línea:
+     * se busca en todas, no se cruza con el filtro ni con la fecha.
+     */
+    if (state.wa.q) {
+      params.set('q', state.wa.q);
+    } else {
+      params.set('filter', state.wa.filter);
+      const dateRange = waDateRange();
+      if (dateRange.mode !== 'all') {
+        if (dateRange.from) params.set('from', dateRange.from);
+        if (dateRange.to) params.set('to', dateRange.to);
+      }
     }
     const list = await api(`/api/admin/conversations?${params.toString()}`);
     if (!domAlive()) return; // la pestaña se cerró mientras respondía el CRM
@@ -9538,6 +11948,7 @@
     if (!panel || panel.hidden) return;
     if (state.tab !== 'whatsapp') return; // fuera de la pestaña no se gasta red
     if (document.visibilityState !== 'visible') return; // ni con la app en segundo plano
+    if (!state.online) return; // sin red no hay nada que preguntar (los mensajes salen al volver)
     if (waPolling) return; // ni dos peticiones a la vez
     waPolling = true;
     refreshWhatsapp()
@@ -10383,81 +12794,145 @@
       const motivo = $('#fu-motivo').value;
       const nota = $('#fu-reason').value.trim();
       await working(event.currentTarget, 'Guardando…', async () => {
-        try {
-          await api('/api/admin/followups', {
-            method: 'POST',
-            body: JSON.stringify({
-              customerId: customer.id,
-              conversationId: options.conversationId || undefined,
-              orderId: options.orderId || undefined,
-              scheduledAt: dateInput.value,
-              reason: nota ? `${motivo} · ${nota}` : motivo,
-            }),
-          });
-          toast('Seguimiento creado');
-          await load({ keepTab: true });
-          closeSheet();
-        } catch (error) {
-          if (error.message !== 'unauthorized') toast('No se pudo crear el seguimiento');
+        /*
+         * UN SEGUIMIENTO ES UNA TAREA PARA UNA PERSONA: se puede crear sin
+         * conexión y aparece en su lista al instante (queda como «sin enviar»).
+         */
+        const idLocalSeguimiento = idLocal('fu');
+        const cuerpo = {
+          customerId: customer.id,
+          conversationId: options.conversationId || undefined,
+          orderId: options.orderId || undefined,
+          scheduledAt: dateInput.value,
+          reason: nota ? `${motivo} · ${nota}` : motivo,
+        };
+        const resultado = await guardar({
+          path: '/api/admin/followups',
+          method: 'POST',
+          body: cuerpo,
+          kind: 'followup-create',
+          key: `followup:${customer.id}:${cuerpo.scheduledAt}:${cuerpo.reason}`,
+          id: idLocalSeguimiento,
+          label: `Seguimiento · ${customerName(customer)}`,
+          aplicar: () => aplicarSeguimientoLocal(idLocalSeguimiento, cuerpo),
+        });
+        if (!resultado.ok) {
+          if (resultado.message) toast(resultado.message);
+          return;
         }
+        toast(resultado.offline ? 'Sin conexión: seguimiento creado aquí' : 'Seguimiento creado');
+        closeSheet();
+        renderOutboxBanner();
+        if (resultado.offline) render();
+        else await load({ keepTab: true });
       });
     });
   }
 
   /** Decidir una tarea: hecha, pospuesta o cancelada. */
   async function followupAction(id, action, payload = {}) {
-    try {
-      await api(`/api/admin/followups/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ action, ...payload }),
-      });
-      toast(
-        { complete: 'Seguimiento hecho', postpone: 'Pospuesto 3 días', cancel: 'Seguimiento cancelado' }[action] ??
-          'Seguimiento actualizado',
-      );
-      await load({ keepTab: true });
-      if (state.chat) await openChat(state.chat.id);
-      if (state.customerId) await openCustomer(state.customerId);
-    } catch (error) {
-      if (error.message !== 'unauthorized') toast('No se pudo actualizar el seguimiento');
+    /*
+     * DECIDIR UNA TAREA ES DE LO MÁS URGENTE (se hace con el teléfono en la mano,
+     * en la calle): se puede marcar «hecha» sin conexión y se manda solo después.
+     */
+    const resultado = await guardar({
+      path: `/api/admin/followups/${encodeURIComponent(id)}`,
+      method: 'PATCH',
+      body: { action, ...payload },
+      kind: 'followup-update',
+      key: `followup:${id}`,
+      id,
+      label: 'Cambio en un seguimiento',
+      aplicar: () => {
+        const nuevo = action === 'complete' ? 'completed' : action === 'cancel' ? 'cancelled' : 'pending';
+        const listas = Array.isArray(state.followups) ? state.followups : state.followups?.items ?? [];
+        const fila = listas.find((row) => row.id === id) ?? null;
+        if (fila) {
+          fila.status = nuevo;
+          fila.pending = true;
+        }
+        saveSnapshot();
+      },
+    });
+    if (!resultado.ok) {
+      if (resultado.message) toast(resultado.message);
+      return;
     }
+    toast(
+      resultado.offline
+        ? 'Sin conexión: guardado aquí · se enviará solo'
+        : { complete: 'Seguimiento hecho', postpone: 'Pospuesto 3 días', cancel: 'Seguimiento cancelado' }[action] ??
+            'Seguimiento actualizado',
+    );
+    renderOutboxBanner();
+    if (resultado.offline) {
+      render();
+      return;
+    }
+    await load({ keepTab: true });
+    if (state.chat) await openChat(state.chat.id);
+    if (state.customerId) await openCustomer(state.customerId);
   }
-
   /** Pausar, reactivar, no contactar o volver a permitir mensajes. */
   async function customerAction(customerId, action) {
     const routes = {
-      pause: ['/automation', { state: 'PAUSED' }],
-      resume: ['/automation', { state: 'AUTOMATIC' }],
-      optout: ['/opt-out', {}],
-      optin: ['/opt-in', {}],
-      campaignOptout: ['', { campaignOptOut: true }],
-      campaignOptin: ['', { campaignOptOut: false }],
+      pause: ['/automation', { state: 'PAUSED' }, { automation_state: 'PAUSED' }],
+      resume: ['/automation', { state: 'AUTOMATIC' }, { automation_state: 'AUTOMATIC' }],
+      optout: ['/opt-out', {}, { do_not_contact: true }],
+      optin: ['/opt-in', {}, { do_not_contact: false }],
+      campaignOptout: ['', { campaignOptOut: true }, { campaign_opt_out_at: new Date().toISOString() }],
+      campaignOptin: ['', { campaignOptOut: false }, { campaign_opt_out_at: null }],
     };
-    const [route, payload] = routes[action] ?? [];
-    if (!route) return;
-    try {
-      const result = await api(`/api/admin/customers/${encodeURIComponent(customerId)}${route}`, {
-        method: route ? 'POST' : 'PATCH',
-        body: JSON.stringify(payload),
-      });
+    const [route, payload, local] = routes[action] ?? [];
+    if (!route && action !== 'campaignOptout' && action !== 'campaignOptin') return;
+    /*
+     * DECISIONES QUE SE PUEDEN TOMAR SIN CONEXIÓN. «No contactar» o «pausar» es una
+     * decisión de negocio que no puede esperar a que haya señal: se aplica aquí y
+     * se manda al CRM al volver. El servidor es quien cancela las tareas pendientes
+     * al recibirlo (aquí solo se avisa de que se hará).
+     */
+    const resultado = await guardar({
+      path: `/api/admin/customers/${encodeURIComponent(customerId)}${route}`,
+      method: route ? 'POST' : 'PATCH',
+      body: payload,
+      kind: 'customer-update',
+      key: `customer:${customerId}`,
+      id: customerId,
+      label: 'Datos del cliente',
+      aplicar: () => aplicarClienteDatosLocal(customerId, local ?? {}),
+    });
+    if (!resultado.ok) {
+      if (resultado.message) toast(resultado.message);
+      return;
+    }
+    if (resultado.offline) {
+      renderOutboxBanner();
       toast(
         action === 'optout'
-          ? `Marcado como no contactar${result.cancelled ? ` · ${result.cancelled} tarea(s) cancelada(s)` : ''}`
-          : action === 'optin'
-            ? 'Puede volver a recibir mensajes'
-            : action === 'campaignOptout'
-              ? 'No recibirá campañas masivas'
-              : action === 'campaignOptin'
-                ? 'Puede recibir campañas'
-                : action === 'pause'
-                  ? 'Seguimiento en pausa'
-                  : 'Seguimiento reactivado',
+          ? 'Sin conexión: marcado como no contactar · se enviará solo'
+          : action === 'pause'
+            ? 'Sin conexión: seguimiento en pausa · se enviará solo'
+            : 'Sin conexión: quedó guardado aquí y se enviará solo',
       );
-      await load({ keepTab: true });
-      await openCustomer(customerId);
-    } catch (error) {
-      if (error.message !== 'unauthorized') toast('No se pudo actualizar el cliente');
+      render();
+      return;
     }
+    const result = resultado.data;
+    toast(
+      action === 'optout'
+        ? `Marcado como no contactar${result.cancelled ? ` · ${result.cancelled} tarea(s) cancelada(s)` : ''}`
+        : action === 'optin'
+          ? 'Puede volver a recibir mensajes'
+          : action === 'campaignOptout'
+            ? 'No recibirá campañas masivas'
+            : action === 'campaignOptin'
+              ? 'Puede recibir campañas'
+              : action === 'pause'
+                ? 'Seguimiento en pausa'
+                : 'Seguimiento reactivado',
+    );
+    await load({ keepTab: true });
+    await openCustomer(customerId);
   }
 
   // --------------------------------------- acciones comerciales (S4 / S5)
@@ -10629,19 +13104,7 @@
    * para que el menú del chat no se llene con cinco botones de lo mismo.
    */
   function openChatAssignMenu(conversationId = state.wa.selectedId || '') {
-    const id = conversationId || state.wa.selectedId || '';
-    const conversation =
-      state.wa.chat?.conversation?.id === id
-        ? state.wa.chat.conversation
-        : state.conversations.find((row) => row.id === id) ?? null;
-    const assignmentMenu = assignmentMenuHtml(conversation, { conversationId });
-    openSheet(
-      'Conversación',
-      `<div class="menu-list">
-        ${assignmentMenu}
-      </div>`,
-      { variant: 'menu' },
-    );
+    return openAssignSheet(conversationId || state.wa.selectedId || '');
   }
 
   function openClientsActions() {
@@ -11729,23 +14192,69 @@
             source_note: $('#order-source-note')?.value.trim() || undefined,
             notes: $('#order-notes')?.value ?? '',
           };
-          const result = orderId
-            ? await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
-                method: 'PATCH',
-                body: JSON.stringify({
-                  items: lines,
-                  discount: payload.discount,
-                  deliveryFee: payload.deliveryFee,
-                  deliveryLocation: payload.deliveryLocation,
-                  paymentMethod: payload.paymentMethod,
-                  source: payload.source,
-                  utm_campaign: payload.utm_campaign,
-                  utm_content: payload.utm_content,
-                  source_note: payload.source_note,
-                  notes: payload.notes,
+          /*
+           * CREAR UN PEDIDO TAMBIÉN SE PUEDE SIN CONEXIÓN.
+           *
+           * Se manda con un id propio (el servidor lo respeta: `id` en el cuerpo)
+           * para que un reintento no cree el pedido dos veces. Sin red, el pedido
+           * queda en la lista del teléfono con su número provisional y marcado
+           * como «sin enviar»: se sigue trabajando y sale solo al volver internet.
+           */
+          const nuevoId = orderId ?? idLocal('off');
+          let resultado;
+          if (orderId) {
+            // EDITAR un pedido sí necesita conexión: se está reescribiendo algo que
+            // ya está en el CRM y no se puede adivinar cómo quedará.
+            try {
+              resultado = {
+                ok: true,
+                offline: false,
+                data: await api(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({
+                    items: lines,
+                    discount: payload.discount,
+                    deliveryFee: payload.deliveryFee,
+                    deliveryLocation: payload.deliveryLocation,
+                    paymentMethod: payload.paymentMethod,
+                    source: payload.source,
+                    utm_campaign: payload.utm_campaign,
+                    utm_content: payload.utm_content,
+                    source_note: payload.source_note,
+                    notes: payload.notes,
+                  }),
                 }),
-              })
-            : await api('/api/admin/orders', { method: 'POST', body: JSON.stringify(payload) });
+              };
+            } catch (error) {
+              if (error.message !== 'unauthorized') {
+                toast(error.offline ? 'Editar un pedido necesita conexión' : error.body?.message ?? 'No se pudo guardar el pedido');
+              }
+              return;
+            }
+          } else {
+            resultado = await guardar({
+              path: '/api/admin/orders',
+              method: 'POST',
+              body: { ...payload, id: nuevoId },
+              kind: 'order-create',
+              key: `order:${nuevoId}`,
+              id: nuevoId,
+              label: `Pedido nuevo · ${customer ? customerName(customer) : typedPhone ?? ''}`.trim(),
+              aplicar: () => aplicarPedidoLocal({ ...payload, id: nuevoId }, customer, conversationId, typedPhone),
+            });
+          }
+          if (!resultado.ok) {
+            if (resultado.message) toast(resultado.message);
+            return;
+          }
+          if (resultado.offline) {
+            closeSheet();
+            render();
+            renderOutboxBanner();
+            toast('Sin conexión: el pedido quedó guardado en el teléfono y se enviará solo');
+            return;
+          }
+          const result = resultado.data;
           const savedId = orderId ?? result.item?.id;
           if (savedId && draftKey && !orderId) clearOrderDraft(draftKey);
           if (savedId && state.orderReturn?.args?.draftKey === draftKey) state.orderReturn = null;
@@ -13813,10 +16322,110 @@
   }
 
   /** Factura de compra dentro del CRM + documento para abrir o compartir. */
+  /**
+   * ÚLTIMAS FICHAS DE PEDIDO VISTAS.
+   *
+   * Cada pedido que se abre se guarda (los 40 últimos): así, en la calle y sin
+   * datos, se puede volver a abrir un pedido y VERIFICARLO. Se poda sola para que
+   * la copia del teléfono no crezca sin límite.
+   */
+  function cachearVistaPedido(orderId, data) {
+    const vistas = { ...(state.orderViews ?? {}), [orderId]: { at: Date.now(), data } };
+    const ids = Object.keys(vistas)
+      .sort((a, b) => (vistas[b]?.at ?? 0) - (vistas[a]?.at ?? 0))
+      .slice(0, 40);
+    state.orderViews = Object.fromEntries(ids.map((id) => [id, vistas[id]]));
+    saveSnapshot();
+  }
+
+  /** Teléfono enmascarado para una copia (nunca se enseña entero en un documento). */
+  function maskPhoneLocal(phone) {
+    const limpio = digits(phone);
+    if (!limpio) return null;
+    return `${limpio.slice(0, 3)} ••• ${limpio.slice(-4)}`;
+  }
+
+  /**
+   * FICHA DE PEDIDO SIN CONEXIÓN.
+   *
+   * Se arma con lo que el pedido ya trae guardado (líneas, precios, pago, estado,
+   * entrega). NO es el comprobante fiscal —ese lo genera el servidor— pero sirve
+   * para lo que se hace en la calle: VERIFICAR el pedido antes de entregarlo.
+   */
+  function vistaPedidoLocal(orderId) {
+    const item = state.items.find((row) => row.id === orderId) ?? null;
+    if (!item || item.type !== 'order_intent') return null;
+    const order = itemOrder(item) ?? {};
+    const cliente = item.customer_id ? customerById(item.customer_id) : null;
+    const lineas = Array.isArray(order.items) ? order.items : [];
+    const receipt = {
+      business: NEGOCIO,
+      document: 'Pedido · copia sin conexión',
+      order_number: order.order_number ?? item.order_number ?? item.id,
+      date: order.created_at ?? order.created_at ?? item.received_at,
+      customer_name: cliente ? customerName(cliente) : item.name ?? null,
+      phone_masked: maskPhoneLocal(cliente?.phone_e164 ?? cliente?.phone ?? item.phone),
+      items: lineas.map((line) => ({
+        label: line.label ?? line.variantName ?? item.variant_name ?? 'Producto',
+        quantity: Number(line.quantity) || 1,
+        unitPrice: Number(line.unitPrice) || 0,
+        subtotal: Number(line.subtotal) || 0,
+      })),
+      subtotal: Number(order.subtotal) || 0,
+      discount: Number(order.discount) || 0,
+      delivery_fee: Number(order.delivery_fee ?? order.delivery?.fee) || 0,
+      total: Number(order.total ?? item.total) || 0,
+      currency: order.currency ?? item.currency ?? 'DOP',
+      has_location: Boolean(order.delivery?.location),
+      location_label: order.delivery?.location?.name ?? null,
+      location_address: order.delivery?.location?.address ?? null,
+      location: order.delivery?.location ?? null,
+      status: order.status ?? item.status ?? 'nuevo',
+      status_label: operationalStatusLabel(orderOperational(item)),
+      payment_method: order.payment_method ?? null,
+      payment_method_label: order.payment_method ? paymentMethodLabel(order.payment_method) : null,
+      cancelled_at: order.cancelled_at ?? null,
+      cancel_reason: order.cancel_reason ?? null,
+      thanks: 'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
+      note: 'Copia guardada en el teléfono. El comprobante oficial lo genera el CRM con la conexión.',
+    };
+    return {
+      ok: true,
+      offline: true,
+      item,
+      order,
+      receipt,
+      customer: cliente,
+      integrity: { operationalStatus: orderOperational(item) },
+      timeline: [],
+      followups: [],
+      scheduled: [],
+    };
+  }
+
   async function openReceipt(orderId) {
+    /*
+     * LOS DATOS DEL PEDIDO: del CRM si hay red, de la copia del teléfono si no.
+     * Con la copia NO se pisa el estado local: puede tener cambios sin enviar.
+     */
+    let offline = false;
+    let data;
     try {
-      const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
-      const item = applyServerOrderUpdate(data) ?? data.item ?? null;
+      data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}`);
+      cachearVistaPedido(orderId, data);
+    } catch (error) {
+      if (error.message === 'unauthorized') return;
+      data = state.orderViews?.[orderId]?.data ?? vistaPedidoLocal(orderId);
+      if (!data) {
+        toast('Sin conexión: este pedido no está en la copia del teléfono');
+        return;
+      }
+      offline = true;
+    }
+    try {
+      const item = offline
+        ? state.items.find((row) => row.id === orderId) ?? data.item ?? null
+        : applyServerOrderUpdate(data) ?? data.item ?? null;
       const receipt = data.receipt;
       const order = data.order ?? {};
       const integrity = data.integrity ?? {};
@@ -13834,6 +16443,11 @@
       openSheet(
         `Factura · ${receipt.order_number}`,
         `
+        ${
+          offline
+            ? '<p class="rule rule--warn">Sin conexión: estás viendo la COPIA guardada en este teléfono. Se puede verificar el pedido y cambiar su estado; los cambios se enviarán solos.</p>'
+            : ''
+        }
         <div class="receipt" aria-label="Comprobante de compra">
           <p class="receipt__brand">${escapeHtml(receipt.business)}</p>
           <p class="receipt__doc">${escapeHtml(receipt.document)}</p>
@@ -14049,14 +16663,42 @@
     const conversacionId = conversationForCustomer(clienteId)?.id ?? item.conversation_id ?? '';
     const estado = orderOperational(item);
     const ubicacionPedido = esPedido ? itemOrder(item)?.delivery?.location ?? null : null;
+    // ¿Este pedido está marcado en la lista? El menú lo dice y lo cambia.
+    const marcado = state.pedidosSel.has(item.id);
+    /*
+     * LA LISTA ES FINA, PERO NADA SE PIERDE.
+     *
+     * En la tarjeta el teléfono y quién atiende el pedido van en la tercera línea
+     * y, si el nombre es largo, se recortan con puntos suspensivos. Aquí se leen
+     * ENTEROS: es justo el dato que se necesita para repartir el trabajo, y quien
+     * abre este menú viene a decidir eso.
+     */
+    const referenciaPedido = esPedido
+      ? (() => {
+          const order = itemOrder(item) ?? {};
+          const entregado = ['ENTREGADO', 'CANCELADO'].includes(estado);
+          const repartidor = order.delivery?.delivery_user_name_snapshot ?? null;
+          return [
+            item.phone ?? null,
+            `Atendido por ${orderAgent(item).label}`,
+            entregado ? null : repartidor ? `Delivery ${repartidor}` : 'sin delivery',
+          ]
+            .filter(Boolean)
+            .join(' · ');
+        })()
+      : '';
     /*
      * Con el pedido YA ENTREGADO es cuando toca el seguimiento: se dice arriba, para
      * que las dos acciones de abajo (seguimiento y mensaje) no se pasen por alto.
      */
-    const nota =
+    const nota = [
+      referenciaPedido,
       esPedido && estado === 'ENTREGADO'
         ? 'Pedido entregado: buen momento para el seguimiento. Programa una tarea para el equipo o un mensaje al cliente.'
-        : '';
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
     // El seguimiento y el mensaje programado se ligan al pedido desde el que se crean.
     const enganche = { 'data-conversation': conversacionId, 'data-order-id': item.id };
     /*
@@ -14073,7 +16715,34 @@
       title: item.order_number ?? item.name ?? 'Acciones',
       nota,
       acciones: [
-        { icon: ICONS.chevron, label: 'Volver a la ficha', data: { 'data-open': item.id } },
+        /*
+         * LO DE TODOS LOS DÍAS, ARRIBA Y A UN TOQUE.
+         *
+         * Estas tres eran los botones que iban al pie de cada tarjeta (Estado,
+         * Escribir y Marcar). Con la lista fina viven aquí: la misma acción, un
+         * toque más, y a cambio la lista se lee de un vistazo.
+         */
+        esPedido
+          ? {
+              icon: ICONS.retry,
+              label: 'Cambiar el estado',
+              note: `Ahora: ${operationalStatusLabel(estado)}`,
+              data: { 'data-order-quick-status': item.id },
+            }
+          : null,
+        {
+          icon: ICONS.chat,
+          label: 'Escribir al cliente',
+          note: 'Plantilla o mensaje libre',
+          data: { 'data-order-quick-chat': item.id },
+        },
+        {
+          icon: ICONS.check,
+          label: marcado ? 'Quitar la marca' : 'Marcar para acciones en lote',
+          note: marcado ? 'Ya está marcado en la lista' : 'Finalizar o cambiar varios a la vez',
+          data: { 'data-order-select-toggle': item.id },
+        },
+        { icon: ICONS.chevron, label: 'Ver el pedido completo', data: { 'data-open': item.id } },
         esPedido
           ? {
               icon: ICONS.doc,
@@ -14848,7 +17517,17 @@
           await load({ keepTab: true });
           closeSheet();
         } catch (error) {
-          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo programar el mensaje');
+          if (error.message === 'unauthorized') return;
+          /*
+           * PROGRAMAR NECESITA EL CRM. Lo que sale a su hora lo manda el SERVIDOR
+           * (con WhatsApp), así que esto no puede quedar «en cola» en el teléfono
+           * como un pedido o un estado: se dice claro en vez de fingir que quedó.
+           */
+          toast(
+            error.offline
+              ? 'Sin conexión: programar un mensaje necesita red (lo envía el CRM a su hora)'
+              : error.body?.message ?? 'No se pudo programar el mensaje',
+          );
         }
       });
     });
@@ -14962,7 +17641,9 @@
     } catch (error) {
       if (error.message !== 'unauthorized') state.metrics = null;
     }
-    renderAjustes();
+    // Por el camino de siempre: si una sección falla, se anota y no se lleva
+    // por delante una promesa suelta (que era lo que dejaba un aviso sin dueño).
+    pintarSeccion('ajustes', renderAjustes);
   }
 
   async function assignCurrentConversation(action, userId = null, conversationId = state.wa.selectedId) {
@@ -15106,10 +17787,18 @@
     });
   }
 
+  /**
+   * EL INFORME DE VENTAS TAMBIÉN SE VE SIN CONEXIÓN.
+   *
+   * Cada informe que se carga se guarda con su período. Sin red se enseña la última
+   * copia de ESE período y se dice de cuándo es: es mejor saber cómo fue el día con
+   * datos de hace un rato (y saberlo) que no poder verlo en absoluto.
+   */
   async function loadSalesReport(period = state.salesReportPeriod, range = null) {
     state.salesReportPeriod = period;
     if (period === 'custom' && range) state.salesReportRange = { from: range.from ?? null, to: range.to ?? null };
     state.salesReportLoading = true;
+    const clave = period === 'custom' ? `custom:${reportRange().from}:${reportRange().to}` : period;
     try {
       const query = new URLSearchParams({ period });
       if (period === 'custom') {
@@ -15120,10 +17809,22 @@
       const data = await api(`/api/admin/reports/sales?${query.toString()}`);
       state.salesReport = data.report ?? null;
       state.salesReportError = null;
+      state.salesReportCachedAt = null;
+      const copia = { at: Date.now(), report: data.report ?? null };
+      state.salesReports = { ...(state.salesReports ?? {}), [clave]: copia };
+      saveSnapshot();
     } catch (error) {
       if (error.message !== 'unauthorized') {
-        state.salesReportError = error.body?.message ?? 'Revisa la conexión e inténtalo otra vez.';
-        toast('No se pudo cargar el reporte');
+        const copia = state.salesReports?.[clave] ?? null;
+        if (copia?.report) {
+          state.salesReport = copia.report;
+          state.salesReportError = null;
+          state.salesReportCachedAt = copia.at;
+          toast(`Sin conexión: informe guardado (${snapshotAgeLabel(copia.at)})`);
+        } else {
+          state.salesReportError = error.body?.message ?? 'Revisa la conexión e inténtalo otra vez.';
+          toast('No se pudo cargar el reporte');
+        }
       }
     } finally {
       state.salesReportLoading = false;
@@ -15165,20 +17866,151 @@
     if (navigator.setAppBadge) navigator.setAppBadge(pendientes + whatsappPendiente).catch(() => {});
   }
   function renderOutboxBanner() {
-    const count = readOutbox().length;
     const banner = $('#outbox-banner');
-    banner.hidden = count === 0;
-    banner.textContent = count
-      ? `${count} cambio(s) pendientes de enviar. Se enviarán solos cuando vuelva la conexión.`
-      : '';
+    if (!banner) return;
+    const problemas = readOutboxProblems();
+    const list = readOutbox();
+    /*
+     * Primero lo MALO: si algo no se pudo enviar, eso manda (y se dice el motivo).
+     */
+    if (problemas.length) {
+      const extra = problemas.length > 1 ? ` (y ${problemas.length - 1} más)` : '';
+      banner.hidden = false;
+      banner.innerHTML = `<span><strong>No se pudo enviar: ${escapeHtml(problemas[0].label)}.</strong> ${escapeHtml(
+        problemas[0].motivo,
+      )}${extra}</span>
+        <button class="btn btn--ghost btn--sm" data-outbox-problems-clear type="button">Entendido</button>`;
+      return;
+    }
+    banner.hidden = list.length === 0;
+    if (!list.length) {
+      banner.innerHTML = '';
+      return;
+    }
+    /*
+     * Lo que falta por enviar se dice con nombre y apellidos: no «hay cambios»,
+     * sino CUÁNTOS y QUÉ. Y con un botón para intentarlo en el momento, porque
+     * a veces la red ya volvió y el navegador todavía no se ha enterado.
+     */
+    const detalle = list.length === 1 ? list[0].label || OUTBOX_LABELS[list[0].kind] || 'Cambio' : `${list.length} cambios`;
+    banner.innerHTML = `<span><strong>${escapeHtml(detalle)} sin enviar.</strong> ${
+      state.online
+        ? 'Se enviarán solos en cuanto el CRM responda.'
+        : 'Sin conexión: se enviarán solos cuando vuelva la red.'
+    }</span>
+      <button class="btn btn--ghost btn--sm" data-outbox-retry type="button"${
+        state.online ? '' : ' disabled'
+      }>Enviar ahora</button>`;
   }
 
   function needsLocationPermission() {
-    return isDeliveryUser() || state.tab === 'delivery' || Boolean(state.deliveryOrders?.length);
+    /*
+     * El GPS se pide a quien de verdad lo usa: el rol Delivery y quien está en
+     * la pantalla de entregas (donde se puede iniciar una). Antes bastaba con que
+     * hubiera pedidos de entrega cargados, y eso hacía que a administración le
+     * apareciera el aviso de ubicación en HOY sin tener nada que entregar.
+     */
+    return isDeliveryUser() || state.tab === 'delivery';
   }
 
-  function needsNotificationPermission() {
-    return Boolean(state.push?.publicKey) && typeof Notification !== 'undefined' && Notification.permission !== 'granted';
+  /*
+   * ======================================================================
+   *  UN PERMISO SE PIDE UNA VEZ (NO EN CADA VISITA)
+   * ======================================================================
+   *
+   * El fallo que arregla esto: el cliente activaba las notificaciones (o decía
+   * que no) y el aviso volvía a salir en cada visita, como si no se hubiera
+   * enterado. Y en iPhone desde Safari el permiso NO SE PUEDE conceder (hay que
+   * añadir el panel a la pantalla de inicio): se pedía una y otra vez sin
+   * posibilidad de que el cliente lo consiguiera.
+   *
+   * Ahora queda anotado en el teléfono, por permiso: cuándo se ofreció, qué dijo
+   * el navegador entonces y si el usuario pidió que no le insistieran. Con eso:
+   *
+   *   · lo ya concedido no se vuelve a pedir;
+   *   · lo que el usuario atendió (concedido o bloqueado) no se le repite;
+   *   · «Ahora no» se respeta: no vuelve, y sigue estando en Configuración para
+   *     cuando el usuario quiera;
+   *   · si el navegador CAMBIA de estado (lo quitó, lo bloqueó luego), se cuenta
+   *     otra vez una única vez más.
+   */
+  const PERMISOS_KEY = 'pe_permisos';
+  /** Los permisos ya ofrecidos en ESTA visita (para que el aviso no parpadee). */
+  const PERMISOS_OFRECIDOS = new Set();
+
+  function leerMemoriaPermisos() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(PERMISOS_KEY) ?? '{}');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function recordarPermiso(nombre, patch = {}) {
+    const memoria = leerMemoriaPermisos();
+    memoria[nombre] = { ...(memoria[nombre] ?? {}), ...patch };
+    try {
+      localStorage.setItem(PERMISOS_KEY, JSON.stringify(memoria));
+    } catch {
+      /* Sin sitio en el teléfono: como mucho se vuelve a preguntar una vez. */
+    }
+    return memoria[nombre];
+  }
+
+  function olvidarPermiso(nombre) {
+    const memoria = leerMemoriaPermisos();
+    if (!(nombre in memoria)) return;
+    delete memoria[nombre];
+    for (const clave of [...PERMISOS_OFRECIDOS]) {
+      if (clave.startsWith(`${nombre}:`)) PERMISOS_OFRECIDOS.delete(clave);
+    }
+    try {
+      localStorage.setItem(PERMISOS_KEY, JSON.stringify(memoria));
+    } catch {
+      /* Nada que hacer: el recuerdo no es crítico. */
+    }
+  }
+
+  /** El estado del permiso de avisos, en palabras que el panel entiende. */
+  function estadoDelPermisoDeAvisos() {
+    if (!state.push?.publicKey || typeof Notification === 'undefined') return 'unsupported';
+    if (Notification.permission === 'granted') return 'granted';
+    if (Notification.permission === 'denied') return 'denied';
+    // Desde aquí no se puede pedir (iPhone sin instalar, http, navegador viejo):
+    // ofrecer «Activar» sería un botón que no puede cumplir lo que promete.
+    return pushUnavailableReason() ? 'bloqueado' : 'prompt';
+  }
+
+  /** ¿Toca volver a ofrecer este permiso en la barra de arriba? */
+  function tocaOfrecerPermiso(nombre, estado) {
+    const memoria = leerMemoriaPermisos()[nombre] ?? {};
+    if (estado === 'granted' || estado === 'unsupported') {
+      // Ya está (o no aplica): se olvida lo de antes. Así­, si el navegador lo
+      // vuelve a pedir algún día, se puede ofrecer otra vez.
+      if (memoria.estado && memoria.estado !== estado) olvidarPermiso(nombre);
+      return false;
+    }
+    if (memoria.descartado) return false; // «Ahora no» es una respuesta.
+    /*
+     * DENTRO DE LA MISMA VISITA EL AVISO SE QUEDA.
+     *
+     * Si el aviso desapareciera en cuanto se pinta (que es lo que pasaba al
+     * anotarlo como «ofrecido» al pintarlo), el usuario vería un parpadeo y no le
+     * daría tiempo a nada: el panel se repinta muchas veces. Por eso la decisión
+     * de «ya se le dijo» se recuerda para las PRÓXIMAS visitas, y dentro de esta
+     * visita el aviso sigue a la vista hasta que el usuario haga algo (permitir o
+     * «Ahora no»).
+     */
+    if (PERMISOS_OFRECIDOS.has(`${nombre}:${estado}`)) return true;
+    // Ya se le dijo en una visita anterior, con este mismo estado.
+    if (memoria.ofertado && memoria.estado === estado) return false;
+    return true;
+  }
+
+  function marcarPermisoOfrecido(nombre, estado) {
+    PERMISOS_OFRECIDOS.add(`${nombre}:${estado}`);
+    recordarPermiso(nombre, { ofertado: new Date().toISOString(), estado });
   }
 
   function renderPermissionBanner() {
@@ -15186,21 +18018,28 @@
     if (!box) return;
     const rows = [];
     const geo = state.devicePermissions?.geolocation ?? 'unknown';
-    if (needsLocationPermission() && ['prompt', 'denied', 'unknown'].includes(geo) && navigator.geolocation?.getCurrentPosition) {
-      rows.push({
-        title: 'Permitir ubicación',
-        detail: geo === 'denied' ? 'El GPS está bloqueado en este teléfono.' : 'Hace falta para iniciar entregas y compartir el recorrido.',
-        action: 'location',
-        cta: geo === 'denied' ? 'Revisar permiso' : 'Permitir',
-      });
+    if (needsLocationPermission() && navigator.geolocation?.getCurrentPosition) {
+      // «unknown» (Safari no sabe contestar) se trata como «todavía por pedir».
+      const estadoGeo = geo === 'granted' ? 'granted' : geo === 'denied' ? 'denied' : 'prompt';
+      if (['prompt', 'denied'].includes(estadoGeo) && tocaOfrecerPermiso('geolocation', estadoGeo)) {
+        marcarPermisoOfrecido('geolocation', estadoGeo);
+        rows.push({
+          title: 'Permitir ubicación',
+          detail: estadoGeo === 'denied' ? 'El GPS está bloqueado en este teléfono.' : 'Hace falta para iniciar entregas y compartir el recorrido.',
+          action: 'location',
+          cta: estadoGeo === 'denied' ? 'Revisar permiso' : 'Permitir',
+        });
+      }
     }
-    if (needsNotificationPermission()) {
-      const denied = Notification.permission === 'denied';
+    const estadoAvisos = estadoDelPermisoDeAvisos();
+    if (tocaOfrecerPermiso('notifications', estadoAvisos)) {
+      marcarPermisoOfrecido('notifications', estadoAvisos);
+      const puedeActivar = estadoAvisos === 'prompt';
       rows.push({
         title: 'Activar notificaciones',
-        detail: denied ? 'Las notificaciones están bloqueadas en este teléfono.' : 'Recibe avisos de pedidos, chats y entregas.',
+        detail: puedeActivar ? 'Recibe avisos de pedidos, chats y entregas.' : 'Este teléfono tiene las notificaciones apagadas para FullTECH, SRL.',
         action: 'notifications',
-        cta: denied ? 'Revisar permiso' : 'Activar',
+        cta: puedeActivar ? 'Activar' : 'Cómo activarlas',
       });
     }
     box.hidden = rows.length === 0;
@@ -15208,10 +18047,34 @@
       .map(
         (row) => `<div class="permission-banner__row">
           <span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.detail)}</small></span>
-          <button class="btn btn--primary btn--sm" data-permission-action="${escapeHtml(row.action)}" type="button">${escapeHtml(row.cta)}</button>
+          <span class="permission-banner__actions">
+            <button class="btn btn--primary btn--sm" data-permission-action="${escapeHtml(row.action)}" type="button">${escapeHtml(row.cta)}</button>
+            <button class="btn btn--ghost btn--sm" data-permission-dismiss="${escapeHtml(row.action)}" type="button" aria-label="No volver a preguntar por ${escapeHtml(
+              row.title.toLowerCase(),
+            )}" title="No volver a preguntar">Ahora no</button>
+          </span>
         </div>`,
       )
       .join('');
+  }
+
+  /**
+   * Abre la explicación de cómo activarlas cuando el navegador no puede
+   * concederlas desde aquí (iPhone desde Safari: hay que añadirlo a la pantalla
+   * de inicio). Es información, no un botón que no hace nada.
+   */
+  function openNotificationPermissionHelpSheet() {
+    const motivo = pushUnavailableReason() || 'Las notificaciones están bloqueadas para este sitio.';
+    openSheet(
+      'Activar notificaciones',
+      `<div class="delivery-permission">
+        <strong>${escapeHtml(motivo)}</strong>
+        <p>Cuando lo permitas, vuelve aquí­ y pulsa <strong>Probar notificación</strong>: sirve para confirmar que el aviso llega de verdad a este teléfono.</p>
+        <button class="btn btn--primary btn--block" data-permission-action="notifications" type="button">Intentar otra vez</button>
+        <button class="btn btn--ghost btn--block" data-close-sheet type="button">Volver</button>
+      </div>`,
+      { variant: 'delivery-permission' },
+    );
   }
 
   async function readPermissionState(name) {
@@ -15226,11 +18089,15 @@
   }
 
   async function refreshDevicePermissions() {
-    const geolocation = await readPermissionState('geolocation');
-    const notifications =
-      typeof Notification === 'undefined' ? 'unsupported' : Notification.permission || (await readPermissionState('notifications'));
-    state.devicePermissions = { loading: false, geolocation, notifications };
+    const [geolocation, microphone, camera] = await Promise.all([
+      navigator.geolocation?.getCurrentPosition ? readPermissionState('geolocation') : 'unsupported',
+      navigator.mediaDevices?.getUserMedia ? readPermissionState('microphone') : 'unsupported',
+      navigator.mediaDevices?.getUserMedia ? readPermissionState('camera') : 'unsupported',
+    ]);
+    const notifications = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission === 'default' ? 'prompt' : Notification.permission || 'unknown';
+    state.devicePermissions = { loading: false, geolocation, notifications, microphone, camera };
     renderPermissionBanner();
+    renderSettingsPermissions();
   }
 
   async function requestDeviceLocationPermission() {
@@ -15241,10 +18108,14 @@
     try {
       await getDeliveryPreviewPosition();
       await refreshDevicePermissions();
+      recordarPermiso('geolocation', { pedido: new Date().toISOString(), estado: 'granted' });
       toast('Ubicación permitida');
       return true;
     } catch (error) {
       await refreshDevicePermissions();
+      // Se anota que YA se pidió: si el teléfono dijo que no, no se insiste desde
+      // la barra de arriba (queda en los ajustes para cuando se quiera).
+      recordarPermiso('geolocation', { pedido: new Date().toISOString(), estado: state.devicePermissions?.geolocation ?? 'prompt' });
       openLocationPermissionHelpSheet();
       return false;
     }
@@ -15279,7 +18150,57 @@
     pill.setAttribute('aria-label', online ? 'Sistema en línea' : 'Sin conexión');
     $('#offline-banner').hidden = online;
     renderMobileHeader();
-    if (online) flushOutbox();
+    if (online) {
+      // Volvió la red: primero lo que se hizo sin ella, después los datos frescos.
+      sincronizarEnSegundoPlano();
+    }
+  }
+
+  let silentSyncTimer = null;
+  let syncEnCurso = null;
+
+  /**
+   * SINCRONÍA SILENCIOSA.
+   *
+   * Cada minuto, y cada vez que se vuelve a la app, se manda lo que quedó en la
+   * cola y se traen los datos nuevos. NUNCA recarga la pantalla, no la deja en
+   * blanco y no mueve a nadie de donde está: misma pestaña, misma hoja abierta,
+   * mismo texto escrito. Si algo falla, se calla y se intenta en el minuto
+   * siguiente (el aviso de "sin conexión" ya está en la barra de arriba).
+   */
+  function iniciarSincroniaSilenciosa() {
+    if (!silentSyncTimer) {
+      silentSyncTimer = setInterval(sincroniaSilenciosaTick, 60000);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && state.online) sincronizarEnSegundoPlano();
+    });
+    window.addEventListener('focus', () => {
+      if (state.online) sincronizarEnSegundoPlano();
+    });
+  }
+
+  /**
+   * La vuelta del temporizador: manda lo que quedó pendiente y trae lo nuevo.
+   * SIEMPRE en silencio y SIN recargar la pantalla.
+   */
+  function sincroniaSilenciosaTick() {
+    if (document.hidden || !state.online) return;
+    sincronizarEnSegundoPlano();
+  }
+
+  /** Una sola sincronización a la vez (dos a la vez se pisarían al pintar). */
+  function sincronizarEnSegundoPlano() {
+    if (syncEnCurso) return syncEnCurso;
+    syncEnCurso = (async () => {
+      if (readOutbox().length) await flushOutbox({ silent: true });
+      await load({ keepTab: true, silent: true });
+    })()
+      .catch(() => {})
+      .finally(() => {
+        syncEnCurso = null;
+      });
+    return syncEnCurso;
   }
 
   // Solo se confirma tras registrar ESTE navegador; nunca se restaura del snapshot.
@@ -15293,14 +18214,14 @@
 
   function pushUnavailableReason() {
     if (iphonePushDevice() && !(navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches)) {
-      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono CRM Phyto. Requiere iOS 16.4 o posterior.';
+      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono FullTECH, SRL. Requiere iOS 16.4 o posterior.';
     }
     if (window.isSecureContext === false) return 'Las notificaciones requieren una conexión HTTPS segura.';
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
-      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre CRM Phyto desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
+      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre FullTECH, SRL desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
     }
     if (Notification.permission === 'denied') {
-      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → CRM Phyto y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
+      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → FullTECH, SRL y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
     }
     return '';
   }
@@ -15411,6 +18332,13 @@
       pushSyncError = error.body?.message || error.message || 'No se pudo registrar este teléfono';
     }
     if (enabled) await refreshPushStatus().catch(() => null);
+    /*
+     * Queda anotado que YA se pidió (y cómo quedó): es lo que evita que el mismo
+     * aviso de «Activar notificaciones» vuelva a salir en la siguiente visita
+     * cuando el navegador no concede el permiso (iPhone desde Safari).
+     */
+    recordarPermiso('notifications', { pedido: new Date().toISOString(), estado: estadoDelPermisoDeAvisos() });
+    renderPermissionBanner();
     // El resultado se queda escrito en la hoja: pulsar no puede quedarse sin respuesta.
     state.pushResult = enabled
       ? { servidor: 'Teléfono registrado', local: 'listo para recibir avisos', at: new Date().toISOString() }
@@ -15445,8 +18373,8 @@
       await registration.showNotification('Prueba en este teléfono', {
         body: 'Si ves este aviso, este teléfono muestra los avisos del CRM.',
         tag: 'phyto-push-test-local',
-        icon: '/admin/icon-192.png',
-        badge: '/admin/icon-192.png',
+        icon: '/admin/fulltech-icon-192.png',
+        badge: '/admin/fulltech-icon-192.png',
         data: { deepLink: '/admin/?v=hoy' },
       });
       return true;
@@ -15623,7 +18551,7 @@
     window.addEventListener('beforeinstallprompt', (event) => {
       event.preventDefault();
       installEvent = event;
-      $('#install-card').hidden = false;
+      $('#install-card').hidden = settingsPage !== 'aplicacion';
       $('#install').hidden = false; // el navegador puede instalarla por nosotros
     });
 
@@ -15632,14 +18560,14 @@
       installEvent.prompt();
       const choice = await installEvent.userChoice.catch(() => null);
       if (choice?.outcome === 'accepted') {
-        $('#install-card').hidden = true;
+        $('#install-text').textContent = 'FullTECH, SRL ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
         toast('Instalada: búscala en tu pantalla de inicio');
       }
       installEvent = null;
     });
 
     // Instalada (o en iPhone, que no avisa): solo las instrucciones manuales.
-    if (window.matchMedia('(display-mode: standalone)').matches) $('#install-card').hidden = true;
+    if (window.matchMedia('(display-mode: standalone)').matches) $('#install-text').textContent = 'FullTECH, SRL ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
     else $('#install').hidden = !installEvent;
   }
 
@@ -15650,21 +18578,29 @@
    * tocando fuera, con la ✕ o con Escape, y devuelve el foco a quien lo abrió.
    */
   let drawerFocusBack = null;
+  let drawerInertNodes = [];
 
   function openDrawer() {
     const drawer = $('#drawer');
     const scrim = $('#scrim');
     if (!drawer || !scrim) return;
+    if (state.drawer) return;
     drawerFocusBack = document.activeElement;
+    drawerInertNodes = [...drawer.parentElement.children].filter((node) => node !== drawer && node !== scrim && !node.inert);
+    drawerInertNodes.forEach((node) => { node.inert = true; });
     drawer.hidden = false;
     scrim.hidden = false;
     requestAnimationFrame(() => {
       drawer.classList.add('drawer--open');
       scrim.classList.add('scrim--open');
     });
+    // El estado se anota en el <body>: así­ TODOS los botones de menú (la cabecera
+    // y el flotante) pueden animar sus barras a la vez, sin ir uno por uno.
+    document.body.dataset.drawer = 'open';
+    $$('[data-open-drawer]').forEach((boton) => boton.setAttribute('aria-expanded', 'true'));
     $('#menu')?.setAttribute('aria-expanded', 'true');
     state.drawer = true;
-    drawer.querySelector('button')?.focus();
+    $('#drawer-close')?.focus();
   }
 
   function closeDrawer() {
@@ -15673,8 +18609,12 @@
     if (!drawer || !scrim || drawer.hidden) return;
     drawer.classList.remove('drawer--open');
     scrim.classList.remove('scrim--open');
+    delete document.body.dataset.drawer;
+    $$('[data-open-drawer]').forEach((boton) => boton.setAttribute('aria-expanded', 'false'));
     $('#menu')?.setAttribute('aria-expanded', 'false');
     state.drawer = false;
+    drawerInertNodes.forEach((node) => { node.inert = false; });
+    drawerInertNodes = [];
     setTimeout(() => {
       if (!state.drawer) {
         drawer.hidden = true;
@@ -15698,7 +18638,7 @@
 
   /** El texto que viaja con el enlace (en el móvil, en el chat o por WhatsApp). */
   function panelShareMessage(url) {
-    return `Panel de trabajo de Phytoemagry: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
+    return `Panel de trabajo de FullTECH, SRL: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
   }
 
   /**
@@ -15712,7 +18652,7 @@
     const texto = panelShareMessage(url);
     try {
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: 'Phytoemagry · Panel', text: texto, url });
+        await navigator.share({ title: 'FullTECH, SRL · Panel', text: texto, url });
         return true;
       }
     } catch (error) {
@@ -15792,7 +18732,7 @@
       if (!options.silent) toast('Mapa y entregas disponible solo para administración');
       tab = isDeliveryUser() ? 'delivery' : 'hoy';
     }
-    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil', 'cierre', 'historial-cierres'].includes(tab)) tab = 'delivery';
+    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil', 'ajustes', 'cierre', 'historial-cierres'].includes(tab)) tab = 'delivery';
     if (tab !== 'whatsapp') {
       state.wa.searchOpen = false;
       state.wa.filtersOpen = false;
@@ -15821,13 +18761,26 @@
       state.deliveryListRequested = false;
       delete document.body.dataset.deliveryDetail;
     }
+    if (tab === 'ajustes') {
+      if (!/^#config(?:\/|$)/.test(location.hash)) history.replaceState(null, '', '#config');
+      settingsPage = settingsRoute();
+    }
+    else if (/^#config(?:\/|$)/.test(location.hash)) {
+      history.replaceState(null, '', location.pathname + location.search);
+      settingsPage = '';
+    }
     state.tab = tab;
     localStorage.setItem(TAB_KEY, tab);
+    // Cambiar de pestaña tambien guarda los filtros que hubiera puestos: asi­ una
+    // tarjeta de HOY que lleva a «Pedidos pendientes» deja puesto ese filtro.
+    guardarFiltrosActuales();
     if (state.drawer) closeDrawer();
     // Fuera de WhatsApp no se mantiene el canal en vivo (ni gastos de más).
     if (tab !== 'whatsapp') stopWhatsappEvents();
     // El ancho de la bandeja de WhatsApp depende de la pestaña activa (CSS).
     document.body.dataset.tab = tab;
+    const navigation = $('.tabs');
+    if (navigation) navigation.hidden = tab !== 'hoy';
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
     VIEWS.forEach((name) => {
       const view = $(`#view-${name}`);
@@ -15847,6 +18800,10 @@
       if (tab === 'delivery') {
         refreshDeliveryTracking().catch(() => {});
         startDeliveryEvents();
+        // Entrar en entregas es el momento de mirar si el GPS está permitido: si
+        // el teléfono lo tiene bloqueado, aquí se dice (una vez), no en cada
+        // visita desde HOY.
+        refreshDevicePermissions().catch(() => {});
       }
       if (tab === 'productos') loadInventory().catch(() => {});
       if (tab === 'reportes' && hasPermission('reports.profit.view')) loadSalesReport(state.salesReportPeriod).catch(() => {});
@@ -15857,6 +18814,8 @@
       // Al entrar en Ajustes se refresca lo que cambia con el uso: los números y
       // la traza. Así el negocio ve el efecto de lo que acaba de hacer.
       if (tab === 'ajustes') {
+        renderAjustes();
+        refreshDevicePermissions().catch(() => {});
         loadMetrics(state.metricsPeriod).catch(() => {});
         state.auditEntries = null;
         state.auditLoading = true;
@@ -15892,6 +18851,44 @@
       startDeliveryEvents();
     }
     renderCustomerCampaignFab();
+  }
+
+  /**
+   * UNA TARJETA DE HOY NO LLEVA A UNA PANTALLA: LLEVA A UNA LISTA CONCRETA.
+   *
+   * Antes solo cambiaba de pestaña, así que se llegaba a Pedidos con el filtro
+   * de ayer puesto, o a Clientes con una búsqueda vieja, y la tarjeta parecía
+   * mentir. Aquí se deja puesto el filtro (y se limpia lo que estorba) ANTES de
+   * entrar, y se repinta la lista de destino para que lo primero que se vea sea
+   * exactamente lo que decía la tarjeta.
+   */
+  function abrirDesdeTarjeta(card) {
+    const destino = card.dataset.goto ?? 'hoy';
+    if (card.dataset.waFilter) {
+      state.wa.filter = card.dataset.waFilter;
+      state.wa.q = '';
+      // Todas las fechas: si no, una conversación de ayer desaparecía de la lista.
+      state.wa.date = { mode: 'all', from: '', to: '' };
+    }
+    if (card.dataset.orderFilter) state.pedidosFilter = card.dataset.orderFilter;
+    if (card.dataset.orderDate) state.pedidosDate = { mode: card.dataset.orderDate, from: '', to: '' };
+    if (card.dataset.followupFilter) state.followupsFilter = card.dataset.followupFilter;
+    if (card.dataset.clientFilter) {
+      state.filter = card.dataset.clientFilter;
+      state.q = '';
+      const search = $('#search');
+      if (search) search.value = '';
+      // Los chips de Clientes se pintan al arrancar: al cambiar el filtro desde
+      // fuera hay que marcarlos, o el chip activo seguiría diciendo «Todos».
+      $$('[data-filter]').forEach((button) =>
+        button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)),
+      );
+    }
+    setTab(destino);
+    if (destino === 'whatsapp') renderWhatsapp();
+    if (destino === 'pedidos') renderPedidos();
+    if (destino === 'clientes') renderClientes();
+    if (destino === 'seguimientos') renderSeguimientos();
   }
 
   // ---------------------------------------------------------------- eventos
@@ -15967,13 +18964,7 @@
         <span><strong>Filtros</strong><small>Clientes</small></span>
         <button class="wa-filter-panel__close" data-client-filter-close type="button" aria-label="Cerrar filtros">${ICONS.close}</button>
       </div>
-      <div class="wa-filter-panel__group">` + [
-      ['todos', 'Todos'],
-      ['clientes', 'Clientes'],
-      ['interesados', 'Interesados'],
-      ['prospectos', 'Prospectos'],
-      ['seguimiento', 'Seguimiento'],
-    ]
+      <div class="wa-filter-panel__group">` + CLIENT_FILTERS
       .map(
         ([value, text]) =>
           `<button class="chip" data-filter="${value}" aria-pressed="${value === state.filter}" type="button">${text}</button>`,
@@ -15984,6 +18975,7 @@
       const chip = event.target.closest('[data-filter]');
       if (!chip) return;
       state.filter = chip.dataset.filter;
+      guardarFiltrosActuales();
       $$('[data-filter]').forEach((button) =>
         button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)),
       );
@@ -15995,7 +18987,7 @@
     $('#stats').addEventListener('click', (event) => {
       const card = event.target.closest('[data-goto]');
       if (card) {
-        setTab(card.dataset.goto);
+        abrirDesdeTarjeta(card);
         return;
       }
       // Compatibilidad: las tarjetas antiguas filtraban la lista de clientes.
@@ -16021,6 +19013,22 @@
         delete document.body.dataset.todayExpanded;
       }
     }, true);
+
+    /* Un solo camino para el filtro de seguimientos: el chip y la tarjeta de HOY. */
+    $('#view-seguimientos').addEventListener('click', (event) => {
+      const chip = event.target.closest('[data-followup-filter]');
+      if (!chip) return;
+      state.followupsFilter = chip.dataset.followupFilter;
+      guardarFiltrosActuales();
+      renderSeguimientos();
+    });
+
+    /* El tema se elige desde Mi perfil (y desde Ajustes): un solo manejador. */
+    document.addEventListener('click', (event) => {
+      const opcion = event.target.closest('[data-tema]');
+      if (!opcion) return;
+      aplicarTema(opcion.dataset.tema, true);
+    });
 
     /*
      * Pulsación larga = seleccionar (el gesto de WhatsApp). Se cancela en cuanto
@@ -16062,7 +19070,63 @@
     document.addEventListener('pointercancel', waPressCancel);
     document.addEventListener('scroll', waPressCancel, true);
 
+    /*
+     * PULSACIÓN LARGA EN UNA BURBUJA = las acciones de ESE mensaje (el gesto de
+     * WhatsApp), y en el ordenador también el clic derecho. Va aparte del de la
+     * lista de conversaciones porque son dos cosas distintas: aquel selecciona
+     * filas para hacer algo en lote; este trabaja UN mensaje del hilo.
+     *
+     * No se dispara sobre los botones que viven dentro de la burbuja (la foto que
+     * se abre en grande, el reproductor del audio, el «Deshacer»): ahí el gesto es
+     * suyo. Y se cancela en cuanto el dedo se mueve, para no secuestrar el
+     * desplazamiento del hilo ni la selección de texto.
+     */
+    let msgPressTimer = null;
+    let msgPressFrom = null;
+    const msgPressCancel = () => {
+      if (msgPressTimer) clearTimeout(msgPressTimer);
+      msgPressTimer = null;
+      msgPressFrom = null;
+    };
+    document.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest?.('[data-media-view],[data-audio-play],[data-audio-seek],[data-undo],[data-media-retry]')) return;
+      const burbuja = event.target.closest?.('#thread [data-message]');
+      if (!burbuja) return;
+      msgPressCancel();
+      msgPressFrom = { x: event.clientX, y: event.clientY, id: burbuja.dataset.message };
+      msgPressTimer = setTimeout(() => {
+        const id = msgPressFrom?.id;
+        msgPressCancel();
+        if (id) openMessageActionsMenu(id);
+      }, 480);
+    });
+    document.addEventListener('pointermove', (event) => {
+      if (!msgPressFrom) return;
+      if (Math.abs(event.clientX - msgPressFrom.x) > 12 || Math.abs(event.clientY - msgPressFrom.y) > 12) msgPressCancel();
+    });
+    document.addEventListener('pointerup', msgPressCancel);
+    document.addEventListener('pointercancel', msgPressCancel);
+    document.addEventListener('scroll', msgPressCancel, true);
+    document.addEventListener('contextmenu', (event) => {
+      const burbuja = event.target.closest?.('#thread [data-message]');
+      if (!burbuja) return;
+      event.preventDefault();
+      msgPressCancel();
+      openMessageActionsMenu(burbuja.dataset.message);
+    });
+
     document.addEventListener('click', (event) => {
+      const settingsLink = event.target.closest('[data-settings-open]');
+      if (settingsLink) { event.preventDefault(); openSettingsPage(settingsLink.dataset.settingsOpen); return; }
+      if (event.target.closest('[data-settings-back]')) { openSettingsPage(SETTINGS_PAGES.find(page => page.key === settingsPage)?.parent || ''); return; }
+      const permission = event.target.closest('[data-settings-permission-enable]');
+      if (permission) { enableSettingsPermission(permission.dataset.settingsPermissionEnable); return; }
+      if (event.target.closest('[data-settings-permissions-refresh]')) {
+        permissionFeedback = 'Permisos comprobados con el teléfono.';
+        refreshDevicePermissions().catch(() => {});
+        return;
+      }
       /*
        * El orden importa: los botones viven DENTRO de tarjetas que también son
        * táctiles. Si se comprobara `data-chat` primero, pulsar "Registrar compra"
@@ -16262,6 +19326,7 @@
         return;
       }
       if (event.target.closest('[data-dashboard-profile]')) {
+        state.profileReturnToSettings = Boolean(event.target.closest('#settings-home'));
         setTab('perfil');
         return;
       }
@@ -16312,7 +19377,12 @@
       }
       const noticeDismiss = event.target.closest('[data-notice-dismiss]');
       if (noticeDismiss) {
-        dismissNotice(noticeDismiss.dataset.noticeDismiss);
+        dismissNotice(noticeDismiss.dataset.noticeDismiss, noticeDismiss.dataset.noticeValue ?? true);
+        return;
+      }
+      const notificationDelete = event.target.closest('[data-notification-delete]');
+      if (notificationDelete) {
+        borrarNotificacion(notificationDelete.dataset.notificationDelete);
         return;
       }
       const notificationOpen = event.target.closest('[data-notification-open]');
@@ -16353,15 +19423,32 @@
         enableCrmPush().catch(() => toast('No se pudieron activar las notificaciones'));
         return;
       }
+      const permissionDismiss = event.target.closest('[data-permission-dismiss]');
+      if (permissionDismiss) {
+        const cual = permissionDismiss.dataset.permissionDismiss === 'location' ? 'geolocation' : 'notifications';
+        // «Ahora no» se guarda: no se vuelve a preguntar (sigue en Configuración).
+        recordarPermiso(cual, { descartado: new Date().toISOString() });
+        renderPermissionBanner();
+        return;
+      }
       const permissionAction = event.target.closest('[data-permission-action]');
       if (permissionAction) {
         const action = permissionAction.dataset.permissionAction;
         if (action === 'location') {
           requestDeviceLocationPermission().catch(() => toast('No se pudo pedir ubicación'));
         } else if (action === 'notifications') {
-          enableCrmPush()
-            .then(() => refreshDevicePermissions().catch(() => {}))
-            .catch(() => toast('No se pudieron activar las notificaciones'));
+          /*
+           * Si desde este navegador NO se puede conceder (iPhone desde Safari, o
+           * bloqueado), no se lanza una petición que no puede funcionar: se
+           * explica qué hacer, que es lo único útil en ese caso.
+           */
+          if (estadoDelPermisoDeAvisos() === 'prompt') {
+            enableCrmPush()
+              .then(() => refreshDevicePermissions().catch(() => {}))
+              .catch(() => toast('No se pudieron activar las notificaciones'));
+          } else {
+            openNotificationPermissionHelpSheet();
+          }
         }
         return;
       }
@@ -16434,7 +19521,7 @@
           delete document.body.dataset.deliveryDetail;
           renderDelivery();
           setTab('hoy');
-          toast('Gracias por colaborar con Phytoemagry');
+          toast('Gracias por colaborar con FullTECH, SRL');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar');
         });
@@ -16547,7 +19634,13 @@
         openDrawer();
         return;
       }
+      if (event.target.closest('[data-wa-chat-back]')) { setWaView('list'); return; }
       if (event.target.closest('[data-simple-back]')) {
+        if (state.tab === 'perfil' && state.profileReturnToSettings) {
+          state.profileReturnToSettings = false;
+          openSettingsPage('');
+          return;
+        }
         if (state.tab === 'perfil-cliente' || state.tab === 'mapa') {
           setTab(state.previousTab && state.previousTab !== state.tab ? state.previousTab : 'hoy');
         } else if (state.tab === 'historial-cierres') {
@@ -16634,9 +19727,113 @@
       const orderFilter = event.target.closest('[data-order-filter]');
       if (orderFilter) {
         state.pedidosFilter = orderFilter.dataset.orderFilter;
+        guardarFiltrosActuales();
         state.pedidosFiltersOpen = false;
         document.body.dataset.orderFilters = 'closed';
         renderPedidos();
+        return;
+      }
+      // ---- Lista de pedidos: fecha, selección y acciones rápidas ----
+      const orderDateOpen = event.target.closest('[data-order-date-open]');
+      if (orderDateOpen) {
+        openOrderDateMenu();
+        return;
+      }
+      const orderDateDay = event.target.closest('[data-order-date-day]');
+      if (orderDateDay) {
+        const dia = orderDateDay.dataset.orderDateDay;
+        if (setOrderDateFilter('custom', { from: dia, to: dia })) closeSheet();
+        return;
+      }
+      const orderDateCustom = event.target.closest('[data-order-date-custom]');
+      if (orderDateCustom) {
+        openOrderCustomDateSheet();
+        return;
+      }
+      const orderDate = event.target.closest('[data-order-date]');
+      if (orderDate) {
+        if (setOrderDateFilter(orderDate.dataset.orderDate)) closeSheet();
+        return;
+      }
+      const orderSelClear = event.target.closest('[data-order-sel-clear]');
+      if (orderSelClear) {
+        state.pedidosSel.clear();
+        renderPedidos();
+        closeSheet();
+        return;
+      }
+      const orderSelAll = event.target.closest('[data-order-sel-all]');
+      if (orderSelAll) {
+        toggleOrderSelectAll();
+        closeSheet();
+        return;
+      }
+      const orderBulkSet = event.target.closest('[data-order-bulk-set]');
+      if (orderBulkSet) {
+        const ids = [...state.pedidosSel];
+        closeSheet();
+        aplicarEstadoVarios(ids, orderBulkSet.dataset.orderBulkSet, { button: orderBulkSet });
+        return;
+      }
+      const orderBulk = event.target.closest('[data-order-bulk]');
+      if (orderBulk) {
+        const accion = orderBulk.dataset.orderBulk;
+        const ids = [...state.pedidosSel];
+        if (accion === 'estado') {
+          openOrderBulkStatusSheet(ids);
+          return;
+        }
+        if (accion === 'seguimiento') {
+          seguimientoDePedidos(ids, { button: orderBulk });
+          return;
+        }
+        if (accion === 'mensaje') {
+          programarMensajeDePedidos(ids);
+          return;
+        }
+        closeSheet();
+        aplicarEstadoVarios(ids, 'ENTREGADO', { button: orderBulk });
+        return;
+      }
+      const orderQuickStatus = event.target.closest('[data-order-quick-status]');
+      if (orderQuickStatus) {
+        openOrderQuickStatus(orderQuickStatus.dataset.orderQuickStatus);
+        return;
+      }
+      const orderQuickChat = event.target.closest('[data-order-quick-chat]');
+      if (orderQuickChat) {
+        openOrderQuickChat(orderQuickChat.dataset.orderQuickChat);
+        return;
+      }
+      /*
+       * MARCAR DESDE EL «⋯». Era la casilla que iba al pie de cada tarjeta; ahora
+       * se marca desde el menú (y se desmarca igual). La barra de la selección
+       * sigue apareciendo sola en cuanto hay un pedido marcado.
+       */
+      const orderSelectToggle = event.target.closest('[data-order-select-toggle]');
+      if (orderSelectToggle) {
+        toggleOrderSelect(orderSelectToggle.dataset.orderSelectToggle);
+        closeSheet();
+        return;
+      }
+      const orderMore = event.target.closest('[data-order-more]');
+      if (orderMore) {
+        openOrderActionsMenu(orderMore.dataset.orderMore);
+        return;
+      }
+      // «Enviar ahora»: la red pudo volver sin que el navegador se enterara.
+      if (event.target.closest('[data-outbox-retry]')) {
+        flushOutbox()
+          .then((resumen) => {
+            renderOutboxBanner();
+            render();
+            if (resumen.pending && !resumen.dropped) toast('Todavía no hay conexión con el CRM');
+          })
+          .catch(() => {});
+        return;
+      }
+      if (event.target.closest('[data-outbox-problems-clear]')) {
+        clearOutboxProblems();
         return;
       }
       const attachLoc = event.target.closest('[data-order-attach-loc]');
@@ -16838,6 +20035,26 @@
         retryMedia(retry.dataset.mediaRetry);
         return;
       }
+      /*
+       * LO QUE SE PUEDE HACER CON UN MENSAJE YA ENVIADO (ver el menú de la
+       * pulsación larga): corregirlo y mandarlo de nuevo, apartarlo de este panel
+       * o devolverlo. Nada de esto toca WhatsApp: allí ya no se puede cambiar nada.
+       */
+      const quitarMensaje = event.target.closest('[data-message-remove]');
+      if (quitarMensaje) {
+        quitarMensajeDelCrm(quitarMensaje.dataset.messageRemove, quitarMensaje.dataset.conversation);
+        return;
+      }
+      const devolverMensaje = event.target.closest('[data-message-restore]');
+      if (devolverMensaje) {
+        devolverMensajeAlCrm(devolverMensaje.dataset.messageRestore, devolverMensaje.dataset.conversation);
+        return;
+      }
+      const reescribir = event.target.closest('[data-message-resend]');
+      if (reescribir) {
+        reescribirMensaje(reescribir.dataset.messageResend);
+        return;
+      }
       if (event.target.closest('#wa-attach')) {
         openAttachSheet(state.wa.selectedId);
         return;
@@ -16986,6 +20203,13 @@
         openChat(chat.dataset.chat, { followupId: chat.dataset.followup ?? null });
         return;
       }
+      const conversationDetails = event.target.closest('[data-conv-client-menu],[data-conv-followup-menu]');
+      if (conversationDetails) {
+        openConversationDetailsMenu(conversationDetails.dataset.convClientMenu || conversationDetails.dataset.convFollowupMenu, Boolean(conversationDetails.dataset.convFollowupMenu));
+        return;
+      }
+      const conversationMenuBack = event.target.closest('[data-conv-menu-back]');
+      if (conversationMenuBack) { openConvMenu(conversationMenuBack.dataset.convMenuBack); return; }
       const convMore = event.target.closest('[data-conv-more]');
       if (convMore) {
         openConvMenu(convMore.dataset.convMore);
@@ -17176,6 +20400,14 @@
         renderWhatsapp();
         return;
       }
+      // «Ver todas» del estado vacío: quita el filtro que dejó la lista a cero.
+      if (event.target.closest('[data-wa-filter-clear]')) {
+        state.wa.filter = 'todos';
+        guardarFiltrosActuales();
+        renderMobileHeader();
+        refreshWhatsapp().catch(() => renderWaList());
+        return;
+      }
       if (event.target.closest('[data-wa-filter-close]')) {
         state.wa.filtersOpen = false;
         document.body.dataset.waFilters = 'closed';
@@ -17254,10 +20486,16 @@
     $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
     $('#clientes-acciones').addEventListener('click', () => openClientsActions());
     $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
+    $('#pedidos-acciones').addEventListener('click', () => openPedidosAcciones());
     $('#usuario-nuevo')?.addEventListener('click', () => openUserCreateSheet());
 
     // Interruptores del plan de postventa (Ajustes): cada día se activa o apaga.
     document.addEventListener('change', (event) => {
+      const orderSelect = event.target.closest('[data-order-select]');
+      if (orderSelect) {
+        toggleOrderSelect(orderSelect.dataset.orderSelect);
+        return;
+      }
       const toggle = event.target.closest('[data-plan-toggle]');
       if (toggle) toggleFollowupDay(toggle.dataset.planToggle, toggle.checked);
       const deliveryAssign = event.target.closest('[data-delivery-assign]');
@@ -17286,10 +20524,23 @@
     $('#scrim').addEventListener('click', () => closeDrawer());
     $('#drawer').addEventListener('click', (event) => {
       // Elegir una opción del menú navega y lo cierra.
-      if (event.target.closest('[data-tab]')) closeDrawer();
+      const destination = event.target.closest('[data-tab]');
+      if (destination && $('#drawer').contains(destination)) closeDrawer();
     });
     $('#logout-drawer').addEventListener('click', () => confirmLogout());
     document.addEventListener('keydown', (event) => {
+      if (state.drawer && event.key === 'Tab') {
+        const focusable = [...$('#drawer').querySelectorAll('button:not([disabled]), a[href]')].filter((node) => !node.closest('[hidden]'));
+        const first = focusable[0], last = focusable.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+      if (state.drawer && event.target.closest('#drawer-theme') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+        const choices = [...$('#drawer-theme').querySelectorAll('button')];
+        const current = choices.indexOf(event.target.closest('button'));
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + choices.length) % choices.length;
+        event.preventDefault(); choices[index]?.click(); choices[index]?.focus();
+      }
       const userOpen = event.target.closest?.('[data-user-open]');
       if (userOpen && (event.key === 'Enter' || event.key === ' ')) {
         event.preventDefault();
@@ -17369,6 +20620,8 @@
       const chip = event.target.closest('[data-wa-filter]');
       if (!chip) return;
       state.wa.filter = chip.dataset.waFilter;
+      // El filtro elegido se recuerda: al volver a entrar sigue puesto.
+      guardarFiltrosActuales();
       state.wa.filtersOpen = false;
       document.body.dataset.waFilters = 'closed';
       state.wa.selected.clear();
@@ -17383,6 +20636,7 @@
     $('#wa-back').addEventListener('click', () => setWaView('list'));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
+        refreshDevicePermissions().catch(() => {});
         autoSyncCrmPush();
         waPollTick();
         // La pestaña vuelve a estar delante: se asegura el canal en vivo (el
@@ -17443,29 +20697,66 @@
 
   async function boot() {
     lockAppZoom();
+    /*
+     * LO ÚLTIMO QUE ELIGIÓ EL USUARIO, ANTES DE MONTAR NADA: la pestaña y los
+     * filtros (bandeja, pedidos, seguimientos, clientes). Se hace aquí­, al
+     * principio, para que los chips y las listas se pinten ya con su filtro
+     * puesto y no haya ni un parpadeo.
+     */
+    aplicarPreferenciasAlEstado();
     initEvents();
+    const restoreSettingsRoute = () => {
+      if (/^#config(?:\/|$)/.test(location.hash) && !$('#app').hidden) {
+        settingsPage = settingsRoute();
+        if (state.tab !== 'ajustes') setTab('ajustes');
+        renderAjustes(); renderMobileHeader(); renderTemaPicker();
+        if (settingsPage === 'permisos') refreshDevicePermissions().catch(() => {});
+      }
+    };
+    window.addEventListener('popstate', restoreSettingsRoute);
+    window.addEventListener('hashchange', restoreSettingsRoute);
     paintIcons();
     initPwa();
 
+    /*
+     * EL TEMA LO PRIMERO (aunque el <head> ya lo dejó puesto): aquí se resuelve
+     * «como el teléfono», se avisa al navegador del color de la barra y se
+     * dibuja el selector. Y a partir de ahora se sigue al sistema en vivo.
+     */
+    aplicarTema(temaDeLaPersona());
+    seguirTemaDelTelefono();
+
     // Un único temporizador para la bandeja de WhatsApp (8 s, solo cuando toca).
     setInterval(waPollTick, 8000);
+
+    /*
+     * A partir de aquí todo se sincroniza por detrás (nunca recargando la
+     * pantalla). Se arranca ANTES de pintar para que la primera vuelta a la app
+     * encuentre la sincronía ya en marcha.
+     */
+    iniciarSincroniaSilenciosa();
 
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
     const query = new URLSearchParams(location.search);
     const wanted = query.get('v');
     if (VIEWS.includes(wanted)) state.tab = wanted;
+    if (/^#config(?:\/|$)/.test(location.hash)) { state.tab = 'ajustes'; settingsPage = settingsRoute(); }
 
     /*
-     * Sin conexión NO se puede comprobar la sesión, pero el panel ya estuvo
-     * abierto antes en este teléfono: se muestra con la última copia en vez de
-     * pedir la clave a alguien que está en la calle sin datos.
+     * SIN CONEXIÓN NO SE PIDE LA CLAVE.
+     *
+     * El panel ya estuvo abierto en este teléfono: se pinta con la copia guardada
+     * (clientes, pedidos, catálogo, ajustes y el rol de quien entró) y se puede
+     * trabajar entero. Al volver la red, todo se manda solo.
      */
     const cached = readSnapshot();
     if (!navigator.onLine && cached) {
+      aplicarCopiaLocal(cached);
       showApp();
-      await load({ keepTab: true });
+      render();
       await applyDeepLink(query);
-      toast('Sin conexión: datos guardados en el teléfono');
+      renderOutboxBanner();
+      toast('Sin conexión: trabajando con los datos guardados en el teléfono');
       return;
     }
 

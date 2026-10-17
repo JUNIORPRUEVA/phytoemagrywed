@@ -370,6 +370,8 @@ describe('enviar una ubicación desde el chat', () => {
     await waitFor(() => $('#attach-location'), 'la opción de ubicación');
     expect(pedidos).toBe(0); // abrir el menú NO pide permiso
     click('#attach-location');
+    await waitFor(() => $('[data-sharing-other-location]'), 'las ubicaciones configuradas');
+    click('[data-sharing-other-location]');
     await waitFor(() => $('#loc-current'), 'el selector de ubicación');
     expect(pedidos).toBe(0); // abrir el selector tampoco
     click('#loc-current');
@@ -390,6 +392,8 @@ describe('enviar una ubicación desde el chat', () => {
     click('#wa-attach');
     await waitFor(() => $('#attach-location'), 'la opción de ubicación');
     click('#attach-location');
+    await waitFor(() => $('[data-sharing-other-location]'), 'las ubicaciones configuradas');
+    click('[data-sharing-other-location]');
     await waitFor(() => $('#loc-current'), 'el selector');
     click('#loc-current');
     await waitFor(() => $('#toast').textContent.match(/permiso/i), 'el aviso de permiso');
@@ -403,6 +407,8 @@ describe('enviar una ubicación desde el chat', () => {
     click('#wa-attach');
     await waitFor(() => $('#attach-location'), 'la opción de ubicación');
     click('#attach-location');
+    await waitFor(() => $('[data-sharing-other-location]'), 'las ubicaciones configuradas');
+    click('[data-sharing-other-location]');
     await waitFor(() => $('#loc-current'), 'el selector');
     click('#loc-current');
     await waitFor(() => $('#toast').textContent.match(/no sabe dar la ubicación/i), 'el aviso de no soportado');
@@ -418,6 +424,8 @@ describe('enviar una ubicación desde el chat', () => {
     click('#wa-attach');
     await waitFor(() => $('#attach-location'), 'la opción de ubicación');
     click('#attach-location');
+    await waitFor(() => $('[data-sharing-other-location]'), 'las ubicaciones configuradas');
+    click('[data-sharing-other-location]');
     await waitFor(() => $('#loc-current'), 'el selector');
     // En vez del dispositivo, se reutiliza la que compartió el cliente.
     const radio = $$('#sheet input[name="loc-pick"]').find((input) => input.value);

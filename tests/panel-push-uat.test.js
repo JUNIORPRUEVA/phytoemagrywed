@@ -291,7 +291,7 @@ describe('diagnóstico de iPhone y registro del dispositivo actual', () => {
     dom.window.Notification.permission = 'denied';
     dom.window.Notification.requestPermission = () => { throw new Error('No debe pedir permiso bloqueado'); };
     click('[data-push-test]');
-    await waitFor(() => $('#push-config [data-push-result]')?.textContent.includes('Ajustes → Notificaciones → CRM Phyto'), 'instrucciones de permiso bloqueado');
+    await waitFor(() => $('#push-config [data-push-result]')?.textContent.includes('Ajustes → Notificaciones → FullTECH, SRL'), 'instrucciones de permiso bloqueado');
     expect($('#push-config').textContent).not.toContain('Teléfono conectado');
     dom.window.Notification.permission = 'granted';
   });

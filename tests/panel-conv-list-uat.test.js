@@ -414,6 +414,46 @@ describe('la fila de la lista', () => {
 });
 
 describe('el menú «⋯» de una conversación', () => {
+  it('agrupa acciones y deja etapas y asignación fuera del menú principal', () => {
+    const before = whatsapp.sent.length;
+    click(`[data-conv-more="${ids.luis}"]`);
+    const groups = $$('#sheet-body .menu-group');
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Acciones principales','Gestión','Organizar conversación','Eliminar']);
+    expect(groups[0].querySelector('[data-conv-act="open"]')).not.toBeNull();
+    expect(groups.at(-1).querySelector('[data-conv-act="delete"]')).not.toBeNull();
+    expect($('#sheet-body [data-customer-stage]')).toBeNull();
+    expect($('#sheet-body [data-conv-take]')).toBeNull();
+    expect($$('#sheet-body [data-conv-assign]').length).toBe(1);
+    expect(whatsapp.sent.length).toBe(before);
+  });
+
+  it('Cliente abre ficha, etapa y etiquetas para la conversación elegida', () => {
+    click(`[data-conv-more="${ids.luis}"]`);
+    click('#sheet-body [data-conv-client-menu]');
+    const customerId = $('#sheet-body [data-customer]').dataset.customer;
+    expect($('#sheet-body [data-customer-stage-menu]').dataset.customerStageMenu).toBe(customerId);
+    expect($('#sheet-body [data-customer-tags]').dataset.customerTags).toBe(customerId);
+    click('#sheet-body [data-customer-stage-menu]');
+    expect($$('#sheet-body [data-customer-stage]').length).toBeGreaterThanOrEqual(4);
+    expect($$('#sheet-body [data-customer-stage]').every((button) => button.dataset.customerStage === customerId)).toBe(true);
+  });
+
+  it('Seguimiento y volver conservan el contexto sin enviar ni asignar', async () => {
+    const before = whatsapp.sent.length;
+    click(`[data-conv-more="${ids.luis}"]`);
+    click('#sheet-body [data-conv-followup-menu]');
+    expect($('#sheet-body [data-followup-new]').dataset.conversation).toBe(ids.luis);
+    expect($('#sheet-body [data-scheduled-new]').dataset.conversation).toBe(ids.luis);
+    click('#sheet-body [data-conv-menu-back]');
+    expect($('#sheet-body [data-conv-act="open"]').dataset.convId).toBe(ids.luis);
+    click('#sheet-body [data-conv-assign]');
+    await waitFor(() => $('#sheet-title').textContent === 'Asignar conversación', 'selector de responsable');
+    // La sesión de esta fixture usa token legado, sin una persona para asignarse.
+    expect($('#sheet-body [data-conv-assign-me]')).toBeNull();
+    expect($('#sheet-body').textContent).toContain('Tu usuario no puede cambiar el responsable');
+    expect(whatsapp.sent.length).toBe(before);
+  });
+
   it('ofrece las acciones de ESA conversación y ninguna manda nada sola', async () => {
     const enviadosAntes = whatsapp.sent.length;
     click(`[data-conv-more="${ids.luis}"]`);
@@ -1156,6 +1196,13 @@ describe('el chat va EN VIVO (sin esperar al sondeo de 8 s)', () => {
     click(`[data-conv="${ids.luis}"]`);
     await waitFor(() => $('#wa-text'), 'el compositor de la conversación');
     const antes = whatsapp.sent.length;
+    /*
+     * SIN LA VENTANA DE DESHACER. En el panel son 8 s para poder retirar un
+     * mensaje escrito a prisa; aquí se apaga (0) para no hacer esperar a la suite:
+     * lo que se está probando es la burbuja instantánea y su confirmación, no la
+     * ventana (esa tiene su propia prueba en `panel-mensajes-uat`).
+     */
+    dom.window.__PHYTO_UNDO_MS = 0;
     /*
      * Se anotan TODAS las peticiones que salen durante el envío: si la prueba
      * falla, el mensaje del fallo dice qué contestó el servidor (y qué avisó la

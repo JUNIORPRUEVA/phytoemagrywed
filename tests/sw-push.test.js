@@ -16,7 +16,7 @@ describe('cada push produce un aviso visible, requisito de Safari', () => {
     expect(pending).toBeDefined();
     await pending;
     expect(showNotification).toHaveBeenCalledTimes(1);
-    expect(showNotification.mock.calls[0][0]).toBe(kind === 'valid' ? 'Mensaje nuevo' : 'Phytoemagry');
+    expect(showNotification.mock.calls[0][0]).toBe(kind === 'valid' ? 'Mensaje nuevo' : 'FullTECH, SRL');
     if (kind === 'valid') expect(showNotification.mock.calls[0][1].data.deepLink).toBe('/admin/?v=whatsapp&conversation=conv-123');
   });
 });
