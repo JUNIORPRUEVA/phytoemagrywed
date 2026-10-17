@@ -55,11 +55,7 @@ body[data-tab=catalogo]:has(.pos-expanded) #view-catalogo .store-fab{display:gri
 .pos-ticket-list small{display:block;font-size:.72rem;opacity:.6;margin-top:5px}.pos-ticket-actions{display:flex;gap:20px;width:100%}
 .pos-ticket-history{margin-top:20px;font-size:.8rem}.pos-ticket-history summary{cursor:pointer;opacity:.7}
 #pos-quotes-page{max-width:820px;margin:0 auto;width:100%;box-sizing:border-box}
-.pos-document-search{display:block;margin:4px 0 20px}.pos-document-search input{width:100%;box-sizing:border-box}
-.pos-quote-row{display:flex;align-items:center;gap:12px;width:100%;padding:18px 3px;border:0;border-bottom:.5px solid #7186a230;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit}
-.pos-quote-row>span:nth-child(2){flex:1;min-width:0}.pos-quote-row>span:last-child{text-align:right;flex-shrink:0}
-.pos-quote-row strong{display:block;font-size:.85rem}.pos-quote-row small{display:block;font-size:.7rem;opacity:.55;margin-top:5px}
-.pos-quote-row>span:nth-child(2)>strong{white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+/* La lista vive en tarjetas (ver el bloque de cotizaciones al final). */
 .pos-document-icon{width:36px;height:42px;border-radius:10px;background:#3575eb18;color:#76a7ff;display:grid;place-items:center;flex-shrink:0}
 .pos-document-icon svg{width:21px;height:24px}
 .pos-quote-detail{padding:3px 0 25px}.pos-quote-detail>header{display:flex;align-items:center;gap:14px;padding:20px 0 25px}
@@ -199,3 +195,116 @@ body #drawer .drawer__head .icon-btn{width:34px;height:34px;min-height:34px;bord
 .pos-modal-form footer .btn.pos-danger{background:#b8453d;border-color:#b8453d;color:#fff}
 .pos-modal-form footer .btn.pos-danger:hover{background:#c9544b;border-color:#c9544b}
 @media(max-width:360px){.pos-discount-grid{grid-template-columns:1fr}}
+
+/* ---------------------------------------------------------------------------
+ * COTIZACIONES: barra con lupa y filtro, lista en tarjetas y panel de filtros.
+ *
+ * La barra es la misma en móvil y en escritorio (en móvil ocupa el sitio del
+ * appbar; en escritorio se enciende porque el appbar general está oculto). El
+ * panel de filtros cuelga de la propia página, no del viewport: así queda
+ * pegado a la barra en cualquier tamaño de pantalla.
+ * ------------------------------------------------------------------------ */
+.quotes-appbar{display:block;padding:calc(6px + env(safe-area-inset-top,0px)) 12px 6px;background:transparent;border-bottom:1px solid var(--border-soft,#7186a226)}
+.quotes-appbar__row{display:flex;align-items:center;gap:10px;min-height:44px}
+.quotes-appbar__search{display:none}
+body[data-quote-search='open'] .quotes-appbar__search{display:flex;animation:quotes-bar-in .16s ease-out}
+body[data-quote-search='open'] .quotes-appbar__default{display:none}
+body[data-quote-detail='true'] .quotes-appbar .wa-appbar__actions{visibility:hidden}
+/* En el detalle se vuelve con «‹ Todas las cotizaciones»: la flecha sobra. */
+body[data-quote-detail='true'] .quotes-appbar__default .wa-appbar__back{display:none}
+.quotes-appbar .wa-appbar__title{display:grid;flex:1;min-width:0;gap:2px}
+.quotes-appbar .wa-appbar__title strong{overflow:hidden;font-size:1.02rem;line-height:1.15;letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap}
+.quotes-appbar .wa-appbar__actions{display:flex;flex:none;align-items:center;gap:8px;margin-left:auto}
+.quotes-appbar .wa-appbar__back,.quotes-appbar .wa-appbar__icon{position:relative;display:grid;place-items:center;flex:none;width:40px;height:40px;min-width:40px;padding:0;border:.5px solid var(--border-soft,#7186a23d);border-radius:12px;background:var(--surface-muted,#7186a20d);color:inherit;cursor:pointer;transition:background .15s ease,border-color .15s ease,transform .15s ease}
+.quotes-appbar .wa-appbar__back{border-radius:50%}
+.quotes-appbar .wa-appbar__back:hover,.quotes-appbar .wa-appbar__icon:hover{border-color:var(--phyto-primary,#145bd7);color:var(--phyto-primary,#145bd7)}
+.quotes-appbar .wa-appbar__back:active,.quotes-appbar .wa-appbar__icon:active{transform:scale(.94)}
+.quotes-appbar .wa-appbar__icon[aria-expanded='true']{border-color:var(--phyto-primary,#145bd7);background:var(--phyto-primary-tint,#3574ef1a);color:var(--phyto-primary,#145bd7)}
+.quotes-appbar .wa-appbar__icon.is-on::after{content:'';position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--phyto-primary,#145bd7);box-shadow:0 0 0 2px var(--surface,#fff)}
+.quotes-appbar svg{width:20px;height:20px}
+.quotes-appbar .wa-appbar__search{flex:1;min-width:0;min-height:42px;padding:0 14px;border:.5px solid var(--border,#7186a240);border-radius:12px;background:var(--surface-muted,#7186a20d);color:inherit;font:inherit;font-size:.94rem;outline:none}
+.quotes-appbar .wa-appbar__search::placeholder{color:inherit;opacity:.42}
+.quotes-appbar .wa-appbar__search:focus{border-color:var(--phyto-primary,#145bd7);background:var(--surface,#fff)}
+/* El buscador ya tiene su propia ✕: la del navegador sobra (salían dos). */
+.quotes-appbar .wa-appbar__search::-webkit-search-cancel-button,.quotes-appbar .wa-appbar__search::-webkit-search-decoration{-webkit-appearance:none;appearance:none}
+@keyframes quotes-bar-in{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.quotes-appbar__search{animation:none!important}.quotes-appbar .wa-appbar__back,.quotes-appbar .wa-appbar__icon{transition:none}}
+
+#pos-quotes-page{position:relative}
+.pos-quotes-summary{margin:0 2px 12px;padding-top:15px;color:var(--text-secondary,#6b7a75);font-size:.72rem;font-weight:700;letter-spacing:.02em}
+.pos-quotes-summary:empty{display:none}
+.pos-quote-list{display:grid;gap:8px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+
+.pos-quote-card{display:grid;grid-template-columns:42px minmax(0,1fr) auto 10px;align-items:center;gap:11px;width:100%;padding:12px 12px 12px 13px;border:.5px solid var(--border-soft,#e9efeb);border-radius:15px;background:var(--surface,#fff);color:inherit;text-align:left;font:inherit;cursor:pointer;box-shadow:0 1px 2px #0e1b1608;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+.pos-quote-card:hover{border-color:var(--phyto-primary,#145bd7);box-shadow:0 12px 26px -16px #0e1b1666;transform:translateY(-1px)}
+.pos-quote-card:active{transform:none;box-shadow:0 1px 2px #0e1b1608}
+.pos-quote-card__avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:var(--tone,#145bd7);color:#fff;font-size:.8rem;font-weight:800;letter-spacing:.02em}
+.pos-quote-card__body{display:grid;min-width:0;gap:3px}
+.pos-quote-card__top{display:flex;align-items:center;gap:7px;min-width:0}
+.pos-quote-card__top>strong{min-width:0;overflow:hidden;font-size:.9rem;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}
+.pos-quote-card__meta{display:flex;align-items:center;gap:5px;overflow:hidden;color:var(--text-secondary,#6b7a75);font-size:.7rem;white-space:nowrap}
+.pos-quote-card__meta>span{flex:none}
+.pos-quote-card__ref{min-width:0;overflow:hidden;font-weight:700;text-overflow:ellipsis}
+.pos-quote-card__items{overflow:hidden;color:var(--text-secondary,#6b7a75);font-size:.7rem;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
+.pos-quote-card__amount{display:grid;justify-items:end;gap:2px;text-align:right;white-space:nowrap}
+.pos-quote-card__amount strong{font-size:.86rem;font-weight:800;font-variant-numeric:tabular-nums}
+.pos-quote-card__amount small{color:var(--text-secondary,#6b7a75);font-size:.6rem}
+.pos-quote-card__go{color:var(--text-secondary,#6b7a75);font-size:1.05rem;opacity:.5}
+.pos-quote-pill{flex:none;padding:2px 8px;border-radius:999px;background:var(--phyto-primary-tint,#3574ef1a);color:var(--phyto-primary,#145bd7);font-size:.62rem;font-weight:800;line-height:1.5}
+.pos-quote-card--converted .pos-quote-pill{background:#2f9e771f;color:#1c8460}
+:root[data-theme='dark'] .pos-quote-card--converted .pos-quote-pill{background:#2f9e7738;color:#82d9b6}
+
+/* En móvil la flecha sobra (la tarjeta entera se pulsa) y le robaba el sitio al
+   nombre del cliente. */
+@media(max-width:400px){
+  .pos-quote-card{grid-template-columns:42px minmax(0,1fr) auto;gap:10px}
+  .pos-quote-card__go{display:none}
+}
+
+/* Pantallas muy estrechas: se aprieta el avatar; el importe conserva su ancho. */
+@media(max-width:359px){
+  .pos-quote-card{grid-template-columns:38px minmax(0,1fr) auto;gap:9px;padding:11px}
+  .pos-quote-card__avatar{width:38px;height:38px;border-radius:12px;font-size:.74rem}
+  /* El estado baja a su propia línea antes que recortar el nombre. */
+  .pos-quote-card__top{flex-wrap:wrap;gap:4px 6px}
+  .pos-quote-card__top>strong{flex:1 1 100%}
+}
+
+.pos-quotes-empty{display:grid;justify-items:center;gap:6px;padding:38px 18px 34px;border:.5px dashed var(--border,#7186a240);border-radius:16px;background:var(--surface-muted,#7186a208);text-align:center}
+.pos-quotes-empty__icon{display:grid;place-items:center;width:46px;height:46px;margin-bottom:4px;border-radius:14px;background:var(--phyto-primary-tint,#3574ef14);color:var(--phyto-primary,#145bd7)}
+.pos-quotes-empty__icon svg{width:24px;height:26px}
+.pos-quotes-empty strong{font-size:.92rem}
+.pos-quotes-empty p{max-width:34ch;margin:0;color:var(--text-secondary,#6b7a75);font-size:.78rem;line-height:1.5}
+.pos-quotes-empty .btn{margin-top:8px}
+
+.pos-quote-filters{position:absolute;top:0;right:0;z-index:40;width:min(340px,calc(100vw - 26px));box-sizing:border-box;padding:14px;border:.5px solid var(--border,#7186a240);border-radius:16px;background:var(--surface,#fff);color:var(--text-primary,#14243d);box-shadow:0 24px 60px -22px #0b1b2e4d,0 2px 8px #0e1b1614;animation:pos-quote-filters-in .16s ease-out}
+.pos-quote-filters[hidden]{display:none}
+@keyframes pos-quote-filters-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.pos-quote-filters__head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.pos-quote-filters__head strong{font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;opacity:.62}
+.pos-quote-filters__group+.pos-quote-filters__group{margin-top:13px}
+.pos-quote-filters__label{margin:0 0 7px;font-size:.66rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;opacity:.45}
+.pos-quote-filters__chips{display:flex;flex-wrap:wrap;gap:6px}
+.pos-quote-filters__chips .chip{min-height:34px;padding:5px 11px;border-radius:999px;font-size:.78rem;font-weight:650}
+.pos-quote-filters__chips .chip span{margin-left:2px;font-size:.72rem;opacity:.55}
+.pos-quote-filters .chip[aria-pressed='true']{border-color:var(--phyto-primary,#145bd7);background:var(--phyto-primary,#145bd7);color:#fff}
+:root[data-theme='dark'] .pos-quote-filters .chip[aria-pressed='true']{color:#0b2142}
+@media(prefers-reduced-motion:reduce){.pos-quote-filters{animation:none!important}.pos-quote-card{transition:none}}
+
+/* Escritorio: la barra de la vista se enciende (el appbar general no se usa en
+   este panel) y la página y la barra comparten el mismo eje de 1000 px. */
+@media(min-width:980px){
+  body[data-tab='cotizaciones'] .mobile-header{display:block!important;flex:0 0 auto}
+  body[data-tab='cotizaciones'] .quotes-appbar{max-width:1000px;margin:0 auto;padding:10px 0 0;border-bottom:0}
+  body[data-tab='cotizaciones'] .pos-quotes-summary{padding-top:10px}
+  /* En escritorio no se «vuelve»: se navega con el menú. El título manda. */
+  body[data-tab='cotizaciones'] .quotes-appbar__default .wa-appbar__back{display:none}
+  body[data-tab='cotizaciones'] .quotes-appbar .wa-appbar__title strong{font-size:1.3rem;font-weight:800;letter-spacing:-.02em}
+  body[data-tab='cotizaciones'] #pos-quotes-page{max-width:1000px}
+  .pos-quote-card{grid-template-columns:46px minmax(0,1fr) auto 14px;gap:14px;padding:14px 16px}
+  .pos-quote-card__avatar{width:46px;height:46px;border-radius:14px;font-size:.86rem}
+  .pos-quote-card__top>strong{font-size:.95rem}
+  .pos-quote-card__amount strong{font-size:1rem}
+  .pos-quotes-empty{padding:56px 24px 50px}
+}
+

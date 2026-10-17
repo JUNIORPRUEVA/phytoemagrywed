@@ -290,7 +290,7 @@ modal.addEventListener('keydown',e=>{
 });
 
 // Las cotizaciones tienen página y detalle propios, separados de la venta activa.
-let quotesEpoch=0,quoteQuery='',quoteRows=[];
+let quotesEpoch=0,quoteQuery='',quoteRows=[],quoteStatus='todas',quoteRange='todas',quoteSearchOpen=false,quoteFiltersOpen=false;
 const quotesPage=()=>$('#pos-quotes-page');
 function openQuote(id){
   if(!id)return;modal.close();const url=new URL(location.href);url.searchParams.set('v','cotizaciones');url.searchParams.set('quote',id);url.searchParams.delete('ticket');url.searchParams.delete('product');
@@ -300,19 +300,109 @@ function notifyQuote(id,text){
   document.querySelector('.pos-document-toast')?.remove();const toast=document.createElement('div');toast.className='pos-document-toast';toast.setAttribute('role','status');
   toast.innerHTML=`<span>${esc(text)}</span><button type="button" data-pos-open-quote="${esc(id)}">Ver cotización</button>`;document.body.append(toast);setTimeout(()=>toast.remove(),15000);
 }
+/* ---------------------------------------------------------------------------
+ * COTIZACIONES: lista, búsqueda y filtros.
+ *
+ * La lupa y el filtro viven en la barra de arriba (los pinta app.js); aquí se
+ * decide qué se ve: texto (cliente, número o teléfono), estado (abiertas /
+ * facturadas) y periodo (hoy, 7 o 30 días). El panel de filtros se abre pegado
+ * a la barra para no sacar a nadie de la pantalla.
+ * ------------------------------------------------------------------------- */
+const QUOTE_STATUSES=[['todas','Todas'],['abiertas','Abiertas'],['facturadas','Facturadas']];
+const QUOTE_RANGES=[['todas','Todas'],['hoy','Hoy'],['7d','7 días'],['30d','30 días']];
+function quoteTone(id){let h=0;for(const c of String(id||''))h=(h*31+c.charCodeAt(0))%360;return `hsl(${h} 58% 42%)`;}
+function quoteInitials(name){return String(name||'?').trim().split(/\s+/).slice(0,2).map(parte=>parte[0]).join('').toUpperCase();}
+function quoteDate(iso){
+  const fecha=new Date(iso);if(Number.isNaN(fecha.getTime()))return '';
+  const hoy=new Date();
+  if(fecha.toDateString()===hoy.toDateString())return `Hoy, ${fecha.toLocaleTimeString('es-DO',{hour:'numeric',minute:'2-digit'})}`;
+  return fecha.toLocaleDateString('es-DO',{day:'numeric',month:'short',year:fecha.getFullYear()===hoy.getFullYear()?undefined:'numeric'});
+}
+const quoteTotal=d=>Number(d?.sale?.total_cents||0);
+const quoteItems=d=>d?.sale?.items||[];
+function hasQuoteFilters(){return quoteStatus!=='todas'||quoteRange!=='todas'||Boolean(quoteQuery.trim());}
+function quoteMatches(d){
+  const q=quoteQuery.trim().toLocaleLowerCase();
+  if(q&&!`${d.number||''} ${d.customer?.name||''} ${d.customer?.phone_e164||''}`.toLocaleLowerCase().includes(q))return false;
+  if(quoteStatus==='abiertas'&&d.status==='converted')return false;
+  if(quoteStatus==='facturadas'&&d.status!=='converted')return false;
+  if(quoteRange!=='todas'){
+    const fecha=new Date(d.created_at);if(Number.isNaN(fecha.getTime()))return false;
+    const ahora=new Date();
+    if(quoteRange==='hoy'&&fecha.toDateString()!==ahora.toDateString())return false;
+    const dias=(ahora-fecha)/86400000;
+    if(quoteRange==='7d'&&dias>7)return false;
+    if(quoteRange==='30d'&&dias>30)return false;
+  }
+  return true;
+}
+function quoteFiltersInner(){
+  const abiertas=quoteRows.filter(d=>d.status!=='converted').length;
+  const cuentas={todas:quoteRows.length,abiertas,facturadas:quoteRows.length-abiertas};
+  return `<header class="pos-quote-filters__head"><strong>Filtros</strong><button class="pos-text" type="button" data-quote-filters-clear ${hasQuoteFilters()?'':'hidden'}>Limpiar</button></header>
+    <div class="pos-quote-filters__group"><p class="pos-quote-filters__label">Estado</p><div class="pos-quote-filters__chips">${QUOTE_STATUSES.map(([key,label])=>`<button class="chip" type="button" data-quote-status="${key}" aria-pressed="${quoteStatus===key}">${label} <span>${cuentas[key]}</span></button>`).join('')}</div></div>
+    <div class="pos-quote-filters__group"><p class="pos-quote-filters__label">Periodo</p><div class="pos-quote-filters__chips">${QUOTE_RANGES.map(([key,label])=>`<button class="chip" type="button" data-quote-range="${key}" aria-pressed="${quoteRange===key}">${label}</button>`).join('')}</div></div>`;
+}
+function quoteFiltersPanel(){return `<section class="pos-quote-filters" id="pos-quote-filters" aria-label="Filtros de cotizaciones">${quoteFiltersInner()}</section>`;}
+function syncQuotesAppbar(){
+  document.body.dataset.quoteSearch=quoteSearchOpen?'open':'closed';
+  document.body.dataset.quoteFilters=quoteFiltersOpen?'open':'closed';
+  const input=$('#quote-appbar-search');
+  if(input&&input.value!==quoteQuery)input.value=quoteQuery;
+  const boton=document.querySelector('[data-quote-filter-open]');
+  if(boton){boton.setAttribute('aria-expanded',String(quoteFiltersOpen));boton.classList.toggle('is-on',hasQuoteFilters());}
+  const panel=$('#pos-quote-filters');
+  if(panel)panel.hidden=!quoteFiltersOpen;
+}
+function quoteCard(d){
+  const facturada=d.status==='converted';
+  const nombre=d.customer?.name||d.customer?.phone_e164||'Cliente';
+  // «Phytoemagry · 10 cápsulas» → «10 cápsulas»: la marca se repite en cada línea.
+  const articulo=i=>String(i.name||'').replace(/^\s*phytoemagry\s*[·-]\s*/i,'');
+  const detalle=quoteItems(d).map(i=>`${articulo(i)} ×${i.quantity}`).join(' · ');
+  const descuento=Number(d.sale?.discount_cents||0);
+  // La referencia corta sirve para reconocer la cotización de un vistazo; el
+  // número completo sigue estando en el detalle y en la búsqueda.
+  const referencia=`#${String(d.number||'').replace(/^COT-?/,'').slice(-8)}`;
+  return `<button class="pos-quote-card${facturada?' pos-quote-card--converted':''}" type="button" data-pos-open-quote="${esc(d.id)}">
+    <span class="pos-quote-card__avatar" style="--tone:${quoteTone(d.id)}" aria-hidden="true">${esc(quoteInitials(nombre))}</span>
+    <span class="pos-quote-card__body">
+      <span class="pos-quote-card__top"><strong>${esc(nombre)}</strong><span class="pos-quote-pill">${facturada?'Facturada':'Abierta'}</span></span>
+      <span class="pos-quote-card__meta"><span>${esc(quoteDate(d.created_at))}</span><span aria-hidden="true">·</span><span class="pos-quote-card__ref">${esc(referencia)}</span></span>
+      ${detalle?`<span class="pos-quote-card__items">${esc(detalle)}</span>`:''}
+    </span>
+    <span class="pos-quote-card__amount"><strong>${cash(quoteTotal(d))}</strong><small>${descuento?`−${cash(descuento)}`:'Total'}</small></span>
+    <span class="pos-quote-card__go" aria-hidden="true">›</span>
+  </button>`;
+}
 function quoteListRows(){
   const list=$('#pos-quote-list');if(!list)return;
-  const q=quoteQuery.toLocaleLowerCase();const rows=quoteRows.filter(d=>(d.number+' '+d.customer.name+' '+d.customer.phone_e164).toLocaleLowerCase().includes(q));
-  list.innerHTML=rows.map(d=>`<button class="pos-quote-row" type="button" data-pos-open-quote="${esc(d.id)}"><span class="pos-document-icon">${quotesIcon}</span><span><strong>${esc(d.customer.name||d.customer.phone_e164)}</strong><small>${esc(d.number)} · ${esc(new Date(d.created_at).toLocaleDateString('es-DO'))}</small></span><span><strong>${cash(d.sale.total_cents)}</strong><small>${d.status==='converted'?'Facturada / pedido':'Cotización'}</small></span></button>`).join('')||'<div class="pos-empty">No hay cotizaciones para mostrar.</div>';
+  const rows=quoteRows.filter(quoteMatches);
+  const abiertas=rows.filter(d=>d.status!=='converted').length;
+  const total=rows.reduce((n,d)=>n+quoteTotal(d),0);
+  const resumen=$('#pos-quotes-summary');
+  if(resumen)resumen.textContent=rows.length?`${rows.length} cotización${rows.length===1?'':'es'} · ${abiertas} abierta${abiertas===1?'':'s'} · ${cash(total)}`:'';
+  list.innerHTML=rows.length?rows.map(quoteCard).join(''):`<div class="pos-quotes-empty"><span class="pos-quotes-empty__icon">${quotesIcon}</span><strong>${hasQuoteFilters()?'No hay cotizaciones con estos filtros':'Todavía no hay cotizaciones'}</strong><p>${hasQuoteFilters()?'Prueba con otro estado, otro periodo o sin búsqueda.':'Se crean desde Facturación con el botón «Cotizar»; aquí quedan guardadas para enviarlas o pasarlas a ticket.'}</p>${hasQuoteFilters()?'<button class="btn btn--ghost" type="button" data-quote-filters-clear>Quitar filtros</button>':''}</div>`;
+  syncQuotesAppbar();
+}
+function renderQuoteFilters(){
+  const panel=$('#pos-quote-filters');
+  if(panel)panel.innerHTML=quoteFiltersInner();
+  quoteListRows();
+}
+function resetQuoteFilters(){
+  quoteStatus='todas';quoteRange='todas';quoteQuery='';quoteSearchOpen=false;
+  renderQuoteFilters();
 }
 async function renderQuotesPage(){
   const box=quotesPage();if(!box)return;const request=++quotesEpoch,epoch=generation;
   try{
     const id=new URLSearchParams(location.search).get('quote');
+    document.body.dataset.quoteDetail=id?'true':'false';
     if(!id){
-      const data=await api('quotes');if(request!==quotesEpoch||epoch!==generation)return;quoteRows=data.quotes;
-      box.innerHTML=`<label class="field pos-document-search"><span class="sr-only">Buscar cotizaciones</span><input class="field__input" type="search" id="pos-quote-search" placeholder="Buscar cliente o cotización" value="${esc(quoteQuery)}"></label><div id="pos-quote-list"></div>`;
-      $('#pos-quote-search').addEventListener('input',e=>{quoteQuery=e.target.value;quoteListRows();});quoteListRows();return;
+      const data=await api('quotes');if(request!==quotesEpoch||epoch!==generation)return;quoteRows=data.quotes||[];
+      box.innerHTML=`<p class="pos-quotes-summary" id="pos-quotes-summary"></p>${quoteFiltersPanel()}<div class="pos-quote-list" id="pos-quote-list"></div>`;
+      syncQuotesAppbar();quoteListRows();return;
     }
     const {document:q}=await api('quotes/'+encodeURIComponent(id));if(request!==quotesEpoch||epoch!==generation)return;
     box.innerHTML=`<div class="pos-quote-detail"><button class="pos-text" type="button" data-pos-quotes-list>‹ Todas las cotizaciones</button><header><span class="pos-document-icon">${quotesIcon}</span><div><small>${esc(q.number)}</small><h2>${esc(q.customer.name||q.customer.phone_e164)}</h2><p>${esc(q.customer.phone_e164)} · ${esc(new Date(q.created_at).toLocaleDateString('es-DO'))}</p></div></header><div class="pos-quote-detail-lines">${q.sale.items.map(i=>`<div><span><strong>${esc(i.name)}</strong><small>${i.quantity} × ${cash(i.unit_price_cents)}${i.discount_cents?' · −'+cash(i.discount_cents):''}</small></span><strong>${cash(i.subtotal_cents)}</strong></div>`).join('')}</div><div class="pos-quote-detail-total"><small>Descuento general ${cash(q.sale.discount_cents)} · Envío ${cash(q.sale.delivery_cents)}</small><strong>${cash(q.sale.total_cents)}</strong></div>${q.input.notes?`<p class="pos-muted">${esc(q.input.notes)}</p>`:''}<div class="pos-quote-detail-actions"><a class="btn btn--ghost" href="/api/admin/pos/quotes/${esc(q.id)}/receipt" target="_blank" rel="noopener">Ver PDF / compartir</a>${q.status==='converted'?`<a class="btn btn--primary" href="/api/admin/orders/${esc(q.order_id)}/receipt" target="_blank" rel="noopener">Ver venta</a>`:`<button class="btn btn--primary" type="button" data-pos-quote-ticket="${esc(q.id)}">Pasar a ticket</button>`}</div><p class="pos-muted">Cotización comercial. No registra pago ni reserva inventario.</p></div>`;
@@ -329,6 +419,15 @@ async function runAction(action){if(busy)return;try{busy=true;await action();}ca
 
 document.addEventListener('click',e=>{
   if(operation&&e.target.closest('[data-pos-new-ticket],[data-pos-note],[data-pos-manual],[data-pos-ticket],[data-pos-quote-ticket]')){actionError('Revisa la operación anterior antes de cambiar la venta.');return;}
+  // Cotizaciones: la barra de arriba lleva la lupa y el filtro.
+  if(e.target.closest('[data-quote-search-open]')){quoteSearchOpen=true;quoteFiltersOpen=false;syncQuotesAppbar();requestAnimationFrame(()=>$('#quote-appbar-search')?.focus());return;}
+  if(e.target.closest('[data-quote-search-close]')||e.target.closest('[data-quote-search-clear]')){quoteSearchOpen=false;quoteQuery='';syncQuotesAppbar();if($('#pos-quote-list'))quoteListRows();return;}
+  if(e.target.closest('[data-quote-filter-open]')){quoteFiltersOpen=!quoteFiltersOpen;quoteSearchOpen=false;syncQuotesAppbar();return;}
+  const quoteStatusChip=e.target.closest('[data-quote-status]');
+  if(quoteStatusChip){quoteStatus=quoteStatusChip.dataset.quoteStatus;renderQuoteFilters();return;}
+  const quoteRangeChip=e.target.closest('[data-quote-range]');
+  if(quoteRangeChip){quoteRange=quoteRangeChip.dataset.quoteRange;renderQuoteFilters();return;}
+  if(e.target.closest('[data-quote-filters-clear]')){resetQuoteFilters();return;}
   if(e.target.closest('[data-pos-search-open]'))setSearchOpen(true);
   if(e.target.closest('[data-pos-search-close]'))setSearchOpen(false);
   if(e.target.closest('[data-pos-actions]'))actions();
@@ -342,12 +441,25 @@ document.addEventListener('click',e=>{
   const discard=e.target.closest('[data-pos-ticket-discard]');if(discard)runAction(()=>discardTicket(discard.dataset.posTicketDiscard));
   const quote=e.target.closest('[data-pos-open-quote]');if(quote)openQuote(quote.dataset.posOpenQuote);
   const quoteTicket=e.target.closest('[data-pos-quote-ticket]');if(quoteTicket)runAction(()=>quoteToTicket(quoteTicket.dataset.posQuoteTicket));
-  if(e.target.closest('[data-pos-quotes-list]'))quotesList();
+  if(e.target.closest('[data-pos-quotes-list]')){document.body.dataset.quoteDetail='false';quotesList();}
+  // Un clic fuera del panel de filtros lo cierra, sin perder lo elegido.
+  if(quoteFiltersOpen&&!e.target.closest('#pos-quote-filters')&&!e.target.closest('[data-quote-filter-open]')){quoteFiltersOpen=false;syncQuotesAppbar();}
 });
 window.addEventListener('fulltech:pos-appbar',syncSearchBar);
 window.addEventListener('fulltech:pos-render',syncSearchBar);
+window.addEventListener('fulltech:pos-navigate',()=>{if(document.body.dataset.tab==='cotizaciones')syncQuotesAppbar();});
+document.addEventListener('input',e=>{if(e.target.id==='quote-appbar-search'){quoteQuery=e.target.value;if(document.body.dataset.tab==='cotizaciones'&&$('#pos-quote-list'))quoteListRows();}});
 window.addEventListener('popstate',()=>{if(document.body.dataset.tab==='cotizaciones')renderQuotesPage();else syncSearchBar();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&searchOpen&&!modal.open&&!actionsDrawer.open){setSearchOpen(false);e.preventDefault();}});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&(quoteSearchOpen||quoteFiltersOpen)&&document.body.dataset.tab==='cotizaciones'){
+    // Si se cierra la barra de búsqueda, el texto deja de filtrar: si no, la
+    // lista quedaría vacía sin que se vea por qué.
+    quoteSearchOpen=false;quoteFiltersOpen=false;quoteQuery='';syncQuotesAppbar();
+    if($('#pos-quote-list'))quoteListRows();
+    e.preventDefault();return;
+  }
+  if(e.key==='Escape'&&searchOpen&&!modal.open&&!actionsDrawer.open){setSearchOpen(false);e.preventDefault();}
+});
 
 document.addEventListener('click',e=>{
   const mutation=e.target.closest('[data-pos-add],[data-pos-client],[data-pos-remove-client],[data-pos-customer],[data-pos-edit],[data-pos-quantity],[data-pos-discount],[data-pos-options],[data-pos-note],[data-pos-clear]');
@@ -380,7 +492,7 @@ document.addEventListener('click',e=>{
 window.addEventListener('fulltech:pos-products',e=>{products=e.detail.products;render();initialize();});
 window.addEventListener('fulltech:pos-render',()=>{updateBadges();});
 window.addEventListener('fulltech:offline-synced',async e=>{const mapping=e.detail.mapping;if(draft.customer&&mapping[draft.customer.id])draft.customer.id=mapping[draft.customer.id];if(mapping[draft.ticketId])draft.ticketId=mapping[draft.ticketId];if(mapping[draft.quoteId])draft.quoteId=mapping[draft.quoteId];persist();loaded=false;await initialize();render();});
-window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones')initialize().then(renderQuotesPage);}});
+window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.detail.tab==='catalogo'){initialize();render();syncSearchBar();}else{searchOpen=false;modal.close();if(e.detail.tab==='cotizaciones'){quoteSearchOpen=false;quoteFiltersOpen=false;initialize().then(()=>{renderQuotesPage();syncQuotesAppbar();});}else{document.body.dataset.quoteSearch='closed';document.body.dataset.quoteFilters='closed';delete document.body.dataset.quoteDetail;}}});
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;
   if(operation){message='Revisa el resultado de la operación anterior antes de iniciar otro pedido.';render();return;}

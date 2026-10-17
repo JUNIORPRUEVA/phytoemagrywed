@@ -2113,6 +2113,29 @@
       return;
     }
     /*
+     * COTIZACIONES: la lupa y el filtro viven en la barra, igual que en Clientes
+     * y Pedidos. La fila de búsqueda se muestra u oculta con `data-quote-search`
+     * (la maneja pos.js, que es quien conoce las cotizaciones).
+     */
+    if (state.tab === 'cotizaciones') {
+      box.innerHTML = `<div class="wa-appbar quotes-appbar">
+        <div class="quotes-appbar__row quotes-appbar__default">
+          <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+          <div class="wa-appbar__title"><strong>Cotizaciones</strong></div>
+          <div class="wa-appbar__actions">
+            <button class="wa-appbar__icon" data-quote-search-open type="button" aria-label="Buscar cotización">${ICONS.search}</button>
+            <button class="wa-appbar__icon" data-quote-filter-open type="button" aria-label="Filtrar cotizaciones" aria-expanded="false">${ICONS.filter}</button>
+          </div>
+        </div>
+        <div class="quotes-appbar__row quotes-appbar__search">
+          <button class="wa-appbar__back" data-quote-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
+          <input class="wa-appbar__search" id="quote-appbar-search" type="search" placeholder="Buscar cliente o cotización" aria-label="Buscar cotización" autocomplete="off" />
+          <button class="wa-appbar__icon" data-quote-search-clear type="button" aria-label="Limpiar búsqueda">${ICONS.close}</button>
+        </div>
+      </div>`;
+      return;
+    }
+    /*
      * EL CIERRE DIARIO Y SU HISTORIAL SON DOS CARAS DE LO MISMO. En la barra de
      * arriba va el atajo para pasar de uno a otro sin dar la vuelta por el menú:
      * desde el cierre de hoy al historial, y del historial al cierre de hoy.
@@ -18901,6 +18924,11 @@
       state.pedidosFiltersOpen = false;
       state.pedidosSearchOpen = false;
       delete document.body.dataset.orderFilters;
+    }
+    if (tab !== 'cotizaciones') {
+      // La barra de Cotizaciones la lleva pos.js: al salir se cierra su búsqueda.
+      document.body.dataset.quoteSearch = 'closed';
+      document.body.dataset.quoteFilters = 'closed';
     }
     // Fuera del mapa no se sigue nada: ni GPS en vivo ni sondeos ni el mapa vivo.
     if (tab !== 'mapa') {

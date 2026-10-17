@@ -423,6 +423,41 @@ Los colores salen de variables (`--pe-page-bg`, `--pe-appbar-bg`, `--pe-tabbar-b
 una variable, no escribiendo un color nuevo. Las filas de conversación, los paneles de
 filtros y las burbujas tienen su bloque de oscuro en ese mismo archivo.
 
+#### Cotizaciones: lupa y filtro en la barra, lista en tarjetas
+
+La pantalla de Cotizaciones tenía un buscador suelto dentro de la página. Ahora **la lupa
+y el filtro viven en la barra de arriba**, a la derecha, igual que en Clientes y Pedidos
+(`app.js` pinta la barra; `pos.js` decide qué se ve).
+
+- La barra tiene **dos filas**: la normal (volver · «Cotizaciones» · 🔍 ⚙) y la de
+  búsqueda, que se cambia en el sitio con una animación corta de 160 ms. Se alternan con
+  `body[data-quote-search='open']`, así que no hay dos barras montadas: es la misma.
+- **El texto deja de filtrar cuando cierras la búsqueda**. Con el botón ✕ o con `Escape`
+  se limpia la consulta: si no, la lista quedaba vacía sin que se viera por qué (pasó al
+  probarlo y está corregido).
+- **Filtros** (panel pegado a la barra, no una hoja que sube desde abajo): Estado
+  (Todas / Abiertas / Facturadas, con su cuenta) y Periodo (Todas / Hoy / 7 días / 30
+  días). Se cierran al pulsar fuera o con `Escape`, y el botón ⚙ se queda con un punto
+  azul mientras haya algo puesto.
+- **La lista es de tarjetas**, no de filas: iniciales con color estable por cotización,
+  nombre, estado (Abierta / Facturada), fecha, referencia corta (`#19F47967C4`), resumen
+  de artículos, importe y descuento. Arriba, una línea de resumen: cuántas hay, cuántas
+  abiertas y cuánto suman. Sin resultados, un estado vacío que explica y ofrece
+  **Quitar filtros**.
+- **En escritorio** la barra se enciende (el appbar general está oculto en el panel), se
+  alinea con el contenido (máximo 1000 px, centrado), pierde la flecha de volver y el
+  título crece: la navegación va por el menú. En el detalle de una cotización la barra se
+  queda solo con el título, porque ya hay «‹ Todas las cotizaciones».
+- En el móvil se sigue viendo igual: la tarjeta entera se pulsa, sin flecha lateral
+  (le robaba el sitio al nombre) y con el estado debajo del nombre por debajo de 360 px.
+- **Datos de prueba**: `scripts/uat-env.mjs` siembra seis cotizaciones por la misma API
+  del panel (una pasada a factura, con descuentos y envíos distintos), con el total
+  calculado por `calculateSale()`. Es idempotente: si ya hay cotizaciones, no toca nada.
+
+Medido en el navegador: 390 × 844, 360, 320, 1024 × 768 y 1440 × 900, en claro y en
+oscuro, sin desbordamiento horizontal y sin nombres recortados (solo se recorta el resumen
+de artículos, que es una línea a propósito).
+
 - **Clave y sesión**: la clave del panel es `PHYTO_CRM_TOKEN`. Al entrar, el
   servidor devuelve una cookie **HttpOnly, SameSite=Strict** (y `Secure` si va por
   HTTPS) firmada con HMAC: no hay tabla de sesiones y, si cambias la clave, todas

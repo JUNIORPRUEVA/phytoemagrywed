@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v122-vista-pc';
+const VERSION = 'crm-v123-cotizaciones';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
