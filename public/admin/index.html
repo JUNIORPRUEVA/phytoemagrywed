@@ -65,11 +65,14 @@
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=2" />
     <link rel="stylesheet" href="/admin/fulltech.css?v=2" />
-    <link rel="stylesheet" href="/admin/navigation.css?v=chat-finalizar-1" />
+    <link rel="stylesheet" href="/admin/navigation.css?v=orders-layout-114" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=2" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=7" />
-    <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
-    <link rel="stylesheet" href="/admin/composer-mobile.css?v=1" />
+    <!--
+      La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
+      sobre la geometría y los colores de esa pantalla.
+    -->
+    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-1" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -334,7 +337,6 @@
                   disabled
                 ></button>
                 <div class="wa__chat-who">
-                  <p class="wa__chat-phone" id="wa-chat-phone" dir="ltr"></p>
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
@@ -871,9 +873,7 @@
     <script src="/admin/offline.js?v=3" defer></script>
     <script src="/admin/offline-ui.js?v=1" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
-    <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=chat-finalizar-117" defer></script>
-    <script src="/admin/composer-mobile.js?v=1" defer></script>
+    <script src="/admin/app.js?v=wa-lista-117" defer></script>
     <script src="/admin/proofreading.js?v=7" defer></script>
     <script src="/admin/deepseek-settings.js?v=2" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=2" defer></script>

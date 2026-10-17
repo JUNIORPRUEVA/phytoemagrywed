@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v119-chat-finalizar';
+const VERSION = 'crm-v119-lista-whatsapp';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -31,10 +31,6 @@ const SHELL = [
   '/admin/settings.css',
   '/admin/fulltech.css',
   '/admin/navigation.css',
-  '/admin/conversation-list.css',
-  '/admin/conversation-list.js',
-  '/admin/composer-mobile.css',
-  '/admin/composer-mobile.js',
   '/admin/assets/icons/chat-call.png',
   '/admin/assets/icons/chat-search.png',
   '/admin/assets/icons/chat-microphone.png',
@@ -49,6 +45,7 @@ const SHELL = [
   '/admin/vendor/proofreading/es-DO.aff',
   '/admin/vendor/proofreading/es-DO.dic',
   '/admin/shell-v2-tema.css',
+  '/admin/wa-lista.css',
   '/admin/app.js',
   '/admin/offline-storage.js',
   '/admin/offline.js',

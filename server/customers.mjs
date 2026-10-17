@@ -813,10 +813,9 @@ export function createCustomerService(deps) {
           /*
            * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
            * Se calcula del propio hilo, así que NO se apaga por abrir o marcar
-           * como leída: se apaga al contestar o finalizar ese mensaje.
+           * como leída la conversación: solo cuando el negocio contesta.
            */
-          awaiting_reply: Boolean(last?.direction === 'inbound' && last.id !== conversation.resolved_message_id),
-          is_resolved: Boolean(conversation.resolved_at && (!last || last.id === conversation.resolved_message_id)),
+          awaiting_reply: last ? last.direction === 'inbound' : false,
           commercial_state: commercialState,
           customerStage: stage.stage,
           customer_stage: stage.stage,
@@ -1070,9 +1069,6 @@ export function createCustomerService(deps) {
         last_message_at: maxIso(conversation.last_message_at, messageAt),
         last_inbound_at: maxIso(conversation.last_inbound_at, messageAt),
         unread_count: Number(conversation.unread_count ?? 0) + 1,
-        resolved_at: null,
-        resolved_message_id: null,
-        resolved_by_user_id: null,
         archived_at: null,
         status: humanRequest || healthConcern ? 'HUMAN_REQUIRED' : conversation.status ?? 'AUTOMATIC',
         updated_at: now,
@@ -1323,18 +1319,6 @@ export function createCustomerService(deps) {
     async archiveConversation(conversationId, archived = true) {
       return db.update('conversations', conversationId, {
         archived_at: archived ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
-      });
-    },
-
-    async resolveConversation(conversationId, resolved = true, userId = null) {
-      const rows = await db.list('wa_messages', { by: 'created_at', order: 'desc' });
-      const last = rows.find((row) => row.conversation_id === conversationId && !row.deleted_at);
-      return db.update('conversations', conversationId, {
-        resolved_at: resolved ? new Date().toISOString() : null,
-        resolved_message_id: resolved ? last?.id ?? null : null,
-        resolved_by_user_id: resolved ? userId : null,
-        ...(resolved ? { unread_count: 0 } : {}),
         updated_at: new Date().toISOString(),
       });
     },

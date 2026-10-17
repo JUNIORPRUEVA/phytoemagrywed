@@ -1015,13 +1015,6 @@ async function closeActiveTrackingForOrder(ctx, orderId, status, actor = null) {
 }
 
 async function createUserNotification(ctx, input) {
-  // Un reintento del mismo suceso no debe recrear el aviso ni reenviar su push.
-  if (input.idempotencyKey) {
-    const marks = await notificationDeletionMarks(ctx);
-    if (borradoParaSuDestinatario(marks, { recipient_user_id: input.recipientUserId, idempotency_key: input.idempotencyKey })) {
-      return { duplicate: true, notification: null };
-    }
-  }
   const at = ctx.clock().toISOString();
   const doc = {
     id: newId('not'),
@@ -1044,12 +1037,28 @@ async function createUserNotification(ctx, input) {
 }
 
 /**
- * Marcas permanentes por destinatario. No se recortan por antigüedad ni por
- * cantidad: hacerlo permitiría que un suceso antiguo volviera a aparecer.
+ * CUÁNTOS BORRADOS SE RECUERDAN.
+ *
+ * Es una lista de «esto ya no lo quiero ver», no un histórico: `PER_USER` por
+ * persona sobra para cualquier uso real y la consulta sigue siendo barata. Al
+ * pasar el tope se van los MÁS VIEJOS (los borrados recientes son los que
+ * importan: son los que el usuario acaba de hacer y los que se encontraría otra
+ * vez al reabrir la app). `READ` es cuántas marcas se leen de una vez.
+ */
+const NOTIF_DELETIONS_PER_USER = 2000;
+const NOTIF_DELETIONS_READ = 5000;
+
+/**
+ * Las marcas de borrado, agrupadas por la persona a la que se le borró el aviso.
+ *
+ * Van por destinatario y no por «quien pulsa», porque un aviso pertenece a UNA
+ * persona: si administración borra los avisos de todo el equipo, cada uno tiene
+ * que dejar de verlos. Y al revés: que un agente borre el suyo no puede esconder
+ * el aviso de otro.
  */
 async function notificationDeletionMarks(ctx) {
   const porPersona = new Map();
-  const rows = await ctx.db.list('notification_deletions', { by: 'created_at', order: 'desc' });
+  const rows = await ctx.db.list('notification_deletions', { by: 'created_at', order: 'desc', limit: NOTIF_DELETIONS_READ });
   for (const row of rows) {
     if (!row.user_id) continue;
     const suyas = porPersona.get(row.user_id) ?? { ids: new Set(), keys: new Set() };
@@ -1072,7 +1081,7 @@ function borradoParaSuDestinatario(marcas, row) {
 /**
  * Apunta que este aviso se borró para `userId` (su destinatario). Se guarda
  * también la clave del suceso para que una recreación del mismo suceso tampoco
- * lo resucite.
+ * lo resucite, y se poda la lista por persona.
  *
  * Importa que ocurra AQUÍ y no solo en el teléfono: el borrado del teléfono no
  * viaja a los demás dispositivos, y es exactamente lo que hacía que los avisos
@@ -1090,50 +1099,38 @@ async function rememberNotificationDeletion(ctx, userId, notification) {
     created_at: at,
     updated_at: at,
   });
-}
-
-async function notificationOwnerId(ctx, actor) {
-  return await pushOwnerUserId(ctx, actor) ?? actor?.id ?? null;
-}
-
-/** Descartes de avisos generados en la interfaz, persistentes y personales. */
-async function localNotificationDismissals(ctx, userId) {
-  const result = {};
-  const rows = await ctx.db.list('notification_deletions');
-  for (const row of rows) {
-    if (row.user_id !== userId || !row.notice_key) continue;
-    const previous = result[row.notice_key];
-    const value = row.notice_value;
-    if (previous === true || value === true) result[row.notice_key] = true;
-    else if (typeof value === 'number') result[row.notice_key] = Math.max(Number(previous) || 0, value);
-    else if (previous === undefined) result[row.notice_key] = value;
+  const suyas = (await ctx.db.list('notification_deletions', { by: 'created_at', order: 'desc', limit: NOTIF_DELETIONS_READ })).filter(
+    (row) => row.user_id === userId,
+  );
+  for (const vieja of suyas.slice(NOTIF_DELETIONS_PER_USER)) {
+    await ctx.db.remove('notification_deletions', vieja.id);
   }
-  return result;
 }
 
 /** Los avisos que este actor puede borrar (filas crudas: hacen falta sus claves). */
 async function deletableNotifications(ctx, actor) {
   if (!actor?.id) return [];
-  const ownerId = await notificationOwnerId(ctx, actor);
   const rows = await ctx.db.list('user_notifications', { by: 'created_at', order: 'desc' });
-  return rows.filter((row) => row.recipient_user_id === ownerId);
+  return rows.filter((row) => hasPermission(actor, 'delivery.tracking.manage_all') || row.recipient_user_id === actor.id);
 }
 
 async function listUserNotifications(ctx, actor, options = {}) {
   if (!actor?.id) return [];
   const limit = options.limit ?? 100;
-  const ownerId = await notificationOwnerId(ctx, actor);
   /*
-   * El límite se aplica después del destinatario y los descartes: el volumen
-   * de avisos de otros usuarios no puede ocultar los de esta persona.
+   * Se lee un poco más de lo pedido porque el filtro (destinatario y borrados) se
+   * aplica DESPUÉS: si no, con muchos avisos borrados la lista se quedaría corta
+   * y el panel diría que no hay nada cuando sí lo hay. Al final se recorta al
+   * tope pedido, así que el contrato de `limit` no cambia.
    */
   const rows = await ctx.db.list('user_notifications', {
     by: 'created_at',
     order: 'desc',
+    limit: Number.isFinite(limit) ? limit + 200 : limit,
   });
   const marcas = await notificationDeletionMarks(ctx);
   return rows
-    .filter((row) => row.recipient_user_id === ownerId)
+    .filter((row) => hasPermission(actor, 'delivery.tracking.manage_all') || row.recipient_user_id === actor.id)
     .filter((row) => !borradoParaSuDestinatario(marcas, row))
     .slice(0, Number.isFinite(limit) ? limit : undefined)
     .map((row) => ({
@@ -5182,8 +5179,6 @@ async function handle(req, res, ctx) {
         // La regla de la contraseña vive en el servidor: el panel solo la enseña.
         minPasswordLength: MIN_PASSWORD_LENGTH,
         notifications: await listUserNotifications(ctx, actor),
-        notificationSnapshotAt: ctx.clock().toISOString(),
-        notificationDismissals: await localNotificationDismissals(ctx, await notificationOwnerId(ctx, actor)),
         push: await pushStatusForUser(ctx, await pushOwnerUserId(ctx, actor)),
         paymentMethods: PAYMENT_METHODS.map((value) => ({ value, label: paymentMethodLabel(value) })),
         // Catálogo, inventario y estado comercial, sin repetir precios ni estados en el panel.
@@ -6168,26 +6163,6 @@ async function handle(req, res, ctx) {
       return;
     }
 
-    if (route === '/api/admin/notification-dismissals' && req.method === 'POST') {
-      const body = await readJsonBody(req);
-      const entries = Object.entries(body?.dismissed ?? {});
-      if (entries.length > 500 || entries.some(([key, value]) =>
-        !/^(wa-failed|scheduled-problem:[a-zA-Z0-9_-]{1,160})$/.test(key) ||
-        !(value === true || (typeof value === 'number' && Number.isFinite(value) && value >= 0) || (typeof value === 'string' && value.length <= 80)))) {
-        json(res, 422, { ok: false, error: 'invalid_dismissals' }); return;
-      }
-      const userId = await notificationOwnerId(ctx, actor);
-      for (const [key, raw] of entries) {
-        const value = key.startsWith('scheduled-problem:') ? true : raw;
-        const identity = JSON.stringify([userId, key, value]);
-        await ctx.db.insert('notification_deletions', {
-          id: newId('ndel'), user_id: userId, notice_key: key, notice_value: value,
-          idempotency_key: `notice-dismiss:${identity}`, created_at: ctx.clock().toISOString(),
-        });
-      }
-      json(res, 200, { ok: true, dismissed: await localNotificationDismissals(ctx, userId) }); return;
-    }
-
     if (route === '/api/admin/notifications' && req.method === 'GET') {
       const notifications = await listUserNotifications(ctx, actor);
       json(res, 200, {
@@ -6199,18 +6174,31 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/notifications' && req.method === 'DELETE') {
-      const body = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] ? await readJsonBody(req) : {};
-      const before = body?.before ?? ctx.clock().toISOString();
-      if (!Number.isFinite(Date.parse(before))) {
-        json(res, 422, { ok: false, error: 'invalid_before' }); return;
-      }
-      // Una sola instantánea personal: los avisos nuevos quedan fuera, también
-      // al sincronizar un «Eliminar todas» que se hizo sin conexión.
-      const pendientes = (await deletableNotifications(ctx, actor)).filter((row) => Date.parse(row.created_at) <= Date.parse(before));
+      /*
+       * SE BORRAN TODAS DE VERDAD, NO LAS PRIMERAS 500… Y NO VUELVEN.
+       *
+       * Antes se listaba con `limit: 500` y, como el filtro por destinatario se
+       * aplica DESPUÉS del límite, quedaban filas vivas: el panel decía
+       * «eliminadas» y la notificación volvía a aparecer en el siguiente
+       * refresco. Ahora se leen TODAS las que el actor puede ver y se borra en
+       * tandas, con un tope de vueltas para no girar sin fin si algo falla.
+       *
+       * Y además se APUNTA el borrado (por aviso y por suceso): borrar en el
+       * teléfono no basta, porque el aviso volvía al abrir el panel desde el
+       * icono instalado, desde otro móvil o con los datos del sitio limpios.
+       */
       let deleted = 0;
-      for (const row of pendientes) {
-        await rememberNotificationDeletion(ctx, row.recipient_user_id, row);
-        if (await ctx.db.remove('user_notifications', row.id)) deleted += 1;
+      for (let vuelta = 0; vuelta < 25; vuelta += 1) {
+        const pendientes = await deletableNotifications(ctx, actor);
+        if (!pendientes.length) break;
+        let borradasEnEstaVuelta = 0;
+        for (const row of pendientes) {
+          if (await ctx.db.remove('user_notifications', row.id)) borradasEnEstaVuelta += 1;
+          await rememberNotificationDeletion(ctx, row.recipient_user_id ?? actor?.id ?? null, row);
+        }
+        deleted += borradasEnEstaVuelta;
+        // Si no se borró ninguna, seguir dando vueltas no cambia nada.
+        if (!borradasEnEstaVuelta) break;
       }
       await ctx.audit?.record({
         entity: 'notifications',
@@ -6231,14 +6219,14 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
       }
-      if (current.recipient_user_id !== await notificationOwnerId(ctx, actor)) {
+      if (!hasPermission(actor, 'delivery.tracking.manage_all') && current.recipient_user_id !== actor?.id) {
         forbid();
         return;
       }
+      const deleted = (await ctx.db.remove('user_notifications', id)) ? 1 : 0;
       // El borrado se recuerda aunque la fila ya no estuviera: es la promesa de
       // que no vuelve, y cubre también una recreación del mismo suceso.
       await rememberNotificationDeletion(ctx, current.recipient_user_id ?? actor?.id ?? null, current);
-      const deleted = (await ctx.db.remove('user_notifications', id)) ? 1 : 0;
       await ctx.audit?.record({
         entity: 'notifications',
         entityId: id,
@@ -6258,7 +6246,7 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
       }
-      if (current.recipient_user_id !== await notificationOwnerId(ctx, actor)) {
+      if (!hasPermission(actor, 'delivery.tracking.manage_all') && current.recipient_user_id !== actor?.id) {
         forbid();
         return;
       }
@@ -6390,7 +6378,7 @@ async function handle(req, res, ctx) {
       const notificationId = url.searchParams.get('notification');
       if (notificationId) {
         const note = await ctx.db.get('user_notifications', notificationId);
-        if (note && note.recipient_user_id === await notificationOwnerId(ctx, actor)) {
+        if (note && (note.recipient_user_id === actor?.id || hasPermission(actor, 'delivery.tracking.manage_all'))) {
           await ctx.db.update('user_notifications', note.id, { status: 'read', read_at: note.read_at ?? ctx.clock().toISOString(), updated_at: ctx.clock().toISOString() });
         }
       }
@@ -8296,21 +8284,6 @@ async function handle(req, res, ctx) {
           text: orderConfirmationText(encontrado.order, customer),
         });
         return;
-      }
-
-      if (['resolve', 'reopen'].includes(action) && req.method === 'POST') {
-        if (!(await canOpenConversation(ctx, actor, conversation))) {
-          denyConversation(res, json, conversation); return;
-        }
-        const updated = await ctx.customers.resolveConversation(conversation.id, action === 'resolve', actor?.id ?? null);
-        await ctx.audit?.record({
-          entity: 'conversation', entityId: conversation.id,
-          action: action === 'resolve' ? 'conversation.resolved' : 'conversation.reopened',
-          actor: actor?.display_name ?? null,
-          summary: action === 'resolve' ? 'Conversación marcada como finalizada' : 'Conversación reabierta',
-          data: { customer_id: conversation.customer_id, message_id: updated.resolved_message_id },
-        });
-        json(res, 200, { ok: true, conversation: updated }); return;
       }
 
       if (action === 'read' && req.method === 'POST') {

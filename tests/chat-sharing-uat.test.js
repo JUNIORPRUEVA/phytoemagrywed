@@ -72,7 +72,7 @@ describe('menú + real con datos guardados',()=>{
     const win=dom.window;win.matchMedia=()=>({matches:false,addEventListener(){}});win.scrollTo=()=>{};win.confirm=()=>true;
     Object.defineProperty(win.navigator,'clipboard',{value:{writeText:async text=>{copied=text;}}});
     win.fetch=(input,init={})=>request(new URL(typeof input==='string'?input:input.url,app.url).pathname,null,{...init,headers:{...(init.headers||{}),cookie}});
-    win.eval(readFileSync('public/admin/conversation-list.js','utf8'));win.eval(readFileSync('public/admin/app.js','utf8'));win.eval(readFileSync('public/admin/chat-sharing-settings.js','utf8'));win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
+    win.eval(readFileSync('public/admin/app.js','utf8'));win.eval(readFileSync('public/admin/chat-sharing-settings.js','utf8'));win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
     await waitFor(()=>$('[data-conv]'));click(`[data-conv="${conversationId}"]`);await waitFor(()=>$('#wa-attach'));
   });
   it('usa la flecha junto al cliente para volver del chat a la lista',async()=>{
@@ -83,34 +83,8 @@ describe('menú + real con datos guardados',()=>{
     click(`[data-conv="${conversationId}"]`);
     await waitFor(()=>dom.window.document.body.dataset.waView==='chat'&&$('#wa-text'));
   });
-  it('abrir un chat y volver conserva el desplazamiento de la bandeja',async()=>{
-    click('#wa-back');
-    const list=$('#wa-conversations');list.scrollTop=236;
-    click(`[data-conv="${conversationId}"]`);
-    await waitFor(()=>dom.window.document.body.dataset.waView==='chat'&&$('#wa-text'));
-    click('#wa-back');expect(list.scrollTop).toBe(236);
-    click(`[data-conv="${conversationId}"]`);
-    await waitFor(()=>dom.window.document.body.dataset.waView==='chat'&&$('#wa-text'));
-  });
   it('ofrece bancos y catálogos aunque la multimedia esté desactivada',async()=>{
     click('#wa-attach');expect($('#attach-banks')).toBeTruthy();expect($('#attach-catalogs')).toBeTruthy();expect($('#attach-location')).toBeTruthy();expect(sent).toHaveLength(0);
-  });
-  it('Enter en móvil y durante composición no envía; en escritorio conserva el atajo',()=>{
-    const win=dom.window, area=$('#wa-text'), send=$('#wa-send'), previous=win.matchMedia;
-    let attempts=0;
-    const intercept=(event)=>{attempts++;event.preventDefault();event.stopImmediatePropagation();};
-    send.addEventListener('click',intercept,true);
-    const press=(options={})=>{const event=new win.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true,...options});area.dispatchEvent(event);return event;};
-    try {
-      input(area,'Borrador del mensaje');
-      win.matchMedia=()=>({matches:true,addEventListener(){}});
-      expect(press().defaultPrevented).toBe(false);expect(attempts).toBe(0);
-      win.matchMedia=previous;
-      press({isComposing:true});press({keyCode:229});press({repeat:true});press({shiftKey:true});
-      expect(attempts).toBe(0);
-      expect(press().defaultPrevented).toBe(true);expect(attempts).toBe(1);
-      expect(area.value).toBe('Borrador del mensaje');
-    } finally {win.matchMedia=previous;send.removeEventListener('click',intercept,true);input(area,'');}
   });
   it('copia únicamente el número y prepara una cuenta sin borrar el borrador ni enviarlo',async()=>{
     input($('#wa-text'),'Mensaje anterior');click('#attach-banks');await waitFor(()=>$('[data-sharing-copy]'));

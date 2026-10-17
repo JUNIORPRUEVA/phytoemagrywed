@@ -12,8 +12,6 @@ import { randomBytes } from 'node:crypto';
 
 /** Acciones auditables (lista cerrada: evita etiquetas inventadas). */
 export const AUDIT_ACTIONS = Object.freeze([
-  'conversation.resolved',
-  'conversation.reopened',
   'order.created',
   'order.updated',
   'order.status_changed',
