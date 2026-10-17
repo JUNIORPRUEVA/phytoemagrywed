@@ -15,7 +15,8 @@
  * servidor en tiempo de ejecución viaja en la imagen final, y que existe la
  * guarda de runtime que lo verifica dentro del propio build.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { productConfig } from '../src/config/product.config.js';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -53,6 +54,13 @@ function relativeImports() {
 }
 
 describe('imagen final (etapa runtime del Dockerfile)', () => {
+  it('incluye las imágenes originales que el catálogo sirve desde el API', () => {
+    for (const product of productConfig.variants) {
+      const image = `public${product.image}-320.webp`;
+      expect(existsSync(path.join(ROOT, image)), image).toBe(true);
+      expect(isCovered(image), image).toBe(true);
+    }
+  });
   it('copia todo lo que el servidor importa en tiempo de ejecución', () => {
     const imports = relativeImports();
     expect(imports.length).toBeGreaterThan(5); // si esto baja, el escáner dejó de leer
