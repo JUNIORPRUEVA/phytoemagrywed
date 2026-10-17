@@ -73,9 +73,8 @@
     document.querySelector('#store-detail-title,#store-search')?.focus({preventScroll:true});document.getElementById('view-catalogo')?.scrollIntoView({block:'start'});
   }
   function detail(p) {
-    if(!p)return `<div class="store-empty"><h2 id="store-detail-title" tabindex="-1">Artículo no encontrado</h2><p>Puede que ya no esté disponible para tu cuenta.</p><a class="btn btn--ghost" href="/admin/?v=catalogo" data-store-back>Volver al catálogo</a></div>`;
-    return `<div class="store-detail-nav"><a href="/admin/?v=catalogo" data-store-back>${svg('arrow')}Volver al catálogo</a><span>${esc(categoryName(p))}</span></div>
-      <article class="store-detail"><div class="store-detail__image">${photo(p)}</div><div class="store-detail__content"><div class="store-detail__eyebrow">${p.kind==='service'?'Servicio':'Producto'}<span class="store-status${p.active?' store-status--active':''}">${p.active?'Activo':'Inactivo'}</span></div>
+    if(!p)return `<div class="store-empty"><h2 id="store-detail-title" tabindex="-1">Artículo no encontrado</h2><p>Puede que ya no esté disponible para tu cuenta.</p></div>`;
+    return `<article class="store-detail"><div class="store-detail__image">${photo(p)}</div><div class="store-detail__content"><div class="store-detail__eyebrow">${p.kind==='service'?'Servicio':'Producto'}<span class="store-status${p.active?' store-status--active':''}">${p.active?'Activo':'Inactivo'}</span></div>
       <h2 id="store-detail-title" tabindex="-1">${esc(p.name)}</h2><p class="store-muted">${esc(p.sku)}</p><strong class="store-detail__price">${cash(p.price_cents)}</strong><p class="store-muted">Precio de venta</p>
       <dl class="store-detail-facts"><div><dt>Categoría</dt><dd>${esc(categoryName(p))}</dd></div>${canManage?`<div><dt>Costo ${p.kind==='service'?'del servicio':'por unidad'}</dt><dd>${cash(p.cost_cents)}</dd></div>`:''}<div><dt>${p.kind==='service'?'Inventario':'Existencias'}</dt><dd>${esc(p.kind==='service'?'No aplica a servicios':stockLabel(p))}</dd></div>${p.kind==='product'&&!p.legacy?`<div><dt>Stock mínimo</dt><dd>${p.min_stock} unidades</dd></div>`:''}</dl>
       ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el mismo inventario de cápsulas de Phytoemagry.</p>':''}<div class="store-actions">${canManage?`<button class="btn btn--primary" type="button" data-store-edit="${esc(p.id)}">Editar artículo</button>`:''}${p.track_stock?`<button class="btn btn--ghost" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver stock</button>`:''}</div></div>
@@ -219,7 +218,7 @@
   });
   document.addEventListener('click',e=>{
     if(!e.target.closest('#view-catalogo,#view-inventario,#view-recuento'))return;
-    const link=e.target.closest('[data-store-detail],[data-store-back]');
+    const link=e.target.closest('[data-store-detail]');
     if(link&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey&&e.button===0){e.preventDefault();navigateProduct(link.dataset.storeDetail||null);return;}
     if(e.target.closest('[data-store-filters]')){openFilters();return;}
     const layoutButton=e.target.closest('[data-store-layout]');if(layoutButton){layout=layoutButton.dataset.storeLayout;try{localStorage.setItem('fulltech.catalog.layout',layout);}catch{}render();document.querySelector(`[data-store-layout="${layout}"]`)?.focus({preventScroll:true});return;}

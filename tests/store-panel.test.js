@@ -96,7 +96,8 @@ it('abre una página de detalle con enlace propio, regresa y respeta la privacid
   expect(w.document.querySelector('#store-detail-title').textContent).toBe(products[0].name);
   expect(w.document.querySelector('.store-detail').textContent).toContain('600.25');
   expect(w.document.querySelector('.store-detail').textContent).toContain('Descripción completa');
-  w.document.querySelector('[data-store-back]').click();await new Promise(r=>setTimeout(r,20));await flush();expect(w.document.querySelector('#store-search')).not.toBeNull();
+  expect(w.document.querySelector('[data-store-back],.store-detail-nav')).toBeNull();
+  w.dispatchEvent(new w.CustomEvent('fulltech:back',{cancelable:true}));await new Promise(r=>setTimeout(r,20));await flush();expect(w.document.querySelector('#store-search')).not.toBeNull();
   canManage=false;await tab('inventario');await tab('catalogo');w.document.querySelector('[data-store-detail]').click();
   expect(w.document.querySelector('.store-detail').textContent).not.toContain('600.25');expect(w.document.querySelector('[data-store-edit]')).toBeNull();
 });
