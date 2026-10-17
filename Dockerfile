@@ -132,6 +132,7 @@ events {
 
 http {
     include /etc/nginx/mime.types;
+    types { application/javascript mjs; }
     default_type application/octet-stream;
     access_log /dev/stdout;
     sendfile on;
@@ -281,6 +282,7 @@ COPY --from=build /app/dist /usr/share/nginx/html
 COPY --from=build /app/server /app/server
 # El cálculo en centavos se comparte entre el POS del navegador y el API.
 COPY --from=build /app/public/admin/pos-math.js /app/public/admin/pos-math.js
+COPY --from=build /app/public/admin/receipt-pdf.js /app/public/admin/receipt-pdf.js
 # Las fichas originales sirven sus imágenes a través del API autenticado.
 COPY --from=build /app/public/assets/img/frascos /app/public/assets/img/frascos
 # La app del panel también viaja al API: así funciona aunque no haya nginx

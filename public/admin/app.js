@@ -19962,7 +19962,7 @@
       const receiptOpen = event.target.closest('[data-receipt-open]');
       if (receiptOpen) {
         window.open(
-          `${app2Base()}/api/admin/orders/${encodeURIComponent(receiptOpen.dataset.receiptOpen)}/receipt`,
+          `/admin/receipt-viewer.html?pdf=${encodeURIComponent('/api/admin/orders/'+receiptOpen.dataset.receiptOpen+'/receipt.pdf')}`,
           '_blank',
           'noopener',
         );

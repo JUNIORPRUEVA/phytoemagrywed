@@ -1,3 +1,4 @@
+import {receiptPdfBytes} from '../public/admin/receipt-pdf.js';
 // @vitest-environment node
 import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -16,10 +17,10 @@ async function server(route,body,key){return fetch(app.url+'/api/admin/'+route,{
 async function page(full=false){
   const dom=new JSDOM(full?readFileSync('public/admin/index.html','utf8'):'<html><body></body></html>',{url:app.url+'/admin/',runScripts:'outside-only',pretendToBeVisual:true});doms.push(dom);
   const w=dom.window;Object.defineProperty(w.navigator,'onLine',{get:()=>online});
-  Object.assign(w,{indexedDB:idb,structuredClone,Response,Headers,Request,AbortController,Blob,TextDecoder,calculateSale,offlineReport});
+  Object.assign(w,{indexedDB:idb,structuredClone,Response,Headers,Request,AbortController,Blob,TextDecoder,calculateSale,offlineReport,receiptPdfBytes});
   w.fetch=async(url,options={})=>{if(w.offlineTransport)return w.offlineTransport(url,options);if(!online)throw new TypeError('network down');return fetch(new URL(url,app.url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),cookie}});};
   w.eval(readFileSync('public/admin/offline-storage.js','utf8'));
-  w.eval(readFileSync('public/admin/offline.js','utf8').replace("await import('./pos-math.js')",'({calculateSale:window.calculateSale})').replace("await import('./offline-report.js')",'({offlineReport:window.offlineReport})'));
+  w.eval(readFileSync('public/admin/offline.js','utf8').replace("await import('./pos-math.js')",'({calculateSale:window.calculateSale})').replace("await import('./offline-report.js')",'({offlineReport:window.offlineReport})').replace("await import('./receipt-pdf.js')",'({receiptPdfBytes:window.receiptPdfBytes})'));
   await w.FulltechOffline.ready;return w;
 }
 const call=(w,route,body)=>w.fetch('/api/admin/'+route,{method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
@@ -67,7 +68,14 @@ it('cobra offline, mantiene el recibo provisional y descuenta stock una sola vez
   const body={requestId:crypto.randomUUID(),mode:'invoice',customerId:customer.id,items:[{variantId:product.id,quantity:2}],expectedTotal:20050,paymentMethod:'CASH'};
   const result=await (await call(w,'pos/checkout',body)).json();expect(result).toMatchObject({ok:true,pending:true,total_cents:20050});
   const stock=await (await call(w,'store/products')).json();expect(stock.products.find(p=>p.id===product.id).quantity).toBe(8);
-  expect((await w.FulltechOfflineStore.entries()).some(([k])=>k.endsWith(result.receiptUrl))).toBe(true);
+  expect(result.receiptUrl).toMatch(/^\/admin\/receipt-viewer\.html\?pdf=/);
+  expect((await w.FulltechOfflineStore.entries()).some(([k])=>k.endsWith(result.pdfUrl))).toBe(true);
+  const cold=await page(),pdfResponse=await cold.fetch(result.pdfUrl);
+  expect(pdfResponse.headers.get('content-type')).toBe('application/pdf');
+  const bytes=new Uint8Array(await pdfResponse.arrayBuffer());expect(new TextDecoder().decode(bytes.slice(0,8))).toBe('%PDF-1.4');
+  const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs'),task=getDocument({data:bytes,useSystemFonts:false,standardFontDataUrl:process.cwd()+'/node_modules/pdfjs-dist/standard_fonts/'});
+  const pdf=await task.promise,content=await(await pdf.getPage(1)).getTextContent();
+  expect(content.items.map(i=>i.str).join(' ')).toContain('Cliente local');expect(content.items.map(i=>i.str).join(' ')).toContain('Cable USB');await task.destroy();
   online=true;await w.FulltechOffline.synchronize();await w.FulltechOffline.synchronize();
   expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
   const actual=await (await server('store/products')).json();expect(actual.products.find(p=>p.id===product.id).quantity).toBe(8);

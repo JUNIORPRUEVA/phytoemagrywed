@@ -57,8 +57,15 @@
   }
   async function cached(url){
     if(!valid())return null;
-    let saved=await db.get(responseKey(url));
     const requested=new URL(url,location.href);
+    const localReceipt=/^\/api\/admin\/(?:pos\/(?:local|quotes)|orders)\/([^/]+)\/(receipt|pdf|receipt\.pdf)$/.exec(requested.pathname);
+    if(localReceipt){
+      const key='receiptDocument:'+owner()+':'+localReceipt[1];
+      let document=await db.get(key);
+      if(!document){const entry=(await listQueue()).find(q=>q.localId===localReceipt[1]&&q.local);if(entry)try{document=JSON.parse(entry.local.body).document;}catch{}}
+      if(document&&!await db.get('receiptPdfReady:'+owner()+':'+document.id))await saveReceipt(document);
+    }
+    let saved=await db.get(responseKey(url));
     if(requested.pathname==='/api/admin/reports/sales'&&identity.role==='ADMIN'){
       const history=await db.get(responseKey('/api/admin/reports/sales?period=custom&from=1900-01-01&to=9999-12-31&offline=1'));
       if(history){
@@ -95,6 +102,25 @@
     const all=await data('/api/admin/data',{});all.catalog=catalog;await save('/api/admin/data',all);
   }
   function localError(message,status=422){return json({ok:false,message},status);}
+  async function saveReceipt(document){
+    const {receiptPdfBytes}=await import('./receipt-pdf.js');
+    const {id,number,customer,sale,kind,created_at,input={}}=document,quote=kind==='quote';
+    const receipt={business:'FullTECH, SRL',document:quote?'Cotización':'Factura de compra',order_number:number,date:created_at,customer_name:customer.name,
+      status_label:quote?'Cotización pendiente de sincronizar':kind==='order'?'Pedido pendiente':'Venta cobrada · pendiente de sincronizar',currency:'DOP',
+      payment_method_label:kind==='invoice'?(input.paymentMethod==='TRANSFER'?'Transferencia':'Efectivo'):null,
+      items:sale.items.map(i=>({label:i.name,quantity:i.quantity,unitPrice:i.unit_price_cents/100,subtotal:i.subtotal_cents/100,line_discount:i.discount_cents/100})),
+      subtotal:sale.subtotal_cents/100,discount:sale.discount_cents/100,delivery_fee:sale.delivery_cents/100,total:sale.total_cents/100,
+      thanks:'Gracias por su compra.',note:'Documento provisional pendiente de sincronizar. No es comprobante fiscal.'};
+    const receiptUrl='/api/admin/pos/local/'+id+'/receipt',pdfUrl='/api/admin/pos/local/'+id+'/pdf';
+    await remember(pdfUrl,new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf','content-disposition':`inline; filename="${number}.pdf"`}}));
+    const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const html=`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(number)}</title><style>body{font:15px system-ui;margin:0;padding:12px;background:#e8edf3;color:#14243b}main,nav,p{max-width:900px;margin:12px auto}nav{display:flex;gap:8px;flex-wrap:wrap}a,button{font:inherit;padding:10px 12px;background:white;border:1px solid #ced7e2;border-radius:8px;color:#153c70;text-decoration:none;cursor:pointer}canvas{display:block;margin:12px 0;box-shadow:0 2px 12px #14243b18;background:white}[data-receipt-fallback]{padding:20px;background:white}table{width:100%}td{padding:8px} @media print{body{padding:0;background:white}nav,[data-receipt-status]{display:none}canvas{box-shadow:none;break-after:page;margin:0;width:100%}}</style><nav><a href="/admin/?v=pedidos">Volver al CRM</a><a href="${pdfUrl}" data-receipt-download hidden>Descargar PDF</a><button data-receipt-share>Compartir PDF</button><button data-receipt-print>Imprimir</button></nav><p data-receipt-status role="status">Abriendo PDF guardado…</p><main data-receipt-pages data-pdf="${pdfUrl}" data-filename="${escape(number)}.pdf"></main><main data-receipt-fallback><h1>FullTECH, SRL</h1><h2>${escape(receipt.document)} · ${escape(number)}</h2><p>${escape(customer.name)}</p><table>${sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>RD$${(i.subtotal_cents/100).toFixed(2)}</td></tr>`).join('')}</table><p>Descuento: RD$${(sale.discount_cents/100).toFixed(2)} · Envío: RD$${(sale.delivery_cents/100).toFixed(2)}</p><h2>Total RD$${(sale.total_cents/100).toFixed(2)}</h2><p>${escape(receipt.note)}</p></main><script src="/admin/receipt-viewer.js" defer></script></html>`;
+    await remember(receiptUrl,new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));
+    if(quote){await remember('/api/admin/pos/quotes/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/pos/quotes/'+id+'/pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
+    else{await remember('/api/admin/orders/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/orders/'+id+'/receipt.pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
+    await db.put('receiptDocument:'+owner()+':'+id,document);await db.put('receiptPdfReady:'+owner()+':'+id,true);
+    return {receiptUrl:'/admin/receipt-viewer.html?pdf='+encodeURIComponent(pdfUrl),pdfUrl};
+  }
   async function consumeStock(lines){
     const snapshot=await data('/api/admin/store/products',{products:[]}),quantities=new Map();
     for(const line of lines||[])quantities.set(line.variantId,(quantities.get(line.variantId)||0)+Number(line.quantity));
@@ -206,13 +232,9 @@
         (all.items||=[]).unshift(item);await save('/api/admin/data',all);
         await save('/api/admin/orders/'+id,{ok:true,item,order,customer,receipt:order});
       }
-      if(body.ticketId){const list=await data('/api/admin/pos/tickets',{tickets:[]});const t=list.tickets.find(t=>t.id===body.ticketId);if(t)t.status='completed';await save('/api/admin/pos/tickets',{ok:true,...list});}
-      const receiptUrl='/api/admin/pos/local/'+id+'/receipt';
-      const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-      const html=`<!doctype html><meta name="viewport" content="width=device-width"><title>${escape(number)}</title><style>body{font:16px system-ui;max-width:720px;margin:24px auto;padding:16px}td{padding:12px}table{width:100%}</style><h1>FullTECH</h1><p>${escape(number)} · Documento local pendiente de sincronización</p><p>${escape(customer.name)}</p><table>${sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>${(i.subtotal_cents/100).toFixed(2)}</td></tr>`).join('')}</table><h2>Total RD$${(sale.total_cents/100).toFixed(2)}</h2><p>El número definitivo y la disponibilidad se validan al sincronizar.</p><button onclick="print()">Imprimir / guardar PDF</button>`;
-      await remember(receiptUrl,new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));
-      if(mode==='quote')await remember('/api/admin/pos/quotes/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));
-      return json({ok:true,offline:true,pending:true,document,quoteId:mode==='quote'?id:null,orderId:mode!=='quote'?id:null,number,receiptUrl,total_cents:sale.total_cents});
+      const {receiptUrl,pdfUrl}=await saveReceipt(document);
+      if(body.ticketId){const list=await data('/api/admin/pos/tickets',{tickets:[]});const t=list.tickets.find(t=>t.id===body.ticketId);if(t){t.status='completed';t.result={receiptUrl,pdfUrl,number,orderId:mode!=='quote'?id:null,quoteId:mode==='quote'?id:null};await save('/api/admin/pos/tickets/'+t.id,{ok:true,ticket:t});}await save('/api/admin/pos/tickets',{ok:true,...list});}
+      return json({ok:true,offline:true,pending:true,document,quoteId:mode==='quote'?id:null,orderId:mode!=='quote'?id:null,number,receiptUrl,pdfUrl,total_cents:sale.total_cents});
     }
     if(/\/orders\/[^/]+\/delivery\/start$/.test(path)||path.startsWith('/api/admin/delivery-tracking/')){
       const all=await data('/api/admin/data',{}),tracking=await data('/api/admin/delivery-tracking',{ok:true,sessions:[]});
@@ -413,7 +435,7 @@
             for(const [key,items] of Object.entries(value))if(Array.isArray(items)){
               const prefix=({customers:'customers',conversations:'conversations',quotes:'pos/quotes',tickets:'pos/tickets'})[key];
               if(prefix)for(const item of items)if(item.id){todo.push('/api/admin/'+prefix+'/'+encodeURIComponent(item.id)+(key==='conversations'?'/messages':''));if(key==='customers')todo.push('/api/admin/customers/'+item.id+'/tags','/api/admin/pos/context/'+item.id);if(key==='quotes')todo.push('/api/admin/pos/quotes/'+item.id+'/receipt','/api/admin/pos/quotes/'+item.id+'/pdf');}
-              if(key==='items'&&path.startsWith('/api/admin/data'))for(const item of items)if(item.type==='order'||item.type==='order_intent')todo.push('/api/admin/orders/'+encodeURIComponent(item.id),'/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt');
+              if(key==='items'&&path.startsWith('/api/admin/data'))for(const item of items)if(item.type==='order'||item.type==='order_intent')todo.push('/api/admin/orders/'+encodeURIComponent(item.id),'/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt','/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt.pdf');
               if(key==='customers')for(const item of items)if(item.id)todo.push('/api/admin/customers/'+item.id+'/locations');
               if(key==='deliveryOrders')for(const item of items)if(item.id)todo.push('/api/admin/delivery/orders/'+item.id);
             }

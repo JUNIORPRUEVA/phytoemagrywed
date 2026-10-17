@@ -8,13 +8,21 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v115-offline-24h';
+const VERSION = 'crm-v116-offline-pdf';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
 const TILE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const REQUIRED_SHELL = new Set(['/admin/index.html', '/admin/app.js', '/admin/admin.css', '/admin/startup-recovery.js', '/admin/offline-storage.js', '/admin/offline.js', '/admin/offline-ui.js', '/admin/pos.js', '/admin/store.js', '/admin/pos-math.js']);
 const SHELL = [
+  '/admin/receipt-pdf.js',
+  '/admin/receipt-viewer.html',
+  '/admin/receipt-launcher.js',
+  '/admin/receipt-viewer.js',
+  '/admin/vendor/pdfjs/pdf.mjs',
+  '/admin/vendor/pdfjs/pdf.worker.mjs',
+  '/admin/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf',
+  '/admin/vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf',
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',
@@ -65,6 +73,7 @@ const SHELL = [
   '/admin/fulltech-icon-maskable-512.png?v=2',
   '/admin/fulltech-apple-touch-icon.png?v=2',
 ];
+for(const file of ['/admin/receipt-pdf.js','/admin/receipt-viewer.html','/admin/receipt-launcher.js','/admin/receipt-viewer.js','/admin/vendor/pdfjs/pdf.mjs','/admin/vendor/pdfjs/pdf.worker.mjs','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf'])REQUIRED_SHELL.add(file);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

@@ -1,3 +1,4 @@
+import {receiptPdfBytes} from '../public/admin/receipt-pdf.js';
 // @vitest-environment node
 /**
  * UAT DEL PANEL SIN CONEXIÓN — trabajar 24 horas sin internet.
@@ -67,7 +68,7 @@ function montarPanel({ offline = false, snapshot = null, cookie = '' } = {}) {
   win.scrollTo = () => {};
   win.HTMLElement.prototype.scrollIntoView=function(){};
   win.HTMLDialogElement.prototype.showModal=function(){this.open=true;};win.HTMLDialogElement.prototype.close=function(){this.open=false;};
-  Object.assign(win,{indexedDB,structuredClone,Response,Headers,Request,AbortController,Blob,TextDecoder,calculateSale,offlineReport});
+  Object.assign(win,{indexedDB,structuredClone,Response,Headers,Request,AbortController,Blob,TextDecoder,calculateSale,offlineReport,receiptPdfBytes});
   win.EventSource=class{addEventListener(){}close(){}};panels.push(win);
   Object.defineProperty(win.navigator, 'onLine', { configurable: true, get: () => !estado.offline });
   win.fetch = async (input, init = {}) => {
@@ -86,7 +87,7 @@ function montarPanel({ offline = false, snapshot = null, cookie = '' } = {}) {
   };
   if (snapshot) win.localStorage.setItem('pe_crm_snapshot', snapshot);
   win.eval(readFileSync(path.join(ADMIN_DIR,'offline-storage.js'),'utf8'));
-  win.eval(readFileSync(path.join(ADMIN_DIR,'offline.js'),'utf8').replace("await import('./pos-math.js')",'({calculateSale:window.calculateSale})').replace("await import('./offline-report.js')",'({offlineReport:window.offlineReport})'));
+  win.eval(readFileSync(path.join(ADMIN_DIR,'offline.js'),'utf8').replace("await import('./pos-math.js')",'({calculateSale:window.calculateSale})').replace("await import('./offline-report.js')",'({offlineReport:window.offlineReport})').replace("await import('./receipt-pdf.js')",'({receiptPdfBytes:window.receiptPdfBytes})'));
   win.eval(APP_JS);
   win.eval(readFileSync(path.join(ADMIN_DIR,'store.js'),'utf8'));
   win.eval(readFileSync(path.join(ADMIN_DIR,'pos.js'),'utf8').replace(/^import[^\n]+\n/,''));
