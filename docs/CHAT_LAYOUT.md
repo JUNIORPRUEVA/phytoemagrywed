@@ -93,8 +93,7 @@ El botón «Acciones» del chat ya no abre una hoja que sube desde abajo: entra 
 
 - **Sin ruido**: ninguna fila lleva subtítulo; el nombre de la acción ya dice qué hace. «Buscar en esta
   conversación» se quitó del menú porque la lupa está en la cabecera del chat.
-- **Seguimiento es un submenú**: una sola fila «Seguimiento ›» abre «Programar seguimiento» y «Programar
-  mensaje» (`openChatFollowupMenu()`), con «Volver a las acciones».
+- **Seguimiento va como dos filas normales** (Programar seguimiento · Programar mensaje), sin submenú.
 - Orden: Crear pedido (destacado) · Mensajes (respuesta rápida, plantilla, ubicación, confirmación) ·
   Seguimiento · Cliente (ficha, etapa, etiquetas) · Conversación (finalizar, asignación).
 - El cajón lleva el `id` de la hoja en el selector CSS: `menus-safe-area.css` recorta todas las hojas con

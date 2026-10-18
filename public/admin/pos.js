@@ -155,7 +155,7 @@ async function complete(mode,paymentMethod,acknowledgeOpen=false){
     draft=empty();operation=null;expanded=false;persist();message=label;render();
     if(mode==='quote'){
       modal.close();const id=result.document?.id||result.quoteId;openQuote(id);notifyQuote(id,label);
-    }else show(label,`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(result.number||'')}</span></p><a class="btn btn--primary" href="${esc(result.receiptUrl)}" target="_blank" rel="noopener">Ver comprobante / PDF</a>${mode==='order'?`<button class="btn btn--ghost" type="button" data-pos-delivery="${esc(result.orderId)}">Continuar entrega</button>`:''}<p class="pos-muted">${mode==='order'?'El pedido está pendiente. Puedes asignar su entrega ahora o desde Pedidos.':'Documento comercial guardado.'}</p>`,null);
+    }else show(label,`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(result.number||'')}</span></p><a class="btn btn--primary" href="${esc(mode==='invoice'?`/admin/receipt-viewer.html?pdf=${encodeURIComponent(result.receiptUrl)}`:result.receiptUrl)}" target="_blank" rel="noopener">${mode==='invoice'?'Ver factura en PDF':'Ver comprobante / PDF'}</a>${mode==='order'?`<button class="btn btn--ghost" type="button" data-pos-delivery="${esc(result.orderId)}">Continuar entrega</button>`:''}<p class="pos-muted">${mode==='order'?'El pedido está pendiente. Puedes asignar su entrega ahora o desde Pedidos.':mode==='invoice'?'La venta quedó registrada en Pedidos con su factura vinculada.':'Documento comercial guardado.'}</p>`,null);
     window.dispatchEvent(new Event('fulltech:pos-saved'));window.dispatchEvent(new Event('fulltech:catalog-updated'));
   }catch(e){
     if(epoch!==generation)return;

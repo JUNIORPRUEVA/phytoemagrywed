@@ -12,7 +12,7 @@
   if(titulo){titulo.textContent=esCotizacion?'Cotización':esFactura?'Factura':'Comprobante';document.title=`${titulo.textContent} · FullTECH`;}
   if(!root.dataset.pdf){
     const path=params.get('pdf')||'';
-    if(!/^\/api\/admin\/(?:pos\/(?:local|quotes)\/[a-zA-Z0-9_-]+\/pdf|orders\/[a-zA-Z0-9_-]+\/(?:receipt\.pdf|receipt-pdf|factura))$/.test(path)){status.textContent='El comprobante no es válido.';return;}
+    if(!/^\/api\/admin\/(?:pos\/(?:local|quotes|invoices)\/[a-zA-Z0-9_-]+\/pdf|orders\/[a-zA-Z0-9_-]+\/(?:receipt\.pdf|receipt-pdf|factura))$/.test(path)){status.textContent='El comprobante no es válido.';return;}
     root.dataset.pdf=path;root.dataset.filename='FullTECH-'+path.split('/').at(-2)+'.pdf';
   }
   /*

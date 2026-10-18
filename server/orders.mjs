@@ -214,6 +214,9 @@ export function buildOrder(input = {}) {
     payment_method_label: paymentMethod ? PAYMENT_METHOD_LABELS[paymentMethod] : null,
     payment_status: status === 'cancelado' ? 'void' : 'paid',
     status,
+    // FACTURA vinculada (POS): la venta facturada deja su documento en el pedido.
+    invoice_id: short(input.invoiceId, 80),
+    invoice_number: short(input.invoiceNumber, 40),
     recorded_by: short(input.recordedBy, 60) ?? 'panel',
     created_at: createdAt,
   };
@@ -250,6 +253,8 @@ export function buildOrder(input = {}) {
     delivery,
     paymentMethod,
     payment_method: paymentMethod,
+    invoice_id: order.invoice_id ?? null,
+    invoice_number: order.invoice_number ?? null,
     meta: { source: 'order', recordedBy: order.recorded_by },
   };
 

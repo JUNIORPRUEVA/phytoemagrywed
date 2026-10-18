@@ -4,7 +4,7 @@ La identidad visible del panel, manifest e interfaz Android es **FullTECH, SRL**
 
 El menú de cada conversación muestra primero Abrir conversación y Crear pedido. Cliente reúne ficha, etapa y etiquetas; Seguimiento reúne tareas y mensajes programados. Asignación abre el selector existente de responsable, que conserva los permisos de cada rol. Archivar y selección múltiple quedan en Organizar conversación; Eliminar queda al final y conserva la confirmación anterior.
 
-Las acciones DENTRO del chat (botón «Acciones») salen como cajón por la derecha, cuadrado y a todo el alto (`variant: 'chat-actions'`), sin subtítulos por fila, y con Seguimiento como submenú de dos opciones. Ese cajón necesita el `#sheet` en el selector porque la regla general de hojas de `menus-safe-area.css` recorta `max-height` en 12 px.
+Las acciones DENTRO del chat (botón «Acciones») salen como cajón por la derecha, cuadrado y a todo el alto (`variant: 'chat-actions'`), sin subtítulos por fila y con las dos opciones de Seguimiento visibles como filas normales. Ese cajón necesita el `#sheet` en el selector porque la regla general de hojas de `menus-safe-area.css` recorta `max-height` en 12 px.
 
 `organizeActionMenus` agrupa las listas simples de acciones al abrir una hoja: convierte los títulos en grupos con nombre accesible y presenta sus filas dentro de una tarjeta. No agrupa formularios ni contenedores complejos. Las operaciones conservan sus atributos y manejadores, y los submenús de cliente y seguimiento mantienen el contexto de la conversación.
 

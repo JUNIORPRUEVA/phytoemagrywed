@@ -29,7 +29,13 @@ export function quotationReceipt(doc){
     status_label:'Cotización',items:doc.sale.items.map(i=>({label:i.name,quantity:i.quantity,unitPrice:i.unit_price_cents/100,subtotal:i.subtotal_cents/100,line_discount:i.discount_cents/100})),
     subtotal:doc.sale.subtotal_cents/100,discount:doc.sale.discount_cents/100,delivery_fee:doc.sale.delivery_cents/100,total:doc.sale.total_cents/100,currency:'DOP',thanks:'Precios y disponibilidad sujetos a confirmación.',note:'Cotización comercial. No acredita pago ni reserva inventario.'};
 }
-export function quotationHtml(doc) {
+/** FACTURA: mismo documento que la cotización, con los datos propios de la venta. */
+export function invoiceReceipt(doc){
+  return {...quotationReceipt(doc),document:'Factura',status_label:'Pagada',
+    thanks:'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
+    note:'Factura de venta. Acredita el pago recibido.'};
+}
+export function quotationHtml(doc, titulo = 'Cotización') {
   const pdf='/api/admin/pos/quotes/'+doc.id+'/pdf';
   /*
    * Acciones del documento: el PDF se ve en el visor del CRM y el envío sale
@@ -111,6 +117,19 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
       res.end(quotationHtml(doc));return true;
     }
+    // FACTURA: su PDF se sirve con el MISMO documento que la cotización.
+    const invoicePdf=/^\/api\/admin\/pos\/invoices\/([a-z0-9_-]+)(?:\/(receipt|pdf))?$/.exec(route);
+    if(invoicePdf&&req.method==='GET') {
+      const doc=await db.get('pos_documents',invoicePdf[1]);
+      if(!doc||doc.kind!=='invoice'||!visible(doc,actor)) return send(404,{ok:false});
+      if(!invoicePdf[2])return send(200,{ok:true,document:publicDocument(doc,actor)});
+      if(invoicePdf[2]==='pdf'){
+        const pdf=receiptPdf(invoiceReceipt(doc));
+        res.writeHead(200,{'content-type':'application/pdf','content-length':pdf.length,'content-disposition':`inline; filename="${doc.number}.pdf"`,'cache-control':'no-store'});res.end(pdf);return true;
+      }
+      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
+      res.end(quotationHtml(doc, 'Factura'));return true;
+    }
     if(!['/api/admin/pos/quotes','/api/admin/pos/checkout'].includes(route)||req.method!=='POST') return send(404,{ok:false});
     if(!can('orders.create')) return send(403,{ok:false,error:'forbidden'});
     const body=await readJson(req), kind=route.endsWith('/quotes')?'quote':body.mode==='order'?'order':'invoice';
@@ -177,7 +196,7 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       }
       const document={id,kind,status:kind==='quote'?'quoted':'processing',actor_id:actor.id,customer_id:customer.id,
         customer:{id:customer.id,name:customer.name,phone_e164:customer.phone_e164},created_at,fingerprint,input,sale,
-        number:`COT-${id.slice(-10).toUpperCase()}`,order_id:kind==='quote'?null:orderId};
+        number:kind==='quote'?`COT-${id.slice(-10).toUpperCase()}`:`FAC-${id.slice(-10).toUpperCase()}`,order_id:kind==='quote'?null:orderId};
       const claim=await db.insert('pos_documents',document);
       if(claim.duplicate) return send(409,{ok:false,message:'Esta operación ya está siendo procesada. Revisa Pedidos antes de reintentar.'});
       claimedOrder=kind==='quote'?null:orderId;
@@ -185,13 +204,16 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       if(kind==='quote') result={document:publicDocument(document,actor),receiptUrl:`/api/admin/pos/quotes/${id}/receipt`};
       else {
         const created=await createOrder(ctx,{...input,id:orderId,items:sale.items.map(i=>({variantId:i.variantId,quantity:i.quantity,unitPrice:i.unit_price_cents/100,lineDiscountCents:i.discount_cents})),
-          discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',delivery:{address:input.address},deliveryLocation:input.location,pos:true},actor,
+          discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',delivery:{address:input.address},deliveryLocation:input.location,pos:true,
+          ...(kind==='invoice'?{invoiceId:id,invoiceNumber:document.number}:{})},actor,
           {manualProducts:manualProducts(input.items).map(p=>({...p,general:true,price:p.price_cents/100,label:p.name}))});
         if(!created.ok) {
           await db.update('pos_documents',id,{status:'failed',failure:created.error});
           return send(created.status||422,{ok:false,error:created.error,operationPending:true,orderId:created.orderId||orderId,message:created.message||'No se pudo guardar. Revisa Pedidos antes de volver a cobrar.'});
         }
-        result={orderId,number:created.order.order_number,total_cents:sale.total_cents,mode:kind,receiptUrl:`/api/admin/orders/${orderId}/receipt`};
+        // La factura se abre SIEMPRE en PDF (el mismo diseño que la cotización).
+        result={orderId,number:created.order.order_number,total_cents:sale.total_cents,mode:kind,invoiceId:kind==='invoice'?id:null,invoiceNumber:kind==='invoice'?document.number:null,
+          receiptUrl:kind==='invoice'?`/api/admin/pos/invoices/${id}/pdf`:`/api/admin/orders/${orderId}/receipt`};
         if(source) await db.update('pos_documents',source.id,{status:'converted',order_id:orderId});
       }
       // Se guarda sin ganancia/costos en el resultado reutilizado por otro rol.
