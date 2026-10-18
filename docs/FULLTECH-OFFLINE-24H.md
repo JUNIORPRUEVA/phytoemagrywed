@@ -88,3 +88,57 @@ repetirse de forma aislada. No se declara la suite completa aprobada.
   repetición de escrituras se probó en bases locales aisladas.
 - Pendiente: validación física del teléfono en modo avión después de descargar
   la copia. Las pruebas automatizadas no sustituyen esta comprobación.
+
+---
+
+## Corrección 2026-10-18 — «no se pudo cargar» y pérdida del acceso local
+
+### Causas reales encontradas (medidas, no supuestas)
+
+1. **La copia se guardaba por URL completa.** La descarga anticipada guarda
+   `?limit=5000`, un período, sin filtros. Al **buscar, filtrar o cambiar de día**
+   la consulta cambia y la copia no aparecía: el panel decía «esta pantalla no
+   está guardada» justo al filtrar, aunque el módulo estuviera descargado. De ahí
+   el «No se pudo cargar el reporte / el inventario» **intermitente**.
+2. **Cualquier 401 cerraba la sesión local.** Un 401 de un módulo (sondeo de
+   llamadas, una ruta de administración para un vendedor) ejecutaba `forget()` y
+   borraba la identidad de 24 h, la copia y el acceso a la cola.
+3. **`showLogin()` borraba la copia.** Ese aviso de acceso también se pinta cuando
+   el panel no puede validar la sesión sin red; disparaba `phyto:calling-logout`,
+   que `offline.js` escuchaba para borrar todo. Quedarse sin señal un momento
+   dejaba al usuario sin datos al volver a entrar.
+4. **Descarga inicial demasiado frágil.** 6 s de tope para `/api/admin/data`
+   (cientos de KB) y una caminata sin límite por cada cliente, conversación y
+   pedido: 2.305 descargas pendientes en la UAT, la copia quedaba a medias.
+
+### Corregido
+
+- `offline.js` y `sw.js`: si falta la respuesta exacta, se sirve **la copia más
+  reciente de esa misma ruta** y se marca con `x-fulltech-offline-at` (fecha).
+- Solo un 401 de `/api/admin/{session,auth/me,data,login,logout}` cierra la sesión
+  local; el resto se devuelve tal cual y queda en el diagnóstico.
+- La copia se borra **solo** al pulsar «Cerrar sesión» (`fulltech:offline-logout`).
+- Vencimiento con mensaje propio («El acceso sin conexión de 24 horas venció…»),
+  sin confundirlo con «no hay copia».
+- Descarga: 15 s (con un reintento) para los endpoints grandes; detalle de solo
+  los **200 más recientes** por lista (120 conversaciones). Las listas completas
+  sí se guardan.
+- Diagnóstico de las últimas 40 peticiones (ruta, causa, si había copia) visible
+  en «Datos sin conexión», y la hora de la copia en el indicador de presencia.
+
+### UAT real sin internet (Chromium, red cortada)
+
+| Comprobación | Resultado |
+| --- | --- |
+| Recarga de la PWA sin red | Abre con la copia; 0 mensajes de «no se pudo cargar» |
+| Inicio / Clientes / Pedidos / Reportes / Inventario / Mapa | Los seis pintan datos, 0 errores JS |
+| Consulta con **filtro/período distinto** (reporte custom, `?q=`, `?refresco=1`) | 200 desde la copia, con fecha |
+| Ruta inexistente | 503 con motivo (no se finge) |
+| Escritura sin red | Encolada (1), respuesta local, pedido visible como cambiado |
+| Vuelve la red | Cola 0 y servidor con el cambio aplicado |
+| Repetir la operación (misma clave) | 2 envíos → **1** cambio auditado |
+| Autorización vencida (25 h) | Lecturas 503 «venció», escrituras 401, identidad y cola conservadas |
+
+Límites que siguen: WhatsApp y llamadas necesitan red; los NCF/e-CF no se emiten
+sin conexión; teselas no visitadas y ruta/ETA necesitan cartografía; la prueba en
+teléfono físico en modo avión sigue pendiente.

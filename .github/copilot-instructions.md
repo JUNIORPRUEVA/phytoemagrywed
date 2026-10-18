@@ -45,3 +45,83 @@ Se activa únicamente cuando se pide expresamente **DEPLOY o publicar en producc
 - Detener el despliegue si hay un bloqueo crítico.
 
 **Rapidez no es programar sin seguridad**: las verificaciones críticas de integridad, permisos, datos y facturación se mantienen siempre que el cambio pueda afectarlas.
+
+## Reglas permanentes de eficiencia
+
+**Principio general:** trabajar rápido, con cambios mínimos y verificaciones proporcionales al riesgo. El objetivo es completar correctamente cada solicitud con la menor cantidad razonable de tiempo, comandos, archivos y herramientas. Calidad no es ejecutar procesos innecesarios.
+
+### Clasificación automática de tareas
+
+**TAREA PEQUEÑA** — cambios visuales, CSS, textos, tamaños, iconos y posiciones.
+
+1. Localizar el archivo.
+2. Aplicar el cambio.
+3. Comprobar sintaxis si corresponde.
+4. Informar brevemente.
+
+**TAREA MEDIANA** — cambios funcionales en un módulo existente.
+
+1. Inspeccionar el módulo y sus dependencias inmediatas.
+2. Implementar el cambio.
+3. Ejecutar pruebas específicas.
+4. Corregir errores relacionados.
+5. Informar resultados.
+
+**TAREA CRÍTICA** — producción, base de datos, pagos, facturación, permisos, autenticación, seguridad, inventario financiero, migraciones o despliegues.
+
+1. Realizar análisis de impacto.
+2. Aplicar controles de seguridad.
+3. Crear respaldos cuando corresponda.
+4. Ejecutar pruebas relevantes y de regresión.
+5. Solicitar autorización para acciones productivas no autorizadas expresamente.
+
+Nunca sacrifiques la seguridad o integridad de datos por velocidad.
+
+### Uso eficiente de terminal
+
+- Evitar comandos repetitivos y agrupar verificaciones relacionadas.
+- Búsquedas específicas por archivo o símbolo; limitar la salida; no mostrar logs gigantes.
+- No repetir pruebas sin cambios que lo justifiquen; reutilizar resultados válidos de la tarea.
+- No arrancar servicios ni contenedores si el cambio no lo requiere.
+- No reconstruir aplicaciones completas por modificaciones menores.
+
+### Pruebas proporcionales
+
+- CSS: verificar estilos, selectores y efectos laterales.
+- JavaScript: sintaxis y comportamiento afectado.
+- Backend: pruebas específicas de rutas o servicios modificados.
+- Base de datos: integridad, aislamiento y migraciones.
+
+No ejecutar suites completas, E2E extensas ni builds globales salvo que el riesgo, la dependencia afectada o una solicitud explícita lo justifiquen. Si una prueba falla por causa aparentemente ajena al cambio, identificarla y reportarla; no afirmar que es preexistente sin evidencia.
+
+### Autonomía sin interrupciones
+
+- No pedir confirmación para cambios rutinarios ni por detalles que se pueden descubrir en el código.
+- No presentar planes extensos para tareas sencillas.
+- Si hay un bloqueo real, explicar qué se necesita.
+- En tareas grandes, dividir en etapas funcionales sin perder el objetivo.
+
+### Evitar cambios innecesarios
+
+- No refactorizar módulos completos por un cambio pequeño.
+- No tocar archivos ajenos a la solicitud ni reestructurar carpetas sin necesidad.
+- No agregar dependencias innecesarias.
+- No sobrescribir cambios de otros worktrees ni usar restauraciones destructivas.
+- No alterar comportamientos que ya funcionan. Respetar arquitectura, estilo y convenciones del proyecto.
+
+### Gestión del tiempo
+
+Priorizar implementar el cambio sobre explorar, analizar o generar informes. Evitar ciclos de auditoría/prueba/corrección sin un problema concreto.
+
+### Protección de producción
+
+Nunca de forma automática: deploy, push, merge, migraciones productivas, borrados de datos, cambios destructivos, modificación de credenciales u operaciones irreversibles. **Requieren autorización explícita.** El permiso para editar código local no implica permiso para modificar producción.
+
+### Formato de la respuesta final (breve)
+
+- **Resultado:** qué se modificó.
+- **Archivos:** cuáles cambiaron.
+- **Validación:** qué se comprobó y su resultado.
+- **Pendiente:** solo lo que realmente falte.
+
+Sin explicaciones largas, tablas múltiples, logs completos ni recomendaciones no solicitadas.
