@@ -308,3 +308,21 @@ body[data-quote-detail='true'] .quotes-appbar__default .wa-appbar__back{display:
   .pos-quotes-empty{padding:56px 24px 50px}
 }
 
+
+.pos-card-plus{width:28px;height:28px;display:flex;align-items:center;justify-content:center;line-height:1;border-radius:9px;bottom:9px}
+.pos-card-plus svg{display:block;width:17px;height:17px;stroke-width:2;stroke-linecap:round}
+.pos-client-dialog{inset:0;width:100%;max-width:none;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0}
+.pos-client-dialog .pos-modal-form{height:100%;max-height:none}
+.pos-client-dialog .pos-modal-form>header{padding:16px 20px;padding-top:max(16px,env(safe-area-inset-top))}
+.pos-client-dialog .pos-modal-body{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;padding:0 max(16px,calc((100vw - 900px)/2))}
+.pos-client-toolbar{display:grid;grid-template-columns:1fr auto auto;align-items:end;gap:10px;padding:18px 0;border-bottom:1px solid #7186a22c;flex-shrink:0}
+.pos-client-toolbar .field{margin:0}
+.pos-client-toolbar .btn{min-height:44px;padding:10px 14px}
+#pos-customer-results{overflow:auto;flex:1;min-height:0;padding-bottom:env(safe-area-inset-bottom)}
+.pos-client-dialog .pos-customer-row{display:flex;align-items:center;gap:14px;padding:16px 12px;border-radius:12px;margin:4px 0}
+.pos-client-dialog .pos-customer-row:hover,.pos-client-dialog .pos-customer-row[aria-pressed=true]{background:#3478ef14}
+.pos-customer-avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#3478ef18;color:var(--accent,#2563eb);flex-shrink:0;font-weight:600}
+.pos-customer-check{margin-left:auto;color:#2563eb;font-size:20px}
+.pos-client-dialog .pos-new-client{flex-shrink:0;max-height:50dvh;overflow:auto;padding:16px;border:1px solid #7186a24a;border-radius:14px;margin:12px 0}
+.pos-client-dialog .pos-new-client[hidden]{display:none}
+@media(max-width:540px){.pos-client-toolbar{grid-template-columns:1fr 1fr}.pos-client-toolbar .field{grid-column:1/-1}.pos-client-toolbar .btn{width:100%}}

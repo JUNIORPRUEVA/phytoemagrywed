@@ -160,3 +160,19 @@ it('salir de la pantalla cierra formularios y filtros para no dejar una capa pen
   await tab('catalogo');w.document.querySelector('[data-store-filters]').click();await tab('hoy');
   expect(w.document.querySelector('.store-filter-drawer').open).toBe(false);
 });
+it('filtra productos de ajuste por búsqueda y categoría sin permitir guardar resultados vacíos',async()=>{
+  products[0].category='Equipos';products.push({...products[0],id:'p2',name:'Cable',sku:'CAB',category:'Accesorios'});
+  await tab('inventario');const search=w.document.querySelector('#stock-search'),category=w.document.querySelector('#stock-category'),form=w.document.querySelector('#store-stock-form');
+  category.value='Accesorios';category.dispatchEvent(new w.Event('change',{bubbles:true}));expect(form.elements.productId.value).toBe('p2');
+  search.value='inexistente';search.dispatchEvent(new w.Event('input',{bubbles:true}));expect(form.querySelector('[type=submit]').disabled).toBe(true);
+  search.value='Cable';search.dispatchEvent(new w.Event('input',{bubbles:true}));expect(form.querySelector('[type=submit]').disabled).toBe(false);expect(form.elements.productId.value).toBe('p2');
+});
+it('ajusta el saldo compartido en cápsulas usando la API de inventario',async()=>{
+  products=[{...products[0],id:'capsules_5',legacy:true,base_quantity:100,quantity:20}];
+  await tab('inventario');const form=w.document.querySelector('#store-stock-form');
+  expect(w.document.querySelector('#stock-quantity-label').textContent).toBe('Cantidad de cápsulas');
+  form.elements.quantity.value='3';form.elements.type.value='out';form.elements.reason.value='Prueba';form.elements.quantity.dispatchEvent(new w.Event('input',{bubbles:true}));
+  expect([...w.document.querySelectorAll('#store-stock-preview div strong')].map(n=>n.textContent)).toEqual(['100','-3','97']);
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
+  const sent=requests.find(r=>r.url==='/api/admin/inventory/adjust');expect(JSON.parse(sent.options.body)).toMatchObject({direction:'out',quantity:3,reason:'Prueba'});
+});

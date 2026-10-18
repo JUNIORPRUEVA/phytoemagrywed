@@ -153,3 +153,9 @@ it('cada ticket ofrece editar y eliminar en sus tres puntos, conservando el nomb
   expect(w.document.querySelector('.pos-ticket-list').textContent).not.toContain('Venta de María');expect(tickets.get('ticket_1').status).toBe('discarded');
   expect(requests.some(r=>r.url.endsWith('/checkout'))).toBe(false);
 });
+it('busca y confirma un cliente desde el selector de pantalla completa',async()=>{
+  click('[data-pos-client]');expect(w.document.querySelector('.pos-client-dialog').open).toBe(true);
+  const search=w.document.querySelector('#pos-client-search');search.value='no existe';search.dispatchEvent(new w.Event('input'));expect(w.document.querySelectorAll('[data-client-choice]')).toHaveLength(0);
+  search.value='Cliente';search.dispatchEvent(new w.Event('input'));click('[data-client-choice]');expect(w.document.querySelector('#pos-client-select').disabled).toBe(false);
+  click('#pos-client-select');expect(w.document.querySelector('[data-pos-client]').textContent).toContain('Cliente <script>');expect(w.document.querySelector('.pos-dialog').open).toBe(false);
+});

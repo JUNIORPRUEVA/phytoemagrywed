@@ -60,7 +60,7 @@
     box.dataset.layout=layout;
     box.innerHTML=rows.length?`<div class="store-items">${rows.map(p=>`<article class="store-product${p.active?'':' store-product--inactive'}" data-product-id="${esc(p.id)}">
       <a class="store-product__visual" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</a>
-      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><span class="pos-card-plus" aria-hidden="true">+</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><span class="pos-card-plus" aria-hidden="true">${svg('plus')}</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
     window.dispatchEvent(new Event('fulltech:pos-render'));
 
   }
@@ -100,12 +100,12 @@
     updateCount();
   }
   function movementForm(count) {
-    const rows=products.filter(p=>p.track_stock&&!p.legacy);
+    const rows=products.filter(p=>p.track_stock&&(!count||!p.legacy));
     if(!rows.length)return '<div class="card"><p>Crea un producto para registrar sus existencias. Los servicios no llevan stock.</p><button class="btn btn--ghost" type="button" data-tab="catalogo">Ir al catálogo</button></div>';
     return `<form class="store-stock-form" id="store-stock-form" data-count="${count}"><p class="store-form-caption">${count?'Compara las unidades contadas con el saldo registrado.':'Registra una entrada o salida de mercancía.'}</p>
-      <label class="field"><span class="field__label">Producto</span><select class="field__select" name="productId">${rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku)}</option>`).join('')}</select></label>
-      ${count?'':'<label class="field"><span class="field__label">Movimiento</span><select class="field__select" name="type"><option value="in">Entrada de mercancía</option><option value="out">Salida / ajuste</option></select></label>'}
-      <label class="field"><span class="field__label">${count?'Unidades contadas':'Cantidad de unidades'}</span><input class="field__input" name="quantity" type="number" min="${count?'0':'1'}" step="1" required></label>
+      <div class="stock-filters"><label class="field"><span class="field__label">Buscar producto</span><input class="field__input" type="search" id="stock-search" placeholder="Nombre o código"></label><label class="field"><span class="field__label">Categoría</span><select class="field__select" id="stock-category"><option value="">Todas las categorías</option>${[...new Set(rows.map(categoryName))].map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label></div><label class="field"><span class="field__label">Producto</span><select class="field__select" name="productId" required>${rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku)}</option>`).join('')}</select></label>
+      ${count?'':'<label class="field"><span class="field__label">Movimiento</span><select class="field__select" name="type"><option value="in">Agregar existencias (+)</option><option value="out">Disminuir existencias (−)</option></select></label>'}
+      <label class="field"><span class="field__label" id="stock-quantity-label">${count?'Unidades contadas':'Cantidad de unidades'}</span><input class="field__input" name="quantity" type="number" min="${count?'0':'1'}" step="1" required></label>
       <div id="store-stock-preview" class="store-stock-preview" aria-live="polite"></div>
       <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" maxlength="300" required placeholder="${count?'Recuento físico':'Compra, devolución o motivo del ajuste'}"></label>
       <p class="store-form-error" role="alert"></p><button class="btn btn--primary" type="submit">${count?'Guardar recuento':'Guardar ajuste'}</button></form>`;
@@ -114,11 +114,12 @@
     const form=document.getElementById('store-stock-form');if(!form)return;
     const p=products.find(p=>p.id===form.elements.productId.value);if(!p)return;
     const count=form.dataset.count==='true';
+    document.getElementById('stock-quantity-label').textContent=p.legacy?'Cantidad de cápsulas':count?'Unidades contadas':'Cantidad de unidades';
     form.dataset.expected ||= String(p.quantity);
-    const baseline=count?Number(form.dataset.expected):p.quantity;
+    const baseline=count?Number(form.dataset.expected):(p.legacy?p.base_quantity:p.quantity);
     const qty=form.elements.quantity.value;
     const delta=qty===''?null:count?Number(qty)-baseline:Number(qty)*(form.elements.type.value==='out'?-1:1);
-    document.getElementById('store-stock-preview').innerHTML=`<div><small>Stock registrado</small><strong>${baseline}</strong></div><div><small>${count?'Diferencia':'Ajuste'}</small><strong>${delta===null?'—':(delta>0?'+':'')+delta}</strong></div><div><small>Quedará</small><strong>${delta===null?'—':baseline+delta}</strong></div>${count&&baseline!==p.quantity?'<p>El stock cambió. Vuelve a abrir Recuento antes de guardar.</p>':''}`;
+    document.getElementById('store-stock-preview').innerHTML=`${p.legacy?'<p class="stock-shared-note">Inventario compartido de Phytoemagry. Introduce la cantidad en <strong>cápsulas</strong>, no en frascos. El ajuste afecta a todas las presentaciones.</p>':''}<div><small>Stock registrado</small><strong>${baseline}</strong></div><div><small>${count?'Diferencia':'Ajuste'}</small><strong>${delta===null?'—':(delta>0?'+':'')+delta}</strong></div><div><small>Quedará</small><strong>${delta===null?'—':baseline+delta}</strong></div>${count&&baseline!==p.quantity?'<p>El stock cambió. Vuelve a abrir Recuento antes de guardar.</p>':''}`;
 
   }
   const filterDrawer=document.createElement('dialog');filterDrawer.className='store-filter-drawer';filterDrawer.setAttribute('aria-label','Filtros del catálogo');document.body.append(filterDrawer);
@@ -227,12 +228,28 @@
   });
   document.addEventListener('input',e=>{if(e.target.id==='store-search'){query=e.target.value;cards();}if(e.target.closest('#store-stock-form'))updateCount();});
   document.addEventListener('change',e=>{if(e.target.id==='store-kind'){kind=e.target.value;cards();}if(e.target.closest('#store-stock-form')){if(e.target.name==='productId'){delete e.target.form.dataset.expected;delete e.target.form.dataset.requestId;}updateCount();}});
+  function filterStock(){
+    const form=document.getElementById('store-stock-form');if(!form)return;
+    const q=document.getElementById('stock-search').value.trim().toLocaleLowerCase(),category=document.getElementById('stock-category').value,select=form.elements.productId,previous=select.value;
+    const rows=products.filter(p=>p.track_stock&&(form.dataset.count!=='true'||!p.legacy)&&(!category||categoryName(p)===category)&&(p.name+' '+p.sku).toLocaleLowerCase().includes(q));
+    select.innerHTML=rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku)}</option>`).join('')||'<option value="">Sin resultados</option>';
+    if(rows.some(p=>p.id===previous))select.value=previous;
+    if(select.value!==previous){delete form.dataset.expected;delete form.dataset.requestId;}
+    form.querySelector('[type=submit]').disabled=!rows.length;
+    document.getElementById('store-stock-preview').innerHTML='';updateCount();
+  }
+  document.addEventListener('input',e=>{if(e.target.id==='stock-search')filterStock();});
+  document.addEventListener('change',e=>{if(e.target.id==='stock-category')filterStock();});
   document.addEventListener('submit',async e=>{
     if(e.target.id!=='store-stock-form')return;e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');button.disabled=true;
     const data=Object.fromEntries(new FormData(form));const p=products.find(p=>p.id===data.productId);
-    data.type=form.dataset.count==='true'?'count':data.type;data.expected=Number(form.dataset.expected??p.quantity);
+    data.type=form.dataset.count==='true'?'count':data.type;data.expected=Number(form.dataset.expected??p?.quantity);
     form.dataset.requestId ||= crypto.randomUUID();data.requestId=form.dataset.requestId;
-    try{await request(`products/${encodeURIComponent(p.id)}/stock`,data);form.reset();delete form.dataset.expected;delete form.dataset.requestId;await load(true);notice('Inventario actualizado.');}
+    try{if(!p)throw new Error('Selecciona un producto.');
+      if(p.legacy){
+        const response=await fetch('/api/admin/inventory/adjust',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({direction:data.type,quantity:Number(data.quantity),reason:data.reason,idempotencyKey:data.requestId})});
+        const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.message||'No se pudo ajustar el inventario. Revisa la cantidad disponible.');
+      }else await request(`products/${encodeURIComponent(p.id)}/stock`,data);form.reset();delete form.dataset.expected;delete form.dataset.requestId;await load(true);notice('Inventario actualizado.');}
     catch(err){form.querySelector('[role=alert]').textContent=err.message;button.disabled=false;}
   });
   function stopLive(){source?.close();source=null;if(poll)clearInterval(poll);poll=null;}
