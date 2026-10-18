@@ -140,10 +140,24 @@
   }
 
   body[data-tab='whatsapp'] .wa__list-head::before {
-    content: 'Chats';
+    content: none;
+  }
+
+  /* Producción ya pinta el título con `.wa__list-title` (dice «WhatsApp»):
+   * en el escritorio se muestra «Chats», como WhatsApp Web, sin tocar el móvil. */
+  body[data-tab='whatsapp'] .wa__list-head .wa__list-title {
     grid-area: 1 / 2 / 2 / 3;
     min-width: 0;
+    overflow: hidden;
     color: var(--wad-ink);
+    font-size: 0;
+    line-height: 0;
+    white-space: nowrap;
+  }
+
+  body[data-tab='whatsapp'] .wa__list-head .wa__list-title::after {
+    content: 'Chats';
+    display: inline-block;
     font-size: 20px;
     font-weight: 600;
     letter-spacing: 0.1px;
