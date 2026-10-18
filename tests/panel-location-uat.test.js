@@ -449,8 +449,9 @@ describe('compartir una ubicación con otro chat', () => {
     const chip = $$('#thread .loc').find((node) => node.textContent.includes('Casa'));
     const menu = await waitFor(() => chip?.querySelector('[data-loc-menu]'), 'el menú de la ubicación');
     click(menu);
-    await waitFor(() => $('#loc-share'), 'las acciones de la ubicación');
-    click('#loc-share');
+    await waitFor(() => $('#sheet-body [data-loc-share-menu]'), 'las acciones de la ubicación');
+    click('[data-loc-share-menu]');
+    click(await waitFor(() => $('[data-loc-share-conv]'), 'el submenú de compartir'));
     await waitFor(() => $('#loc-share-ok'), 'el selector de destino');
     expect($('#loc-share-warning').textContent).toMatch(/Vas a compartir esta ubicación con/i);
 
@@ -508,8 +509,9 @@ describe('compartir una ubicación con otro chat', () => {
     await waitFor(() => $$('#thread .loc').length > 0, 'el hilo con la ubicación');
     const chip = $$('#thread .loc').find((node) => node.textContent.includes('Casa'));
     click(chip.querySelector('[data-loc-menu]'));
-    await waitFor(() => $('#loc-share'), 'las acciones de la ubicación');
-    click('#loc-share');
+    await waitFor(() => $('#sheet-body [data-loc-share-menu]'), 'las acciones de la ubicación');
+    click('[data-loc-share-menu]');
+    click(await waitFor(() => $('[data-loc-share-conv]'), 'el submenú de compartir'));
     const select = await waitFor(() => $('#loc-share-to'), 'el selector de destino');
 
     // El destino dice en la propia lista por dónde puede recibirla.

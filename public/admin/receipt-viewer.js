@@ -4,7 +4,7 @@
   const status=document.querySelector('[data-receipt-status]');
   if(!root.dataset.pdf){
     const path=new URLSearchParams(location.search).get('pdf')||'';
-    if(!/^\/api\/admin\/(?:pos\/(?:local|quotes)\/[a-zA-Z0-9_-]+\/pdf|orders\/[a-zA-Z0-9_-]+\/(?:receipt\.pdf|receipt-pdf|factura))$/.test(path)){status.textContent='El comprobante no es válido.';return;}
+    if(!/^\/api\/admin\/(?:pos\/(?:local|quotes|invoices)\/[a-zA-Z0-9_-]+\/pdf|orders\/[a-zA-Z0-9_-]+\/(?:receipt\.pdf|receipt-pdf|factura))$/.test(path)){status.textContent='El comprobante no es válido.';return;}
     root.dataset.pdf=path;root.dataset.filename='FullTECH-'+path.split('/').at(-2)+'.pdf';
   }
   let objectUrl,task;

@@ -442,6 +442,8 @@
     customerViews: {},
     // Datos de la factura abierta (los usa el menú de su botón flotante).
     receiptContext: null,
+  /** Última ubicación GPS que este agente guardó desde su perfil. */
+  myLocation: null,
     openId: null,
     customerId: null,
     chat: null,
@@ -2453,7 +2455,7 @@
         canSeeCost
           ? `<form class="card" id="inventory-restock">
         <p class="card__title">Agregar inventario</p>
-        <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
+        <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" value="1" required /></label>
         <label class="field"><span class="field__label">Costo unitario</span><input class="field__input" name="unitCost" type="number" min="0" step="0.01" value="${escapeHtml(
           ((inv.product?.current_unit_cost_cents ?? 0) / 100).toFixed(2),
         )}" required /></label>
@@ -2470,7 +2472,7 @@
       <form class="card" id="inventory-adjust">
         <p class="card__title">Ajuste manual</p>
         <label class="field"><span class="field__label">Tipo</span><select class="field__select" name="direction"><option value="in">Entrada</option><option value="out">Salida</option></select></label>
-        <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" required /></label>
+        <label class="field"><span class="field__label">Cápsulas</span><input class="field__input" name="quantity" type="number" min="1" step="1" value="1" required /></label>
         <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" value="Ajuste manual" /></label>
         <button class="btn btn--ghost btn--block" type="submit">Guardar ajuste</button>
       </form>
@@ -2819,10 +2821,20 @@
     }
     const ultimo = ordersNewestFirst(ordersForCustomer(customerId))[0] ?? null;
     const delPedido = ultimo ? itemOrder(ultimo)?.delivery?.location?.source_location_id ?? null : null;
+    /*
+     * Respaldo: si no hay preferencia guardada ni pedido reciente, se usa la
+     * última ubicación QUE SIRVA del cliente (con coordenadas), sea cual sea su
+     * origen. Antes solo valía `whatsapp_inbound`, así que un punto compartido de
+     * otra forma no aparecía en el pedido y el operador tenía que buscarlo.
+     */
+    const utilizables = locations.filter((row) => locationCoordsOk(row));
+    const masReciente = [...utilizables].sort((a, b) =>
+      String(b.created_at ?? b.updated_at ?? '').localeCompare(String(a.created_at ?? a.updated_at ?? '')),
+    )[0] ?? null;
     return (
       (delPedido ? locations.find((row) => row.id === delPedido) : null) ??
       locations.find((row) => String(row.source ?? '') === 'whatsapp_inbound') ??
-      null
+      masReciente
     );
   }
 
@@ -7094,6 +7106,66 @@
       </article>`;
     }).join('');
     $('#settings-permission-feedback').textContent = permissionFeedback;
+    // MI UBICACIÓN GPS (perfil del agente/delivery): se pide permiso explícito al pulsar.
+    const caja = $('#settings-my-location');
+    if (caja) {
+      const guardada = state.myLocation;
+      caja.innerHTML = `<article class="settings-permission" data-settings-my-location>
+        <span class="settings-row__icon" aria-hidden="true">${ICONS.pin}</span>
+        <div class="settings-row__copy"><strong>Mi ubicación GPS</strong>
+          <small>${guardada ? `Última: ${escapeHtml(fmtWhen(guardada.updated_at))} · ${Number(guardada.latitude).toFixed(5)}, ${Number(guardada.longitude).toFixed(5)}` : 'Sin registrar todavía'}</small>
+        </div>
+        <button class="settings-permission__button" type="button" data-settings-my-location-update ${myLocationBusy ? 'disabled' : ''}>${myLocationBusy ? 'Guardando…' : guardada ? 'Actualizar' : 'Registrar'}</button>
+      </article>
+      <p class="settings-permission__state" role="status">${escapeHtml(myLocationFeedback || 'Se guarda tu última posición para medir distancias; se pide permiso al pulsar.')}</p>`;
+      caja.querySelector('[data-settings-my-location-update]')?.addEventListener('click', () => updateMyLocation());
+      if (!myLocationLoaded && !myLocationBusy) {
+        myLocationLoaded = true;
+        api('/api/admin/me/location')
+          .then((data) => {
+            state.myLocation = data.location ?? null;
+            renderSettingsPermissions();
+          })
+          .catch(() => {});
+      }
+    }
+  }
+
+  let myLocationBusy = false;
+  let myLocationLoaded = false;
+  let myLocationFeedback = '';
+  /** Guarda MI posición con permiso explícito del navegador (nada de inventarla). */
+  async function updateMyLocation() {
+    if (myLocationBusy) return;
+    if (!navigator.geolocation) {
+      myLocationFeedback = 'Este navegador no puede dar la ubicación.';
+      renderSettingsPermissions();
+      return;
+    }
+    myLocationBusy = true;
+    myLocationFeedback = '';
+    renderSettingsPermissions();
+    try {
+      const position = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 20000 }),
+      );
+      const data = await api('/api/admin/me/location', {
+        method: 'POST',
+        body: JSON.stringify({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        }),
+      });
+      state.myLocation = data.location ?? null;
+      myLocationFeedback = 'Ubicación guardada.';
+    } catch (error) {
+      myLocationFeedback =
+        error?.code === 1 ? 'Permiso de ubicación denegado: actívalo en los ajustes del navegador.' : error?.body?.message ?? 'No se pudo guardar tu ubicación.';
+    } finally {
+      myLocationBusy = false;
+      renderSettingsPermissions();
+    }
   }
 
   async function enableSettingsPermission(key) {
@@ -13378,7 +13450,6 @@
   function openChatActions(customerId, conversationId) {
     const customer = customerById(customerId);
     if (!customer) return;
-    const clave = `${escapeHtml(customer.id)}|${escapeHtml(conversationId ?? '')}`;
     const conversacion =
       state.wa.chat?.conversation?.id === conversationId
         ? state.wa.chat.conversation
@@ -13412,9 +13483,18 @@
           <span><strong>Pedir confirmación</strong></span>
         </button>
 
-        <button class="menu-item menu-item--submenu" data-chat-followup-menu="${clave}" type="button">
+        <p class="menu-list__label">Seguimiento</p>
+        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
-          <span><strong>Seguimiento</strong></span>
+          <span><strong>Programar seguimiento</strong></span>
+        </button>
+        <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
+          conversationId ?? '',
+        )}" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
+          <span><strong>Programar mensaje</strong></span>
         </button>
 
         <p class="menu-list__label">Cliente</p>
@@ -13443,32 +13523,6 @@
         </button>
       </div>
     `,
-      { variant: 'chat-actions' },
-    );
-  }
-
-  /** SUBMENÚ «Seguimiento» del cajón: la tarea o el mensaje programado. */
-  function openChatFollowupMenu(customerId, conversationId) {
-    const customer = customerById(customerId);
-    if (!customer) return;
-    const clave = `${escapeHtml(customer.id)}|${escapeHtml(conversationId ?? '')}`;
-    openSheet(
-      'Seguimiento',
-      `<button class="menu-back" data-chat-actions-back="${clave}" type="button">${ICONS.back}<span>Volver a las acciones</span></button>
-      <div class="menu-list">
-        <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
-          <span><strong>Programar seguimiento</strong></span>
-        </button>
-        <button class="menu-item" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversationId ?? '',
-        )}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span>
-          <span><strong>Programar mensaje</strong></span>
-        </button>
-      </div>`,
       { variant: 'chat-actions' },
     );
   }
@@ -15164,53 +15218,241 @@
     });
   }
 
-  /** Acciones de una ubicación: lo esencial a la vista y el resto en «⋯» (§12). */
+  /** Acciones de una ubicación: cajón lateral derecho, filas compactas. */
   function openLocationActions({ location, conversationId }) {
     const url = locationMapUrl(location);
     const dibujable = Boolean(mapLatLng(location));
-    openSheet(
-      'Ubicación',
-      `
-      ${locationChip(location, { withActions: false })}
-      ${
-        dibujable
-          ? '<button class="btn btn--primary btn--block" id="loc-map" type="button">Ver el mapa</button>'
-          : '<p class="rule rule--warn">Esta ubicación no trae coordenadas legibles.</p>'
-      }
-      <button class="btn btn--ghost btn--block" id="loc-use" type="button">Usar para un pedido</button>
-      <button class="btn btn--ghost btn--block" id="loc-attach" type="button">Agregar a un pedido abierto</button>
-      <button class="btn btn--ghost btn--block" id="loc-share" type="button">Compartir con otra conversación</button>
-      ${
-        url
-          ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a>`
-          : ''
-      }
-      <button class="btn btn--ghost btn--block" id="loc-close" type="button">Cerrar</button>
-      `,
-    );
-    $('#loc-close').addEventListener('click', () => closeSheet());
-    $('#loc-map')?.addEventListener('click', () => {
-      closeSheet();
-      openMapScreen({ location, title: 'Ubicación', conversationId: conversationId ?? state.wa.selectedId ?? '' });
+    const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
+    const pedidosVivos = customerId ? liveOrdersForCustomer(customerId) : [];
+    const yaAsignada = pedidosVivos.some((item) => itemOrder(item)?.delivery?.location?.id === location?.id);
+    openSheetActionMenu({
+      title: 'Ubicación',
+      variant: 'actions-drawer',
+      acciones: [
+        dibujable ? { icon: ICONS.pin, label: 'Ver en el mapa', data: { 'data-loc-map': 1 } } : null,
+        { icon: ICONS.send, label: 'Compartir', data: { 'data-loc-share-menu': 1 } },
+        {
+          icon: ICONS.bag,
+          label: yaAsignada ? 'Cambiar ubicación' : 'Agregar a pedido',
+          data: { 'data-loc-attach': 1 },
+        },
+        { icon: ICONS.doc, label: 'Crear pedido con esta ubicación', data: { 'data-loc-use': 1 } },
+        dibujable ? { icon: ICONS.clock, label: 'Medir distancia', data: { 'data-loc-distance': 1 } } : null,
+        url ? { icon: ICONS.pin, label: 'Abrir en Google Maps', href: url } : null,
+        { icon: ICONS.close, label: 'Cerrar', data: { 'data-loc-close': 1 } },
+      ].filter(Boolean),
     });
-    $('#loc-use').addEventListener('click', () => {
-      const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
+    const contexto = () => ({ location, locationId: location.id, conversationId: conversationId ?? state.wa.selectedId ?? '', customerId });
+    $('#sheet-body [data-loc-close]')?.addEventListener('click', () => closeSheet());
+    $('#sheet-body [data-loc-map]')?.addEventListener('click', () => {
+      const ctx = contexto();
       closeSheet();
-      if (!customerId) {
+      openMapScreen({ location, title: 'Ubicación', conversationId: ctx.conversationId });
+    });
+    $('#sheet-body [data-loc-use]')?.addEventListener('click', () => {
+      const ctx = contexto();
+      closeSheet();
+      if (!ctx.customerId) {
         toast('Abre la conversación del cliente para crearle un pedido');
         return;
       }
-      openOrderForm({ customerId, conversationId: conversationId ?? state.wa.selectedId ?? '', location });
+      openOrderForm({ customerId: ctx.customerId, conversationId: ctx.conversationId, location });
     });
-    $('#loc-attach')?.addEventListener('click', () => {
-      const customerId = state.wa.chat?.customer?.id ?? location?.customer_id ?? null;
+    $('#sheet-body [data-loc-attach]')?.addEventListener('click', () => {
+      const ctx = contexto();
       closeSheet();
-      openAttachLocationToOrder({ location, customerId });
+      openAttachLocationToOrder({ location, customerId: ctx.customerId });
     });
-    $('#loc-share').addEventListener('click', () => {
+    $('#sheet-body [data-loc-share-menu]')?.addEventListener('click', () => {
+      const ctx = contexto();
+      openShareLocationMenu(ctx);
+    });
+    $('#sheet-body [data-loc-distance]')?.addEventListener('click', () => {
+      openLocationDistance({ location });
+    });
+  }
+
+  /**
+   * MEDIR DISTANCIA: desde la última posición GPS válida de un delivery hasta la
+   * ubicación del cliente. Es distancia EN LÍNEA RECTA (haversine): el panel lo
+   * dice tal cual y enseña de cuándo es la posición, para no prometer una ruta.
+   */
+  async function openLocationDistance({ location }) {
+    let positions = [];
+    try {
+      positions = (await api('/api/admin/delivery-positions')).positions ?? [];
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudieron leer las ubicaciones del equipo');
+      return;
+    }
+    const ordenadas = positions
+      .filter((row) => Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)))
+      .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')));
+    if (!ordenadas.length) {
+      openSheet(
+        'Medir distancia',
+        `${locationChip(location, { withActions: false })}
+         <p class="rule rule--warn">Ningún delivery ha registrado su ubicación todavía. Puede hacerlo desde Configuración → Permisos → «Mi ubicación GPS».</p>`,
+        { variant: 'actions-drawer' },
+      );
+      return;
+    }
+    openSheetActionMenu({
+      title: 'Medir distancia',
+      variant: 'actions-drawer',
+      acciones: ordenadas.map((row) => ({
+        icon: ICONS.users,
+        label: row.name || 'Delivery',
+        note: `${row.source === 'entrega' ? 'Entrega' : 'Perfil'} · ${fmtWhen(row.updated_at)}`,
+        data: { 'data-loc-measure-user': row.user_id },
+      })),
+    });
+    $$('#sheet-body [data-loc-measure-user]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const row = ordenadas.find((candidate) => candidate.user_id === button.dataset.locMeasureUser);
+        if (!row) return;
+        const metros = metersBetween(row, location);
+        openSheet(
+          'Distancia',
+          `${locationChip(location, { withActions: false })}
+           <dl class="facts">
+             <div class="fact"><dt>Desde</dt><dd>${escapeHtml(row.name || 'Delivery')}</dd></div>
+             <div class="fact"><dt>Posición GPS</dt><dd>${escapeHtml(fmtWhen(row.updated_at))}</dd></div>
+             <div class="fact"><dt>Distancia</dt><dd>${escapeHtml(metros === null ? 'Sin coordenadas' : fmtDistance(metros))}</dd></div>
+           </dl>
+           <p class="view__hint">Es la distancia <strong>en línea recta</strong> entre la última posición conocida del delivery y la ubicación del cliente; la distancia por carretera será mayor.</p>`,
+          { variant: 'actions-drawer' },
+        );
+      });
+    });
+  }
+
+  /** SUBMENÚ «Compartir»: número, delivery registrado, delivery nuevo o chat. */
+  function openShareLocationMenu({ location, locationId, conversationId }) {
+    openSheetActionMenu({
+      title: 'Compartir',
+      variant: 'actions-drawer',
+      acciones: [
+        { icon: ICONS.send, label: 'Enviar a número', data: { 'data-loc-share-phone': 1 } },
+        { icon: ICONS.users, label: 'Delivery registrado', data: { 'data-loc-share-delivery': 1 } },
+        { icon: ICONS.plus, label: 'Nuevo delivery', data: { 'data-loc-share-new': 1 } },
+        { icon: ICONS.chat, label: 'Compartir con conversación', data: { 'data-loc-share-conv': 1 } },
+        { icon: ICONS.back, label: 'Volver', data: { 'data-loc-back': 1 } },
+      ],
+    });
+    const ctx = { location, locationId, conversationId };
+    $('#sheet-body [data-loc-back]')?.addEventListener('click', () => openLocationActions(ctx));
+    $('#sheet-body [data-loc-share-conv]')?.addEventListener('click', () => {
       closeSheet();
-      openShareLocation({ locationId: location.id, location });
+      openShareLocation({ locationId, location });
     });
+    $('#sheet-body [data-loc-share-phone]')?.addEventListener('click', () => openShareLocationToPhone({ locationId, location }));
+    $('#sheet-body [data-loc-share-delivery]')?.addEventListener('click', () => openShareLocationToDelivery({ locationId, location }));
+    $('#sheet-body [data-loc-share-new]')?.addEventListener('click', () => openNewDeliveryContact({ locationId, location }));
+  }
+
+  /** ¿Este usuario es un delivery con teléfono para WhatsApp? */
+  const esDeliveryConTelefono = (user) =>
+    Boolean(user?.phone) && ['DELIVERY', 'AGENT', 'ADMIN'].includes(String(user.role ?? '').toUpperCase());
+
+  /**
+   * ENVIAR LA UBICACIÓN A UN NÚMERO.
+   *
+   * El mensaje lo manda el CRM con la API oficial; el servidor resuelve/crea el
+   * cliente por ese teléfono y deja el envío escrito en su hilo. Si WhatsApp no
+   * está configurado o falta la plantilla, se dice el motivo: nunca se finge.
+   */
+  function enviarUbicacionANumero({ locationId, phone, name = '', saveContact = false, contactLabel = '', concept = '' }) {
+    return api(`/api/admin/locations/${encodeURIComponent(locationId)}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ phone, name, saveContact, contactLabel, concept, confirmed: true, mode: 'location' }),
+    });
+  }
+
+  function openShareLocationToPhone({ locationId, location }) {
+    openSheet(
+      'Enviar a número',
+      `<p class="rule">Se enviará <strong>esta ubicación</strong> por WhatsApp con el mensaje «Esta es la ubicación del cliente».</p>
+       ${locationChip(location, { withActions: false })}
+       <label class="field"><span class="field__label">Teléfono con WhatsApp</span>
+         <input class="field__input" id="loc-phone" type="tel" inputmode="tel" placeholder="+1 809 555 1234" required /></label>
+       <label class="field"><span class="field__label">Nombre (opcional)</span>
+         <input class="field__input" id="loc-phone-name" maxlength="120" placeholder="A quién le llega" /></label>`,
+      'Enviar ubicación',
+      async () => {
+        const phone = $('#loc-phone')?.value?.trim() ?? '';
+        if (digits(phone).length < 7) throw new Error('Escribe un teléfono válido con código de país.');
+        if (!window.confirm(`¿Compartir esta ubicación con ${phone}?`)) return;
+        await enviarUbicacionANumero({ locationId, phone, name: $('#loc-phone-name')?.value?.trim() ?? '' });
+        closeSheet();
+        toast('Ubicación enviada por WhatsApp');
+      },
+    );
+  }
+
+  function openShareLocationToDelivery({ locationId, location }) {
+    const deliveries = (state.users ?? []).filter(esDeliveryConTelefono);
+    if (!deliveries.length) {
+      toast('No hay deliveries con teléfono registrado');
+      return;
+    }
+    openSheet(
+      'Delivery registrado',
+      `${locationChip(location, { withActions: false })}
+       <div class="menu-list">
+        ${deliveries
+          .map(
+            (user) => `<button class="menu-item" data-loc-delivery="${escapeHtml(user.id)}" type="button">
+            <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
+            <span><strong>${escapeHtml(user.display_name ?? user.username ?? 'Delivery')}</strong></span>
+          </button>`,
+          )
+          .join('')}
+       </div>`,
+      { variant: 'actions-drawer' },
+    );
+    $$('#sheet-body [data-loc-delivery]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const user = deliveries.find((row) => row.id === button.dataset.locDelivery);
+        if (!user?.phone) return;
+        if (!window.confirm(`¿Compartir esta ubicación con ${user.display_name ?? user.username}?`)) return;
+        await working(button, 'Enviando…', async () => {
+          try {
+            await enviarUbicacionANumero({ locationId, phone: user.phone, name: user.display_name ?? '' });
+            closeSheet();
+            toast('Ubicación enviada al delivery');
+          } catch (error) {
+            if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar la ubicación');
+          }
+        });
+      });
+    });
+  }
+
+  function openNewDeliveryContact({ locationId, location }) {
+    openSheet(
+      'Nuevo delivery',
+      `${locationChip(location, { withActions: false })}
+       <label class="field"><span class="field__label">Nombre</span>
+         <input class="field__input" id="loc-new-name" maxlength="120" required placeholder="Nombre del delivery" /></label>
+       <label class="field"><span class="field__label">Teléfono con WhatsApp</span>
+         <input class="field__input" id="loc-new-phone" type="tel" inputmode="tel" placeholder="+1 809 555 1234" required /></label>
+       <label class="field"><span class="field__label">Concepto (opcional)</span>
+         <input class="field__input" id="loc-new-concept" maxlength="120" placeholder="Zona, vehículo, nota…" /></label>
+       <p class="view__hint">Queda guardado para elegirlo en próximos envíos.</p>`,
+      'Guardar y enviar',
+      async () => {
+        const name = $('#loc-new-name')?.value?.trim() ?? '';
+        const phone = $('#loc-new-phone')?.value?.trim() ?? '';
+        const concept = $('#loc-new-concept')?.value?.trim() ?? '';
+        if (!name) throw new Error('Escribe el nombre del delivery.');
+        if (digits(phone).length < 7) throw new Error('Escribe un teléfono válido con código de país.');
+        if (!window.confirm(`¿Guardar a ${name} y enviarle la ubicación?`)) return;
+        await enviarUbicacionANumero({ locationId, phone, name, saveContact: true, contactLabel: name, concept });
+        closeSheet();
+        toast('Delivery guardado y ubicación enviada');
+      },
+    );
   }
 
   /**
@@ -17053,7 +17295,7 @@
    * de siempre, ahora dentro del menú) y `href` para lo que de verdad es un
    * enlace, como llamar por teléfono.
    */
-  function openSheetActionMenu({ title = 'Acciones', nota = '', acciones = [] } = {}) {
+  function openSheetActionMenu({ title = 'Acciones', nota = '', acciones = [], variant = 'menu' } = {}) {
     const fila = (accion) => {
       const cuerpo = `<span class="menu-item__icon" aria-hidden="true">${accion.icon ?? ''}</span>
         <span><strong>${escapeHtml(accion.label)}</strong>${
@@ -17074,7 +17316,7 @@
       `${nota ? `<p class="view__hint">${escapeHtml(nota)}</p>` : ''}<div class="menu-list">${acciones
         .map(fila)
         .join('')}</div>`,
-      { variant: 'menu' },
+      { variant },
     );
   }
 
@@ -17276,32 +17518,26 @@
     const operational = getOrderOperationalStatus(order);
     const abierto = receipt.status !== 'entregado' && receipt.status !== 'cancelado';
     const ubicacionPedido = order?.delivery?.location ?? receipt?.location ?? null;
+    // La venta facturada desde el POS guarda su factura: se abre ESA (mismo diseño que la cotización).
+    const facturaPdf = order?.invoice_id ? `/api/admin/pos/invoices/${order.invoice_id}/pdf` : '';
     openSheetActionMenu({
       title: receipt.order_number ? `Factura · ${receipt.order_number}` : 'Factura',
+      variant: 'actions-drawer',
       acciones: [
-        { icon: ICONS.doc, label: 'Ver factura', note: 'Documento para imprimir', data: { 'data-receipt-open': orderId } },
+        {
+          icon: ICONS.doc,
+          label: 'Ver factura',
+          data: facturaPdf ? { 'data-receipt-pdf': facturaPdf } : { 'data-receipt-open': orderId },
+        },
         nativePrinterAvailable()
-          ? {
-              icon: ICONS.box,
-              label: 'Imprimir factura',
-              note: 'Ticket Bluetooth ESC/POS',
-              data: { 'data-receipt-print': orderId },
-            }
+          ? { icon: ICONS.box, label: 'Imprimir factura', data: { 'data-receipt-print': orderId } }
           : null,
         {
           icon: ICONS.send,
-          label: 'Enviar factura por WhatsApp',
-          note: 'La manda el CRM al chat del cliente',
+          label: 'Enviar al cliente',
           data: { 'data-receipt-wa': orderId },
         },
-        mapLatLng(ubicacionPedido)
-          ? {
-              icon: ICONS.pin,
-              label: 'Ver en mapa',
-              note: 'Ubicación de entrega',
-              data: { 'data-order-map': orderId },
-            }
-          : null,
+        mapLatLng(ubicacionPedido) ? { icon: ICONS.pin, label: 'Ver en mapa', data: { 'data-order-map': orderId } } : null,
         hasPermission('delivery.tracking.manage_all') && abierto
           ? { icon: ICONS.send, label: 'Pasar a un delivery', data: { 'data-order-delivery': orderId } }
           : null,
@@ -17311,22 +17547,11 @@
           ? {
               icon: ICONS.check,
               label: 'Cambiar estado',
-              note: operationalStatusLabel(operational),
               data: { 'data-order-status-change': orderId, 'data-order-status-current': operational },
             }
           : null,
-        isAdmin() && receipt.status !== 'cancelado'
-          ? { icon: ICONS.close, label: 'Cancelar venta', data: { 'data-sale-cancel': orderId } }
-          : null,
-        isAdmin()
-          ? {
-              icon: ICONS.trash,
-              label: 'Eliminar pedido',
-              note: 'Solo si no tiene historial comercial',
-              data: { 'data-order-delete': orderId },
-              danger: true,
-            }
-          : null,
+        isAdmin() && receipt.status !== 'cancelado' ? { icon: ICONS.close, label: 'Cancelar venta', data: { 'data-sale-cancel': orderId } } : null,
+        isAdmin() ? { icon: ICONS.trash, label: 'Eliminar pedido', data: { 'data-order-delete': orderId }, danger: true } : null,
       ].filter(Boolean),
     });
   }
@@ -20348,13 +20573,12 @@
         openItemWhatsAppSheet(itemWa.dataset.itemWa);
         return;
       }
-      const receiptOpen = event.target.closest('[data-receipt-open]');
+      const receiptOpen = event.target.closest('[data-receipt-open],[data-receipt-pdf]');
       if (receiptOpen) {
-        window.open(
-          `/admin/receipt-viewer.html?pdf=${encodeURIComponent('/api/admin/orders/'+receiptOpen.dataset.receiptOpen+'/receipt.pdf')}`,
-          '_blank',
-          'noopener',
-        );
+        const ruta =
+          receiptOpen.dataset.receiptPdf ||
+          `/api/admin/orders/${encodeURIComponent(receiptOpen.dataset.receiptOpen ?? '')}/receipt.pdf`;
+        window.open(`/admin/receipt-viewer.html?pdf=${encodeURIComponent(ruta)}`, '_blank', 'noopener');
         return;
       }
       const receiptWa = event.target.closest('[data-receipt-wa]');
@@ -20703,19 +20927,6 @@
       if (conversationDetails) {
         cerrarPanelSeleccionWa();
         openConversationDetailsMenu(conversationDetails.dataset.convClientMenu || conversationDetails.dataset.convFollowupMenu, Boolean(conversationDetails.dataset.convFollowupMenu));
-        return;
-      }
-      /* Submenú «Seguimiento» del cajón del chat, y su «volver». */
-      const chatFollowupMenu = event.target.closest('[data-chat-followup-menu]');
-      if (chatFollowupMenu) {
-        const [customerId, conversationId] = String(chatFollowupMenu.dataset.chatFollowupMenu ?? '').split('|');
-        openChatFollowupMenu(customerId, conversationId ?? '');
-        return;
-      }
-      const chatActionsBack = event.target.closest('[data-chat-actions-back]');
-      if (chatActionsBack) {
-        const [customerId, conversationId] = String(chatActionsBack.dataset.chatActionsBack ?? '').split('|');
-        openChatActions(customerId, conversationId ?? '');
         return;
       }
       const conversationMenuBack = event.target.closest('[data-conv-menu-back]');

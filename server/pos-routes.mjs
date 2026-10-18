@@ -30,7 +30,13 @@ export function quotationReceipt(doc){
     status_label:'Cotización',items:doc.sale.items.map(i=>({label:i.name,quantity:i.quantity,unitPrice:i.unit_price_cents/100,subtotal:i.subtotal_cents/100,line_discount:i.discount_cents/100})),
     subtotal:doc.sale.subtotal_cents/100,discount:doc.sale.discount_cents/100,delivery_fee:doc.sale.delivery_cents/100,total:doc.sale.total_cents/100,currency:'DOP',thanks:'Precios y disponibilidad sujetos a confirmación.',note:'Cotización comercial. No acredita pago ni reserva inventario.'};
 }
-export function quotationHtml(doc) {
+/** FACTURA: mismo documento que la cotización, con los datos propios de la venta. */
+export function invoiceReceipt(doc){
+  return {...quotationReceipt(doc),document:'Factura',status_label:'Pagada',
+    thanks:'Gracias por tu compra. Si tienes cualquier duda, escríbenos por WhatsApp.',
+    note:'Factura de venta. Acredita el pago recibido.'};
+}
+export function quotationHtml(doc, titulo = 'Cotización') {
   const pdf='/api/admin/pos/quotes/'+doc.id+'/pdf';
   const actions=`<nav class="quote-actions"><a href="${pdf}" target="_blank">Abrir PDF</a><button type="button" data-share-quote data-pdf="${pdf}" data-filename="${escape(doc.number)}.pdf">Compartir PDF</button><a href="https://wa.me/${String(doc.customer.phone_e164||'').replace(/[^0-9]/g,'')}?text=${encodeURIComponent('Te comparto la cotización '+doc.number+' de Fulltech.')}" target="_blank" rel="noopener">WhatsApp</a><a href="/admin/?v=cotizaciones&amp;quote=${doc.id}&amp;ticket=1">${doc.status==='converted'?'Ver venta':'Crear ticket'}</a></nav><p id="quote-share-status" role="status"></p>`;
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Cotización ${escape(doc.number)}</title><style>body{font:15px system-ui;max-width:760px;margin:36px auto;padding:20px;color:#14243b}header,footer{padding:20px 0;border-bottom:1px solid #ddd}table{width:100%;border-collapse:collapse}td,th{padding:12px 6px;text-align:right;border-bottom:1px solid #eee}td:first-child,th:first-child{text-align:left}.total{text-align:right;font-size:22px}small{color:#526078}a{color:#225bd1}.quote-actions{display:flex;gap:10px;flex-wrap:wrap}.quote-actions a,.quote-actions button{border:1px solid #ccd7e7;background:#f3f7fd;border-radius:9px;padding:10px 12px;color:#18395e;text-decoration:none;font:inherit;cursor:pointer}@media print{button,.quote-actions,#quote-share-status{display:none}}</style>${actions}<header><h1>Fulltech · Cotización</h1><p>${escape(doc.number)} · ${escape(new Date(doc.created_at).toLocaleDateString('es-DO'))}</p><p>${escape(doc.customer.name)} · ${escape(doc.customer.phone_e164)}</p></header><table><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Descuento</th><th>Importe</th></tr></thead><tbody>${doc.sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.discount_cents)}</td><td>${money(i.subtotal_cents)}</td></tr>`).join('')}</tbody></table><p class="total">Total: ${money(doc.sale.total_cents)}</p><p>Descuento general: ${money(doc.sale.discount_cents)} · Envío: ${money(doc.sale.delivery_cents)}</p><p>${escape(doc.input.notes)}</p><footer><small>Cotización comercial. No acredita pago ni reserva inventario. Precios y disponibilidad se verifican al confirmar la venta.</small></footer><button onclick="window.print()">Imprimir / guardar PDF</button><script src="/admin/quote-document.js" defer></script></html>`;
@@ -106,6 +112,19 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
       res.end(quotationHtml(doc));return true;
     }
+    // FACTURA: su PDF se sirve con el MISMO documento que la cotización.
+    const invoicePdf=/^\/api\/admin\/pos\/invoices\/([a-z0-9_-]+)(?:\/(receipt|pdf))?$/.exec(route);
+    if(invoicePdf&&req.method==='GET') {
+      const doc=await db.get('pos_documents',invoicePdf[1]);
+      if(!doc||doc.kind!=='invoice'||!visible(doc,actor)) return send(404,{ok:false});
+      if(!invoicePdf[2])return send(200,{ok:true,document:publicDocument(doc,actor)});
+      if(invoicePdf[2]==='pdf'){
+        const pdf=receiptPdf(invoiceReceipt(doc));
+        res.writeHead(200,{'content-type':'application/pdf','content-length':pdf.length,'content-disposition':`inline; filename="${doc.number}.pdf"`,'cache-control':'no-store'});res.end(pdf);return true;
+      }
+      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});
+      res.end(quotationHtml(doc, 'Factura'));return true;
+    }
     if(!['/api/admin/pos/quotes','/api/admin/pos/checkout'].includes(route)||req.method!=='POST') return send(404,{ok:false});
     if(!can('orders.create')) return send(403,{ok:false,error:'forbidden'});
     const body=await readJson(req), kind=route.endsWith('/quotes')?'quote':body.mode==='order'?'order':'invoice';
@@ -172,7 +191,7 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       }
       const document={id,kind,status:kind==='quote'?'quoted':'processing',actor_id:actor.id,customer_id:customer.id,
         customer:{id:customer.id,name:customer.name,phone_e164:customer.phone_e164},created_at,fingerprint,input,sale,
-        number:`COT-${id.slice(-10).toUpperCase()}`,order_id:kind==='quote'?null:orderId};
+        number:kind==='quote'?`COT-${id.slice(-10).toUpperCase()}`:`FAC-${id.slice(-10).toUpperCase()}`,order_id:kind==='quote'?null:orderId};
       const claim=await db.insert('pos_documents',document);
       if(claim.duplicate) return send(409,{ok:false,message:'Esta operación ya está siendo procesada. Revisa Pedidos antes de reintentar.'});
       claimedOrder=kind==='quote'?null:orderId;
@@ -180,13 +199,16 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       if(kind==='quote') result={document:publicDocument(document,actor),receiptUrl:`/api/admin/pos/quotes/${id}/receipt`};
       else {
         const created=await createOrder(ctx,{...input,id:orderId,items:sale.items.map(i=>({variantId:i.variantId,quantity:i.quantity,unitPrice:i.unit_price_cents/100,lineDiscountCents:i.discount_cents})),
-          discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',delivery:{address:input.address},deliveryLocation:input.location,pos:true},actor,
+          discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',delivery:{address:input.address},deliveryLocation:input.location,pos:true,
+          ...(kind==='invoice'?{invoiceId:id,invoiceNumber:document.number}:{})},actor,
           {manualProducts:manualProducts(input.items).map(p=>({...p,general:true,price:p.price_cents/100,label:p.name}))});
         if(!created.ok) {
           await db.update('pos_documents',id,{status:'failed',failure:created.error});
           return send(created.status||422,{ok:false,error:created.error,operationPending:true,orderId:created.orderId||orderId,message:created.message||'No se pudo guardar. Revisa Pedidos antes de volver a cobrar.'});
         }
-        result={orderId,number:created.order.order_number,total_cents:sale.total_cents,mode:kind,receiptUrl:`/api/admin/orders/${orderId}/receipt`};
+        // La factura se abre SIEMPRE en PDF (el mismo diseño que la cotización).
+        result={orderId,number:created.order.order_number,total_cents:sale.total_cents,mode:kind,invoiceId:kind==='invoice'?id:null,invoiceNumber:kind==='invoice'?document.number:null,
+          receiptUrl:kind==='invoice'?`/api/admin/pos/invoices/${id}/pdf`:`/api/admin/orders/${orderId}/receipt`};
         if(source) await db.update('pos_documents',source.id,{status:'converted',order_id:orderId});
       }
       // Se guarda sin ganancia/costos en el resultado reutilizado por otro rol.

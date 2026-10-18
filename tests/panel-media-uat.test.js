@@ -650,8 +650,10 @@ describe('UAT del panel con multimedia', () => {
     for (const accion of ['Crear pedido', 'Respuesta rápida', 'Enviar plantilla', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
-    // «Seguimiento» es un submenú y la búsqueda ya vive en la cabecera del chat.
-    expect(menu).toContain('data-chat-followup-menu');
+    // El seguimiento va en el cajón como dos filas normales, y la búsqueda ya
+    // vive en la cabecera del chat.
+    expect(menu).toContain('Programar seguimiento');
+    expect(menu).toContain('Programar mensaje');
     expect(menu).not.toContain('Buscar en esta conversación');
 
     let context;

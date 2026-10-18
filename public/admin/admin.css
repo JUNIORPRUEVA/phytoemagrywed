@@ -13308,3 +13308,57 @@ body[data-tab='hoy'] .stat__arrow .svg {
 #seguimientos-filtros .chip {
   min-height: 38px;
 }
+
+/* ==========================================================================
+   CAJÓN DE ACCIONES (factura / pedido): columna derecha, cuadrada, todo el alto.
+   Se abre con una animación suave desde la derecha. Sin bordes redondeados y
+   sin comentarios por fila: la lista se lee de un vistazo.
+   ========================================================================== */
+:root body #sheet[data-variant='actions-drawer'] .sheet__backdrop {
+  background: rgba(11, 20, 26, 0.34);
+}
+
+:root body #sheet[data-variant='actions-drawer'] .sheet__panel {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: min(86%, 340px);
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-left: 1px solid var(--pe-border, #dce5f2);
+  border-radius: 0;
+  box-shadow: -26px 0 54px rgba(11, 20, 26, 0.3);
+  transform: none;
+  animation: sheet-actions-drawer-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes sheet-actions-drawer-in {
+  from { transform: translateX(102%); }
+  to { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root body #sheet[data-variant='actions-drawer'] .sheet__panel { animation: none; }
+}
+
+:root body #sheet[data-variant='actions-drawer'] .sheet__head {
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 10px 10px 16px;
+}
+
+:root body #sheet[data-variant='actions-drawer'] .sheet__body {
+  gap: 2px;
+  padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+:root body #sheet[data-variant='actions-drawer'] .menu-item {
+  min-height: 46px;
+  border-radius: 12px;
+}
+
+:root body #sheet[data-variant='actions-drawer'] .menu-item + .menu-item {
+  border-top: 1px solid var(--pe-border, #dce5f2);
+  border-radius: 0;
+}

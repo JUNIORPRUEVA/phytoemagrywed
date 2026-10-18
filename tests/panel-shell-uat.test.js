@@ -328,15 +328,10 @@ describe('compositor y acciones del cliente', () => {
   });
 
   it('el cajón de acciones lleva las acciones, con cliente ya elegido', () => {
-    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatFollowupMenu'));
-    for (const accion of ['Crear pedido', 'Respuesta rápida', 'Enviar plantilla', 'Ver cliente', 'Asignación']) {
+    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatActions') + 5200);
+    for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
-    // «Seguimiento» es un SUBMENÚ con sus dos opciones (antes eran dos filas más).
-    expect(menu).toContain('data-chat-followup-menu');
-    const submenu = app.slice(app.indexOf('function openChatFollowupMenu'), app.indexOf('function openChatFollowupMenu') + 2200);
-    expect(submenu).toContain('Programar seguimiento');
-    expect(submenu).toContain('Programar mensaje');
     // Cada acción viaja con el cliente y la conversación de los que viene.
     expect(menu).toContain('data-order-new="${escapeHtml(customer.id)}"');
     expect(menu).toContain('data-conversation="${escapeHtml(');

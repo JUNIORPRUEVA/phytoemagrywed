@@ -286,7 +286,7 @@ afterAll(async () => {
 describe('enviar la factura por WhatsApp desde el panel', () => {
   it('el menú de la factura ofrece ENVIARLA (ya no «compartir» con el sistema)', async () => {
     const menu = await abrirMenuFactura();
-    expect(menu.textContent).toContain('Enviar factura por WhatsApp');
+    expect(menu.textContent).toContain('Enviar al cliente');
     expect(menu.textContent).not.toContain('Compartir factura');
     // Y no queda ni rastro del camino viejo en el código del panel.
     expect(APP_JS).not.toContain('shareReceiptPdf');

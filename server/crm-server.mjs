@@ -6168,6 +6168,104 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    /*
+     * MI UBICACIÓN (perfil del agente/delivery).
+     *
+     * Un repartidor puede guardar su última posición conocida SIN tener una
+     * entrega activa: sirve para medir distancias antes de salir. Se guarda en los
+     * ajustes del negocio (una posición por usuario) con su hora, y solo la puede
+     * escribir su dueño. El permiso del navegador se pide en el panel; aquí nunca
+     * se inventa una posición.
+     */
+    if (route === '/api/admin/me/location' && (req.method === 'GET' || req.method === 'POST')) {
+      const ownerId = actor?.id ?? actor?.username ?? actor?.role ?? 'anon';
+      const guardadas = async () => {
+        const doc = await ctx.settings.read('agent_positions');
+        const value = doc?.value && typeof doc.value === 'object' ? doc.value : {};
+        return value;
+      };
+      if (req.method === 'GET') {
+        const value = await guardadas();
+        json(res, 200, { ok: true, location: value[ownerId] ?? null });
+        return;
+      }
+      if (!requirePermission('delivery.location.update_own')) return;
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const latitude = Number(body.latitude);
+      const longitude = Number(body.longitude);
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        json(res, 422, { ok: false, error: 'invalid_coordinates', message: 'Las coordenadas no son válidas.' });
+        return;
+      }
+      const accuracy = Number(body.accuracy);
+      const posicion = {
+        latitude,
+        longitude,
+        accuracy: Number.isFinite(accuracy) ? accuracy : null,
+        updated_at: ctx.clock().toISOString(),
+        user_id: ownerId,
+        user_name: actor?.display_name ?? actor?.username ?? null,
+      };
+      const value = { ...(await guardadas()), [ownerId]: posicion };
+      await ctx.settings.write('agent_positions', value);
+      json(res, 200, { ok: true, location: posicion });
+      return;
+    }
+
+    /*
+     * POSICIONES DEL EQUIPO: para «Medir distancia» desde la última posición
+     * válida de un delivery. Junta lo que dice su reparto EN VIVO (sesión) con la
+     * posición que guardó en su perfil, y se queda con la más reciente.
+     */
+    if (route === '/api/admin/delivery-positions' && req.method === 'GET') {
+      if (!requirePermission('delivery.location.read_own')) return;
+      /** @type {Map<string, any>} */
+      const porUsuario = new Map();
+      for (const session of await listVisibleTracking(ctx, actor)) {
+        const punto = session?.last_position;
+        const userId = session?.delivery_user_id;
+        if (!punto || !userId || !Number.isFinite(Number(punto.latitude)) || !Number.isFinite(Number(punto.longitude))) continue;
+        const actual = porUsuario.get(userId);
+        const when = String(punto.recorded_at ?? '');
+        if (!actual || when > String(actual.updated_at ?? '')) {
+          porUsuario.set(userId, {
+            user_id: userId,
+            name: session.delivery_user_name_snapshot ?? null,
+            latitude: Number(punto.latitude),
+            longitude: Number(punto.longitude),
+            accuracy: punto.accuracy ?? null,
+            updated_at: punto.recorded_at ?? null,
+            source: 'entrega',
+          });
+        }
+      }
+      const doc = await ctx.settings.read('agent_positions');
+      const guardadas = doc?.value && typeof doc.value === 'object' ? doc.value : {};
+      for (const [userId, posicion] of Object.entries(guardadas)) {
+        if (!posicion || !Number.isFinite(Number(posicion.latitude)) || !Number.isFinite(Number(posicion.longitude))) continue;
+        const actual = porUsuario.get(userId);
+        if (!actual || String(posicion.updated_at ?? '') > String(actual.updated_at ?? '')) {
+          porUsuario.set(userId, {
+            user_id: userId,
+            name: posicion.user_name ?? null,
+            latitude: Number(posicion.latitude),
+            longitude: Number(posicion.longitude),
+            accuracy: posicion.accuracy ?? null,
+            updated_at: posicion.updated_at ?? null,
+            source: 'perfil',
+          });
+        }
+      }
+      json(res, 200, { ok: true, positions: [...porUsuario.values()] });
+      return;
+    }
+
     if (route === '/api/admin/notification-dismissals' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const entries = Object.entries(body?.dismissed ?? {});
@@ -7706,9 +7804,48 @@ async function handle(req, res, ctx) {
         forbid();
         return;
       }
-      const destination = await findConversation(ctx, text(body.conversationId, 80) ?? '');
+      let destination = await findConversation(ctx, text(body.conversationId, 80) ?? '');
+      /*
+       * ENVIAR A UN NÚMERO (delivery registrado, número escrito a mano o contacto
+       * nuevo): se resuelve/crea el cliente por su teléfono y se usa SU conversación.
+       * Quien manda sigue siendo el actor del panel, con sus permisos.
+       */
+      const telefonoDestino = text(body.phone, 40);
+      if (!destination && telefonoDestino) {
+        const encontrado = await ctx.customers.findOrCreateByPhone({
+          phone: telefonoDestino,
+          name: text(body.name, 120) ?? null,
+          source: 'manual',
+        });
+        if (!encontrado.ok) {
+          json(res, 422, { ok: false, error: 'invalid_phone', message: 'Escribe un teléfono válido con código de país.' });
+          return;
+        }
+        destination = await ctx.customers.conversationFor(encontrado.customer.id);
+        /*
+         * CONTACTO DE DELIVERY: se guarda para poder elegirlo la próxima vez.
+         * Nombre + teléfono + concepto, en los ajustes del negocio.
+         */
+        if (body.saveContact === true) {
+          try {
+            const actual = (await ctx.settings.read('delivery_contacts'))?.value;
+            const lista = Array.isArray(actual) ? actual : [];
+            const nuevo = {
+              id: encontrado.customer.id,
+              name: text(body.contactLabel, 120) ?? encontrado.customer.name ?? null,
+              phone: encontrado.customer.phone_e164 ?? telefonoDestino,
+              concept: text(body.concept, 120) ?? null,
+              updated_at: new Date().toISOString(),
+            };
+            const siguientes = [...lista.filter((row) => row.id !== nuevo.id), nuevo].slice(-100);
+            await ctx.settings.write('delivery_contacts', siguientes);
+          } catch {
+            /* Si no se puede guardar el contacto, el envío no se cae. */
+          }
+        }
+      }
       if (!destination) {
-        json(res, 404, { ok: false, error: 'unknown_conversation', message: 'Elige una conversación de destino.' });
+        json(res, 404, { ok: false, error: 'unknown_conversation', message: 'Elige un destinatario.' });
         return;
       }
       if (!(await canOpenConversation(ctx, actor, destination))) {

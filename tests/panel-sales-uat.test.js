@@ -308,8 +308,9 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     for (const accion of ['Crear pedido', 'Respuesta rápida', 'Enviar plantilla', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
-    // «Seguimiento» entra como SUBMENÚ: sus dos opciones viven dentro.
-    expect(menu).toContain('data-chat-followup-menu');
+    // Las dos acciones de seguimiento van en el cajón, sin submenú.
+    expect(menu).toContain('Programar seguimiento');
+    expect(menu).toContain('Programar mensaje');
     // Sin ruido: ni subtítulos por fila ni la búsqueda repetida del encabezado.
     expect(menu).not.toContain('<small>');
     expect(menu).not.toContain('Buscar en esta conversación');
@@ -357,8 +358,6 @@ describe('UAT del centro de ventas (panel real + CRM real)', () => {
     click(await waitFor(() => $$('[data-conv]')[0], 'la conversación para programar'));
     await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado');
     click('#wa-actions');
-    // «Seguimiento» es un submenú del cajón: ahí viven las dos acciones.
-    click(await waitFor(() => $('[data-chat-followup-menu]'), 'el submenú de seguimiento'));
     click('[data-scheduled-new]');
     await waitFor(() => $('#sch-save'), 'el formulario de mensaje programado');
     // La pantalla propone una plantilla de seguimiento; aquí se prueba el TEXTO LIBRE.
@@ -546,7 +545,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const menu = await waitFor(() => ($('#sheet-body .menu-list') ? $('#sheet-body') : null), 'las acciones de la factura');
     for (const accion of [
       'Ver factura',
-      'Enviar factura por WhatsApp',
+      'Enviar al cliente',
       'Pasar a un delivery',
       'Ver cliente',
       'Modificar pedido',
@@ -770,8 +769,8 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
       'la ubicación nueva dentro del hilo',
     );
     click(mas);
-    await waitFor(() => $('#loc-attach'), 'las acciones de la ubicación');
-    click('#loc-attach');
+    await waitFor(() => $('#sheet-body [data-loc-attach]'), 'las acciones de la ubicación');
+    click('[data-loc-attach]');
 
     // Solo se ofrecen los pedidos VIVOS de ESE cliente (ni entregados ni cancelados).
     const cliente = (await datos()).customers.find((candidate) => candidate.phone_e164 === `+${PHONE}`);
