@@ -8,77 +8,83 @@
 <style>
   /* ------------------------------------------------------------------------
    * VISOR DEL DOCUMENTO
-   * El PDF ocupa el espacio principal y las ACCIONES viven en una columna a la
-   * DERECHA (en el teléfono pasan arriba, para no tener que bajar). El envío se
-   * hace por la API oficial de WhatsApp con una plantilla; aquí no hay ningún
-   * enlace al WhatsApp personal.
+   * El PDF manda: ocupa todo el ancho libre. Las acciones son tres botones
+   * compactos en una columna estrecha a la derecha (arriba del PDF en el
+   * teléfono). El envío va por la API oficial de WhatsApp, nunca por la app
+   * personal del teléfono.
    * ---------------------------------------------------------------------- */
   *{box-sizing:border-box}
+  :root{--rv-head:48px}
   html,body{height:100%}
-  body{margin:0;background:#e8edf3;color:#14243b;font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
-  .rv{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:0;min-height:100vh;min-height:100dvh;margin:0;max-width:none;padding:0;align-items:stretch}
-  .rv__doc{min-width:0;padding:16px}
-  .rv__status{margin:0 0 12px;color:#51627a;font-size:13px}
-  .rv__pages canvas{display:block;max-width:100%;height:auto;margin:0 auto 14px;background:#fff;box-shadow:0 2px 12px #14243b18;border-radius:2px}
-  /* Columna de acciones: cuadrada (sin radios) y a todo el alto disponible. */
-  .rv__side{position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:12px;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;overflow:auto;padding:20px 18px;background:#fff;border:0;border-left:1px solid #d5deea;border-radius:0;box-shadow:none}
-  .rv__eyebrow{margin:0;color:#5b6b84;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
-  .rv__title{margin:3px 0 2px;color:#12233f;font-size:17px;font-weight:750;line-height:1.25;overflow-wrap:anywhere}
-  .rv__sub{margin:0;color:#5b6b84;font-size:13px;overflow-wrap:anywhere}
-  .rv__act{display:grid;gap:8px}
-  .rv__act a,.rv__act button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px 12px;border:1px solid #cfd9e6;border-radius:11px;background:#fff;color:#153c70;font:inherit;font-size:14px;font-weight:650;text-decoration:none;cursor:pointer;touch-action:manipulation}
-  .rv__act a:hover,.rv__act button:hover{border-color:#9fb4d4;background:#f6f9ff}
-  .rv__act .rv__primary{border-color:#128c5d;background:#128c5d;color:#fff;font-weight:750}
-  .rv__act .rv__primary:hover{border-color:#0f7a51;background:#0f7a51}
-  .rv__act button:disabled{opacity:.6;cursor:progress}
-  .rv__msg{margin:0;min-height:1.2em;color:#0f7a51;font-size:13px;line-height:1.4}
+  body{margin:0;background:#eef2f6;color:#14243b;font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+  .rv{display:grid;grid-template-columns:minmax(0,1fr) 210px;grid-template-areas:"head head" "doc side";min-height:100vh;min-height:100dvh;margin:0;padding:0;align-items:start}
+  .rv__head{grid-area:head;position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;min-height:var(--rv-head);padding:6px 12px 6px 6px;background:#fff;border-bottom:1px solid #e3e9f0}
+  .rv__back{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:8px;background:transparent;color:#2b3d55;cursor:pointer}
+  .rv__back:hover{background:#eef3f9;color:#0f172a}
+  .rv__back svg{width:18px;height:18px}
+  .rv__title{margin:0;font-size:15px;font-weight:700;color:#0f1f36;overflow-wrap:anywhere}
+  .rv__doc{grid-area:doc;min-width:0;padding:10px 10px 32px}
+  .rv__status{margin:0 0 8px;color:#5b6b84;font-size:12px}
+  .rv__pages canvas{display:block;max-width:100%;height:auto;margin:0 auto 10px;background:#fff;box-shadow:0 1px 6px #14243b1f}
+  /* Columna de acciones: estrecha, cuadrada y a todo el alto disponible. */
+  .rv__side{grid-area:side;position:sticky;top:var(--rv-head);display:flex;flex-direction:column;gap:6px;height:calc(100vh - var(--rv-head));height:calc(100dvh - var(--rv-head));padding:10px;overflow:auto;background:#fff;border-left:1px solid #e3e9f0}
+  .rv__btn{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;border:1px solid #d3dce7;border-radius:8px;background:#fff;color:#1c3557;font:inherit;font-size:13px;font-weight:650;line-height:1.2;text-decoration:none;cursor:pointer;touch-action:manipulation}
+  .rv__btn svg{flex:0 0 auto;width:15px;height:15px;opacity:.7}
+  .rv__btn:hover{border-color:#a9bcd4;background:#f5f9ff}
+  .rv__btn--primary{border-color:#128c5d;background:#128c5d;color:#fff}
+  .rv__btn--primary svg{opacity:.95}
+  .rv__btn--primary:hover{border-color:#0f7a51;background:#0f7a51}
+  .rv__btn:disabled{opacity:.6;cursor:progress}
+  .rv__msg{margin:2px 0 0;min-height:1em;color:#0f7a51;font-size:12px;line-height:1.35}
   .rv__msg.is-error{color:#a12222}
-  .rv__note{margin:auto 0 0;padding-top:10px;border-top:1px solid #e6ecf4;color:#5b6b84;font-size:12px;line-height:1.45}
-  .rv__back{justify-self:start;padding:4px 0;border:0;background:transparent;color:#51627a;font:inherit;font-size:13px;font-weight:650;text-decoration:none;cursor:pointer}
-  .rv__back:hover{color:#153c70}
-  @media (max-width:880px){
-    .rv{grid-template-columns:1fr;gap:12px;padding:12px}
-    .rv__doc{padding:0}
-    .rv__side{position:static;order:-1;height:auto;max-height:none;border:1px solid #d5deea;border-radius:0}
-    .rv__act{grid-template-columns:1fr 1fr}
-    .rv__act .rv__primary{grid-column:1/-1}
+  @media (max-width:720px){
+    .rv{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "side" "doc"}
+    .rv__side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:6px;padding:8px;border-left:0;border-bottom:1px solid #e3e9f0}
+    .rv__btn{flex:1 1 auto;width:auto;justify-content:center;padding:8px 10px;font-size:12.5px}
+    .rv__msg{flex:1 1 100%;margin:0}
+    .rv__doc{padding:6px 8px 24px}
   }
   @media print{
     body{background:#fff}
-    .rv{display:block;max-width:none;padding:0}
-    .rv__side,.rv__status{display:none}
+    .rv{display:block;min-height:0}
+    .rv__head,.rv__side,.rv__status{display:none}
+    .rv__doc{padding:0}
     .rv__pages canvas{box-shadow:none;margin:0;width:100%;break-after:page}
   }
 </style>
 </head>
 <body>
   <div class="rv">
+    <header class="rv__head">
+      <button class="rv__back" type="button" data-receipt-back aria-label="Regresar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <h1 class="rv__title" data-receipt-title>Comprobante</h1>
+    </header>
+
     <main class="rv__doc">
-      <p class="rv__status" data-receipt-status role="status">Abriendo PDF guardado…</p>
+      <p class="rv__status" data-receipt-status role="status">Abriendo PDF…</p>
       <div class="rv__pages" data-receipt-pages></div>
     </main>
 
     <aside class="rv__side" aria-label="Acciones del documento">
-      <div>
-        <p class="rv__eyebrow" data-receipt-kind>Comprobante</p>
-        <p class="rv__title" data-receipt-title>FullTECH, SRL</p>
-        <p class="rv__sub" data-receipt-sub></p>
-      </div>
-      <div class="rv__act">
-        <button class="rv__primary" type="button" data-receipt-send hidden>Enviar al cliente</button>
-        <a data-receipt-download hidden>Descargar PDF</a>
-        <button type="button" data-receipt-print>Imprimir</button>
-      </div>
+      <button class="rv__btn rv__btn--primary" type="button" data-receipt-send hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z"/></svg>
+        <span>Enviar al cliente</span>
+      </button>
+      <button class="rv__btn" type="button" data-receipt-print>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V4h10v4"/><rect x="4" y="8" width="16" height="8" rx="2"/><path d="M7 16h10v4H7z"/></svg>
+        <span>Imprimir</span>
+      </button>
+      <a class="rv__btn" data-receipt-download hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10"/><path d="M8 11l4 4 4-4"/><path d="M5 19h14"/></svg>
+        <span>Descargar PDF</span>
+      </a>
       <p class="rv__msg" data-receipt-message role="status"></p>
-      <p class="rv__note" data-receipt-hint>
-        El documento se envía por WhatsApp con la API oficial del CRM y queda
-        escrito en la conversación. Nunca se abre tu WhatsApp personal.
-      </p>
-      <a class="rv__back" data-receipt-close>← Volver al CRM</a>
     </aside>
   </div>
   <script src="/admin/offline-storage.js?v=1" defer></script>
   <script src="/admin/offline.js?v=2" defer></script>
-  <script src="/admin/receipt-viewer.js?v=4" defer></script>
+  <script src="/admin/receipt-viewer.js?v=5" defer></script>
 </body>
 </html>
