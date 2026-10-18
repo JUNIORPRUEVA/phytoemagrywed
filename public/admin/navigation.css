@@ -28,6 +28,8 @@ body[data-tab='whatsapp'] .thread { padding-bottom: 64px; overscroll-behavior-y:
 body[data-tab='whatsapp'] .wa__fab-row { position: relative; flex: 0 0 0; height: 0; }
 body[data-tab='whatsapp'] .wa-fab { right: calc(12px + var(--safe-right, 0px)); bottom: 8px; width: 44px; height: 44px; background: var(--pe-brand-text); color: var(--pe-on-brand); }
 .wa__home { display: none; }
+/* El botón de menú de la bandeja solo existe en escritorio (aquí hay cabecera). */
+.wa__menu { display: none; }
 
 @media (max-width: 979px) {
   body[data-tab='hoy'] { --pe-tabbar: 64px; }

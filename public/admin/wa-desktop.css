@@ -1,0 +1,1050 @@
+/*
+ * VISTA DE ESCRITORIO — chat con la piel de WhatsApp Web.
+ *
+ * QUÉ CAMBIA Y QUÉ NO
+ *   · TODO lo de este archivo vive dentro de `@media (min-width: 980px)`. El
+ *     móvil (≤ 979 px) no se toca: ahí siguen mandando `admin.css`,
+ *     `navigation.css` y `wa-lista.css`, porque estas reglas ni se aplican.
+ *   · Se carga la ÚLTIMA de todas: en el escritorio gana a las demás hojas.
+ *
+ * QUÉ HACE
+ *   · Pantalla completa de borde a borde: dos columnas, sin márgenes.
+ *   · Lista: cabecera gris con «Chats», buscador en píldora con lupa, filtros
+ *     en una sola fila, filas de 72 px, separador que arranca en el avatar y
+ *     contador verde. Solo se desplaza la lista: cabecera y filtros quedan
+ *     quietos.
+ *   · Conversación: cabecera de 60 px con foto, nombre y acciones; papel
+ *     tapizado propio (dibujos tenues de la casa, no los de WhatsApp); burbujas
+ *     de 8 px con colita, entrantes blancas y salientes verde claro, la hora
+ *     abajo a la derecha; separadores de día en píldora.
+ *   · Compositor: barra gris, campo redondeado y botón circular verde.
+ *   · Sin conversación: la marca de la casa centrada, sin texto suelto.
+ *
+ * MEDIDAS (las de WhatsApp Web): cabecera 60 px, fila 72 px, avatar 49 px,
+ * burbuja 14,2 px / 19 px de interlínea, ancho máximo de burbuja 68 %.
+ */
+
+@media (min-width: 980px) {
+  /* ------------------------------------------------------------- colores */
+  body[data-tab='whatsapp'] {
+    --wad-shell: #d1d7db;
+    --wad-panel: #ffffff;
+    --wad-bar: #f0f2f5;
+    --wad-field: #ffffff;
+    --wad-line: #e9edef;
+    --wad-line-strong: #d1d7db;
+    --wad-ink: #111b21;
+    --wad-ink-soft: #667781;
+    --wad-icon: #54656f;
+    --wad-hover: #f5f6f6;
+    --wad-active: #f0f2f5;
+    --wad-teal: #00a884;
+    --wad-teal-dark: #008069;
+    --wad-bubble-in: #ffffff;
+    --wad-bubble-out: #d9fdd3;
+    --wad-wallpaper: #efeae2;
+    --wad-bubble-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+    --wad-search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2354656f' stroke-width='1.9' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m16.4 16.4 4.1 4.1'/%3E%3C/svg%3E");
+    /*
+     * Papel tapizado PROPIO: hojas, burbujas de chat y estrellas dibujadas a
+     * mano (SVG en línea, sin archivos ni los dibujos de WhatsApp). Blanco al
+     * 35 % sobre beige: se intuye, no compite con los mensajes.
+     */
+    --wad-wallpaper-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='176' height='176' viewBox='0 0 176 176'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='.35' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 18h26a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6H33l-7 6v-6h-6a6 6 0 0 1-6-6V24a6 6 0 0 1 6-6z'/%3E%3Cpath d='M104 12c9-7 21-4 25 5 4 9-2 20-12 23-10 3-20-3-23-11-3-8 3-11 10-17z'/%3E%3Cpath d='M150 58h14M157 51v14'/%3E%3Ccircle cx='42' cy='94' r='6'/%3E%3Cpath d='M78 76c11 0 20 7 20 16s-9 16-20 16c-3 0-7-1-9-2l-9 4 3-8c-4-3-6-6-6-10 0-9 9-16 21-16z'/%3E%3Cpath d='M132 104c7-5 15-3 18 3 3 6-2 13-9 15-7 2-14-2-16-7-2-6 2-8 7-11z'/%3E%3Cpath d='M18 148h14M25 141v14'/%3E%3Ccircle cx='94' cy='152' r='4.5'/%3E%3Cpath d='M148 136l5 9-5 9-5-9z'/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] {
+    --wad-shell: #0b141a;
+    --wad-panel: #111b21;
+    --wad-bar: #202c33;
+    --wad-field: #2a3942;
+    --wad-line: #222d34;
+    --wad-line-strong: #222d34;
+    --wad-ink: #e9edef;
+    --wad-ink-soft: #8696a0;
+    --wad-icon: #aebac1;
+    --wad-hover: #182229;
+    --wad-active: #2a3942;
+    --wad-teal: #00a884;
+    --wad-teal-dark: #06cf9c;
+    --wad-bubble-in: #202c33;
+    --wad-bubble-out: #005c4b;
+    --wad-wallpaper: #0b141a;
+    --wad-bubble-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.4);
+    --wad-search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238696a0' stroke-width='1.9' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m16.4 16.4 4.1 4.1'/%3E%3C/svg%3E");
+  }
+
+  /* --------------------------------------------------------- el armazón */
+  body[data-tab='whatsapp'] .app {
+    padding: 0;
+    background: var(--wad-shell);
+  }
+
+  body[data-tab='whatsapp'] .content {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  body[data-tab='whatsapp'] #view-whatsapp {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+  }
+
+  body[data-tab='whatsapp'] #wa-status {
+    flex: 0 0 auto;
+  }
+
+  body[data-tab='whatsapp'] .wa {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: clamp(340px, 27vw, 430px) minmax(0, 1fr);
+    gap: 0;
+    border-radius: 0;
+    background: var(--wad-panel);
+    box-shadow: none;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  /* ------------------------------------------------- columna izquierda */
+  body[data-tab='whatsapp'] .wa__list {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    gap: 0;
+    overflow: hidden;
+    border-right: 1px solid var(--wad-line-strong);
+    background: var(--wad-panel);
+  }
+
+  /* Cabecera: «Chats» y el buscador, sobre el gris de WhatsApp. */
+  body[data-tab='whatsapp'] .wa__list-head {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    grid-template-rows: 44px auto;
+    align-items: center;
+    gap: 0 4px;
+    padding: 6px 12px 10px;
+    background: var(--wad-bar);
+  }
+
+  body[data-tab='whatsapp'] .wa__list-head::before {
+    content: 'Chats';
+    grid-area: 1 / 2 / 2 / 3;
+    min-width: 0;
+    color: var(--wad-ink);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    line-height: 1.2;
+  }
+
+  body[data-tab='whatsapp'] .wa__home {
+    grid-area: 1 / 1 / 2 / 2;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--wad-icon);
+    cursor: pointer;
+  }
+
+  body[data-tab='whatsapp'] .wa__home:hover,
+  body[data-tab='whatsapp'] .wa__home:focus-visible {
+    background: rgba(11, 20, 26, 0.06);
+    color: var(--wad-ink);
+  }
+
+  body[data-tab='whatsapp'] .wa__home .svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /*
+   * El menú, también en escritorio: en WhatsApp no hay barra superior, así que
+   * este botón del buscador es la única puerta al menú lateral.
+   */
+  body[data-tab='whatsapp'] .wa__menu {
+    grid-area: 1 / 3 / 2 / 4;
+    display: grid;
+    place-items: center;
+    justify-self: end;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--wad-icon);
+    cursor: pointer;
+  }
+
+  body[data-tab='whatsapp'] .wa__menu:hover,
+  body[data-tab='whatsapp'] .wa__menu:focus-visible {
+    background: rgba(11, 20, 26, 0.06);
+    color: var(--wad-ink);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__menu:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  body[data-tab='whatsapp'] .wa__search {
+    grid-area: 2 / 1 / 3 / 4;
+    min-width: 0;
+    min-height: 38px;
+    margin-top: 4px;
+    padding: 0 12px 0 44px;
+    border: 0;
+    border-radius: 8px;
+    background-color: var(--wad-field);
+    background-image: var(--wad-search-icon);
+    background-repeat: no-repeat;
+    background-position: 14px 50%;
+    background-size: 17px 17px;
+    color: var(--wad-ink);
+    font-size: 14.5px;
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] .wa__search::placeholder {
+    color: var(--wad-ink-soft);
+  }
+
+  /* Filtros: una sola fila que se desliza; nada de panel emergente. */
+  body[data-tab='whatsapp'] #wa-filters {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 8px 12px 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: var(--wad-panel);
+    scrollbar-width: none;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters::-webkit-scrollbar {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .wa-filter-panel__head {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .wa-filter-panel__group {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  /* Las utilidades (avisos, sonido, fecha) van al final, más discretas. */
+  body[data-tab='whatsapp'] #wa-filters .wa-filter-panel__group--tools {
+    margin-left: auto;
+    padding-left: 10px;
+    border-left: 1px solid var(--wad-line);
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip {
+    min-height: 32px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--wad-bar);
+    color: var(--wad-ink);
+    font-size: 13.5px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip:hover,
+  body[data-tab='whatsapp'] #wa-filters .chip:focus-visible {
+    background: var(--wad-hover);
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .chip[aria-pressed='true'] {
+    background: var(--wad-bubble-out);
+    color: #0b3d2c;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] #wa-filters .chip[aria-pressed='true'] {
+    background: #005c4b;
+    color: #d9fdd3;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .wa-filter-panel__group--tools .chip {
+    background: transparent;
+    color: var(--wad-ink-soft);
+    font-size: 12.5px;
+    font-weight: 400;
+  }
+
+  body[data-tab='whatsapp'] #wa-filters .wa-filter-panel__group--tools .chip:hover {
+    background: var(--wad-bar);
+    color: var(--wad-ink);
+  }
+
+  /* La lista es lo único que se desplaza. */
+  body[data-tab='whatsapp'] #wa-conversations {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 92px;
+  }
+
+  /*
+   * La fila abierta y la que está bajo el puntero, sin la marca azul: el fondo
+   * ya lo dice (como WhatsApp). Se repite el `#wa-conversations >` de la hoja de
+   * la lista porque su ID pesa más que un simple `.conv-wrap`.
+   */
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:hover {
+    background: var(--wad-hover);
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap.conv-wrap--selected {
+    background: var(--wad-active);
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:has(.conv--active),
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:has(.conv--active):hover {
+    background: var(--wad-active);
+  }
+
+  /* …pero el separador fino de la fila se queda (WhatsApp lo mantiene). */
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:has(.conv--active)::after {
+    background: var(--wad-line);
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations > .conv-wrap::after {
+    background: var(--wad-line);
+  }
+
+  body[data-tab='whatsapp'] .conv__name {
+    color: var(--wad-ink);
+  }
+
+  body[data-tab='whatsapp'] .conv__preview,
+  body[data-tab='whatsapp'] .conv__when {
+    color: var(--wad-ink-soft);
+  }
+
+  body[data-tab='whatsapp'] .conv--unread .conv__when {
+    color: var(--wad-teal);
+    font-weight: 600;
+  }
+
+  /* Agregar cliente: círculo verde, como el botón de WhatsApp. */
+  body[data-tab='whatsapp'] .wa-new-chat {
+    position: absolute;
+    right: 22px;
+    bottom: 22px;
+    width: 52px;
+    height: 52px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--wad-teal);
+    box-shadow: 0 3px 10px rgba(11, 20, 26, 0.3);
+  }
+
+  body[data-tab='whatsapp'] .wa-new-chat:hover,
+  body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
+    background: var(--wad-teal-dark);
+    box-shadow: 0 5px 16px rgba(11, 20, 26, 0.34);
+  }
+
+  /* ------------------------------------------------- columna derecha */
+  body[data-tab='whatsapp'] .wa__chat {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    gap: 0;
+    background: var(--wad-wallpaper);
+  }
+
+  /* Cabecera: foto, nombre y acciones sobre el mismo gris de WhatsApp. */
+  body[data-tab='whatsapp'] .wa__chat-head,
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head {
+    flex: 0 0 60px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 60px;
+    padding: 0 16px;
+    border-bottom: 0;
+    background: var(--wad-bar);
+    box-shadow: 0 1px 2px rgba(11, 20, 26, 0.08);
+    z-index: 3;
+  }
+
+  /* La foto del cliente SIEMPRE en escritorio (en el móvil no cabe). */
+  body[data-tab='whatsapp'] .wa__chat-avatar[hidden] {
+    display: grid !important;
+  }
+
+  body[data-tab='whatsapp'] .wa__chat-avatar {
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #25d366, #00a884);
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] .wa__chat-avatar:hover,
+  body[data-tab='whatsapp'] .wa__chat-avatar:focus-visible {
+    border: 0;
+    background: linear-gradient(145deg, #2ee06f, #06cf9c);
+    transform: none;
+  }
+
+  body[data-tab='whatsapp'] .wa__chat-avatar:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+
+  body[data-tab='whatsapp'] .wa__chat-name {
+    color: var(--wad-ink);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  body[data-tab='whatsapp'] .wa__chat-meta {
+    color: var(--wad-ink-soft);
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  body[data-tab='whatsapp'] .wa__head-icon,
+  body[data-tab='whatsapp'] .wa__chat-menu {
+    display: grid;
+    place-items: center;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    padding: 8px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--wad-icon);
+    box-shadow: none;
+    cursor: pointer;
+  }
+
+  body[data-tab='whatsapp'] .wa__head-icon:hover,
+  body[data-tab='whatsapp'] .wa__head-icon:focus-visible,
+  body[data-tab='whatsapp'] .wa__chat-menu:hover {
+    background: rgba(11, 20, 26, 0.06);
+    color: var(--wad-ink);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] :is(.wa__head-icon, .wa__chat-menu):hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  body[data-tab='whatsapp'] .wa__head-icon:disabled {
+    opacity: 0.4;
+    cursor: default;
+    background: transparent;
+  }
+
+  body[data-tab='whatsapp'] .wa-header-image {
+    width: 20px;
+    height: 20px;
+  }
+
+  body[data-tab='whatsapp'] .wa__thread-search-input {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--wad-field);
+    color: var(--wad-ink);
+    font-size: 14px;
+  }
+
+  body[data-tab='whatsapp'] .wa__thread-search-input:focus {
+    border: 0;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--wad-teal) 45%, transparent);
+  }
+
+  /* -------------------------------------------------------- el hilo */
+  body[data-tab='whatsapp'] .thread {
+    flex: 1 1 auto;
+    display: grid;
+    gap: 2px;
+    align-content: start;
+    min-height: 0;
+    padding: 18px clamp(16px, 5vmin, 72px) 64px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Papel tapizado propio, con la marca de agua de la casa. */
+  body[data-tab='whatsapp'] .chat-bg {
+    background-color: var(--wad-wallpaper);
+    background-image: var(--wad-wallpaper-image);
+    background-size: 176px 176px;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .chat-bg {
+    background-image:
+      linear-gradient(rgba(11, 20, 26, 0.94), rgba(11, 20, 26, 0.94)), var(--wad-wallpaper-image);
+  }
+
+  /* Burbujas: 8 px, colita y la hora abajo a la derecha. */
+  body[data-tab='whatsapp'] .bubble {
+    --wad-bubble-bg: var(--wad-bubble-in);
+
+    position: relative;
+    width: fit-content;
+    max-width: min(68%, 640px);
+    padding: 6px 9px 7px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--wad-bubble-bg);
+    color: var(--wad-ink);
+    box-shadow: var(--wad-bubble-shadow);
+    font-size: 14.2px;
+    line-height: 19px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  body[data-tab='whatsapp'] .bubble--in {
+    justify-self: start;
+    border-bottom-left-radius: 0;
+  }
+
+  body[data-tab='whatsapp'] .bubble--out {
+    --wad-bubble-bg: var(--wad-bubble-out);
+
+    justify-self: end;
+    border-bottom-right-radius: 0;
+  }
+
+  body[data-tab='whatsapp'] .bubble--auto {
+    --wad-bubble-bg: #fff4d6;
+  }
+
+  body[data-tab='whatsapp'] .bubble--failed {
+    --wad-bubble-bg: #ffe3e0;
+  }
+
+  body[data-tab='whatsapp'] .bubble--removed {
+    --wad-bubble-bg: rgba(11, 20, 26, 0.05);
+    box-shadow: none;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--auto {
+    --wad-bubble-bg: #2a3942;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--failed {
+    --wad-bubble-bg: #4a2b2b;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--removed {
+    --wad-bubble-bg: rgba(255, 255, 255, 0.05);
+  }
+
+  /* La colita: un triángulo del mismo color, abajo y por fuera. */
+  body[data-tab='whatsapp'] .bubble--in::after,
+  body[data-tab='whatsapp'] .bubble--out::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    width: 9px;
+    height: 13px;
+    background-color: var(--wad-bubble-bg);
+    pointer-events: none;
+  }
+
+  body[data-tab='whatsapp'] .bubble--in::after {
+    left: -8px;
+    clip-path: polygon(0 100%, 100% 100%, 100% 0);
+  }
+
+  body[data-tab='whatsapp'] .bubble--out::after {
+    right: -8px;
+    clip-path: polygon(0 100%, 100% 100%, 0 0);
+  }
+
+  body[data-tab='whatsapp'] .bubble--grouped {
+    margin-top: -1px;
+  }
+
+  /*
+   * En un chat de una persona, WhatsApp no repite el nombre del autor en cada
+   * burbuja. Se conserva SOLO en los avisos del sistema (`.bubble--auto`), que
+   * no son de nadie y conviene saber de dónde salen.
+   */
+  body[data-tab='whatsapp'] .bubble:not(.bubble--auto) .bubble__who {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'] .bubble__who {
+    margin-bottom: 3px;
+    color: var(--wad-teal);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  body[data-tab='whatsapp'] .bubble__meta,
+  body[data-tab='whatsapp'] .bubble--in .bubble__meta {
+    margin: 3px 0 -2px;
+    color: var(--wad-ink-soft);
+    font-size: 11px;
+    line-height: 15px;
+    text-align: right;
+  }
+
+  body[data-tab='whatsapp'] .bubble__undo {
+    min-height: 28px;
+    margin-top: 6px;
+    background: rgba(255, 255, 255, 0.75);
+    color: var(--wad-teal-dark);
+    font-size: 12px;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble__undo {
+    background: rgba(255, 255, 255, 0.12);
+    color: #d9fdd3;
+  }
+
+  /* Un mensaje que es solo archivo no lleva burbuja: el archivo manda. */
+  body[data-tab='whatsapp'] .bubble--media,
+  body[data-tab='whatsapp'] .bubble--media:has(.media-thumb),
+  body[data-tab='whatsapp'] .bubble--out:has(.media-thumb) {
+    --wad-bubble-bg: transparent;
+
+    padding: 0;
+    border-radius: 8px;
+    background-color: transparent;
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] .bubble--media::after,
+  body[data-tab='whatsapp'] .bubble:has(.media-thumb)::after {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'] .bubble--media .bubble__meta {
+    padding: 0 4px;
+    margin-top: 3px;
+  }
+
+  body[data-tab='whatsapp'] .media-thumb,
+  body[data-tab='whatsapp'] .bubble:has(.media-thumb) .media-thumb {
+    border-radius: 8px;
+  }
+
+  body[data-tab='whatsapp'] .media-thumb img {
+    max-height: min(64vh, 520px);
+    border-radius: 8px;
+  }
+
+  body[data-tab='whatsapp'] .media-caption {
+    color: var(--wad-ink);
+    font-size: 13.8px;
+  }
+
+  /* Reproductor y documento DENTRO de la burbuja: sin tarjeta sobre tarjeta. */
+  body[data-tab='whatsapp'] .bubble:not(.bubble--media) .audio {
+    min-width: min(52vw, 300px);
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  body[data-tab='whatsapp'] .bubble--out .audio {
+    background: transparent;
+  }
+
+  body[data-tab='whatsapp'] .bubble:not(.bubble--media) .doc-card {
+    min-width: min(52vw, 320px);
+    padding: 4px 0;
+    border: 0;
+    background: transparent;
+  }
+
+  body[data-tab='whatsapp'] .bubble--out .doc-card {
+    background: transparent;
+  }
+
+  /* Ubicación: tarjeta blanca sobre el papel, como la de WhatsApp. */
+  body[data-tab='whatsapp'] .bubble .loc {
+    min-width: 232px;
+    padding: 9px 11px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--wad-bubble-in);
+    box-shadow: var(--wad-bubble-shadow);
+  }
+
+  body[data-tab='whatsapp'] .bubble--media .loc {
+    margin: 1px 0;
+  }
+
+  body[data-tab='whatsapp'] .audio__seek::-webkit-slider-runnable-track {
+    background: linear-gradient(
+      90deg,
+      var(--wad-teal) var(--audio-progress, 0%),
+      rgba(11, 20, 26, 0.16) var(--audio-progress, 0%)
+    );
+  }
+
+  body[data-tab='whatsapp'] .audio__play {
+    background: var(--wad-teal);
+  }
+
+  /* Separadores de día: píldora blanca y mayúsculas pequeñas. */
+  body[data-tab='whatsapp'] .day-sep {
+    justify-self: center;
+    margin: 12px 0 6px;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--wad-panel);
+    color: var(--wad-ink-soft);
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    box-shadow: var(--wad-bubble-shadow);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .day-sep {
+    background: #182229;
+  }
+
+  body[data-tab='whatsapp'] .wa-locked {
+    margin: 40px auto;
+    border: 0;
+    background: var(--wad-panel);
+    box-shadow: var(--wad-bubble-shadow);
+  }
+
+  body[data-tab='whatsapp'] .wa-locked strong,
+  body[data-tab='whatsapp'] .wa-locked p {
+    color: var(--wad-ink);
+  }
+
+  /* Acciones de la conversación: círculo verde, por encima del compositor. */
+  body[data-tab='whatsapp'] .wa-fab {
+    right: 20px;
+    bottom: 14px;
+    width: 44px;
+    height: 44px;
+    background: var(--wad-teal);
+    color: #ffffff;
+    box-shadow: 0 3px 12px rgba(11, 20, 26, 0.28);
+  }
+
+  body[data-tab='whatsapp'] .wa-fab:hover,
+  body[data-tab='whatsapp'] .wa-fab:focus-visible {
+    background: var(--wad-teal-dark);
+  }
+
+  body[data-tab='whatsapp'] .wa__delivery-cta {
+    border: 0;
+    background: var(--wad-panel);
+    box-shadow: 0 8px 26px rgba(11, 20, 26, 0.18);
+  }
+
+  /* ------------------------------------------------------- compositor */
+  body[data-tab='whatsapp'] .wa__composer {
+    flex: 0 0 auto;
+    padding: 8px 16px 10px;
+    border-top: 0;
+    background: var(--wad-bar);
+    backdrop-filter: none;
+  }
+
+  body[data-tab='whatsapp'] .composer-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] .composer-field {
+    display: flex;
+    align-items: flex-end;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 6px 0 4px;
+    border: 0;
+    border-radius: 24px;
+    background: var(--wad-field);
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] .composer-field textarea {
+    min-height: 40px;
+    max-height: 132px;
+    padding: 10px 6px;
+    background: transparent;
+    color: var(--wad-ink);
+    font-size: 15px;
+    line-height: 20px;
+  }
+
+  body[data-tab='whatsapp'] .composer-field textarea::placeholder {
+    color: var(--wad-ink-soft);
+  }
+
+  body[data-tab='whatsapp'] #wa-attach {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    color: var(--wad-icon);
+  }
+
+  body[data-tab='whatsapp'] #wa-attach:hover {
+    background: rgba(11, 20, 26, 0.06);
+    color: var(--wad-ink);
+  }
+
+  body[data-tab='whatsapp'] .composer-left,
+  body[data-tab='whatsapp'] .composer-end {
+    align-self: flex-end;
+    min-height: 40px;
+  }
+
+  body[data-tab='whatsapp'] .composer-end {
+    width: 44px;
+    height: 44px;
+  }
+
+  body[data-tab='whatsapp'] :is(#wa-mic, #wa-send) {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 11px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--wad-teal);
+    color: #ffffff;
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'] :is(#wa-mic, #wa-send):hover {
+    background: var(--wad-teal-dark);
+    filter: none;
+  }
+
+  body[data-tab='whatsapp'] :is(#wa-mic, #wa-send):disabled {
+    background: var(--wad-bar);
+    color: var(--wad-ink-soft);
+  }
+
+  body[data-tab='whatsapp'] .composer-rule {
+    margin: 6px 4px 0;
+    color: var(--wad-ink-soft);
+    font-size: 11px;
+    text-align: center;
+  }
+
+  body[data-tab='whatsapp'] .wa-quick-preview,
+  body[data-tab='whatsapp'] .wa-proofreading {
+    border: 0;
+    background: var(--wad-panel);
+    color: var(--wad-ink-soft);
+  }
+
+  /* ---------------------------------------------------- sin conversación */
+  body[data-tab='whatsapp'] .wa__placeholder {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 22px;
+    height: 100%;
+    margin: 0;
+    padding: 40px;
+    background-color: var(--wad-wallpaper);
+    background-image: var(--wad-wallpaper-image);
+    background-size: 176px 176px;
+    color: var(--wad-ink-soft);
+    text-align: center;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__placeholder {
+    background-image:
+      linear-gradient(rgba(11, 20, 26, 0.94), rgba(11, 20, 26, 0.94)), var(--wad-wallpaper-image);
+  }
+
+  body[data-tab='whatsapp'] .wa__placeholder::before {
+    content: '';
+    width: 132px;
+    height: 132px;
+    border-radius: 50%;
+    background: var(--wad-panel) url('/admin/fulltech-icon-192.png') center / 88px 88px no-repeat;
+    box-shadow: 0 12px 34px rgba(11, 20, 26, 0.12);
+  }
+
+  body[data-tab='whatsapp'] .wa__placeholder {
+    font-size: 14.5px;
+    line-height: 1.55;
+  }
+
+  /* --------------------------------------------------- barras de desplazamiento */
+  body[data-tab='whatsapp'] #wa-conversations,
+  body[data-tab='whatsapp'] .thread {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(11, 20, 26, 0.2) transparent;
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations::-webkit-scrollbar,
+  body[data-tab='whatsapp'] .thread::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations::-webkit-scrollbar-thumb,
+  body[data-tab='whatsapp'] .thread::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: rgba(11, 20, 26, 0.2);
+  }
+
+  body[data-tab='whatsapp'] #wa-conversations::-webkit-scrollbar-track,
+  body[data-tab='whatsapp'] .thread::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] #wa-conversations,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .thread {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] #wa-conversations::-webkit-scrollbar-thumb,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .thread::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  /* ------------------------------------------- tema oscuro (repaso final) */
+  /*
+   * `shell-v2-tema.css` tiene reglas oscuras muy específicas
+   * (`:root[data-theme='dark'] body :is(...)`) pensadas para el chat viejo. Aquí
+   * se vuelven a fijar, con más peso, las superficies y las burbujas del chat.
+   */
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .content,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__list {
+    background: var(--wad-panel);
+    border-color: var(--wad-line-strong);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__list-head,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__chat-head,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__composer {
+    background: var(--wad-bar);
+    border-color: var(--wad-line);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__thread-search {
+    background: transparent;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__chat,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .thread {
+    background-color: var(--wad-wallpaper);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--in {
+    background-color: var(--wad-bubble-in);
+    color: var(--wad-ink);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--out {
+    background-color: var(--wad-bubble-out);
+    color: #e9edef;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--auto {
+    background-color: #2a3942;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--failed {
+    background-color: #4a2b2b;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--removed {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--media,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--media:has(.media-thumb),
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--out:has(.media-thumb) {
+    background-color: transparent;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble__meta,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--in .bubble__meta,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--out .bubble__meta,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble__who {
+    color: var(--wad-ink-soft);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__chat-name {
+    background: none;
+    color: var(--wad-ink);
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa__chat-meta {
+    color: var(--wad-ink-soft);
+  }
+
+  /* ------------------------------------------- pantallas de escritorio justas */
+  @media (max-width: 1120px) {
+    body[data-tab='whatsapp'] .wa {
+      grid-template-columns: 320px minmax(0, 1fr);
+    }
+
+    body[data-tab='whatsapp'] .thread {
+      padding-right: 16px;
+      padding-left: 16px;
+    }
+
+    body[data-tab='whatsapp'] .bubble {
+      max-width: min(78%, 640px);
+    }
+  }
+}

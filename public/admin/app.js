@@ -2179,6 +2179,29 @@
       return;
     }
     /*
+     * COTIZACIONES: la lupa y el filtro viven en la barra, igual que en Clientes
+     * y Pedidos. La fila de búsqueda se muestra u oculta con `data-quote-search`
+     * (la maneja pos.js, que es quien conoce las cotizaciones).
+     */
+    if (state.tab === 'cotizaciones') {
+      box.innerHTML = `<div class="wa-appbar quotes-appbar">
+        <div class="quotes-appbar__row quotes-appbar__default">
+          <button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+          <div class="wa-appbar__title"><strong>Cotizaciones</strong></div>
+          <div class="wa-appbar__actions">
+            <button class="wa-appbar__icon" data-quote-search-open type="button" aria-label="Buscar cotización">${ICONS.search}</button>
+            <button class="wa-appbar__icon" data-quote-filter-open type="button" aria-label="Filtrar cotizaciones" aria-expanded="false">${ICONS.filter}</button>
+          </div>
+        </div>
+        <div class="quotes-appbar__row quotes-appbar__search">
+          <button class="wa-appbar__back" data-quote-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
+          <input class="wa-appbar__search" id="quote-appbar-search" type="search" placeholder="Buscar cliente o cotización" aria-label="Buscar cotización" autocomplete="off" />
+          <button class="wa-appbar__icon" data-quote-search-clear type="button" aria-label="Limpiar búsqueda">${ICONS.close}</button>
+        </div>
+      </div>`;
+      return;
+    }
+    /*
      * EL CIERRE DIARIO Y SU HISTORIAL SON DOS CARAS DE LO MISMO. En la barra de
      * arriba va el atajo para pasar de uno a otro sin dar la vuelta por el menú:
      * desde el cierre de hoy al historial, y del historial al cierre de hoy.
@@ -16873,6 +16896,23 @@
             ? '<p class="rule rule--warn">Sin conexión: estás viendo la COPIA guardada en este teléfono. Se puede verificar el pedido y cambiar su estado; los cambios se enviarán solos.</p>'
             : ''
         }
+        <div class="receipt-pdf-card" aria-label="Factura lista para enviar">
+          <span class="receipt-pdf-card__icon" aria-hidden="true">${ICONS.doc}</span>
+          <span class="receipt-pdf-card__body">
+            <strong>Factura lista para enviar</strong>
+            <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
+          </span>
+          <span class="receipt-pdf-card__actions">
+            <a class="btn btn--ghost btn--sm" href="${escapeHtml(
+              `/admin/receipt-viewer.html?pdf=${encodeURIComponent(`/api/admin/orders/${orderId}/receipt.pdf`)}&order=${encodeURIComponent(
+                orderId,
+              )}`,
+            )}" target="_blank" rel="noopener">Ver PDF</a>
+            <button class="btn btn--primary btn--sm" data-invoice-send="${escapeHtml(
+              orderId,
+            )}" type="button">Enviar al cliente</button>
+          </span>
+        </div>
         <div class="receipt" aria-label="Comprobante de compra">
           <p class="receipt__brand">${escapeHtml(receipt.business)}</p>
           <p class="receipt__doc">${escapeHtml(receipt.document)}</p>
@@ -16942,13 +16982,6 @@
           }
           <p class="view__hint">${escapeHtml(receipt.thanks)}</p>
           <p class="view__hint">${escapeHtml(receipt.note)}</p>
-        </div>
-        <div class="receipt-pdf-card" aria-label="Factura lista para enviar">
-          <span class="receipt-pdf-card__icon" aria-hidden="true">${ICONS.doc}</span>
-          <span class="receipt-pdf-card__body">
-            <strong>Factura lista para enviar</strong>
-            <small>Factura ${escapeHtml(receipt.order_number)} · ${money(receipt.total, receipt.currency)}</small>
-          </span>
         </div>
         ${sheetFabHtml(`data-receipt-actions="${escapeHtml(orderId)}"`)}
         `,
@@ -17290,8 +17323,8 @@
           : null,
         {
           icon: ICONS.send,
-          label: 'Enviar factura por WhatsApp',
-          note: 'La manda el CRM al chat del cliente',
+          label: 'Enviar al cliente',
+          note: 'La factura sale por WhatsApp oficial y queda en el CRM',
           data: { 'data-receipt-wa': orderId },
         },
         mapLatLng(ubicacionPedido)
@@ -18288,6 +18321,19 @@
     const waBadge = $('#badge-whatsapp');
     waBadge.hidden = whatsappPendiente === 0;
     waBadge.textContent = whatsappPendiente;
+    /*
+     * El menú lateral de escritorio es la barra inferior de ese mundo: los mismos
+     * destinos y los mismos números. Se busca por atributo (no por id) porque la
+     * barra de abajo YA usa `#badge-hoy` / `#badge-whatsapp`.
+     */
+    $$('[data-drawer-badge="hoy"]').forEach((node) => {
+      node.hidden = pendientes === 0;
+      node.textContent = pendientes;
+    });
+    $$('[data-drawer-badge="whatsapp"]').forEach((node) => {
+      node.hidden = whatsappPendiente === 0;
+      node.textContent = whatsappPendiente;
+    });
     if (navigator.setAppBadge) navigator.setAppBadge(pendientes + whatsappPendiente).catch(() => {});
   }
   function renderOutboxBanner() {
@@ -19004,12 +19050,19 @@
    */
   let drawerFocusBack = null;
   let drawerInertNodes = [];
+  /** El cierre se retrasa 200 ms para que la animación se vea. Si mientras tanto
+   * se vuelve a abrir el menú, este temporizador ya no puede esconderlo. */
+  let drawerHideTimer = null;
 
   function openDrawer() {
     const drawer = $('#drawer');
     const scrim = $('#scrim');
     if (!drawer || !scrim) return;
     if (state.drawer) return;
+    if (drawerHideTimer) {
+      clearTimeout(drawerHideTimer);
+      drawerHideTimer = null;
+    }
     if ($('#store-menu')) $('#store-menu').open = false;
     drawerFocusBack = document.activeElement;
     drawerInertNodes = [...drawer.parentElement.children].filter((node) => node !== drawer && node !== scrim && !node.inert);
@@ -19026,6 +19079,8 @@
     $$('[data-open-drawer]').forEach((boton) => boton.setAttribute('aria-expanded', 'true'));
     $('#menu')?.setAttribute('aria-expanded', 'true');
     state.drawer = true;
+    // Al abrirlo en escritorio se deja a la vista el grupo de la pantalla actual.
+    plegarMenuEscritorio();
     $('#drawer-close')?.focus();
   }
 
@@ -19041,7 +19096,9 @@
     state.drawer = false;
     drawerInertNodes.forEach((node) => { node.inert = false; });
     drawerInertNodes = [];
-    setTimeout(() => {
+    clearTimeout(drawerHideTimer);
+    drawerHideTimer = setTimeout(() => {
+      drawerHideTimer = null;
       if (!state.drawer) {
         drawer.hidden = true;
         scrim.hidden = true;
@@ -19049,6 +19106,37 @@
     }, 200);
     if (drawerFocusBack instanceof HTMLElement) drawerFocusBack.focus();
     drawerFocusBack = null;
+  }
+
+  /*
+   * EL MENÚ, PLEGADO Y ORDENADO SEGÚN LA PANTALLA.
+   *
+   * En el móvil los desplegables van ABIERTOS (la barra inferior lleva lo
+   * principal y el menú se abre a propósito, sin pasos de más). En escritorio,
+   * donde no hay barra inferior y el menú lo lleva TODO, se abre solo el grupo
+   * de la pantalla actual y los demás quedan como cabeceras: así todo cabe en
+   * la ventana sin desplazar el menú a ciegas.
+   */
+  function plegarMenuEscritorio() {
+    const escritorio =
+      typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 980px)').matches;
+    $$('#drawer details.drawer__fold').forEach((fold) => {
+      fold.open = !escritorio || Boolean(fold.querySelector('[aria-current="true"]'));
+    });
+    /*
+     * Un destino puede vivir dentro de más de un desplegable (Inventario dentro
+     * de Ventas): se abren todos sus padres para que se vea dónde está uno.
+     */
+    const activo = $('#drawer .drawer__item[aria-current="true"]');
+    for (let padre = activo?.closest('details'); padre; padre = padre.parentElement?.closest('details')) {
+      padre.open = true;
+    }
+  }
+
+  // Si la ventana cruza el ancho de escritorio, el menú se reordena solo.
+  if (typeof window.matchMedia === 'function') {
+    const menuAncho = window.matchMedia('(min-width: 980px)');
+    if (typeof menuAncho.addEventListener === 'function') menuAncho.addEventListener('change', plegarMenuEscritorio);
   }
 
   /**
@@ -19179,6 +19267,11 @@
       state.pedidosSearchOpen = false;
       delete document.body.dataset.orderFilters;
     }
+    if (tab !== 'cotizaciones') {
+      // La barra de Cotizaciones la lleva pos.js: al salir se cierra su búsqueda.
+      document.body.dataset.quoteSearch = 'closed';
+      document.body.dataset.quoteFilters = 'closed';
+    }
     // Fuera del mapa no se sigue nada: ni GPS en vivo ni sondeos ni el mapa vivo.
     if (tab !== 'mapa') {
       stopOrdersMapPoll();
@@ -19223,6 +19316,8 @@
     const navigation = $('.tabs');
     if (navigation) navigation.hidden = tab !== 'hoy';
     $$('[data-tab]').forEach((button) => button.setAttribute('aria-current', String(button.dataset.tab === tab)));
+    // El menú lateral de escritorio deja abierto el grupo donde está uno.
+    plegarMenuEscritorio();
     VIEWS.forEach((name) => {
       const view = $(`#view-${name}`);
       if (view) view.hidden = name !== tab;
@@ -20348,10 +20443,18 @@
         openItemWhatsAppSheet(itemWa.dataset.itemWa);
         return;
       }
+      const invoiceSend = event.target.closest('[data-invoice-send]');
+      if (invoiceSend) {
+        openSendInvoiceSheet(invoiceSend.dataset.invoiceSend);
+        return;
+      }
       const receiptOpen = event.target.closest('[data-receipt-open]');
       if (receiptOpen) {
+        const id = receiptOpen.dataset.receiptOpen;
         window.open(
-          `/admin/receipt-viewer.html?pdf=${encodeURIComponent('/api/admin/orders/'+receiptOpen.dataset.receiptOpen+'/receipt.pdf')}`,
+          `/admin/receipt-viewer.html?pdf=${encodeURIComponent(`/api/admin/orders/${id}/receipt.pdf`)}&order=${encodeURIComponent(
+            id,
+          )}`,
           '_blank',
           'noopener',
         );

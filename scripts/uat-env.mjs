@@ -33,6 +33,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, appendFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// El total de una cotización se calcula con la MISMA función que usan el panel y
+// el servidor: si la semilla inventara importes, el POST fallaría por precio.
+import { calculateSale } from '../public/admin/pos-math.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -558,6 +561,7 @@ async function sembrar() {
     'phyto_confirmacion_pedido_v1',
     'phyto_envio_factura_v1',
     'phyto_delivery_asignado_v1',
+    'phyto_envio_cotizacion_v1',
   ];
   const plantillas = (await pedir('/api/admin/wa-templates')).body?.templates ?? [];
   for (const nombre of APROBADAS) {
@@ -885,6 +889,92 @@ async function haceFaltaSembrar() {
   return ((data.body?.customers ?? []).length === 0 && (data.body?.items ?? []).length === 0);
 }
 
+/*
+ * COTIZACIONES DE PRUEBA.
+ *
+ * La pantalla de cotizaciones se prueba con datos de verdad: seis cotizaciones
+ * con clientes, importes y descuentos distintos, y UNA ya facturada, para poder
+ * ver los dos estados del filtro. Se crean por la API (la misma que usa el
+ * panel), así que el total lo calcula el servidor: nada se escribe a mano en la
+ * base. Es idempotente: si ya hay cotizaciones, no toca nada.
+ */
+async function sembrarCotizaciones() {
+  if (COPIAR_DATOS) return;
+  const existentes = await pedir('/api/admin/pos/quotes');
+  const ya = (existentes.body?.quotes ?? []).length;
+  if (ya > 0) {
+    log(`\n▸ Cotizaciones: ya hay ${ya} en esta base (no se siembran más).`);
+    return;
+  }
+  const catalogo = (await pedir('/api/admin/store/products')).body?.products ?? [];
+  const productos = catalogo.filter((row) => row.active !== false && Number.isInteger(row.price_cents));
+  const clientes = (await pedir('/api/admin/pos/customers')).body?.customers ?? [];
+  if (!productos.length || !clientes.length) {
+    log('\n▸ Cotizaciones: faltan productos o clientes en esta base; no se siembran.');
+    return;
+  }
+
+  log('\n▸ Sembrando cotizaciones de prueba (lista, filtros, detalle y PDF)…');
+  paso('Cotizaciones');
+  // Cada línea es [índice de producto, cantidad]; los índices se reparten sobre
+  // lo que haya en el catálogo, así que la semilla no depende de los IDs.
+  const plan = [
+    { cliente: 0, lineas: [[0, 1]], envio: 250, descuento: null, nota: 'Pidió precio para 1 frasco; confirma el lunes.', convertir: true },
+    { cliente: 1, lineas: [[1, 2]], envio: 0, descuento: { type: 'percent', value: 10 }, nota: 'Se le ofreció 10% si cierra esta semana.' },
+    { cliente: 2, lineas: [[2, 1], [0, 1]], envio: 0, descuento: null, nota: '' },
+    { cliente: 3, lineas: [[0, 3]], envio: 150, descuento: null, nota: 'Envío a Santiago; se cobra al recibir.' },
+    { cliente: 4, lineas: [[2, 1]], envio: 0, descuento: { type: 'amount', value: 300 }, nota: '' },
+    { cliente: 5, lineas: [[1, 1], [2, 1]], envio: 350, descuento: null, nota: 'Reposición mensual.' },
+  ];
+
+  for (const [indice, fila] of plan.entries()) {
+    const cliente = clientes[fila.cliente % clientes.length];
+    const items = fila.lineas.map(([posicion, cantidad]) => ({
+      variantId: productos[posicion % productos.length].id,
+      quantity: cantidad,
+      discount: {},
+    }));
+    const descuento = fila.descuento ?? {};
+    // El total lo calcula la MISMA función que el panel y el servidor.
+    const venta = calculateSale(items, productos, descuento, fila.envio);
+    const creada = await pedir('/api/admin/pos/quotes', {
+      method: 'POST',
+      body: JSON.stringify({
+        requestId: randomBytes(12).toString('hex'),
+        customerId: cliente.id,
+        items,
+        discount: descuento,
+        deliveryFee: fila.envio,
+        expectedTotal: venta.total_cents,
+        paymentMethod: 'CASH',
+        notes: fila.nota,
+      }),
+    });
+    const id = creada.body?.document?.id ?? creada.body?.quoteId ?? null;
+    dato(`${creada.body?.document?.number ?? `cotización ${indice + 1}`} · ${cliente.name}`, creada.ok ? `${venta.total_cents} céntimos` : `error ${creada.status} ${creada.body?.message ?? ''}`);
+    if (!fila.convertir || !id) continue;
+    // Una cotización se lleva a factura: así el filtro «Facturadas» tiene algo.
+    const factura = await pedir('/api/admin/pos/checkout', {
+      method: 'POST',
+      body: JSON.stringify({
+        quoteId: id,
+        customerId: cliente.id,
+        mode: 'invoice',
+        items,
+        discount: descuento,
+        deliveryFee: fila.envio,
+        expectedTotal: venta.total_cents,
+        paymentMethod: 'CASH',
+        notes: fila.nota,
+        acknowledgeOpen: true,
+        requestId: randomBytes(12).toString('hex'),
+      }),
+    });
+    dato('una cotización pasada a factura', factura.ok ? `pedido ${factura.body?.number ?? ''}` : `no se pudo (${factura.status} ${factura.body?.message ?? ''})`);
+  }
+}
+
+
 if (await haceFaltaSembrar()) {
   await sembrar();
 } else {
@@ -893,6 +983,7 @@ if (await haceFaltaSembrar()) {
     log('\n▸ Ya había datos: no se vuelve a sembrar (usa `npm run uat:reset` para empezar de cero).');
   }
 }
+await sembrarCotizaciones();
 await resumen();
 
 let cerrando = false;

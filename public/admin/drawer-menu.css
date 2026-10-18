@@ -1,0 +1,194 @@
+/*
+ * MENÚ LATERAL ORDENADO (escritorio).
+ *
+ * QUÉ RESUELVE
+ *   En el escritorio no hay barra inferior y, en WhatsApp, tampoco barra superior:
+ *   el menú lateral es la ÚNICA navegación. Antes le faltaban los cuatro destinos
+ *   de la barra (Hoy, Chats, Pedidos, Clientes) y las opciones se acumulaban en
+ *   una lista larga. Ahora:
+ *     · «Principal» lleva los cuatro destinos, con sus contadores.
+ *     · Ventas / Seguimiento / Sistema son DESPLEGABLES: se abre el grupo de la
+ *       pantalla actual y los demás quedan como cabeceras. Todo cabe sin buscar.
+ *
+ * QUÉ NO CAMBIA
+ *   El móvil. Ahí la barra inferior ya lleva los cuatro destinos, así que
+ *   «Principal» se oculta y los desplegables se abren enteros desde app.js; las
+ *   cabeceras de grupo siguen sin pintarse (`display:none` en admin.css).
+ */
+
+/* --------------------------------------------------------- el móvil, igual */
+/* Primero el estilo común (el orden importa: la regla de abajo lo apaga). */
+.drawer__section {
+  display: grid;
+  gap: 2px;
+}
+
+/*
+ * Lo principal ya está en la barra de abajo: no se repite aquí. `#drawer` delante
+ * porque el propio panel tiene reglas de menú con ID.
+ */
+@media (max-width: 979px) {
+  #drawer .drawer__section--main {
+    display: none;
+  }
+}
+
+/* Un desplegable sin la flecha nativa del navegador (la pinta la hoja). */
+.drawer__fold > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.drawer__fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.drawer__fold > summary:focus-visible {
+  outline: 2px solid var(--phyto-primary);
+  outline-offset: 2px;
+}
+
+.drawer__fold > nav {
+  display: grid;
+  gap: 3px;
+}
+
+/* Contador del menú (los mismos números que la barra inferior). */
+.drawer__badge {
+  margin-left: auto;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--pe-danger, #e64b57);
+  color: #fff;
+  font-size: 0.64rem;
+  font-weight: 800;
+  line-height: 19px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ escritorio */
+@media (min-width: 980px) {
+  /* Un poco más ancho: los nombres largos («Productos y servicios») respiran. */
+  .drawer {
+    width: min(92vw, 344px);
+    overflow: hidden;
+  }
+
+  /*
+   * Solo se desplaza la lista de opciones: la marca, el tema y «Cerrar sesión»
+   * se quedan fijos arriba y abajo.
+   */
+  .drawer__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-primary) 22%, transparent) transparent;
+  }
+
+  .drawer__body::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .drawer__body::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  }
+
+  .drawer__body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /*
+   * Cabeceras de grupo: etiqueta + flecha, y toda la fila se pulsa. Van con
+   * `#drawer` delante porque `shell-v2-tema.css` ya pinta `.drawer__group` con
+   * un ID (`#drawer .drawer__group`) y, sin él, ganaba el estilo viejo.
+   */
+  #drawer .drawer__group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    margin: 8px 4px 2px;
+    padding: 0 9px;
+    border-radius: 9px;
+    color: var(--text-secondary);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.13em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  #drawer .drawer__section--main > .drawer__group {
+    margin-top: 2px;
+  }
+
+  .drawer__fold > summary::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    margin-left: auto;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(45deg) translate(-1px, -2px);
+    transition: transform 160ms ease;
+    opacity: 0.65;
+  }
+
+  .drawer__fold[open] > summary::after {
+    transform: rotate(-135deg) translate(-1px, -2px);
+  }
+
+  .drawer__fold > summary:hover,
+  .drawer__fold > summary:focus-visible {
+    background: color-mix(in srgb, var(--phyto-primary) 9%, transparent);
+    color: var(--text-primary);
+  }
+
+  .drawer__fold[open] > summary {
+    color: var(--text-primary);
+  }
+
+  .drawer__fold > nav {
+    margin: 2px 0 4px;
+  }
+
+  /* Inventario, dentro de Ventas: sangría y guía para que se vea el nivel. */
+  .store-menu {
+    margin-top: 2px;
+  }
+
+  .store-menu > summary.drawer__item {
+    min-height: 38px;
+  }
+
+  .store-menu > nav {
+    display: grid;
+    gap: 2px;
+    margin: 2px 0 2px 12px;
+    padding-left: 12px;
+    border-left: 1px solid color-mix(in srgb, var(--phyto-primary) 18%, transparent);
+  }
+
+  .store-menu > nav .drawer__item {
+    min-height: 36px;
+    padding-left: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* Los ítems del menú, un pelo más altos: se pulsan con ratón, no con prisa. */
+  .drawer__item {
+    min-height: 40px;
+  }
+
+  .drawer__badge {
+    margin-left: auto;
+  }
+}

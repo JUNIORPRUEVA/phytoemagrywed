@@ -1,0 +1,264 @@
+/*
+ * VISTA PC — orden y proporción de TODAS las pantallas (≥ 980 px).
+ *
+ * QUÉ HACE
+ *   · Un lienzo centrado (máx. 1320 px): en un monitor grande nada se estira de
+ *     lado a lado ni obliga a leer de borde a borde.
+ *   · Hoy: las ocho tarjetas en DOS filas parejas de cuatro.
+ *   · Pedidos, Clientes, Usuarios, Seguimientos, Plantillas y Productos: las
+ *     tarjetas en dos columnas cuando de verdad hay sitio (≥ 1200 px).
+ *   · Reportes y Cierre diario: los bloques en dos columnas, con la cabecera y
+ *     el resumen a todo el ancho.
+ *   · Mis entregas: cada grupo (pendientes, en camino…) reparte sus tarjetas en
+ *     dos columnas.
+ *   · Mapa: el mapa a la izquierda y la lista a la derecha, con el alto de la
+ *     ventana (antes la lista caía debajo y había que bajar).
+ *   · Buscador y filtros de Clientes en la misma fila; botones flotantes
+ *     alineados con el borde del contenido; barras de desplazamiento finas.
+ *
+ * QUÉ NO CAMBIA
+ *   El móvil (≤ 979 px) ni la bandeja de WhatsApp, que tiene su propia hoja
+ *   (`wa-desktop.css` y `drawer-menu.css`). Todo lo de aquí está dentro del
+ *   media query de escritorio.
+ */
+
+@media (min-width: 980px) {
+  /* ---------------------------------------------------- lienzo y tipografía */
+  /*
+   * FANTASMA DE LA VISTA DE FACTURACIÓN: `pos.css` fuerza
+   * `#view-catalogo { display: grid !important }` en escritorio para su rejilla
+   * de dos columnas, y eso le gana al `[hidden]` del panel: la vista seguía
+   * ocupando ~94 px al final de TODAS las demás pantallas (y alargaba la
+   * página). Aquí se devuelve a su sitio cuando está oculta.
+   */
+  body:not([data-tab='catalogo']) #view-catalogo[hidden] {
+    display: none !important;
+  }
+
+  body:not([data-tab='whatsapp']):not([data-tab='catalogo']):not([data-tab='mapa']) .content {
+    width: 100%;
+    max-width: 1320px;
+    margin-inline: auto;
+    padding: 20px 24px 48px;
+  }
+
+  /* Con un detalle de entrega abierto el panel manda: no se le pone lienzo. */
+  body[data-tab='delivery'][data-delivery-detail='true'] .content {
+    max-width: none;
+    padding: 0;
+  }
+
+  body:not([data-tab='whatsapp']) .view__title {
+    font-size: 1.5rem;
+    letter-spacing: -0.02em;
+  }
+
+  body:not([data-tab='whatsapp']) .view__hint {
+    max-width: 78ch;
+  }
+
+  body:not([data-tab='whatsapp']) .view__count {
+    font-size: 0.82rem;
+    letter-spacing: 0.01em;
+  }
+
+  /* Barras finas y del color del texto (en claro y en oscuro). */
+  .content,
+  #list-pedidos,
+  #list-clientes,
+  #list-mensajes,
+  #list-seguimientos,
+  #inventory-view,
+  #mapa-lista {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+  }
+
+  .content::-webkit-scrollbar,
+  #list-pedidos::-webkit-scrollbar,
+  #list-clientes::-webkit-scrollbar,
+  #list-mensajes::-webkit-scrollbar,
+  #list-seguimientos::-webkit-scrollbar,
+  #inventory-view::-webkit-scrollbar,
+  #mapa-lista::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .content::-webkit-scrollbar-thumb,
+  #list-pedidos::-webkit-scrollbar-thumb,
+  #list-clientes::-webkit-scrollbar-thumb,
+  #list-mensajes::-webkit-scrollbar-thumb,
+  #list-seguimientos::-webkit-scrollbar-thumb,
+  #inventory-view::-webkit-scrollbar-thumb,
+  #mapa-lista::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text-primary) 20%, transparent);
+  }
+
+  /* ------------------------------------------------------------------- HOY */
+  /* Ocho tarjetas: dos filas de cuatro (antes cinco y tres, cojas). */
+  body[data-tab='hoy'] .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  body[data-tab='hoy'] .stat {
+    min-height: 108px;
+    padding: 14px 16px;
+  }
+
+  /* ------------------------------------------------- Clientes: busca y filtra */
+  body[data-tab='clientes'] .filters {
+    display: grid;
+    grid-template-columns: minmax(260px, 380px) minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+  }
+
+  /*
+   * En el móvil los filtros son un panel que entra por el lado y lleva su
+   * cabecera («Filtros · ×»). Aquí ya están a la vista, así que sobran; y en vez
+   * de una fila que se corta, los chips se reparten en varias líneas.
+   */
+  body:is([data-tab='pedidos'], [data-tab='clientes']) :is(.wa-filter-panel__head, .wa-filter-panel__close) {
+    display: none;
+  }
+
+  body[data-tab='pedidos'] #pedidos-filtros,
+  body[data-tab='clientes'] #chips {
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 8px;
+  }
+
+  /* ------------------------------------------- listas de tarjetas en 2 columnas */
+  @media (min-width: 1200px) {
+    body[data-tab='pedidos'] #list-pedidos,
+    body[data-tab='clientes'] #list-clientes,
+    body[data-tab='usuarios'] .list--users,
+    body[data-tab='seguimientos'] #list-seguimientos,
+    body[data-tab='mensajes'] #list-mensajes,
+    body[data-tab='productos'] #inventory-view,
+    body[data-tab='reportes'] #sales-report-view {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    /* Lo que no es una tarjeta (un aviso, un título, el rango de fechas) ocupa
+       la fila entera: no se queda a media columna. */
+    body[data-tab='reportes'] #sales-report-view > :not(.card),
+    body[data-tab='productos'] #inventory-view > .inventory-summary,
+    body[data-tab='pedidos'] #list-pedidos > :not(.order-card),
+    body[data-tab='clientes'] #list-clientes > :not(.client-row),
+    body[data-tab='usuarios'] .list--users > :not(.item),
+    body[data-tab='seguimientos'] #list-seguimientos > :not(.item),
+    body[data-tab='mensajes'] #list-mensajes > :not(.item) {
+      grid-column: 1 / -1;
+    }
+
+    /* El cuadro grande de utilidad manda: va a todo el ancho y los otros dos
+       (presentación y ventas) comparten la fila de abajo. */
+    body[data-tab='reportes'] #sales-report-view > .card:first-of-type {
+      grid-column: 1 / -1;
+    }
+
+    /* Las tarjetas ya están separadas por la rejilla: sin márgenes sueltos. */
+    body:is([data-tab='pedidos'], [data-tab='clientes'], [data-tab='seguimientos'], [data-tab='mensajes'], [data-tab='usuarios'])
+      :is(#list-pedidos, #list-clientes, #list-seguimientos, #list-mensajes, .list--users)
+      > * {
+      margin-block: 0;
+    }
+
+    /* Mis entregas: los grupos siguen en orden, pero sus pedidos se reparten. */
+    body[data-tab='delivery'] .delivery-group {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+
+    body[data-tab='delivery'] .delivery-group > :not(.delivery-card) {
+      grid-column: 1 / -1;
+    }
+
+    /* Cierre diario: cabecera y resumen a todo el ancho; los bloques en pareja. */
+    body[data-tab='cierre'] .daily-close {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    body[data-tab='cierre'] .close-scope,
+    body[data-tab='cierre'] .daily-close__head,
+    body[data-tab='cierre'] .daily-close__grid,
+    body[data-tab='cierre'] .daily-close__settlement {
+      grid-column: 1 / -1;
+    }
+  }
+
+  /* ------------------------------------------------------------------ mapa */
+  body[data-tab='mapa'] .content {
+    width: 100%;
+    max-width: none;
+    padding: 12px 16px 16px;
+  }
+
+  body[data-tab='mapa'] #view-mapa {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 410px;
+    gap: 14px;
+    height: calc(100dvh - 120px);
+    min-height: 540px;
+  }
+
+  body[data-tab='mapa'] .map-stage {
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+  }
+
+  body[data-tab='mapa'] .map-panel {
+    height: 100%;
+    margin: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    align-content: start;
+  }
+
+  /* La lista ya está a la vista: ni asa ni velo. */
+  body[data-tab='mapa'] .map-panel__handle,
+  body[data-tab='mapa'] .map-scrim {
+    display: none;
+  }
+
+  /* La entrega en vivo no tapa el botón de acciones. */
+  body[data-tab='mapa'] .map-live {
+    max-width: min(420px, calc(100% - 96px));
+  }
+
+  /* En pantallas medianas el mapa y su lista siguen juntos, sin asfixiarse. */
+  @media (max-width: 1199px) {
+    body[data-tab='mapa'] #view-mapa {
+      grid-template-columns: minmax(0, 1fr) 340px;
+    }
+
+    body[data-tab='mapa'] .map-live {
+      max-width: 300px;
+    }
+  }
+
+  /* ----------------------------------------------- ajustes y perfil con aire */
+  body[data-tab='perfil'] .view--profile,
+  body[data-tab='perfil'] #view-perfil {
+    width: min(100%, 760px);
+    margin-inline: auto;
+  }
+
+  /* ------------------------- botones flotantes al borde del contenido (ancho) */
+  @media (min-width: 1400px) {
+    body:is([data-tab='pedidos'], [data-tab='clientes'], [data-tab='usuarios'])
+      :is(.client-fab, .list-fab) {
+      right: calc((100vw - 1320px) / 2 + 12px);
+    }
+  }
+}

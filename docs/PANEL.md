@@ -363,10 +363,100 @@ tocar la lógica de ninguna pantalla.
 - **La marca** se escribe con una serif suave (variable `--pe-brand-font`) y el «CRM» es
   una etiqueta, no un eco del nombre.
 
+#### El menú lateral en escritorio
+
+La piel vive en **`public/admin/drawer-menu.css`** (se carga al final) y el orden lo
+decide `plegarMenuEscritorio()` en `app.js`.
+
+- En escritorio **no hay barra inferior** y, dentro de WhatsApp, tampoco barra superior:
+  el menú lateral es la única navegación. Por eso lleva **«Principal»**, con los cuatro
+  destinos de la barra (Hoy, Chats, Pedidos y Clientes) y **los mismos contadores**
+  (`data-drawer-badge`). En el móvil esa sección se oculta, porque la barra ya está abajo.
+- El resto se ordena en **desplegables**: Ventas, Seguimiento y Sistema. Al abrir el menú
+  se despliega solo el grupo de la pantalla actual (Inventario incluido si estás en
+  Productos, Cotizaciones, Stock o Recuento) y los demás quedan como cabeceras con su
+  flecha. Así todo cabe sin tener que desplazar el menú.
+- La marca, la apariencia y «Cerrar sesión» quedan fijos: solo se desplaza la lista de
+  opciones (`.drawer__body`), con barra fina.
+- En WhatsApp, el botón ☰ de la cabecera de la bandeja (`.wa__menu`) abre el menú; antes
+  en esa pantalla no había ninguna forma de abrirlo con ratón.
+- En el móvil no cambia nada visible: los grupos se abren enteros y las cabeceras se
+  pintan como siempre.
+
+#### El lienzo de las pantallas en escritorio
+
+`public/admin/panel-desktop.css` (también la última) ordena el resto de pantallas. En
+el móvil no se aplica: **todo** va dentro de `@media (min-width: 980px)`.
+
+- **Lienzo centrado**: el contenido se limita a 1320 px y se centra con 24 px de aire.
+  Antes se estiraba a los 1400 px del monitor y las filas se leían de borde a borde.
+  WhatsApp (a pantalla completa) y Facturación (su propio tablero) quedan fuera.
+- **Hoy**: las ocho tarjetas pasan a dos filas parejas de cuatro (antes cinco y tres).
+- **Pedidos, Clientes, Usuarios, Seguimientos, Plantillas y Productos**: sus tarjetas se
+  reparten en **dos columnas** desde 1200 px. Lo que no es tarjeta (un título, un aviso,
+  el rango de fechas) ocupa la fila entera.
+- **Reportes**: el cuadro de utilidad va a todo el ancho y «Por presentación» y «Ventas»
+  comparten la fila de abajo. **Cierre diario**: cabecera y resumen a todo el ancho y los
+  bloques en pareja. **Mis entregas**: cada grupo (pendientes, en camino…) reparte sus
+  pedidos en dos columnas.
+- **Clientes**: buscador y filtros en la misma fila; en Pedidos y Clientes se oculta la
+  cabecera «Filtros · ×» (es del panel del móvil) y los chips se reparten en varias líneas
+  en vez de cortarse.
+- **Mapa**: mapa a la izquierda y lista a la derecha (410 px; 340 px en pantallas
+  medianas), con el alto de la ventana. Antes la lista caía debajo del mapa.
+- Detalles de acabado: barras de desplazamiento finas, botones flotantes alineados con el
+  borde del contenido en monitores anchos y el perfil centrado.
+- **Fantasma corregido**: `pos.css` fuerza `#view-catalogo { display: grid !important }` en
+  escritorio para su rejilla de dos columnas, y eso le ganaba al `[hidden]` del panel: la
+  vista de Facturación seguía ocupando ~94 px al final de TODAS las demás pantallas. Ahora
+  se apaga cuando no es la pantalla activa (`panel-desktop.css`), y las páginas cortas
+  vuelven a terminar en la ventana (scroll 900 px exactos a 1440 × 900).
+
+Medido en el navegador a 1440 × 900: contenido 1320 px (antes 1416), Pedidos 655 px de
+alto con dos columnas (antes 1018 en una), Clientes 588 (antes 998), Plantillas 1296
+(antes 1982) y Mis entregas 1524 (antes 2051). A 1024 × 768 las listas vuelven a una
+columna y el mapa mantiene la lista a 340 px. Sin desbordamiento horizontal en ninguna
+pantalla.
+
 Los colores salen de variables (`--pe-page-bg`, `--pe-appbar-bg`, `--pe-tabbar-bg`,
 `--pe-card-bg`, `--pe-brand-text`…). Si algo se ve mal de noche, se arregla cambiando
 una variable, no escribiendo un color nuevo. Las filas de conversación, los paneles de
 filtros y las burbujas tienen su bloque de oscuro en ese mismo archivo.
+
+#### Cotizaciones: lupa y filtro en la barra, lista en tarjetas
+
+La pantalla de Cotizaciones tenía un buscador suelto dentro de la página. Ahora **la lupa
+y el filtro viven en la barra de arriba**, a la derecha, igual que en Clientes y Pedidos
+(`app.js` pinta la barra; `pos.js` decide qué se ve).
+
+- La barra tiene **dos filas**: la normal (volver · «Cotizaciones» · 🔍 ⚙) y la de
+  búsqueda, que se cambia en el sitio con una animación corta de 160 ms. Se alternan con
+  `body[data-quote-search='open']`, así que no hay dos barras montadas: es la misma.
+- **El texto deja de filtrar cuando cierras la búsqueda**. Con el botón ✕ o con `Escape`
+  se limpia la consulta: si no, la lista quedaba vacía sin que se viera por qué (pasó al
+  probarlo y está corregido).
+- **Filtros** (panel pegado a la barra, no una hoja que sube desde abajo): Estado
+  (Todas / Abiertas / Facturadas, con su cuenta) y Periodo (Todas / Hoy / 7 días / 30
+  días). Se cierran al pulsar fuera o con `Escape`, y el botón ⚙ se queda con un punto
+  azul mientras haya algo puesto.
+- **La lista es de tarjetas**, no de filas: iniciales con color estable por cotización,
+  nombre, estado (Abierta / Facturada), fecha, referencia corta (`#19F47967C4`), resumen
+  de artículos, importe y descuento. Arriba, una línea de resumen: cuántas hay, cuántas
+  abiertas y cuánto suman. Sin resultados, un estado vacío que explica y ofrece
+  **Quitar filtros**.
+- **En escritorio** la barra se enciende (el appbar general está oculto en el panel), se
+  alinea con el contenido (máximo 1000 px, centrado), pierde la flecha de volver y el
+  título crece: la navegación va por el menú. En el detalle de una cotización la barra se
+  queda solo con el título, porque ya hay «‹ Todas las cotizaciones».
+- En el móvil se sigue viendo igual: la tarjeta entera se pulsa, sin flecha lateral
+  (le robaba el sitio al nombre) y con el estado debajo del nombre por debajo de 360 px.
+- **Datos de prueba**: `scripts/uat-env.mjs` siembra seis cotizaciones por la misma API
+  del panel (una pasada a factura, con descuentos y envíos distintos), con el total
+  calculado por `calculateSale()`. Es idempotente: si ya hay cotizaciones, no toca nada.
+
+Medido en el navegador: 390 × 844, 360, 320, 1024 × 768 y 1440 × 900, en claro y en
+oscuro, sin desbordamiento horizontal y sin nombres recortados (solo se recorta el resumen
+de artículos, que es una línea a propósito).
 
 - **Clave y sesión**: la clave del panel es `PHYTO_CRM_TOKEN`. Al entrar, el
   servidor devuelve una cookie **HttpOnly, SameSite=Strict** (y `Secure` si va por

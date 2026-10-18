@@ -53,7 +53,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=campaign-exact-66" />
+    <link rel="stylesheet" href="/admin/admin.css?v=campaign-exact-67" />
     <link rel="stylesheet" href="/admin/store.css?v=4" />
     <link rel="stylesheet" href="/admin/pos.css?v=8" />
     <link rel="stylesheet" href="/admin/offline.css?v=1" />
@@ -75,6 +75,21 @@
       sobre la geometría y los colores de esa pantalla.
     -->
     <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-9" />
+    <!--
+      Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
+      todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
+    -->
+    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-1" />
+    <!--
+      El menú lateral en escritorio: lleva los cuatro destinos de la barra y
+      ordena el resto en desplegables. En el móvil no cambia nada.
+    -->
+    <link rel="stylesheet" href="/admin/drawer-menu.css?v=drawer-1" />
+    <!--
+      Orden general de las pantallas en escritorio (lienzo centrado, rejillas de
+      tarjetas y mapa en dos columnas). En el móvil no se aplica.
+    -->
+    <link rel="stylesheet" href="/admin/panel-desktop.css?v=panel-desk-1" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -187,79 +202,122 @@
         <div class="drawer__user" id="drawer-user" hidden></div>
 
         <div class="drawer__body">
+          <!--
+            PRINCIPAL: los CUATRO destinos de la barra inferior (Hoy, Chats,
+            Pedidos, Clientes). En el móvil esa barra ya está abajo, así que esta
+            sección se oculta; en escritorio, donde la barra no existe, el menú
+            lateral es la única navegación y tiene que llevarlos todos.
+          -->
+          <section class="drawer__section drawer__section--main" aria-label="Principal">
+            <p class="drawer__group">Principal</p>
+            <nav class="drawer__nav">
+              <button class="drawer__item" data-tab="hoy" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
+                <span class="drawer__badge" data-drawer-badge="hoy" hidden></span>
+              </button>
+              <button class="drawer__item" data-tab="whatsapp" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>Chats
+                <span class="drawer__badge" data-drawer-badge="whatsapp" hidden></span>
+              </button>
+              <button class="drawer__item" data-tab="pedidos" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos
+              </button>
+              <button class="drawer__item" data-tab="clientes" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
+              </button>
+            </nav>
+          </section>
+
+          <!--
+            El resto vive en DESPLEGABLES: en escritorio se abre solo el grupo de
+            la pantalla actual y los demás quedan como cabeceras. Así el menú
+            entero cabe sin tener que desplazarlo a ciegas. En el móvil se abren
+            todos (los abre app.js) y las cabeceras no se pintan: se ve igual que
+            antes.
+          -->
           <section class="drawer__section" aria-label="Ventas">
-            <p class="drawer__group">Ventas</p>
-            <nav class="drawer__nav">
-              <button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
-                <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
-              </button>
-              <button class="drawer__item" data-tab="delivery" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
-              </button>
-              <details class="store-menu" id="store-menu">
-                <summary class="drawer__item"><span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Inventario</summary>
-                <nav aria-label="Inventario">
-                  <button class="drawer__item" data-tab="catalogo" type="button">Productos y servicios</button>
-                  <button class="drawer__item" data-tab="cotizaciones" type="button">Cotizaciones</button>
-                  <button class="drawer__item" data-tab="inventario" type="button">Ajuste de stock</button>
-                  <button class="drawer__item" data-tab="recuento" type="button">Recuento</button>
-                </nav>
-              </details>
-              <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
-                <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
-              </button>
-              <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
-                <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
-              </button>
-            </nav>
+            <details class="drawer__fold" open>
+              <summary class="drawer__group">Ventas</summary>
+              <nav class="drawer__nav">
+                <button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
+                </button>
+                <button class="drawer__item" data-tab="delivery" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
+                </button>
+                <details class="store-menu" id="store-menu">
+                  <summary class="drawer__item"><span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Inventario</summary>
+                  <nav aria-label="Inventario">
+                    <button class="drawer__item" data-tab="catalogo" type="button">Productos y servicios</button>
+                    <button class="drawer__item" data-tab="cotizaciones" type="button">Cotizaciones</button>
+                    <button class="drawer__item" data-tab="inventario" type="button">Ajuste de stock</button>
+                    <button class="drawer__item" data-tab="recuento" type="button">Recuento</button>
+                  </nav>
+                </details>
+                <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
+                </button>
+                <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
+                  <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
+                </button>
+              </nav>
+            </details>
           </section>
+
           <section class="drawer__section" aria-label="Seguimiento">
-            <p class="drawer__group">Seguimiento</p>
-            <nav class="drawer__nav">
-              <button class="drawer__item" data-tab="seguimientos" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
-              </button>
-              <button class="drawer__item" data-tab="mensajes" type="button" data-admin-only hidden>
-                <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
-              </button>
-            </nav>
+            <details class="drawer__fold" open>
+              <summary class="drawer__group">Seguimiento</summary>
+              <nav class="drawer__nav">
+                <button class="drawer__item" data-tab="seguimientos" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
+                </button>
+                <button class="drawer__item" data-tab="mensajes" type="button" data-admin-only hidden>
+                  <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
+                </button>
+              </nav>
+            </details>
           </section>
+
           <section class="drawer__section" aria-label="Sistema">
-            <p class="drawer__group">Sistema</p>
-            <nav class="drawer__nav drawer__nav--bottom">
-              <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
-                <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
-              </button>
-              <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
-                <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
-              </button>
-              <button class="drawer__item" data-tab="perfil" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="person"></span>Perfil
-              </button>
-              <!--
-                COMPARTIR APP: manda el enlace del panel a otra persona (un vendedor,
-                un repartidor, el socio). SIEMPRE sin la clave: el enlace que sale de
-                aquí no da acceso a nada, cada uno entra con su usuario.
-              -->
-              <button class="drawer__item" id="drawer-share" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app
-              </button>
-              <!--
-                IR A LA WEB: enlace de verdad a la tienda (`/`, el mismo dominio donde
-                vive el panel). Abre en otra pestaña para no perder el panel abierto; en
-                el teléfono, la app instalada abre el navegador con la web.
-              -->
-              <a
-                class="drawer__item drawer__item--link"
-                id="drawer-web"
-                href="/"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Ir a la web
-                <span class="drawer__out" aria-hidden="true">↗</span>
-              </a>
-            </nav>
+            <details class="drawer__fold" open>
+              <summary class="drawer__group">Sistema</summary>
+              <nav class="drawer__nav drawer__nav--bottom">
+                <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
+                </button>
+                <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
+                  <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
+                </button>
+                <button class="drawer__item" data-tab="perfil" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="person"></span>Perfil
+                </button>
+                <!--
+                  COMPARTIR APP: manda el enlace del panel a otra persona (un
+                  vendedor, un repartidor, el socio). SIEMPRE sin la clave: el
+                  enlace que sale de aquí no da acceso a nada, cada uno entra con
+                  su usuario.
+                -->
+                <button class="drawer__item" id="drawer-share" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app
+                </button>
+                <!--
+                  IR A LA WEB: enlace de verdad a la tienda (`/`, el mismo dominio
+                  donde vive el panel). Abre en otra pestaña para no perder el
+                  panel abierto; en el teléfono, la app instalada abre el navegador
+                  con la web.
+                -->
+                <a
+                  class="drawer__item drawer__item--link"
+                  id="drawer-web"
+                  href="/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Ir a la web
+                  <span class="drawer__out" aria-hidden="true">↗</span>
+                </a>
+              </nav>
+            </details>
           </section>
         </div>
         <div class="drawer__foot">
@@ -312,6 +370,21 @@
                   aria-label="Buscar conversación"
                   autocomplete="off"
                 />
+                <!--
+                  MENÚ EN ESCRITORIO: en el móvil hay barra superior, pero en el
+                  escritorio (y sobre todo en WhatsApp, que ocupa la pantalla
+                  entera) no quedaba ningún botón para abrir el menú. Aquí sí.
+                -->
+                <button
+                  class="wa__menu"
+                  data-open-drawer
+                  type="button"
+                  aria-label="Abrir menú"
+                  aria-expanded="false"
+                  aria-controls="drawer"
+                >
+                  <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
+                </button>
               </div>
               <div class="chips" id="wa-filters"></div>
               <div class="wa__error" id="wa-error" hidden></div>
@@ -878,13 +951,13 @@
     <script src="/admin/offline-ui.js?v=1" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=wa-acciones-122" defer></script>
+    <script src="/admin/app.js?v=wa-acciones-123" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <script src="/admin/proofreading.js?v=7" defer></script>
     <script src="/admin/deepseek-settings.js?v=2" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=2" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
     <script src="/admin/store.js?v=9" defer></script>
-    <script src="/admin/pos.js?v=9" type="module"></script>
+    <script src="/admin/pos.js?v=10" type="module"></script>
   </body>
 </html>
