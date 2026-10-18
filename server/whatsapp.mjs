@@ -221,6 +221,7 @@ export function createWhatsAppClient(options = {}) {
 
   return {
     enabled,
+    mock,
     graphVersion,
     phoneNumberId: enabled ? phoneNumberId : null,
     businessAccountId: businessAccountId || null,

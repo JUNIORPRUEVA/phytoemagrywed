@@ -1,0 +1,767 @@
+/* ---------------------------------------------------------------------------
+   AJUSTE DE STOCK Y RECUENTO — una pantalla, dos pasos y nada más.
+
+   El orden es el de la tarea: primero se BUSCA el artículo (lista que se toca,
+   no un desplegable de 110 nombres), se ve cuánto hay y cuánto vale, y recién
+   entonces se escribe la cantidad. El recuento abre con el valor del inventario
+   —total y por categoría— porque es lo primero que se quiere saber al contar.
+   --------------------------------------------------------------------------- */
+
+.stock-workspace {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+.stock-form {
+  display: grid;
+  gap: 14px;
+}
+
+.stock-caption {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-secondary, #53647d);
+}
+
+/* Buscar + categoría: dos campos, alineados y del mismo alto. */
+.stock-find {
+  display: grid;
+  gap: 10px;
+}
+
+@media (min-width: 640px) {
+  .stock-find {
+    grid-template-columns: minmax(0, 1fr) 200px;
+    align-items: center;
+  }
+}
+
+.stock-form .stock-find .field__input,
+.stock-form .stock-find .field__select {
+  min-height: 46px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stock-list-title {
+  margin: 2px 0 -6px;
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #53647d);
+}
+
+/* La lista de artículos: su propia zona con desplazamiento, sin mover la página. */
+.stock-results {
+  display: grid;
+  gap: 6px;
+  max-height: min(42vh, 340px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+  scrollbar-width: thin;
+}
+
+.stock-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #dbe2ec);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--text-primary, #0f1b2d);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.stock-pick:hover {
+  background: color-mix(in srgb, var(--phyto-primary, #2f6fe4) 5%, var(--surface, #fff));
+}
+
+.stock-pick[aria-selected='true'] {
+  border-color: var(--phyto-primary, #2f6fe4);
+  background: color-mix(in srgb, var(--phyto-primary, #2f6fe4) 8%, var(--surface, #fff));
+  box-shadow: inset 0 0 0 1px var(--phyto-primary, #2f6fe4);
+}
+
+.stock-pick__main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.stock-pick__name {
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-pick__meta {
+  overflow: hidden;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #53647d);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-pick__qty {
+  flex: 0 0 auto;
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-pick__qty small {
+  margin-left: 2px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-secondary, #53647d);
+}
+
+.stock-pick__qty--low {
+  color: var(--danger, #b42318);
+}
+
+/* Paso 2: solo aparece cuando hay artículo elegido. */
+.stock-adjust {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border, #dbe2ec);
+}
+
+.stock-adjust[hidden] {
+  display: none !important;
+}
+
+.stock-selected {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--phyto-primary, #2f6fe4) 6%, transparent);
+}
+
+.stock-selected__info strong {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.stock-selected__info small {
+  display: block;
+  font-size: 0.77rem;
+  color: var(--text-secondary, #53647d);
+}
+
+.stock-selected__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stock-selected__facts small {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 0.66rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #53647d);
+}
+
+.stock-selected__facts strong {
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ resumen */
+
+.stock-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.stock-summary__total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--phyto-primary, #2f6fe4) 18%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--phyto-primary, #2f6fe4) 7%, transparent);
+}
+
+.stock-summary__total small {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #53647d);
+}
+
+.stock-summary__total strong {
+  font-size: 1.65rem;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-summary__meta {
+  display: grid;
+  gap: 2px;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #53647d);
+  text-align: right;
+}
+
+.stock-summary__title {
+  margin: 0 0 4px;
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #53647d);
+}
+
+.stock-summary__cats ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stock-summary__cats li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--border, #dbe2ec);
+  font-size: 0.85rem;
+}
+
+.stock-summary__cats li:last-child {
+  border-bottom: 0;
+}
+
+.stock-summary__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-summary__units,
+.stock-summary__share {
+  color: var(--text-secondary, #53647d);
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-summary__share {
+  min-width: 34px;
+  text-align: right;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 420px) {
+  /* En pantallas estrechas se suelta el porcentaje, pero NUNCA las unidades ni
+     el valor: son las dos cifras que se vienen a ver. */
+  .stock-summary__cats li {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+  }
+
+  .stock-summary__share {
+    display: none;
+  }
+}
+
+.stock-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border, #dbe2ec);
+  border-radius: 12px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary, #53647d);
+}
+
+/* ===========================================================================
+   ORDEN DEFINITIVO — UNA PANTALLA, TRES ZONAS, SIN SCROLL DE PÁGINA
+
+   De arriba a abajo y nada más:
+     1) Buscador + categoría, en la MISMA línea.
+     2) El ajuste del artículo elegido (ficha, cantidad, motivo y guardar).
+     3) La lista de artículos, que ocupa lo que sobra y se desplaza DENTRO.
+
+   La página no crece: el scroll vive en la lista. Así la pantalla se ve entera
+   sin arrastrar la vista completa, que era lo que hacía incómodo ajustar stock.
+   =========================================================================== */
+
+body[data-tab='inventario'],
+body[data-tab='recuento'] {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+body[data-tab='inventario'] .app,
+body[data-tab='recuento'] .app {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+body[data-tab='inventario'] .content,
+body[data-tab='recuento'] .content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+body[data-tab='inventario'] #view-inventario,
+body[data-tab='recuento'] #view-recuento {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+body[data-tab='inventario'] #store-inventario,
+body[data-tab='recuento'] #store-recuento {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.stock-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: 720px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+/* En el móvil el título ya está en la barra de arriba: no se repite. */
+@media (max-width: 979px) {
+  #view-inventario > .view__title,
+  #view-recuento > .view__title {
+    display: none;
+  }
+}
+
+/* En escritorio no hace falta el hueco de la barra inferior. */
+@media (min-width: 980px) {
+  body[data-tab='inventario'] .app,
+  body[data-tab='recuento'] .app {
+    padding-bottom: 0;
+  }
+
+  body[data-tab='inventario'] .content,
+  body[data-tab='recuento'] .content {
+    padding-bottom: 16px;
+  }
+}
+
+/* ------------------------------------------------- 1) buscar y filtrar */
+
+.stock-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stock-find {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, 34%);
+  gap: 8px;
+}
+
+.stock-form .stock-find .field__input,
+.stock-form .stock-find .field__select {
+  min-height: 42px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ------------------------------------------------------- 2) el ajuste */
+
+.stock-adjust {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.stock-selected {
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.stock-selected__facts small {
+  margin-bottom: 0;
+}
+
+.stock-row2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.stock-row2 .field__input,
+.stock-row2 .field__select {
+  min-height: 40px;
+}
+
+.stock-form .store-stock-preview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 10px 8px;
+  border-radius: 10px;
+}
+
+.stock-form .store-stock-preview small {
+  margin-bottom: 2px;
+  font-size: 0.62rem;
+}
+
+.stock-form .store-stock-preview strong {
+  font-size: 1rem;
+}
+
+.stock-form .stock-adjust > .field .field__input {
+  min-height: 40px;
+}
+
+.stock-form .stock-adjust > [type='submit'] {
+  min-height: 42px;
+  margin-top: 2px;
+}
+
+/* -------------------------------------------------------- 3) la lista */
+
+.stock-results {
+  flex: 1 1 auto;
+  min-height: 84px;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 2px 0;
+}
+
+.stock-pick {
+  padding: 8px 10px;
+}
+
+.stock-pick__name {
+  font-size: 0.9rem;
+}
+
+.stock-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #53647d);
+}
+.stock-warn {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--danger, #b42318);
+}
+/* La ficha del artículo en dos líneas: nombre + código, y las cifras debajo. */
+.stock-selected {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.stock-selected__info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.stock-selected__info strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-selected__info small {
+  flex: 0 0 auto;
+}
+
+.stock-selected__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.stock-selected__facts small {
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+}
+
+.stock-selected__facts strong {
+  font-size: 0.88rem;
+}
+
+@media (max-width: 430px) {
+  .stock-selected__facts div:nth-child(2) {
+    display: none;
+  }
+}
+/* ===========================================================================
+   LA LISTA MANDA: ocupa TODO lo que queda hacia abajo y se ve fina.
+   Filas con un separador de 1 px en vez de tarjetas: muchos nombres caben sin
+   ruido, y el desplazamiento queda dentro de la lista (la página no se mueve).
+   =========================================================================== */
+
+.stock-form {
+  gap: 8px;
+}
+
+.stock-results {
+  flex: 1 1 auto;
+  min-height: 140px;
+  gap: 0;
+  padding: 0 2px;
+  border-top: 1px solid var(--border, #dbe2ec);
+}
+
+.stock-pick {
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border, #dbe2ec) 70%, transparent);
+  border-radius: 0;
+  padding: 9px 2px;
+  background: transparent;
+}
+
+.stock-pick:last-child {
+  border-bottom: 0;
+}
+
+.stock-pick:hover {
+  background: color-mix(in srgb, var(--phyto-primary, #2f6fe4) 4%, transparent);
+}
+
+.stock-pick[aria-selected='true'] {
+  border-top-color: transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--phyto-primary, #2f6fe4) 8%, transparent);
+  box-shadow: none;
+}
+
+/* Ajuste aún más fino. */
+.stock-selected {
+  padding: 8px 10px;
+}
+
+.stock-row2 {
+  gap: 6px;
+}
+
+.stock-form .store-stock-preview {
+  padding: 6px;
+}
+
+.stock-form .store-stock-preview strong {
+  font-size: 0.95rem;
+}
+
+.stock-form .store-stock-preview small {
+  margin-bottom: 1px;
+  font-size: 0.58rem;
+}
+
+@media (min-width: 980px) {
+  .stock-workspace {
+    max-width: 860px;
+  }
+}
+/* Afinado: el ajuste ocupa lo justo para que la lista se lleve el resto. */
+.stock-adjust {
+  gap: 6px;
+}
+
+.stock-selected {
+  padding: 6px 8px;
+  gap: 2px;
+}
+
+.stock-row2 .field__label,
+.stock-adjust .field__label {
+  font-size: 0.68rem;
+}
+
+.stock-row2 .field__input,
+.stock-row2 .field__select,
+.stock-adjust .field .field__input {
+  min-height: 38px;
+}
+
+.stock-form .store-stock-preview {
+  padding: 4px 6px;
+}
+
+.stock-form .store-stock-preview strong {
+  font-size: 0.92rem;
+}
+
+.stock-form .stock-adjust > [type='submit'] {
+  min-height: 40px;
+  margin-top: 0;
+}
+/* La ficha, en UNA línea: nombre a la izquierda y las cifras a la derecha. */
+.stock-selected {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 8px;
+}
+
+.stock-selected__info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
+.stock-selected__info strong {
+  display: block;
+  overflow: hidden;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-selected__info small {
+  display: none;
+}
+
+.stock-selected__facts {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+}
+
+.stock-selected__facts div {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.stock-selected__facts small {
+  font-size: 0.58rem;
+}
+
+.stock-selected__facts strong {
+  font-size: 0.85rem;
+}
+
+/* El motivo va sin etiqueta: el marcador ya lo dice (y se ahorra una línea). */
+.stock-adjust > input[name='reason'] {
+  min-height: 38px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stock-adjust {
+  gap: 5px;
+}
+
+.stock-form .store-stock-preview {
+  padding: 3px 6px;
+}
+
+.stock-form .store-stock-preview strong {
+  font-size: 0.9rem;
+}
+
+.stock-form .store-stock-preview small {
+  font-size: 0.56rem;
+}
+/* Sin tarjeta alrededor: la pantalla ES el formulario. Se ganan 36 px para
+   la lista y se ve más fino (nada de marcos dentro de marcos). */
+.stock-form.store-stock-form {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ===========================================================================
+   CADA FILA DEL INVENTARIO, DETALLADA PERO EN ORDEN
+   Izquierda: nombre, código · categoría · grupo y el mínimo.
+   Derecha: existencias, su valor y, si toca, el aviso de bajo mínimo.
+   =========================================================================== */
+
+.stock-pick {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.stock-pick__main {
+  display: grid;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.stock-pick__meta {
+  font-size: 0.72rem;
+}
+
+.stock-pick__extra {
+  overflow: hidden;
+  font-size: 0.67rem;
+  color: var(--text-secondary, #53647d);
+  opacity: 0.9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-pick__side {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 1px;
+  text-align: right;
+}
+
+.stock-pick__value {
+  font-size: 0.7rem;
+  color: var(--text-secondary, #53647d);
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-pick__low {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--danger, #b42318);
+}

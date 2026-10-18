@@ -48,6 +48,8 @@ export function catalogItems(product = productConfig) {
       available: variant.available !== false,
       label: variant.label || `Frasco de ${variant.capsules} cápsulas`,
       ...(variant.general ? {general:true,name:variant.name,kind:variant.kind} : {}),
+      /* Procedencia (propio / de terceros): la línea del pedido la conserva. */
+      ...(variant.product_type ? {product_type: variant.product_type} : {}),
       ...(variant.manual ? {manual:true,cost_cents:variant.cost_cents} : {}),
     }));
 }
@@ -111,6 +113,23 @@ export function computeOrderTotals(lines = [], options = {}) {
       capsules: catalogItem.capsules,
       variantName: catalogItem.general ? catalogItem.name : `${catalogItem.capsules} cápsulas`,
       ...(catalogItem.general ? {general:true,kind:catalogItem.kind} : {}),
+      ...(catalogItem.product_type ? {product_type:catalogItem.product_type} : {}),
+      /*
+       * TIENDA PROVEEDORA POR LÍNEA.
+       *
+       * Un producto de terceros se compra en una tienda concreta; esa elección
+       * viaja con la línea hasta el pedido para poder agrupar las recogidas. Sin
+       * esto, dos cámaras de la misma tienda parecían dos recogidas distintas.
+       */
+      ...(line?.supplierId || line?.supplier_id
+        ? {
+            supplier_id: String(line.supplierId ?? line.supplier_id).slice(0, 80),
+            supplier_name: line.supplierName ?? line.supplier_name ?? null,
+            supplier_cost_cents: Number.isFinite(Number(line.supplierCostCents ?? line.supplier_cost_cents))
+              ? Math.round(Number(line.supplierCostCents ?? line.supplier_cost_cents))
+              : null,
+          }
+        : {}),
       ...(catalogItem.manual ? {manual:true,unit_cost_snapshot_cents:catalogItem.cost_cents||0,product_cost_snapshot_cents:(catalogItem.cost_cents||0)*quantity,subtotal_snapshot_cents:Math.round(subtotal*100),unit_price_snapshot_cents:Math.round(unitPrice*100)} : {}),
       label: catalogItem.label,
       quantity,

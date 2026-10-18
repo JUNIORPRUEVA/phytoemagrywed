@@ -146,6 +146,59 @@ export const COLLECTIONS = Object.freeze({
     indexed: { key: 'text', updated_at: 'text' },
     unique: ['key'],
   },
+  /*
+   * TIENDAS PROVEEDORAS (`phytoemagry_suppliers`).
+   *
+   * Un producto de terceros se compra en una tienda concreta; la tienda lleva
+   * su ubicación GPS porque el repartidor tiene que llegar. `name_key` es la
+   * llave para no duplicar la misma tienda escrita de dos formas.
+   */
+  suppliers: {
+    indexed: { name: 'text', name_key: 'text', active: 'text', updated_at: 'text', created_at: 'text' },
+  },
+  /*
+   * PRODUCTO ↔ TIENDA: costo en ESA tienda, disponibilidad verificada y tiempo
+   * de recogida. `link_key` (`producto:tienda`) es único: no se repite el par.
+   */
+  product_suppliers: {
+    indexed: { product_id: 'text', supplier_id: 'text', link_key: 'text', updated_at: 'text' },
+    unique: ['link_key'],
+  },
+  /*
+   * RECOGIDAS DE UN PEDIDO, agrupadas por tienda (`order_pickups`).
+   * `idempotency_key` = `pickup:<pedido>:<tienda>`: volver a calcular los grupos
+   * no crea recogidas nuevas.
+   */
+  order_pickups: {
+    indexed: { order_id: 'text', supplier_id: 'text', status: 'text', idempotency_key: 'text', created_at: 'text' },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * FACTURAS DE PROVEEDOR (`supplier_invoices`): el comprobante ORIGINAL de la
+   * tienda donde se compró un producto de terceros. Es documentación interna y
+   * NUNCA se adjunta al PDF ni al WhatsApp que recibe el cliente.
+   * El archivo vive en el almacén de documentos (R2/S3 o disco), no aquí: en el
+   * documento solo van los metadatos y la referencia.
+   */
+  supplier_invoices: {
+    indexed: {
+      customer_id: 'text',
+      order_id: 'text',
+      supplier_id: 'text',
+      invoice_number: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * GARANTÍAS (`warranty_claims`): reclamación ligada a un artículo vendido, su
+   * factura FULLTECH y (si existe) la factura del proveedor. Sin fechas y
+   * condiciones reales no se calcula ningún plazo automáticamente.
+   */
+  warranty_claims: {
+    indexed: { customer_id: 'text', order_id: 'text', product_id: 'text', status: 'text', created_at: 'text' },
+  },
   products: {
     indexed: { product_id: 'text', updated_at: 'text' },
     unique: ['product_id'],
@@ -170,6 +223,18 @@ export const COLLECTIONS = Object.freeze({
       last_position_at: 'text',
       created_at: 'text',
     },
+  },
+  /*
+   * BITÁCORA DEL SUPERVISOR DE DELIVERY (`delivery_supervision_events`).
+   *
+   * Cada recordatorio, escalamiento, respuesta del repartidor, posposición y
+   * conciliación diaria queda aquí. Es la memoria que permite NO duplicar un
+   * aviso (clave de idempotencia ÚNICA) y saber cuántos intentos lleva un
+   * pedido, aunque el proceso se reinicie o Meta reintente el webhook.
+   */
+  delivery_supervision_events: {
+    indexed: { order_id: 'text', kind: 'text', stage: 'text', status: 'text', created_at: 'text', idempotency_key: 'text' },
+    unique: ['idempotency_key'],
   },
   delivery_location_points: {
     indexed: {
@@ -370,6 +435,7 @@ async function createSqliteCollections(db, prefix) {
       get: db.prepare(`SELECT doc FROM ${table} WHERE id = ?`),
       all: db.prepare(`SELECT doc FROM ${table}`),
       ordered: new Map(),
+      filtered: new Map(),
       update: db.prepare(`UPDATE ${table} SET doc = ? WHERE id = ?`),
       columnUpdates,
       remove: db.prepare(`DELETE FROM ${table} WHERE id = ?`),
@@ -400,8 +466,29 @@ async function createSqliteCollections(db, prefix) {
     },
     async list(name, options = {}) {
       const built = statementsFor(name);
+      const schema = schemaOf(name);
       const by = String(options.by ?? '');
-      const indexed = Object.prototype.hasOwnProperty.call(schemaOf(name).indexed, by);
+      const indexed = Object.prototype.hasOwnProperty.call(schema.indexed, by);
+      /*
+       * FILTRAR POR COLUMNA EN SQL (no en JavaScript).
+       * `where` solo se resuelve en SQL si TODAS sus columnas están indexadas;
+       * si no, se filtra después. Sin esto, pedir los mensajes de una
+       * conversación obligaba a leer y deserializar la tabla entera.
+       */
+      const where = sqlWhere(schema, options.where);
+      if (where) {
+        const key = `w:${where.map(([column]) => column).join(',')}|${indexed ? `${by}:${orderDirection(options.order)}` : ''}`;
+        if (!built.filtered.has(key)) {
+          const clause = where.map(([column]) => `${column} = ?`).join(' AND ');
+          const order = indexed ? ` ORDER BY ${by} ${orderDirection(options.order)}` : '';
+          built.filtered.set(key, db.prepare(`SELECT doc FROM ${built.table} WHERE ${clause}${order}`));
+        }
+        const docs = built.filtered
+          .get(key)
+          .all(...where.map(([, value]) => value))
+          .map((row) => JSON.parse(row.doc));
+        return sortAndLimit(docs, options);
+      }
       let statement = built.all;
       if (indexed) {
         const key = `${by}:${orderDirection(options.order)}`;
@@ -412,7 +499,8 @@ async function createSqliteCollections(db, prefix) {
       }
       const docs = statement
         .all()
-        .map((row) => JSON.parse(row.doc));
+        .map((row) => JSON.parse(row.doc))
+        .filter((doc) => matchesWhere(doc, options.where));
       return sortAndLimit(docs, options);
     },
     async update(name, id, patch) {
@@ -526,10 +614,19 @@ async function createPostgresCollections(pool, prefix) {
       await ensure(name);
       const by = String(options.by ?? '');
       const indexed = Object.prototype.hasOwnProperty.call(schemaOf(name).indexed, by);
-      const result = indexed
-        ? await pool.query(`SELECT doc FROM ${prefix}${name} ORDER BY ${by} ${orderDirection(options.order)}`)
-        : await pool.query(`SELECT doc FROM ${prefix}${name}`);
-      return sortAndLimit(result.rows.map((row) => row.doc), options);
+      /* Igual que en SQLite: `where` se resuelve en SQL si sus columnas están indexadas. */
+      const where = sqlWhere(schemaOf(name), options.where);
+      const values = [];
+      const conditions = [];
+      for (const [column, value] of where ?? []) {
+        values.push(value);
+        conditions.push(`${column} = $${values.length}`);
+      }
+      const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+      const orderSql = indexed ? ` ORDER BY ${by} ${orderDirection(options.order)}` : '';
+      const result = await pool.query(`SELECT doc FROM ${prefix}${name}${whereSql}${orderSql}`, values);
+      const docs = result.rows.map((row) => row.doc);
+      return sortAndLimit(where ? docs : docs.filter((doc) => matchesWhere(doc, options.where)), options);
     },
     async update(name, id, patch) {
       await ensure(name);
@@ -605,7 +702,7 @@ async function createJsonlCollections(dir, prefix) {
       return read(name).find((row) => row[field] === value) ?? null;
     },
     async list(name, options = {}) {
-      return sortAndLimit(read(name), options);
+      return sortAndLimit(read(name).filter((doc) => matchesWhere(doc, options.where)), options);
     },
     async update(name, id, patch) {
       const rows = read(name);
@@ -630,9 +727,30 @@ async function createJsonlCollections(dir, prefix) {
 }
 
 /**
+ * Columnas de `where` que se pueden resolver en SQL.
+ * Devuelve `null` si no hay filtro o si alguna columna no está indexada (entonces
+ * se filtra en JavaScript, que también es correcto pero más lento).
+ * @param {any} schema
+ * @param {any} where
+ * @returns {[string, any][]|null}
+ */
+function sqlWhere(schema, where) {
+  if (!where || typeof where !== 'object') return null;
+  const entries = Object.entries(where).filter(([, value]) => value !== undefined && value !== null);
+  if (!entries.length) return null;
+  return entries.every(([column]) => Object.prototype.hasOwnProperty.call(schema.indexed, column)) ? entries : null;
+}
+
+/** Filtro en JavaScript para las columnas que no se pueden consultar en SQL. */
+function matchesWhere(doc, where) {
+  if (!where || typeof where !== 'object') return true;
+  return Object.entries(where).every(([key, value]) => value === undefined || value === null || doc[key] === value);
+}
+
+/**
  * Orden por defecto: lo más reciente primero (`created_at` o `at`).
  * @param {any[]} docs
- * @param {{ limit?: number, order?: 'asc'|'desc', by?: string }} [options]
+ * @param {{ limit?: number, order?: 'asc'|'desc', by?: string, where?: any }} [options]
  */
 function sortAndLimit(docs, options = {}) {
   const by = options.by ?? 'created_at';

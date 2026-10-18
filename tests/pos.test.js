@@ -120,13 +120,13 @@ it('desde el chat real abre Facturación con el cliente y guarda la cotización 
     w.requestAnimationFrame=callback=>callback();
     w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:true}}));
     expect(w.document.querySelector('#drawer').hidden).toBe(false);expect(w.document.body.dataset.drawer).toBe('open');
-    expect(w.document.querySelector('#store-menu').open).toBe(false);
-    expect(w.document.querySelector('#store-menu summary').textContent).toContain('Inventario');
-    w.document.querySelector('#store-menu').open=true;
+    expect(w.document.querySelector('#drawer details.drawer__fold').open).toBe(false);
+    expect(w.document.querySelector('#drawer .drawer__subnav').textContent).toContain('Ajuste de stock');
+    w.document.querySelector('#drawer details.drawer__fold').open=true;
     w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
     expect(w.document.body.dataset.drawer).toBeUndefined();
     w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:true}}));
-    expect(w.document.querySelector('#store-menu').open).toBe(false);
+    expect(w.document.querySelector('#drawer details.drawer__fold').open).toBe(false);
     w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
     w.document.querySelector('[data-tab="whatsapp"]').click();await until(()=>w.document.querySelector('[data-conv]'),'conversación');
     w.document.querySelector('[data-conv]').click();await until(()=>w.document.querySelector('#wa-actions')?.disabled===false,'acciones');

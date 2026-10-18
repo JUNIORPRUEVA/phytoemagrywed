@@ -38,6 +38,32 @@
       })();
     </script>
 
+    <!--
+      ¿ESTE APARATO ES UN iPHONE/iPAD?
+
+      Se pregunta una sola vez, antes de pintar, y se deja escrito en el <html>
+      como `data-ios`. La hoja ios.css cuelga TODAS sus reglas de ese atributo,
+      así que en Android no se aplica ni una: la experiencia que ya funcionaba
+      queda igual. También se marca si va instalada en la pantalla de inicio
+      (`data-ios-standalone`), que es cuando no hay barra de Safari.
+    -->
+    <script>
+      (() => {
+        const ua = navigator.userAgent || '';
+        const apple = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (!apple) return;
+        const root = document.documentElement;
+        root.dataset.ios = 'true';
+        try {
+          if (navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches) {
+            root.dataset.iosStandalone = 'true';
+          }
+        } catch (error) {
+          /* Sin matchMedia se sigue: solo se pierde la marca de instalada. */
+        }
+      })();
+    </script>
+
     <style>
       html { background-color: #f4f7fd; }
       html[data-theme="dark"] { background-color: #0b1424; }
@@ -53,9 +79,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=consolidado-68" />
-    <link rel="stylesheet" href="/admin/store.css?v=5" />
-    <link rel="stylesheet" href="/admin/pos.css?v=consolidado-9" />
+    <link rel="stylesheet" href="/admin/admin.css?v=consolidado-73" />
+    <link rel="stylesheet" href="/admin/store.css?v=etiqueta-4" />
+    <link rel="stylesheet" href="/admin/stock.css?v=6" />
+    <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
+    <link rel="stylesheet" href="/admin/pos.css?v=pedido-14" />
     <link rel="stylesheet" href="/admin/offline.css?v=1" />
     <!--
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
@@ -74,7 +102,7 @@
       La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
       sobre la geometría y los colores de esa pantalla.
     -->
-    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-9" />
+    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-11" />
     <!--
       Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
       todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
@@ -84,12 +112,17 @@
       El menú lateral en escritorio: lleva los cuatro destinos de la barra y
       ordena el resto en desplegables. En el móvil no cambia nada.
     -->
-    <link rel="stylesheet" href="/admin/drawer-menu.css?v=drawer-1" />
+    <link rel="stylesheet" href="/admin/drawer-menu.css?v=drawer-7" />
     <!--
       Orden general de las pantallas en escritorio (lienzo centrado, rejillas de
       tarjetas y mapa en dos columnas). En el móvil no se aplica.
     -->
     <link rel="stylesheet" href="/admin/panel-desktop.css?v=panel-desk-1" />
+    <!--
+      La capa del iPhone va la ÚLTIMA: solo actúa si el <html> lleva data-ios,
+      así que en Android y en el ordenador no cambia absolutamente nada.
+    -->
+    <link rel="stylesheet" href="/admin/ios.css?v=ios-1" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -189,13 +222,24 @@
       <!-- Menú lateral: lo secundario no ocupa la barra inferior -->
       <div class="scrim" id="scrim" hidden></div>
       <aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-label="Menú del CRM">
-        <p class="drawer__eyebrow">FullTECH, SRL</p>
+        <!--
+          ENCABEZADO COMPACTO (referencia: FullPOS Cloud).
+          Una sola pieza de 72 px: logo de la marca, nombre y rol del usuario,
+          iniciales y cerrar. Todo el bloque del usuario abre su perfil; «Perfil»
+          no se repite dentro del menú.
+        -->
         <div class="drawer__head">
           <button class="drawer__brand" data-tab="perfil" type="button" aria-label="Abrir mi perfil">
-            <img class="drawer__logo" src="/admin/fulltech-logo.png" alt="" width="38" height="38" />
-            <span><strong>FullTECH, SRL</strong><span>CRM</span></span>
+            <span class="drawer__logo" aria-hidden="true">
+              <img src="/admin/fulltech-logo.png" alt="" width="26" height="26" />
+            </span>
+            <span class="drawer__identity">
+              <strong>FullTECH, SRL</strong>
+              <span class="drawer__role">CRM</span>
+            </span>
+            <span class="drawer__avatar" aria-hidden="true">FT</span>
           </button>
-          <button class="icon-btn" id="drawer-close" type="button" aria-label="Cerrar menú">
+          <button class="drawer__close" id="drawer-close" type="button" aria-label="Cerrar menú">
             <span class="ico" aria-hidden="true" data-icon="close"></span>
           </button>
         </div>
@@ -236,98 +280,152 @@
             antes.
           -->
           <section class="drawer__section" aria-label="Ventas">
-            <details class="drawer__fold" open>
-              <summary class="drawer__group">Ventas</summary>
-              <nav class="drawer__nav">
-                <button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa y entregas
+            <details class="drawer__fold">
+              <summary class="drawer__item drawer__fold-summary">
+                <span class="drawer__icon" aria-hidden="true" data-icon="bag"></span>Ventas
+                <span class="drawer__chev" aria-hidden="true"></span>
+              </summary>
+              <nav class="drawer__subnav" aria-label="Ventas">
+                <button class="drawer__item drawer__item--sub" data-tab="catalogo" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="doc"></span>Facturación
                 </button>
-                <button class="drawer__item" data-tab="delivery" type="button">
+                <button class="drawer__item drawer__item--sub" data-tab="inventario" id="drawer-inventario" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Ajuste de stock
+                </button>
+                <button class="drawer__item drawer__item--sub" data-tab="cotizaciones" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Cotizaciones
+                </button>
+                <button class="drawer__item drawer__item--sub" data-tab="recuento" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Recuento
+                </button>
+                <button class="drawer__item drawer__item--sub" data-tab="recogidas" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="bag"></span>Recogidas
+                </button>
+                <button class="drawer__item drawer__item--sub" data-tab="tiendas" type="button" data-admin-only hidden>
+                  <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Tiendas
+                </button>
+              </nav>
+            </details>
+          </section>
+
+          <section class="drawer__section" aria-label="Entregas">
+            <details class="drawer__fold">
+              <summary class="drawer__item drawer__fold-summary">
+                <span class="drawer__icon" aria-hidden="true" data-icon="delivery"></span>Entregas
+                <span class="drawer__chev" aria-hidden="true"></span>
+              </summary>
+              <nav class="drawer__subnav" aria-label="Entregas">
+                <button class="drawer__item drawer__item--sub" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa
+                </button>
+                <button class="drawer__item drawer__item--sub" data-tab="delivery" type="button">
                   <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
                 </button>
-                <details class="store-menu" id="store-menu">
-                  <summary class="drawer__item"><span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Inventario</summary>
-                  <nav aria-label="Inventario">
-                    <button class="drawer__item" data-tab="catalogo" type="button">Productos y servicios</button>
-                    <button class="drawer__item" data-tab="cotizaciones" type="button">Cotizaciones</button>
-                    <button class="drawer__item" data-tab="inventario" type="button">Ajuste de stock</button>
-                    <button class="drawer__item" data-tab="recuento" type="button">Recuento</button>
-                  </nav>
-                </details>
-                <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
-                </button>
-                <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
-                  <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
+                <button class="drawer__item drawer__item--sub" data-tab="supervisor" type="button" data-permission="delivery.tracking.manage_all">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="spark"></span>Supervisor IA
                 </button>
               </nav>
             </details>
           </section>
 
           <section class="drawer__section" aria-label="Seguimiento">
-            <details class="drawer__fold" open>
-              <summary class="drawer__group">Seguimiento</summary>
-              <nav class="drawer__nav">
-                <button class="drawer__item" data-tab="seguimientos" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimientos
+            <details class="drawer__fold">
+              <summary class="drawer__item drawer__fold-summary">
+                <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimiento
+                <span class="drawer__chev" aria-hidden="true"></span>
+              </summary>
+              <nav class="drawer__subnav" aria-label="Seguimiento">
+                <button class="drawer__item drawer__item--sub" data-tab="seguimientos" type="button">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="clock"></span>Seguimientos
                 </button>
-                <button class="drawer__item" data-tab="mensajes" type="button" data-admin-only hidden>
-                  <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Mensajes y plantillas
+                <button class="drawer__item drawer__item--sub" data-tab="mensajes" type="button" data-admin-only hidden>
+                  <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>Mensajes
                 </button>
+                <a
+                  class="drawer__item drawer__item--sub"
+                  href="#config/plantillas"
+                  data-settings-open="plantillas"
+                  data-admin-only
+                  hidden
+                >
+                  <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Plantillas
+                </a>
               </nav>
             </details>
           </section>
 
-          <section class="drawer__section" aria-label="Sistema">
+          <!--
+            CIERRE Y REPORTES: van como opciones principales (no dentro de
+            Ventas) para que estén a un toque.
+          -->
+          <section class="drawer__section" aria-label="Cierre y reportes">
+            <nav class="drawer__nav">
+              <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
+                <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
+              </button>
+              <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
+                <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
+              </button>
+            </nav>
+          </section>
 
-            <details class="drawer__fold" open>
-              <summary class="drawer__group">Sistema</summary>
-              <nav class="drawer__nav drawer__nav--bottom">
-                <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
-                </button>
-                <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
-                  <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
-                </button>
-                <button class="drawer__item" data-tab="perfil" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="person"></span>Perfil
-                </button>
-                <!--
-                  COMPARTIR APP: manda el enlace del panel a otra persona (un
-                  vendedor, un repartidor, el socio). SIEMPRE sin la clave: el
-                  enlace que sale de aquí no da acceso a nada, cada uno entra con
-                  su usuario.
-                -->
-                <button class="drawer__item" id="drawer-share" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app
-                </button>
-                <!--
-                  IR A LA WEB: enlace de verdad a la tienda (`/`, el mismo dominio
-                  donde vive el panel). Abre en otra pestaña para no perder el
-                  panel abierto; en el teléfono, la app instalada abre el navegador
-                  con la web.
-                -->
-                <a
-                  class="drawer__item drawer__item--link"
-                  id="drawer-web"
-                  href="/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Ir a la web
-                  <span class="drawer__out" aria-hidden="true">↗</span>
-                </a>
-              </nav>
-            </details>          </section>
+          <!--
+            SISTEMA: se conservan las dos acciones que ya tenía el panel.
+            «Sincronizar datos» tira la copia del aparato y vuelve a pedir todo
+            al servidor (la salida cuando un teléfono se quedó con datos viejos).
+          -->
+          <section class="drawer__section" aria-label="Sistema">
+            <nav class="drawer__nav">
+              <button class="drawer__item" id="drawer-sync" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="refresh"></span>Sincronizar datos
+              </button>
+              <a
+                class="drawer__item drawer__item--link"
+                id="drawer-web"
+                href="/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Ir a la web
+                <span class="drawer__out" aria-hidden="true">↗</span>
+              </a>
+            </nav>
+          </section>
         </div>
+        <!--
+          PIE: compartir, usuarios y configuración viven aquí, en la barra de
+          abajo y por encima de Claro/Oscuro. Van fuera del menú y sin
+          desplegable, para tenerlos siempre en el mismo sitio.
+        -->
         <div class="drawer__foot">
-          <div class="drawer__appearance">
-            <span class="drawer__appearance-label">Apariencia</span>
+          <section class="drawer__section drawer__foot-links" aria-label="Compartir">
+            <nav class="drawer__nav">
+              <button class="drawer__item" id="drawer-share" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir aplicación
+              </button>
+              <button class="drawer__item" id="drawer-share-web" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Compartir página web
+              </button>
+            </nav>
+          </section>
+          <section class="drawer__section drawer__foot-links" aria-label="Administración">
+            <nav class="drawer__nav">
+              <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
+                <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
+              </button>
+              <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
+                <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
+              </button>
+            </nav>
+          </section>
+          <div class="drawer__foot-row">
             <div id="drawer-theme" class="drawer__themes" role="radiogroup" aria-label="Apariencia del panel"></div>
+            <div class="drawer__foot-actions">
+              <button class="drawer__logout" id="logout-drawer" type="button" aria-label="Cerrar sesión" title="Cerrar sesión">
+                <span class="drawer__icon" aria-hidden="true" data-icon="logout"></span>
+              </button>
+            </div>
           </div>
-          <button class="drawer__logout" id="logout-drawer" type="button" aria-label="Cerrar sesión">
-            <span class="drawer__icon" aria-hidden="true" data-icon="logout"></span><span>Cerrar sesión</span>
-          </button>
         </div>
       </aside>
 
@@ -461,6 +559,12 @@
             />
             <div class="chips" id="chips"></div>
           </div>
+          <!--
+            GRUPOS DE NEGOCIO: un filtro aparte del de segmento (cliente,
+            interesado…). Se combinan, y arriba se ven cuántos clientes hay en
+            cada actividad.
+          -->
+          <div class="chips chips--groups" id="clientes-grupos" role="group" aria-label="Filtrar clientes por grupo de negocio"></div>
           <p class="view__count" id="clientes-count"></p>
           <button class="client-fab" id="clientes-acciones" type="button" aria-label="Acciones de clientes" title="Acciones de clientes">
             <span class="ico" aria-hidden="true" data-icon="plus"></span>
@@ -526,6 +630,17 @@
         <section class="view view--delivery" id="view-delivery" hidden>
           <div class="delivery-view" id="delivery-view"></div>
         </section>
+
+        <!--
+          SUPERVISOR IA DELIVERY (solo administración).
+          Se pinta desde `supervisor.js` (módulo propio): contadores por
+          situación, la siguiente acción de cada pedido, pospuestos y las reglas
+          del motor. El servidor decide; la pantalla solo muestra y pide.
+          `app.js` únicamente registra la pestaña y comprueba el permiso.
+        -->
+        <section class="view" id="view-supervisor" hidden></section>
+        <div id="sup-postpone" hidden></div>
+        <div id="sup-preview" hidden></div>
 
         <!-- PERFIL DEL CLIENTE -->
         <section class="view view--customer-profile" id="view-perfil-cliente" hidden>
@@ -647,6 +762,19 @@
         <section class="view" id="view-recuento" hidden>
           <h2 class="view__title">Recuento de inventario</h2>
           <div id="store-recuento"></div>
+        </section>
+        <!--
+          RECOGIDAS: lo que se compra en una tienda para un pedido. Una tarjeta
+          por compra y tienda, con asignación, costo y factura del proveedor.
+        -->
+        <section class="view" id="view-recogidas" hidden>
+          <h2 class="view__title">Recogidas en tiendas</h2>
+          <div id="admin-recogidas"></div>
+        </section>
+        <!-- TIENDAS PROVEEDORAS: alta y ubicación real de cada tienda. -->
+        <section class="view" id="view-tiendas" hidden>
+          <h2 class="view__title">Tiendas proveedoras</h2>
+          <div id="admin-tiendas"></div>
         </section>
         <section class="view" id="view-productos" hidden>
           <h2 class="view__title">Inventario de Phytoemagry</h2>
@@ -948,17 +1076,32 @@
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/startup-recovery.js?v=1" defer></script>
     <script src="/admin/offline-storage.js?v=1" defer></script>
-    <script src="/admin/offline.js?v=3" defer></script>
-    <script src="/admin/offline-ui.js?v=1" defer></script>
+    <script src="/admin/offline.js?v=12" defer></script>
+    <!-- Tiempo real: un solo SSE por pestaña (va después de offline.js, que envuelve fetch). -->
+    <script src="/admin/realtime.js?v=1" defer></script>
+    <script src="/admin/offline-ui.js?v=4" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=consolidado-126" defer></script>
+      <script src="/admin/app.js?v=wa-estado-real-149" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
+    <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
+    <script src="/admin/ios.js?v=1" defer></script>
     <script src="/admin/proofreading.js?v=7" defer></script>
     <script src="/admin/deepseek-settings.js?v=2" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=2" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
-    <script src="/admin/store.js?v=10" defer></script>
-    <script src="/admin/pos.js?v=consolidado-11" type="module"></script>
+    <script src="/admin/store.js?v=stock-honesto-2" defer></script>
+    <script src="/admin/recogidas.js?v=1" type="module"></script>
+    <script src="/admin/supervisor.js?v=3" type="module"></script>
+    <script src="/admin/pos.js?v=pedido-16" type="module"></script>
   </body>
 </html>
+
+
+
+
+
+
+
+
+

@@ -764,6 +764,51 @@ describe('enviar una ubicación por WhatsApp', () => {
     expect(JSON.stringify(shared)).not.toContain('18.6157');
   });
 
+  it('con la plantilla PROPIA primero: nombre del destino, cliente, dirección y mapa', async () => {
+    const app = await newApp();
+    await inbound(app, 'wamid.PROPIA-1', locationNode(L1), PHONE_A);
+    const origen = await customerWithPhone(app, PHONE_A);
+    const { locations } = await json(await call(app, `/api/admin/customers/${origen.id}/locations`));
+
+    await inbound(app, 'wamid.PROPIA-2', { type: 'text', text: { body: 'Hola' } }, PHONE_B);
+    const conversations = await json(await call(app, '/api/admin/conversations'));
+    const destino = conversations.conversations.find((row) => row.customer?.phone_e164 === `+${PHONE_B}`);
+
+    // La plantilla propia, aprobada como lo estaría en Meta.
+    const propia = await call(app, '/api/admin/wa-templates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'phyto_compartir_ubicacion_v1',
+        status: 'APPROVED',
+        body:
+          'Hola {{1}}, te compartimos la ubicación de {{2}} para la entrega.\n\nDirección: {{3}}\nMapa: {{4}}\n\nCualquier cosa nos dices.',
+        variables: ['recipient_name', 'customer_name', 'address', 'maps_link'],
+        metaTemplateId: 'tpl-loc-propia',
+        lastSyncedAt: new Date().toISOString(),
+      }),
+    });
+    expect(propia.status).toBe(200);
+
+    await app.collections.update('conversations', destino.id, {
+      last_inbound_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+    });
+
+    const envio = await call(app, `/api/admin/locations/${locations[0].id}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: destino.id, confirmed: true, mode: 'template' }),
+    });
+    expect(envio.status).toBe(201);
+
+    // Se usa LA PROPIA (no una de hueco libre) y con los cuatro datos en orden.
+    const enviado = app.sentMessages.at(-1);
+    expect(enviado.template.name).toBe('phyto_compartir_ubicacion_v1');
+    const textos = enviado.template.components[0].parameters.map((parameter) => parameter.text);
+    expect(textos).toHaveLength(4);
+    expect(textos[0]).toContain('Cliente 0102'); // a quién se le manda
+    expect(textos[1]).toContain('Cliente 0101'); // de quién es el punto
+    expect(textos[3]).toContain('google.com/maps');
+  });
+
   it('no se envía a un cliente que pidió no recibir mensajes', async () => {
     const app = await newApp();
     await inbound(app, 'wamid.OPT-1', { type: 'text', text: { body: 'No me escriban más' } });

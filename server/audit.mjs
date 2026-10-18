@@ -32,6 +32,12 @@ export const AUDIT_ACTIONS = Object.freeze([
   'delivery.admin_delivery_notification_failed',
   'delivery.issue_reported',
   'order.cancelled',
+  /*
+   * DINERO DEL PEDIDO: cobrar al cliente y rendir el efectivo del repartidor son
+   * actos separados de la entrega y quedan en la traza con su importe.
+   */
+  'order.payment_registered',
+  'order.courier_handover_registered',
   'sale.cancelled',
   'followup.created',
   'followup.completed',

@@ -3,6 +3,15 @@
   'use strict';
   const db=window.FulltechOfflineStore, network=window.fetch.bind(window), DAY=86400000;
   let identity=null,warming=null,syncing=null,epoch=0,localTail=Promise.resolve(),storageAvailable=true;
+  /*
+   * DIAGNÓSTICO DE LO QUE FALLA (últimos 40 eventos, en memoria del panel).
+   * Sin esto, «no cargó» era indistinguible de «no hay copia» o «sin permiso»:
+   * aquí queda la ruta, la causa (red / tiempo / HTTP) y si había copia local.
+   */
+  const diag=[];
+  function recordDiag(entry){
+    try{diag.push({at:Date.now(),...entry});if(diag.length>40)diag.shift();}catch{}
+  }
   const ready=db.get('identity').then(value=>{identity=value||null;}).catch(()=>{storageAvailable=false;});
   const valid=()=>storageAvailable&&!!identity&&Date.now()-identity.verifiedAt<=DAY;
   const owner=()=>identity?.key;
@@ -14,6 +23,13 @@
   const excluded=url=>/\/(calling|push-subscriptions|proofreading)(\/|$)|\/wa-templates.*sync|\/(send|invoice-whatsapp|meta-purchase|message-send)(\/|$)|\/conversations\/[^/]+\/messages$/.test(url.pathname);
   const protectedWrite=url=>excluded(url)||/\/(auth|login|logout)(\/|$)|\/password(?:\/|$)|\/whatsapp|\/deepseek\/test$|\/locations\/[^/]+\/share$|\/conversations\/[^/]+\/(location|order-confirmation)$|\/customer-campaigns\//.test(url.pathname);
   function signal(){window.dispatchEvent(new Event('fulltech:offline-status'));}
+  /*
+   * Avisa a la página de que esa respuesta salió de la COPIA LOCAL. Con eso el
+   * panel sabe que lo que está pintando puede estar viejo y vuelve a pedirlo.
+   */
+  function servedLocal(url,at){
+    try{window.dispatchEvent(new CustomEvent('fulltech:served-local',{detail:{path:new URL(url,location.href).pathname,at:at||null}}));}catch{}
+  }
   async function identify(payload){
     await localTail.catch(()=>{});
     if(!storageAvailable)return;
@@ -45,6 +61,26 @@
     identity=null;await db.remove('identity').catch(()=>{});
     try{for(const key of ['pe_crm_snapshot','pe_crm_outbox','pe_crm_outbox_problems','fulltech.offline.legacy-owner'])localStorage.removeItem(key);}catch{}
     signal();
+  }
+  /*
+   * BORRAR LA COPIA Y VOLVER A PEDIRLO TODO.
+   *
+   * Los aparatos con el panel instalado guardan cada respuesta privada para
+   * trabajar sin conexión. Si esa copia se queda atrás (o alguien cambia de
+   * cuenta), el panel puede seguir enseñando clientes o productos que ya no son
+   * los del servidor. Esto tira SOLO esas respuestas guardadas: no toca la
+   * sesión, ni las operaciones pendientes de subir, ni la cola.
+   */
+  async function clearCache(){
+    if(!storageAvailable||!owner())return 0;
+    const prefix='response:'+owner()+':';
+    let removed=0;
+    try{
+      for(const [key] of await db.entries()){
+        if(typeof key==='string'&&key.startsWith(prefix)){await db.remove(key);removed++;}
+      }
+    }catch{}
+    return removed;
   }
   async function remember(url,response,remote=false){
     if(!valid()||!response.ok)return;
@@ -87,8 +123,32 @@
         return json(value);
       }
     }
+    if(!saved||saved.owner!==owner()){
+      /*
+       * LA COPIA DEL MISMO MÓDULO SIRVE AUNQUE CAMBIE LA CONSULTA.
+       *
+       * La descarga anticipada guarda URIs concretas (`?limit=5000`, un período,
+       * sin filtros). Al buscar, filtrar o cambiar de día la consulta cambia y la
+       * copia ya no aparecía: el panel decía «esta pantalla no está guardada»
+       * justo al filtrar, aunque el módulo entero estuviera descargado. Esa es la
+       * causa real de los errores intermitentes («no se pudo cargar el reporte /
+       * el inventario»). Sin red se devuelve la copia MÁS RECIENTE de esa ruta,
+       * con su fecha en `x-fulltech-offline-at` para poder decir de cuándo es.
+       */
+      const records=await db.entries();
+      let newest=null;
+      for(const [,value] of records){
+        if(!value||value.owner!==owner()||!value.url)continue;
+        let path;try{path=new URL(value.url).pathname;}catch{continue;}
+        if(path!==requested.pathname)continue;
+        if(!newest||(value.at||0)>(newest.at||0))newest=value;
+      }
+      if(!newest)return null;
+      saved=newest;
+    }
     if(!saved||saved.owner!==owner())return null;
-    return new Response(saved.body,{status:saved.status,headers:[...saved.headers,['x-fulltech-offline','1']]});
+    const at=saved.at?new Date(saved.at).toISOString():new Date().toISOString();
+    return new Response(saved.body,{status:saved.status,headers:[...saved.headers,['x-fulltech-offline','1'],['x-fulltech-offline-at',at]]});
   }
   async function data(path,fallback={}){const r=await cached(path);return r?await r.json():clone(fallback);}
   async function save(path,value){await remember(path,json(value));}
@@ -102,6 +162,16 @@
     const all=await data('/api/admin/data',{});all.catalog=catalog;await save('/api/admin/data',all);
   }
   function localError(message,status=422){return json({ok:false,message},status);}
+  /*
+   * «No hay copia guardada y la red no respondió». Se dice QUÉ pasó y QUÉ hacer:
+   * el mensaje viejo («Este contenido todavía no está descargado») dejaba al
+   * usuario sin saber si era la app, el servidor o su conexión.
+   * Lleva `error:'offline'` para que las pantallas puedan distinguirlo.
+   */
+  const SIN_COPIA='Esta pantalla todavía no está guardada en el dispositivo. Conéctate a internet y pulsa «Reintentar» para descargarla.';
+  /* Venció la autorización de 24 h: NO es lo mismo que «no hay copia». */
+  const SIN_VIGENCIA='El acceso sin conexión de 24 horas venció. Conéctate a internet, inicia sesión y pulsa «Preparar dispositivo» para renovarlo. Los cambios pendientes se conservan.';
+  function sinConexion(message=SIN_COPIA){return json({ok:false,error:'offline',message},503);}
   async function saveReceipt(document){
     const {receiptPdfBytes}=await import('./receipt-pdf.js');
     const {id,number,customer,sale,kind,created_at,input={}}=document,quote=kind==='quote';
@@ -145,16 +215,34 @@
     if(path.startsWith('/api/admin/inventory/')){
       if(identity.role!=='ADMIN')return localError('Solo administración puede cambiar el inventario.',403);
       const value=await data('/api/admin/inventory',{}),inventory=value.inventory||value;
-      if(!inventory.product)return localError('Descarga primero el inventario.');
-      const action=path.split('/').pop(),quantity=Number(body.countedQuantity??body.quantity??0),before=Number(inventory.stock||0);
+      /*
+       * EL AJUSTE NO DEPENDE DE `inventory.product`.
+       *
+       * Antes, si la copia de `/api/admin/inventory` venía sin el bloque del
+       * producto (una copia vieja o guardada antes de abrir Inventario), el
+       * ajuste sin conexión se RECHAZABA con «Descarga primero el inventario» y
+       * la operación se perdía: parecía que el CRM no dejaba cambiar el stock.
+       * Ahora la fuente de la verdad local es el catálogo (el saldo de cápsulas
+       * es el que se ve en pantalla) y `inventory.product` solo aporta el costo.
+       */
+      const snapshot=await data('/api/admin/store/products',{products:[],categories:[],movements:[]});
+      const legacy=snapshot.products.find(p=>p.legacy)||null;
+      const unitCost=Number(inventory.product?.current_unit_cost_cents??legacy?.cost_cents??0)||0;
+      const action=path.split('/').pop(),quantity=Number(body.countedQuantity??body.quantity??0);
+      const before=Number(inventory.stock??legacy?.base_quantity??0);
       if(!Number.isSafeInteger(quantity)||quantity<0)return localError('Escribe una cantidad entera válida.');
       const after=action==='count'?quantity:action==='cost'?before:before+(action==='adjust'&&body.direction==='out'?-quantity:quantity);
       if(after<0)return localError('No hay existencias suficientes.');
+      if(action!=='cost'&&!legacy&&!inventory.product)return localError('No se puede guardar sin conexión: falta la copia del inventario. Actualiza cuando tengas red.',503);
       inventory.stock=after;inventory.initialized=true;inventory.pending=true;
-      if(body.unitCost!==undefined&&body.unitCost!==''){const cost=money(body.unitCost);if(!Number.isSafeInteger(cost)||cost<0)return localError('Escribe un costo válido.');inventory.product.current_unit_cost_cents=cost;}
-      inventory.inventory_value_cents=after*inventory.product.current_unit_cost_cents;
-      const snapshot=await data('/api/admin/store/products',{products:[],categories:[],movements:[]});
-      for(const p of snapshot.products.filter(p=>p.legacy)){p.base_quantity=after;p.quantity=Math.floor(after/p.capsules);p.stock_initialized=true;p.cost_cents=inventory.product.current_unit_cost_cents*p.capsules;}
+      if(body.unitCost!==undefined&&body.unitCost!==''){
+        const cost=money(body.unitCost);
+        if(!Number.isSafeInteger(cost)||cost<0)return localError('Escribe un costo válido.');
+        if(inventory.product)inventory.product.current_unit_cost_cents=cost;
+      }
+      const costCents=Number(inventory.product?.current_unit_cost_cents??unitCost)||0;
+      inventory.inventory_value_cents=after*costCents;
+      for(const p of snapshot.products.filter(p=>p.legacy)){p.base_quantity=after;p.quantity=Math.floor(after/p.capsules);p.stock_initialized=true;p.cost_cents=costCents*p.capsules;p.pending=true;}
       await saveCatalog(snapshot);await save('/api/admin/inventory',{...inventory,ok:true});
       const all=await data('/api/admin/data',{});all.inventory=inventory;await save('/api/admin/data',all);
       return json({ok:true,inventory,pending:true,offline:true});
@@ -344,10 +432,30 @@
     if(method!=='GET'&&!legacy&&!protectedWrite(url)&&valid()&&(await listQueue()).length)return enqueue(url,{...options,method});
     // Mientras haya trabajo local pendiente, no taparlo con una copia remota anterior.
     if(method==='GET'&&canRead&&valid()&&!/\/(auth\/me|session)$/.test(url.pathname)&&(await listQueue()).length){const r=await cached(url);if(r)return r;}
-    if(method==='GET'&&!navigator.onLine){const r=await cached(url);if(r&&canRead)return r;return localError('Este contenido todavía no está descargado en el dispositivo.',503);}
+    /*
+     * SIEMPRE SE INTENTA LA RED PRIMERO, aunque el aparato diga que está sin
+     * conexión.
+     *
+     * «navigator.onLine» se equivoca: al abrir la app en frío, con wifi cautivo
+     * o con una VPN dice `false` aunque haya red. Darlo por bueno dejaba el panel
+     * pintando la copia vieja SIN pedir los datos nuevos —y desde el servidor
+     * parecía que nadie había entrado—. Si de verdad no hay red, el intento falla
+     * en milisegundos y se usa la copia guardada (ver el catch de abajo).
+     */
     if(method!=='GET'&&!navigator.onLine&&!/\/(login|logout)(\/|$)/.test(url.pathname)){if(legacy)throw new TypeError('offline');return enqueue(url,{...options,method});}
     const operationId=method!=='GET'&&!protectedWrite(url)?new Headers(options.headers||{}).get('x-fulltech-operation')||uuid():null;
-    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),6000);
+    /*
+     * Si el aparato DICE que no hay red se espera mucho menos antes de tirar de
+     * la copia (2,5 s en vez de 6). Así el panel no se queda colgado en cada
+     * petición y el inventario o el catálogo no se caen por tiempo de espera.
+     *
+     * LECTURAS PESADAS (supervisor, reportes, métricas, datos): el servidor tiene
+     * que recorrer todo el histórico. Con 6 s se cortaban en falso, y el panel
+     * decía «no está descargado» aunque hubiera conexión. Tienen su propio tope.
+     */
+    const LECTURA_LENTA=/^\/api\/admin\/(data|delivery-supervisor|reports\/sales|metrics)(\/|$)/;
+    const limite=navigator.onLine?(LECTURA_LENTA.test(url.pathname)?20000:6000):2500;
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),limite);
     const onAbort=()=>controller.abort();options.signal?.addEventListener('abort',onAbort,{once:true});
     try{
       const headers=new Headers(options.headers||{});if(operationId)headers.set('x-fulltech-operation',operationId);
@@ -356,9 +464,44 @@
         const failure=await response.clone().json().catch(()=>({}));
         if(failure.error==='offline_operation_uncertain')await changeQueue(q=>[...q,{id:operationId,path:url.pathname+url.search,method,body:options.body?JSON.parse(options.body):{},localId:'uncertain_'+operationId,state:'review',at:Date.now(),error:failure.message}]);
       }
-      if(response.status===401){await forget();return response;}
+      /*
+       * UN 401 DEL SERVIDOR CIERRA LA SESIÓN; UNO LOCAL, NO.
+       *
+       * La cola contesta 401 cuando la autorización de 24 h venció («conéctate
+       * para renovar»). Eso NO es que el servidor haya rechazado la cuenta: si se
+       * trataba igual, se borraba la identidad local —y con ella el acceso a la
+       * copia y la cola— por un cambio guardado. Esa era la causa de que expirar
+       * se viera como «pantalla no guardada» y de que el acceso se perdiera solo.
+       */
+      if(response.status===401){
+        /*
+         * NO CUALQUIER 401 CIERRA LA SESIÓN.
+         *
+         * Un 401 de un módulo (por ejemplo el sondeo de llamadas, o una ruta de
+         * administración para un usuario que no la tiene) NO significa que la
+         * cuenta haya caducado. Tratarlo así borraba la identidad local —y con
+         * ella la copia y la cola— por una petición de fondo. Solo se cierra con
+         * los endpoints que de verdad identifican la sesión.
+         */
+        if(response.headers.get('x-fulltech-local')==='1')return response;
+        if(!/^\/api\/admin\/(session|auth\/me|data|login|logout)(\/|$)/.test(url.pathname)){
+          recordDiag({path:url.pathname,cause:'http',status:401});
+          return response;
+        }
+        await forget();
+        return response;
+      }
       if([502,503,504].includes(response.status)&&canRead){
-        if(method==='GET'){const r=await cached(url);if(r)return r;}
+        if(method==='GET'){
+          const r=await cached(url);
+          if(r){const at=r.headers.get('x-fulltech-offline-at');recordDiag({path:url.pathname,cause:'http',status:response.status,copy:true});servedLocal(url,at);return r;}
+          recordDiag({path:url.pathname,cause:'http',status:response.status,copy:false});
+          /* Venció la autorización de 24 h: se dice ESO, no «no hay copia». */
+          if(identity&&!valid())return sinConexion(SIN_VIGENCIA);
+          // Sin copia guardada: el 503 del service worker no se enseña en crudo.
+          const body=await response.clone().json().catch(()=>({}));
+          if(body?.error==='offline'||!body?.message)return sinConexion();
+        }
         else if(!legacy)return enqueue(url,{...options,method,operationId});
       }
       const localResponse=response.headers.get('x-fulltech-offline')==='1';
@@ -371,7 +514,16 @@
       return response;
     }catch(e){
       if(options.signal?.aborted)throw e;
-      if(method==='GET'&&canRead){const r=await cached(url);if(r)return r;}
+      if(method==='GET'&&canRead){
+        const r=await cached(url);
+        if(r){const at=r.headers.get('x-fulltech-offline-at');recordDiag({path:url.pathname,cause:e?.name==='AbortError'?'timeout':'network',copy:true});servedLocal(url,at);return r;}
+        recordDiag({path:url.pathname,cause:e?.name==='AbortError'?'timeout':'network',copy:false});
+        if(identity&&!valid())return sinConexion(SIN_VIGENCIA);
+        // Se distingue «tardó demasiado» de «no hay red»: no es lo mismo.
+        return sinConexion(e?.name==='AbortError'
+          ? 'El servidor tardó demasiado en responder y esta pantalla todavía no está guardada. Comprueba la conexión y pulsa «Reintentar».'
+          : SIN_COPIA);
+      }
       if(method!=='GET'&&!protectedWrite(url)&&!legacy)return enqueue(url,{...options,method,operationId});
       throw e;
     }finally{clearTimeout(timeout);options.signal?.removeEventListener('abort',onAbort);}
@@ -406,7 +558,7 @@
     const prepare=async()=>{const legacy=await window.FulltechLegacyOffline?.synchronize();if(legacy?.pending||legacy?.dropped)return;return navigator.locks?.request?navigator.locks.request('fulltech-offline-write:'+owner(),run):run();};
     syncing=prepare().finally(()=>{syncing=null;signal();});return syncing;
   }
-  const ROOTS=['session','data?offline=1','catalog','pos/customers','store/products','pos/tickets','pos/quotes','inventory','inventory/reconcile','customers?limit=5000','conversations?limit=5000','followups','customer-tags','notifications','delivery-tracking','locations?limit=5000','users','settings/followup','settings/deepseek','messages','scheduled','reports/sales?period=custom&from=1900-01-01&to=9999-12-31&offline=1','reports/sales?period=hoy','reports/sales?period=ayer','reports/sales?period=7d','reports/sales?period=30d','reports/sales?period=mes','metrics?period=hoy','metrics?period=7d','metrics?period=30d','push-status','chat-sharing','wa-templates','audit?limit=10'];
+  const ROOTS=['session','data?offline=1','catalog','pos/customers','store/products','pos/tickets','pos/quotes','inventory','inventory/reconcile','customers?limit=5000','conversations?limit=5000','followups','customer-tags','notifications','delivery-tracking','locations?limit=5000','users','settings/deepseek','messages','scheduled','reports/sales?period=custom&from=1900-01-01&to=9999-12-31&offline=1','reports/sales?period=hoy','reports/sales?period=ayer','reports/sales?period=7d','reports/sales?period=30d','reports/sales?period=mes','metrics?period=hoy','metrics?period=7d','metrics?period=30d','push-status','chat-sharing','wa-templates','audit?limit=10','delivery-supervisor'];
   async function warm(force=false){
     if(warming)return warming;
     if(!navigator.onLine||!valid())return;
@@ -415,15 +567,34 @@
       try{if(JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length)return;}catch{}
       const mine=owner(),todo=ROOTS.map(p=>'/api/admin/'+p),seen=new Set();let completed=0,failed=0;
       await navigator.storage?.persist?.().catch(()=>{});
+      /*
+       * LO PESADO TIENE MÁS MARGEN.
+       *
+       * Con 6 s para todo, `/api/admin/data` (cientos de KB con clientes,
+       * pedidos e historial) se cortaba en un móvil lento: la copia quedaba sin la
+       * pantalla principal y offline salía «no está guardada». Ahora lo grande
+       * espera 15 s y, si falla, se reintenta UNA vez.
+       */
+      const fetchOne=async path=>{
+        const limit=/^\/api\/admin\/(data|customers|conversations|store\/products|orders)/.test(path)?15000:8000;
+        const run=async timeoutMs=>{
+          const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
+          try{return await network(path,{credentials:'same-origin',cache:'no-store',signal:controller.signal});}
+          finally{clearTimeout(timeout);}
+        };
+        try{return await run(limit);}
+        catch(error){recordDiag({path,cause:error?.name==='AbortError'?'timeout':'network',warm:true});
+          if(limit>8000)return run(limit);
+          throw error;}
+      };
       while(todo.length&&mine===owner()&&navigator.onLine){
         const batch=todo.splice(0,4).filter(p=>!seen.has(p));batch.forEach(p=>seen.add(p));
         await Promise.all(batch.map(async path=>{
           try{
-            const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),6000);
-            let r;try{r=await network(path,{credentials:'same-origin',cache:'no-store',signal:controller.signal});}finally{clearTimeout(timeout);}
+            const r=await fetchOne(path);
             if(r.headers.get('x-fulltech-offline')==='1'){failed++;return;}
             if(r.status===401){await forget();return;}
-            if(!r.ok)return;
+            if(!r.ok){recordDiag({path,cause:'http',status:r.status,warm:true});return;}
             await remember(path,r,true);if(path==='/api/admin/data?offline=1')await remember('/api/admin/data',r,true);completed++;
             if(!r.headers.get('content-type')?.includes('json'))return;
             const value=await r.json();
@@ -433,11 +604,22 @@
               else if(v&&typeof v==='object')Object.values(v).forEach(visit);
             };visit(value);
             for(const [key,items] of Object.entries(value))if(Array.isArray(items)){
+              /*
+               * HASTA DÓNDE SE BAJA, A PROPÓSITO.
+               *
+               * Las LISTAS completas sí se guardan (es lo que se consulta). Del
+               * detalle de cada registro se bajan solo los más recientes: bajar
+               * 2.300 fichas en un móvil tarda minutos, llena el almacenamiento y
+               * deja la descarga a medias (y con ella la sensación de «no está
+               * guardado»). Lo que no se bajó se pide al servidor cuando vuelva
+               * la red.
+               */
+              const MAX_DETALLE=200;
               const prefix=({customers:'customers',conversations:'conversations',quotes:'pos/quotes',tickets:'pos/tickets'})[key];
-              if(prefix)for(const item of items)if(item.id){todo.push('/api/admin/'+prefix+'/'+encodeURIComponent(item.id)+(key==='conversations'?'/messages':''));if(key==='customers')todo.push('/api/admin/customers/'+item.id+'/tags','/api/admin/pos/context/'+item.id);if(key==='quotes')todo.push('/api/admin/pos/quotes/'+item.id+'/receipt','/api/admin/pos/quotes/'+item.id+'/pdf');}
-              if(key==='items'&&path.startsWith('/api/admin/data'))for(const item of items)if(item.type==='order'||item.type==='order_intent')todo.push('/api/admin/orders/'+encodeURIComponent(item.id),'/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt','/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt.pdf');
-              if(key==='customers')for(const item of items)if(item.id)todo.push('/api/admin/customers/'+item.id+'/locations');
-              if(key==='deliveryOrders')for(const item of items)if(item.id)todo.push('/api/admin/delivery/orders/'+item.id);
+              if(prefix)for(const item of items.slice(0,key==='conversations'?120:MAX_DETALLE))if(item.id){todo.push('/api/admin/'+prefix+'/'+encodeURIComponent(item.id)+(key==='conversations'?'/messages':''));if(key==='customers')todo.push('/api/admin/customers/'+item.id+'/tags','/api/admin/pos/context/'+item.id);if(key==='quotes')todo.push('/api/admin/pos/quotes/'+item.id+'/receipt','/api/admin/pos/quotes/'+item.id+'/pdf');}
+              if(key==='items'&&path.startsWith('/api/admin/data'))for(const item of items.slice(0,MAX_DETALLE))if(item.type==='order'||item.type==='order_intent')todo.push('/api/admin/orders/'+encodeURIComponent(item.id),'/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt','/api/admin/orders/'+encodeURIComponent(item.id)+'/receipt.pdf');
+              if(key==='customers')for(const item of items.slice(0,MAX_DETALLE))if(item.id)todo.push('/api/admin/customers/'+item.id+'/locations');
+              if(key==='deliveryOrders')for(const item of items.slice(0,MAX_DETALLE))if(item.id)todo.push('/api/admin/delivery/orders/'+item.id);
             }
           }catch{failed++;}
         }));
@@ -462,9 +644,18 @@
     };
     const next=localTail.catch(()=>{}).then(run);localTail=next;return next;
   }
-  window.FulltechOffline={ready,valid,warm,synchronize,listQueue,saveLegacySnapshot,status:async()=>({valid:valid(),expiresAt:identity?identity.verifiedAt+DAY:null,shell:await db.get('shell'),preparation:await db.get('preparation:'+owner()),queue:await listQueue()}),forget};
+  window.FulltechOffline={ready,valid,warm,synchronize,listQueue,saveLegacySnapshot,status:async()=>({valid:valid(),expiresAt:identity?identity.verifiedAt+DAY:null,shell:await db.get('shell'),preparation:await db.get('preparation:'+owner()),queue:await listQueue()}),forget,clearCache,diagnostics:()=>[...diag]};
   window.addEventListener('online',()=>setTimeout(()=>synchronize().catch(()=>{}),0));
-  window.addEventListener('phyto:calling-logout',()=>forget().catch(()=>{}));
+  /*
+   * LA COPIA SE BORRA AL CERRAR SESIÓN DE VERDAD, NO AL PINTAR EL ACCESO.
+   *
+   * `phyto:calling-logout` lo dispara también `showLogin()` cuando el panel no
+   * puede validar la sesión sin red. Al escuchar ese evento, quedarse sin señal
+   * un momento borraba la autorización de 24 h y todas las copias: el usuario
+   * volvía a entrar y no tenía nada. Ahora el borrado lo pide la acción
+   * explícita de «Cerrar sesión» (`fulltech:offline-logout`).
+   */
+  window.addEventListener('fulltech:offline-logout',()=>forget().catch(()=>{}));
   window.addEventListener('pageshow',()=>{if(navigator.onLine)warm().catch(()=>{});});
   setInterval(()=>{if(navigator.onLine&&valid())listQueue().then(q=>{if(q.some(p=>p.state==='pending'))synchronize().catch(()=>{});}).catch(()=>{});},30000);
 })();

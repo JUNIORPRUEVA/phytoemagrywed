@@ -94,26 +94,30 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(posicion('drawer__section--main')).toBeGreaterThan(-1);
     expect(posicion('drawer__section--main')).toBeLessThan(posicion('aria-label="Ventas"'));
     // Cada grupo es un desplegable con su cabecera, en el orden de siempre.
-    for (const grupo of ['Ventas', 'Seguimiento', 'Sistema']) {
-      expect(html).toContain(`<summary class="drawer__group">${grupo}</summary>`);
+    for (const grupo of ['Ventas', 'Entregas', 'Seguimiento']) {
+      expect(html).toMatch(new RegExp(`data-icon="[a-z]+"></span>${grupo}\\s*<span class="drawer__chev"`));
     }
-    expect(posicion('>Ventas</summary>')).toBeLessThan(posicion('>Seguimiento</summary>'));
-    expect(posicion('>Seguimiento</summary>')).toBeLessThan(posicion('>Sistema</summary>'));
+    expect(posicion('aria-label="Ventas"')).toBeLessThan(posicion('aria-label="Entregas"'));
+    expect(posicion('aria-label="Entregas"')).toBeLessThan(posicion('aria-label="Seguimiento"'));
+    // Cierre, Reportes y el bloque de sistema quedan FUERA de los desplegables.
+    expect(html).toContain('aria-label="Cierre y reportes"');
+    expect(html).toContain('aria-label="Sistema"');
     expect(html).not.toContain('Pedidos y compras');
     // El móvil no cambia: los grupos ya no se pintan y «Principal» se oculta.
     expect(html).toContain('/admin/drawer-menu.css');
     const drawerCss = read('drawer-menu.css');
     expect(drawerCss).toMatch(/@media \(max-width: 979px\)[\s\S]*?\.drawer__section--main \{\n\s+display: none;/);
-    // En escritorio se abre solo el grupo de la pantalla actual; en móvil, todos.
+    // En escritorio se abre solo el grupo de la pantalla actual; en móvil, ninguno.
     expect(app).toContain('function plegarMenuEscritorio');
     expect(app).toContain("window.matchMedia('(min-width: 980px)').matches");
-    expect(app).toContain('fold.open = !escritorio');
+    expect(app).toContain('fold.open = false');
+    expect(app).toContain('function animarDesplegables');
     // El menú también se abre desde la bandeja de WhatsApp en escritorio.
     expect(html).toContain('class="wa__menu"');
     expect(html).toContain('data-open-drawer');
-    // El mapa operativo sigue en Ventas, y el repartidor tiene su entrada directa.
-    expect(html).toContain('<button class="drawer__item" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">');
-    expect(html).toContain('Mapa y entregas');
+    // El mapa operativo sigue en Entregas, y el repartidor tiene su entrada directa.
+    expect(html).toContain('<button class="drawer__item drawer__item--sub" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">');
+    expect(html).toContain('Mapa\n                </button>');
     expect(app).toContain('const canUseMapScreen = () => hasPermission(\'delivery.tracking.manage_all\');');
     expect(html).toContain('data-tab="delivery"');
     expect(html).toContain('Mis entregas');
@@ -156,7 +160,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
      */
     const item = html.match(/<button[^>]*id="drawer-share"[\s\S]*?<\/button>/);
     expect(item).toBeTruthy();
-    expect(item[0]).toContain('Compartir app');
+    expect(item[0]).toContain('Compartir aplicación');
     expect(item[0]).toContain('data-icon="share"');
     // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
     expect(app).toContain('share: svg(');
@@ -216,7 +220,11 @@ describe('WhatsApp: la conversación es la pantalla', () => {
     expect(css).toMatch(/body\[data-tab='whatsapp'\] \.topbar \{\n\s+display: none/);
     // El estado de WhatsApp solo se anuncia cuando HAY algo que hacer.
     expect(app).not.toContain('WhatsApp conectado');
-    expect(app).toContain("$('#wa-status').innerHTML = wa.configured");
+    // Un ÚNICO aviso para lista y chat, construido desde el estado del servidor
+    // (envío/recepción/motivo), nunca desde un booleano de credenciales.
+    expect(app).toContain("$('#wa-status').innerHTML = waNoticeHtml()");
+    expect(app).toContain('function waConnectionNotice()');
+    expect(app).not.toContain('todavía no está configurado en el servidor');
   });
 
   it('la vista de WhatsApp no lleva relleno: el hilo va a sangre', () => {
@@ -369,7 +377,7 @@ describe('compositor y acciones del cliente', () => {
   });
 
   it('los menús son popover en escritorio y hoja en el móvil', () => {
-    expect(app).toContain("{ variant = '' } = {}");
+    expect(app).toContain("{ variant = '', action = null } = {}");
     expect(css).toContain(".sheet[data-variant='menu'] .sheet__panel");
     expect(css).toContain('@media (min-width: 720px)');
   });

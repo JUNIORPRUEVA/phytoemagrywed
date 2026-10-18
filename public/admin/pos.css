@@ -210,8 +210,15 @@ body #drawer .drawer__head .icon-btn{width:34px;height:34px;min-height:34px;bord
 body[data-quote-search='open'] .quotes-appbar__search{display:flex;animation:quotes-bar-in .16s ease-out}
 body[data-quote-search='open'] .quotes-appbar__default{display:none}
 body[data-quote-detail='true'] .quotes-appbar .wa-appbar__actions{visibility:hidden}
-/* En el detalle se vuelve con «‹ Todas las cotizaciones»: la flecha sobra. */
-body[data-quote-detail='true'] .quotes-appbar__default .wa-appbar__back{display:none}
+/*
+ * EN EL DETALLE TAMBIÉN SE VUELVE CON LA FLECHA DE ARRIBA.
+ * Antes se escondía y solo quedaba un enlace de texto pequeño; en el teléfono
+ * parecía que no había forma de regresar. Ahora la flecha sigue ahí y, dentro
+ * del detalle, lleva a la lista de cotizaciones.
+ */
+.pos-quote-back{display:inline-flex;align-items:center;gap:7px;margin:0 0 12px;padding:8px 14px 8px 11px;border:.5px solid var(--border-soft,#7186a233);border-radius:999px;background:var(--surface-muted,#7186a20d);color:inherit;font:inherit;font-size:.82rem;font-weight:600;cursor:pointer}
+.pos-quote-back:hover{background:#7186a220}
+.pos-quote-back span{font-size:1rem;line-height:1}
 .quotes-appbar .wa-appbar__title{display:grid;flex:1;min-width:0;gap:2px}
 .quotes-appbar .wa-appbar__title strong{overflow:hidden;font-size:1.02rem;line-height:1.15;letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap}
 .quotes-appbar .wa-appbar__actions{display:flex;flex:none;align-items:center;gap:8px;margin-left:auto}
@@ -326,3 +333,56 @@ body[data-quote-detail='true'] .quotes-appbar__default .wa-appbar__back{display:
 .pos-client-dialog .pos-new-client{flex-shrink:0;max-height:50dvh;overflow:auto;padding:16px;border:1px solid #7186a24a;border-radius:14px;margin:12px 0}
 .pos-client-dialog .pos-new-client[hidden]{display:none}
 @media(max-width:540px){.pos-client-toolbar{grid-template-columns:1fr 1fr}.pos-client-toolbar .field{grid-column:1/-1}.pos-client-toolbar .btn{width:100%}}
+
+
+/* ---------------------------------------------------------------------------
+ * PEDIDO GUIADO: una sola pantalla, tres bloques y un botón principal.
+ * Lo secundario (asignar repartidor, enviar por WhatsApp) vive en el menú ⋯.
+ * ------------------------------------------------------------------------ */
+.pos-order-dialog{inset:0;width:100%;max-width:none;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0;padding:0;background:var(--surface,#fff);color:var(--text-primary,#14243d)}
+.pos-order-dialog::backdrop{background:#0b1b2e66}
+.pos-order-sheet{display:flex;flex-direction:column;height:100%;min-height:0}
+.pos-order-head{display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top));border-bottom:1px solid var(--border-soft,#7186a226)}
+.pos-order-title{display:grid;flex:1;min-width:0}
+.pos-order-title strong{font-size:1rem;line-height:1.2}
+.pos-order-title small{overflow:hidden;color:var(--text-secondary,#6b7a75);font-size:.74rem;text-overflow:ellipsis;white-space:nowrap}
+.pos-order-draft{flex:none;color:var(--text-secondary,#6b7a75);font-size:.64rem;font-weight:700;letter-spacing:.03em}
+.pos-order-body{display:grid;flex:1;min-height:0;gap:10px;overflow:auto;padding:12px}
+.pos-order-block{display:grid;gap:9px;padding:12px;border:.5px solid var(--border-soft,#7186a226);border-radius:14px;background:var(--surface,#fff)}
+.pos-order-where{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0;font-size:.86rem;line-height:1.35}
+.pos-order-where strong{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.pos-order-where span{flex:none;color:var(--text-secondary,#6b7a75);font-size:.7rem}
+.pos-order-where--miss{color:#b8453d}
+.pos-order-link{padding:0;border:0;background:none;color:var(--phyto-primary,#145bd7);font:inherit;font-size:.74rem;font-weight:700;text-decoration:underline;cursor:pointer}
+.pos-order-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px}
+.pos-order-fee{display:flex;align-items:center;gap:6px;color:var(--text-secondary,#6b7a75);font-size:.74rem}
+.pos-order-fee input{width:88px;min-height:38px;text-align:right}
+.pos-order-inline{display:flex;align-items:center;gap:8px;color:var(--text-secondary,#6b7a75);font-size:.74rem}
+.pos-order-inline select{flex:1;min-width:0;min-height:38px}
+.pos-order-seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:3px;border-radius:11px;background:var(--surface-muted,#7186a20d)}
+.pos-order-seg button{min-height:36px;border:0;border-radius:9px;background:transparent;color:inherit;font:inherit;font-size:.8rem;font-weight:650;cursor:pointer}
+.pos-order-seg button[aria-pressed='true']{background:var(--surface,#fff);color:var(--phyto-primary,#145bd7);box-shadow:0 1px 3px #0e1b1614}
+.pos-order-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;font-size:.8rem;font-weight:700;cursor:pointer}
+.pos-order-detail[hidden]{display:none}
+.pos-order-lines{display:grid;gap:4px;margin:8px 0 0;padding:0;list-style:none;font-size:.8rem}
+.pos-order-lines li{display:flex;justify-content:space-between;gap:10px}
+.pos-order-lines li span{min-width:0;overflow:hidden;color:var(--text-secondary,#6b7a75);text-overflow:ellipsis;white-space:nowrap}
+.pos-order-totals{display:grid;gap:3px;margin:0;font-size:.78rem}
+.pos-order-totals div{display:flex;justify-content:space-between;gap:10px}
+.pos-order-totals dt{color:var(--text-secondary,#6b7a75)}
+.pos-order-totals dd{margin:0;font-variant-numeric:tabular-nums}
+.pos-order-totals .total{padding-top:7px;border-top:1px solid var(--border-soft,#7186a226);font-size:1.05rem;font-weight:800}
+.pos-order-missing{margin:0;padding:0 0 0 16px;color:#b8453d;font-size:.76rem;line-height:1.45}
+.pos-order-ai{justify-self:start;min-height:36px;padding:0 12px;border:.5px solid var(--phyto-primary,#145bd7);border-radius:10px;background:var(--phyto-primary-tint,#3574ef1a);color:var(--phyto-primary,#145bd7);font:inherit;font-size:.76rem;font-weight:700;cursor:pointer}
+.pos-order-error{margin:0;padding:0 12px;color:#b8453d;font-size:.76rem}
+.pos-order-error:empty{display:none}
+.pos-order-menu{display:grid;gap:6px;padding:8px 12px;border-top:1px solid var(--border-soft,#7186a226)}
+.pos-order-menu[hidden]{display:none}
+.pos-order-menu button{min-height:42px;border:.5px solid var(--border-soft,#7186a226);border-radius:11px;background:var(--surface,#fff);color:inherit;font:inherit;font-size:.82rem;font-weight:650;cursor:pointer}
+.pos-order-foot{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--border-soft,#7186a226);background:var(--surface,#fff)}
+.pos-order-foot .btn{min-height:46px}
+.pos-order-dots{display:grid;place-items:center;min-height:46px;border:.5px solid var(--border-soft,#7186a226);border-radius:12px;background:var(--surface-muted,#7186a20d);color:inherit;font:inherit;font-size:1.1rem;cursor:pointer}
+@media(min-width:900px){
+  .pos-order-dialog{inset:50% auto auto 50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 40px));height:auto;max-height:88dvh;margin:0;border-radius:18px}
+  .pos-order-body{gap:12px;padding:14px}
+}

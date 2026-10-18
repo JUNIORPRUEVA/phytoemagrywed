@@ -97,6 +97,7 @@ import {
   CUSTOMER_STAGE_LABELS,
 } from './customers.mjs';
 import { addDays, createFollowupEngine, dayIn, resolveDailyCapsules, resolvePlan } from './followups.mjs';
+import { BUSINESS_GROUPS, normalizeGroups } from './business-groups.mjs';
 import { createAuditLog } from './audit.mjs';
 import {
   createUserService,
@@ -108,6 +109,10 @@ import {
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
+import { handleSupplierRoutes } from './suppliers-routes.mjs';
+import { buildCustomerHistory } from './history.mjs';
+import { syncOrderPickups } from './suppliers.mjs';
+import { createRealtimeHub, eventFromMutation } from './realtime.mjs';
 import { handlePosRoute, quotationReceipt } from './pos-routes.mjs';
 import { createScheduler } from './scheduler.mjs';
 import {
@@ -169,6 +174,87 @@ import {
   suspiciousJump,
   validateLocationUpdate,
 } from './delivery-tracking.mjs';
+import {
+  COURIER_TEMPLATE,
+  COURIER_STATUS,
+  savedCourierContacts,
+  assignCourier,
+  sendOrderToCourier,
+  handleCourierInbound,
+} from './delivery-courier.mjs';
+import {
+  SUPERVISOR_REMINDER_TEMPLATE,
+  dailyReconciliation,
+  handleSupervisorReply,
+  postponeDelivery,
+  saveSupervisorSettings,
+  supervisorPreview,
+  supervisorSnapshot,
+  supervisorTick,
+} from './delivery-supervisor.mjs';
+import {
+  paymentBlockOf,
+  paymentSummaryForDelivery,
+  registerCourierHandover,
+  registerCustomerPayment,
+} from './order-payments.mjs';
+
+/**
+ * ESTADO DE WHATSAPP PARA EL PANEL (con respaldo).
+ *
+ * `ctx.whatsappStatus` es la fuente única: envío y recepción por separado y con
+ * motivo. Si no estuviera (una prueba que monta el servidor a mano), se responde
+ * con lo que se sabe SIN inventar: credenciales sí/no y `send: 'unknown'` —
+ * nunca «no configurado» por no haber podido comprobar.
+ *
+ * @param {any} ctx
+ */
+function whatsappStatusPayload(ctx) {
+  const snapshot = ctx?.whatsappStatus?.snapshot?.();
+  if (snapshot) return snapshot;
+  const enabled = Boolean(ctx?.whatsapp?.enabled);
+  const receive = ctx?.whatsappVerifyToken && ctx?.appSecret ? 'ok' : 'not_configured';
+  return {
+    configured: enabled,
+    mode: ctx?.whatsapp?.mock ? 'mock' : enabled ? 'live' : 'off',
+    send: enabled ? 'unknown' : 'not_configured',
+    receive,
+    receiveReason: receive === 'ok' ? null : 'missing_webhook_config',
+    checked: 'unknown',
+    checkedAt: null,
+    reason: enabled ? 'pending_check' : 'missing_credentials',
+    canSend: false,
+    graphVersion: ctx?.whatsapp?.graphVersion ?? null,
+    detail: null,
+  };
+}
+
+/**
+ * PUENTE DEL SUPERVISOR DE DELIVERY.
+ *
+ * El motor (`server/delivery-supervisor.mjs`) no conoce las piezas internas de
+ * este archivo: aquí se le pasan las plantillas aprobadas, la notificación
+ * interna, el push y la transición OFICIAL a entregado (la misma del panel).
+ */
+function supervisorBridge(ctx) {
+  return {
+    checkTemplate: (name) => approvedTemplate(ctx, name),
+    refreshTemplate: (name) => refreshTemplateFromMeta(ctx, name),
+    notifyUser: (input) => createUserNotification(ctx, input),
+    push: (notification) => sendPushForNotification(ctx, notification),
+    timeZone: TIME_ZONE,
+    /* Enlace ABSOLUTO al pedido: el escalado por WhatsApp se abre en un teléfono. */
+    orderDeepLink: (orderId) => absoluteDeliveryDeepLink(orderId),
+    completeDelivery: (orderId, options = {}) =>
+      transitionOrderStatus(ctx, {
+        orderId,
+        targetStatus: 'ENTREGADO',
+        actor: { ...SYSTEM_ACTOR, display_name: 'Supervisor IA' },
+        source: options.source ?? 'SUPERVISOR_AI',
+        reason: options.reason ?? null,
+      }),
+  };
+}
 
 const saleCancellationLocks = new Map();
 const orderTransitionLocks = new Map();
@@ -180,6 +266,7 @@ import {
   verifyWebhookChallenge,
   verifyWebhookSignature,
 } from './whatsapp.mjs';
+import { createWhatsAppStatus } from './whatsapp-status.mjs';
 import { productConfig } from '../src/config/product.config.js';
 import {
   CLOSED_STATUSES,
@@ -657,10 +744,19 @@ async function conversationOrder(store, conversation, customer, orderId) {
 async function updateOrderStatus(store, item, status, actor = null) {
   const current = orderOf(item);
   if (!current) return null;
+  /*
+   * ENTREGAR NO ES COBRAR.
+   *
+   * Aquí había un `payment_status: 'paid'` automático al pasar el pedido a un
+   * estado final: cerrar la entrega marcaba la venta como cobrada sin que nadie
+   * hubiera recibido el dinero. El estado del pedido describe la ENTREGA; el
+   * dinero se registra aparte y a mano (`server/order-payments.mjs`) y solo se
+   * vuelve 'paid' cuando el cobro está completo. Un pedido ya pagado nunca se
+   * degrada desde aquí.
+   */
   const next = {
     ...current,
     status,
-    ...(current.payment_status==='pending'&&isCompletedPurchaseStatus(status)?{payment_status:'paid'}:{}),
     updated_by_user_id: actor?.actor_type === 'USER' ? actor.id : current.updated_by_user_id ?? null,
     updated_by_display_name_snapshot:
       actor?.actor_type === 'USER' ? actor.display_name : current.updated_by_display_name_snapshot ?? null,
@@ -670,9 +766,52 @@ async function updateOrderStatus(store, item, status, actor = null) {
   return { item: updated, order: orderOf(updated) ?? next };
 }
 
+/** Pedido fresco (para no pisar cambios de otros procesos al anotar dinero). */
+async function freshOrderForPayment(ctx, orderId) {
+  const rows = await Promise.resolve(ctx.store.listAdmin({ limit: 5000 }));
+  const item = rows.find((entry) => entry.id === orderId) ?? null;
+  if (!item || item.type !== 'order_intent') return null;
+  return { item, order: orderOf(item) };
+}
+
+/**
+ * QUIÉN PUEDE ANOTAR EL COBRO DE ESTE PEDIDO.
+ *
+ * - ADMIN: cualquiera.
+ * - El repartidor al que está asignado: el suyo (efectivo cobrado en la puerta).
+ * - Ventas/operaciones: puede conciliar lo que otro repartidor ya cerró, pero NO
+ *   el pedido que otro está llevando ahora mismo (dos personas anotando el mismo
+ *   dinero es justo lo que produce cobros duplicados).
+ */
+async function paymentAuthorization(ctx, actor, order, can) {
+  if (can('admin.full')) return { ok: true };
+  const assignedTo = order?.delivery?.delivery_user_id ?? null;
+  if (assignedTo && assignedTo === actor?.id) return { ok: true };
+  if (can('sales.view_payment_method')) {
+    if (!assignedTo) return { ok: true };
+    const sessions = (await activeTrackingSessionsForOrder(ctx, order.id).catch(() => [])) ?? [];
+    if (sessions.some((session) => session.delivery_user_id !== actor?.id)) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'courier_in_route',
+        message: 'Ese pedido lo está entregando otro repartidor: el cobro lo anota él o un administrador.',
+      };
+    }
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    status: 403,
+    error: 'forbidden_payment',
+    message: 'Solo el repartidor asignado o el equipo de ventas puede registrar este cobro.',
+  };
+}
+
 function canReadTracking(actor, session) {
   return hasPermission(actor, 'delivery.location.read_all') || session.delivery_user_id === actor?.id;
 }
+
 
 function canUpdateTracking(actor, session) {
   return hasPermission(actor, 'delivery.tracking.manage_all') || session.delivery_user_id === actor?.id;
@@ -721,6 +860,17 @@ async function publicSessionWithOrder(ctx, session) {
  *           direction?: string|null, status?: string|null, message?: any }} info
  */
 function emitChatEvent(ctx, info) {
+  // El resto del panel también se entera (contadores de HOY, notificaciones).
+  // Va sin contenido: solo de qué conversación es y en qué dirección fue.
+  if (ctx?.realtime && info?.type === 'message' && info?.direction === 'inbound') {
+    ctx.realtime.publish({
+      type: 'whatsapp.message_received',
+      entity: { kind: 'conversation', id: info.conversationId ?? null },
+      requires: 'chats.read',
+      audience: 'panel',
+      data: { conversationId: info.conversationId ?? null, customerId: info.customerId ?? null },
+    });
+  }
   const clients = ctx?.chatEventClients;
   if (!clients?.size || !info?.conversationId) return;
   const event = info.type === 'status' ? 'wa.status' : 'wa.message';
@@ -869,7 +1019,28 @@ function orderDeliveryDeepLink(orderId) {
   return `/admin/?v=delivery&order=${encodeURIComponent(orderId)}`;
 }
 
-function publicDeliveryOrder(item, order, customer = null, conversation = null) {
+/**
+ * ENLACE ABSOLUTO para las plantillas de WhatsApp.
+ *
+ * La ruta relativa sirve para navegar DENTRO del panel, pero un mensaje de
+ * WhatsApp se abre desde el teléfono del repartidor o del administrador: ahí
+ * `/admin/?v=delivery&order=…` no lleva a ninguna parte. Se antepone la URL
+ * pública HTTPS real (verificada: `https://phytoemagryrd.lat`).
+ *
+ * Se puede cambiar sin tocar código con `PHYTO_PUBLIC_URL` (o, si ya existe,
+ * `SEO_SITE_URL`); el valor por defecto es el dominio que sirve producción.
+ *
+ * @param {string} orderId
+ * @returns {string}
+ */
+function absoluteDeliveryDeepLink(orderId) {
+  const base = String(process.env.PHYTO_PUBLIC_URL ?? process.env.SEO_SITE_URL ?? '')
+    .trim()
+    .replace(/\/+$/, '') || 'https://phytoemagryrd.lat';
+  return `${base}${orderDeliveryDeepLink(orderId)}`;
+}
+
+function publicDeliveryOrder(item, order, customer = null, conversation = null, pickups = []) {
   return {
     id: item.id,
     order_id: item.id,
@@ -886,21 +1057,91 @@ function publicDeliveryOrder(item, order, customer = null, conversation = null) 
     delivery: order?.delivery ?? {},
     delivery_status: deliveryStatusOf(order),
     deep_link: orderDeliveryDeepLink(item.id),
+    /*
+     * LO QUE NECESITA LA TARJETA, ya resuelto: cuántas unidades, qué se cobra,
+     * cuándo se asignó y qué hay que recoger. Se calcula aquí para que el panel
+     * no tenga que recorrer líneas por cada pedido.
+     */
+    total: Number(order?.total ?? item.total ?? 0) || 0,
+    delivery_fee: Number(order?.delivery_fee ?? order?.delivery?.fee ?? 0) || 0,
+    payment_method: order?.payment_method ?? order?.paymentMethod ?? null,
+    payment_status: order?.payment_status ?? null,
+    /*
+     * LO QUE FALTA COBRAR, tal cual. `payment_status` dice si está pagado del
+     * todo; `payment.due` dice cuánto queda (pago parcial incluido). Así el
+     * repartidor cobra el saldo correcto y no el total otra vez.
+     */
+    payment: paymentSummaryForDelivery(order),
+    created_at: order?.created_at ?? item.received_at ?? null,
+    assigned_at: order?.delivery?.delivery_assigned_at ?? null,
+    delivered_at: order?.delivered_at ?? null,
+    items_count: (order?.items ?? []).reduce((sum, line) => sum + Math.max(1, Number(line?.quantity ?? 1) || 1), 0),
+    pickups: Array.isArray(pickups) ? pickups : [],
   };
 }
 
 async function visibleDeliveryOrders(ctx, actor) {
   const items = await ctx.store.listAdmin({ limit: 5000 });
   const conversations = await ctx.db.list('conversations', { limit: 5000 });
+  /*
+   * «MIS ENTREGAS» FILTRA EN EL PANEL.
+   *
+   * Antes un administrador veía aquí TODOS los pedidos (en UAT: 414, contados
+   * como «asignados»), con los entregados y cancelados mezclados. El repartidor
+   * recibe solo lo suyo desde el servidor; el administrador puede supervisar y
+   * la pantalla enseña únicamente los trabajos que tiene él asignados.
+   */
+  if (!actor?.id) return [];
+  /*
+   * RECOGIDAS: se resuelven en UNA consulta para todos los pedidos, y solo con
+   * lo que el repartidor necesita (tienda, artículos, estado). Nada de costos.
+   */
+  let pickupsByOrder = new Map();
+  try {
+    const [pickups, suppliers] = await Promise.all([
+      ctx.db.list('order_pickups', { limit: 5000 }),
+      ctx.db.list('suppliers', { limit: 5000 }),
+    ]);
+    const supplierById = new Map(suppliers.map((row) => [row.id, row]));
+    for (const pickup of pickups) {
+      const supplier = supplierById.get(pickup.supplier_id) ?? null;
+      const key = String(pickup.order_id ?? '');
+      if (!key) continue;
+      const list = pickupsByOrder.get(key) ?? [];
+      list.push({
+        id: pickup.id ?? null,
+        supplier_id: pickup.supplier_id ?? null,
+        supplier_name: pickup.supplier_name ?? supplier?.name ?? null,
+        status: pickup.status ?? 'pending_purchase',
+        quantity: Number(pickup.quantity ?? 0) || 0,
+        items: Array.isArray(pickup.items) ? pickup.items.map((line) => ({ name: line.name ?? 'Producto', quantity: Number(line.quantity ?? 1) || 1 })) : [],
+        address: supplier?.address ?? null,
+        sector: supplier?.sector ?? null,
+        latitude: Number.isFinite(Number(supplier?.lat)) ? Number(supplier.lat) : null,
+        longitude: Number.isFinite(Number(supplier?.lng)) ? Number(supplier.lng) : null,
+        maps_url: supplier?.maps_url ?? null,
+        invoice_attached: pickup.invoice_attached === true,
+      });
+      pickupsByOrder.set(key, list);
+    }
+  } catch {
+    pickupsByOrder = new Map();
+  }
   const orders = [];
   for (const item of items.filter((row) => row.type === 'order_intent')) {
     const order = orderOf(item);
+    /*
+     * Administración conserva la vista completa (supervisión y pruebas); el
+     * repartidor recibe las suyas. La pantalla «Mis entregas» filtra además por
+     * el usuario autenticado, para que un administrador no vea aquí 400 pedidos
+     * que no son suyos.
+     */
     if (!canOpenDeliveryOrder(actor, order)) continue;
     const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
     const conversation = order.conversation_id
       ? await findConversation(ctx, order.conversation_id)
       : conversations.find((row) => customer?.id && row.customer_id === customer.id) ?? null;
-    orders.push(publicDeliveryOrder(item, order, customer, conversation));
+    orders.push(publicDeliveryOrder(item, order, customer, conversation, pickupsByOrder.get(String(item.id)) ?? []));
   }
   return orders;
 }
@@ -1810,7 +2051,7 @@ async function maybeSendDeliveryReminder(ctx, item, order, deliveryUser, version
       provided: {
         1: deliveryUser.display_name ?? 'Delivery',
         2: order.order_number ?? item.id,
-        3: orderDeliveryDeepLink(item.id),
+        3: absoluteDeliveryDeepLink(item.id),
       },
     });
     currentOrder = await updateDeliveryControlStatus(ctx, item, currentOrder, 'reminder_5m', version, recipient.key, { ...result, phone: recipient.phone });
@@ -1844,7 +2085,7 @@ async function maybeSendDeliveryAdminEscalation(ctx, item, order, deliveryUser, 
       order: currentOrder,
       templateName: DELIVERY_ADMIN_ESCALATION_TEMPLATE,
       to: contact.phone,
-      provided: { 1: order.order_number ?? item.id, 2: deliveryUser.display_name ?? 'Delivery', 3: orderDeliveryDeepLink(item.id) },
+      provided: { 1: order.order_number ?? item.id, 2: deliveryUser.display_name ?? 'Delivery', 3: absoluteDeliveryDeepLink(item.id) },
     });
     currentOrder = await updateDeliveryControlStatus(ctx, item, currentOrder, 'escalation_30m', version, key, { ...result, phone: contact.phone });
     if (result.status === 'sent') sent += 1;
@@ -1883,7 +2124,7 @@ async function notifyAdminsDeliveryCompleted(ctx, item, order, actor = null) {
         2: deliveryUser?.display_name ?? order.delivery?.delivery_user_name_snapshot ?? 'Delivery',
         3: customer?.name ?? customer?.phone_e164 ?? 'Cliente',
         4: order.delivered_at ? new Date(order.delivered_at).toLocaleString('es-DO') : ctx.clock().toISOString(),
-        5: orderDeliveryDeepLink(item.id),
+        5: absoluteDeliveryDeepLink(item.id),
       },
     });
     currentOrder = await updateDeliveryControlStatus(ctx, item, currentOrder, 'admin_delivered_notification', version, key, { ...result, phone: contact.phone });
@@ -1955,7 +2196,11 @@ async function notifyDeliveryOrderCancelled(ctx, item, order, actor = null) {
 
 function deliveryIdentityHeader(user) {
   const name = text(user?.display_name, 120) ?? 'Delivery';
-  return `*DELIVERY · ${name}*`;
+  /*
+   * FORMATO DOCUMENTADO: «*Nombre · Delivery*». Es la firma que ven los clientes
+   * cuando escribe un repartidor, y la que comprueban las pruebas.
+   */
+  return `*${name} · Delivery*`;
 }
 
 /**
@@ -1975,13 +2220,20 @@ function canDeliver(user) {
 function messageNeedsDeliveryIdentity(order, actor) {
   if (!order || !canDeliver(actor)) return false;
   if (order.delivery?.delivery_user_id !== actor.id) return false;
-  return true;
+  /*
+   * LA FIRMA VA EN EL PRIMER MENSAJE DEL PEDIDO.
+   *
+   * Mientras el pedido está «por contactar», el cliente todavía no sabe quién
+   * se lo lleva: ese mensaje lleva «*Nombre · Delivery*». Después ya lo sabe y
+   * repetir la firma en cada mensaje ensucia la conversación.
+   */
+  return deliveryStatusOf(order) === DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT;
 }
 
 function withDeliveryIdentity(body, actor) {
   const header = deliveryIdentityHeader(actor);
   const clean = longText(body, 1200) ?? '';
-  if (/^\*?DELIVERY\b/i.test(clean.trim()) || clean.trim().startsWith(header)) return clean;
+  if (/^\*[^*\n]{1,120}·\s*Delivery\*/i.test(clean.trim()) || clean.trim().startsWith(header)) return clean;
   return `${header}\n${clean}`.slice(0, 1200);
 }
 
@@ -2027,20 +2279,40 @@ async function conversationAccess(ctx, actor) {
   if (hasPermission(actor, 'chats.force_reassign') || !actor?.id || actor.actor_type !== 'USER') {
     return { all: true, conversationIds: null, customerIds: null };
   }
-  const conversations = await ctx.db.list('conversations', { limit: 5000 });
+  /*
+   * SOLO LO SUYO, pedido a la base con filtro.
+   * Antes se leían TODAS las conversaciones (hasta 5000) y se descartaban en
+   * memoria: abrir un chat con el usuario de un agente costaba más cuanto más
+   * grande era el negocio, no cuanto más largo era el chat.
+   */
+  const conversations = await ctx.db.list('conversations', { where: { assigned_user_id: actor.id }, limit: 5000 });
   const conversationIds = new Set();
-  for (const conversation of conversations) {
-    if (conversation.assigned_user_id === actor.id) conversationIds.add(conversation.id);
-  }
-  const rows = await ctx.store.listAdmin({ limit: 5000 });
-  for (const item of rows) {
-    if (item.type !== 'order_intent' || !item.conversation_id) continue;
-    const order = orderOf(item);
-    if (order?.delivery?.delivery_user_id === actor.id) conversationIds.add(item.conversation_id);
-  }
   const customerIds = new Set();
   for (const conversation of conversations) {
-    if (conversationIds.has(conversation.id)) customerIds.add(conversation.customer_id);
+    conversationIds.add(conversation.id);
+    if (conversation.customer_id) customerIds.add(conversation.customer_id);
+  }
+  const rows = await ctx.store.listAdmin({ limit: 5000 });
+  const clientesDeSusEntregas = new Set();
+  for (const item of rows) {
+    if (item.type !== 'order_intent') continue;
+    const order = orderOf(item);
+    if (order?.delivery?.delivery_user_id !== actor.id) continue;
+    if (item.conversation_id) conversationIds.add(item.conversation_id);
+    const customerId = order?.customer_id ?? item.customer_id ?? null;
+    if (customerId) clientesDeSusEntregas.add(customerId);
+  }
+  /*
+   * EL CHAT DEL CLIENTE DE SU PEDIDO TAMBIÉN ES SUYO.
+   *
+   * Muchos pedidos no guardan `conversation_id`; la conversación es la del
+   * cliente. Sin esto, el repartidor abría «Mensaje CRM» desde su entrega y el
+   * servidor le decía que la conversación no estaba a su nombre.
+   */
+  for (const customerId of clientesDeSusEntregas) {
+    customerIds.add(customerId);
+    const suyas = await ctx.db.list('conversations', { where: { customer_id: customerId } });
+    for (const conversation of suyas) conversationIds.add(conversation.id);
   }
   return { all: false, conversationIds, customerIds };
 }
@@ -2861,7 +3133,14 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
 
   const requested = text(body.status, 20);
   const status = requested && isOrderStatus(requested) ? requested : 'nuevo';
-  if(body.pos===true) built.order.payment_status=isCompletedPurchaseStatus(status)?'paid':'pending';
+  /*
+   * EL ESTADO NO DECIDE EL PAGO, NI EN EL POS.
+   *
+   * Aquí había `payment_status = 'paid'` solo porque el pedido nacía entregado,
+   * aunque el POS no hubiera cobrado (una venta a crédito creada como entregada
+   * salía «pagada»). El pago lo dice quien cobra: `paymentStatus` en la venta
+   * facturada, o el registro explícito de cobro después.
+   */
   built.order.created_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
   built.order.created_by_display_name_snapshot = actor?.actor_type === 'USER' ? actor.display_name : null;
   built.order.updated_by_user_id = actor?.actor_type === 'USER' ? actor.id : null;
@@ -2885,6 +3164,24 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
     createdByDisplayNameSnapshot: actor?.actor_type === 'USER' ? actor.display_name : null,
   });
   const finalItem = item ?? built.row;
+
+  /*
+   * RECOGIDAS POR TIENDA (idempotente).
+   * Un pedido con artículos de dos tiendas genera DOS recogidas, no una por
+   * artículo; volver a pasar por aquí no duplica ninguna. Los productos propios
+   * no entran: no hay nada que recoger.
+   */
+  try {
+    const supplierRows = await ctx.db.list('suppliers', { limit: 5000 });
+    await syncOrderPickups(ctx.db, {
+      order: { ...built.order, id: built.row.id, customer_id: customer.id },
+      suppliers: supplierRows,
+      clock: ctx.clock ?? (() => new Date()),
+    });
+  } catch (error) {
+    // El pedido ya está guardado: un fallo aquí no puede perder la venta.
+    console.error('[crm] no se pudieron preparar las recogidas', { code: error?.code });
+  }
 
   if (!customer.acquisition_source && snapshot.source) {
     customer = (await ctx.customers.update(customer.id, {
@@ -3391,6 +3688,76 @@ const WA_TEMPLATE_SEED = [
     buttons: [],
     required_context: 'order',
   },
+  /*
+   * COMPARTIR UNA UBICACIÓN CON OTRO NÚMERO (repartidor, socio, otra persona).
+   *
+   * Fuera de la ventana de 24 h WhatsApp no deja mandar ubicaciones ni texto
+   * libre: solo plantillas aprobadas. Esta es la plantilla propia para ese
+   * caso: saluda, dice de quién es el punto, la dirección y el enlace del mapa.
+   * Es UTILITY porque describe una entrega real.
+   */
+  {
+    name: 'phyto_compartir_ubicacion_v1',
+    friendly_name: 'Compartir ubicación',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body:
+      'Hola {{1}}, te compartimos la ubicación de {{2}} para la entrega.\n\nDirección: {{3}}\nMapa: {{4}}\n\nCualquier cosa nos dices.',
+    variables: ['recipient_name', 'customer_name', 'address', 'maps_link'],
+    buttons: [],
+  },
+  {
+    name: 'phyto_pedido_repartidor_v1',
+    friendly_name: 'Pedido al repartidor',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    /*
+     * Plantilla TRANSACCIONAL para el repartidor externo: lleva solo lo que
+     * necesita para entregar (pedido, cliente, productos, importe, dirección y
+     * mapa). Los botones son de respuesta rápida y su carga es FIJA (Meta no
+     * permite cargas dinámicas): la correlación con el pedido se hace por el
+     * teléfono del remitente, nunca por el botón.
+     */
+    body:
+      'Hola {{1}}, pedido {{2}} para entregar.\n\nCliente: {{3}}\nProductos: {{4}}\nCobrar: {{5}}\nDirección: {{6}}\nMapa: {{7}}\nInstrucciones: {{8}}\n\nCuando salgas, pulsa «Iniciar entrega» y avísame cuando esté entregado.',
+    variables: [
+      'courier_name',
+      'order_number',
+      'customer_contact',
+      'products',
+      'amount',
+      'address',
+      'maps_link',
+      'instructions',
+    ],
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Iniciar entrega', payload: 'INICIAR_ENTREGA' },
+      { type: 'QUICK_REPLY', text: 'Entregado', payload: 'ENTREGADO' },
+      { type: 'QUICK_REPLY', text: 'Reportar problema', payload: 'PROBLEMA' },
+    ],
+    required_context: 'order',
+  },
+  /*
+   * RECORDATORIO DEL SUPERVISOR AL REPARTIDOR.
+   *
+   * Fuera de la ventana de 24 h WhatsApp solo deja plantillas aprobadas: sin
+   * esta, el supervisor registra el recordatorio como «pendiente» (nunca finge
+   * un envío) y escala a administración. Tres datos: nombre, pedido y siguiente
+   * acción. Nada de costos, direcciones ajenas ni historial.
+   */
+  {
+    name: SUPERVISOR_REMINDER_TEMPLATE,
+    friendly_name: 'Recordatorio del supervisor al repartidor',
+    group: 'DELIVERY',
+    category: 'UTILITY',
+    language: 'es',
+    body: 'Hola {{1}}, seguimos pendientes del pedido {{2}}.\n\nSiguiente paso: {{3}}\n\nResponde a este mensaje cuando lo tengas listo.',
+    variables: ['courier_name', 'order_number', 'next_action'],
+    buttons: [],
+    required_context: 'order',
+  },
   {
     name: 'phyto_pedido_listo_v1',
     friendly_name: 'Pedido listo',
@@ -3430,7 +3797,7 @@ const WA_TEMPLATE_SEED = [
     group: 'DELIVERY',
     category: 'UTILITY',
     language: 'es',
-    body: 'URGENTE: el pedido {{1}} fue asignado al delivery {{2}} hace aproximadamente 30 minutos y todavía no ha contactado al cliente.\n\nSe requiere intervención administrativa.\n\n{{3}}',
+    body: 'Urgente: el pedido {{1}} fue asignado al delivery {{2}} hace aproximadamente 30 minutos y todavía no ha contactado al cliente.\n\nPanel del pedido: {{3}}\n\nSe requiere intervención administrativa.',
     variables: ['order_number', 'delivery_display_name', 'delivery_deep_link'],
     buttons: [],
     required_context: 'order',
@@ -3657,6 +4024,24 @@ async function freeTextTemplate(ctx) {
         templateSendable(row.status) &&
         row.sendable === true &&
         (row.variables ?? []).some((key) => TEMPLATE_FREE_TEXT_KEYS.includes(String(key).toLowerCase())),
+    ) ?? null
+  );
+}
+
+/**
+ * LA PLANTILLA PROPIA PARA COMPARTIR UNA UBICACIÓN.
+ *
+ * Se prefiere siempre esta (trae dirección y enlace del mapa con nombre y todo)
+ * y solo si Meta todavía no la tiene aprobada se cae a una plantilla con hueco
+ * de texto libre. Así el mensaje que recibe el repartidor se lee bien aunque la
+ * ventana de 24 h esté cerrada.
+ */
+const LOCATION_SHARE_TEMPLATE = 'phyto_compartir_ubicacion_v1';
+async function locationShareTemplate(ctx) {
+  const templates = await listWaTemplates(ctx, { syncIfStale: true });
+  return (
+    templates.find(
+      (row) => row.name === LOCATION_SHARE_TEMPLATE && templateSendable(row.status) && row.sendable === true,
     ) ?? null
   );
 }
@@ -3892,7 +4277,7 @@ async function resolveTemplatePayload(ctx, { template, customer, conversation, o
     total: orderTotalText(order, item),
     payment_method: order?.payment_method_label ?? paymentMethodLabel(order?.payment_method ?? item?.payment_method) ?? null,
     delivery_display_name: deliveryName,
-    delivery_deep_link: orderDeliveryDeepLink(item?.id ?? order?.id ?? ''),
+    delivery_deep_link: absoluteDeliveryDeepLink(item?.id ?? order?.id ?? ''),
     delivered_at: order?.delivered_at ? new Date(order.delivered_at).toLocaleString('es-DO') : null,
   };
   if (variables.includes('delivery_display_name') && !values.delivery_display_name && !escrito(variables.indexOf('delivery_display_name'))) {
@@ -4257,6 +4642,44 @@ export async function processWebhookPayload(ctx, body) {
     const result = await ctx.customers.recordInbound({ waMessage: inbound });
     if (result.duplicate) continue;
     stored.push(result);
+    /*
+     * RESPUESTA DE UN REPARTIDOR (interno o externo).
+     *
+     * El SUPERVISOR se prueba primero: entiende más frases y también a los
+     * agentes con cuenta en el CRM. Si no reconoce al remitente o no encuentra
+     * intención, sigue la máquina de estados histórica del repartidor externo
+     * (así nada de lo que ya funcionaba se pierde). Cualquier error se registra
+     * y NO tumba el webhook: Meta no debe reintentar por esto.
+     */
+    try {
+      const supervisor = await handleSupervisorReply({
+        ctx,
+        inbound,
+        conversation: result.conversation ?? null,
+        deps: supervisorBridge(ctx),
+      });
+      if (supervisor?.handled) {
+        console.log(`[crm] supervisor de delivery · ${supervisor.reason} · pedido ${supervisor.orderId ?? '—'}`);
+      } else {
+        const courier = await handleCourierInbound({
+          ctx,
+          inbound,
+          completeDelivery: (orderId, options = {}) =>
+            transitionOrderStatus(ctx, {
+              orderId,
+              targetStatus: 'ENTREGADO',
+              actor: { ...SYSTEM_ACTOR, display_name: 'Repartidor externo' },
+              source: options.source ?? 'EXTERNAL_COURIER',
+              reason: options.reason ?? null,
+            }),
+        });
+        if (courier?.handled) {
+          console.log(`[crm] repartidor externo · ${courier.reason} · pedido ${courier.orderId ?? '—'}`);
+        }
+      }
+    } catch (error) {
+      console.error('[crm] respuesta de repartidor:', error?.message ?? error);
+    }
     const metaAttribution = captureMetaReferral(inbound, inbound.receivedAt);
     if (metaAttribution && hasAutomaticMetaEvidence(metaAttribution)) {
       if (result.conversation?.id) {
@@ -4758,6 +5181,12 @@ async function handle(req, res, ctx) {
 
   const forbid = (message = 'No tienes permiso para esta acción.') =>
     json(res, 403, { ok: false, error: 'forbidden', message });
+  /*
+   * El observador de tiempo real (ver `createServer`) publica DESPUÉS de la
+   * respuesta; necesita saber quién hizo el cambio para no avisarle de lo suyo
+   * y para filtrar por rol.
+   */
+  res.__crmActor = actor;
   const can = (permission) => hasPermission(actor, permission);
   const requirePermission = (permission, message) => {
     if (can(permission)) return true;
@@ -4774,6 +5203,136 @@ async function handle(req, res, ctx) {
     legacy: Boolean(legacyAuthenticated),
     permissions: permissionsForRole(actor?.role),
   });
+
+  /*
+   * CANAL ÚNICO DE TIEMPO REAL DEL CRM (`GET /api/admin/events`).
+   *
+   * Un solo SSE por pestaña, con reconexión y cursor. Se manda SOLO lo que ese
+   * usuario puede ver: el permiso se comprueba aquí, al suscribir, y cada evento
+   * se filtra otra vez con `clientAccepts` (rol + si es su entrega).
+   *
+   * `?since=<seq>` (o la cabecera `Last-Event-ID`) recupera lo perdido mientras
+   * el teléfono estuvo dormido. Si el cursor es tan viejo que ya no está en el
+   * búfer, se avisa con `resync` para que el panel recargue lo justo.
+   */
+  if (route === '/api/admin/events' && req.method === 'GET') {
+    if (!authenticated) {
+      json(res, 401, { ok: false, error: 'unauthorized' });
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      // Sin esto nginx guarda los eventos en búfer y llegan tarde (o no llegan).
+      'x-accel-buffering': 'no',
+    });
+    const sinceRaw = url.searchParams.get('since') ?? req.headers['last-event-id'] ?? '';
+    const since = Number(sinceRaw) || 0;
+    const origin = String(req.headers['x-crm-device'] ?? url.searchParams.get('device') ?? '').slice(0, 64) || null;
+    const oldest = ctx.realtime.stats().seq - ctx.realtime.stats().buffered;
+    if (since > 0 && since < oldest) {
+      res.write(`event: resync\ndata: ${JSON.stringify({ ok: true, oldest })}\n\n`);
+    }
+    res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, seq: ctx.realtime.seq, v: 1 })}\n\n`);
+    /*
+     * PERMISOS VIVOS, NO CONGELADOS.
+     *
+     * El actor y su `can` se leen en cada evento (getters). Si a esta persona le
+     * cambian el rol, el siguiente aviso ya se filtra con el rol nuevo sin
+     * obligarla a recargar. Y en cada latido se comprueba que la sesión siga
+     * existiendo: si se cerró o borraron el usuario, se corta el canal y deja de
+     * llegar información.
+     */
+    const permiso = { actor, can };
+    const unsubscribe = ctx.realtime.subscribe({
+      get actor() {
+        return permiso.actor;
+      },
+      get can() {
+        return permiso.can;
+      },
+      origin,
+      since,
+      send: (chunk) => res.write(chunk),
+      close: () => res.end(),
+    });
+    const sessionId = parsedUserSession?.sessionId ?? null;
+    const heartbeat = setInterval(async () => {
+      try {
+        if (sessionId) {
+          const fresca = await ctx.users.sessionUser(sessionId).catch(() => null);
+          if (!fresca?.user || fresca.user.active === false) {
+            res.write(`event: revoked\ndata: ${JSON.stringify({ ok: true, reason: 'session_ended' })}\n\n`);
+            clearInterval(heartbeat);
+            unsubscribe();
+            return;
+          }
+          permiso.actor = {
+            id: fresca.user.id,
+            role: fresca.user.role,
+            display_name: fresca.user.display_name,
+            actor_type: 'USER',
+          };
+          permiso.can = (permission) => hasPermission(permiso.actor, permission);
+        }
+        res.write(`event: heartbeat\ndata: ${JSON.stringify({ at: ctx.clock().toISOString(), seq: ctx.realtime.seq })}\n\n`);
+      } catch {
+        clearInterval(heartbeat);
+        unsubscribe();
+      }
+    }, 25_000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+    return;
+  }
+
+  /*
+   * Estado del canal de tiempo real (diagnóstico): cuántos escuchan, hasta qué
+   * secuencia se ha publicado y los últimos avisos. Sirve para comprobar en UAT
+   * que un cambio se publicó de verdad, sin abrir la consola del navegador.
+   */
+  if (route === '/api/admin/realtime/stats' && req.method === 'GET') {
+    if (!requireAdmin()) return;
+    json(res, 200, { ok: true, realtime: ctx.realtime.stats() });
+    return;
+  }
+
+  /*
+   * REFRESCO MÍNIMO DE UN PEDIDO para el tiempo real.
+   *
+   * El evento dice «este pedido cambió»; el panel pide aquí SOLO ese pedido, ya
+   * saneado por permisos. Es una consulta indexada por `id` (no la lista de
+   * 5000): así un aviso no cuesta lo mismo que abrir el panel entero.
+   */
+  if (route.startsWith('/api/admin/realtime/order/') && req.method === 'GET') {
+    const orderId = decodeURIComponent(route.slice('/api/admin/realtime/order/'.length)).slice(0, 120);
+    const item = typeof store.getAdmin === 'function' ? await store.getAdmin(orderId) : await findOrderItem(store, orderId);
+    if (!item || item.type !== 'order_intent') {
+      json(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+    /*
+     * Quién puede pedir este refresco: la MISMA regla que el detalle del pedido.
+     * El rol DELIVERY no tiene `orders.read` (no lista pedidos) pero sí ve el
+     * suyo; `canReadOrder` ya distingue ese caso. Si se exigiera `orders.read`
+     * aquí, el repartidor nunca vería cambiar su propia entrega.
+     */
+    if (!(await canReadOrder(ctx, actor, item))) {
+      forbid();
+      return;
+    }
+    const order = orderOf(item);
+    json(res, 200, {
+      ok: true,
+      item: sanitizeItemForPermissions(item, actor),
+      order: sanitizeOrderForPermissions(order, actor),
+      payment: paymentBlockOf(order),
+    });
+    return;
+  }
 
   // ------------------------------------------------------------- el panel
   if ((route === '/api/admin/login' || route === '/api/admin/auth/login') && req.method === 'POST') {
@@ -5140,11 +5699,36 @@ async function handle(req, res, ctx) {
         }
       }
       const inventory = sanitizeInventoryForPermissions(await ctx.inventory.catalog(), actor);
+      /*
+       * TIENDAS PROVEEDORAS Y SUS ENLACES CON PRODUCTOS.
+       *
+       * Van en el paquete general porque la venta necesita saber, sin otra
+       * llamada, dónde se compra cada cosa. El costo por tienda se recorta con
+       * el mismo criterio que el resto de importes (cost.view).
+       */
+      const canSeeCost = hasPermission(actor, 'cost.view');
+      const supplierRows = (await ctx.db.list('suppliers', { by: 'name', order: 'asc' })).map((row) => ({
+        ...row,
+        location_status: Number.isFinite(row.lat) && Number.isFinite(row.lng) ? 'ok' : 'pending',
+      }));
+      const productSupplierRows = (await ctx.db.list('product_suppliers', { limit: 5000 })).map((row) =>
+        canSeeCost ? row : { ...row, cost_cents: null },
+      );
       json(res, 200, {
         ok: true,
         storage: store.kind,
         timeZone: TIME_ZONE,
         auth: authPayload(),
+        /*
+         * MODO UAT (SOLO PRUEBAS).
+         *
+         * Permite probar el circuito operativo del reparto sin enviar mensajes
+         * reales de WhatsApp: el panel enseña el botón de iniciar aunque no se
+         * haya «contactado» al cliente. NO marca el pedido como contactado, no
+         * cambia ninguna regla del servidor y solo aparece si el entorno arranca
+         * con `PHYTO_UAT_SKIP_DELIVERY_CONTACT=1`. En producción va apagado.
+         */
+        uat: { skipDeliveryContact: process.env.PHYTO_UAT_SKIP_DELIVERY_CONTACT === '1' },
         statuses: STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] ?? value })),
         items,
         messages,
@@ -5161,6 +5745,11 @@ async function handle(req, res, ctx) {
         },
         // ------------------------------------------------ clientes y WhatsApp
         customers: customerList,
+        // Grupos de negocio con los que trabaja el panel (etiquetas y filtros).
+        businessGroups: BUSINESS_GROUPS,
+        // Tiendas proveedoras y qué producto se consigue en cada una.
+        suppliers: supplierRows,
+        productSuppliers: productSupplierRows,
         conversations: conversationList,
         conversationCounts,
         followups: {
@@ -5224,16 +5813,12 @@ async function handle(req, res, ctx) {
           })),
         },
         // Estado de WhatsApp SIN secretos (solo booleanos y datos públicos).
-        whatsapp: {
-          configured: Boolean(ctx.whatsapp?.enabled),
-          graphVersion: ctx.whatsapp?.graphVersion ?? null,
-          phoneNumber: ctx.whatsappPhoneNumber || null,
-          phoneNumberIdConfigured: Boolean(ctx.whatsapp?.phoneNumberId),
-          webhookUrl: ctx.whatsappWebhookUrl || null,
-          verifyTokenConfigured: Boolean(ctx.whatsappVerifyToken),
-          appSecretConfigured: Boolean(ctx.appSecret),
-          businessAccountConfigured: Boolean(ctx.whatsapp?.businessAccountId),
-        },
+        /*
+         * ESTADO REAL, CON ENVÍO Y RECEPCIÓN SEPARADOS.
+         * `configured` se mantiene por compatibilidad, pero el panel decide con
+         * `send`/`receive`/`reason`: un timeout de Meta no es «no configurado».
+         */
+        whatsapp: whatsappStatusPayload(ctx),
         /*
          * MULTIMEDIA: qué se puede hacer y qué quedó a medias. La cola de
          * recuperación es información de ADMINISTRACIÓN (un envío ambiguo no se
@@ -5459,8 +6044,13 @@ async function handle(req, res, ctx) {
       return;
     }
 
-    if (await handlePosRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,can:permission=>hasPermission(actor,permission),createOrder,findOrder:id=>findOrderItem(ctx.store,id)})) return;
-    if (await handleStoreCatalogRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
+    if (await handlePosRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,can:permission=>hasPermission(actor,permission),createOrder,findOrder:id=>findOrderItem(ctx.store,id),
+      listDeliveryCandidates: async () => (await ctx.users.listUsers()).filter((user) => canDeliver(user) && user.active !== false).map((user) => ({ id: user.id, name: user.display_name || user.name || user.username || user.id, role: user.role })),
+      listDeliveryContacts: async () => { const value = (await ctx.settings.read('delivery_contacts'))?.value; return Array.isArray(value) ? value.filter((row) => row?.phone).map((row) => ({ id: row.id || row.phone, name: row.name || row.phone, phone: row.phone })) : []; }})) return;
+    if (await handleSupplierRoutes({req,res,route,ctx,actor,json,readJson:readJsonBody,
+  can:permission=>hasPermission(actor,permission),
+  sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
+  if (await handleStoreCatalogRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
       can:permission=>hasPermission(actor,permission),
       sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
 
@@ -6027,7 +6617,18 @@ async function handle(req, res, ctx) {
           return;
         }
         const profile = await ctx.customers.profile(customerId);
-        json(res, 200, { ok: true, ...profile });
+        /*
+         * HISTORIAL 360°: se arma al abrir la ficha leyendo cada módulo (mensajes,
+         * cotizaciones, facturas, pedidos, seguimientos y entregas). No duplica
+         * datos y las notas internas solo salen para quien puede verlas.
+         */
+        const history = await buildCustomerHistory({
+          db: ctx.db,
+          customerId,
+          orders: profile.purchases ?? [],
+          includeInternal: hasPermission(actor, 'admin.full'),
+        });
+        json(res, 200, { ok: true, ...profile, history });
         return;
       }
 
@@ -6237,7 +6838,36 @@ async function handle(req, res, ctx) {
             return;
           }
         }
+        /*
+         * GRUPOS DE NEGOCIO del cliente (PHYTOEMAGRY, FULLTECH — Ventas
+         * generales, FULLTECH — Sistemas de seguridad y los que se añadan).
+         * Es una lista abierta: se limpia con `normalizeGroups` y nunca puede
+         * quedar vacía, porque un cliente sin grupo desaparece de los filtros.
+         */
+        if (body.groups !== undefined) {
+          if (!requirePermission('customer.stage.update', 'No tienes permiso para cambiar los grupos del cliente.')) return;
+          const groups = normalizeGroups(body.groups, { fallback: null });
+          if (!groups.length) {
+            json(res, 422, {
+              ok: false,
+              error: 'invalid_groups',
+              message: 'El cliente necesita al menos un grupo de negocio.',
+            });
+            return;
+          }
+          patch.groups = groups;
+        }
         const updated = await ctx.customers.update(customerId, patch);
+        if (patch.groups) {
+          await ctx.audit?.record({
+            entity: 'customer',
+            entityId: customerId,
+            action: 'customer.groups_changed',
+            actor: actor?.display_name ?? null,
+            summary: `Grupos: ${patch.groups.join(', ')}`,
+            data: { customer_id: customerId, groups: patch.groups },
+          });
+        }
         json(res, 200, { ok: true, customer: updated });
         return;
       }
@@ -6665,7 +7295,8 @@ async function handle(req, res, ctx) {
 
     if (route.startsWith('/api/admin/delivery/orders/') && req.method === 'GET') {
       const orderId = decodeURIComponent(route.slice('/api/admin/delivery/orders/'.length));
-      const item = await findOrderItem(store, orderId);
+      // Consulta por id (indexada): lo pide el refresco en vivo de «Mis entregas».
+      const item = typeof store.getAdmin === 'function' ? await store.getAdmin(orderId) : await findOrderItem(store, orderId);
       if (!item) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
@@ -6972,6 +7603,237 @@ async function handle(req, res, ctx) {
           }))
         : { status: 'not_applicable', reason: deliveryUser ? 'mismo_repartidor' : 'unassigned' };
       json(res, 200, { ok: true, order: assigned.order, deliveryUser, customerNotification });
+      return;
+    }
+
+    /*
+     * REPARTIDOR EXTERNO (mensajero sin cuenta en el CRM).
+     *
+     * Asignar y enviar son DOS pasos a propósito: primero se dice quién lleva el
+     * pedido y solo después se manda el mensaje. El destinatario tiene que estar
+     * guardado como contacto de reparto: no se acepta un número suelto (así nadie
+     * puede mandar la dirección de un cliente a un teléfono cualquiera).
+     */
+    const puedeGestionarReparto = () =>
+      can('orders.update_operational') || can('delivery.manage') || can('delivery.tracking.manage_all');
+
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/courier/assign') && req.method === 'POST') {
+      if (!puedeGestionarReparto()) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/courier/assign'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await assignCourier({
+        ctx,
+        item,
+        order: orderOf(item),
+        contactPhone: body.contactPhone ?? body.contact_phone ?? body.phone,
+        actor,
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message });
+        return;
+      }
+      /*
+       * AVISO AUTOMÁTICO AL ASIGNAR.
+       *
+       * Antes había que pulsar «Enviar» después de asignar; si nadie lo pulsaba,
+       * el repartidor externo quedaba asignado sin recibir nada. Se envía aquí,
+       * con la plantilla oficial y sin duplicar (la función es idempotente). Si la
+       * plantilla no está aprobada no se finge un envío: se devuelve el motivo y
+       * el supervisor lo deja como pendiente/escalado.
+       */
+      let envio = null;
+      /*
+       * `autoSend` lo pide el panel cuando asigna desde un solo toque. Sin él se
+       * mantiene el contrato de siempre (asignar y enviar por separado), que es
+       * el que usan los scripts y las pruebas.
+       */
+      if (body.autoSend === true) {
+        try {
+          envio = await sendOrderToCourier({
+            ctx,
+            item,
+            order: result.order,
+            actor,
+            resend: false,
+            checkTemplate: (name) => approvedTemplate(ctx, name),
+            refreshTemplate: (name) => refreshTemplateFromMeta(ctx, name),
+          });
+        } catch (error) {
+          envio = { ok: false, error: 'send_failed', message: error?.message ?? null };
+        }
+      }
+      const freshItem = await findOrderItem(store, orderId);
+      const freshOrder = freshItem ? orderOf(freshItem) : result.order;
+      json(res, 200, {
+        ok: true,
+        order: freshOrder,
+        courier: freshOrder?.delivery?.external ?? result.courier,
+        sent: envio ? envio.ok === true : null,
+        send_error: !envio ? null : envio.ok === true ? null : envio.error ?? 'not_sent',
+        message: !envio || envio.ok === true ? null : envio.message ?? null,
+      });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/courier/send') && req.method === 'POST') {
+      if (!puedeGestionarReparto()) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/courier/send'.length));
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let order = orderOf(item);
+      // Si el panel manda el contacto en el mismo paso, se asigna antes de enviar.
+      const contactPhone = body.contactPhone ?? body.contact_phone;
+      if (contactPhone) {
+        const assigned = await assignCourier({ ctx, item, order, contactPhone, actor });
+        if (!assigned.ok) {
+          json(res, assigned.status ?? 422, { ok: false, error: assigned.error, message: assigned.message });
+          return;
+        }
+        order = assigned.order;
+      }
+      const result = await sendOrderToCourier({
+        ctx,
+        item,
+        order,
+        actor,
+        resend: body.resend === true,
+        checkTemplate: (name) => approvedTemplate(ctx, name),
+        refreshTemplate: (name) => refreshTemplateFromMeta(ctx, name),
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 422, {
+          ok: false,
+          error: result.error,
+          message: result.message,
+          courier: result.courier ?? null,
+          template: result.template ?? null,
+        });
+        return;
+      }
+      json(res, 200, { ok: true, courier: result.courier, messageId: result.messageId });
+      return;
+    }
+
+    /*
+     * SUPERVISOR IA DELIVERY — panel, ajustes y pasada manual.
+     *
+     * Solo administración (es la pantalla de supervisión). La pasada normal la
+     * hace el scheduler; «Ejecutar ahora» sirve para probar y para no esperar
+     * al siguiente ciclo.
+     */
+    if (route === '/api/admin/delivery-supervisor' && req.method === 'GET') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      json(res, 200, await supervisorSnapshot(ctx, supervisorBridge(ctx)));
+      return;
+    }
+
+    /* Vista previa: a quién se escribiría AHORA. No envía ni guarda nada. */
+    if (route === '/api/admin/delivery-supervisor/preview' && req.method === 'GET') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      json(res, 200, await supervisorPreview(ctx, supervisorBridge(ctx)));
+      return;
+    }
+
+    if (route === '/api/admin/delivery-supervisor/settings' && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const saved = await saveSupervisorSettings(ctx, body.settings ?? body);
+      await ctx.audit?.record({
+        entity: 'settings',
+        entityId: 'delivery_supervisor',
+        action: 'settings.delivery_supervisor_updated',
+        actor: actor?.display_name ?? null,
+        summary: 'Ajustes del Supervisor IA de delivery actualizados',
+        data: saved,
+        idempotencyKey: `settings.delivery_supervisor:${ctx.clock().toISOString()}`,
+      });
+      json(res, 200, { ok: true, settings: saved });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-supervisor/run' && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      const result = await supervisorTick(ctx, supervisorBridge(ctx));
+      json(res, 200, { ok: true, result, snapshot: await supervisorSnapshot(ctx, supervisorBridge(ctx)) });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-supervisor/daily' && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      json(res, 200, await dailyReconciliation(ctx, { deps: supervisorBridge(ctx) }));
+      return;
+    }
+
+    /*
+     * POSPONER una entrega (motivo + fecha nueva + comentario).
+     * Puede hacerlo administración o el repartidor ASIGNADO a ese pedido.
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/postpone') && req.method === 'POST') {
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/postpone'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      const asignado = Boolean(actor?.id) && order?.delivery?.delivery_user_id === actor.id;
+      if (!can('delivery.tracking.manage_all') && !asignado) {
+        forbid();
+        return;
+      }
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const result = await postponeDelivery({
+        ctx,
+        item,
+        order,
+        actor,
+        reason: body.reason ?? body.motivo,
+        until: body.until ?? body.date ?? body.fecha,
+        note: body.note ?? body.comment ?? body.comentario,
+        source: 'PANEL',
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message });
+        return;
+      }
+      json(res, 200, { ok: true, order: result.order, postponedUntil: result.postponedUntil, count: result.count });
       return;
     }
 
@@ -7586,6 +8448,11 @@ async function handle(req, res, ctx) {
         ok: true,
         item: sanitizeItemForPermissions(item, actor),
         order: sanitizeOrderForPermissions(order, actor),
+        /*
+         * El dinero del pedido, con su detalle: cobros (importe, medio, quién y
+         * cuándo) y rendiciones del repartidor. Entregar no lo cambia.
+         */
+        payment: paymentBlockOf(order),
         ...(can('cost.view') ? { financials: orderFinancials(order) } : {}),
         receipt,
         customer,
@@ -7697,6 +8564,101 @@ async function handle(req, res, ctx) {
         integrity: result.integrity,
       });
       return;
+    }
+
+    if (route.startsWith('/api/admin/orders/') && req.method === 'POST') {
+      const rest = decodeURIComponent(route.slice('/api/admin/orders/'.length));
+      const [paymentOrderId, paymentAction = '', paymentSub = ''] = rest.split('/');
+
+      /*
+       * COBRAR ES UN ACTO APARTE DE ENTREGAR.
+       *
+       * El repartidor puede marcar ENTREGADO sin tocar el dinero; aquí es donde
+       * se anota cuánto entró, con qué medio, quién lo anotó y cuándo. Sin esta
+       * llamada el pedido se queda «por cobrar» aunque esté entregado, que es la
+       * verdad. Una lectura de WhatsApp (aunque diga «ya te pagué») NUNCA llega
+       * hasta aquí: solo una persona autorizada desde el panel o la app.
+       */
+      if (paymentOrderId && paymentAction === 'payments' && !paymentSub && req.method === 'POST') {
+        const fresh = await freshOrderForPayment(ctx, paymentOrderId);
+        if (!fresh) {
+          json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no existe.' });
+          return;
+        }
+        /*
+         * Quien reparte ESE pedido puede anotar el efectivo que cobró en la
+         * puerta aunque su rol no sea de oficina; para cualquier otro hace falta
+         * permiso de operar pedidos (y no basta: ver `paymentAuthorization`).
+         */
+        const reparteEsePedido = Boolean(actor?.id) && fresh.order?.delivery?.delivery_user_id === actor.id;
+        if (!reparteEsePedido && !requirePermission('orders.update_operational', 'No tienes permiso para registrar cobros.')) return;
+        const guard = await paymentAuthorization(ctx, actor, fresh.order, can);
+        if (!guard.ok) {
+          json(res, guard.status, { ok: false, error: guard.error, message: guard.message });
+          return;
+        }
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const result = await registerCustomerPayment({
+          ctx,
+          orderId: paymentOrderId,
+          actor,
+          amount: body.amount,
+          method: body.method,
+          note: body.note,
+          evidenceUrl: body.evidenceUrl ?? body.evidence_url,
+          idempotencyKey: body.idempotencyKey ?? body.idempotency_key,
+        });
+        if (!result.ok) {
+          json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message, due: result.due });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          duplicate: result.duplicate === true,
+          payment: result.payment,
+          order: sanitizeOrderForPermissions(result.order, actor),
+        });
+        return;
+      }
+
+      /*
+       * RENDICIÓN: el efectivo que el repartidor le entrega a la empresa. No es
+       * un cobro (el cliente ya pagó) ni un movimiento de caja: es la trazabilidad
+       * de dónde está el dinero que lleva el repartidor. Solo administración.
+       */
+      if (paymentOrderId && paymentAction === 'payments' && paymentSub === 'handover' && req.method === 'POST') {
+        if (!requireAdmin()) return;
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const result = await registerCourierHandover({
+          ctx,
+          orderId: paymentOrderId,
+          actor,
+          amount: body.amount,
+          note: body.note,
+          idempotencyKey: body.idempotencyKey ?? body.idempotency_key,
+        });
+        if (!result.ok) {
+          json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message, pending: result.pending });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          duplicate: result.duplicate === true,
+          payment: result.payment,
+          order: sanitizeOrderForPermissions(result.order, actor),
+        });
+        return;
+      }
     }
 
     if (route.startsWith('/api/admin/orders/') && req.method === 'POST') {
@@ -8111,47 +9073,90 @@ async function handle(req, res, ctx) {
           });
           return;
         }
-        const plantilla = await freeTextTemplate(ctx);
-        if (!plantilla) {
-          json(res, 409, {
-            ok: false,
-            error: 'no_template_with_free_slot',
-            message:
-              'No hay ninguna plantilla APROBADA con un hueco de texto libre para mandar el enlace. Regístrala en Meta (o edita el nombre del hueco) y pulsa «Sincronizar con Meta».',
+        /*
+         * PRIMERO LA PLANTILLA PROPIA (phyto_compartir_ubicacion_v1): lleva el
+         * nombre de quien recibe, el del cliente, la dirección y el enlace del
+         * mapa. Solo si Meta aún no la aprobó se usa una de hueco libre.
+         */
+        const dedicada = await locationShareTemplate(ctx);
+        if (dedicada) {
+          const clienteUbicacion = source.customer_id ? await ctx.customers.get(source.customer_id) : null;
+          const payload = await resolveTemplatePayload(ctx, {
+            template: dedicada,
+            customer: destinoCustomer,
+            conversation: destination,
+            provided: {
+              1: destinoCustomer.name || destinoCustomer.phone_e164,
+              2: clienteUbicacion?.name || clienteUbicacion?.phone_e164 || 'nuestro cliente',
+              3: source.address || `${Number(source.latitude).toFixed(5)}, ${Number(source.longitude).toFixed(5)}`,
+              4: enlace,
+            },
           });
-          return;
-        }
-        const payload = await resolveTemplatePayload(ctx, {
-          template: plantilla,
-          customer: destinoCustomer,
-          conversation: destination,
-          provided: {
-            1: destinoCustomer.name || destinoCustomer.phone_e164,
-            2: `Te compartimos la ubicación de entrega: ${enlace}`,
-          },
-        });
-        if (!payload.ok) {
-          json(res, payload.status ?? 422, {
-            ok: false,
-            error: payload.error,
-            message: payload.message,
-            missing: payload.missing ?? undefined,
+          if (!payload.ok) {
+            json(res, payload.status ?? 422, {
+              ok: false,
+              error: payload.error,
+              message: payload.message,
+              missing: payload.missing ?? undefined,
+            });
+            return;
+          }
+          const result = await ctx.whatsapp.sendTemplate(destinoCustomer.phone_e164, {
+            name: dedicada.name,
+            language: dedicada.language ?? 'es',
+            components: payload.components,
           });
-          return;
+          envio = {
+            ok: result.ok === true,
+            messageId: result.messageId ?? null,
+            error: result.error ?? (result.ok ? null : { message: result.reason ?? 'error' }),
+            plantilla: dedicada,
+            cuerpo: payload.body ?? enlace,
+            tipo: 'template',
+          };
+        } else {
+          const plantilla = await freeTextTemplate(ctx);
+          if (!plantilla) {
+            json(res, 409, {
+              ok: false,
+              error: 'no_template_approved',
+              message:
+                'Meta todavía no tiene aprobada la plantilla «phyto_compartir_ubicacion_v1» (ni ninguna con hueco de texto libre). Créala en WhatsApp Manager y pulsa «Sincronizar con Meta».',
+            });
+            return;
+          }
+          const payload = await resolveTemplatePayload(ctx, {
+            template: plantilla,
+            customer: destinoCustomer,
+            conversation: destination,
+            provided: {
+              1: destinoCustomer.name || destinoCustomer.phone_e164,
+              2: `Te compartimos la ubicación de entrega: ${enlace}`,
+            },
+          });
+          if (!payload.ok) {
+            json(res, payload.status ?? 422, {
+              ok: false,
+              error: payload.error,
+              message: payload.message,
+              missing: payload.missing ?? undefined,
+            });
+            return;
+          }
+          const result = await ctx.whatsapp.sendTemplate(destinoCustomer.phone_e164, {
+            name: plantilla.name,
+            language: plantilla.language ?? 'es',
+            components: payload.components,
+          });
+          envio = {
+            ok: result.ok === true,
+            messageId: result.messageId ?? null,
+            error: result.error ?? (result.ok ? null : { message: result.reason ?? 'error' }),
+            plantilla,
+            cuerpo: payload.body ?? enlace,
+            tipo: 'template',
+          };
         }
-        const result = await ctx.whatsapp.sendTemplate(destinoCustomer.phone_e164, {
-          name: plantilla.name,
-          language: plantilla.language ?? 'es',
-          components: payload.components,
-        });
-        envio = {
-          ok: result.ok === true,
-          messageId: result.messageId ?? null,
-          error: result.error ?? (result.ok ? null : { message: result.reason ?? 'error' }),
-          plantilla,
-          cuerpo: payload.body ?? enlace,
-          tipo: 'template',
-        };
       } else {
         const result = await ctx.whatsapp.sendLocation(destinoCustomer.phone_e164, compartida);
         envio = {
@@ -8230,7 +9235,7 @@ async function handle(req, res, ctx) {
           ? listedConversations.filter((row) => access.conversationIds.has(row.id))
           : listedConversations;
       const counts = await ctx.customers.conversationCounts();
-      json(res, 200, { ok: true, conversations, counts, dateRange: { from: dateRange.from, to: dateRange.to }, whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) } });
+      json(res, 200, { ok: true, conversations, counts, dateRange: { from: dateRange.from, to: dateRange.to }, whatsapp: whatsappStatusPayload(ctx) });
       return;
     }
 
@@ -8603,7 +9608,7 @@ async function handle(req, res, ctx) {
                 deliveryUserName: actor?.display_name ?? deliveryOrderContext.order.delivery?.delivery_user_name_snapshot ?? null,
               }
             : null,
-          whatsapp: { configured: Boolean(ctx.whatsapp?.enabled) },
+          whatsapp: whatsappStatusPayload(ctx),
         });
         return;
       }
@@ -10148,6 +11153,26 @@ export async function startCrmServer(config = {}) {
     });
 
   /*
+   * ESTADO REAL DE WHATSAPP: una sola instancia para todo el servidor.
+   *
+   * Antes el panel deducía «no configurado» de un booleano de credenciales y
+   * pintaba DOS avisos distintos según la pantalla. Aquí se comprueba contra
+   * Meta (solo lectura) y se responde con estados separados: envío, recepción y
+   * motivo. La comprobación va en segundo plano: abrir el panel nunca espera a
+   * Meta.
+   */
+  const whatsappStatus =
+    config.whatsappStatus ??
+    createWhatsAppStatus({
+      whatsapp,
+      verifyToken: config.whatsappVerifyToken ?? WHATSAPP_VERIFY_TOKEN,
+      appSecret: config.metaAppSecret ?? META_APP_SECRET,
+      graphVersion: config.whatsappGraphVersion ?? WHATSAPP_GRAPH_VERSION,
+      clock: config.clock,
+    });
+  void whatsappStatus.refresh();
+
+  /*
    * Ajustes del negocio (hoy: qué días del plan de postventa están activos).
    * El plan EFECTIVO sale de aquí, no solo de la variable de entorno: el negocio
    * lo cambia desde Ajustes y el motor de seguimiento lo respeta al crear tareas.
@@ -10299,6 +11324,7 @@ export async function startCrmServer(config = {}) {
     // La plantilla se resuelve contra el mismo criterio que el envío manual.
     resolveTemplate: (name) => approvedTemplate(ctxRef.current, name),
     deliveryControlTick: () => deliveryControlTick(ctxRef.current),
+    deliverySupervisorTick: () => supervisorTick(ctxRef.current, supervisorBridge(ctxRef.current)),
     clock: config.clock,
     intervalMs: config.schedulerIntervalMs,
     log: settings.quiet ? () => {} : (message) => console.log(message),
@@ -10327,11 +11353,19 @@ export async function startCrmServer(config = {}) {
     // Multimedia: metadata (BD), binario (R2), Graph y el pipeline que los une.
     media: { store: mediaStore, storage, whatsapp: whatsappMedia, pipeline: mediaPipeline },
     whatsapp,
+    whatsappStatus,
     whatsappPhoneNumber: (config.whatsappPhoneNumber ?? WHATSAPP_PHONE_NUMBER).trim(),
     whatsappWebhookUrl: (config.whatsappWebhookUrl ?? WHATSAPP_WEBHOOK_URL).trim(),
     whatsappVerifyToken: (config.whatsappVerifyToken ?? WHATSAPP_VERIFY_TOKEN).trim(),
     appSecret: (config.metaAppSecret ?? META_APP_SECRET).trim(),
     deliveryEventClients: new Set(),
+    /*
+     * BUS DE TIEMPO REAL (pedidos, entregas, recogidas, cobros, inventario,
+     * clientes y supervisor). Vive en MEMORIA del proceso: hay UNA instancia de
+     * Node (nginx y Node en el mismo contenedor). Si algún día hubiera varias
+     * réplicas, el único sitio que cambia es `server/realtime.mjs`.
+     */
+    realtime: createRealtimeHub(),
     /*
      * Sesiones que escuchan el chat EN VIVO (SSE). Vive en MEMORIA del proceso:
      * hay UNA instancia de Node (nginx y Node en el mismo contenedor), así que no
@@ -10472,6 +11506,44 @@ export async function startCrmServer(config = {}) {
   ctx.calling.start();
 
   const server = createServer((req, res) => {
+    /*
+     * TIEMPO REAL — PUBLICAR SOLO LO QUE SE GUARDÓ.
+     *
+     * Se engancha AQUÍ, en un único punto, en vez de tocar veinte rutas: se
+     * guarda la respuesta JSON y, cuando la petición termina, si el estado es
+     * 2xx se publica el evento correspondiente. Un 4xx/5xx o un cuerpo que no es
+     * JSON no anuncia nada (no se avisa de escrituras fallidas).
+     *
+     * `x-crm-device` lo pone el propio panel: así el dispositivo que hizo el
+     * cambio no se repite el trabajo; los demás sí se enteran.
+     */
+    let status = 0;
+    /** @type {string|null} */
+    let captured = null;
+    const writeHead = res.writeHead.bind(res);
+    res.writeHead = (code, ...rest) => {
+      status = Number(code) || 0;
+      return writeHead(code, ...rest);
+    };
+    const end = res.end.bind(res);
+    res.end = (chunk, ...rest) => {
+      if (captured === null && typeof chunk === 'string' && chunk.length <= 200_000) captured = chunk;
+      return end(chunk, ...rest);
+    };
+    res.on('finish', () => {
+      if (!captured || !(status >= 200 && status < 300)) return;
+      try {
+        const parsed = JSON.parse(captured);
+        const route = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
+        const events = eventFromMutation({ method: req.method, route, status, body: parsed });
+        if (!events.length) return;
+        const actor = res.__crmActor ?? null;
+        const origin = String(req.headers['x-crm-device'] ?? '').slice(0, 64) || null;
+        ctx.realtime.publish(events.map((event) => ({ ...event, actor, origin })));
+      } catch {
+        /* Respuesta no JSON (PDF, imagen, CSV): no hay nada que anunciar. */
+      }
+    });
     handle(req, res, ctx).catch((error) => {
       console.error('[crm] error:', error);
       if (!res.headersSent) json(res, 500, { ok: false, error: 'server_error' });

@@ -13,6 +13,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { classifyIntent, detectHealthConcern, detectHumanRequest, detectOptOut, toE164, toWaId } from './whatsapp.mjs';
+import { normalizeGroups } from './business-groups.mjs';
 import { addDays, dayIn } from './followups.mjs';
 import { LOCATION_SOURCES, buildLocationDoc, publicLocation } from './locations.mjs';
 import { isCompletedPurchaseStatus } from './orders.mjs';
@@ -467,7 +468,14 @@ export function createCustomerService(deps) {
       return { ok: true, customer, created: true };
     },
 
-    get: (id) => db.get('customers', id),
+    /*
+     * El documento guarda `groups` desde la clasificación FULLTECH. Los clientes
+     * que ya existían no lo tienen: se leen como PHYTOEMAGRY sin reescribirlos.
+     */
+    get: async (id) => {
+      const row = await db.get('customers', id);
+      return row ? { ...row, groups: normalizeGroups(row.groups) } : null;
+    },
 
     /** Busca un cliente por su teléfono (para el webhook). */
     findByPhone,
@@ -494,6 +502,7 @@ export function createCustomerService(deps) {
         const resolved = stages.get(row.id) ?? resolveCustomerStage({ customer: row, purchases: [] });
         return {
           ...row,
+          groups: normalizeGroups(row.groups),
           commercial_state: states.get(row.id) ?? 'NUEVO',
           customerStage: resolved.stage,
           customer_stage: resolved.stage,
@@ -730,7 +739,8 @@ export function createCustomerService(deps) {
     },
 
     update(id, patch) {
-      return db.update('customers', id, { ...patch, updated_at: new Date().toISOString() });
+      const next = patch?.groups === undefined ? patch : { ...patch, groups: normalizeGroups(patch.groups) };
+      return db.update('customers', id, { ...next, updated_at: new Date().toISOString() });
     },
 
     /** Recalcula los totales desde los pedidos (derivado ⇒ no puede desincronizarse). */
@@ -835,6 +845,26 @@ export function createCustomerService(deps) {
           next_followup: followupList[0] ?? null,
           assigned_user_id: conversation.assigned_user_id ?? conversation.assigned_to ?? null,
           assigned_display_name_snapshot: conversation.assigned_display_name_snapshot ?? null,
+          /*
+           * CONVERSACIÓN VACÍA DE UN CONTACTO IMPORTADO.
+           *
+           * Al importar de FULLTECH se crea a cada cliente su conversación para
+           * poder escribirle. Si esas 221 filas aparecieran en la bandeja, la
+           * taparían con contactos «sin mensajes» que nunca han escrito.
+           *
+           * Se ocultan SOLO si además el cliente viene de una importación
+           * (`imported_from`): una conversación que abre una persona a mano
+           * —o la que crea el propio CRM al registrar un cliente— sigue
+           * apareciendo como siempre. Nada se borra: el cliente sigue en
+           * Clientes, su botón de chat la abre, el buscador la encuentra, y en
+           * cuanto hay un mensaje deja de estar vacía y vuelve sola.
+           */
+          empty:
+            Boolean(customer?.imported_from || conversation.imported_from) &&
+            !last &&
+            !conversation.last_message_at &&
+            Number(conversation.unread_count ?? 0) <= 0 &&
+            !conversation.archived_at,
         };
       });
       const needle = String(options.q ?? '').trim().toLowerCase();
@@ -857,6 +887,12 @@ export function createCustomerService(deps) {
       const buscando = needle.length > 0;
       const filtered = items.filter((row) => {
         if (row.deleted_at) return false;
+        /*
+         * Las vacías no son «bandeja», pero SÍ se encuentran buscando: quien
+         * escribe el nombre de un contacto importado tiene que poder abrir su
+         * chat. Es la misma regla que ya vale para las archivadas.
+         */
+        if (row.empty && !buscando && !options.includeEmpty) return false;
         const archived = Boolean(row.archived_at);
         if (!buscando) {
           if (options.filter === 'archivados') {
@@ -914,8 +950,17 @@ export function createCustomerService(deps) {
 
     /** Mensajes de una conversación, del más antiguo al más nuevo. */
     async messagesFor(conversationId, options = {}) {
-      const rows = await db.list('wa_messages', { by: 'created_at', order: 'asc' });
-      const scoped = rows.filter((row) => row.conversation_id === conversationId);
+      /*
+       * SOLO los mensajes de esta conversación, pedidos a la base con filtro.
+       * Antes se pedía la tabla ENTERA y se filtraba en memoria: abrir un chat
+       * costaba más cuanto más historial tenía el negocio, no cuanto más larga
+       * era esa conversación.
+       */
+      const scoped = await db.list('wa_messages', {
+        by: 'created_at',
+        order: 'asc',
+        where: { conversation_id: conversationId },
+      });
       const page = options.limit ? scoped.slice(-options.limit) : scoped;
       /*
        * Los mensajes con archivo (imagen, audio, nota de voz…) llevan el estado de
@@ -1451,6 +1496,7 @@ export function createCustomerService(deps) {
       return {
         customer: {
           ...customer,
+          groups: normalizeGroups(customer.groups),
           commercial_state,
           customerStage: stage.stage,
           customer_stage: stage.stage,

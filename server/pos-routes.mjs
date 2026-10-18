@@ -22,7 +22,11 @@ function inputOf(body,previous={}){  if(body.items!==undefined&&!Array.isArray(b
   const items=(body.items||[]).map(i=>({variantId:String(i.variantId),quantity:Number(i.quantity),discount:i.discount||{},
     ...(i.manual?{manual:{name:String(i.manual.name||'').trim(),price:Number(i.manual.price),kind:i.manual.kind==='service'?'service':'product',cost:Number(i.manual.cost??previous.items?.find(p=>p.variantId===i.variantId)?.manual?.cost??0)}}:{})}));
   if(items.length>100)throw Object.assign(new Error('El ticket admite hasta 100 artículos.'),{status:422});
-  return {customerId:String(body.customerId||''),conversationId:String(body.conversationId||''),items,discount:body.discount||{},deliveryFee:Number(body.deliveryFee||0),notes:String(body.notes||'').slice(0,2000),address:String(body.address||'').slice(0,240),paymentMethod:body.paymentMethod||'CASH',location:body.location||null};
+  return {customerId:String(body.customerId||''),conversationId:String(body.conversationId||''),items,discount:body.discount||{},deliveryFee:Number(body.deliveryFee||0),notes:String(body.notes||'').slice(0,2000),address:String(body.address||'').slice(0,240),paymentMethod:body.paymentMethod||'CASH',location:body.location||null,
+    deliveryMethod:body.deliveryMethod==='pickup'?'pickup':'delivery',scheduledAt:String(body.scheduledAt||'').slice(0,40),deliveryNotes:String(body.deliveryNotes||'').slice(0,400),
+    deliveryReference:String(body.deliveryReference||'').slice(0,240),deliveryAgentId:String(body.deliveryAgentId||'').slice(0,80),
+    deliveryContact:body.deliveryContact?{name:String(body.deliveryContact.name||'').slice(0,80),phone:String(body.deliveryContact.phone||'').slice(0,40)}:null,
+    paymentStatus:body.paymentStatus==='paid'?'paid':'pending'};
 }
 export function quotationReceipt(doc){
   return {business:'Fulltech',document:'Cotización',order_number:doc.number,date:doc.created_at,customer_name:doc.customer.name,customer_phone:doc.customer.phone_e164,notes:doc.input?.notes||'',
@@ -47,7 +51,7 @@ export function quotationHtml(doc, titulo = 'Cotización') {
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Cotización ${escape(doc.number)}</title><style>body{font:15px system-ui;max-width:760px;margin:36px auto;padding:20px;color:#14243b}header,footer{padding:20px 0;border-bottom:1px solid #ddd}table{width:100%;border-collapse:collapse}td,th{padding:12px 6px;text-align:right;border-bottom:1px solid #eee}td:first-child,th:first-child{text-align:left}.total{text-align:right;font-size:22px}small{color:#526078}a{color:#225bd1}.quote-actions{display:flex;gap:10px;flex-wrap:wrap}.quote-actions a,.quote-actions button{border:1px solid #ccd7e7;background:#f3f7fd;border-radius:9px;padding:10px 12px;color:#18395e;text-decoration:none;font:inherit;cursor:pointer}.quote-actions .primary{border-color:#128c5d;background:#128c5d;color:#fff;font-weight:600}.quote-note{color:#526078;font-size:13px;line-height:1.45}#quote-share-status{min-height:1.2em;font-size:14px;color:#0f7a51}@media print{button,.quote-actions,#quote-share-status,.quote-note{display:none}}</style>${actions}<header><h1>Fulltech · Cotización</h1><p>${escape(doc.number)} · ${escape(new Date(doc.created_at).toLocaleDateString('es-DO'))}</p><p>${escape(doc.customer.name)} · ${escape(doc.customer.phone_e164)}</p></header><table><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Descuento</th><th>Importe</th></tr></thead><tbody>${doc.sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.discount_cents)}</td><td>${money(i.subtotal_cents)}</td></tr>`).join('')}</tbody></table><p class="total">Total: ${money(doc.sale.total_cents)}</p><p>Descuento general: ${money(doc.sale.discount_cents)} · Envío: ${money(doc.sale.delivery_cents)}</p><p>${escape(doc.input.notes)}</p><footer><small>Cotización comercial. No acredita pago ni reserva inventario. Precios y disponibilidad se verifican al confirmar la venta.</small></footer><button onclick="window.print()">Imprimir / guardar PDF</button><script src="/admin/quote-document.js" defer></script></html>`;
 }
 
-export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,createOrder,findOrder}) {
+export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,createOrder,findOrder,listDeliveryCandidates,listDeliveryContacts}) {
   if(!route.startsWith('/api/admin/pos/')) return false;
   const send=(status,body)=>{json(res,status,body);return true;};
   if(!can('orders.read')) return send(403,{ok:false,error:'forbidden'});
@@ -70,6 +74,13 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
     if(route==='/api/admin/pos/customers' && req.method==='GET') {
       const rows=await db.list('customers',{limit:5000});
       return send(200,{ok:true,actorId:actor.id||actor.role,canCreate:can('orders.create'),isAdmin:actor.role==='ADMIN',customers:rows.map(c=>({id:c.id,name:c.name,phone_e164:c.phone_e164}))});
+    }
+    // Quién puede llevar el pedido: repartidores, agentes que entregan y contactos guardados.
+    if(route==='/api/admin/pos/assignees' && req.method==='GET') {
+      if(!can('orders.create')) return send(403,{ok:false});
+      const users=typeof listDeliveryCandidates==='function'?await listDeliveryCandidates():[];
+      const contacts=typeof listDeliveryContacts==='function'?await listDeliveryContacts():[];
+      return send(200,{ok:true,users,contacts});
     }
     if(route==='/api/admin/pos/quotes' && req.method==='GET') {
       const rows=await db.list('pos_documents',{by:'created_at',order:'desc',limit:1000});
@@ -177,7 +188,20 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
         if(!conversation||conversation.customer_id!==customer.id) return send(422,{ok:false,message:'La conversación no pertenece al cliente seleccionado.'});
       }
       if(!['CASH','TRANSFER'].includes(input.paymentMethod)) return send(422,{ok:false,message:'Selecciona efectivo o transferencia.'});
-      if(!Number.isInteger(input.deliveryFee)) return send(422,{ok:false,message:'El envío debe expresarse en pesos enteros.'});
+      if(!Number.isInteger(input.deliveryFee)||input.deliveryFee<0) return send(422,{ok:false,message:'El envío debe expresarse en pesos enteros.'});
+      // PEDIDO GUIADO (desde una conversación): delivery exige coordenadas; el retiro no.
+      if(kind==='order'&&body.guided===true){
+        if(input.deliveryMethod!=='pickup'){
+          const punto=input.location;
+          if(!punto||!Number.isFinite(Number(punto.latitude))||!Number.isFinite(Number(punto.longitude)))
+            return send(422,{ok:false,error:'missing_location',message:'Falta la ubicación de entrega con coordenadas.'});
+        }
+        if(input.scheduledAt){
+          const cuando=Date.parse(input.scheduledAt);
+          if(!Number.isFinite(cuando)) return send(422,{ok:false,error:'invalid_schedule',message:'La fecha programada no es válida.'});
+          if(cuando<Date.now()-300000) return send(422,{ok:false,error:'schedule_in_past',message:'La fecha programada ya pasó.'});
+        }
+      }
       const products=await ctx.storeCatalog.list();
       let sale;
       try{sale=calculateSale(input.items,products,input.discount,input.deliveryFee);}catch(e){return send(422,{ok:false,message:e.message});}
@@ -204,7 +228,9 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       if(kind==='quote') result={document:publicDocument(document,actor),receiptUrl:`/api/admin/pos/quotes/${id}/receipt`};
       else {
         const created=await createOrder(ctx,{...input,id:orderId,items:sale.items.map(i=>({variantId:i.variantId,quantity:i.quantity,unitPrice:i.unit_price_cents/100,lineDiscountCents:i.discount_cents})),
-          discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',delivery:{address:input.address},deliveryLocation:input.location,pos:true,
+          discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',
+          delivery:{address:input.address,method:input.deliveryMethod,note:input.deliveryNotes,scheduledAt:input.scheduledAt,reference:input.deliveryReference},
+          paymentStatus:kind==='invoice'?'paid':input.paymentStatus,deliveryLocation:input.location,pos:true,
           ...(kind==='invoice'?{invoiceId:id,invoiceNumber:document.number}:{})},actor,
           {manualProducts:manualProducts(input.items).map(p=>({...p,general:true,price:p.price_cents/100,label:p.name}))});
         if(!created.ok) {

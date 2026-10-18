@@ -132,12 +132,14 @@ it('muestra los cambios de ambas colas en el menú sin tapar la pantalla con avi
   w.document.body.innerHTML='<footer class="drawer__foot"></footer><div id="update-bar">Actualizar</div>';
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
   w.eval(readFileSync('public/admin/offline-ui.js','utf8'));w.dispatchEvent(new w.Event('DOMContentLoaded'));
-  for(let i=0;i<100&&!w.document.querySelector('.offline-status')?.textContent.includes('2');i++)await new Promise(r=>setTimeout(r,10));
-  w.document.querySelector('.offline-status').click();
+  for(let i=0;i<100&&!w.document.querySelector('.drawer__offline')?.textContent.includes('2');i++)await new Promise(r=>setTimeout(r,10));
+  w.document.querySelector('.drawer__offline').click();
   for(let i=0;i<100&&!w.document.querySelector('.offline-dialog')?.open;i++)await new Promise(r=>setTimeout(r,10));
   const dialog=w.document.querySelector('.offline-dialog');expect(dialog.textContent).toContain('2 cambios pendientes');
   expect(dialog.textContent).toContain('Categoría pendiente');expect(dialog.textContent).toContain('Seguimiento pendiente');
-  expect(w.document.querySelector('.drawer__foot #update-bar')).toBeTruthy();
+  // La barra de actualizar NO se mete dentro del menú (empezaría oculta).
+  expect(w.document.querySelector('#update-bar')).toBeTruthy();
+  expect(w.document.querySelector('.drawer__foot #update-bar')).toBeNull();
 });
 it('mantiene varios tickets y convierte una cotización local en venta al reconectar',async()=>{
   const w=await page();await prepare(w);online=false;

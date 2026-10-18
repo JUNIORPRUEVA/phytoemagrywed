@@ -187,6 +187,8 @@ export function buildOrder(input = {}) {
     city: short(input.delivery?.city, 120),
     note: long(input.delivery?.note, 400),
     method: short(input.delivery?.method, 40),
+    reference: long(input.delivery?.reference, 240),
+    scheduled_at: short(input.delivery?.scheduledAt, 40) ?? null,
     shipping: null,
   };
   const order = {
@@ -212,7 +214,15 @@ export function buildOrder(input = {}) {
     delivery,
     payment_method: paymentMethod,
     payment_method_label: paymentMethod ? PAYMENT_METHOD_LABELS[paymentMethod] : null,
-    payment_status: status === 'cancelado' ? 'void' : 'paid',
+    /*
+     * UN PEDIDO NACE «POR COBRAR» SALVO QUE SE DIGA LO CONTRARIO.
+     *
+     * Antes, no mandar `paymentStatus` lo dejaba «pagado»: el pedido aparecía
+     * cobrado desde el segundo uno sin que nadie hubiera recibido dinero. Solo
+     * se marca 'paid' cuando quien crea el pedido lo afirma (una venta facturada
+     * en caja); si no, se queda 'pending' y el cobro se registra aparte.
+     */
+    payment_status: status === 'cancelado' ? 'void' : input.paymentStatus === 'paid' ? 'paid' : 'pending',
     status,
     // FACTURA vinculada (POS): la venta facturada deja su documento en el pedido.
     invoice_id: short(input.invoiceId, 80),

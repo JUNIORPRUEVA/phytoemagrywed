@@ -1,8 +1,17 @@
 /* Catálogo Fulltech. Operaciones de stock en línea, con historial en el servidor. */
 (() => {
   'use strict';
+  /*
+   * Sin documento no hay nada que pintar.
+   *
+   * Un sondeo (o una promesa) puede resolverse DESPUÉS de cerrar la pestaña o la
+   * ventana de un UAT. Antes eso terminaba en «Cannot read properties of
+   * undefined (reading 'getElementById')» dentro de un callback asíncrono, que en
+   * las pruebas aparecía como excepción sin dueño.
+   */
+  const doc=()=>(typeof document==='undefined'||!document?null:document);
   const pages=['catalogo','inventario','recuento'];
-  let page='',products=[],categoryRows=[],movements=[],canManage=false,loading=false,query='',kind='all',epoch=0;
+  let page='',products=[],categoryRows=[],movements=[],canManage=false,loading=false,query='',kind='all',productType='all',epoch=0,businessGroup='';
   let category='',layout='grid',signature='',source=null,poll=null,pending=false,authenticated=false;
   try {layout=localStorage.getItem('fulltech.catalog.layout')==='list'?'list':'grid';}catch{}
   const categoryName=p=>String(p.category||'').trim().replace(/\s+/g,' ')||'Sin categoría';
@@ -11,8 +20,16 @@
   const svg=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${icon(name)}</svg>`;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
-  const root=()=>document.getElementById(`store-${page}`);
-  const notice=text=>{const box=document.getElementById('store-notice');if(box)box.textContent=text;};
+  const root=()=>doc()?.getElementById(`store-${page}`)??null;
+  /*
+   * EL AVISO SOBREVIVE AL REPINTADO.
+   *
+   * El tiempo real (SSE) vuelve a pintar el inventario justo después de guardar
+   * y borraba el mensaje: la operación se había guardado y la persona no veía
+   * confirmación. El texto vive en una variable y se repone en cada render.
+   */
+  let stockNotice='';
+  const notice=text=>{stockNotice=String(text??'');const box=doc()?.getElementById('store-notice');if(box)box.textContent=stockNotice;};
   async function request(path,body,method='POST') {
     const generation=epoch,wasAuthenticated=authenticated;
     const r=await fetch(`/api/admin/store/${path}`,{credentials:'same-origin',cache:'no-store',
@@ -37,6 +54,10 @@
     const listScroll=document.getElementById('store-product-grid')?.scrollTop||0;
     const form=document.getElementById('store-stock-form');
     const draft=form?{values:Object.fromEntries(new FormData(form)),...form.dataset}:null;
+    // La búsqueda y la categoría no van por `name` (no se envían al servidor),
+    // así que se guardan aparte: si no, cada sincronía borraría el filtro.
+    const stockSearch=document.getElementById('stock-search')?.value??'';
+    const stockCategory=document.getElementById('stock-category')?.value??'';
     const active=document.activeElement,focusId=active?.id,focusName=form?.contains(active)?active.name:null,start=active?.selectionStart,end=active?.selectionEnd;
     render();
     const list=document.getElementById('store-product-grid');if(list)list.scrollTop=listScroll;
@@ -45,26 +66,114 @@
       Object.entries(draft.values).forEach(([key,value])=>{if(next.elements[key])next.elements[key].value=value;});
       if(draft.expected!==undefined)next.dataset.expected=draft.expected;
       if(draft.requestId)next.dataset.requestId=draft.requestId;
-      updateCount();
+      const search=document.getElementById('stock-search');if(search)search.value=stockSearch;
+      const categorySelect=document.getElementById('stock-category');if(categorySelect)categorySelect.value=stockCategory;
     }
     const node=focusId?document.getElementById(focusId):focusName?next?.elements.namedItem(focusName):null;
     node?.focus({preventScroll:true});if(node?.setSelectionRange&&start!==null)try{node.setSelectionRange(start,end);}catch{}
   }
   function head() {return '<p id="store-notice" class="store-notice" role="status" aria-live="polite"></p>';}
   function photo(p){return p.image_url?`<img class="store-photo" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" width="96" height="96">`:'<div class="store-photo store-photo--empty" aria-label="Servicio">Servicio</div>';}
-  function stockLabel(p){return p.kind==='service'?'Sin stock':p.quantity===null?'Sin inventario inicial':`${p.quantity} ${p.quantity===1?'unidad':'unidades'}${p.legacy?' disponibles':''}`;}
+  /*
+   * CÓMO SE LEE EL STOCK. «Sin control de inventario» NO es «Agotado»: un
+   * artículo que se compra al proveedor cuando lo piden no tiene existencias que
+   * contar, y decir que está agotado sería mentira. Se distinguen los tres casos
+   * posibles: servicio, sin control de inventario y con existencias reales.
+   */
+  function stockLabel(p){
+    if(p.kind==='service')return 'No aplica a servicios';
+    if(p.track_stock===false)return 'Sin control de inventario';
+    if(p.quantity===null)return 'Sin inventario inicial';
+    return `${p.quantity} ${p.quantity===1?'unidad':'unidades'}${p.legacy?' disponibles':''}`;
+  }
+  const sinControl=(p)=>p.kind==='product'&&p.track_stock===false;
+  /*
+   * PROCEDENCIA DEL ARTÍCULO.
+   *   own         → está en el almacén (descuenta existencias).
+   *   third_party → se compra en una tienda; no descuenta stock propio.
+   * Si la ficha aún no lo dice, se deduce de la política de inventario y del
+   * origen: los PHYTOEMAGRY son propios por definición. Sin dato NO se inventa
+   * nada más (el informe `scripts/classify-products.mjs` sirve para revisarlo).
+   */
+  const procedencia=(p)=>p.product_type??(p.legacy?'own':(p.track_stock===false?'third_party':'own'));
+  const etiquetaProcedencia=(p)=>procedencia(p)==='third_party'?'De terceros':'Propio';
+  // La etiqueta de procedencia se ve como un distintivo pequeño, no como texto suelto.
+  const claseProcedencia=(p)=>`store-product__origin${procedencia(p)==='third_party'?' store-product__origin--third':''}`;
+  const gruposNegocio=()=>[...new Set(products.map(p=>p.business_group).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
   function cards() {
     const search=query.toLocaleLowerCase();
-    const rows=products.filter(p=>(kind==='all'||p.kind===kind)&&(!category||categoryKey(p)===category)&&(p.name+' '+p.sku+' '+(p.category||'')).toLocaleLowerCase().includes(search));
+    const rows=products.filter(p=>(kind==='all'||p.kind===kind)&&(productType==='all'||procedencia(p)===productType)&&(!category||categoryKey(p)===category)&&(!businessGroup||p.business_group===businessGroup)&&(p.name+' '+p.sku+' '+(p.category||'')).toLocaleLowerCase().includes(search));
     const box=document.getElementById('store-product-grid');if(!box)return;
     box.dataset.layout=layout;
     box.innerHTML=rows.length?`<div class="store-items">${rows.map(p=>`<article class="store-product${p.active?'':' store-product--inactive'}" data-product-id="${esc(p.id)}">
       <a class="store-product__visual" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</a>
-      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><span class="pos-card-plus" aria-hidden="true">${svg('plus')}</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><small class="${claseProcedencia(p)}">${esc(etiquetaProcedencia(p))}</small>${sinControl(p)?'<small class="store-product__policy">Sin control de inventario</small>':''}<span class="pos-card-plus" aria-hidden="true">${svg('plus')}</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
     window.dispatchEvent(new Event('fulltech:pos-render'));
 
   }
   function detailId(){return new URLSearchParams(location.search).get('product');}
+  /* Llamadas al API del panel (las tiendas no cuelgan de /store/). */
+  async function apiAdmin(path,body,method='POST'){
+    const r=await fetch(path,{credentials:'same-origin',cache:'no-store',method:body?method:'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok||!data.ok)throw new Error(data.message||'No se pudo completar la operación.');
+    return data;
+  }
+  /** Vincula una tienda al producto con su costo en ESA tienda. */
+  async function agregarTienda(productId){
+    try{
+      const {suppliers=[]}=await apiAdmin('/api/admin/suppliers');
+      const activas=suppliers.filter(s=>s.active!==false);
+      if(!activas.length){notice('Crea primero una tienda en Sistema → Tiendas proveedoras.');return;}
+      const opciones=activas.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}${s.location_status==='pending'?' · ubicación pendiente':''}</option>`).join('');
+      supplierDialog.innerHTML=`<form id="store-supplier-form" data-product="${esc(productId)}"><div class="store-toolbar"><h2>Agregar tienda</h2><button class="store-icon-button" type="button" data-supplier-close aria-label="Cerrar">${svg('close')}</button></div><div class="store-form-body"><label class="field"><span class="field__label">Tienda</span><select class="field__input" name="supplier_id" required>${opciones}</select></label><label class="field"><span class="field__label">Costo en esa tienda (opcional)</span><input class="field__input" name="cost" inputmode="decimal" placeholder="0.00"></label><label class="field"><span class="field__label">Tiempo de recogida (min, opcional)</span><input class="field__input" name="eta" type="number" min="0" step="5" inputmode="numeric"></label><label class="field"><span class="field__label">Código del proveedor (opcional)</span><input class="field__input" name="code" maxlength="80"></label><label class="field"><span class="field__label">Disponibilidad</span><select class="field__input" name="availability"><option value="unknown">Sin confirmar</option><option value="available">Confirmada hoy</option><option value="unavailable">No disponible</option></select></label><p class="store-form-error" role="alert"></p></div><div class="store-form-footer"><button class="btn btn--primary btn--block" type="submit">Guardar tienda</button></div></form>`;
+      supplierDialog.showModal();
+      supplierDialog.querySelector('[data-supplier-close]').addEventListener('click',()=>supplierDialog.close());
+      const form=supplierDialog.querySelector('form');
+      form.addEventListener('submit',async event=>{
+        event.preventDefault();
+        const boton=form.querySelector('[type=submit]');boton.disabled=true;
+        const campo=form.querySelector('.store-form-error');campo.textContent='';
+        const datos=new FormData(form);
+        const costo=String(datos.get('cost')??'').trim();
+        const availability=String(datos.get('availability')||'unknown');
+        const eta=String(datos.get('eta')??'').trim();
+        try{
+          await apiAdmin(`/api/admin/products/${encodeURIComponent(productId)}/suppliers`,{
+            supplier_id:String(datos.get('supplier_id')),
+            cost_cents:costo?Math.round(Number(costo)*100):null,
+            pickup_eta_minutes:eta?Number(eta):null,
+            supplier_code:String(datos.get('code')||''),
+            availability,
+            verified_at:availability==='available'?new Date().toISOString():null,
+          });
+          supplierDialog.close();
+          await cargarTiendas(productId);
+        }catch(error){campo.textContent=error.message;}finally{boton.disabled=false;}
+      });
+    }catch(error){notice(error.message);}
+  }
+  /**
+   * «TIENDAS DISPONIBLES» de la ficha.
+   *
+   * Se pide al abrir el detalle (no viaja en el catálogo entero) y muestra el
+   * costo en ESA tienda y si la disponibilidad está confirmada. Sin fecha de
+   * verificación se dice «sin confirmar»: no se supone que haya unidades.
+   */
+  async function cargarTiendas(productId){
+    const host=document.getElementById('store-suppliers');
+    if(!host)return;
+    const disponible={available:'Disponible',unavailable:'No disponible',unknown:'Sin confirmar'};
+    try{
+      const [enlaces,tiendas]=await Promise.all([apiAdmin(`/api/admin/products/${encodeURIComponent(productId)}/suppliers`),apiAdmin('/api/admin/suppliers')]);
+      const links=enlaces.links||[], suppliers=(tiendas.suppliers||[]).filter(s=>s.active!==false);
+      host.innerHTML=`<h3>Tiendas disponibles</h3>`+(links.length
+        ?`<ul class="store-supplier-list">${links.map(l=>{const s=suppliers.find(x=>x.id===l.supplier_id);return `<li><strong>${esc(l.supplier_name||s?.name||'Tienda')}</strong><span class="store-supplier-meta">${esc(disponible[l.availability]||'Sin confirmar')}${l.cost_cents!=null?` · ${cash(l.cost_cents)}`:''}${l.pickup_eta_minutes?` · ${l.pickup_eta_minutes} min`:''}</span>${s&&s.location_status==='pending'?'<span class="store-supplier-warn">Ubicación pendiente</span>':''}${l.supplier_code?`<small>${esc(l.supplier_code)}</small>`:''}</li>`}).join('')}</ul>`
+        :'<p class="store-muted">Todavía no hay tiendas para este artículo.</p>')
+        +(canManage&&suppliers.length?`<button class="btn btn--ghost btn--sm" type="button" data-supplier-add="${esc(productId)}">Agregar tienda</button>`:'')
+        +(canManage&&!suppliers.length?'<p class="store-muted">Crea primero una tienda en Sistema → Tiendas proveedoras.</p>':'');
+    }catch(error){host.innerHTML=`<h3>Tiendas disponibles</h3><p class="store-muted">${esc(error.message)}</p>`;}
+  }
   function navigateProduct(id){
     if(!id&&detailId()&&history.state?.storeProduct){history.back();return;}
     const url=new URL(location.href);url.searchParams.set('v','catalogo');if(id)url.searchParams.set('product',id);else url.searchParams.delete('product');
@@ -75,43 +184,170 @@
     if(!p)return `<div class="store-empty"><h2 id="store-detail-title" tabindex="-1">Artículo no encontrado</h2><p>Puede que ya no esté disponible para tu cuenta.</p></div>`;
     return `<article class="store-detail"><div class="store-detail__image">${photo(p)}</div><div class="store-detail__content"><div class="store-detail__eyebrow">${p.kind==='service'?'Servicio':'Producto'}<span class="store-status${p.active?' store-status--active':''}">${p.active?'Activo':'Inactivo'}</span></div>
       <h2 id="store-detail-title" tabindex="-1">${esc(p.name)}</h2><p class="store-muted">${esc(p.sku)}</p><strong class="store-detail__price">${cash(p.price_cents)}</strong><p class="store-muted">Precio de venta</p>
-      <dl class="store-detail-facts"><div><dt>Categoría</dt><dd>${esc(categoryName(p))}</dd></div>${canManage?`<div><dt>Costo ${p.kind==='service'?'del servicio':'por unidad'}</dt><dd>${cash(p.cost_cents)}</dd></div>`:''}<div><dt>${p.kind==='service'?'Inventario':'Existencias'}</dt><dd>${esc(p.kind==='service'?'No aplica a servicios':stockLabel(p))}</dd></div>${p.kind==='product'&&!p.legacy?`<div><dt>Stock mínimo</dt><dd>${p.min_stock} unidades</dd></div>`:''}</dl>
+      <dl class="store-detail-facts"><div><dt>Categoría</dt><dd>${esc(categoryName(p))}</dd></div><div><dt>Procedencia</dt><dd>${esc(etiquetaProcedencia(p))}</dd></div>${p.business_group?`<div><dt>Grupo de negocio</dt><dd>${esc(p.business_group)}</dd></div>`:''}${canManage?`<div><dt>Costo ${p.kind==='service'?'del servicio':'por unidad'}</dt><dd>${cash(p.cost_cents)}</dd></div>`:''}<div><dt>${p.kind==='service'?'Inventario':(sinControl(p)?'Inventario':'Existencias')}</dt><dd>${esc(stockLabel(p))}</dd></div>${p.kind==='product'&&!p.legacy&&!sinControl(p)?`<div><dt>Stock mínimo</dt><dd>${p.min_stock} unidades</dd></div>`:''}</dl>
+      <section class="store-suppliers" id="store-suppliers" data-product="${esc(p.id)}"><h3>Tiendas disponibles</h3><p class="store-muted">Cargando tiendas…</p></section>
       ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el mismo inventario de cápsulas de Phytoemagry.</p>':''}<div class="store-actions">${canManage?`<button class="btn btn--primary" type="button" data-store-edit="${esc(p.id)}">Editar artículo</button>`:''}${p.track_stock?`<button class="btn btn--ghost" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver stock</button>`:''}</div></div>
       <section class="store-detail-description"><h3>Descripción</h3><p>${esc(p.description||'Este artículo todavía no tiene descripción.')}</p></section></article>`;
   }
   function render() {
     const box=root();if(!box)return;
-    pages.filter(p=>p!==page).forEach(p=>document.getElementById(`store-${p}`)?.replaceChildren());
+    const d=doc();if(!d)return;
+    pages.filter(p=>p!==page).forEach(p=>d.getElementById(`store-${p}`)?.replaceChildren());
     const legacy=products.find(p=>p.legacy);
     const tracked=products.filter(p=>p.track_stock&&!p.legacy);
     if(page==='catalogo') {
-      const selected=detailId();document.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
-      if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));window.dispatchEvent(new Event('fulltech:catalog-view'));return;}
-      document.querySelector('#pos-search-host .store-search-line')?.remove();
-      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'?'<span class="store-filter-dot"></span>':''}</button></div>
+      const selected=detailId();d.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
+      if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));window.dispatchEvent(new Event('fulltech:catalog-view'));cargarTiendas(selected);return;}
+      d.querySelector('#pos-search-host .store-search-line')?.remove();
+      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
       <div id="store-product-grid"></div>${`<button class="store-fab pos-actions-fab" type="button" data-pos-actions aria-label="Acciones de facturación" title="Acciones"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>`}`;
       cards();window.dispatchEvent(new Event('fulltech:catalog-view'));
     }else {
-      box.innerHTML=head()+`<div class="store-workspace">${canManage?movementForm(page==='recuento'):'<p class="store-empty">Solo administración puede registrar ajustes y recuentos.</p>'}
-        ${legacy?`<div class="store-capsule-link"><div><strong>Phytoemagry</strong><small>${esc(legacy.base_quantity??'Sin inicializar')} cápsulas · saldo compartido</small></div><button class="btn btn--ghost" type="button" data-tab="productos">${page==='recuento'?'Contar cápsulas':'Gestionar'}</button></div>`:''}
-        <details class="store-disclosure"><summary>Existencias por producto <span>${tracked.length}</span></summary><div class="store-stock-list">${tracked.map(p=>`<div><span><strong>${esc(p.name)}</strong><small>${esc(p.sku)} · Mínimo ${p.min_stock}</small></span><span class="${p.quantity<=p.min_stock?'store-low-stock':''}">${p.quantity}<small>unidades</small></span></div>`).join('')||'<p>Los nuevos productos aparecerán aquí.</p>'}</div></details>
-        <details class="store-disclosure"><summary>Movimientos recientes <span>${movements.length}</span></summary><div class="store-stock-list">${movements.map(m=>`<div><span><strong>${esc(m.product_name)}</strong><small>${esc(({INITIAL:'Inicial',RESTOCK:'Entrada',SALE:'Venta',SALE_REVERSAL:'Devolución',COUNT:'Recuento',ADJUSTMENT_OUT:'Salida'})[m.type]||m.type)} · ${esc(new Date(m.created_at).toLocaleString('es-DO'))}</small><small>${esc(m.reason)} · ${esc(m.actor)}</small></span><span>${m.quantity_delta>0?'+':''}${m.quantity_delta}<small>Saldo ${m.quantity_after}</small></span></div>`).join('')||'<p>No hay movimientos todavía.</p>'}</div></details></div>`;
+      /*
+       * TRES ZONAS Y NADA MÁS: buscar arriba, el ajuste debajo y la lista al
+       * final. Sin párrafos explicativos ni bloques plegables: la pantalla se
+       * entiende sola y la lista es la única que se desplaza.
+       */
+      box.innerHTML=head()+`<div class="stock-workspace">${canManage?movementForm(page==='recuento'):'<p class="store-empty">Solo administración puede registrar ajustes y recuentos.</p>'}</div>`;
     }
     updateCount();
+    // La lista de productos se pinta con el mismo filtro que haya puesto la persona.
+    filterStock();
+    // El aviso de la última operación se repone despuÃ©s de repintar.
+    if(stockNotice){const caja=d.getElementById('store-notice');if(caja)caja.textContent=stockNotice;}
   }
+
+  /*
+   * CUÁNTO HAY INVERTIDO, GENERAL Y POR CATEGORÍA.
+   *
+   * Se cuenta solo lo que lleva existencias de verdad (los servicios no) y se
+   * valora con el costo unitario guardado en cada artículo. Las presentaciones
+   * antiguas de Phytoemagry comparten el saldo de cápsulas, así que se valoran
+   * con ese saldo y su costo por cápsula: si no, el total mentiría.
+   */
+  function stockValue(rows) {
+    let units=0,value=0;
+    const byCategory=new Map(),vistos=new Set();
+    for(const p of rows){
+      /*
+       * Las presentaciones antiguas de Phytoemagry comparten UN mismo saldo de
+       * cápsulas: contarlas una por una multiplicaría el valor por siete.
+       */
+      const clave=p.legacy?'__capsulas__':p.id;
+      if(vistos.has(clave))continue;vistos.add(clave);
+      const quantity=Number(p.legacy?p.base_quantity:p.quantity)||0;
+      /*
+       * En las presentaciones antiguas el costo guardado es el de la PRESENTACIÓN
+       * entera (costo por cápsula × cápsulas). El saldo, en cambio, está en
+       * cápsulas: hay que valorarlo por unidad o el total sale multiplicado.
+       */
+      const cost=p.legacy?(Number(p.cost_cents)||0)/Math.max(1,Number(p.capsules)||1):Number(p.cost_cents)||0;
+      const amount=Math.max(0,quantity)*Math.max(0,cost);
+      units+=Math.max(0,quantity);value+=amount;
+      const name=categoryName(p)||'Sin categoría';
+      const entry=byCategory.get(name)??{units:0,value:0,items:0};
+      entry.units+=Math.max(0,quantity);entry.value+=amount;entry.items+=1;
+      byCategory.set(name,entry);
+    }
+    return {units,value,byCategory:[...byCategory.entries()].sort((a,b)=>b[1].value-a[1].value||a[0].localeCompare(b[0],'es'))};
+  }
+
+  function stockSummary(rows) {
+    const {units,value,byCategory}=stockValue(rows);
+    const share=item=>value?Math.round((item.value/value)*100):0;
+    return `<section class="stock-summary" aria-label="Valor del inventario">
+      <div class="stock-summary__total">
+        <div><small>Invertido en inventario</small><strong>${cash(value)}</strong></div>
+        <div class="stock-summary__meta"><span>${units.toLocaleString('es-DO')} unidades</span><span>${rows.length} artículos</span></div>
+      </div>
+      <div class="stock-summary__cats">
+        <p class="stock-summary__title">Por categoría</p>
+        <ul>${byCategory.map(([name,item])=>`<li><span class="stock-summary__name">${esc(name)}</span><span class="stock-summary__units">${item.units.toLocaleString('es-DO')} u.</span><strong>${cash(item.value)}</strong><span class="stock-summary__share">${share(item)}%</span></li>`).join('')||'<li><span class="stock-summary__name">Sin artículos</span></li>'}</ul>
+      </div>
+    </section>`;
+  }
+
+  function productStock(p) {
+    return Number(p.legacy?p.base_quantity:p.quantity)||0;
+  }
+
   function movementForm(count) {
     const rows=products.filter(p=>p.track_stock&&(!count||!p.legacy));
-    if(!rows.length)return '<div class="card"><p>Crea un producto para registrar sus existencias. Los servicios no llevan stock.</p><button class="btn btn--ghost" type="button" data-tab="catalogo">Ir al catálogo</button></div>';
-    return `<form class="store-stock-form" id="store-stock-form" data-count="${count}"><p class="store-form-caption">${count?'Compara las unidades contadas con el saldo registrado.':'Registra una entrada o salida de mercancía.'}</p>
-      <div class="stock-filters"><label class="field"><span class="field__label">Buscar producto</span><input class="field__input" type="search" id="stock-search" placeholder="Nombre o código"></label><label class="field"><span class="field__label">Categoría</span><select class="field__select" id="stock-category"><option value="">Todas las categorías</option>${[...new Set(rows.map(categoryName))].map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label></div><label class="field"><span class="field__label">Producto</span><select class="field__select" name="productId" required>${rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku)}</option>`).join('')}</select></label>
-      ${count?'':'<label class="field"><span class="field__label">Movimiento</span><select class="field__select" name="type"><option value="in">Agregar existencias (+)</option><option value="out">Disminuir existencias (−)</option></select></label>'}
-      <label class="field"><span class="field__label" id="stock-quantity-label">${count?'Unidades contadas':'Cantidad de unidades'}</span><input class="field__input" name="quantity" type="number" min="${count?'0':'1'}" step="1" required></label>
-      <div id="store-stock-preview" class="store-stock-preview" aria-live="polite"></div>
-      <label class="field"><span class="field__label">Motivo</span><input class="field__input" name="reason" maxlength="300" required placeholder="${count?'Recuento físico':'Compra, devolución o motivo del ajuste'}"></label>
-      <p class="store-form-error" role="alert"></p><button class="btn btn--primary" type="submit">${count?'Guardar recuento':'Guardar ajuste'}</button></form>`;
+    const valorables=products.filter(p=>p.track_stock);
+    if(!rows.length){
+      // Sin artículos con control: las cifras y una salida clara, sin discursos.
+      const capsulas=products.find(p=>p.legacy);
+      return `<form class="stock-form store-stock-form" id="store-stock-form" data-count="${count}">
+        ${count?stockSummary(valorables):''}
+        <p class="stock-empty">${capsulas?`Cápsulas de Phytoemagry: <strong>${capsulas.base_quantity??0}</strong>`:'Ningún artículo lleva control de inventario.'}</p>
+        <button class="btn btn--ghost btn--block" type="button" data-tab="${capsulas?'productos':'catalogo'}">${capsulas?(count?'Contar cápsulas':'Gestionar cápsulas'):'Ir al catálogo'}</button>
+      </form>`;
+    }
+    const categorias=[...new Set(rows.map(categoryName).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+    return `<form class="stock-form store-stock-form" id="store-stock-form" data-count="${count}">
+      ${count?stockSummary(valorables):''}
+      <div class="stock-find">
+        <input class="field__input" type="search" id="stock-search" placeholder="Buscar producto…" aria-label="Buscar producto por nombre o código" autocomplete="off" enterkeyhint="search">
+        <select class="field__select" id="stock-category" aria-label="Filtrar por categoría"><option value="">Todas</option>${categorias.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+      </div>
+      <div class="stock-adjust" id="stock-adjust" hidden>
+        <div class="stock-selected" id="stock-selected"></div>
+        <div class="stock-row2">
+          ${count?'':'<label class="field"><span class="field__label">Movimiento</span><select class="field__select" name="type"><option value="in">Entrada (+)</option><option value="out">Salida (−)</option></select></label>'}
+          <label class="field"><span class="field__label" id="stock-quantity-label">${count?'Contadas':'Cantidad'}</span><input class="field__input" name="quantity" type="number" min="${count?'0':'1'}" step="1" value="${count?'':'1'}" inputmode="numeric" required></label>
+        </div>
+        <div id="store-stock-preview" class="store-stock-preview" aria-live="polite"></div>
+        <input class="field__input" name="reason" maxlength="300" aria-label="Motivo del ajuste (opcional)" placeholder="Motivo (opcional)">
+        <p class="store-form-error" role="alert"></p>
+        <button class="btn btn--primary btn--block" type="submit">${count?'Guardar recuento':'Guardar ajuste'}</button>
+      </div>
+      <div class="stock-results" id="stock-results" role="listbox" aria-label="Productos con existencias"></div>
+      <select name="productId" hidden aria-hidden="true" tabindex="-1">${rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku)}</option>`).join('')}</select>
+    </form>`;
   }
+
+  /** Una fila por producto: se toca y queda elegido (sin desplegables largos). */
+  /*
+   * CADA FILA, CON TODO LO QUE HACE FALTA PARA DECIDIR.
+   *
+   * Nombre · código · categoría · grupo de negocio, y a la derecha las
+   * existencias con su valor y el mínimo. Sin abrir nada se sabe qué hay, cuánto
+   * vale y si está por debajo del mínimo; el ajuste se hace tocando la fila.
+   */
+  function stockRow(p, selected) {
+    const quantity=productStock(p), minimo=Number(p.min_stock||0);
+    const low=!p.legacy&&quantity<=minimo;
+    const porUnidad=p.legacy?(Number(p.cost_cents)||0)/Math.max(1,Number(p.capsules)||1):Number(p.cost_cents)||0;
+    const valor=Math.max(0,quantity)*porUnidad;
+    const etiqueta=p.legacy?'cáps.':'u.';
+    const meta=[p.sku,categoryName(p),p.business_group].filter(Boolean).map(esc).join(' · ');
+    return `<button class="stock-pick" type="button" role="option" aria-selected="${selected}" data-stock-pick="${esc(p.id)}">
+      <span class="stock-pick__main">
+        <span class="stock-pick__name">${esc(p.name)}</span>
+        <span class="stock-pick__meta">${meta}</span>
+        <span class="stock-pick__extra">${p.legacy?'Saldo compartido de cápsulas':`Mínimo ${minimo} ${etiqueta}`}${p.kind==='service'?' · Servicio':''}${p.track_stock===false?' · Sin control':''}</span>
+      </span>
+      <span class="stock-pick__side">
+        <span class="stock-pick__qty ${low?'stock-pick__qty--low':''}">${quantity}<small>${etiqueta}</small></span>
+        <span class="stock-pick__value">${cash(valor)}</span>
+        ${low?'<span class="stock-pick__low">Bajo mínimo</span>':''}
+      </span>
+    </button>`;
+  }
+
+  function renderStockResults(rows) {
+    const form=document.getElementById('store-stock-form'),box=document.getElementById('stock-results'),select=form?.elements?.productId;
+    if(!form||!box||!select)return;
+    const selected=select.value;
+    box.innerHTML=rows.map(p=>stockRow(p,p.id===selected)).join('')||'<p class="stock-empty">Sin resultados.</p>';
+    form.querySelector('[type=submit]').disabled=!rows.length;
+    document.getElementById('stock-adjust').hidden=!rows.length;
+  }
+
   function updateCount() {
     const form=document.getElementById('store-stock-form');if(!form)return;
+    // Sin lista de artículos (recuento de un negocio solo de cápsulas) no hay nada que calcular aquí.
+    if(!form.elements.productId)return;
     const p=products.find(p=>p.id===form.elements.productId.value);if(!p)return;
     const count=form.dataset.count==='true';
     document.getElementById('stock-quantity-label').textContent=p.legacy?'Cantidad de cápsulas':count?'Unidades contadas':'Cantidad de unidades';
@@ -119,12 +355,30 @@
     const baseline=count?Number(form.dataset.expected):(p.legacy?p.base_quantity:p.quantity);
     const qty=form.elements.quantity.value;
     const delta=qty===''?null:count?Number(qty)-baseline:Number(qty)*(form.elements.type.value==='out'?-1:1);
-    document.getElementById('store-stock-preview').innerHTML=`${p.legacy?'<p class="stock-shared-note">Inventario compartido de Phytoemagry. Introduce la cantidad en <strong>cápsulas</strong>, no en frascos. El ajuste afecta a todas las presentaciones.</p>':''}<div><small>Stock registrado</small><strong>${baseline}</strong></div><div><small>${count?'Diferencia':'Ajuste'}</small><strong>${delta===null?'—':(delta>0?'+':'')+delta}</strong></div><div><small>Quedará</small><strong>${delta===null?'—':baseline+delta}</strong></div>${count&&baseline!==p.quantity?'<p>El stock cambió. Vuelve a abrir Recuento antes de guardar.</p>':''}`;
-
+    /*
+     * Solo las tres cifras: registrado · ajuste · quedará. El aviso de «saldo
+     * compartido» ya lo dice la ficha del artículo (costo por cápsula), así que
+     * repetirlo aquí era ruido.
+     */
+    document.getElementById('store-stock-preview').innerHTML=`<div><small>Registrado</small><strong>${baseline}</strong></div><div><small>${count?'Diferencia':'Ajuste'}</small><strong>${delta===null?'—':(delta>0?'+':'')+delta}</strong></div><div><small>Quedará</small><strong>${delta===null?'—':baseline+delta}</strong></div>${count&&baseline!==p.quantity?'<p class="stock-warn">El stock cambió: vuelve a abrir Recuento.</p>':''}`;
+    /*
+     * Ficha del artículo elegido: nombre, dónde está, cuánto hay y cuánto vale.
+     * Es el contexto necesario para decidir la cantidad, sin más.
+     */
+    const ficha=document.getElementById('stock-selected');
+    if(ficha){
+      const existencias=productStock(p);
+      const porUnidad=p.legacy?(Number(p.cost_cents)||0)/Math.max(1,Number(p.capsules)||1):Number(p.cost_cents)||0;
+      ficha.innerHTML=`<div class="stock-selected__info"><strong>${esc(p.name)}</strong><small>${esc(p.sku)} · ${esc(categoryName(p))}</small></div>
+        <div class="stock-selected__facts"><div><small>Hay</small><strong>${existencias}${p.legacy?' cáps.':''}</strong></div><div><small>${p.legacy?'Costo/cáps.':'Costo'}</small><strong>${cash(porUnidad)}</strong></div><div><small>Valor</small><strong>${cash(Math.max(0,existencias)*porUnidad)}</strong></div></div>`;
+    }
+    const adjust=document.getElementById('stock-adjust');
+    if(adjust)adjust.hidden=false;
   }
   const filterDrawer=document.createElement('dialog');filterDrawer.className='store-filter-drawer';filterDrawer.setAttribute('aria-label','Filtros del catálogo');document.body.append(filterDrawer);
   const categoryDialog=document.createElement('dialog');categoryDialog.className='store-dialog store-category-dialog';categoryDialog.setAttribute('aria-label','Nueva categoría');document.body.append(categoryDialog);
   const dialog=document.createElement('dialog');dialog.className='store-dialog store-product-dialog';dialog.setAttribute('aria-label','Producto o servicio');document.body.append(dialog);
+  const supplierDialog=document.createElement('dialog');supplierDialog.className='store-dialog store-supplier-dialog';supplierDialog.setAttribute('aria-label','Agregar tienda');document.body.append(supplierDialog);
   function categoryOptions(selected='') {
     return '<option value="">Sin categoría</option>'+categoryRows.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.name)}</option>`).join('');
   }
@@ -133,15 +387,17 @@
     for(const p of products){const key=categoryKey(p);if(!rows.has(key))rows.set(key,{name:categoryName(p),count:0});rows.get(key).count++;}
     filterDrawer.innerHTML=`<div class="store-drawer-head"><h2>Filtros</h2><button class="store-icon-button" type="button" data-filter-close aria-label="Cerrar filtros">${svg('close')}</button></div><div class="store-drawer-body">
       <fieldset><legend>Tipo de artículo</legend><div class="store-segmented">${[['all','Todos'],['product','Productos'],['service','Servicios']].map(([value,name])=>`<label><input type="radio" name="kind" value="${value}" ${kind===value?'checked':''}><span>${name}</span></label>`).join('')}</div></fieldset>
+      <fieldset><legend>Procedencia</legend><div class="store-segmented">${[['all','Todos'],['own','Propios'],['third_party','De terceros']].map(([value,name])=>`<label><input type="radio" name="productType" value="${value}" ${productType===value?'checked':''}><span>${name}</span></label>`).join('')}</div></fieldset>
+      <fieldset><legend>Grupo de negocio</legend><div class="store-category-choices"><label><input type="radio" name="businessGroup" value="" ${!businessGroup?'checked':''}><span class="store-category-thumb">⊞</span><span>Todos los grupos</span><small>${products.length}</small></label>${gruposNegocio().map(g=>`<label><input type="radio" name="businessGroup" value="${esc(g)}" ${businessGroup===g?'checked':''}><span class="store-category-thumb">${esc(g[0])}</span><span>${esc(g)}</span><small>${products.filter(p=>p.business_group===g).length}</small></label>`).join('')}</div></fieldset>
       <fieldset><legend>Categoría</legend><div class="store-category-choices"><label><input type="radio" name="category" value="" ${!category?'checked':''}><span class="store-category-thumb">⊞</span><span>Todas las categorías</span><small>${products.length}</small></label>${[...rows.entries()].sort((a,b)=>a[1].name.localeCompare(b[1].name,'es')).map(([key,c])=>`<label><input type="radio" name="category" value="${esc(key)}" ${category===key?'checked':''}>${c.image_url?`<img class="store-category-thumb" src="${esc(c.image_url)}" alt="">`:`<span class="store-category-thumb">${esc(c.name[0])}</span>`}<span>${esc(c.name)}</span><small>${c.count}</small></label>`).join('')}</div>${canManage?`<button type="button" class="store-text-button" data-category-new>${svg('plus')}Nueva categoría</button>`:''}</fieldset>
       <fieldset><legend>Presentación</legend><div class="store-layout-switch" role="group" aria-label="Vista del catálogo"><button type="button" data-store-layout="grid" aria-label="Vista de cuadrícula" aria-pressed="${layout==='grid'}">${svg('grid')}<span>Cuadrícula</span></button><button type="button" data-store-layout="list" aria-label="Vista de lista" aria-pressed="${layout==='list'}">${svg('list')}<span>Lista</span></button></div></fieldset></div>
       <div class="store-drawer-footer"><button class="btn btn--ghost" type="button" data-filter-reset>Restablecer</button><button class="btn btn--primary" type="button" data-filter-close>Ver resultados</button></div>`;
     if(!filterDrawer.open)filterDrawer.showModal();
   }
-  filterDrawer.addEventListener('change',e=>{if(e.target.name==='kind')kind=e.target.value;if(e.target.name==='category')category=e.target.value;render();});
+  filterDrawer.addEventListener('change',e=>{if(e.target.name==='kind')kind=e.target.value;if(e.target.name==='productType')productType=e.target.value;if(e.target.name==='category')category=e.target.value;if(e.target.name==='businessGroup')businessGroup=e.target.value;render();});
   filterDrawer.addEventListener('click',e=>{
     if(e.target.closest('[data-filter-close]'))filterDrawer.close();
-    if(e.target.closest('[data-filter-reset]')){kind='all';category='';render();openFilters();}
+    if(e.target.closest('[data-filter-reset]')){kind='all';productType='all';category='';businessGroup='';render();openFilters();}
     if(e.target.closest('[data-category-new]'))openCategory();
     const b=e.target.closest('[data-store-layout]');if(b){layout=b.dataset.storeLayout;try{localStorage.setItem('fulltech.catalog.layout',layout);}catch{}cards();filterDrawer.querySelectorAll('[data-store-layout]').forEach(n=>n.setAttribute('aria-pressed',String(n.dataset.storeLayout===layout)));}
   });
@@ -184,6 +440,7 @@
     ${!editing?'<label class="field" data-stock-field><span class="field__label">Cantidad inicial</span><input class="field__input" name="quantity" type="number" min="0" step="1" value="0" required></label>':''}
     ${!p.legacy?`<label class="field" data-stock-field><span class="field__label">Stock mínimo</span><input class="field__input" name="min_stock" type="number" min="0" step="1" value="${p.min_stock||0}" required></label>`:'<p>El costo y las cápsulas se administran desde Inventario → Gestionar cápsulas.</p>'}
     <label class="store-check"><input name="active" type="checkbox" ${p.active!==false?'checked':''}> Disponible para nuevas ventas</label>
+    ${!p.legacy?`<label class="store-check"><input name="track_stock" type="checkbox" ${p.track_stock!==false?'checked':''}> Controlar existencias <small>Si se desmarca, se vende sin control de inventario (se compra al proveedor cuando lo piden)</small></label>`:''}
     <p class="store-form-error" role="alert"></p></div><div class="store-form-footer"><button class="btn btn--primary btn--block" type="submit">Guardar artículo</button></div></form>`;
     dialog.querySelector('[name=kind]').value=p.kind||'product';toggleKind();dialog.showModal();
   }
@@ -212,45 +469,132 @@
     if(e.target.id!=='store-product-form')return;e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');
     button.disabled=true;form.querySelector('[role=alert]').textContent='';
     const data=Object.fromEntries(new FormData(form));data.kind=editing?.kind||data.kind;data.active=form.elements.active.checked;
+    if(form.elements.track_stock)data.track_stock=form.elements.track_stock.checked;
     delete data.image;if(imageData)data.image=imageData;if(editing)data.version=editing.version;
     try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load(true);notice('Artículo guardado.');}
     catch(err){form.querySelector('[role=alert]').textContent=err.message;}finally{button.disabled=false;}
   });
   document.addEventListener('click',e=>{
-    if(!e.target.closest('#view-catalogo,#view-inventario,#view-recuento'))return;
+    // La barra de búsqueda del catálogo se mueve a la cabecera del POS
+    // (`#pos-search-host`), que está FUERA de las vistas: si no se incluye,
+    // el botón «Filtros» no abría nada cuando el catálogo va con el POS.
+    if(!e.target.closest('#view-catalogo,#view-inventario,#view-recuento,#pos-search-host'))return;
+    const stockPick=e.target.closest('[data-stock-pick]');
+    if(stockPick){
+      const form=document.getElementById('store-stock-form');
+      if(form){
+        form.elements.productId.value=stockPick.dataset.stockPick;
+        delete form.dataset.expected;delete form.dataset.requestId;
+        document.querySelectorAll('[data-stock-pick]').forEach(n=>n.setAttribute('aria-selected',String(n===stockPick)));
+        updateCount();
+        form.elements.quantity?.focus({preventScroll:true});
+      }
+      return;
+    }
     const link=e.target.closest('[data-store-detail]');
     if(link&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey&&e.button===0){e.preventDefault();navigateProduct(link.dataset.storeDetail||null);return;}
     if(e.target.closest('[data-store-filters]')){openFilters();return;}
     const layoutButton=e.target.closest('[data-store-layout]');if(layoutButton){layout=layoutButton.dataset.storeLayout;try{localStorage.setItem('fulltech.catalog.layout',layout);}catch{}render();document.querySelector(`[data-store-layout="${layout}"]`)?.focus({preventScroll:true});return;}
-    if(e.target.closest('[data-store-clear]')){query='';kind='all';category='';render();return;}
+    if(e.target.closest('[data-store-clear]')){query='';kind='all';productType='all';category='';businessGroup='';render();return;}
+    const addSupplier=e.target.closest('[data-supplier-add]');
+    if(addSupplier){agregarTienda(addSupplier.dataset.supplierAdd);return;}
     if(e.target.closest('[data-store-new]'))edit();
     const editButton=e.target.closest('[data-store-edit]');if(editButton)edit(editButton.dataset.storeEdit);
   });
-  document.addEventListener('input',e=>{if(e.target.id==='store-search'){query=e.target.value;cards();}if(e.target.closest('#store-stock-form'))updateCount();});
+  document.addEventListener('input',e=>{if(e.target.id==='store-search'){query=e.target.value;cards();}if(e.target.id==='stock-search')filterStock();if(e.target.closest('#store-stock-form')&&e.target.id!=='stock-search')updateCount();});
   document.addEventListener('change',e=>{if(e.target.id==='store-kind'){kind=e.target.value;cards();}if(e.target.closest('#store-stock-form')){if(e.target.name==='productId'){delete e.target.form.dataset.expected;delete e.target.form.dataset.requestId;}updateCount();}});
   function filterStock(){
     const form=document.getElementById('store-stock-form');if(!form)return;
-    const q=document.getElementById('stock-search').value.trim().toLocaleLowerCase(),category=document.getElementById('stock-category').value,select=form.elements.productId,previous=select.value;
-    const rows=products.filter(p=>p.track_stock&&(form.dataset.count!=='true'||!p.legacy)&&(!category||categoryName(p)===category)&&(p.name+' '+p.sku).toLocaleLowerCase().includes(q));
+    // El recuento de un negocio que solo vende cápsulas no lleva lista de artículos.
+    if(!form.elements.productId)return;
+    const q=(document.getElementById('stock-search')?.value??'').trim().toLocaleLowerCase('es'),category=document.getElementById('stock-category')?.value??'',select=form.elements.productId,previous=select.value;
+    const rows=products.filter(p=>p.track_stock&&(form.dataset.count!=='true'||!p.legacy)&&(!category||categoryName(p)===category)&&`${p.name} ${p.sku} ${categoryName(p)}`.toLocaleLowerCase('es').includes(q));
     select.innerHTML=rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.sku)}</option>`).join('')||'<option value="">Sin resultados</option>';
-    if(rows.some(p=>p.id===previous))select.value=previous;
+    // El primero queda elegido: se ve el saldo sin tener que abrir nada.
+    if(!rows.some(p=>p.id===select.value))select.value=rows.length?rows[0].id:'';
     if(select.value!==previous){delete form.dataset.expected;delete form.dataset.requestId;}
-    form.querySelector('[type=submit]').disabled=!rows.length;
-    document.getElementById('store-stock-preview').innerHTML='';updateCount();
+    renderStockResults(rows);
+    updateCount();
   }
-  document.addEventListener('input',e=>{if(e.target.id==='stock-search')filterStock();});
+  // El buscador y la categoría van juntos: uno filtra la lista, el otro la acota.
   document.addEventListener('change',e=>{if(e.target.id==='stock-category')filterStock();});
+  /*
+   * UNA ESCRITURA DE INVENTARIO TIENE TRES RESULTADOS, Y SE DICEN TAL CUAL:
+   *
+   *   confirmado  → el servidor lo aceptó (200 sin `pending`);
+   *   pendiente   → se guardó en el dispositivo y subirá al reconectar (la capa
+   *                 offline devuelve `pending:true`);
+   *   rechazado   → NO se aplicó, con el motivo real (permisos, conflicto, stock).
+   *
+   * Nunca un «No se pudo guardar» genérico cuando en realidad se perdió la
+   * conexión, y nunca un «Guardado» cuando solo está en la cola.
+   */
+  function stockRejectionMessage(status, data) {
+    const code = String(data?.error ?? '');
+    if (code === 'stale_count') return 'Otro usuario cambió el stock mientras contabas. Actualiza y vuelve a contar.';
+    if (code === 'insufficient_stock') return data?.message || 'No hay existencias suficientes para esa salida.';
+    if (status === 403) return data?.message || 'Tu cuenta no puede cambiar el inventario.';
+    if (status === 409) return data?.message || 'El stock cambió mientras guardabas. Actualiza y vuelve a intentarlo.';
+    if (status === 422) return data?.message || 'Revisa la cantidad: no es válida.';
+    if (status === 429) return 'Demasiados intentos seguidos. Espera unos segundos y reintenta.';
+    if (status >= 500) return 'El servidor falló al guardar. El cambio NO se aplicó; vuelve a intentarlo.';
+    return data?.message || 'El cambio no se aplicó. Revisa el motivo e inténtalo otra vez.';
+  }
+  async function writeStock(path, body) {
+    const generation = epoch, wasAuthenticated = authenticated;
+    let response;
+    try {
+      response = await fetch(`/api/admin/${path}`, { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    } catch (error) {
+      // `fetch` rechazado = no hubo respuesta. Se distingue de un rechazo del servidor.
+      return navigator.onLine === false
+        ? { kind: 'offline', message: 'Sin conexión: el cambio no se envió. Reintenta cuando tengas internet.' }
+        : { kind: 'network', message: 'No se pudo conectar con el servidor (sin respuesta). El cambio NO se aplicó.' };
+    }
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      if (generation === epoch && wasAuthenticated) window.dispatchEvent(new Event('fulltech:session-expired'));
+      return { kind: 'rejected', status: 401, message: 'Tu sesión terminó. Vuelve a entrar y repite el ajuste.' };
+    }
+    if (!response.ok || data.ok === false) return { kind: 'rejected', status: response.status, message: stockRejectionMessage(response.status, data) };
+    // `x-fulltech-local` = lo contestó la cola del dispositivo, no el servidor.
+    const pending = data.pending === true || data.offline === true || response.headers.get('x-fulltech-local') === '1';
+    return { kind: pending ? 'pending' : 'confirmed', data };
+  }
   document.addEventListener('submit',async e=>{
-    if(e.target.id!=='store-stock-form')return;e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');button.disabled=true;
+    if(e.target.id!=='store-stock-form')return;e.preventDefault();
+    const form=e.target,button=form.querySelector('[type=submit]'),alertBox=form.querySelector('[role=alert]');
+    button.disabled=true;if(alertBox)alertBox.textContent='';notice('');
     const data=Object.fromEntries(new FormData(form));const p=products.find(p=>p.id===data.productId);
-    data.type=form.dataset.count==='true'?'count':data.type;data.expected=Number(form.dataset.expected??p?.quantity);
-    form.dataset.requestId ||= crypto.randomUUID();data.requestId=form.dataset.requestId;
-    try{if(!p)throw new Error('Selecciona un producto.');
-      if(p.legacy){
-        const response=await fetch('/api/admin/inventory/adjust',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({direction:data.type,quantity:Number(data.quantity),reason:data.reason,idempotencyKey:data.requestId})});
-        const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.message||'No se pudo ajustar el inventario. Revisa la cantidad disponible.');
-      }else await request(`products/${encodeURIComponent(p.id)}/stock`,data);form.reset();delete form.dataset.expected;delete form.dataset.requestId;await load(true);notice('Inventario actualizado.');}
-    catch(err){form.querySelector('[role=alert]').textContent=err.message;button.disabled=false;}
+    const count=form.dataset.count==='true';
+    data.type=count?'count':(data.type||'in');
+    data.expected=Number(form.dataset.expected??productStock(p));
+    form.dataset.requestId ||= crypto.randomUUID();
+    const requestId=form.dataset.requestId;
+    try{
+      if(!p)throw new Error('Selecciona un producto.');
+      /*
+       * EL RECUENTO VA POR SU PROPIA RUTA. `/inventory/adjust` solo entiende
+       * in/out: mandarle un recuento lo habría convertido en una ENTRADA (contar
+       * 120 cápsulas cuando había 100 sumaba 120). Con `/inventory/count` se FIJA
+       * el valor contado. Hoy el formulario de recuento no ofrece las cápsulas
+       * legacy, pero el camino queda correcto y probado.
+       */
+      const result = p.legacy
+        ? await writeStock(count?'inventory/count':'inventory/adjust', count?{countedQuantity:Number(data.quantity),reason:data.reason,idempotencyKey:requestId}:{direction:data.type,quantity:Number(data.quantity),reason:data.reason,idempotencyKey:requestId})
+        : await writeStock(`store/products/${encodeURIComponent(p.id)}/stock`, {type:data.type,quantity:Number(data.quantity),expected:data.expected,reason:data.reason,requestId});
+      if(result.kind==='rejected'){if(alertBox)alertBox.textContent=result.message;button.disabled=false;return;}
+      form.reset();delete form.dataset.expected;delete form.dataset.requestId;
+      await load(true);
+      notice(result.kind==='pending'
+        ? 'Guardado en el dispositivo · pendiente de sincronizar.'
+        : 'Inventario actualizado.');
+    }
+    catch(err){
+      if(alertBox)alertBox.textContent=err?.message||'El cambio no se aplicó.';
+      button.disabled=false;
+    }
   });
   function stopLive(){source?.close();source=null;if(poll)clearInterval(poll);poll=null;}
   function startLive(){
@@ -282,3 +626,4 @@
   window.addEventListener('phyto:calling-logout',()=>{epoch++;pending=false;authenticated=false;signature='';stopLive();products=[];categoryRows=[];movements=[];canManage=false;filterDrawer.close();categoryDialog.close();dialog.close();dialog.innerHTML='';pages.forEach(p=>{document.getElementById(`store-${p}`)?.replaceChildren();});});
   if(pages.includes(document.body.dataset.tab)){page=document.body.dataset.tab;render();load().then(startLive);}
 })();
+

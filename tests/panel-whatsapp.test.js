@@ -152,8 +152,14 @@ describe('nada se envía solo', () => {
     // Y el CONTADOR DE DESHACER (1 s): solo baja el número del botón «Deshacer · 7s»
     // del mensaje que aún no ha salido. No envía nada —al contrario: existe para que
     // el mensaje NO salga si alguien se arrepiente— y se apaga solo al terminar.
+    //
+    // Y la COMPROBACIÓN DE VERSIÓN (10 min): pide `/admin/index.html` con
+    // `cache:'no-store'` solo para ver si hay una versión nueva del panel. No
+    // escribe en el servidor ni envía mensajes: únicamente enseña la barra
+    // «Actualizar». Se comprueba abajo, no basta con contarlo.
     const intervals = (app.match(/setInterval\([^)]*\)/g) ?? []).sort();
     expect(intervals).toEqual([
+      'setInterval(()',
       'setInterval(()',
       'setInterval(()',
       'setInterval(deliveryPollTick, 8000)',
@@ -161,6 +167,12 @@ describe('nada se envía solo', () => {
       'setInterval(tick, 200)',
       'setInterval(waPollTick, 8000)',
     ]);
+    // La comprobación de versión: solo LEE el HTML del panel.
+    const versionFrom = app.indexOf('function revisarVersionPanel');
+    const versionBlock = app.slice(versionFrom, versionFrom + 1200);
+    expect(versionBlock).toContain("cache: 'no-store'");
+    expect(versionBlock).not.toContain('POST');
+    expect(versionBlock).not.toContain('/messages');
     // El sondeo del mapa: fuera de su pantalla no corre, y solo LEE.
     const mapaFrom = app.indexOf('function startOrdersMapPoll');
     const mapaPoll = app.slice(mapaFrom, mapaFrom + 400);
@@ -181,7 +193,15 @@ describe('nada se envía solo', () => {
     expect(deliveryTick).toContain('refreshDeliveryTracking');
     expect(deliveryTick).not.toContain('POST');
     expect(deliveryTick).not.toContain('/messages');
-    expect(app).not.toMatch(/autoSend|sendAutomatically|scheduleSend/i);
+    // `autoSend` SÍ existe, pero SOLO en la acción explícita de una persona
+    // («Asignar repartidor» en un pedido). No hay envío de fondo: los
+    // temporizadores de arriba no lo usan y aquí se comprueba que aparece una
+    // sola vez, dentro del manejador del clic.
+    expect(app.match(/autoSend/g) ?? []).toHaveLength(1);
+    const courierAt = app.indexOf("closest('[data-order-courier-assign]')");
+    expect(courierAt).toBeGreaterThan(-1);
+    expect(app.slice(courierAt, courierAt + 1600)).toContain('autoSend: true');
+    expect(app).not.toMatch(/sendAutomatically|scheduleSend/i);
 
     // El reloj de la grabación solo escribe el tiempo en pantalla.
     const desde = app.indexOf('const tick = () => {');

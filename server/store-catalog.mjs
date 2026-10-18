@@ -105,7 +105,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     } : { ...p, stock_initialized: true });
   }
   function saleItem(p) {
-    return { id: p.id, name: p.name, label: p.name, kind: p.kind, product_id: p.id,
+    return { id: p.id, name: p.name, label: p.name, kind: p.kind, product_type: p.product_type ?? null, product_id: p.id,
       price: p.price_cents / 100, currency: 'DOP', available: p.active, active: p.active,
       capsules: p.capsules || 0, capsule_quantity: p.capsules || 0, completeBottle: !!p.completeBottle,
       general: !p.legacy, track_stock: p.track_stock, stock: p.quantity,
@@ -120,17 +120,59 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       const kind = previous?.legacy ? 'product' : input.kind;
       if (!['product','service'].includes(kind)) throw fail('invalid_kind', 'Elige producto o servicio.');
       if (previous && kind !== previous.kind) throw fail('kind_locked', 'No se puede cambiar el tipo de un artículo ya creado.');
+      /*
+       * POLÍTICA DE INVENTARIO.
+       *
+       * Un artículo puede llevar existencias (`track_stock: true`) o venderse sin
+       * control de inventario (`false`, para lo que se compra al proveedor cuando
+       * lo piden). Cambiarla es un proceso CONTROLADO: si el artículo tiene
+       * existencias, primero hay que dejarlas en cero con un ajuste, porque si no
+       * el saldo quedaría sin significado y el historial de movimientos mentiría.
+       */
+      const requested = typeof input.track_stock === 'boolean'
+        ? input.track_stock
+        : input.track_stock === undefined || input.track_stock === null
+          ? null
+          : !['false', '0', ''].includes(String(input.track_stock).toLowerCase());
+      if (kind === 'service' && requested === true) throw fail('invalid_kind', 'Un servicio no lleva existencias.');
+      if (previous && requested !== null && Boolean(previous.track_stock) !== requested && Number(previous.quantity) !== 0) {
+        throw fail('policy_locked', 'Para cambiar el control de inventario, deja antes las existencias en cero con un ajuste de inventario.', 409);
+      }
+      const trackStock = kind === 'product'
+        ? requested === null
+          ? previous ? previous.track_stock !== false : true
+          : requested
+        : false;
+      /*
+       * TIPO COMERCIAL (no confundir con `kind`: producto o servicio).
+       *   own         → está en nuestro almacén y descuenta existencias.
+       *   third_party → se compra en una tienda; NUNCA descuenta stock propio.
+       * Los PHYTOEMAGRY de siempre quedan como `own` sin cambiar nada más. Si no
+       * se dice nada en un producto nuevo, se deduce de la política de stock.
+       */
+      const requestedType = ['own', 'third_party'].includes(input.product_type) ? input.product_type : null;
+      const productType = previous?.legacy
+        ? 'own'
+        : requestedType ??
+          previous?.product_type ??
+          (kind === 'service' ? 'own' : trackStock ? 'own' : 'third_party');
+      if (kind === 'service' && productType === 'third_party') {
+        throw fail('invalid_product_type', 'Un servicio no se compra en una tienda: elige «Propio».');
+      }
+      if (productType === 'third_party' && trackStock && Number(previous?.quantity ?? 0) > 0) {
+        throw fail('policy_locked', 'Un producto de terceros no lleva existencias propias: deja antes el stock en cero con un ajuste.', 409);
+      }
       const name = clean(input.name), sku = clean(input.sku, 60).toUpperCase();
       if (!name || !/^[A-Z0-9][A-Z0-9._-]{0,59}$/.test(sku)) throw fail('invalid_product', 'Escribe un nombre y un código válido sin espacios.');
-      if (kind === 'product' && !image && !previous?.image_url) throw fail('image_required', 'Agrega la imagen del producto.');
+      if (kind === 'product' && !image && !previous?.image_url && !previous?.imported_from) throw fail('image_required', 'Agrega la imagen del producto.');
       if (!integer(input.min_stock ?? 0)) throw fail('invalid_quantity', 'El stock mínimo debe ser un número entero mayor o igual a cero.');
       let category=null;
       if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
       else if(input.category_id===undefined)category=await ensureCategory(q,input.category||'');
-      const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind,
+      const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind, product_type: productType,
         description: clean(input.description, 2000), category: category?.name||'',category_id:category?.id||null,unit: 'unidad',
         price_cents: money(input.price), cost_cents: previous?.legacy ? 0 : money(input.cost),
-        track_stock: kind === 'product', active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
+        track_stock: trackStock, active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
         updated_at: clock().toISOString(), updated_by: actor?.display_name || 'Administración' };
       if (image) {
@@ -156,8 +198,12 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return doc;
   }
   async function adjust(id, input, actor) {
-    const reason = clean(input.reason,300);
-    if (!reason) throw fail('reason_required','Escribe el motivo del movimiento.');
+    /*
+     * El motivo es OPCIONAL: quien ajusta muchas veces al día no tiene que
+     * inventar una frase. Si no lo escribe, se guarda uno que diga de dónde
+     * viene el movimiento, para que el historial siga siendo legible.
+     */
+    const reason = clean(input.reason,300) || (input.type==='count'?'Recuento físico':input.type==='in'?'Entrada manual':'Salida manual');
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(input.requestId || '')) throw fail('invalid_request_id','Actualiza la página y vuelve a intentarlo.');
     const current = await one(id);
     if (!current) throw fail('not_found','Producto no encontrado.',404);
@@ -230,7 +276,42 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     }
     return [...new Set(issues)];
   }
-  return {list,save,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,
+  /**
+   * CAMBIO DE TIPO COMERCIAL, aislado del resto de la ficha.
+   *
+   * Editar un producto exige reenviar precio, categoría e imagen; para marcar
+   * «esto se compra en una tienda» eso es demasiado y se presta a pisar datos.
+   * Aquí solo se toca `product_type`, con las mismas garantías: no se cambia el
+   * tipo de un PHYTOEMAGRY y no se marca de terceros algo con existencias.
+   */
+  async function setProductType(id, productType, actor) {
+    if (!['own', 'third_party'].includes(productType)) {
+      throw fail('invalid_product_type', 'Elige «Propio» o «De terceros».');
+    }
+    return transaction(async (q) => {
+      const previous = await one(id, q, true);
+      if (!previous) throw fail('not_found', 'El producto ya no existe.', 404);
+      if (previous.legacy) throw fail('product_type_locked', 'Los productos Phytoemagry son propios por su inventario.', 409);
+      if (productType === 'third_party' && previous.track_stock && Number(previous.quantity) > 0) {
+        throw fail(
+          'policy_locked',
+          'Un producto de terceros no lleva existencias propias: deja antes el stock en cero con un ajuste.',
+          409,
+        );
+      }
+      const doc = {
+        ...previous,
+        product_type: productType,
+        // De terceros nunca descuenta stock propio.
+        track_stock: productType === 'third_party' ? false : previous.track_stock,
+        updated_at: clock().toISOString(),
+        updated_by: actor?.display_name || 'Administración',
+      };
+      await q('UPDATE fulltech_catalog_v1 SET doc=$1,version=version+1 WHERE id=$2', [JSON.stringify(doc), id]);
+      return one(id, q);
+    });
+  }
+  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

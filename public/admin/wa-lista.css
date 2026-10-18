@@ -1077,3 +1077,59 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
   margin: 2px 0 6px;
 }
 
+/* --------------------------------------------------------------------------
+ * AVISO DE ARCHIVADOS — DISCRETO
+ * Una sola línea, tono suave y sin caja: informa y lleva a «Archivados» sin
+ * robarle espacio a la lista. Los chats archivados son de la empresa; el aviso
+ * existe solo para que nadie piense que otra persona se los llevó.
+ * ------------------------------------------------------------------------ */
+body[data-tab='whatsapp'] .wa-archived-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--wa-line);
+  background: transparent;
+  color: var(--wa-ink-soft);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+body[data-tab='whatsapp'] .wa-archived-hint:hover,
+body[data-tab='whatsapp'] .wa-archived-hint:focus-visible {
+  background: var(--wa-row-hover);
+  color: var(--wa-ink);
+}
+
+body[data-tab='whatsapp'] .wa-archived-hint__icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: currentColor;
+  opacity: 0.75;
+}
+
+body[data-tab='whatsapp'] .wa-archived-hint__icon .svg {
+  width: 16px;
+  height: 16px;
+}
+
+body[data-tab='whatsapp'] .wa-archived-hint__text strong {
+  font-weight: 600;
+  color: var(--wa-ink);
+}
+
+body[data-tab='whatsapp'] .wa-archived-hint__go {
+  margin-left: auto;
+  color: var(--wa-accent-ink);
+  font-weight: 600;
+}
+

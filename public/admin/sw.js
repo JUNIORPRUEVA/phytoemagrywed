@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v128-consolidado';
+const VERSION = 'crm-v163-wa-estado-real';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -53,6 +53,8 @@ const SHELL = [
   '/admin/wa-desktop.css',
   '/admin/drawer-menu.css',
   '/admin/panel-desktop.css',
+  '/admin/ios.css',
+  '/admin/ios.js',
   '/admin/app.js',
   '/admin/offline-storage.js',
   '/admin/offline.js',
@@ -63,6 +65,10 @@ const SHELL = [
   '/admin/calling.js',
   '/admin/store.js',
   '/admin/store.css',
+  '/admin/stock.css',
+  '/admin/realtime.js',
+  '/admin/supervisor.js',
+  '/admin/supervisor.css',
   '/admin/pos.js',
   '/admin/pos-math.js',
   '/admin/quote-document.js',
@@ -83,7 +89,19 @@ const SHELL = [
   '/admin/fulltech-icon-maskable-512.png?v=2',
   '/admin/fulltech-apple-touch-icon.png?v=2',
 ];
-for(const file of ['/admin/receipt-pdf.js','/admin/receipt-brand.js','/admin/receipt-viewer.html','/admin/receipt-launcher.js','/admin/receipt-viewer.js','/admin/vendor/pdfjs/pdf.mjs','/admin/vendor/pdfjs/pdf.worker.mjs','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf','/admin/vendor/pdfjs/standard_fonts/LiberationSans-Italic.ttf'])REQUIRED_SHELL.add(file);
+for(const file of ['/admin/receipt-pdf.js','/admin/receipt-brand.js','/admin/receipt-viewer.html','/admin/receipt-launcher.js','/admin/receipt-viewer.js'])REQUIRED_SHELL.add(file);
+/*
+ * PDF.JS NO ES OBLIGATORIO.
+ *
+ * `public/admin/vendor/pdfjs/` se copia en el BUILD (`scripts/build.mjs` desde
+ * node_modules) y está ignorado por git. Cuando esa carpeta no existe —UAT,
+ * un servidor recién clonado— sus 5 peticiones dan 404 y, como estaban en
+ * REQUIRED_SHELL, el `install` del service worker fallaba ENTERO: el navegador
+ * borraba el registro y el panel quedaba SIN service worker. Sin service worker
+ * no hay armazón guardado y cualquier corte de red mostraba «este contenido
+ * todavía no está descargado». El visor de PDF es una mejora opcional: si falta
+ * se registra en `missing[]` y el resto del panel sigue funcionando.
+ */
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -94,17 +112,45 @@ self.addEventListener('install', (event) => {
          * ARCHIVO A ARCHIVO, no con `addAll`: con `addAll` un solo archivo que
          * falte (un icono, un sonido) deja el armazón ENTERO sin guardar y el
          * panel no abre sin conexión. Así, lo que se pueda guardar se guarda.
+         *
+         * UN ARCHIVO QUE FALTA NO TUMBA EL SERVICE WORKER.
+         *
+         * Antes, si fallaba uno de `REQUIRED_SHELL`, el `install` se rechazaba y
+         * el navegador BORRABA el registro: el panel se quedaba sin service
+         * worker (sin armazón, sin push) y cualquier corte de red mostraba «este
+         * contenido todavía no está descargado». Pasó de verdad: `pdf.js` se
+         * copia en el build y no existía en UAT, así que los 5 archivos del visor
+         * daban 404 y borraban el registro entero.
+         *
+         * Ahora el fallo se ANOTA (`missing` / `failedRequired`, visible en
+         * `FulltechOffline.status().shell` y en la consola): se dice la verdad sin
+         * dejar al usuario sin aplicación.
          */
         const missing=[];
+        const failedRequired=[];
+        /*
+         * UN ARCHIVO LENTO O COLGADO TAMPOCO PUEDE BLOQUEAR LA INSTALACIÓN.
+         *
+         * `cache.add()` no tiene tope de tiempo: si una URL no responde (una CDN
+         * caída, un archivo que no existe y el servidor se queda esperando), el
+         * `install` no termina NUNCA, el service worker no se activa y el panel se
+         * queda sin armazón. Cada archivo tiene su propio tope: si tarda, se
+         * anota como faltante y se sigue con el resto.
+         */
+        const conTope = (promise, ms) =>
+          Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
         for (const url of SHELL) {
           try {
-            await cache.add(url);
+            await conTope(cache.add(url), 8000);
           } catch (error) {
             missing.push(url);
-            if (REQUIRED_SHELL.has(url)) throw error;
+            if (REQUIRED_SHELL.has(url)) failedRequired.push(url);
           }
         }
-        await globalThis.FulltechOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing});
+        if (failedRequired.length) {
+          console.warn('[sw] archivos esenciales sin guardar:', failedRequired.join(', '));
+        }
+        await globalThis.FulltechOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing,failedRequired});
       })
       .then(() => self.skipWaiting()),
   );
@@ -225,13 +271,35 @@ self.addEventListener('fetch', (event) => {
         const store=globalThis.FulltechOfflineStore;if(!store)return null;
         const identity=await store.get('identity');
         if(!identity||Date.now()-identity.verifiedAt>86400000)return null;
-        const saved=await store.get('response:'+identity.key+':'+url.href);
-        if(!saved||saved.owner!==identity.key)return null;
-        return new Response(saved.body,{status:saved.status,headers:[...saved.headers,['x-fulltech-offline','1']]});
+        let saved=await store.get('response:'+identity.key+':'+url.href);
+        if(saved&&saved.owner!==identity.key)saved=null;
+        /*
+         * MISMA RUTA, OTRA CONSULTA (buscar, filtrar, cambiar de período).
+         * La descarga anticipada guarda URIs concretas; sin este respaldo, al
+         * filtrar sin red el módulo entero parecía «no descargado». Se usa la
+         * copia más reciente de ESA ruta, igual que hace `offline.js`.
+         */
+        if(!saved){
+          let newest=null;
+          const entries=typeof store.entries==='function'?await store.entries():[];
+          for(const [,value] of entries){
+            if(!value||value.owner!==identity.key||!value.url)continue;
+            let path;try{path=new URL(value.url).pathname;}catch{continue;}
+            if(path!==url.pathname)continue;
+            if(!newest||(value.at||0)>(newest.at||0))newest=value;
+          }
+          saved=newest||null;
+        }
+        if(!saved)return null;
+        const headers=[...saved.headers,['x-fulltech-offline','1']];
+        if(saved.at)headers.push(['x-fulltech-offline-at',new Date(saved.at).toISOString()]);
+        return new Response(saved.body,{status:saved.status,headers});
       }
       try{
         const response=await fetch(request);
-        if(response.status===401){await globalThis.FulltechOfflineStore?.remove('identity');return response;}
+        /* Solo los endpoints de sesión invalidan la copia local (ver offline.js). */
+        if(response.status===401&&/^\/api\/admin\/(session|auth\/me|data|login|logout)(\/|$)/.test(url.pathname)){await globalThis.FulltechOfflineStore?.remove('identity');return response;}
+        if(response.status===401)return response;
         if([502,503,504].includes(response.status)||url.pathname.startsWith('/api/admin/pos/local/'))return (await local())||response;
         if(response.status===404&&/\/(receipt|pdf)$/.test(url.pathname)){
           const store=globalThis.FulltechOfflineStore,identity=await store?.get('identity');
@@ -345,3 +413,13 @@ self.addEventListener('notificationclick', (event) => {
     })(),
   );
 });
+
+
+
+
+
+
+
+
+
+

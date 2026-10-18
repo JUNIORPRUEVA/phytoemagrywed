@@ -32,13 +32,24 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('function updateDeliveryDetailMap');
     expect(app).toContain('if (Array.isArray(point) && point.length >= 2)');
     expect(app).toContain('if (meters === null || meters === undefined || meters === \'\') return \'\';');
-    expect(app).toContain('const measuredDistance = current && destination ? metersBetween(current, destination) : null;');
+    /*
+     * REGLA DE NEGOCIO: la ruta SIEMPRE sale del repartidor.
+     *   · GPS en vivo → esa posición;
+     *   · si no, la última señal guardada (etiquetada como tal);
+     *   · si no hay ninguna, NO se dibuja ruta (`hasRoute` exige origen real).
+     */
+    expect(app).toContain('const origin = mapLatLng(devicePoint) ?? lastPoint;');
+    expect(app).toContain("const gpsState = mapLatLng(devicePoint) ? 'live' : lastPoint ? 'last' : 'none';");
+    expect(app).toContain('hasRoute: Boolean(origin) && routePoints.length >= 2,');
+    expect(app).toContain('function deliveryGpsFreshness');
+    expect(app).toContain('function deliverySignalAgeMinutes');
+    expect(app).toContain('Sin señal de tu GPS: no se dibuja la ruta hasta que la ubicación esté activa.');
     expect(app).toContain('class="delivery-detail-map" id="delivery-detail-map"');
     expect(app).toContain('class="delivery-map-mode" data-delivery-map-mode');
     expect(app).toContain("return MAP_BASE_LAYERS[state.deliveryDetailMap?.base] ? state.deliveryDetailMap.base : 'satelite';");
     expect(app).toContain('function toggleDeliveryDetailMapBase');
     expect(app).toContain(".bindTooltip('Cliente'");
-    expect(app).toContain(".bindTooltip('Tu ubicación'");
+    expect(app).toContain(".bindTooltip('Tú'");
     expect(app).toContain('if (activeOrder && session.order_id === activeOrder.id) updateDeliveryDetailMap(activeOrder);');
     expect(app).toContain('class="icon-btn delivery-detail-back"');
     expect(app).toContain('function deliveryDetailPanelHtml');
@@ -53,7 +64,7 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('Aceptar y contactar');
     expect(app).toContain('data-delivery-order-detail');
     expect(app).toContain('Ver pedido');
-    expect(app).toContain('-- *DELIVERY* --');
+    expect(app).toContain('Este mensaje se enviará con tu firma de repartidor.');
     expect(app).toContain('Voy a salir para allá, para que estés pendiente, por favor.');
     /*
      * EL AVISO AL CLIENTE LO MANDA EL SERVIDOR, UNA VEZ Y CORTO. El panel tenía
@@ -77,6 +88,38 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(css).toContain('@keyframes delivery-action-sheen');
     expect(css).toContain('.delivery-map-label--customer');
     expect(css).toContain('.delivery-map-label--driver');
+  });
+
+  it('mapa del repartidor: cabecera, controles flotantes, acciones de una mano y modo seguir', () => {
+    // Cabecera con pedido, etapa, distancia, ETA y estado del GPS.
+    expect(app).toContain('function deliveryHeaderHtml');
+    expect(app).toContain('data-dv-map-fact="distance"');
+    expect(app).toContain('data-dv-map-fact="eta"');
+    expect(app).toContain('data-dv-map-fact="stage"');
+    expect(app).toContain('data-dv-map-fact="gps"');
+    expect(app).toContain('data-dv-gps-badge');
+    // Controles flotantes: centrar en mí, ruta completa, refrescar y seguir.
+    expect(app).toContain('function deliveryMapControlsHtml');
+    expect(app).toContain('data-dv-map-center="courier"');
+    expect(app).toContain('data-dv-map-center="route"');
+    expect(app).toContain('data-dv-map-refresh');
+    expect(app).toContain('data-dv-follow');
+    expect(app).toContain('function centerDeliveryDetail');
+    expect(app).toContain('function refreshDeliveryDetailPosition');
+    // Acciones del móvil (misma entrega de siempre, solo cambia la puerta de entrada).
+    expect(app).toContain('function deliveryActionPanelHtml');
+    expect(app).toContain('Iniciar entrega');
+    expect(app).toContain('Marcar entregado');
+    expect(app).toContain('Google Maps');
+    expect(app).toContain('Marcar recogida');
+    expect(app).toContain('Reportar incidencia');
+    // El mapa de administración sigue siendo el de supervisión múltiple.
+    expect(app).toContain('function renderMapLive');
+    expect(app).toContain('function fitDeliveryBounds');
+    expect(css).toContain('.dv-map-head');
+    expect(css).toContain('.dv-map-controls');
+    expect(css).toContain('.dv-act--go');
+    expect(css).toContain(":root[data-theme='dark'] .delivery-detail-panel");
   });
 
   it('al asignar delivery permite comentario interno visible en la orden', () => {
@@ -125,8 +168,12 @@ describe('delivery tracking frontend UAT guards', () => {
   it('carga mapa real Leaflet con tiles de OpenStreetMap y atribución', () => {
     expect(html).toContain('/admin/vendor/leaflet/leaflet.css');
     expect(html).toContain('/admin/vendor/leaflet/leaflet.js');
-    expect(html).toContain('/admin/app.js?v=wa-list-legible-64');
-    expect(html).toContain('/admin/admin.css?v=wa-list-legible-64');
+    /*
+     * El panel y su hoja de estilos se sirven con marcador de versión (cada uno
+     * el suyo): sin él, el teléfono se queda con el JS o el CSS viejo.
+     */
+    expect(html).toMatch(/\/admin\/app\.js\?v=[^"'&]+/);
+    expect(html).toMatch(/\/admin\/admin\.css\?v=[^"'&]+/);
     expect(html).not.toContain('unpkg.com/leaflet');
     expect(app).toContain('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     expect(app).toContain('OpenStreetMap contributors');
@@ -223,7 +270,9 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain("if (tab === 'mapa' && !canUseMapScreen())");
     expect(app).toContain('Mapa y entregas disponible solo para administración');
     expect(app).toContain('delivery: svg(');
-    expect(app).toContain("kind === 'customer' ? ICONS.pin : ICONS.delivery");
+    /* Tres marcadores distintos: cliente, tienda y repartidor. */
+    expect(app).toContain("kind === 'customer' ? ICONS.pin : kind === 'pickup' ? ICONS.box : ICONS.delivery");
+    expect(css).toContain('.delivery-leaflet-marker--pickup');
     expect(app).toContain('aria-label="Centrar en el repartidor">${ICONS.delivery}');
     expect(app).toContain('function confirmDeliveryStop');
     expect(app).toContain('data-delivery-confirm-stop');
@@ -255,12 +304,19 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('load({ keepTab: true }).catch(() => {});');
   });
 
-  it('Mis entregas usa datos compactos en dos columnas', () => {
-    expect(app).toContain('class="delivery-card__facts"');
-    expect(app).toContain("['Estado', operationalStatusLabel(status)]");
-    expect(app).toContain("['Resumen', items || 'Producto']");
-    expect(app).toContain("['Pago', paymentMethodLabel(order.payment_method)]");
-    expect(css).toContain('.delivery-card__facts');
+  it('Mis entregas usa tarjetas compactas con acción única y tres secciones', () => {
+    expect(app).toContain('class="dv-card__chips"');
+    expect(app).toContain('class="dv-cta dv-cta--finish"');
+    expect(app).toContain('>INICIAR</button>');
+    expect(app).toContain('>FINALIZAR</button>');
+    expect(app).toContain("deliveryHasPickups(order) ? 'Con recogida' : 'Entrega'");
+    expect(app).toContain('deliveryCashDue(order)');
+    expect(app).toContain("seccion('curso', 'En curso', curso)");
+    expect(app).toContain("seccion('pendientes', 'Pendientes', pendientes)");
+    expect(app).toContain("seccion('historial', 'Historial', historial)");
+    expect(app).toContain('data-delivery-more="${key}"');
+    expect(css).toContain('.dv-card');
+    expect(css).toContain('.dv-cta');
     expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
   });
 

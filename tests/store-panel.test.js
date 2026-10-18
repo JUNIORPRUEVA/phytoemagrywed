@@ -23,8 +23,9 @@ it('cada página presenta su función y los nombres del catálogo se tratan como
   await tab('catalogo');expect(w.document.querySelector('#store-product-grid script')).toBeNull();
   expect(w.document.querySelector('#store-catalogo').textContent).toContain('Cámara <script>prueba</script>');
   expect(w.document.querySelector('#store-catalogo').textContent).toContain('1,250.50');
-  await tab('inventario');expect(w.document.querySelector('#store-inventario').textContent).toContain('Existencias por producto');
-  await tab('recuento');expect(w.document.querySelector('#store-recuento').textContent).toContain('unidades contadas');
+  await tab('inventario');expect(w.document.querySelector('#store-inventario #store-stock-form')).not.toBeNull();
+  expect(w.document.querySelector('#store-inventario #stock-search')).not.toBeNull();
+  await tab('recuento');expect(w.document.querySelector('#store-recuento #store-stock-form')?.dataset.count).toBe('true');
 });
 it('el agente ve artículos sin acciones de administración',async()=>{
   canManage=false;await tab('catalogo');
@@ -44,7 +45,7 @@ it('el recuento incluye la existencia esperada y una operación idempotente',asy
   form.elements.quantity.value='2';form.elements.reason.value='Conteo de cierre';
   form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
   const sent=requests.find(r=>r.options.body);const body=JSON.parse(sent.options.body);
-  expect(body).toMatchObject({type:'count',quantity:'2',expected:4,reason:'Conteo de cierre'});expect(body.requestId).toHaveLength(36);
+  expect(body).toMatchObject({type:'count',quantity:2,expected:4,reason:'Conteo de cierre'});expect(body.requestId).toHaveLength(36);
 });
 it('permite crear un servicio sin inventario y conserva el formulario si el servidor falla',async()=>{
   await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));

@@ -103,7 +103,7 @@ afterAll(async () => {
 
 describe('el tema se elige y se queda elegido', () => {
   it('el panel abre el selector en Mi perfil y en Configuración', () => {
-    click('.drawer__item[data-tab="perfil"]');
+    click('.drawer__brand');
     const enPerfil = $$('#view-perfil [data-tema-picker] [data-tema]');
     expect(enPerfil.map((b) => b.dataset.tema)).toEqual(['light', 'dark', 'auto']);
     expect($('#view-perfil [data-tema-picker] .tema-card')).toBeTruthy();

@@ -125,21 +125,29 @@ describe('Mi perfil', () => {
     expect($('#drawer-user')?.hidden).toBe(true);
   });
 
-  it('«Perfil» está en sistema y después quedan compartir e ir a la web', () => {
-    const items = $$('.drawer__nav--bottom .drawer__item');
-    expect(items.length).toBeGreaterThanOrEqual(2);
-    const pantallas = items.filter((item) => item.dataset.tab);
-    expect(pantallas.map((item) => item.dataset.tab)).toContain('perfil');
-    const perfil = pantallas.find((item) => item.dataset.tab === 'perfil');
-    expect(perfil.textContent).toContain('Perfil');
-    const enlace = items.at(-1);
-    expect(enlace.id).toBe('drawer-web');
+  it('el perfil se abre desde la cabecera; compartir y sistema quedan al pie', () => {
+    // La cabecera del menú ES el acceso al perfil (no se repite como opción).
+    const marca = $('.drawer__brand');
+    expect(marca?.dataset.tab).toBe('perfil');
+    // La cabecera muestra a la persona (nombre y rol), no una opción más.
+    expect(marca?.textContent).toContain('Ana Perfil');
+    expect(marca?.textContent).toContain('Administrador');
+    // «Ir a la web» sigue siendo un enlace real, dentro del bloque de sistema.
+    const sistema = $$('.drawer__section').find((s) => s.getAttribute('aria-label') === 'Sistema');
+    expect(sistema).toBeTruthy();
+    const enlace = sistema.querySelector('#drawer-web');
+    expect(enlace).not.toBeNull();
     expect(enlace.getAttribute('href')).toBe('/');
+    expect(sistema.querySelector('#drawer-sync')).not.toBeNull();
+    // Compartir y administración viven en el pie, fuera de los desplegables.
+    const compartir = $$('.drawer__foot .drawer__item');
+    expect(compartir.map((item) => item.id)).toContain('drawer-share');
+    expect(compartir.map((item) => item.id)).toContain('drawer-share-web');
   });
 
-  it('la opción Perfil del menú lleva al perfil', async () => {
-    expect($('.drawer__item[data-tab="perfil"]')).not.toBeNull();
-    click('.drawer__item[data-tab="perfil"]');
+  it('la cabecera del menú lleva al perfil', async () => {
+    expect($('.drawer__brand[data-tab="perfil"]')).not.toBeNull();
+    click('.drawer__brand');
     await waitFor(() => !$('#view-perfil').hidden, 'la vista de perfil');
     expect($('#profile-name').value).toBe('Ana Perfil');
     expect($('#profile-username').value).toBe(USER);

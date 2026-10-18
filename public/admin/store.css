@@ -253,3 +253,46 @@ body[data-tab='catalogo'] #store-product-grid{flex:1;min-height:0;overflow-y:aut
 @media(max-width:540px){.stock-filters{grid-template-columns:1fr;gap:0}.store-stock-form{padding:18px}}
 
 @media(max-width:899px){#drawer .drawer-system-toggle{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:.85rem;min-height:44px}}
+
+/* ---------------------------------------------------------------------------
+   POLÍTICA DE INVENTARIO EN EL CATÁLOGO
+   «Sin control de inventario» se ve como una nota bajo el precio, nunca como
+   una etiqueta de «Agotado»: son cosas distintas.
+   --------------------------------------------------------------------------- */
+.store-product__policy{display:block;margin-top:2px;color:#6b7a90;font-size:.62rem;font-weight:600;letter-spacing:.01em;line-height:1.25}
+[data-layout=list] .store-product__policy{font-size:.66rem}
+.store-check small{display:block;margin-top:2px;color:var(--text-secondary,#53647d);font-size:.72rem;font-weight:400;line-height:1.3}
+
+/* ---------------------------------------------------------------------------
+   PROCEDENCIA DEL ARTÍCULO (Propio / De terceros)
+   Es un DISTINTIVO pequeño, no una frase suelta: va en su propia línea, con
+   su pastilla y sin partir palabras (antes «Propio» se rompía como «Prop / io»
+   al ir pegado al precio y compartir su ancho).
+   --------------------------------------------------------------------------- */
+.store-product__origin{
+  display:block;
+  width:fit-content;
+  max-width:100%;
+  margin:6px 0 0;
+  padding:2px 7px;
+  border-radius:999px;
+  font-size:.66rem;
+  line-height:1.35;
+  font-weight:650;
+  letter-spacing:.015em;
+  white-space:nowrap;
+  overflow-wrap:normal;
+  word-break:normal;
+  hyphens:none;
+  color:var(--text-secondary,#53647d);
+  background:color-mix(in srgb,var(--text-primary,#17243b) 7%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text-primary,#17243b) 10%,transparent);
+}
+.store-product__origin--third{color:#8a5300;background:#fff2de;box-shadow:inset 0 0 0 1px #f0d3a6}
+:root[data-theme='dark'] .store-product__origin--third{color:#ffd7a3;background:#3a2a12;box-shadow:inset 0 0 0 1px #5c4421}
+/* En lista el distintivo va debajo del precio, sin chocar con el botón «+». */
+[data-layout=list] .store-product__origin{grid-column:2;grid-row:3;justify-self:end;margin:6px 40px 0 0}
+@media(max-width:640px){
+  .store-product__origin{font-size:.65rem;padding:2px 6px;margin-top:5px}
+  [data-layout=list] .store-product__origin{grid-column:1;grid-row:4;justify-self:start;margin-top:4px}
+}

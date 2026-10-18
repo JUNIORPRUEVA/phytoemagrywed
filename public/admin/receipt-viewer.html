@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#0b1424" />
 <title>Comprobante · FullTECH</title>
 <style>
@@ -14,20 +14,28 @@
    * personal del teléfono.
    * ---------------------------------------------------------------------- */
   *{box-sizing:border-box}
-  :root{--rv-head:48px}
+  /* `viewport-fit=cover` + estos cuatro valores: la cabecera no se mete bajo
+     la isla dinámica y la última acción no queda bajo el indicador de inicio. */
+  :root{--rv-head:48px;--rv-top:env(safe-area-inset-top,0px);--rv-bottom:env(safe-area-inset-bottom,0px);--rv-left:env(safe-area-inset-left,0px);--rv-right:env(safe-area-inset-right,0px)}
   html,body{height:100%}
   body{margin:0;background:#eef2f6;color:#14243b;font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
   .rv{display:grid;grid-template-columns:minmax(0,1fr) 210px;grid-template-areas:"head head" "doc side";min-height:100vh;min-height:100dvh;margin:0;padding:0;align-items:start}
-  .rv__head{grid-area:head;position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;min-height:var(--rv-head);padding:6px 12px 6px 6px;background:#fff;border-bottom:1px solid #e3e9f0}
+  .rv__head{grid-area:head;position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;min-height:calc(var(--rv-head) + var(--rv-top));padding:calc(6px + var(--rv-top)) calc(12px + var(--rv-right)) 6px calc(6px + var(--rv-left));background:#fff;border-bottom:1px solid #e3e9f0}
   .rv__back{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:8px;background:transparent;color:#2b3d55;cursor:pointer}
+  /* SOLO Safari/iOS: el dedo necesita 44 pt y el resto de navegadores se queda
+     exactamente igual que antes. */
+  @supports (-webkit-touch-callout:none){
+    .rv__back{width:44px;height:44px;border-radius:10px}
+    @media (max-width:720px){ .rv__btn{min-height:44px} }
+  }
   .rv__back:hover{background:#eef3f9;color:#0f172a}
   .rv__back svg{width:18px;height:18px}
   .rv__title{margin:0;font-size:15px;font-weight:700;color:#0f1f36;overflow-wrap:anywhere}
-  .rv__doc{grid-area:doc;min-width:0;padding:10px 10px 32px}
+  .rv__doc{grid-area:doc;min-width:0;padding:10px calc(10px + var(--rv-right)) calc(32px + var(--rv-bottom)) calc(10px + var(--rv-left))}
   .rv__status{margin:0 0 8px;color:#5b6b84;font-size:12px}
   .rv__pages canvas{display:block;max-width:100%;height:auto;margin:0 auto 10px;background:#fff;box-shadow:0 1px 6px #14243b1f}
   /* Columna de acciones: estrecha, cuadrada y a todo el alto disponible. */
-  .rv__side{grid-area:side;position:sticky;top:var(--rv-head);display:flex;flex-direction:column;gap:6px;height:calc(100vh - var(--rv-head));height:calc(100dvh - var(--rv-head));padding:10px;overflow:auto;background:#fff;border-left:1px solid #e3e9f0}
+  .rv__side{grid-area:side;position:sticky;top:calc(var(--rv-head) + var(--rv-top));display:flex;flex-direction:column;gap:6px;height:calc(100vh - var(--rv-head) - var(--rv-top));height:calc(100dvh - var(--rv-head) - var(--rv-top));padding:10px 10px calc(10px + var(--rv-bottom));overflow:auto;background:#fff;border-left:1px solid #e3e9f0}
   .rv__btn{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;border:1px solid #d3dce7;border-radius:8px;background:#fff;color:#1c3557;font:inherit;font-size:13px;font-weight:650;line-height:1.2;text-decoration:none;cursor:pointer;touch-action:manipulation}
   .rv__btn svg{flex:0 0 auto;width:15px;height:15px;opacity:.7}
   .rv__btn:hover{border-color:#a9bcd4;background:#f5f9ff}
@@ -39,10 +47,10 @@
   .rv__msg.is-error{color:#a12222}
   @media (max-width:720px){
     .rv{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "side" "doc"}
-    .rv__side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:6px;padding:8px;border-left:0;border-bottom:1px solid #e3e9f0}
+    .rv__side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:6px;padding:8px 8px calc(8px + var(--rv-bottom));border-left:0;border-bottom:1px solid #e3e9f0}
     .rv__btn{flex:1 1 auto;width:auto;justify-content:center;padding:8px 10px;font-size:12.5px}
     .rv__msg{flex:1 1 100%;margin:0}
-    .rv__doc{padding:6px 8px 24px}
+    .rv__doc{padding:6px 8px calc(24px + var(--rv-bottom))}
   }
   @media print{
     body{background:#fff}

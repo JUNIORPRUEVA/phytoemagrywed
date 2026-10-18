@@ -562,6 +562,13 @@ async function sembrar() {
     'phyto_envio_factura_v1',
     'phyto_delivery_asignado_v1',
     'phyto_envio_cotizacion_v1',
+    // Ubicación compartida con otro número fuera de la ventana de 24 h.
+    'phyto_compartir_ubicacion_v1',
+    // Pedido al repartidor externo: en pruebas se aprueba para poder recorrer
+    // el flujo completo. En producción la aprueba Meta.
+    'phyto_pedido_repartidor_v1',
+    // Recordatorio del Supervisor IA al repartidor.
+    'phyto_supervisor_recordatorio_v1',
   ];
   const plantillas = (await pedir('/api/admin/wa-templates')).body?.templates ?? [];
   for (const nombre of APROBADAS) {

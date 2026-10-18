@@ -1,0 +1,189 @@
+/* ==========================================================================
+   iPHONE / iPAD — capa de adaptación nativa
+   ==========================================================================
+
+   QUÉ HACE AQUÍ Y POR QUÉ ESTÁ SEPARADO
+   -------------------------------------
+   Todo lo que hay en este archivo está detrás de `html[data-ios]`. Ese atributo
+   lo pone un script mínimo del <head> (index.html) leyendo el user-agent de
+   Apple. Consecuencia: en Android, en Windows y en cualquier navegador que no
+   sea de Apple estas reglas NO SE APLICAN. Por eso se puede afinar el iPhone
+   sin tocar la experiencia Android que ya funciona.
+
+   Se carga la ÚLTIMA, después de panel-desktop.css, para tener la última
+   palabra en los pocos puntos que ajusta.
+
+   Lo que ya estaba resuelto en el resto de hojas y aquí NO se repite:
+     - márgenes seguros (env(safe-area-inset-*)) en cabeceras, barra inferior,
+       hojas, cajón y pantallas de lista  -> menus-safe-area.css / navigation.css
+     - alto real del viewport con 100dvh en el chat -> navigation.css
+     - el compositor del chat siguiendo el teclado -> composer-mobile.js/.css
+   ========================================================================== */
+
+/* ------------------------------------------------------------ RENDER BASE */
+/*
+ * iOS hincha la letra al girar el teléfono a horizontal si no se le dice lo
+ * contrario. Con `text-size-adjust: 100%` el tamaño es el que hemos escrito.
+ */
+html[data-ios] {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/*
+ * El resaltado azul del sistema al tocar (tap highlight) delata que es una web.
+ * Se quita en las piezas que se tocan; el :focus-visible sigue intacto para
+ * quien navega con teclado.
+ */
+html[data-ios] :where(a, button, [role='button'], .tab, .chip, .stat, .menu-item, .card, .wa__conv, .list-card) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Los campos de texto de iOS traen su propio aspecto (sombra interior, esquinas
+ * propias) que se pelea con los bordes redondeados del panel. Se pide el
+ * aspecto plano y se deja que mande nuestra hoja de estilos.
+ */
+html[data-ios] :where(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
+  textarea
+) {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/*
+ * SCROLL CON INERCIA: en iOS el desplazamiento dentro de una caja solo se
+ * siente como el del sistema si se le pide explícitamente. En las cajas que
+ * desplazan contenido (no en el documento) se añade el rebote contenido.
+ */
+html[data-ios] :where(.content, .thread, .wa__convs, .sheet__body, #list-pedidos, #list-clientes, .drawer__nav) {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --------------------------------------------------- TECLADO (SIN ZOOM) */
+/*
+ * LO MÁS IMPORTANTE PARA EL TECLADO: iOS hace zoom sobre la página entera
+ * cuando el campo enfocado tiene menos de 16 px de letra, y ese zoom se queda
+ * puesto (la pantalla se sale a los lados hasta que se recarga). El viewport no
+ * basta —Safari ignora `user-scalable=no` desde iOS 10—, así que se pone un
+ * mínimo real de 16 px en los campos de texto.
+ *
+ * `max(16px, 1em)` respeta el tamaño que ya tuviera el campo cuando es mayor:
+ * solo sube lo que estaba por debajo del umbral.
+ *
+ * Va con `!important` a propósito: cada pantalla fija su tamaño con su propia
+ * clase (`.login .field__input`, `.order-line__qty .field__input`…) y sin esto
+ * ganarían ellas y Safari volvería a hacer zoom. Como esto SOLO existe en iOS
+ * y SOLO en móvil, Android y el ordenador no ven ni una diferencia.
+ */
+@media (max-width: 979px) {
+  html[data-ios] :where(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
+    textarea
+  ) {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+/* -------------------------------------------------- TECLADO Y SUPERPUESTOS */
+/*
+ * `--ios-kb` lo mantiene ios.js: es el alto que ocupa el teclado y vale 0
+ * cuando está cerrado (o cuando no hay un campo enfocado).
+ *
+ * Con el teclado abierto, una hoja pegada abajo (formulario de pedido, cliente,
+ * campaña…) quedaría DETRÁS del teclado, porque en iOS los elementos `fixed`
+ * se anclan al viewport de maquetación y el teclado no lo encoge. Subiendo el
+ * borde inferior de #sheet lo que sube el teclado, el panel queda encima, y los
+ * paneles centrados se recentran solos dentro de la parte visible.
+ */
+html[data-ios] body[data-ios-kb='open'] #sheet {
+  bottom: var(--ios-kb, 0px);
+}
+
+html[data-ios] body[data-ios-kb='open'] #sheet .sheet__panel {
+  max-height: calc(var(--ios-vvh, 100dvh) - 8px);
+}
+
+/*
+ * Con el teclado abierto no tiene sentido que el cuerpo siga desplazándose por
+ * debajo: el dedo que intenta llegar al botón de guardar acaba moviendo la
+ * página. El desplazamiento interno de la hoja sigue funcionando.
+ */
+html[data-ios] body[data-ios-kb='open'] #sheet .sheet__body {
+  overscroll-behavior: contain;
+}
+
+/*
+ * El mismo problema, en los paneles que NO son hojas: el flujo de pedido va
+ * centrado con `top: 50%` y el diálogo de llamada ocupa media pantalla. Con el
+ * teclado abierto se les limita el alto a lo que se ve y se les sube la mitad
+ * de lo que ocupa el teclado, que es justo lo necesario para que el centro del
+ * panel caiga en el centro de la parte visible.
+ */
+html[data-ios] body[data-ios-kb='open'] .order-flow-panel {
+  top: calc(50% - (var(--ios-kb, 0px) / 2));
+  max-height: calc(var(--ios-vvh, 100dvh) - 16px);
+  overflow-y: auto;
+}
+
+html[data-ios] body[data-ios-kb='open'] .calling {
+  max-height: calc(var(--ios-vvh, 100dvh) - 16px);
+}
+
+/* ------------------------------------------------- iOS ANTIGUO SIN `dvh` */
+/*
+ * `dvh` llegó con iOS 15.4. En un iPhone que se quedó en iOS 14 o 15.0-15.3
+ * esas alturas serían inválidas y la caja se quedaría con el alto del
+ * contenido (barra inferior flotando a media pantalla). Aquí se dan los mismos
+ * valores con `vh`, que existe desde siempre. Solo entra si el navegador NO
+ * entiende `dvh`, así que en iOS moderno no se ejecuta nada.
+ */
+@supports not (height: 100dvh) {
+  html[data-ios] body:not([data-tab='hoy']) .app,
+  html[data-ios] body[data-tab='whatsapp'] {
+    height: 100vh;
+  }
+
+  html[data-ios] body[data-tab='hoy'] .content {
+    height: calc(100vh - var(--dash-content-top, 72px) - 8px - env(safe-area-inset-bottom, 0px));
+  }
+
+  html[data-ios] .sheet__panel {
+    max-height: 92vh;
+  }
+}
+
+/* ----------------------------------------------------------- HORIZONTAL */
+/*
+ * En apaisado el iPhone gasta los lados en la isla y el indicador de inicio.
+ * Las hojas no deben pegarse a esos bordes; el resto de márgenes laterales ya
+ * los pone menus-safe-area.css, y aquí no se duplican.
+ */
+@media (orientation: landscape) and (max-height: 520px) {
+  html[data-ios] .sheet__panel {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  html[data-ios] .sheet__panel {
+    max-height: calc(100dvh - 6px);
+  }
+}
+
+/* --------------------------------------------------------- MENOS MOVIMIENTO */
+/*
+ * Si la persona pidió «Reducir movimiento» en Ajustes > Accesibilidad, las
+ * transiciones dejan de existir. Se hace solo en iOS para no cambiar el
+ * comportamiento en Android.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html[data-ios] *,
+  html[data-ios] *::before,
+  html[data-ios] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -123,6 +123,12 @@ export function createScheduler(deps) {
   const audit = deps.audit;
   const resolveTemplate = deps.resolveTemplate ?? (async () => ({ ok: false, reason: 'unknown_template' }));
   const deliveryControlTick = deps.deliveryControlTick ?? null;
+  /*
+   * SUPERVISOR DE DELIVERY: pasada determinista (recordatorios, posposiciones
+   * vencidas, escalamientos y conciliación). Vive aquí porque el trabajo tiene
+   * que seguir aunque el navegador esté cerrado.
+   */
+  const deliverySupervisorTick = deps.deliverySupervisorTick ?? null;
   const clock = deps.clock ?? (() => new Date());
   const log = deps.log ?? (() => {});
   const staleMs = Number(deps.staleMs ?? DEFAULT_STALE_MS);
@@ -526,7 +532,13 @@ export function createScheduler(deps) {
         if (result?.status === 'SENT') sent += 1;
       }
       const delivery = deliveryControlTick ? await deliveryControlTick() : null;
-      return { recovered, due: due.length, sent, delivery };
+      const supervisor = deliverySupervisorTick
+        ? await deliverySupervisorTick().catch((error) => {
+            log(`[crm] supervisor de delivery: ${error?.message ?? error}`);
+            return null;
+          })
+        : null;
+      return { recovered, due: due.length, sent, delivery, supervisor };
     },
 
     /**

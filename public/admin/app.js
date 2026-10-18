@@ -190,8 +190,11 @@
   function renderDrawerTheme() {
     const box = $('#drawer-theme');
     if (!box) return;
-    if (!box.children.length) box.innerHTML = TEMAS.map(([key, label, icon]) =>
-      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${ICONS[icon]}</span><span>${key === 'auto' ? 'Sistema' : label}</span></button>`
+    // En el menú solo caben DOS opciones: claro y oscuro. «Como el teléfono»
+    // sigue valiendo (si ya estaba elegido se respeta), pero no ocupa sitio aquí.
+    const temasMenu = TEMAS.filter(([key]) => key !== 'auto');
+    if (!box.children.length) box.innerHTML = temasMenu.map(([key, label, icon]) =>
+      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${ICONS[icon]}</span><span>${label}</span></button>`
     ).join('');
     box.querySelectorAll('[data-tema]').forEach((button) => {
       button.setAttribute('aria-checked', String(button.dataset.tema === temaDeLaPersona()));
@@ -329,6 +332,10 @@
     deliveryActiveOrderId: null,
     deliveryListRequested: false,
     deliveryPreviewPoint: null,
+    /** Cuántas tarjetas se ven de cada sección de «Mis entregas». */
+    deliveryMore: { pendientes: 12, curso: 12, historial: 6 },
+    /** Pedido cuyo aviso rápido está abierto en la hoja. */
+    deliveryNoticeOrderId: null,
     deliveryLastSentAt: 0,
     deliveryLastSentPoint: null,
     deliveryWatchStartedAt: 0,
@@ -410,12 +417,19 @@
     customerProfile: null,
     customerProfileLoading: false,
     customerProfileOrderId: null,
+    customerHistoryFilter: 'all',
     customerCampaignPreview: null,
     tab: 'hoy',
     filter: 'todos',
     q: '',
     clientSearchOpen: false,
     clientFiltersOpen: false,
+    /*
+     * GRUPO DE NEGOCIO puesto en el filtro de Clientes. `todos` es el valor
+     * neutro; el resto son las etiquetas (PHYTOEMAGRY, FULLTECH…).
+     */
+    clientGroup: 'todos',
+    businessGroups: [],
     // Filtro de la lista de pedidos, por ESTADO OPERATIVO (pendiente, en camino…).
     pedidosFilter: 'todo',    /*
      * …y por FECHA. Por defecto HOY: la lista de pedidos se abre en el día que se
@@ -462,6 +476,8 @@
       listSig: null,
       chatSig: null,
       counts: null,
+      /** Ya se pidió al servidor la lista de archivados (evita pedirla en bucle). */
+      archivadosPedidos: false,
       selected: new Set(),
       /** El panel de acciones de la selección está desplegado. */
       actionsOpen: false,
@@ -699,6 +715,8 @@
     web: svg('<circle cx="12" cy="12" r="8.6"/><path d="M3.6 9.5h16.8M3.6 14.5h16.8"/><path d="M12 3.4c2.2 2.4 3.3 5.3 3.3 8.6s-1.1 6.2-3.3 8.6c-2.2-2.4-3.3-5.3-3.3-8.6S9.8 5.8 12 3.4z"/>'),
     /* «Compartir app»: dos puntos unidos por líneas. */
     share: svg('<circle cx="17.6" cy="5.9" r="2.7"/><circle cx="6.4" cy="12" r="2.7"/><circle cx="17.6" cy="18.1" r="2.7"/><path d="M8.8 10.7l6.4-3.4M8.8 13.3l6.4 3.4"/>'),
+    /* «Sincronizar datos»: flechas en círculo, el gesto de volver a pedirlo todo. */
+    refresh: svg('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20.4 4.4v4.4H16"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -1478,11 +1496,23 @@
   }
 
   async function load(options = {}) {
+    /*
+     * CARRERA ENTRE LA CARGA COMPLETA Y EL TIEMPO REAL.
+     *
+     * `/api/admin/data` puede tardar; si mientras viaja llega un aviso de un
+     * pedido, la respuesta (más vieja) reemplazaba la lista y el pedido recién
+     * asignado desaparecía de la pantalla hasta el siguiente refresco. Se anota
+     * qué pedidos llegaron durante la carga y, al terminar, se vuelven a pedir
+     * (uno por id): lo más reciente manda sin recargar todo otra vez.
+     */
+    state.cargandoDatos = true;
+    state.reconciliarTrasCarga = state.reconciliarTrasCarga ?? new Set();
     try {
       const data = await api('/api/admin/data');
       state.items = data.items ?? [];
       state.messages = data.messages ?? [];
       state.customers = data.customers ?? [];
+      state.businessGroups = data.businessGroups ?? state.businessGroups;
       state.conversations = data.conversations ?? [];
       state.wa.counts = data.conversationCounts ?? state.wa.counts;
       for (const row of state.conversations) {
@@ -1512,11 +1542,19 @@
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
       state.auth = data.auth ?? null;
+       /*
+        * MODO UAT: el servidor puede permitir el circuito de reparto sin mandar
+        * WhatsApp reales. Es una bandera de ENTORNO (no una regla de negocio) y
+        * llega en `data.uat`; si no está, todo sigue igual que siempre.
+        */
+       state.uat = data.uat ?? { skipDeliveryContact: false };
       state.notificationSnapshotAt = data.notificationSnapshotAt ?? new Date().toISOString();
       migrateNotificationStorage();
       writeDismissedNotices(mergeNotificationDismissals(readDismissedNotices(), data.notificationDismissals ?? {}));
       state.templates = (await api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }))).templates ?? [];
       state.syncedAt = Date.now();
+      // Los datos llegaron de verdad: los reintentos vuelven a cero.
+      if (Date.now() - datosLocales.ultimo > 15000) datosLocales.intentos = 0;
       saveSnapshot();
       render();
       window.dispatchEvent(new Event('fulltech:startup-ready'));
@@ -1543,6 +1581,12 @@
         if (!options.silent) toast('No se pudieron cargar los datos');
         render();
       }
+    } finally {
+      state.cargandoDatos = false;
+      // Lo que llegó por tiempo real mientras se cargaba se recupera ahora.
+      const pendientes = [...(state.reconciliarTrasCarga ?? [])];
+      state.reconciliarTrasCarga.clear();
+      for (const id of pendientes.slice(0, 10)) sincronizarPedidoVivo(id).catch(() => {});
     }
   }
 
@@ -2232,9 +2276,13 @@
     const brand = $('.drawer__brand');
     if (brand) {
       const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : 'Usuario');
+      const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
       brand.innerHTML = `
-        <span class="drawer__avatar" aria-hidden="true">${escapeHtml(name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase())}</span>
-        <span><strong>${escapeHtml(name)}</strong><span>${escapeHtml(roleLabel(user?.role ?? 'ADMIN'))}</span></span>`;
+        <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo.png" alt="" width="26" height="26" /></span>
+        <span class="drawer__identity"><strong>${escapeHtml(name)}</strong><span class="drawer__role">${escapeHtml(
+          roleLabel(user?.role ?? 'ADMIN'),
+        )}</span></span>
+        <span class="drawer__avatar" aria-hidden="true">${escapeHtml(initials)}</span>`;
     }
     if (box) {
       box.hidden = true;
@@ -2262,8 +2310,18 @@
         node.hidden = !canUseDailyClose();
       });
     }
+    /*
+     * Una sección (o un desplegable) SIN opciones visibles no se queda en pie.
+     * La cabecera del desplegable también es `.drawer__item`, así que se cuenta
+     * solo lo que NO es `summary`: si no, un grupo vacío parecía lleno.
+     */
+    $$('#drawer details.drawer__fold').forEach((fold) => {
+      const items = [...fold.querySelectorAll('.drawer__item:not(summary)')];
+      fold.hidden = items.length > 0 && items.every((item) => item.hidden);
+    });
     $$('#drawer .drawer__section').forEach((section) => {
-      section.hidden = ![...section.querySelectorAll('.drawer__item')].some((item) => !item.hidden);
+      const items = [...section.querySelectorAll('.drawer__item:not(summary)')];
+      section.hidden = items.length > 0 && items.every((item) => item.hidden);
     });
   }
 
@@ -2996,19 +3054,55 @@
     delete document.body.dataset.todayExpanded;
   }
 
+  /*
+   * UN SOLO AVISO PARA EL ESTADO DE WHATSAPP.
+   *
+   * Antes había dos textos escritos a mano en dos pantallas y se contradecían
+   * («no envía ni recibe» en la lista, «se reciben pero no se envían» dentro del
+   * chat) cuando la única verdad era el mismo booleano. Ahora el servidor manda
+   * estados separados (envío / recepción / motivo) y aquí se traducen una vez:
+   *
+   *   - sin conexión            → se dice eso, nunca «falta configuración»;
+   *   - estado desconocido      → «no se pudo verificar», sin inventar;
+   *   - credencial rechazada    → se nombra el motivo real;
+   *   - solo falta un lado      → se dice exactamente cuál;
+   *   - todo bien               → NO se muestra nada.
+   */
+  function waConnectionNotice() {
+    const online = navigator.onLine !== false && state.online !== false;
+    if (!online) return { tone: 'offline', text: 'Sin conexión: los chats guardados siguen disponibles y los mensajes nuevos llegan al reconectar.' };
+    const wa = state.whatsapp ?? null;
+    if (!wa) return { tone: 'unknown', text: 'No se pudo verificar la conexión con WhatsApp. Los chats guardados siguen disponibles.' };
+    if (wa.mode === 'mock') return { tone: 'mock', text: 'WhatsApp en modo local (pruebas): los mensajes no salen a Meta.' };
+    const reason = String(wa.reason ?? '');
+    if (wa.send === 'ok') {
+      return wa.receive === 'ok' ? null : { tone: 'receive', text: 'WhatsApp puede enviar, pero el webhook de recepción no está configurado en el servidor.' };
+    }
+    if (reason === 'token_invalid') return { tone: 'token', text: 'Meta rechazó la credencial de WhatsApp. Revisa el token del servidor (no se ha enviado nada).' };
+    if (wa.send === 'not_configured' || wa.mode === 'off') {
+      return wa.receive === 'ok'
+        ? { tone: 'config', text: 'WhatsApp no está configurado para enviar: se reciben mensajes, pero no se pueden enviar.' }
+        : { tone: 'config', text: 'WhatsApp no está configurado en el servidor: el panel no puede enviar ni recibir mensajes.' };
+    }
+    // `unknown`: Meta no respondió o la comprobación no se pudo hacer. NUNCA se
+    // afirma que falten variables: sería inventar la causa.
+    return { tone: 'unknown', text: 'No se pudo verificar la conexión con WhatsApp. Los chats guardados siguen disponibles y se reintenta solo.' };
+  }
+
+  function waNoticeHtml() {
+    const notice = waConnectionNotice();
+    return notice ? `<p class="rule rule--warn" data-wa-notice="${notice.tone}">${escapeHtml(notice.text)}</p>` : '';
+  }
+
   function renderWhatsapp() {
-    const wa = state.whatsapp ?? { configured: false };
+    const wa = state.whatsapp ?? null;
     document.body.dataset.waFilters = state.wa.filtersOpen ? 'open' : 'closed';
     /*
      * En WhatsApp NO se anuncia "conectado" ni se repite el número del negocio:
      * es SU número y la pantalla ya dice dónde estamos. Solo se avisa cuando hay
-     * algo que hacer de verdad: que WhatsApp no esté configurado en el servidor.
+     * algo que hacer de verdad, con el MISMO texto que ve dentro del chat.
      */
-    $('#wa-status').innerHTML = wa.configured
-      ? ''
-      : `<p class="rule rule--warn">WhatsApp todavía no está configurado en el servidor. Puedes registrar
-         clientes y compras y ver sus fichas, pero el panel no envía ni recibe mensajes. Faltan las
-         variables del servidor (ver docs/WHATSAPP_INTEGRATION.md).</p>`;
+    $('#wa-status').innerHTML = waNoticeHtml();
 
     const filters = $('#wa-filters');
     if (filters) {
@@ -3067,6 +3161,11 @@
     if (filter === 'interesados') rows = rows.filter((customer) => customerSegment(customer) === 'interesado');
     if (filter === 'prospectos') rows = rows.filter((customer) => customerSegment(customer) === 'prospecto');
     if (filter === 'seguimiento') rows = rows.filter((customer) => Boolean(nextFollowupFor(customer.id) || customer.next_followup));
+    // El grupo de negocio es un filtro APARTE del de segmento: se combinan.
+    if (state.clientGroup && state.clientGroup !== 'todos') {
+      const buscado = String(state.clientGroup).toLocaleLowerCase('es');
+      rows = rows.filter((customer) => customerGroups(customer).some((group) => group.toLocaleLowerCase('es') === buscado));
+    }
     if (q) {
       const needle = q.toLowerCase();
       rows = rows.filter((customer) =>
@@ -3098,6 +3197,33 @@
     });
   }
 
+  /**
+   * GRUPOS DEL CLIENTE.
+   *
+   * Se usa el mismo criterio que el servidor: si el documento no trae `groups`
+   * (clientes anteriores a la clasificación FULLTECH) el cliente es de
+   * PHYTOEMAGRY. Así la lista nunca muestra un cliente «sin grupo».
+   */
+  function customerGroups(customer) {
+    const list = Array.isArray(customer?.groups) ? customer.groups : [];
+    const limpios = list
+      .filter((group) => typeof group === 'string' && group.trim())
+      .map((group) => group.replace(/\s+/g, ' ').trim());
+    return limpios.length ? [...new Set(limpios)] : ['PHYTOEMAGRY'];
+  }
+
+  /** Color de la etiqueta según la actividad (solo presentación). */
+  function groupTone(group) {
+    const key = String(group).toLocaleLowerCase('es');
+    if (key.includes('seguridad')) return 'seguridad';
+    if (key.includes('fulltech')) return 'fulltech';
+    return 'phyto';
+  }
+
+  function groupBadge(group) {
+    return `<span class="tag tag--group tag--group--${groupTone(group)}">${escapeHtml(group)}</span>`;
+  }
+
   function customerRow(customer) {
     const summary = customerSalesSummary(customer);
     const segment = customerSegment(customer);
@@ -3123,6 +3249,7 @@
           </span>
           <span class="client-row__meta">
             <span class="tag client-row__tag">${escapeHtml(customerSegmentLabel(segment, summary))}</span>
+            ${customerGroups(customer).map(groupBadge).join('')}
             ${customer.historicalWhatsAppImport?.status_label ? `<span class="tag client-row__tag">${escapeHtml(customer.historicalWhatsAppImport.status_label)}</span>` : ''}
             ${customer.do_not_contact ? '<span class="tag tag--perdido client-row__tag">No contactar</span>' : ''}
             ${customerCampaignOptOut(customer) ? '<span class="tag tag--recordatorio client-row__tag">Sin campañas</span>' : ''}
@@ -3154,12 +3281,86 @@
 
   function renderClientes() {
     document.body.dataset.clientFilters = state.clientFiltersOpen ? 'open' : 'closed';
+    renderClientGroupChips();
     const customers = filteredCustomers();
     $('#clientes-count').textContent = `${customers.length} de ${state.customers.length} clientes`;
     $('#list-clientes').innerHTML = customers.length
       ? customers.map(customerRow).join('')
       : emptyState('No hay clientes con este filtro.');
   }
+
+  /**
+   * Chips de GRUPO DE NEGOCIO encima de la lista de Clientes.
+   *
+   * Se cuentan los clientes de cada grupo (un cliente puede estar en varios, así
+   * que los números pueden sumar más que el total). Los grupos configurados se
+   * muestran siempre, aunque hoy no tengan clientes.
+   */
+  function renderClientGroupChips() {
+    const box = $('#clientes-grupos');
+    if (!box) return;
+    const counts = new Map();
+    for (const customer of state.customers) {
+      for (const group of customerGroups(customer)) counts.set(group, (counts.get(group) ?? 0) + 1);
+    }
+    for (const group of state.businessGroups ?? []) if (!counts.has(group)) counts.set(group, 0);
+    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'));
+    const chip = (value, label, count) => `<button class="chip" data-client-group="${escapeHtml(value)}" aria-pressed="${
+      state.clientGroup === value
+    }" type="button">${escapeHtml(label)}${count === null ? '' : ` <span class="chip__count">${count}</span>`}</button>`;
+    box.innerHTML =
+      chip('todos', 'Todos los grupos', null) + entries.map(([group, count]) => chip(group, group, count)).join('');
+  }
+
+  // Elegir grupo se hace con un toque y no cierra la lista (se ve el resultado).
+  document.addEventListener('click', (event) => {
+    const chip = event.target.closest('[data-client-group]');
+    if (!chip) return;
+    state.clientGroup = chip.dataset.clientGroup || 'todos';
+    renderClientes();
+  });
+
+  /**
+   * CAMBIAR LOS GRUPOS DESDE LA FICHA.
+   *
+   * Se envía la lista completa (no «añade este»): así dos personas mirando la
+   * misma ficha no se pisan a medias. El servidor la limpia y rechaza una lista
+   * vacía, porque un cliente sin grupo desaparece de los filtros.
+   */
+  document.addEventListener('click', async (event) => {
+    const chip = event.target.closest('[data-customer-group]');
+    if (!chip) return;
+    const holder = chip.closest('[data-customer-groups]');
+    if (!holder) return;
+    const customerId = holder.dataset.customerGroups;
+    const buttons = [...holder.querySelectorAll('[data-customer-group]')];
+    const next = buttons
+      .filter((button) =>
+        button === chip ? button.getAttribute('aria-pressed') !== 'true' : button.getAttribute('aria-pressed') === 'true',
+      )
+      .map((button) => button.dataset.customerGroup);
+    if (!next.length) {
+      toast('El cliente necesita al menos un grupo');
+      return;
+    }
+    buttons.forEach((button) => {
+      button.disabled = true;
+    });
+    try {
+      await api(`/api/admin/customers/${encodeURIComponent(customerId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ groups: next }),
+      });
+      await load({ keepTab: true });
+      await openCustomer(customerId);
+      toast('Grupos actualizados');
+    } catch (error) {
+      buttons.forEach((button) => {
+        button.disabled = false;
+      });
+      if (error.message !== 'unauthorized') toast('No se pudieron guardar los grupos');
+    }
+  });
 
   const CAMPAIGN_PRESETS = [
     {
@@ -4691,6 +4892,47 @@
       .join('')}`;
   }
 
+  /** Antigüedad de una señal GPS, en minutos (null si no hay hora utilizable). */
+  function deliverySignalAgeMinutes(value) {
+    const iso = value?.recorded_at ?? value?.at ?? value?.timestamp ?? null;
+    if (!iso) return null;
+    const at = Date.parse(iso);
+    if (!Number.isFinite(at)) return null;
+    return Math.max(0, Math.round((Date.now() - at) / 60000));
+  }
+
+  /** «ahora», «hace 4 min», «hace 2 h». */
+  function deliveryAgeLabel(minutes) {
+    if (minutes === null) return 'sin hora';
+    if (minutes <= 1) return 'ahora';
+    if (minutes < 60) return `hace ${minutes} min`;
+    return `hace ${Math.round(minutes / 60)} h`;
+  }
+
+  /**
+   * ESTADO DEL GPS, EN UNA LÍNEA.
+   *
+   * `live`  = posición del repartidor al día · `last` = última señal guardada
+   * `stale` = la última señal es vieja · `none` = no hay posición del repartidor.
+   * Nunca se inventa una posición: sin señal, no hay punto de salida.
+   */
+  function deliveryGpsFreshness(route) {
+    const state_ = route?.gpsState ?? 'none';
+    const age = route?.gpsAgeMin ?? null;
+    if (state_ === 'live') {
+      return { state: 'live', label: 'GPS en vivo', detail: age === null ? 'señal al día' : `señal ${deliveryAgeLabel(age)}` };
+    }
+    if (state_ === 'last') {
+      const viejo = age !== null && age > 15;
+      return {
+        state: viejo ? 'stale' : 'last',
+        label: viejo ? 'Sin señal reciente' : 'Última señal',
+        detail: `última señal ${deliveryAgeLabel(age)}`,
+      };
+    }
+    return { state: 'none', label: 'GPS no disponible', detail: 'activa la ubicación para ver la ruta' };
+  }
+
   function deliveryLatLng(point) {
     const lat = Number(point?.latitude);
     const lng = Number(point?.longitude);
@@ -4699,11 +4941,12 @@
 
   function deliveryMarkerIcon(kind, stale = false) {
     if (!window.L) return null;
+    const icono = kind === 'customer' ? ICONS.pin : kind === 'pickup' ? ICONS.box : ICONS.delivery;
     return window.L.divIcon({
       className: `delivery-leaflet-marker delivery-leaflet-marker--${kind}${stale ? ' delivery-leaflet-marker--stale' : ''}`,
-      html: `<span>${kind === 'customer' ? ICONS.pin : ICONS.delivery}</span>`,
-      iconSize: [38, 38],
-      iconAnchor: [19, 19],
+      html: `<span>${icono}</span>`,
+      iconSize: kind === 'pickup' ? [32, 32] : [38, 38],
+      iconAnchor: kind === 'pickup' ? [16, 16] : [19, 19],
       popupAnchor: [0, -18],
     });
   }
@@ -5515,8 +5758,224 @@
     startDeliveryPollTimer();
   }
 
-  function shouldSendDeliveryPoint(point) {
-    const now = Date.now();
+  /* ------------------------------------------------------------------ *
+   * TIEMPO REAL: UN AVISO DEL SERVIDOR, UN REFRESCO MÍNIMO.
+   *
+   * El servidor publica «este pedido cambió» (nunca los datos privados). Aquí se
+   * pide SOLO ese pedido —una consulta por id, no la base entera— y se repinta
+   * únicamente la pantalla que está mirando la persona. Nada de recargar la
+   * página ni de volver a bajar clientes, catálogo o conversaciones.
+   *
+   * Los cambios repetidos en pocos milisegundos (varios avisos del mismo pedido)
+   * se agrupan: una sola petición y un solo repintado.
+   * ------------------------------------------------------------------ */
+
+  /** Pantallas que pueden cambiar con un pedido. Se repinta solo la visible. */
+  function refrescarPantallaViva() {
+    pintarSeccion('cabecera', renderMobileHeader);
+    pintarSeccion('resumen', renderStats);
+    pintarSeccion('avisos', updateBadge);
+    if (state.tab === 'hoy') pintarSeccion('hoy', renderHoy);
+    if (state.tab === 'pedidos') pintarSeccion('pedidos', renderPedidos);
+    if (state.tab === 'delivery') pintarSeccion('entregas', renderDelivery);
+    if (state.tab === 'mapa') pintarSeccion('mapa', renderOrdersMap);
+    if (state.tab === 'perfil-cliente') pintarSeccion('ficha del cliente', renderCustomerProfile);
+  }
+
+  const vivoPendientes = new Map();
+  let vivoTimer = null;
+
+  async function sincronizarPedidoVivo(orderId) {
+    if (!orderId) return;
+    state.ultimoEventoVivo = Date.now();
+    /*
+     * Si en este momento se está bajando el panel completo, ese resultado puede
+     * llegar con datos de ANTES de este cambio y pisarlo. Se apunta para volver a
+     * pedirlo en cuanto la carga termine (ver `load`).
+     */
+    if (state.cargandoDatos) state.reconciliarTrasCarga?.add(orderId);
+    let algoNuevo = false;
+    const enReparto = state.tab === 'delivery' || state.tab === 'mapa';
+    /*
+     * UN REPARTIDOR NO PIDE LA LISTA DEL PANEL: no tiene `orders.read` y solo
+     * necesita SU entrega. Antes se pedían las dos cosas y la primera siempre
+     * fallaba (403): un viaje de red tirado en cada aviso.
+     */
+    const pedirPanel = !(enReparto && !hasPermission('orders.read'));
+    const [panel, extra] = await Promise.all([
+      pedirPanel
+        ? api(`/api/admin/realtime/order/${encodeURIComponent(orderId)}`).catch(() => null)
+        : Promise.resolve(null),
+      /*
+       * «MIS ENTREGAS» USA OTRA FORMA de pedido (con recogidas, cliente y estado
+       * de reparto ya resueltos). Si el pedido ya no es visible (403/404) se
+       * quita de la lista en vez de dejar una tarjeta fantasma.
+       */
+      enReparto
+        ? api(`/api/admin/delivery/orders/${encodeURIComponent(orderId)}`).catch((error) => ({
+            remove: [403, 404].includes(Number(error?.status)),
+          }))
+        : Promise.resolve(null),
+    ]);
+    if (panel?.item) {
+      applyServerOrderUpdate(panel);
+      algoNuevo = true;
+    }
+    if (extra?.remove) {
+      state.deliveryOrders = (state.deliveryOrders ?? []).filter((order) => order.id !== orderId);
+      algoNuevo = true;
+    } else if (extra?.order) {
+      const list = [...(state.deliveryOrders ?? [])];
+      const index = list.findIndex((order) => order.id === extra.order.id);
+      if (index >= 0) list[index] = extra.order;
+      else list.unshift(extra.order);
+      state.deliveryOrders = list;
+      algoNuevo = true;
+    }
+    /*
+     * El seguimiento se refresca SIN rehacer el mapa (`rebuild:false`): repintar
+     * el mapa entero por cada pedido asignado era lo que hacía lenta la pantalla
+     * de reparto.
+     */
+    if (enReparto) refreshDeliveryTracking({ rebuild: false }).catch(() => {});
+    if (!algoNuevo) return;
+    refrescarPantallaViva();
+    window.dispatchEvent(new CustomEvent('fulltech:order-live', { detail: { orderId } }));
+  }
+
+  /** Agrupa varios avisos del mismo pedido en un solo refresco. */
+  function programarPedidoVivo(orderId) {
+    if (!orderId) return;
+    vivoPendientes.set(String(orderId), Date.now());
+    /*
+     * CON LA PANTALLA EN SEGUNDO PLANO NO SE PROGRAMA NADA.
+     *
+     * El navegador (sobre todo en iPhone) congela los temporizadores de una
+     * pestaña oculta: el refresco se quedaba esperando y, al volver, la pantalla
+     * mostraba datos viejos. Se apunta y se refresca en cuanto la persona vuelve
+     * a mirar (ver el `visibilitychange` de `startCrmEvents`).
+     */
+    if (document.visibilityState !== 'visible') return;
+    if (vivoTimer) return;
+    vivoTimer = setTimeout(() => {
+      vivoTimer = null;
+      const ids = [...vivoPendientes.keys()];
+      vivoPendientes.clear();
+      // Un tope por vuelta: una ráfaga enorme no puede bloquear el teléfono.
+      for (const id of ids.slice(0, 8)) sincronizarPedidoVivo(id).catch(() => {});
+      if (ids.length > 8) setTimeout(refrescarPantallaViva, 400);
+    }, 120);
+  }
+
+  /** Refresca lo que quedó pendiente mientras la app estaba en segundo plano. */
+  function vaciarRefrescosPendientes() {
+    if (!vivoPendientes.size) return;
+    const ids = [...vivoPendientes.keys()];
+    vivoPendientes.clear();
+    for (const id of ids.slice(0, 10)) sincronizarPedidoVivo(id).catch(() => {});
+  }
+
+  const EVENTOS_DE_PEDIDO = new Set([
+    'order.created',
+    'order.updated',
+    'order.status_changed',
+    'order.assigned',
+    'order.deleted',
+    'delivery.started',
+    'delivery.completed',
+    'delivery.postponed',
+    'delivery.issue',
+    'pickup.status_changed',
+    'pickup.created',
+    'payment.recorded',
+    'payment.handover_recorded',
+  ]);
+
+  /**
+   * Engancha el panel al bus de tiempo real. Una sola vez por pestaña; si no hay
+   * `CrmRealtime` (navegador viejo) no pasa nada: todo sigue funcionando como
+   * antes, con el sondeo de siempre.
+   */
+  function startCrmEvents() {
+    if (state.crmEventsStarted) return;
+    state.crmEventsStarted = true;
+    window.addEventListener('fulltech:crm-event', (event) => {
+      const payload = event.detail ?? {};
+      const tipo = String(payload.type ?? '');
+      const orderId = payload?.data?.orderId ?? (payload?.entity?.kind === 'order' ? payload.entity.id : null);
+      if (EVENTOS_DE_PEDIDO.has(tipo) && orderId) {
+        programarPedidoVivo(orderId);
+        return;
+      }
+      if (tipo === 'inventory.changed') {
+        // El inventario no se baja entero por un ajuste: se pide su foto, que ya
+        // viene saneada por permisos, y solo se pinta si esa pantalla está abierta.
+        api('/api/admin/inventory')
+          .then((data) => {
+            state.inventory = data;
+            if (['inventario', 'recuento', 'productos'].includes(state.tab)) pintarSeccion('inventario', renderProductos);
+            window.dispatchEvent(new CustomEvent('fulltech:inventory-live'));
+          })
+          .catch(() => {});
+        return;
+      }
+      if (tipo === 'customer.updated') {
+        const customerId = payload?.data?.customerId ?? payload?.entity?.id;
+        const abierto = state.customerProfile?.customer?.id;
+        if (customerId && abierto && String(abierto) === String(customerId)) {
+          // La ficha abierta se relee entera: los totales dependen de lo que
+          // acaba de cambiar y calcularlos a mano sería inventar.
+          api(`/api/admin/customers/${encodeURIComponent(customerId)}`)
+            .then((profile) => renderCustomer(profile))
+            .catch(() => {});
+        }
+        return;
+      }
+      if (tipo === 'whatsapp.message_received') {
+        // El hilo tiene su propio canal; aquí solo se refrescan los avisos.
+        pintarSeccion('avisos', updateBadge);
+        if (state.tab === 'hoy') pintarSeccion('hoy', renderHoy);
+      }
+    });
+    /*
+     * SESIÓN TERMINADA O PERMISO RETIRADO.
+     *
+     * El bus corta el canal y avisa (`revoked`) cuando el servidor comprueba, en
+     * el latido, que la sesión ya no existe. Antes ese aviso no lo escuchaba
+     * nadie: el panel se quedaba abierto enseñando datos que ya no podía
+     * refrescar. Ahora se confirma contra el servidor y, si de verdad no hay
+     * sesión, se vuelve a la entrada diciendo por qué.
+     */
+    window.addEventListener('fulltech:crm-revoked', () => {
+      fetch('/api/admin/session', { credentials: 'same-origin' })
+        .then((response) => response.json().catch(() => ({ ok: false })))
+        .then((body) => {
+          if (body?.ok) return; // solo se cerró el canal: la sesión sigue viva
+          showLogin('Tu sesión terminó. Vuelve a entrar para seguir trabajando.');
+        })
+        .catch(() => {
+          /* sin red no se puede confirmar: no se expulsa a nadie */
+        });
+    });
+    /*
+     * El servidor avisó de que el cursor guardado es demasiado viejo (el
+     * teléfono estuvo horas sin red). Se recarga una vez, ya con datos frescos,
+     * en vez de pintar estados viejos encima de los nuevos.
+     */
+    window.addEventListener('fulltech:crm-resync', () => {
+      load({ keepTab: true, silent: true }).catch(() => {});
+    });
+    /*
+     * AL VOLVER A MIRAR, SE RECUPERA LO PENDIENTE.
+     * Mientras la app estaba en segundo plano el navegador pudo congelar los
+     * temporizadores; aquí se aplican los avisos que quedaron apuntados.
+     */
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') vaciarRefrescosPendientes();
+    });
+  }
+
+  function shouldSendDeliveryPoint(point) {    const now = Date.now();
     if (!state.deliveryLastSentPoint) return true;
     if (now - state.deliveryLastSentAt >= 7000) return true;
     const dx = Number(point.latitude) - Number(state.deliveryLastSentPoint.latitude);
@@ -5695,8 +6154,8 @@
     openSheet(
       'Permitir ubicación',
       `<div class="delivery-permission">
-        <strong>Activa la ubicación para iniciar la entrega.</strong>
-        <p>El GPS se usa solo mientras esta entrega está en curso.</p>
+        <strong>Necesitas permitir acceso a tu ubicación para iniciar la entrega.</strong>
+        <p>Activa la ubicación para iniciar la entrega. El GPS se usa solo mientras esta entrega está en curso; sin él no se puede confirmar que saliste hacia el cliente.</p>
         <button class="btn btn--primary btn--block" data-delivery-permission="${escapeHtml(orderId)}" type="button">Permitir ubicación</button>
         <button class="btn btn--ghost btn--block" data-close-sheet type="button">Volver</button>
       </div>`,
@@ -5746,6 +6205,19 @@
    * corto. Tenerlo también aquí hacía que el cliente recibiera dos mensajes.
    */
 
+  /**
+   * LA RUTA DE ESTA ENTREGA, CON ORIGEN REAL.
+   *
+   * REGLA DE NEGOCIO: la ruta SIEMPRE arranca donde está el repartidor.
+   *   1. GPS en vivo de la entrega (`session.last_position`).
+   *   2. La posición del teléfono (una lectura al abrir el detalle).
+   *   3. La última señal guardada del repartidor, etiquetada como tal.
+   *   4. Nada: sin posición del repartidor NO se dibuja ruta (no se inventa).
+   *
+   * Los puntos de paso son REALES: las tiendas del pedido (`order.pickups`) que
+   * todavía no se recogieron, en su orden, y la ubicación del cliente al final.
+   * No hay almacén fijo ni trayecto inventado.
+   */
   function deliveryRouteSummary(order, session = deliverySessionForOrder(order?.id)) {
     const location = deliveryOrderLocation(order);
     const destination = mapLatLng(location);
@@ -5754,28 +6226,58 @@
     const savedLast = order?.delivery?.delivery_last_location ?? snapshot?.last_location ?? null;
     const savedStart = order?.delivery?.delivery_start_location ?? snapshot?.start_location ?? null;
     const status = deliveryVisibleStatus(order, session);
-    const current =
-      mapLatLng(session?.last_position) ??
-      (status === 'ENTREGADO' || status === 'CANCELADO' || status === 'INCIDENCIA' ? mapLatLng(savedLast) ?? mapLatLng(savedStart) : null) ??
-      mapLatLng(preview);
-    const origin = mapLatLng(savedStart) ?? current;
-    const meters = Number(session?.distance_m ?? session?.distance_meters ?? order?.delivery?.delivery_route_distance_m ?? snapshot?.distance_m);
     const closedRoute = ['ENTREGADO', 'CANCELADO', 'INCIDENCIA'].includes(status);
-    const measuredDistance = destination
-      ? closedRoute && origin
-        ? metersBetween(origin, destination)
-        : current
-          ? metersBetween(current, destination)
-          : null
+
+    const sessionPoint = session?.last_position ?? null;
+    const livePoint = sessionPoint && !sessionPoint.stale ? sessionPoint : null;
+    const devicePoint = mapLatLng(livePoint) ? livePoint : mapLatLng(preview) ? preview : null;
+    const lastPoint = closedRoute ? mapLatLng(savedLast) ?? mapLatLng(savedStart) : mapLatLng(savedLast);
+    /* `origin` es la salida de la ruta: el repartidor, nunca la tienda. */
+    const origin = mapLatLng(devicePoint) ?? lastPoint;
+    const gpsState = mapLatLng(devicePoint) ? 'live' : lastPoint ? 'last' : 'none';
+    const gpsAgeMin = deliverySignalAgeMinutes(devicePoint ?? savedLast ?? savedStart);
+
+    const pickups = (Array.isArray(order?.pickups) ? order.pickups : [])
+      .map((pickup) => ({
+        id: pickup.id ?? null,
+        name: pickup.supplier_name ?? 'Tienda',
+        address: pickup.address ?? pickup.sector ?? null,
+        status: pickup.status ?? 'pending_purchase',
+        latlng: deliveryLatLng({ latitude: pickup.latitude, longitude: pickup.longitude }),
+      }));
+    const hechas = ['purchased', 'to_customer', 'delivered'];
+    const pendientes = pickups.filter((pickup) => pickup.latlng && !hechas.includes(pickup.status));
+
+    /* Trazo real: yo → tiendas pendientes (en orden) → cliente. */
+    const routePoints = [
+      ...(origin ? [origin] : []),
+      ...pendientes.map((pickup) => pickup.latlng),
+      ...(destination ? [destination] : []),
+    ];
+    const legMeters = routePoints.length >= 2
+      ? routePoints.slice(1).reduce((sum, point, index) => sum + metersBetween(routePoints[index], point), 0)
       : null;
-    const distance = measuredDistance ?? (Number.isFinite(meters) ? meters : null);
+    const savedMeters = Number(session?.distance_m ?? session?.distance_meters ?? order?.delivery?.delivery_route_distance_m ?? snapshot?.distance_m);
+    const distance = legMeters ?? (Number.isFinite(savedMeters) ? savedMeters : null);
     const savedAt = order?.delivery?.delivery_route_saved_at ?? snapshot?.ended_at ?? snapshot?.started_at ?? null;
+
+    const stage = closedRoute
+      ? { key: 'done', label: status === 'ENTREGADO' ? 'Entregado' : status === 'INCIDENCIA' ? 'Con incidencia' : 'Cancelado' }
+      : pendientes.length
+        ? { key: 'pickup', label: `Recoger en ${pendientes[0].name}` }
+        : { key: 'customer', label: 'Ir al cliente' };
+
     return {
       destination,
-      current,
       origin,
-      distanceLabel: fmtDistance(distance),
-      etaLabel: fmtEta(distance),
+      current: origin,
+      pickups,
+      pendientes,
+      routePoints,
+      hasRoute: Boolean(origin) && routePoints.length >= 2,
+      gpsState,
+      gpsAgeMin,
+      stage,
       gpsLabel: session?.last_position?.recorded_at
         ? `GPS ${fmtWhen(session.last_position.recorded_at)}`
         : savedAt
@@ -5787,6 +6289,9 @@
             : preview?.recorded_at
               ? `Tu ubicación ${fmtWhen(preview.recorded_at)}`
               : '',
+      distanceLabel: fmtDistance(distance),
+      etaLabel: fmtEta(distance),
+      distance,
     };
   }
 
@@ -5812,10 +6317,23 @@
   function deliveryCompactFactsHtml(order, session, status) {
     const route = deliveryRouteSummary(order, session);
     const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
+    const pagado = String(order.payment_status ?? '').toLowerCase() === 'paid';
+    /*
+     * «Por cobrar» con saldo: si el cliente adelantó una parte, aquí se ve lo que
+     * falta de verdad, no una etiqueta genérica.
+     */
+    const saldo = Number(order?.payment?.due);
+    const pago = pagado
+      ? 'Pagado'
+      : Number.isFinite(saldo) && saldo >= 0 && saldo < (Number(order.total ?? 0) || 0)
+        ? `Faltan ${money(saldo, order.currency)}`
+        : 'Por cobrar';
     const facts = [
       ['Distancia', route.distanceLabel || 'Calculando'],
       ['Llegada', route.etaLabel ? `${route.etaLabel} aprox.` : 'Calculando'],
       ['Delivery cobrado', money(deliveryFee, order.currency)],
+      ['Pago', `${paymentMethodLabel(order.payment_method)} · ${pago}`],
+      ['Total', money(Number(order.total ?? 0) || 0, order.currency)],
       ['GPS', route.gpsLabel || (status === 'EN_CAMINO' ? 'Esperando señal' : 'Al entrar al detalle')],
     ];
     return `<div class="delivery-compact-facts">
@@ -5873,6 +6391,9 @@
     const base = detail?.base && MAP_BASE_LAYERS[detail.base] ? detail.base : 'satelite';
     if (detail?.map) {
       try {
+        /* Cortar animaciones ANTES de desmontar: si no, Leaflet falla con
+           «_leaflet_pos» al quedarse sin panel en mitad de un desplazamiento. */
+        detail.map.stop?.();
         detail.map.remove();
       } catch {
         /* Leaflet ya limpió el contenedor */
@@ -5885,8 +6406,12 @@
       base,
       customerMarker: null,
       deliveryMarker: null,
+      pickupMarkers: new Map(),
       routeLine: null,
       orderId: null,
+      /* «Seguir al repartidor»: el mapa se queda pegado a su última posición. */
+      follow: true,
+      fitKey: '',
     };
   }
 
@@ -5901,6 +6426,97 @@
       <span>${ICONS.pin}</span>
       <strong>${escapeHtml(nextLabel)}</strong>
     </button>`;
+  }
+
+  /**
+   * ENCABEZADO DE LA ENTREGA (móvil primero).
+   *
+   * Pedido, etapa real, distancia, ETA y estado del GPS en una sola tarjeta
+   * oscura que se lee de un vistazo encima del mapa. La etapa sale del estado
+   * del pedido y de sus recogidas pendientes: no hay texto inventado.
+   */
+  function deliveryHeaderHtml(order, session, status, route) {
+    const gps = deliveryGpsFreshness(route);
+    const badges = {
+      live: 'GPS en vivo',
+      last: 'Última señal',
+      stale: 'Sin señal reciente',
+      none: 'GPS no disponible',
+    };
+    return `<header class="dv-map-head" aria-label="Resumen de la entrega">
+      <div class="dv-map-head__row">
+        <strong class="dv-map-head__order">#${escapeHtml(order.order_number ?? order.id)}</strong>
+        <span class="dv-map-head__stage" data-dv-map-fact="stage">${escapeHtml(route.stage.label)}</span>
+      </div>
+      <div class="dv-map-head__facts">
+        <span class="dv-map-chip">${ICONS.pin}<span data-dv-map-fact="distance">${escapeHtml(route.distanceLabel || 'Sin distancia')}</span></span>
+        <span class="dv-map-chip">${ICONS.clock}<span data-dv-map-fact="eta">${escapeHtml(route.etaLabel || 'Sin ETA')}</span></span>
+        <span class="dv-map-gps" data-dv-gps-badge data-state="${escapeHtml(gps.state)}" title="${escapeHtml(gps.detail)}">
+          <i aria-hidden="true"></i><span data-dv-map-fact="gps">${escapeHtml(gps.label)}</span>
+        </span>
+      </div>
+      ${route.gpsState === 'none'
+        ? `<p class="dv-map-head__warn">Sin señal de tu GPS: no se dibuja la ruta hasta que la ubicación esté activa.</p>`
+        : route.gpsState === 'last'
+          ? `<p class="dv-map-head__warn">Ruta desde tu última señal ${escapeHtml(deliveryAgeLabel(route.gpsAgeMin))}.</p>`
+          : ''}
+    </header>`;
+  }
+
+  /** Controles flotantes del mapa del repartidor. */
+  function deliveryMapControlsHtml() {
+    return `<div class="dv-map-controls" role="group" aria-label="Controles del mapa">
+      <button class="dv-map-btn" data-dv-map-center="courier" type="button" aria-label="Centrar en mí" title="Centrar en mí">${ICONS.delivery}</button>
+      <button class="dv-map-btn" data-dv-map-center="route" type="button" aria-label="Ver la ruta completa" title="Ver la ruta completa">${ICONS.search}</button>
+      <button class="dv-map-btn" data-dv-map-refresh type="button" aria-label="Actualizar mi ubicación" title="Actualizar mi ubicación">${ICONS.retry}</button>
+      <button class="dv-map-btn" data-dv-follow type="button" aria-label="Seguirme en el mapa" aria-pressed="true" title="Seguirme en el mapa">${ICONS.pin}</button>
+    </div>`;
+  }
+
+  /**
+   * ACCIONES DE LA ENTREGA EN EL MÓVIL.
+   *
+   * Todo lo que se hace con una mano: empezar, abrir en Google Maps (con el
+   * repartidor como ORIGEN real), llamar, WhatsApp, marcar la recogida, marcar
+   * entregado y reportar una incidencia. Reutiliza los estados y manejadores que
+   * ya existen: no hay un segundo sistema de entrega.
+   */
+  function deliveryActionPanelHtml(order, session, status, route) {
+    const phone = deliveryCustomerPhone(order);
+    const destino = deliveryOrderLocation(order);
+    const navUrl = route.destination
+      ? externalNavigationUrl(destino, route.origin ? { latitude: route.origin[0], longitude: route.origin[1] } : null)
+      : '';
+    const pickupPendiente = (route.pendientes ?? [])[0] ?? null;
+    const abierto = !['ENTREGADO', 'CANCELADO'].includes(status);
+    const cta =
+      status === 'EN_CAMINO'
+        ? `<button class="dv-act dv-act--go" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${
+            session?.id ? '' : 'disabled'
+          }>${ICONS.check}<span>Marcar entregado</span></button>`
+        : status === 'PENDIENTE' || status === 'EN_PROCESO'
+          ? `<button class="dv-act dv-act--go" data-delivery-start="${escapeHtml(order.id)}" type="button">${ICONS.delivery}<span>Iniciar entrega</span></button>`
+          : '';
+    return `<div class="dv-actions" role="group" aria-label="Acciones de la entrega">
+      ${cta}
+      ${navUrl ? `<a class="dv-act" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">${ICONS.pin}<span>Google Maps</span></a>` : ''}
+      ${phone ? `<a class="dv-act" href="tel:${escapeHtml(phone)}">${ICONS.call ?? ICONS.phone}<span>Llamar</span></a>` : ''}
+      ${phone ? `<a class="dv-act" href="https://wa.me/${escapeHtml(phone)}" target="_blank" rel="noopener noreferrer">${ICONS.chat}<span>WhatsApp</span></a>` : ''}
+      ${
+        pickupPendiente?.id && abierto
+          ? `<button class="dv-act" data-dv-pickup-status="purchased" data-dv-pickup="${escapeHtml(pickupPendiente.id)}" type="button">${ICONS.box}<span>Marcar recogida</span></button>`
+          : ''
+      }
+      ${
+        /* El aviso rápido ya escrito (camino, llegando, llegué) sigue disponible. */
+        abierto
+          ? `<button class="dv-act" data-delivery-notice="${escapeHtml(order.id)}" type="button">${ICONS.send}<span>Enviar aviso</span></button>`
+          : ''
+      }
+      ${abierto
+        ? `<button class="dv-act" data-delivery-issue="${escapeHtml(order.id)}" type="button"><span class="dv-act__dot" aria-hidden="true"></span><span>Reportar incidencia</span></button>`
+        : ''}
+    </div>`;
   }
 
   function syncDeliveryDetailMapModeButton() {
@@ -5972,6 +6588,10 @@
         keyboard: true,
         maxZoom: 22,
         tap: true,
+        /* El panel se vuelve a montar a menudo: sin animación de zoom no queda
+           ninguna transición a medias cuando el mapa se desmonta. */
+        zoomAnimation: false,
+        fadeAnimation: false,
       });
     } catch {
       try {
@@ -5989,57 +6609,225 @@
         keyboard: true,
         maxZoom: 22,
         tap: true,
+        zoomAnimation: false,
+        fadeAnimation: false,
       });
     }
     state.deliveryDetailMap.map = map;
     state.deliveryDetailMap.orderId = order?.id ?? null;
+    /*
+     * VISTA INICIAL OBLIGATORIA ANTES DE LAS TESELAS.
+     *
+     * Una capa de teselas no se puede añadir a un mapa sin centro/zoom: Leaflet
+     * calcula un zoom infinito, lanza «Attempted to load an infinite number of
+     * tiles» y el mapa se queda en blanco (sin marcadores y sin ruta). Se fija
+     * aquí el centro real del pedido —o el repartidor— y luego ya se encuadra
+     * la ruta completa.
+     */
+    const inicial =
+      deliveryLatLng(order?.delivery?.location) ??
+      mapLatLng(order?.delivery?.delivery_start_location) ??
+      [18.6157, -68.7071];
+    map.setView(inicial, 15);
     addDeliveryDetailMapBase(map);
     return map;
   }
 
+  /**
+   * PINTA LA RUTA DEL REPARTIDOR SOBRE EL MAPA.
+   *
+   * Tres marcadores distintos —repartidor, tienda y cliente— y una sola línea
+   * que pasa por los puntos REALES en orden. Si no hay posición del repartidor,
+   * se enseñan los destinos pero NO se dibuja línea: una ruta inventada es peor
+   * que ninguna.
+   */
   function updateDeliveryDetailMap(order) {
     const map = ensureDeliveryDetailMap(order);
     if (!map || !window.L || !order) return;
     const detail = state.deliveryDetailMap;
     const session = deliverySessionForOrder(order.id);
-    const location = deliveryOrderLocation(order);
     const route = deliveryRouteSummary(order, session);
-    const destination = route.destination;
-    const current = route.current;
-    const origin = route.origin;
-    if (!destination) {
+    const { destination, origin, pickups } = route;
+    if (!destination && !origin) {
       map.setView([18.6157, -68.7071], 12);
       return;
     }
-    if (!detail.customerMarker) {
-      detail.customerMarker = window.L.marker(destination, { icon: deliveryMarkerIcon('customer') }).addTo(map);
-      if (typeof detail.customerMarker.bindTooltip === 'function') {
-        detail.customerMarker.bindTooltip('Cliente', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--customer' });
-      }
-    } else {
-      detail.customerMarker.setLatLng(destination);
+    if (detail.orderId !== order.id) {
+      detail.orderId = order.id;
+      detail.fitKey = '';
+      detail.follow = true;
     }
-    if (current) {
-      if (!detail.deliveryMarker) {
-        detail.deliveryMarker = window.L.marker(current, { icon: deliveryMarkerIcon('delivery') }).addTo(map);
-        if (typeof detail.deliveryMarker.bindTooltip === 'function') {
-          detail.deliveryMarker.bindTooltip('Tu ubicación', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--driver' });
+
+    // Cliente (destino final).
+    if (destination) {
+      if (!detail.customerMarker) {
+        detail.customerMarker = window.L.marker(destination, { icon: deliveryMarkerIcon('customer') }).addTo(map);
+        if (typeof detail.customerMarker.bindTooltip === 'function') {
+          detail.customerMarker.bindTooltip('Cliente', { permanent: true, direction: 'top', offset: [0, -16], className: 'delivery-map-label delivery-map-label--customer' });
         }
       } else {
-        detail.deliveryMarker.setLatLng(current);
+        detail.customerMarker.setLatLng(destination);
       }
-      const routeStart = origin ?? current;
-      const points = routeStart && `${routeStart[0]},${routeStart[1]}` !== `${current[0]},${current[1]}` ? [routeStart, current, destination] : [current, destination];
-      if (!detail.routeLine) {
-        detail.routeLine = window.L.polyline(points, { color: '#0b6b4f', weight: 4, opacity: 0.72, dashArray: '8 8' }).addTo(map);
-      } else if (typeof detail.routeLine.setLatLngs === 'function') {
-        detail.routeLine.setLatLngs(points);
-      }
-      map.fitBounds(window.L.latLngBounds(points).pad(0.32), { animate: false, maxZoom: 16, padding: [40, 150] });
-    } else {
-      map.setView(destination, 16);
     }
-    setTimeout(() => map.invalidateSize(), 0);
+
+    // Repartidor (origen de la ruta).
+    if (origin) {
+      const etiqueta = route.gpsState === 'last' ? `Última señal ${deliveryAgeLabel(route.gpsAgeMin)}` : 'Tú';
+      if (!detail.deliveryMarker) {
+        detail.deliveryMarker = window.L.marker(origin, { icon: deliveryMarkerIcon('delivery', route.gpsState === 'last') })
+          .addTo(map)
+          .bindPopup(deliveryPopupHtml('Tu ubicación', [route.gpsState === 'last' ? etiqueta : 'GPS en vivo']));
+        if (typeof detail.deliveryMarker.bindTooltip === 'function') {
+          detail.deliveryMarker.bindTooltip('Tú', { permanent: true, direction: 'top', offset: [0, -18], className: 'delivery-map-label delivery-map-label--driver' });
+        }
+      } else {
+        detail.deliveryMarker.setLatLng(origin);
+        detail.deliveryMarker.setIcon(deliveryMarkerIcon('delivery', route.gpsState === 'last'));
+        detail.deliveryMarker.setPopupContent(deliveryPopupHtml('Tu ubicación', [etiqueta]));
+      }
+    } else if (detail.deliveryMarker) {
+      detail.deliveryMarker.remove();
+      detail.deliveryMarker = null;
+    }
+
+    // Tiendas del pedido (solo las que tienen coordenadas reales).
+    const vistos = new Set();
+    for (const pickup of pickups) {
+      if (!pickup.latlng) continue;
+      const key = pickup.id ?? `${pickup.name}:${pickup.latlng.join(',')}`;
+      vistos.add(key);
+      const hecha = ['purchased', 'to_customer', 'delivered'].includes(pickup.status);
+      let marker = detail.pickupMarkers.get(key);
+      if (!marker) {
+        marker = window.L.marker(pickup.latlng, { icon: deliveryMarkerIcon('pickup', hecha) }).addTo(map);
+        detail.pickupMarkers.set(key, marker);
+      } else {
+        marker.setLatLng(pickup.latlng);
+        marker.setIcon(deliveryMarkerIcon('pickup', hecha));
+      }
+      if (typeof marker.bindTooltip === 'function') {
+        marker.unbindTooltip?.();
+        marker.bindTooltip(pickup.name, { permanent: true, direction: 'top', offset: [0, -14], className: 'delivery-map-label delivery-map-label--pickup' });
+      }
+      if (typeof marker.bindPopup === 'function') {
+        marker.bindPopup(deliveryPopupHtml(pickup.name, [pickup.address, hecha ? 'Recogida hecha' : 'Pendiente de recoger']));
+      }
+    }
+    for (const [key, marker] of detail.pickupMarkers) {
+      if (!vistos.has(key)) {
+        marker.remove();
+        detail.pickupMarkers.delete(key);
+      }
+    }
+
+    // La línea: solo con origen real (el repartidor) y al menos un destino.
+    if (route.hasRoute) {
+      if (!detail.routeLine) {
+        detail.routeLine = window.L.polyline(route.routePoints, { color: '#0b6b4f', weight: 4, opacity: 0.78, dashArray: '8 8' }).addTo(map);
+      } else {
+        detail.routeLine.setLatLngs(route.routePoints);
+      }
+    } else if (detail.routeLine) {
+      detail.routeLine.remove();
+      detail.routeLine = null;
+    }
+
+    // Encuadre inicial y modo «seguir» durante la entrega.
+    const fitKey = `${order.id}:${route.stage.key}:${route.pendientes.length}`;
+    if (detail.follow && origin) {
+      /*
+       * La PRIMERA pintura no se anima: el mapa acaba de crearse y una animación
+       * de pane antes de estar montado lanza «_leaflet_pos» en Leaflet. Después,
+       * seguir al repartidor sí se anima (se ve el desplazamiento).
+       */
+      if (!detail.fitKey) {
+        map.setView(origin, 15, { animate: false });
+        detail.fitKey = fitKey;
+      } else {
+        if (map.getZoom() < 14) map.setZoom(15);
+        map.panTo(origin, { animate: true, duration: 0.35 });
+      }
+    } else if (detail.fitKey !== fitKey) {
+      const puntos = route.routePoints.length >= 2 ? route.routePoints : [destination ?? origin].filter(Boolean);
+      if (puntos.length >= 2) map.fitBounds(window.L.latLngBounds(puntos).pad(0.28), { animate: false, maxZoom: 16, padding: [56, 70] });
+      else if (puntos[0]) map.setView(puntos[0], 16);
+      detail.fitKey = fitKey;
+    }
+    updateDeliveryDetailFacts(order, session);
+    /* Si la pantalla se volvió a pintar entre tanto, este mapa ya no existe. */
+    setTimeout(() => {
+      if (state.deliveryDetailMap.map === map) map.invalidateSize();
+    }, 0);
+  }
+
+  /** Centra el mapa del repartidor en él o en la ruta completa. */
+  function centerDeliveryDetail(kind) {
+    const map = state.deliveryDetailMap.map;
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === state.deliveryActiveOrderId);
+    if (!map || !order) return;
+    const route = deliveryRouteSummary(order, deliverySessionForOrder(order.id));
+    if (kind === 'route') {
+      state.deliveryDetailMap.follow = false;
+      state.deliveryDetailMap.fitKey = '';
+      const puntos = route.routePoints.length >= 2 ? route.routePoints : [route.destination ?? route.origin].filter(Boolean);
+      if (puntos.length >= 2) map.fitBounds(window.L.latLngBounds(puntos).pad(0.25), { animate: true, maxZoom: 16, padding: [56, 70] });
+      else if (puntos[0]) map.setView(puntos[0], 16);
+    } else if (route.origin) {
+      state.deliveryDetailMap.follow = true;
+      map.setView(route.origin, Math.max(map.getZoom(), 16), { animate: true });
+    } else {
+      toast('Todavía no hay señal de tu GPS');
+    }
+    syncDeliveryFollowButton();
+  }
+
+  function syncDeliveryFollowButton() {
+    const button = $('[data-dv-follow]');
+    if (!button) return;
+    const activo = state.deliveryDetailMap.follow === true;
+    button.setAttribute('aria-pressed', String(activo));
+    button.classList.toggle('is-active', activo);
+  }
+
+  /** Vuelve a pedir la posición del teléfono (y la envía si hay entrega activa). */
+  async function refreshDeliveryDetailPosition() {
+    const orderId = state.deliveryActiveOrderId;
+    if (!orderId) return;
+    state.deliveryPreviewPoint = null;
+    const session = deliverySessionForOrder(orderId);
+    if (session?.id) {
+      try {
+        const position = await getInitialDeliveryPosition();
+        await sendDeliveryPoint(session.id, position.coords, { force: true });
+        toast('Ubicación actualizada');
+      } catch {
+        toast('No se pudo leer tu GPS');
+      }
+      return;
+    }
+    await refreshDeliveryPreviewPosition(orderId);
+    toast('Ubicación actualizada');
+  }
+
+  /** Los números del encabezado, al día (se llaman también desde el sondeo). */
+  function updateDeliveryDetailFacts(order, session = deliverySessionForOrder(order?.id)) {
+    if (!order) return;
+    const route = deliveryRouteSummary(order, session);
+    const gps = deliveryGpsFreshness(route);
+    const set = (name, value) => {
+      const node = $(`[data-dv-map-fact="${name}"]`);
+      if (node) node.textContent = value;
+    };
+    set('distance', route.distanceLabel || 'Sin distancia');
+    set('eta', route.etaLabel || 'Sin ETA');
+    set('stage', route.stage.label);
+    set('gps', gps.label);
+    const badge = $('[data-dv-gps-badge]');
+    if (badge) {
+      badge.dataset.state = gps.state;
+      badge.title = gps.detail;
+    }
+    syncDeliveryFollowButton();
   }
 
   async function openDeliveryOrderDetail(orderId) {
@@ -6100,9 +6888,20 @@
   function deliveryPrimaryAction(order, session) {
     const status = deliveryVisibleStatus(order, session);
     if (status === 'PENDIENTE') {
-      return order.conversation_id
-        ? `<button class="btn btn--primary btn--sm" data-delivery-contact="${escapeHtml(order.id)}" type="button">Aceptar y contactar</button>`
-        : `<span class="delivery-unavailable">Sin conversación</span>`;
+      /*
+       * MODO UAT: con la bandera encendida se puede INICIAR sin enviar el
+       * mensaje de contacto. No se marca al cliente como contactado: el pedido
+       * sigue diciendo la verdad. En producción la bandera no llega y este botón
+       * no existe.
+       */
+      const uatStart = state.uat?.skipDeliveryContact
+        ? `<button class="btn btn--ghost btn--sm" data-delivery-start="${escapeHtml(order.id)}" type="button" title="Modo UAT: inicia sin enviar WhatsApp">Iniciar (UAT, sin contacto)</button>`
+        : '';
+      return (
+        (order.conversation_id
+          ? `<button class="btn btn--primary btn--sm" data-delivery-contact="${escapeHtml(order.id)}" type="button">Aceptar y contactar</button>`
+          : '<span class="delivery-unavailable">Sin conversación</span>') + uatStart
+      );
     }
     if (status === 'EN_PROCESO') {
       return `<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(order.id)}" type="button">Iniciar</button>`;
@@ -6134,92 +6933,368 @@
       .join('');
   }
 
-  function deliveryCard(order, { detail = false } = {}) {
+  /*
+   * ==================================================================
+   *  MIS ENTREGAS — TARJETA COMPACTA
+   * ==================================================================
+   *
+   * Una tarjeta dice solo lo que se necesita para decidir: qué pedido es, a
+   * quién, a dónde, cuántas cosas lleva, si hay que cobrar y desde cuándo está
+   * asignado. El resto (productos, notas, recogidas, historial) vive en el
+   * detalle: la lista tiene que leerse de un vistazo con una mano.
+   */
+
+  /** Dirección corta del cliente: lo que se lee, no el volcado completo. */
+  function deliveryShortAddress(order) {
+    const location = deliveryOrderLocation(order);
+    const nombre = String(location?.name ?? '').trim();
+    const direccion = String(location?.address ?? '').trim();
+    const sector = String(location?.sector ?? '').trim();
+    const parts = [sector, nombre && nombre !== direccion ? nombre : null, direccion].filter(Boolean);
+    return parts.join(' · ') || 'Sin dirección guardada';
+  }
+
+  /** Dinero que hay que cobrar al entregar (0 si no aplica o ya está pagado). */
+  function deliveryCashDue(order) {
+    const method = String(order?.payment_method ?? '').toUpperCase();
+    if (method !== 'CASH' && method !== 'EFECTIVO' && method !== 'CONTRAENTREGA') return 0;
+    if (String(order?.payment_status ?? '').toLowerCase() === 'paid') return 0;
+    /*
+     * CON PAGO PARCIAL SE COBRA EL SALDO, NO EL TOTAL OTRA VEZ.
+     * El servidor manda `payment.due` (lo que falta). Si no viene, se usa el
+     * total como siempre.
+     */
+    const due = Number(order?.payment?.due);
+    if (Number.isFinite(due) && due >= 0) return due;
+    return Number(order?.total ?? 0) || 0;
+  }
+
+  /** ¿Este pedido obliga a pasar antes por una tienda? */
+  const deliveryHasPickups = (order) => Array.isArray(order?.pickups) && order.pickups.length > 0;
+
+  /** Teléfono del cliente tal como se marca (solo dígitos). */
+  const deliveryCustomerPhone = (order) =>
+    digits(order?.customer?.phone_e164 || order?.customer?.phone || order?.customer_phone || '');
+
+  /** Una sola acción grande, la que toca: empezar o terminar. */
+  function deliveryCardCta(order) {
+    const session = deliverySessionForOrder(order.id);
+    const status = deliveryVisibleStatus(order, session);
+    if (status === 'EN_CAMINO') {
+      return `<button class="dv-cta dv-cta--finish" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${
+        session?.id ? '' : 'disabled'
+      }>FINALIZAR</button>`;
+    }
+    if (status === 'PENDIENTE' || status === 'EN_PROCESO') {
+      /*
+       * SIN DESTINO NO HAY ENTREGA. El servidor rechaza iniciar un pedido sin
+       * ubicación (`missing_destination`): decirlo aquí evita un toque que solo
+       * puede acabar en error.
+       */
+      if (!deliveryOrderLocation(order)) {
+        return `<button class="dv-cta dv-cta--blocked" data-delivery-open="${escapeHtml(order.id)}" type="button">FALTA UBICACIÓN</button>`;
+      }
+      return `<button class="dv-cta" data-delivery-start="${escapeHtml(order.id)}" type="button">INICIAR</button>`;
+    }
+    return '';
+  }
+
+  function deliveryCard(order) {
     const session = deliverySessionForOrder(order.id);
     const status = deliveryVisibleStatus(order, session);
     const customer = order.customer ?? {};
-    const location = deliveryOrderLocation(order);
-    const title = order.order_number ?? order.id;
-    const assignedAt = order.delivery?.delivery_assigned_at ? fmtWhen(order.delivery.delivery_assigned_at) : '';
-    const meta = [location?.name || location?.address, assignedAt]
-      .filter(Boolean)
-      .join(' · ');
-    const items = (order.items ?? []).map((line) => `${line.quantity ?? 1} × ${line.variantName ?? line.name ?? 'Producto'}`).join(', ');
-    const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
-    const summary = [
-      ['Estado', operationalStatusLabel(status)],
-      ['Resumen', items || 'Producto'],
-      ['Pago', paymentMethodLabel(order.payment_method)],
-      ['Delivery', deliveryFee ? money(deliveryFee, order.currency) : 'Sin cargo'],
-    ];
-    return `<article class="delivery-card delivery-card--${escapeHtml(status.toLowerCase())}" data-delivery-order-card="${escapeHtml(order.id)}">
-      <button class="delivery-card__main" data-delivery-open="${escapeHtml(order.id)}" type="button">
-        <span class="delivery-card__top">
-          <strong>Pedido ${escapeHtml(title)}</strong>
-          <span class="tag delivery-status delivery-status--${escapeHtml(status.toLowerCase())}">${escapeHtml(operationalStatusLabel(status))}</span>
+    const cash = deliveryCashDue(order);
+    const units = Number(order.items_count ?? 0) || (order.items ?? []).length;
+    const assignedAt = order.assigned_at ?? order.delivery?.delivery_assigned_at ?? order.created_at ?? null;
+    const chips = [
+      units ? `${units} producto${units === 1 ? '' : 's'}` : null,
+      deliveryHasPickups(order) ? 'Con recogida' : 'Entrega',
+      cash ? `Cobrar ${money(cash, order.currency)}` : null,
+    ].filter(Boolean);
+    const tiempo = assignedAt ? `Asignado ${fmtWhen(assignedAt)}` : '';
+    return `<article class="dv-card dv-card--${escapeHtml(status.toLowerCase())}" data-delivery-order-card="${escapeHtml(
+      order.id,
+    )}">
+      <button class="dv-card__body" data-delivery-open="${escapeHtml(order.id)}" type="button" aria-label="Detalles del pedido ${escapeHtml(
+        order.order_number ?? order.id,
+      )}">
+        <span class="dv-card__head">
+          <strong>#${escapeHtml(order.order_number ?? order.id)}</strong>
+          <span class="dv-pill dv-pill--${escapeHtml(status.toLowerCase())}">${escapeHtml(operationalStatusLabel(status))}</span>
         </span>
-        <span class="delivery-card__customer">${escapeHtml(customer.name ?? 'Cliente')}</span>
-        <span class="delivery-card__meta">${escapeHtml(meta || 'Entrega asignada')}</span>
-        ${items ? `<span class="delivery-card__items">${escapeHtml(items)}</span>` : ''}
-        <span class="delivery-card__facts">
-          ${summary
-            .map(
-              ([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value || '—')}</strong></span>`,
-            )
-            .join('')}
-        </span>
+        <span class="dv-card__client">${escapeHtml(customer.name ?? 'Cliente')}</span>
+        <span class="dv-card__address">${escapeHtml(deliveryShortAddress(order))}</span>
+        <span class="dv-card__chips">${chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join('')}</span>
+        ${tiempo ? `<span class="dv-card__time">${escapeHtml(tiempo)}</span>` : ''}
       </button>
+      <div class="dv-card__actions">
+        <button class="btn btn--ghost btn--sm dv-card__more" data-delivery-open="${escapeHtml(order.id)}" type="button">Detalles</button>
+        ${deliveryCardCta(order)}
+      </div>
+    </article>`;
+  }
+
+  /*
+   * CONTACTO CON EL CLIENTE — tres caminos distintos y bien separados:
+   *   · Llamar            → tel: (marcador del teléfono)
+   *   · WhatsApp          → wa.me, lo envía la persona desde su WhatsApp
+   *   · Mensaje CRM       → el chat oficial de la Cloud API (ventanas y plantillas)
+   * Y un cuarto: el aviso rápido con texto ya escrito (editable).
+   */
+  function deliveryContactHtml(order) {
+    const phone = deliveryCustomerPhone(order);
+    const canChat = Boolean(order.conversation_id);
+    return `<div class="dv-contact">
+      ${phone ? `<a class="dv-contact__btn" href="tel:${escapeHtml(phone)}">${ICONS.call ?? ''}<span>Llamar</span></a>` : ''}
       ${
-        detail
-          ? `<div class="delivery-card__detail">
-              ${deliveryOrderSummaryHtml(order, session, status)}
-              ${deliveryMapPreviewHtml(order, session, status)}
-              ${deliveryAssignmentNoteHtml(order)}
-              <div class="delivery-step ${status === 'PENDIENTE' ? 'delivery-step--required' : ''}">
-                <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
-                <div>
-                  <strong>${status === 'PENDIENTE' ? 'Primero contacta al cliente' : 'Cliente contactado'}</strong>
-                  <small>${status === 'PENDIENTE' ? 'Luego podrás iniciar la entrega.' : 'Ya puedes continuar con la entrega.'}</small>
-                </div>
-              </div>
-              <div class="delivery-actions">
-                <button class="btn btn--ghost btn--sm" data-delivery-order-detail="${escapeHtml(order.id)}" type="button">Ver pedido</button>
-                ${
-                  status === 'INCIDENCIA'
-                    ? `<div class="delivery-issue">
-                        <strong>Incidencia reportada</strong>
-                        <p><span>Motivo:</span> ${escapeHtml(order.delivery?.issue_reason_label ?? 'Incidencia')}</p>
-                        ${order.delivery?.issue_note ? `<p><span>Nota:</span> ${escapeHtml(order.delivery.issue_note)}</p>` : ''}
-                        <p>Esperando decisión administrativa.</p>
-                      </div>`
-                    : ''
-                }
-                ${deliveryQuickActions(order, status, session)}
-                ${deliveryPrimaryAction(order, session)}
-              </div>
-            </div>`
+        phone
+          ? `<a class="dv-contact__btn" href="https://wa.me/${escapeHtml(phone)}" target="_blank" rel="noopener noreferrer"><span>WhatsApp</span></a>`
           : ''
       }
-    </article>`;
+      ${
+        canChat
+          ? `<button class="dv-contact__btn" data-delivery-chat="${escapeHtml(order.conversation_id)}" data-delivery-order-chat="${escapeHtml(
+              order.id,
+            )}" type="button"><span>Mensaje CRM</span></button>`
+          : ''
+      }
+      <button class="dv-contact__btn dv-contact__btn--primary" data-delivery-notice="${escapeHtml(order.id)}" type="button"><span>Enviar aviso</span></button>
+    </div>`;
+  }
+
+  /** Textos de aviso: nombre del cliente y número de pedido, sin inventar horas. */
+  function deliveryNoticeText(order, kind) {
+    const cliente = String(order?.customer?.name ?? '').trim().split(/\s+/)[0] || 'buenas';
+    const repartidor = currentUser()?.display_name || 'su repartidor';
+    const numero = order?.order_number ?? order?.id ?? '';
+    const textos = {
+      camino: `Hola ${cliente}, soy ${repartidor}, repartidor de FULLTECH. Voy de camino con su pedido #${numero}. Le aviso cuando esté llegando.`,
+      llegando: `Hola ${cliente}, soy ${repartidor}, de FULLTECH. Estoy llegando con su pedido #${numero}.`,
+      llegue: `Hola ${cliente}, soy ${repartidor}, de FULLTECH. Ya estoy en su ubicación con el pedido #${numero}.`,
+      comunicarme: `Hola ${cliente}, soy ${repartidor}, de FULLTECH. Necesito comunicarme con usted sobre el pedido #${numero}.`,
+    };
+    return textos[kind] ?? '';
+  }
+
+  function openDeliveryNoticeSheet(orderId) {
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    if (!order) return;
+    state.deliveryNoticeOrderId = orderId;
+    const phone = deliveryCustomerPhone(order);
+    const canChat = Boolean(order.conversation_id);
+    const inicial = deliveryNoticeText(order, 'camino');
+    openSheet(
+      'Enviar aviso',
+      `<div class="dv-notice">
+        <div class="dv-notice__options">
+          <button class="chip" data-dv-notice-option="camino" type="button">Voy de camino</button>
+          <button class="chip" data-dv-notice-option="llegando" type="button">Estoy llegando</button>
+          <button class="chip" data-dv-notice-option="llegue" type="button">Llegué a su ubicación</button>
+          <button class="chip" data-dv-notice-option="comunicarme" type="button">Necesito comunicarme</button>
+        </div>
+        <label class="field">
+          <span class="field__label">Mensaje (puedes editarlo)</span>
+          <textarea class="field__input" id="dv-notice-text" rows="4">${escapeHtml(inicial)}</textarea>
+        </label>
+        <p class="rule">WhatsApp abre la conversación en tu teléfono con este texto: lo envías tú. «Mensaje CRM» usa el canal oficial de WhatsApp y respeta la ventana de 24 horas y las plantillas aprobadas.</p>
+        <div class="dv-notice__actions">
+          ${
+            phone
+              ? `<button class="btn btn--ghost btn--block" data-dv-notice-send="wa" type="button">Abrir WhatsApp</button>`
+              : '<p class="rule rule--warn">Este pedido no tiene teléfono del cliente.</p>'
+          }
+          <button class="btn btn--primary btn--block" data-dv-notice-send="crm" type="button" ${
+            canChat ? '' : 'disabled'
+          }>Enviar desde el CRM</button>
+        </div>
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  /** Recogidas en tienda del pedido: estado, acciones y factura (sin costos). */
+  function deliveryPickupsHtml(order) {
+    const pickups = Array.isArray(order?.pickups) ? order.pickups : [];
+    if (!pickups.length) return '';
+    const estados = {
+      pending_purchase: 'Por comprar',
+      assigned: 'Asignada',
+      on_the_way: 'En camino',
+      purchased: 'Recogida',
+      to_customer: 'Con el repartidor',
+      delivered: 'Entregada',
+      issue: 'Incidencia',
+    };
+    return `<div class="dv-pickups">
+      <strong class="dv-block__title">Recogidas en tiendas</strong>
+      ${pickups
+        .map((pickup) => {
+          const coords =
+            Number.isFinite(Number(pickup.latitude)) && Number.isFinite(Number(pickup.longitude))
+              ? `https://www.google.com/maps/dir/?api=1&destination=${pickup.latitude},${pickup.longitude}&travelmode=driving`
+              : '';
+          const maps = pickup.maps_url || coords;
+          const estado = pickup.status ?? 'pending_purchase';
+          const id = pickup.id ? escapeHtml(pickup.id) : '';
+          const cerrada = ['purchased', 'to_customer', 'delivered'].includes(estado);
+          const accion = (value, label, clase = 'btn btn--ghost btn--sm') =>
+            id ? `<button class="${clase}" data-dv-pickup-status="${value}" data-dv-pickup="${id}" type="button">${label}</button>` : '';
+          return `<div class="dv-pickup">
+            <div>
+              <strong>${escapeHtml(pickup.supplier_name ?? 'Tienda')}</strong>
+              <small>${escapeHtml(pickup.address ?? pickup.sector ?? 'Sin dirección')} · ${escapeHtml(
+                estados[estado] ?? estado,
+              )}${pickup.invoice_attached ? ' · Factura adjunta' : ''}</small>
+              ${(pickup.items ?? []).length ? `<ul class="dv-pickup__items">${pickup.items
+                .map((line) => `<li>${escapeHtml(line.quantity ?? 1)} × ${escapeHtml(line.name ?? 'Producto')}</li>`)
+                .join('')}</ul>` : ''}
+              <div class="dv-pickup__actions">
+                ${maps ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(maps)}" target="_blank" rel="noopener noreferrer">Maps</a>` : ''}
+                ${cerrada ? '' : accion('on_the_way', estado === 'on_the_way' ? 'Sigo en camino' : 'Iniciar recogida')}
+                ${estado === 'on_the_way' ? accion('purchased', 'Confirmar recogida', 'dv-cta dv-cta--pickup') : ''}
+                ${
+                  pickup.invoice_attached && pickup.invoice_id
+                    ? `<a class="btn btn--ghost btn--sm" href="/api/admin/supplier-invoices/${encodeURIComponent(
+                        pickup.invoice_id,
+                      )}/file" target="_blank" rel="noopener noreferrer">Ver factura</a>`
+                    : id
+                      ? `<button class="btn btn--ghost btn--sm" data-dv-pickup-invoice="${id}" type="button">Adjuntar factura</button>`
+                      : ''
+                }
+                ${estado === 'issue' ? '' : accion('issue', 'Incidencia')}
+              </div>
+            </div>
+          </div>`;
+        })
+        .join('')}
+    </div>`;
+  }
+
+  /**
+   * RECOGIDAS REALES DEL PEDIDO. El detalle trae un resumen; aquí se piden las
+   * de verdad (con su id para poder moverlas) y, si ainda no existen, el servidor
+   * las crea sin duplicar.
+   */
+  async function cargarRecogidasDelPedido(orderId) {
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    if (!order) return;
+    try {
+      const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/pickups`);
+      order.pickups = (data.pickups ?? []).map((pickup) => ({
+        id: pickup.id ?? null,
+        supplier_id: pickup.supplier_id ?? null,
+        supplier_name: pickup.supplier_name ?? null,
+        status: pickup.status ?? 'pending_purchase',
+        quantity: Number(pickup.quantity ?? 0) || 0,
+        items: Array.isArray(pickup.items)
+          ? pickup.items.map((line) => ({ name: line.name ?? 'Producto', quantity: Number(line.quantity ?? 1) || 1 }))
+          : [],
+        address: pickup.address ?? null,
+        sector: pickup.sector ?? null,
+        latitude: pickup.latitude ?? null,
+        longitude: pickup.longitude ?? null,
+        maps_url: pickup.maps_url ?? null,
+        invoice_attached: pickup.invoice_attached === true,
+        invoice_id: pickup.invoice_id ?? null,
+      }));
+      if (state.deliveryActiveOrderId === orderId) renderDelivery();
+    } catch {
+      /* sin recogidas el detalle funciona igual */
+    }
+  }
+
+  /** Cámara o archivo: adjunta la factura del proveedor de ESA recogida. */
+  function elegirFacturaDeRecogida(pickupId) {
+    const orderId = state.deliveryActiveOrderId;
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    const pickup = (order?.pickups ?? []).find((row) => row.id === pickupId);
+    if (!order || !pickup?.supplier_id) {
+      toast('Esta recogida no tiene tienda asociada');
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,application/pdf';
+    input.setAttribute('capture', 'environment');
+    input.style.display = 'none';
+    document.body.append(input);
+    input.addEventListener(
+      'change',
+      async () => {
+        const file = input.files?.[0];
+        input.remove();
+        if (!file) return;
+        if (file.size > 4 * 1024 * 1024) {
+          toast('La factura supera 4 MB. Haz una foto más ligera o guárdala en JPG.');
+          return;
+        }
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result ?? ''));
+          reader.onerror = () => reject(new Error('read_failed'));
+          reader.readAsDataURL(file);
+        }).catch(() => '');
+        if (!dataUrl) {
+          toast('No se pudo leer el archivo');
+          return;
+        }
+        try {
+          await api('/api/admin/supplier-invoices', {
+            method: 'POST',
+            body: JSON.stringify({
+              order_id: order.id,
+              supplier_id: pickup.supplier_id,
+              filename: file.name,
+              data_url: dataUrl,
+            }),
+          });
+          await cargarRecogidasDelPedido(order.id);
+          toast('Factura adjunta');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo adjuntar la factura');
+        }
+      },
+      { once: true },
+    );
+    input.click();
+  }
+
+  /** Cobro pendiente: se muestra, pero finalizar NO registra ningún pago. */
+  function deliveryCashHtml(order) {
+    const cash = deliveryCashDue(order);
+    if (!cash) return '';
+    return `<div class="dv-cash">
+      <strong>Cobro pendiente ${escapeHtml(money(cash, order.currency))}</strong>
+      <small>Finalizar la entrega no registra el cobro: se cobra en el flujo de caja.</small>
+    </div>`;
   }
 
   function deliveryDetailPanelHtml(order) {
     const session = deliverySessionForOrder(order.id);
     const status = deliveryVisibleStatus(order, session);
+    const route = deliveryRouteSummary(order, session);
+    const ruta = externalNavigationUrl(
+      deliveryOrderLocation(order),
+      order?.delivery?.delivery_start_location ?? order?.delivery?.route_snapshot?.start_location ?? session?.last_position,
+    );
     return `<section class="delivery-detail-panel" aria-label="Detalle de entrega">
-      ${deliveryOrderSummaryHtml(order, session, status)}
+      ${deliveryHeaderHtml(order, session, status, route)}
+      ${deliveryActionPanelHtml(order, session, status, route)}
+      ${deliveryCashHtml(order)}
       ${deliveryCompactFactsHtml(order, session, status)}
+      ${deliveryPickupsHtml(order)}
       ${deliveryAssignmentNoteHtml(order)}
+      ${deliveryOrderSummaryHtml(order, session, status)}
       <div class="delivery-step ${status === 'PENDIENTE' ? 'delivery-step--required' : ''}">
         <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
         <div>
           <strong>${status === 'PENDIENTE' ? 'Primero contacta al cliente' : 'Cliente contactado'}</strong>
-          <small>${status === 'PENDIENTE' ? 'Acepta y envía el aviso al cliente.' : 'Ya puedes continuar con la entrega.'}</small>
+          <small>${status === 'PENDIENTE' ? 'Luego podrás iniciar la entrega.' : 'Ya puedes continuar con la entrega.'}</small>
         </div>
       </div>
       <div class="delivery-actions">
         <button class="btn btn--ghost btn--sm" data-delivery-order-detail="${escapeHtml(order.id)}" type="button">Ver pedido</button>
-        ${deliveryQuickActions(order, status, session)}
+        ${ruta ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(ruta)}" target="_blank" rel="noopener noreferrer">Ruta</a>` : ''}
         ${
           status === 'INCIDENCIA'
             ? `<div class="delivery-issue">
@@ -6235,10 +7310,35 @@
     </section>`;
   }
 
+  /** Tamaño de cada tanda: la lista arranca corta y crece de a poco. */
+  const DELIVERY_PAGE = 12;
+
+  function deliverySectionLimit(key) {
+    state.deliveryMore = state.deliveryMore ?? { pendientes: DELIVERY_PAGE, curso: DELIVERY_PAGE, historial: 6 };
+    return state.deliveryMore[key] ?? DELIVERY_PAGE;
+  }
+
+  /** Mis pedidos, sin los de otros: si el servidor ya filtra, esto es un no-op. */
+  function deliveryMyOrders() {
+    const mine = String(currentUser()?.id ?? '');
+    const all = state.deliveryOrders ?? [];
+    if (!mine) return all;
+    const propios = all.filter((order) => String(order.delivery?.delivery_user_id ?? '') === mine);
+    if (propios.length) return propios;
+    /*
+     * Compatibilidad con una copia guardada ANTES de este cambio: si ninguno de
+     * los pedidos trae repartidor, no hay nada que separar. En cuanto el payload
+     * trae repartidor (lo normal), la lista es solo la mía: lo ajeno no se enseña.
+     */
+    return all.every((order) => !order.delivery?.delivery_user_id) ? all : [];
+  }
+
   function renderDelivery() {
     const box = $('#delivery-view');
     if (!box) return;
-    const orders = deliveryOrdersSorted();
+    const mine = deliveryMyOrders();
+    const mineIds = new Set(mine.map((order) => order.id));
+    const orders = deliveryOrdersSorted().filter((order) => mineIds.has(order.id));
     const activeId = state.deliveryActiveOrderId;
     const autoOpen = !activeId && !state.deliveryListRequested && orders.length === 1;
     const active = activeId
@@ -6260,32 +7360,79 @@
         <div class="delivery-detail-map" id="delivery-detail-map" aria-label="Mapa de entrega"></div>
         <button class="icon-btn delivery-detail-back" data-delivery-back type="button" aria-label="Volver">${ICONS.back}</button>
         ${deliveryDetailMapModeHtml()}
+        ${deliveryMapControlsHtml()}
         ${deliveryDetailPanelHtml(active)}
       </div>`;
       if (visible) setTimeout(() => updateDeliveryDetailMap(active), 0);
       return;
     }
     resetDeliveryDetailMap();
-    const group = (title, values) =>
-      values.length
-        ? `<section class="delivery-group"><h2>${escapeHtml(title)} <span>${values.length}</span></h2>${values.map((order) => deliveryCard(order)).join('')}</section>`
-        : '';
-    const buckets = {
-      pendientes: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'PENDIENTE'),
-      proceso: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'EN_PROCESO'),
-      camino: orders.filter((order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id)) === 'EN_CAMINO'),
-      finalizadas: orders.filter((order) => ['ENTREGADO', 'CANCELADO', 'INCIDENCIA'].includes(deliveryVisibleStatus(order, deliverySessionForOrder(order.id)))),
+
+    const estado = (order) => deliveryVisibleStatus(order, deliverySessionForOrder(order.id));
+    const pendientes = mine
+      .filter((order) => estado(order) === 'PENDIENTE')
+      .sort((a, b) => {
+        /*
+         * LO ÚLTIMO ASIGNADO, ARRIBA.
+         *
+         * Antes se ordenaba por el más viejo: un pedido recién asignado caía al
+         * final de la lista (y con la carga por tandas ni se veía), justo cuando
+         * lo que importa es atenderlo ya. Se ordena por la asignación más
+         * reciente.
+         */
+        const fa = String(b.assigned_at ?? b.delivery?.delivery_assigned_at ?? b.created_at ?? '');
+        const fb = String(a.assigned_at ?? a.delivery?.delivery_assigned_at ?? a.created_at ?? '');
+        return fa.localeCompare(fb);
+      });
+    const rankCurso = { EN_CAMINO: 0, EN_PROCESO: 1, INCIDENCIA: 2 };
+    const curso = mine
+      .filter((order) => ['EN_PROCESO', 'EN_CAMINO', 'INCIDENCIA'].includes(estado(order)))
+      .sort((a, b) => (rankCurso[estado(a)] ?? 9) - (rankCurso[estado(b)] ?? 9));
+    const historial = mine
+      .filter((order) => ['ENTREGADO', 'CANCELADO'].includes(estado(order)))
+      .sort((a, b) => String(b.delivered_at ?? b.assigned_at ?? b.created_at ?? '').localeCompare(String(a.delivered_at ?? a.assigned_at ?? a.created_at ?? '')));
+
+    const seccion = (key, titulo, filas) => {
+      if (!filas.length) return '';
+      const limite = deliverySectionLimit(key);
+      const visibles = filas.slice(0, limite);
+      const restantes = filas.length - visibles.length;
+      return `<section class="dv-section" data-dv-section="${key}">
+        <h2>${escapeHtml(titulo)}<span>${filas.length}</span></h2>
+        ${visibles.map((order) => deliveryCard(order)).join('')}
+        ${
+          restantes > 0
+            ? `<button class="dv-more" data-delivery-more="${key}" type="button">Ver más (${restantes})</button>`
+            : ''
+        }
+      </section>`;
     };
-    box.innerHTML = `<div class="delivery-head">
-      <div><p>${orders.length ? `${orders.length} pedido${orders.length === 1 ? '' : 's'} asignado${orders.length === 1 ? '' : 's'}` : 'Sin entregas asignadas'}</p></div>
+
+    const contadores = `<div class="dv-counts">
+      <span class="dv-count"><strong>${pendientes.length}</strong> pendientes</span>
+      <span class="dv-count"><strong>${curso.length}</strong> en curso</span>
+      <span class="dv-count"><strong>${historial.length}</strong> completadas</span>
+    </div>`;
+    const activos = pendientes.length + curso.length;
+    const avisoAdministracion =
+      !mine.length && hasPermission('delivery.tracking.manage_all')
+        ? '<p class="rule">Administración supervisa todas las entregas desde «Pedidos» y «Mapa».</p>'
+        : '';
+    box.innerHTML = `<div class="delivery-head dv-head">
+      <div>
+        <h1>Mis entregas</h1>
+        ${contadores}
+      </div>
       <button class="icon-btn" data-delivery-refresh type="button" aria-label="Actualizar">${ICONS.retry}</button>
     </div>
-    ${orders.length ? [
-      group('Pendientes', buckets.pendientes),
-      group('En proceso', buckets.proceso),
-      group('En camino', buckets.camino),
-      group('Finalizadas', buckets.finalizadas),
-    ].join('') : emptyState('No tienes entregas asignadas.')}
+    ${
+      activos
+        ? seccion('pendientes', 'Pendientes', pendientes) + seccion('curso', 'En curso', curso)
+        : `<div class="dv-idle">${emptyState(
+            mine.length ? 'No tienes entregas activas. Lo completado está en el historial.' : 'No tienes entregas asignadas.',
+          )}${avisoAdministracion}</div>`
+    }
+    ${historial.length ? seccion('historial', 'Historial', historial) : ''}
     `;
   }
 
@@ -6847,6 +7994,8 @@
     state.deliveryListRequested = false;
     setTab('delivery', { silent: true });
     renderDelivery();
+    // Las recogidas se piden al abrir: el detalle las pinta en cuanto llegan.
+    cargarRecogidasDelPedido(orderId).catch(() => {});
     refreshDeliveryPreviewPosition(orderId).catch(() => {});
   }
 
@@ -6857,12 +8006,19 @@
       return;
     }
     const order = (state.deliveryOrders ?? []).find((row) => row.id === session.order_id) ?? null;
+    // El saldo sale del bloque de pago del servidor: los adelantos se descuentan.
+    const cash = deliveryCashDue(order);
     openSheet(
       'Finalizar entrega',
       `<div class="delivery-confirm">
         <p><strong>Cliente:</strong> ${escapeHtml(order?.customer?.name ?? session.customer?.name ?? 'Cliente')}</p>
         <p><strong>Pedido:</strong> ${escapeHtml(order?.order_number ?? session.order?.order_number ?? session.order_id)}</p>
         <p>¿Confirmas que el pedido fue entregado?</p>
+        ${
+          cash
+            ? `<div class="dv-cash"><strong>Cobro pendiente ${escapeHtml(money(cash, order?.currency))}</strong><small>Finalizar la entrega no registra el cobro: se cobra en el flujo de caja.</small></div>`
+            : ''
+        }
         <label class="field">
           <span class="field__label">Nota de entrega</span>
           <textarea class="field__input" id="delivery-complete-note" rows="3" placeholder="Opcional"></textarea>
@@ -8184,10 +9340,38 @@
     });
   }
 
-  function openSheet(title, html, { variant = '' } = {}) {
+  function openSheet(title, html, { variant = '', action = null } = {}) {
     $('#sheet-title').textContent = title;
     $('#sheet-body').innerHTML = html;
     organizeActionMenus($('#sheet-body'));
+    if (action?.label && typeof action.onClick === 'function') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn--primary btn--block';
+      button.id = 'sheet-submit';
+      button.textContent = action.label;
+      button.addEventListener('click', async () => {
+        $('#sheet-body')?.querySelector('.inline-feedback')?.remove();
+        try {
+          await action.onClick(button);
+        } catch (error) {
+          if (error?.message === 'unauthorized') return;
+          const mensaje = error?.body?.message ?? error?.message ?? 'No se pudo completar la acción';
+          const cuerpo = $('#sheet-body');
+          if (cuerpo && !$('#sheet')?.hidden) {
+            const aviso = document.createElement('p');
+            aviso.className = 'inline-feedback';
+            aviso.setAttribute('role', 'alert');
+            aviso.textContent = mensaje;
+            cuerpo.prepend(aviso);
+            aviso.scrollIntoView({ block: 'nearest' });
+          } else {
+            toast(mensaje);
+          }
+        }
+      });
+      $('#sheet-body').append(button);
+    }
     const sheet = $('#sheet');
     if (variant) sheet.dataset.variant = variant;
     else delete sheet.dataset.variant;
@@ -8273,7 +9457,7 @@
       return;
     }
     const body = deliveryMessage(order);
-    await openChat(order.conversation_id, { draft: body, deliveryOrderId: order.id });
+    await openChat(order.conversation_id, { draft: deliveryMessage(order), deliveryOrderId: order.id });
     const sent = await sendWaMessage(
       {
         body,
@@ -8492,7 +9676,7 @@
       label ? ` · ${escapeHtml(label)}` : ''
     }${
       estado ? ` · ${escapeHtml(estado)}` : ''
-    }${message.error_message && !isTemplateMessage(message) ? ` · ${escapeHtml(message.error_message)}` : ''}</span>`;
+    }${message.error_message && !isTemplateMessage(message) ? ` · ${escapeHtml(waFriendlySendError(message))}` : ''}</span>`;
     const clases = [
       `bubble bubble--${inbound ? 'in' : 'out'}`,
       auto ? 'bubble--auto' : '',
@@ -8632,13 +9816,40 @@
     return CONTACT_STATE.CLOSED_WINDOW;
   }
 
-  function waFriendlyTemplateError(message) {
+  /*
+   * TRADUCIR LO QUE DICE WHATSAPP.
+   *
+   * Meta contesta en inglés y con códigos («Invalid parameter», «131026»).
+   * Enseñarlo tal cual no le dice nada a quien atiende el chat: parece un fallo
+   * del panel cuando en realidad es el número o la ventana de 24 horas. Aquí se
+   * convierte en una frase que explica qué pasó y qué hacer.
+   */
+  function waFriendlySendError(message) {
     const text = String(message?.error_message ?? '');
     const code = String(message?.error_code ?? '');
     if (code === '132000' || /Number of parameters does not match/i.test(text)) {
       return 'Esta plantilla no pudo enviarse porque faltan o sobran datos requeridos.';
     }
-    return text || 'WhatsApp rechazó el envío de la plantilla.';
+    if (/Invalid parameter/i.test(text) || code === '100' || code === '131009') {
+      return 'WhatsApp rechazó el mensaje: algún dato del envío no es válido (revisa el número del cliente).';
+    }
+    if (/not in allowed list|not a valid WhatsApp|recipient phone number/i.test(text) || code === '131030') {
+      return 'Ese número no puede recibir mensajes de esta cuenta de WhatsApp.';
+    }
+    if (/undeliverable|131026/i.test(text) || code === '131026') {
+      return 'El mensaje no se entregó: el número no tiene WhatsApp activo.';
+    }
+    if (/re-engagement|24 hour|outside.*window/i.test(text) || code === '131047') {
+      return 'El cliente no ha escrito en las últimas 24 horas: hay que usar una plantilla aprobada.';
+    }
+    if (/template/i.test(text) && /(not exist|not found|unknown)/i.test(text)) {
+      return 'La plantilla no existe o no está aprobada en Meta.';
+    }
+    return text || 'WhatsApp rechazó el envío.';
+  }
+
+  function waFriendlyTemplateError(message) {
+    return waFriendlySendError(message);
   }
 
   const waAwaiting = (row) => row.awaiting_reply === true;
@@ -9743,6 +10954,29 @@
      * este filtro», que despista: parece que el chat no existe.
      */
     const rows = waVisibleConversations();
+    /*
+     * LA LISTA DE ARCHIVADOS SE PIDE AL SERVIDOR.
+     *
+     * `/api/admin/data` (la carga de arranque) trae solo las conversaciones
+     * ACTIVAS. Si el filtro recordado es «Archivados», al abrir la app la lista
+     * salía vacía aunque los contadores dijeran que hay 11: se leía «No hay
+     * conversaciones archivadas» justo después de salir de un chat. Se pide una
+     * vez la lista filtrada; el guardia evita pedirla en bucle si algo falla.
+     */
+    if (
+      !rows.length &&
+      !state.wa.q &&
+      state.wa.filter === 'archivados' &&
+      Number(state.wa.counts?.archivados ?? 0) > 0 &&
+      !state.wa.archivadosPedidos
+    ) {
+      state.wa.archivadosPedidos = true;
+      refreshWhatsapp()
+        .catch(() => {})
+        .finally(() => {
+          state.wa.archivadosPedidos = false;
+        });
+    }
     const buscando = Boolean(state.wa.q);
     const vacioPorBusqueda = buscando && !rows.length;
     /*
@@ -9776,15 +11010,39 @@
         : 'No hay conversaciones con este filtro.');
     if (rows.length) {
       const html = rows.map(waRow).join('');
-      const scope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date]);
-      if (window.PhytoConversationList) window.PhytoConversationList.render(box, html, scope);
-      else box.innerHTML = html;
+      /*
+       * LOS ARCHIVADOS SON DE LA EMPRESA, NO DE QUIEN LOS ARCHIVÓ.
+       *
+       * Al finalizar o archivar, el chat sale de la bandeja de trabajo para
+       * TODOS (el estado vive en la conversación), así que si alguien no sabe
+       * dónde mirar parece que otro se lo llevó. Este aviso lo deja claro y
+       * lleva a la lista de archivados en un toque: ahí los ve cualquiera.
+       */
+      const archivados = Number(state.wa.counts?.archivados ?? 0);
+      const avisoArchivados =
+        !buscando && state.wa.filter !== 'archivados' && archivados > 0
+          ? `<button class="wa-archived-hint" data-wa-archived-hint type="button" aria-label="Ver los ${archivados} chats archivados">
+              <span class="wa-archived-hint__icon" aria-hidden="true">${ICONS.box}</span>
+              <span class="wa-archived-hint__text"><strong>${archivados}</strong> archivado${archivados === 1 ? '' : 's'}</span>
+              <span class="wa-archived-hint__go" aria-hidden="true">Ver</span>
+            </button>`
+          : '';
+      const scope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date, archivados]);
+      if (window.PhytoConversationList) window.PhytoConversationList.render(box, avisoArchivados + html, scope);
+      else box.innerHTML = avisoArchivados + html;
       return;
     }
     const filtroPuesto = state.wa.filter !== 'todos';
+    const archivadosFuera = Number(state.wa.counts?.archivados ?? 0);
+    const aLosArchivados =
+      archivadosFuera > 0 && state.wa.filter !== 'archivados'
+        ? `<button class="btn btn--ghost btn--sm" data-wa-archived-hint type="button">Ver ${archivadosFuera} archivado${
+            archivadosFuera === 1 ? '' : 's'
+          }</button>`
+        : '';
     box.innerHTML = filtroPuesto
-      ? `${emptyState(empty)}<div class="empty__actions"><button class="btn btn--ghost btn--sm" data-wa-filter-clear type="button">Ver todas</button></div>`
-      : emptyState(empty);
+      ? `${emptyState(empty)}<div class="empty__actions"><button class="btn btn--ghost btn--sm" data-wa-filter-clear type="button">Ver todas</button>${aLosArchivados}</div>`
+      : `${emptyState(empty)}${aLosArchivados ? `<div class="empty__actions">${aLosArchivados}</div>` : ''}`;
   }
 
   function openNewConversationSheet() {
@@ -10640,15 +11898,30 @@
   }
 
   function waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate = null }) {
-    const wa = state.whatsapp ?? {};
-    if (!wa.configured) {
-      return '<p class="rule rule--warn">WhatsApp no está configurado en el servidor: se reciben mensajes, pero no se pueden enviar.</p>';
+    const wa = state.whatsapp ?? null;
+    /*
+     * SE PUEDE ESCRIBIR SI EL ENVÍO FUNCIONA. `canSend` lo resuelve el servidor
+     * (credenciales válidas + Meta responde; el modo local de la UAT también
+     * cuenta). Antes esto miraba `configured`, un booleano que no distinguía una
+     * caída de red de una credencial rechazada.
+     */
+    const canSend = wa?.canSend === true || wa?.mode === 'mock' || (wa?.send === 'ok' && wa?.mode !== 'mock');
+    /*
+     * «No se pudo verificar» NO es «no configurado»: en ese caso se deja escribir
+     * (el servidor responderá con el motivo real si de verdad no se puede) y solo
+     * se advierte. Con configuración ausente o credencial rechazada sí se oculta
+     * el compositor: escribir ahí solo generaría un error garantizado.
+     */
+    const doubtful = !canSend && (wa === null || wa?.send === 'unknown');
+    if (!canSend && !doubtful) {
+      return waNoticeHtml();
     }
+    const aviso = doubtful ? waNoticeHtml() : '';
     if (customer?.do_not_contact) {
       return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      return waClosedComposerHtml();
+      return aviso + waClosedComposerHtml();
     }
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     /*
@@ -10659,7 +11932,7 @@
      * «Enviar plantilla» NO va aquí a la izquierda: esa acción ya está en el menú
      * de acciones del chat (el botón flotante), y repetir el icono solo confundía.
      */
-    return `<div class="composer-bar">
+    return `${aviso}<div class="composer-bar">
         <div class="composer-field">
         <span class="composer-left">
           <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
@@ -10920,7 +12193,16 @@
       messages,
       (message) => message?.direction === 'outbound' && isTemplateMessage(message),
     );
-    const composerHtml = waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate });
+    const composerHtml =
+      waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate }) +
+      /*
+       * Desde el chat de reparto el mensaje no sale «pelado»: el servidor le
+       * pone delante la firma del repartidor. Decirlo aquí evita la duda de si
+       * el cliente sabe quién le escribe.
+       */
+      (deliveryChatMode
+        ? '<p class="wa-delivery-sign">Este mensaje se enviará con tu firma de repartidor.</p>'
+        : '');
     if (composerHtml !== state.wa.composerHtml) {
       state.wa.composerHtml = composerHtml;
       $('#wa-composer').innerHTML = composerHtml;
@@ -11734,14 +13016,23 @@
     state.wa.loadingFor = conversationId;
     const secuencia = (state.wa.threadSeq = (state.wa.threadSeq ?? 0) + 1);
     try {
-      const [data, templates] = await Promise.all([
-        api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`),
-        api('/api/admin/wa-templates?sync=stale').catch(() => ({ templates: state.templates ?? [] })),
-      ]);
+      /*
+       * LAS PLANTILLAS NO HACEN ESPERAR AL HILO.
+       *
+       * Este `sync=stale` puede llegar a consultar Meta (red externa) y antes se
+       * esperaba junto con los mensajes: el chat se quedaba en «Cargando…» hasta
+       * que contestaba Meta, aunque el hilo ya estuviera listo. Ahora se pide en
+       * segundo plano; cuando llega, se guarda para el desplegable de envío.
+       */
+      api('/api/admin/wa-templates?sync=stale')
+        .then((templates) => {
+          state.templates = templates.templates ?? state.templates ?? [];
+        })
+        .catch(() => {});
+      const data = await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`);
       // Se cambió de conversación o alguien pidió una carga más nueva: esta sobra.
       if (secuencia !== state.wa.threadSeq) return;
       if (state.wa.selectedId !== conversationId) return; // se cambió mientras cargaba
-      state.templates = templates.templates ?? [];
       state.wa.chat = data;
       state.wa.chatSig = waThreadSig(data);
       state.wa.threadError = false;
@@ -12544,6 +13835,28 @@
       </dl>`,
     );
 
+    /*
+     * GRUPOS DE NEGOCIO — un cliente puede comprar en varias actividades.
+     * Se muestran los grupos configurados y los que ya tenga el cliente, por si
+     * alguno se añadió después y hoy no está en la lista por defecto.
+     */
+    const gruposCliente = customerGroups(customer);
+    const gruposDisponibles = [...new Set([...(state.businessGroups ?? []), ...gruposCliente])];
+    const groupsSection = customerProfileSection(
+      'Grupos de negocio',
+      `<p class="view__hint">Clasifica al cliente por actividad. Toca una etiqueta para ponerla o quitarla: se guarda al instante.</p>
+       <div class="profile-groups" data-customer-groups="${escapeHtml(customer.id)}">
+         ${gruposDisponibles
+           .map(
+             (group) =>
+               `<button class="chip chip--group chip--group-${groupTone(group)}" data-customer-group="${escapeHtml(
+                 group,
+               )}" aria-pressed="${gruposCliente.includes(group) ? 'true' : 'false'}" type="button">${escapeHtml(group)}</button>`,
+           )
+           .join('')}
+       </div>`,
+    );
+
     const tagsHtml = customerProfileSection(
       'Etiquetas',
       `${
@@ -12574,18 +13887,80 @@
       </dl>`,
     );
 
+    /*
+     * HISTORIAL 360° — una sola línea de tiempo con todo lo que pasó con este
+     * cliente: mensajes, cotizaciones, facturas, pedidos, entregas, compras a
+     * terceros, seguimientos y garantías. Viene del servidor ya unificado (no se
+     * copian datos) y cada fila puede abrir su registro original.
+     */
+    const historyTypes = [
+      ['all', 'Todo'],
+      ['message', 'Mensajes'],
+      ['order', 'Pedidos'],
+      ['quote', 'Cotizaciones'],
+      ['invoice', 'Facturas'],
+      ['pickup', 'Compras'],
+      ['supplier_invoice', 'Docs. proveedor'],
+      ['delivery', 'Entregas'],
+      ['followup', 'Seguimientos'],
+      ['warranty', 'Garantías'],
+    ];
+    const historyFilter = state.customerHistoryFilter ?? 'all';
+    const historyRows = [
+      ...(profile.history ?? []),
+      ...(profile.stageHistory ?? []).map((row) => ({
+        id: `stage:${row.id ?? row.timestamp}`,
+        at: row.timestamp,
+        type: 'stage',
+        title: `Etapa: ${customerStageLabel(row.to_stage)}`,
+        detail: row.reason ?? '',
+        status: null,
+        actor: row.changed_by_display_name ?? 'Sistema',
+        ref: null,
+      })),
+    ]
+      .filter((row) => row.at)
+      .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const historyGroup = (type) => (type === 'message_in' || type === 'message_out' ? 'message' : type);
+    const historyVisible = historyRows.filter(
+      (row) => historyFilter === 'all' || historyGroup(row.type) === historyFilter,
+    );
     const historyHtml = customerProfileSection(
       'Historial',
-      (profile.stageHistory ?? []).length
-        ? `<div class="profile-history">${profile.stageHistory
-            .map(
-              (row) =>
-                `<div><strong>${escapeHtml(customerStageLabel(row.to_stage))}</strong><span>${escapeHtml(
-                  row.timestamp ? fmtWhen(row.timestamp) : 'Sin fecha',
-                )} · ${escapeHtml(row.changed_by_display_name ?? 'Sistema')}${row.reason ? ` · ${escapeHtml(row.reason)}` : ''}</span></div>`,
-            )
-            .join('')}</div>`
-        : '<p class="view__hint">Sin cambios manuales de etapa.</p>',
+      `<div class="chips profile-history-filters">${historyTypes
+        .map(
+          ([value, label]) =>
+            `<button class="chip" type="button" data-history-filter="${value}" aria-pressed="${
+              historyFilter === value
+            }">${escapeHtml(label)}</button>`,
+        )
+        .join('')}</div>
+      ${
+        historyVisible.length
+          ? `<div class="profile-history">${historyVisible
+              .slice(0, 120)
+              .map((row) => {
+                const cuando = row.at ? fmtWhen(row.at) : 'Sin fecha';
+                const enlace =
+                  row.ref?.kind === 'order' && row.ref.id
+                    ? ` data-history-order="${escapeHtml(row.ref.id)}"`
+                    : row.type === 'message_in' || row.type === 'message_out'
+                      ? ' data-history-chat="1"'
+                      : '';
+                return `<div class="history-row" data-history-type="${escapeHtml(historyGroup(row.type))}"${enlace}>
+                  <time>${escapeHtml(cuando)}</time>
+                  <div><strong>${escapeHtml(row.title ?? '')}</strong><span>${escapeHtml(row.detail ?? '')}${
+                    row.actor ? ` · ${escapeHtml(row.actor)}` : ''
+                  }</span></div>
+                  ${row.status ? `<span class="history-status">${escapeHtml(row.status)}</span>` : ''}
+                </div>`;
+              })
+              .join('')}</div>`
+          : `<p class="view__hint">${
+              historyFilter === 'all' ? 'Todavía no hay movimientos.' : 'No hay movimientos de ese tipo.'
+            }</p>`
+      }`,
+      'profile-history-card',
     );
 
     const followupHtml = customerProfileSection(
@@ -12817,6 +14192,7 @@
     box.innerHTML = `${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
       <div class="profile-grid">
         ${personal}
+        ${groupsSection}
         ${prefsSection}
         ${stageHtml}
         ${tagsHtml}
@@ -15385,11 +16761,29 @@
    * cliente por ese teléfono y deja el envío escrito en su hilo. Si WhatsApp no
    * está configurado o falta la plantilla, se dice el motivo: nunca se finge.
    */
-  function enviarUbicacionANumero({ locationId, phone, name = '', saveContact = false, contactLabel = '', concept = '' }) {
+  function enviarUbicacionANumero({ locationId, phone, name = '', saveContact = false, contactLabel = '', concept = '', mode = 'location' }) {
     return api(`/api/admin/locations/${encodeURIComponent(locationId)}/share`, {
       method: 'POST',
-      body: JSON.stringify({ phone, name, saveContact, contactLabel, concept, confirmed: true, mode: 'location' }),
+      body: JSON.stringify({ phone, name, saveContact, contactLabel, concept, confirmed: true, mode }),
     });
+  }
+
+  /**
+   * Envía la ubicación y, si WhatsApp ya cerró la ventana de 24 h, ofrece la
+   * única vía legítima que queda: la plantilla con el enlace del mapa. Antes el
+   * envío a un número nuevo moría aquí con un 409 y no se veía el motivo.
+   */
+  async function enviarUbicacionConRespaldo(datos, button) {
+    try {
+      return await working(button, 'Enviando…', () => enviarUbicacionANumero(datos));
+    } catch (error) {
+      if (error.status !== 409 || !error.body?.canUseTemplate) throw error;
+      const porPlantilla = window.confirm(
+        'WhatsApp ya no deja enviar la ubicación a ese número porque han pasado más de 24 h desde su último mensaje.\n\n¿Enviarla por plantilla con el enlace del mapa? Es la única forma de que le llegue.',
+      );
+      if (!porPlantilla) throw error;
+      return working(button, 'Enviando…', () => enviarUbicacionANumero({ ...datos, mode: 'template' }));
+    }
   }
 
   function openShareLocationToPhone({ locationId, location }) {
@@ -15401,14 +16795,26 @@
          <input class="field__input" id="loc-phone" type="tel" inputmode="tel" placeholder="+1 809 555 1234" required /></label>
        <label class="field"><span class="field__label">Nombre (opcional)</span>
          <input class="field__input" id="loc-phone-name" maxlength="120" placeholder="A quién le llega" /></label>`,
-      'Enviar ubicación',
-      async () => {
-        const phone = $('#loc-phone')?.value?.trim() ?? '';
-        if (digits(phone).length < 7) throw new Error('Escribe un teléfono válido con código de país.');
-        if (!window.confirm(`¿Compartir esta ubicación con ${phone}?`)) return;
-        await enviarUbicacionANumero({ locationId, phone, name: $('#loc-phone-name')?.value?.trim() ?? '' });
-        closeSheet();
-        toast('Ubicación enviada por WhatsApp');
+      {
+        action: {
+          label: 'Enviar ubicación',
+          onClick: async (button) => {
+            const phone = $('#loc-phone')?.value?.trim() ?? '';
+            if (digits(phone).length < 7) throw new Error('Escribe un teléfono válido con código de país.');
+            if (!window.confirm(`¿Compartir esta ubicación con ${phone}?`)) return;
+            const envio = await enviarUbicacionConRespaldo(
+              { locationId, phone, name: $('#loc-phone-name')?.value?.trim() ?? '' },
+              button,
+            );
+            closeSheet();
+            toast(
+              envio?.mode === 'template'
+                ? 'Ubicación enviada por plantilla con el enlace del mapa'
+                : 'Ubicación enviada por WhatsApp',
+            );
+            refreshWhatsapp().catch(() => {});
+          },
+        },
       },
     );
   }
@@ -15439,15 +16845,19 @@
         const user = deliveries.find((row) => row.id === button.dataset.locDelivery);
         if (!user?.phone) return;
         if (!window.confirm(`¿Compartir esta ubicación con ${user.display_name ?? user.username}?`)) return;
-        await working(button, 'Enviando…', async () => {
-          try {
-            await enviarUbicacionANumero({ locationId, phone: user.phone, name: user.display_name ?? '' });
-            closeSheet();
-            toast('Ubicación enviada al delivery');
-          } catch (error) {
-            if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar la ubicación');
-          }
-        });
+        try {
+          const envio = await enviarUbicacionConRespaldo(
+            { locationId, phone: user.phone, name: user.display_name ?? '' },
+            button,
+          );
+          closeSheet();
+          toast(
+            envio?.mode === 'template' ? 'Ubicación enviada al delivery por plantilla' : 'Ubicación enviada al delivery',
+          );
+          refreshWhatsapp().catch(() => {});
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar la ubicación');
+        }
       });
     });
   }
@@ -15463,17 +16873,29 @@
        <label class="field"><span class="field__label">Concepto (opcional)</span>
          <input class="field__input" id="loc-new-concept" maxlength="120" placeholder="Zona, vehículo, nota…" /></label>
        <p class="view__hint">Queda guardado para elegirlo en próximos envíos.</p>`,
-      'Guardar y enviar',
-      async () => {
-        const name = $('#loc-new-name')?.value?.trim() ?? '';
-        const phone = $('#loc-new-phone')?.value?.trim() ?? '';
-        const concept = $('#loc-new-concept')?.value?.trim() ?? '';
-        if (!name) throw new Error('Escribe el nombre del delivery.');
-        if (digits(phone).length < 7) throw new Error('Escribe un teléfono válido con código de país.');
-        if (!window.confirm(`¿Guardar a ${name} y enviarle la ubicación?`)) return;
-        await enviarUbicacionANumero({ locationId, phone, name, saveContact: true, contactLabel: name, concept });
-        closeSheet();
-        toast('Delivery guardado y ubicación enviada');
+      {
+        action: {
+          label: 'Guardar y enviar',
+          onClick: async (button) => {
+            const name = $('#loc-new-name')?.value?.trim() ?? '';
+            const phone = $('#loc-new-phone')?.value?.trim() ?? '';
+            const concept = $('#loc-new-concept')?.value?.trim() ?? '';
+            if (!name) throw new Error('Escribe el nombre del delivery.');
+            if (digits(phone).length < 7) throw new Error('Escribe un teléfono válido con código de país.');
+            if (!window.confirm(`¿Guardar a ${name} y enviarle la ubicación?`)) return;
+            const envio = await enviarUbicacionConRespaldo(
+              { locationId, phone, name, saveContact: true, contactLabel: name, concept },
+              button,
+            );
+            closeSheet();
+            toast(
+              envio?.mode === 'template'
+                ? 'Delivery guardado y ubicación enviada por plantilla'
+                : 'Delivery guardado y ubicación enviada',
+            );
+            refreshWhatsapp().catch(() => {});
+          },
+        },
       },
     );
   }
@@ -17283,10 +18705,37 @@
             : `<p class="rule rule--warn">No hay agentes activos. Se crean en «Usuarios» (menú lateral) y vuelven a aparecer aquí.</p>`
         }
       </div>
+      <p class="view__hint">Repartidor externo (contacto guardado, sin cuenta en el CRM):</p>
+      <div class="menu-list" id="courier-contacts"><p class="view__hint">Cargando contactos…</p></div>
       <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
       `,
       { variant: 'menu' },
     );
+    /*
+     * Los contactos guardados se piden aparte para no frenar la hoja. Al elegir
+     * uno se ASIGNA al pedido (no se envía nada todavía): enviar es un segundo
+     * paso, con su confirmación, desde las acciones del pedido.
+     */
+    const caja = $('#courier-contacts');
+    if (caja) {
+      try {
+        const data = await api('/api/admin/pos/assignees');
+        const contactos = (data.contacts ?? []).filter((row) => row.phone);
+        caja.innerHTML = contactos.length
+          ? contactos
+              .map(
+                (row) => `<button class="menu-item" data-order-courier-assign="${escapeHtml(orderId)}" data-courier-phone="${escapeHtml(
+                  row.phone,
+                )}" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.send}</span><span><strong>${escapeHtml(
+                  row.name ?? row.phone,
+                )}</strong><small>${escapeHtml(row.concept ?? 'contacto de reparto')}</small></span></button>`,
+              )
+              .join('')
+          : '<p class="view__hint">No hay contactos guardados. Se guardan al enviar una ubicación a un número nuevo.</p>';
+      } catch {
+        caja.innerHTML = '<p class="view__hint">No se pudieron cargar los contactos.</p>';
+      }
+    }
   }
 
   /** Asigna el pedido a un repartidor (el MISMO endpoint que usa el mapa). */
@@ -17363,6 +18812,25 @@
     const conversacionId = conversationForCustomer(clienteId)?.id ?? item.conversation_id ?? '';
     const estado = orderOperational(item);
     const ubicacionPedido = esPedido ? itemOrder(item)?.delivery?.location ?? null : null;
+    /*
+     * REPARTIDOR EXTERNO: mensajero sin cuenta en el CRM. Si el pedido ya lo
+     * tiene asignado se ofrece ENVIAR el pedido; si no, se ofrece elegirlo.
+     */
+    const repartidorExterno = esPedido ? itemOrder(item)?.delivery?.external ?? null : null;
+    const puedeRepartidorExterno =
+      hasPermission('delivery.manage') || hasPermission('orders.update_operational') || hasPermission('delivery.tracking.manage_all');
+    /*
+     * DINERO: quién puede anotar un cobro y cuánto falta de verdad.
+     * El saldo lo calcula el servidor (`payment.due`); si el pedido es antiguo y
+     * no trae bloque de pago, se usa el total cuando no está marcado como pagado.
+     */
+    const puedeRegistrarCobro = hasPermission('orders.update_operational');
+    const saldoPorCobrar = (() => {
+      const order = esPedido ? itemOrder(item) ?? {} : {};
+      const due = Number(order?.payment?.due);
+      if (Number.isFinite(due)) return due;
+      return String(order?.payment_status ?? '').toLowerCase() === 'paid' ? 0 : Number(order?.total ?? 0) || 0;
+    })();
     // ¿Este pedido está marcado en la lista? El menú lo dice y lo cambia.
     const marcado = state.pedidosSel.has(item.id);
     /*
@@ -17443,12 +18911,27 @@
           data: { 'data-order-select-toggle': item.id },
         },
         { icon: ICONS.chevron, label: 'Ver el pedido completo', data: { 'data-open': item.id } },
-        esPedido
+        esPedido ?
+          {
+            icon: ICONS.doc,
+            label: 'Ver factura',
+            note: 'Comprobante con detalle y total',
+            data: { 'data-receipt': item.id },
+          }
+          : null,
+        /*
+         * REGISTRAR EL COBRO, A MANO Y A PROPÓSITO.
+         *
+         * Entregar ya no marca el pedido como pagado: si falta dinero, aquí es
+         * donde se anota lo que entró. Se muestra el saldo real (los pagos
+         * parciales quedan descontados).
+         */
+        esPedido && puedeRegistrarCobro && saldoPorCobrar > 0
           ? {
-              icon: ICONS.doc,
-              label: 'Ver factura',
-              note: 'Comprobante con detalle y total',
-              data: { 'data-receipt': item.id },
+              icon: ICONS.check,
+              label: 'Registrar cobro',
+              note: `Faltan ${money(saldoPorCobrar, itemOrder(item)?.currency)}`,
+              data: { 'data-order-payment': item.id },
             }
           : null,
         esPedido && mapLatLng(ubicacionPedido)
@@ -17513,9 +18996,98 @@
     });
   }
 
+  /**
+   * REGISTRAR EL COBRO DE UN PEDIDO (y, si toca, la rendición del repartidor).
+   *
+   * Esto NO cambia el estado del pedido ni marca la entrega: solo dice cuánto
+   * dinero entró, con qué medio, quién lo anotó y cuándo. Si el cobro cubre el
+   * total, el servidor pone `payment_status: 'paid'`; si es parcial, queda el
+   * saldo (`payment.due`) para que el repartidor cobre lo que falta.
+   */
+  function openOrderPaymentSheet(orderId) {
+    const item = state.items.find((candidate) => candidate.id === orderId) ?? null;
+    if (!item) return;
+    const order = itemOrder(item) ?? {};
+    const block = order.payment ?? {};
+    const total = Number(order.total ?? 0) || 0;
+    const due = Number.isFinite(Number(block.due)) ? Number(block.due) : total;
+    const recibido = Number(block.received ?? 0) || 0;
+    const moneda = order.currency ?? 'DOP';
+    const courier = block.courier ?? {};
+    const pendienteRendir = Number(courier.pending ?? 0) || 0;
+    const keyCobro = cryptoKey();
+    const keyRendicion = cryptoKey();
+    openSheet(
+      `Cobro · ${order.order_number ?? item.order_number ?? item.name ?? 'Pedido'}`,
+      `<div class="delivery-confirm">
+        <p><strong>Cliente:</strong> ${escapeHtml(order.customer?.name ?? item.name ?? 'Cliente')}</p>
+        <p>
+          Total ${escapeHtml(money(total, moneda))} · recibido ${escapeHtml(money(recibido, moneda))} ·
+          <strong>falta ${escapeHtml(money(due, moneda))}</strong>
+        </p>
+        <label class="field">
+          <span class="field__label">Importe recibido</span>
+          <input class="field__input" id="order-payment-amount" type="number" min="0.01" step="0.01" value="${escapeHtml(due.toFixed(2))}" />
+        </label>
+        <label class="field">
+          <span class="field__label">Medio de pago</span>
+          <select class="field__select" id="order-payment-method">
+            <option value="CASH">Efectivo</option>
+            <option value="TRANSFER">Transferencia</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">Nota</span>
+          <input class="field__input" id="order-payment-note" type="text" placeholder="Opcional: referencia de la transferencia" />
+        </label>
+        <label class="field">
+          <span class="field__label">Evidencia (enlace)</span>
+          <input class="field__input" id="order-payment-evidence" type="text" placeholder="Opcional: comprobante o captura" />
+        </label>
+        <p class="view__hint">Registrar el cobro no cambia el estado del pedido ni su entrega.</p>
+        <div class="sheet-actions">
+          <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
+          <button class="btn btn--primary" data-order-payment-save="${escapeHtml(orderId)}" data-idempotency="${escapeHtml(keyCobro)}" type="button">
+            Registrar cobro
+          </button>
+        </div>
+        ${
+          isAdmin() && pendienteRendir > 0
+            ? `<hr />
+        <p><strong>Rendición del repartidor</strong> · ${escapeHtml(courier.name ?? 'Sin repartidor')} tiene
+          ${escapeHtml(money(pendienteRendir, moneda))} en efectivo sin entregar.</p>
+        <label class="field">
+          <span class="field__label">Efectivo entregado a la empresa</span>
+          <input class="field__input" id="order-handover-amount" type="number" min="0.01" step="0.01" value="${escapeHtml(pendienteRendir.toFixed(2))}" />
+        </label>
+        <label class="field">
+          <span class="field__label">Nota de la rendición</span>
+          <input class="field__input" id="order-handover-note" type="text" placeholder="Opcional" />
+        </label>
+        <div class="sheet-actions">
+          <button class="btn btn--ghost" data-order-handover-save="${escapeHtml(orderId)}" data-idempotency="${escapeHtml(keyRendicion)}" type="button">
+            Registrar rendición
+          </button>
+        </div>`
+            : ''
+        }
+      </div>`,
+    );
+    const metodo = $('#order-payment-method');
+    if (metodo) metodo.value = String(order.payment_method ?? '').toUpperCase() === 'TRANSFER' ? 'TRANSFER' : 'CASH';
+  }
+
+  /** Clave de idempotencia: dos toques seguidos no cobran dos veces. */
+  function cryptoKey() {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `k_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+  }
+
   /** Escribir por WhatsApp: elegir la plantilla, ver el mensaje final y enviarlo. */
-  function openItemWhatsAppSheet(itemId) {
-    const item = state.items.find((candidate) => candidate.id === itemId) ?? null;
+  function openItemWhatsAppSheet(itemId) {    const item = state.items.find((candidate) => candidate.id === itemId) ?? null;
     if (!item) return;
     const mensajes = state.messages ?? [];
     openSheet(
@@ -17551,6 +19123,15 @@
     const operational = getOrderOperationalStatus(order);
     const abierto = receipt.status !== 'entregado' && receipt.status !== 'cancelado';
     const ubicacionPedido = order?.delivery?.location ?? receipt?.location ?? null;
+    /*
+     * REPARTIDOR EXTERNO: las mismas dos acciones que en el menú del pedido.
+     * Aquí se declaran en ESTA función: antes se usaban sin existir y abrir el
+     * menú de la factura lanzaba «puedeRepartidorExterno is not defined», así que
+     * el menú no salía.
+     */
+    const repartidorExterno = order?.delivery?.external ?? null;
+    const puedeRepartidorExterno =
+      hasPermission('delivery.manage') || hasPermission('orders.update_operational') || hasPermission('delivery.tracking.manage_all');
     // La venta facturada desde el POS guarda su factura: se abre ESA (mismo diseño que la cotización).
     const facturaPdf = order?.invoice_id ? `/api/admin/pos/invoices/${order.invoice_id}/pdf` : '';
     openSheetActionMenu({
@@ -17574,6 +19155,21 @@
         mapLatLng(ubicacionPedido) ? { icon: ICONS.pin, label: 'Ver en mapa', data: { 'data-order-map': orderId } } : null,
         hasPermission('delivery.tracking.manage_all') && abierto
           ? { icon: ICONS.send, label: 'Pasar a un delivery', data: { 'data-order-delivery': orderId } }
+          : null,
+        abierto && puedeRepartidorExterno
+          ? repartidorExterno?.phone_e164
+            ? {
+                icon: ICONS.send,
+                label: 'Enviar pedido al repartidor',
+                note: `${repartidorExterno.contact_name ?? 'Contacto'} · ${repartidorExterno.phone_e164}`,
+                data: { 'data-order-courier-send': orderId },
+              }
+            : {
+                icon: ICONS.send,
+                label: 'Repartidor externo',
+                note: 'Elegir el contacto guardado que lo lleva',
+                data: { 'data-order-courier-assign': orderId },
+              }
           : null,
         item?.customer_id ? { icon: ICONS.person, label: 'Ver cliente', data: { 'data-customer': item.customer_id } } : null,
         { icon: ICONS.note, label: 'Modificar pedido', data: { 'data-order-edit': orderId } },
@@ -19144,6 +20740,63 @@
   }
 
   /*
+   * ¿Se puede recargar el panel sin molestar? Sí cuando nadie está escribiendo
+   * ni hay una ficha a medio llenar; si hay algo abierto, se avisa con la barra.
+   */
+  function puedeRecargarSolo() {
+    try {
+      if (document.hidden) return true;
+      if (state.openId) return false;
+      if (document.querySelector('#sheet:not([hidden])')) return false;
+      const textos = [...document.querySelectorAll('#app textarea, #app input[type="text"], #app input[type="search"]')];
+      if (textos.some((campo) => typeof campo.value === 'string' && campo.value.trim().length > 0)) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /*
+   * COMPROBAR LA VERSIÓN SIN DEPENDER DEL SERVICE WORKER.
+   *
+   * El panel se instala en el teléfono y puede quedarse abierto días en segundo
+   * plano: entonces nadie navega, no se descarga nada nuevo y la persona sigue
+   * viendo la versión vieja aunque el servidor ya tenga otra. Aquí se pregunta
+   * por el `index.html` de verdad (sin caché) y, si el `app.js` que corre no es
+   * el que sirve el servidor, se recarga —solo si no hay nada a medio escribir—.
+   *
+   * No usa el service worker ni el almacén local: es una petición normal, así
+   * que también funciona cuando la copia guardada está desfasada.
+   */
+  let ultimaRevisionVersion = 0;
+  async function revisarVersionPanel({ forzar = false } = {}) {
+    if (!navigator.onLine) return;
+    if (!forzar && Date.now() - ultimaRevisionVersion < 60000) return;
+    ultimaRevisionVersion = Date.now();
+    try {
+      const respuesta = await fetch('/admin/index.html', { cache: 'no-store', credentials: 'same-origin' });
+      if (!respuesta.ok) return;
+      const html = await respuesta.text();
+      const encontrada = /app\.js\?v=([\w.-]+)/.exec(html)?.[1];
+      if (!encontrada) return;
+      const actual = [...document.scripts].map((script) => script.src).find((src) => src.includes('/admin/app.js')) ?? '';
+      if (actual.includes(encontrada)) return;
+      /*
+       * Si la app está en segundo plano se actualiza sin molestar; si alguien
+       * la está mirando, el botón «Actualizar» sale AL INSTANTE: no se espera
+       * a que pase nada más.
+       */
+      if (document.hidden && puedeRecargarSolo()) {
+        location.reload();
+        return;
+      }
+      showUpdateBar();
+    } catch {
+      /* Sin red o servidor lento: se reintenta en la próxima vuelta. */
+    }
+  }
+
+  /*
    * ACTUALIZAR EL PANEL — cada vez que se publica una versión nueva en el
    * servidor, el service worker la descarga por su cuenta, pero la pestaña que
    * ya está abierta sigue con el código viejo hasta recargar. Aquí se avisa y
@@ -19154,7 +20807,25 @@
   function initServiceWorkerUpdates() {
     const teniaControl = Boolean(navigator.serviceWorker.controller);
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (teniaControl) showUpdateBar();
+      if (!teniaControl) return;
+      /*
+       * VERSIÓN NUEVA LISTA: se recarga sola si no hay nada a medio escribir.
+       *
+       * Antes solo salía una barra «Actualizar» y, si nadie la veía, el aparato
+       * seguía con el panel viejo. En un negocio donde entra más de una persona,
+       * eso deja teléfonos descolgados durante días. Si hay un texto empezado o
+       * una ficha abierta se respeta y se pide confirmación con la barra.
+       */
+      if (puedeRecargarSolo()) {
+        const yaRecargado = sessionStorage.getItem('fulltech.reload') === 'once';
+        if (!yaRecargado) {
+          sessionStorage.setItem('fulltech.reload', 'once');
+          location.reload();
+          return;
+        }
+        sessionStorage.removeItem('fulltech.reload');
+      }
+      showUpdateBar();
     });
     navigator.serviceWorker
       .register('/admin/sw.js', { scope: '/admin/' })
@@ -19240,6 +20911,21 @@
 
   function initPwa() {
     if ('serviceWorker' in navigator) initServiceWorkerUpdates();
+
+    /*
+     * La versión se repasa al volver a la app y cada 10 minutos: el panel se
+     * queda abierto días en el teléfono y, sin esto, la única forma de enterarse
+     * de una publicación era que alguien recargara a mano.
+     */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) revisarVersionPanel();
+    });
+    setInterval(() => {
+      if (!document.hidden) revisarVersionPanel();
+    }, 600000);
+    // Una pasada al arrancar: si el servidor ya tiene otra versión, el botón
+    // «Actualizar» sale sin esperar a que nadie vuelva a la app.
+    setTimeout(() => revisarVersionPanel({ forzar: true }), 2500);
 
     window.addEventListener('online', () => setConnection(true));
     window.addEventListener('offline', () => setConnection(false));
@@ -19346,17 +21032,57 @@
   function plegarMenuEscritorio() {
     const escritorio =
       typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 980px)').matches;
-    $$('#drawer details.drawer__fold').forEach((fold) => {
-      fold.open = !escritorio || Boolean(fold.querySelector('[aria-current="true"]'));
-    });
-    /*
-     * Un destino puede vivir dentro de más de un desplegable (Inventario dentro
-     * de Ventas): se abren todos sus padres para que se vea dónde está uno.
-     */
     const activo = $('#drawer .drawer__item[aria-current="true"]');
-    for (let padre = activo?.closest('details'); padre; padre = padre.parentElement?.closest('details')) {
-      padre.open = true;
+    // PLEGADO POR DEFECTO: el menú se abre corto y ordenado (también en el móvil).
+    $$('#drawer details').forEach((fold) => {
+      fold.open = false;
+    });
+    // En escritorio, donde el menú es la única navegación, se deja a la vista
+    // dónde está uno: se abren SOLO los desplegables que llevan a esa pantalla.
+    if (escritorio && activo) {
+      for (let padre = activo.closest('details'); padre; padre = padre.parentElement?.closest('details')) {
+        padre.open = true;
+      }
     }
+  }
+
+  /**
+   * DESPLEGABLES CON ANIMACIÓN DISCRETA (el `SizeTransition` de FullPOS Cloud).
+   *
+   * `<details>` no anima por sí solo: se intercepta el toque de la cabecera, se
+   * mide el contenido y se abre o cierra con una transición corta. Con
+   * «reducir movimiento» activado se abre sin animación, como debe ser.
+   */
+  function animarDesplegables() {
+    const suave = !window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    $$('#drawer details.drawer__fold').forEach((fold) => {
+      const summary = fold.querySelector(':scope > summary');
+      const nav = fold.querySelector(':scope > nav');
+      if (!summary || !nav || summary.dataset.animado === '1') return;
+      summary.dataset.animado = '1';
+      summary.addEventListener('click', (event) => {
+        event.preventDefault();
+        const abrir = !fold.open;
+        if (!suave || typeof nav.animate !== 'function') {
+          fold.open = abrir;
+          return;
+        }
+        if (abrir) fold.open = true;
+        const alto = nav.scrollHeight;
+        const anim = nav.animate(
+          abrir
+            ? [{ height: '0px', opacity: 0 }, { height: `${alto}px`, opacity: 1 }]
+            : [{ height: `${alto}px`, opacity: 1 }, { height: '0px', opacity: 0 }],
+          { duration: 170, easing: abrir ? 'cubic-bezier(.33,1,.68,1)' : 'ease-in', fill: 'both' },
+        );
+        nav.style.overflow = 'hidden';
+        anim.onfinish = () => {
+          nav.style.overflow = '';
+          anim.cancel();
+          if (!abrir) fold.open = false;
+        };
+      });
+    });
   }
 
   // Si la ventana cruza el ancho de escritorio, el menú se reordena solo.
@@ -19387,6 +21113,44 @@
    * con el enlace a la vista y un botón de WhatsApp. Ninguna vía falla en
    * silencio.
    */
+  /**
+   * COMPARTIR LA PÁGINA WEB (la tienda, no el panel).
+   *
+   * Mismo patrón que «Compartir app»: hoja nativa en el móvil, enlace copiado en
+   * el ordenador y hoja con el texto a la vista si el navegador no deja copiar.
+   * Nunca se manda la dirección del panel: esto es la web pública.
+   */
+  async function shareStoreWeb() {
+    const url = `${location.origin}/`;
+    const texto = `Phytoemagry · FullTECH, SRL: ${url}`;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({ title: 'Phytoemagry · FullTECH, SRL', text: texto, url });
+        return true;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Enlace de la web copiado');
+      return true;
+    } catch {
+      openSheet(
+        'Compartir la web',
+        `<div class="field">
+          <span class="field__label">Enlace de la tienda</span>
+          <input class="field__input" id="share-web-url" type="text" readonly value="${escapeHtml(url)}" />
+        </div>
+        <p class="view__hint">Cópialo y mándalo a quien quieras: es la página pública, sin acceso al panel.</p>
+        <a class="btn btn--primary btn--block" href="https://wa.me/?text=${encodeURIComponent(texto)}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp</a>`,
+        { variant: 'menu' },
+      );
+      $('#share-web-url')?.select();
+      return false;
+    }
+  }
+
   async function sharePanelApp() {
     const url = panelShareUrl();
     const texto = panelShareMessage(url);
@@ -19440,13 +21204,14 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'supervisor', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
     delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
+    supervisor: 'Supervisor IA',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
@@ -19454,6 +21219,8 @@
     cotizaciones: 'Cotizaciones',
     inventario: 'Ajuste de stock',
     recuento: 'Recuento de inventario',
+    recogidas: 'Recogidas en tiendas',
+    tiendas: 'Tiendas proveedoras',
     reportes: 'Reportes',
     cierre: 'Cierre diario',
     'historial-cierres': 'Historial de cierres',
@@ -19474,6 +21241,10 @@
     }
     if (tab === 'mapa' && !canUseMapScreen()) {
       if (!options.silent) toast('Mapa y entregas disponible solo para administración');
+      tab = isDeliveryUser() ? 'delivery' : 'hoy';
+    }
+    if (tab === 'supervisor' && !canUseMapScreen()) {
+      if (!options.silent) toast('Supervisor disponible solo para administración');
       tab = isDeliveryUser() ? 'delivery' : 'hoy';
     }
     if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil', 'ajustes', 'cierre', 'historial-cierres'].includes(tab)) tab = 'delivery';
@@ -19710,6 +21481,24 @@
       window.dispatchEvent(new Event('fulltech:close-actions'));openDrawer();
     });
     window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
+    /*
+     * Deja un mensaje escrito en el chat del cliente sin enviarlo: se abre la
+     * conversación con el borrador puesto y la persona solo pulsa Enviar.
+     */
+    window.addEventListener('fulltech:wa-compose', async (event) => {
+      const detalle = event.detail || {};
+      const texto = String(detalle.text || '').trim();
+      if (!texto) return;
+      const conversacion = detalle.conversationId
+        ? state.conversations.find((row) => row.id === detalle.conversationId)
+        : state.conversations.find((row) => row.customer_id === detalle.customerId);
+      if (!conversacion) {
+        toast('Ese cliente todavía no tiene un chat abierto en el CRM');
+        return;
+      }
+      await openChat(conversacion.id, { draft: texto });
+      $('#wa-text')?.focus();
+    });
     $('#login-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const username = $('#login-username')?.value.trim() ?? '';
@@ -19758,6 +21547,12 @@
     $('#drawer-share')?.addEventListener('click', () => {
       closeDrawer();
       sharePanelApp();
+    });
+
+    /* «Compartir página web»: el enlace público de la tienda. */
+    $('#drawer-share-web')?.addEventListener('click', () => {
+      closeDrawer();
+      shareStoreWeb();
     });
 
     $('#search').addEventListener('input', (event) => {
@@ -19928,7 +21723,12 @@
         resolveConversationFromPanel(resolution.dataset.conversationResolution, resolution.dataset.resolved === 'true', resolution);
         return;
       }
-      if (settingsLink) { event.preventDefault(); openSettingsPage(settingsLink.dataset.settingsOpen); return; }
+          if (settingsLink) {
+        event.preventDefault();
+        if (settingsLink.closest('#drawer')) closeDrawer();
+        openSettingsPage(settingsLink.dataset.settingsOpen);
+        return;
+      }
       if (event.target.closest('[data-settings-back]')) { openSettingsPage(SETTINGS_PAGES.find(page => page.key === settingsPage)?.parent || ''); return; }
       const permission = event.target.closest('[data-settings-permission-enable]');
       if (permission) { enableSettingsPermission(permission.dataset.settingsPermissionEnable); return; }
@@ -20213,6 +22013,87 @@
         openDeliveryOrderDetail(deliveryOrderDetail.dataset.deliveryOrderDetail);
         return;
       }
+      const deliveryNotice = event.target.closest('[data-delivery-notice]');
+      if (deliveryNotice) {
+        openDeliveryNoticeSheet(deliveryNotice.dataset.deliveryNotice);
+        return;
+      }
+      const noticeOption = event.target.closest('[data-dv-notice-option]');
+      if (noticeOption) {
+        const order = (state.deliveryOrders ?? []).find((row) => row.id === state.deliveryNoticeOrderId);
+        const texto = order ? deliveryNoticeText(order, noticeOption.dataset.dvNoticeOption) : '';
+        const area = $('#dv-notice-text');
+        if (area && texto) area.value = texto;
+        return;
+      }
+      const noticeSend = event.target.closest('[data-dv-notice-send]');
+      if (noticeSend) {
+        const order = (state.deliveryOrders ?? []).find((row) => row.id === state.deliveryNoticeOrderId);
+        const texto = String($('#dv-notice-text')?.value ?? '').trim();
+        if (!order || !texto) {
+          toast('Escribe el aviso');
+          return;
+        }
+        if (noticeSend.dataset.dvNoticeSend === 'wa') {
+          /*
+           * WhatsApp MANUAL: abre el WhatsApp del teléfono con el texto escrito.
+           * No envía nada solo y no tiene nada que ver con la Cloud API del CRM.
+           */
+          const phone = deliveryCustomerPhone(order);
+          if (!phone) {
+            toast('Este pedido no tiene teléfono del cliente');
+            return;
+          }
+          window.open(`https://wa.me/${phone}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+          closeSheet();
+          return;
+        }
+        if (!order.conversation_id) {
+          toast('Este pedido no tiene chat en el CRM');
+          return;
+        }
+        closeSheet();
+        openChat(order.conversation_id, { draft: texto, deliveryOrderId: order.id }).catch(() => toast('No se pudo abrir el chat'));
+        return;
+      }
+      const deliveryMore = event.target.closest('[data-delivery-more]');
+      if (deliveryMore) {
+        const key = deliveryMore.dataset.deliveryMore;
+        state.deliveryMore = state.deliveryMore ?? {};
+        state.deliveryMore[key] = deliverySectionLimit(key) + DELIVERY_PAGE;
+        renderDelivery();
+        return;
+      }
+      const pickupStatus = event.target.closest('[data-dv-pickup-status]');
+      if (pickupStatus) {
+        /*
+         * Recogida ≠ entrega ≠ pago. Aquí solo cambia la recogida: el pedido, su
+         * entrega y el cobro no se tocan.
+         */
+        const status = pickupStatus.dataset.dvPickupStatus;
+        working(pickupStatus, 'Guardando…', async () => {
+          await api(`/api/admin/pickups/${encodeURIComponent(pickupStatus.dataset.dvPickup)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status }),
+          });
+          await cargarRecogidasDelPedido(state.deliveryActiveOrderId);
+          toast(
+            status === 'purchased'
+              ? 'Recogida confirmada'
+              : status === 'issue'
+                ? 'Incidencia de recogida reportada'
+                : 'Recogida en camino',
+          );
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo actualizar la recogida');
+        });
+        return;
+      }
+      const pickupInvoice = event.target.closest('[data-dv-pickup-invoice]');
+      if (pickupInvoice) {
+        elegirFacturaDeRecogida(pickupInvoice.dataset.dvPickupInvoice);
+        return;
+      }
       const deliveryChat = event.target.closest('[data-delivery-chat]');
       if (deliveryChat) {
         // «Solicitar ubicación» deja además el aviso listo para enviar.
@@ -20294,6 +22175,25 @@
         toggleDeliveryDetailMapBase();
         return;
       }
+      /*
+       * CONTROLES DEL MAPA DEL REPARTIDOR: centrar en mí, ver la ruta completa,
+       * volver a pedir la ubicación y seguirme durante la entrega.
+       */
+      const dvMapCenter = event.target.closest('[data-dv-map-center]');
+      if (dvMapCenter) {
+        centerDeliveryDetail(dvMapCenter.dataset.dvMapCenter);
+        return;
+      }
+      if (event.target.closest('[data-dv-map-refresh]')) {
+        refreshDeliveryDetailPosition().catch(() => toast('No se pudo actualizar la ubicación'));
+        return;
+      }
+      if (event.target.closest('[data-dv-follow]')) {
+        state.deliveryDetailMap.follow = !state.deliveryDetailMap.follow;
+        if (state.deliveryDetailMap.follow) centerDeliveryDetail('courier');
+        else syncDeliveryFollowButton();
+        return;
+      }
       const deliveryFocus = event.target.closest('[data-delivery-focus]');
       if (deliveryFocus) {
         state.deliveryActiveSessionId = deliveryFocus.dataset.deliveryFocus;
@@ -20325,12 +22225,16 @@
         working(deliveryConfirmComplete, 'Confirmando…', async () => {
           await stopDelivery(sessionId, true, note ? { note } : {});
           closeSheet();
+          /*
+           * AL TERMINAR SE VUELVE A «MIS ENTREGAS», no a la pantalla de inicio:
+           * el repartidor sigue trabajando y lo entregado ya está en Historial.
+           */
           state.deliveryActiveOrderId = null;
-          state.deliveryListRequested = false;
+          state.deliveryListRequested = true;
           delete document.body.dataset.deliveryDetail;
+          setTab('delivery', { silent: true });
           renderDelivery();
-          setTab('hoy');
-          toast('Gracias por colaborar con FullTECH, SRL');
+          toast('Entrega finalizada. Ya está en el historial.');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar');
         });
@@ -20534,6 +22438,21 @@
         });
         return;
       }
+      const historyFilterButton = event.target.closest('[data-history-filter]');
+      if (historyFilterButton) {
+        state.customerHistoryFilter = historyFilterButton.dataset.historyFilter || 'all';
+        renderCustomerProfile();
+        return;
+      }
+      if (event.target.closest('[data-history-chat]')) {
+        const id = state.customerProfile?.customer?.id;
+        if (id) openCustomerConversation(id).catch(() => toast('No se pudo abrir el chat'));
+        return;
+      }
+      if (event.target.closest('[data-history-order]')) {
+        document.getElementById('profile-order-list')?.scrollIntoView({ block: 'start' });
+        return;
+      }
       const profileOrder = event.target.closest('[data-profile-order]');
       if (profileOrder) {
         state.customerProfileOrderId = profileOrder.dataset.profileOrder || null;
@@ -20712,6 +22631,67 @@
         );
         return;
       }
+      /*
+       * REPARTIDOR EXTERNO: elegirlo (asignar) y enviarle el pedido son DOS
+       * acciones. El envío pide confirmación y el servidor vuelve a comprobar
+       * todo (contacto guardado, permiso, plantilla aprobada, no duplicar).
+       *
+       * El envío de aquí es una ACCIÓN DE UNA PERSONA (pulsó «Asignar»), no un
+       * temporizador: este bloque es el ÚNICO que pide el envío en el mismo paso.
+       * Si la plantilla no está aprobada, el aviso dice el motivo real —nunca
+       * «enviado».
+       */
+      const courierAssign = event.target.closest('[data-order-courier-assign]');
+      if (courierAssign) {
+        const phone = courierAssign.dataset.courierPhone;
+        const orderId = courierAssign.dataset.orderCourierAssign;
+        working(courierAssign, 'Asignando…', async () => {
+          try {
+            const resultado = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/courier/assign`, {
+              method: 'POST',
+              body: JSON.stringify({ contactPhone: phone, autoSend: true }),
+            });
+            toast(
+              resultado?.sent
+                ? 'Repartidor asignado y pedido enviado por WhatsApp.'
+                : `Repartidor asignado. No se pudo enviar todavía: ${
+                    resultado?.send_error === 'template_not_approved'
+                      ? 'la plantilla no está aprobada en Meta.'
+                      : resultado?.message ?? 'revisa la plantilla del repartidor.'
+                  }`,
+            );
+            closeSheet();
+            await load({ keepTab: true });
+          } catch (error) {
+            if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo asignar el repartidor');
+          }
+        });
+        return;
+      }
+      const courierSend = event.target.closest('[data-order-courier-send]');
+      if (courierSend) {
+        const orderId = courierSend.dataset.orderCourierSend;
+        working(courierSend, 'Enviando…', async () => {
+          try {
+            await api(`/api/admin/orders/${encodeURIComponent(orderId)}/courier/send`, {
+              method: 'POST',
+              body: JSON.stringify({}),
+            });
+            toast('Pedido enviado al repartidor');
+            closeSheet();
+            await load({ keepTab: true });
+          } catch (error) {
+            if (error.message !== 'unauthorized') {
+              const mensaje =
+                error.body?.error === 'template_not_approved'
+                  ? 'La plantilla del repartidor no está aprobada en Meta todavía.'
+                  : error.body?.message ?? 'No se pudo enviar el pedido';
+              toast(mensaje);
+            }
+          }
+        });
+        return;
+      }
       const orderEdit = event.target.closest('[data-order-edit]');
       if (orderEdit) {
         openOrderEditor(orderEdit.dataset.orderEdit);
@@ -20748,6 +22728,62 @@
       const orderDelete = event.target.closest('[data-order-delete]');
       if (orderDelete) {
         deleteOrder(orderDelete.dataset.orderDelete, orderDelete);
+        return;
+      }
+      /*
+       * COBRO Y RENDICIÓN DESDE LA FICHA DEL PEDIDO.
+       * Se manda una clave de idempotencia por hoja abierta: si el usuario pulsa
+       * dos veces (o la red reintenta), el servidor no anota el dinero dos veces.
+       */
+      const orderPaymentOpen = event.target.closest('[data-order-payment]');
+      if (orderPaymentOpen) {
+        openOrderPaymentSheet(orderPaymentOpen.dataset.orderPayment);
+        return;
+      }
+      const orderPaymentSave = event.target.closest('[data-order-payment-save]');
+      if (orderPaymentSave) {
+        const orderId = orderPaymentSave.dataset.orderPaymentSave;
+        const amount = Number($('#order-payment-amount')?.value ?? 0);
+        const method = $('#order-payment-method')?.value ?? 'CASH';
+        const note = String($('#order-payment-note')?.value ?? '').trim();
+        const evidenceUrl = String($('#order-payment-evidence')?.value ?? '').trim();
+        working(orderPaymentSave, 'Registrando…', async () => {
+          const result = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/payments`, {
+            method: 'POST',
+            body: JSON.stringify({
+              amount,
+              method,
+              note: note || null,
+              evidenceUrl: evidenceUrl || null,
+              idempotencyKey: orderPaymentSave.dataset.idempotency,
+            }),
+          });
+          closeSheet();
+          await load({ keepTab: true });
+          renderPedidos();
+          toast(result?.duplicate ? 'Ese cobro ya estaba registrado' : 'Cobro registrado');
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo registrar el cobro');
+        });
+        return;
+      }
+      const orderHandoverSave = event.target.closest('[data-order-handover-save]');
+      if (orderHandoverSave) {
+        const orderId = orderHandoverSave.dataset.orderHandoverSave;
+        const amount = Number($('#order-handover-amount')?.value ?? 0);
+        const note = String($('#order-handover-note')?.value ?? '').trim();
+        working(orderHandoverSave, 'Registrando…', async () => {
+          const result = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/payments/handover`, {
+            method: 'POST',
+            body: JSON.stringify({ amount, note: note || null, idempotencyKey: orderHandoverSave.dataset.idempotency }),
+          });
+          closeSheet();
+          await load({ keepTab: true });
+          renderPedidos();
+          toast(result?.duplicate ? 'Esa rendición ya estaba registrada' : 'Rendición registrada');
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo registrar la rendición');
+        });
         return;
       }
       const scheduledNew = event.target.closest('[data-scheduled-new]');
@@ -21370,6 +23406,7 @@
       if (destination && $('#drawer').contains(destination)) closeDrawer();
     });
     $('#logout-drawer').addEventListener('click', () => confirmLogout());
+    animarDesplegables();
     document.addEventListener('keydown', (event) => {
       if (state.drawer && event.key === 'Tab') {
         const focusable = [...$('#drawer').querySelectorAll('button:not([disabled]), a[href]')].filter((node) => !node.closest('[hidden]'));
@@ -21480,6 +23517,26 @@
     });
     $('#wa-new-chat').addEventListener('click', () => openNewConversationSheet());
 
+    /*
+     * «N chats archivados» de la bandeja → lista de archivados.
+     * Es la misma acción que el chip «Archivados», con el mismo recuerdo de
+     * filtro: así no parece que el chat se lo haya quedado otra persona.
+     */
+    document.addEventListener('click', (event) => {
+      const aviso = event.target.closest('[data-wa-archived-hint]');
+      if (!aviso) return;
+      event.preventDefault();
+      state.wa.filter = 'archivados';
+      guardarFiltrosActuales();
+      state.wa.filtersOpen = false;
+      document.body.dataset.waFilters = 'closed';
+      state.wa.selected.clear();
+      $$('[data-wa-filter]').forEach((button) =>
+        button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),
+      );
+      refreshWhatsapp().catch(() => renderWaList());
+    });
+
     // En el móvil, ← vuelve a la lista de conversaciones.
     $('#wa-back').addEventListener('click', () => setWaView('list'));
     document.addEventListener('visibilitychange', () => {
@@ -21497,10 +23554,83 @@
       stopDeliveryWatch();
       stopDeliveryEvents();
       stopWhatsappEvents();
+      /*
+       * CERRAR SESIÓN SÍ BORRA LA COPIA; «mostrar el acceso» NO.
+       *
+       * `showLogin()` también se pinta cuando el panel no puede validar la sesión
+       * sin red. Antes eso disparaba el borrado de la copia local (24 h) y el
+       * usuario, al volver a entrar, se encontraba sin datos. Ahora el borrado lo
+       * pide SOLO esta acción explícita.
+       */
+      window.dispatchEvent(new Event('fulltech:offline-logout'));
       await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
       showLogin('Sesión cerrada.');
     });
+
+    /*
+     * SINCRONIZAR DATOS (menú → Sistema).
+     *
+     * Cada aparato guarda una copia para trabajar sin conexión. Si esa copia se
+     * queda vieja —móvil que estuvo días sin abrir el panel, cuenta cambiada,
+     * wifi que dijo «sin conexión» sin estarlo— el panel puede seguir enseñando
+     * clientes o productos que ya no son los del servidor. Esto borra SOLO esa
+     * copia y vuelve a pedir todo. No cierra la sesión ni pierde lo pendiente.
+     */
+    $('#drawer-sync')?.addEventListener('click', async () => {
+      const boton = $('#drawer-sync');
+      if (!boton || boton.disabled) return;
+      boton.disabled = true;
+      try {
+        await window.FulltechOffline?.clearCache?.();
+        datosLocales.intentos = 0;
+        await load({ keepTab: true });
+        // La versión a la vista: sirve para saber si un aparato quedó atrasado.
+        const version = /app\.js\?v=([\w.-]+)/.exec(
+          [...document.scripts].map((script) => script.src).find((src) => src.includes('/admin/app.js')) ?? '',
+        )?.[1];
+        toast(version ? `Datos actualizados · ${version}` : 'Datos actualizados');
+      } catch {
+        toast('No se pudo actualizar: revisa la conexión');
+      } finally {
+        boton.disabled = false;
+      }
+    });
   }
+
+  /*
+   * SI EL PANEL SE PINTÓ CON LA COPIA GUARDADA, SE VUELVE A PEDIR — pero UNA
+   * sola vez cada vez, y sin insistir si no hay red.
+   *
+   * Antes se programaban varios `load()` seguidos: cada uno pide ~600 KB de
+   * datos, así que en una conexión mala se pisaban entre ellos y el resto de
+   * peticiones (inventario, catálogo) se caían por tiempo de espera. Eso era el
+   * «no se pudo sincronizar» que apareció después.
+   */
+  const datosLocales = { intentos: 0, ultimo: 0, programado: null };
+  window.addEventListener('fulltech:served-local', (event) => {
+    /*
+     * ANTIGÜEDAD DE LO QUE SE ESTÁ VIENDO.
+     *
+     * Si la pantalla se pintó con la copia del dispositivo, el indicador lo dice
+     * (sin ocupar sitio): «Sin conexión · copia de las 14:32». Así nadie confunde
+     * un dato de ayer con el de ahora.
+     */
+    if (event.detail?.at) {
+      const cuando = new Date(event.detail.at);
+      const hora = Number.isNaN(cuando.getTime()) ? '' : cuando.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
+      const pill = $('#state-pill');
+      if (pill && hora) pill.title = `Datos de la copia local · ${hora}`;
+    }
+    if (event.detail?.path !== '/api/admin/data') return;
+    datosLocales.ultimo = Date.now();
+    if (datosLocales.programado || datosLocales.intentos >= 3) return;
+    datosLocales.intentos += 1;
+    datosLocales.programado = setTimeout(() => {
+      datosLocales.programado = null;
+      if ($('#app')?.hidden || !navigator.onLine) return;
+      load({ keepTab: true, silent: true }).catch(() => {});
+    }, 12000);
+  });
 
   /** Formulario de plantilla (alta o edición) dentro de la hoja inferior. */
   function openMessageForm(message) {
@@ -21553,6 +23683,12 @@
      */
     aplicarPreferenciasAlEstado();
     initEvents();
+    /*
+     * TIEMPO REAL: engancharse al bus ANTES de pedir los datos. Si llega un
+     * evento mientras se está cargando, el refresco mínimo espera a que haya
+     * estado y no se pierde.
+     */
+    startCrmEvents();
     const restoreSettingsRoute = () => {
       if (/^#config(?:\/|$)/.test(location.hash) && !$('#app').hidden) {
         settingsPage = settingsRoute();

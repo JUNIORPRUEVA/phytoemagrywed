@@ -7,7 +7,7 @@ function worker(){
   let online=false,status=200;
   const context={URL,Request,Response,Headers,console,setTimeout,clearTimeout,Date,
     self:{location:{origin:'https://crm.test'},addEventListener:(name,fn)=>handlers[name]=fn},
-    FulltechOfflineStore:{get:async k=>records.get(k),remove:async k=>records.delete(k)},
+    FulltechOfflineStore:{get:async k=>records.get(k),remove:async k=>records.delete(k),entries:async()=>[...records.entries()]},
     fetch:async()=>{if(!online)throw new TypeError('offline');return new Response('{}',{status});},
     caches:{match:async(request,options)=>{const u=new URL(typeof request==='string'?request:request.url,'https://crm.test');if(options?.ignoreSearch)u.search='';return shell.get(u.href)?.clone();}},
   };
@@ -27,7 +27,16 @@ it('abre imágenes y recibos privados de la cuenta durante 24 h y bloquea acceso
   w.records.set('identity',{key:'AGENT-2',verifiedAt:Date.now()});expect((await w.get(path,true)).status).toBe(503);
   w.records.set('identity',{...identity,verifiedAt:Date.now()-86400001});expect((await w.get(path,true)).status).toBe(503);
 });
-it('un 401 real elimina el acceso local y no devuelve un recibo viejo',async()=>{
-  const w=worker();w.records.set('identity',{key:'ADMIN-1',verifiedAt:Date.now()});w.setNetwork(true,401);
-  expect((await w.get('/api/admin/pos/quotes/pos_123/receipt',true)).status).toBe(401);expect(w.records.has('identity')).toBe(false);
+it('un 401 SOLO cierra el acceso local si viene de los endpoints de sesión',async()=>{
+  /*
+   * REGLA CORREGIDA: un 401 de un módulo (recibos, llamadas, una ruta de
+   * administración) NO significa que la cuenta caducó. Antes borraba la
+   * identidad local —y con ella la copia y la cola— por una petición de fondo.
+   */
+  const modulo=worker();modulo.records.set('identity',{key:'ADMIN-1',verifiedAt:Date.now()});modulo.setNetwork(true,401);
+  expect((await modulo.get('/api/admin/pos/quotes/pos_123/receipt',true)).status).toBe(401);
+  expect(modulo.records.has('identity')).toBe(true);
+  const sesion=worker();sesion.records.set('identity',{key:'ADMIN-1',verifiedAt:Date.now()});sesion.setNetwork(true,401);
+  expect((await sesion.get('/api/admin/session')).status).toBe(401);
+  expect(sesion.records.has('identity')).toBe(false);
 });

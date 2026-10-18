@@ -202,7 +202,11 @@ export function createInventoryService(deps) {
       order_id: input.orderId ?? null,
       reference_type: input.referenceType ?? (input.orderId ? 'order' : null),
       reference_id: input.referenceId ?? input.orderId ?? null,
-      reason: input.reason ?? null,
+      /*
+       * El motivo es OPCIONAL desde el panel. Si no viene, se guarda de dónde
+       * salió el movimiento para que el historial no quede con huecos.
+       */
+      reason: (typeof input.reason === 'string' && input.reason.trim()) || (type === 'COUNT' ? 'Recuento físico' : delta > 0 ? 'Entrada manual' : 'Salida manual'),
       expected_quantity: input.expectedQuantity ?? null,
       counted_quantity: input.countedQuantity ?? null,
       created_by: input.actor ?? input.actorName ?? 'panel',

@@ -596,6 +596,11 @@ async function createSqliteStore(file) {
         .map(normalize)
         .filter((item) => matches(item, filters));
     },
+    /** Un pedido por su `id`, sin recorrer la lista: lo usa el tiempo real. */
+    getAdmin(id) {
+      const row = byId.get(String(id ?? ''));
+      return row ? normalize(row) : null;
+    },
     update(id, patch) {
       const current = byId.get(id);
       if (!current) return null;
@@ -718,6 +723,11 @@ function createJsonlStore(file) {
         .slice(-limit)
         .reverse()
         .filter((item) => matches(item, filters));
+    },
+    /** Un pedido por su `id` (sin conexión / JSONL: búsqueda directa). */
+    getAdmin(id) {
+      const row = readRows(file).find((item) => item.id === id);
+      return row ? normalize(row) : null;
     },
     update(id, patch) {
       const rows = readRows(file);
@@ -992,6 +1002,11 @@ async function createPostgresStore(url) {
         values,
       );
       return result.rows.map(normalize).filter((item) => matches(item, { type, status, view, q })).slice(0, limit);
+    },
+    /** Un pedido por su `id`: una consulta indexada, no la lista entera. */
+    async getAdmin(id) {
+      const result = await pool.query(`SELECT ${SELECT_ADMIN} FROM ${TABLE} WHERE id = $1`, [String(id ?? '')]);
+      return result.rowCount ? normalize(result.rows[0]) : null;
     },
     async update(id, patch) {
       const current = await pool.query(`SELECT ${SELECT_ADMIN} FROM ${TABLE} WHERE id = $1`, [id]);
