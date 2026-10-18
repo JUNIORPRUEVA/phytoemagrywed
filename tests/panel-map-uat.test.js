@@ -461,15 +461,15 @@ describe('el mapa se abre DENTRO de la app', () => {
     await abrirChatAna();
     const chip = $$('#thread .loc').find((node) => node.textContent.includes('Casa'));
     click(chip.querySelector('[data-loc-menu]'));
-    await waitFor(() => $('#loc-map'), 'la hoja de la ubicación');
+    await waitFor(() => $('[data-loc-map]'), 'la hoja de la ubicación');
 
     // La opción principal es el mapa de la app: el enlace externo queda detrás.
-    expect($('#sheet-body').textContent).toContain('Ver el mapa');
+    expect($('#sheet-body').textContent).toContain('Ver en el mapa');
     expect($('#sheet-body').textContent).toContain('Abrir en Google Maps');
 
     const mapasAntes = fake.calls.maps.length;
     const marcadoresAntes = fake.calls.markers.length;
-    click('#loc-map');
+    click('[data-loc-map]');
 
     // UNA pantalla de mapa: el punto queda centrado y con su ficha encima.
     await waitFor(() => !$('#view-mapa').hidden && $('#orders-map'), 'la pantalla del mapa');
