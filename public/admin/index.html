@@ -123,6 +123,7 @@
       así que en Android y en el ordenador no cambia absolutamente nada.
     -->
     <link rel="stylesheet" href="/admin/ios.css?v=ios-1" />
+    <link rel="stylesheet" href="/admin/daily-close.css?v=close-compact-2" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -354,15 +355,16 @@
             </details>
           </section>
 
-          <!--
-            CIERRE Y REPORTES: van como opciones principales (no dentro de
-            Ventas) para que estén a un toque.
-          -->
+          <!-- Cierre diario reúne el acceso al día actual y al historial. -->
           <section class="drawer__section" aria-label="Cierre y reportes">
             <nav class="drawer__nav">
-              <button class="drawer__item" data-tab="cierre" type="button" data-daily-close-access>
-                <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario
-              </button>
+              <details class="drawer__fold">
+                <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario<span class="drawer__chev" aria-hidden="true"></span></summary>
+                <nav class="drawer__subnav" aria-label="Cierre diario">
+                  <button class="drawer__item drawer__item--sub" data-tab="cierre" data-close-view="actual" type="button" data-daily-close-access><span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre actual</button>
+                  <button class="drawer__item drawer__item--sub" data-tab="historial-cierres" data-close-view="history" type="button" data-daily-close-access><span class="drawer__icon" aria-hidden="true" data-icon="calendar"></span>Historial</button>
+                </nav>
+              </details>
               <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
                 <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
               </button>
@@ -396,20 +398,17 @@
           </section>
         </div>
         <!--
-          PIE: compartir, usuarios y configuración viven aquí, en la barra de
-          abajo y por encima de Claro/Oscuro. Van fuera del menú y sin
-          desplegable, para tenerlos siempre en el mismo sitio.
+          PIE: utilidades y administración quedan por encima de la apariencia.
         -->
         <div class="drawer__foot">
-          <section class="drawer__section drawer__foot-links" aria-label="Compartir">
-            <nav class="drawer__nav">
-              <button class="drawer__item" id="drawer-share" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir aplicación
-              </button>
-              <button class="drawer__item" id="drawer-share-web" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Compartir página web
-              </button>
-            </nav>
+          <section class="drawer__section drawer__foot-links drawer__share-section" aria-label="Compartir">
+            <details class="drawer__fold">
+              <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir<span class="drawer__chev" aria-hidden="true"></span></summary>
+              <nav class="drawer__subnav" aria-label="Compartir">
+                <button class="drawer__item drawer__item--sub" id="drawer-share" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app cliente</button>
+                <button class="drawer__item drawer__item--sub" id="drawer-share-web" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Compartir catálogo Fulltech</button>
+              </nav>
+            </details>
           </section>
           <section class="drawer__section drawer__foot-links" aria-label="Administración">
             <nav class="drawer__nav">
@@ -809,13 +808,18 @@
 
         <!-- HISTORIAL DE CIERRES: cada día cerrado, con su cuadre, y filtros. -->
         <section class="view" id="view-historial-cierres" hidden>
-          <h2 class="view__title">Historial de cierres</h2>
-          <div class="chips" id="close-history-period">
-            <button class="chip" data-close-history-period="7d" aria-pressed="true" type="button">7 días</button>
-            <button class="chip" data-close-history-period="30d" type="button">30 días</button>
-            <button class="chip" data-close-history-period="mes" type="button">Este mes</button>
-            <button class="chip" data-close-history-period="custom" type="button">Intervalo</button>
-          </div>
+          <aside class="close-history-filter" id="close-history-filter" aria-label="Filtros del historial">
+            <div class="close-history-filter__head">
+              <strong>Filtrar historial</strong>
+              <button class="close-history-filter__close" data-close-filter-close type="button" aria-label="Cerrar filtros">×</button>
+            </div>
+            <div class="close-history-filter__options" id="close-history-period">
+              <button class="chip" data-close-history-period="7d" aria-pressed="true" type="button">Últimos 7 días</button>
+              <button class="chip" data-close-history-period="30d" type="button">Últimos 30 días</button>
+              <button class="chip" data-close-history-period="mes" type="button">Este mes</button>
+              <button class="chip" data-close-history-period="custom" type="button">Elegir intervalo…</button>
+            </div>
+          </aside>
           <div class="list" id="close-history-view"></div>
         </section>
 
@@ -845,14 +849,22 @@
           <header class="settings-header">
             <button class="settings-back" data-settings-back type="button" aria-label="Volver a Configuración" hidden></button>
             <div><p class="settings-eyebrow" id="settings-eyebrow">TU ESPACIO</p><h2 id="settings-title" tabindex="-1">Configuración</h2></div>
+            <button class="settings-profile-trigger" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil"><span class="drawer__icon" aria-hidden="true" data-icon="person"></span></button>
           </header>
           <div id="settings-home">
-            <button class="settings-profile" data-dashboard-profile type="button">
-              <span class="settings-avatar" id="settings-avatar" aria-hidden="true"></span>
-              <span class="settings-profile__copy"><strong id="settings-name">Mi perfil</strong><small>Tu cuenta y tus datos personales</small></span>
-              <span class="settings-chevron" aria-hidden="true">›</span>
-            </button>
             <nav class="config-menu settings-list" aria-label="Menú de configuración" id="settings-menu"></nav>
+            <details class="settings-data-group">
+              <summary><span class="settings-data-group__icon" aria-hidden="true">▤</span><span><strong>Datos</strong><small>Información, actividad y sincronización</small></span><span class="settings-chevron" aria-hidden="true">›</span></summary>
+              <div class="settings-data-group__items">
+                <a href="#config/datos" data-settings-open="datos" data-admin-only hidden><span>Datos del negocio</span><small>Registros y actividad general</small></a>
+                <a href="#config/metricas" data-settings-open="metricas" data-admin-only hidden><span>Métricas de ventas</span><small>Resultados por período</small></a>
+                <a href="#config/auditoria" data-settings-open="auditoria" data-admin-only hidden><span>Actividad reciente</span><small>Cambios y movimientos del equipo</small></a>
+                <a href="#config/exportar" data-settings-open="exportar" data-admin-only hidden><span>Exportar datos</span><small>Descargar contactos y pedidos</small></a>
+                <a href="#config/multimedia" data-settings-open="multimedia" data-admin-only hidden><span>Archivos y multimedia</span><small>Almacenamiento y envíos por revisar</small></a>
+                <button type="button" id="settings-refresh-data"><span>Actualizar datos guardados</span><small>Descargar la información actual del CRM</small></button>
+                <button type="button" id="settings-offline-data"><span>Datos sin conexión y operaciones</span><small>Estado de la copia y cambios pendientes</small></button>
+              </div>
+            </details>
           </div>
           <section class="card" id="config-chat-sharing" hidden aria-label="Opciones para compartir en el chat">
             <div id="sharing-settings-home">
@@ -974,7 +986,7 @@
               >Descargar CSV</a
             >
           </div>
-          <button class="btn btn--danger btn--block" id="logout" type="button">Cerrar sesión</button>
+          <button class="btn btn--danger btn--block" id="logout" type="button" hidden>Cerrar sesión</button>
           <p class="view__hint" id="build-info"></p>
         </section>
 
@@ -1093,7 +1105,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-      <script src="/admin/app.js?v=sync-engine-158" defer></script>
+      <script src="/admin/app.js?v=daily-close-ui-152-sync-engine-158" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>

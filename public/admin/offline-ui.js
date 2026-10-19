@@ -96,6 +96,7 @@
     button.innerHTML='<span aria-hidden="true">↻</span><span class="drawer__offline-count"></span>';
     button.addEventListener('click',()=>show().catch(console.error));acciones.prepend(button);
     dialog=document.createElement('dialog');dialog.className='offline-dialog';document.body.append(dialog);
+    window.addEventListener('fulltech:offline-open',()=>show().catch(console.error));
     dialog.addEventListener('click',async e=>{
       if(e.target.closest('[data-offline-close]')){dialog.close();return;}
       const verificar=e.target.closest('[data-offline-verify]');

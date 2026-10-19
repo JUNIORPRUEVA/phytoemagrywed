@@ -1019,6 +1019,15 @@ body #drawer .drawer__foot-links {
   padding: 0;
 }
 
+/* Utilities form a quiet closing group; account management stays closest to the footer. */
+#drawer .drawer__foot { display: flex; flex-direction: column; }
+#drawer .drawer__foot-row { order: 3; }
+#drawer .drawer__foot > .drawer__section[aria-label="Administración"] { order: 1; margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--pe-hairline); }
+#drawer .drawer__share-section { order: 2; }
+#drawer .drawer__foot > .drawer__section[aria-label="Administración"] .drawer__nav { display: flex; flex-direction: column-reverse; }
+#drawer .drawer__foot > .drawer__section[aria-label="Administración"] [data-tab="usuarios"] { margin-top: 3px; }
+#drawer .drawer__share-section .drawer__subnav { margin-left: 21px; padding-right: 2px; }
+
 body #drawer .drawer__foot-links[hidden] {
   display: none;
 }

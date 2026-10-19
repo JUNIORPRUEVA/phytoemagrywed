@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v177-fulltech-rebrand';
+const VERSION = 'crm-v178-crm-release';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -54,6 +54,7 @@ const SHELL = [
   '/admin/drawer-menu.css',
   '/admin/panel-desktop.css',
   '/admin/ios.css',
+  '/admin/daily-close.css',
   '/admin/ios.js',
   '/admin/app.js',
   '/admin/sync-engine.js',

@@ -160,7 +160,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
      */
     const item = html.match(/<button[^>]*id="drawer-share"[\s\S]*?<\/button>/);
     expect(item).toBeTruthy();
-    expect(item[0]).toContain('Compartir aplicación');
+    expect(item[0]).toContain('Compartir app cliente');
     expect(item[0]).toContain('data-icon="share"');
     // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
     expect(app).toContain('share: svg(');
