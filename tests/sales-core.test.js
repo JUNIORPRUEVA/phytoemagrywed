@@ -147,6 +147,8 @@ describe('factura de compra (no «factura fiscal»)', () => {
   it('el HTML se imprime bien y no filtra el teléfono completo', () => {
     const order = buildOrder({ items: [{ variantId: 'capsules_10', quantity: 1 }], paymentMethod: 'CASH' }).order;
     const html = receiptHtml(buildReceipt({ order, customer: { name: 'Ana', phone_e164: '+18095550101' } }));
+    expect(html).toContain('src="/assets/img/fulltech-logo.png"');
+    expect(html).toContain('<h1 class="brand">FullTECH</h1>');
     expect(html).toContain('Factura de compra');
     expect(html).toContain('RD$ 2,500');
     expect(html).not.toContain('+18095550101');

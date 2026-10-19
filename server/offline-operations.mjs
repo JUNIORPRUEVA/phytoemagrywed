@@ -2,8 +2,7 @@ import {createHash} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {createSqlQuery} from './sql-query.mjs';
 
-const stores = new WeakMap();
-function service(ctx) {
+const stores = new WeakMap();function service(ctx) {
   if (!stores.has(ctx)) stores.set(ctx, (async () => {
     const adapter = createSqlQuery({backend:ctx.db.kind, handle:ctx.store.handle});
     if (!adapter.enabled) return null;
@@ -14,6 +13,38 @@ function service(ctx) {
     return sql;
   })());
   return stores.get(ctx);
+}
+
+/**
+ * CONSULTA DE ESTADO (SOLO LECTURA).
+ *
+ * Responde, por cada clave de operación del teléfono, qué hizo el servidor con
+ * ella: si llegó, si se completó y con qué código HTTP. No ejecuta nada ni
+ * devuelve cuerpos (podrían llevar datos de clientes).
+ */
+export async function operationStatuses({ ctx, actor, keys = [] }) {
+  const sql = await service(ctx);
+  if (!sql) return { disponible: false, estados: [] };
+  const actorId = String(actor?.id || actor?.role || '');
+  const estados = [];
+  for (const key of keys.slice(0, 50)) {
+    const texto = String(key ?? '');
+    if (!/^[a-zA-Z0-9_-]{16,100}$/.test(texto)) { estados.push({ key: texto, estado: 'clave_invalida' }); continue; }
+    const id = createHash('sha256').update(actorId + '\n' + texto).digest('hex');
+    const row = (await sql.query('SELECT status, response, created_at FROM fulltech_offline_operations_v1 WHERE id=$1', [id])).rows[0];
+    if (!row) { estados.push({ key: texto, estado: 'no_recibida' }); continue; }
+    let cabecera = null;
+    try { cabecera = JSON.parse(row.response); } catch { cabecera = null; }
+    const http = Number(cabecera?.status) || null;
+    estados.push({
+      key: texto,
+      estado: row.status === 'completed' ? 'completada' : 'en_proceso',
+      http,
+      aplicada: Boolean(http && http >= 200 && http < 300),
+      at: row.created_at ?? null,
+    });
+  }
+  return { disponible: true, estados };
 }
 
 /** Guarda la respuesta antes de confirmarla. Una ejecución incierta NUNCA se repite a ciegas. */

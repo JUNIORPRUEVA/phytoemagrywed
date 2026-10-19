@@ -126,6 +126,8 @@ describe('Mi perfil', () => {
   });
 
   it('el perfil se abre desde la cabecera; compartir y sistema quedan al pie', () => {
+    expect($('#view-perfil .profile-brand img')?.getAttribute('src')).toContain('fulltech-logo.png');
+    expect($('#view-perfil .profile-brand strong')?.textContent).toBe('FullTECH');
     // La cabecera del menú ES el acceso al perfil (no se repite como opción).
     const marca = $('.drawer__brand');
     expect(marca?.dataset.tab).toBe('perfil');

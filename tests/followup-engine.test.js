@@ -482,7 +482,7 @@ describe('cola de mensajes programados', () => {
       historicalStatus: 'COMPRO_REPORTADO',
       template: 'phyto_contacto_personalizado_v1',
       customMessage:
-        'Hola {{nombre}}, te escribimos de Phytoemagry.\n\nEste es un aviso importante.\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+        'Hola {{nombre}}, te escribimos de FullTECH.\n\nEste es un aviso importante.\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
       requireExactBody: true,
       startAt,
       intervalMinutes: 2,
@@ -511,7 +511,7 @@ describe('cola de mensajes programados', () => {
     const created = after.find((row) => row.customer_id === ana.customer.id);
     expect(created?.status).toBe('SCHEDULED');
     expect(created?.template_body).toBe(
-      'Hola Ana Campaña, te escribimos de Phytoemagry.\n\nEste es un aviso importante.\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+      'Hola Ana Campaña, te escribimos de FullTECH.\n\nEste es un aviso importante.\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
     );
     expect(created?.scheduled_at).toBe(startAt);
   });

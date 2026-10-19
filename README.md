@@ -1,4 +1,4 @@
-# Phytoemagry — Landing comercial (V1)
+# FullTECH — Catálogo comercial de Phytoemagry
 
 Landing de conversión pensada para tráfico pagado (Meta/Facebook/Instagram), con
 medición propia, captura de UTM y arquitectura preparada para el mini-CRM.

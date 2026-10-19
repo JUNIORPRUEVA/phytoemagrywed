@@ -20,7 +20,7 @@ void main() {
     expect(bytes.take(2), [0x1b, 0x40]);
     expect(bytes.skip(bytes.length - 4), [0x1d, 0x56, 0x42, 0x00]);
     final text = latin1.decode(bytes, allowInvalid: true);
-    expect(text, contains('PHYTOEMAGRY'));
+    expect(text, contains('FULLTECH'));
     expect(text, contains('Prueba de impresion'));
     expect(text, contains('58 mm'));
   });

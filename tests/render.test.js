@@ -74,6 +74,14 @@ describe('landing con los 7 frascos reales', () => {
   const html = renderIndexPage(view);
   const doc = parse(html);
 
+  it('usa FullTECH como negocio y muestra su logo, manteniendo Phytoemagry como producto', () => {
+    expect(doc.querySelector('.pe-logo img')?.getAttribute('src')).toBe('/assets/img/fulltech-logo.png');
+    expect(doc.querySelector('.pe-logo')?.getAttribute('aria-label')).toContain('FullTECH');
+    expect(view.site.brand.name).toBe('FullTECH');
+    expect(view.product.name).toBe('Phytoemagry');
+    expect(doc.querySelector('meta[property="og:site_name"]')?.getAttribute('content')).toBe('FullTECH');
+  });
+
   it('ordena las secciones segun el recorrido comercial', () => {
     const ids = [...doc.querySelectorAll('main > section')].map((section) => section.id);
     // Página ligera: sin comunidad (decisión de negocio) ni "Cómo comprar"
@@ -292,7 +300,7 @@ describe('landing con los 7 frascos reales', () => {
     expect(url.origin + url.pathname).toBe(`https://wa.me/${WHATSAPP}`);
     const text = url.searchParams.get('text');
     // Sin frasco elegido el mensaje sale sin datos inventados…
-    expect(text).toContain('quiero confirmar este pedido');
+    expect(text).toContain('quiero confirmar mi pedido');
     expect(text).not.toContain('Frasco:');
     expect(text).not.toContain('Total:');
   });

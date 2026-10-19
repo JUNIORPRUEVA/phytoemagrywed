@@ -696,6 +696,24 @@ describe('foto para el panel', () => {
     expect(snapshot.buckets.sin_iniciar[0].order_number).toBe('PE-100001');
   });
 
+  it('muestra pedidos asignados antes de activar para revisión sin mezclarlos con los avisos automáticos', async () => {
+    const antiguo = baseOrder({ id: 'ord_old', order_number: 'PE-OLD' });
+    antiguo.delivery.delivery_assigned_at = '2026-10-17T10:00:00.000Z';
+    antiguo.delivery.external.assigned_at = '2026-10-17T10:00:00.000Z';
+    const { ctx, deps } = makeWorld({
+      orders: [antiguo],
+      supervisor: { activationMode: 'new', activatedAt: '2026-10-18T00:00:00.000Z' },
+    });
+    const snapshot = await supervisorSnapshot(ctx, deps);
+    expect(snapshot.counts.revision).toBe(1);
+    expect(snapshot.buckets.revision[0]).toMatchObject({
+      id: 'ord_old',
+      review_reason: 'before_activation',
+      next_action: expect.stringContaining('Revisar pedido histórico'),
+    });
+    expect(snapshot.counts.sin_iniciar).toBe(0);
+  });
+
   it('los ajustes se normalizan y respetan límites', async () => {
     const { ctx } = makeWorld();
     const settings = await supervisorSettings(ctx);
@@ -705,5 +723,15 @@ describe('foto para el panel', () => {
     expect(clamped.firstReminderMinutes).toBe(1440);
     expect(clamped.maxAttempts).toBe(1);
     expect(clamped.contactFromHour).toBe(0);
+  });
+
+  it('migra una instalación habilitada sin fecha y fija un corte sin activar pedidos viejos', async () => {
+    const value = { enabled: true, activationMode: 'new', activatedAt: null, includeOldOrders: false };
+    const write = vi.fn(async (_key, next) => { Object.assign(value, next); });
+    const ctx = { clock: () => new Date('2026-10-19T14:00:00.000Z'), settings: { read: async () => ({ value }), write } };
+    const settings = await supervisorSettings(ctx);
+    expect(settings.activatedAt).toBe('2026-10-19T14:00:00.000Z');
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(value.includeOldOrders).toBe(false);
   });
 });

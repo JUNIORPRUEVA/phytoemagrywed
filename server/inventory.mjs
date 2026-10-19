@@ -140,9 +140,12 @@ export function createInventoryService(deps) {
       release = resolve;
     });
     await previous;
+    let client;
     try {
+      if(store?.kind==='postgres'){client=await store.handle.connect();await client.query("SELECT pg_advisory_lock(hashtext('phyto-inventory-v1'))");}
       return await work();
     } finally {
+      if(client){try{await client.query("SELECT pg_advisory_unlock(hashtext('phyto-inventory-v1'))");}finally{client.release();}}
       release();
     }
   }
@@ -323,6 +326,7 @@ export function createInventoryService(deps) {
     if (counted === null) return { ok: false, error: 'invalid_quantity' };
     return withInventoryLock(async () => {
       const current = await stock();
+      if(input.expectedQuantity!==undefined&&Number(input.expectedQuantity)!==current.current)return {ok:false,error:'stale_count',message:'El stock cambió. Vuelve a contar antes de guardar.',current:current.current};
       const delta = counted - current.current;
       if (delta === 0) {
         return {

@@ -4,7 +4,8 @@ export async function handleProofreadingRoute({ req, res, route, ctx, actor, can
   const test = route === '/api/admin/settings/deepseek/test';
   const correction = route === '/api/admin/proofreading';
   const orderMessage = route === '/api/admin/ai/order-message';
-  if (!config && !test && !correction && !orderMessage) return false;
+  const replySuggestion = route === '/api/admin/ai/reply-suggestion';
+  if (!config && !test && !correction && !orderMessage && !replySuggestion) return false;
   const send = (status, body) => { json(res, status, body); return true; };
   if (!can(config || test ? 'settings.manage' : 'chats.reply')) return send(403, { ok: false, error: 'forbidden' });
   if (config && req.method === 'GET') return send(200, { ok: true, deepseek: await ctx.proofreading.status() });
@@ -30,6 +31,20 @@ export async function handleProofreadingRoute({ req, res, route, ctx, actor, can
       actorId: actor?.id || 'legacy',
     });
     return send(200, { ok: true, ...mensaje });
+  }
+  if (replySuggestion) {
+    const conversation = typeof body.conversationId === 'string' ? await ctx.db.get('conversations', body.conversationId) : null;
+    if (!conversation || !(await canOpen(conversation))) return send(403, { ok: false, error: 'conversation_not_accessible' });
+    const customer = await ctx.customers.get(conversation.customer_id);
+    // El servidor obtiene el contexto desde el hilo autorizado; el navegador no
+    // puede inyectar conversaciones, mensajes ni datos de otro usuario.
+    const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
+    const suggestion = await ctx.proofreading.suggestReply({
+      messages: messages.slice(-5),
+      customerName: customer?.name || '',
+      actorId: actor?.id || 'legacy',
+    });
+    return send(200, { ok: true, ...suggestion });
   }
   const conversation = typeof body.conversationId === 'string' ? await ctx.db.get('conversations', body.conversationId) : null;
   if (!conversation || !(await canOpen(conversation))) return send(403, { ok: false, error: 'conversation_not_accessible' });

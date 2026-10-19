@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   let worker, timer, maxTimer, watchdog, inFlight, pending, version = 0;
-  const REVIEW_DELAY = 180;
+  const REVIEW_DELAY = 120;
   const MAX_WAIT = 600;
   function clearScheduled() { clearTimeout(timer); clearTimeout(maxTimer); maxTimer = null; }
   let composing = false;
@@ -24,7 +24,7 @@
     aiAbort?.abort(); aiAbort = null; aiJob = null;
   }
   function requestSupport(job, suggestion) {
-    if (!isCurrent(job) || !suggestion?.uncertain?.length) return;
+    if (!isCurrent(job) || (!suggestion?.uncertain?.length && !suggestion?.edits?.length)) return;
     cancelAI();
     const key = JSON.stringify([job.context, job.text, [...ignored]]);
     const apply = result => {
@@ -252,7 +252,49 @@
   document.addEventListener('compositionend', (event) => { if (event.target.id === 'wa-text') { composing = false; schedule(); } });
   // Conservar el teclado al tocar Usar/Omitir en teléfonos.
   document.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-proofreading]')) event.preventDefault(); });
-  document.addEventListener('click', (event) => {
+  document.addEventListener('click', async (event) => {
+    const aiButton = event.target.closest('#wa-ai-reply');
+    if (aiButton) {
+      event.preventDefault(); event.stopPropagation();
+      const id = conversation(), input = area();
+      if (!id || aiButton.disabled || !input || document.body.dataset.waView === 'list') return;
+      aiButton.disabled = true;
+      let box = document.querySelector('#wa-ai-reply-result');
+      if (!box) { box = document.createElement('div'); box.id = 'wa-ai-reply-result'; box.className = 'wa-proofreading wa-ai-reply-result'; input.closest('#wa-composer')?.prepend(box); }
+      box.replaceChildren();
+      const status = document.createElement('span'); status.className = 'wa-proofreading__text'; status.setAttribute('role', 'status'); status.textContent = 'Preparando sugerencia…'; box.append(status); box.hidden = false;
+      const controller = new AbortController();
+      try {
+        const response = await fetch('/api/admin/ai/reply-suggestion', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: id }) });
+        const result = response.ok ? await response.json() : null;
+        if (id !== conversation() || !box.isConnected) return;
+        box.replaceChildren();
+        const text = document.createElement('span'); text.className = 'wa-proofreading__text'; text.setAttribute('role', 'status');
+        if (result?.ok && result.ai && typeof result.text === 'string') {
+          text.textContent = result.text; box.append(text);
+          const use = document.createElement('button'); use.type = 'button'; use.textContent = 'Usar respuesta';
+          use.addEventListener('click', () => { if (id !== conversation() || !area()) return; area().value = result.text; area().dispatchEvent(new Event('input', { bubbles: true })); area().focus({ preventScroll: true }); box.hidden = true; });
+          box.append(use);
+        } else {
+          text.textContent = response.status === 503
+            ? 'Conéctate al servidor para pedir una sugerencia. No se guardará como mensaje pendiente.'
+            : result?.reason === 'limit_reached'
+            ? 'Se alcanzó el límite de uso de IA. Inténtalo más tarde.'
+            : result?.reason === 'awaiting_customer'
+              ? 'El último mensaje lo envió tu equipo. Espera la respuesta del cliente para sugerir qué contestar.'
+              : result?.reason === 'unknown_direction'
+                ? 'No pude confirmar quién envió el último mensaje. No generaré una respuesta para evitar confusiones.'
+                : result?.reason === 'no_messages'
+                  ? 'No hay un mensaje reciente del cliente para responder.'
+                  : 'No se pudo generar la respuesta. Comprueba DeepSeek en Configuración.';
+          box.append(text);
+        }
+        const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Cerrar'; close.addEventListener('click', () => { box.hidden = true; }); box.append(close);
+      } catch {
+        if (id === conversation() && box.isConnected) { box.replaceChildren(); const error = document.createElement('span'); error.className = 'wa-proofreading__text'; error.textContent = 'No se pudo conectar para sugerir la respuesta.'; box.append(error); }
+      } finally { aiButton.disabled = false; }
+      return;
+    }
     if (event.target.closest('#wa-send')) { setTimeout(schedule, 0); return; }
     const button = event.target.closest('[data-proofreading]');
     if (!button) return;

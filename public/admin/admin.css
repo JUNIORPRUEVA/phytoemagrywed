@@ -5738,6 +5738,21 @@ body[data-wa-view='chat'] .float-btn--menu {
   transition: transform var(--pe-motion) var(--pe-ease);
 }
 
+.wa-ai-fab {
+  position: absolute; right: 16px; bottom: 58px; z-index: 15;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0; border: 1px solid var(--pe-line);
+  border-radius: 50%; background: var(--pe-appbar-bg); color: var(--pe-brand-text);
+  box-shadow: var(--pe-shadow-float); line-height: 1;
+  cursor: pointer; touch-action: manipulation; transition: transform var(--pe-motion) var(--pe-ease);
+}
+.wa-ai-fab__spark { font-size: 17px; }
+.wa-ai-fab__label { position: absolute; right: 1px; bottom: 1px; padding: 1px 2px; border-radius: 5px; background: var(--pe-brand-text); color: var(--pe-on-brand); font-size: 8px; font-weight: 750; letter-spacing: -.02em; }
+.wa-fab__dots { display: block; font-size: 27px; font-weight: 700; line-height: .8; transform: translateY(-1px); }
+.wa-ai-fab:active { transform: scale(.94); }
+.wa-ai-fab[disabled] { opacity: .4; box-shadow: none; cursor: not-allowed; }
+.wa-ai-fab:focus-visible { outline: 2px solid var(--pe-focus); outline-offset: 2px; }
+
 .wa-fab:active {
   transform: scale(0.94);
 }
@@ -14675,4 +14690,22 @@ body[data-tab='hoy'] .stat__arrow .svg {
   .dv-map-head__order {
     font-size: 0.96rem;
   }
+}
+
+.profile-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: fit-content;
+  margin: 0 0 12px;
+  color: var(--text-primary, #182338);
+}
+
+.profile-brand img {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 2px 10px rgb(14 53 106 / 15%);
 }

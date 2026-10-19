@@ -25,17 +25,17 @@ const ADMIN_DIR = path.join(process.cwd(), 'public', 'admin');
 
 /** El texto fijo que aprueba Meta para las campañas. */
 const CUERPO_FULLTECH =
-  'Hola {{1}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.';
+  'Hola {{1}}, te escribimos de FullTECH, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.';
 /** La genérica (la que se usa si la de Fulltech todavía no está aprobada). */
 const CUERPO_GENERICA =
-  'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.';
+  'Hola {{1}}, te escribimos de FullTECH. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.';
 /** El aviso de la mudanza: lo que escribe el negocio en el hueco libre. */
 const AVISO_MUDANZA =
   'Nos mudamos temporalmente a La Otra Banda y ahora trabajamos de forma virtual, con almacen en Higuey. Tenemos delivery de 8 a. m. a 9 p. m. Para pedidos o consultas, escribenos por aqui. Entrega rapida.';
 
 /** El mensaje final EXACTO que tiene que quedar programado (con el hueco sin rellenar). */
 const MENSAJE_ESPERADO =
-  `Hola {{nombre}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n${AVISO_MUDANZA}\n\n` +
+  `Hola {{nombre}}, te escribimos de FullTECH, distribuidor de Phytoemagry en Higüey.\n\n${AVISO_MUDANZA}\n\n` +
   'Cualquier duda, respóndenos por aquí y te ayudamos.';
 
 let tmpDir;
@@ -186,11 +186,11 @@ describe('campaña de WhatsApp: la presentación de Fulltech', () => {
     expect(select.value).toBe('phyto_aviso_fulltech_v1');
     // El nombre amable sale del catálogo del CRM, no del nombre técnico.
     const opcion = [...select.options].find((row) => row.value === 'phyto_aviso_fulltech_v1');
-    expect(opcion.textContent).toContain('Fulltech');
+    expect(opcion.textContent).toContain('FullTECH');
     // El mensaje que se va a programar es el del negocio, palabra por palabra.
     expect($('#campaign-message').value).toBe(MENSAJE_ESPERADO);
     // Y la vista previa enseña el nombre de ejemplo en vez del hueco.
-    expect($('#campaign-preview').textContent).toContain('Fulltech, distribuidor de Phytoemagry en Higüey');
+    expect($('#campaign-preview').textContent).toContain('FullTECH, distribuidor de Phytoemagry en Higüey');
     // Nada de avisos de «la plantilla agrega texto fijo»: encaja exacto.
     expect($('#campaign-summary').textContent).not.toMatch(/agrega texto fijo/i);
   });
@@ -219,7 +219,7 @@ describe('campaña de WhatsApp: la presentación de Fulltech', () => {
 
     await abrirCampana();
     expect($('#campaign-template').value).toBe('phyto_mensaje_personalizado_v1');
-    expect($('#campaign-message').value).toContain('te escribimos de Phytoemagry');
+    expect($('#campaign-message').value).toContain('te escribimos de FullTECH');
     expect($('#campaign-message').value).not.toContain('Fulltech');
     expect($('#campaign-message').value).toContain(AVISO_MUDANZA);
   });
@@ -233,10 +233,10 @@ describe('campaña de WhatsApp: la presentación de Fulltech', () => {
 
     await abrirCampana();
     setValue('#campaign-template', 'phyto_mensaje_personalizado_v1');
-    expect($('#campaign-message').value).toContain('te escribimos de Phytoemagry');
+    expect($('#campaign-message').value).toContain('te escribimos de FullTECH');
     expect($('#campaign-preview').textContent).not.toContain('Fulltech');
     setValue('#campaign-template', 'phyto_aviso_fulltech_v1');
     expect($('#campaign-message').value).toBe(MENSAJE_ESPERADO);
-    expect($('#campaign-preview').textContent).toContain('Fulltech');
+    expect($('#campaign-preview').textContent).toContain('FullTECH');
   });
 });

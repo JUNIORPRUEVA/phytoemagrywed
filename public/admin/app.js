@@ -209,7 +209,7 @@
     document.documentElement.dataset.theme = pintado;
     document.documentElement.style.colorScheme = pintado;
     document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', pintado);
-    window.FulltechAppearance?.postMessage(pintado);
+    window.FullTECHAppearance?.postMessage(pintado);
     if (guardar) {
       try {
         localStorage.setItem(TEMA_KEY, elegido);
@@ -244,7 +244,7 @@
   const DELIVERY_TILE_PREFETCH_REASON =
     'Neither the OSM nor the Esri tile service allows automatic area prefetch; caching visited tiles is fine.';
   const DELIVERY_TILE_SLOW_MS = 4500;
-  const NEGOCIO = 'FullTECH, SRL';
+  const NEGOCIO = 'FullTECH';
   const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
 
   function isMapGestureTarget(target) {
@@ -717,6 +717,8 @@
     share: svg('<circle cx="17.6" cy="5.9" r="2.7"/><circle cx="6.4" cy="12" r="2.7"/><circle cx="17.6" cy="18.1" r="2.7"/><path d="M8.8 10.7l6.4-3.4M8.8 13.3l6.4 3.4"/>'),
     /* «Sincronizar datos»: flechas en círculo, el gesto de volver a pedirlo todo. */
     refresh: svg('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20.4 4.4v4.4H16"/>'),
+    /* «Instalar la app»: un teléfono con la flecha de descarga. */
+    install: svg('<rect x="6" y="2.6" width="12" height="18.8" rx="3"/><path d="M12 7.2v6.4"/><path d="M9.2 11l2.8 2.8 2.8-2.8"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -809,7 +811,7 @@
 
   let toastTimer = null;
   function toast(message) {
-    if(window.FulltechOffline){
+    if(window.FullTECHOffline){
       if(!/no se|error|falt|elige|escribe|permiso|necesit|inválid|revisa|requiere|confirma|caduc|rechaz|intént|no hay|no puede|activa/i.test(message))return;
       const host=document.querySelector('dialog[open] .pos-modal-body,dialog[open] form')||(!$('#sheet')?.hidden?$('#sheet-body'):null)||document.querySelector('.view:not([hidden])');
       if(host){host.querySelector('.inline-feedback')?.remove();const notice=document.createElement('p');notice.className='inline-feedback';notice.setAttribute('role','alert');notice.textContent=message;host.prepend(notice);setTimeout(()=>notice.remove(),8000);return;}
@@ -954,7 +956,7 @@
   }
 
   function saveSnapshot() {
-    window.FulltechOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
+    window.FullTECHOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
     try {
       localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload()));
     } catch {
@@ -972,7 +974,7 @@
   }
 
   function readSnapshot() {
-    if(window.FulltechOffline&&!window.FulltechOffline.valid())return null;
+    if(window.FullTECHOffline&&!window.FullTECHOffline.valid())return null;
     try {
       const raw = getStoredValue(SNAPSHOT_KEY);
       return raw ? JSON.parse(raw) : null;
@@ -1085,6 +1087,15 @@
     const list = readOutbox().filter((row) => (row.key ?? `${row.method} ${row.path}`) !== key);
     list.push({ ...entry, key, operationId: entry.operationId||crypto.randomUUID(), at: Date.now(), tries: 0 });
     writeOutbox(list);
+    /*
+     * SE INTENTA ENVIAR EN EL ACTO.
+     *
+     * Antes el cambio se quedaba guardado hasta que alguien pulsaba «Sincronizar».
+     * Ahora lo solicita el motor único (`sync-engine.js`), que además se encarga
+     * de reintentar con espera creciente hasta que el servidor lo confirma.
+     */
+    if (window.FullTECHSync) window.FullTECHSync.ahora();
+    else setTimeout(() => { flushOutbox({ silent: true }).catch(() => {}); }, 0);
   }
 
   /** Cambio que no se pudo enviar (sin red): se aplica en pantalla y se reintenta. */
@@ -1117,11 +1128,26 @@
   async function flushOutboxRun({ silent = false } = {}) {
     const outbox = readOutbox();
     if (!outbox.length) return { sent: 0, pending: 0, dropped: 0, messages: [] };
-    if (!state.online) return { sent: 0, pending: outbox.length, dropped: 0, messages: [] };
+    /*
+     * SE INTENTA AUNQUE EL TELÉFONO DIGA QUE NO HAY RED.
+     *
+     * `state.online` se queda en falso tras un fallo pasajero (o si el móvil
+     * informa mal), y entonces la cola no salía nunca hasta pulsar «Sincronizar».
+     * El intento real decide: si no hay red, el propio `api` lo deja pendiente.
+     */
     const pendientes = [];
     const descartados = [];
     let enviados = 0;
+    let motivoFallo = '';
     for (const [index,entry] of outbox.entries()) {
+      /*
+       * UNA MARCA DE «LEÍDO» NO ES UN CAMBIO DEL USUARIO.
+       *
+       * Si una versión anterior la dejó en la cola, se retira: mandarla tarde no
+       * sirve de nada y era la causa de que el aviso dijera «1 cambio pendiente»
+       * para siempre.
+       */
+      if (/\/(read|seen|visit|heartbeat|presence|typing)(\/|$)/.test(String(entry.path ?? ''))) continue;
       try {
         if (entry.kind === 'order-create') {
           // ¿Ya había llegado? (un reintento anterior pudo guardarlo sin respuesta)
@@ -1139,7 +1165,13 @@
         enviados += 1;
       } catch (error) {
         if (error.message === 'unauthorized' || error.offline === true) {
-          pendientes.push(...outbox.slice(index));
+          /*
+           * EL RITMO DE LOS REINTENTOS LO LLEVA EL MOTOR, NO LA OPERACIÓN.
+           * Se conserva la cola ENTERA y en orden; el motor decide cuándo volver
+           * a intentarlo (2, 4, 8, 15, 30 y 60 s) y lo reinicia al volver la red.
+           */
+          pendientes.push(...outbox.slice(index).map((row, i) => (i === 0 ? { ...row, tries: (row.tries || 0) + 1 } : row)));
+          motivoFallo = error.message === 'unauthorized' ? 'La sesión caducó: vuelve a entrar para enviarlo.' : 'Sin conexión con el servidor';
           break;
         }
         descartados.push({ ...entry, motivo: error.body?.message ?? 'El CRM lo rechazó' });
@@ -1149,7 +1181,7 @@
     const added=readOutbox().filter(e=>!oldKeys.has(e.operationId||String(e.at)+e.key));
     writeOutbox([...pendientes,...added]);
     if (descartados.length) addOutboxProblems(descartados);
-    const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, messages: descartados.map((row) => row.motivo) };
+    const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, error: motivoFallo, messages: descartados.map((row) => row.motivo) };
     if (!silent) {
       if (enviados && !descartados.length) toast(`${enviados} cambio(s) enviados`);
       else if (descartados.length) toast(descartados[0].motivo);
@@ -1188,7 +1220,7 @@
     }
   }
 
-  window.FulltechLegacyOffline={synchronize:()=>flushOutbox({silent:true})};
+  window.FullTECHLegacyOffline={synchronize:()=>flushOutbox({silent:true})};
 
   /** Etiqueta legible de lo que está esperando (para el aviso de la pantalla). */
   function outboxSummary() {
@@ -1828,7 +1860,7 @@
      *
      * Antes solo se repintaba al guardar el perfil o cuando la sección
      * «usuario» era la activa; tras recargar la PWA el menú seguía enseñando el
-     * texto fijo del HTML («FullTECH, SRL · CRM») en vez de la persona y su rol.
+     * texto fijo del HTML («FullTECH · CRM») en vez de la persona y su rol.
      * Es idempotente: solo escribe nombre, rol, iniciales y visibilidad.
      */
     renderCurrentUser();
@@ -2046,11 +2078,29 @@
     const pending = Object.entries(readNotificationStorage(NOTICE_PENDING_KEY, {}, owner));
     for (let offset = 0; offset < pending.length && stillOwner(); offset += 500) {
       const batch = Object.fromEntries(pending.slice(offset, offset + 500));
-      const result = await api('/api/admin/notification-dismissals', { method: 'POST', body: JSON.stringify({ dismissed: batch }) });
+      /*
+       * LOS DESCARTES VIEJOS SE TRADUCEN ANTES DE ENVIARLOS.
+       *
+       * Una versión anterior guardaba claves como `wa-failed:2`, que el servidor
+       * no acepta: el lote ENTERO se rechazaba con `invalid_dismissals` y no
+       * llegaba ni el descarte viejo ni los nuevos, para siempre.
+       * `sanearDismissals` las traduce (`wa-failed:2` → `wa-failed` con valor 2)
+       * y descarta únicamente las que ya no significan nada.
+       */
+      const limpias = window.FullTECHOffline?.sanearDismissals
+        ? window.FullTECHOffline.sanearDismissals(batch).limpio
+        : batch;
+      const result = Object.keys(limpias).length
+        ? await api('/api/admin/notification-dismissals', { method: 'POST', body: JSON.stringify({ dismissed: limpias }) })
+        : { dismissed: {} };
       const latest = readNotificationStorage(NOTICE_PENDING_KEY, {}, owner);
-      for (const [key, value] of Object.entries(batch)) if (latest[key] === value) delete latest[key];
+      for (const [key, value] of Object.entries(batch)) {
+        // Una clave que no se puede enviar se retira: reintentarla es el mismo rechazo eterno.
+        if (!(key in limpias)) { delete latest[key]; continue; }
+        if (JSON.stringify(latest[key]) === JSON.stringify(value)) delete latest[key];
+      }
       writeNotificationStorage(NOTICE_PENDING_KEY, latest, owner);
-      writeNotificationStorage(NOTICE_DISMISSED_KEY, mergeNotificationDismissals(readNotificationStorage(NOTICE_DISMISSED_KEY, {}, owner), result.dismissed ?? batch), owner);
+      writeNotificationStorage(NOTICE_DISMISSED_KEY, mergeNotificationDismissals(readNotificationStorage(NOTICE_DISMISSED_KEY, {}, owner), result.dismissed ?? limpias), owner);
     }
   }
 
@@ -2186,7 +2236,7 @@
           <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="dashboard-head__title">
-          <strong>FullTECH, SRL</strong>
+          <strong>FullTECH</strong>
           <span>CRM</span>
         </div>
         <div class="dashboard-head__actions">
@@ -3138,7 +3188,14 @@
     const online = navigator.onLine !== false && state.online !== false;
     if (!online) return { tone: 'offline', text: 'Sin conexión: los chats guardados siguen disponibles y los mensajes nuevos llegan al reconectar.' };
     const wa = state.whatsapp ?? null;
-    if (!wa) return { tone: 'unknown', text: 'No se pudo verificar la conexión con WhatsApp. Los chats guardados siguen disponibles.' };
+    /*
+     * SIN DATO FRESCO NO SE HABLA DE «NO SE PUDO VERIFICAR».
+     *
+     * Si el panel está pintando una copia guardada de antes de que existiera el
+     * estado de WhatsApp, `state.whatsapp` es `null`: eso NO significa que Meta
+     * falle. Se dice qué pasa de verdad y qué hacer.
+     */
+    if (!wa) return { tone: 'sin-datos', text: 'El panel está mostrando una copia guardada y todavía no tiene el estado de WhatsApp. Conéctate y pulsa «Sincronizar» para comprobarlo; los chats guardados siguen disponibles.' };
     if (wa.mode === 'mock') return { tone: 'mock', text: 'WhatsApp en modo local (pruebas): los mensajes no salen a Meta.' };
     const reason = String(wa.reason ?? '');
     if (wa.send === 'ok') {
@@ -3513,7 +3570,7 @@
     }
     const approved = (state.templates ?? []).filter(waTemplateApproved);
     /*
-     * La campaña sale con la presentación de FullTECH, SRL cuando Meta la ha aprobado;
+     * La campaña sale con la presentación de FullTECH cuando Meta la ha aprobado;
      * mientras no, se usa la plantilla personalizada de siempre.
      */
     const personal = waCampaignTemplate() ?? waPersonalTemplate();
@@ -5463,9 +5520,9 @@
       pushUnavailableReason()
         ? `<p class="notice-hint">${escapeHtml(pushUnavailableReason())}</p>`
         : resultado
-        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → FullTECH, SRL en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
+        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → FullTECH en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
         : iphonePushDevice()
-          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → FullTECH, SRL activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
+          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → FullTECH activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
           : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
       }`;
   }
@@ -5494,7 +5551,7 @@
 
   function nativePrinterRequest(action, payload = {}) {
     if (!nativePrinterAvailable()) {
-      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación FullTECH, SRL para Android.'));
+      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación FullTECH para Android.'));
     }
     const id = `printer-${Date.now()}-${++nativePrinterRequestSeq}`;
     return new Promise((resolve, reject) => {
@@ -5516,13 +5573,13 @@
           <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
           <div>
             <strong>Impresora térmica</strong>
-            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH, SRL para Android.</p>
+            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH para Android.</p>
           </div>
         </div>
         <dl class="facts printer-settings__facts">
           <div class="fact"><dt>Estado</dt><dd>Usando el CRM desde el navegador</dd></div>
           <div class="fact"><dt>Impresión Bluetooth</dt><dd>Disponible en la app Android</dd></div>
-          <div class="fact"><dt>Nombre de la app</dt><dd>FullTECH, SRL</dd></div>
+          <div class="fact"><dt>Nombre de la app</dt><dd>FullTECH</dd></div>
         </dl>
         <div class="item__actions printer-settings__actions">
           <a class="btn btn--primary" href="/api/admin/android-apk/download">Descargar app para Android</a>
@@ -5533,7 +5590,7 @@
             <li>Desde el teléfono Android, toca <strong>Descargar app para Android</strong>.</li>
             <li>Cuando termine la descarga, abre el archivo y toca <strong>Instalar</strong>.</li>
             <li>Si el teléfono pide permiso para instalar, toca <strong>Permitir</strong> y vuelve a abrir el archivo descargado.</li>
-            <li>Abre la app <strong>FullTECH, SRL</strong> e inicia sesión en el CRM.</li>
+            <li>Abre la app <strong>FullTECH</strong> e inicia sesión en el CRM.</li>
             <li>Entra a <strong>Configuración → Impresora</strong> y toca <strong>Seleccionar impresora</strong>.</li>
             <li>Elige tu impresora térmica Bluetooth. Si no aparece, primero vincúlala en los ajustes Bluetooth del teléfono.</li>
             <li>Toca <strong>Imprimir prueba</strong>. Si sale bien, ya puedes imprimir facturas desde los pedidos.</li>
@@ -8421,7 +8478,7 @@
     renderSettingsPermissions();
     try {
       if (state.devicePermissions?.[key] === 'denied') {
-        permissionFeedback = `Permite ${SETTINGS_PERMISSIONS.find((entry) => entry.key === key).title.toLowerCase()} en los ajustes de este sitio o de FullTECH, SRL en tu teléfono. Después vuelve aquí y pulsa Comprobar permisos.`;
+        permissionFeedback = `Permite ${SETTINGS_PERMISSIONS.find((entry) => entry.key === key).title.toLowerCase()} en los ajustes de este sitio o de FullTECH en tu teléfono. Después vuelve aquí y pulsa Comprobar permisos.`;
       } else if (key === 'notifications') {
         // Se invoca directamente desde el clic para conservar el gesto que exige iOS.
         const enabled = await enableCrmPush();
@@ -8439,7 +8496,7 @@
       }
     } catch (error) {
       permissionFeedback = ['NotAllowedError', 'SecurityError'].includes(error.name)
-        ? 'El teléfono no permitió el acceso. Puedes activarlo en los ajustes de este sitio o de FullTECH, SRL.'
+        ? 'El teléfono no permitió el acceso. Puedes activarlo en los ajustes de este sitio o de FullTECH.'
         : error.name === 'NotFoundError' ? 'No se encontró este dispositivo. Comprueba que está conectado.'
         : 'No se pudo acceder al dispositivo. Comprueba que no lo esté usando otra aplicación.';
     } finally {
@@ -10349,7 +10406,7 @@
      * LA PRIMERA FILA ES LA QUE ASIGNA: dice quién atiende y al pulsarla se elige
      * responsable (a mí o a otra persona). Antes era un cartel que no hacía nada.
      */
-    const canChooseResponsible = Boolean(currentUser()) && (canTake || isAdmin());
+    const canChooseResponsible = Boolean(currentUser()) && (canTake || canAsk || isAdmin());
     const assignmentRow = canChooseResponsible
       ? `<button class="menu-item" data-conv-assign="${escapeHtml(conversationId)}" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span><span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Asignar a una persona</small></span></button>`
       : `<div class="menu-item menu-item--static"><span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span><span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span></div>`;
@@ -10767,6 +10824,7 @@
     const id = escapeHtml(conversationId);
     const customerKey = escapeHtml(customerId);
     const archived = Boolean(row.archived_at);
+    const assignmentMenu = assignmentMenuHtml(row, { conversationId });
     openSheet(customer ? customerName(customer) : waDisplayName(row), `
       <div class="menu-list">
         <p class="menu-list__label">Acciones principales</p>
@@ -10787,10 +10845,8 @@
         <button class="menu-item menu-item--submenu" data-conv-followup-menu="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
           <span><strong>Seguimiento</strong><small>Tareas y mensajes programados</small></span></button>` : ''}
-        <button class="menu-item menu-item--submenu" data-conv-assign="${id}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
-          <span><strong>Asignación</strong><small>${escapeHtml(conversationAssignmentLabel(row))}</small></span>
-        </button>
+        <p class="menu-list__label">Asignación</p>
+        ${assignmentMenu}
         <p class="menu-list__label">Organizar conversación</p>
         ${conversationResolutionButton(row.id, row.is_resolved)}
         ${Number(row.unread_count) > 0 ? `<button class="menu-item" data-conv-act="mark_read" data-conv-id="${id}" type="button">
@@ -11176,7 +11232,7 @@
          * texto de WhatsApp no viaja en esa llamada: se escribe al abrir la
          * conversación, y eso sí necesita red.
          */
-        if (!navigator.onLine && window.FulltechOffline) {
+        if (!navigator.onLine && window.FullTECHOffline) {
           const data = await api('/api/admin/pos/customers', {method:'POST',body:JSON.stringify({phone,name})});
           aplicarClienteLocal(data.customer.id, phone, name);
           closeSheet();render();
@@ -11480,7 +11536,7 @@
   }
 
   /**
-   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe FullTECH, SRL.
+   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe FullTECH.
    *
    * Mientras Meta no la apruebe, no se ofrece y la campaña usa la genérica de
    * siempre (`waPersonalTemplate`): nunca se finge una aprobación. En cuanto esté
@@ -11969,6 +12025,7 @@
   }
 
   function waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate = null }) {
+    const stateHtml = waContactStateHtml(contactState, customer, lastTemplate);
     const wa = state.whatsapp ?? null;
     /*
      * SE PUEDE ESCRIBIR SI EL ENVÍO FUNCIONA. `canSend` lo resuelve el servidor
@@ -11985,14 +12042,14 @@
      */
     const doubtful = !canSend && (wa === null || wa?.send === 'unknown');
     if (!canSend && !doubtful) {
-      return waNoticeHtml();
+      return stateHtml + waNoticeHtml();
     }
     const aviso = doubtful ? waNoticeHtml() : '';
     if (customer?.do_not_contact) {
-      return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
+      return stateHtml + '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      return aviso + waClosedComposerHtml();
+      return stateHtml + aviso + waClosedComposerHtml();
     }
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     /*
@@ -12003,7 +12060,7 @@
      * «Enviar plantilla» NO va aquí a la izquierda: esa acción ya está en el menú
      * de acciones del chat (el botón flotante), y repetir el icono solo confundía.
      */
-    return `${aviso}<div class="composer-bar">
+    return `${stateHtml}${aviso}<div class="composer-bar">
         <div class="composer-field">
         <span class="composer-left">
           <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
@@ -12109,6 +12166,8 @@
           avatarBloqueada.dataset.customer = '';
         }
         const accionesBloqueadas = $('#wa-actions');
+        const aiReplyBloqueado = $('#wa-ai-reply');
+        if (aiReplyBloqueado) aiReplyBloqueado.disabled = true;
         if (accionesBloqueadas) {
           accionesBloqueadas.disabled = true;
           accionesBloqueadas.hidden = false;
@@ -12152,6 +12211,8 @@
       }
       // Mientras no hay datos no se puede pedir ninguna acción comercial.
       const actionsLoading = $('#wa-actions');
+      const aiReplyLoading = $('#wa-ai-reply');
+      if (aiReplyLoading) aiReplyLoading.disabled = true;
       if (actionsLoading) {
         actionsLoading.disabled = true;
         actionsLoading.hidden = Boolean(state.wa.deliveryOrderId);
@@ -12193,6 +12254,8 @@
     // El menú de acciones del chat (crear pedido, programar…) es una sola tecla
     // para no llenar el encabezado de botones en el móvil.
     const actions = $('#wa-actions');
+    const aiReply = $('#wa-ai-reply');
+    if (aiReply) { aiReply.disabled = !customer?.id || !conversation?.id; aiReply.hidden = deliveryChatMode; }
     if (actions) {
       actions.dataset.customer = customer?.id ?? '';
       actions.dataset.conversation = conversation?.id ?? '';
@@ -12231,7 +12294,7 @@
 
     const emptyThread =
       contactState === CONTACT_STATE.NEW_CONTACT
-        ? ''
+        ? '<div class="wa-empty"><strong>Todavía no has iniciado una conversación</strong></div>'
         : '';
     const query = String(state.wa.threadQuery ?? '').trim().toLowerCase();
     if (!query) {
@@ -12732,7 +12795,7 @@
         closeSheet();openSendLocation({conversationId,customerId:customer?.id||null});
       });
       panel.querySelectorAll('[data-sharing-copy]').forEach(button=>button.addEventListener('click',()=>copySharingText(rows[Number(button.dataset.sharingCopy)].number,button)));
-      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>sharingDraft(conversationId,`Cuentas bancarias — FullTECH, SRL\n\n${rows.map(row=>row.message).join('\n\n')}`));
+      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>sharingDraft(conversationId,`Cuentas bancarias — FullTECH\n\n${rows.map(row=>row.message).join('\n\n')}`));
       panel.querySelectorAll('[data-sharing-use]').forEach(button=>button.addEventListener('click',()=>{
         const row=rows[Number(button.dataset.sharingUse)];
         if(kind==='banks') sharingDraft(conversationId,row.message);
@@ -13152,14 +13215,14 @@
   /**
    * CUÁNTOS SEGUNDOS SE PUEDE DESHACER UN MENSAJE ESCRITO A MANO.
    *
-   * Ocho segundos: da tiempo a ver el error delante (un nombre mal escrito, el chat
+   * Cinco segundos: da tiempo a ver el error delante (un nombre mal escrito, el chat
    * equivocado) sin que enviar se sienta lento. Se puede ajustar sin tocar el código
    * con `globalThis.__PHYTO_UNDO_MS` —así lo apagan las pruebas— y con 0 el mensaje
    * sale de inmediato, como antes.
    */
   const waUndoMs = () => {
     const valor = Number(globalThis.__PHYTO_UNDO_MS);
-    return Number.isFinite(valor) && valor >= 0 ? valor : 8000;
+    return Number.isFinite(valor) && valor >= 0 ? valor : 5000;
   };
 
   /**
@@ -20401,7 +20464,7 @@
       const puedeActivar = estadoAvisos === 'prompt';
       rows.push({
         title: 'Activar notificaciones',
-        detail: puedeActivar ? 'Recibe avisos de pedidos, chats y entregas.' : 'Este teléfono tiene las notificaciones apagadas para FullTECH, SRL.',
+        detail: puedeActivar ? 'Recibe avisos de pedidos, chats y entregas.' : 'Este teléfono tiene las notificaciones apagadas para FullTECH.',
         action: 'notifications',
         cta: puedeActivar ? 'Activar' : 'Cómo activarlas',
       });
@@ -20536,12 +20599,17 @@
     if (!silentSyncTimer) {
       silentSyncTimer = setInterval(sincroniaSilenciosaTick, 60000);
     }
+    /*
+     * SIN COMPROBAR `state.online`.
+     *
+     * Ese indicador se queda en falso tras un fallo pasajero (o si el móvil informa
+     * mal) y entonces la sincronización de fondo no se ejecutaba NUNCA hasta pulsar
+     * «Sincronizar». El intento real decide: si no hay red, no pasa nada.
+     */
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && state.online) sincronizarEnSegundoPlano();
+      if (document.visibilityState === 'visible') sincronizarEnSegundoPlano();
     });
-    window.addEventListener('focus', () => {
-      if (state.online) sincronizarEnSegundoPlano();
-    });
+    window.addEventListener('focus', () => sincronizarEnSegundoPlano());
   }
 
   /**
@@ -20549,15 +20617,18 @@
    * SIEMPRE en silencio y SIN recargar la pantalla.
    */
   function sincroniaSilenciosaTick() {
-    if (document.hidden || !state.online) return;
+    if (document.hidden) return;
     sincronizarEnSegundoPlano();
   }
 
-  /** Una sola sincronización a la vez (dos a la vez se pisarían al pintar). */
+  /**
+   * Una sola sincronización a la vez (dos a la vez se pisarían al pintar).
+   */
   function sincronizarEnSegundoPlano() {
     if (syncEnCurso) return syncEnCurso;
     syncEnCurso = (async () => {
-      if (readOutbox().length) await flushOutbox({ silent: true });
+      // El motor único (sync-engine.js) es el único que envía las colas.
+      // Este ciclo solo refresca datos visibles al volver a la aplicación.
       await load({ keepTab: true, silent: true });
     })()
       .catch(() => {})
@@ -20565,6 +20636,46 @@
         syncEnCurso = null;
       });
     return syncEnCurso;
+  }
+
+  /**
+   * EL MOTOR ÚNICO DE ENVÍO.
+   *
+   * `sync-engine.js` decide cuándo se manda (cambio nuevo, volver a la app,
+   * recuperar el foco, evento `online`, aviso del service worker y espera
+   * creciente mientras quede algo). Aquí solo se le dice qué hay pendiente y
+   * cómo se envía: las dos colas del panel.
+   *
+   * Es el único sitio que cuenta lo pendiente, así que el aviso de la pantalla
+   * y lo que de verdad se envía nunca se contradicen.
+   */
+  function iniciarMotorDeSincronizacion() {
+    if (!window.FullTECHSync?.configure) return;
+    window.FullTECHSync.configure({
+      pending: async () => {
+        const cola = Number(await Promise.resolve(window.FullTECHOffline?.pendientes?.()).catch(() => 0)) || 0;
+        return readOutbox().length + cola;
+      },
+      flush: async () => {
+        const legacy = await flushOutbox({ silent: true }).catch((error) => ({
+          sent: 0,
+          pending: readOutbox().length,
+          error: error?.message === 'unauthorized' ? 'La sesión caducó: vuelve a entrar para enviarlo.' : 'Sin conexión con el servidor',
+        }));
+        const cola = await window.FullTECHOffline?.synchronize?.().catch(() => null);
+        const restantes = readOutbox().length + (Number(await Promise.resolve(window.FullTECHOffline?.pendientes?.()).catch(() => 0)) || 0);
+        return {
+          sent: (Number(legacy?.sent) || 0) + (Number(cola?.sent) || 0),
+          pending: restantes,
+          error: cola?.error || legacy?.error || (legacy?.pending ? 'Sin conexión con el servidor' : ''),
+        };
+      },
+      after: (sent) => {
+        // Lo que se pintó como «sin enviar» deja de estarlo: la lista se repinta.
+        if (sent) render();
+      },
+    });
+    window.FullTECHSync.start();
   }
 
   // Solo se confirma tras registrar ESTE navegador; nunca se restaura del snapshot.
@@ -20578,19 +20689,72 @@
 
   function pushUnavailableReason() {
     if (iphonePushDevice() && !(navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches)) {
-      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono FullTECH, SRL. Requiere iOS 16.4 o posterior.';
+      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono FullTECH. Requiere iOS 16.4 o posterior.';
     }
     if (window.isSecureContext === false) return 'Las notificaciones requieren una conexión HTTPS segura.';
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
-      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre FullTECH, SRL desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
+      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre FullTECH desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
     }
     if (Notification.permission === 'denied') {
-      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → FullTECH, SRL y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
+      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → FullTECH y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
     }
     return '';
   }
 
   let installEvent = null;
+
+  /* ¿Se está mirando el panel COMO APP instalada (no en una pestaña)? */
+  function appInstalada() {
+    try {
+      return (
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches ||
+        window.matchMedia('(display-mode: minimal-ui)').matches ||
+        navigator.standalone === true
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  let botonInstalar = null;
+
+  /**
+   * BOTÓN DISCRETO PARA INSTALAR LA APP.
+   *
+   * Solo aparece cuando de verdad hace falta: se está usando en el navegador
+   * (Chrome) y el sistema ofrece instalarla. Si ya está instalada —o se abre
+   * desde el icono del teléfono— no se muestra nada. En iPhone Safari no existe
+   * el aviso del navegador, así que el botón explica los dos toques manuales.
+   */
+  function actualizarBotonInstalar() {
+    if (!botonInstalar) return;
+    const puede = Boolean(installEvent) || (iphonePushDevice() && !appInstalada());
+    botonInstalar.hidden = appInstalada() || !puede;
+  }
+
+  async function instalarApp() {
+    if (installEvent) {
+      try {
+        installEvent.prompt();
+        const choice = await installEvent.userChoice.catch(() => null);
+        if (choice?.outcome === 'accepted') {
+          toast('Instalada: búscala en tu pantalla de inicio');
+          $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
+        }
+        installEvent = null;
+      } catch {
+        installEvent = null;
+      }
+      actualizarBotonInstalar();
+      return;
+    }
+    if (iphonePushDevice()) {
+      toast('En iPhone: toca Compartir y luego «Añadir a pantalla de inicio»');
+      return;
+    }
+    toast('Abre el menú del navegador y elige «Instalar aplicación»');
+  }
   let swRegistration = null;
 
   function pushPermissionLabel() {
@@ -20737,8 +20901,8 @@
       await registration.showNotification('Prueba en este teléfono', {
         body: 'Si ves este aviso, este teléfono muestra los avisos del CRM.',
         tag: 'phyto-push-test-local',
-        icon: '/admin/fulltech-icon-192.png',
-        badge: '/admin/fulltech-icon-192.png',
+        icon: '/admin/fulltech-icon-192.png?v=3',
+        badge: '/admin/fulltech-icon-192.png?v=3',
         data: { deepLink: '/admin/?v=hoy' },
       });
       return true;
@@ -20840,8 +21004,15 @@
    * que también funciona cuando la copia guardada está desfasada.
    */
   let ultimaRevisionVersion = 0;
+  let recargaPorVersion = 0;
   async function revisarVersionPanel({ forzar = false } = {}) {
-    if (!navigator.onLine) return;
+    /*
+     * TAMPOCO AQUÍ MANDA `navigator.onLine`.
+     *
+     * Si el móvil dice «sin conexión» pero el servidor sí responde, el panel se
+     * quedaba con el código viejo indefinidamente. La petición real decide; si
+     * falla, se reintenta en la vuelta siguiente.
+     */
     if (!forzar && Date.now() - ultimaRevisionVersion < 60000) return;
     ultimaRevisionVersion = Date.now();
     try {
@@ -20857,7 +21028,18 @@
        * la está mirando, el botón «Actualizar» sale AL INSTANTE: no se espera
        * a que pase nada más.
        */
-      if (document.hidden && puedeRecargarSolo()) {
+      /*
+       * SE ACTUALIZA SOLO, TAMBIÉN CON LA PANTALLA DELANTE.
+       *
+       * Antes solo se recargaba con la app en segundo plano; delante, quedaba una
+       * barra «Actualizar» esperando a que alguien la tocara. Así un teléfono
+       * podía seguir días con el panel viejo —y con los fallos ya corregidos— sin
+       * que nadie supiera por qué. Se recarga sola cuando no hay nada a medio
+       * escribir, con un margen de 2 min para no entrar en bucle si el despliegue
+       * está a medias.
+       */
+      if (puedeRecargarSolo() && Date.now() - recargaPorVersion > 120000) {
+        recargaPorVersion = Date.now();
         location.reload();
         return;
       }
@@ -21001,28 +21183,74 @@
     window.addEventListener('online', () => setConnection(true));
     window.addEventListener('offline', () => setConnection(false));
     setConnection(navigator.onLine);
+    /*
+     * LA COLA SE VACÍA SOLA.
+     *
+     * Lo normal es que la mande el motor único (`sync-engine.js`) en cuanto hay
+     * un cambio o una señal de vida. Si por lo que sea el motor no estuviera
+     * cargado, quedan estos disparadores de respaldo: nunca una cola sin dueño.
+     */
+    const vaciarCola = () => {
+      if (window.FullTECHSync) {
+        window.FullTECHSync.kick('senal');
+        return;
+      }
+      if (!readOutbox().length) return;
+      flushOutbox({ silent: true }).catch(() => {});
+    };
+    if (!window.FullTECHSync) setInterval(vaciarCola, 5000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) vaciarCola();
+    });
+    window.addEventListener('focus', vaciarCola);
+    window.addEventListener('online', vaciarCola);
+    window.addEventListener('pageshow', vaciarCola);
+    setTimeout(vaciarCola, 800);
 
     window.addEventListener('beforeinstallprompt', (event) => {
       event.preventDefault();
       installEvent = event;
       $('#install-card').hidden = settingsPage !== 'aplicacion';
       $('#install').hidden = false; // el navegador puede instalarla por nosotros
+      actualizarBotonInstalar();
     });
 
-    $('#install').addEventListener('click', async () => {
-      if (!installEvent) return;
-      installEvent.prompt();
-      const choice = await installEvent.userChoice.catch(() => null);
-      if (choice?.outcome === 'accepted') {
-        $('#install-text').textContent = 'FullTECH, SRL ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
-        toast('Instalada: búscala en tu pantalla de inicio');
-      }
+    /*
+     * EL BOTÓN DEL MENÚ (solo si no está instalada).
+     *
+     * Va en la fila de abajo, junto al aviso de cambios sin enviar y a la salida:
+     * un icono de teléfono con la flecha de descarga, sin texto, para no meter
+     * ruido en el menú de todos los días.
+     */
+    const accionesDrawer = document.querySelector('#drawer .drawer__foot-actions');
+    if (accionesDrawer) {
+      botonInstalar = document.createElement('button');
+      botonInstalar.type = 'button';
+      botonInstalar.className = 'drawer__install';
+      botonInstalar.hidden = true;
+      botonInstalar.setAttribute('aria-label', 'Instalar la app en este teléfono');
+      botonInstalar.title = 'Instalar la app en este teléfono';
+      botonInstalar.innerHTML = '<span class="drawer__icon" aria-hidden="true" data-icon="install"></span>';
+      accionesDrawer.prepend(botonInstalar);
+      paintIcons(botonInstalar);
+      botonInstalar.addEventListener('click', () => instalarApp());
+    }
+    window.addEventListener('appinstalled', () => {
       installEvent = null;
+      $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
+      actualizarBotonInstalar();
     });
+    window.addEventListener('resize', actualizarBotonInstalar);
+
+    /*
+     * El mismo gesto que el botoncito del menú: una sola forma de instalar.
+     */
+    $('#install').addEventListener('click', () => instalarApp());
 
     // Instalada (o en iPhone, que no avisa): solo las instrucciones manuales.
-    if (window.matchMedia('(display-mode: standalone)').matches) $('#install-text').textContent = 'FullTECH, SRL ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
+    if (window.matchMedia('(display-mode: standalone)').matches) $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
     else $('#install').hidden = !installEvent;
+    actualizarBotonInstalar();
   }
 
   // ------------------------------------------------------------------- menú
@@ -21175,7 +21403,7 @@
 
   /** El texto que viaja con el enlace (en el móvil, en el chat o por WhatsApp). */
   function panelShareMessage(url) {
-    return `Panel de trabajo de FullTECH, SRL: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
+    return `Panel de trabajo de FullTECH: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
   }
 
   /**
@@ -21193,10 +21421,10 @@
    */
   async function shareStoreWeb() {
     const url = `${location.origin}/`;
-    const texto = `Phytoemagry · FullTECH, SRL: ${url}`;
+    const texto = `FullTECH · Phytoemagry: ${url}`;
     try {
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: 'Phytoemagry · FullTECH, SRL', text: texto, url });
+        await navigator.share({ title: 'FullTECH · Phytoemagry', text: texto, url });
         return true;
       }
     } catch (error) {
@@ -21227,7 +21455,7 @@
     const texto = panelShareMessage(url);
     try {
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: 'FullTECH, SRL · Panel', text: texto, url });
+        await navigator.share({ title: 'FullTECH · Panel', text: texto, url });
         return true;
       }
     } catch (error) {
@@ -22832,7 +23060,7 @@
           closeSheet();
           await load({ keepTab: true });
           renderPedidos();
-          toast(result?.duplicate ? 'Ese cobro ya estaba registrado' : 'Cobro registrado');
+          toast(result?.pending ? 'Cobro guardado en el dispositivo · pendiente de confirmar' : result?.duplicate ? 'Ese cobro ya estaba registrado' : 'Cobro registrado');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo registrar el cobro');
         });
@@ -22851,7 +23079,7 @@
           closeSheet();
           await load({ keepTab: true });
           renderPedidos();
-          toast(result?.duplicate ? 'Esa rendición ya estaba registrada' : 'Rendición registrada');
+          toast(result?.pending ? 'Rendición guardada en el dispositivo · pendiente de confirmar' : result?.duplicate ? 'Esa rendición ya estaba registrada' : 'Rendición registrada');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo registrar la rendición');
         });
@@ -23652,7 +23880,7 @@
       if (!boton || boton.disabled) return;
       boton.disabled = true;
       try {
-        await window.FulltechOffline?.clearCache?.();
+        await window.FullTECHOffline?.clearCache?.();
         datosLocales.intentos = 0;
         await load({ keepTab: true });
         // La versión a la vista: sirve para saber si un aparato quedó atrasado.
@@ -23790,6 +24018,7 @@
      * encuentre la sincronía ya en marcha.
      */
     iniciarSincroniaSilenciosa();
+    iniciarMotorDeSincronizacion();
 
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
     const query = new URLSearchParams(location.search);
@@ -23804,13 +24033,13 @@
      * (clientes, pedidos, catálogo, ajustes y el rol de quien entró) y se puede
      * trabajar entero. Al volver la red, todo se manda solo.
      */
-    if(window.FulltechOffline)await window.FulltechOffline.ready;
+    if(window.FullTECHOffline)await window.FullTECHOffline.ready;
     const cached = readSnapshot();
     if (!navigator.onLine && cached) {
       aplicarCopiaLocal(cached);
       showApp();
       render();
-      if(window.FulltechOffline)await load({keepTab:true});
+      if(window.FullTECHOffline)await load({keepTab:true});
       await applyDeepLink(query);
       renderOutboxBanner();
 

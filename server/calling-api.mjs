@@ -66,7 +66,7 @@ export function createCallingApi({ env = {}, enabled = false, fetchImpl = global
       }
       const r = await request('messages', { to: phone, recipient_type: 'individual', type: 'interactive',
         interactive: { type: 'call_permission_request', action: { name: 'call_permission_request' },
-          body: { text: '¿Nos permites llamarte por WhatsApp para ayudarte con tu consulta o pedido de Phytoemagry?' } } });
+          body: { text: '¿Nos permites llamarte por WhatsApp para ayudarte con tu consulta o pedido? Somos FullTECH.' } } });
       return r.ok ? { ok: true, messageId: r.body?.messages?.[0]?.id ?? null } : r;
     },
     async action(action, { phone, callId, sdp, reference } = {}) {

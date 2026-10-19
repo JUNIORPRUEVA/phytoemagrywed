@@ -77,6 +77,7 @@ function show(title,body,submitText,onSubmit){
 function chooseClient(){
   show('Seleccionar cliente',`<div class="pos-client-toolbar"><label class="field"><span class="field__label">Buscar cliente</span><input class="field__input" type="search" id="pos-client-search" placeholder="Nombre o teléfono" autocomplete="off"></label><button type="button" class="btn btn--ghost" id="pos-client-new">+ Agregar</button><button type="button" class="btn btn--primary" id="pos-client-select" disabled>Seleccionar</button></div><div class="pos-new-client" hidden><h3>Nuevo cliente</h3><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="120"></label><label class="field"><span class="field__label">Teléfono con código de país</span><input class="field__input" name="phone" type="tel" placeholder="+1 809 555 1234"></label><button class="btn btn--primary" type="submit">Guardar y seleccionar</button></div><div id="pos-customer-results" role="group" aria-label="Clientes"></div>`,null,async form=>{
     if(!String(form.get('phone')||'').trim())throw new Error('Escribe el teléfono del nuevo cliente.');
+    await initialize();
     const data=await api('customers',{name:form.get('name'),phone:form.get('phone')});customers.push(data.customer);selectClient(data.customer);modal.close();
   });
   let selected=null;

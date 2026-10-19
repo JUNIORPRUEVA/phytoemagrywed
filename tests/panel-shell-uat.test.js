@@ -189,7 +189,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(app).toContain("nativePrinterRequest('printReceipt'");
     expect(app).toContain('data-native-printer="configure"');
     expect(app).toContain('data-native-printer="test"');
-    expect(app).toContain('Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH, SRL para Android.');
+    expect(app).toContain('Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH para Android.');
     expect(app).toContain('/api/admin/android-apk/download');
     expect(app).toContain('Descargar app para Android');
     expect(app).toContain('Cómo instalar y probar la impresora');

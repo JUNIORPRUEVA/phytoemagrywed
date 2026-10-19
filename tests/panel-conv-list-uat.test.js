@@ -20,9 +20,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { calculateSale } from '../public/admin/pos-math.js';
 
 import { startCrmServer } from '../server/crm-server.mjs';
 import { addDays, dayIn } from '../server/followups.mjs';
+
+const POS_SCRIPT = readFileSync(path.join(process.cwd(), 'public', 'admin', 'pos.js'), 'utf8').replace(/^import[^\n]+\n/, '');
+const STORE_SCRIPT = readFileSync(path.join(process.cwd(), 'public', 'admin', 'store.js'), 'utf8');
 
 const TOKEN = 'uat-conv-panel';
 const APP_SECRET = 'uat-conv-secret';
@@ -320,6 +324,10 @@ beforeAll(async () => {
     runScripts: 'outside-only',
   });
   const win = dom.window;
+  win.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
+  win.HTMLDialogElement.prototype.close = function close() { this.open = false; };
+  win.structuredClone = structuredClone;
+  win.calculateSale = calculateSale;
   win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   win.scrollTo = () => {};
   win.confirm = () => true;
@@ -366,6 +374,8 @@ beforeAll(async () => {
   };
 
   win.eval(readFileSync(path.join(ADMIN_DIR, 'app.js'), 'utf8'));
+  win.eval(STORE_SCRIPT);
+  win.eval(POS_SCRIPT);
   await waitFor(() => $$('[data-conv]').length >= 3, 'la lista con las tres conversaciones', 8000);
 });
 

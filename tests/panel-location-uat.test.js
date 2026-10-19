@@ -21,8 +21,12 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { calculateSale } from '../public/admin/pos-math.js';
 
 import { startCrmServer } from '../server/crm-server.mjs';
+
+const POS_SCRIPT = readFileSync(path.join(process.cwd(), 'public', 'admin', 'pos.js'), 'utf8').replace(/^import[^\n]+\n/, '');
+const STORE_SCRIPT = readFileSync(path.join(process.cwd(), 'public', 'admin', 'store.js'), 'utf8');
 
 const TOKEN = 'uat-loc-panel';
 const APP_SECRET = 'uat-loc-secret';
@@ -95,7 +99,7 @@ const whatsapp = {
 /** Mensaje entrante firmado (webhook real del CRM). */
 async function inbound(id, node) {
   inboundSeq += 1;
-  const timestamp = Math.floor(Date.now() / 1000) + inboundSeq;
+  const timestamp = Math.floor(Date.now() / 1000) - 10 + inboundSeq;
   const payload = {
     object: 'whatsapp_business_account',
     entry: [
@@ -174,8 +178,14 @@ beforeAll(async () => {
     runScripts: 'outside-only',
   });
   const win = dom.window;
+  win.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
+  win.HTMLDialogElement.prototype.close = function close() { this.open = false; };
+  win.structuredClone = structuredClone;
+  win.calculateSale = calculateSale;
   win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   win.scrollTo = () => {};
+  win.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+  win.cancelAnimationFrame = (timer) => clearTimeout(timer);
   win.confirm = () => confirmAnswer;
   win.alert = () => {};
   // Vigila que NADA de esto abra una pestaña nueva: el mapa se abre en la app.
@@ -200,6 +210,8 @@ beforeAll(async () => {
   };
 
   win.eval(readFileSync(path.join(ADMIN_DIR, 'app.js'), 'utf8'));
+  win.eval(STORE_SCRIPT);
+  win.eval(POS_SCRIPT);
   // El panel arranca solo: se espera a que pinte la lista.
   await waitFor(() => win.document.querySelector('[data-conv]'), 'la lista de conversaciones', 8000);
 });
@@ -211,8 +223,27 @@ afterAll(async () => {
 
 /** Abre la conversación donde está la ubicación. */
 async function openChat() {
+  if (dom.window.document.body.dataset.tab !== 'whatsapp') {
+    click('#menu');
+    click('[data-tab="whatsapp"]');
+    await waitFor(() => dom.window.document.body.dataset.tab === 'whatsapp', 'la pestaña de WhatsApp', 8000);
+  }
   click(`[data-conv="${conversationId}"]`);
   await waitFor(() => $('#wa-chat-pane') && $$('#thread .bubble').length > 0, 'el hilo con la ubicación', 8000);
+}
+
+async function openGuidedOrder() {
+  await openChat();
+  await waitFor(() => $('#wa-actions')?.disabled === false, 'acciones del chat habilitadas', 8000);
+  click('#wa-actions');
+  click(await waitFor(() => $(`[data-order-new="${customerId}"]`), 'crear pedido desde el chat', 8000));
+  await waitFor(() => $('#pos-client .pos-client-button strong')?.textContent === 'Ana Ubicación', 'cliente cargado en POS', 8000);
+  const add = await waitFor(() => $('[data-pos-add]'), 'el catálogo de POS', 8000);
+  click(add);
+  const pay = await waitFor(() => $('[data-pos-pay]')?.disabled === false ? $('[data-pos-pay]') : null, 'Continuar del pedido', 8000);
+  click(pay);
+  await waitFor(() => $('.pos-order-dialog [data-order-field="deliveryFee"]'), 'el pedido guiado de POS', 8000);
+  await waitFor(() => $('#pos-order-where')?.textContent.includes('Calle Principal 12'), 'ubicación traída del chat', 8000);
 }
 
 describe('componente de ubicación en el chat', () => {
@@ -292,65 +323,45 @@ describe('componente de ubicación en el chat', () => {
 
 describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () => {
   it('el formulario ya no pide ciudad ni dirección y deja el total sin delivery', async () => {
-    // El pedido se crea desde «Acciones del cliente», como en el panel real.
-    // El botón «⋯» está deshabilitado mientras la conversación carga: se espera
-    // a que esté listo antes de pulsarlo (un botón gris no hace nada).
-    await waitFor(() => $('#wa-actions')?.disabled === false, 'el menú ⋯ habilitado', 8000);
-    click($('#wa-actions'));
-    await waitFor(() => $(`[data-order-new="${customerId}"]`), 'las acciones del cliente', 8000);
-    click(`[data-order-new="${customerId}"]`);
-    await waitFor(() => $('#order-fee'), 'el formulario de pedido', 8000);
+    await openGuidedOrder();
     expect($('#order-city')).toBe(null);
     expect($('#order-address')).toBe(null);
-    // La ubicación que el cliente YA compartió viene puesta («la de siempre»),
-    // con su edad, para que el pedido casi no haya que tocarlo. Y se puede quitar:
-    // el pedido se guarda igual sin ubicación.
-    expect($('#order-loc').textContent).toMatch(/Casa/);
-    expect($('#order-loc').textContent).toMatch(/Compartida hoy/);
-    expect($('#order-loc-clear')).not.toBe(null);
-    expect($('#order-loc-current')).toBe(null);
-    // Total de 10 cápsulas (RD$2,500) sin delivery.
-    expect($('#order-total').textContent).toContain('1,250');
+    expect($('#pos-order-where').textContent).toContain('Calle Principal 12');
+    expect($('.pos-order-dialog [data-order-field="deliveryFee"]').value).toBe('0');
+    expect($('#pos-order-totals').textContent).toContain('Total');
   }, 20000);
 
   it('el delivery se suma al total al escribirlo', async () => {
-    $('#order-fee').value = '250';
-    $('#order-fee').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    expect($('#order-total').textContent).toContain('Delivery');
-    expect($('#order-total').textContent).toContain('1,500');
+    await waitFor(() => $('.pos-order-dialog [data-order-field="deliveryFee"]'), 'pedido guiado abierto');
+    const amount = () => Number($('#pos-order-totals .total dd').textContent.replace(/[^\d,.]/g, '').replace(/,/g, ''));
+    const before = amount();
+    const field = $('.pos-order-dialog [data-order-field="deliveryFee"]');
+    field.value = '250';
+    field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    expect(amount() - before).toBe(250);
   }, 20000);
 
-  it('guardar sin ubicación funciona (y manda deliveryLocation null)', async () => {
-    // La ubicación venía puesta («la de siempre»): se quita a mano y el pedido se
-    // guarda igual. Es el caso de un pedido que no se entrega en ese punto.
-    click('#order-loc-clear');
-    await waitFor(() => $('#order-loc-field')?.hidden === true, 'la ubicación oculta', 8000);
-
-    let payload = null;
-    const original = dom.window.fetch;
-    dom.window.fetch = async (input, init = {}) => {
-      const url = typeof input === 'string' ? input : input.url;
-      if (String(url).includes('/api/admin/orders') && init.method === 'POST') {
-        payload = JSON.parse(init.body);
-      }
-      return original(input, init);
-    };
-    click('#order-save');
-    await waitFor(() => payload, 'el guardado del pedido', 8000);
-    expect(payload.deliveryLocation).toBe(null);
-    expect(payload.deliveryFee).toBe(250);
-    expect(payload.delivery).toBeUndefined();
-    dom.window.fetch = original;
-    /*
-     * El panel sigue con su trabajo (recarga y comprobante) después de responder:
-     * se espera a que termine antes de seguir, o el comprobante se abriría encima
-     * del siguiente paso (carrera del propio test, no del producto).
-     * El comprobante se reconoce por su título: sus acciones viven ahora en el
-     * botón flotante de la hoja.
-     */
+  it('confirma el retiro y reinicia el costo de delivery', async () => {
+    await waitFor(() => $('.pos-order-dialog [data-order-field="deliveryFee"]'), 'pedido guiado abierto');
+    // POS exige coordenadas antes de confirmar un delivery. Una selección de
+    // retiro sigue disponible sin solicitar ubicación del dispositivo.
+    expect($('.pos-order-dialog [data-order-confirm]').disabled).toBe(false);
+    click('.pos-order-dialog [data-order-method="pickup"]');
+    await waitFor(() => $('.pos-order-dialog [data-order-method="pickup"]')?.getAttribute('aria-pressed') === 'true', 'retiro sin costo de delivery');
+    const countBefore = (await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json()).items
+      .filter((item) => item.customer_id === customerId && item.type === 'order_intent').length;
+    click('.pos-order-dialog [data-order-confirm]');
+    const saved = await waitFor(async () => {
+      const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+      const orders = data.items.filter((item) => item.customer_id === customerId && item.type === 'order_intent');
+      return orders.length > countBefore ? orders.sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)))[0] : null;
+    }, 'el pedido guardado en el servidor', 8000);
+    const order = JSON.parse(saved.order_json);
+    expect(order.delivery.method).toBe('pickup');
+    expect(Number(order.delivery_fee ?? order.delivery.fee)).toBe(0);
     await waitFor(
-      () => ($('#sheet-title')?.textContent?.startsWith('Factura') ? true : null),
-      'el comprobante del pedido',
+      () => $('.pos-order-dialog h2')?.textContent.includes('Pedido guardado') ? true : null,
+      'la confirmación de POS',
       8000,
     );
     $('#sheet').hidden = true;
@@ -359,6 +370,7 @@ describe('crear pedido: sin ciudad, sin dirección, con delivery opcional', () =
 
 describe('enviar una ubicación desde el chat', () => {
   it('no se pide el permiso de ubicación al abrir, solo al pulsar el botón', async () => {
+    await openChat();
     let pedidos = 0;
     dom.window.navigator.geolocation = {
       getCurrentPosition(success) {
@@ -383,6 +395,7 @@ describe('enviar una ubicación desde el chat', () => {
   });
 
   it('si el usuario rechaza el permiso, se avisa y el pedido sigue sin ubicación', async () => {
+    await openChat();
     dom.window.navigator.geolocation = {
       getCurrentPosition(success, error) {
         error({ code: 1 });
@@ -403,6 +416,7 @@ describe('enviar una ubicación desde el chat', () => {
   });
 
   it('si el navegador no sabe dar la ubicación, se dice igual', async () => {
+    await openChat();
     dom.window.navigator.geolocation = undefined;
     click('#wa-attach');
     await waitFor(() => $('#attach-location'), 'la opción de ubicación');
@@ -416,6 +430,7 @@ describe('enviar una ubicación desde el chat', () => {
   });
 
   it('confirmar envía UNA ubicación con las coordenadas exactas', async () => {
+    await openChat();
     dom.window.navigator.geolocation = {
       getCurrentPosition(success) {
         success({ coords: { latitude: L2.latitude, longitude: L2.longitude } });

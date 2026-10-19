@@ -364,7 +364,7 @@ export function orderOf(item) {
  *
  * @param {{ order: any, customer?: any, businessName?: string, timeZone?: string }} input
  */
-export function buildReceipt({ order, customer = null, businessName = 'Phytoemagry' }) {
+export function buildReceipt({ order, customer = null, businessName = 'FullTECH' }) {
   if (!order) return null;
   const items = (order.items ?? []).map((line) => ({
     label: line.label ?? `Frasco de ${line.capsules} cápsulas`,
@@ -529,6 +529,7 @@ export function receiptHtml(receipt, options = {}) {
   .btn--primary { background: #0b6b4f; color: #fff; border-color: #0b6b4f; }
   .sheet { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 16px;
     padding: 24px 20px; box-shadow: 0 10px 30px rgba(16,40,28,.12); }
+  .brand-logo { display:block;width:64px;height:64px;object-fit:cover;border-radius:10px }
   .brand { font-size: 22px; font-weight: 800; letter-spacing: .02em; color: #0b6b4f; margin: 0; }
   .doc { margin: 4px 0 18px; font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: #62736b; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 18px; font-size: 14px; }
@@ -553,6 +554,7 @@ export function receiptHtml(receipt, options = {}) {
   </nav>
   <p class="aviso" id="aviso" role="status" hidden></p>
   <main class="sheet">
+    <img class="brand-logo" src="/assets/img/fulltech-logo.png" alt="FullTECH" width="64" height="64" />
     <h1 class="brand">${esc(receipt.business)}</h1>
     <p class="doc">${esc(receipt.document)}</p>
     <dl>

@@ -20,8 +20,20 @@
   const clone=value=>structuredClone(value);
   const uuid=()=>crypto.randomUUID();
   const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','x-fulltech-local':'1'}});
-  const excluded=url=>/\/(calling|push-subscriptions|proofreading)(\/|$)|\/wa-templates.*sync|\/(send|invoice-whatsapp|meta-purchase|message-send)(\/|$)|\/conversations\/[^/]+\/messages$/.test(url.pathname);
+  const excluded=url=>/\/(calling|push-subscriptions|proofreading|ai\/reply-suggestion)(\/|$)|\/wa-templates.*sync|\/(send|invoice-whatsapp|meta-purchase|message-send)(\/|$)|\/conversations\/[^/]+\/messages$/.test(url.pathname);
   const protectedWrite=url=>excluded(url)||/\/(auth|login|logout)(\/|$)|\/password(?:\/|$)|\/whatsapp|\/deepseek\/test$|\/locations\/[^/]+\/share$|\/conversations\/[^/]+\/(location|order-confirmation)$|\/customer-campaigns\//.test(url.pathname);
+  /*
+   * MARCAS DE «LEÍDO» Y SEÑALES DE PRESENCIA: NO SON UN CAMBIO.
+   *
+   * `POST /conversations/:id/read`, `POST /notifications/:id/read` o el aviso de
+   * «escribiendo» solo dicen que alguien miró algo. Guardarlos en la cola hacía
+   * que el panel mostrara para siempre «1 cambio pendiente de sincronizar» que,
+   * al enviarse tarde, ya no significa nada: era el cambio fantasma que no se
+   * aplicaba nunca. Si falla la red, se descarta en silencio y se reintenta la
+   * próxima vez que se abra la pantalla.
+   */
+  const efimeroPath=pathname=>/\/(read|seen|visit|heartbeat|presence|typing)(\/|$)/.test(pathname)||/\/calling(\/|$)/.test(pathname);
+  const efimero=url=>efimeroPath(url.pathname);
   function signal(){window.dispatchEvent(new Event('fulltech:offline-status'));}
   /*
    * Avisa a la página de que esa respuesta salió de la COPIA LOCAL. Con eso el
@@ -30,15 +42,53 @@
   function servedLocal(url,at){
     try{window.dispatchEvent(new CustomEvent('fulltech:served-local',{detail:{path:new URL(url,location.href).pathname,at:at||null}}));}catch{}
   }
+  /**
+   * ADOPTA LA COLA GUARDADA CON LA CLAVE ANTIGUA (la que incluía los permisos).
+   *
+   * No se borra nada: se copian las operaciones que falten a la clave nueva y se
+   * deja la antigua intacta por si hiciera falta recuperarla.
+   */
+  async function adoptarColaAntigua(nueva){
+    try{
+      const entradas=await db.entries();
+      for(const [clave,valor] of entradas){
+        if(!clave.startsWith('queue:')||clave==='queue:'+nueva)continue;
+        let partes=null;
+        try{partes=JSON.parse(clave.slice(6));}catch{continue;}
+        if(!Array.isArray(partes)||partes.length<2)continue;
+        if(JSON.stringify([partes[0],partes[1]])!==nueva)continue;
+        if(!Array.isArray(valor)||!valor.length)continue;
+        const actual=(await db.get('queue:'+nueva))||[];
+        const ids=new Set(actual.map(p=>p.id));
+        const fusion=[...actual,...valor.filter(p=>p&&p.id&&!ids.has(p.id))];
+        if(fusion.length>actual.length){
+          await db.put('queue:'+nueva,fusion);
+          recordDiag({path:'/offline/cola',cause:'migrada',status:0});
+        }
+      }
+    }catch{/* si no se puede enumerar, la cola nueva sigue funcionando */}
+  }
   async function identify(payload){
     await localTail.catch(()=>{});
     if(!storageAvailable)return;
     try{
     const auth=payload.auth||payload;
     if(!auth.user&&!auth.legacy)return;
-    const key=JSON.stringify([auth.user?.id||'LEGACY_PANEL',auth.user?.role||'ADMIN',auth.permissions||[]]);
+    /*
+     * LA CLAVE DE LA CUENTA NO LLEVA LOS PERMISOS.
+     *
+     * Antes era `[usuario, rol, permisos]`. El inicio de sesión responde sin la
+     * lista de permisos y `/api/admin/data` con ella, así que la clave cambiaba
+     * sola entre dos respuestas: la cola quedaba guardada bajo una clave y el
+     * panel leía otra (operaciones «perdidas», copia local borrada y descargas
+     * contadas dos veces). Los permisos no identifican a la persona: la clave es
+     * usuario + rol.
+     */
+    const key=(()=>{const id=auth.user?.id||'LEGACY_PANEL';const rol=auth.user?.role||'ADMIN';return JSON.stringify([id,rol]);})();
     if(identity?.key!==key){
-      epoch++;localStorage.removeItem('pe_crm_snapshot');
+      epoch++;
+      await adoptarColaAntigua(key);
+      localStorage.removeItem('pe_crm_snapshot');
       const previous=localStorage.getItem('fulltech.offline.legacy-owner');
       if(previous&&previous!==key){
         await db.put('legacyQueue:'+previous,{queue:localStorage.getItem('pe_crm_outbox'),problems:localStorage.getItem('pe_crm_outbox_problems')});
@@ -50,6 +100,8 @@
     }
     identity={key,user:auth.user,role:auth.user?.role||'ADMIN',permissions:auth.permissions||[],verifiedAt:Date.now()};
     await db.put('identity',identity).catch(()=>signal());
+    // Primero se respalda y después se clasifican los rechazos antiguos.
+    await isolateHistorical().catch(()=>{});
     navigator.serviceWorker?.controller?.postMessage({type:'FULLTECH_OFFLINE_IDENTITY'});
     signal();
     }catch{storageAvailable=false;identity=null;await db.remove('identity').catch(()=>{});signal();}
@@ -73,11 +125,11 @@
    */
   async function clearCache(){
     if(!storageAvailable||!owner())return 0;
-    const prefix='response:'+owner()+':';
+    const prefixes=['response:'+owner()+':','local-response:'+owner()+':'];
     let removed=0;
     try{
       for(const [key] of await db.entries()){
-        if(typeof key==='string'&&key.startsWith(prefix)){await db.remove(key);removed++;}
+        if(typeof key==='string'&&prefixes.some(prefix=>key.startsWith(prefix))){await db.remove(key);removed++;}
       }
     }catch{}
     return removed;
@@ -88,11 +140,13 @@
     if(mine!==owner())return;
     const headers=[...copy.headers].filter(([name])=>!['set-cookie','content-length','content-encoding'].includes(name));
     const record={owner:mine,url:new URL(url,location.href).href,at:Date.now(),status:copy.status,headers,body};
-    if(remote){try{if(JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length)return;}catch{}await db.putRemote(responseKey(url),record,queueKey());}
-    else await db.put(responseKey(url),record);
+    if(remote){await db.putRemote(responseKey(url),{...record,source:'remote'},queueKey());await db.remove('local-response:'+mine+':'+record.url);}
+    else await db.put('local-response:'+mine+':'+record.url,{...record,source:'local'});
   }
   async function cached(url){
     if(!valid())return null;
+    // Permisos cambiados en otra pestaña: la copia privada anterior deja de servir.
+    if(identity?.legacyCacheDisabled)return null;
     const requested=new URL(url,location.href);
     const localReceipt=/^\/api\/admin\/(?:pos\/(?:local|quotes)|orders)\/([^/]+)\/(receipt|pdf|receipt\.pdf)$/.exec(requested.pathname);
     if(localReceipt){
@@ -101,7 +155,9 @@
       if(!document){const entry=(await listQueue()).find(q=>q.localId===localReceipt[1]&&q.local);if(entry)try{document=JSON.parse(entry.local.body).document;}catch{}}
       if(document&&await db.get('receiptPdfReady:'+owner()+':'+document.id)!==2)await saveReceipt(document);
     }
-    let saved=await db.get(responseKey(url));
+    const localKey='local-response:'+owner()+':'+new URL(url,location.href).href;
+    let saved=await db.get(localKey),savedSource=saved?'local':'remote';
+    if(!saved)saved=await db.get(responseKey(url));
     if(requested.pathname==='/api/admin/reports/sales'&&identity.role==='ADMIN'){
       const history=await db.get(responseKey('/api/admin/reports/sales?period=custom&from=1900-01-01&to=9999-12-31&offline=1'));
       if(history){
@@ -113,7 +169,7 @@
       }
     }
     if(!saved&&['/api/admin/locations','/api/admin/wa-templates'].includes(requested.pathname)){
-      const records=await db.entries();saved=records.find(([,v])=>v?.owner===owner()&&v.url&&new URL(v.url).pathname===requested.pathname)?.[1];
+      const records=await db.entries();const found=records.find(([key,v])=>(String(key).startsWith('local-response:'+owner()+':')||String(key).startsWith('response:'+owner()+':'))&&v?.owner===owner()&&v.url&&new URL(v.url).pathname===requested.pathname);saved=found?.[1];savedSource=String(found?.[0]||'').startsWith('local-response:')?'local':'remote';
     }
     if(!saved&&requested.pathname==='/api/admin/conversations'){
       const records=await db.entries(),source=records.find(([,v])=>v?.owner===owner()&&v.url&&new URL(v.url).pathname===requested.pathname)?.[1];
@@ -136,23 +192,44 @@
        * con su fecha en `x-fulltech-offline-at` para poder decir de cuándo es.
        */
       const records=await db.entries();
-      let newest=null;
-      for(const [,value] of records){
-        if(!value||value.owner!==owner()||!value.url)continue;
+      let newest=null,newestKey='';
+      for(const [key,value] of records){
+        if(!value||value.owner!==owner()||!value.url||!(String(key).startsWith('local-response:'+owner()+':')||String(key).startsWith('response:'+owner()+':')))continue;
         let path;try{path=new URL(value.url).pathname;}catch{continue;}
         if(path!==requested.pathname)continue;
-        if(!newest||(value.at||0)>(newest.at||0))newest=value;
+        if(!newest||(value.at||0)>(newest.at||0)){newest=value;newestKey=String(key);}
       }
       if(!newest)return null;
-      saved=newest;
+      saved=newest;savedSource=newestKey.startsWith('local-response:')?'local':'remote';
     }
     if(!saved||saved.owner!==owner())return null;
     const at=saved.at?new Date(saved.at).toISOString():new Date().toISOString();
+    if(savedSource==='remote'&&requested.pathname==='/api/admin/store/products'){
+      try{
+        const snapshot=JSON.parse(new TextDecoder().decode(saved.body));
+        const queue=await listQueue();
+        for(const op of queue){
+          if(op.state!=='pending'||op.path!=='/api/admin/pos/checkout'||op.body?.mode!=='invoice')continue;
+          for(const line of op.body.items||[]){const product=snapshot.products?.find(row=>row.id===line.variantId);if(product?.track_stock&&product.quantity!=null){product.quantity=Math.max(0,Number(product.quantity)-Number(line.quantity||0));product.pending=true;}}
+        }
+        saved={...saved,body:await new Response(JSON.stringify(snapshot)).arrayBuffer()};
+      }catch{}
+    }
     return new Response(saved.body,{status:saved.status,headers:[...saved.headers,['x-fulltech-offline','1'],['x-fulltech-offline-at',at]]});
   }
   async function data(path,fallback={}){const r=await cached(path);return r?await r.json():clone(fallback);}
   async function save(path,value){await remember(path,json(value));}
-  async function listQueue(){return valid()?(await db.get(queueKey())||[]):[];}
+  /*
+   * LA COLA NO DEJA DE EXISTIR A LAS 24 HORAS.
+   *
+   * Antes `listQueue()` devolvía [] en cuanto la autorización local caducaba. Los
+   * cambios seguían guardados en el aparato, pero el panel no los veía ni los
+   * enviaba: parecía que se habían perdido y no había forma de sacarlos sin
+   * recargar estando en línea. Lo que caduca son las LECTURAS privadas de 24 h,
+   * no el trabajo que la persona ya hizo y está esperando subir.
+   */
+  async function listQueue(){return owner()?(await db.get(queueKey())||[]):[];}
+  const pendientesDeEnviar=async()=>(await listQueue()).filter(p=>p.state==='pending').length;
   async function changeQueue(fn){const list=await db.update(queueKey(),q=>fn(q||[]));signal();return list;}
   const money=n=>Math.round(Number(n||0)*100);
   async function saveCatalog(snapshot){
@@ -172,10 +249,183 @@
   /* Venció la autorización de 24 h: NO es lo mismo que «no hay copia». */
   const SIN_VIGENCIA='El acceso sin conexión de 24 horas venció. Conéctate a internet, inicia sesión y pulsa «Preparar dispositivo» para renovarlo. Los cambios pendientes se conservan.';
   function sinConexion(message=SIN_COPIA){return json({ok:false,error:'offline',message},503);}
+  /*
+   * DESCARTES DE AVISOS CON FORMATO ANTIGUO.
+   *
+   * Una versión anterior guardaba la clave del descarte con el número dentro
+   * (`wa-failed:2`). El servidor solo acepta `wa-failed` o
+   * `scheduled-problem:<id>`, así que el lote entero se rechazaba con
+   * `invalid_dismissals` y —peor— la operación quedaba atascada para siempre.
+   * Aquí se traduce sin perder el significado: `wa-failed:2` significa «descarté
+   * el aviso de fallos con valor 2».
+   */
+  function sanearDismissals(mapa){
+    const salida={};const descartadas=[];
+    for(const [clave,valor] of Object.entries(mapa&&typeof mapa==='object'?mapa:{})){
+      const legado=/^wa-failed:(\d+)$/.exec(clave);
+      if(legado){const numero=Number(legado[1]);if(!(salida['wa-failed']>=numero))salida['wa-failed']=numero;continue;}
+      if(clave==='wa-failed'){salida[clave]=valor;continue;}
+      if(/^scheduled-problem:[a-zA-Z0-9_-]{1,160}$/.test(clave)){salida[clave]=true;continue;}
+      descartadas.push(clave);
+    }
+    return {limpio:salida,descartadas};
+  }
+  /** Cuerpo saneado de una operación de descartes (misma id, mismo significado). */
+  function sanearCuerpo(body,path){
+    if(!/\/notification-dismissals$/.test(String(path)))return body;
+    if(!body||typeof body!=='object'||!body.dismissed||typeof body.dismissed!=='object')return body;
+    return {...body,dismissed:sanearDismissals(body.dismissed).limpio};
+  }
+  /**
+   * COPIA DE RECUPERACIÓN DE LA COLA — ANTES DE TOCAR NADA.
+   *
+   * La primera vez que esta versión ve una cola con trabajo guarda una copia
+   * ÍNTEGRA en IndexedDB (`respaldo:<cuenta>`) y **nunca la sobrescribe**:
+   * aunque la sincronización confirme operaciones y las quite de la cola, el
+   * respaldo conserva lo que había ANTES. Se guarda además el último estado
+   * (`respaldo-ultimo:<cuenta>`) para poder comparar. Esto no borra ni modifica
+   * ninguna operación pendiente.
+   */
+  async function respaldarCola(){
+    const mine=owner();
+    const cola=await listQueue();
+    if(!cola.length)return null;
+    const firma=JSON.stringify(cola.map(q=>[q.id,q.state,q.at]));
+    const original=await db.get('respaldo:'+mine);
+    if(!original){
+      await db.put('respaldo:'+mine,{at:Date.now(),version:1,motivo:'antes-de-la-primera-sincronizacion',firma,operaciones:cola.map(q=>({...q}))});
+    }else{
+      /*
+       * LA COPIA ORIGINAL NO SE PIERDE, PERO NO SE QUEDA CORTA.
+       *
+       * Si más tarde aparecen operaciones que no estaban (por ejemplo la cola
+       * antigua que se adopta al migrar la clave), se AÑADEN a la copia. Nunca
+       * se quitan ni se modifican las que ya estaban: es un registro que solo
+       * crece, para poder recuperar todo lo que hubo.
+       */
+      const conocidas=new Set((original.operaciones||[]).map(o=>o.id));
+      const faltan=cola.filter(q=>!conocidas.has(q.id));
+      if(faltan.length)await db.put('respaldo:'+mine,{...original,firma,actualizadoAt:Date.now(),operaciones:[...(original.operaciones||[]),...faltan.map(q=>({...q}))]});
+    }
+    const ultimo=await db.get('respaldo-ultimo:'+mine);
+    if(ultimo?.firma!==firma)await db.put('respaldo-ultimo:'+mine,{at:Date.now(),version:1,firma,operaciones:cola.map(q=>({...q}))});
+    return {original:await db.get('respaldo:'+mine),ultimo:await db.get('respaldo-ultimo:'+mine)};
+  }
+  /*
+   * RECUPERACIÓN DE OPERACIONES RECHAZADAS.
+   *
+   * Una operación en «revisar» NO se reintenta sola (evita bucles infinitos).
+   * Estas son las tres cosas que sí puede hacer una persona, sin perder nada:
+   *   · Verificar en el servidor: pregunta si llegó y qué respondió. No reenvía.
+   *   · Reintentar reparada: solo con una traducción validada del contenido.
+   *   · Resolver manualmente: deja constancia con motivo y auditoría.
+   */
+  async function anotarReparacion(mine,registro){
+    try{
+      const previas=(await db.get('reparadas:'+mine))||[];
+      await db.put('reparadas:'+mine,[{...registro,at:Date.now()},...previas].slice(0,50));
+    }catch{/* el registro es útil, no imprescindible */}
+  }
+  async function verificarEnServidor(ids){
+    const lista=(Array.isArray(ids)?ids:[]).filter(id=>typeof id==='string'&&id.length>=16).slice(0,50);
+    if(!lista.length)return { estados: [] };
+    const respuesta=await network('/api/admin/offline-operations/status',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({ids:lista})});
+    if(!respuesta.ok)throw new Error('El servidor no pudo consultar el estado de las operaciones.');
+    const datos=await respuesta.json();
+    for(const estado of datos.estados||[]){
+      await changeQueue(q=>q.map(p=>p.id===estado.key?{...p,servidor:{...estado,at:Date.now()}}:p));
+    }
+    return datos;
+  }
+  async function reintentarReparada(id){
+    const mine=owner();
+    const cola=await listQueue();
+    const entrada=cola.find(p=>p.id===id);
+    if(!entrada)throw new Error('Esa operación ya no está en la cola.');
+    if(entrada.state!=='review')throw new Error('Solo se reintentan operaciones que requieren revisión.');
+    const cuerpo=sanearCuerpo(entrada.body,entrada.path);
+    if(JSON.stringify(cuerpo)===JSON.stringify(entrada.body))throw new Error('Esta operación no tiene una reparación automática validada. Revísala a mano.');
+    /*
+     * EL IDENTIFICADOR NO SE INVENTA.
+     *
+     * Si el servidor ya contestó a esta operación, ese id queda registrado con la
+     * huella de su cuerpo: reenviarlo con otro contenido devolvería 409
+     * `operation_reused`. Por eso el reintento reparado usa un id DERIVADO,
+     * determinista y visible (`<id>-r1`), y el id original se conserva en la
+     * entrada y en el registro de reparaciones.
+     */
+    const idEnvio=/^[a-zA-Z0-9_-]{16,100}$/.test(entrada.id+'-r1')?entrada.id+'-r1':entrada.id;
+    await anotarReparacion(mine,{accion:'reintento_reparado',idOriginal:entrada.id,idEnvio,path:entrada.path,motivo:entrada.error??null});
+    await changeQueue(q=>q.map(p=>p.id===id?{...p,state:'pending',body:cuerpo,error:null,status:null,attempts:(p.attempts||0)+1,retry:{at:Date.now(),idOriginal:entrada.id,idEnvio,reparada:true}}:p));
+    await synchronize().catch(()=>{});
+    const despues=(await listQueue()).find(p=>p.id===id);
+    return { quedó:despues?despues.state:'confirmada', idEnvio };
+  }
+  async function resolverOperacion(id,motivo){
+    const mine=owner();
+    const texto=String(motivo??'').trim();
+    if(texto.length<4)throw new Error('Escribe el motivo de la resolución (mínimo 4 caracteres).');
+    const entrada=(await listQueue()).find(p=>p.id===id);
+    if(!entrada)throw new Error('Esa operación ya no está en la cola.');
+    let auditado=false;
+    const respuesta=await network('/api/admin/offline-operations/resolve',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({id,motivo:texto,tipo:entrada.path})}).catch(()=>null);
+    auditado=Boolean(respuesta?.ok);
+    /*
+     * SIN AUDITORÍA NO HAY RESOLUCIÓN. Si el servidor no confirma la anotación,
+     * la operación sigue en revisión: no se borra ni se da por resuelta en local.
+     */
+    if(!auditado)throw new Error('El servidor no confirmó la resolución. La operación sigue en revisión.');
+    await anotarReparacion(mine,{accion:'resuelta_manual',idOriginal:id,path:entrada.path,motivo:texto,auditado});
+    await changeQueue(q=>q.map(p=>p.id===id?{...p,state:'resuelto',resuelto:{at:Date.now(),motivo:texto,auditado,error:p.error??null}}:p));
+    return { auditado };
+  }
+  /**
+   * HISTÓRICOS: RECHAZOS ANTIGUOS QUE SE QUEDAN PARA REVISIÓN.
+   *
+   * Se respalda ANTES de marcarlos. No se borra nada, no se reenvían solos y no
+   * bloquean las operaciones nuevas. La marca `historical` es una clasificación
+   * por evidencia local (estado review + 404/422), no una identificación de qué
+   * operación era: eso se decide al revisarla.
+   */
+  async function isolateHistorical(){
+    const mine=owner();
+    const cola=await listQueue();
+    const viejas=cola.filter(p=>p.state==='review'&&!p.projectionVersion&&!p.historical&&
+      (p.status===404||p.status===422||/invalid_dismissals|not_found/i.test(String(p.error||''))));
+    if(!viejas.length)return 0;
+    if(typeof db.backupQueue==='function')await db.backupQueue(mine).catch(()=>{});
+    await changeQueue(q=>q.map(p=>viejas.some(v=>v.id===p.id)?{...p,historical:true}:p));
+    return viejas.length;
+  }
+  /** Exportación completa: original, últimas versiones y cola actual. */
+  async function exportRecovery(){
+    const mine=owner();
+    const original=await db.get('respaldo:'+mine);
+    let versiones=[];
+    try{versiones=(await db.entries()).filter(([k])=>String(k).startsWith('respaldo-version:'+mine+':')).map(([,v])=>v).sort((a,b)=>(a.sequence||0)-(b.sequence||0));}catch{}
+    let legacyPending=[];let legacyProblems=[];
+    try{legacyPending=JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]');legacyProblems=JSON.parse(localStorage.getItem('pe_crm_outbox_problems')||'[]');}catch{}
+    return {version:2,at:new Date().toISOString(),original:original??{version:0,operaciones:[]},ultima:await db.get('respaldo-ultimo:'+mine),versiones,operaciones:await listQueue(),legacyPending,legacyProblems};
+  }
+  /** Un rechazo del servidor se explica en castellano, no con su código. */
+  function mensajeDeRechazo(result,status){
+    const codigo=String(result?.error??'');
+    const mapa={
+      invalid_dismissals:'El servidor no aceptó el formato de los avisos descartados (venían de una versión anterior).',
+      invalid_before:'La fecha de borrado no es válida.',
+      forbidden:'Tu usuario no tiene permiso para este cambio.',
+      unauthorized:'La sesión ya no es válida: vuelve a entrar.',
+      invalid_payload:'Los datos del cambio no tienen el formato esperado.',
+      invalid_operation:'El identificador del cambio no es válido (venía de una versión anterior).',
+      operation_reused:'Ese cambio ya se envió con otros datos: no se repite solo.',
+      offline_operation_uncertain:'El servidor no pudo confirmar si el cambio se aplicó. Se conserva para revisión.',
+    };
+    return mapa[codigo]||result?.message||`El servidor rechazó el cambio (HTTP ${status}).`;
+  }
   async function saveReceipt(document){
     const {receiptPdfBytes}=await import('./receipt-pdf.js');
     const {id,number,customer,sale,kind,created_at,input={}}=document,quote=kind==='quote';
-    const receipt={business:'FullTECH, SRL',document:quote?'Cotización':'Factura de compra',order_number:number,date:created_at,customer_name:customer.name,notes:input.notes||'',...(quote?{customer_phone:customer.phone_e164}:{phone_masked:String(customer.phone_e164||'').slice(0,5)+'••• ••'+String(customer.phone_e164||'').slice(-2)}),
+    const receipt={business:'FullTECH',document:quote?'Cotización':'Factura de compra',order_number:number,date:created_at,customer_name:customer.name,notes:input.notes||'',...(quote?{customer_phone:customer.phone_e164}:{phone_masked:String(customer.phone_e164||'').slice(0,5)+'••• ••'+String(customer.phone_e164||'').slice(-2)}),
       status_label:quote?'Cotización pendiente de sincronizar':kind==='order'?'Pedido pendiente':'Venta cobrada · pendiente de sincronizar',currency:'DOP',
       payment_method_label:kind==='invoice'?(input.paymentMethod==='TRANSFER'?'Transferencia':'Efectivo'):null,
       items:sale.items.map(i=>({label:i.name,quantity:i.quantity,unitPrice:i.unit_price_cents/100,subtotal:i.subtotal_cents/100,line_discount:i.discount_cents/100})),
@@ -184,7 +434,7 @@
     const receiptUrl='/api/admin/pos/local/'+id+'/receipt',pdfUrl='/api/admin/pos/local/'+id+'/pdf';
     await remember(pdfUrl,new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf','content-disposition':`inline; filename="${number}.pdf"`}}));
     const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const html=`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(number)}</title><style>body{font:15px system-ui;margin:0;padding:12px;background:#e8edf3;color:#14243b}main,nav,p{max-width:900px;margin:12px auto}nav{display:flex;gap:8px;flex-wrap:wrap}a,button{font:inherit;padding:10px 12px;background:white;border:1px solid #ced7e2;border-radius:8px;color:#153c70;text-decoration:none;cursor:pointer}canvas{display:block;margin:12px 0;box-shadow:0 2px 12px #14243b18;background:white}[data-receipt-fallback]{padding:20px;background:white}table{width:100%}td{padding:8px} @media print{body{padding:0;background:white}nav,[data-receipt-status]{display:none}canvas{box-shadow:none;break-after:page;margin:0;width:100%}}</style><nav><a href="/admin/?v=pedidos">Volver al CRM</a><a href="${pdfUrl}" data-receipt-download hidden>Descargar PDF</a><button data-receipt-share>Compartir PDF</button><button data-receipt-print>Imprimir</button></nav><p data-receipt-status role="status">Abriendo PDF guardado…</p><main data-receipt-pages data-pdf="${pdfUrl}" data-filename="${escape(number)}.pdf"></main><main data-receipt-fallback><h1>FullTECH, SRL</h1><h2>${escape(receipt.document)} · ${escape(number)}</h2><p>${escape(customer.name)}</p><table>${sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>RD$${(i.subtotal_cents/100).toFixed(2)}</td></tr>`).join('')}</table><p>Descuento: RD$${(sale.discount_cents/100).toFixed(2)} · Envío: RD$${(sale.delivery_cents/100).toFixed(2)}</p><h2>Total RD$${(sale.total_cents/100).toFixed(2)}</h2><p>${escape(receipt.note)}</p></main><script src="/admin/receipt-viewer.js" defer></script></html>`;
+    const html=`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(number)}</title><style>body{font:15px system-ui;margin:0;padding:12px;background:#e8edf3;color:#14243b}main,nav,p{max-width:900px;margin:12px auto}nav{display:flex;gap:8px;flex-wrap:wrap}a,button{font:inherit;padding:10px 12px;background:white;border:1px solid #ced7e2;border-radius:8px;color:#153c70;text-decoration:none;cursor:pointer}canvas{display:block;margin:12px 0;box-shadow:0 2px 12px #14243b18;background:white}[data-receipt-fallback]{padding:20px;background:white}table{width:100%}td{padding:8px} @media print{body{padding:0;background:white}nav,[data-receipt-status]{display:none}canvas{box-shadow:none;break-after:page;margin:0;width:100%}}</style><nav><a href="/admin/?v=pedidos">Volver al CRM</a><a href="${pdfUrl}" data-receipt-download hidden>Descargar PDF</a><button data-receipt-share>Compartir PDF</button><button data-receipt-print>Imprimir</button></nav><p data-receipt-status role="status">Abriendo PDF guardado…</p><main data-receipt-pages data-pdf="${pdfUrl}" data-filename="${escape(number)}.pdf"></main><main data-receipt-fallback><img src="/admin/fulltech-logo.png?v=3" alt="FullTECH" width="48" height="48"><h1>FullTECH</h1><h2>${escape(receipt.document)} · ${escape(number)}</h2><p>${escape(customer.name)}</p><table>${sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>RD$${(i.subtotal_cents/100).toFixed(2)}</td></tr>`).join('')}</table><p>Descuento: RD$${(sale.discount_cents/100).toFixed(2)} · Envío: RD$${(sale.delivery_cents/100).toFixed(2)}</p><h2>Total RD$${(sale.total_cents/100).toFixed(2)}</h2><p>${escape(receipt.note)}</p></main><script src="/admin/receipt-viewer.js" defer></script></html>`;
     await remember(receiptUrl,new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));
     if(quote){await remember('/api/admin/pos/quotes/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/pos/quotes/'+id+'/pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
     else{await remember('/api/admin/orders/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/orders/'+id+'/receipt.pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
@@ -212,6 +462,27 @@
   }
   async function project(path,method,body,operation){
     const now=new Date().toISOString(), id=operation.localId;
+    const paymentMatch=path.match(/^\/api\/admin\/orders\/([^/]+)\/payments$/);
+    if(paymentMatch&&method==='POST'){
+      const orderId=decodeURIComponent(paymentMatch[1]);
+      const all=await data('/api/admin/data',{});
+      const item=(all.items||[]).find(row=>row.id===orderId);
+      const cached=await data('/api/admin/orders/'+orderId,{});
+      let order=cached.order;
+      if(!order&&item)try{order=JSON.parse(item.order_json||'null');}catch{}
+      if(!order)return localError('El pedido no está descargado.');
+      const amount=Number(body.amount);
+      if(!Number.isFinite(amount)||amount<=0)return localError('Escribe un importe válido.');
+      const pendingFinancial=[...(order.pendingFinancial||[]),{
+        id,amount,method:String(body.method||''),idempotencyKey:body.idempotencyKey||null,
+        created_at:now,state:'pending_sync',
+      }];
+      const projectedOrder={...order,pendingFinancial};
+      if(item){item.order_json=JSON.stringify(projectedOrder);item.pending=true;item.updated_at=now;await save('/api/admin/data',all);}
+      const result={...cached,ok:true,order:projectedOrder,pending:true,offline:true};
+      await save('/api/admin/orders/'+orderId,result);
+      return json(result);
+    }
     if(path.startsWith('/api/admin/inventory/')){
       if(identity.role!=='ADMIN')return localError('Solo administración puede cambiar el inventario.',403);
       const value=await data('/api/admin/inventory',{}),inventory=value.inventory||value;
@@ -396,10 +667,32 @@
     localTail=next;return next;
   }
   async function enqueueRun(url,options){
-    if(!valid())return localError('Conéctate para renovar el acceso sin conexión de 24 horas.',401);
+    /*
+     * SE ENCOLA CON LA CUENTA IDENTIFICADA, AUNQUE LA COPIA HAYA CADUCADO.
+     *
+     * Lo que caduca a las 24 h son las lecturas privadas, no el cambio que la
+     * persona acaba de hacer. Antes se rechazaba con «conéctate para renovar» y
+     * el trabajo se quedaba sin guardar en ningún sitio.
+     */
+    const mine=owner();
+    if(!mine)return localError('Conéctate para renovar el acceso sin conexión de 24 horas.',401);
     if(protectedWrite(url))return localError('Esta acción requiere conexión con el servicio.',503);
-    const body=options.body?JSON.parse(options.body):{};
+    let body=options.body?JSON.parse(options.body):{};
     if(/password|apiKey|accessToken|secret/i.test(JSON.stringify(Object.keys(body))))return localError('Las contraseñas y claves se cambian con conexión segura al servidor.',503);
+    const paymentPath=url.pathname.match(/^\/api\/admin\/orders\/([^/]+)\/payments$/);
+    if(paymentPath&&options.method==='POST'){
+      const response=await cached('/api/admin/orders/'+decodeURIComponent(paymentPath[1]));
+      const current=response?await response.json():null;
+      const order=current?.order;
+      if(!order)return localError('Descarga el pedido antes de guardar el cobro.',503);
+      const payment=order.payment||{};
+      const total=Number(payment.total??order.total??0);
+      const received=Number(payment.received_total??0);
+      const baseDue=Number.isFinite(Number(payment.due))?Number(payment.due):Math.max(0,total-received);
+      const reserved=(order.pendingFinancial||[]).reduce((sum,entry)=>sum+Math.max(0,Number(entry.amount)||0),0);
+      const due=Math.max(0,baseDue-reserved);
+      body={...body,expectedDue:due};
+    }
     const pending=await listQueue();
     const same=pending.find(p=>p.path===url.pathname+url.search&&p.method===options.method&&JSON.stringify(p.body)===JSON.stringify(body)&&p.state==='pending');
     if(same)return new Response(same.local.body,{status:same.local.status,headers:same.local.headers});
@@ -412,12 +705,35 @@
       if(!response.ok){await changeQueue(q=>q.filter(p=>p.id!==operation.id));return response;}
       const text=await response.clone().text();
       await changeQueue(q=>q.map(p=>p.id===operation.id?{...operation,local:{body:text,status:response.status,headers:[...response.headers]}}:p));
-      if(navigator.onLine)setTimeout(()=>synchronize().catch(()=>{}),0);
+      const snapshot=await db.projectionSnapshot?.(mine);
+      if(snapshot){
+        const records=snapshot.records.map(([href,record])=>[
+          href,/\/api\/admin\/pos\/local\//.test(new URL(href).pathname)?{...record,source:'local'}:record,
+        ]);
+        await db.commitProjection?.(mine,{...snapshot,records,queueSignature:JSON.stringify(await listQueue())});
+      }
+      // Cada operación nueva también queda en la copia de recuperación.
+      await respaldarCola().catch(()=>{});
+      // Cada operación nueva se intenta enviar de inmediato (sin esperar a que
+      // nadie pulse «Sincronizar»).
+      if(navigator.onLine){if(window.FullTECHSync)window.FullTECHSync.ahora();else setTimeout(()=>synchronize().catch(()=>{}),0);}
       return response;
     }catch(e){await changeQueue(q=>q.map(p=>p.id===operation.id?{...p,state:'review',error:e.message}:p));throw e;}
   }
   async function send(input,options={}){
     await ready;
+    /*
+     * LOS PERMISOS PUEDEN CAMBIAR EN OTRA PESTAÑA.
+     * Si la identidad guardada ya no coincide con la de memoria (o quedó marcada
+     * como no apta para caché), se deja de servir la copia privada anterior.
+     */
+    try{
+      const persistida=await db.get('identity');
+      if(persistida&&identity){
+        const cambiados=JSON.stringify(persistida.permissions||[])!==JSON.stringify(identity.permissions||[]);
+        if(cambiados||persistida.legacyCacheDisabled)identity={...identity,permissions:persistida.permissions||[],legacyCacheDisabled:true};
+      }
+    }catch{}
     if(valid()&&options.method&&options.method!=='GET'){
       const mapping=await db.get('mapping:'+owner())||{};
       if(typeof input==='string')input=replace(input,mapping);
@@ -429,21 +745,40 @@
     const canRead=(!excluded(url)||/\/conversations\/[^/]+\/messages$/.test(url.pathname))&&!url.pathname.includes('/android-apk/download');
     let legacy=new Headers(options.headers||{}).has('x-fulltech-legacy-outbox');
     if(legacy&&(await listQueue()).some(p=>(url.pathname+String(options.body||'')).includes(p.localId)))legacy=false;
-    if(method!=='GET'&&!legacy&&!protectedWrite(url)&&valid()&&(await listQueue()).length)return enqueue(url,{...options,method});
-    // Mientras haya trabajo local pendiente, no taparlo con una copia remota anterior.
-    if(method==='GET'&&canRead&&valid()&&!/\/(auth\/me|session)$/.test(url.pathname)&&(await listQueue()).length){const r=await cached(url);if(r)return r;}
+    if(method!=='GET'&&!legacy&&!protectedWrite(url)&&valid()){
+      /*
+       * SOLO SE ENCOLA CUANDO LA OPERACIÓN DEPENDE DE UN ID LOCAL AÚN NO CONFIRMADO.
+       * Las escrituras independientes van DIRECTO al servidor con su clave de
+       * idempotencia: así una cola llena de rechazos antiguos no impide trabajar
+       * y la nube manda. Si la red falla, el catch de abajo la encola.
+       */
+      const pendientes=(await listQueue()).filter(p=>p.state==='pending'&&p.localId);
+      if(pendientes.length){
+        const texto=url.pathname+String(options.body||'');
+        if(pendientes.some(p=>texto.includes(p.localId)))return enqueue(url,{...options,method});
+      }
+    }
     /*
-     * SIEMPRE SE INTENTA LA RED PRIMERO, aunque el aparato diga que está sin
-     * conexión.
+     * LA RED SE INTENTA SIEMPRE, TAMBIÉN CON `navigator.onLine=false`.
      *
-     * «navigator.onLine» se equivoca: al abrir la app en frío, con wifi cautivo
-     * o con una VPN dice `false` aunque haya red. Darlo por bueno dejaba el panel
-     * pintando la copia vieja SIN pedir los datos nuevos —y desde el servidor
-     * parecía que nadie había entrado—. Si de verdad no hay red, el intento falla
-     * en milisegundos y se usa la copia guardada (ver el catch de abajo).
+     * «navigator.onLine» se equivoca (wifi cautivo, VPN, arranque en frío). Si el
+     * servidor está accesible, se usa; si no, el catch encola o devuelve la copia.
+     * Lo único que no se intenta sin red es la cola heredada del navegador antiguo.
      */
-    if(method!=='GET'&&!navigator.onLine&&!/\/(login|logout)(\/|$)/.test(url.pathname)){if(legacy)throw new TypeError('offline');return enqueue(url,{...options,method});}
+    /*
+     * NINGÚN AVISO DEL NAVEGADOR IMPIDE INTENTARLO.
+     *
+     * Antes, si la cola heredada llevaba el marcador y `navigator.onLine` decía
+     * «no hay red», ni siquiera se probaba: el cambio quedaba en el aparato y el
+     * reintento automático volvía a caer en la misma comprobación una y otra vez.
+     * `navigator.onLine` se equivoca (VPN, wifi cautivo, app reanudada en segundo
+     * plano). Quien decide es el servidor: si no responde, el catch encola.
+     */
+    // Lo que el servidor no puede ejecutar desde la cola (mensajes, llamadas, claves)
+    // falla en el acto sin red, en vez de intentar una petición imposible.
+    if(method!=='GET'&&protectedWrite(url)&&!navigator.onLine)return localError('Esta acción requiere conexión con el servicio.',503);
     const operationId=method!=='GET'&&!protectedWrite(url)?new Headers(options.headers||{}).get('x-fulltech-operation')||uuid():null;
+    const efimeroEscribir=method!=='GET'&&efimero(url);
     /*
      * Si el aparato DICE que no hay red se espera mucho menos antes de tirar de
      * la copia (2,5 s en vez de 6). Así el panel no se queda colgado en cada
@@ -454,7 +789,16 @@
      * decía «no está descargado» aunque hubiera conexión. Tienen su propio tope.
      */
     const LECTURA_LENTA=/^\/api\/admin\/(data|delivery-supervisor|reports\/sales|metrics)(\/|$)/;
-    const limite=navigator.onLine?(LECTURA_LENTA.test(url.pathname)?20000:6000):2500;
+    /*
+     * UNA ESCRITURA NO SE CORTA A LOS 6 SEGUNDOS.
+     *
+     * Si el servidor tardaba un poco más, el intento se abortaba y el cambio se
+     * iba a la cola aunque el servidor lo estuviera guardando: trabajo que había
+     * que reenviar por nada y que, con la cola bloqueada, se quedaba esperando a
+     * que alguien pulsara «Sincronizar». Las escrituras tienen un margen amplio:
+     * esperar es mejor que encolar algo que ya llegó.
+     */
+    const limite=method!=='GET'?20000:(navigator.onLine?(LECTURA_LENTA.test(url.pathname)?20000:6000):2500);
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),limite);
     const onAbort=()=>controller.abort();options.signal?.addEventListener('abort',onAbort,{once:true});
     try{
@@ -502,7 +846,9 @@
           const body=await response.clone().json().catch(()=>({}));
           if(body?.error==='offline'||!body?.message)return sinConexion();
         }
-        else if(!legacy)return enqueue(url,{...options,method,operationId});
+        else if(!legacy&&!efimeroEscribir)return enqueue(url,{...options,method,operationId});
+        // Una marca de leído que el servidor no atiende no se guarda: se da por vista.
+        else if(efimeroEscribir)return json({ok:true,offline:true,omitted:true});
       }
       const localResponse=response.headers.get('x-fulltech-offline')==='1';
       if(response.ok&&!localResponse&&method==='GET'&&/\/(data|session|auth\/me)$/.test(url.pathname)){
@@ -524,38 +870,167 @@
           ? 'El servidor tardó demasiado en responder y esta pantalla todavía no está guardada. Comprueba la conexión y pulsa «Reintentar».'
           : SIN_COPIA);
       }
+      if(efimeroEscribir)return json({ok:true,offline:true,omitted:true});
       if(method!=='GET'&&!protectedWrite(url)&&!legacy)return enqueue(url,{...options,method,operationId});
       throw e;
     }finally{clearTimeout(timeout);options.signal?.removeEventListener('abort',onAbort);}
   }
+  /**
+   * LA SESIÓN CADUCÓ: SE PIDE VOLVER A ENTRAR, PERO NO SE BORRA NADA.
+   *
+   * Antes, un 401 llamaba a `forget()`, que borra la identidad y la cola heredada:
+   * las operaciones pendientes quedaban sin dueño y ya no se podían enviar. Un
+   * aviso de «vuelve a entrar» no puede costar el trabajo de nadie. La identidad
+   * se marca como caducada (deja de servir la copia privada) y la cola se
+   * conserva bajo la misma clave: al entrar de nuevo se reanuda sola.
+   */
+  async function marcarReautenticacion(){
+    if(!identity)return;
+    identity={...identity,verifiedAt:0};
+    await db.put('identity',identity).catch(()=>{});
+    recordDiag({path:'/offline/sesion',cause:'http',status:401});
+    signal();
+  }
   async function synchronize(){
     if(syncing)return syncing;
-    if(!navigator.onLine||!valid())return;
+    /*
+     * SE INTENTA CON LA CUENTA IDENTIFICADA, NO CON LA CUENTA «VIGENTE».
+     *
+     * `valid()` solo dice si la copia privada de 24 h se puede leer. Usarlo aquí
+     * significaba: cuenta con más de 24 h → la cola no se envía nunca sola.
+     */
+    if(!storageAvailable||!owner())return {sent:0,pending:0};
     const run=async()=>{
       const mine=owner(),mapping=await db.get('mapping:'+mine)||{};
+      /*
+       * 1) LA SESIÓN SE COMPRUEBA DE VERDAD ANTES DE ENVIAR NADA.
+       *
+       * Si el servidor ya no reconoce la sesión, la cola no se toca y la copia
+       * privada deja de servir: no se manda trabajo con una cuenta caducada.
+       */
+      const sesion=await network('/api/admin/session',{credentials:'same-origin',cache:'no-store'}).catch(()=>null);
+      if(sesion && (sesion.status===401 || (await sesion.clone().json().catch(()=>({})))?.ok===false)){
+        await marcarReautenticacion();
+        return {sent:0,pending:await pendientesDeEnviar(),error:'La sesión caducó: vuelve a entrar para enviarlo.',session:false};
+      }
+      /*
+       * 2) RESPALDO ANTES DE ENVIAR, PERO SIN BLOQUEAR.
+       *
+       * El respaldo protege la cola, no la sustituye: si falla (cuota, disco), se
+       * anota y se sigue enviando. Antes, un respaldo fallido detenía TODOS los
+       * envíos en silencio y el panel solo decía «pendiente» para siempre.
+       */
+      if(typeof db.backupQueue==='function')await db.backupQueue(mine).catch(()=>recordDiag({path:'/offline/respaldo',cause:'cuota',status:0}));
+      let enviadas=0,motivoFallo='';
       for(const entry of await listQueue()){
         if(mine!==owner())break;
-        if(entry.state!=='pending')break;
-        const path=replace(entry.path,mapping),body=replace(entry.body,mapping);
+        /*
+         * UNA OPERACIÓN EN «REVISAR» NO FRENA A LAS DEMÁS.
+         *
+         * Antes la primera rechazada cortaba el bucle: lo guardado días atrás
+         * detrás de ella no se enviaba nunca. Se salta y se sigue con el resto.
+         */
+        if(entry.state!=='pending')continue;
+        /*
+         * LO QUE YA NO SIGNIFICA NADA NO SE ENVÍA TARDE.
+         *
+         * Una marca de «leído» guardada por una versión anterior se descarta al
+         * sincronizar: mandarla ahora solo ensucia la auditoría y deja el aviso
+         * de «cambio pendiente» encendido para siempre.
+         */
+        if(efimeroPath(String(entry.path).split('?')[0])){
+          await changeQueue(q=>q.filter(p=>p.id!==entry.id));
+          continue;
+        }
+        /*
+         * UN RECUENTO SIN PRECONDICIÓN NO SE ENVÍA A CIEGAS.
+         *
+         * Los recuentos guardados por versiones anteriores no traen
+         * `expectedQuantity`: aplicarlos sobrescribiría un stock más reciente que
+         * ya está confirmado. Quedan para revisión, con su payload intacto.
+         */
+        if(/\/inventory\/count$/.test(String(entry.path))&&entry.body?.expectedQuantity==null){
+          await changeQueue(q=>q.map(p=>p.id===entry.id?{...p,state:'review',attempts:(p.attempts||0)+1,
+            error:'Recuento guardado por una versión anterior sin la cantidad esperada: no se aplica solo para no sobrescribir stock más reciente.'}:p));
+          continue;
+        }
+        /*
+         * EL RITMO DE LOS REINTENTOS LO LLEVA EL MOTOR, NO LA OPERACIÓN.
+         *
+         * Cada operación solo cuenta sus intentos. Guardar aquí «cuándo le toca»
+         * hacía que una sincronización manual (o volver a la app con la red
+         * arreglada) se saltara operaciones todavía «en espera» y pareciera que
+         * no se enviaban nunca.
+         */
+        const path=replace(entry.path,mapping),body=sanearCuerpo(replace(entry.body,mapping),path);
+        const claveEnvio=entry.retry?.idEnvio||entry.id;
         let r;
-        try{r=await network(path,{method:entry.method,credentials:'same-origin',headers:{'content-type':'application/json','x-fulltech-operation':entry.id},body:JSON.stringify(body)});}catch{break;}
-        if(r.status===401){await forget();break;}
-        if(r.status>=500)break;
-        const result=await r.json();
-        if(!r.ok){await changeQueue(q=>q.map(p=>p.id===entry.id?{...p,state:'review',error:result.message||result.error||'Revisa la operación.'}:p));break;}
+        try{r=await network(path,{method:entry.method,credentials:'same-origin',headers:{'content-type':'application/json','x-fulltech-operation':claveEnvio},body:JSON.stringify(body)});}
+        catch{
+          /* Un fallo de red no es un rechazo: no se cuenta como intento. */
+          motivoFallo='Sin conexión con el servidor';
+          break;
+        }
+        if(r.status===401){await marcarReautenticacion();motivoFallo='La sesión caducó: vuelve a entrar para enviarlo.';break;}
+        if(r.status>=500){motivoFallo='El servidor no está disponible en este momento.';break;}
+        const texto=await r.clone().text().catch(()=> '');
+        let result=null;
+        try{result=texto?JSON.parse(texto):null;}catch{result=null;}
+        if(!r.ok){
+          // Se guarda el motivo legible y el código: la pantalla no muestra «invalid_dismissals» a secas.
+          await changeQueue(q=>q.map(p=>p.id===entry.id?{...p,state:'review',status:r.status,attempts:(p.attempts||0)+1,
+            error:mensajeDeRechazo(result,r.status),lastError:{error:result?.error??null,message:result?.message??null,at:Date.now()}}:p));
+          continue;
+        }
+        /*
+         * UN 200 QUE NO ES EL JSON DEL CRM NO CONFIRMA NADA.
+         *
+         * Un portal cautivo o un proxy devuelven HTML con estado 200: darlo por
+         * bueno borraba la operación sin que el servidor la hubiera aplicado.
+         */
+        if(!result||typeof result!=='object'||result.ok===false){
+          await changeQueue(q=>q.map(p=>p.id===entry.id?{...p,state:'review',status:r.status,attempts:(p.attempts||0)+1,
+            error:'El servidor respondió algo que no es una confirmación del CRM. La operación se conserva para revisión.',
+            lastError:{error:result?.error??null,message:null,at:Date.now()}}:p));
+          continue;
+        }
         const real=result.session?.id||result.product?.id||result.category?.id||result.customer?.id||result.ticket?.id||result.document?.id||result.quoteId||result.orderId;
         if(real&&real!==entry.localId)mapping[entry.localId]=real;
         await db.put('mapping:'+mine,mapping);
         await changeQueue(q=>q.filter(p=>p.id!==entry.id));
+        enviadas+=1;
       }
       if(mine===owner()){
         const url=new URL(location.href);for(const key of ['product','quote','ticket']){const old=url.searchParams.get(key);if(mapping[old])url.searchParams.set(key,mapping[old]);}history.replaceState(history.state,'',url);
-        if(!(await listQueue()).length)await warm(true);
+        /*
+         * LA COPIA SE REFRESCA COMO MUCHO CADA 10 MINUTOS.
+         *
+         * Antes, cada sincronización volvía a descargar todas las pantallas (~30
+         * peticiones). Con el envío automático, eso pasaría después de CADA
+         * cambio y en un móvil se comería datos y batería sin necesidad. Los datos
+         * frescos ya llegan: los pide la propia pantalla al enviarse el cambio.
+         */
+        if(!(await listQueue()).length){
+          const ultima=await db.get('preparation:'+mine).catch(()=>null);
+          if(!ultima?.at||Date.now()-ultima.at>600000)await warm(true);
+        }
         window.dispatchEvent(new CustomEvent('fulltech:offline-synced',{detail:{mapping}}));
         window.dispatchEvent(new Event('fulltech:catalog-updated'));window.dispatchEvent(new Event('fulltech:pos-saved'));
       }
+      return {sent:enviadas,pending:await pendientesDeEnviar(),error:motivoFallo};
     };
-    const prepare=async()=>{const legacy=await window.FulltechLegacyOffline?.synchronize();if(legacy?.pending||legacy?.dropped)return;return navigator.locks?.request?navigator.locks.request('fulltech-offline-write:'+owner(),run):run();};
+    /*
+     * LAS DOS COLAS SON INDEPENDIENTES.
+     *
+     * Antes, si la cola del panel tenía UN cambio pendiente o uno rechazado, esta
+     * función devolvía sin enviar NADA del diario de operaciones: un rechazo
+     * antiguo bloqueaba para siempre todo lo nuevo. Ahora cada cola se envía por
+     * su lado; que una falle no detiene a la otra.
+     */
+    const prepare=async()=>{
+      try{await window.FullTECHLegacyOffline?.synchronize();}catch{/* la cola del panel se reintenta sola */}
+      return navigator.locks?.request?navigator.locks.request('fulltech-offline-write:'+owner(),run):run();
+    };
     syncing=prepare().finally(()=>{syncing=null;signal();});return syncing;
   }
   const ROOTS=['session','data?offline=1','catalog','pos/customers','store/products','pos/tickets','pos/quotes','inventory','inventory/reconcile','customers?limit=5000','conversations?limit=5000','followups','customer-tags','notifications','delivery-tracking','locations?limit=5000','users','settings/deepseek','messages','scheduled','reports/sales?period=custom&from=1900-01-01&to=9999-12-31&offline=1','reports/sales?period=hoy','reports/sales?period=ayer','reports/sales?period=7d','reports/sales?period=30d','reports/sales?period=mes','metrics?period=hoy','metrics?period=7d','metrics?period=30d','push-status','chat-sharing','wa-templates','audit?limit=10','delivery-supervisor'];
@@ -565,7 +1040,7 @@
     warming=(async()=>{
       if((await listQueue()).length)return;
       try{if(JSON.parse(localStorage.getItem('pe_crm_outbox')||'[]').length)return;}catch{}
-      const mine=owner(),todo=ROOTS.map(p=>'/api/admin/'+p),seen=new Set();let completed=0,failed=0;
+      const mine=owner(),todo=ROOTS.map(p=>'/api/admin/'+p),seen=new Set();let completed=0,failed=0;const fallos=[];
       await navigator.storage?.persist?.().catch(()=>{});
       /*
        * LO PESADO TIENE MÁS MARGEN.
@@ -576,7 +1051,15 @@
        * espera 15 s y, si falla, se reintenta UNA vez.
        */
       const fetchOne=async path=>{
-        const limit=/^\/api\/admin\/(data|customers|conversations|store\/products|orders)/.test(path)?15000:8000;
+        /*
+         * LAS RUTAS PESADAS TIENEN EL MISMO MARGEN QUE AL LEERLAS.
+         *
+         * El servidor da 20 s a datos, supervisor, reportes y métricas; aquí se
+         * les daba 8 s y se contaban como fallo aunque el servidor estuviera
+         * respondiendo: de ahí venían reintentos eternos que nunca mejoraban.
+         */
+        const LENTAS=/^\/api\/admin\/(data|customers|conversations|store\/products|orders|delivery-supervisor|reports\/sales|metrics)(\/|$)/;
+        const limit=LENTAS.test(path)?20000:8000;
         const run=async timeoutMs=>{
           const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),timeoutMs);
           try{return await network(path,{credentials:'same-origin',cache:'no-store',signal:controller.signal});}
@@ -592,9 +1075,9 @@
         await Promise.all(batch.map(async path=>{
           try{
             const r=await fetchOne(path);
-            if(r.headers.get('x-fulltech-offline')==='1'){failed++;return;}
+            if(r.headers.get('x-fulltech-offline')==='1'){failed++;fallos.push({path,cause:'copia'});return;}
             if(r.status===401){await forget();return;}
-            if(!r.ok){recordDiag({path,cause:'http',status:r.status,warm:true});return;}
+            if(!r.ok){recordDiag({path,cause:'http',status:r.status,warm:true});failed++;fallos.push({path,status:r.status});return;}
             await remember(path,r,true);if(path==='/api/admin/data?offline=1')await remember('/api/admin/data',r,true);completed++;
             if(!r.headers.get('content-type')?.includes('json'))return;
             const value=await r.json();
@@ -621,9 +1104,19 @@
               if(key==='customers')for(const item of items.slice(0,MAX_DETALLE))if(item.id)todo.push('/api/admin/customers/'+item.id+'/locations');
               if(key==='deliveryOrders')for(const item of items.slice(0,MAX_DETALLE))if(item.id)todo.push('/api/admin/delivery/orders/'+item.id);
             }
-          }catch{failed++;}
+          }catch(error){failed++;fallos.push({path,cause:error?.name==='AbortError'?'timeout':'red'});}
         }));
-        await db.put('preparation:'+mine,{at:Date.now(),completed,failed,remaining:todo.length});signal();
+        /*
+         * QUÉ SE QUEDÓ SIN DESCARGAR, DICHO CON NOMBRE Y APELLIDO.
+         *
+         * Antes solo se guardaba un número (los «62 recursos»): imposible saber
+         * si faltaba lo importante o una miniatura. Ahora se guarda la lista
+         * (acotada) y se separa lo crítico de lo opcional.
+         */
+        const CRITICOS=new Set(['session','data?offline=1','catalog','inventory','store/products','customers?limit=5000','conversations?limit=5000','delivery-tracking','scheduled','messages','users','settings/deepseek']);
+        const faltan=new Set(fallos.map(f=>f.path.replace('/api/admin/','')));
+        const criticosFaltan=[...faltan].filter(p=>CRITICOS.has(p));
+        await db.put('preparation:'+mine,{at:Date.now(),completed,failed,remaining:todo.length,fallos:fallos.slice(-80),criticosFaltan,listo:criticosFaltan.length===0});signal();
       }
       if(!force&&await listQueue().then(q=>q.length)&&!syncing)setTimeout(()=>synchronize().catch(()=>{}),0);
     })().finally(()=>{warming=null;signal();});return warming;
@@ -644,8 +1137,8 @@
     };
     const next=localTail.catch(()=>{}).then(run);localTail=next;return next;
   }
-  window.FulltechOffline={ready,valid,warm,synchronize,listQueue,saveLegacySnapshot,status:async()=>({valid:valid(),expiresAt:identity?identity.verifiedAt+DAY:null,shell:await db.get('shell'),preparation:await db.get('preparation:'+owner()),queue:await listQueue()}),forget,clearCache,diagnostics:()=>[...diag]};
-  window.addEventListener('online',()=>setTimeout(()=>synchronize().catch(()=>{}),0));
+  window.FullTECHOffline={ready,valid,warm,synchronize,listQueue,pendientes:pendientesDeEnviar,saveLegacySnapshot,sanearDismissals,backup:()=>db.get('respaldo:'+owner()),respaldar:()=>respaldarCola(),verificar:verificarEnServidor,reintentar:reintentarReparada,resolver:resolverOperacion,reparadas:()=>db.get('reparadas:'+owner()),exportRecovery,status:async()=>({valid:valid(),expiresAt:identity?identity.verifiedAt+DAY:null,shell:await db.get('shell'),preparation:await db.get('preparation:'+owner()),respaldo:await db.get('respaldo:'+owner()).then(r=>r?{at:r.at,count:(r.operaciones||[]).length}:null).catch(()=>null),rol:identity?.role??null,reparadas:await db.get('reparadas:'+owner()).then(r=>r?.length??0).catch(()=>0),queue:await listQueue()}),forget,clearCache,diagnostics:()=>[...diag]};
+  if(!window.FullTECHSync)window.addEventListener('online',()=>setTimeout(()=>synchronize().catch(()=>{}),0));
   /*
    * LA COPIA SE BORRA AL CERRAR SESIÓN DE VERDAD, NO AL PINTAR EL ACCESO.
    *
@@ -657,5 +1150,41 @@
    */
   window.addEventListener('fulltech:offline-logout',()=>forget().catch(()=>{}));
   window.addEventListener('pageshow',()=>{if(navigator.onLine)warm().catch(()=>{});});
-  setInterval(()=>{if(navigator.onLine&&valid())listQueue().then(q=>{if(q.some(p=>p.state==='pending'))synchronize().catch(()=>{});}).catch(()=>{});},30000);
+  /*
+   * REINTENTO RÁPIDO MIENTRAS HAYA ALGO PENDIENTE.
+   *
+   * Cada 5 s, y al volver a la app (visibilitychange/focus), se intenta enviar lo
+   * que quedó. Antes eran 30 s y solo con `navigator.onLine` en verdadero: un
+   * cambio podía esperar minutos y parecía que había que pulsar «Sincronizar».
+   */
+  const reintentarPendientes=()=>{
+    /* Con el motor único cargado, no se programa un reloj competidor. */
+    if(window.FullTECHSync)return;
+    if(!owner())return;
+    listQueue().then(q=>{if(q.some(p=>p.state==='pending'))return synchronize().catch(()=>{});}).catch(()=>{});
+  };
+  if(!window.FullTECHSync){
+    setInterval(reintentarPendientes,5000);
+    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')reintentarPendientes();});
+    window.addEventListener('focus',reintentarPendientes);
+  }
+  /*
+   * AL ABRIR, PRIMERO LA COPIA DE RECUPERACIÓN.
+   *
+   * Así, una cola que venía de la versión anterior queda respaldada ANTES de
+   * que el temporizador, el evento «online» o una sincronización en curso toquen
+   * nada. Es idempotente y no sobrescribe la copia original.
+   */
+  ready
+    .then(async () => {
+      // Una cola guardada con la clave antigua (llevaba los permisos) se adopta
+      // aunque la identidad ya estuviera migrada: si no, quedaría invisible.
+      if (identity?.key) await adoptarColaAntigua(identity.key).catch(() => {});
+      await respaldarCola().catch(() => {});
+    })
+    .catch(() => {});
+  window.FulltechOffline=window.FullTECHOffline;
+  if(!window.FullTECHSync)setInterval(()=>{
+    if(owner())listQueue().then(q=>{if(q.some(p=>p.state==='pending'))synchronize().catch(()=>{});}).catch(()=>{});
+  },30000);
 })();

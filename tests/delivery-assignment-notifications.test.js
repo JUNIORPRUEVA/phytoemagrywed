@@ -102,7 +102,7 @@ async function login(username, password) {
 async function inbound(id, body) {
   const payload = {
     object: 'whatsapp_business_account',
-    entry: [{ id: 'WABA1', changes: [{ value: { messaging_product: 'whatsapp', metadata: { phone_number_id: 'PN-DELIVERY' }, contacts: [{ profile: { name: 'Cliente Delivery' }, wa_id: PHONE }], messages: [{ id, from: PHONE, timestamp: `${Math.floor(Date.now() / 1000)}`, type: 'text', text: { body } }] }, field: 'messages' }] }],
+    entry: [{ id: 'WABA1', changes: [{ value: { messaging_product: 'whatsapp', metadata: { phone_number_id: 'PN-DELIVERY' }, contacts: [{ profile: { name: 'Cliente Delivery' }, wa_id: PHONE }], messages: [{ id, from: PHONE, timestamp: `${Math.floor(now.getTime() / 1000)}`, type: 'text', text: { body } }] }, field: 'messages' }] }],
   };
   const raw = JSON.stringify(payload);
   const signature = `sha256=${createHmac('sha256', APP_SECRET).update(raw).digest('hex')}`;
@@ -149,7 +149,7 @@ async function approveTemplate(name, body, variables = []) {
 
 async function setConversationWindow(open = true) {
   await app.collections.update('conversations', conversationId, {
-    last_inbound_at: open ? new Date().toISOString() : new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+    last_inbound_at: open ? now.toISOString() : new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString(),
   });
 }
 

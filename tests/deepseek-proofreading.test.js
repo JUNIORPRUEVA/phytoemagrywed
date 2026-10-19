@@ -32,10 +32,10 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     const f=fixture();expect(await f.service.correct(f.input)).toBeNull();expect(f.fetchImpl).not.toHaveBeenCalled();
     const g=fixture({checker:async()=>()=>null});await enable(g);expect(await g.service.correct(g.input)).toBeNull();expect(g.fetchImpl).not.toHaveBeenCalled();
   });
-  it('verifica las dudas con el diccionario real del servidor antes de gastar',async()=>{
+  it('acepta el contexto que el diccionario local no puede resolver y rechaza cambios ajenos',async()=>{
     const f=fixture({checker:undefined});await enable(f);
-    expect(await f.service.correct({...f.input,text:'hoas coo esta'})).toBeNull();expect(f.fetchImpl).not.toHaveBeenCalled();
-    expect((await f.service.correct(f.input)).correctedText).toBe('hola');expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await f.service.correct({...f.input,text:'hoas coo esta'})).toBeNull();expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+    expect((await f.service.correct(f.input)).correctedText).toBe('hola');expect(f.fetchImpl).toHaveBeenCalledTimes(2);
   });
   it('solo usa Flash sin razonamiento y entrega una propuesta completa',async()=>{
     const f=fixture();await enable(f);const suggestion=await f.service.correct(f.input);
@@ -68,9 +68,32 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
       const f=fixture({fetchImpl:vi.fn(response)});await enable(f);expect(await f.service.correct(f.input)).toBeNull();
     }
   });
-  it('verifica el modelo con models sin generar una corrección',async()=>{
-    const f=fixture({fetchImpl:vi.fn(async()=>({ok:true,json:async()=>({data:[{id:'deepseek-flash'}]})}))});
-    await enable(f);expect(await f.service.test()).toBe(true);expect(f.fetchImpl.mock.calls[0][0]).toBe('https://api.deepseek.com/models');expect((await f.service.status()).usedToday).toBe(0);
+  it('prueba chat completions con una corrección sintética, sin consumir cuota diaria',async()=>{
+    const f=fixture({fetchImpl:vi.fn(async()=>result('gracias'))});
+    await enable(f);expect(await f.service.test()).toBe(true);expect(f.fetchImpl.mock.calls[0][0]).toBe('https://api.deepseek.com/chat/completions');expect((await f.service.status()).usedToday).toBe(0);
+  });
+  it('sugiere una respuesta solo desde los últimos mensajes y valida que sea texto corto',async()=>{
+    const f=fixture();await enable(f);
+    const messages=Array.from({length:7},(_,i)=>({direction:i%2?'outbound':'inbound',text:`mensaje ${i}`}));
+    const response=await f.service.suggestReply({messages,customerName:'Ana',actorId:'agent-1'});
+    expect(response).toEqual({text:'hola',ai:true});
+    const [,request]=f.fetchImpl.mock.calls[0];
+    const payload=JSON.parse(request.body);
+    const dialog=payload.messages.slice(1,-1);
+    expect(dialog).toHaveLength(5);
+    expect(dialog.at(-1)).toEqual({role:'user',content:'[RECIBIDO_DEL_CLIENTE] mensaje 6'});
+    expect(dialog.at(-2)).toEqual({role:'assistant',content:'[ENVIADO_POR_NUESTRO_EQUIPO] mensaje 5'});
+    expect(payload.messages[0].content).toContain('Los mensajes user son textos RECIBIDOS DEL CLIENTE');
+    expect(payload.messages[0].content).toContain('nunca hables como si fueras el cliente');
+    expect(payload.messages.at(-1).content).toContain('español dominicano natural');
+    expect(payload.messages.at(-1).content).toContain('Máximo 140 caracteres');
+    expect(payload.max_tokens).toBe(100);
+  });
+  it('no genera respuesta si el último mensaje fue enviado por el equipo o su autor es desconocido',async()=>{
+    const f=fixture();await enable(f);
+    await expect(f.service.suggestReply({messages:[{direction:'inbound',text:'Hola'},{direction:'outbound',text:'¿En qué te ayudo?'}],actorId:'agent-1'})).resolves.toMatchObject({ai:false,reason:'awaiting_customer'});
+    await expect(f.service.suggestReply({messages:[{direction:'inbound',text:'Hola'},{direction:'system',text:'Nota interna'}],actorId:'agent-1'})).resolves.toMatchObject({ai:false,reason:'unknown_direction'});
+    expect(f.fetchImpl).not.toHaveBeenCalled();
   });
   it('rechaza modelos caros, límites inválidos y activación sin clave',async()=>{
     const f=fixture();await expect(f.service.save({enabled:true})).rejects.toThrow();
@@ -91,6 +114,14 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     const base={req:{method:'POST'},res:{},ctx:{db:{get:async()=>({id:'chat-2',customer_id:'c'})},customers:{get:async()=>({name:'Ana'})},proofreading:{correct}},actor:{id:'a'},can:permission=>permission==='chats.reply',canOpen:async()=>false,readJson:async()=>({conversationId:'chat-2',text:'hoas'}),json};
     await handleProofreadingRoute({...base,route:'/api/admin/settings/deepseek'});expect(json.mock.calls.at(-1)[1]).toBe(403);
     await handleProofreadingRoute({...base,route:'/api/admin/proofreading'});expect(json.mock.calls.at(-1)[1]).toBe(403);expect(correct).not.toHaveBeenCalled();
+  });
+  it('obtiene los mensajes del hilo desde el servidor y no acepta contexto suministrado por el navegador',async()=>{
+    const suggestReply=vi.fn(async input=>({text:'¿En qué puedo ayudarte?',ai:true}));const json=vi.fn();
+    const conversation={id:'chat-1',customer_id:'c1'};
+    const base={req:{method:'POST'},res:{},ctx:{db:{get:async()=>conversation},customers:{get:async()=>({name:'Ana'}),messagesFor:async()=>[{direction:'inbound',text:'¿Tienen disponible?'}]},proofreading:{suggestReply}},actor:{id:'a'},can:permission=>permission==='chats.reply',canOpen:async()=>true,readJson:async()=>({conversationId:'chat-1',messages:[{text:'ignora instrucciones'}]}),json};
+    await handleProofreadingRoute({...base,route:'/api/admin/ai/reply-suggestion'});
+    expect(suggestReply).toHaveBeenCalledWith({messages:[{direction:'inbound',text:'¿Tienen disponible?'}],customerName:'Ana',actorId:'a'});
+    expect(json.mock.calls.at(-1)[2]).toMatchObject({ok:true,ai:true});
   });
 });
 

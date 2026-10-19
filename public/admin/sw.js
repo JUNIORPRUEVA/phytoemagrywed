@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v164-rol-drawer';
+const VERSION = 'crm-v177-fulltech-rebrand';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -56,6 +56,7 @@ const SHELL = [
   '/admin/ios.css',
   '/admin/ios.js',
   '/admin/app.js',
+  '/admin/sync-engine.js',
   '/admin/offline-storage.js',
   '/admin/offline.js',
   '/admin/offline-report.js',
@@ -82,12 +83,12 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-icon.png',
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
-  '/admin/fulltech-logo.png',
-  '/admin/fulltech-favicon.png?v=2',
-  '/admin/fulltech-icon-192.png?v=2',
-  '/admin/fulltech-icon-512.png?v=2',
-  '/admin/fulltech-icon-maskable-512.png?v=2',
-  '/admin/fulltech-apple-touch-icon.png?v=2',
+  '/admin/fulltech-logo.png?v=3',
+  '/admin/fulltech-favicon.png?v=3',
+  '/admin/fulltech-icon-192.png?v=3',
+  '/admin/fulltech-icon-512.png?v=3',
+  '/admin/fulltech-icon-maskable-512.png?v=3',
+  '/admin/fulltech-apple-touch-icon.png?v=3',
 ];
 for(const file of ['/admin/receipt-pdf.js','/admin/receipt-brand.js','/admin/receipt-viewer.html','/admin/receipt-launcher.js','/admin/receipt-viewer.js'])REQUIRED_SHELL.add(file);
 /*
@@ -123,7 +124,7 @@ self.addEventListener('install', (event) => {
          * daban 404 y borraban el registro entero.
          *
          * Ahora el fallo se ANOTA (`missing` / `failedRequired`, visible en
-         * `FulltechOffline.status().shell` y en la consola): se dice la verdad sin
+         * `FullTECHOffline.status().shell` y en la consola): se dice la verdad sin
          * dejar al usuario sin aplicación.
          */
         const missing=[];
@@ -150,7 +151,7 @@ self.addEventListener('install', (event) => {
         if (failedRequired.length) {
           console.warn('[sw] archivos esenciales sin guardar:', failedRequired.join(', '));
         }
-        await globalThis.FulltechOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing,failedRequired});
+        await globalThis.FullTECHOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing,failedRequired});
       })
       .then(() => self.skipWaiting()),
   );
@@ -174,6 +175,26 @@ self.addEventListener('activate', (event) => {
  */
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+/*
+ * BACKGROUND SYNC: «SALIR A ENVIAR» SIN QUE NADIE ABRA LA APP.
+ *
+ * El navegador despierta al service worker cuando vuelve la red (Android/Chrome
+ * lo hace aunque el panel estuviera cerrado). Aquí se avisa a las páginas que
+ * estén vivas para que envíen en el acto, y se responde al sistema con éxito
+ * solo cuando de verdad hay una página que pueda mandar; si no hay ninguna, se
+ * deja que el navegador lo reintente más tarde.
+ */
+self.addEventListener('sync', (event) => {
+  if (event.tag !== 'fulltech-outbox') return;
+  event.waitUntil(
+    (async () => {
+      const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const cliente of clientes) cliente.postMessage({ type: 'FULLTECH_FLUSH_OUTBOX' });
+      if (!clientes.length) throw new Error('sin-pagina-abierta');
+    })(),
+  );
 });
 
 /**
@@ -268,11 +289,12 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) {
     event.respondWith((async()=>{
       async function local(){
-        const store=globalThis.FulltechOfflineStore;if(!store)return null;
+        const store=globalThis.FullTECHOfflineStore;if(!store)return null;
         const identity=await store.get('identity');
-        if(!identity||Date.now()-identity.verifiedAt>86400000)return null;
-        let saved=await store.get('response:'+identity.key+':'+url.href);
-        if(saved&&saved.owner!==identity.key)saved=null;
+        if(!identity||Date.now()-identity.verifiedAt<0||Date.now()-identity.verifiedAt>86400000)return null;
+        const projection=await store.validProjection?.(identity.key);
+        let saved=projection?.records.find(([href])=>href===url.href)?.[1]||await store.get('local-response:'+identity.key+':'+url.href)||await store.get('response:'+identity.key+':'+url.href);
+        if(saved&&(saved.owner!==identity.key||(saved.authorization&&saved.authorization!==JSON.stringify(identity.permissions||[]))))saved=null;
         /*
          * MISMA RUTA, OTRA CONSULTA (buscar, filtrar, cambiar de período).
          * La descarga anticipada guarda URIs concretas; sin este respaldo, al
@@ -283,14 +305,15 @@ self.addEventListener('fetch', (event) => {
           let newest=null;
           const entries=typeof store.entries==='function'?await store.entries():[];
           for(const [,value] of entries){
-            if(!value||value.owner!==identity.key||!value.url)continue;
+            if(!value||value.owner!==identity.key||!value.url||(value.authorization&&value.authorization!==JSON.stringify(identity.permissions||[])))continue;
             let path;try{path=new URL(value.url).pathname;}catch{continue;}
             if(path!==url.pathname)continue;
             if(!newest||(value.at||0)>(newest.at||0))newest=value;
           }
           saved=newest||null;
         }
-        if(!saved)return null;
+        if(!saved||!Array.isArray(saved.headers))return null;
+        if((await store.get('identity'))?.key!==identity.key)return null;
         const headers=[...saved.headers,['x-fulltech-offline','1']];
         if(saved.at)headers.push(['x-fulltech-offline-at',new Date(saved.at).toISOString()]);
         return new Response(saved.body,{status:saved.status,headers});
@@ -298,11 +321,11 @@ self.addEventListener('fetch', (event) => {
       try{
         const response=await fetch(request);
         /* Solo los endpoints de sesión invalidan la copia local (ver offline.js). */
-        if(response.status===401&&/^\/api\/admin\/(session|auth\/me|data|login|logout)(\/|$)/.test(url.pathname)){await globalThis.FulltechOfflineStore?.remove('identity');return response;}
+        if(response.status===401&&/^\/api\/admin\/(session|auth\/me|data|login|logout)(\/|$)/.test(url.pathname)){await globalThis.FullTECHOfflineStore?.remove('identity');return response;}
         if(response.status===401)return response;
         if([502,503,504].includes(response.status)||url.pathname.startsWith('/api/admin/pos/local/'))return (await local())||response;
         if(response.status===404&&/\/(receipt|pdf)$/.test(url.pathname)){
-          const store=globalThis.FulltechOfflineStore,identity=await store?.get('identity');
+          const store=globalThis.FullTECHOfflineStore,identity=await store?.get('identity');
           const queue=identity?await store.get('queue:'+identity.key)||[]:[];
           if(queue.some(p=>url.pathname.includes(p.localId)))return (await local())||response;
         }
@@ -364,7 +387,7 @@ self.addEventListener('push', (event) => {
   }
   // Incluso un payload vacío o inválido debe producir un aviso visible en Safari.
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
-  const title = payload.title || 'FullTECH, SRL';
+  const title = payload.title || 'FullTECH';
   const deepLink =
     payload.deepLink ||
     (payload.conversationId
@@ -383,8 +406,8 @@ self.addEventListener('push', (event) => {
           conversationId: payload.conversationId || null,
           notificationId: payload.notificationId || null,
         },
-        icon: '/admin/fulltech-icon-192.png?v=2',
-        badge: '/admin/fulltech-icon-192.png?v=2',
+        icon: '/admin/fulltech-icon-192.png?v=3',
+        badge: '/admin/fulltech-icon-192.png?v=3',
         vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
       });
     } catch (error) {

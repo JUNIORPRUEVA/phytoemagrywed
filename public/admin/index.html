@@ -6,8 +6,8 @@
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#145bd7" />
     <meta name="color-scheme" content="light dark" />
-    <title>CRM · FullTECH, SRL</title>
-    <meta name="description" content="Panel privado de FullTECH, SRL: clientes, WhatsApp, pedidos y seguimiento." />
+    <title>CRM · FullTECH</title>
+    <meta name="description" content="Panel de FullTECH: clientes, WhatsApp, pedidos y seguimiento." />
 
     <!--
       EL TEMA, ANTES DE PINTAR NADA.
@@ -69,17 +69,17 @@
       html[data-theme="dark"] { background-color: #0b1424; }
     </style>
     <!-- PWA: se instala en el móvil y abre a pantalla completa -->
-    <link rel="manifest" href="/admin/manifest.json" />
-    <link rel="icon" href="/admin/fulltech-favicon.png?v=2" sizes="32x32" type="image/png" />
-    <link rel="icon" href="/admin/fulltech-icon-192.png?v=2" sizes="192x192" type="image/png" />
-    <link rel="apple-touch-icon" href="/admin/fulltech-apple-touch-icon.png?v=2" />
+    <link rel="manifest" href="/admin/manifest.json?v=3" />
+    <link rel="icon" href="/admin/fulltech-favicon.png?v=3" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/admin/fulltech-icon-192.png?v=3" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="/admin/fulltech-apple-touch-icon.png?v=3" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="FullTECH, SRL" />
+    <meta name="apple-mobile-web-app-title" content="FullTECH" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=consolidado-73" />
+    <link rel="stylesheet" href="/admin/admin.css?v=consolidado-75" />
     <link rel="stylesheet" href="/admin/store.css?v=etiqueta-4" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
     <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
@@ -91,13 +91,13 @@
     -->
     <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
-    <link rel="stylesheet" href="/admin/chat-sharing.css?v=2" />
-    <link rel="stylesheet" href="/admin/fulltech.css?v=2" />
-    <link rel="stylesheet" href="/admin/navigation.css?v=chat-finalizar-2" />
-    <link rel="stylesheet" href="/admin/menus-safe-area.css?v=2" />
-    <link rel="stylesheet" href="/admin/proofreading.css?v=7" />
+    <link rel="stylesheet" href="/admin/chat-sharing.css?v=3" />
+    <link rel="stylesheet" href="/admin/fulltech.css?v=3" />
+    <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-2" />
+    <link rel="stylesheet" href="/admin/menus-safe-area.css?v=3" />
+    <link rel="stylesheet" href="/admin/proofreading.css?v=10" />
     <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
-    <link rel="stylesheet" href="/admin/composer-mobile.css?v=2" />
+    <link rel="stylesheet" href="/admin/composer-mobile.css?v=3" />
     <!--
       La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
       sobre la geometría y los colores de esa pantalla.
@@ -127,9 +127,9 @@
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
       <div class="splash__mark">
-        <img src="/admin/fulltech-logo.png" alt="" width="176" height="176" />
+        <img src="/admin/fulltech-logo.png?v=3" alt="" width="176" height="176" />
       </div>
-      <p class="splash__brand">FullTECH, SRL</p>
+      <p class="splash__brand">FullTECH</p>
       <p class="splash__text">Preparando tu espacio de trabajo</p>
       <span class="splash__bar" aria-hidden="true"></span>
     </div>
@@ -138,9 +138,9 @@
     <main id="login" class="login" hidden>
       <section class="login__card" aria-labelledby="login-title">
         <span class="login__mark">
-          <img class="login__logo" src="/admin/fulltech-logo.png" alt="" width="46" height="46" />
+          <img class="login__logo" src="/admin/fulltech-logo.png?v=3" alt="" width="46" height="46" />
         </span>
-        <h1 class="login__title" id="login-title">FullTECH, SRL <span>CRM</span></h1>
+        <h1 class="login__title" id="login-title">FullTECH <span>CRM</span></h1>
         <p class="login__lede">Acceso privado del equipo</p>
         <form id="login-form" class="login__form" autocomplete="on">
           <label class="field">
@@ -213,7 +213,7 @@
       <span class="presence" id="state-pill" role="status" hidden></span>
       <header class="topbar">
         <div class="topbar__title">
-          <span class="topbar__brand">FullTECH, SRL</span>
+          <span class="topbar__brand">FullTECH</span>
           <span class="topbar__sub" id="topbar-sub">CRM</span>
         </div>
       </header>
@@ -231,10 +231,10 @@
         <div class="drawer__head">
           <button class="drawer__brand" data-tab="perfil" type="button" aria-label="Abrir mi perfil">
             <span class="drawer__logo" aria-hidden="true">
-              <img src="/admin/fulltech-logo.png" alt="" width="26" height="26" />
+              <img src="/admin/fulltech-logo.png?v=3" alt="" width="26" height="26" />
             </span>
             <span class="drawer__identity">
-              <strong>FullTECH, SRL</strong>
+              <strong>FullTECH</strong>
               <span class="drawer__role">CRM</span>
             </span>
             <span class="drawer__avatar" aria-hidden="true">FT</span>
@@ -377,7 +377,10 @@
           <section class="drawer__section" aria-label="Sistema">
             <nav class="drawer__nav">
               <button class="drawer__item" id="drawer-sync" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="refresh"></span>Sincronizar datos
+                <span class="drawer__icon" aria-hidden="true" data-icon="refresh"></span>Actualizar datos guardados
+              </button>
+              <button class="drawer__item" id="drawer-offline" type="button">
+                <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Datos sin conexión y operaciones
               </button>
               <a
                 class="drawer__item drawer__item--link"
@@ -534,7 +537,10 @@
               <div class="thread thread--wa chat-bg" id="thread"></div>
               <div class="wa__fab-row">
                 <button class="wa-fab" id="wa-actions" type="button" aria-label="Acciones de la conversación" title="Acciones de la conversación" disabled>
-                  <span class="ico" aria-hidden="true" data-icon="spark"></span>
+                  <span class="wa-fab__dots" aria-hidden="true">⋮</span>
+                </button>
+                <button class="wa-ai-fab" id="wa-ai-reply" type="button" aria-label="IA: sugerir un mensaje para este cliente" title="IA · Sugerir mensaje" disabled>
+                  <span class="wa-ai-fab__spark" aria-hidden="true">✦</span><span class="wa-ai-fab__label" aria-hidden="true">IA</span>
                 </button>
               </div>
               <div class="wa__delivery-cta" id="wa-delivery-cta" hidden></div>
@@ -777,7 +783,7 @@
           <div id="admin-tiendas"></div>
         </section>
         <section class="view" id="view-productos" hidden>
-          <h2 class="view__title">Inventario de Phytoemagry</h2>
+          <h2 class="view__title">Inventario de productos</h2>
           <button class="btn btn--ghost" data-tab="inventario" type="button">Volver al inventario de la tienda</button>
           <div class="list" id="inventory-view"></div>
         </section>
@@ -868,21 +874,21 @@
           </section>
           <section class="card" id="config-deepseek" hidden aria-label="Configuración de DeepSeek">
             <p class="settings-intro">Mensajes más cuidados, con consumo controlado.</p>
-            <p class="settings-description">El corrector habitual sigue siendo gratuito y local. Si quedan palabras dudosas, se envía el borrador completo a DeepSeek para proponer una corrección. Tú decides si la usas.</p>
+            <p class="settings-description">El corrector local revisa cada borrador al escribir. Cuando encuentra una posible falta, DeepSeek puede refinar la frase; tú decides si aplicas la sugerencia. En el chat, el botón compacto IA propone una respuesta breve a partir de los últimos mensajes cuando tú lo pides.</p>
             <form id="deepseek-settings-form" autocomplete="off">
               <label class="field"><span>API key DeepSeek</span><input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Pega tu clave para configurarla" maxlength="300" /></label>
               <p class="settings-footnote" id="deepseek-key-status">Comprobando configuración…</p>
               <label class="field"><span>Modelo</span><select id="deepseek-model"><option value="deepseek-flash">DeepSeek V4.1 Flash · Económico</option></select></label>
               <label class="field"><span>Límite de consultas por día</span><input id="deepseek-daily-limit" type="number" min="1" max="1000" step="1" value="100" required /></label>
               <label class="settings-permission"><input id="deepseek-enabled" type="checkbox" /> Activar correcciones de apoyo</label>
-              <p class="settings-footnote">La clave se guarda cifrada en el servidor y no vuelve a mostrarse. Solo se consulta cuando hace falta, sin cambiar automáticamente a un modelo más caro.</p>
+              <p class="settings-footnote">La clave se guarda cifrada en el servidor y no vuelve a mostrarse. La comprobación envía una corrección de prueba al mismo servicio usado por las funciones de IA.</p>
               <div class="item__actions"><button class="btn btn--primary" type="submit">Guardar configuración</button><button class="btn btn--ghost" id="deepseek-test" type="button">Comprobar conexión</button><button class="btn btn--ghost" id="deepseek-remove" type="button">Eliminar clave</button></div>
               <p class="settings-feedback" id="deepseek-feedback" role="status"></p>
             </form>
           </section>
           <section class="card settings-permissions" id="config-permisos" hidden aria-label="Permisos del dispositivo">
             <p class="settings-intro">Todo listo para tu día a día.</p>
-            <p class="settings-description">Elige qué puede usar FullTECH, SRL en este dispositivo. Los permisos concedidos se comprueban al volver a la app, sin volver a pedirlos.</p>
+            <p class="settings-description">Elige qué puede usar FullTECH en este dispositivo. Los permisos concedidos se comprueban al volver a la app, sin volver a pedirlos.</p>
             <div id="settings-permission-list" aria-live="polite"></div>
             <div id="settings-my-location"></div>
             <p class="settings-footnote">Para conservarlos, elige «Permitir» de forma permanente cuando tu teléfono lo ofrezca. Si eliges «Solo esta vez», borras los datos o reinstalas la app, el sistema puede volver a preguntarte.</p>
@@ -984,6 +990,10 @@
         <!-- MI PERFIL (el usuario que tiene la sesión) -->
         <section class="view view--profile" id="view-perfil" hidden>
           <h2 class="view__title">Mi perfil</h2>
+          <div class="profile-brand" aria-label="Negocio: FullTECH">
+            <img src="/admin/fulltech-logo.png?v=3" alt="Logo de FullTECH" width="44" height="44" />
+            <strong>FullTECH</strong>
+          </div>
           <p class="view__hint">
             Tu nombre y tu clave son tuyos: aquí los cambias sin pedirle nada a nadie.
           </p>
@@ -1075,24 +1085,25 @@
 
     <script src="/admin/vendor/leaflet/leaflet.js" defer></script>
     <script src="/admin/startup-recovery.js?v=1" defer></script>
-    <script src="/admin/offline-storage.js?v=1" defer></script>
-    <script src="/admin/offline.js?v=12" defer></script>
+    <script src="/admin/offline-storage.js?v=3" defer></script>
+    <script src="/admin/sync-engine.js?v=3" defer></script>
+    <script src="/admin/offline.js?v=30" defer></script>
     <!-- Tiempo real: un solo SSE por pestaña (va después de offline.js, que envuelve fetch). -->
     <script src="/admin/realtime.js?v=1" defer></script>
-    <script src="/admin/offline-ui.js?v=4" defer></script>
+    <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-      <script src="/admin/app.js?v=rol-drawer-150" defer></script>
+      <script src="/admin/app.js?v=sync-engine-158" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
-    <script src="/admin/proofreading.js?v=7" defer></script>
-    <script src="/admin/deepseek-settings.js?v=2" defer></script>
-    <script src="/admin/chat-sharing-settings.js?v=2" defer></script>
+    <script src="/admin/proofreading.js?v=10" defer></script>
+    <script src="/admin/deepseek-settings.js?v=3" defer></script>
+    <script src="/admin/chat-sharing-settings.js?v=3" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
-    <script src="/admin/store.js?v=stock-honesto-2" defer></script>
+    <script src="/admin/store.js?v=cloud-first-3" defer></script>
     <script src="/admin/recogidas.js?v=1" type="module"></script>
-    <script src="/admin/supervisor.js?v=3" type="module"></script>
+    <script src="/admin/supervisor.js?v=4" type="module"></script>
     <script src="/admin/pos.js?v=pedido-16" type="module"></script>
   </body>
 </html>

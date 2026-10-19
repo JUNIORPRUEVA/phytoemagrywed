@@ -36,8 +36,9 @@ export const AUDIT_ACTIONS = Object.freeze([
    * DINERO DEL PEDIDO: cobrar al cliente y rendir el efectivo del repartidor son
    * actos separados de la entrega y quedan en la traza con su importe.
    */
-  'order.payment_registered',
-  'order.courier_handover_registered',
+  'order.payment_registered',  'order.courier_handover_registered',
+  /* Operaciones offline que una persona da por resueltas tras revisarlas. */
+  'offline_operation_resolved',
   'sale.cancelled',
   'followup.created',
   'followup.completed',

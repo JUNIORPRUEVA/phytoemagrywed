@@ -353,7 +353,7 @@ export const contentConfig = {
       location: 'Ubicación (ciudad/país)',
       locationOptional: 'opcional',
       consent:
-        'Autorizo que Phytoemagry me contacte por WhatsApp o teléfono para enviarme información del producto.',
+        'Autorizo que FullTECH me contacte por WhatsApp o teléfono para enviarme información del producto.',
       submit: 'Quiero recibir información',
       privacyPrefix: 'He leído y acepto la',
       privacyLink: 'política de privacidad',
@@ -440,7 +440,7 @@ export const contentConfig = {
     contactTitle: 'Contacto',
     legalTitle: 'Legal',
     commerceTitle: 'Pago y entrega',
-    rights: `© ${new Date().getFullYear()} Phytoemagry. Todos los derechos reservados.`,
+    rights: `© ${new Date().getFullYear()} FullTECH. Todos los derechos reservados.`,
     /** Aviso obligatorio de producto (PENDIENTE: texto aprobado). */
     disclaimer: null,
   },
@@ -479,19 +479,19 @@ export const contentConfig = {
   /** -------------------------------------------------- MENSAJES DE WHATSAPP */
   whatsapp: {
     /** Mensaje del CTA general (hero, footer, barra móvil). */
-    general: 'Hola, estoy interesado/a en Phytoemagry.',
+    general: 'Hola, soy cliente de FullTECH y estoy interesado/a en Phytoemagry.',
     /**
      * Mensaje de TODOS los botones de pedido (cada tarjeta del carrusel y el
      * resumen): es texto + los datos del pedido que añade `lib/whatsapp.js`.
      */
-    checkout: 'Hola, quiero confirmar este pedido de Phytoemagry.',
+    checkout: 'Hola, quiero confirmar mi pedido de Phytoemagry con FullTECH.',
     /**
      * Mensaje cuando alguien deja sus datos en el formulario: así el contacto
      * llega al WhatsApp del negocio con nombre, teléfono y ubicación.
      */
-    lead: 'Hola, quiero recibir información sobre Phytoemagry.',
+    lead: 'Hola, quiero recibir información sobre Phytoemagry de FullTECH.',
     /** Mensaje del CTA de comunidad (los grupos NO son un canal de pedidos). */
-    community: 'Hola, quiero unirme a la comunidad de Phytoemagry.',
+    community: 'Hola, quiero unirme a la comunidad de FullTECH.',
     labels: {
       product: 'Producto',
       presentation: 'Frasco',

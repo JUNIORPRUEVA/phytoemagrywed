@@ -6,6 +6,7 @@ import path from 'node:path';
 import { startCrmServer } from '../server/crm-server.mjs';
 
 let app, dir, cookie, conversation, first;
+let now = new Date();
 const phone = '18095557891';
 const sent = [];
 const request = (route, method = 'GET', body, session = cookie) => fetch(app.url + route, {
@@ -15,12 +16,12 @@ const request = (route, method = 'GET', body, session = cookie) => fetch(app.url
 const json = async (route) => (await request(route)).json();
 const inbound = (id) => app.customers.recordInbound({ waMessage: {
   waMessageId: id, from: phone, profileName: 'Cliente finalizable', body: 'Una consulta', type: 'text',
-  receivedAt: new Date().toISOString(),
+  receivedAt: now.toISOString(),
 } });
 beforeAll(async () => {
   dir = mkdtempSync(path.join(os.tmpdir(), 'conversation-resolution-'));
   app = await startCrmServer({ host: '127.0.0.1', port: 0, dataFile: path.join(dir, 'crm.sqlite'),
-    token: 'resolution-test', quiet: true, schedulerEnabled: false,
+    token: 'resolution-test', quiet: true, schedulerEnabled: false, clock: () => now,
     whatsapp: { enabled: true, markAsRead: async () => ({ ok: true }), sendText: async (to, body) => { sent.push({ to, body }); return { ok: true, messageId: 'wamid.out-resolution' }; } } });
   const login = await fetch(app.url + '/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: 'resolution-test' }) });
   cookie = login.headers.get('set-cookie').split(';')[0];
@@ -65,7 +66,7 @@ describe('finalizar una conversación sin bloquear el contacto', () => {
      * Otra clienta escribe DESPUÉS de la conversación archivada. Mientras la
      * finalizada siga archivada, la más reciente es la de esta otra clienta.
      */
-    const base = Date.now();
+    const base = now.getTime();
     const otra = await app.customers.recordInbound({ waMessage: {
       waMessageId: 'wamid.resolve-otra', from: '18095557892', profileName: 'Otra clienta', body: 'Buenas',
       type: 'text', receivedAt: new Date(base).toISOString(),
@@ -78,6 +79,7 @@ describe('finalizar una conversación sin bloquear el contacto', () => {
       waMessageId: 'wamid.resolve-new', from: phone, profileName: 'Cliente finalizable', body: 'Otra consulta',
       type: 'text', receivedAt: new Date(base + 5000).toISOString(),
     } });
+    now = new Date(base + 5000);
     const pending = await json('/api/admin/conversations?filter=pendientes');
     expect(pending.conversations).toHaveLength(2); expect(pending.counts.pendientes).toBe(2);
     expect(pending.conversations[0].id).toBe(conversation.id);

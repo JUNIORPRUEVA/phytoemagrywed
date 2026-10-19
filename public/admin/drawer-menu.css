@@ -403,6 +403,39 @@
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
+/*
+ * INSTALAR LA APP (app.js): solo sale cuando el panel se abre en el navegador y
+ * el sistema ofrece instalarlo. Mismo tamaño que la salida, sin texto: discreto.
+ */
+#drawer .drawer__install {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+#drawer .drawer__install[hidden] {
+  display: none;
+}
+
+#drawer .drawer__install .drawer__icon .svg {
+  width: 18px;
+  height: 18px;
+}
+
+#drawer .drawer__install:hover,
+#drawer .drawer__install:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 13%, transparent);
+}
+
 @media (max-width: 979px) {
   #drawer {
     width: min(88vw, 352px);

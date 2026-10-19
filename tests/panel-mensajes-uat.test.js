@@ -231,7 +231,7 @@ describe('mensajes ya enviados: deshacer, quitar del CRM y corregir', () => {
   it('deshacer borra DE VERDAD: el mensaje no llega a salir', async () => {
     await abrirConversacion();
     /*
-     * La ventana se acorta solo para la prueba (en el panel son 8 s): es la misma
+     * La ventana se acorta solo para la prueba (en el panel son 5 s): es la misma
      * máquina, medida en milisegundos para no hacer esperar a la suite.
      */
     dom.window.__PHYTO_UNDO_MS = 1200;

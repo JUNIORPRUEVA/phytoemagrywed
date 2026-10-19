@@ -117,6 +117,15 @@ async function ensureCrm(port) {
       ...process.env,
       PHYTO_CRM_PORT: String(port),
       PHYTO_CRM_TOKEN: process.env.PHYTO_CRM_TOKEN || DEV_CRM_TOKEN,
+      /*
+       * EL PANEL SE SIRVE SIEMPRE DESDE `public/admin`.
+       *
+       * Sin esto, el CRM local usaba `dist/admin` (una compilación vieja) y el
+       * panel del teléfono/escritorio seguía mostrando el código de días atrás:
+       * los arreglos se publicaban pero en local no llegaban nunca, y la cola
+       * se quedaba con cambios que ya estaban corregidos.
+       */
+      PHYTO_ADMIN_DIR: path.join(ROOT, 'public', 'admin'),
     },
   });
   child.on('exit', (code, signal) => {
