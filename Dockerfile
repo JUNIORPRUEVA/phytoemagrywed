@@ -198,6 +198,18 @@ http {
         # nginx aborte con `duplicate location` y el contenedor no arranca.
         location = /panel { return 302 /admin/; }
 
+        # PWA de clientes: alcance e identidad separados de /admin/.
+        location = /store/manifest.webmanifest {
+            default_type application/manifest+json;
+            add_header Cache-Control "no-cache" always;
+            try_files $uri =404;
+        }
+        location = /store/sw.js {
+            add_header Cache-Control "no-cache" always;
+            add_header Service-Worker-Allowed "/store/" always;
+            try_files $uri =404;
+        }
+
         location ^~ /admin/ {
             try_files $uri $uri/ /admin/index.html;
             expires -1;

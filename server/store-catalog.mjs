@@ -33,6 +33,16 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, order_id TEXT,
       created_at TEXT NOT NULL, operation_key TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)`);
   await sql.query('CREATE TABLE IF NOT EXISTS fulltech_categories_v1 (id TEXT PRIMARY KEY, category_key TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)');
+  // Store publication is deliberately separate from the operational catalog.
+  // Existing and newly created rows start hidden until an administrator opts in.
+  await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_publication_v1 (
+    product_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'unpublished',
+    featured INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL)`);
+  await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_publication_status_order_idx ON fulltech_store_publication_v1(status, sort_order, product_id)');
+  await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_search_terms_v1 (
+    product_id TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(product_id,token))`);
+  await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_search_token_product_idx ON fulltech_store_search_terms_v1(token,product_id)');
   for (const p of productConfig.variants) {
     const doc = { id: p.id, sku: `PHYTO-${p.capsules}`, kind: 'product', name: `Phytoemagry · ${p.capsules} cápsulas`,
       category: 'Phytoemagry', description: '', price_cents: p.price * 100, cost_cents: 0,
@@ -40,9 +50,85 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       capsules: p.capsules, legacy: true, completeBottle: !!p.completeBottle, unit: 'unidad', created_at: clock().toISOString() };
     await sql.query('INSERT INTO fulltech_catalog_v1(id,sku,doc) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING', [p.id, doc.sku, JSON.stringify(doc)]);
   }
+  for (const row of (await sql.query('SELECT id FROM fulltech_catalog_v1')).rows) {
+    await sql.query("INSERT INTO fulltech_store_publication_v1(product_id,status,featured,sort_order,updated_at) VALUES($1,'unpublished',0,0,$2) ON CONFLICT(product_id) DO NOTHING", [row.id, clock().toISOString()]);
+  }
   let tail = Promise.resolve();
   const listeners = new Set();
-  function changed() { for (const listener of listeners) { try { listener(); } catch {} } }
+  let publicCache = null;
+  function changed() { publicCache = null; for (const listener of listeners) { try { listener(); } catch {} } }
+  async function setPublication(id, input) {
+    const status = input?.status;
+    if (!['published', 'unpublished'].includes(status)) throw fail('invalid_publication_status', 'Elige si el artículo se publica o se mantiene oculto.');
+    const current = await one(id);
+    if (!current) throw fail('not_found', 'El artículo ya no existe.', 404);
+    if (status === 'published' && !current.active) throw fail('inactive_product', 'Activa el artículo en el catálogo antes de publicarlo.', 409);
+    const featured = input?.featured === true;
+    const rawOrder = input?.sort_order ?? 0;
+    if (!Number.isSafeInteger(Number(rawOrder)) || Number(rawOrder) < 0 || Number(rawOrder) > 1000000) throw fail('invalid_sort_order', 'El orden debe ser un número válido.');
+    await sql.query('INSERT INTO fulltech_store_publication_v1(product_id,status,featured,sort_order,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(product_id) DO UPDATE SET status=excluded.status,featured=excluded.featured,sort_order=excluded.sort_order,updated_at=excluded.updated_at', [id, status, featured ? 1 : 0, Number(rawOrder), clock().toISOString()]);
+    changed();
+    return { product_id: id, status, featured, sort_order: Number(rawOrder) };
+  }
+  async function publicationStates() {
+    const rows = (await sql.query('SELECT product_id,status,featured,sort_order,updated_at FROM fulltech_store_publication_v1')).rows;
+    return Object.fromEntries(rows.map(row => [row.product_id, { status: row.status, featured: Boolean(Number(row.featured)), sort_order: Number(row.sort_order), updated_at: row.updated_at }]));
+  }
+  async function publicProducts() {
+    if (publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
+    const pubs = (await sql.query("SELECT product_id,featured,sort_order FROM fulltech_store_publication_v1 WHERE status='published' ORDER BY sort_order,product_id")).rows;
+    if (!pubs.length) { publicCache = { items: [], expiresAt: Date.now() + 5000 }; return []; }
+    const all = await list({ includeInactive: false });
+    const byId = new Map(all.map(p => [p.id, p]));
+    const items = pubs.flatMap(pub => {
+      const p = byId.get(pub.product_id);
+      if (!p?.active) return [];
+      let availability;
+      if (p.kind === 'service') availability = 'consult';
+      else if (p.track_stock === false || p.product_type === 'third_party') availability = 'by_order';
+      else if (p.quantity == null) availability = 'check';
+      else if (p.quantity <= 0) availability = 'out_of_stock';
+      else if (p.quantity <= 2) availability = 'low_stock';
+      else availability = 'available';
+      return [{
+        id: p.id, kind: p.kind === 'service' ? 'service' : 'product', name: p.store_public_name || p.name,
+        category: p.category || null, price: Number(p.price_cents) / 100, currency: 'DOP',
+        availability, shortDescription: p.store_short_description || '', description: p.store_public_description || '',
+        brand: p.store_brand || null,
+        imageUrl: p.image_url ? `/api/store/products/${encodeURIComponent(p.id)}/image` : null,
+        featured: Boolean(Number(pub.featured)), sortOrder: Number(pub.sort_order),
+      }];
+    });
+    publicCache = { items, expiresAt: Date.now() + 5000 };
+    return items;
+  }
+  async function searchPublicProducts(value) {
+    const terms = [...new Set(normalizeSearch(value).split(/[^a-z0-9]+/).filter(Boolean))].slice(0, 8);
+    if (!terms.length) return publicProducts();
+    let matches = null;
+    for (const term of terms) {
+      const rows = (await sql.query('SELECT product_id FROM fulltech_store_search_terms_v1 WHERE token LIKE $1', [`${term}%`])).rows;
+      const ids = new Set(rows.map(row => row.product_id));
+      matches = matches === null ? ids : new Set([...matches].filter(id => ids.has(id)));
+      if (!matches.size) return [];
+    }
+    return (await publicProducts()).filter(product => matches.has(product.id));
+  }
+  async function image(id) {
+    const stored=(await sql.query('SELECT mime,data FROM fulltech_product_images_v1 WHERE id=$1',[id])).rows[0];
+    if(stored)return stored;
+    const seed=productConfig.variants.find(p=>p.id===id);
+    if(!seed)return null;
+    const data=await readFile(new URL(`../public${seed.image}-320.webp`,import.meta.url));
+    return {mime:'image/webp',data:data.toString('base64')};
+  }
+  async function publicImage(id) {
+    const pub = (await sql.query("SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1", [id])).rows[0];
+    if (pub?.status !== 'published') return null;
+    const p = await one(id);
+    if (!p?.active) return null;
+    return image(id);
+  }
   let ordersTail = Promise.resolve();
   async function orderLock(fn) {
     const before=ordersTail;let release;ordersTail=new Promise(r=>{release=r;});await before;
@@ -64,6 +150,15 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     });
   }
   const decode = r => r ? { ...JSON.parse(r.doc), quantity: Number(r.quantity), version: Number(r.version) } : null;
+  const normalizeSearch = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+  async function indexProductSearch(q, product) {
+    const tokens = [...new Set(normalizeSearch(`${product.name} ${product.store_public_name || ''} ${product.sku} ${product.category || ''} ${product.description || ''} ${product.store_short_description || ''} ${product.store_public_description || ''} ${product.store_brand || ''}`).split(/[^a-z0-9]+/).filter(token => token.length > 0 && token.length <= 80))];
+    await q('DELETE FROM fulltech_store_search_terms_v1 WHERE product_id=$1', [product.id]);
+    for (const token of tokens) await q('INSERT INTO fulltech_store_search_terms_v1(product_id,token) VALUES($1,$2) ON CONFLICT(product_id,token) DO NOTHING', [product.id, token]);
+  }
+  if (Number((await sql.query('SELECT COUNT(*) AS count FROM fulltech_store_search_terms_v1')).rows[0]?.count || 0) === 0) {
+    for (const row of (await sql.query('SELECT id,doc FROM fulltech_catalog_v1')).rows) await indexProductSearch(sql.query, { ...JSON.parse(row.doc), id: row.id });
+  }
   const one = async (id, q = sql.query, lock = false) => decode((await q('SELECT * FROM fulltech_catalog_v1 WHERE id=$1'+(lock&&backend==='postgres'?' FOR UPDATE':''), [id])).rows[0]);
   const categoryKey=name=>name.trim().replace(/\s+/g,' ').toLocaleLowerCase('es');
   async function ensureCategory(q,name,imageUrl=null) {
@@ -171,6 +266,10 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       else if(input.category_id===undefined)category=await ensureCategory(q,input.category||'');
       const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind, product_type: productType,
         description: clean(input.description, 2000), category: category?.name||'',category_id:category?.id||null,unit: 'unidad',
+        store_public_name: clean(input.store_public_name ?? previous?.store_public_name ?? '', 160),
+        store_short_description: clean(input.store_short_description ?? previous?.store_short_description ?? '', 240),
+        store_public_description: clean(input.store_public_description ?? previous?.store_public_description ?? '', 2000),
+        store_brand: clean(input.store_brand ?? previous?.store_brand ?? '', 100),
         price_cents: money(input.price), cost_cents: previous?.legacy ? 0 : money(input.cost),
         track_stock: trackStock, active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
@@ -186,6 +285,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         await q('INSERT INTO fulltech_catalog_v1(id,sku,quantity,doc) VALUES($1,$2,$3,$4)', [p.id,sku,initial,JSON.stringify(p)]);
         if (initial) await movement(q,p,initial,0,initial,'INITIAL','Inventario inicial',actor,`initial:${p.id}`);
       }
+      await indexProductSearch(q, p);
       return one(p.id, q);
     });
   }
@@ -311,18 +411,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       return one(id, q);
     });
   }
-  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,
+  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,publicProducts,searchPublicProducts,publicImage,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),
-    image:async id=>{
-      const stored=(await sql.query('SELECT mime,data FROM fulltech_product_images_v1 WHERE id=$1',[id])).rows[0];
-      if(stored)return stored;
-      const seed=productConfig.variants.find(p=>p.id===id);
-      if(!seed)return null;
-      const data=await readFile(new URL(`../public${seed.image}-320.webp`,import.meta.url));
-      return {mime:'image/webp',data:data.toString('base64')};
-    },
+    image,
   };
 }
 

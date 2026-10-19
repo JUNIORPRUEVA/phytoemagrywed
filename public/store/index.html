@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es-DO">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f8fa" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="description" content="Explora el catálogo de FULLTECH Store." />
+    <link rel="manifest" href="/store/manifest.webmanifest" />
+    <link rel="icon" href="/store/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/store/icon-192.png" />
+    <link rel="stylesheet" href="/store/store.css" />
+    <title>FULLTECH Store</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="icon-button" id="menu-button" aria-label="Abrir menú" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+        </button>
+        <a class="wordmark" href="/store/" aria-label="FULLTECH Store, inicio"><span class="brand-mark">F</span><span>FULL<span>TECH</span><small>STORE</small></span></a>
+        <button class="icon-button cart-shortcut" data-route="cart" aria-label="Carrito, próximamente" title="Carrito · Próximamente">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>
+        </button>
+      </header>
+
+      <main id="main" tabindex="-1" aria-live="polite"></main>
+
+      <nav class="bottom-nav" id="bottom-nav" aria-label="Navegación principal">
+        <a href="/store/" class="nav-item active" data-route="home"><span class="nav-icon">⌂</span><span>Inicio</span></a>
+        <a href="/store/#/catalog" class="nav-item" data-route="catalog"><span class="nav-icon">▦</span><span>Catálogo</span></a>
+        <a href="/store/#/request" class="nav-item" data-route="request"><span class="nav-icon nav-plus">＋</span><span>Solicitar</span></a>
+        <a href="/store/#/orders" class="nav-item" data-route="orders"><span class="nav-icon">≡</span><span>Pedidos</span></a>
+        <a href="/store/#/account" class="nav-item" data-route="account"><span class="nav-icon">◯</span><span>Cuenta</span></a>
+      </nav>
+    </div>
+
+    <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+    <aside class="drawer" id="drawer" aria-label="Menú FULLTECH" aria-hidden="true" inert>
+      <div class="drawer-head"><a class="wordmark" href="/store/"><span class="brand-mark">F</span><span>FULL<span>TECH</span><small>STORE</small></span></a><button class="icon-button" id="close-drawer" aria-label="Cerrar menú">×</button></div>
+      <p class="drawer-label">EXPLORA</p>
+      <a href="/store/" data-route="home">Inicio</a>
+      <a href="/store/#/catalog" data-route="catalog">Catálogo</a>
+      <a href="/store/#/catalog?kind=service" data-route="catalog?kind=service">Servicios</a>
+      <a href="/store/#/request" data-route="request">Lo conseguimos por ti</a>
+      <div class="drawer-divider"></div>
+      <p class="drawer-label">TU ESPACIO</p>
+      <a href="/store/#/orders" data-route="orders">Mis pedidos</a>
+      <a href="/store/#/account" data-route="account">Mi cuenta</a>
+      <div class="drawer-bottom"><span class="status-dot"></span> Tu tienda FULLTECH</div>
+    </aside>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/store/store.js"></script>
+  </body>
+</html>

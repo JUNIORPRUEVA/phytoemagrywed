@@ -80,6 +80,10 @@
 .store-detail-facts dd{margin:0;font-size:.95rem;font-weight:600;overflow-wrap:anywhere}
 .store-detail-note{padding:14px 16px;border-left:3px solid #629ce8;font-size:.85rem;line-height:1.6;color:var(--text-secondary,#53647d)}
 .store-detail-description{grid-column:1/-1;border-top:1px solid var(--border,#dbe2ec);padding-top:24px}
+.store-publication{grid-column:1/-1;border-top:1px solid var(--border,#dbe2ec);padding-top:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.store-publication h3{width:100%;margin:0;font-size:1rem}
+.store-publication p{margin:0;flex:1 1 300px}
+.store-publication small{flex-basis:100%}
 .store-detail-description h3{font-size:1rem;margin-top:0}
 .store-detail-description p{white-space:pre-wrap;color:var(--text-secondary,#53647d);line-height:1.8;max-width:80ch;overflow-wrap:anywhere}
 .store-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}

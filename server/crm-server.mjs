@@ -109,6 +109,7 @@ import {
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
+import { handleStorePublicRoute } from './store-public-routes.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
@@ -5008,6 +5009,9 @@ async function handle(req, res, ctx) {
     json(res, 200, { ok: true, storage: store.kind, items: await store.count() });
     return;
   }
+
+  // Tienda pública: solo lectura y con una proyección separada del CRM.
+  if (await handleStorePublicRoute({ req, res, route, url, ctx, json })) return;
 
   // Confirmación limitada a un envío: no requiere la cookie de una app cerrada.
   if (route === '/api/push/receipts' && req.method === 'POST') {
