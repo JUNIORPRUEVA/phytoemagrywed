@@ -148,7 +148,7 @@ describe('panel: app instalable (PWA)', () => {
 
   it('el manifest y el service worker están listos para instalar', async () => {
     const manifest = await json(await call('/admin/manifest.json'));
-    expect(manifest).toMatchObject({ name: 'CRM Phytoemagry', start_url: '/admin/', display: 'standalone' });
+    expect(manifest).toMatchObject({ name: 'FullTECH', start_url: '/admin/', display: 'standalone' });
     expect(manifest.icons.map((icon) => icon.sizes)).toEqual(
       expect.arrayContaining(['192x192', '512x512']),
     );

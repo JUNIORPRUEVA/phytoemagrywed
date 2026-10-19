@@ -165,8 +165,14 @@ describe('nada se envía solo', () => {
       'setInterval(deliveryPollTick, 8000)',
       'setInterval(sincroniaSilenciosaTick, 60000)',
       'setInterval(tick, 200)',
+      'setInterval(vaciarCola, 5000)',
       'setInterval(waPollTick, 8000)',
     ]);
+    const queueFrom = app.indexOf('const vaciarCola = () => {');
+    const queueFlush = app.slice(queueFrom, queueFrom + 520);
+    expect(queueFlush).toContain('readOutbox()');
+    expect(queueFlush).toContain('flushOutbox({ silent: true })');
+    expect(queueFlush).not.toContain('/messages');
     // La comprobación de versión: solo LEE el HTML del panel.
     const versionFrom = app.indexOf('function revisarVersionPanel');
     const versionBlock = app.slice(versionFrom, versionFrom + 1200);

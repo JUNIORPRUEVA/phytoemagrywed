@@ -129,7 +129,7 @@ export const siteConfig = {
     termsPath: '/terminos.html',
     /** Datos de la empresa. NINGUNO se inventa: los placeholders aparecen marcados como [PENDIENTE]. */
     company: {
-      legalName: 'FullTECH, SRL',
+      legalName: null,
       taxId: null,
       address: null,
       country: null,

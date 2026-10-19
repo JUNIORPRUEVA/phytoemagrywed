@@ -209,7 +209,7 @@
     document.documentElement.dataset.theme = pintado;
     document.documentElement.style.colorScheme = pintado;
     document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', pintado);
-    window.FullTECHAppearance?.postMessage(pintado);
+    window.FulltechAppearance?.postMessage(pintado);
     if (guardar) {
       try {
         localStorage.setItem(TEMA_KEY, elegido);
@@ -11759,7 +11759,15 @@
         if (cleaned) templateValues[Number(index) + 1] = cleaned;
       }
       const sent = await sendWaMessage({ template: $('#wa-template')?.value || null, templateValues }, event.currentTarget);
-      if (sent) closeSheet();
+      if (sent) {
+        if (state.wa.draft === borrador) {
+          state.wa.draft = '';
+          const composer = $('#wa-text');
+          if (composer) composer.value = '';
+          adjustWaComposer();
+        }
+        closeSheet();
+      }
     });
   }
 
@@ -12369,12 +12377,9 @@
          * solo camino para «escribir» y «usar plantilla».
          */
         if (!canSendFreeText) {
-          const draft = waPersonalTemplateDraft(body);
-          if (!draft) {
-            openWaTemplateSheet();
-            return;
-          }
-          sendWaMessage({ template: draft.template.name, templateValues: draft.templateValues, body: draft.preview }, event.currentTarget);
+          // La persona debe revisar la plantilla y sus parámetros antes de
+          // enviarla. Escribir en el compositor nunca constituye confirmación.
+          openWaTemplateSheet();
           return;
         }
         sendWaMessage({ body }, event.currentTarget);
