@@ -111,8 +111,7 @@ ENV PORT=80 \
     PHYTO_CRM_PORT=8787 \
     PHYTO_CRM_HOST=127.0.0.1 \
     PHYTO_CRM_DATA=/data/phytoemagry.sqlite \
-    PHYTO_CRM_DATABASE_URL="" \
-    PHYTO_CRM_TOKEN=""
+    PHYTO_CRM_DATABASE_URL=""
 
 # Config de nginx, escrita aquí mismo: este Dockerfile no depende de ningún otro
 # archivo de configuración. (Para un servidor con nginx del sistema, el
