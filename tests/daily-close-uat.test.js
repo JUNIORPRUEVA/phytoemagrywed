@@ -18,7 +18,6 @@ describe('cierre diario del delivery', () => {
     expect(app).toContain("'AGENT', 'DELIVERY'");
     expect(app).toContain('18 * 60');
     expect(app).toContain('21 * 60');
-    expect(app).toContain('a las 9:00 p.m. queda automático');
     expect(app).toContain('deliveryCommissionForLine');
     expect(app).toContain('capsules === 5 ? 150 : capsules === 10 ? 200 : capsules === 60 ? 200 : capsules > 10 ? 250');
     expect(app).toContain('cashHeldByDelivery');
@@ -28,7 +27,8 @@ describe('cierre diario del delivery', () => {
     expect(app).toContain('Delivery cobrado');
     expect(app).toContain('Total que se gana');
     expect(app).toContain('No delivery');
-    expect(app).toContain('Hacer cierre ahora');
+    expect(app).toContain('Cierre actual');
+    expect(app).toContain('Hacer corte');
     expect(app).toContain('Todavía es temprano: el cierre manual se habilita desde las 6:00 p.m.');
     expect(app).toContain('function deliveryEarningsForUser');
     expect(app).toContain('profileDeliveryEarningsHtml');

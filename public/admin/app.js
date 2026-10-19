@@ -298,9 +298,6 @@
     closeHistoryRange: { from: null, to: null },
     // Cierre que se está mirando: `null` = el de hoy.
     closeDay: null,
-    // Cómo se mira el cierre: un DÍA (lo de siempre) o VARIOS días (el resumen).
-    closeScope: 'dia',
-    closeRange: { from: null, to: null },
     whatsapp: null,
     templates: [],
     stats: null,
@@ -2158,7 +2155,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div><button class="pos-swipe-close" data-billing-close type="button" aria-label="Cerrar facturación" title="Cerrar">${ICONS.close}</button>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -2175,7 +2172,32 @@
     }
     if (state.tab === 'ajustes') {
       const page = SETTINGS_PAGES.find((entry) => entry.key === settingsPage);
-      box.innerHTML = `<div class="wa-appbar settings-appbar"><button class="wa-appbar__back" ${page ? 'data-settings-back' : 'data-simple-back'} type="button" aria-label="${page ? 'Volver a Configuración' : 'Regresar'}">${ICONS.back}</button><div class="wa-appbar__title"><h2 class="settings-mobile-title" tabindex="-1">${escapeHtml(page?.title || 'Configuración')}</h2></div></div>`;
+      box.innerHTML = `<div class="wa-appbar settings-appbar"><button class="wa-appbar__back" ${page ? 'data-settings-back' : 'data-simple-back'} type="button" aria-label="${page ? 'Volver a Configuración' : 'Regresar'}">${ICONS.back}</button><div class="wa-appbar__title"><h2 class="settings-mobile-title" tabindex="-1">${escapeHtml(page?.title || 'Configuración')}</h2></div>${!page ? `<button class="settings-profile-trigger" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil">${ICONS.person}</button>` : ''}</div>`;
+      return;
+    }
+    if (state.tab === 'cierre' || state.tab === 'historial-cierres') {
+      const day = state.closeDay ?? todayISO();
+      const isTodayClose = state.tab === 'cierre' && day === todayISO();
+      const title = state.tab === 'historial-cierres'
+        ? 'Historial de cierres'
+        : isTodayClose
+          ? 'Cierre actual'
+          : `Cierre del ${fmtShortDay(day)}`;
+      const canManualClose = businessClockMinutes() >= 18 * 60;
+      const autoClosed = businessClockMinutes() >= 21 * 60;
+      const backButton = state.tab === 'cierre' && !isTodayClose
+        ? `<button class="simple-head__back" data-close-back type="button" aria-label="Volver al historial">${ICONS.back}</button>`
+        : `<button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>`;
+      const actions = state.tab === 'historial-cierres'
+        ? `<button class="simple-head__action close-history-filter-toggle" data-close-filter-toggle type="button" aria-label="Filtrar historial" aria-controls="close-history-filter" aria-expanded="false">${ICONS.filter}</button>`
+        : isTodayClose
+          ? `<button class="simple-head__action close-cut-action" data-daily-close-now type="button" ${canManualClose ? '' : 'disabled aria-disabled="true"'} title="${canManualClose ? (autoClosed ? 'Ver el corte final del día' : 'Calcular el corte de hoy') : 'Disponible desde las 6:00 p. m.'}"><span>${autoClosed ? 'Ver corte final' : 'Hacer corte'}</span></button>`
+          : '';
+      box.innerHTML = `<div class="simple-head simple-head--close">
+        ${backButton}
+        <strong>${escapeHtml(title)}</strong>
+        ${actions ? `<div class="simple-head__actions">${actions}</div>` : ''}
+      </div>`;
       return;
     }
     if (state.tab === 'hoy') {
@@ -2294,26 +2316,9 @@
       </div>`;
       return;
     }
-    /*
-     * EL CIERRE DIARIO Y SU HISTORIAL SON DOS CARAS DE LO MISMO. En la barra de
-     * arriba va el atajo para pasar de uno a otro sin dar la vuelta por el menú:
-     * desde el cierre de hoy al historial, y del historial al cierre de hoy.
-     */
-    const cierreAtajos = [];
-    if (state.tab === 'cierre' && canUseDailyClose()) {
-      cierreAtajos.push(
-        `<button class="simple-head__action" data-close-history-go type="button" aria-label="Ver el historial de cierres">${ICONS.calendar}<span>Historial</span></button>`,
-      );
-    }
-    if (state.tab === 'historial-cierres' && canUseDailyClose()) {
-      cierreAtajos.push(
-        `<button class="simple-head__action" data-close-today-go type="button" aria-label="Ver el cierre de hoy">${ICONS.checkCircle}<span>Cierre de hoy</span></button>`,
-      );
-    }
     box.innerHTML = `<div class="simple-head">
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
       <strong>${escapeHtml(currentViewTitle())}</strong>
-      ${cierreAtajos.length ? `<div class="simple-head__actions">${cierreAtajos.join('')}</div>` : ''}
     </div>`;
   }
 
@@ -7614,17 +7619,6 @@
     const box = $('#daily-close-view');
     if (!box) return;
     /*
-     * VARIOS DÍAS: la misma pantalla, pero con un solo cuadro que suma todo el
-     * tramo elegido (ventas, efectivo, transferencia, lo que se gana el delivery
-     * y el cuadre), el desglose por repartidor y la lista de cada día (que se
-     * puede abrir como siempre).
-     */
-    if (state.closeScope === 'rango') {
-      const { from, to } = closePeriodRange();
-      box.innerHTML = closeScopeChipsHtml() + closePeriodHtml(from, to);
-      return;
-    }
-    /*
      * EL CIERRE SE PUEDE MIRAR EN CUALQUIER DÍA. Desde el historial se abre el
      * cierre de un día pasado con la MISMA pantalla (`state.closeDay`); si es
      * hoy, la cabecera ofrece el cierre manual como siempre.
@@ -7636,32 +7630,8 @@
     const net = model.totals.cashHeldByDelivery - deliveryEarnings;
     const minutesNow = businessClockMinutes();
     const canManualClose = minutesNow >= 18 * 60;
-    const autoClosed = minutesNow >= 21 * 60;
     const deliveryRows = [...model.byDelivery.values()];
-    const scopeLabel = model.ownClose ? 'Tus entregas' : 'Todo el equipo';
-    const closeStatus = esHoy
-      ? autoClosed
-        ? 'cerrado automático'
-        : canManualClose
-          ? 'listo para cierre manual'
-          : 'vista previa'
-      : 'cierre ya hecho';
-    box.innerHTML = closeScopeChipsHtml() + `
-      <div class="daily-close__head">
-        <span>
-          <strong>${esHoy ? 'Cierre de hoy' : `Cierre del ${escapeHtml(fmtShortDay(day))}`}</strong>
-          <small>${escapeHtml(scopeLabel)} · ${escapeHtml(fmtDay(day))} · ${
-            esHoy ? 'desde las 6:00 p.m. puedes cerrarlo; a las 9:00 p.m. queda automático' : 'día ya cerrado'
-          } · ${escapeHtml(closeStatus)}</small>
-        </span>
-        ${
-          esHoy
-            ? `<button class="btn btn--primary btn--sm" data-daily-close-now type="button" ${canManualClose ? '' : 'disabled aria-disabled="true"'}>${
-                autoClosed ? 'Ver cierre final' : 'Hacer cierre ahora'
-              }</button>`
-            : '<button class="btn btn--ghost btn--sm" data-close-back type="button">Volver al historial</button>'
-        }
-      </div>
+    box.innerHTML = `
       <div class="daily-close__grid">
         <div><span>Ventas del día</span><strong>${model.orders.length}</strong><small>${money(model.totals.sales)}</small></div>
         <div><span>Efectivo en mano</span><strong>${money(model.totals.cashHeldByDelivery)}</strong><small>Lo tiene el delivery</small></div>
@@ -7670,9 +7640,9 @@
         <div><span>Descuentos</span><strong>${money(model.totals.discount)}</strong><small>Rebaja aplicada</small></div>
         <div><span>Cuadre</span><strong>${escapeHtml(net === 0 ? 'Listo' : net > 0 ? 'Entrega' : 'Recibe')}</strong><small>${escapeHtml(settlementLabel(net))}</small></div>
       </div>
-      <section class="daily-close__settlement">
+      <section class="daily-close__settlement" aria-label="Cuadre del día">
         <strong>${escapeHtml(settlementLabel(net))}</strong>
-        <small>Cuadre claro: efectivo en mano ${money(model.totals.cashHeldByDelivery)} menos ganancia del delivery ${money(deliveryEarnings)}.</small>
+        <small>Efectivo ${money(model.totals.cashHeldByDelivery)} · Ganancia del delivery ${money(deliveryEarnings)}</small>
       </section>
       <section class="daily-close__block daily-close__block--green">
         <h3>Ganancia del delivery</h3>
@@ -7682,8 +7652,9 @@
           <span><small>Total que se gana</small><strong>${money(deliveryEarnings)}</strong></span>
         </div>
       </section>
-      <section class="daily-close__block">
-        <h3>${model.ownClose ? 'Tu cuadre' : 'Por delivery'}</h3>
+      <details class="daily-close__details">
+        <summary>${model.ownClose ? 'Tu cuadre' : `Por delivery · ${deliveryRows.length}`}</summary>
+        <div class="daily-close__detail-body">
         ${
           deliveryRows.length
             ? deliveryRows
@@ -7698,9 +7669,11 @@
                 .join('')
             : '<p class="view__hint">No hay entregas con mensajero en este día.</p>'
         }
-      </section>
-      <section class="daily-close__block">
-        <h3>Ventas del día</h3>
+        </div>
+      </details>
+      <details class="daily-close__details">
+        <summary>Ventas del día · ${model.orders.length}</summary>
+        <div class="daily-close__detail-body">
         ${
           model.orders.length
             ? model.orders
@@ -7715,7 +7688,8 @@
                 .join('')
             : '<p class="view__hint">Todavía no hay ventas entregadas hoy.</p>'
         }
-      </section>`;
+        </div>
+      </details>`;
   }
 
   /*
@@ -7779,14 +7753,7 @@
     return closeRangeData(from, to);
   }
 
-  /**
-   * LOS NÚMEROS DE UN TRAMO DE DÍAS.
-   *
-   * Los usan las dos pantallas que miran varios días: el historial de cierres y
-   * el resumen de «Cierre diario». Se suman de los MISMOS modelos que el cierre de
-   * un día (`dailyCloseModel`), así que no hay dos verdades: lo que dice el resumen
-   * es exactamente lo que dicen los días, sumado.
-   */
+  /** LOS NÚMEROS DE UN TRAMO: el historial suma los mismos modelos diarios. */
   function closeRangeData(from, to) {
     const conVentas = closeHistoryDaysWithSales(from, to);
     const cierres = closeHistoryDays(from, to)
@@ -7853,21 +7820,12 @@
   function closeHistoryRowHtml(day, model) {
     const ganancia = model.totals.deliveryFee + model.totals.commissions;
     const cuadre = model.totals.cashHeldByDelivery - ganancia;
-    return `<article class="close-history" data-close-history-day="${escapeHtml(day)}">
-        <div class="close-history__top">
-          <div>
-            <p class="close-history__day">${escapeHtml(fmtDay(day))}</p>
-            <span class="close-history__meta">${model.orders.length} venta${model.orders.length === 1 ? '' : 's'} · efectivo ${money(
-              model.totals.cash,
-            )} · transferencia ${money(model.totals.transfer)}</span>
-          </div>
-          <strong class="close-history__total">${money(model.totals.sales)}</strong>
-        </div>
-        <div class="close-history__foot">
-          <span>El delivery se gana ${money(ganancia)}</span>
-          <span>${escapeHtml(settlementLabel(cuadre))}</span>
-        </div>
-      </article>`;
+    return `<button class="close-history" data-close-history-day="${escapeHtml(day)}" type="button" aria-label="Ver cierre del ${escapeHtml(fmtDay(day))}">
+      <span class="close-history__day">${escapeHtml(fmtDay(day))}</span>
+      <span class="close-history__total">${money(model.totals.sales)}</span>
+      <span class="close-history__meta">${model.orders.length} venta${model.orders.length === 1 ? '' : 's'} · ${escapeHtml(settlementLabel(cuadre))}</span>
+      <span class="close-history__open" aria-hidden="true">›</span>
+    </button>`;
   }
 
   function renderCloseHistory() {
@@ -7885,25 +7843,8 @@
       chip.setAttribute('aria-pressed', String(chip.dataset.closeHistoryPeriod === state.closeHistoryPeriod)),
     );
     const { from, to, cierres, total } = closeHistoryData();
-    const scopeLabel = hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas';
     box.innerHTML = `
-      <p class="close-history__note" id="close-history-note">Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(
-        fmtShortDay(to),
-      )} · ${escapeHtml(scopeLabel)}</p>
-      <div class="card">
-        <p class="card__title">En el intervalo</p>
-        <dl class="facts">
-          <div class="fact"><dt>Días con cierre</dt><dd>${total.days}</dd></div>
-          <div class="fact"><dt>Ventas entregadas</dt><dd>${total.orders}</dd></div>
-          <div class="fact"><dt>Total vendido</dt><dd>${money(total.sales)}</dd></div>
-          <div class="fact"><dt>Efectivo en mano (del delivery)</dt><dd>${money(total.cashHeldByDelivery)}</dd></div>
-          <div class="fact"><dt>Transferencia</dt><dd>${money(total.transfer)}</dd></div>
-          <div class="fact"><dt>Ganancia del delivery</dt><dd>${money(total.deliveryEarnings)}</dd></div>
-          <div class="fact"><dt>Descuentos</dt><dd>${money(total.discount)}</dd></div>
-          <div class="fact"><dt>Sin delivery</dt><dd>${total.noDelivery}</dd></div>
-          <div class="fact"><dt>Cuadre del intervalo</dt><dd>${escapeHtml(settlementLabel(total.net))}</dd></div>
-        </dl>
-      </div>
+      <p class="close-history__note" id="close-history-note">${total.days} cierre${total.days === 1 ? '' : 's'} · ${total.orders} venta${total.orders === 1 ? '' : 's'} · ${money(total.sales)} · Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(fmtShortDay(to))} · ${hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas'}</p>
       ${
         cierres.length
           ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
@@ -7920,119 +7861,9 @@
    * El resumen se pidió expresamente: «si elijo dos o más, quiero un resumen de
    * todo eso para saber exactamente cómo va todo».
    */
-  function closeScopeChipsHtml() {
-    const enTramo = state.closeScope === 'rango';
-    return `<div class="chips close-scope" id="close-scope">
-      <button class="chip" data-close-scope="dia" type="button" aria-pressed="${enTramo ? 'false' : 'true'}">Un día</button>
-      <button class="chip" data-close-scope="rango" type="button" aria-pressed="${enTramo ? 'true' : 'false'}">Varios días</button>
-      <button class="chip" data-close-scope="historial" type="button" aria-pressed="false">Historial</button>
-    </div>`;
-  }
-
-  /** El tramo de días del cierre (o los últimos 7 días si todavía no se eligió). */
-  const closePeriodRange = () => {
-    const rango = state.closeRange ?? {};
-    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.from ?? '')) ? String(rango.from) : null;
-    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.to ?? '')) ? String(rango.to) : null;
-    if (!desde || !hasta) return { from: addDaysISO(-6), to: todayISO() };
-    return desde <= hasta ? { from: desde, to: hasta } : { from: hasta, to: desde };
-  };
-
-  /** RESUMEN DE VARIOS DÍAS: un solo cuadro con todo el tramo. */
-  function closePeriodHtml(from, to) {
-    const { cierres, total, byDelivery } = closeRangeData(from, to);
-    const scopeLabel = hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas';
-    const planificados = closeHistoryDays(from, to).length;
-    const repartidores = [...byDelivery.values()].sort((a, b) => b.total - a.total);
-    return `
-      <div class="daily-close__head">
-        <span>
-          <strong>Resumen de varios días</strong>
-          <small>${escapeHtml(scopeLabel)} · del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(
-            fmtShortDay(to),
-          )} · ${planificados} día${planificados === 1 ? '' : 's'} mirado${planificados === 1 ? '' : 's'} · ${total.days} con cierre</small>
-        </span>
-        <button class="btn btn--ghost btn--sm" data-close-period-pick type="button">Cambiar días</button>
-      </div>
-      <div class="daily-close__grid">
-        <div><span>Ventas entregadas</span><strong>${total.orders}</strong><small>${total.days} día${
-          total.days === 1 ? '' : 's'
-        } con cierre</small></div>
-        <div><span>Total vendido</span><strong>${money(total.sales)}</strong><small>Todo lo entregado</small></div>
-        <div><span>Efectivo en mano</span><strong>${money(total.cashHeldByDelivery)}</strong><small>Lo tiene el delivery</small></div>
-        <div><span>Transferencia</span><strong>${money(total.transfer)}</strong><small>Dinero de la empresa</small></div>
-        <div><span>Descuentos</span><strong>${money(total.discount)}</strong><small>Rebaja aplicada</small></div>
-        <div><span>Sin delivery</span><strong>${total.noDelivery}</strong><small>Sin mensajero asignado</small></div>
-      </div>
-      <section class="daily-close__settlement">
-        <strong>${escapeHtml(settlementLabel(total.net))}</strong>
-        <small>Cuadre del tramo: efectivo en mano ${money(total.cashHeldByDelivery)} menos ganancia del delivery ${money(
-          total.deliveryEarnings,
-        )}.</small>
-      </section>
-      <section class="daily-close__block daily-close__block--green">
-        <h3>Ganancia del delivery</h3>
-        <div class="daily-close__totals">
-          <span><small>Delivery cobrado</small><strong>${money(total.deliveryFee)}</strong></span>
-          <span><small>Comisión por frascos</small><strong>${money(total.commissions)}</strong></span>
-          <span><small>Total que se gana</small><strong>${money(total.deliveryEarnings)}</strong></span>
-        </div>
-      </section>
-      <section class="daily-close__block">
-        <h3>Por delivery</h3>
-        ${
-          repartidores.length
-            ? repartidores
-                .map((row) => {
-                  const gana = row.deliveryFee + row.commissions;
-                  return `<article class="daily-close__delivery">
-                    <strong>${escapeHtml(row.name)}</strong>
-                    <span>${row.orders} entrega${row.orders === 1 ? '' : 's'} · efectivo ${money(row.cash)} · transferencia ${money(
-                      row.transfer,
-                    )}</span>
-                    <small>Ganancia ${money(gana)} · ${escapeHtml(settlementLabel(row.cash - gana))}</small>
-                  </article>`;
-                })
-                .join('')
-            : '<p class="view__hint">No hay entregas con mensajero en estos días.</p>'
-        }
-      </section>
-      <section class="daily-close__block">
-        <h3>Por día</h3>
-        ${
-          cierres.length
-            ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
-            : '<p class="view__hint">No hay ventas entregadas en estos días.</p>'
-        }
-      </section>`;
-  }
-
-  function openClosePeriodRangeSheet() {
-    const rango = closePeriodRange();
-    openRangeSheet({
-      title: 'Varios días',
-      hint: 'Elige <strong>desde</strong> y <strong>hasta</strong>: el resumen suma las ventas entregadas de esos días (los dos incluidos). Si eliges el mismo día, se abre el cierre de ese día.',
-      from: rango.from,
-      to: rango.to,
-      prefix: 'close-period',
-      onApply: (elegido) => {
-        if (elegido.from === elegido.to) {
-          state.closeScope = 'dia';
-          state.closeDay = elegido.from === todayISO() ? null : elegido.from;
-        } else {
-          state.closeScope = 'rango';
-          state.closeRange = elegido;
-          state.closeDay = null;
-        }
-        renderDailyClose();
-      },
-    });
-  }
-
   /** Abre el cierre de un día concreto (la MISMA pantalla que el cierre de hoy). */
   function openCloseHistoryDay(day) {
     if (!day) return;
-    state.closeScope = 'dia';
     state.closeDay = day === todayISO() ? null : day;
     setTab('cierre');
     renderDailyClose();
@@ -8262,6 +8093,7 @@
     { key: 'datos', title: 'Datos del negocio', detail: 'Registros, clientes y sincronización', icon: 'inventory', group: 'Información y datos', admin: true, cards: ['config-datos'] },
     { key: 'exportar', title: 'Exportar datos', detail: 'Descargar contactos y pedidos', icon: 'doc', group: 'Información y datos', admin: true, cards: ['config-exportar'] },
   ];
+  const SETTINGS_DATA_KEYS = new Set(['datos', 'metricas', 'auditoria', 'exportar', 'multimedia']);
   let settingsPage = '';
   let permissionBusy = '';
   let permissionFeedback = '';
@@ -8313,23 +8145,18 @@
       if (node) node.hidden = !selected?.cards.includes(id);
     }
     window.dispatchEvent(new Event('fulltech:sharing-page'));
-    $('#logout').hidden = Boolean(selected);
-    $('#build-info').hidden = Boolean(selected);
-    const user = state.auth?.user || {};
-    const name = user.display_name || user.username || 'Mi perfil';
-    $('#settings-name').textContent = name;
-    $('#settings-avatar').textContent = name === 'Mi perfil' ? 'P' : name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-    const pages = SETTINGS_PAGES.filter((page) => !page.parent && (!page.admin || isAdmin()));
-    $('#settings-menu').innerHTML = [...new Set(pages.map((page) => page.group))].map((group) => `
-      <section class="settings-group" aria-label="${escapeHtml(group)}">
-        <h3>${escapeHtml(group)}</h3>
-        <ul>${pages.filter((page) => page.group === group).map((page) => `
+    $('#logout').hidden = true;
+    $('#build-info').hidden = true;
+    const pages = SETTINGS_PAGES.filter((page) => !page.parent && !SETTINGS_DATA_KEYS.has(page.key) && (!page.admin || isAdmin()));
+    $('#settings-menu').innerHTML = `
+      <section class="settings-group" aria-label="Opciones de configuración">
+        <ul>${pages.map((page) => `
           <li><a class="settings-row" href="#config/${page.key}" data-settings-open="${page.key}">
             <span class="settings-row__icon" aria-hidden="true">${ICONS[page.icon] || ICONS.gear}</span>
             <span class="settings-row__copy"><strong>${escapeHtml(page.title)}</strong><small>${escapeHtml(page.detail)}</small></span>
             <span class="settings-chevron" aria-hidden="true">›</span>
           </a></li>`).join('')}</ul>
-      </section>`).join('');
+      </section>`;
     renderSettingsPermissions();
   }
 
@@ -21293,7 +21120,7 @@
     recogidas: 'Recogidas en tiendas',
     tiendas: 'Tiendas proveedoras',
     reportes: 'Reportes',
-    cierre: 'Cierre diario',
+    cierre: 'Cierre actual',
     'historial-cierres': 'Historial de cierres',
     seguimientos: 'Seguimientos',
     mensajes: 'Plantillas',
@@ -21303,6 +21130,7 @@
   };
 
   function setTab(tab, options = {}) {
+    if (tab === 'catalogo' && state.tab !== 'catalogo') window.__billingReturnTab = state.tab;
     if (
       ((tab === 'usuarios' || tab === 'mensajes') && !isAdmin()) ||
       (tab === 'reportes' && !hasPermission('reports.profit.view')) ||
@@ -21612,7 +21440,11 @@
       }
     });
 
-    $$('[data-tab]').forEach((button) => button.addEventListener('click', () => setTab(button.dataset.tab)));
+    $$('[data-tab]').forEach((button) => button.addEventListener('click', () => {
+      if (button.dataset.closeView === 'actual') state.closeDay = null;
+      if (button.dataset.closeView === 'history') state.closeDay = null;
+      setTab(button.dataset.tab);
+    }));
 
     /* «Compartir app»: manda el enlace del panel (sin la clave) a otra persona. */
     $('#drawer-share')?.addEventListener('click', () => {
@@ -21625,6 +21457,8 @@
       closeDrawer();
       shareStoreWeb();
     });
+
+    $('#settings-offline-data')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('fulltech:offline-open')));
 
     $('#search').addEventListener('input', (event) => {
       state.q = event.target.value.trim();
@@ -21760,6 +21594,11 @@
       msgPressFrom = null;
     };
     document.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'touch' && window.matchMedia('(max-width: 700px)').matches && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) {
+        window.__billingSwipeStart = event.clientX >= window.innerWidth - 34
+          ? { x: event.clientX, y: event.clientY }
+          : null;
+      }
       if (event.button !== 0) return;
       if (event.target.closest?.('[data-media-view],[data-audio-play],[data-audio-seek],[data-undo],[data-media-retry]')) return;
       const burbuja = event.target.closest?.('#thread [data-message]');
@@ -21771,6 +21610,14 @@
         msgPressCancel();
         if (id) openMessageActionsMenu(id);
       }, 480);
+    });
+    document.addEventListener('pointerup', (event) => {
+      const start = window.__billingSwipeStart;
+      window.__billingSwipeStart = null;
+      if (!start || state.tab === 'catalogo') return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (dx < -78 && Math.abs(dy) < 64 && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) setTab('catalogo');
     });
     document.addEventListener('pointermove', (event) => {
       if (!msgPressFrom) return;
@@ -21788,6 +21635,7 @@
     });
 
     document.addEventListener('click', (event) => {
+      if (event.target.closest('[data-billing-close]')) { const back = window.__billingReturnTab; window.__billingReturnTab = null; setTab(back && back !== 'catalogo' ? back : 'hoy'); return; }
       const settingsLink = event.target.closest('[data-settings-open]');
       const resolution = event.target.closest('[data-conversation-resolution]');
       if (resolution) {
@@ -22006,7 +21854,7 @@
         return;
       }
       if (event.target.closest('[data-dashboard-profile]')) {
-        state.profileReturnToSettings = Boolean(event.target.closest('#settings-home'));
+        state.profileReturnToSettings = state.tab === 'ajustes';
         setTab('perfil');
         return;
       }
@@ -22346,16 +22194,34 @@
         load({ keepTab: true }).catch(() => {});
         return;
       }
+      const closeHistoryFilter = $('#close-history-filter');
+      if (closeHistoryFilter?.classList.contains('is-open') && !event.target.closest('#close-history-filter, [data-close-filter-toggle]')) {
+        closeHistoryFilter.classList.remove('is-open');
+        $('[data-close-filter-toggle]')?.setAttribute('aria-expanded', 'false');
+      }
+      if (event.target.closest('[data-close-filter-toggle]')) {
+        const abierto = closeHistoryFilter?.classList.toggle('is-open') ?? false;
+        event.target.closest('[data-close-filter-toggle]').setAttribute('aria-expanded', String(abierto));
+        return;
+      }
+      if (event.target.closest('[data-close-filter-close]')) {
+        closeHistoryFilter?.classList.remove('is-open');
+        $('[data-close-filter-toggle]')?.setAttribute('aria-expanded', 'false');
+        return;
+      }
       if (event.target.closest('[data-daily-close-now]')) {
         if (businessClockMinutes() < 18 * 60) {
           toast('Todavía es temprano: el cierre manual se habilita desde las 6:00 p.m.');
           return;
         }
         renderDailyClose();
-        toast('Cierre calculado con las entregas de hoy');
+        toast('Corte calculado con las entregas de hoy');
         return;
       }
-      const closeHistoryChip = event.target.closest('[data-close-history-period]');      if (closeHistoryChip) {
+      const closeHistoryChip = event.target.closest('[data-close-history-period]');
+      if (closeHistoryChip) {
+        closeHistoryFilter?.classList.remove('is-open');
+        $('[data-close-filter-toggle]')?.setAttribute('aria-expanded', 'false');
         if (closeHistoryChip.dataset.closeHistoryPeriod === 'custom') {
           openCloseHistoryRangeSheet();
           return;
@@ -22372,46 +22238,6 @@
       if (event.target.closest('[data-close-back]')) {
         state.closeDay = null;
         setTab('historial-cierres');
-        return;
-      }
-      /* Los atajos de la barra de arriba: cierre de hoy ↔ historial. */
-      if (event.target.closest('[data-close-history-go]')) {
-        state.closeDay = null;
-        setTab('historial-cierres');
-        return;
-      }
-      if (event.target.closest('[data-close-today-go]')) {
-        state.closeScope = 'dia';
-        state.closeDay = null;
-        setTab('cierre');
-        return;
-      }
-      /* «Un día» / «Varios días» / «Historial» dentro del cierre, y cómo elegir el tramo. */
-      const closeScopeChip = event.target.closest('[data-close-scope]');
-      if (closeScopeChip) {
-        if (closeScopeChip.dataset.closeScope === 'historial') {
-          /*
-           * EL HISTORIAL SOLO SE ENTRA DESDE AQUÍ: el menú ya no lo lleva. Sus filtros
-           * (7 días / 30 días / Este mes / Intervalo) viven en esa página.
-           */
-          state.closeScope = 'dia';
-          state.closeDay = null;
-          setTab('historial-cierres');
-          return;
-        }
-        if (closeScopeChip.dataset.closeScope === 'rango') {
-          state.closeScope = 'rango';
-          renderDailyClose();
-          openClosePeriodRangeSheet();
-          return;
-        }
-        state.closeScope = 'dia';
-        state.closeDay = null;
-        renderDailyClose();
-        return;
-      }
-      if (event.target.closest('[data-close-period-pick]')) {
-        openClosePeriodRangeSheet();
         return;
       }
       if (event.target.closest('[data-open-drawer]')) {
@@ -23647,8 +23473,7 @@
      * clientes o productos que ya no son los del servidor. Esto borra SOLO esa
      * copia y vuelve a pedir todo. No cierra la sesión ni pierde lo pendiente.
      */
-    $('#drawer-sync')?.addEventListener('click', async () => {
-      const boton = $('#drawer-sync');
+    const refreshSavedData = async (boton) => {
       if (!boton || boton.disabled) return;
       boton.disabled = true;
       try {
@@ -23665,7 +23490,8 @@
       } finally {
         boton.disabled = false;
       }
-    });
+    };
+    $('#settings-refresh-data')?.addEventListener('click', (event) => refreshSavedData(event.currentTarget));
   }
 
   /*

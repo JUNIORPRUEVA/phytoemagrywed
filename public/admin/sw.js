@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v164-rol-drawer';
+const VERSION = 'crm-v167-close-compact';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -54,6 +54,7 @@ const SHELL = [
   '/admin/drawer-menu.css',
   '/admin/panel-desktop.css',
   '/admin/ios.css',
+  '/admin/daily-close.css',
   '/admin/ios.js',
   '/admin/app.js',
   '/admin/offline-storage.js',
