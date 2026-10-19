@@ -50,6 +50,13 @@ body:is([data-tab='cierre'], [data-tab='historial-cierres']) .content {
 .close-history__meta { grid-column: 1; color: var(--text-secondary); font-size: .67rem; line-height: 1.3; }
 .close-history__total { grid-column: 2; grid-row: 1 / span 2; color: var(--text-primary); font-size: .81rem; font-weight: 700; text-align: right; white-space: nowrap; }
 .close-history__open { grid-column: 3; grid-row: 1 / span 2; color: var(--text-secondary); font-size: 1.2rem; text-align: right; }
+.close-history-summary { min-width: 0; margin: 0 0 2px; padding: 10px 11px; border: 1px solid var(--pe-line); border-radius: 11px; background: var(--pe-card-bg); color: var(--text-primary); }
+.close-history-summary__title { margin: 0 0 7px; color: var(--text-primary); font-size: .78rem; font-weight: 700; }
+.close-history-summary__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px 10px; margin: 0; }
+.close-history-summary__grid > div { display: grid; gap: 2px; min-width: 0; padding: 5px 0; border-top: 1px solid var(--pe-line); }
+.close-history-summary__grid dt { color: var(--text-secondary); font-size: .65rem; line-height: 1.3; }
+.close-history-summary__grid dd { margin: 0; color: var(--text-primary); font-size: .74rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.close-history-summary__settlement { grid-column: 1 / -1; }
 
 .sheet[data-variant='intervalo'] .report-range { display: grid; gap: 8px; margin: 0; padding: 14px; }
 .sheet[data-variant='intervalo'] .report-range .rule { margin: 0 0 3px; font-size: .78rem; line-height: 1.5; }
@@ -110,6 +117,8 @@ body:is([data-tab='cierre'], [data-tab='historial-cierres']) .content {
   #view-historial-cierres > .view__title { display: none; }
   .close-history { padding: 7px 9px; }
   .close-history__top { align-items: center; }
+  .close-history-summary { padding: 9px 10px; }
+  .close-history-summary__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 9px; }
 }
 
 @media (max-width: 360px) {

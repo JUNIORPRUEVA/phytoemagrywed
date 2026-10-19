@@ -233,6 +233,8 @@ describe('historial de cierres', () => {
     expect(resumen).toContain('3 cierres');
     expect(resumen).toContain('3 ventas');
     expect(resumen).toContain('DOP 5,000');
+    expect($('#close-history-summary')?.textContent).toContain('Ganancia del delivery');
+    expect($('#close-history-summary')?.textContent).toContain('Cuadre del intervalo');
     // La nota dice qué días se están mirando y de quién.
     expect($('#close-history-note')?.textContent).toContain(`Del ${fmt(restarDias(hoy, 6))} al ${fmt(hoy)}`);
     expect($('#close-history-note')?.textContent).toContain('Todo el equipo');
@@ -280,6 +282,26 @@ describe('historial de cierres', () => {
     click('#close-range-form button[type="submit"]');
     await waitFor(() => $('#close-history-view')?.textContent?.includes('No hay cierres en estos días'), 'el aviso sin cierres');
     expect(filas()).toEqual([]);
+  });
+
+  it('muestra el desglose completo al resumir varios días', async () => {
+    await abrirHistorial();
+    click('[data-close-history-period="custom"]');
+    await waitFor(() => $('#close-range-form'), 'el calendario del historial');
+    const hoy = diaDeNegocio(new Date());
+    setValue('#close-from', restarDias(hoy, 3));
+    setValue('#close-to', hoy);
+    click('#close-range-form button[type="submit"]');
+
+    await waitFor(() => $('#close-history-note')?.textContent.includes('3 cierres'), 'el resumen de los tres días');
+    expect(filas()).toHaveLength(3);
+    const resumen = $('#close-history-summary')?.textContent ?? '';
+    expect(resumen).toContain('Ventas entregadas');
+    expect(resumen).toContain('DOP 5,000');
+    expect(resumen).toContain('Efectivo en mano');
+    expect(resumen).toContain('Transferencia');
+    expect(resumen).toContain('Ganancia del delivery');
+    expect(resumen).toContain('Cuadre del intervalo');
   });
 
   it('al tocar un día se abre su cierre completo y se puede volver', async () => {

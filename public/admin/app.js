@@ -7902,6 +7902,20 @@
     const { from, to, cierres, total } = closeHistoryData();
     box.innerHTML = `
       <p class="close-history__note" id="close-history-note">${total.days} cierre${total.days === 1 ? '' : 's'} · ${total.orders} venta${total.orders === 1 ? '' : 's'} · ${money(total.sales)} · Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(fmtShortDay(to))} · ${hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas'}</p>
+      <section class="close-history-summary" id="close-history-summary" aria-label="Resumen del intervalo">
+        <h3 class="close-history-summary__title">Resumen del intervalo</h3>
+        <dl class="close-history-summary__grid">
+          <div><dt>Días con cierre</dt><dd>${total.days}</dd></div>
+          <div><dt>Ventas entregadas</dt><dd>${total.orders}</dd></div>
+          <div><dt>Total vendido</dt><dd>${money(total.sales)}</dd></div>
+          <div><dt>Efectivo en mano</dt><dd>${money(total.cashHeldByDelivery)}</dd></div>
+          <div><dt>Transferencia</dt><dd>${money(total.transfer)}</dd></div>
+          <div><dt>Ganancia del delivery</dt><dd>${money(total.deliveryEarnings)}</dd></div>
+          <div><dt>Descuentos</dt><dd>${money(total.discount)}</dd></div>
+          <div><dt>Sin delivery</dt><dd>${total.noDelivery}</dd></div>
+          <div class="close-history-summary__settlement"><dt>Cuadre del intervalo</dt><dd>${escapeHtml(settlementLabel(total.net))}</dd></div>
+        </dl>
+      </section>
       ${
         cierres.length
           ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
