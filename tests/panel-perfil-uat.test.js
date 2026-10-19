@@ -125,7 +125,7 @@ describe('Mi perfil', () => {
     expect($('#drawer-user')?.hidden).toBe(true);
   });
 
-  it('el perfil se abre desde la cabecera; compartir y sistema quedan al pie', () => {
+  it('el perfil se abre desde la cabecera; compartir queda al pie', () => {
     expect($('#view-perfil .profile-brand img')?.getAttribute('src')).toContain('fulltech-logo.png');
     expect($('#view-perfil .profile-brand strong')?.textContent).toBe('FullTECH');
     // La cabecera del menú ES el acceso al perfil (no se repite como opción).
@@ -134,13 +134,9 @@ describe('Mi perfil', () => {
     // La cabecera muestra a la persona (nombre y rol), no una opción más.
     expect(marca?.textContent).toContain('Ana Perfil');
     expect(marca?.textContent).toContain('Administrador');
-    // «Ir a la web» sigue siendo un enlace real, dentro del bloque de sistema.
+    // El bloque «Sistema» ya no existe: esas acciones se movieron a otro sitio.
     const sistema = $$('.drawer__section').find((s) => s.getAttribute('aria-label') === 'Sistema');
-    expect(sistema).toBeTruthy();
-    const enlace = sistema.querySelector('#drawer-web');
-    expect(enlace).not.toBeNull();
-    expect(enlace.getAttribute('href')).toBe('/');
-    expect(sistema.querySelector('#drawer-sync')).not.toBeNull();
+    expect(sistema).toBeUndefined();
     // Compartir y administración viven en el pie, fuera de los desplegables.
     const compartir = $$('.drawer__foot .drawer__item');
     expect(compartir.map((item) => item.id)).toContain('drawer-share');

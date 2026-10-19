@@ -99,9 +99,10 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     }
     expect(posicion('aria-label="Ventas"')).toBeLessThan(posicion('aria-label="Entregas"'));
     expect(posicion('aria-label="Entregas"')).toBeLessThan(posicion('aria-label="Seguimiento"'));
-    // Cierre, Reportes y el bloque de sistema quedan FUERA de los desplegables.
+    // Cierre y Reportes quedan FUERA de los desplegables; «Sistema» ya no existe
+    // (sus tres acciones se movieron fuera del menú).
     expect(html).toContain('aria-label="Cierre y reportes"');
-    expect(html).toContain('aria-label="Sistema"');
+    expect(html).not.toContain('aria-label="Sistema"');
     expect(html).not.toContain('Pedidos y compras');
     // El móvil no cambia: los grupos ya no se pintan y «Principal» se oculta.
     expect(html).toContain('/admin/drawer-menu.css');
@@ -131,24 +132,6 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/\.drawer__logout \{[\s\S]*?justify-self: end;/);
     expect(html).toContain('data-icon="logout"');
     expect(app).toContain('logout: svg(');
-  });
-
-  it('el menú lleva a la web de la tienda con un enlace de verdad', () => {
-    /*
-     * «Ir a la web»: la raíz del MISMO dominio donde vive el panel es la tienda
-     * (`phytoemagryrd.lat/`). Tiene que ser un enlace real (`<a href>`), no un
-     * botón que llame a una función, y abrirse en otra pestaña para no perder el
-     * panel abierto.
-     */
-    const enlace = html.match(/<a[^>]*id="drawer-web"[\s\S]*?<\/a>/);
-    expect(enlace).toBeTruthy();
-    expect(enlace[0]).toContain('href="/"');
-    expect(enlace[0]).toContain('target="_blank"');
-    expect(enlace[0]).toContain('rel="noopener noreferrer"');
-    expect(enlace[0]).toContain('Ir a la web');
-    // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
-    expect(app).toContain('web: svg(');
-    expect(css).toContain('.drawer__item--link');
   });
 
   it('el menú tiene «Compartir app» y comparte el enlace SIN la clave', () => {
