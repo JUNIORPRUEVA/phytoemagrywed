@@ -1417,7 +1417,21 @@
         ]);
       } finally { clearTimeout(timer); }
       const body = await response.json().catch(() => ({}));
-      if (body.ok) state.auth = { user: body.user ?? null, legacy: body.legacy === true };
+      /*
+       * SE CONSERVAN LOS PERMISOS EFECTIVOS.
+       *
+       * Antes se guardaba solo `{user, legacy}`: `permissions()` pasaba a `[]` y
+       * todo `[data-permission]` (Mapa, Supervisor IA…) desaparecía del menú
+       * hasta la siguiente carga completa. Si el servidor no los manda, se deja
+       * la lista vacía (cerrado por defecto), nunca una lista inventada.
+       */
+      if (body.ok) {
+        state.auth = {
+          user: body.user ?? null,
+          legacy: body.legacy === true,
+          permissions: Array.isArray(body.permissions) ? body.permissions : [],
+        };
+      }
       /*
        * El servidor SÍ contestó y dijo que no hay sesión: eso es distinto de
        * «no se pudo preguntar». Se guarda para no enseñar datos guardados y
@@ -1541,7 +1555,18 @@
       state.deliveryOrders = data.deliveryOrders ?? [];
       state.notifications = data.notifications ?? [];
       state.push = data.push ?? null;
-      state.auth = data.auth ?? null;
+      /*
+       * UNA RESPUESTA SIN `auth` NO BORRA EL ROL QUE YA SE CONOCE.
+       *
+       * Pasaba en el teléfono: si `/api/admin/data` llegaba desde una copia o
+       * caché que no traía el bloque `auth` (o de un objeto sin identidad),
+       * `state.auth` quedaba en `null`; el menú entonces escondía todo lo que
+       * depende de un permiso (Mapa, Supervisor IA) y la cabecera del menú
+       * imprimía el texto de reserva «Administrador», que parecía el rol real.
+       * Quien manda sobre los permisos es el servidor en cada petición; aquí
+       * solo se evita perder en pantalla lo que ya estaba verificado.
+       */
+      if (data.auth) state.auth = data.auth;
        /*
         * MODO UAT: el servidor puede permitir el circuito de reparto sin mandar
         * WhatsApp reales. Es una bandera de ENTORNO (no una regla de negocio) y
@@ -1583,6 +1608,19 @@
       }
     } finally {
       state.cargandoDatos = false;
+      /*
+       * SIN IDENTIDAD NO SE PUEDE DECIDIR EL MENÚ. Si la copia local o una
+       * respuesta incompleta dejaron `state.auth` vacío, se pregunta una vez al
+       * servidor (es barato y solo ocurre en ese caso); si contesta, el menú se
+       * compone otra vez con los permisos reales.
+       */
+      if (!state.auth) {
+        checkSession()
+          .then((ok) => {
+            if (ok) render();
+          })
+          .catch(() => {});
+      }
       // Lo que llegó por tiempo real mientras se cargaba se recupera ahora.
       const pendientes = [...(state.reconciliarTrasCarga ?? [])];
       state.reconciliarTrasCarga.clear();
@@ -1785,6 +1823,15 @@
   };
 
   function render() {
+    /*
+     * LA CABECERA DEL MENÚ SE PINTA SIEMPRE.
+     *
+     * Antes solo se repintaba al guardar el perfil o cuando la sección
+     * «usuario» era la activa; tras recargar la PWA el menú seguía enseñando el
+     * texto fijo del HTML («FullTECH, SRL · CRM») en vez de la persona y su rol.
+     * Es idempotente: solo escribe nombre, rol, iniciales y visibilidad.
+     */
+    renderCurrentUser();
     pintarSeccion('cabecera', renderMobileHeader);
     pintarSeccion('resumen', renderStats);
     pintarSeccion('hoy', renderHoy);
@@ -2270,20 +2317,39 @@
     </div>`;
   }
 
-  function renderCurrentUser() {
+  /**
+   * SOLO LA CABECERA DEL MENÚ: nombre, rol e iniciales.
+   *
+   * Se separa del reparto de permisos porque hay momentos (al abrir el panel)
+   * en los que ya se sabe quién entra pero todavía no toca recalcular el menú.
+   */
+  function pintarIdentidadMenu() {
     const user = currentUser();
-    const box = $('#drawer-user');
     const brand = $('.drawer__brand');
-    if (brand) {
-      const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : 'Usuario');
-      const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-      brand.innerHTML = `
-        <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo.png" alt="" width="26" height="26" /></span>
-        <span class="drawer__identity"><strong>${escapeHtml(name)}</strong><span class="drawer__role">${escapeHtml(
-          roleLabel(user?.role ?? 'ADMIN'),
-        )}</span></span>
-        <span class="drawer__avatar" aria-hidden="true">${escapeHtml(initials)}</span>`;
-    }
+    if (!brand) return;
+    const name = user?.display_name ?? (state.auth?.legacy ? 'Panel legacy' : 'Usuario');
+    const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+    /*
+     * EL ROL MOSTRADO NUNCA SE INVENTA.
+     *
+     * Antes: `roleLabel(user?.role ?? 'ADMIN')`. Sin identidad cargada
+     * imprimía «Administrador», así que un menú recortado parecía el de un
+     * administrador al que le faltaban opciones (falsa alarma que costó una
+     * auditoría entera). Con el rol desconocido se dice «Sesión»; el panel
+     * legacy sí es administrativo y se sigue mostrando como tal.
+     */
+    const rolMostrado = user?.role ?? (state.auth?.legacy ? 'ADMIN' : null);
+    brand.innerHTML = `
+      <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo.png" alt="" width="26" height="26" /></span>
+      <span class="drawer__identity"><strong>${escapeHtml(name)}</strong><span class="drawer__role">${escapeHtml(
+        roleLabel(rolMostrado),
+      )}</span></span>
+      <span class="drawer__avatar" aria-hidden="true">${escapeHtml(initials)}</span>`;
+  }
+
+  function renderCurrentUser() {
+    const box = $('#drawer-user');
+    pintarIdentidadMenu();
     if (box) {
       box.hidden = true;
       box.innerHTML = '';
@@ -9091,7 +9157,12 @@
   async function refreshProfile() {
     try {
       const result = await api('/api/admin/auth/me');
-      state.auth = { user: result.user ?? null, legacy: result.legacy === true };
+      state.auth = {
+        user: result.user ?? null,
+        legacy: result.legacy === true,
+        /* Los permisos efectivos vienen del servidor: perderlos recortaba el menú. */
+        permissions: Array.isArray(result.permissions) ? result.permissions : [],
+      };
       renderCurrentUser();
       renderPerfil(true);
     } catch (error) {
@@ -23766,6 +23837,8 @@
     }
 
     if (await checkSession()) {
+      /* Ya se sabe quién entra: la cabecera del menú no espera a los datos. */
+      pintarIdentidadMenu();
       showApp();
       await load();
       await applyDeepLink(query);
