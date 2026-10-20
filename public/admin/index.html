@@ -79,7 +79,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=consolidado-75" />
+    <link rel="stylesheet" href="/admin/admin.css?v=boot-fast-76" />
     <link rel="stylesheet" href="/admin/store.css?v=etiqueta-4" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
     <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
@@ -92,7 +92,7 @@
     <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=3" />
-    <link rel="stylesheet" href="/admin/fulltech.css?v=3" />
+    <link rel="stylesheet" href="/admin/fulltech.css?v=4" />
     <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-2" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=3" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=10" />
@@ -102,7 +102,7 @@
       La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
       sobre la geometría y los colores de esa pantalla.
     -->
-    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-11" />
+    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-13-chat-actions-list" />
     <!--
       Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
       todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
@@ -128,7 +128,7 @@
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
       <div class="splash__mark">
-        <img src="/admin/fulltech-logo.png?v=3" alt="" width="176" height="176" />
+        <img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="96" height="96" fetchpriority="high" decoding="async" />
       </div>
       <p class="splash__brand">FullTECH</p>
       <p class="splash__text">Preparando tu espacio de trabajo</p>
@@ -139,7 +139,7 @@
     <main id="login" class="login" hidden>
       <section class="login__card" aria-labelledby="login-title">
         <span class="login__mark">
-          <img class="login__logo" src="/admin/fulltech-logo.png?v=3" alt="" width="46" height="46" />
+          <img class="login__logo" src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="54" height="54" decoding="async" />
         </span>
         <h1 class="login__title" id="login-title">FullTECH <span>CRM</span></h1>
         <p class="login__lede">Acceso privado del equipo</p>
@@ -232,7 +232,7 @@
         <div class="drawer__head">
           <button class="drawer__brand" data-tab="perfil" type="button" aria-label="Abrir mi perfil">
             <span class="drawer__logo" aria-hidden="true">
-              <img src="/admin/fulltech-logo.png?v=3" alt="" width="26" height="26" />
+              <img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="26" height="26" decoding="async" />
             </span>
             <span class="drawer__identity">
               <strong>FullTECH</strong>
@@ -977,7 +977,7 @@
         <section class="view view--profile" id="view-perfil" hidden>
           <h2 class="view__title">Mi perfil</h2>
           <div class="profile-brand" aria-label="Negocio: FullTECH">
-            <img src="/admin/fulltech-logo.png?v=3" alt="Logo de FullTECH" width="44" height="44" />
+            <img src="/admin/fulltech-logo-transparent.png?v=1" alt="Logo de FullTECH" width="44" height="44" decoding="async" />
             <strong>FullTECH</strong>
           </div>
           <p class="view__hint">
@@ -1073,13 +1073,13 @@
     <script src="/admin/startup-recovery.js?v=1" defer></script>
     <script src="/admin/offline-storage.js?v=3" defer></script>
     <script src="/admin/sync-engine.js?v=3" defer></script>
-    <script src="/admin/offline.js?v=30" defer></script>
+    <script src="/admin/offline.js?v=31" defer></script>
     <!-- Tiempo real: un solo SSE por pestaña (va después de offline.js, que envuelve fetch). -->
     <script src="/admin/realtime.js?v=1" defer></script>
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-      <script src="/admin/app.js?v=daily-close-ui-152-sync-engine-159" defer></script>
+      <script src="/admin/app.js?v=boot-fast-155" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>

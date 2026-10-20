@@ -84,6 +84,7 @@ import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import webpush from 'web-push';
 
 import { buildUserData, createMetaCapi } from './meta-capi.mjs';
@@ -4945,18 +4946,47 @@ const CONTENT_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+const ADMIN_COMPRESSIBLE_EXTENSIONS = new Set(['.html', '.css', '.js', '.mjs', '.json', '.webmanifest', '.svg', '.txt']);
+const ADMIN_GZIP_CACHE = new Map();
+
+function acceptsGzip(req) {
+  return String(req.headers['accept-encoding'] ?? '').split(',').some((entry) => {
+    const [encoding, ...parameters] = entry.trim().toLowerCase().split(';');
+    if (encoding !== 'gzip' && encoding !== '*') return false;
+    const quality = parameters.find((parameter) => parameter.trim().startsWith('q='));
+    return !quality || Number(quality.trim().slice(2)) > 0;
+  });
+}
+
 /** Sirve un archivo de la app del panel (sin poder salir de su carpeta). */
-function serveAdminFile(res, urlPath, adminDir) {
+function serveAdminFile(req, res, urlPath, adminDir) {
   const relative = urlPath.replace(/^\/admin\/?/, '') || 'index.html';
   const target = path.resolve(adminDir, relative);
   if (!target.startsWith(adminDir) || !existsSync(target) || !statSync(target).isFile()) {
     json(res, 404, { ok: false, error: 'not_found' });
     return;
   }
-  const body = readFileSync(target);
+  const info = statSync(target);
+  const originalBody = readFileSync(target);
+  const extension = path.extname(target);
+  let body = originalBody;
+  let compressed = false;
+  if (ADMIN_COMPRESSIBLE_EXTENSIONS.has(extension) && acceptsGzip(req)) {
+    const cached = ADMIN_GZIP_CACHE.get(target);
+    if (cached?.mtimeMs === info.mtimeMs && cached.size === info.size) {
+      body = cached.body;
+    } else {
+      body = gzipSync(originalBody, { level: 1 });
+      if (ADMIN_GZIP_CACHE.size >= 64) ADMIN_GZIP_CACHE.delete(ADMIN_GZIP_CACHE.keys().next().value);
+      ADMIN_GZIP_CACHE.set(target, { mtimeMs: info.mtimeMs, size: info.size, body });
+    }
+    compressed = true;
+  }
   res.writeHead(200, {
-    'content-type': CONTENT_TYPES[path.extname(target)] ?? 'application/octet-stream',
+    'content-type': CONTENT_TYPES[extension] ?? 'application/octet-stream',
     'content-length': body.length,
+    vary: 'Accept-Encoding',
+    ...(compressed ? { 'content-encoding': 'gzip' } : {}),
     // El panel y su service worker nunca se cachean: publicar = ver el cambio ya.
     'cache-control': 'no-cache, must-revalidate',
     'service-worker-allowed': '/admin/',
@@ -5194,7 +5224,7 @@ async function handle(req, res, ctx) {
 
   // --------------------------------------------------- app instalable (PWA)
   if (route === '/admin' || route.startsWith('/admin/')) {
-    serveAdminFile(res, url.pathname, ctx.adminDir);
+    serveAdminFile(req, res, url.pathname, ctx.adminDir);
     return;
   }
 

@@ -434,7 +434,7 @@
     const receiptUrl='/api/admin/pos/local/'+id+'/receipt',pdfUrl='/api/admin/pos/local/'+id+'/pdf';
     await remember(pdfUrl,new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf','content-disposition':`inline; filename="${number}.pdf"`}}));
     const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const html=`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(number)}</title><style>body{font:15px system-ui;margin:0;padding:12px;background:#e8edf3;color:#14243b}main,nav,p{max-width:900px;margin:12px auto}nav{display:flex;gap:8px;flex-wrap:wrap}a,button{font:inherit;padding:10px 12px;background:white;border:1px solid #ced7e2;border-radius:8px;color:#153c70;text-decoration:none;cursor:pointer}canvas{display:block;margin:12px 0;box-shadow:0 2px 12px #14243b18;background:white}[data-receipt-fallback]{padding:20px;background:white}table{width:100%}td{padding:8px} @media print{body{padding:0;background:white}nav,[data-receipt-status]{display:none}canvas{box-shadow:none;break-after:page;margin:0;width:100%}}</style><nav><a href="/admin/?v=pedidos">Volver al CRM</a><a href="${pdfUrl}" data-receipt-download hidden>Descargar PDF</a><button data-receipt-share>Compartir PDF</button><button data-receipt-print>Imprimir</button></nav><p data-receipt-status role="status">Abriendo PDF guardado…</p><main data-receipt-pages data-pdf="${pdfUrl}" data-filename="${escape(number)}.pdf"></main><main data-receipt-fallback><img src="/admin/fulltech-logo.png?v=3" alt="FullTECH" width="48" height="48"><h1>FullTECH</h1><h2>${escape(receipt.document)} · ${escape(number)}</h2><p>${escape(customer.name)}</p><table>${sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>RD$${(i.subtotal_cents/100).toFixed(2)}</td></tr>`).join('')}</table><p>Descuento: RD$${(sale.discount_cents/100).toFixed(2)} · Envío: RD$${(sale.delivery_cents/100).toFixed(2)}</p><h2>Total RD$${(sale.total_cents/100).toFixed(2)}</h2><p>${escape(receipt.note)}</p></main><script src="/admin/receipt-viewer.js" defer></script></html>`;
+    const html=`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(number)}</title><style>body{font:15px system-ui;margin:0;padding:12px;background:#e8edf3;color:#14243b}main,nav,p{max-width:900px;margin:12px auto}nav{display:flex;gap:8px;flex-wrap:wrap}a,button{font:inherit;padding:10px 12px;background:white;border:1px solid #ced7e2;border-radius:8px;color:#153c70;text-decoration:none;cursor:pointer}canvas{display:block;margin:12px 0;box-shadow:0 2px 12px #14243b18;background:white}[data-receipt-fallback]{padding:20px;background:white}table{width:100%}td{padding:8px} @media print{body{padding:0;background:white}nav,[data-receipt-status]{display:none}canvas{box-shadow:none;break-after:page;margin:0;width:100%}}</style><nav><a href="/admin/?v=pedidos">Volver al CRM</a><a href="${pdfUrl}" data-receipt-download hidden>Descargar PDF</a><button data-receipt-share>Compartir PDF</button><button data-receipt-print>Imprimir</button></nav><p data-receipt-status role="status">Abriendo PDF guardado…</p><main data-receipt-pages data-pdf="${pdfUrl}" data-filename="${escape(number)}.pdf"></main><main data-receipt-fallback><img src="/admin/fulltech-logo-transparent.png?v=1" alt="FullTECH" width="48" height="48"><h1>FullTECH</h1><h2>${escape(receipt.document)} · ${escape(number)}</h2><p>${escape(customer.name)}</p><table>${sale.items.map(i=>`<tr><td>${escape(i.name)}</td><td>${i.quantity}</td><td>RD$${(i.subtotal_cents/100).toFixed(2)}</td></tr>`).join('')}</table><p>Descuento: RD$${(sale.discount_cents/100).toFixed(2)} · Envío: RD$${(sale.delivery_cents/100).toFixed(2)}</p><h2>Total RD$${(sale.total_cents/100).toFixed(2)}</h2><p>${escape(receipt.note)}</p></main><script src="/admin/receipt-viewer.js" defer></script></html>`;
     await remember(receiptUrl,new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));
     if(quote){await remember('/api/admin/pos/quotes/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/pos/quotes/'+id+'/pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
     else{await remember('/api/admin/orders/'+id+'/receipt',new Response(html,{headers:{'content-type':'text/html; charset=utf-8'}}));await remember('/api/admin/orders/'+id+'/receipt.pdf',new Response(receiptPdfBytes(receipt),{headers:{'content-type':'application/pdf'}}));}
@@ -721,6 +721,17 @@
     }catch(e){await changeQueue(q=>q.map(p=>p.id===operation.id?{...p,state:'review',error:e.message}:p));throw e;}
   }
   async function send(input,options={}){
+    const url=new URL(typeof input==='string'?input:input.url,location.href),method=(options.method||input.method||'GET').toUpperCase();
+    // Validar la sesión online no necesita abrir IndexedDB. Responde al panel
+    // enseguida y conserva la identidad/caché local en segundo plano.
+    if(method==='GET'&&url.pathname==='/api/admin/session'&&navigator.onLine){
+      const response=await network(input,{...options,cache:'no-store'}),copy=response.clone();
+      void ready.then(async()=>{
+        if(response.status===401){await forget();return;}
+        if(response.ok){await identify(await copy.clone().json().catch(()=>({})));await remember(url,copy,true).catch(()=>signal());}
+      }).catch(()=>{});
+      return response;
+    }
     await ready;
     /*
      * LOS PERMISOS PUEDEN CAMBIAR EN OTRA PESTAÑA.
@@ -739,7 +750,6 @@
       if(typeof input==='string')input=replace(input,mapping);
       if(typeof options.body==='string'){try{options={...options,body:JSON.stringify(replace(JSON.parse(options.body),mapping))};}catch{}}
     }
-    const url=new URL(typeof input==='string'?input:input.url,location.href),method=(options.method||input.method||'GET').toUpperCase();
     if(url.origin!==location.origin||!url.pathname.startsWith('/api/admin/')||url.pathname.includes('/events'))return network(input,options);
     const mine=owner(),myEpoch=epoch;
     const canRead=(!excluded(url)||/\/conversations\/[^/]+\/messages$/.test(url.pathname))&&!url.pathname.includes('/android-apk/download');

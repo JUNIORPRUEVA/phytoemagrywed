@@ -153,24 +153,19 @@ body {
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 10px;
+  gap: 8px;
   padding: 28px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 28%, rgba(201, 226, 101, 0.26), transparent 28%),
-    linear-gradient(180deg, #fbfdfb 0%, #eef7f1 100%);
-  color: var(--phyto-primary-dark);
+    radial-gradient(circle at 50% 42%, rgba(20, 91, 215, 0.08), transparent 32%),
+    var(--pe-page-bg);
+  color: var(--text-primary);
   text-align: center;
-  transition: opacity 220ms ease, visibility 220ms ease;
+  transition: opacity 160ms ease, visibility 160ms ease;
 }
 
 .splash::before {
-  content: '';
-  position: absolute;
-  inset: 18px;
-  border: 1px solid rgba(20, 91, 215, 0.12);
-  border-radius: 28px;
-  pointer-events: none;
+  display: block;
 }
 
 .splash--hide {
@@ -181,39 +176,40 @@ body {
 .splash__mark {
   display: grid;
   place-items: center;
-  width: 138px;
-  height: 138px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 18px 48px rgba(20, 60, 120, 0.14);
-  animation: splash-breathe 1.9s ease-in-out infinite;
+  width: 100px;
+  height: 100px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: splash-settle 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .splash__mark img {
   display: block;
-  width: 118px;
-  height: 118px;
+  width: 88px;
+  height: 88px;
   object-fit: contain;
 }
 
 .splash__brand {
-  margin: 8px 0 0;
+  margin: 2px 0 0;
+  color: var(--text-primary);
   font-size: 1.02rem;
   font-weight: 800;
 }
 
 .splash__text {
   margin: 0;
-  color: var(--pe-ink-500);
+  color: var(--text-secondary);
   font-size: 0.84rem;
 }
 
 .splash__bar {
   position: relative;
   display: block;
-  width: min(210px, 58vw);
-  height: 4px;
-  margin-top: 8px;
+  width: min(156px, 48vw);
+  height: 3px;
+  margin-top: 5px;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(20, 91, 215, 0.13);
@@ -237,6 +233,11 @@ body {
   50% {
     transform: scale(1.035);
   }
+}
+
+@keyframes splash-settle {
+  from { opacity: 0; transform: translateY(5px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Hoy queda como panel de indicadores: sin listview de actividades debajo. */

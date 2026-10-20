@@ -1412,8 +1412,8 @@
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     setTimeout(() => {
       splash.classList.add('splash--hide');
-      setTimeout(() => { splash.hidden = true; }, reducedMotion ? 0 : 260);
-    }, reducedMotion ? 0 : Math.max(0, 650 - (performance.now() - splashStartedAt)));
+      setTimeout(() => { splash.hidden = true; }, reducedMotion ? 0 : 180);
+    }, reducedMotion ? 0 : Math.max(0, 120 - (performance.now() - splashStartedAt)));
   }
 
   function showLogin(message = '') {
@@ -2395,7 +2395,7 @@
      */
     const rolMostrado = user?.role ?? (state.auth?.legacy ? 'ADMIN' : null);
     brand.innerHTML = `
-      <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo.png" alt="" width="26" height="26" /></span>
+      <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="26" height="26" /></span>
       <span class="drawer__identity"><strong>${escapeHtml(name)}</strong><span class="drawer__role">${escapeHtml(
         roleLabel(rolMostrado),
       )}</span></span>
@@ -14834,7 +14834,7 @@
         ? state.wa.chat.conversation
         : state.conversations.find((row) => row.id === conversationId) ?? null;
     openSheet(
-      customerName(customer),
+      '¿Qué quieres hacer?',
       `
       <div class="menu-list">
         <button class="menu-item menu-item--primary" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
@@ -14844,7 +14844,6 @@
           <span><strong>Crear pedido</strong></span>
         </button>
 
-        <p class="menu-list__label">Mensajes</p>
         <button class="menu-item" data-quick-replies="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Respuesta rápida</strong></span>
@@ -14862,7 +14861,6 @@
           <span><strong>Pedir confirmación</strong></span>
         </button>
 
-        <p class="menu-list__label">Seguimiento</p>
         <button class="menu-item" data-followup-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
         )}" type="button">
@@ -14876,7 +14874,6 @@
           <span><strong>Programar mensaje</strong></span>
         </button>
 
-        <p class="menu-list__label">Cliente</p>
         <button class="menu-item" data-customer="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
           <span><strong>Ver cliente</strong></span>
@@ -14890,7 +14887,6 @@
           <span><strong>Etiquetas</strong></span>
         </button>
 
-        <p class="menu-list__label">Conversación</p>
         ${conversationResolutionButton(
           conversationId,
           (state.conversations ?? []).find((row) => row.id === conversationId)?.is_resolved ??
@@ -23893,7 +23889,10 @@
      * (clientes, pedidos, catálogo, ajustes y el rol de quien entró) y se puede
      * trabajar entero. Al volver la red, todo se manda solo.
      */
-    if(window.FullTECHOffline)await window.FullTECHOffline.ready;
+    if (window.FullTECHOffline) {
+      if (!navigator.onLine) await window.FullTECHOffline.ready;
+      else window.FullTECHOffline.ready.catch(() => {});
+    }
     const cached = readSnapshot();
     if (!navigator.onLine && cached) {
       aplicarCopiaLocal(cached);

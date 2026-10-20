@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v181-corrector-movil';
+const VERSION = 'crm-v185-fast-entry-logo';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -84,7 +84,7 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-icon.png',
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
-  '/admin/fulltech-logo.png?v=3',
+  '/admin/fulltech-logo-transparent.png?v=1',
   '/admin/fulltech-favicon.png?v=3',
   '/admin/fulltech-icon-192.png?v=3',
   '/admin/fulltech-icon-512.png?v=3',

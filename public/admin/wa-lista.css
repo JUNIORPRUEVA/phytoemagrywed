@@ -999,6 +999,7 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
  */
 .sheet[data-variant='chat-actions'] .sheet__backdrop {
   background: rgba(11, 20, 26, 0.34);
+  animation: wa-chat-backdrop-in 0.2s ease-out both;
 }
 
 :root body #sheet[data-variant='chat-actions'] .sheet__panel {
@@ -1006,7 +1007,7 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
   right: 0;
   bottom: 0;
   left: auto;
-  width: min(86%, 330px);
+  width: min(78%, 320px);
   max-width: none;
   height: 100%;
   max-height: none;
@@ -1015,7 +1016,12 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
   border-radius: 0;
   box-shadow: -26px 0 54px rgba(11, 20, 26, 0.3);
   transform: none;
-  animation: wa-chat-drawer-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: wa-chat-drawer-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes wa-chat-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes wa-chat-drawer-in {
@@ -1031,6 +1037,9 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
   :root body #sheet[data-variant='chat-actions'] .sheet__panel {
     animation: none;
   }
+  .sheet[data-variant='chat-actions'] .sheet__backdrop {
+    animation: none;
+  }
 }
 
 :root body #sheet[data-variant='chat-actions'] .sheet__head {
@@ -1039,19 +1048,46 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
 }
 
 :root body #sheet[data-variant='chat-actions'] .sheet__title {
-  font-size: 16.5px;
+  font-size: 17px;
   font-weight: 600;
 }
 
-/* Filas finas: sin subtítulos, con el icono y el nombre de la acción. */
+/* Lista única: sin cajas apiladas; el tema de la app conserva su contraste. */
+:root body #sheet[data-variant='chat-actions'] .menu-list {
+  gap: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-group__items {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 :root body #sheet[data-variant='chat-actions'] .sheet__body {
-  gap: 2px;
-  padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px));
+  gap: 0;
+  overflow-y: auto;
+  padding: 4px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface, var(--pe-page-bg));
+  color: var(--wa-ink);
 }
 
 :root body #sheet[data-variant='chat-actions'] .menu-item {
-  min-height: 46px;
-  border-radius: 12px;
+  min-height: 50px;
+  gap: 13px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--wa-ink);
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.3;
 }
 
 :root body #sheet[data-variant='chat-actions'] .menu-item + .menu-item {
@@ -1060,17 +1096,47 @@ body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
 }
 
 :root body #sheet[data-variant='chat-actions'] .menu-item:hover {
-  border-radius: 12px;
+  border-radius: 10px;
+  background: var(--wa-row-hover);
+  color: var(--wa-ink);
 }
 
-:root body #sheet[data-variant='chat-actions'] .menu-list__label {
-  margin: 10px 0 2px;
-  padding: 0 12px;
-  color: var(--wa-ink-soft);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+:root body #sheet[data-variant='chat-actions'] .menu-item strong {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 580;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item--primary,
+:root body #sheet[data-variant='chat-actions'] .menu-item--primary:hover {
+  border-radius: 12px;
+  background: var(--pe-brand-soft);
+  color: var(--wa-ink);
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item--primary strong {
+  color: inherit;
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item__icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  color: var(--pe-brand-text);
+}
+
+:root body #sheet[data-variant='chat-actions'] .menu-item__icon .svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Aire sutil entre tipos de acción, sin repetir rótulos de sección. */
+:root body #sheet[data-variant='chat-actions'] .menu-item[data-quick-replies],
+:root body #sheet[data-variant='chat-actions'] .menu-item[data-followup-new],
+:root body #sheet[data-variant='chat-actions'] .menu-item[data-customer],
+:root body #sheet[data-variant='chat-actions'] .menu-item[data-conversation-resolution] {
+  margin-top: 8px;
+  border-top-color: transparent;
 }
 
 :root body #sheet[data-variant='chat-actions'] .menu-back {
