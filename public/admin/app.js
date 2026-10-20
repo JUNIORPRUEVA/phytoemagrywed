@@ -21861,10 +21861,23 @@
     document.addEventListener('pointerup', (event) => {
       const start = window.__billingSwipeStart;
       window.__billingSwipeStart = null;
-      if (!start || state.tab === 'catalogo') return;
+      if (!start) return;
       const dx = event.clientX - start.x;
       const dy = event.clientY - start.y;
-      if (dx < -78 && Math.abs(dy) < 64 && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) setTab('catalogo');
+      if (dx < -78 && Math.abs(dy) < 64 && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) {
+        /*
+         * DENTRO DE UN CHAT el gesto abre las ACCIONES de esa conversación (las
+         * mismas del botón flotante). Fuera del chat se conserva el atajo a
+         * Facturación.
+         */
+        if (state.tab === 'whatsapp' && document.body.dataset.waView === 'chat') {
+          const acciones = document.querySelector('#wa-actions');
+          if (acciones && !acciones.hidden && !acciones.disabled) acciones.click();
+          return;
+        }
+        if (state.tab === 'catalogo') return;
+        setTab('catalogo');
+      }
     });
     document.addEventListener('pointermove', (event) => {
       if (!msgPressFrom) return;

@@ -28,9 +28,31 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     await reopened.save({enabled:true,dailyLimit:12});expect((await reopened.status()).configured).toBe(true);
     await reopened.save({removeKey:true,enabled:false});expect(await reopened.status()).toMatchObject({configured:false,enabled:false});
   });
-  it('no llama sin configurar o sin dudas reales del motor local',async()=>{
+  it('no llama sin configurar o si el diccionario local no responde',async()=>{
     const f=fixture();expect(await f.service.correct(f.input)).toBeNull();expect(f.fetchImpl).not.toHaveBeenCalled();
     const g=fixture({checker:async()=>()=>null});await enable(g);expect(await g.service.correct(g.input)).toBeNull();expect(g.fetchImpl).not.toHaveBeenCalled();
+  });
+  it('corrige también cuando el diccionario local no marca ninguna duda',async()=>{
+    /*
+     * Una frase puede tener todas las palabras válidas y aun así llevar tildes o
+     * concordancia mal. La revisión con IA ya no depende de que el diccionario
+     * dude: cubre TODAS las respuestas de la conversación.
+     */
+    const f=fixture({checker:async()=>()=>({edits:[],uncertain:[]}),fetchImpl:vi.fn(async()=>result('El pedido llega hoy.'))});
+    await enable(f);
+    expect((await f.service.correct({...f.input,text:'el pedido llega oy'})).correctedText).toBe('El pedido llega hoy.');
+    expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it('la sugerencia lleva la hora local del negocio y las fotos del cliente',async()=>{
+    const clock=()=>new Date('2026-10-19T23:30:00Z');
+    const f=fixture({clock});await enable(f);
+    const media=new Map([['m1',['data:image/png;base64,AAAA']]]);
+    await f.service.suggestReply({messages:[{id:'m1',direction:'inbound',type:'image',text:'El cliente envió una imagen.'}],media,actorId:'a'});
+    const payload=JSON.parse(f.fetchImpl.mock.calls[0][1].body);
+    const esperado=new Intl.DateTimeFormat('es-DO',{timeZone:'America/Santo_Domingo',weekday:'long',day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}).format(clock());
+    expect(payload.messages.at(-1).content).toContain(esperado);
+    expect(payload.messages[0].content).toContain('nota de voz');
+    expect(payload.messages.slice(1,-1)[0].content[1]).toEqual({type:'image_url',image_url:{url:'data:image/png;base64,AAAA'}});
   });
   it('acepta el contexto que el diccionario local no puede resolver y rechaza cambios ajenos',async()=>{
     const f=fixture({checker:undefined});await enable(f);
@@ -87,7 +109,7 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     expect(payload.messages[0].content).toContain('nunca hables como si fueras el cliente');
     expect(payload.messages.at(-1).content).toContain('español dominicano natural');
     expect(payload.messages.at(-1).content).toContain('Máximo 140 caracteres');
-    expect(payload.max_tokens).toBe(100);
+    expect(payload.max_tokens).toBe(160);
   });
   it('no genera respuesta si el último mensaje fue enviado por el equipo o su autor es desconocido',async()=>{
     const f=fixture();await enable(f);

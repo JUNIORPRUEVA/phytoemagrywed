@@ -11453,6 +11453,28 @@ export async function startCrmServer(config = {}) {
     chatSharing: createChatSharingService({ settings: settingsService, customers }),
     proofreading,
     scheduler,
+    /*
+     * IMÁGENES PARA LA IA: solo las fotos del tramo reciente, descargadas de R2
+     * en el servidor y convertidas a data URL para el modelo. No salen del
+     * proceso, no se guardan y el navegador nunca ve el binario ni la clave.
+     */
+    aiMediaImages: async (messages = []) => {
+      const out = new Map();
+      if (!mediaStore || !storage?.enabled) return out;
+      const conFoto = messages.filter((row) => String(row?.type || '').toLowerCase() === 'image' && row?.id);
+      if (!conFoto.length) return out;
+      const rows = await mediaStore.byMessageIds(conFoto.map((row) => row.id)).catch(() => []);
+      const byMessage = new Map(rows.filter((row) => row.message_id).map((row) => [row.message_id, row]));
+      for (const msg of conFoto.slice(-3)) {
+        const meta = byMessage.get(msg.id);
+        const mime = String(meta?.mime_type || '').toLowerCase();
+        if (!meta?.object_key || !/^image\/(png|jpe?g|webp|gif)$/.test(mime)) continue;
+        const got = await storage.get(meta.object_key).catch(() => null);
+        if (!got?.ok || !got.buffer || got.buffer.length > 2 * 1024 * 1024) continue;
+        out.set(msg.id, [`data:${mime};base64,${got.buffer.toString('base64')}`]);
+      }
+      return out;
+    },
     // Multimedia: metadata (BD), binario (R2), Graph y el pipeline que los une.
     media: { store: mediaStore, storage, whatsapp: whatsappMedia, pipeline: mediaPipeline },
     whatsapp,

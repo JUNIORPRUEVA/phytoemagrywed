@@ -39,10 +39,14 @@ export async function handleProofreadingRoute({ req, res, route, ctx, actor, can
     // El servidor obtiene el contexto desde el hilo autorizado; el navegador no
     // puede inyectar conversaciones, mensajes ni datos de otro usuario.
     const messages = await ctx.customers.messagesFor(conversation.id, { limit: 200 });
+    const recientes = messages.slice(-5);
     const suggestion = await ctx.proofreading.suggestReply({
-      messages: messages.slice(-5),
+      messages: recientes,
       customerName: customer?.name || '',
       actorId: actor?.id || 'legacy',
+      // Las fotos del tramo reciente se descargan en el servidor y viajan a la IA
+      // como contenido multimodal; el navegador nunca ve la clave ni el binario.
+      media: await ctx.aiMediaImages?.(recientes),
     });
     return send(200, { ok: true, ...suggestion });
   }

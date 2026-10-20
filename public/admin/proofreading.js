@@ -24,7 +24,12 @@
     aiAbort?.abort(); aiAbort = null; aiJob = null;
   }
   function requestSupport(job, suggestion) {
-    if (!isCurrent(job) || (!suggestion?.uncertain?.length && !suggestion?.edits?.length)) return;
+    if (!isCurrent(job)) return;
+    const local = Boolean(suggestion?.uncertain?.length || suggestion?.edits?.length);
+    // Con dudas locales se pide enseguida; sin ellas también se pide (una frase
+    // puede tener todas las palabras válidas y aun así llevar tildes o
+    // concordancia mal) pero con más calma y solo desde tres palabras.
+    if (!local && job.text.trim().split(/\s+/).filter(Boolean).length < 3) return;
     cancelAI();
     const key = JSON.stringify([job.context, job.text, [...ignored]]);
     const apply = result => {
@@ -53,7 +58,7 @@
         }
         if (aiAbort === controller) { clearTimeout(aiTimeout); aiAbort = null; aiJob = null; }
       }
-    }, 900);
+    }, local ? 900 : 1400);
   }
   function cancelSend() {
     clearTimeout(sendTimer);
