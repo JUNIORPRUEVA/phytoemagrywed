@@ -276,6 +276,31 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
+        # Portada de la tienda: el servidor del CRM devuelve el MISMO HTML de la
+        # PWA con canonical, Open Graph y enlaces rastreables inyectados. Si el
+        # servicio no responde, se sirve el HTML estático como red de seguridad.
+        # Sin `add_header` aquí: se heredan las cabeceras de seguridad del
+        # servidor (en nginx, un add_header local las reemplazaría).
+        location = /store/ {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            error_page 502 503 504 = @store_static_home;
+        }
+        location = /store {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+        }
+        location @store_static_home {
+            internal;
+            try_files /store/index.html =404;
+        }
+
         location ^~ /admin/ {
             try_files $uri $uri/ /admin/index.html;
             expires -1;

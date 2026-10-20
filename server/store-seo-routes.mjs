@@ -14,10 +14,14 @@ import {
   renderSitemap,
   renderStoreGone,
   renderStoreNotFound,
+  renderStoreShell,
   storeOrigin,
 } from './store-seo.mjs';
 
 const PRODUCT_PATH = /^\/store\/p\/([A-Za-z0-9_-]{1,80})$/;
+/** Portada de la tienda: se sirve la PWA con la cabecera SEO inyectada. */
+const STORE_HOME = '/store/';
+let shellCache = { html: '', at: 0 };
 
 function send(res, req, status, body, headers) {
   res.writeHead(status, headers);
@@ -28,10 +32,24 @@ function send(res, req, status, body, headers) {
 
 export async function handleStoreSeoRoute({ req, res, route, ctx }) {
   const isProduct = PRODUCT_PATH.test(route);
-  if (route !== '/store/robots.txt' && route !== '/store/sitemap.xml' && !isProduct) return false;
+  /*
+   * El router del CRM elimina la barra final, así que `/store/` llega como
+   * `/store`. La barra original se recupera de `req.url` para redirigir solo la
+   * variante sin barra y no provocar un bucle 301.
+   */
+  const rawPath = String(req.url ?? '').split('?')[0];
+  const isHome = route === '/store';
+  if (route !== '/store/robots.txt' && route !== '/store/sitemap.xml' && !isProduct && !isHome) return false;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Allow', 'GET, HEAD');
     send(res, req, 405, 'Método no permitido', { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    return true;
+  }
+
+  /* `/store` sin barra: una sola URL canónica, con redirección permanente. */
+  if (isHome && !rawPath.startsWith(STORE_HOME)) {
+    res.writeHead(301, { location: STORE_HOME, 'cache-control': 'public, max-age=300' });
+    res.end();
     return true;
   }
 
@@ -43,7 +61,7 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
   const baseHeaders = {
     'x-content-type-options': 'nosniff',
     'cache-control': indexable ? 'public, max-age=0, s-maxage=60, must-revalidate' : 'no-store',
-    ...(indexable ? {} : { 'x-robots-tag': 'noindex, nofollow' }),
+    ...(indexable && origin ? {} : { 'x-robots-tag': 'noindex, nofollow' }),
   };
 
   if (route === '/store/robots.txt') {
@@ -73,8 +91,31 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
     });
   }
 
+  if (isHome) {
+    let shell = '';
+    try {
+      shell = await readStoreShell();
+    } catch {
+      shell = '';
+    }
+    if (!shell) {
+      /* Sin HTML base se deja que nginx sirva el archivo estático. */
+      return false;
+    }
+    const page = renderStoreShell({ html: shell, origin, indexable, products, siteName: seo.siteName });
+    return send(res, req, 200, page.html, { ...baseHeaders, 'content-type': 'text/html; charset=utf-8' });
+  }
+
   if (route === '/store/sitemap.xml') {
     const { xml } = renderSitemap({ origin, products });
+    /* Sin origen público válido no se publica un sitemap con hosts internos. */
+    if (!xml) {
+      return send(res, req, 503, 'Sitemap no disponible: falta configurar el dominio público de la tienda.', {
+        ...baseHeaders,
+        'content-type': 'text/plain; charset=utf-8',
+        'retry-after': '60',
+      });
+    }
     return send(res, req, 200, xml, { ...baseHeaders, 'content-type': 'application/xml; charset=utf-8' });
   }
 
@@ -103,6 +144,18 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
     return send(res, req, 404, missing.html, htmlHeaders);
   }
 
-  const page = renderProductPage({ product, origin, indexable, siteName: seo.siteName });
+  const page = renderProductPage({ product, origin, indexable: indexable && Boolean(origin), siteName: seo.siteName });
   return send(res, req, 200, page.html, htmlHeaders);
+}
+
+/**
+ * HTML base de la PWA. Se lee una vez y se guarda 60 s: la inyección SEO se hace
+ * por petición, el archivo no cambia salvo despliegue.
+ */
+async function readStoreShell() {
+  if (shellCache.html && Date.now() - shellCache.at < 60000) return shellCache.html;
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../public/store/index.html', import.meta.url), 'utf8');
+  shellCache = { html, at: Date.now() };
+  return html;
 }

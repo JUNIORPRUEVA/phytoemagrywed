@@ -375,7 +375,12 @@ const STORE_MAIL = {
 };
 const STORE_SEO = {
   indexable: (process.env.PHYTO_STORE_INDEXABLE ?? 'false').trim().toLowerCase() === 'true',
-  publicUrl: (process.env.PHYTO_STORE_PUBLIC_URL ?? process.env.PHYTO_PUBLIC_URL ?? '').trim(),
+  /*
+   * Dominio PÚBLICO de la tienda. No se cae a `PHYTO_PUBLIC_URL`: esa variable es
+   * la URL interna de la app en EasyPanel y publicarla en canonical/sitemap fue
+   * justo el defecto que dejó el sitemap apuntando al host interno.
+   */
+  publicUrl: (process.env.PHYTO_STORE_PUBLIC_URL ?? '').trim(),
   siteName: (process.env.PHYTO_STORE_SITE_NAME ?? 'FULLTECH Store').trim(),
 };
 /* Verificación por SMS: APLAZADA. Solo se enciende con `PHYTO_STORE_PHONE_OTP=enabled`. */

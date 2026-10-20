@@ -129,7 +129,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   async function publicProducts() {
     if (publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
-    const pubs = (await sql.query("SELECT product_id,featured,sort_order FROM fulltech_store_publication_v1 WHERE status='published' ORDER BY sort_order,product_id")).rows;
+    const pubs = (await sql.query("SELECT product_id,featured,sort_order,updated_at FROM fulltech_store_publication_v1 WHERE status='published' ORDER BY sort_order,product_id")).rows;
     if (!pubs.length) { publicCache = { items: [], expiresAt: Date.now() + 5000 }; return []; }
     /*
      * El contenido público se deriva SIEMPRE del registro vivo del catálogo:
@@ -163,6 +163,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         warranty: publicWarranty(p),
         imageUrl: p.image_url ? `/api/store/products/${encodeURIComponent(p.id)}/image` : null,
         featured: Boolean(Number(pub.featured)), sortOrder: Number(pub.sort_order),
+        /* Fecha real de publicación: única fuente válida para <lastmod>. */
+        updatedAt: pub.updated_at ?? null,
       }];
     });
     publicCache = { items, expiresAt: Date.now() + 5000 };

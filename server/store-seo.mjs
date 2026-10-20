@@ -25,13 +25,47 @@ const jsonScript = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
 
 const cleanOrigin = (value) => String(value ?? '').trim().replace(/\/+$/, '');
 
-/** Origen canónico: configuración explícita; si falta, el host de la petición. */
+/*
+ * GUARDA DE ORIGEN PÚBLICO: un canonical, un sitemap o un og:url NUNCA pueden
+ * salir con un host que Google no puede alcanzar. Si la configuración falta y la
+ * petición llega con el host interno de EasyPanel, se devuelve cadena vacía y el
+ * llamador responde en cerrado (noindex / sin sitemap) en vez de publicar basura.
+ */
+const INTERNAL_HOST = /(^|\.)(localhost|internal|intranet|lan|local)$/i;
+const INTERNAL_SUFFIX = /(^|\.)(easypanel\.host|easypanel\.io|railway\.app|vercel\.app)$/i;
+const PRIVATE_IPV4 = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+const PRIVATE_IPV6 = /^(::1|fc|fd|fe80)/i;
+
+export function isPublicOrigin(value) {
+  const candidate = cleanOrigin(value);
+  if (!candidate) return false;
+  let url;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  if (url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  if (!host.includes('.') || host.endsWith('.')) return false;
+  if (INTERNAL_HOST.test(host) || INTERNAL_SUFFIX.test(host)) return false;
+  if (PRIVATE_IPV4.test(host) || PRIVATE_IPV6.test(host)) return false;
+  if (/^[\d.]+$/.test(host) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  return true;
+}
+
+/**
+ * Origen canónico: la configuración explícita manda; si falta o es inválida se
+ * usa el host de la petición SOLO cuando es público. Nunca un host interno.
+ */
 export function storeOrigin(req, configured = '') {
   const fixed = cleanOrigin(configured);
-  if (fixed) return fixed;
+  if (isPublicOrigin(fixed)) return fixed;
   const proto = String(req?.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim() || (req?.socket?.encrypted ? 'https' : 'http');
-  const host = String(req?.headers?.['x-forwarded-host'] ?? req?.headers?.host ?? 'localhost').split(',')[0].trim();
-  return `${proto}://${host}`;
+  const host = String(req?.headers?.['x-forwarded-host'] ?? req?.headers?.host ?? '').split(',')[0].trim();
+  const candidate = host ? `${proto}://${host}` : '';
+  return isPublicOrigin(candidate) ? candidate : '';
 }
 
 export const productPath = (id) => `/store/p/${encodeURIComponent(String(id))}`;
@@ -241,35 +275,102 @@ export function renderStoreGone({ origin = '', siteName = 'FULLTECH Store', name
 }
 
 /**
+ * Portada de la tienda: se sirve el MISMO HTML de la PWA (la experiencia del
+ * cliente no cambia) con la cabecera SEO inyectada y enlaces rastreables a los
+ * artículos publicados dentro de `<noscript>`.
+ *
+ * Sin origen público válido: noindex y sin canonical (nunca un host interno).
+ */
+export function renderStoreShell({ html = '', origin = '', indexable = false, products = [], siteName = 'FULLTECH Store' }) {
+  const base = cleanOrigin(origin);
+  const publicOrigin = isPublicOrigin(base) ? base : '';
+  const canonical = publicOrigin ? `${publicOrigin}/store/` : '';
+  const title = `${siteName} · Productos y suministros en República Dominicana`;
+  const description =
+    'Catálogo FULLTECH Store: productos de tecnología y suministros con entrega a domicilio o recogida coordinada en República Dominicana.';
+  const allowIndex = indexable === true && Boolean(publicOrigin);
+
+  const links = products
+    .filter((product) => product?.id && product?.name)
+    .slice(0, 60)
+    .map((product) => `      <li><a href="${escapeHtml(productCanonical(publicOrigin, product.id))}">${escapeHtml(product.name)}</a></li>`)
+    .join('\n');
+
+  const head = [
+    `<meta name="robots" content="${allowIndex ? 'index,follow,max-image-preview:large' : 'noindex,nofollow'}">`,
+    allowIndex && canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}">` : '',
+    allowIndex && canonical ? `<meta property="og:type" content="website">` : '',
+    allowIndex && canonical ? `<meta property="og:site_name" content="${escapeHtml(siteName)}">` : '',
+    allowIndex && canonical ? `<meta property="og:title" content="${escapeHtml(title)}">` : '',
+    allowIndex && canonical ? `<meta property="og:description" content="${escapeHtml(description)}">` : '',
+    allowIndex && canonical ? `<meta property="og:url" content="${escapeHtml(canonical)}">` : '',
+    allowIndex && canonical ? `<meta name="twitter:card" content="summary_large_image">` : '',
+  ]
+    .filter(Boolean)
+    .join('\n    ');
+
+  const noscript = links
+    ? `<noscript><nav aria-label="Productos publicados"><h2>Productos publicados</h2><ul>\n${links}\n    </ul></nav></noscript>`
+    : '';
+
+  let output = String(html);
+  /* Título descriptivo y único sin duplicarlo si ya existía. */
+  output = /<title>[^<]*<\/title>/i.test(output)
+    ? output.replace(/<title>[^<]*<\/title>/i, `<title>${escapeHtml(title)}</title>`)
+    : output.replace(/<\/head>/i, `<title>${escapeHtml(title)}</title>\n  </head>`);
+  output = output.replace(/<\/head>/i, `    ${head}\n  </head>`);
+  if (noscript) {
+    if (/<main id="main"[^>]*><\/main>/i.test(output)) output = output.replace(/(<main id="main"[^>]*>)<\/main>/i, `$1${noscript}</main>`);
+    else output = output.replace(/<\/body>/i, `${noscript}\n  </body>`);
+  }
+  return { html: output, canonical, indexable: allowIndex, title, description };
+}
+
+/**
  * Sitemap con SOLO artículos publicados y activos.
  * Devuelve la lista de URLs incluidas (para poder comprobarla en UAT).
+ * Sin un origen público válido devuelve `xml: null`: NUNCA se publica un sitemap
+ * con hosts internos ni con URLs relativas.
  */
 export function renderSitemap({ origin, products = [] }) {
   const base = cleanOrigin(origin);
-  const entries = [{ loc: `${base}/store/`, changefreq: 'daily', priority: '1.0' }];
+  if (!isPublicOrigin(base)) return { xml: null, urls: [], included: [] };
+  const seen = new Set();
+  const entries = [{ loc: `${base}/store/`, changefreq: 'daily', priority: '1.0', lastmod: '' }];
+  seen.add(entries[0].loc);
   const included = [];
-  for (const product of products) {
-    if (!product?.id || !product?.name) continue;
-    entries.push({ loc: productCanonical(base, product.id), changefreq: 'weekly', priority: '0.8' });
+  const sorted = [...products]
+    .filter((product) => product?.id && product?.name)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id), 'en'));
+  for (const product of sorted) {
+    const loc = productCanonical(base, product.id);
+    if (seen.has(loc)) continue;
+    seen.add(loc);
+    /* lastmod solo cuando el catálogo conoce una fecha real de publicación. */
+    const stamp = Date.parse(product.updatedAt ?? '');
+    const lastmod = Number.isFinite(stamp) ? new Date(stamp).toISOString().slice(0, 10) : '';
+    entries.push({ loc, changefreq: 'weekly', priority: '0.8', lastmod });
     included.push(String(product.id));
   }
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${entries
-    .map((entry) => `  <url>\n    <loc>${escapeXml(entry.loc)}</loc>\n    <changefreq>${entry.changefreq}</changefreq>\n    <priority>${entry.priority}</priority>\n  </url>`)
+    .map((entry) => `  <url>\n    <loc>${escapeXml(entry.loc)}</loc>${entry.lastmod ? `\n    <lastmod>${escapeXml(entry.lastmod)}</lastmod>` : ''}\n    <changefreq>${entry.changefreq}</changefreq>\n    <priority>${entry.priority}</priority>\n  </url>`)
     .join('\n')}
 </urlset>
 `;
   return { xml, urls: entries.map((entry) => entry.loc), included };
 }
 
-/** robots.txt: índice cerrado salvo autorización explícita. */
+/** robots.txt de la tienda: índice cerrado salvo autorización explícita. */
 export function renderRobots({ origin = '', indexable = false } = {}) {
-  if (!indexable) {
+  const base = cleanOrigin(origin);
+  /* Sin origen público no se puede anunciar un sitemap absoluto: se cierra. */
+  if (!indexable || !isPublicOrigin(base)) {
     return ['# FULLTECH Store — entorno no indexable (UAT / vista previa).', 'User-agent: *', 'Disallow: /', ''].join('\n');
   }
-  const base = cleanOrigin(origin);
   return [
+    '# FULLTECH Store — público indexable',
     'User-agent: *',
     'Allow: /store/',
     'Disallow: /admin/',

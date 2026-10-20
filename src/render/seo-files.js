@@ -18,8 +18,16 @@ export function renderRobots(view) {
     site.seo.noindex ? 'Disallow: /' : 'Allow: /',
     '',
   ];
-  if (view.seo.siteUrl) lines.push(`Sitemap: ${view.seo.siteUrl}/sitemap.xml`, '');
-  else lines.push('# PENDIENTE: define SEO_SITE_URL para publicar el sitemap.', '');
+  if (view.seo.siteUrl) {
+    /*
+     * Dos sitemaps distintos y explícitos: las páginas de la landing y el
+     * catálogo de FULLTECH Store (que lo genera el servidor del CRM). Listarlos
+     * por separado evita que Google descubra el sitemap de la tienda por azar.
+     */
+    lines.push(`Sitemap: ${view.seo.siteUrl}/sitemap.xml`, `Sitemap: ${view.seo.siteUrl}/store/sitemap.xml`, '');
+  } else {
+    lines.push('# PENDIENTE: define SEO_SITE_URL para publicar los sitemaps.', '');
+  }
   return lines.join('\n');
 }
 
