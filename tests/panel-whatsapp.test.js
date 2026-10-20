@@ -162,9 +162,11 @@ describe('nada se envía solo', () => {
       'setInterval(()',
       'setInterval(()',
       'setInterval(()',
+      // Contador de la nota de voz en el compositor (200 ms): anónimo desde que
+      // la grabación vive dentro del propio compositor. Solo pinta el tiempo.
+      'setInterval(()',
       'setInterval(deliveryPollTick, 8000)',
       'setInterval(sincroniaSilenciosaTick, 60000)',
-      'setInterval(tick, 200)',
       'setInterval(vaciarCola, 5000)',
       // El sondeo del chat es SOLO la red de seguridad: los mensajes llegan por
       // el canal SSE. Cada 20 s (antes 8 s) reduce la carga sin perder tiempo real.
@@ -212,7 +214,8 @@ describe('nada se envía solo', () => {
     expect(app).not.toMatch(/sendAutomatically|scheduleSend/i);
 
     // El reloj de la grabación solo escribe el tiempo en pantalla.
-    const desde = app.indexOf('const tick = () => {');
+    const desde = app.indexOf('sesion.timer = setInterval(');
+    expect(desde).toBeGreaterThan(-1);
     const reloj = app.slice(desde, desde + 500);
     expect(reloj).toContain('rec-time');
     expect(reloj).not.toMatch(/fetch|uploadMediaFile|sendAudio|sendImage|POST/);

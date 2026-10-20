@@ -138,7 +138,14 @@ it('los gestos de los bordes abren cada drawer y los gestos verticales o central
   const main=vi.fn();w.addEventListener('fulltech:main-drawer',main);
   const swipe=(x1,y1,x2,y2)=>{for(const [type,x,y] of [['pointerdown',x1,y1],['pointermove',x2,y2],['pointerup',x2,y2]]){const event=new w.Event(type,{bubbles:true,cancelable:true});for(const [key,value] of Object.entries({clientX:x,clientY:y,pointerId:7,pointerType:'touch',isPrimary:true}))Object.defineProperty(event,key,{value});w.document.body.dispatchEvent(event);}};
   swipe(4,200,8,320);swipe(140,200,250,205);expect(main).not.toHaveBeenCalled();
+  /*
+   * FUERA DE «HOY» el borde izquierdo NO abre el menú general: dentro del chat ese
+   * gesto es el de las respuestas rápidas (lo maneja el chat, no el borde).
+   */
+  swipe(4,200,110,208);expect(main).not.toHaveBeenCalled();
+  w.document.body.dataset.tab='hoy';
   swipe(4,200,110,208);expect(main.mock.calls[0][0].detail.open).toBe(true);
+  w.document.body.dataset.tab='catalogo';
   swipe(387,200,270,207);expect(w.document.querySelector('.pos-actions-drawer').open).toBe(true);
   swipe(260,200,370,205);expect(w.document.querySelector('.pos-actions-drawer').open).toBe(false);
 });

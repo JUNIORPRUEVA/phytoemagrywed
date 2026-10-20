@@ -21935,6 +21935,10 @@
       state.wa.filtersOpen = false;
       delete document.body.dataset.waView;
       delete document.body.dataset.waFilters;
+      // Al salir del chat no queda ninguna columna lateral abierta (ni su
+      // marca en el body): al volver se entra limpio y los gestos no se
+      // consumen cerrando algo que ya no se ve.
+      closeChatColumns();
     }
     if (tab !== 'clientes') state.clientSearchOpen = false;
     if (tab !== 'clientes') {

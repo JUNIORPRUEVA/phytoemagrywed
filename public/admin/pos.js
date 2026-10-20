@@ -286,7 +286,16 @@ let edgeGesture=null;
 document.addEventListener('pointerdown',e=>{
   if(!['touch','pen'].includes(e.pointerType)||e.isPrimary===false||window.innerWidth>979||$('#app')?.hidden!==false||busy)return;
   if(modal.open||document.querySelector('dialog[open]:not(.pos-actions-drawer)')||$('#sheet')?.hidden===false)return;
-  const mode=actionsDrawer.open?'close-actions':document.body.dataset.drawer==='open'?'close-main':e.clientX<=20?'main':e.clientX>=window.innerWidth-20&&document.body.dataset.tab==='catalogo'?'actions':null;
+  /*
+   * EL MENÚ PRINCIPAL SOLO SE ABRE DESDE «HOY».
+   *
+   * Antes bastaba con empezar el gesto en los 20 px del borde izquierdo, en
+   * CUALQUIER pestaña: dentro de un chat, deslizar de izquierda a derecha abría
+   * el menú general en vez de la columna de respuestas rápidas. En el chat manda
+   * el gesto del propio chat (app.js); aquí solo cuenta la portada.
+   */
+  const enPortada=document.body.dataset.tab==='hoy';
+  const mode=actionsDrawer.open?'close-actions':document.body.dataset.drawer==='open'?'close-main':e.clientX<=20&&enPortada?'main':e.clientX>=window.innerWidth-20&&document.body.dataset.tab==='catalogo'?'actions':null;
   if(!mode||e.target.closest('input,textarea,select,[contenteditable=true]'))return;
   edgeGesture={id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now(),mode};
   if(edgeZones.includes(e.target))e.target.setPointerCapture?.(e.pointerId);
