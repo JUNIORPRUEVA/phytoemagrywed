@@ -5740,15 +5740,15 @@ body[data-wa-view='chat'] .float-btn--menu {
 }
 
 .wa-ai-fab {
-  position: absolute; right: 16px; bottom: 58px; z-index: 15;
+  position: absolute; right: 16px; bottom: 8px; z-index: 15;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; padding: 0; border: 1px solid var(--pe-line);
+  width: 46px; height: 46px; padding: 0; border: 1px solid var(--pe-line);
   border-radius: 50%; background: var(--pe-appbar-bg); color: var(--pe-brand-text);
   box-shadow: var(--pe-shadow-float); line-height: 1;
   cursor: pointer; touch-action: manipulation; transition: transform var(--pe-motion) var(--pe-ease);
 }
-.wa-ai-fab__spark { font-size: 17px; }
-.wa-ai-fab__label { position: absolute; right: 1px; bottom: 1px; padding: 1px 2px; border-radius: 5px; background: var(--pe-brand-text); color: var(--pe-on-brand); font-size: 8px; font-weight: 750; letter-spacing: -.02em; }
+.wa-ai-fab__spark { font-size: 21px; }
+.wa-ai-fab__label { position: absolute; right: 1px; bottom: 1px; padding: 1px 3px; border-radius: 5px; background: var(--pe-brand-text); color: var(--pe-on-brand); font-size: 9px; font-weight: 750; letter-spacing: -.02em; }
 .wa-fab__dots { display: block; font-size: 27px; font-weight: 700; line-height: .8; transform: translateY(-1px); }
 .wa-ai-fab:active { transform: scale(.94); }
 .wa-ai-fab[disabled] { opacity: .4; box-shadow: none; cursor: not-allowed; }

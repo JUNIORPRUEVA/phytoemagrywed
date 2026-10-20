@@ -12420,6 +12420,8 @@
   const AUDIO_MIME_OK = ['audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/aac', 'audio/amr', 'audio/opus'];
   const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
   const AUDIO_ACCEPT = 'audio/ogg,audio/mp4,audio/mpeg,audio/aac,audio/amr,audio/webm,audio/*';
+  /* El servidor reconoce como DOCUMENTO el PDF (ver `kindOfMime` del pipeline). */
+  const DOCUMENT_ACCEPT = 'application/pdf,.pdf';
 
   const fmtSeconds = (value) => {
     const total = Math.max(0, Math.floor(Number(value) || 0));
@@ -12640,7 +12642,7 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: {
-          'content-type': file.type || (kind === 'audio' ? 'audio/ogg' : 'image/png'),
+          'content-type': file.type || (kind === 'audio' ? 'audio/ogg' : kind === 'document' ? 'application/pdf' : 'image/png'),
           'x-phyto-filename': file.name || kind,
         },
         body: file,
@@ -12708,42 +12710,24 @@
                <button class="menu-item" id="attach-audio" type="button">
                  <span class="menu-item__icon" aria-hidden="true">${ICONS.audio}</span>
                  <span><strong>Audio</strong><small>Un archivo de audio · hasta 16 MB</small></span>
+               </button>
+               <button class="menu-item" id="attach-document" type="button">
+                 <span class="menu-item__icon" aria-hidden="true">${ICONS.doc}</span>
+                 <span><strong>Documento</strong><small>PDF · hasta 100 MB</small></span>
                </button>`
         }
-        <button class="menu-item" id="attach-gps" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.pin}</span>
-          <span><strong>Ubicación GPS</strong><small>Usar la ubicación de este equipo y enviarla al cliente</small></span>
-        </button>
-        <button class="menu-item" id="attach-location" type="button">
-          <span class="menu-item__icon" aria-hidden="true">📍</span>
-          <span><strong>Ubicaciones del negocio</strong><small>Elegir una ubicación guardada</small></span>
-        </button>
-        <button class="menu-item" id="attach-banks" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.doc}</span><span><strong>Cuentas bancarias</strong><small>Las cuentas del negocio, listas para enviar</small></span></button>
-        <button class="menu-item" id="attach-store" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span><span><strong>Tienda online</strong><small>Compartir el enlace de la tienda</small></span></button>
-        <button class="menu-item" id="attach-web" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.web}</span><span><strong>Página web</strong><small>Compartir la web del negocio</small></span></button>
       </div>
-      ${isAdmin() ? '<button class="btn btn--ghost btn--block" id="attach-configure" type="button">Configurar opciones para compartir</button>' : ''}
       <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
       <input id="attach-audio-input" type="file" accept="${AUDIO_ACCEPT}" hidden />
+      <input id="attach-document-input" type="file" accept="${DOCUMENT_ACCEPT}" hidden />
       `,
       { variant: 'menu' },
     );
 
-    $('#attach-gps').addEventListener('click', () => { closeSheet(); sendDeviceLocation(conversationId); });
-    $('#attach-location').addEventListener('click', () => {
-      closeSheet();
-      openBusinessSharing(conversationId, 'locations');
-    });
-
-    $('#attach-banks').addEventListener('click', () => openBusinessSharing(conversationId, 'banks'));
-    $('#attach-store').addEventListener('click', () => openChatLinkShare(conversationId, 'store'));
-    $('#attach-web').addEventListener('click', () => openChatLinkShare(conversationId, 'web'));
-    $('#attach-configure')?.addEventListener('click', () => { closeSheet(); openSettingsPage('compartir'); });
-
-    if (soloUbicacion) return;
-
+    /* Elegir archivo: se abre el selector del sistema y se previsualiza. */
     const pick = (inputSelector, kind) => {
       const input = $(inputSelector);
+      if (!input) return;
       input.value = '';
       input.onchange = () => {
         const file = input.files?.[0];
@@ -12751,8 +12735,9 @@
       };
       input.click();
     };
-    $('#attach-image').addEventListener('click', () => pick('#attach-image-input', 'image'));
-    $('#attach-audio').addEventListener('click', () => pick('#attach-audio-input', 'audio'));
+    $('#attach-image')?.addEventListener('click', () => pick('#attach-image-input', 'image'));
+    $('#attach-audio')?.addEventListener('click', () => pick('#attach-audio-input', 'audio'));
+    $('#attach-document')?.addEventListener('click', () => pick('#attach-document-input', 'document'));
   }
 
   /**
@@ -12941,22 +12926,24 @@
                  por su contenido al enviarlo.</p>`
             : '';
     openSheet(
-      kind === 'image' ? 'Enviar imagen' : 'Enviar audio',
+      kind === 'image' ? 'Enviar imagen' : kind === 'audio' ? 'Enviar audio' : 'Enviar documento',
       `
       <div class="attach-preview">
         ${
           kind === 'image'
             ? `<img src="${escapeHtml(objectUrl)}" alt="Previsualización" />`
-            : `<audio src="${escapeHtml(objectUrl)}" controls preload="metadata"></audio>`
+            : kind === 'document'
+              ? `<p class="attach-preview__file"><span aria-hidden="true">📄</span><strong>${escapeHtml(file.name || 'Documento')}</strong><small>${escapeHtml(mime || 'PDF')} · ${fmtBytes(file.size)}</small></p>`
+              : `<audio src="${escapeHtml(objectUrl)}" controls preload="metadata"></audio>`
         }
         <p class="attach-preview__meta">
-          <span>${escapeHtml(file.name || (kind === 'image' ? 'Imagen' : 'Audio'))}</span>
+          <span>${escapeHtml(file.name || (kind === 'image' ? 'Imagen' : kind === 'audio' ? 'Audio' : 'Documento'))}</span>
           <span>${escapeHtml(mime || 'tipo desconocido')} · ${fmtBytes(file.size)}${durationMs ? ` · ${fmtSeconds(durationMs / 1000)}` : ''}</span>
         </p>
       </div>
       ${aviso}
       ${
-        kind === 'image'
+        kind !== 'audio'
           ? `<label class="field">
                <span class="field__label">Texto (opcional)</span>
                <input class="field__input" id="attach-caption" maxlength="400" placeholder="Mira, este es el frasco…" />
@@ -12976,10 +12963,10 @@
     $('#attach-send').addEventListener('click', async (event) => {
       await working(event.currentTarget, 'Enviando…', async () => {
         try {
-          const caption = kind === 'image' ? ($('#attach-caption')?.value ?? '').trim() : '';
+          const caption = kind !== 'audio' ? ($('#attach-caption')?.value ?? '').trim() : '';
           await uploadMediaFile({ conversationId, kind, file, caption, key: key ?? uploadKey(kind) });
           cleanup();
-          toast(kind === 'image' ? 'Imagen enviada' : 'Audio enviado');
+          toast(kind === 'image' ? 'Imagen enviada' : kind === 'audio' ? 'Audio enviado' : 'Documento enviado');
           closeSheet();
           await load({ keepTab: true });
           await loadWaThread(conversationId, { force: true });
@@ -15104,10 +15091,6 @@
           <span><strong>Crear pedido</strong></span>
         </button>
 
-        <button class="menu-item" data-quick-replies="1" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
-          <span><strong>Respuesta rápida</strong></span>
-        </button>
         <button class="menu-item" data-wa-template="1" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.note}</span>
           <span><strong>Enviar plantilla</strong></span>
@@ -15187,10 +15170,16 @@
     );
   }
 
+  /* Cuántas respuestas se ven sin desplazar: el resto, tras «Ver más». */
+  const QUICK_VISIBLE = 6;
+  let waQuickExpanded = false;
+
   function quickColumnHtml() {
     const rows = quickRepliesAll();
+    const visibles = waQuickExpanded ? rows : rows.slice(0, QUICK_VISIBLE);
+    const ocultas = Math.max(0, rows.length - visibles.length);
     const lista = rows.length
-      ? rows
+      ? visibles
           .map(
             (row) => `<button class="wa-col__item" data-qr-insert="${escapeHtml(row.id)}" type="button">
               <strong>${escapeHtml(row.name ?? '')}</strong>
@@ -15199,6 +15188,9 @@
           )
           .join('')
       : '<p class="wa-col__empty">Sin respuestas rápidas guardadas.</p>';
+    const verMas = ocultas
+      ? `<button class="wa-col__more" data-wa-col-more="1" type="button">Ver más (${ocultas})</button>`
+      : '';
     return `
       <div class="wa-col" data-side="left" data-open="0">
         <button class="wa-col__backdrop" data-wa-col-close="1" type="button" aria-label="Cerrar" tabindex="-1"></button>
@@ -15208,16 +15200,21 @@
             <button class="wa-col__x" data-wa-col-close="1" type="button" aria-label="Cerrar">✕</button>
           </header>
           <div class="wa-col__body">
-            <p class="wa-col__label">Responder rápido</p>
-            <div class="wa-col__list">${lista}</div>
-            <p class="wa-col__label">Compartir</p>
-            <div class="wa-col__list">
-              <button class="wa-col__item" data-wa-col-gps="1" type="button"><strong>Ubicación GPS</strong><small>Ubicación de este equipo</small></button>
-              <button class="wa-col__item" data-wa-col-locations="1" type="button"><strong>Ubicación del negocio</strong><small>Direcciones guardadas</small></button>
-              <button class="wa-col__item" data-wa-col-banks="1" type="button"><strong>Cuentas bancarias</strong><small>Datos para transferencias</small></button>
-              <button class="wa-col__item" data-wa-col-store="1" type="button"><strong>Tienda online</strong><small>Enlace de la tienda</small></button>
-              <button class="wa-col__item" data-wa-col-web="1" type="button"><strong>Página web</strong><small>Web del negocio</small></button>
-            </div>
+            <section class="wa-col__section">
+              <p class="wa-col__label">Responder rápido</p>
+              <div class="wa-col__list${waQuickExpanded ? ' wa-col__list--scroll' : ''}">${lista}</div>
+              ${verMas}
+            </section>
+            <section class="wa-col__section wa-col__section--share">
+              <p class="wa-col__label">Compartir</p>
+              <div class="wa-col__list">
+                <button class="wa-col__item" data-wa-col-gps="1" type="button"><strong>Ubicación GPS</strong><small>Ubicación de este equipo</small></button>
+                <button class="wa-col__item" data-wa-col-locations="1" type="button"><strong>Ubicación del negocio</strong><small>Direcciones guardadas</small></button>
+                <button class="wa-col__item" data-wa-col-banks="1" type="button"><strong>Cuentas bancarias</strong><small>Datos para transferencias</small></button>
+                <button class="wa-col__item" data-wa-col-store="1" type="button"><strong>Tienda online</strong><small>Enlace de la tienda</small></button>
+                <button class="wa-col__item" data-wa-col-web="1" type="button"><strong>Página web</strong><small>Web del negocio</small></button>
+              </div>
+            </section>
           </div>
         </aside>
       </div>`;
@@ -15243,10 +15240,11 @@
       </div>`;
   }
 
-  function closeChatColumns() {
+  function closeChatColumns(reset = true) {
     const host = waColumnsHost();
     host?.querySelectorAll('.wa-col').forEach((col) => { col.dataset.open = '0'; });
     delete document.body.dataset.waCol;
+    if (reset) waQuickExpanded = false;
   }
 
   /** Abre una columna (`left` = respuestas/envíos, `right` = acciones). */
@@ -15254,7 +15252,7 @@
     const host = waColumnsHost();
     if (!host) return;
     if (!state.wa.selectedId) return;
-    closeChatColumns();
+    closeChatColumns(false);
     host.innerHTML = quickColumnHtml() + actionsColumnHtml();
     const col = host.querySelector(`.wa-col[data-side="${side}"]`);
     if (!col) return;
@@ -22578,6 +22576,12 @@
       // --- columnas laterales del chat (gesto o pestañas de los bordes) ---
       if (event.target.closest('[data-wa-col-close]')) {
         closeChatColumns();
+        return;
+      }
+      if (event.target.closest('[data-wa-col-more]')) {
+        closeChatColumns();
+        waQuickExpanded = true;
+        openChatColumn('left');
         return;
       }
       const colBoton = event.target.closest(

@@ -268,7 +268,9 @@ export function createMediaRoutes(deps) {
       return json(res, error.status ?? 400, { ok: false, error: error.message });
     }
 
-    const kind = url.searchParams.get('kind') === 'audio' ? 'audio' : 'image';
+    /* Tres familias admitidas desde el panel: imagen, audio y documento (PDF). */
+    const kindParam = url.searchParams.get('kind');
+    const kind = kindParam === 'audio' ? 'audio' : kindParam === 'document' ? 'document' : 'image';
     const caption = (url.searchParams.get('caption') ?? '').slice(0, 1024) || null;
     const idempotencyKey = (url.searchParams.get('key') ?? '').slice(0, 80) || null;
 

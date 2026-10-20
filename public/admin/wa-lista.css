@@ -1303,9 +1303,96 @@ body[data-tab='whatsapp'] .wa-col__x:hover {
 
 body[data-tab='whatsapp'] .wa-col__body {
   flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 4px 8px calc(18px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  padding: 4px 8px calc(12px + env(safe-area-inset-bottom, 0px));
   -webkit-overflow-scrolling: touch;
+}
+
+/* Dos bloques: «Responder rápido» se lleva el espacio libre y «Compartir»
+   queda siempre completo abajo (así nunca hay que desplazar para verlo). */
+body[data-tab='whatsapp'] .wa-col__section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body[data-tab='whatsapp'] .wa-col__section:first-child {
+  flex: 1 1 auto;
+}
+
+body[data-tab='whatsapp'] .wa-col__section--share {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  border-top: 1px solid var(--wa-line);
+}
+
+/* La barra de desplazamiento NO se ve: aparece solo al desplazar. */
+body[data-tab='whatsapp'] .wa-col__list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+}
+
+body[data-tab='whatsapp'] .wa-col__list--scroll {
+  overflow-y: auto;
+  max-height: 34vh;
+  scrollbar-width: none;
+}
+
+body[data-tab='whatsapp'] .wa-col__list--scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+body[data-tab='whatsapp'] .wa-col__more {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px dashed var(--wa-line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--wa-ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+body[data-tab='whatsapp'] .wa-col__more:hover {
+  background: rgba(11, 20, 26, 0.06);
+}
+
+/* La columna de acciones sí puede ser larga: se desplaza sin barra visible. */
+body[data-tab='whatsapp'] .wa-col[data-side='right'] .wa-col__body {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+body[data-tab='whatsapp'] .wa-col[data-side='right'] .wa-col__body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Documento adjunto: ficha con nombre y peso. */
+.attach-preview__file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px;
+  border: 1px dashed var(--pe-line);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.attach-preview__file span {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.attach-preview__file small {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 body[data-tab='whatsapp'] .wa-col__label {
@@ -1321,7 +1408,6 @@ body[data-tab='whatsapp'] .wa-col__list {
   display: grid;
   gap: 1px;
 }
-
 body[data-tab='whatsapp'] .wa-col__item {
   display: block;
   width: 100%;
