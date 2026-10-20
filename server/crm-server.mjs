@@ -1100,8 +1100,25 @@ function publicDeliveryOrder(item, order, customer = null, conversation = null, 
 }
 
 async function visibleDeliveryOrders(ctx, actor) {
-  const items = await ctx.store.listAdmin({ limit: 5000 });
-  const conversations = await ctx.db.list('conversations', { limit: 5000 });
+  /*
+   * UNA lectura por tabla, no una por pedido.
+   *
+   * Antes, por cada pedido visible se pedía el cliente (`ctx.customers.get`) y se
+   * buscaba su conversación, así que abrir el panel con 500 pedidos hacía 500
+   * consultas encadenadas. Ahora las tres tablas se leen en paralelo y se
+   * resuelven con mapas.
+   */
+  const [items, conversations, customerRows] = await Promise.all([
+    ctx.store.listAdmin({ limit: 5000 }),
+    ctx.db.list('conversations', { limit: 5000 }),
+    ctx.db.list('customers', { limit: 500 }),
+  ]);
+  const customerById = new Map(customerRows.map((row) => [row.id, row]));
+  const conversationById = new Map(conversations.map((row) => [row.id, row]));
+  const conversationByCustomer = new Map();
+  for (const row of conversations) {
+    if (!conversationByCustomer.has(row.customer_id)) conversationByCustomer.set(row.customer_id, row);
+  }
   /*
    * «MIS ENTREGAS» FILTRA EN EL PANEL.
    *
@@ -1156,10 +1173,10 @@ async function visibleDeliveryOrders(ctx, actor) {
      * que no son suyos.
      */
     if (!canOpenDeliveryOrder(actor, order)) continue;
-    const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
+    const customer = order.customer_id ? customerById.get(order.customer_id) ?? null : null;
     const conversation = order.conversation_id
-      ? await findConversation(ctx, order.conversation_id)
-      : conversations.find((row) => customer?.id && row.customer_id === customer.id) ?? null;
+      ? conversationById.get(order.conversation_id) ?? null
+      : conversationByCustomer.get(customer?.id) ?? null;
     orders.push(publicDeliveryOrder(item, order, customer, conversation, pickupsByOrder.get(String(item.id)) ?? []));
   }
   return orders;
@@ -5720,21 +5737,60 @@ async function handle(req, res, ctx) {
 
     // Todo lo que necesita el panel en una sola petición (móvil con mala señal).
     if (route === '/api/admin/data' && req.method === 'GET') {
+      /*
+       * ARRANQUE LIGERO (`?light=1`).
+       *
+       * El panel necesita pintar HOY, la bandeja y los recuentos para abrir;
+       * catálogo, inventario, entregas, proveedores y auditoría pueden llegar
+       * después. El cliente pide esta versión primero (unos cientos de KB en vez
+       * de megabytes) y programa la carga completa en segundo plano. La respuesta
+       * lleva `partial: true` para que el cliente NO borre lo que ya tenía ni
+       * guarde una copia offline incompleta.
+       */
+      const lightRequested = url.searchParams.get('light') === '1';
       const deliveryScope = await deliveryAccessScope(ctx, actor);
-      const rawItems = await store.listAdmin({ limit: url.searchParams.get('offline') === '1' ? 5000 : 500 });
-      const items = rawItems
+      /*
+       * Se pide UNO de más para saber si hay truncamiento. Si el negocio cabe
+       * entero en el paquete ligero, la respuesta se devuelve COMPLETA
+       * (`partial: false`): no tiene sentido pintar dos veces los mismos datos.
+       */
+      const rawItems = await store.listAdmin({
+        limit: lightRequested ? 151 : url.searchParams.get('offline') === '1' ? 5000 : 500,
+      });
+      const hasMoreItems = lightRequested && rawItems.length > 150;
+      const itemRows = hasMoreItems ? rawItems.slice(0, 150) : rawItems;
+      const items = itemRows
         .filter((item) => !deliveryScope.restricted || (item.type === 'order_intent' && deliveryScope.orderIds.has(item.id)))
         .map((item) => sanitizeItemForPermissions(item, actor));
       const messages = actor?.role === 'ADMIN' ? await store.messages().list() : [];
-      const fullCustomerList = await ctx.customers.list({});
-      const customerList = deliveryScope.restricted
+      /*
+       * CLIENTES + BANDEJA + RECUENTOS, EN UNA SOLA PASADA.
+       *
+       * Antes se llamaba tres veces: `list()` (que a su vez leía pedidos,
+       * seguimientos y mensajes), `listConversations()` (los volvía a leer y
+       * recorría 5.000 mensajes por cliente) y `conversationCounts()` (que hacía
+       * DOS pasadas más de lo mismo). Abrir el panel costaba segundos cuando la
+       * bandeja crecía. Ahora es una lectura por tabla y una pasada en memoria.
+       */
+      const overview = await ctx.customers.overview({});
+      const fullCustomerList = overview.customers;
+      const scopedCustomers = deliveryScope.restricted
         ? fullCustomerList.filter((customer) => deliveryScope.customerIds.has(customer.id))
         : fullCustomerList;
-      const fullConversationList = await ctx.customers.listConversations({});
-      const conversationList = deliveryScope.restricted
+      const fullConversationList = overview.conversations;
+      const scopedConversations = deliveryScope.restricted
         ? fullConversationList.filter((conversation) => deliveryScope.conversationIds.has(conversation.id))
         : fullConversationList;
-      const conversationCounts = await ctx.customers.conversationCounts();
+      /*
+       * Los CLIENTES viajan completos (el tope de la lista son 500): los
+       * contadores de HOY se calculan con ellos y un recorte haría que las
+       * tarjetas mintieran mientras llega el paquete completo. Lo que se recorta
+       * es la bandeja y los pedidos, que son los bloques pesados.
+       */
+      const light = lightRequested && (hasMoreItems || scopedConversations.length > 150);
+      const customerList = scopedCustomers;
+      const conversationList = light ? scopedConversations.slice(0, 150) : scopedConversations;
+      const conversationCounts = overview.counts;
       await ctx.customers.ensureInitialTags();
       const buckets = deliveryScope.restricted
         ? { reference: new Date().toISOString(), today: [], overdue: [], upcoming: [], completed: [] }
@@ -5749,7 +5805,7 @@ async function handle(req, res, ctx) {
        */
       /** @type {any[]} */
       const mediaNeedsReview = [];
-      if (ctx.media?.store?.listBySendStatus) {
+      if (!light && ctx.media?.store?.listBySendStatus) {
         for (const status of [SEND_STATUS.SEND_UNKNOWN, SEND_STATUS.SENDING]) {
           const rows = await ctx.media.store.listBySendStatus(status, 10);
           for (const row of rows) {
@@ -5777,15 +5833,20 @@ async function handle(req, res, ctx) {
        * el mismo criterio que el resto de importes (cost.view).
        */
       const canSeeCost = hasPermission(actor, 'cost.view');
-      const supplierRows = (await ctx.db.list('suppliers', { by: 'name', order: 'asc' })).map((row) => ({
-        ...row,
-        location_status: Number.isFinite(row.lat) && Number.isFinite(row.lng) ? 'ok' : 'pending',
-      }));
-      const productSupplierRows = (await ctx.db.list('product_suppliers', { limit: 5000 })).map((row) =>
-        canSeeCost ? row : { ...row, cost_cents: null },
-      );
+      const supplierRows = light
+        ? []
+        : (await ctx.db.list('suppliers', { by: 'name', order: 'asc' })).map((row) => ({
+            ...row,
+            location_status: Number.isFinite(row.lat) && Number.isFinite(row.lng) ? 'ok' : 'pending',
+          }));
+      const productSupplierRows = light
+        ? []
+        : (await ctx.db.list('product_suppliers', { limit: 5000 })).map((row) =>
+            canSeeCost ? row : { ...row, cost_cents: null },
+          );
       json(res, 200, {
         ok: true,
+        partial: light,
         storage: store.kind,
         timeZone: TIME_ZONE,
         auth: authPayload(),
@@ -5833,7 +5894,7 @@ async function handle(req, res, ctx) {
           enabled: (await ctx.settings.followup()).enabled,
         },
         // --------------------------------------- ventas: programados y ajustes
-        scheduled: await ctx.scheduler.summary(),
+        scheduled: light ? null : await ctx.scheduler.summary(),
         settings: { followup: (await ctx.settings.followup()).enabled },
         commercial: {
           states: COMMERCIAL_STATES,
@@ -5842,9 +5903,9 @@ async function handle(req, res, ctx) {
         },
         customerStages: CUSTOMER_STAGES.map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
         customerTags: deliveryScope.restricted ? [] : await ctx.customers.listTags(),
-        deliveryTracking: await listVisibleTracking(ctx, actor),
-        deliveryOrders: await visibleDeliveryOrders(ctx, actor),
-        deliveryUsers: can('delivery.tracking.manage_all')
+        deliveryTracking: light ? [] : await listVisibleTracking(ctx, actor),
+        deliveryOrders: light ? [] : await visibleDeliveryOrders(ctx, actor),
+        deliveryUsers: !light && can('delivery.tracking.manage_all')
           ? (await ctx.users.listUsers()).filter((user) => canDeliver(user) && user.active !== false)
           : [],
         // La regla de la contraseña vive en el servidor: el panel solo la enseña.
@@ -5858,7 +5919,7 @@ async function handle(req, res, ctx) {
         catalog: inventory.presentations,
         inventory,
         orderStatuses: Object.entries(ORDER_STATUS_LABELS).map(([value, label]) => ({ value, label })),
-        audit: await ctx.audit.summary(),
+        audit: light ? null : await ctx.audit.summary(),
         // Pantalla HOY: lo que una persona tiene que mirar al abrir el panel.
         hoy: {
           reference: buckets.reference,
@@ -5909,6 +5970,8 @@ async function handle(req, res, ctx) {
           audioNormalize: ffmpegInfo().available,
           needsReview: mediaNeedsReview.length,
           review: mediaNeedsReview,
+          /* En el arranque ligero no se revisa la cola: es información de Ajustes. */
+          deferred: light,
         },
       });
       return;
@@ -9354,7 +9417,7 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: dateRange.error, message: 'El rango de fechas no es válido.' });
         return;
       }
-      const listedConversations = await ctx.customers.listConversations({
+      const page = await ctx.customers.conversationPage({
         filter,
         order,
         q,
@@ -9365,9 +9428,9 @@ async function handle(req, res, ctx) {
       const access = await conversationAccess(ctx, actor);
       const conversations =
         isDeliveryOnly(actor) && !access.all
-          ? listedConversations.filter((row) => access.conversationIds.has(row.id))
-          : listedConversations;
-      const counts = await ctx.customers.conversationCounts();
+          ? page.conversations.filter((row) => access.conversationIds.has(row.id))
+          : page.conversations;
+      const counts = page.counts;
       json(res, 200, { ok: true, conversations, counts, dateRange: { from: dateRange.from, to: dateRange.to }, whatsapp: whatsappStatusPayload(ctx) });
       return;
     }

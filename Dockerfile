@@ -170,6 +170,38 @@ http {
         # Guarda los `lead` y los `order_intent` en PostgreSQL
         # (PHYTO_CRM_DATABASE_URL) o, si no hay, en /data/phytoemagry.sqlite.
         # `^~` evita que lo capturen las reglas de abajo (map/md/json).
+        # Los tres canales SSE: sin búfer y SIN comprimir (gzip acumula y
+        # retrasa los avisos). Van como `location =` para ganar al bloque /api/.
+        location = /api/admin/events {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_buffering off;
+            proxy_cache off;
+            gzip off;
+            proxy_read_timeout 1h;
+            proxy_send_timeout 1h;
+        }
+        location = /api/admin/whatsapp/events {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_buffering off;
+            proxy_cache off;
+            gzip off;
+            proxy_read_timeout 1h;
+            proxy_send_timeout 1h;
+        }
+        location = /api/admin/delivery-tracking/events {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_buffering off;
+            proxy_cache off;
+            gzip off;
+            proxy_read_timeout 1h;
+            proxy_send_timeout 1h;
+        }
         location ^~ /api/ {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
@@ -177,14 +209,20 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
-            # SIN BÚFER: por aquí viaja el canal en vivo del chat y del reparto
-            # (SSE). Con el búfer puesto (el valor por defecto), nginx acumula la
-            # respuesta y los avisos llegan tarde: el panel parecía ir a 8 s.
+            # SIN BÚFER: las respuestas JSON grandes no se acumulan antes de enviarse.
             proxy_buffering off;
             proxy_cache off;
             proxy_read_timeout 1h;
             proxy_send_timeout 1h;
-            gzip off;
+            # El panel manda JSON grande (clientes, pedidos, bandeja). Sin esto
+            # viajaba sin comprimir: ~2 MB por apertura. Con gzip baja a unos
+            # cientos de KB. `gzip_proxied any` es imprescindible para respuestas
+            # proxied (por defecto nginx no las comprime).
+            gzip on;
+            gzip_proxied any;
+            gzip_types application/json;
+            gzip_min_length 1024;
+            gzip_comp_level 6;
         }
 
         # --------------------------------------------- app del panel (PWA)

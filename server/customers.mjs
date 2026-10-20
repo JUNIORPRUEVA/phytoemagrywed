@@ -244,15 +244,17 @@ export function createCustomerService(deps) {
     };
   }
 
-  async function tagsForCustomers(customerIds) {
+  /**
+   * Etiquetas de cada cliente en UNA pasada.
+   *
+   * Se separa de la consulta para poder reutilizar filas ya leídas (el resumen
+   * del panel pide etiquetas, clientes y conversaciones a la vez).
+   */
+  function buildTagsFor(customerIds, tagRows, assignments) {
     const ids = new Set(customerIds.filter(Boolean));
-    if (!ids.size) return new Map();
-    const [tagRows, assignments] = await Promise.all([
-      db.list('customer_tags', { limit: 1000 }),
-      db.list('customer_tag_assignments', { limit: 5000 }),
-    ]);
-    const byTag = new Map(tagRows.filter((tag) => tag.active !== false).map((tag) => [tag.id, tag]));
     const out = new Map([...ids].map((id) => [id, []]));
+    if (!ids.size) return out;
+    const byTag = new Map(tagRows.filter((tag) => tag.active !== false).map((tag) => [tag.id, tag]));
     for (const assignment of assignments) {
       if (!ids.has(assignment.customer_id) || assignment.removed_at) continue;
       const tag = byTag.get(assignment.tag_id);
@@ -261,6 +263,16 @@ export function createCustomerService(deps) {
     }
     for (const list of out.values()) list.sort((a, b) => String(a.label).localeCompare(String(b.label)));
     return out;
+  }
+
+  async function tagsForCustomers(customerIds) {
+    const ids = new Set(customerIds.filter(Boolean));
+    if (!ids.size) return new Map();
+    const [tagRows, assignments] = await Promise.all([
+      db.list('customer_tags', { limit: 1000 }),
+      db.list('customer_tag_assignments', { limit: 5000 }),
+    ]);
+    return buildTagsFor([...ids], tagRows, assignments);
   }
 
   /** Busca por teléfono normalizado (el identificador fuerte). */
@@ -335,28 +347,45 @@ export function createCustomerService(deps) {
     return out;
   }
 
-  async function inboxContext(customerRows) {
-    const ids = new Set(customerRows.map((row) => row.id));
-    const [items, followupRows, messages] = await Promise.all([
-      store?.listAdmin ? store.listAdmin({ limit: 1000 }) : Promise.resolve([]),
+  /**
+   * TODO el contexto de la bandeja, en UNA pasada.
+   *
+   * Antes cada consulta a la bandeja repetía estas lecturas (clientes, pedidos,
+   * seguimientos y mensajes) y, para cada cliente, recorría la lista completa de
+   * mensajes para saber si había escrito. Con 500 clientes y 5.000 mensajes eso
+   * son millones de comparaciones POR PETICIÓN, y `/api/admin/data` lo hacía tres
+   * veces (lista, recuento de archivados y recuento activo). De ahí que el panel
+   * tardara segundos en abrir.
+   *
+   * Ahora se lee una vez, en paralelo, y todo se resuelve con mapas en O(n+m).
+   */
+  async function loadInboxData() {
+    const [conversations, customers, items, followupRows, messages, tagRows, assignments] = await Promise.all([
+      db.list('conversations', { by: 'last_message_at', order: 'desc' }),
+      db.list('customers', { limit: 500 }),
+      store?.listAdmin ? Promise.resolve(store.listAdmin({ limit: 1000 })) : Promise.resolve([]),
       db.list('followups', { limit: 2000 }),
       db.list('wa_messages', { by: 'created_at', order: 'desc', limit: 5000 }),
+      db.list('customer_tags', { limit: 1000 }),
+      db.list('customer_tag_assignments', { limit: 5000 }),
     ]);
+    const ids = new Set(customers.map((row) => row.id));
     const purchasesByCustomer = new Map();
-    const followupsByCustomer = new Map();
-    const messagesByConversation = new Map();
     for (const row of items) {
       if (row.type !== 'order_intent' || !row.customer_id || !ids.has(row.customer_id)) continue;
       const list = purchasesByCustomer.get(row.customer_id) ?? [];
       list.push(row);
       purchasesByCustomer.set(row.customer_id, list);
     }
+    const followupsByCustomer = new Map();
     for (const row of followupRows) {
       if (row.status !== 'pending' || !ids.has(row.customer_id)) continue;
       const list = followupsByCustomer.get(row.customer_id) ?? [];
       list.push(row);
       followupsByCustomer.set(row.customer_id, list);
     }
+    const messagesByConversation = new Map();
+    const inboundCustomers = new Set();
     for (const message of messages) {
       /*
        * UN MENSAJE QUITADO DEL CRM NO ES «LO ÚLTIMO QUE SE DIJO».
@@ -368,7 +397,63 @@ export function createCustomerService(deps) {
        * aparta de la vista, con el registro de quién lo quitó y cuándo.
        */
       if (message.deleted_at) continue;
+      if (message.direction === 'inbound' && message.customer_id) inboundCustomers.add(message.customer_id);
       if (!messagesByConversation.has(message.conversation_id)) messagesByConversation.set(message.conversation_id, message);
+    }
+    const states = new Map();
+    const stages = new Map();
+    for (const customer of customers) {
+      const purchases = purchasesByCustomer.get(customer.id) ?? [];
+      states.set(
+        customer.id,
+        deriveCommercialState({
+          customer,
+          purchases,
+          followups: followupsByCustomer.get(customer.id) ?? [],
+          hasInbound: inboundCustomers.has(customer.id),
+        }),
+      );
+      stages.set(customer.id, resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) }));
+    }
+    const tags = buildTagsFor(customers.map((row) => row.id), tagRows, assignments);
+    return {
+      conversations,
+      customers,
+      context: { messagesByConversation, purchasesByCustomer, followupsByCustomer, states, stages, tags },
+    };
+  }
+
+  /**
+   * Contexto SOLO de clientes (sin la bandeja): estado, etapa y etiquetas.
+   * Una lectura por tabla, en paralelo, y una pasada por cliente.
+   */
+  async function customerContextFor(customerRows) {
+    const ids = new Set(customerRows.map((row) => row.id));
+    const [items, followupRows, messages, tagRows, assignments] = await Promise.all([
+      store?.listAdmin ? Promise.resolve(store.listAdmin({ limit: 1000 })) : Promise.resolve([]),
+      db.list('followups', { limit: 2000 }),
+      db.list('wa_messages', { by: 'created_at', order: 'desc', limit: 5000 }),
+      db.list('customer_tags', { limit: 1000 }),
+      db.list('customer_tag_assignments', { limit: 5000 }),
+    ]);
+    const purchasesByCustomer = new Map();
+    for (const row of items) {
+      if (row.type !== 'order_intent' || !row.customer_id || !ids.has(row.customer_id)) continue;
+      const list = purchasesByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      purchasesByCustomer.set(row.customer_id, list);
+    }
+    const followupsByCustomer = new Map();
+    for (const row of followupRows) {
+      if (row.status !== 'pending' || !ids.has(row.customer_id)) continue;
+      const list = followupsByCustomer.get(row.customer_id) ?? [];
+      list.push(row);
+      followupsByCustomer.set(row.customer_id, list);
+    }
+    const inboundCustomers = new Set();
+    for (const message of messages) {
+      if (message.deleted_at || message.direction !== 'inbound' || !message.customer_id) continue;
+      if (ids.has(message.customer_id)) inboundCustomers.add(message.customer_id);
     }
     const states = new Map();
     const stages = new Map();
@@ -380,13 +465,193 @@ export function createCustomerService(deps) {
           customer,
           purchases,
           followups: followupsByCustomer.get(customer.id) ?? [],
-          hasInbound: messages.some((row) => row.customer_id === customer.id && row.direction === 'inbound'),
+          hasInbound: inboundCustomers.has(customer.id),
         }),
       );
       stages.set(customer.id, resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) }));
     }
-    const tags = await tagsForCustomers(customerRows.map((row) => row.id));
-    return { messagesByConversation, purchasesByCustomer, followupsByCustomer, states, stages, tags };
+    const tags = buildTagsFor(customerRows.map((row) => row.id), tagRows, assignments);
+    return { states, stages, tags };
+  }
+
+  /** Cliente con su estado, etapa y etiquetas ya resueltos. */
+  function decorateCustomerRows(customerRows, context) {
+    return customerRows.map((row) => {
+      const resolved = context.stages.get(row.id) ?? resolveCustomerStage({ customer: row, purchases: [] });
+      return {
+        ...row,
+        groups: normalizeGroups(row.groups),
+        commercial_state: context.states.get(row.id) ?? 'NUEVO',
+        customerStage: resolved.stage,
+        customer_stage: resolved.stage,
+        customer_stage_source: resolved.source,
+        customer_stage_reason: resolved.reason,
+        tags: context.tags.get(row.id) ?? [],
+      };
+    });
+  }
+
+  /** Fila de la bandeja: conversación + cliente + último mensaje + seguimiento. */
+  function decorateConversation(conversation, byCustomer, context) {
+    const customer = byCustomer.get(conversation.customer_id) ?? null;
+    const last = context.messagesByConversation.get(conversation.id) ?? null;
+    const purchases = context.purchasesByCustomer.get(conversation.customer_id) ?? [];
+    const followupList = (context.followupsByCustomer.get(conversation.customer_id) ?? []).sort((a, b) =>
+      String(a.scheduled_at).localeCompare(String(b.scheduled_at)),
+    );
+    const delivered = purchases.filter((row) => isCompletedPurchaseStatus(row.status));
+    const commercialState = context.states.get(conversation.customer_id) ?? 'NUEVO';
+    const stage = context.stages.get(conversation.customer_id) ?? resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) });
+    const activeOrder = purchases.find((row) => !ORDER_CLOSED.includes(row.status)) ?? null;
+    return {
+      ...conversation,
+      archived_at: conversation.archived_at ?? null,
+      deleted_at: conversation.deleted_at ?? null,
+      customer: customer
+        ? {
+            ...customer,
+            commercial_state: commercialState,
+            customerStage: stage.stage,
+            customer_stage: stage.stage,
+            tags: context.tags.get(customer.id) ?? [],
+          }
+        : null,
+      last_message: last ? { body: last.body, direction: last.direction, status: last.status, type: last.type ?? 'text', at: last.created_at } : null,
+      /*
+       * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
+       * Se calcula del propio hilo, así que NO se apaga por abrir o marcar
+       * como leída: se apaga al contestar o finalizar ese mensaje.
+       */
+      awaiting_reply: Boolean(last?.direction === 'inbound' && last.id !== conversation.resolved_message_id),
+      is_resolved: Boolean(conversation.resolved_at && (!last || last.id === conversation.resolved_message_id)),
+      commercial_state: commercialState,
+      customerStage: stage.stage,
+      customer_stage: stage.stage,
+      customer_stage_source: stage.source,
+      customer_stage_reason: stage.reason,
+      tags: customer ? context.tags.get(customer.id) ?? [] : [],
+      has_purchase: delivered.length > 0,
+      last_purchase_at: delivered[0]?.received_at ?? null,
+      active_order: activeOrder
+        ? {
+            id: activeOrder.id,
+            order_number: activeOrder.order_number ?? null,
+            status: activeOrder.status ?? null,
+          }
+        : null,
+      next_followup: followupList[0] ?? null,
+      assigned_user_id: conversation.assigned_user_id ?? conversation.assigned_to ?? null,
+      assigned_display_name_snapshot: conversation.assigned_display_name_snapshot ?? null,
+      /*
+       * CONVERSACIÓN VACÍA DE UN CONTACTO IMPORTADO.
+       *
+       * Al importar de FULLTECH se crea a cada cliente su conversación para
+       * poder escribirle. Si esas 221 filas aparecieran en la bandeja, la
+       * taparían con contactos «sin mensajes» que nunca han escrito.
+       *
+       * Se ocultan SOLO si además el cliente viene de una importación
+       * (`imported_from`): una conversación que abre una persona a mano
+       * —o la que crea el propio CRM al registrar un cliente— sigue
+       * apareciendo como siempre. Nada se borra: el cliente sigue en
+       * Clientes, su botón de chat la abre, el buscador la encuentra, y en
+       * cuanto hay un mensaje deja de estar vacía y vuelve sola.
+       */
+      empty:
+        Boolean(customer?.imported_from || conversation.imported_from) &&
+        !last &&
+        !conversation.last_message_at &&
+        Number(conversation.unread_count ?? 0) <= 0 &&
+        !conversation.archived_at,
+    };
+  }
+
+  function decorateConversations(conversationRows, customerRows, context) {
+    const byCustomer = new Map(customerRows.map((row) => [row.id, row]));
+    return conversationRows.map((conversation) => decorateConversation(conversation, byCustomer, context));
+  }
+
+  /** Recuentos de la bandeja derivados de filas ya calculadas (sin otra pasada). */
+  function countsFromRows(rows) {
+    const visible = rows.filter((row) => !row.deleted_at && !row.empty);
+    const active = visible.filter((row) => !row.archived_at);
+    const archived = visible.filter((row) => row.archived_at);
+    return {
+      todos: active.length,
+      no_leidos: active.filter((row) => Number(row.unread_count) > 0).length,
+      pendientes: active.filter((row) => row.awaiting_reply === true).length,
+      clientes: active.filter((row) => row.has_purchase === true).length,
+      seguimiento: active.filter((row) => row.next_followup).length,
+      mios: 0,
+      sin_asignar: active.filter((row) => !row.assigned_user_id).length,
+      archivados: archived.length,
+      unread_total: visible.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
+    };
+  }
+
+  /** Filtros y orden de la bandeja sobre filas YA calculadas. */
+  function filterConversationRows(items, options = {}) {
+    const needle = String(options.q ?? '').trim().toLowerCase();
+    const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.from ?? '')) ? String(options.from) : null;
+    const toDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.to ?? '')) ? String(options.to) : null;
+    /*
+     * BUSCAR ES BUSCAR EN TODAS — también en las archivadas.
+     *
+     * Con texto en el buscador NO se aplica ningún filtro de estado (ni
+     * «Archivados», ni «Nuevos», ni «Pendientes»…) ni el rango de fechas: quien
+     * escribe «Yahaira» quiere ver a Yahaira, esté activa, archivada, asignada a
+     * otro o haya escrito la semana pasada. Antes, si la conversación estaba
+     * archivada, la búsqueda no la encontraba y parecía que la clienta había
+     * desaparecido.
+     *
+     * Los filtros siguen mandando cuando NO se está buscando, y en cuanto se
+     * borra el texto vuelven a mandar tal cual estaban puestos: buscar no los
+     * cambia.
+     */
+    const buscando = needle.length > 0;
+    const filtered = items.filter((row) => {
+      if (row.deleted_at) return false;
+      /*
+       * Las vacías no son «bandeja», pero SÍ se encuentran buscando: quien
+       * escribe el nombre de un contacto importado tiene que poder abrir su
+       * chat. Es la misma regla que ya vale para las archivadas.
+       */
+      if (row.empty && !buscando && !options.includeEmpty) return false;
+      const archived = Boolean(row.archived_at);
+      if (!buscando) {
+        if (options.filter === 'archivados') {
+          if (!archived) return false;
+        } else if (archived) {
+          return false;
+        }
+        if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
+        if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
+        if (options.filter === 'clientes' && row.has_purchase !== true) return false;
+        if (options.filter === 'seguimiento' && !row.next_followup) return false;
+        if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
+        if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
+        if (fromDay || toDay) {
+          if (!row.last_message_at) return false;
+          const messageDay = dayIn(new Date(row.last_message_at), timeZone);
+          if (fromDay && messageDay < fromDay) return false;
+          if (toDay && messageDay > toDay) return false;
+        }
+      }
+      if (needle) {
+        const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
+    });
+    const ordered = filtered.sort((a, b) => {
+      if (options.filter === 'pendientes') return compareConversationsRecent(a, b);
+      if (options.filter === 'seguimiento') return String(a.next_followup?.scheduled_at ?? '9999').localeCompare(String(b.next_followup?.scheduled_at ?? '9999'));
+      if (options.filter === 'clientes' && options.order === 'purchase') return String(b.last_purchase_at ?? '').localeCompare(String(a.last_purchase_at ?? ''));
+      return compareConversationsRecent(a, b);
+    });
+    return options.limit ? ordered.slice(0, options.limit) : ordered;
   }
 
   return {
@@ -495,22 +760,8 @@ export function createCustomerService(deps) {
         : rows;
       const scoped = options.limit ? filtered.slice(0, options.limit) : filtered;
       // El estado comercial se DERIVA en cada lectura: nunca queda desincronizado.
-      const states = await statesFor(scoped);
-      const stages = await stagesFor(scoped);
-      const tags = await tagsForCustomers(scoped.map((row) => row.id));
-      return scoped.map((row) => {
-        const resolved = stages.get(row.id) ?? resolveCustomerStage({ customer: row, purchases: [] });
-        return {
-          ...row,
-          groups: normalizeGroups(row.groups),
-          commercial_state: states.get(row.id) ?? 'NUEVO',
-          customerStage: resolved.stage,
-          customer_stage: resolved.stage,
-          customer_stage_source: resolved.source,
-          customer_stage_reason: resolved.reason,
-          tags: tags.get(row.id) ?? [],
-        };
-      });
+      const context = await customerContextFor(scoped);
+      return decorateCustomerRows(scoped, context);
     },
 
     /** Estado comercial derivado de un cliente (o null si no existe). */
@@ -788,164 +1039,40 @@ export function createCustomerService(deps) {
      * Todo lo que el negocio necesita para decidir a quién atender.
      */
     async listConversations(options = {}) {
-      const [conversations, customers, messages] = await Promise.all([
-        db.list('conversations', { by: 'last_message_at', order: 'desc' }),
-        db.list('customers', { limit: 500 }),
-        db.list('wa_messages', { by: 'created_at', order: 'desc', limit: 500 }),
-      ]);
-      const byCustomer = new Map(customers.map((row) => [row.id, row]));
-      const context = await inboxContext(customers);
-      const items = conversations.map((conversation) => {
-        const customer = byCustomer.get(conversation.customer_id) ?? null;
-        const last = context.messagesByConversation.get(conversation.id) ?? messages.find((message) => message.conversation_id === conversation.id && !message.deleted_at) ?? null;
-        const purchases = context.purchasesByCustomer.get(conversation.customer_id) ?? [];
-        const followupList = (context.followupsByCustomer.get(conversation.customer_id) ?? []).sort((a, b) =>
-          String(a.scheduled_at).localeCompare(String(b.scheduled_at)),
-        );
-        const delivered = purchases.filter((row) => isCompletedPurchaseStatus(row.status));
-        const commercialState = context.states.get(conversation.customer_id) ?? 'NUEVO';
-        const stage = context.stages.get(conversation.customer_id) ?? resolveCustomerStage({ customer, purchases, totals: totalsFrom(purchases) });
-        const activeOrder = purchases.find((row) => !ORDER_CLOSED.includes(row.status)) ?? null;
-        return {
-          ...conversation,
-          archived_at: conversation.archived_at ?? null,
-          deleted_at: conversation.deleted_at ?? null,
-          customer: customer
-            ? {
-                ...customer,
-                commercial_state: commercialState,
-                customerStage: stage.stage,
-                customer_stage: stage.stage,
-                tags: context.tags.get(customer.id) ?? [],
-              }
-            : null,
-          last_message: last ? { body: last.body, direction: last.direction, status: last.status, type: last.type ?? 'text', at: last.created_at } : null,
-          /*
-           * Pendiente de respuesta = el ÚLTIMO mensaje lo escribió el cliente.
-           * Se calcula del propio hilo, así que NO se apaga por abrir o marcar
-           * como leída: se apaga al contestar o finalizar ese mensaje.
-           */
-          awaiting_reply: Boolean(last?.direction === 'inbound' && last.id !== conversation.resolved_message_id),
-          is_resolved: Boolean(conversation.resolved_at && (!last || last.id === conversation.resolved_message_id)),
-          commercial_state: commercialState,
-          customerStage: stage.stage,
-          customer_stage: stage.stage,
-          customer_stage_source: stage.source,
-          customer_stage_reason: stage.reason,
-          tags: customer ? context.tags.get(customer.id) ?? [] : [],
-          has_purchase: delivered.length > 0,
-          last_purchase_at: delivered[0]?.received_at ?? null,
-          active_order: activeOrder
-            ? {
-                id: activeOrder.id,
-                order_number: activeOrder.order_number ?? null,
-                status: activeOrder.status ?? null,
-              }
-            : null,
-          next_followup: followupList[0] ?? null,
-          assigned_user_id: conversation.assigned_user_id ?? conversation.assigned_to ?? null,
-          assigned_display_name_snapshot: conversation.assigned_display_name_snapshot ?? null,
-          /*
-           * CONVERSACIÓN VACÍA DE UN CONTACTO IMPORTADO.
-           *
-           * Al importar de FULLTECH se crea a cada cliente su conversación para
-           * poder escribirle. Si esas 221 filas aparecieran en la bandeja, la
-           * taparían con contactos «sin mensajes» que nunca han escrito.
-           *
-           * Se ocultan SOLO si además el cliente viene de una importación
-           * (`imported_from`): una conversación que abre una persona a mano
-           * —o la que crea el propio CRM al registrar un cliente— sigue
-           * apareciendo como siempre. Nada se borra: el cliente sigue en
-           * Clientes, su botón de chat la abre, el buscador la encuentra, y en
-           * cuanto hay un mensaje deja de estar vacía y vuelve sola.
-           */
-          empty:
-            Boolean(customer?.imported_from || conversation.imported_from) &&
-            !last &&
-            !conversation.last_message_at &&
-            Number(conversation.unread_count ?? 0) <= 0 &&
-            !conversation.archived_at,
-        };
-      });
-      const needle = String(options.q ?? '').trim().toLowerCase();
-      const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.from ?? '')) ? String(options.from) : null;
-      const toDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.to ?? '')) ? String(options.to) : null;
-      /*
-       * BUSCAR ES BUSCAR EN TODAS — también en las archivadas.
-       *
-       * Con texto en el buscador NO se aplica ningún filtro de estado (ni
-       * «Archivados», ni «Nuevos», ni «Pendientes»…) ni el rango de fechas: quien
-       * escribe «Yahaira» quiere ver a Yahaira, esté activa, archivada, asignada a
-       * otro o haya escrito la semana pasada. Antes, si la conversación estaba
-       * archivada, la búsqueda no la encontraba y parecía que la clienta había
-       * desaparecido.
-       *
-       * Los filtros siguen mandando cuando NO se está buscando, y en cuanto se
-       * borra el texto vuelven a mandar tal cual estaban puestos: buscar no los
-       * cambia.
-       */
-      const buscando = needle.length > 0;
-      const filtered = items.filter((row) => {
-        if (row.deleted_at) return false;
-        /*
-         * Las vacías no son «bandeja», pero SÍ se encuentran buscando: quien
-         * escribe el nombre de un contacto importado tiene que poder abrir su
-         * chat. Es la misma regla que ya vale para las archivadas.
-         */
-        if (row.empty && !buscando && !options.includeEmpty) return false;
-        const archived = Boolean(row.archived_at);
-        if (!buscando) {
-          if (options.filter === 'archivados') {
-            if (!archived) return false;
-          } else if (archived) {
-            return false;
-          }
-          if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
-          if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
-          if (options.filter === 'clientes' && row.has_purchase !== true) return false;
-          if (options.filter === 'seguimiento' && !row.next_followup) return false;
-          if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
-          if (options.filter === 'sin-asignar' && row.assigned_user_id) return false;
-          if (fromDay || toDay) {
-            if (!row.last_message_at) return false;
-            const messageDay = dayIn(new Date(row.last_message_at), timeZone);
-            if (fromDay && messageDay < fromDay) return false;
-            if (toDay && messageDay > toDay) return false;
-          }
-        }
-        if (needle) {
-          const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-          if (!haystack.includes(needle)) return false;
-        }
-        return true;
-      });
-      const ordered = filtered.sort((a, b) => {
-        if (options.filter === 'pendientes') return compareConversationsRecent(a, b);
-        if (options.filter === 'seguimiento') return String(a.next_followup?.scheduled_at ?? '9999').localeCompare(String(b.next_followup?.scheduled_at ?? '9999'));
-        if (options.filter === 'clientes' && options.order === 'purchase') return String(b.last_purchase_at ?? '').localeCompare(String(a.last_purchase_at ?? ''));
-        return compareConversationsRecent(a, b);
-      });
-      return options.limit ? ordered.slice(0, options.limit) : ordered;
+      const { conversations, customers, context } = await loadInboxData();
+      return filterConversationRows(decorateConversations(conversations, customers, context), options);
+    },
+
+    /**
+     * La bandeja + sus recuentos en UNA sola pasada.
+     *
+     * `/api/admin/conversations` los necesitaba juntos y antes los pedía con
+     * tres lecturas completas (lista, archivadas y activas), cada una con sus
+     * propios pedidos, seguimientos y mensajes.
+     */
+    async conversationPage(options = {}) {
+      const { conversations, customers, context } = await loadInboxData();
+      const rows = decorateConversations(conversations, customers, context);
+      return { conversations: filterConversationRows(rows, options), counts: countsFromRows(rows) };
+    },
+
+    /**
+     * Resumen del panel: clientes + bandeja + recuentos, con UNA sola lectura.
+     * Es lo que usa `/api/admin/data` para no repetir el mismo trabajo tres veces.
+     */
+    async overview(options = {}) {
+      const { conversations, customers, context } = await loadInboxData();
+      const rows = decorateConversations(conversations, customers, context);
+      return {
+        customers: decorateCustomerRows(customers, context),
+        conversations: filterConversationRows(rows, options),
+        counts: countsFromRows(rows),
+      };
     },
 
     async conversationCounts() {
-      const rows = await this.listConversations({ filter: 'archivados' });
-      const active = await this.listConversations({});
-      const all = active.concat(rows);
-      return {
-        todos: active.length,
-        no_leidos: active.filter((row) => Number(row.unread_count) > 0).length,
-        pendientes: active.filter((row) => row.awaiting_reply === true).length,
-        clientes: active.filter((row) => row.has_purchase === true).length,
-        seguimiento: active.filter((row) => row.next_followup).length,
-        mios: 0,
-        sin_asignar: active.filter((row) => !row.assigned_user_id).length,
-        archivados: rows.length,
-        unread_total: all.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
-      };
+      const { conversations, customers, context } = await loadInboxData();
+      return countsFromRows(decorateConversations(conversations, customers, context));
     },
 
     /** Mensajes de una conversación, del más antiguo al más nuevo. */
@@ -1373,8 +1500,17 @@ export function createCustomerService(deps) {
     },
 
     async resolveConversation(conversationId, resolved = true, userId = null) {
-      const rows = await db.list('wa_messages', { by: 'created_at', order: 'desc' });
-      const last = rows.find((row) => row.conversation_id === conversationId && !row.deleted_at);
+      /*
+       * Solo el hilo de ESTA conversación (columna indexada). Antes se leía la
+       * tabla completa de mensajes para encontrar el último.
+       */
+      const rows = await db.list('wa_messages', {
+        by: 'created_at',
+        order: 'desc',
+        where: { conversation_id: conversationId },
+        limit: 50,
+      });
+      const last = rows.find((row) => !row.deleted_at);
       const now = new Date().toISOString();
       return db.update('conversations', conversationId, {
         resolved_at: resolved ? now : null,

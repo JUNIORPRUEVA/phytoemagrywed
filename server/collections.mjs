@@ -624,7 +624,24 @@ async function createPostgresCollections(pool, prefix) {
       }
       const whereSql = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
       const orderSql = indexed ? ` ORDER BY ${by} ${orderDirection(options.order)}` : '';
-      const result = await pool.query(`SELECT doc FROM ${prefix}${name}${whereSql}${orderSql}`, values);
+      /*
+       * EL LÍMITE SE PIDE A POSTGRES, NO SE APLICA DESPUÉS.
+       *
+       * Antes se traía la tabla ENTERA (`wa_messages` incluida) y se recortaba
+       * en JavaScript. Con 20.000 mensajes, cada apertura del panel leía y
+       * deserializaba la tabla completa varias veces. Solo se limita en SQL
+       * cuando el orden es por una columna indexada y el filtro también se ha
+       * resuelto en SQL; si no, recortar antes de filtrar cambiaría el
+       * resultado y prevalecen las filas correctas sobre la velocidad.
+       */
+      const limit = Number(options.limit);
+      const useSqlLimit = Number.isFinite(limit) && limit > 0 && indexed && (!options.where || where);
+      let sql = `SELECT doc FROM ${prefix}${name}${whereSql}${orderSql}`;
+      if (useSqlLimit) {
+        values.push(limit);
+        sql += ` LIMIT $${values.length}`;
+      }
+      const result = await pool.query(sql, values);
       const docs = result.rows.map((row) => row.doc);
       return sortAndLimit(where ? docs : docs.filter((doc) => matchesWhere(doc, options.where)), options);
     },

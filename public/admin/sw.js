@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v185-fast-entry-logo';
+const VERSION = 'crm-v186-arranque-ligero';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -342,6 +342,47 @@ self.addEventListener('fetch', (event) => {
   const navigation = request.mode === 'navigate' || request.destination === 'document' || /\/(?:index\.html)?$/.test(url.pathname);
   const resource = /\.(?:js|mjs|css|json)$/.test(url.pathname);
   const usable = (response) => response && !(resource && /text\/html/i.test(response.headers.get('content-type') || ''));
+
+  /*
+   * SCRIPTS Y HOJAS: SE SIRVEN DE LA CACHÉ AL INSTANTE Y SE REFRESCAN DETRÁS.
+   *
+   * Antes el `fetch` de `/admin/` era RED PRIMERO para TODO: en cada arranque se
+   * pedían (y se revalidaban) las 20 hojas de estilo y los 20 scripts antes de
+   * pintar. Con una PWA instalada eso convertía cada apertura en decenas de
+   * viajes de red. El HTML sigue siendo red primero (así una publicación nueva
+   * se ve al abrir), pero sus recursos versionados (`?v=…`) se pintan desde la
+   * copia local y se actualizan en segundo plano. Si el archivo no está en la
+   * caché, se baja como siempre; si la red falla, la copia ya servida se queda.
+   */
+  if (resource) {
+    event.respondWith((async () => {
+      const cache = await caches.open(VERSION);
+      const exact = await caches.match(request);
+      const base = usable(exact) ? null : await caches.match(url.origin + url.pathname);
+      const cached = usable(exact) ? exact : usable(base) ? base : null;
+      const refresh = (async () => {
+        try {
+          const response = await fetch(request);
+          if (!response.ok || !usable(response)) return null;
+          await cache.put(request, response.clone()).catch(() => {});
+          return response;
+        } catch {
+          return null;
+        }
+      })();
+      if (cached) {
+        // La actualización no bloquea: se aprovecha el hueco del service worker.
+        if (event.waitUntil) event.waitUntil(refresh.then(() => {}).catch(() => {}));
+        else refresh.catch(() => {});
+        return cached;
+      }
+      const response = await refresh;
+      if (response) return response;
+      return new Response('Recurso no disponible sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
+    })());
+    return;
+  }
+
   event.respondWith((async () => {
     try {
       const response = await fetch(request);

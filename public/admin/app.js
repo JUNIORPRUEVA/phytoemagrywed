@@ -825,7 +825,30 @@
 
   // ---------------------------------------------------------------------- API
 
-  async function api(path, options = {}) {
+  /*
+   * UNA SOLA PETICIÓN DE LECTURA A LA VEZ.
+   *
+   * El arranque puede disparar la misma lectura por varios caminos (volver a la
+   * app, cambiar de pestaña, el sondeo y el canal en vivo). Antes cada uno abría
+   * su propia petición y la última podía pisar a la anterior. Ahora las lecturas
+   * GET idénticas comparten la misma promesa: se ahorra red y se evita que dos
+   * respuestas fuera de orden repinten con datos viejos.
+   */
+  const apiEnCurso = new Map();
+
+  function api(path, options = {}) {
+    const method = String(options.method ?? 'GET').toUpperCase();
+    if (method !== 'GET' || options.signal) return apiSinDedupe(path, options);
+    const pending = apiEnCurso.get(path);
+    if (pending) return pending;
+    const promise = apiSinDedupe(path, options).finally(() => {
+      if (apiEnCurso.get(path) === promise) apiEnCurso.delete(path);
+    });
+    apiEnCurso.set(path, promise);
+    return promise;
+  }
+
+  async function apiSinDedupe(path, options = {}) {
     let response;
     try {
       response = await fetch(path, {
@@ -953,9 +976,16 @@
   }
 
   function saveSnapshot() {
-    window.FullTECHOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
+    /*
+     * UNA sola copia en memoria y UNA sola serialización. Antes se construía el
+     * objeto dos veces y se convertía a JSON dos veces (el paquete pesa más de
+     * un megabyte): ese trabajo se hacía en el hilo principal justo después de
+     * pintar, y en un móvil se notaba como un tirón al abrir.
+     */
+    const snapshot = snapshotPayload();
+    window.FullTECHOffline?.saveLegacySnapshot?.(snapshot).catch(()=>{});
     try {
-      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload()));
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
     } catch {
       /*
        * Sin sitio (datos de un negocio grande): se guarda una copia LIGERA con lo
@@ -1419,6 +1449,12 @@
   function showLogin(message = '') {
     window.dispatchEvent(new CustomEvent('phyto:calling-logout'));
     currentPushSubscription = null;
+    /*
+     * SIN IDENTIDAD no puede quedar sincronía de fondo corriendo: el temporizador
+     * de la app sigue vivo en la pantalla de acceso y no tiene nada que pedir.
+     */
+    state.auth = null;
+    state.sessionRejected = true;
     $('#app').hidden = true;
     $('#login').hidden = false;
     hideSplash();
@@ -1538,6 +1574,35 @@
     return true;
   }
 
+  /*
+   * PRIMERO LO QUE SE VE, DESPUÉS LO QUE PESA.
+   *
+   * La carga ligera pinta la pantalla con lo imprescindible (HOY, bandeja,
+   * clientes recientes, recuentos) y programa la carga completa en segundo plano.
+   * Es la diferencia entre abrir con un megabyte y medio de JSON o con unos
+   * cientos de KB. La copia offline NO se guarda desde la respuesta ligera: se
+   * guarda cuando llega la completa, para no dejar el teléfono con datos a medias.
+   */
+  let cargaCompletaProgramada = null;
+  function cancelarCargaCompleta() {
+    if (cargaCompletaProgramada === null) return;
+    if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(cargaCompletaProgramada);
+    else clearTimeout(cargaCompletaProgramada);
+    cargaCompletaProgramada = null;
+  }
+  function programarCargaCompleta(delay = 0) {
+    if (cargaCompletaProgramada !== null) return;
+    const run = () => {
+      cargaCompletaProgramada = null;
+      if ($('#app')?.hidden) return; // se cerró la sesión o la pestaña
+      load({ keepTab: true, silent: true }).catch(() => {});
+    };
+    cargaCompletaProgramada =
+      typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback(run, { timeout: 1200 })
+        : setTimeout(run, delay);
+  }
+
   async function load(options = {}) {
     /*
      * CARRERA ENTRE LA CARGA COMPLETA Y EL TIEMPO REAL.
@@ -1548,42 +1613,59 @@
      * qué pedidos llegaron durante la carga y, al terminar, se vuelven a pedir
      * (uno por id): lo más reciente manda sin recargar todo otra vez.
      */
+    const light = options.light === true;
+    /*
+     * Si esta carga ya trae el paquete completo (un enlace directo, una acción,
+     * volver a la app), no hace falta además la que quedó programada tras el
+     * arranque ligero: sería pedir lo mismo dos veces.
+     */
+    if (!light) cancelarCargaCompleta();
     state.cargandoDatos = true;
     state.reconciliarTrasCarga = state.reconciliarTrasCarga ?? new Set();
     try {
-      const data = await api('/api/admin/data');
-      state.items = data.items ?? [];
-      state.messages = data.messages ?? [];
-      state.customers = data.customers ?? [];
-      state.businessGroups = data.businessGroups ?? state.businessGroups;
-      state.conversations = data.conversations ?? [];
-      state.wa.counts = data.conversationCounts ?? state.wa.counts;
-      for (const row of state.conversations) {
-        if (row.last_message?.direction === 'inbound') state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
+      /*
+       * Las plantillas pesan poco y el chat las necesita para pintar sus
+       * acciones. Viajan SIEMPRE, también con el paquete ligero: así abrir un
+       * chat no depende de que llegue antes la carga completa.
+       */
+      const templatesPromise = api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }));
+      const data = await api(light ? '/api/admin/data?light=1' : '/api/admin/data');
+      const partial = data.partial === true || light;
+      const has = (key) => !partial || data[key] !== undefined;
+      if (has('items')) state.items = data.items ?? [];
+      if (has('messages')) state.messages = data.messages ?? [];
+      if (has('customers')) state.customers = data.customers ?? [];
+      if (data.businessGroups !== undefined) state.businessGroups = data.businessGroups;
+      if (has('conversations')) {
+        state.conversations = data.conversations ?? [];
+        for (const row of state.conversations) {
+          if (row.last_message?.direction === 'inbound') state.wa.seenMessages.add(`${row.id}:${row.last_message.at ?? row.last_message_at ?? ''}`);
+        }
       }
-      state.followups = data.followups ?? null;
-      state.hoy = data.hoy ?? null;
-      state.catalog = data.catalog ?? [];
-      state.inventory = data.inventory ?? null;
-      state.whatsapp = data.whatsapp ?? null;
-      state.stats = data.stats ?? null;
-      state.statuses = data.statuses ?? [];
-      state.meta = data.meta ?? null;
-      state.scheduled = data.scheduled ?? null;
-      state.settings = data.settings ?? null;
-      state.commercial = data.commercial ?? null;
-      state.orderStatuses = data.orderStatuses ?? [];
-      state.paymentMethods = data.paymentMethods ?? [];
-      state.customerStages = data.customerStages ?? [];
-      state.customerTags = data.customerTags ?? [];
-      state.audit = data.audit ?? null;
-      state.media = data.media ?? null;
-      state.deliveryTracking = data.deliveryTracking ?? [];
-      state.deliveryUsers = data.deliveryUsers ?? [];
-      state.minPasswordLength = Number(data.minPasswordLength) > 0 ? Number(data.minPasswordLength) : 6;
-      state.deliveryOrders = data.deliveryOrders ?? [];
-      state.notifications = data.notifications ?? [];
-      state.push = data.push ?? null;
+      if (data.conversationCounts !== undefined) state.wa.counts = data.conversationCounts;
+      if (has('followups')) state.followups = data.followups ?? null;
+      if (has('hoy')) state.hoy = data.hoy ?? null;
+      if (has('catalog')) state.catalog = data.catalog ?? [];
+      if (has('inventory')) state.inventory = data.inventory ?? null;
+      if (has('whatsapp')) state.whatsapp = data.whatsapp ?? null;
+      if (has('stats')) state.stats = data.stats ?? null;
+      if (has('statuses')) state.statuses = data.statuses ?? [];
+      if (has('meta')) state.meta = data.meta ?? null;
+      if (has('scheduled')) state.scheduled = data.scheduled ?? null;
+      if (has('settings')) state.settings = data.settings ?? null;
+      if (has('commercial')) state.commercial = data.commercial ?? null;
+      if (has('orderStatuses')) state.orderStatuses = data.orderStatuses ?? [];
+      if (has('paymentMethods')) state.paymentMethods = data.paymentMethods ?? [];
+      if (has('customerStages')) state.customerStages = data.customerStages ?? [];
+      if (has('customerTags')) state.customerTags = data.customerTags ?? [];
+      if (has('audit')) state.audit = data.audit ?? null;
+      if (has('media')) state.media = data.media ?? null;
+      if (has('deliveryTracking')) state.deliveryTracking = data.deliveryTracking ?? [];
+      if (has('deliveryUsers')) state.deliveryUsers = data.deliveryUsers ?? [];
+      if (Number(data.minPasswordLength) > 0) state.minPasswordLength = Number(data.minPasswordLength);
+      if (has('deliveryOrders')) state.deliveryOrders = data.deliveryOrders ?? [];
+      if (has('notifications')) state.notifications = data.notifications ?? [];
+      if (has('push')) state.push = data.push ?? null;
       /*
        * UNA RESPUESTA SIN `auth` NO BORRA EL ROL QUE YA SE CONOCE.
        *
@@ -1605,15 +1687,21 @@
       state.notificationSnapshotAt = data.notificationSnapshotAt ?? new Date().toISOString();
       migrateNotificationStorage();
       writeDismissedNotices(mergeNotificationDismissals(readDismissedNotices(), data.notificationDismissals ?? {}));
-      state.templates = (await api('/api/admin/wa-templates').catch(() => ({ templates: state.templates ?? [] }))).templates ?? [];
+      const templates = await templatesPromise;
+      if (templates) state.templates = templates.templates ?? [];
       state.syncedAt = Date.now();
       // Los datos llegaron de verdad: los reintentos vuelven a cero.
       if (Date.now() - datosLocales.ultimo > 15000) datosLocales.intentos = 0;
-      saveSnapshot();
+      if (!partial) saveSnapshot();
       render();
       window.dispatchEvent(new Event('fulltech:startup-ready'));
-      refreshDevicePermissions().catch(() => {});
-      autoSyncCrmPush();
+      if (partial) {
+        programarCargaCompleta();
+      } else {
+        refreshDevicePermissions().catch(() => {});
+        /* El registro push se sincroniza con los datos COMPLETOS, no dos veces. */
+        autoSyncCrmPush();
+      }
       if (!options.keepTab) await flushOutbox();
       /*
        * SIEMPRE QUE SE HABLA CON EL CRM SE APROVECHA PARA VACIAR LA COLA. Va al
@@ -1643,7 +1731,7 @@
        * servidor (es barato y solo ocurre en ese caso); si contesta, el menú se
        * compone otra vez con los permisos reales.
        */
-      if (!state.auth) {
+      if (!state.auth && !state.sessionRejected) {
         checkSession()
           .then((ok) => {
             if (ok) render();
@@ -1851,6 +1939,73 @@
     }
   };
 
+  /*
+   * CADA PANTALLA SE PINTA DONDE SE VE.
+   *
+   * `render()` repintaba las 20 secciones en cada carga, incluidas las que
+   * estaban ocultas (clientes, pedidos, entregas, informes…). En un móvil eso
+   * bloqueaba el hilo principal justo después de recibir los datos. Ahora se
+   * pinta primero la pestaña activa y el armazón (cabecera, avisos, cola), y el
+   * resto se pinta en segundo plano para que al cambiar de pestaña ya esté
+   * listo. Nada se queda sin actualizar: solo cambia CUÁNDO se pinta.
+   */
+  const RENDER_GLOBAL = [
+    ['cabecera', renderMobileHeader],
+    ['campañas', renderCustomerCampaignFab],
+    ['permisos', renderPermissionBanner],
+    ['avisos', updateBadge],
+    ['cola offline', renderOutboxBanner],
+    ['tema', renderTemaPicker],
+  ];
+  const RENDER_POR_VISTA = {
+    hoy: [
+      ['resumen', renderStats],
+      ['hoy', renderHoy],
+    ],
+    whatsapp: [['whatsapp', renderWhatsapp]],
+    clientes: [['clientes', renderClientes]],
+    mapa: [['mapa', renderOrdersMap]],
+    delivery: [['entregas', renderDelivery]],
+    pedidos: [['pedidos', renderPedidos]],
+    productos: [['inventario', renderProductos]],
+    reportes: [['reportes', renderReportes]],
+    cierre: [['cierre diario', renderDailyClose]],
+    'historial-cierres': [['historial de cierres', renderCloseHistory]],
+    seguimientos: [['seguimientos', renderSeguimientos]],
+    mensajes: [['mensajes', renderMensajes]],
+    ajustes: [['ajustes', renderAjustes]],
+    usuarios: [['usuarios', renderUsuarios]],
+    perfil: [['perfil', renderPerfil]],
+    'perfil-cliente': [['ficha del cliente', renderCustomerProfile]],
+  };
+
+  /*
+   * QUÉ PANTALLAS YA ESTÁN PINTADAS CON LOS DATOS ACTUALES.
+   *
+   * Sirve para no reconstruir una lista al entrar en su pestaña si ya está al
+   * día: además de trabajo, evita tirar el nodo que la persona acaba de tocar
+   * (pulsar una fila y que el clic caiga en un elemento ya reemplazado).
+   */
+  const viewsPintadas = new Set();
+
+  function renderView(tab) {
+    for (const [nombre, pintar] of RENDER_POR_VISTA[tab] ?? []) pintarSeccion(nombre, pintar);
+    viewsPintadas.add(tab);
+  }
+
+  let renderDiferido = null;
+  function programarRenderDiferido() {
+    if (renderDiferido) clearTimeout(renderDiferido);
+    renderDiferido = setTimeout(() => {
+      renderDiferido = null;
+      for (const [tab, secciones] of Object.entries(RENDER_POR_VISTA)) {
+        if (tab === state.tab || viewsPintadas.has(tab)) continue;
+        for (const [nombre, pintar] of secciones) pintarSeccion(nombre, pintar);
+        viewsPintadas.add(tab);
+      }
+    }, 60);
+  }
+
   function render() {
     /*
      * LA CABECERA DEL MENÚ SE PINTA SIEMPRE.
@@ -1861,30 +2016,12 @@
      * Es idempotente: solo escribe nombre, rol, iniciales y visibilidad.
      */
     renderCurrentUser();
-    pintarSeccion('cabecera', renderMobileHeader);
-    pintarSeccion('resumen', renderStats);
-    pintarSeccion('hoy', renderHoy);
-    pintarSeccion('whatsapp', renderWhatsapp);
-    pintarSeccion('clientes', renderClientes);
-    pintarSeccion('mapa', renderOrdersMap);
-    pintarSeccion('entregas', renderDelivery);
-    pintarSeccion('pedidos', renderPedidos);
-    pintarSeccion('inventario', renderProductos);
-    pintarSeccion('reportes', renderReportes);
-    pintarSeccion('cierre diario', renderDailyClose);
-    pintarSeccion('historial de cierres', renderCloseHistory);
-    pintarSeccion('seguimientos', renderSeguimientos);
-    pintarSeccion('mensajes', renderMensajes);
-    pintarSeccion('ajustes', renderAjustes);
-    pintarSeccion('usuario', renderCurrentUser);
-    pintarSeccion('usuarios', renderUsuarios);
-    pintarSeccion('perfil', renderPerfil);
-    pintarSeccion('ficha del cliente', renderCustomerProfile);
-    pintarSeccion('campañas', renderCustomerCampaignFab);
-    pintarSeccion('permisos', renderPermissionBanner);
-    pintarSeccion('avisos', updateBadge);
-    pintarSeccion('cola offline', renderOutboxBanner);
-    pintarSeccion('tema', renderTemaPicker);
+    for (const [nombre, pintar] of RENDER_GLOBAL) pintarSeccion(nombre, pintar);
+    /* Hay datos nuevos: lo que estaba pintado puede haber quedado viejo. */
+    viewsPintadas.clear();
+    renderView(state.tab);
+    /* Las demás, cuando el navegador tenga un hueco (sin bloquear el primer pintado). */
+    programarRenderDiferido();
   }
 
   const label = (type) => (type === 'order_intent' ? 'Pedido' : 'Contacto');
@@ -20448,10 +20585,15 @@
      * mal) y entonces la sincronización de fondo no se ejecutaba NUNCA hasta pulsar
      * «Sincronizar». El intento real decide: si no hay red, no pasa nada.
      */
+    /*
+     * VOLVER A LA APP ES UNA SEÑAL DE «PUEDE HABER NOVEDADES»: se permite
+     * refrescar antes que el temporizador, sin pedir el paquete completo en cada
+     * parpadeo de foco.
+     */
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') sincronizarEnSegundoPlano();
+      if (document.visibilityState === 'visible') sincronizarEnSegundoPlano({ force: true });
     });
-    window.addEventListener('focus', () => sincronizarEnSegundoPlano());
+    window.addEventListener('focus', () => sincronizarEnSegundoPlano({ force: true }));
   }
 
   /**
@@ -20466,8 +20608,25 @@
   /**
    * Una sola sincronización a la vez (dos a la vez se pisarían al pintar).
    */
-  function sincronizarEnSegundoPlano() {
+  function sincronizarEnSegundoPlano(options = {}) {
     if (syncEnCurso) return syncEnCurso;
+    /*
+     * SIN SESIÓN NO SE SINCRONIZA.
+     *
+     * Este temporizador arranca antes de saber quién entra (la pantalla de
+     * acceso también es parte de la app). Al abrir, un aviso de foco o de
+     * visibilidad lanzaba una carga completa SIN sesión: el servidor contestaba
+     * 401 y esa petición se cruzaba con la del inicio de sesión, retrasándolo.
+     * Ahora solo corre cuando ya hay identidad verificada.
+     */
+    if (!state.auth) return Promise.resolve();
+    /*
+     * El canal de tiempo real (SSE) es el que mantiene la pantalla al día; esta
+     * sincronía es la red de seguridad. Volver a la app puede traer novedades;
+     * el temporizador de cada minuto espera a que los datos tengan un rato de vida.
+     */
+    const esperaMinima = options.force ? 0 : 15000;
+    if (state.cargandoDatos || Date.now() - (state.syncedAt ?? 0) < esperaMinima) return Promise.resolve();
     syncEnCurso = (async () => {
       // El motor único (sync-engine.js) es el único que envía las colas.
       // Este ciclo solo refresca datos visibles al volver a la aplicación.
@@ -21464,12 +21623,27 @@
     const sub = $('#topbar-sub');
     if (sub) sub.textContent = VIEW_SUBTITLE[tab] ?? 'CRM';
     renderMobileHeader();
+    /*
+     * Al entrar por una acción de la persona se pinta YA esa pantalla (esté o no
+     * pendiente el repintado de fondo). En los cambios SILENCIOSOS (abrir el
+     * panel antes de tener datos, enlaces directos) no se pinta de más: el
+     * arranque tiene que llegar cuanto antes a pedir los datos.
+     */
+    if (!options.silent && !viewsPintadas.has(tab)) renderView(tab);
     if (!options.silent) {
       window.scrollTo({ top: 0 });
       if (tab === 'hoy') {
         renderStats();
         renderHoy();
-        load({ keepTab: true, silent: true }).catch(() => {});
+        /*
+         * Tocar HOY no vuelve a pedir todo si los datos acaban de llegar. Antes
+         * cada visita a la pestaña inicial lanzaba otra carga completa (500
+         * clientes, 500 pedidos y la bandeja entera) aunque no hubiera pasado
+         * ni un segundo.
+         */
+        if (!state.cargandoDatos && Date.now() - (state.syncedAt ?? 0) > 15000) {
+          load({ keepTab: true, silent: true }).catch(() => {});
+        }
       }
       // Al entrar en WhatsApp se refresca una vez y se abre el canal EN VIVO; el
       // sondeo sigue después como red de seguridad.
@@ -21651,6 +21825,7 @@
         const payload = token ? { token } : { username, password };
         const result = await api('/api/admin/login', { method: 'POST', body: JSON.stringify(payload) });
         state.auth = { user: result.user ?? null, legacy: Boolean(token) };
+        state.sessionRejected = false;
         if ($('#login-token')) $('#login-token').value = '';
         if ($('#login-password')) $('#login-password').value = '';
         showApp();
@@ -23866,7 +24041,16 @@
     seguirTemaDelTelefono();
 
     // Un único temporizador para la bandeja de WhatsApp (8 s, solo cuando toca).
-    setInterval(waPollTick, 8000);
+    /*
+     * SONEO DE RESPALDO DE WHATSAPP.
+     *
+     * El canal en vivo (SSE) es el que entrega los mensajes al instante. El
+     * sondeo existe solo por si el navegador no soporta SSE o la conexión se
+     * cae; con 8 s multiplicaba la carga de la bandeja por cada usuario. Ahora
+     * va cada 20 s y sigue callándose fuera de la pestaña, sin red o en segundo
+     * plano. La mensajería en tiempo real NO depende de él.
+     */
+    setInterval(waPollTick, 20000);
 
     /*
      * A partir de aquí todo se sincroniza por detrás (nunca recargando la
@@ -23916,7 +24100,7 @@
         await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ token: linkToken }) });
         history.replaceState(null, '', `${location.pathname}${wanted ? `?v=${wanted}` : ''}`);
         showApp();
-        await load();
+        await load({ light: true });
         await applyDeepLink(query);
         return;
       } catch {
@@ -23928,7 +24112,12 @@
       /* Ya se sabe quién entra: la cabecera del menú no espera a los datos. */
       pintarIdentidadMenu();
       showApp();
-      await load();
+      /*
+       * PRIMERO EL ARMAZÓN ÚTIL. El servidor manda solo lo que hace falta para
+       * pintar HOY y la bandeja; el resto (entregas, proveedores, auditoría,
+       * catálogo completo) llega en segundo plano sin bloquear la pantalla.
+       */
+      await load({ light: true });
       await applyDeepLink(query);
     } else if (cached && !state.sessionRejected) {
       // El servidor NO contesta (sin red): si hay copia, se enseña lo guardado.

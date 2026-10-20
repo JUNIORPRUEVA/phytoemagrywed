@@ -166,7 +166,9 @@ describe('nada se envía solo', () => {
       'setInterval(sincroniaSilenciosaTick, 60000)',
       'setInterval(tick, 200)',
       'setInterval(vaciarCola, 5000)',
-      'setInterval(waPollTick, 8000)',
+      // El sondeo del chat es SOLO la red de seguridad: los mensajes llegan por
+      // el canal SSE. Cada 20 s (antes 8 s) reduce la carga sin perder tiempo real.
+      'setInterval(waPollTick, 20000)',
     ]);
     const queueFrom = app.indexOf('const vaciarCola = () => {');
     const queueFlush = app.slice(queueFrom, queueFrom + 520);
