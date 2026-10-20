@@ -178,8 +178,8 @@ describe('nada se envía solo', () => {
     expect(queueFlush).toContain('flushOutbox({ silent: true })');
     expect(queueFlush).not.toContain('/messages');
     // La comprobación de versión: solo LEE el HTML del panel.
-    const versionFrom = app.indexOf('function revisarVersionPanel');
-    const versionBlock = app.slice(versionFrom, versionFrom + 1200);
+    const versionFrom = app.indexOf('async function versionesDelServidor');
+    const versionBlock = app.slice(versionFrom, versionFrom + 700);
     expect(versionBlock).toContain("cache: 'no-store'");
     expect(versionBlock).not.toContain('POST');
     expect(versionBlock).not.toContain('/messages');

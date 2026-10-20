@@ -21343,14 +21343,52 @@
    * El panel se instala en el teléfono y puede quedarse abierto días en segundo
    * plano: entonces nadie navega, no se descarga nada nuevo y la persona sigue
    * viendo la versión vieja aunque el servidor ya tenga otra. Aquí se pregunta
-   * por el `index.html` de verdad (sin caché) y, si el `app.js` que corre no es
-   * el que sirve el servidor, se recarga —solo si no hay nada a medio escribir—.
+   * por el `index.html` de verdad (sin caché) y, si lo que sirve el servidor no
+   * coincide con lo que corre esta pestaña, se recarga —solo si no hay nada a
+   * medio escribir—.
    *
    * No usa el service worker ni el almacén local: es una petición normal, así
    * que también funciona cuando la copia guardada está desfasada.
    */
   let ultimaRevisionVersion = 0;
   let recargaPorVersion = 0;
+
+  /**
+   * Versiones `?v=` que anuncia el `index.html` del servidor.
+   *
+   * Antes solo se miraba `app.js`: una publicación que cambiara únicamente el
+   * CSS, el service worker o el corrector no se detectaba nunca y el botón
+   * «Actualizar» no salía. La URL lleva un parámetro único para que ninguna
+   * caché (ni la del navegador ni la del service worker) devuelva el HTML viejo.
+   */
+  async function versionesDelServidor() {
+    const respuesta = await fetch(`/admin/index.html?_=${Date.now()}`, { cache: 'no-store', credentials: 'same-origin' });
+    if (!respuesta.ok) return null;
+    const html = await respuesta.text();
+    const versiones = {};
+    for (const match of html.matchAll(/(?:src|href)="\/admin\/([\w.-]+)\?v=([\w.-]+)"/g)) versiones[match[1]] = match[2];
+    return versiones;
+  }
+
+  /** Las versiones que está usando AHORA esta pestaña. */
+  function versionesEnPantalla() {
+    const versiones = {};
+    for (const nodo of document.querySelectorAll('script[src*="/admin/"], link[href*="/admin/"]')) {
+      const url = new URL(nodo.src || nodo.href, location.href);
+      const version = url.searchParams.get('v');
+      if (version) versiones[url.pathname.replace('/admin/', '')] = version;
+    }
+    return versiones;
+  }
+
+  /** Qué archivos publicados no coinciden con los que corren aquí. */
+  function versionesDistintas(servidor, pantalla) {
+    if (!servidor) return [];
+    return Object.keys(servidor)
+      .filter((archivo) => pantalla[archivo] && servidor[archivo] !== pantalla[archivo])
+      .map((archivo) => `${archivo} ${pantalla[archivo]} → ${servidor[archivo]}`);
+  }
+
   async function revisarVersionPanel({ forzar = false } = {}) {
     /*
      * TAMPOCO AQUÍ MANDA `navigator.onLine`.
@@ -21362,13 +21400,8 @@
     if (!forzar && Date.now() - ultimaRevisionVersion < 60000) return;
     ultimaRevisionVersion = Date.now();
     try {
-      const respuesta = await fetch('/admin/index.html', { cache: 'no-store', credentials: 'same-origin' });
-      if (!respuesta.ok) return;
-      const html = await respuesta.text();
-      const encontrada = /app\.js\?v=([\w.-]+)/.exec(html)?.[1];
-      if (!encontrada) return;
-      const actual = [...document.scripts].map((script) => script.src).find((src) => src.includes('/admin/app.js')) ?? '';
-      if (actual.includes(encontrada)) return;
+      const cambios = versionesDistintas(await versionesDelServidor(), versionesEnPantalla());
+      if (!cambios.length) return;
       /*
        * Si la app está en segundo plano se actualiza sin molestar; si alguien
        * la está mirando, el botón «Actualizar» sale AL INSTANTE: no se espera
@@ -21386,7 +21419,10 @@
        */
       if (puedeRecargarSolo() && Date.now() - recargaPorVersion > 120000) {
         recargaPorVersion = Date.now();
-        location.reload();
+        // Se avisa un instante antes de recargar: así la actualización se VE y
+        // no parece que el panel «no hace nada».
+        toast('Actualizando el panel…');
+        setTimeout(() => location.reload(), 650);
         return;
       }
       showUpdateBar();
@@ -21491,6 +21527,22 @@
 
   /** Botón manual de Ajustes: obliga a mirar si hay algo nuevo en el servidor. */
   async function buscarActualizacion() {
+    /*
+     * PRIMERO, LA VERDAD DEL SERVIDOR: ¿el HTML publicado anuncia otras
+     * versiones? Antes este botón solo miraba el service worker y, si el SW ya
+     * estaba al día pero la pestaña no, contestaba «Ya tienes la última
+     * versión» —que era falso—. Ahora se compara lo publicado con lo que corre.
+     */
+    try {
+      const cambios = versionesDistintas(await versionesDelServidor(), versionesEnPantalla());
+      if (cambios.length) {
+        showUpdateBar();
+        toast('Hay una versión nueva: pulsa «Actualizar»');
+        return;
+      }
+    } catch {
+      /* Sin red: se intenta por el service worker, que puede tenerla guardada. */
+    }
     let registro = swRegistration;
     try {
       registro = registro ?? (await navigator.serviceWorker?.getRegistration('/admin/'));
@@ -21521,7 +21573,7 @@
     });
     setInterval(() => {
       if (!document.hidden) revisarVersionPanel();
-    }, 600000);
+    }, 180000);
     // Una pasada al arrancar: si el servidor ya tiene otra versión, el botón
     // «Actualizar» sale sin esperar a que nadie vuelva a la app.
     setTimeout(() => revisarVersionPanel({ forzar: true }), 2500);
