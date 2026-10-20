@@ -2,6 +2,21 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { createProofreader } from '../src/admin/proofreading-core.mjs';
 
 export const DEEPSEEK_MODEL = 'deepseek-flash';
+/*
+ * TOPES DE USO.
+ *
+ * El corrector consulta a la IA cada vez que la persona hace una pausa al
+ * escribir. Con el tope anterior (10 por minuto y por usuario) un vendedor
+ * normal lo agotaba en la primera frase: a partir de ahí el servicio devolvía
+ * `null` en silencio y parecía que «la IA se apagaba». Además cada intento
+ * fallido consumía cuota, así que un proveedor lento apagaba la ayuda antes.
+ *
+ * Ahora el margen es holgado para escribir con naturalidad, los fallos NO
+ * consumen cuota (ver `release`) y el tope diario es un control de gasto real.
+ */
+export const PER_MINUTE_CALLS = 60;
+export const DAILY_LIMIT_DEFAULT = 800;
+export const DAILY_LIMIT_MAX = 5000;
 const SETTING = 'proofreading_deepseek';
 const USAGE = 'proofreading_usage';
 let dictionary;
@@ -66,13 +81,13 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
   async function status() {
     const config = await read(), usage = (await settings.read(USAGE))?.value;
     const configured = Boolean(decrypt(config.credential));
-    return { enabled: config.enabled === true && configured, configured, model: DEEPSEEK_MODEL, dailyLimit: config.dailyLimit || 100, usedToday: usage?.day === today() ? usage.calls : 0 };
+    return { enabled: config.enabled === true && configured, configured, model: DEEPSEEK_MODEL, dailyLimit: config.dailyLimit || DAILY_LIMIT_DEFAULT, usedToday: usage?.day === today() ? usage.calls : 0 };
   }
   async function save(input) {
     const current = await read();
     if (input.model && input.model !== DEEPSEEK_MODEL) throw new Error('Elige el modelo Flash económico.');
-    const dailyLimit = input.dailyLimit ?? current.dailyLimit ?? 100;
-    if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > 1000) throw new Error('El límite diario debe estar entre 1 y 1000.');
+    const dailyLimit = input.dailyLimit ?? current.dailyLimit ?? DAILY_LIMIT_DEFAULT;
+    if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > DAILY_LIMIT_MAX) throw new Error(`El límite diario debe estar entre 1 y ${DAILY_LIMIT_MAX}.`);
     let credential = input.removeKey === true ? null : current.credential;
     if (input.apiKey) {
       const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
@@ -105,18 +120,39 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
       return typeof answer === 'string' && answer.trim().toLocaleLowerCase('es-DO') === 'gracias';
     } catch { return false; }
   }
+  /**
+   * Reserva una consulta. Devuelve un «ticket» (para devolverla si el intento
+   * no sirvió) o `false` si se rozó el tope por minuto o el diario.
+   */
   async function reserve(config, actorId) {
     const run = lock.then(async () => {
       const now = clock().getTime();
       const previous = users.get(actorId);
       const window = previous && now - previous.since < 60000 ? previous : { since: now, calls: 0 };
-      if (window.calls >= 10) return false;
+      if (window.calls >= PER_MINUTE_CALLS) return false;
       const old = (await settings.read(USAGE))?.value;
       const day = today(), calls = old?.day === day ? old.calls || 0 : 0;
-      if (calls >= (config.dailyLimit || 100)) return false;
+      if (calls >= (config.dailyLimit || DAILY_LIMIT_DEFAULT)) return false;
       await settings.write(USAGE, { day, calls: calls + 1 });
       if (users.size > 500) users.clear();
-      users.set(actorId, { since: window.since, calls: window.calls + 1 }); return true;
+      users.set(actorId, { since: window.since, calls: window.calls + 1 });
+      return { day, actorId, since: window.since };
+    });
+    lock = run.catch(() => {}); return run;
+  }
+
+  /**
+   * DEVUELVE la cuota de un intento que no produjo corrección (proveedor caído,
+   * error, respuesta truncada). Sin esto, diez fallos seguidos dejaban la ayuda
+   * apagada el resto del minuto aunque no se hubiera corregido nada.
+   */
+  async function release(ticket) {
+    if (!ticket) return;
+    const run = lock.then(async () => {
+      const current = users.get(ticket.actorId);
+      if (current && current.since === ticket.since && current.calls > 0) current.calls -= 1;
+      const old = (await settings.read(USAGE))?.value;
+      if (old?.day === ticket.day && (old.calls || 0) > 0) await settings.write(USAGE, { day: old.day, calls: old.calls - 1 });
     });
     lock = run.catch(() => {}); return run;
   }
@@ -129,7 +165,7 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
     if (cached && cached.until > clock().getTime()) return cached.value;
     if (active.has(hash)) return active.get(hash);
     const task = (async () => {
-      let value = null;
+      let value = null, ticket = null;
       try {
         /*
          * La revisión con IA cubre TODAS las respuestas. NO se filtra por el
@@ -139,7 +175,8 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
          * dando la propuesta inmediata en el navegador; esto añade la segunda
          * opinión del modelo sobre el mismo borrador.
          */
-        if (!(await reserve(config, actorId))) return null;
+        ticket = await reserve(config, actorId);
+        if (!ticket) return null;
         const response = await fetchImpl('https://api.deepseek.com/chat/completions', {
           method: 'POST', signal: AbortSignal.timeout(6000),
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -153,7 +190,11 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
           const proposed = choice?.finish_reason === 'stop' ? JSON.parse(choice.message?.content || '{}').text : null;
           if (validCorrection(text, proposed, names)) value = { start: 0, end: text.length, word: text, replacement: proposed, correctedText: proposed, edits: [{ start: 0, end: text.length, word: text, replacement: proposed }], uncertain: [] };
         }
-      } catch { /* Sin claves, borradores ni errores del proveedor en logs. */ }
+        /* Un intento sin corrección no debe gastar cuota. */
+        if (!value) await release(ticket);
+      } catch {
+        if (ticket) await release(ticket).catch(() => {});
+      }
       finally {
         if (cache.size >= 100) cache.delete(cache.keys().next().value);
         cache.set(hash, { value, until: clock().getTime() + (value ? 600000 : 30000) });

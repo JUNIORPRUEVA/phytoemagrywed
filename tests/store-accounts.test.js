@@ -284,7 +284,7 @@ describe('FULLTECH Store customer accounts', () => {
     expect(callback.cookie ?? '').not.toMatch(/^ft_store_session=/);
 
     const completed = await api('/api/store/account/complete', {
-      method: 'POST', body: { token: setupToken, name: 'OAuth Cliente', phone: '8095550501' },
+      method: 'POST', body: { token: setupToken, name: 'OAuth Cliente', phone: '8095550501', city: 'Santo Domingo' },
     });
     expect(completed.status).toBe(200);
     expect(completed.data.account).toMatchObject({ name: 'OAuth Cliente', phone: '+18095550501', providers: { google: true, password: false } });

@@ -934,6 +934,58 @@ body[data-drawer='open'] .burger span:nth-child(3),
   background: #24304a;
 }
 
+/*
+ * REPRODUCTOR DE AUDIO EN OSCURO.
+ *
+ * El reproductor del mensaje saliente llevaba el verde claro de WhatsApp escrito
+ * a mano (#d5ecdd): en modo noche se veía como un parche blanco sobre la burbuja
+ * azul. Aquí toma el tono del tema y el contraste de sus textos y controles.
+ */
+:root[data-theme='dark'] .audio {
+  border-color: var(--pe-border);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme='dark'] .bubble--out .audio {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-theme='dark'] .audio__times {
+  color: rgba(234, 240, 253, 0.72);
+}
+
+:root[data-theme='dark'] .audio__play {
+  background: var(--pe-brand-text);
+  color: var(--pe-on-brand);
+}
+
+:root[data-theme='dark'] .audio__kind,
+:root[data-theme='dark'] .audio--playing .audio__kind {
+  color: var(--pe-brand-text);
+}
+
+:root[data-theme='dark'] .audio__seek::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    90deg,
+    var(--pe-brand-text) var(--audio-progress, 0%),
+    rgba(255, 255, 255, 0.22) var(--audio-progress, 0%)
+  );
+}
+
+:root[data-theme='dark'] .audio__seek::-webkit-slider-thumb {
+  border-color: #0d1728;
+  background: var(--pe-brand-text);
+}
+
+:root[data-theme='dark'] .audio__seek::-moz-range-track {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+:root[data-theme='dark'] .audio__seek::-moz-range-progress {
+  background: var(--pe-brand-text);
+}
+
 :root[data-theme='dark'] .bubble--failed {
   background: #4a2320;
 }

@@ -46,7 +46,7 @@ function updateCartBadge() {
 }
 let homeData = null, catalogState = {kind:'all',category:'',q:'',page:1,pages:1}, searchTimer;
 const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false} };
-async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||'No pudimos completar la operación.');return d}
+async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(d.message||'No pudimos completar la operación.');error.code=d.error||'';throw error;}return d}
 async function ensureSession(force=false){if(session.loaded&&!force)return session.account;try{const d=await api('/api/store/account/me');session.account=d.account}catch{session.account=null}session.loaded=true;return session.account}
 async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})}}catch{}return session.providers}
 const initials = value => String(value||'F').trim().split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
@@ -352,10 +352,34 @@ async function renderRecover(){
 
 async function renderComplete(params){
   setNav('account');const token=params.get('token')||'';
-  const body=token?`<form id="complete-form" class="auth-form" novalidate><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" autocomplete="name" maxlength="120" required></label><label class="field"><span class="field__label">Tu número de teléfono</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label><label class="field"><span class="field__label">Número de un pedido anterior (si ya compraste)</span><input class="field__input" name="orderNumber" maxlength="60" placeholder="Ej. PE-123456"></label><p class="form-error" id="auth-error" role="alert"></p><button class="button button-block" type="submit">Terminar mi cuenta</button></form>`:`<p class="auth-sub">El enlace caducó. Vuelve a intentarlo.</p><a class="button button-block" href="#/account/login">Volver a iniciar sesión</a>`;
-  main.innerHTML=`${authHead('Completa tu cuenta')}${token?'<p class="auth-sub">Solo falta tu teléfono para vincular tus compras.</p>':''}<section class="auth-panel">${body}</section>${footer()}`;
+  if(!token){
+    main.innerHTML=`${authHead('Completa tu cuenta')}<section class="auth-panel"><p class="auth-sub">El enlace caducó. Vuelve a intentarlo.</p><a class="button button-block" href="#/account/login">Volver a iniciar sesión</a></section>${footer()}`;
+    bindAuthBack();return;
+  }
+  /* Solo lo imprescindible: WhatsApp y ciudad. El nombre ya viene de Google. */
+  main.innerHTML=`${authHead('Completa tu cuenta')}<p class="auth-sub">Solo faltan tu WhatsApp y tu ciudad.</p><section class="auth-panel">
+    <form id="complete-form" class="auth-form" novalidate>
+      <label class="field"><span class="field__label">Número de WhatsApp</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label>
+      <label class="field"><span class="field__label">Ciudad</span><input class="field__input" name="city" autocomplete="address-level2" maxlength="80" required placeholder="Santo Domingo"></label>
+      <label class="field" id="complete-proof" hidden><span class="field__label">Número de un pedido anterior</span><input class="field__input" name="orderNumber" maxlength="60" placeholder="Ej. PE-123456"><small class="auth-hint">Ese WhatsApp ya compró antes con nosotros.</small></label>
+      <p class="form-error" id="auth-error" role="alert"></p>
+      <button class="button button-block" type="submit">Terminar mi cuenta</button>
+    </form></section>${footer()}`;
   bindAuthBack();
-  if(token)$('#complete-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#auth-error').textContent='';try{const data=await apiPost('/api/store/account/complete',{token,name:form.name.value.trim(),phone:form.phone.value.trim(),orderNumber:form.orderNumber.value.trim()});session.account=data.account;session.loaded=true;location.hash='/account';}catch(error){$('#auth-error').textContent=error.message;button.disabled=false;}};
+  const form=$('#complete-form'),button=form.querySelector('[type=submit]');
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    button.disabled=true;$('#auth-error').textContent='';
+    try{
+      const data=await apiPost('/api/store/account/complete',{token,phone:form.phone.value.trim(),city:form.city.value.trim(),orderNumber:(form.orderNumber.value||'').trim()});
+      session.account=data.account;session.loaded=true;
+      afterAuth();
+    }catch(error){
+      $('#auth-error').textContent=error.message;
+      if(error.code==='verification_required'){$('#complete-proof').hidden=false;form.orderNumber.focus();}
+      button.disabled=false;
+    }
+  };
 }
 function bindAuthBack(){const back=$('[data-back]');if(back)back.onclick=()=>history.length>1?history.back():location.assign('/store/')}
 async function renderAccount(){

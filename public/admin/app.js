@@ -10165,14 +10165,26 @@
     await openCustomer(customerId);
   }
 
-  /** «Hoy», «Ayer» o la fecha: el separador que ordena el hilo. */
+  /**
+   * «Hoy», «Ayer» o la fecha de verdad («Miércoles, 15 de octubre»).
+   *
+   * El separador orienta en un hilo largo: un «15 de octubre» suelto obliga a
+   * pensar; con el día de la semana y el año (cuando no es el actual) se lee
+   * de un vistazo sin ambigüedad.
+   */
   const waDayLabel = (iso) => {
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return '';
     const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     if (day === todayISO()) return 'Hoy';
     if (day === addDaysISO(-1)) return 'Ayer';
-    return new Intl.DateTimeFormat('es-DO', { day: 'numeric', month: 'long' }).format(date);
+    const texto = new Intl.DateTimeFormat('es-DO', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+    }).format(date);
+    return texto.charAt(0).toUpperCase() + texto.slice(1);
   };
 
   /** Hilo completo: separadores por día y agrupación de mensajes seguidos. */
@@ -10210,7 +10222,15 @@
     for (const message of messages) {
       const day = waDayLabel(message.created_at);
       if (day && day !== lastDay) {
-        html += `<div class="day-sep">${escapeHtml(day)}</div>`;
+        /*
+         * Un separador con icono de calendario: se entiende que es la FECHA sin
+         * tener que interpretar un cuadro de texto. La píldora sigue el tema
+         * (claro/oscuro), nunca un blanco fijo.
+         */
+        html += `<div class="day-sep" role="separator" aria-label="${escapeHtml(day)}">
+          <span class="day-sep__icon" aria-hidden="true">${ICONS.calendar}</span>
+          <span class="day-sep__label">${escapeHtml(day)}</span>
+        </div>`;
         lastDay = day;
         lastDirection = '';
       }
@@ -12658,21 +12678,8 @@
       body = {};
     }
     if (!response.ok) {
-      /*
-       * NGINX PUEDE CORTAR ANTES DE LLEGAR AL SERVIDOR (413 «too large») y
-       * entonces la respuesta no es JSON: `body` queda vacío. Se dice la causa
-       * real en vez de un «no se pudo enviar» que no explica nada.
-       */
-      const message =
-        body.message ??
-        (response.status === 413
-          ? 'El servidor rechazó el archivo por tamaño (413). Prueba con una nota más corta o adjunta uno más pequeño.'
-          : response.status === 502 || response.status === 504
-            ? 'El servidor no respondió a tiempo. Vuelve a intentarlo en unos segundos.'
-            : 'No se pudo enviar el archivo');
-      const error = new Error(message);
+      const error = new Error(body.message ?? 'No se pudo enviar el archivo');
       error.body = body;
-      error.status = response.status;
       throw error;
     }
     return body;
@@ -12689,7 +12696,7 @@
     toast(
       ambiguo
         ? 'No se pudo confirmar si el mensaje salió. No se reintenta solo: míralo en Ajustes → «Envíos de archivo por revisar».'
-        : error.body?.message ?? error.message ?? 'No se pudo enviar el archivo',
+        : error.body?.message ?? 'No se pudo enviar el archivo',
     );
     if (ambiguo) {
       closeSheet();
@@ -21312,6 +21319,15 @@
     try {
       if (document.hidden) return true;
       if (state.openId) return false;
+      /*
+       * CON UNA CONVERSACIÓN ABIERTA NO SE RECARGA SOLO.
+       *
+       * Antes bastaba con no tener texto escrito: al publicar una versión nueva,
+       * el panel se recargaba en mitad de una conversación y el chat "se escondía"
+       * (volvía a la lista) sin que la persona hubiera hecho nada. Ahora se avisa
+       * con la barra «Actualizar» y decide ella cuándo.
+       */
+      if (state.wa?.selectedId) return false;
       if (document.querySelector('#sheet:not([hidden])')) return false;
       const textos = [...document.querySelectorAll('#app textarea, #app input[type="text"], #app input[type="search"]')];
       if (textos.some((campo) => typeof campo.value === 'string' && campo.value.trim().length > 0)) return false;

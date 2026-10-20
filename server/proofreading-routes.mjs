@@ -1,4 +1,6 @@
 // Solo se invoca después de autenticación y comprobación del origen/CSRF.
+import { DAILY_LIMIT_MAX } from './proofreading.mjs';
+
 export async function handleProofreadingRoute({ req, res, route, ctx, actor, can, canOpen, readJson, json }) {
   const config = route === '/api/admin/settings/deepseek';
   const test = route === '/api/admin/settings/deepseek/test';
@@ -15,7 +17,7 @@ export async function handleProofreadingRoute({ req, res, route, ctx, actor, can
   catch { return send(400, { ok: false, message: 'Datos no válidos.' }); }
   if (config) {
     try { return send(200, { ok: true, deepseek: await ctx.proofreading.save(body) }); }
-    catch (error) { return send(400, { ok: false, message: ['Elige el modelo Flash económico.', 'El límite diario debe estar entre 1 y 1000.', 'La clave API no tiene un formato válido.', 'Guarda una clave API para activar las correcciones.'].includes(error.message) ? error.message : 'No se pudo guardar la configuración.' }); }
+    catch (error) { return send(400, { ok: false, message: ['Elige el modelo Flash económico.', `El límite diario debe estar entre 1 y ${DAILY_LIMIT_MAX}.`, 'La clave API no tiene un formato válido.', 'Guarda una clave API para activar las correcciones.'].includes(error.message) ? error.message : 'No se pudo guardar la configuración.' }); }
   }
   if (test) return send(200, { ok: true, connected: await ctx.proofreading.test() });
   if (orderMessage) {

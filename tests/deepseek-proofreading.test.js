@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createProofreadingService, validCorrection } from '../server/proofreading.mjs';
+import { PER_MINUTE_CALLS, DAILY_LIMIT_MAX, createProofreadingService, validCorrection } from '../server/proofreading.mjs';
 import { handleProofreadingRoute } from '../server/proofreading-routes.mjs';
 import { startCrmServer } from '../server/crm-server.mjs';
 
@@ -84,8 +84,24 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
   });
   it('limita consultas distintas del mismo usuario aunque cambie el texto',async()=>{
     const f=fixture();await enable(f);
-    for(let i=0;i<10;i++)await f.service.correct({...f.input,text:'hoas '+i});
-    expect(await f.service.correct({...f.input,text:'otro borrador'})).toBeNull();expect(f.fetchImpl).toHaveBeenCalledTimes(10);
+    // Sin números ni datos protegidos: esos NO se corrigen (y por tanto se devuelve la cuota).
+    const palabra = (i) => 'hoas ' + 'a'.repeat(1 + i);
+    for(let i=0;i<PER_MINUTE_CALLS;i++)await f.service.correct({...f.input,text:palabra(i)});
+    expect(await f.service.correct({...f.input,text:'otra duda distinta'})).toBeNull();expect(f.fetchImpl).toHaveBeenCalledTimes(PER_MINUTE_CALLS);
+  });
+  it('un intento que no produce corrección NO gasta cuota (la IA no «se apaga» por un proveedor lento)',async()=>{
+    /*
+     * Antes cada intento contaba, incluso los que fallaban: diez timeouts o
+     * errores del proveedor dejaban el corrector mudo el resto del minuto. Ahora
+     * el cupo se devuelve y un fallo no puede apagar la ayuda.
+     */
+    const f=fixture({fetchImpl:vi.fn(async()=>({ok:false}))});await enable(f);
+    for(let i=0;i<PER_MINUTE_CALLS+5;i++)expect(await f.service.correct({...f.input,text:'hoas fallo ' + 'a'.repeat(1 + i)})).toBeNull();
+    expect((await f.service.status()).usedToday).toBe(0);
+    // Y con una respuesta buena, el mismo usuario sigue siendo atendido.
+    f.fetchImpl.mockImplementation(async()=>result('hola'));
+    expect((await f.service.correct({...f.input,text:'hoas'})).correctedText).toBe('hola');
+    expect((await f.service.status()).usedToday).toBe(1);
   });
   it('omite respuestas truncadas, inválidas, errores y timeouts sin exponer el proveedor',async()=>{
     for (const response of [()=>({ok:false}),()=>({ok:true,json:async()=>({choices:[{finish_reason:'length',message:{content:'{}'}}]})}),()=>({ok:true,json:async()=>{throw new Error(API_KEY);}}),()=>{throw new Error(API_KEY);}]) {
@@ -121,7 +137,7 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
   });
   it('rechaza modelos caros, límites inválidos y activación sin clave',async()=>{
     const f=fixture();await expect(f.service.save({enabled:true})).rejects.toThrow();
-    await expect(f.service.save({model:'deepseek-v4-pro'})).rejects.toThrow();await expect(f.service.save({dailyLimit:1001})).rejects.toThrow();
+    await expect(f.service.save({model:'deepseek-v4-pro'})).rejects.toThrow();await expect(f.service.save({dailyLimit:DAILY_LIMIT_MAX+1})).rejects.toThrow();
   });
   it('no acepta cambios en números, enlaces o nombres del cliente ni respuestas inventadas',()=>{
     expect(validCorrection('grasias Ana RD$ 1250 https://a.do','gracias Ana RD$ 1500 https://a.do',['Ana'])).toBe(false);

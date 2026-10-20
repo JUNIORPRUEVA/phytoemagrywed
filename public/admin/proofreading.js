@@ -32,6 +32,12 @@
     // puede tener todas las palabras válidas y aun así llevar tildes o
     // concordancia mal) pero con más calma y solo desde tres palabras.
     if (!local && job.text.trim().split(/\s+/).filter(Boolean).length < 3) return;
+    /*
+     * YA HAY UNA PETICIÓN EN VUELO PARA ESTE MISMO TEXTO: no se cancela ni se
+     * repite. Antes cada respuesta del Worker abortaba la anterior y volvía a
+     * empezar, así que escribiendo seguido la IA no llegaba a contestar nunca.
+     */
+    if (aiJob && aiJob.text === job.text && aiJob.context === job.context && aiAbort && !aiAbort.signal.aborted) return;
     cancelAI();
     const key = JSON.stringify([job.context, job.text, [...ignored]]);
     const apply = result => {
@@ -46,7 +52,7 @@
     aiTimer = setTimeout(async () => {
       if (!isCurrent(job)) return;
       const controller = new AbortController(); aiAbort = controller;
-      aiTimeout = setTimeout(() => controller.abort(), 5500);
+      aiTimeout = setTimeout(() => controller.abort(), 6500);
       let result = null;
       try {
         const response = await fetch('/api/admin/proofreading', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: job.context, text: job.text }) });
@@ -60,7 +66,7 @@
         }
         if (aiAbort === controller) { clearTimeout(aiTimeout); aiAbort = null; aiJob = null; }
       }
-    }, local ? 900 : 1400);
+    }, local ? 700 : 1100);
   }
   function cancelSend() {
     clearTimeout(sendTimer);
@@ -245,23 +251,33 @@
       document.querySelector('#wa-proofreading').setAttribute('aria-busy', 'true');
     }
     if (!composing && input && !input.disabled && document.body.dataset.tab === 'whatsapp') ensureWorker();
+    const job = input ? { id: version, area: input, text: input.value, context: nextContext } : null;
+    /*
+     * LA IA DEL SERVIDOR NO DEPENDE DEL DICCIONARIO LOCAL.
+     *
+     * Antes, si el Worker del diccionario fallaba (`unavailable`), se salía aquí
+     * y NO se pedía la corrección al servidor: el corrector quedaba mudo 30 s
+     * aunque la IA estuviera perfectamente disponible. Ahora se programa igual;
+     * el Worker, cuando llega, la adelanta o la reemplaza.
+     */
+    if (!composing && input && !input.disabled && input.value.trim().length >= 2 && input.value.length <= 4000) {
+      clearTimeout(aiFallback);
+      /*
+       * Si el diccionario local ya se sabe caído, no hay nada que esperar: se
+       * pregunta al servidor casi enseguida. Con el Worker vivo se espera un
+       * poco por si contesta antes (y así se ahorra la consulta).
+       */
+      const aiDelay = unavailable ? 500 : 1200;
+      aiFallback = setTimeout(() => {
+        aiFallback = null;
+        if (!isCurrent(job)) return;
+        if (lastReview && isCurrent(lastReview.job)) return;
+        requestSupport(job, null);
+      }, aiDelay);
+    }
     if (composing || unavailable || !input || input.disabled || input.value.trim().length < 2 || input.value.length > 4000) { clearScheduled(); return; }
-    const job = { id: version, area: input, text: input.value, context: nextContext };
     pending = job;
     timer = setTimeout(pump, REVIEW_DELAY);
-    /*
-     * EN EL TELÉFONO EL WORKER PUEDE NO LLEGAR. Si el diccionario tarda o el
-     * navegador lo bloquea, `pump` nunca responde y el corrector quedaba mudo.
-     * La corrección del servidor NO necesita el diccionario local: se pide igual
-     * pasado un margen, y si el Worker contesta antes, su respuesta la cancela.
-     */
-    clearTimeout(aiFallback);
-    aiFallback = setTimeout(() => {
-      aiFallback = null;
-      if (!isCurrent(job)) return;
-      if (lastReview && isCurrent(lastReview.job)) return;
-      requestSupport(job, null);
-    }, 1600);
     // No reiniciar este límite con cada tecla: revisar también mientras escribe
     // seguido, conservando solo el borrador más reciente en la cola.
     if (maxTimer == null) maxTimer = setTimeout(() => { maxTimer = null; pump(); }, MAX_WAIT);

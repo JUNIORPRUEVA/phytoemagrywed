@@ -79,7 +79,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=boot-fast-77" />
+    <link rel="stylesheet" href="/admin/admin.css?v=dia-78" />
     <link rel="stylesheet" href="/admin/store.css?v=etiqueta-5" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
     <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
@@ -89,7 +89,7 @@
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
       DESPUÉS de admin.css a propósito: es la última palabra sobre esas piezas.
     -->
-    <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-1" />
+    <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-2" />
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=3" />
     <link rel="stylesheet" href="/admin/fulltech.css?v=4" />
@@ -107,7 +107,7 @@
       Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
       todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
     -->
-    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-1" />
+    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-2" />
     <!--
       El menú lateral en escritorio: lleva los cuatro destinos de la barra y
       ordena el resto en desplegables. En el móvil no cambia nada.
@@ -892,7 +892,7 @@
               <label class="field"><span>API key DeepSeek</span><input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Pega tu clave para configurarla" maxlength="300" /></label>
               <p class="settings-footnote" id="deepseek-key-status">Comprobando configuración…</p>
               <label class="field"><span>Modelo</span><select id="deepseek-model"><option value="deepseek-flash">DeepSeek V4.1 Flash · Económico</option></select></label>
-              <label class="field"><span>Límite de consultas por día</span><input id="deepseek-daily-limit" type="number" min="1" max="1000" step="1" value="100" required /></label>
+              <label class="field"><span>Límite de consultas por día</span><input id="deepseek-daily-limit" type="number" min="1" max="5000" step="1" value="800" required /></label>
               <label class="settings-permission"><input id="deepseek-enabled" type="checkbox" /> Activar correcciones de apoyo</label>
               <p class="settings-footnote">La clave se guarda cifrada en el servidor y no vuelve a mostrarse. La comprobación envía una corrección de prueba al mismo servicio usado por las funciones de IA.</p>
               <div class="item__actions"><button class="btn btn--primary" type="submit">Guardar configuración</button><button class="btn btn--ghost" id="deepseek-test" type="button">Comprobar conexión</button><button class="btn btn--ghost" id="deepseek-remove" type="button">Eliminar clave</button></div>
@@ -1106,11 +1106,11 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=voz-413-8" defer></script>
+    <script src="/admin/app.js?v=chat-elegante-9" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
-    <script src="/admin/proofreading.js?v=12" defer></script>
+    <script src="/admin/proofreading.js?v=13" defer></script>
     <script src="/admin/deepseek-settings.js?v=3" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=3" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>

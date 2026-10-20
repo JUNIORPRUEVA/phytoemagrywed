@@ -297,8 +297,14 @@ describe('mensajes: un mensaje, un componente visual', () => {
     expect(app).toContain("if (typeof requestAnimationFrame === 'function')");
   });
 
-  it('las fechas son una etiqueta discreta, no una tarjeta', () => {
-    expect(css).toMatch(/\.day-sep \{[\s\S]*?border: 0;/);
+  it('las fechas son una etiqueta discreta con icono, y se leen en oscuro', () => {
+    // Píldora delgada con icono de calendario: dice que es la fecha sin que haya
+    // que interpretar un cuadro, y toma sus colores del TEMA (claro/oscuro).
+    expect(app).toContain('class="day-sep"');
+    expect(app).toContain('day-sep__icon');
+    expect(css).toMatch(/\.day-sep \{[\s\S]*?border-radius: 999px;/);
+    expect(css).toMatch(/\.day-sep__icon \{/);
+    expect(css).toMatch(/:root\[data-theme='dark'\] \.day-sep \{/);
   });
 });
 

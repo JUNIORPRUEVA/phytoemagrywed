@@ -233,7 +233,8 @@ describe('sugerencia discreta dentro de la app',()=>{
     ui.win.fetch.mockResolvedValue({ok:true,json:async()=>({suggestion:{start:0,end:text.length,word:text,replacement:corrected,edits:[{start:0,end:text.length,word:text,replacement:corrected}]}})});
     ui.type(text);await vi.advanceTimersByTimeAsync(180);ui.reply();
     expect(ui.$('.wa-proofreading__text').textContent).toBe('gracias hoas');
-    await vi.advanceTimersByTimeAsync(899);expect(ui.win.fetch).not.toHaveBeenCalled();
+    // Con dudas locales la IA se pide a los 700 ms (antes 900): más rápida.
+    await vi.advanceTimersByTimeAsync(699);expect(ui.win.fetch).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);expect(ui.win.fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(ui.win.fetch.mock.calls[0][1].body)).toEqual({conversationId:'chat-1',text});
     expect(ui.$('.wa-proofreading__text').textContent).toBe(corrected);
@@ -249,6 +250,21 @@ describe('sugerencia discreta dentro de la app',()=>{
     ui.click('[data-proofreading="dismiss"]');await vi.advanceTimersByTimeAsync(1000);expect(ui.win.fetch).not.toHaveBeenCalled();
     ui.type('coo');await vi.advanceTimersByTimeAsync(180);ui.reply();ui.type('hola');await vi.advanceTimersByTimeAsync(1000);
     expect(ui.win.fetch).not.toHaveBeenCalled();
+  });
+  it('si el diccionario local falla, la IA del servidor sigue respondiendo',async()=>{
+    /*
+     * El Worker del diccionario puede no cargar en un teléfono con poca memoria.
+     * Antes eso apagaba TAMBIÉN la IA (30 s sin nada); ahora la corrección del
+     * servidor no depende de él.
+     */
+    const ui=setup(),text='hoas coo esta';
+    ui.win.fetch.mockResolvedValue({ok:true,json:async()=>({suggestion:{edits:[{start:0,end:text.length,word:text,replacement:'hola cómo está'}]}})});
+    ui.worker.handlers.get('error')({});
+    ui.type(text);
+    await vi.advanceTimersByTimeAsync(1800);
+    expect(ui.win.fetch).toHaveBeenCalledTimes(1);
+    expect(ui.$('.wa-proofreading__text').textContent).toBe('hola cómo está');
+    expect(ui.sends).toBe(0);
   });
   it('una respuesta de apoyo antigua nunca reemplaza el mensaje nuevo',async()=>{
     const ui=setup();let resolve;

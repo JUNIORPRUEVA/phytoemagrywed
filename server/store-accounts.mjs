@@ -20,6 +20,14 @@ const safeJson = (value, fallback = {}) => {
   }
 };
 const normProof = (value) => String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+/*
+ * Nombre de respaldo cuando el proveedor no lo envía (p. ej. un token sin
+ * `name`): se usa la parte local del correo, nunca se inventa un nombre.
+ */
+const nameFromEmail = (value) => {
+  const local = String(value ?? '').split('@')[0].replace(/[._-]+/g, ' ').trim().slice(0, 120);
+  return local.length >= 2 ? local : 'Cliente';
+};
 const normTitle = (value) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 /*
  * Mensaje ÚNICO para un alta que no se puede completar: no confirma si el
@@ -645,16 +653,21 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     return publicRequest(doc, { includeInternal: true });
   }
 
-  async function resolveCustomerForAccount(name, phone, orderNumber) {
+  async function resolveCustomerForAccount(name, phone, orderNumber, city = '') {
     const existing = await customers.findByPhone(phone);
     if (existing) {
       if (await accountBy('customer_id', existing.id)) throw fail('account_exists', 'Ese teléfono ya tiene una cuenta. Inicia sesión.', 409);
       if (!(await orderMatchesCustomer(existing.id, orderNumber))) {
         throw fail('verification_required', 'Ese teléfono ya tiene historial. Escribe el número de uno de tus pedidos para vincular la cuenta.', 403);
       }
+      /* La ciudad es dato de contacto: se completa si falta, nunca se pisa. */
+      if (city && !existing.location) {
+        const patched = await customers.update(existing.id, { location: city });
+        return patched ?? existing;
+      }
       return existing;
     }
-    const created = await customers.findOrCreateByPhone({ phone, name, source: 'tienda' });
+    const created = await customers.findOrCreateByPhone({ phone, name, location: city || null, source: 'tienda' });
     if (!created.ok) throw fail(created.error ?? 'invalid_phone', 'No pudimos crear tu cuenta con ese teléfono.');
     return created.customer;
   }
@@ -740,16 +753,18 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (!account) throw fail('link_expired', 'El enlace caducó. Vuelve a entrar con Google o Apple.', 410);
     if (account.status === 'active' && account.customer_id) return { account: publicAccount(account, await customers.get(account.customer_id)) };
 
-    const name = clean(input.name, 120) || clean(account.profile?.name, 120);
+    const provided = clean(input.name, 120) || clean(account.profile?.name, 120);
+    const name = provided.length >= 2 ? provided : nameFromEmail(account.email);
     const phone = customers.normalizePhone(input.phone);
-    if (name.length < 2) throw fail('invalid_name', 'Escribe tu nombre.');
-    if (!phone) throw fail('invalid_phone', 'Escribe un teléfono válido.');
+    const city = clean(input.city, 80);
+    if (!phone) throw fail('invalid_phone', 'Escribe tu número de WhatsApp.');
+    if (city.length < 2) throw fail('invalid_city', 'Escribe tu ciudad.');
     if (await accountBy('phone_e164', phone)) {
       const other = await accountBy('phone_e164', phone);
       if (other && other.id !== account.id) throw fail('account_exists', 'Ese teléfono ya tiene una cuenta. Inicia sesión con ella.', 409);
     }
-    const customer = await resolveCustomerForAccount(name, phone, input.orderNumber);
-    const profile = { ...safeJson(account.profile), name, email: account.email };
+    const customer = await resolveCustomerForAccount(name, phone, input.orderNumber, city);
+    const profile = { ...safeJson(account.profile), name, email: account.email, city };
     const now = clock().toISOString();
     await sql.query('UPDATE fulltech_customer_accounts_v1 SET customer_id=$1,phone_e164=$2,status=$3,profile=$4,updated_at=$5 WHERE id=$6', [
       customer.id, phone, 'active', JSON.stringify(profile), now, account.id,
