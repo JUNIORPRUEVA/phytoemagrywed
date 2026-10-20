@@ -1099,6 +1099,55 @@ function orderDeliveryDeepLink(orderId) {
 }
 
 /**
+ * Avisa a los ADMINISTRADORES activos de un pedido nuevo de la tienda.
+ *
+ * Canal: notificación interna + Web Push. No usa WhatsApp a propósito: el
+ * número del negocio no admite mensajes libres sin plantilla aprobada y el
+ * webhook lo consume una sola instancia (el CRM).
+ *
+ * @param {any} ctx
+ * @param {any} item fila del pedido ya guardada
+ * @param {any} order pedido normalizado
+ * @param {any} customer cliente asociado
+ * @returns {Promise<number>} avisos nuevos entregados a la cola de push
+ */
+async function notifyAdminsStoreOrder(ctx, item, order, customer) {
+  if (!item?.id || !order) return 0;
+  const admins = (await ctx.users.listUsers()).filter((user) => user.active !== false && user.role === 'ADMIN');
+  if (!admins.length) return 0;
+  const customerName = notificationSafeName(customer, 'Cliente');
+  const money = new Intl.NumberFormat('es-DO', { style: 'currency', currency: order.currency || 'DOP', maximumFractionDigits: 0 }).format(Number(order.total || 0));
+  const delivery = order.fulfillment_method === 'pickup' ? 'Recogida coordinada' : 'Entrega a domicilio';
+  let created = 0;
+  for (const user of admins) {
+    const note = await createUserNotification(ctx, {
+      recipientUserId: user.id,
+      type: 'STORE_ORDER_CREATED',
+      title: `Nuevo pedido de la tienda · ${order.order_number ?? item.order_number ?? item.id}`,
+      body: `${customerName} · ${money} · ${delivery}`,
+      entityType: 'order',
+      entityId: item.id,
+      deepLink: orderDeliveryDeepLink(item.id),
+      data: {
+        order_id: item.id,
+        order_number: order.order_number ?? null,
+        customer_name: customerName,
+        total: order.total ?? null,
+        currency: order.currency ?? 'DOP',
+        channel: 'store',
+        vibrate: [150, 80, 150],
+      },
+      idempotencyKey: `store-order-created:${item.id}:${user.id}`,
+    });
+    if (note.notification && !note.duplicate) {
+      await sendPushForNotification(ctx, note.notification);
+      created += 1;
+    }
+  }
+  return created;
+}
+
+/**
  * ENLACE ABSOLUTO para las plantillas de WhatsApp.
  *
  * La ruta relativa sirve para navegar DENTRO del panel, pero un mensaje de
@@ -3417,6 +3466,22 @@ async function createStoreOrder(ctx, session, body = {}) {
     null,
   );
   if (!result?.ok) return result;
+  /*
+   * AVISO AL EQUIPO. Un pedido de la tienda entra por el servidor de la tienda,
+   * que corre en modo WhatsApp MOCK y sin credenciales de envío. Por eso el
+   * aviso va por NOTIFICACIÓN + WEB PUSH (la misma vía que ya usa el panel para
+   * los pedidos de reparto), no por WhatsApp: así no se duplica el consumidor
+   * del webhook ni se abre una ventana de mensajes al cliente.
+   *
+   * El pedido YA está guardado cuando se llega aquí: cualquier fallo del aviso
+   * se registra y se ignora (nunca pierde la venta). Es idempotente por
+   * pedido+usuario, así que un reintento no duplica avisos.
+   */
+  try {
+    await notifyAdminsStoreOrder(ctx, result.item, result.order, result.customer);
+  } catch (error) {
+    console.error('[crm] aviso de pedido de tienda no enviado', { orderId: result.item?.id ?? null, code: error?.code ?? error?.name });
+  }
   return {
     ok: true,
     duplicate: result.duplicate === true,
