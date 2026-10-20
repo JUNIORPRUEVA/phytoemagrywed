@@ -72,7 +72,10 @@
     return `<section class="requests-detail" aria-label="Detalle de la solicitud">
       <div class="requests-detail__head">
         <div><span class="requests-item__status requests-status--${esc(request.status)}">${esc(STATUS_LABEL[request.status] || request.status)}</span><h3>${esc(request.title)}</h3><p class="store-muted">${esc(customer?.name || 'Cliente')}${customer?.phone_e164 ? ` · ${esc(customer.phone_e164)}` : ''} · ${esc(date(request.created_at))}</p></div>
-        <button class="store-icon-button" type="button" data-request-close aria-label="Cerrar detalle">×</button>
+        <div class="requests-detail__actions">
+          ${request.customer_id ? `<button class="btn btn--ghost btn--sm" type="button" data-order-new="${esc(request.customer_id)}" title="Abrir el alta de pedido del CRM para este cliente">Crear pedido</button>` : ''}
+          <button class="store-icon-button" type="button" data-request-close aria-label="Cerrar detalle">×</button>
+        </div>
       </div>
       ${request.details ? `<p class="requests-detail__body">${esc(request.details)}</p>` : ''}
       ${request.reference_url ? `<p class="requests-detail__link"><a href="${esc(request.reference_url)}" target="_blank" rel="noopener noreferrer">Abrir enlace enviado por el cliente</a></p>` : ''}

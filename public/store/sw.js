@@ -1,4 +1,4 @@
-const VERSION = 'fulltech-store-v8';
+const VERSION = 'fulltech-store-v9';
 const SHELL = [
   '/store/',
   '/store/index.html',

@@ -326,6 +326,7 @@ body[data-tab='catalogo'] #store-product-grid{flex:1;min-height:0;overflow-y:aut
 .requests-item__amount{font-weight:800;color:#bd5524;white-space:nowrap}
 .requests-detail{background:#fff;border:1px solid #e7ebf1;border-radius:16px;padding:16px 18px;margin-bottom:14px;box-shadow:0 6px 20px #18345a0d}
 .requests-detail__head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.requests-detail__actions{display:flex;align-items:center;gap:6px;flex:none}
 .requests-detail__head h3{margin:6px 0 2px;font-size:1.05rem;color:#142338}
 .requests-detail__head p{margin:0}
 .requests-detail__body{color:#43536a;font-size:.88rem;line-height:1.55;margin:12px 0}
