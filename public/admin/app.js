@@ -324,7 +324,6 @@
     push: null,
     devicePermissions: { loading: false, geolocation: 'unknown', notifications: 'unknown' },
     orderReturn: null,
-    nativePrinter: { available: false, status: null, loading: false, result: null },
     deliveryEvents: null,
     deliveryPollTimer: null,
     deliveryWatchId: null,
@@ -5470,124 +5469,6 @@
       }`;
   }
 
-  const nativePrinterRequests = new Map();
-  let nativePrinterRequestSeq = 0;
-
-  function nativePrinterAvailable() {
-    return Boolean(window.PhytoDeviceBridge && typeof window.PhytoDeviceBridge.postMessage === 'function');
-  }
-
-  window.addEventListener('phyto-device-response', (event) => {
-    const detail = event.detail ?? {};
-    const id = detail.id;
-    const pending = nativePrinterRequests.get(id);
-    if (!pending) return;
-    nativePrinterRequests.delete(id);
-    clearTimeout(pending.timer);
-    if (detail.ok) pending.resolve(detail.data ?? {});
-    else {
-      const error = new Error(detail.error?.message || 'No se pudo completar la acción nativa.');
-      error.code = detail.error?.code;
-      pending.reject(error);
-    }
-  });
-
-  function nativePrinterRequest(action, payload = {}) {
-    if (!nativePrinterAvailable()) {
-      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación FullTECH, SRL para Android.'));
-    }
-    const id = `printer-${Date.now()}-${++nativePrinterRequestSeq}`;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        nativePrinterRequests.delete(id);
-        reject(new Error('La impresora no respondió a tiempo.'));
-      }, 15000);
-      nativePrinterRequests.set(id, { resolve, reject, timer });
-      window.PhytoDeviceBridge.postMessage(JSON.stringify({ id, scope: 'printer', action, payload }));
-    });
-  }
-
-  function printerConfigHtml() {
-    const status = state.nativePrinter?.status ?? null;
-    const result = state.nativePrinter?.result ?? '';
-    if (!nativePrinterAvailable()) {
-      return `<article class="printer-settings printer-settings--browser">
-        <div class="printer-settings__hero">
-          <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
-          <div>
-            <strong>Impresora térmica</strong>
-            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH, SRL para Android.</p>
-          </div>
-        </div>
-        <dl class="facts printer-settings__facts">
-          <div class="fact"><dt>Estado</dt><dd>Usando el CRM desde el navegador</dd></div>
-          <div class="fact"><dt>Impresión Bluetooth</dt><dd>Disponible en la app Android</dd></div>
-          <div class="fact"><dt>Nombre de la app</dt><dd>FullTECH, SRL</dd></div>
-        </dl>
-        <div class="item__actions printer-settings__actions">
-          <a class="btn btn--primary" href="/api/admin/android-apk/download">Descargar app para Android</a>
-        </div>
-        <div class="printer-settings__guide">
-          <strong>Cómo instalar y probar la impresora</strong>
-          <ol>
-            <li>Desde el teléfono Android, toca <strong>Descargar app para Android</strong>.</li>
-            <li>Cuando termine la descarga, abre el archivo y toca <strong>Instalar</strong>.</li>
-            <li>Si el teléfono pide permiso para instalar, toca <strong>Permitir</strong> y vuelve a abrir el archivo descargado.</li>
-            <li>Abre la app <strong>FullTECH, SRL</strong> e inicia sesión en el CRM.</li>
-            <li>Entra a <strong>Configuración → Impresora</strong> y toca <strong>Seleccionar impresora</strong>.</li>
-            <li>Elige tu impresora térmica Bluetooth. Si no aparece, primero vincúlala en los ajustes Bluetooth del teléfono.</li>
-            <li>Toca <strong>Imprimir prueba</strong>. Si sale bien, ya puedes imprimir facturas desde los pedidos.</li>
-          </ol>
-        </div>
-        <p class="notice-hint">Android puede mostrar avisos de seguridad antes de instalar. Es normal: confirma la instalación solo si el archivo viene desde este botón del CRM.</p>
-      </article>`;
-    }
-    const bluetooth = status?.bluetoothLabel ?? 'Revisando…';
-    const device = status?.defaultDevice?.name || 'Sin impresora seleccionada';
-    const paper = status?.paperWidthLabel ?? '58 mm';
-    const profile = status?.profileLabel ?? 'Generic ESC/POS';
-    const autoPrint = status?.autoPrint ? 'ON' : 'OFF';
-    return `<article class="printer-settings">
-      <div class="printer-settings__hero">
-        <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
-        <div>
-          <strong>Impresora térmica</strong>
-          <p>Bluetooth: ${escapeHtml(bluetooth)}</p>
-        </div>
-      </div>
-      <dl class="facts printer-settings__facts">
-        <div class="fact"><dt>Bluetooth</dt><dd>${escapeHtml(bluetooth)}</dd></div>
-        <div class="fact"><dt>Impresora predeterminada</dt><dd>${escapeHtml(device)}</dd></div>
-        <div class="fact"><dt>Tamaño</dt><dd>${escapeHtml(paper)}</dd></div>
-        <div class="fact"><dt>Perfil</dt><dd>${escapeHtml(profile)}</dd></div>
-        <div class="fact"><dt>Impresión automática</dt><dd>${escapeHtml(autoPrint)}</dd></div>
-      </dl>
-      ${result ? `<p class="notice-hint printer-settings__result">${escapeHtml(result)}</p>` : ''}
-      <div class="item__actions printer-settings__actions">
-        <button class="btn btn--primary" data-native-printer="configure" type="button">Seleccionar impresora</button>
-        <button class="btn btn--ghost" data-native-printer="test" type="button">Imprimir prueba</button>
-      </div>
-    </article>`;
-  }
-
-  async function refreshNativePrinterStatus() {
-    state.nativePrinter.available = nativePrinterAvailable();
-    if (!state.nativePrinter.available) {
-      state.nativePrinter.status = null;
-      $('#printer-config') && ($('#printer-config').innerHTML = printerConfigHtml());
-      return;
-    }
-    state.nativePrinter.loading = true;
-    try {
-      state.nativePrinter.status = await nativePrinterRequest('printerStatus');
-    } catch (error) {
-      state.nativePrinter.result = error.message || 'No se pudo leer la impresora.';
-    } finally {
-      state.nativePrinter.loading = false;
-      $('#printer-config') && ($('#printer-config').innerHTML = printerConfigHtml());
-    }
-  }
-
   function openNotificationsSheet() {
     $('#sheet-title').textContent = 'Notificaciones';
     // Lo ya borrado en este teléfono no se pinta nunca más (aunque el servidor
@@ -8460,11 +8341,6 @@
     if (!admin) {
       $('#build-info').textContent = `${state.online ? 'en línea' : 'sin conexión'} · Configuración personal`;
       return;
-    }
-    const printerConfig = $('#printer-config');
-    if (printerConfig) {
-      printerConfig.innerHTML = printerConfigHtml();
-      refreshNativePrinterStatus().catch(() => {});
     }
     $('#facts').innerHTML = [
       ['Registros', stats.total ?? state.items.length],
@@ -14260,9 +14136,34 @@
       </div>`,
     );
 
+    /*
+     * CUENTA DE LA TIENDA: se muestra el acceso del cliente a FULLTECH Store y
+     * sus últimas solicitudes. La cuenta se enlaza por teléfono con prueba de
+     * pedido; aquí solo se LEE (no se puede suplantar la sesión del cliente).
+     */
+    const storeAccount = profile.store_account ?? null;
+    const storeRequests = profile.store_requests ?? [];
+    const storeRequestStatus = { nuevo: 'Recibida', en_revision: 'En revisión', cotizado: 'Cotizada', aprobado: 'Aprobada', en_proceso: 'En proceso', completado: 'Completada', rechazado: 'No disponible', cancelado: 'Cancelada' };
+    const storeSection = customerProfileSection(
+      'Cuenta en FULLTECH Store',
+      storeAccount
+        ? `<dl class="facts profile-facts">
+            ${profileFact('Estado', storeAccount.status === 'active' ? 'Activa' : 'Pendiente de verificación')}
+            ${profileFact('Teléfono', escapeHtml(storeAccount.phone ?? '—'))}
+            ${profileFact('Correo', escapeHtml(storeAccount.email ?? '—'))}
+            ${profileFact('Acceso', escapeHtml([storeAccount.providers?.password ? 'Teléfono y contraseña' : null, storeAccount.providers?.google ? 'Google' : null, storeAccount.providers?.apple ? 'Apple' : null].filter(Boolean).join(' · ') || '—'))}
+            ${profileFact('Creada', storeAccount.created_at ? escapeHtml(fmtWhen(storeAccount.created_at)) : '—')}
+          </dl>
+          <p class="view__hint">${storeRequests.length ? `${storeRequests.length} solicitud(es) enviadas desde la tienda.` : 'Sin solicitudes enviadas desde la tienda.'}</p>
+          ${storeRequests.length ? `<ul class="profile-store-requests">${storeRequests.slice(0, 5).map((row) => `<li><strong>${escapeHtml(row.title)}</strong><span>${escapeHtml(storeRequestStatus[row.status] ?? row.status)} · ${escapeHtml(fmtWhen(row.created_at))}</span></li>`).join('')}</ul>` : ''}`
+        : '<p class="view__hint">Este cliente todavía no tiene cuenta en FULLTECH Store. Se vinculará al crearla con su teléfono y el número de un pedido.</p>',
+      'profile-card--wide',
+    );
+
     box.innerHTML = `${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
       <div class="profile-grid">
         ${personal}
+        ${storeSection}
         ${groupsSection}
         ${prefsSection}
         ${stageHtml}
@@ -19214,9 +19115,6 @@
           label: 'Ver factura',
           data: facturaPdf ? { 'data-receipt-pdf': facturaPdf } : { 'data-receipt-open': orderId },
         },
-        nativePrinterAvailable()
-          ? { icon: ICONS.box, label: 'Imprimir factura', data: { 'data-receipt-print': orderId } }
-          : null,
         {
           icon: ICONS.send,
           label: 'Enviar al cliente',
@@ -19254,23 +19152,6 @@
         isAdmin() && receipt.status !== 'cancelado' ? { icon: ICONS.close, label: 'Cancelar venta', data: { 'data-sale-cancel': orderId } } : null,
         isAdmin() ? { icon: ICONS.trash, label: 'Eliminar pedido', data: { 'data-order-delete': orderId }, danger: true } : null,
       ].filter(Boolean),
-    });
-  }
-
-  async function printReceiptNative(orderId, button = null) {
-    const ctx = state.receiptContext ?? {};
-    const receipt = ctx.orderId === orderId ? ctx.receipt : null;
-    if (!receipt || Object.keys(receipt).length === 0) {
-      toast('Abre la factura antes de imprimirla');
-      return;
-    }
-    await working(button, 'Imprimiendo…', async () => {
-      try {
-        const data = await nativePrinterRequest('printReceipt', receipt);
-        toast(data?.orderNumber ? `Factura ${data.orderNumber} enviada a impresora` : 'Factura enviada a impresora');
-      } catch (error) {
-        toast(error.message || 'No se pudo imprimir la factura');
-      }
     });
   }
 
@@ -21222,6 +21103,41 @@
     }
   }
 
+  /**
+   * TIENDA ONLINE: el enlace directo a FULLTECH Store (catálogo, cuenta y
+   * solicitudes). Se comparte igual que la web: hoja nativa, copiar o WhatsApp.
+   */
+  async function shareOnlineStore() {
+    const url = `${location.origin}/store/`;
+    const texto = `FULLTECH Store: ${url}\nCompra, consulta tus pedidos y pide lo que necesites.`;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({ title: 'FULLTECH Store', text: texto, url });
+        return true;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Enlace de la tienda online copiado');
+      return true;
+    } catch {
+      openSheet(
+        'Tienda online',
+        `<div class="field">
+          <span class="field__label">Enlace de FULLTECH Store</span>
+          <input class="field__input" id="share-store-url" type="text" readonly value="${escapeHtml(url)}" />
+        </div>
+        <p class="view__hint">Cópialo y mándalo: es la tienda pública, sin acceso al panel.</p>
+        <a class="btn btn--primary btn--block" href="https://wa.me/?text=${encodeURIComponent(texto)}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp</a>`,
+        { variant: 'menu' },
+      );
+      $('#share-store-url')?.select();
+      return false;
+    }
+  }
+
   async function sharePanelApp() {
     const url = panelShareUrl();
     const texto = panelShareMessage(url);
@@ -21275,11 +21191,12 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'supervisor', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
+    solicitudes: 'Solicitudes de clientes',
     delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
     supervisor: 'Supervisor IA',
@@ -21624,6 +21541,12 @@
     $('#drawer-share-web')?.addEventListener('click', () => {
       closeDrawer();
       shareStoreWeb();
+    });
+
+    /* «Tienda online»: el enlace directo a FULLTECH Store (catálogo y cuenta). */
+    $('#drawer-share-store')?.addEventListener('click', () => {
+      closeDrawer();
+      shareOnlineStore();
     });
 
     $('#search').addEventListener('input', (event) => {
@@ -22022,32 +21945,6 @@
       }
       if (event.target.closest('[data-push-test]')) {
         testCrmPush().catch((error) => toast(error.body?.message ?? 'No se pudo probar las notificaciones'));
-        return;
-      }
-      const nativePrinter = event.target.closest('[data-native-printer]');
-      if (nativePrinter) {
-        const action = nativePrinter.dataset.nativePrinter;
-        if (action === 'configure') {
-          nativePrinterRequest('configurePrinter')
-            .then(() => {
-              state.nativePrinter.result = 'Configuración de impresora guardada.';
-              refreshNativePrinterStatus();
-            })
-            .catch((error) => {
-              state.nativePrinter.result = error.message || 'No se pudo configurar la impresora.';
-              refreshNativePrinterStatus();
-            });
-        } else if (action === 'test') {
-          working(nativePrinter, 'Imprimiendo…', async () => {
-            try {
-              await nativePrinterRequest('testPrint');
-              state.nativePrinter.result = 'Prueba enviada correctamente.';
-            } catch (error) {
-              state.nativePrinter.result = error.message || 'No fue posible conectar con la impresora.';
-            }
-            refreshNativePrinterStatus();
-          });
-        }
         return;
       }
       const notificationsDeleteAll = event.target.closest('[data-notifications-delete-all]');
@@ -22679,11 +22576,6 @@
       const receiptWa = event.target.closest('[data-receipt-wa]');
       if (receiptWa) {
         openSendInvoiceSheet(receiptWa.dataset.receiptWa);
-        return;
-      }
-      const receiptPrint = event.target.closest('[data-receipt-print]');
-      if (receiptPrint) {
-        printReceiptNative(receiptPrint.dataset.receiptPrint, receiptPrint);
         return;
       }
       const orderDelivery = event.target.closest('[data-order-delivery]');

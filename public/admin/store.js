@@ -30,10 +30,10 @@
    */
   let stockNotice='';
   const notice=text=>{stockNotice=String(text??'');const box=doc()?.getElementById('store-notice');if(box)box.textContent=stockNotice;};
-  async function request(path,body,method='POST') {
-    const generation=epoch,wasAuthenticated=authenticated;
+  async function request(path,body,method) {
+    const generation=epoch,wasAuthenticated=authenticated,verb=method||(body?'POST':'GET');
     const r=await fetch(`/api/admin/store/${path}`,{credentials:'same-origin',cache:'no-store',
-      method:body?method:'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+      method:verb,headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
     if(r.status===401){if(generation===epoch&&wasAuthenticated)window.dispatchEvent(new Event('fulltech:session-expired'));throw new Error('Tu sesión terminó. Vuelve a entrar.');}
     const data=await r.json();
     if(!r.ok||!data.ok)throw new Error(data.message||'No se pudo completar la operación. Actualiza y vuelve a intentarlo.');
@@ -186,8 +186,8 @@
       <h2 id="store-detail-title" tabindex="-1">${esc(p.name)}</h2><p class="store-muted">${esc(p.sku)}</p><strong class="store-detail__price">${cash(p.price_cents)}</strong><p class="store-muted">Precio de venta</p>
       <dl class="store-detail-facts"><div><dt>Categoría</dt><dd>${esc(categoryName(p))}</dd></div><div><dt>Procedencia</dt><dd>${esc(etiquetaProcedencia(p))}</dd></div>${p.business_group?`<div><dt>Grupo de negocio</dt><dd>${esc(p.business_group)}</dd></div>`:''}${canManage?`<div><dt>Costo ${p.kind==='service'?'del servicio':'por unidad'}</dt><dd>${cash(p.cost_cents)}</dd></div>`:''}<div><dt>${p.kind==='service'?'Inventario':(sinControl(p)?'Inventario':'Existencias')}</dt><dd>${esc(stockLabel(p))}</dd></div>${p.kind==='product'&&!p.legacy&&!sinControl(p)?`<div><dt>Stock mínimo</dt><dd>${p.min_stock} unidades</dd></div>`:''}</dl>
       <section class="store-suppliers" id="store-suppliers" data-product="${esc(p.id)}"><h3>Tiendas disponibles</h3><p class="store-muted">Cargando tiendas…</p></section>
-      ${canManage?`<section class="store-publication"><h3>Catálogo / Tienda</h3><p class="store-muted">Estado: <strong>${p.store_publication?.status==='published'?'Publicado en FULLTECH Store':'Oculto en FULLTECH Store'}</strong> · ${p.store_publication?.featured?'Artículo destacado':'Sin destacar'}. Esto no cambia el estado de venta ni el inventario.</p><button class="btn ${p.store_publication?.status==='published'?'btn--ghost':'btn--primary'}" type="button" data-store-publication="${esc(p.id)}" data-next-status="${p.store_publication?.status==='published'?'unpublished':'published'}" ${p.store_publication?.status!=='published'&&!p.active?'disabled':''}>${p.store_publication?.status==='published'?'Retirar de la tienda':'Publicar en FULLTECH Store'}</button><button class="btn btn--ghost" type="button" data-store-featured="${esc(p.id)}" data-next-featured="${!p.store_publication?.featured}" ${p.store_publication?.status!=='published'?'disabled':''}>${p.store_publication?.featured?'Quitar destacado':'Destacar en inicio'}</button>${!p.active&&p.store_publication?.status!=='published'?'<small class="store-muted">Activa el artículo en el catálogo para publicarlo.</small>':''}</section>`:''}
-      ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el mismo inventario de cápsulas de Phytoemagry.</p>':''}<div class="store-actions">${canManage?`<button class="btn btn--primary" type="button" data-store-edit="${esc(p.id)}">Editar artículo</button>`:''}${p.track_stock?`<button class="btn btn--ghost" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver stock</button>`:''}</div></div>
+      ${canManage?`<section class="store-publication"><h3>Catálogo / Tienda</h3><p class="store-muted">Estado: <strong>${p.store_publication?.status==='published'?'Publicado en FULLTECH Store':'Oculto en FULLTECH Store'}</strong> · ${p.store_publication?.featured?'Artículo destacado':'Sin destacar'}. Se publica automáticamente al guardar; retíralo si no debe aparecer en la tienda.</p><button class="btn ${p.store_publication?.status==='published'?'btn--ghost':'btn--primary'}" type="button" data-store-publication="${esc(p.id)}" data-next-status="${p.store_publication?.status==='published'?'unpublished':'published'}" ${p.store_publication?.status!=='published'&&!p.active?'disabled':''}>${p.store_publication?.status==='published'?'Retirar de la tienda':'Publicar en FULLTECH Store'}</button><button class="btn btn--ghost" type="button" data-store-featured="${esc(p.id)}" data-next-featured="${!p.store_publication?.featured}" ${p.store_publication?.status!=='published'?'disabled':''}>${p.store_publication?.featured?'Quitar destacado':'Destacar en inicio'}</button>${!p.active&&p.store_publication?.status!=='published'?'<small class="store-muted">Activa el artículo en el catálogo para publicarlo.</small>':''}</section>`:''}
+      ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el mismo inventario de cápsulas de Phytoemagry.</p>':''}<div class="store-actions">${canManage?`<button class="btn btn--primary" type="button" data-store-edit="${esc(p.id)}">Editar artículo</button>`:''}${canManage&&!p.legacy?`<button class="btn btn--ghost" type="button" data-store-archive="${esc(p.id)}">Archivar artículo</button>`:''}${p.track_stock?`<button class="btn btn--ghost" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver stock</button>`:''}</div></div>
       <section class="store-detail-description"><h3>Descripción</h3><p>${esc(p.description||'Este artículo todavía no tiene descripción.')}</p></section></article>`;
   }
   function render() {
@@ -200,7 +200,7 @@
       const selected=detailId();d.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
       if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));window.dispatchEvent(new Event('fulltech:catalog-view'));cargarTiendas(selected);return;}
       d.querySelector('#pos-search-host .store-search-line')?.remove();
-      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
+      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label>${canManage?`<button type="button" class="store-filter-trigger" data-store-archived aria-label="Artículos archivados" title="Archivados"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M6 7v12h12V7M9 4h6l1 3H8l1-3Z"/></svg></button>`:''}<button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
       <div id="store-product-grid"></div>${`<button class="store-fab pos-actions-fab" type="button" data-pos-actions aria-label="Acciones de facturación" title="Acciones"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>`}`;
       cards();window.dispatchEvent(new Event('fulltech:catalog-view'));
     }else {
@@ -403,6 +403,16 @@
     const b=e.target.closest('[data-store-layout]');if(b){layout=b.dataset.storeLayout;try{localStorage.setItem('fulltech.catalog.layout',layout);}catch{}cards();filterDrawer.querySelectorAll('[data-store-layout]').forEach(n=>n.setAttribute('aria-pressed',String(n.dataset.storeLayout===layout)));}
   });
   let categoryImage=null;
+  async function openArchived(){
+    dialog.innerHTML=`<div class="store-toolbar"><h2>Artículos archivados</h2><button type="button" class="store-icon-button" data-store-close aria-label="Cerrar archivados">${svg('close')}</button></div><div class="store-form-body"><p class="store-muted">Conservan su código, movimientos, pedidos y facturas. Al restaurar quedan inactivos y sin publicar.</p><div id="store-archived-list" class="store-archived-list">Cargando…</div><p class="store-form-error" role="alert"></p></div>`;
+    dialog.showModal();
+    try{
+      const data=await request('products?archived=1');
+      const rows=data.products||[];
+      const host=dialog.querySelector('#store-archived-list');
+      if(host)host.innerHTML=rows.length?rows.map(p=>`<div class="store-archived-row"><div><strong>${esc(p.store_public_name||p.name)}</strong><small>${esc(p.sku)} · ${esc(categoryName(p))}</small></div><button class="btn btn--ghost btn--sm" type="button" data-store-restore="${esc(p.id)}">Restaurar</button></div>`).join(''):'<p class="store-muted">No hay artículos archivados.</p>';
+    }catch(error){const host=dialog.querySelector('#store-archived-list');if(host)host.innerHTML=`<p class="store-muted">${esc(error.message)}</p>`;}
+  }
   function openCategory(){
     categoryImage=null;
     categoryDialog.innerHTML=`<form id="store-category-form"><div class="store-toolbar"><h2>Nueva categoría</h2><button class="store-icon-button" type="button" data-category-close aria-label="Cerrar categoría">${svg('close')}</button></div><div class="store-form-body"><label class="field"><span class="field__label">Nombre de la categoría</span><input class="field__input" name="name" maxlength="100" required placeholder="Ej. Accesorios"></label><label class="field"><span class="field__label">Imagen de la categoría</span><input class="field__input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label><div id="store-category-image-preview" class="store-category-image-preview">Imagen opcional</div><p class="store-form-error" role="alert"></p></div><div class="store-form-footer"><button class="btn btn--primary btn--block" type="submit">Crear categoría</button></div></form>`;
@@ -434,7 +444,7 @@
     <div class="field"><label class="field__label" for="store-product-category">Categoría</label><div class="store-category-input"><select class="field__select" name="category_id" id="store-product-category">${categoryOptions(p.category_id||categoryRows.find(c=>c.name===p.category)?.id||'')}</select><button class="store-icon-button" type="button" data-category-new aria-label="Agregar categoría">${svg('plus')}</button></div></div></div>
 
     <label class="field"><span class="field__label">Descripción interna</span><textarea class="field__input" name="description" maxlength="2000">${esc(p.description)}</textarea><small>Solo para el equipo; no se muestra en la tienda.</small></label>
-    <section class="store-publication store-product-public-fields"><h3>Contenido público de la tienda</h3><p class="store-muted">Estos datos sí los verán tus clientes cuando publiques el artículo.</p>
+    <section class="store-publication store-product-public-fields"><h3>Contenido público de la tienda</h3><p class="store-muted">Estos datos sí los verán tus clientes. El artículo aparece en la tienda al guardarlo; puedes retirarlo desde la ficha.</p>
       <label class="field"><span class="field__label">Nombre público (opcional)</span><input class="field__input" name="store_public_name" maxlength="160" value="${esc(p.store_public_name)}" placeholder="Usar el nombre del artículo"></label>
       <div class="store-form-grid"><label class="field"><span class="field__label">Marca (opcional)</span><input class="field__input" name="store_brand" maxlength="100" value="${esc(p.store_brand)}"></label>
       <label class="field"><span class="field__label">Descripción corta (opcional)</span><input class="field__input" name="store_short_description" maxlength="240" value="${esc(p.store_short_description)}"></label></div>
@@ -471,7 +481,7 @@
       catch(err){if(!e.target.isConnected)return;imageData=null;error.textContent=err.message;document.getElementById('store-image-preview').innerHTML=editing?.image_url?photo(editing):'';e.target.value='';}finally{button.disabled=false;}
     }
   });
-  dialog.addEventListener('click',e=>{if(e.target.closest('[data-store-close]'))dialog.close();if(e.target.closest('[data-category-new]'))openCategory();});
+  dialog.addEventListener('click',e=>{if(e.target.closest('[data-store-close]'))dialog.close();if(e.target.closest('[data-category-new]'))openCategory();const restoreButton=e.target.closest('[data-store-restore]');if(restoreButton){restoreButton.disabled=true;const error=dialog.querySelector('[role=alert]');if(error)error.textContent='';request(`products/${encodeURIComponent(restoreButton.dataset.storeRestore)}/restore`,undefined,'POST').then(async()=>{await load(true);await openArchived();notice('Artículo restaurado. Actívalo y publícalo cuando corresponda.');}).catch(err=>{restoreButton.disabled=false;if(error)error.textContent=err.message;});}})
   dialog.addEventListener('submit',async e=>{
     if(e.target.id!=='store-product-form')return;e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');
     button.disabled=true;form.querySelector('[role=alert]').textContent='';
@@ -500,6 +510,15 @@
     }
     const link=e.target.closest('[data-store-detail]');
     if(link&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey&&e.button===0){e.preventDefault();navigateProduct(link.dataset.storeDetail||null);return;}
+    const archiveButton=e.target.closest('[data-store-archive]');
+    if(archiveButton){
+      if(!window.confirm('¿Archivar este artículo? Dejará de venderse y desaparecerá de la tienda, pero sus pedidos, facturas e historial de inventario se conservan.'))return;
+      const id=archiveButton.dataset.storeArchive;archiveButton.disabled=true;
+      request(`products/${encodeURIComponent(id)}`,undefined,'DELETE')
+        .then(async()=>{await load(true);if(detailId()===id)navigateProduct(null);notice('Artículo archivado. Su historial se conserva.');})
+        .catch(error=>{archiveButton.disabled=false;notice(error.message);});
+      return;
+    }
     const publicationButton=e.target.closest('[data-store-publication]');
     if(publicationButton){
       publicationButton.disabled=true;
@@ -522,6 +541,7 @@
     if(e.target.closest('[data-store-clear]')){query='';kind='all';productType='all';category='';businessGroup='';render();return;}
     const addSupplier=e.target.closest('[data-supplier-add]');
     if(addSupplier){agregarTienda(addSupplier.dataset.supplierAdd);return;}
+    if(e.target.closest('[data-store-archived]')){openArchived();return;}
     if(e.target.closest('[data-store-new]'))edit();
     const editButton=e.target.closest('[data-store-edit]');if(editButton)edit(editButton.dataset.storeEdit);
   });

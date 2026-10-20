@@ -300,3 +300,64 @@ body[data-tab='catalogo'] #store-product-grid{flex:1;min-height:0;overflow-y:aut
   .store-product__origin{font-size:.65rem;padding:2px 6px;margin-top:5px}
   [data-layout=list] .store-product__origin{grid-column:1;grid-row:4;justify-self:start;margin-top:4px}
 }
+
+/* Archivados: lista compacta con restauración segura. */
+.store-archived-list{display:grid;gap:8px;margin-top:10px}
+.store-archived-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #e7ebf1;border-radius:12px;background:#fff}
+.store-archived-row strong{display:block;font-size:.92rem;color:#142338}
+.store-archived-row small{display:block;color:#687689;font-size:.76rem;margin-top:2px}
+.store-archived-row .btn{flex:0 0 auto}
+
+/* Solicitudes de clientes: lista, detalle y cotización. */
+.requests-toolbar{display:grid;gap:10px;margin-bottom:12px}
+.requests-filters{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.requests-filters .chip{white-space:nowrap}
+.requests-list{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+.requests-item{display:flex;align-items:center;gap:12px;width:100%;min-width:0;overflow:hidden;text-align:left;padding:12px 14px;border:1px solid #e7ebf1;border-radius:13px;background:#fff;cursor:pointer}
+.requests-item:hover{border-color:#cdd8e8;box-shadow:0 4px 14px #18345a0f}
+.requests-item__status{font-size:.62rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:#eef2f7;color:#5b6b80;white-space:nowrap}
+.requests-status--cotizado,.requests-status--aprobado{background:#eaf1ff;color:#1f4fa8}
+.requests-status--completado{background:#e2f6ee;color:#23795f}
+.requests-status--rechazado,.requests-status--cancelado{background:#fdeeee;color:#a34e52}
+.requests-status--en_revision{background:#fff4e6;color:#97631f}
+.requests-item__main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.requests-item__main strong{font-size:.92rem;color:#142338}
+.requests-item__main small{color:#687689;font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.requests-item__amount{font-weight:800;color:#bd5524;white-space:nowrap}
+.requests-detail{background:#fff;border:1px solid #e7ebf1;border-radius:16px;padding:16px 18px;margin-bottom:14px;box-shadow:0 6px 20px #18345a0d}
+.requests-detail__head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.requests-detail__head h3{margin:6px 0 2px;font-size:1.05rem;color:#142338}
+.requests-detail__head p{margin:0}
+.requests-detail__body{color:#43536a;font-size:.88rem;line-height:1.55;margin:12px 0}
+.requests-detail__link{margin:8px 0;font-size:.82rem}
+.requests-detail__link a{color:#1258d6}
+.requests-photos{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.requests-photo{width:64px;height:64px;padding:0;border:1px solid #e7ebf1;border-radius:10px;overflow:hidden;background:#f4f6fa;cursor:pointer}
+.requests-photo img{width:100%;height:100%;object-fit:cover;display:block}
+.requests-timeline{list-style:none;margin:12px 0;padding:0;display:grid;gap:6px}
+.requests-timeline li{display:flex;flex-wrap:wrap;gap:6px 10px;font-size:.76rem;color:#5b6b80;border-top:1px dashed #e7ebf1;padding-top:6px}
+.requests-timeline li span{font-weight:700;color:#142338}
+.requests-timeline li em{flex-basis:100%;font-style:normal;color:#687689}
+.requests-quote-read{background:#f7f9fc;border:1px solid #e7ebf1;border-radius:12px;padding:10px 12px;margin:10px 0;display:flex;flex-direction:column;gap:2px}
+.requests-quote-read span{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:#687689;font-weight:800}
+.requests-quote-read strong{font-size:1.1rem;color:#142338}
+.requests-quote-read p{margin:2px 0 0;font-size:.78rem;color:#687689}
+.requests-form{display:grid;gap:10px;margin-top:14px;border-top:1px solid #e7ebf1;padding-top:14px}
+.requests-form__grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.requests-photo-view{position:fixed;inset:0;z-index:80;background:#0b1524e6;display:grid;place-items:center;padding:24px}
+.requests-photo-view img{max-width:min(92vw,900px);max-height:86vh;border-radius:12px;box-shadow:0 20px 60px #0008}
+.requests-photo-view button{position:absolute;top:14px;right:16px;width:40px;height:40px;border-radius:50%;border:0;background:#ffffff24;color:#fff;font-size:22px;cursor:pointer}
+@media(max-width:640px){.requests-form__grid{grid-template-columns:1fr}.requests-item{align-items:flex-start}.requests-item__amount{font-size:.82rem}}
+
+/* Cuenta de la tienda dentro de la ficha del cliente. */
+.profile-store-requests{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.profile-store-requests li{display:flex;flex-direction:column;gap:1px;border-top:1px solid #eef2f7;padding-top:6px}
+.profile-store-requests strong{font-size:.86rem;color:#142338}
+.profile-store-requests span{font-size:.72rem;color:#687689}
+
+/* La bandeja nunca debe ensanchar la página en móvil. */
+#view-solicitudes{overflow-x:hidden}
+#admin-requests,.requests-toolbar,.requests-list,.requests-detail{min-width:0;max-width:100%}
+.requests-filters{width:100%;max-width:100%;overscroll-behavior-x:contain}
+.requests-search{width:100%}
+.requests-toolbar .store-search{width:100%;max-width:100%}

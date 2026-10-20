@@ -9,7 +9,8 @@ import {parseProductImage} from '../server/store-catalog.mjs';
 const IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS7kAAAAASUVORK5CYII=';
 let app,dir,cookie,databaseUrl;
 async function call(route,body,method='POST',auth=cookie){
-  const r=await fetch(app.url+route,{method:body?method:'GET',headers:{cookie:auth,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+  const verb=body?method:method==='POST'?'GET':method;
+  const r=await fetch(app.url+route,{method:verb,headers:{cookie:auth,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
   return {status:r.status,data:await r.json()};
 }
 const list=()=>call('/api/admin/store/products');
@@ -108,6 +109,29 @@ it('archivar retira el artículo del selector sin borrar su ficha ni pedidos',as
   expect((await sale([{variantId:p.id,quantity:1}])).status).toBe(422);
   expect((await list()).data.products.find(x=>x.id===p.id).active).toBe(false);
 });
+it('archivar conserva pedidos y factura, y cancelar restaura el stock',async()=>{
+  const p=(await create()).data.product;
+  const r=await sale([{variantId:p.id,quantity:2}]);expect(r.status).toBe(201);
+  expect((await call(`/api/admin/store/products/${p.id}`,null,'DELETE')).status).toBe(200);
+  const order=await call(`/api/admin/orders/${r.data.item.id}`,null,'GET');
+  expect(order.status).toBe(200);
+  expect(order.data.order.items[0]).toMatchObject({variantId:p.id,quantity:2});
+  expect((await call('/api/admin/reports/sales')).data.report.sales.some(x=>x.id===r.data.item.id)).toBe(true);
+  const cancel=await call(`/api/admin/orders/${r.data.item.id}/cancel`,{reason:'Cliente canceló'});
+  expect(cancel.status).toBe(200);
+  const movements=(await list()).data.movements.filter(x=>x.product_id===p.id);
+  expect(movements.reduce((sum,move)=>sum+move.quantity_delta,0)).toBe(5);
+  const archivedList=await call('/api/admin/store/products?archived=1',null,'GET');
+  expect(archivedList.data.products.some(x=>x.id===p.id)).toBe(true);
+  const restored=await call(`/api/admin/store/products/${p.id}/restore`,{},'POST');
+  expect(restored.status).toBe(200);
+  expect(restored.data.product).toMatchObject({id:p.id,sku:p.sku,archived:false,active:false});
+  expect((await call('/api/store/catalog?q=camara')).data.products).toEqual([]);
+  const afterRestore=await call('/api/admin/store/products');
+  expect(afterRestore.data.products.find(x=>x.id===p.id)).toMatchObject({archived:false,active:false,sku:p.sku});
+  expect(afterRestore.data.movements.filter(x=>x.product_id===p.id).reduce((sum,move)=>sum+move.quantity_delta,0)).toBe(5);
+  expect((await call(`/api/admin/store/products/${p.id}/restore`,{},'POST')).data.error).toBe('not_archived');
+});
 it('rechaza ediciones antiguas y protege catálogo e imágenes sin sesión',async()=>{
   const p=(await create()).data.product;
   const body={...p,price:'1000',cost:'600.25'};
@@ -117,7 +141,7 @@ it('rechaza ediciones antiguas y protege catálogo e imágenes sin sesión',asyn
   expect((await fetch(app.url+p.image_url)).status).toBe(401);
 });
 it('solo administración modifica el catálogo y un agente no recibe costos internos',async()=>{
-  await create();
+  const seeded=await create();
   const user=await call('/api/admin/users',{username:'catalog-agent',displayName:'Agente catálogo',role:'AGENT',password:'Catalog-12345'});expect(user.status).toBe(201);
   const login=await fetch(app.url+'/api/admin/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'catalog-agent',password:'Catalog-12345'})});
   const agent=login.headers.get('set-cookie').split(';')[0];
@@ -126,6 +150,9 @@ it('solo administración modifica el catálogo y un agente no recibe costos inte
   const saleCatalog=await call('/api/admin/catalog',null,'GET',agent);expect(JSON.stringify(saleCatalog.data)).not.toMatch(/cost_cents|unit_cost|presentation_cost/);
   expect((await call('/api/admin/store/products',{kind:'service'},'POST',agent)).status).toBe(403);
   expect((await call('/api/admin/store/categories',{name:'Categoría sin permiso'},'POST',agent)).status).toBe(403);
+  const archived=seeded.data.product;
+  await call(`/api/admin/store/products/${archived.id}`,null,'DELETE');
+  expect((await call(`/api/admin/store/products/${archived.id}/restore`,{},'POST',agent)).status).toBe(403);
 });
 it('dos ventas concurrentes no pueden consumir la misma última unidad',async()=>{
   const p=(await create({quantity:1})).data.product;

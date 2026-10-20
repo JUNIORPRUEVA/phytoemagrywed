@@ -33,8 +33,9 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       id TEXT PRIMARY KEY, product_id TEXT NOT NULL, order_id TEXT,
       created_at TEXT NOT NULL, operation_key TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)`);
   await sql.query('CREATE TABLE IF NOT EXISTS fulltech_categories_v1 (id TEXT PRIMARY KEY, category_key TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)');
-  // Store publication is deliberately separate from the operational catalog.
-  // Existing and newly created rows start hidden until an administrator opts in.
+  // La publicación es un acto deliberado: un artículo nuevo nace oculto y solo
+  // aparece en la tienda cuando una persona autorizada lo publica. Esta tabla
+  // guarda además los ajustes editoriales (destacado y orden).
   await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_publication_v1 (
     product_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'unpublished',
     featured INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
@@ -71,13 +72,17 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return { product_id: id, status, featured, sort_order: Number(rawOrder) };
   }
   async function publicationStates() {
-    const rows = (await sql.query('SELECT product_id,status,featured,sort_order,updated_at FROM fulltech_store_publication_v1')).rows;
-    return Object.fromEntries(rows.map(row => [row.product_id, { status: row.status, featured: Boolean(Number(row.featured)), sort_order: Number(row.sort_order), updated_at: row.updated_at }]));
+    return Object.fromEntries((await sql.query('SELECT product_id,status,featured,sort_order,updated_at FROM fulltech_store_publication_v1')).rows.map(row => [row.product_id, { status: row.status, featured: Boolean(Number(row.featured)), sort_order: Number(row.sort_order), updated_at: row.updated_at }]));
   }
   async function publicProducts() {
     if (publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
     const pubs = (await sql.query("SELECT product_id,featured,sort_order FROM fulltech_store_publication_v1 WHERE status='published' ORDER BY sort_order,product_id")).rows;
     if (!pubs.length) { publicCache = { items: [], expiresAt: Date.now() + 5000 }; return []; }
+    /*
+     * El contenido público se deriva SIEMPRE del registro vivo del catálogo:
+     * precio, nombre público, imagen y disponibilidad se actualizan solos. La
+     * publicación solo decide si el artículo se muestra.
+     */
     const all = await list({ includeInactive: false });
     const byId = new Map(all.map(p => [p.id, p]));
     const items = pubs.flatMap(pub => {
@@ -123,7 +128,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return {mime:'image/webp',data:data.toString('base64')};
   }
   async function publicImage(id) {
-    const pub = (await sql.query("SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1", [id])).rows[0];
+    const pub = (await sql.query('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1', [id])).rows[0];
     if (pub?.status !== 'published') return null;
     const p = await one(id);
     if (!p?.active) return null;
@@ -190,9 +195,9 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       return c;
     });
   }
-  async function list({ includeInactive = true } = {}) {
+  async function list({ includeInactive = true, includeArchived = false } = {}) {
     const [rows, legacy] = await Promise.all([sql.query('SELECT * FROM fulltech_catalog_v1 ORDER BY sku'), legacyInventory.catalog()]);
-    return rows.rows.map(decode).filter(p => includeInactive || p.active).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => p.legacy ? { ...p,
+    return rows.rows.map(decode).filter(p => (includeArchived || !p.archived) && (includeInactive || p.active)).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => p.legacy ? { ...p,
       quantity: legacy.initialized ? Math.floor(legacy.stock / p.capsules) : null,
       stock_initialized: legacy.initialized, base_quantity: legacy.stock, base_unit: 'cápsulas',
       cost_cents: legacy.product.current_unit_cost_cents * p.capsules,
@@ -285,6 +290,9 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         await q('INSERT INTO fulltech_catalog_v1(id,sku,quantity,doc) VALUES($1,$2,$3,$4)', [p.id,sku,initial,JSON.stringify(p)]);
         if (initial) await movement(q,p,initial,0,initial,'INITIAL','Inventario inicial',actor,`initial:${p.id}`);
       }
+      // Seguridad de publicación: el artículo nace oculto. Se publica de forma
+      // explícita desde la ficha. Las ediciones posteriores no alteran el estado.
+      await q("INSERT INTO fulltech_store_publication_v1(product_id,status,featured,sort_order,updated_at) VALUES($1,'unpublished',0,0,$2) ON CONFLICT(product_id) DO NOTHING", [p.id, clock().toISOString()]);
       await indexProductSearch(q, p);
       return one(p.id, q);
     });
@@ -411,7 +419,53 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       return one(id, q);
     });
   }
-  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,publicProducts,searchPublicProducts,publicImage,
+  /**
+   * Archivar es la baja segura de un artículo: deja de venderse y desaparece de
+   * la tienda, pero conserva su registro, su imagen, su historial de inventario
+   * y las referencias de pedidos y facturas ya emitidos. No se borran filas
+   * físicamente para no romper la integridad histórica.
+   */
+  async function archive(id, actor) {
+    return transaction(async (q) => {
+      const current = await one(id, q, true);
+      if (!current) throw fail('not_found', 'El artículo ya no existe.', 404);
+      if (current.legacy) throw fail('legacy_locked', 'Las presentaciones Phytoemagry no se archivan: desactívalas para retirarlas.', 409);
+      if (current.archived) return { id, name: current.name, archived: true, duplicate: true };
+      const { quantity, version, ...stored } = current;
+      const now = clock().toISOString();
+      const doc = {
+        ...stored, archived: true, active: false,
+        archived_at: now, archived_by: actor?.display_name || 'Administración',
+        updated_at: now, updated_by: actor?.display_name || 'Administración',
+      };
+      await q('UPDATE fulltech_catalog_v1 SET doc=$1, version=version+1 WHERE id=$2', [JSON.stringify(doc), id]);
+      await q("UPDATE fulltech_store_publication_v1 SET status='unpublished', featured=0, updated_at=$2 WHERE product_id=$1", [id, now]);
+      return { id, name: current.name, archived: true };
+    });
+  }
+  /**
+   * Restaurar devuelve el artículo al catálogo conservando su identidad: mismo
+   * id, SKU, imagen, movimientos y referencias históricas. Queda inactivo y sin
+   * publicar hasta que administración lo active y apruebe explícitamente.
+   */
+  async function restore(id, actor) {
+    return transaction(async (q) => {
+      const current = await one(id, q, true);
+      if (!current) throw fail('not_found', 'El artículo ya no existe.', 404);
+      if (!current.archived) throw fail('not_archived', 'El artículo no está archivado.', 409);
+      const { quantity, version, ...stored } = current;
+      const now = clock().toISOString();
+      const doc = {
+        ...stored, archived: false, active: false,
+        restored_at: now, restored_by: actor?.display_name || 'Administración',
+        updated_at: now, updated_by: actor?.display_name || 'Administración',
+      };
+      await q('UPDATE fulltech_catalog_v1 SET doc=$1, version=version+1 WHERE id=$2', [JSON.stringify(doc), id]);
+      await q("INSERT INTO fulltech_store_publication_v1(product_id,status,featured,sort_order,updated_at) VALUES($1,'unpublished',0,0,$2) ON CONFLICT(product_id) DO UPDATE SET status='unpublished', featured=0, updated_at=excluded.updated_at", [id, now]);
+      return one(id, q);
+    });
+  }
+  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,publicProducts,searchPublicProducts,publicImage,archive,restore,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

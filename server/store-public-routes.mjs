@@ -71,12 +71,18 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
   if (route === '/api/store/home') {
     const all = await catalog.publicProducts();
     const categories = [...new Set(all.map(item => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-    const products = all.filter(item => item.kind === 'product' && item.availability !== 'out_of_stock');
+    // Include all eligible published items, including out-of-stock products.
+    // Availability is shown to customers; hiding an item here made published
+    // CRM records disappear from the homepage without a clear reason.
+    const products = all.filter(item => item.kind === 'product');
     const featured = products.filter(item => item.featured);
     const services = all.filter(item => item.kind === 'service');
-    const items = featured.length ? featured.slice(0, 8) : products.slice(0, 8);
+    const ordered = items => [...items].sort((a, b) => Number(b.featured) - Number(a.featured) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es'));
+    // Keep the homepage bounded while placing featured products first. The
+    // paginated catalog endpoint remains the complete source for larger stores.
+    const items = ordered(products).slice(0, 8);
     res.writeHead(200, { ...cacheHeaders, 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: true, categories, products: items.map(publicProduct), services: services.slice(0, 4).map(publicProduct), featured: featured.length > 0 }));
+    res.end(JSON.stringify({ ok: true, categories, products: items.map(publicProduct), services: ordered(services).slice(0, 4).map(publicProduct), featured: featured.length > 0, total: all.length }));
     return true;
   }
   if (route === '/api/store/categories') {
@@ -93,14 +99,14 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
   const category = normalize(url.searchParams.get('category'));
   const kind = url.searchParams.get('kind');
   const featured = url.searchParams.get('featured') === 'true';
-  if (kind && !['product', 'service'].includes(kind)) {
+  if (kind && !['product', 'service', 'all'].includes(kind)) {
     json(res, 400, { ok: false, error: 'invalid_kind' });
     return true;
   }
   const all = query ? await catalog.searchPublicProducts(query) : await catalog.publicProducts();
   const filtered = all.filter(item => {
     if (category && normalize(item.category) !== category) return false;
-    if (kind && item.kind !== kind) return false;
+    if (kind && kind !== 'all' && item.kind !== kind) return false;
     if (featured && !item.featured) return false;
     return true;
   }).sort((a, b) => Number(b.featured) - Number(a.featured) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es'));

@@ -15,6 +15,7 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
   }
   const match=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)(?:\/(image|stock))?$/.exec(route);
   const publicationMatch=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)\/publication$/.exec(route);
+  const restoreMatch=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)\/restore$/.exec(route);
   const categoryImage=/^\/api\/admin\/store\/categories\/(category_[a-zA-Z0-9_-]+)\/image$/.exec(route);
   try {
     if((match?.[2]==='image'||categoryImage)&&req.method==='GET') {
@@ -24,14 +25,26 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
       res.end(Buffer.from(image.data,'base64'));return true;
     }
     if(route==='/api/admin/store/products'&&req.method==='GET') {
-      const products=sanitize(await catalog.list());
+      const archivedOnly=new URL(req.url,'http://localhost').searchParams.get('archived')==='1';
+      const all=sanitize(await catalog.list({includeArchived:true}));
+      const products=all.filter(product=>archivedOnly?product.archived===true:product.archived!==true);
       const publication=await catalog.publicationStates();
       for(const product of products)product.store_publication=publication[product.id]||{status:'unpublished',featured:false,sort_order:0,updated_at:null};
       return send(200,{ok:true,products,categories:await catalog.categories(),movements:sanitize(await catalog.history()),canManage:actor.role==='ADMIN'});
     }
     if(route==='/api/admin/store/categories'&&req.method==='GET')return send(200,{ok:true,categories:await catalog.categories()});
-    if(req.method!=='POST'&&req.method!=='PATCH')return send(405,{ok:false,error:'method_not_allowed'});
+    if(req.method!=='POST'&&req.method!=='PATCH'&&req.method!=='DELETE')return send(405,{ok:false,error:'method_not_allowed'});
     if(actor.role!=='ADMIN')return send(403,{ok:false,error:'forbidden'});
+    if(match&&!match[2]&&req.method==='DELETE') {
+      const archived=await catalog.archive(match[1],actor);
+      await ctx.audit?.record({entity:'product',entityId:archived.id,action:'store.product_archived',actor:actor.display_name,summary:`Artículo archivado: ${archived.name}`});
+      return send(200,{ok:true,archived});
+    }
+    if(restoreMatch&&req.method==='POST') {
+      const restored=await catalog.restore(restoreMatch[1],actor);
+      await ctx.audit?.record({entity:'product',entityId:restored.id,action:'store.product_restored',actor:actor.display_name,summary:`Artículo restaurado (sin publicar): ${restored.name}`});
+      return send(200,{ok:true,product:restored});
+    }
     const body=await readJson(req,1500000);
     if(route==='/api/admin/store/categories'&&req.method==='POST')return send(201,{ok:true,category:await catalog.createCategory(body,actor)});
     if(route==='/api/admin/store/products'&&req.method==='POST') return send(201,{ok:true,product:await catalog.save(body,actor)});

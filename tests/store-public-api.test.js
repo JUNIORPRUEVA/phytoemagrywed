@@ -44,7 +44,7 @@ describe('FULLTECH Store public catalog API', () => {
     expect((await request('/api/admin/store/products', { auth: false })).status).toBe(401);
   });
 
-  it('builds the homepage from published products, featured items and services only', async () => {
+  it('builds the homepage from published products, featured first, and published services only', async () => {
     const featured = await product('Cámara destacada', `FEA-${randomUUID().slice(0, 8)}`, { category: 'Seguridad' });
     const normal = await product('Router disponible', `NOR-${randomUUID().slice(0, 8)}`);
     const serviceResult = await request('/api/admin/store/products', { method: 'POST', body: {
@@ -52,14 +52,16 @@ describe('FULLTECH Store public catalog API', () => {
       price: '850.00', cost: '200.00', quantity: 0, min_stock: 0, category: 'Instalación',
     } });
     expect(serviceResult.status).toBe(201);
+    expect((await request('/api/store/catalog', { auth: false })).data.products).toEqual([]);
     await publish(featured.id, { featured: true });
     await publish(normal.id);
     await publish(serviceResult.data.product.id);
     const home = await request('/api/store/home', { auth: false });
     expect(home.data.featured).toBe(true);
-    expect(home.data.products.map(row => row.id)).toEqual([featured.id]);
+    expect(home.data.products.map(row => row.id)).toEqual([featured.id, normal.id]);
     expect(home.data.services.map(row => row.id)).toEqual([serviceResult.data.product.id]);
     expect(home.data.categories.sort()).toEqual(['Instalación', 'Seguridad']);
+    expect(home.data.total).toBe(3);
   });
 
   it('whitelists public fields and never leaks costs or internal CRM values', async () => {
@@ -72,7 +74,7 @@ describe('FULLTECH Store public catalog API', () => {
     expect(JSON.stringify(result.data)).not.toMatch(/cost|supplier|margin|updated_by|stock_movements/i);
   });
 
-  it('only serves public images for published and active products', async () => {
+  it('serves images only for active and published products', async () => {
     const hidden = await product('Oculto', `HID-${randomUUID().slice(0, 8)}`);
     expect((await request(`/api/store/products/${hidden.id}/image`, { auth: false })).status).toBe(404);
     await publish(hidden.id);
@@ -87,8 +89,40 @@ describe('FULLTECH Store public catalog API', () => {
       image: IMAGE,
     } });
     expect(deactivated.status).toBe(200);
-    expect((await request('/api/store/catalog', { auth: false })).data.products).toEqual([]);
+    expect((await request('/api/store/catalog?q=oculto', { auth: false })).data.products).toEqual([]);
     expect((await request(`/api/store/products/${hidden.id}/image`, { auth: false })).status).toBe(404);
+  });
+
+  it('keeps published products and services in sync and archives without losing history', async () => {
+    const created = await product('Producto sincronizado', `SYN-${randomUUID().slice(0, 8)}`);
+    const serviceResult = await request('/api/admin/store/products', { method: 'POST', body: {
+      kind: 'service', name: 'Servicio sincronizado', sku: `SRV-${randomUUID().slice(0, 8)}`,
+      price: '900.00', cost: '300.00', quantity: 0, min_stock: 0, category: 'Soporte',
+    } });
+    expect(serviceResult.status).toBe(201);
+    const service = serviceResult.data.product;
+    expect((await request('/api/store/catalog?kind=all&limit=48', { auth: false })).data.products).toEqual([]);
+    await publish(created.id);
+    await publish(service.id);
+    const catalog = await request('/api/store/catalog?kind=all&limit=48', { auth: false });
+    expect(catalog.data.products).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: created.id, kind: 'product' }),
+      expect.objectContaining({ id: service.id, kind: 'service' }),
+    ]));
+    const archived = await request(`/api/admin/store/products/${created.id}`, { method: 'DELETE' });
+    expect(archived.status).toBe(200);
+    expect(archived.data.archived).toMatchObject({ id: created.id, archived: true });
+    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products.map(row => row.id)).toEqual([service.id]);
+    expect((await request(`/api/store/products/${created.id}`, { auth: false })).status).toBe(404);
+    const admin = await request('/api/admin/store/products');
+    expect(admin.data.products.some(row => row.id === created.id)).toBe(false);
+    expect(admin.data.movements.some(move => move.product_id === created.id && move.type === 'INITIAL')).toBe(true);
+    const restored = await request(`/api/admin/store/products/${created.id}/restore`, { method: 'POST', body: {} });
+    expect(restored.status).toBe(200);
+    expect(restored.data.product).toMatchObject({ id: created.id, archived: false, active: false });
+    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products.map(row => row.id)).toEqual([service.id]);
+    const legacy = admin.data.products.find(row => row.legacy);
+    expect((await request(`/api/admin/store/products/${legacy.id}`, { method: 'DELETE' })).status).toBe(409);
   });
 
   it('supports bounded pagination, category and normalized search', async () => {
@@ -108,10 +142,10 @@ describe('FULLTECH Store public catalog API', () => {
   it('invalidates the public projection immediately after unpublishing', async () => {
     const p = await product('Retirable', `RET-${randomUUID().slice(0, 8)}`);
     await publish(p.id);
-    expect((await request('/api/store/catalog', { auth: false })).data.products).toHaveLength(1);
+    expect((await request('/api/store/catalog?q=retirable', { auth: false })).data.products).toHaveLength(1);
     const removed = await request(`/api/admin/store/products/${p.id}/publication`, { method: 'POST', body: { status: 'unpublished' } });
     expect(removed.status).toBe(200);
-    expect((await request('/api/store/catalog', { auth: false })).data.products).toEqual([]);
+    expect((await request('/api/store/catalog?q=retirable', { auth: false })).data.products).toEqual([]);
   });
 
   it('reflects CRM edits, stock availability and image access without stale public data', async () => {

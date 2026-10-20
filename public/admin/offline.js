@@ -426,7 +426,7 @@
     const url=new URL(typeof input==='string'?input:input.url,location.href),method=(options.method||input.method||'GET').toUpperCase();
     if(url.origin!==location.origin||!url.pathname.startsWith('/api/admin/')||url.pathname.includes('/events'))return network(input,options);
     const mine=owner(),myEpoch=epoch;
-    const canRead=(!excluded(url)||/\/conversations\/[^/]+\/messages$/.test(url.pathname))&&!url.pathname.includes('/android-apk/download');
+    const canRead=!excluded(url)||/\/conversations\/[^/]+\/messages$/.test(url.pathname);
     let legacy=new Headers(options.headers||{}).has('x-fulltech-legacy-outbox');
     if(legacy&&(await listQueue()).some(p=>(url.pathname+String(options.body||'')).includes(p.localId)))legacy=false;
     if(method!=='GET'&&!legacy&&!protectedWrite(url)&&valid()&&(await listQueue()).length)return enqueue(url,{...options,method});

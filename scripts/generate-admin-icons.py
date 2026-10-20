@@ -1,8 +1,4 @@
-"""Genera tamaños de instalación desde el logo Fulltech transparente.
-
-Los iconos opacos funcionan en iOS; el maskable conserva el logo en la zona
-segura central. No cambia los identificadores de instalación ni del bridge.
-"""
+"""Genera los iconos de instalación web desde el logo Fulltech transparente."""
 from pathlib import Path
 from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,12 +29,5 @@ def main():
     for name,size,fraction in [('fulltech-icon-192.png',192,.98),('fulltech-icon-512.png',512,.98),('fulltech-icon-maskable-512.png',512,.80),('fulltech-apple-touch-icon.png',180,.98),('fulltech-favicon.png',32,.98)]:
         icon(source,size,fraction).save(OUT/name,optimize=True)
         print(f'{name}: {size}x{size}')
-    android = ROOT/'apps/phyto_printer/android/app/src/main/res'
-    for density,size in [('mdpi',48),('hdpi',72),('xhdpi',96),('xxhdpi',144),('xxxhdpi',192)]:
-        icon(source,size,.98).save(android/f'mipmap-{density}'/'ic_launcher.png',optimize=True)
-        launch_dir = android/f'drawable-{density}'
-        launch_dir.mkdir(exist_ok=True)
-        icon(source,size*3,.82).save(launch_dir/'fulltech_launch.png',optimize=True)
-
 if __name__ == '__main__':
     main()

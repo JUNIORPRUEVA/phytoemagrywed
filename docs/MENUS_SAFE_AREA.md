@@ -1,6 +1,6 @@
 # Menús y áreas seguras
 
-La identidad visible del panel, manifest e interfaz Android es **FullTECH, SRL**. Se conservan los identificadores de instalación, el bridge nativo y las preferencias.
+La identidad visible del panel y el manifest es **FullTECH, SRL**. Se conservan los identificadores de instalación y las preferencias.
 
 El menú de cada conversación muestra primero Abrir conversación y Crear pedido. Cliente reúne ficha, etapa y etiquetas; Seguimiento reúne tareas y mensajes programados. Asignación abre el selector existente de responsable, que conserva los permisos de cada rol. Archivar y selección múltiple quedan en Organizar conversación; Eliminar queda al final y conserva la confirmación anterior.
 
@@ -16,6 +16,6 @@ Comprobaciones en navegador mediante un proxy local de UAT que sustituye únicam
 - Horizontal 850 × 400 px, laterales 44 e inferior 21: los controles de cabecera quedan dentro de x=54…796. La barra de Hoy usa relleno lateral de 48 px e inferior de 25 px; los botones terminan en y=375. Ancho de página: 850 px.
 - El menú horizontal empieza en y≈16, termina en y≈363 y su cuerpo se desplaza manteniendo el cierre visible.
 
-Validación: 126 pruebas pasan en diez archivos de shell, tema, configuración, push, contraste, preferencias, perfil y permisos. Cinco pruebas adicionales del menú de conversación pasan, incluyendo tres nuevas para agrupación, submenús y ausencia de efectos al abrirlos. El análisis Flutter y la compilación del APK de depuración pasan. `npm run verify:deploy` pasa con los siete avisos previos de contenido de la landing.
+Validación: 126 pruebas pasan en diez archivos de shell, tema, configuración, push, contraste, preferencias, perfil y permisos. Cinco pruebas adicionales del menú de conversación pasan, incluyendo tres nuevas para agrupación, submenús y ausencia de efectos al abrirlos. `npm run verify:deploy` pasa con los siete avisos previos de contenido de la landing.
 
 Siguen pendientes la comprobación en teléfonos físicos y el despliegue. La batería completa de conversaciones conserva los fallos previos de plantillas/envíos documentados en `CHAT_LAYOUT.md`; esta iteración valida de forma dirigida los menús afectados.

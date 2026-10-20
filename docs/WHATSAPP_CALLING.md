@@ -92,22 +92,12 @@ Se conserva su id local para reconciliar el webhook. El historial distingue
 estados de llamada y duración reportada por Meta; no deduce una conversación
 conectada únicamente de un HTTP 200 de inicio.
 
-## Android
-
-La aplicación Flutter incorpora `RECORD_AUDIO` y solicita permiso Android
-cuando el WebView pide micrófono. Solo concede audio en el origen HTTPS del
-CRM; cámara y otros recursos se rechazan. El APK debe actualizarse para contar
-con este soporte. La app debe permanecer abierta durante la llamada.
-
 ## Validación
 
 ```powershell
 npx vitest run tests/calling-integration.test.js tests/calling-panel.test.js tests/whatsapp-calling.test.js
 npm run verify:deploy
 ```
-
-En `apps/phyto_printer`: `flutter analyze`, `flutter test` y
-`flutter build apk --release`.
 
 Las pruebas con mocks verifican estados, permisos, controles, reintentos,
 concurrencia y liberación del micrófono. No sustituyen una llamada real con audio

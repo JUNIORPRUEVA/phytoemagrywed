@@ -80,7 +80,7 @@ import { createCallingStore } from './calling-store.mjs';
 import { createCallingService } from './calling-service.mjs';
 import { handleCallingRoute } from './calling-routes.mjs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -110,6 +110,10 @@ import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
 import { handleStorePublicRoute } from './store-public-routes.mjs';
+import { createStoreAccounts } from './store-accounts.mjs';
+import { handleStoreAccountRoute } from './store-account-routes.mjs';
+import { handleStoreRequestsAdminRoute } from './store-requests-admin-routes.mjs';
+import { createStoreOAuth } from './store-oauth.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
@@ -282,13 +286,6 @@ import {
 } from './stores.mjs';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ANDROID_APK_PATH = path.resolve(
-  process.env.PHYTO_ANDROID_APK_PATH ??
-    path.join(PROJECT_ROOT, 'apps', 'phyto_printer', 'build', 'app', 'outputs', 'flutter-apk', 'app-debug.apk'),
-);
-const DEFAULT_ANDROID_APK_URL =
-  'https://github.com/JUNIORPRUEVA/phytoemagrywed/releases/download/v1.01/app-debug.apk';
-const ANDROID_APK_URL = (process.env.PHYTO_ANDROID_APK_URL ?? DEFAULT_ANDROID_APK_URL).trim();
 
 function loadServerEnv() {
   if (process.env.NODE_ENV === 'test') return;
@@ -325,6 +322,22 @@ const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
 const WEB_PUSH_PUBLIC_KEY = (process.env.PHYTO_WEB_PUSH_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? '').trim();
 const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.env.VAPID_PRIVATE_KEY ?? '').trim();
 const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT || 'https://phytoemagryrd.lat').trim();
+// OAuth de clientes (opcional): sin credenciales, la tienda usa teléfono y contraseña.
+const STORE_OAUTH = {
+  publicUrl: (process.env.PHYTO_PUBLIC_URL ?? '').trim(),
+  google: {
+    clientId: (process.env.PHYTO_GOOGLE_CLIENT_ID ?? '').trim(),
+    clientSecret: (process.env.PHYTO_GOOGLE_CLIENT_SECRET ?? '').trim(),
+    redirectUri: (process.env.PHYTO_GOOGLE_REDIRECT_URI ?? '').trim(),
+  },
+  apple: {
+    clientId: (process.env.PHYTO_APPLE_CLIENT_ID ?? '').trim(),
+    teamId: (process.env.PHYTO_APPLE_TEAM_ID ?? '').trim(),
+    keyId: (process.env.PHYTO_APPLE_KEY_ID ?? '').trim(),
+    privateKey: (process.env.PHYTO_APPLE_PRIVATE_KEY ?? '').trim(),
+    redirectUri: (process.env.PHYTO_APPLE_REDIRECT_URI ?? '').trim(),
+  },
+};
 if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
   webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
   console.log('[push] Web Push configurado (llaves VAPID presentes).');
@@ -4927,51 +4940,6 @@ function serveAdminFile(res, urlPath, adminDir) {
   res.end(body);
 }
 
-function androidApkInfo(ctx) {
-  const configuredUrl = String(ctx.androidApk?.url ?? '').trim();
-  const filePath = path.resolve(String(ctx.androidApk?.path ?? ANDROID_APK_PATH));
-  const hasRemoteUrl = /^https?:\/\//i.test(configuredUrl);
-  const exists = existsSync(filePath) && statSync(filePath).isFile();
-  return {
-    available: hasRemoteUrl || exists,
-    source: hasRemoteUrl ? 'storage' : exists ? 'local' : 'missing',
-    url: hasRemoteUrl ? configuredUrl : '/api/admin/android-apk/download',
-    filename: 'phytoemagry-android.apk',
-    path: filePath,
-    sizeBytes: exists ? statSync(filePath).size : null,
-  };
-}
-
-function serveAndroidApk(req, res, ctx) {
-  const info = androidApkInfo(ctx);
-  if (/^https?:\/\//i.test(info.url)) {
-    res.writeHead(302, { location: info.url, 'cache-control': 'no-store' });
-    res.end();
-    return;
-  }
-  if (!info.available || !existsSync(info.path)) {
-    json(res, 404, {
-      ok: false,
-      error: 'apk_not_found',
-      message: 'El APK Android todavía no está publicado en el servidor.',
-    });
-    return;
-  }
-  const size = statSync(info.path).size;
-  res.writeHead(200, {
-    'content-type': 'application/vnd.android.package-archive',
-    'content-length': size,
-    'content-disposition': `attachment; filename="${info.filename}"`,
-    'cache-control': 'no-store',
-    'x-robots-tag': 'noindex, nofollow',
-  });
-  if (req.method === 'HEAD') {
-    res.end();
-    return;
-  }
-  createReadStream(info.path).pipe(res);
-}
-
 async function deleteConversationFromCrm(ctx, conversation, actor) {
   const messages = await ctx.db.list('wa_messages', { limit: 5000 });
   let deletedMessages = 0;
@@ -5012,6 +4980,9 @@ async function handle(req, res, ctx) {
 
   // Tienda pública: solo lectura y con una proyección separada del CRM.
   if (await handleStorePublicRoute({ req, res, route, url, ctx, json })) return;
+
+  // Cuenta de cliente y solicitudes de la tienda (sesión propia, separada del panel).
+  if (await handleStoreAccountRoute({ req, res, route, url, ctx, json, readJson: readJsonBody })) return;
 
   // Confirmación limitada a un envío: no requiere la cookie de una app cerrada.
   if (route === '/api/push/receipts' && req.method === 'POST') {
@@ -5453,24 +5424,6 @@ async function handle(req, res, ctx) {
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
       json(res, 200, { ok: true, ...authPayload() });
-      return;
-    }
-
-    if (route === '/api/admin/android-apk/status' && req.method === 'GET') {
-      const info = androidApkInfo(ctx);
-      json(res, 200, {
-        ok: true,
-        available: info.available,
-        source: info.source,
-        url: info.url,
-        filename: info.filename,
-        sizeBytes: info.sizeBytes,
-      });
-      return;
-    }
-
-    if (route === '/api/admin/android-apk/download' && ['GET', 'HEAD'].includes(req.method ?? 'GET')) {
-      serveAndroidApk(req, res, ctx);
       return;
     }
 
@@ -6054,6 +6007,7 @@ async function handle(req, res, ctx) {
     if (await handleSupplierRoutes({req,res,route,ctx,actor,json,readJson:readJsonBody,
   can:permission=>hasPermission(actor,permission),
   sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
+  if (await handleStoreRequestsAdminRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,can:permission=>hasPermission(actor,permission)})) return;
   if (await handleStoreCatalogRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
       can:permission=>hasPermission(actor,permission),
       sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
@@ -6632,7 +6586,13 @@ async function handle(req, res, ctx) {
           orders: profile.purchases ?? [],
           includeInternal: hasPermission(actor, 'admin.full'),
         });
-        json(res, 200, { ok: true, ...profile, history });
+        const [storeAccount, storeRequests] = ctx.storeAccounts
+          ? await Promise.all([
+              ctx.storeAccounts.accountForCustomer(customerId),
+              ctx.storeAccounts.listRequestsForCustomer(customerId, 10),
+            ])
+          : [null, []];
+        json(res, 200, { ok: true, ...profile, history, store_account: storeAccount, store_requests: storeRequests });
         return;
       }
 
@@ -11085,8 +11045,6 @@ function descripcionMultimedia(mediaStore, storage, whatsappMedia) {
  * @param {string} [config.token] clave del panel (vacía = panel desactivado)
  * @param {string} [config.adminDir] carpeta de la app del panel
  * @param {string} [config.allowedOrigin] origen permitido por CORS
- * @param {string} [config.androidApkPath] APK local para descarga desde el panel
- * @param {string} [config.androidApkUrl] URL de storage/CDN del APK publicado
  * @param {boolean} [config.quiet] no imprimir el banner de arranque
  * @param {any} [config.metaCapi] cliente de CAPI ya construido (tests)
  * @param {string} [config.metaPixelId]
@@ -11105,9 +11063,8 @@ export async function startCrmServer(config = {}) {
     token: config.token ?? TOKEN,
     allowedOrigin: config.allowedOrigin ?? ALLOWED_ORIGIN,
     adminDir: resolveAdminDir(config.adminDir),
-    androidApkPath: path.resolve(config.androidApkPath ?? ANDROID_APK_PATH),
-    androidApkUrl: config.androidApkUrl ?? ANDROID_APK_URL,
     quiet: config.quiet ?? false,
+    storeOAuth: config.storeOAuth ?? STORE_OAUTH,
   };
 
   const store = await createStore({ databaseUrl: settings.databaseUrl, dataFile: settings.dataFile });
@@ -11335,13 +11292,32 @@ export async function startCrmServer(config = {}) {
   });
   schedulerRef.current = scheduler;
 
+  /*
+   * Cuentas de cliente y solicitudes de la tienda. Son tablas aditivas y
+   * separadas: no tocan clientes, pedidos, facturas ni inventario. Si no hay SQL
+   * (JSONL), la tienda sigue mostrando el catálogo y las cuentas quedan apagadas.
+   */
+  const storeAccounts = await createStoreAccounts({
+    backend: db.kind,
+    handle: store.handle,
+    customers,
+    listOrders: () => store.listAdmin({ limit: 5000 }),
+    findCustomerByEmail: async (email) => {
+      const key = String(email ?? '').trim().toLowerCase();
+      if (!key) return null;
+      const rows = await db.list('customers', { limit: 2000 });
+      return rows.find((row) => String(row.email ?? '').trim().toLowerCase() === key) ?? null;
+    },
+    clock: config.clock,
+  });
+  const storeOAuth = createStoreOAuth({ config: settings.storeOAuth, fetchImpl: config.storeOAuthFetch ?? fetch, clock: config.clock });
+
   const ctx = {
     store,
     db,
     token: settings.token,
     allowedOrigin: settings.allowedOrigin,
     adminDir: settings.adminDir,
-    androidApk: { path: settings.androidApkPath, url: settings.androidApkUrl },
     metaCapi,
     purchaseStatus: config.purchaseStatus ?? META_PURCHASE_STATUS,
     followups,
@@ -11350,6 +11326,8 @@ export async function startCrmServer(config = {}) {
     users,
     inventory,
     storeCatalog,
+    storeAccounts,
+    storeOAuth,
     settings: settingsService,
     chatSharing: createChatSharingService({ settings: settingsService, customers }),
     proofreading,

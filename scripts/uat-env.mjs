@@ -892,6 +892,9 @@ async function resumen() {
 async function haceFaltaSembrar() {
   if (COPIAR_DATOS) return false;
   if (SEMBRAR_SIEMPRE || !habiaDatos) return true;
+  // La comprobación necesita sesión: sin ella /api/admin/data responde 401 y
+  // parecía una base vacía, así que cada reinicio volvía a sembrar pedidos.
+  await entrarComoAdmin();
   const data = await pedir('/api/admin/data');
   return ((data.body?.customers ?? []).length === 0 && (data.body?.items ?? []).length === 0);
 }
