@@ -756,6 +756,7 @@ body[data-drawer='open'] .burger span:nth-child(3),
 :root[data-theme='dark'] .qty-stepper,
 :root[data-theme='dark'] .receipt-pdf-card,
 :root[data-theme='dark'] .config-card--active,
+:root[data-theme='dark'] .printer-settings__hero,
 :root[data-theme='dark'] .order-location-required {
   background: var(--pe-card-bg);
   background-image: none;
@@ -1085,7 +1086,7 @@ body :is(button,a,input,textarea,select):focus-visible { outline-color: var(--pe
 :root[data-theme='dark'] body .order-card--sel { outline: 2px solid var(--pe-focus); outline-offset: 2px; }
 
 /* Detalles que no deben heredar blanco o verde oscuro en hojas de noche. */
-:root[data-theme='dark'] body :is(.qty-stepper button,.inventory-summary,.order-line,.profile-account,.receipt-pdf-card,.delivery-permission,.order-location-required) { background: var(--pe-card-bg); color: var(--text-primary); border-color: var(--pe-line); }
+:root[data-theme='dark'] body :is(.qty-stepper button,.inventory-summary,.order-line,.profile-account,.printer-settings__hero,.receipt-pdf-card,.delivery-permission,.order-location-required) { background: var(--pe-card-bg); color: var(--text-primary); border-color: var(--pe-line); }
 :root[data-theme='dark'] body :is(.sheet__head .icon-btn,.sheet__panel .pass__eye,.password-toggle) { background: var(--pe-control-bg); color: var(--text-primary); border-color: var(--pe-line); }
 :root[data-theme='dark'] body .field__input:focus, :root[data-theme='dark'] body .field__area:focus { border-color: var(--pe-focus); box-shadow: 0 0 0 3px var(--pe-brand-soft); }
 :root[data-theme='dark'] body :is(input[type='checkbox'],input[type='radio']) { accent-color: var(--pe-brand-text); }

@@ -1471,7 +1471,8 @@ export function createCustomerService(deps) {
     canSendFreeText(conversation) {
       const last = conversation?.last_inbound_at;
       if (!last) return false;
-      return Date.now() - Date.parse(last) < 24 * 60 * 60 * 1000;
+      const elapsed = clock().getTime() - Date.parse(last);
+      return Number.isFinite(elapsed) && elapsed >= 0 && elapsed < 24 * 60 * 60 * 1000;
     },
 
     /** Perfil 360: todo lo que hay que saber de un cliente, en una sola llamada. */

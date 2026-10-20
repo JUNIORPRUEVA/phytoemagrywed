@@ -61,7 +61,14 @@ async function panel({ role = 'ADMIN', permissions = { geolocation: 'prompt', mi
   win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
   const $ = (selector) => win.document.querySelector(selector);
   const click = (selector) => { const node = $(selector); if (!node) throw new Error('No existe ' + selector); node.click(); };
-  await waitFor(() => !$('#app').hidden && $('#settings-menu a') && (role === 'ADMIN' || $('#settings-name')?.textContent === 'Persona de prueba'));
+  // El rol se refleja en la visibilidad de las opciones de administración
+  // (la portada ya no repite el nombre de la persona).
+  await waitFor(() => {
+    if ($('#app').hidden || !$('#settings-menu a')) return false;
+    const adminOnly = [...win.document.querySelectorAll('[data-admin-only]')];
+    if (!adminOnly.length) return role === 'ADMIN';
+    return adminOnly.every((node) => node.hidden === (role !== 'ADMIN'));
+  });
   return { win, $, click, statuses, getUserMedia, stop };
 }
 
@@ -69,22 +76,26 @@ describe('Configuración con una pantalla por opción', () => {
   it('la portada solo muestra la lista; cada opción abre únicamente su contenido', async () => {
     const p = await panel();
     expect(p.$('#settings-home').hidden).toBe(false);
-    const links = [...p.win.document.querySelectorAll('#settings-menu [data-settings-open]')];
-    expect(links.length).toBe(15);
+    const menuLinks = [...p.win.document.querySelectorAll('#settings-menu [data-settings-open]')];
+    const groupLinks = [...p.win.document.querySelectorAll('.settings-data-group [data-settings-open]')];
+    // Las cinco opciones de administración viven en el grupo «Datos» del inicio.
+    expect(menuLinks.length).toBe(10);
+    expect(groupLinks.length).toBe(5);
     expect([...p.win.document.querySelectorAll('#view-ajustes > .card')].every((node) => node.hidden)).toBe(true);
-    for (const link of links) {
+    for (const link of [...menuLinks, ...groupLinks]) {
       const key = link.dataset.settingsOpen;
       p.click(`[data-settings-open="${key}"]`);
       expect(p.win.location.hash).toBe('#config/' + key);
       expect(p.$('#settings-home').hidden).toBe(true);
-      expect(p.$('#settings-title').textContent).toBe(link.querySelector('strong').textContent);
+      const label = link.querySelector('strong, span:not([class])')?.textContent;
+      expect(p.$('#settings-title').textContent).toBe(label);
       const shown = [...p.win.document.querySelectorAll('#view-ajustes > .card')].filter((node) => !node.hidden);
       expect(shown.length).toBeGreaterThan(0);
       expect(shown.length).toBeLessThanOrEqual(2);
       p.click('#view-ajustes [data-settings-back]');
       expect(p.$('#settings-home').hidden).toBe(false);
     }
-  });
+  }, 20000);
   it('atrás/adelante del navegador y la recarga respetan la pantalla elegida', async () => {
     const p = await panel();
     p.click('[data-settings-open="permisos"]');

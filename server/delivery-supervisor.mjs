@@ -171,7 +171,19 @@ export function normalizeSupervisorSettings(raw = null) {
 /** Lee los ajustes guardados (con los valores de fábrica de respaldo). */
 export async function supervisorSettings(ctx) {
   const doc = await ctx.settings.read(SUPERVISOR_SETTINGS_KEY).catch(() => null);
-  return normalizeSupervisorSettings(doc?.value);
+  const settings = normalizeSupervisorSettings(doc?.value);
+  /*
+   * MIGRACIÓN DE INSTALACIONES ANTIGUAS: antes de `activatedAt`, algunas
+   * instalaciones ya tenían el supervisor habilitado pero ninguna fecha de
+   * corte. En ese estado el panel decía «activo» mientras la elegibilidad
+   * rechazaba todos los pedidos. Sellar el corte ahora habilita pedidos nuevos
+   * y conserva los anteriores en Revisión pendiente; no envía ningún aviso.
+   */
+  if (settings.enabled && !settings.activatedAt && settings.activationMode === 'new' && !settings.includeOldOrders) {
+    settings.activatedAt = ctx.clock().toISOString();
+    await ctx.settings.write(SUPERVISOR_SETTINGS_KEY, settings);
+  }
+  return settings;
 }
 
 /** Guarda los ajustes normalizados. */
@@ -1056,6 +1068,7 @@ export async function supervisorSnapshot(ctx, options = {}) {
   const dayStart = now - 24 * 60 * 60 * 1000;
 
   const buckets = {
+    revision: [],
     sin_iniciar: [],
     en_camino: [],
     atrasados: [],
@@ -1087,6 +1100,19 @@ export async function supervisorSnapshot(ctx, options = {}) {
     const elegibilidad = supervisionEligibility(order, settings, item.id);
     if (!elegibilidad.eligible) {
       excluded[elegibilidad.reason] = (excluded[elegibilidad.reason] ?? 0) + 1;
+      // Las asignaciones anteriores a la activación no reciben mensajes en
+      // bloque, pero siguen visibles para que administración pueda revisarlas.
+      if (!['closed', 'delivery_cancelled'].includes(elegibilidad.reason)) {
+        buckets.revision.push({
+          ...row,
+          review_reason: elegibilidad.reason,
+          next_action: elegibilidad.reason === 'before_activation'
+            ? 'Revisar pedido histórico y activar seguimiento si sigue pendiente'
+            : elegibilidad.reason === 'no_assignment_date'
+              ? 'Revisar fecha de asignación y activar seguimiento si sigue pendiente'
+              : 'Revisar y asignar un repartidor',
+        });
+      }
       continue;
     }
     if (state.stage === SUPERVISOR_STAGES.POSTPONED) buckets.pospuestos.push(row);
@@ -1120,6 +1146,7 @@ export async function supervisorSnapshot(ctx, options = {}) {
     },
     excluded,
     counts: {
+      revision: count(buckets.revision),
       sin_iniciar: count(buckets.sin_iniciar),
       en_camino: count(buckets.en_camino),
       atrasados: count(buckets.atrasados),

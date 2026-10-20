@@ -24,6 +24,20 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { BUSINESS_COMPLETED_PURCHASE_STATUS, isCompletedPurchaseStatus } from './orders.mjs';
 
+// Los cambios operativos no pueden reemplazar cobros confirmados con una copia
+// anterior. Solo compareOrder puede modificar el libro de pagos.
+function preserveConfirmedPayments(current,incoming){
+  if(!current||!incoming)return incoming;
+  let before,after;try{before=JSON.parse(current);after=JSON.parse(incoming);}catch{return incoming;}
+  if(!before.payment?.entries?.length)return incoming;
+  if(JSON.stringify(before.payment)!==JSON.stringify(after.payment)){
+    after.payment=before.payment;
+    if(after.payment_status!=='void')after.payment_status=before.payment_status;
+    if(before.paid_at)after.paid_at=before.paid_at;
+  }
+  return JSON.stringify(after);
+}
+
 /** Tabla de registros (nombre propio: no choca con otras apps del servidor). */
 export const TABLE = 'phytoemagry_items';
 /** Tabla de plantillas de mensajes de WhatsApp. */
@@ -86,9 +100,9 @@ export const DEFAULT_MESSAGES = [
   },
   {
     id: 'msg-precios-phyto',
-    name: 'Precios Phytoemagry',
+    name: 'Precios FullTECH',
     body:
-      '*Precios Phytoemagry*\n\n' +
+      '*Precios del producto Phytoemagry*\n\n' +
       '5 cápsulas - RD$1,250\n' +
       '7 cápsulas - RD$1,750\n' +
       '10 cápsulas - RD$2,500\n' +
@@ -96,14 +110,14 @@ export const DEFAULT_MESSAGES = [
       '20 cápsulas - RD$5,000\n' +
       '30 cápsulas - RD$6,000\n' +
       '60 cápsulas - RD$10,000\n\n' +
-      'Dime cuál frasco deseas y te ayudo con tu pedido.',
+      'Somos FullTECH. Dime cuál frasco deseas y te ayudo con tu pedido.',
   },
   {
     id: 'msg-bienvenida-phyto',
     name: 'Bienvenida + grupos',
     body:
-      'Saludos {nombre}, bienvenida a *Phytoemagry*.\n\n' +
-      'Phytoemagry es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria.\n\n' +
+      'Saludos {nombre}, te damos la bienvenida a *FullTECH*.\n\n' +
+      'Phytoemagry es el producto en cápsulas que elegiste.\n\n' +
       '*Modo de uso*\n' +
       '1 cápsula al día después del desayuno.\n\n' +
       '*Grupos de apoyo*\n' +
@@ -121,9 +135,9 @@ export const DEFAULT_MESSAGES = [
   },
   {
     id: 'msg-grupos-phyto',
-    name: 'Grupos de apoyo',
+    name: 'Grupos de apoyo FullTECH',
     body:
-      '*Grupos de apoyo Phytoemagry*\n\n' +
+      '*Grupos de apoyo de FullTECH*\n\n' +
       'Puedes unirte para ver testimonios, resultados y hacer todas tus preguntas durante tu proceso.\n\n' +
       'Grupo 5\n' +
       'https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n\n' +
@@ -142,7 +156,7 @@ export const DEFAULT_MESSAGES = [
     body:
       '*Cuentas disponibles*\n\n' +
       'Banco Popular\n' +
-      'FULLTECH SRL\n' +
+      'FULLTECH\n' +
       '0841088008\n\n' +
       'BHD\n' +
       'Yunior Lopez de la Rosa\n' +
@@ -185,6 +199,10 @@ const LEGACY_DEFAULT_MESSAGE_BODIES = new Map([
   [
     'msg-precios-phyto',
     [
+      '*Precios Phytoemagry*\n\n' +
+        '5 cápsulas - RD$1,250\n7 cápsulas - RD$1,750\n10 cápsulas - RD$2,500\n' +
+        '15 cápsulas - RD$3,750\n20 cápsulas - RD$5,000\n30 cápsulas - RD$6,000\n' +
+        '60 cápsulas - RD$10,000\n\nDime cuál frasco deseas y te ayudo con tu pedido.',
       'Precios por frasco:\n' +
         '5 cápsulas: RD$1,250\n' +
         '7 cápsulas: RD$1,750\n' +
@@ -199,6 +217,15 @@ const LEGACY_DEFAULT_MESSAGE_BODIES = new Map([
   [
     'msg-bienvenida-phyto',
     [
+      'Saludos {nombre}, bienvenida a *Phytoemagry*.\n\n' +
+        'Phytoemagry es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria.\n\n' +
+        '*Modo de uso*\n1 cápsula al día después del desayuno.\n\n' +
+        '*Grupos de apoyo*\nPuedes unirte para ver testimonios, resultados y hacer tus preguntas con más confianza:\n\n' +
+        'Grupo 5\nhttps://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n\n' +
+        'Grupo 1\nhttps://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n\n' +
+        'Grupo 2\nhttps://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n\n' +
+        'Grupo 3\nhttps://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n\n' +
+        'Grupo 4\nhttps://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
       'Saludos {nombre}, bienvenida a Phytoemagry. Es un producto fitoterápico en cápsulas para integrarlo a tu rutina diaria. Se toma 1 cápsula al día después del desayuno.\n\n' +
         'También puedes unirte a nuestros grupos para ver resultados, testimonios y hacer tus preguntas con más confianza:\n' +
         'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
@@ -211,6 +238,13 @@ const LEGACY_DEFAULT_MESSAGE_BODIES = new Map([
   [
     'msg-grupos-phyto',
     [
+      '*Grupos de apoyo Phytoemagry*\n\n' +
+        'Puedes unirte para ver testimonios, resultados y hacer todas tus preguntas durante tu proceso.\n\n' +
+        'Grupo 5\nhttps://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n\n' +
+        'Grupo 1\nhttps://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n\n' +
+        'Grupo 2\nhttps://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t\n\n' +
+        'Grupo 3\nhttps://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK\n\n' +
+        'Grupo 4\nhttps://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
       'Si deseas, puedes unirte a uno de nuestros grupos de WhatsApp para ver resultados, testimonios y hacer tus preguntas. Son grupos de apoyo durante tu proceso.\n\n' +
         'Grupo 5: https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4\n' +
         'Grupo 1: https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t\n' +
@@ -222,6 +256,7 @@ const LEGACY_DEFAULT_MESSAGE_BODIES = new Map([
   [
     'msg-cuentas-banco',
     [
+      '*Cuentas disponibles*\n\nBanco Popular\nFULLTECH SRL\n0841088008\n\nBHD\nYunior Lopez de la Rosa\n28726660019\n\nBanreservas\nYunior Lopez de la Rosa\n9600921403\n\nCuando realices el pago, envíame el comprobante por aquí, por favor.',
       'Cuentas disponibles:\n' +
         'Popular: 0841088008 - FULLTECH SRL\n' +
         'BHD: 28726660019 - Yunior Lopez de la Rosa\n' +
@@ -601,6 +636,10 @@ async function createSqliteStore(file) {
       const row = byId.get(String(id ?? ''));
       return row ? normalize(row) : null;
     },
+    compareOrder(id, expected, next) {
+      const changed=db.prepare('UPDATE items SET order_json=?,updated_at=? WHERE id=? AND order_json IS ?').run(next,new Date().toISOString(),id,expected);
+      return changed.changes?normalize(byId.get(id)):null;
+    },
     update(id, patch) {
       const current = byId.get(id);
       if (!current) return null;
@@ -627,7 +666,7 @@ async function createSqliteStore(file) {
         conversation_id:
           patch.conversationId !== undefined ? patch.conversationId : item.conversation_id,
         order_number: patch.orderNumber !== undefined ? patch.orderNumber : item.order_number,
-        order_json: patch.orderJson !== undefined ? patch.orderJson : item.order_json,
+        order_json: patch.orderJson !== undefined ? preserveConfirmedPayments(item.order_json,patch.orderJson) : item.order_json,
         // Primera línea del pedido (compatibilidad con CSV, estadísticas y Meta).
         variant_id: patch.variantId !== undefined ? patch.variantId : item.variant_id,
         variant_name: patch.variantName !== undefined ? patch.variantName : item.variant_name,
@@ -729,6 +768,13 @@ function createJsonlStore(file) {
       const row = readRows(file).find((item) => item.id === id);
       return row ? normalize(row) : null;
     },
+    compareOrder(id, expected, next) {
+      const rows=readRows(file),index=rows.findIndex(row=>row.id===id);
+      if(index<0||(rows[index].order_json??rows[index].orderJson??null)!==expected)return null;
+      rows[index]={...rows[index],order_json:next,updated_at:new Date().toISOString()};
+      writeFileSync(file,rows.map(row=>JSON.stringify(row)+'\n').join(''),'utf8');
+      return normalize(rows[index]);
+    },
     update(id, patch) {
       const rows = readRows(file);
       const index = rows.findIndex((item) => item.id === id);
@@ -755,7 +801,7 @@ function createJsonlStore(file) {
         customer_id: patch.customerId !== undefined ? patch.customerId : item.customer_id,
         conversation_id: patch.conversationId !== undefined ? patch.conversationId : item.conversation_id,
         order_number: patch.orderNumber !== undefined ? patch.orderNumber : item.order_number,
-        order_json: patch.orderJson !== undefined ? patch.orderJson : item.order_json,
+        order_json: patch.orderJson !== undefined ? preserveConfirmedPayments(item.order_json,patch.orderJson) : item.order_json,
         variant_id: patch.variantId !== undefined ? patch.variantId : item.variant_id,
         variant_name: patch.variantName !== undefined ? patch.variantName : item.variant_name,
         capsules: patch.capsules !== undefined ? patch.capsules : item.capsules,
@@ -1008,6 +1054,10 @@ async function createPostgresStore(url) {
       const result = await pool.query(`SELECT ${SELECT_ADMIN} FROM ${TABLE} WHERE id = $1`, [String(id ?? '')]);
       return result.rowCount ? normalize(result.rows[0]) : null;
     },
+    async compareOrder(id, expected, next) {
+      const result=await pool.query(`UPDATE ${TABLE} SET order_json=$1,updated_at=$2 WHERE id=$3 AND order_json IS NOT DISTINCT FROM $4 RETURNING ${SELECT_ADMIN}`,[next,new Date().toISOString(),id,expected]);
+      return result.rowCount?normalize(result.rows[0]):null;
+    },
     async update(id, patch) {
       const current = await pool.query(`SELECT ${SELECT_ADMIN} FROM ${TABLE} WHERE id = $1`, [id]);
       if (current.rowCount === 0) return null;
@@ -1033,7 +1083,7 @@ async function createPostgresStore(url) {
         conversation_id:
           patch.conversationId !== undefined ? patch.conversationId : item.conversation_id,
         order_number: patch.orderNumber !== undefined ? patch.orderNumber : item.order_number,
-        order_json: patch.orderJson !== undefined ? patch.orderJson : item.order_json,
+        order_json: patch.orderJson !== undefined ? preserveConfirmedPayments(item.order_json,patch.orderJson) : item.order_json,
         variant_id: patch.variantId !== undefined ? patch.variantId : item.variant_id,
         variant_name: patch.variantName !== undefined ? patch.variantName : item.variant_name,
         capsules: patch.capsules !== undefined ? patch.capsules : item.capsules,
@@ -1041,13 +1091,13 @@ async function createPostgresStore(url) {
         unit_price: patch.unitPrice !== undefined ? patch.unitPrice : item.unit_price,
         total: patch.total !== undefined ? patch.total : item.total,
       };
-      await pool.query(
+      const changed=await pool.query(
         `UPDATE ${TABLE} SET status = $1, notes = $2, next_action_at = $3, last_contact_at = $4, updated_at = $5,
            meta_purchase_event_id = $6, meta_purchase_sent_at = $7, meta_purchase_status = $8,
            meta_purchase_attempts = $9, meta_purchase_error = $10, customer_id = $11,
            conversation_id = $12, order_number = $13, order_json = $14,
            variant_id = $15, variant_name = $16, capsules = $17, quantity = $18, unit_price = $19, total = $20
-         WHERE id = $21`,
+         WHERE id = $21 AND order_json IS NOT DISTINCT FROM $22`,
         [
           next.status,
           next.notes,
@@ -1070,8 +1120,13 @@ async function createPostgresStore(url) {
           next.unit_price,
           next.total,
           id,
+          item.order_json,
         ],
       );
+      if(!changed.rowCount){
+        if((patch._casRetries||0)>=3)throw Object.assign(new Error('Concurrent order update'),{status:409,code:'order_conflict'});
+        return store.update(id,{...patch,_casRetries:(patch._casRetries||0)+1});
+      }
       return { ...item, ...next };
     },
     async remove(id) {

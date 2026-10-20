@@ -38,7 +38,7 @@ describe('WhatsApp assignment UX', () => {
     const siguiente = app.indexOf('\n  function ', start + 10);
     const menu = app.slice(start, siguiente > start ? siguiente : start + 4200);
     expect(app).toContain('function assignmentMenuHtml');
-    expect(app).toContain('const assignmentMenu = assignmentMenuHtml(conversation, { conversationId });');
+    expect(app).toContain('const assignmentMenu = assignmentMenuHtml(row, { conversationId });');
     expect(menu).toContain('Tomar conversación');
     expect(menu).toContain('Liberar conversación');
     expect(menu).toContain('Reasignar / transferir');

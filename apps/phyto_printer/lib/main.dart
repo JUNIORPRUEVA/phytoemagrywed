@@ -11,17 +11,17 @@ import 'printer/printer_models.dart';
 import 'printer/printer_service.dart';
 
 void main() {
-  runApp(const PhytoemagryApp());
+  runApp(const FulltechApp());
 }
 
-class PhytoemagryApp extends StatelessWidget {
-  const PhytoemagryApp({super.key});
+class FulltechApp extends StatelessWidget {
+  const FulltechApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     const seed = Color(0xff145bd7);
     return MaterialApp(
-      title: 'FullTECH, SRL',
+      title: 'FullTECH',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -90,7 +90,7 @@ class _CrmWebShellState extends State<CrmWebShell> {
         'FulltechAppearance',
         onMessageReceived: _handleAppearance,
       )
-      ..setUserAgent('PhytoemagryAndroid WebView')
+      ..setUserAgent('FullTECHAndroid WebView')
       ..addJavaScriptChannel(
         'PhytoDeviceBridge',
         onMessageReceived: _handleBridgeMessage,
@@ -331,7 +331,7 @@ class _LoadError extends StatelessWidget {
               const Icon(Icons.wifi_off_rounded, size: 44),
               const SizedBox(height: 12),
               const Text(
-                'No se pudo cargar FullTECH, SRL.',
+                'No se pudo cargar FullTECH.',
                 style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                 textAlign: TextAlign.center,
               ),

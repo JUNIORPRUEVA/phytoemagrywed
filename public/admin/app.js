@@ -244,7 +244,7 @@
   const DELIVERY_TILE_PREFETCH_REASON =
     'Neither the OSM nor the Esri tile service allows automatic area prefetch; caching visited tiles is fine.';
   const DELIVERY_TILE_SLOW_MS = 4500;
-  const NEGOCIO = 'FullTECH, SRL';
+  const NEGOCIO = 'FullTECH';
   const BUSINESS_TIME_ZONE = 'America/Santo_Domingo';
 
   function isMapGestureTarget(target) {
@@ -298,9 +298,6 @@
     closeHistoryRange: { from: null, to: null },
     // Cierre que se está mirando: `null` = el de hoy.
     closeDay: null,
-    // Cómo se mira el cierre: un DÍA (lo de siempre) o VARIOS días (el resumen).
-    closeScope: 'dia',
-    closeRange: { from: null, to: null },
     whatsapp: null,
     templates: [],
     stats: null,
@@ -324,6 +321,7 @@
     push: null,
     devicePermissions: { loading: false, geolocation: 'unknown', notifications: 'unknown' },
     orderReturn: null,
+    nativePrinter: { available: false, status: null, loading: false, result: null },
     deliveryEvents: null,
     deliveryPollTimer: null,
     deliveryWatchId: null,
@@ -716,6 +714,8 @@
     share: svg('<circle cx="17.6" cy="5.9" r="2.7"/><circle cx="6.4" cy="12" r="2.7"/><circle cx="17.6" cy="18.1" r="2.7"/><path d="M8.8 10.7l6.4-3.4M8.8 13.3l6.4 3.4"/>'),
     /* «Sincronizar datos»: flechas en círculo, el gesto de volver a pedirlo todo. */
     refresh: svg('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20.4 4.4v4.4H16"/>'),
+    /* «Instalar la app»: un teléfono con la flecha de descarga. */
+    install: svg('<rect x="6" y="2.6" width="12" height="18.8" rx="3"/><path d="M12 7.2v6.4"/><path d="M9.2 11l2.8 2.8 2.8-2.8"/>'),
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
@@ -808,7 +808,7 @@
 
   let toastTimer = null;
   function toast(message) {
-    if(window.FulltechOffline){
+    if(window.FullTECHOffline){
       if(!/no se|error|falt|elige|escribe|permiso|necesit|inválid|revisa|requiere|confirma|caduc|rechaz|intént|no hay|no puede|activa/i.test(message))return;
       const host=document.querySelector('dialog[open] .pos-modal-body,dialog[open] form')||(!$('#sheet')?.hidden?$('#sheet-body'):null)||document.querySelector('.view:not([hidden])');
       if(host){host.querySelector('.inline-feedback')?.remove();const notice=document.createElement('p');notice.className='inline-feedback';notice.setAttribute('role','alert');notice.textContent=message;host.prepend(notice);setTimeout(()=>notice.remove(),8000);return;}
@@ -953,7 +953,7 @@
   }
 
   function saveSnapshot() {
-    window.FulltechOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
+    window.FullTECHOffline?.saveLegacySnapshot?.(snapshotPayload()).catch(()=>{});
     try {
       localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshotPayload()));
     } catch {
@@ -971,7 +971,7 @@
   }
 
   function readSnapshot() {
-    if(window.FulltechOffline&&!window.FulltechOffline.valid())return null;
+    if(window.FullTECHOffline&&!window.FullTECHOffline.valid())return null;
     try {
       const raw = getStoredValue(SNAPSHOT_KEY);
       return raw ? JSON.parse(raw) : null;
@@ -1084,6 +1084,15 @@
     const list = readOutbox().filter((row) => (row.key ?? `${row.method} ${row.path}`) !== key);
     list.push({ ...entry, key, operationId: entry.operationId||crypto.randomUUID(), at: Date.now(), tries: 0 });
     writeOutbox(list);
+    /*
+     * SE INTENTA ENVIAR EN EL ACTO.
+     *
+     * Antes el cambio se quedaba guardado hasta que alguien pulsaba «Sincronizar».
+     * Ahora lo solicita el motor único (`sync-engine.js`), que además se encarga
+     * de reintentar con espera creciente hasta que el servidor lo confirma.
+     */
+    if (window.FullTECHSync) window.FullTECHSync.ahora();
+    else setTimeout(() => { flushOutbox({ silent: true }).catch(() => {}); }, 0);
   }
 
   /** Cambio que no se pudo enviar (sin red): se aplica en pantalla y se reintenta. */
@@ -1116,11 +1125,26 @@
   async function flushOutboxRun({ silent = false } = {}) {
     const outbox = readOutbox();
     if (!outbox.length) return { sent: 0, pending: 0, dropped: 0, messages: [] };
-    if (!state.online) return { sent: 0, pending: outbox.length, dropped: 0, messages: [] };
+    /*
+     * SE INTENTA AUNQUE EL TELÉFONO DIGA QUE NO HAY RED.
+     *
+     * `state.online` se queda en falso tras un fallo pasajero (o si el móvil
+     * informa mal), y entonces la cola no salía nunca hasta pulsar «Sincronizar».
+     * El intento real decide: si no hay red, el propio `api` lo deja pendiente.
+     */
     const pendientes = [];
     const descartados = [];
     let enviados = 0;
+    let motivoFallo = '';
     for (const [index,entry] of outbox.entries()) {
+      /*
+       * UNA MARCA DE «LEÍDO» NO ES UN CAMBIO DEL USUARIO.
+       *
+       * Si una versión anterior la dejó en la cola, se retira: mandarla tarde no
+       * sirve de nada y era la causa de que el aviso dijera «1 cambio pendiente»
+       * para siempre.
+       */
+      if (/\/(read|seen|visit|heartbeat|presence|typing)(\/|$)/.test(String(entry.path ?? ''))) continue;
       try {
         if (entry.kind === 'order-create') {
           // ¿Ya había llegado? (un reintento anterior pudo guardarlo sin respuesta)
@@ -1138,7 +1162,13 @@
         enviados += 1;
       } catch (error) {
         if (error.message === 'unauthorized' || error.offline === true) {
-          pendientes.push(...outbox.slice(index));
+          /*
+           * EL RITMO DE LOS REINTENTOS LO LLEVA EL MOTOR, NO LA OPERACIÓN.
+           * Se conserva la cola ENTERA y en orden; el motor decide cuándo volver
+           * a intentarlo (2, 4, 8, 15, 30 y 60 s) y lo reinicia al volver la red.
+           */
+          pendientes.push(...outbox.slice(index).map((row, i) => (i === 0 ? { ...row, tries: (row.tries || 0) + 1 } : row)));
+          motivoFallo = error.message === 'unauthorized' ? 'La sesión caducó: vuelve a entrar para enviarlo.' : 'Sin conexión con el servidor';
           break;
         }
         descartados.push({ ...entry, motivo: error.body?.message ?? 'El CRM lo rechazó' });
@@ -1148,7 +1178,7 @@
     const added=readOutbox().filter(e=>!oldKeys.has(e.operationId||String(e.at)+e.key));
     writeOutbox([...pendientes,...added]);
     if (descartados.length) addOutboxProblems(descartados);
-    const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, messages: descartados.map((row) => row.motivo) };
+    const resumen = { sent: enviados, pending: pendientes.length, dropped: descartados.length, error: motivoFallo, messages: descartados.map((row) => row.motivo) };
     if (!silent) {
       if (enviados && !descartados.length) toast(`${enviados} cambio(s) enviados`);
       else if (descartados.length) toast(descartados[0].motivo);
@@ -1187,7 +1217,7 @@
     }
   }
 
-  window.FulltechLegacyOffline={synchronize:()=>flushOutbox({silent:true})};
+  window.FullTECHLegacyOffline={synchronize:()=>flushOutbox({silent:true})};
 
   /** Etiqueta legible de lo que está esperando (para el aviso de la pantalla). */
   function outboxSummary() {
@@ -1827,7 +1857,7 @@
      *
      * Antes solo se repintaba al guardar el perfil o cuando la sección
      * «usuario» era la activa; tras recargar la PWA el menú seguía enseñando el
-     * texto fijo del HTML («FullTECH, SRL · CRM») en vez de la persona y su rol.
+     * texto fijo del HTML («FullTECH · CRM») en vez de la persona y su rol.
      * Es idempotente: solo escribe nombre, rol, iniciales y visibilidad.
      */
     renderCurrentUser();
@@ -2045,11 +2075,29 @@
     const pending = Object.entries(readNotificationStorage(NOTICE_PENDING_KEY, {}, owner));
     for (let offset = 0; offset < pending.length && stillOwner(); offset += 500) {
       const batch = Object.fromEntries(pending.slice(offset, offset + 500));
-      const result = await api('/api/admin/notification-dismissals', { method: 'POST', body: JSON.stringify({ dismissed: batch }) });
+      /*
+       * LOS DESCARTES VIEJOS SE TRADUCEN ANTES DE ENVIARLOS.
+       *
+       * Una versión anterior guardaba claves como `wa-failed:2`, que el servidor
+       * no acepta: el lote ENTERO se rechazaba con `invalid_dismissals` y no
+       * llegaba ni el descarte viejo ni los nuevos, para siempre.
+       * `sanearDismissals` las traduce (`wa-failed:2` → `wa-failed` con valor 2)
+       * y descarta únicamente las que ya no significan nada.
+       */
+      const limpias = window.FullTECHOffline?.sanearDismissals
+        ? window.FullTECHOffline.sanearDismissals(batch).limpio
+        : batch;
+      const result = Object.keys(limpias).length
+        ? await api('/api/admin/notification-dismissals', { method: 'POST', body: JSON.stringify({ dismissed: limpias }) })
+        : { dismissed: {} };
       const latest = readNotificationStorage(NOTICE_PENDING_KEY, {}, owner);
-      for (const [key, value] of Object.entries(batch)) if (latest[key] === value) delete latest[key];
+      for (const [key, value] of Object.entries(batch)) {
+        // Una clave que no se puede enviar se retira: reintentarla es el mismo rechazo eterno.
+        if (!(key in limpias)) { delete latest[key]; continue; }
+        if (JSON.stringify(latest[key]) === JSON.stringify(value)) delete latest[key];
+      }
       writeNotificationStorage(NOTICE_PENDING_KEY, latest, owner);
-      writeNotificationStorage(NOTICE_DISMISSED_KEY, mergeNotificationDismissals(readNotificationStorage(NOTICE_DISMISSED_KEY, {}, owner), result.dismissed ?? batch), owner);
+      writeNotificationStorage(NOTICE_DISMISSED_KEY, mergeNotificationDismissals(readNotificationStorage(NOTICE_DISMISSED_KEY, {}, owner), result.dismissed ?? limpias), owner);
     }
   }
 
@@ -2157,7 +2205,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div><button class="pos-swipe-close" data-billing-close type="button" aria-label="Cerrar facturación" title="Cerrar">${ICONS.close}</button>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -2174,7 +2222,32 @@
     }
     if (state.tab === 'ajustes') {
       const page = SETTINGS_PAGES.find((entry) => entry.key === settingsPage);
-      box.innerHTML = `<div class="wa-appbar settings-appbar"><button class="wa-appbar__back" ${page ? 'data-settings-back' : 'data-simple-back'} type="button" aria-label="${page ? 'Volver a Configuración' : 'Regresar'}">${ICONS.back}</button><div class="wa-appbar__title"><h2 class="settings-mobile-title" tabindex="-1">${escapeHtml(page?.title || 'Configuración')}</h2></div></div>`;
+      box.innerHTML = `<div class="wa-appbar settings-appbar"><button class="wa-appbar__back" ${page ? 'data-settings-back' : 'data-simple-back'} type="button" aria-label="${page ? 'Volver a Configuración' : 'Regresar'}">${ICONS.back}</button><div class="wa-appbar__title"><h2 class="settings-mobile-title" tabindex="-1">${escapeHtml(page?.title || 'Configuración')}</h2></div>${!page ? `<button class="settings-profile-trigger" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil">${ICONS.person}</button>` : ''}</div>`;
+      return;
+    }
+    if (state.tab === 'cierre' || state.tab === 'historial-cierres') {
+      const day = state.closeDay ?? todayISO();
+      const isTodayClose = state.tab === 'cierre' && day === todayISO();
+      const title = state.tab === 'historial-cierres'
+        ? 'Historial de cierres'
+        : isTodayClose
+          ? 'Cierre actual'
+          : `Cierre del ${fmtShortDay(day)}`;
+      const canManualClose = businessClockMinutes() >= 18 * 60;
+      const autoClosed = businessClockMinutes() >= 21 * 60;
+      const backButton = state.tab === 'cierre' && !isTodayClose
+        ? `<button class="simple-head__back" data-close-back type="button" aria-label="Volver al historial">${ICONS.back}</button>`
+        : `<button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>`;
+      const actions = state.tab === 'historial-cierres'
+        ? `<button class="simple-head__action close-history-filter-toggle" data-close-filter-toggle type="button" aria-label="Filtrar historial" aria-controls="close-history-filter" aria-expanded="false">${ICONS.filter}</button>`
+        : isTodayClose
+          ? `<button class="simple-head__action close-cut-action" data-daily-close-now type="button" ${canManualClose ? '' : 'disabled aria-disabled="true"'} title="${canManualClose ? (autoClosed ? 'Ver el corte final del día' : 'Calcular el corte de hoy') : 'Disponible desde las 6:00 p. m.'}"><span>${autoClosed ? 'Ver corte final' : 'Hacer corte'}</span></button>`
+          : '';
+      box.innerHTML = `<div class="simple-head simple-head--close">
+        ${backButton}
+        <strong>${escapeHtml(title)}</strong>
+        ${actions ? `<div class="simple-head__actions">${actions}</div>` : ''}
+      </div>`;
       return;
     }
     if (state.tab === 'hoy') {
@@ -2185,7 +2258,7 @@
           <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="dashboard-head__title">
-          <strong>FullTECH, SRL</strong>
+          <strong>FullTECH</strong>
           <span>CRM</span>
         </div>
         <div class="dashboard-head__actions">
@@ -2293,26 +2366,9 @@
       </div>`;
       return;
     }
-    /*
-     * EL CIERRE DIARIO Y SU HISTORIAL SON DOS CARAS DE LO MISMO. En la barra de
-     * arriba va el atajo para pasar de uno a otro sin dar la vuelta por el menú:
-     * desde el cierre de hoy al historial, y del historial al cierre de hoy.
-     */
-    const cierreAtajos = [];
-    if (state.tab === 'cierre' && canUseDailyClose()) {
-      cierreAtajos.push(
-        `<button class="simple-head__action" data-close-history-go type="button" aria-label="Ver el historial de cierres">${ICONS.calendar}<span>Historial</span></button>`,
-      );
-    }
-    if (state.tab === 'historial-cierres' && canUseDailyClose()) {
-      cierreAtajos.push(
-        `<button class="simple-head__action" data-close-today-go type="button" aria-label="Ver el cierre de hoy">${ICONS.checkCircle}<span>Cierre de hoy</span></button>`,
-      );
-    }
     box.innerHTML = `<div class="simple-head">
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
       <strong>${escapeHtml(currentViewTitle())}</strong>
-      ${cierreAtajos.length ? `<div class="simple-head__actions">${cierreAtajos.join('')}</div>` : ''}
     </div>`;
   }
 
@@ -3137,7 +3193,14 @@
     const online = navigator.onLine !== false && state.online !== false;
     if (!online) return { tone: 'offline', text: 'Sin conexión: los chats guardados siguen disponibles y los mensajes nuevos llegan al reconectar.' };
     const wa = state.whatsapp ?? null;
-    if (!wa) return { tone: 'unknown', text: 'No se pudo verificar la conexión con WhatsApp. Los chats guardados siguen disponibles.' };
+    /*
+     * SIN DATO FRESCO NO SE HABLA DE «NO SE PUDO VERIFICAR».
+     *
+     * Si el panel está pintando una copia guardada de antes de que existiera el
+     * estado de WhatsApp, `state.whatsapp` es `null`: eso NO significa que Meta
+     * falle. Se dice qué pasa de verdad y qué hacer.
+     */
+    if (!wa) return { tone: 'sin-datos', text: 'El panel está mostrando una copia guardada y todavía no tiene el estado de WhatsApp. Conéctate y pulsa «Sincronizar» para comprobarlo; los chats guardados siguen disponibles.' };
     if (wa.mode === 'mock') return { tone: 'mock', text: 'WhatsApp en modo local (pruebas): los mensajes no salen a Meta.' };
     const reason = String(wa.reason ?? '');
     if (wa.send === 'ok') {
@@ -3512,7 +3575,7 @@
     }
     const approved = (state.templates ?? []).filter(waTemplateApproved);
     /*
-     * La campaña sale con la presentación de FullTECH, SRL cuando Meta la ha aprobado;
+     * La campaña sale con la presentación de FullTECH cuando Meta la ha aprobado;
      * mientras no, se usa la plantilla personalizada de siempre.
      */
     const personal = waCampaignTemplate() ?? waPersonalTemplate();
@@ -5462,11 +5525,129 @@
       pushUnavailableReason()
         ? `<p class="notice-hint">${escapeHtml(pushUnavailableReason())}</p>`
         : resultado
-        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → FullTECH, SRL en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
+        ? '<p class="notice-hint">Salen dos avisos: uno lo manda el servidor y otro lo muestra este teléfono. Si dice «enviado» y no ves el del servidor, revisa Ajustes → Notificaciones → FullTECH en iPhone: activa Pantalla bloqueada, Centro de notificaciones y Tiras. El número del icono se actualiza por separado y no confirma la recepción push. Revisa los modos de concentración y el resumen programado; en Android revisa los permisos del navegador y el ahorro de batería. Que el servicio acepte el envío no confirma su recepción.</p>'
         : iphonePushDevice()
-          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → FullTECH, SRL activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
+          ? '<p class="notice-hint">¿Solo ves el número en el icono? Ese contador se actualiza por separado y no confirma que llegue el aviso push. En Ajustes → Notificaciones → FullTECH activa Pantalla bloqueada, Centro de notificaciones y Tiras. Revisa también Concentración y Resumen programado. Luego pulsa Probar notificación y comprueba los avisos local y remoto.</p>'
           : '<p class="notice-hint">Activa este teléfono y luego usa la prueba para confirmar que el aviso llega al dispositivo.</p>'
       }`;
+  }
+
+  const nativePrinterRequests = new Map();
+  let nativePrinterRequestSeq = 0;
+
+  function nativePrinterAvailable() {
+    return Boolean(window.PhytoDeviceBridge && typeof window.PhytoDeviceBridge.postMessage === 'function');
+  }
+
+  window.addEventListener('phyto-device-response', (event) => {
+    const detail = event.detail ?? {};
+    const id = detail.id;
+    const pending = nativePrinterRequests.get(id);
+    if (!pending) return;
+    nativePrinterRequests.delete(id);
+    clearTimeout(pending.timer);
+    if (detail.ok) pending.resolve(detail.data ?? {});
+    else {
+      const error = new Error(detail.error?.message || 'No se pudo completar la acción nativa.');
+      error.code = detail.error?.code;
+      pending.reject(error);
+    }
+  });
+
+  function nativePrinterRequest(action, payload = {}) {
+    if (!nativePrinterAvailable()) {
+      return Promise.reject(new Error('Para impresión Bluetooth automática, utiliza la aplicación FullTECH para Android.'));
+    }
+    const id = `printer-${Date.now()}-${++nativePrinterRequestSeq}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        nativePrinterRequests.delete(id);
+        reject(new Error('La impresora no respondió a tiempo.'));
+      }, 15000);
+      nativePrinterRequests.set(id, { resolve, reject, timer });
+      window.PhytoDeviceBridge.postMessage(JSON.stringify({ id, scope: 'printer', action, payload }));
+    });
+  }
+
+  function printerConfigHtml() {
+    const status = state.nativePrinter?.status ?? null;
+    const result = state.nativePrinter?.result ?? '';
+    if (!nativePrinterAvailable()) {
+      return `<article class="printer-settings printer-settings--browser">
+        <div class="printer-settings__hero">
+          <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
+          <div>
+            <strong>Impresora térmica</strong>
+            <p>Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH para Android.</p>
+          </div>
+        </div>
+        <dl class="facts printer-settings__facts">
+          <div class="fact"><dt>Estado</dt><dd>Usando el CRM desde el navegador</dd></div>
+          <div class="fact"><dt>Impresión Bluetooth</dt><dd>Disponible en la app Android</dd></div>
+          <div class="fact"><dt>Nombre de la app</dt><dd>FullTECH</dd></div>
+        </dl>
+        <div class="item__actions printer-settings__actions">
+          <a class="btn btn--primary" href="/api/admin/android-apk/download">Descargar app para Android</a>
+        </div>
+        <div class="printer-settings__guide">
+          <strong>Cómo instalar y probar la impresora</strong>
+          <ol>
+            <li>Desde el teléfono Android, toca <strong>Descargar app para Android</strong>.</li>
+            <li>Cuando termine la descarga, abre el archivo y toca <strong>Instalar</strong>.</li>
+            <li>Si el teléfono pide permiso para instalar, toca <strong>Permitir</strong> y vuelve a abrir el archivo descargado.</li>
+            <li>Abre la app <strong>FullTECH</strong> e inicia sesión en el CRM.</li>
+            <li>Entra a <strong>Configuración → Impresora</strong> y toca <strong>Seleccionar impresora</strong>.</li>
+            <li>Elige tu impresora térmica Bluetooth. Si no aparece, primero vincúlala en los ajustes Bluetooth del teléfono.</li>
+            <li>Toca <strong>Imprimir prueba</strong>. Si sale bien, ya puedes imprimir facturas desde los pedidos.</li>
+          </ol>
+        </div>
+        <p class="notice-hint">Android puede mostrar avisos de seguridad antes de instalar. Es normal: confirma la instalación solo si el archivo viene desde este botón del CRM.</p>
+      </article>`;
+    }
+    const bluetooth = status?.bluetoothLabel ?? 'Revisando…';
+    const device = status?.defaultDevice?.name || 'Sin impresora seleccionada';
+    const paper = status?.paperWidthLabel ?? '58 mm';
+    const profile = status?.profileLabel ?? 'Generic ESC/POS';
+    const autoPrint = status?.autoPrint ? 'ON' : 'OFF';
+    return `<article class="printer-settings">
+      <div class="printer-settings__hero">
+        <span class="printer-settings__icon" aria-hidden="true">${ICONS.box}</span>
+        <div>
+          <strong>Impresora térmica</strong>
+          <p>Bluetooth: ${escapeHtml(bluetooth)}</p>
+        </div>
+      </div>
+      <dl class="facts printer-settings__facts">
+        <div class="fact"><dt>Bluetooth</dt><dd>${escapeHtml(bluetooth)}</dd></div>
+        <div class="fact"><dt>Impresora predeterminada</dt><dd>${escapeHtml(device)}</dd></div>
+        <div class="fact"><dt>Tamaño</dt><dd>${escapeHtml(paper)}</dd></div>
+        <div class="fact"><dt>Perfil</dt><dd>${escapeHtml(profile)}</dd></div>
+        <div class="fact"><dt>Impresión automática</dt><dd>${escapeHtml(autoPrint)}</dd></div>
+      </dl>
+      ${result ? `<p class="notice-hint printer-settings__result">${escapeHtml(result)}</p>` : ''}
+      <div class="item__actions printer-settings__actions">
+        <button class="btn btn--primary" data-native-printer="configure" type="button">Seleccionar impresora</button>
+        <button class="btn btn--ghost" data-native-printer="test" type="button">Imprimir prueba</button>
+      </div>
+    </article>`;
+  }
+
+  async function refreshNativePrinterStatus() {
+    state.nativePrinter.available = nativePrinterAvailable();
+    if (!state.nativePrinter.available) {
+      state.nativePrinter.status = null;
+      $('#printer-config') && ($('#printer-config').innerHTML = printerConfigHtml());
+      return;
+    }
+    state.nativePrinter.loading = true;
+    try {
+      state.nativePrinter.status = await nativePrinterRequest('printerStatus');
+    } catch (error) {
+      state.nativePrinter.result = error.message || 'No se pudo leer la impresora.';
+    } finally {
+      state.nativePrinter.loading = false;
+      $('#printer-config') && ($('#printer-config').innerHTML = printerConfigHtml());
+    }
   }
 
   function openNotificationsSheet() {
@@ -7495,17 +7676,6 @@
     const box = $('#daily-close-view');
     if (!box) return;
     /*
-     * VARIOS DÍAS: la misma pantalla, pero con un solo cuadro que suma todo el
-     * tramo elegido (ventas, efectivo, transferencia, lo que se gana el delivery
-     * y el cuadre), el desglose por repartidor y la lista de cada día (que se
-     * puede abrir como siempre).
-     */
-    if (state.closeScope === 'rango') {
-      const { from, to } = closePeriodRange();
-      box.innerHTML = closeScopeChipsHtml() + closePeriodHtml(from, to);
-      return;
-    }
-    /*
      * EL CIERRE SE PUEDE MIRAR EN CUALQUIER DÍA. Desde el historial se abre el
      * cierre de un día pasado con la MISMA pantalla (`state.closeDay`); si es
      * hoy, la cabecera ofrece el cierre manual como siempre.
@@ -7517,32 +7687,8 @@
     const net = model.totals.cashHeldByDelivery - deliveryEarnings;
     const minutesNow = businessClockMinutes();
     const canManualClose = minutesNow >= 18 * 60;
-    const autoClosed = minutesNow >= 21 * 60;
     const deliveryRows = [...model.byDelivery.values()];
-    const scopeLabel = model.ownClose ? 'Tus entregas' : 'Todo el equipo';
-    const closeStatus = esHoy
-      ? autoClosed
-        ? 'cerrado automático'
-        : canManualClose
-          ? 'listo para cierre manual'
-          : 'vista previa'
-      : 'cierre ya hecho';
-    box.innerHTML = closeScopeChipsHtml() + `
-      <div class="daily-close__head">
-        <span>
-          <strong>${esHoy ? 'Cierre de hoy' : `Cierre del ${escapeHtml(fmtShortDay(day))}`}</strong>
-          <small>${escapeHtml(scopeLabel)} · ${escapeHtml(fmtDay(day))} · ${
-            esHoy ? 'desde las 6:00 p.m. puedes cerrarlo; a las 9:00 p.m. queda automático' : 'día ya cerrado'
-          } · ${escapeHtml(closeStatus)}</small>
-        </span>
-        ${
-          esHoy
-            ? `<button class="btn btn--primary btn--sm" data-daily-close-now type="button" ${canManualClose ? '' : 'disabled aria-disabled="true"'}>${
-                autoClosed ? 'Ver cierre final' : 'Hacer cierre ahora'
-              }</button>`
-            : '<button class="btn btn--ghost btn--sm" data-close-back type="button">Volver al historial</button>'
-        }
-      </div>
+    box.innerHTML = `
       <div class="daily-close__grid">
         <div><span>Ventas del día</span><strong>${model.orders.length}</strong><small>${money(model.totals.sales)}</small></div>
         <div><span>Efectivo en mano</span><strong>${money(model.totals.cashHeldByDelivery)}</strong><small>Lo tiene el delivery</small></div>
@@ -7551,9 +7697,9 @@
         <div><span>Descuentos</span><strong>${money(model.totals.discount)}</strong><small>Rebaja aplicada</small></div>
         <div><span>Cuadre</span><strong>${escapeHtml(net === 0 ? 'Listo' : net > 0 ? 'Entrega' : 'Recibe')}</strong><small>${escapeHtml(settlementLabel(net))}</small></div>
       </div>
-      <section class="daily-close__settlement">
+      <section class="daily-close__settlement" aria-label="Cuadre del día">
         <strong>${escapeHtml(settlementLabel(net))}</strong>
-        <small>Cuadre claro: efectivo en mano ${money(model.totals.cashHeldByDelivery)} menos ganancia del delivery ${money(deliveryEarnings)}.</small>
+        <small>Efectivo ${money(model.totals.cashHeldByDelivery)} · Ganancia del delivery ${money(deliveryEarnings)}</small>
       </section>
       <section class="daily-close__block daily-close__block--green">
         <h3>Ganancia del delivery</h3>
@@ -7563,8 +7709,9 @@
           <span><small>Total que se gana</small><strong>${money(deliveryEarnings)}</strong></span>
         </div>
       </section>
-      <section class="daily-close__block">
-        <h3>${model.ownClose ? 'Tu cuadre' : 'Por delivery'}</h3>
+      <details class="daily-close__details">
+        <summary>${model.ownClose ? 'Tu cuadre' : `Por delivery · ${deliveryRows.length}`}</summary>
+        <div class="daily-close__detail-body">
         ${
           deliveryRows.length
             ? deliveryRows
@@ -7579,9 +7726,11 @@
                 .join('')
             : '<p class="view__hint">No hay entregas con mensajero en este día.</p>'
         }
-      </section>
-      <section class="daily-close__block">
-        <h3>Ventas del día</h3>
+        </div>
+      </details>
+      <details class="daily-close__details">
+        <summary>Ventas del día · ${model.orders.length}</summary>
+        <div class="daily-close__detail-body">
         ${
           model.orders.length
             ? model.orders
@@ -7596,7 +7745,8 @@
                 .join('')
             : '<p class="view__hint">Todavía no hay ventas entregadas hoy.</p>'
         }
-      </section>`;
+        </div>
+      </details>`;
   }
 
   /*
@@ -7660,14 +7810,7 @@
     return closeRangeData(from, to);
   }
 
-  /**
-   * LOS NÚMEROS DE UN TRAMO DE DÍAS.
-   *
-   * Los usan las dos pantallas que miran varios días: el historial de cierres y
-   * el resumen de «Cierre diario». Se suman de los MISMOS modelos que el cierre de
-   * un día (`dailyCloseModel`), así que no hay dos verdades: lo que dice el resumen
-   * es exactamente lo que dicen los días, sumado.
-   */
+  /** LOS NÚMEROS DE UN TRAMO: el historial suma los mismos modelos diarios. */
   function closeRangeData(from, to) {
     const conVentas = closeHistoryDaysWithSales(from, to);
     const cierres = closeHistoryDays(from, to)
@@ -7734,21 +7877,12 @@
   function closeHistoryRowHtml(day, model) {
     const ganancia = model.totals.deliveryFee + model.totals.commissions;
     const cuadre = model.totals.cashHeldByDelivery - ganancia;
-    return `<article class="close-history" data-close-history-day="${escapeHtml(day)}">
-        <div class="close-history__top">
-          <div>
-            <p class="close-history__day">${escapeHtml(fmtDay(day))}</p>
-            <span class="close-history__meta">${model.orders.length} venta${model.orders.length === 1 ? '' : 's'} · efectivo ${money(
-              model.totals.cash,
-            )} · transferencia ${money(model.totals.transfer)}</span>
-          </div>
-          <strong class="close-history__total">${money(model.totals.sales)}</strong>
-        </div>
-        <div class="close-history__foot">
-          <span>El delivery se gana ${money(ganancia)}</span>
-          <span>${escapeHtml(settlementLabel(cuadre))}</span>
-        </div>
-      </article>`;
+    return `<button class="close-history" data-close-history-day="${escapeHtml(day)}" type="button" aria-label="Ver cierre del ${escapeHtml(fmtDay(day))}">
+      <span class="close-history__day">${escapeHtml(fmtDay(day))}</span>
+      <span class="close-history__total">${money(model.totals.sales)}</span>
+      <span class="close-history__meta">${model.orders.length} venta${model.orders.length === 1 ? '' : 's'} · ${escapeHtml(settlementLabel(cuadre))}</span>
+      <span class="close-history__open" aria-hidden="true">›</span>
+    </button>`;
   }
 
   function renderCloseHistory() {
@@ -7766,25 +7900,22 @@
       chip.setAttribute('aria-pressed', String(chip.dataset.closeHistoryPeriod === state.closeHistoryPeriod)),
     );
     const { from, to, cierres, total } = closeHistoryData();
-    const scopeLabel = hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas';
     box.innerHTML = `
-      <p class="close-history__note" id="close-history-note">Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(
-        fmtShortDay(to),
-      )} · ${escapeHtml(scopeLabel)}</p>
-      <div class="card">
-        <p class="card__title">En el intervalo</p>
-        <dl class="facts">
-          <div class="fact"><dt>Días con cierre</dt><dd>${total.days}</dd></div>
-          <div class="fact"><dt>Ventas entregadas</dt><dd>${total.orders}</dd></div>
-          <div class="fact"><dt>Total vendido</dt><dd>${money(total.sales)}</dd></div>
-          <div class="fact"><dt>Efectivo en mano (del delivery)</dt><dd>${money(total.cashHeldByDelivery)}</dd></div>
-          <div class="fact"><dt>Transferencia</dt><dd>${money(total.transfer)}</dd></div>
-          <div class="fact"><dt>Ganancia del delivery</dt><dd>${money(total.deliveryEarnings)}</dd></div>
-          <div class="fact"><dt>Descuentos</dt><dd>${money(total.discount)}</dd></div>
-          <div class="fact"><dt>Sin delivery</dt><dd>${total.noDelivery}</dd></div>
-          <div class="fact"><dt>Cuadre del intervalo</dt><dd>${escapeHtml(settlementLabel(total.net))}</dd></div>
+      <p class="close-history__note" id="close-history-note">${total.days} cierre${total.days === 1 ? '' : 's'} · ${total.orders} venta${total.orders === 1 ? '' : 's'} · ${money(total.sales)} · Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(fmtShortDay(to))} · ${hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas'}</p>
+      <section class="close-history-summary" id="close-history-summary" aria-label="Resumen del intervalo">
+        <h3 class="close-history-summary__title">Resumen del intervalo</h3>
+        <dl class="close-history-summary__grid">
+          <div><dt>Días con cierre</dt><dd>${total.days}</dd></div>
+          <div><dt>Ventas entregadas</dt><dd>${total.orders}</dd></div>
+          <div><dt>Total vendido</dt><dd>${money(total.sales)}</dd></div>
+          <div><dt>Efectivo en mano</dt><dd>${money(total.cashHeldByDelivery)}</dd></div>
+          <div><dt>Transferencia</dt><dd>${money(total.transfer)}</dd></div>
+          <div><dt>Ganancia del delivery</dt><dd>${money(total.deliveryEarnings)}</dd></div>
+          <div><dt>Descuentos</dt><dd>${money(total.discount)}</dd></div>
+          <div><dt>Sin delivery</dt><dd>${total.noDelivery}</dd></div>
+          <div class="close-history-summary__settlement"><dt>Cuadre del intervalo</dt><dd>${escapeHtml(settlementLabel(total.net))}</dd></div>
         </dl>
-      </div>
+      </section>
       ${
         cierres.length
           ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
@@ -7801,119 +7932,9 @@
    * El resumen se pidió expresamente: «si elijo dos o más, quiero un resumen de
    * todo eso para saber exactamente cómo va todo».
    */
-  function closeScopeChipsHtml() {
-    const enTramo = state.closeScope === 'rango';
-    return `<div class="chips close-scope" id="close-scope">
-      <button class="chip" data-close-scope="dia" type="button" aria-pressed="${enTramo ? 'false' : 'true'}">Un día</button>
-      <button class="chip" data-close-scope="rango" type="button" aria-pressed="${enTramo ? 'true' : 'false'}">Varios días</button>
-      <button class="chip" data-close-scope="historial" type="button" aria-pressed="false">Historial</button>
-    </div>`;
-  }
-
-  /** El tramo de días del cierre (o los últimos 7 días si todavía no se eligió). */
-  const closePeriodRange = () => {
-    const rango = state.closeRange ?? {};
-    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.from ?? '')) ? String(rango.from) : null;
-    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(rango.to ?? '')) ? String(rango.to) : null;
-    if (!desde || !hasta) return { from: addDaysISO(-6), to: todayISO() };
-    return desde <= hasta ? { from: desde, to: hasta } : { from: hasta, to: desde };
-  };
-
-  /** RESUMEN DE VARIOS DÍAS: un solo cuadro con todo el tramo. */
-  function closePeriodHtml(from, to) {
-    const { cierres, total, byDelivery } = closeRangeData(from, to);
-    const scopeLabel = hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas';
-    const planificados = closeHistoryDays(from, to).length;
-    const repartidores = [...byDelivery.values()].sort((a, b) => b.total - a.total);
-    return `
-      <div class="daily-close__head">
-        <span>
-          <strong>Resumen de varios días</strong>
-          <small>${escapeHtml(scopeLabel)} · del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(
-            fmtShortDay(to),
-          )} · ${planificados} día${planificados === 1 ? '' : 's'} mirado${planificados === 1 ? '' : 's'} · ${total.days} con cierre</small>
-        </span>
-        <button class="btn btn--ghost btn--sm" data-close-period-pick type="button">Cambiar días</button>
-      </div>
-      <div class="daily-close__grid">
-        <div><span>Ventas entregadas</span><strong>${total.orders}</strong><small>${total.days} día${
-          total.days === 1 ? '' : 's'
-        } con cierre</small></div>
-        <div><span>Total vendido</span><strong>${money(total.sales)}</strong><small>Todo lo entregado</small></div>
-        <div><span>Efectivo en mano</span><strong>${money(total.cashHeldByDelivery)}</strong><small>Lo tiene el delivery</small></div>
-        <div><span>Transferencia</span><strong>${money(total.transfer)}</strong><small>Dinero de la empresa</small></div>
-        <div><span>Descuentos</span><strong>${money(total.discount)}</strong><small>Rebaja aplicada</small></div>
-        <div><span>Sin delivery</span><strong>${total.noDelivery}</strong><small>Sin mensajero asignado</small></div>
-      </div>
-      <section class="daily-close__settlement">
-        <strong>${escapeHtml(settlementLabel(total.net))}</strong>
-        <small>Cuadre del tramo: efectivo en mano ${money(total.cashHeldByDelivery)} menos ganancia del delivery ${money(
-          total.deliveryEarnings,
-        )}.</small>
-      </section>
-      <section class="daily-close__block daily-close__block--green">
-        <h3>Ganancia del delivery</h3>
-        <div class="daily-close__totals">
-          <span><small>Delivery cobrado</small><strong>${money(total.deliveryFee)}</strong></span>
-          <span><small>Comisión por frascos</small><strong>${money(total.commissions)}</strong></span>
-          <span><small>Total que se gana</small><strong>${money(total.deliveryEarnings)}</strong></span>
-        </div>
-      </section>
-      <section class="daily-close__block">
-        <h3>Por delivery</h3>
-        ${
-          repartidores.length
-            ? repartidores
-                .map((row) => {
-                  const gana = row.deliveryFee + row.commissions;
-                  return `<article class="daily-close__delivery">
-                    <strong>${escapeHtml(row.name)}</strong>
-                    <span>${row.orders} entrega${row.orders === 1 ? '' : 's'} · efectivo ${money(row.cash)} · transferencia ${money(
-                      row.transfer,
-                    )}</span>
-                    <small>Ganancia ${money(gana)} · ${escapeHtml(settlementLabel(row.cash - gana))}</small>
-                  </article>`;
-                })
-                .join('')
-            : '<p class="view__hint">No hay entregas con mensajero en estos días.</p>'
-        }
-      </section>
-      <section class="daily-close__block">
-        <h3>Por día</h3>
-        ${
-          cierres.length
-            ? cierres.map(({ day, model }) => closeHistoryRowHtml(day, model)).join('')
-            : '<p class="view__hint">No hay ventas entregadas en estos días.</p>'
-        }
-      </section>`;
-  }
-
-  function openClosePeriodRangeSheet() {
-    const rango = closePeriodRange();
-    openRangeSheet({
-      title: 'Varios días',
-      hint: 'Elige <strong>desde</strong> y <strong>hasta</strong>: el resumen suma las ventas entregadas de esos días (los dos incluidos). Si eliges el mismo día, se abre el cierre de ese día.',
-      from: rango.from,
-      to: rango.to,
-      prefix: 'close-period',
-      onApply: (elegido) => {
-        if (elegido.from === elegido.to) {
-          state.closeScope = 'dia';
-          state.closeDay = elegido.from === todayISO() ? null : elegido.from;
-        } else {
-          state.closeScope = 'rango';
-          state.closeRange = elegido;
-          state.closeDay = null;
-        }
-        renderDailyClose();
-      },
-    });
-  }
-
   /** Abre el cierre de un día concreto (la MISMA pantalla que el cierre de hoy). */
   function openCloseHistoryDay(day) {
     if (!day) return;
-    state.closeScope = 'dia';
     state.closeDay = day === todayISO() ? null : day;
     setTab('cierre');
     renderDailyClose();
@@ -8143,6 +8164,7 @@
     { key: 'datos', title: 'Datos del negocio', detail: 'Registros, clientes y sincronización', icon: 'inventory', group: 'Información y datos', admin: true, cards: ['config-datos'] },
     { key: 'exportar', title: 'Exportar datos', detail: 'Descargar contactos y pedidos', icon: 'doc', group: 'Información y datos', admin: true, cards: ['config-exportar'] },
   ];
+  const SETTINGS_DATA_KEYS = new Set(['datos', 'metricas', 'auditoria', 'exportar', 'multimedia']);
   let settingsPage = '';
   let permissionBusy = '';
   let permissionFeedback = '';
@@ -8194,23 +8216,18 @@
       if (node) node.hidden = !selected?.cards.includes(id);
     }
     window.dispatchEvent(new Event('fulltech:sharing-page'));
-    $('#logout').hidden = Boolean(selected);
-    $('#build-info').hidden = Boolean(selected);
-    const user = state.auth?.user || {};
-    const name = user.display_name || user.username || 'Mi perfil';
-    $('#settings-name').textContent = name;
-    $('#settings-avatar').textContent = name === 'Mi perfil' ? 'P' : name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-    const pages = SETTINGS_PAGES.filter((page) => !page.parent && (!page.admin || isAdmin()));
-    $('#settings-menu').innerHTML = [...new Set(pages.map((page) => page.group))].map((group) => `
-      <section class="settings-group" aria-label="${escapeHtml(group)}">
-        <h3>${escapeHtml(group)}</h3>
-        <ul>${pages.filter((page) => page.group === group).map((page) => `
+    $('#logout').hidden = true;
+    $('#build-info').hidden = true;
+    const pages = SETTINGS_PAGES.filter((page) => !page.parent && !SETTINGS_DATA_KEYS.has(page.key) && (!page.admin || isAdmin()));
+    $('#settings-menu').innerHTML = `
+      <section class="settings-group" aria-label="Opciones de configuración">
+        <ul>${pages.map((page) => `
           <li><a class="settings-row" href="#config/${page.key}" data-settings-open="${page.key}">
             <span class="settings-row__icon" aria-hidden="true">${ICONS[page.icon] || ICONS.gear}</span>
             <span class="settings-row__copy"><strong>${escapeHtml(page.title)}</strong><small>${escapeHtml(page.detail)}</small></span>
             <span class="settings-chevron" aria-hidden="true">›</span>
           </a></li>`).join('')}</ul>
-      </section>`).join('');
+      </section>`;
     renderSettingsPermissions();
   }
 
@@ -8302,7 +8319,7 @@
     renderSettingsPermissions();
     try {
       if (state.devicePermissions?.[key] === 'denied') {
-        permissionFeedback = `Permite ${SETTINGS_PERMISSIONS.find((entry) => entry.key === key).title.toLowerCase()} en los ajustes de este sitio o de FullTECH, SRL en tu teléfono. Después vuelve aquí y pulsa Comprobar permisos.`;
+        permissionFeedback = `Permite ${SETTINGS_PERMISSIONS.find((entry) => entry.key === key).title.toLowerCase()} en los ajustes de este sitio o de FullTECH en tu teléfono. Después vuelve aquí y pulsa Comprobar permisos.`;
       } else if (key === 'notifications') {
         // Se invoca directamente desde el clic para conservar el gesto que exige iOS.
         const enabled = await enableCrmPush();
@@ -8320,7 +8337,7 @@
       }
     } catch (error) {
       permissionFeedback = ['NotAllowedError', 'SecurityError'].includes(error.name)
-        ? 'El teléfono no permitió el acceso. Puedes activarlo en los ajustes de este sitio o de FullTECH, SRL.'
+        ? 'El teléfono no permitió el acceso. Puedes activarlo en los ajustes de este sitio o de FullTECH.'
         : error.name === 'NotFoundError' ? 'No se encontró este dispositivo. Comprueba que está conectado.'
         : 'No se pudo acceder al dispositivo. Comprueba que no lo esté usando otra aplicación.';
     } finally {
@@ -8341,6 +8358,11 @@
     if (!admin) {
       $('#build-info').textContent = `${state.online ? 'en línea' : 'sin conexión'} · Configuración personal`;
       return;
+    }
+    const printerConfig = $('#printer-config');
+    if (printerConfig) {
+      printerConfig.innerHTML = printerConfigHtml();
+      refreshNativePrinterStatus().catch(() => {});
     }
     $('#facts').innerHTML = [
       ['Registros', stats.total ?? state.items.length],
@@ -10225,7 +10247,7 @@
      * LA PRIMERA FILA ES LA QUE ASIGNA: dice quién atiende y al pulsarla se elige
      * responsable (a mí o a otra persona). Antes era un cartel que no hacía nada.
      */
-    const canChooseResponsible = Boolean(currentUser()) && (canTake || isAdmin());
+    const canChooseResponsible = Boolean(currentUser()) && (canTake || canAsk || isAdmin());
     const assignmentRow = canChooseResponsible
       ? `<button class="menu-item" data-conv-assign="${escapeHtml(conversationId)}" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span><span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Asignar a una persona</small></span></button>`
       : `<div class="menu-item menu-item--static"><span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span><span><strong>${escapeHtml(conversationAssignmentLabel(conversation))}</strong><small>Responsable de esta conversación</small></span></div>`;
@@ -10643,6 +10665,7 @@
     const id = escapeHtml(conversationId);
     const customerKey = escapeHtml(customerId);
     const archived = Boolean(row.archived_at);
+    const assignmentMenu = assignmentMenuHtml(row, { conversationId });
     openSheet(customer ? customerName(customer) : waDisplayName(row), `
       <div class="menu-list">
         <p class="menu-list__label">Acciones principales</p>
@@ -10663,10 +10686,8 @@
         <button class="menu-item menu-item--submenu" data-conv-followup-menu="${id}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.clock}</span>
           <span><strong>Seguimiento</strong><small>Tareas y mensajes programados</small></span></button>` : ''}
-        <button class="menu-item menu-item--submenu" data-conv-assign="${id}" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.users}</span>
-          <span><strong>Asignación</strong><small>${escapeHtml(conversationAssignmentLabel(row))}</small></span>
-        </button>
+        <p class="menu-list__label">Asignación</p>
+        ${assignmentMenu}
         <p class="menu-list__label">Organizar conversación</p>
         ${conversationResolutionButton(row.id, row.is_resolved)}
         ${Number(row.unread_count) > 0 ? `<button class="menu-item" data-conv-act="mark_read" data-conv-id="${id}" type="button">
@@ -11052,7 +11073,7 @@
          * texto de WhatsApp no viaja en esa llamada: se escribe al abrir la
          * conversación, y eso sí necesita red.
          */
-        if (!navigator.onLine && window.FulltechOffline) {
+        if (!navigator.onLine && window.FullTECHOffline) {
           const data = await api('/api/admin/pos/customers', {method:'POST',body:JSON.stringify({phone,name})});
           aplicarClienteLocal(data.customer.id, phone, name);
           closeSheet();render();
@@ -11356,7 +11377,7 @@
   }
 
   /**
-   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe FullTECH, SRL.
+   * LA PLANTILLA DE LAS CAMPAÑAS: la que dice que escribe FullTECH.
    *
    * Mientras Meta no la apruebe, no se ofrece y la campaña usa la genérica de
    * siempre (`waPersonalTemplate`): nunca se finge una aprobación. En cuanto esté
@@ -11579,7 +11600,15 @@
         if (cleaned) templateValues[Number(index) + 1] = cleaned;
       }
       const sent = await sendWaMessage({ template: $('#wa-template')?.value || null, templateValues }, event.currentTarget);
-      if (sent) closeSheet();
+      if (sent) {
+        if (state.wa.draft === borrador) {
+          state.wa.draft = '';
+          const composer = $('#wa-text');
+          if (composer) composer.value = '';
+          adjustWaComposer();
+        }
+        closeSheet();
+      }
     });
   }
 
@@ -11845,6 +11874,7 @@
   }
 
   function waComposerHtml({ customer, canSendFreeText, contactState, lastTemplate = null }) {
+    const stateHtml = waContactStateHtml(contactState, customer, lastTemplate);
     const wa = state.whatsapp ?? null;
     /*
      * SE PUEDE ESCRIBIR SI EL ENVÍO FUNCIONA. `canSend` lo resuelve el servidor
@@ -11861,14 +11891,14 @@
      */
     const doubtful = !canSend && (wa === null || wa?.send === 'unknown');
     if (!canSend && !doubtful) {
-      return waNoticeHtml();
+      return stateHtml + waNoticeHtml();
     }
     const aviso = doubtful ? waNoticeHtml() : '';
     if (customer?.do_not_contact) {
-      return '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
+      return stateHtml + '<p class="rule rule--warn">Este cliente pidió no recibir mensajes. Reactívalo solo si te lo pide él.</p>';
     }
     if (!canSendFreeText) {
-      return aviso + waClosedComposerHtml();
+      return stateHtml + aviso + waClosedComposerHtml();
     }
     const puedeGrabar = typeof window.MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
     /*
@@ -11879,7 +11909,7 @@
      * «Enviar plantilla» NO va aquí a la izquierda: esa acción ya está en el menú
      * de acciones del chat (el botón flotante), y repetir el icono solo confundía.
      */
-    return `${aviso}<div class="composer-bar">
+    return `${stateHtml}${aviso}<div class="composer-bar">
         <div class="composer-field">
         <span class="composer-left">
           <button class="composer-btn" id="wa-attach" type="button" aria-label="Adjuntar y compartir"
@@ -11985,6 +12015,8 @@
           avatarBloqueada.dataset.customer = '';
         }
         const accionesBloqueadas = $('#wa-actions');
+        const aiReplyBloqueado = $('#wa-ai-reply');
+        if (aiReplyBloqueado) aiReplyBloqueado.disabled = true;
         if (accionesBloqueadas) {
           accionesBloqueadas.disabled = true;
           accionesBloqueadas.hidden = false;
@@ -12028,6 +12060,8 @@
       }
       // Mientras no hay datos no se puede pedir ninguna acción comercial.
       const actionsLoading = $('#wa-actions');
+      const aiReplyLoading = $('#wa-ai-reply');
+      if (aiReplyLoading) aiReplyLoading.disabled = true;
       if (actionsLoading) {
         actionsLoading.disabled = true;
         actionsLoading.hidden = Boolean(state.wa.deliveryOrderId);
@@ -12069,6 +12103,8 @@
     // El menú de acciones del chat (crear pedido, programar…) es una sola tecla
     // para no llenar el encabezado de botones en el móvil.
     const actions = $('#wa-actions');
+    const aiReply = $('#wa-ai-reply');
+    if (aiReply) { aiReply.disabled = !customer?.id || !conversation?.id; aiReply.hidden = deliveryChatMode; }
     if (actions) {
       actions.dataset.customer = customer?.id ?? '';
       actions.dataset.conversation = conversation?.id ?? '';
@@ -12107,7 +12143,7 @@
 
     const emptyThread =
       contactState === CONTACT_STATE.NEW_CONTACT
-        ? ''
+        ? '<div class="wa-empty"><strong>Todavía no has iniciado una conversación</strong></div>'
         : '';
     const query = String(state.wa.threadQuery ?? '').trim().toLowerCase();
     if (!query) {
@@ -12182,12 +12218,9 @@
          * solo camino para «escribir» y «usar plantilla».
          */
         if (!canSendFreeText) {
-          const draft = waPersonalTemplateDraft(body);
-          if (!draft) {
-            openWaTemplateSheet();
-            return;
-          }
-          sendWaMessage({ template: draft.template.name, templateValues: draft.templateValues, body: draft.preview }, event.currentTarget);
+          // La persona debe revisar la plantilla y sus parámetros antes de
+          // enviarla. Escribir en el compositor nunca constituye confirmación.
+          openWaTemplateSheet();
           return;
         }
         sendWaMessage({ body }, event.currentTarget);
@@ -12608,7 +12641,7 @@
         closeSheet();openSendLocation({conversationId,customerId:customer?.id||null});
       });
       panel.querySelectorAll('[data-sharing-copy]').forEach(button=>button.addEventListener('click',()=>copySharingText(rows[Number(button.dataset.sharingCopy)].number,button)));
-      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>sharingDraft(conversationId,`Cuentas bancarias — FullTECH, SRL\n\n${rows.map(row=>row.message).join('\n\n')}`));
+      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>sharingDraft(conversationId,`Cuentas bancarias — FullTECH\n\n${rows.map(row=>row.message).join('\n\n')}`));
       panel.querySelectorAll('[data-sharing-use]').forEach(button=>button.addEventListener('click',()=>{
         const row=rows[Number(button.dataset.sharingUse)];
         if(kind==='banks') sharingDraft(conversationId,row.message);
@@ -13028,14 +13061,14 @@
   /**
    * CUÁNTOS SEGUNDOS SE PUEDE DESHACER UN MENSAJE ESCRITO A MANO.
    *
-   * Ocho segundos: da tiempo a ver el error delante (un nombre mal escrito, el chat
+   * Cinco segundos: da tiempo a ver el error delante (un nombre mal escrito, el chat
    * equivocado) sin que enviar se sienta lento. Se puede ajustar sin tocar el código
    * con `globalThis.__PHYTO_UNDO_MS` —así lo apagan las pruebas— y con 0 el mensaje
    * sale de inmediato, como antes.
    */
   const waUndoMs = () => {
     const valor = Number(globalThis.__PHYTO_UNDO_MS);
-    return Number.isFinite(valor) && valor >= 0 ? valor : 8000;
+    return Number.isFinite(valor) && valor >= 0 ? valor : 5000;
   };
 
   /**
@@ -19115,6 +19148,9 @@
           label: 'Ver factura',
           data: facturaPdf ? { 'data-receipt-pdf': facturaPdf } : { 'data-receipt-open': orderId },
         },
+        nativePrinterAvailable()
+          ? { icon: ICONS.box, label: 'Imprimir factura', data: { 'data-receipt-print': orderId } }
+          : null,
         {
           icon: ICONS.send,
           label: 'Enviar al cliente',
@@ -19152,6 +19188,23 @@
         isAdmin() && receipt.status !== 'cancelado' ? { icon: ICONS.close, label: 'Cancelar venta', data: { 'data-sale-cancel': orderId } } : null,
         isAdmin() ? { icon: ICONS.trash, label: 'Eliminar pedido', data: { 'data-order-delete': orderId }, danger: true } : null,
       ].filter(Boolean),
+    });
+  }
+
+  async function printReceiptNative(orderId, button = null) {
+    const ctx = state.receiptContext ?? {};
+    const receipt = ctx.orderId === orderId ? ctx.receipt : null;
+    if (!receipt || Object.keys(receipt).length === 0) {
+      toast('Abre la factura antes de imprimirla');
+      return;
+    }
+    await working(button, 'Imprimiendo…', async () => {
+      try {
+        const data = await nativePrinterRequest('printReceipt', receipt);
+        toast(data?.orderNumber ? `Factura ${data.orderNumber} enviada a impresora` : 'Factura enviada a impresora');
+      } catch (error) {
+        toast(error.message || 'No se pudo imprimir la factura');
+      }
     });
   }
 
@@ -20282,7 +20335,7 @@
       const puedeActivar = estadoAvisos === 'prompt';
       rows.push({
         title: 'Activar notificaciones',
-        detail: puedeActivar ? 'Recibe avisos de pedidos, chats y entregas.' : 'Este teléfono tiene las notificaciones apagadas para FullTECH, SRL.',
+        detail: puedeActivar ? 'Recibe avisos de pedidos, chats y entregas.' : 'Este teléfono tiene las notificaciones apagadas para FullTECH.',
         action: 'notifications',
         cta: puedeActivar ? 'Activar' : 'Cómo activarlas',
       });
@@ -20417,12 +20470,17 @@
     if (!silentSyncTimer) {
       silentSyncTimer = setInterval(sincroniaSilenciosaTick, 60000);
     }
+    /*
+     * SIN COMPROBAR `state.online`.
+     *
+     * Ese indicador se queda en falso tras un fallo pasajero (o si el móvil informa
+     * mal) y entonces la sincronización de fondo no se ejecutaba NUNCA hasta pulsar
+     * «Sincronizar». El intento real decide: si no hay red, no pasa nada.
+     */
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && state.online) sincronizarEnSegundoPlano();
+      if (document.visibilityState === 'visible') sincronizarEnSegundoPlano();
     });
-    window.addEventListener('focus', () => {
-      if (state.online) sincronizarEnSegundoPlano();
-    });
+    window.addEventListener('focus', () => sincronizarEnSegundoPlano());
   }
 
   /**
@@ -20430,15 +20488,18 @@
    * SIEMPRE en silencio y SIN recargar la pantalla.
    */
   function sincroniaSilenciosaTick() {
-    if (document.hidden || !state.online) return;
+    if (document.hidden) return;
     sincronizarEnSegundoPlano();
   }
 
-  /** Una sola sincronización a la vez (dos a la vez se pisarían al pintar). */
+  /**
+   * Una sola sincronización a la vez (dos a la vez se pisarían al pintar).
+   */
   function sincronizarEnSegundoPlano() {
     if (syncEnCurso) return syncEnCurso;
     syncEnCurso = (async () => {
-      if (readOutbox().length) await flushOutbox({ silent: true });
+      // El motor único (sync-engine.js) es el único que envía las colas.
+      // Este ciclo solo refresca datos visibles al volver a la aplicación.
       await load({ keepTab: true, silent: true });
     })()
       .catch(() => {})
@@ -20446,6 +20507,46 @@
         syncEnCurso = null;
       });
     return syncEnCurso;
+  }
+
+  /**
+   * EL MOTOR ÚNICO DE ENVÍO.
+   *
+   * `sync-engine.js` decide cuándo se manda (cambio nuevo, volver a la app,
+   * recuperar el foco, evento `online`, aviso del service worker y espera
+   * creciente mientras quede algo). Aquí solo se le dice qué hay pendiente y
+   * cómo se envía: las dos colas del panel.
+   *
+   * Es el único sitio que cuenta lo pendiente, así que el aviso de la pantalla
+   * y lo que de verdad se envía nunca se contradicen.
+   */
+  function iniciarMotorDeSincronizacion() {
+    if (!window.FullTECHSync?.configure) return;
+    window.FullTECHSync.configure({
+      pending: async () => {
+        const cola = Number(await Promise.resolve(window.FullTECHOffline?.pendientes?.()).catch(() => 0)) || 0;
+        return readOutbox().length + cola;
+      },
+      flush: async () => {
+        const legacy = await flushOutbox({ silent: true }).catch((error) => ({
+          sent: 0,
+          pending: readOutbox().length,
+          error: error?.message === 'unauthorized' ? 'La sesión caducó: vuelve a entrar para enviarlo.' : 'Sin conexión con el servidor',
+        }));
+        const cola = await window.FullTECHOffline?.synchronize?.().catch(() => null);
+        const restantes = readOutbox().length + (Number(await Promise.resolve(window.FullTECHOffline?.pendientes?.()).catch(() => 0)) || 0);
+        return {
+          sent: (Number(legacy?.sent) || 0) + (Number(cola?.sent) || 0),
+          pending: restantes,
+          error: cola?.error || legacy?.error || (legacy?.pending ? 'Sin conexión con el servidor' : ''),
+        };
+      },
+      after: (sent) => {
+        // Lo que se pintó como «sin enviar» deja de estarlo: la lista se repinta.
+        if (sent) render();
+      },
+    });
+    window.FullTECHSync.start();
   }
 
   // Solo se confirma tras registrar ESTE navegador; nunca se restaura del snapshot.
@@ -20459,19 +20560,72 @@
 
   function pushUnavailableReason() {
     if (iphonePushDevice() && !(navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches)) {
-      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono FullTECH, SRL. Requiere iOS 16.4 o posterior.';
+      return 'En iPhone: abre el panel en Safari, pulsa Compartir → Añadir a pantalla de inicio y abre el icono FullTECH. Requiere iOS 16.4 o posterior.';
     }
     if (window.isSecureContext === false) return 'Las notificaciones requieren una conexión HTTPS segura.';
     if (!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) {
-      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre FullTECH, SRL desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
+      return iphonePushDevice() ? 'Actualiza a iOS 16.4 o posterior y abre FullTECH desde la pantalla de inicio.' : 'Este navegador no soporta notificaciones push';
     }
     if (Notification.permission === 'denied') {
-      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → FullTECH, SRL y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
+      return iphonePushDevice() ? 'Notificaciones bloqueadas: abre Ajustes → Notificaciones → FullTECH y permite los avisos.' : 'Notificaciones bloqueadas por navegador: permite los avisos en los ajustes del sitio.';
     }
     return '';
   }
 
   let installEvent = null;
+
+  /* ¿Se está mirando el panel COMO APP instalada (no en una pestaña)? */
+  function appInstalada() {
+    try {
+      return (
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches ||
+        window.matchMedia('(display-mode: minimal-ui)').matches ||
+        navigator.standalone === true
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  let botonInstalar = null;
+
+  /**
+   * BOTÓN DISCRETO PARA INSTALAR LA APP.
+   *
+   * Solo aparece cuando de verdad hace falta: se está usando en el navegador
+   * (Chrome) y el sistema ofrece instalarla. Si ya está instalada —o se abre
+   * desde el icono del teléfono— no se muestra nada. En iPhone Safari no existe
+   * el aviso del navegador, así que el botón explica los dos toques manuales.
+   */
+  function actualizarBotonInstalar() {
+    if (!botonInstalar) return;
+    const puede = Boolean(installEvent) || (iphonePushDevice() && !appInstalada());
+    botonInstalar.hidden = appInstalada() || !puede;
+  }
+
+  async function instalarApp() {
+    if (installEvent) {
+      try {
+        installEvent.prompt();
+        const choice = await installEvent.userChoice.catch(() => null);
+        if (choice?.outcome === 'accepted') {
+          toast('Instalada: búscala en tu pantalla de inicio');
+          $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
+        }
+        installEvent = null;
+      } catch {
+        installEvent = null;
+      }
+      actualizarBotonInstalar();
+      return;
+    }
+    if (iphonePushDevice()) {
+      toast('En iPhone: toca Compartir y luego «Añadir a pantalla de inicio»');
+      return;
+    }
+    toast('Abre el menú del navegador y elige «Instalar aplicación»');
+  }
   let swRegistration = null;
 
   function pushPermissionLabel() {
@@ -20618,8 +20772,8 @@
       await registration.showNotification('Prueba en este teléfono', {
         body: 'Si ves este aviso, este teléfono muestra los avisos del CRM.',
         tag: 'phyto-push-test-local',
-        icon: '/admin/fulltech-icon-192.png',
-        badge: '/admin/fulltech-icon-192.png',
+        icon: '/admin/fulltech-icon-192.png?v=3',
+        badge: '/admin/fulltech-icon-192.png?v=3',
         data: { deepLink: '/admin/?v=hoy' },
       });
       return true;
@@ -20721,8 +20875,15 @@
    * que también funciona cuando la copia guardada está desfasada.
    */
   let ultimaRevisionVersion = 0;
+  let recargaPorVersion = 0;
   async function revisarVersionPanel({ forzar = false } = {}) {
-    if (!navigator.onLine) return;
+    /*
+     * TAMPOCO AQUÍ MANDA `navigator.onLine`.
+     *
+     * Si el móvil dice «sin conexión» pero el servidor sí responde, el panel se
+     * quedaba con el código viejo indefinidamente. La petición real decide; si
+     * falla, se reintenta en la vuelta siguiente.
+     */
     if (!forzar && Date.now() - ultimaRevisionVersion < 60000) return;
     ultimaRevisionVersion = Date.now();
     try {
@@ -20738,7 +20899,18 @@
        * la está mirando, el botón «Actualizar» sale AL INSTANTE: no se espera
        * a que pase nada más.
        */
-      if (document.hidden && puedeRecargarSolo()) {
+      /*
+       * SE ACTUALIZA SOLO, TAMBIÉN CON LA PANTALLA DELANTE.
+       *
+       * Antes solo se recargaba con la app en segundo plano; delante, quedaba una
+       * barra «Actualizar» esperando a que alguien la tocara. Así un teléfono
+       * podía seguir días con el panel viejo —y con los fallos ya corregidos— sin
+       * que nadie supiera por qué. Se recarga sola cuando no hay nada a medio
+       * escribir, con un margen de 2 min para no entrar en bucle si el despliegue
+       * está a medias.
+       */
+      if (puedeRecargarSolo() && Date.now() - recargaPorVersion > 120000) {
+        recargaPorVersion = Date.now();
         location.reload();
         return;
       }
@@ -20882,28 +21054,74 @@
     window.addEventListener('online', () => setConnection(true));
     window.addEventListener('offline', () => setConnection(false));
     setConnection(navigator.onLine);
+    /*
+     * LA COLA SE VACÍA SOLA.
+     *
+     * Lo normal es que la mande el motor único (`sync-engine.js`) en cuanto hay
+     * un cambio o una señal de vida. Si por lo que sea el motor no estuviera
+     * cargado, quedan estos disparadores de respaldo: nunca una cola sin dueño.
+     */
+    const vaciarCola = () => {
+      if (window.FullTECHSync) {
+        window.FullTECHSync.kick('senal');
+        return;
+      }
+      if (!readOutbox().length) return;
+      flushOutbox({ silent: true }).catch(() => {});
+    };
+    if (!window.FullTECHSync) setInterval(vaciarCola, 5000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) vaciarCola();
+    });
+    window.addEventListener('focus', vaciarCola);
+    window.addEventListener('online', vaciarCola);
+    window.addEventListener('pageshow', vaciarCola);
+    setTimeout(vaciarCola, 800);
 
     window.addEventListener('beforeinstallprompt', (event) => {
       event.preventDefault();
       installEvent = event;
       $('#install-card').hidden = settingsPage !== 'aplicacion';
       $('#install').hidden = false; // el navegador puede instalarla por nosotros
+      actualizarBotonInstalar();
     });
 
-    $('#install').addEventListener('click', async () => {
-      if (!installEvent) return;
-      installEvent.prompt();
-      const choice = await installEvent.userChoice.catch(() => null);
-      if (choice?.outcome === 'accepted') {
-        $('#install-text').textContent = 'FullTECH, SRL ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
-        toast('Instalada: búscala en tu pantalla de inicio');
-      }
+    /*
+     * EL BOTÓN DEL MENÚ (solo si no está instalada).
+     *
+     * Va en la fila de abajo, junto al aviso de cambios sin enviar y a la salida:
+     * un icono de teléfono con la flecha de descarga, sin texto, para no meter
+     * ruido en el menú de todos los días.
+     */
+    const accionesDrawer = document.querySelector('#drawer .drawer__foot-actions');
+    if (accionesDrawer) {
+      botonInstalar = document.createElement('button');
+      botonInstalar.type = 'button';
+      botonInstalar.className = 'drawer__install';
+      botonInstalar.hidden = true;
+      botonInstalar.setAttribute('aria-label', 'Instalar la app en este teléfono');
+      botonInstalar.title = 'Instalar la app en este teléfono';
+      botonInstalar.innerHTML = '<span class="drawer__icon" aria-hidden="true" data-icon="install"></span>';
+      accionesDrawer.prepend(botonInstalar);
+      paintIcons(botonInstalar);
+      botonInstalar.addEventListener('click', () => instalarApp());
+    }
+    window.addEventListener('appinstalled', () => {
       installEvent = null;
+      $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
+      actualizarBotonInstalar();
     });
+    window.addEventListener('resize', actualizarBotonInstalar);
+
+    /*
+     * El mismo gesto que el botoncito del menú: una sola forma de instalar.
+     */
+    $('#install').addEventListener('click', () => instalarApp());
 
     // Instalada (o en iPhone, que no avisa): solo las instrucciones manuales.
-    if (window.matchMedia('(display-mode: standalone)').matches) $('#install-text').textContent = 'FullTECH, SRL ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
+    if (window.matchMedia('(display-mode: standalone)').matches) $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
     else $('#install').hidden = !installEvent;
+    actualizarBotonInstalar();
   }
 
   // ------------------------------------------------------------------- menú
@@ -21056,7 +21274,7 @@
 
   /** El texto que viaja con el enlace (en el móvil, en el chat o por WhatsApp). */
   function panelShareMessage(url) {
-    return `Panel de trabajo de FullTECH, SRL: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
+    return `Panel de trabajo de FullTECH: ${url}\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`;
   }
 
   /**
@@ -21074,10 +21292,10 @@
    */
   async function shareStoreWeb() {
     const url = `${location.origin}/`;
-    const texto = `Phytoemagry · FullTECH, SRL: ${url}`;
+    const texto = `FullTECH · Phytoemagry: ${url}`;
     try {
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: 'Phytoemagry · FullTECH, SRL', text: texto, url });
+        await navigator.share({ title: 'FullTECH · Phytoemagry', text: texto, url });
         return true;
       }
     } catch (error) {
@@ -21143,7 +21361,7 @@
     const texto = panelShareMessage(url);
     try {
       if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
-        await navigator.share({ title: 'FullTECH, SRL · Panel', text: texto, url });
+        await navigator.share({ title: 'FullTECH · Panel', text: texto, url });
         return true;
       }
     } catch (error) {
@@ -21210,7 +21428,7 @@
     recogidas: 'Recogidas en tiendas',
     tiendas: 'Tiendas proveedoras',
     reportes: 'Reportes',
-    cierre: 'Cierre diario',
+    cierre: 'Cierre actual',
     'historial-cierres': 'Historial de cierres',
     seguimientos: 'Seguimientos',
     mensajes: 'Plantillas',
@@ -21220,6 +21438,7 @@
   };
 
   function setTab(tab, options = {}) {
+    if (tab === 'catalogo' && state.tab !== 'catalogo') window.__billingReturnTab = state.tab;
     if (
       ((tab === 'usuarios' || tab === 'mensajes') && !isAdmin()) ||
       (tab === 'reportes' && !hasPermission('reports.profit.view')) ||
@@ -21529,7 +21748,11 @@
       }
     });
 
-    $$('[data-tab]').forEach((button) => button.addEventListener('click', () => setTab(button.dataset.tab)));
+    $$('[data-tab]').forEach((button) => button.addEventListener('click', () => {
+      if (button.dataset.closeView === 'actual') state.closeDay = null;
+      if (button.dataset.closeView === 'history') state.closeDay = null;
+      setTab(button.dataset.tab);
+    }));
 
     /* «Compartir app»: manda el enlace del panel (sin la clave) a otra persona. */
     $('#drawer-share')?.addEventListener('click', () => {
@@ -21548,6 +21771,8 @@
       closeDrawer();
       shareOnlineStore();
     });
+
+    $('#settings-offline-data')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('fulltech:offline-open')));
 
     $('#search').addEventListener('input', (event) => {
       state.q = event.target.value.trim();
@@ -21683,6 +21908,11 @@
       msgPressFrom = null;
     };
     document.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'touch' && window.matchMedia('(max-width: 700px)').matches && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) {
+        window.__billingSwipeStart = event.clientX >= window.innerWidth - 34
+          ? { x: event.clientX, y: event.clientY }
+          : null;
+      }
       if (event.button !== 0) return;
       if (event.target.closest?.('[data-media-view],[data-audio-play],[data-audio-seek],[data-undo],[data-media-retry]')) return;
       const burbuja = event.target.closest?.('#thread [data-message]');
@@ -21694,6 +21924,27 @@
         msgPressCancel();
         if (id) openMessageActionsMenu(id);
       }, 480);
+    });
+    document.addEventListener('pointerup', (event) => {
+      const start = window.__billingSwipeStart;
+      window.__billingSwipeStart = null;
+      if (!start) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (dx < -78 && Math.abs(dy) < 64 && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) {
+        /*
+         * DENTRO DE UN CHAT el gesto abre las ACCIONES de esa conversación (las
+         * mismas del botón flotante). Fuera del chat se conserva el atajo a
+         * Facturación.
+         */
+        if (state.tab === 'whatsapp' && document.body.dataset.waView === 'chat') {
+          const acciones = document.querySelector('#wa-actions');
+          if (acciones && !acciones.hidden && !acciones.disabled) acciones.click();
+          return;
+        }
+        if (state.tab === 'catalogo') return;
+        setTab('catalogo');
+      }
     });
     document.addEventListener('pointermove', (event) => {
       if (!msgPressFrom) return;
@@ -21711,6 +21962,7 @@
     });
 
     document.addEventListener('click', (event) => {
+      if (event.target.closest('[data-billing-close]')) { const back = window.__billingReturnTab; window.__billingReturnTab = null; setTab(back && back !== 'catalogo' ? back : 'hoy'); return; }
       const settingsLink = event.target.closest('[data-settings-open]');
       const resolution = event.target.closest('[data-conversation-resolution]');
       if (resolution) {
@@ -21929,7 +22181,7 @@
         return;
       }
       if (event.target.closest('[data-dashboard-profile]')) {
-        state.profileReturnToSettings = Boolean(event.target.closest('#settings-home'));
+        state.profileReturnToSettings = state.tab === 'ajustes';
         setTab('perfil');
         return;
       }
@@ -21945,6 +22197,32 @@
       }
       if (event.target.closest('[data-push-test]')) {
         testCrmPush().catch((error) => toast(error.body?.message ?? 'No se pudo probar las notificaciones'));
+        return;
+      }
+      const nativePrinter = event.target.closest('[data-native-printer]');
+      if (nativePrinter) {
+        const action = nativePrinter.dataset.nativePrinter;
+        if (action === 'configure') {
+          nativePrinterRequest('configurePrinter')
+            .then(() => {
+              state.nativePrinter.result = 'Configuración de impresora guardada.';
+              refreshNativePrinterStatus();
+            })
+            .catch((error) => {
+              state.nativePrinter.result = error.message || 'No se pudo configurar la impresora.';
+              refreshNativePrinterStatus();
+            });
+        } else if (action === 'test') {
+          working(nativePrinter, 'Imprimiendo…', async () => {
+            try {
+              await nativePrinterRequest('testPrint');
+              state.nativePrinter.result = 'Prueba enviada correctamente.';
+            } catch (error) {
+              state.nativePrinter.result = error.message || 'No fue posible conectar con la impresora.';
+            }
+            refreshNativePrinterStatus();
+          });
+        }
         return;
       }
       const notificationsDeleteAll = event.target.closest('[data-notifications-delete-all]');
@@ -22243,16 +22521,34 @@
         load({ keepTab: true }).catch(() => {});
         return;
       }
+      const closeHistoryFilter = $('#close-history-filter');
+      if (closeHistoryFilter?.classList.contains('is-open') && !event.target.closest('#close-history-filter, [data-close-filter-toggle]')) {
+        closeHistoryFilter.classList.remove('is-open');
+        $('[data-close-filter-toggle]')?.setAttribute('aria-expanded', 'false');
+      }
+      if (event.target.closest('[data-close-filter-toggle]')) {
+        const abierto = closeHistoryFilter?.classList.toggle('is-open') ?? false;
+        event.target.closest('[data-close-filter-toggle]').setAttribute('aria-expanded', String(abierto));
+        return;
+      }
+      if (event.target.closest('[data-close-filter-close]')) {
+        closeHistoryFilter?.classList.remove('is-open');
+        $('[data-close-filter-toggle]')?.setAttribute('aria-expanded', 'false');
+        return;
+      }
       if (event.target.closest('[data-daily-close-now]')) {
         if (businessClockMinutes() < 18 * 60) {
           toast('Todavía es temprano: el cierre manual se habilita desde las 6:00 p.m.');
           return;
         }
         renderDailyClose();
-        toast('Cierre calculado con las entregas de hoy');
+        toast('Corte calculado con las entregas de hoy');
         return;
       }
-      const closeHistoryChip = event.target.closest('[data-close-history-period]');      if (closeHistoryChip) {
+      const closeHistoryChip = event.target.closest('[data-close-history-period]');
+      if (closeHistoryChip) {
+        closeHistoryFilter?.classList.remove('is-open');
+        $('[data-close-filter-toggle]')?.setAttribute('aria-expanded', 'false');
         if (closeHistoryChip.dataset.closeHistoryPeriod === 'custom') {
           openCloseHistoryRangeSheet();
           return;
@@ -22269,46 +22565,6 @@
       if (event.target.closest('[data-close-back]')) {
         state.closeDay = null;
         setTab('historial-cierres');
-        return;
-      }
-      /* Los atajos de la barra de arriba: cierre de hoy ↔ historial. */
-      if (event.target.closest('[data-close-history-go]')) {
-        state.closeDay = null;
-        setTab('historial-cierres');
-        return;
-      }
-      if (event.target.closest('[data-close-today-go]')) {
-        state.closeScope = 'dia';
-        state.closeDay = null;
-        setTab('cierre');
-        return;
-      }
-      /* «Un día» / «Varios días» / «Historial» dentro del cierre, y cómo elegir el tramo. */
-      const closeScopeChip = event.target.closest('[data-close-scope]');
-      if (closeScopeChip) {
-        if (closeScopeChip.dataset.closeScope === 'historial') {
-          /*
-           * EL HISTORIAL SOLO SE ENTRA DESDE AQUÍ: el menú ya no lo lleva. Sus filtros
-           * (7 días / 30 días / Este mes / Intervalo) viven en esa página.
-           */
-          state.closeScope = 'dia';
-          state.closeDay = null;
-          setTab('historial-cierres');
-          return;
-        }
-        if (closeScopeChip.dataset.closeScope === 'rango') {
-          state.closeScope = 'rango';
-          renderDailyClose();
-          openClosePeriodRangeSheet();
-          return;
-        }
-        state.closeScope = 'dia';
-        state.closeDay = null;
-        renderDailyClose();
-        return;
-      }
-      if (event.target.closest('[data-close-period-pick]')) {
-        openClosePeriodRangeSheet();
         return;
       }
       if (event.target.closest('[data-open-drawer]')) {
@@ -22578,6 +22834,11 @@
         openSendInvoiceSheet(receiptWa.dataset.receiptWa);
         return;
       }
+      const receiptPrint = event.target.closest('[data-receipt-print]');
+      if (receiptPrint) {
+        printReceiptNative(receiptPrint.dataset.receiptPrint, receiptPrint);
+        return;
+      }
       const orderDelivery = event.target.closest('[data-order-delivery]');
       if (orderDelivery) {
         const id = orderDelivery.dataset.orderDelivery;
@@ -22724,7 +22985,7 @@
           closeSheet();
           await load({ keepTab: true });
           renderPedidos();
-          toast(result?.duplicate ? 'Ese cobro ya estaba registrado' : 'Cobro registrado');
+          toast(result?.pending ? 'Cobro guardado en el dispositivo · pendiente de confirmar' : result?.duplicate ? 'Ese cobro ya estaba registrado' : 'Cobro registrado');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo registrar el cobro');
         });
@@ -22743,7 +23004,7 @@
           closeSheet();
           await load({ keepTab: true });
           renderPedidos();
-          toast(result?.duplicate ? 'Esa rendición ya estaba registrada' : 'Rendición registrada');
+          toast(result?.pending ? 'Rendición guardada en el dispositivo · pendiente de confirmar' : result?.duplicate ? 'Esa rendición ya estaba registrada' : 'Rendición registrada');
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo registrar la rendición');
         });
@@ -23539,12 +23800,11 @@
      * clientes o productos que ya no son los del servidor. Esto borra SOLO esa
      * copia y vuelve a pedir todo. No cierra la sesión ni pierde lo pendiente.
      */
-    $('#drawer-sync')?.addEventListener('click', async () => {
-      const boton = $('#drawer-sync');
+    const refreshSavedData = async (boton) => {
       if (!boton || boton.disabled) return;
       boton.disabled = true;
       try {
-        await window.FulltechOffline?.clearCache?.();
+        await window.FullTECHOffline?.clearCache?.();
         datosLocales.intentos = 0;
         await load({ keepTab: true });
         // La versión a la vista: sirve para saber si un aparato quedó atrasado.
@@ -23557,7 +23817,10 @@
       } finally {
         boton.disabled = false;
       }
-    });
+    };
+    $('#settings-refresh-data')?.addEventListener('click', (event) => refreshSavedData(event.currentTarget));
+    // El menú lateral conserva la misma acción («menú → Sistema»).
+    $('#drawer-sync')?.addEventListener('click', (event) => refreshSavedData(event.currentTarget));
   }
 
   /*
@@ -23682,6 +23945,7 @@
      * encuentre la sincronía ya en marcha.
      */
     iniciarSincroniaSilenciosa();
+    iniciarMotorDeSincronizacion();
 
     // Atajos del icono instalado (manifest → shortcuts): /admin/?v=clientes
     const query = new URLSearchParams(location.search);
@@ -23696,13 +23960,13 @@
      * (clientes, pedidos, catálogo, ajustes y el rol de quien entró) y se puede
      * trabajar entero. Al volver la red, todo se manda solo.
      */
-    if(window.FulltechOffline)await window.FulltechOffline.ready;
+    if(window.FullTECHOffline)await window.FullTECHOffline.ready;
     const cached = readSnapshot();
     if (!navigator.onLine && cached) {
       aplicarCopiaLocal(cached);
       showApp();
       render();
-      if(window.FulltechOffline)await load({keepTab:true});
+      if(window.FullTECHOffline)await load({keepTab:true});
       await applyDeepLink(query);
       renderOutboxBanner();
 

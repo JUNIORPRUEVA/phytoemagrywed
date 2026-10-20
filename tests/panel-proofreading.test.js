@@ -106,7 +106,7 @@ let dom;
 afterEach(()=>{ dom?.window.close(); vi.useRealTimers(); });
 function setup() {
   vi.useFakeTimers();
-  dom = new JSDOM('<body data-tab="whatsapp" data-wa-view="chat"><button id="wa-actions" data-conversation="chat-1"></button><p id="wa-chat-name">Ana Ruiz</p><div id="wa-composer"><textarea id="wa-text"></textarea><button id="wa-send" type="button">Enviar</button></div></body>',{url:'https://crm.test/admin/',runScripts:'outside-only'});
+  dom = new JSDOM('<body data-tab="whatsapp" data-wa-view="chat"><button id="wa-actions" data-conversation="chat-1"></button><button id="wa-ai-reply" type="button"></button><p id="wa-chat-name">Ana Ruiz</p><div id="wa-composer"><textarea id="wa-text"></textarea><button id="wa-send" type="button">Enviar</button></div></body>',{url:'https://crm.test/admin/',runScripts:'outside-only'});
   const win = dom.window;
   win.setTimeout = setTimeout; win.clearTimeout = clearTimeout;
   const jobs = [];
@@ -219,6 +219,15 @@ describe('confirmación discreta antes de enviar',()=>{
 });
 
 describe('sugerencia discreta dentro de la app',()=>{
+  it('el botón de IA muestra la propuesta y solo la coloca en el borrador tras elegir Usar respuesta',async()=>{
+    const ui=setup();ui.$('#wa-ai-reply').disabled=false;
+    ui.win.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,ai:true,text:'Claro, con gusto te ayudo.'})});
+    ui.click('#wa-ai-reply');await vi.waitFor(()=>expect(ui.$('#wa-ai-reply-result').textContent).toContain('Claro, con gusto te ayudo.'));
+    expect(ui.$('#wa-ai-reply-result').textContent).toContain('Claro, con gusto te ayudo.');
+    expect(ui.$('#wa-text').value).toBe('');expect(ui.sends).toBe(0);
+    ui.click('#wa-ai-reply-result button');
+    expect(ui.$('#wa-text').value).toBe('Claro, con gusto te ayudo.');expect(ui.sends).toBe(0);
+  });
   it('consulta el apoyo solo ante dudas y presenta la frase completa sin etiquetas técnicas',async()=>{
     const ui=setup(),text='grasias hoas',corrected='gracias hola';
     ui.win.fetch.mockResolvedValue({ok:true,json:async()=>({suggestion:{start:0,end:text.length,word:text,replacement:corrected,edits:[{start:0,end:text.length,word:text,replacement:corrected}]}})});
@@ -231,9 +240,9 @@ describe('sugerencia discreta dentro de la app',()=>{
     expect(ui.$('#wa-proofreading').textContent).not.toMatch(/DeepSeek|inteligencia|segura/);
     ui.click('[data-proofreading="accept"]');expect(ui.$('#wa-text').value).toBe(corrected);expect(ui.sends).toBe(0);
   });
-  it('no llama al apoyo cuando las correcciones locales resuelven el mensaje',async()=>{
+  it('consulta el apoyo también si el diccionario local encontró correcciones',async()=>{
     const ui=setup();ui.type('hoas coo esta');await vi.advanceTimersByTimeAsync(180);ui.reply();
-    await vi.advanceTimersByTimeAsync(2000);expect(ui.win.fetch).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);expect(ui.win.fetch).toHaveBeenCalledTimes(1);
   });
   it('cancela una consulta pendiente si cambia el borrador o se omite la ayuda',async()=>{
     const ui=setup();ui.type('grasias hoas');await vi.advanceTimersByTimeAsync(180);ui.reply();
@@ -274,9 +283,9 @@ describe('sugerencia discreta dentro de la app',()=>{
     ui.type('grasias por el pediod');await vi.advanceTimersByTimeAsync(180);ui.reply();
     expect(ui.warmups).toHaveLength(1);expect(ui.jobs).toHaveLength(2);
   });
-  it('revisa al cabo de 180 ms y muestra todo el texto aunque solo haya un error',async()=>{
+  it('revisa al cabo de 120 ms y muestra todo el texto aunque solo haya un error',async()=>{
     const ui=setup();ui.type('gracias por escribir, podemos aser el delivery hoy');
-    await vi.advanceTimersByTimeAsync(179);expect(ui.jobs).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(119);expect(ui.jobs).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);ui.reply();
     expect(ui.$('.wa-proofreading__text').textContent).toBe('gracias por escribir, podemos hacer el delivery hoy');
     expect(ui.$('[data-proofreading="accept"]').textContent).toBe('Usar todo');
@@ -363,7 +372,7 @@ describe('sugerencia discreta dentro de la app',()=>{
   });
   it('se carga tras una pausa y acepta solo la palabra, sin enviar',async()=>{
     const ui=setup(); ui.type('le podemos aser el delivery hoy');
-    await vi.advanceTimersByTimeAsync(179); expect(ui.jobs).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(119); expect(ui.jobs).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1); ui.reply();
     expect(ui.$('#wa-proofreading').hidden).toBe(false);
     expect(ui.$('.wa-proofreading__text').textContent).toBe('le podemos hacer el delivery hoy');
@@ -388,6 +397,15 @@ describe('sugerencia discreta dentro de la app',()=>{
     expect(ui.jobs).toHaveLength(1);ui.reply(0);
     expect(ui.jobs).toHaveLength(2);ui.reply(1);
     expect(ui.$('#wa-proofreading')?.hidden ?? true).toBe(true);
+  });
+  it('revisa también un segundo borrador después de terminar el primero',async()=>{
+    const ui=setup();
+    ui.type('grasias por el pedido');await vi.advanceTimersByTimeAsync(120);ui.reply();
+    expect(ui.$('.wa-proofreading__text').textContent).toBe('gracias por el pedido');
+    ui.type('');
+    ui.type('nesecito aser otro pedido');await vi.advanceTimersByTimeAsync(120);ui.reply();
+    expect(ui.jobs).toHaveLength(2);
+    expect(ui.$('.wa-proofreading__text').textContent).toBe('necesito hacer otro pedido');
   });
   it('no aplica una corrección al borrador de otra conversación',async()=>{
     const ui=setup();ui.type('grasias');await vi.advanceTimersByTimeAsync(600);ui.reply();

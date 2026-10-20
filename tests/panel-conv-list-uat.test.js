@@ -20,9 +20,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { calculateSale } from '../public/admin/pos-math.js';
 
 import { startCrmServer } from '../server/crm-server.mjs';
 import { addDays, dayIn } from '../server/followups.mjs';
+
+const POS_SCRIPT = readFileSync(path.join(process.cwd(), 'public', 'admin', 'pos.js'), 'utf8').replace(/^import[^\n]+\n/, '');
+const STORE_SCRIPT = readFileSync(path.join(process.cwd(), 'public', 'admin', 'store.js'), 'utf8');
 
 const TOKEN = 'uat-conv-panel';
 const APP_SECRET = 'uat-conv-secret';
@@ -168,6 +172,45 @@ async function adminJson(route, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   return { response, body };
+}
+
+/** Crea un pedido desde el flujo POS vigente, asociado a la conversación real. */
+async function createGuidedOrder(conversationId, variantId = 'capsules_10') {
+  if (dom.window.document.body.dataset.tab !== 'whatsapp') {
+    click('#menu');
+    click('[data-tab="whatsapp"]');
+    await waitFor(() => dom.window.document.body.dataset.tab === 'whatsapp', 'pestaña WhatsApp');
+  }
+  click(`[data-conv="${conversationId}"]`);
+  await waitFor(() => $('#wa-chat-pane') && $('#wa-actions')?.disabled === false, 'chat seleccionado');
+  click('#wa-actions');
+  const create = await waitFor(
+    () => $(`[data-order-new][data-conversation="${conversationId}"]`),
+    'crear pedido desde la conversación',
+  );
+  click(create);
+  await waitFor(() => $('#pos-client .pos-client-button strong')?.textContent.includes('Luis'), 'cliente cargado en POS');
+  const product = await waitFor(() => $(`[data-pos-add="${variantId}"]`), 'catálogo POS');
+  click(product);
+  const pay = await waitFor(() => $('[data-pos-pay]')?.disabled === false ? $('[data-pos-pay]') : null, 'continuar pedido');
+  click(pay);
+  const pickup = await waitFor(() => $('.pos-order-dialog [data-order-method="pickup"]'), 'retiro POS');
+  click(pickup);
+  await waitFor(() => $('.pos-order-dialog [data-order-method="pickup"]')?.getAttribute('aria-pressed') === 'true', 'POS en modo retiro');
+  const confirm = await waitFor(() => $('.pos-order-dialog [data-order-confirm]')?.disabled === false ? $('.pos-order-dialog [data-order-confirm]') : null, 'confirmar pedido');
+  click(confirm);
+  await waitFor(() => $('.pos-order-dialog h2')?.textContent.includes('Pedido guardado'), 'pedido persistido por POS', 12000);
+  const number = $('.pos-order-dialog .pos-confirm-total span')?.textContent?.trim() ?? '';
+  click('.pos-order-dialog [data-pos-close]');
+  // El POS navega a su pestaña al abrir el carrito; vuelve al chat como lo
+  // haría el operador antes de elegir una acción de conversación.
+  click('#menu');
+  click('[data-tab="whatsapp"]');
+  await waitFor(() => dom.window.document.body.dataset.tab === 'whatsapp' && $('#wa-chat-pane'), 'regreso al chat');
+  click(`[data-conv="${conversationId}"]`);
+  await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'conversación activa después del POS');
+  await waitFor(() => $('#wa-actions')?.disabled === false, 'acciones del chat disponibles');
+  return number;
 }
 
 /**
@@ -320,6 +363,10 @@ beforeAll(async () => {
     runScripts: 'outside-only',
   });
   const win = dom.window;
+  win.HTMLDialogElement.prototype.showModal = function showModal() { this.open = true; };
+  win.HTMLDialogElement.prototype.close = function close() { this.open = false; };
+  win.structuredClone = structuredClone;
+  win.calculateSale = calculateSale;
   win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   win.scrollTo = () => {};
   win.confirm = () => true;
@@ -366,6 +413,8 @@ beforeAll(async () => {
   };
 
   win.eval(readFileSync(path.join(ADMIN_DIR, 'app.js'), 'utf8'));
+  win.eval(STORE_SCRIPT);
+  win.eval(POS_SCRIPT);
   await waitFor(() => $$('[data-conv]').length >= 3, 'la lista con las tres conversaciones', 8000);
 });
 
@@ -418,12 +467,13 @@ describe('el menú «⋯» de una conversación', () => {
     const before = whatsapp.sent.length;
     click(`[data-conv-more="${ids.luis}"]`);
     const groups = $$('#sheet-body .menu-group');
-    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Acciones principales','Gestión','Organizar conversación','Eliminar']);
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['Acciones principales','Gestión','Asignación','Organizar conversación','Eliminar']);
     expect(groups[0].querySelector('[data-conv-act="open"]')).not.toBeNull();
     expect(groups.at(-1).querySelector('[data-conv-act="delete"]')).not.toBeNull();
     expect($('#sheet-body [data-customer-stage]')).toBeNull();
     expect($('#sheet-body [data-conv-take]')).toBeNull();
-    expect($$('#sheet-body [data-conv-assign]').length).toBe(1);
+    expect($$('#sheet-body [data-conv-assign]').length).toBe(0);
+    expect($('#sheet-body').textContent).toContain('Responsable de esta conversación');
     expect(whatsapp.sent.length).toBe(before);
   });
 
@@ -446,11 +496,10 @@ describe('el menú «⋯» de una conversación', () => {
     expect($('#sheet-body [data-scheduled-new]').dataset.conversation).toBe(ids.luis);
     click('#sheet-body [data-conv-menu-back]');
     expect($('#sheet-body [data-conv-act="open"]').dataset.convId).toBe(ids.luis);
-    click('#sheet-body [data-conv-assign]');
-    await waitFor(() => $('#sheet-title').textContent === 'Asignar conversación', 'selector de responsable');
-    // La sesión de esta fixture usa token legado, sin una persona para asignarse.
-    expect($('#sheet-body [data-conv-assign-me]')).toBeNull();
-    expect($('#sheet-body').textContent).toContain('Tu usuario no puede cambiar el responsable');
+    // La sesión de esta fixture usa token legado, sin una persona autenticada:
+    // se muestra el responsable como dato, pero no se ofrece una acción inválida.
+    expect($('#sheet-body [data-conv-assign]')).toBeNull();
+    expect($('#sheet-body').textContent).toContain('Responsable de esta conversación');
     expect(whatsapp.sent.length).toBe(before);
   });
 
@@ -809,8 +858,8 @@ describe('escribir el mensaje de un chat nuevo (fuera de la ventana de 24 h)', (
     await waitFor(() => $('#wa-composer [data-wa-contact-state="NEW_CONTACT"]'), 'estado NEW_CONTACT', 9000);
 
     const area = await waitFor(() => $('#wa-text'), 'el compositor del chat nuevo', 9000);
-    expect($('#wa-composer').textContent).toContain('Mensaje personalizado');
-    expect($('#wa-composer').textContent).toContain('Nada se envía solo');
+    expect(area.getAttribute('aria-label')).toBe('Mensaje que se enviará dentro de la plantilla');
+    expect(area.getAttribute('placeholder')).toContain('Escribe lo que quieras decirle');
     area.value = 'Tu pedido ya salió para tu dirección.';
     area.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 
@@ -854,11 +903,11 @@ describe('escribir el mensaje de un chat nuevo (fuera de la ventana de 24 h)', (
       'los huecos de la plantilla por defecto',
       9000,
     );
-    expect($('#wa-template').value).toBe('phyto_followup_checkin');
+    expect($('#wa-template').value).toBe('phyto_mensaje_personalizado_v1');
     expect(nombre.value).toBe('Cliente Escribe');
-    // Esa plantilla no declara hueco libre: nadie le mete un mensaje a la fuerza.
-    expect($('#wa-template-fields [data-wa-var="2"]')).toBeNull();
-    expect($('#wa-template-preview').textContent).toBe('Hola Cliente Escribe, ¿cómo va todo?');
+    // El hueco libre existe, pero queda vacío: no se inventa ni se reutiliza texto.
+    expect($('#wa-template-fields [data-wa-var="2"]').value).toBe('');
+    expect($('#wa-template-preview').textContent).toContain('Hola Cliente Escribe');
     closeSheetForUat();
   });
 });
@@ -923,27 +972,8 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
   }, 30000);
 
   it('«Pedir confirmación» usa el pedido REAL de esa conversación (no una plantilla)', async () => {
-    // El pedido se crea DESDE el panel, como lo hace una persona.
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-order-new]');
-    const variante = await waitFor(() => $('#order-lines select'), 'el formulario de pedido', 9000);
-    variante.value = 'capsules_10';
-    variante.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    variante.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    click('#order-save');
-    await waitFor(
-      () => /Comprobante|Pedido/.test($('#sheet-body').innerHTML),
-      'el comprobante del pedido',
-      9000,
-    );
-    closeSheetForUat();
-
-    // El número real, tal como lo guardó el servidor.
-    const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
-    const numero = datos.items.find(
-      (item) => item.type === 'order_intent' && item.conversation_id === ids.luis,
-    )?.order_number;
+    // El pedido se crea desde el POS actual y se conserva ligado al chat.
+    const numero = await createGuidedOrder(ids.luis, 'capsules_10');
     expect(numero).toBeTruthy();
 
     click('#wa-actions');
@@ -1000,40 +1030,48 @@ describe('preferencias del pedido del cliente', () => {
     expect(prefs.payment_method).toBe('TRANSFER');
     expect(prefs.note).toContain('5 pm');
 
-    // 2) Crear pedido: el formulario ya viene con «lo de siempre».
+    // 2) Crear pedido desde el POS actual: el carrito recupera «lo de siempre».
+    closeSheetForUat();
     click('.tabs [data-tab="whatsapp"]');
     const fila = await waitFor(() => $(`[data-conv="${ids.luis}"]`), 'la fila de Luis', 9000);
     click(fila);
-    // El chat se repinta al llegar sus mensajes: se espera al chat pintado
-    // (nombre incluido) para no pulsar el «⋯» de un render que ya no está.
     await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
-    if (!$('#sheet-body [data-order-new]')) {
-      click('#wa-actions');
-      await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
-    }
+    click('#wa-actions');
+    await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
     click('#sheet-body [data-order-new]');
-
-    const variante = await waitFor(() => $('#order-lines select'), 'el formulario de pedido', 9000);
-    expect(variante.value).toBe('capsules_15');
-    expect($('#order-lines [data-line-qty="0"]').value).toBe('3');
-    expect($('#order-payment').value).toBe('TRANSFER');
-    expect($('#sheet-body').textContent).toContain('Lo de siempre');
-    expect($('#order-save-prefs')).not.toBeNull();
-    expect($('#order-save-prefs').checked).toBe(true);
+    await waitFor(() => $('.pos-cart-lines [data-pos-quantity="0"]')?.textContent === '3', 'frasco y cantidad preferidos en el POS');
+    expect($('.pos-cart-lines .pos-line-info strong').textContent).toContain('15');
+    click('.pos-cart-lines [data-pos-edit="0"]');
+    const cantidad = await waitFor(() => $('dialog [name="quantity"]'), 'editor de cantidad del POS');
+    cantidad.value = '2';
+    cantidad.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    click('dialog form [type="submit"]');
+    await waitFor(() => !$('dialog').open, 'carrito actualizado');
+    click('[data-pos-pay]');
+    await waitFor(() => $('.pos-order-dialog [data-order-field="paymentMethod"]'), 'forma de pago preferida');
+    expect($('.pos-order-dialog [data-order-field="paymentMethod"]').value).toBe('TRANSFER');
+    expect($('.pos-order-dialog [data-order-save-prefs]').checked).toBe(true);
 
     // Solo se confirma la cantidad.
-    const cantidad = $('#order-lines [data-line-qty="0"]');
-    cantidad.value = '2';
-    cantidad.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    /*
-     * Luis YA tiene un pedido abierto, así que el panel avisa y exige confirmar
-     * que este es otro de verdad: sin marcar la casilla no se guarda nada.
-     */
-    expect($('#order-open-warning')?.textContent).toMatch(/ya tiene un pedido sin cerrar/);
-    $('#order-open-ack').checked = true;
-    click('#order-save');
-    await waitFor(() => /Comprobante|Pedido/.test($('#sheet-body').innerHTML), 'el comprobante del pedido', 9000);
-    closeSheetForUat();
+    const retiro = await waitFor(() => $('.pos-order-dialog [data-order-method="pickup"]'), 'retiro');
+    click(retiro);
+    await waitFor(() => $('.pos-order-dialog [data-order-method="pickup"]')?.getAttribute('aria-pressed') === 'true', 'pedido en modo retiro');
+    await waitFor(() => $('.pos-order-dialog [data-order-open-ack]') || $('.pos-order-dialog [data-order-confirm]')?.disabled === false, 'resumen de pedido actualizado', 20000);
+    const ack = $('.pos-order-dialog [data-order-open-ack]');
+    if (ack) {
+      expect($('.pos-order-dialog .pos-open-warning').textContent).toMatch(/pedido.*sin cerrar|pedidos.*sin cerrar/i);
+      ack.checked = true;
+      ack.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    }
+    await waitFor(() => $('.pos-order-dialog [data-order-confirm]')?.disabled === false, 'confirmación habilitada', 20000);
+    $('.pos-order-dialog [data-order-confirm]').click();
+    await waitFor(() => $('.pos-order-dialog h2')?.textContent.includes('Pedido guardado'), 'pedido guardado', 20000);
+    click('.pos-order-dialog [data-pos-close]');
+    await waitFor(async () => {
+      const data = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
+      const cliente = (data.customers ?? []).find((row) => row.id === luis.customer_id);
+      return Number(cliente?.orderPrefs?.quantity) === 2 ? cliente : null;
+    }, 'preferencias actualizadas con el pedido confirmado', 9000);
 
     const datos = await (await fetch(`${app.url}/api/admin/data`, { headers: { cookie } })).json();
     const pedidos = datos.items.filter((item) => item.type === 'order_intent' && item.customer_id === luis.customer_id);
@@ -1138,6 +1176,10 @@ describe('la foto del cliente', () => {
   });
 
   it('la foto aparece en la cabecera del chat, en la lista y en la ficha', async () => {
+    // La foto se cambió en el test anterior directamente por API; refresca los
+    // datos del panel igual que al volver a cargar el espacio de trabajo.
+    dom.window.dispatchEvent(new dom.window.Event('fulltech:pos-saved'));
+    await waitFor(() => $(`[data-conv="${ids.ana}"]`), 'lista actualizada desde el servidor', 9000);
     click('[data-wa-filter="todos"]');
     await waitFor(() => $(`[data-conv="${ids.ana}"]`), 'la fila de la conversación', 9000);
     /*

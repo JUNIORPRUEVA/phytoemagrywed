@@ -180,34 +180,44 @@ afterAll(async () => {
 
 const abrirHistorial = async () => {
   await waitFor(() => datosCargados, 'los datos del panel');
-  /*
-   * El historial se entra DESDE EL CIERRE (el menú ya no lo lleva): su chip está
-   * en la misma pantalla del cierre, junto a «Un día» y «Varios días».
-   */
-  click('[data-tab="cierre"]');
-  await waitFor(() => $('[data-close-scope="historial"]'), 'el botón del historial dentro del cierre');
-  click('[data-close-scope="historial"]');
+  abrirMenuCierre();
+  click('[data-close-view="history"]');
   const pintado = await waitFor(() => $('#close-history-view')?.children.length, 'el historial pintado');
   await sleep(150);
   return pintado;
 };
 
 const filas = () => $$('[data-close-history-day]').map((fila) => fila.dataset.closeHistoryDay);
+const abrirMenuCierre = () => {
+  const grupo = $$('#drawer details.drawer__fold').find((fold) => fold.querySelector('[data-close-view="actual"]'));
+  if (grupo && !grupo.open) click(grupo.querySelector(':scope > summary'));
+};
 
 describe('historial de cierres', () => {
-  it('NO está en el menú: se entra desde «Cierre diario»', async () => {
-    // El menú ya no lo lleva (se pidió que solo se acceda a través del cierre).
-    expect($('[data-tab="historial-cierres"]')).toBe(null);
+  it('agrupa cierre actual e historial en el menú y mantiene los filtros dentro del historial', async () => {
+    const grupo = $$('#drawer details.drawer__fold').find((fold) => fold.querySelector('[data-close-view="actual"]'));
+    expect(grupo).not.toBeNull();
+    expect(grupo.open).toBe(false);
+    expect($('[data-close-view="actual"]')?.textContent.trim()).toBe('Cierre actual');
+    expect($('[data-close-view="history"]')?.textContent.trim()).toBe('Historial');
     expect($('#view-historial-cierres')).not.toBeNull();
 
     await waitFor(() => datosCargados, 'los datos del panel');
-    click('[data-tab="cierre"]');
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
-    expect($$('[data-close-scope]').map((chip) => chip.textContent.trim())).toEqual(['Un día', 'Varios días', 'Historial']);
+    abrirMenuCierre();
+    click('[data-close-view="actual"]');
+    await waitFor(() => $('.simple-head--close strong')?.textContent === 'Cierre actual', 'el cierre actual');
+    expect($$('[data-close-scope]')).toHaveLength(0);
+    expect($$('#daily-close-view [data-close-history-period]')).toHaveLength(0);
 
     await abrirHistorial();
     expect($('#view-historial-cierres')?.hidden).toBe(false);
-    expect($$('[data-close-history-period]').map((chip) => chip.textContent.trim())).toEqual(['7 días', '30 días', 'Este mes', 'Intervalo']);
+    expect($$('[data-close-history-period]').map((chip) => chip.textContent.trim())).toEqual(['Últimos 7 días', 'Últimos 30 días', 'Este mes', 'Elegir intervalo…']);
+    expect($('#close-history-note')).not.toBeNull();
+    click('[data-close-filter-toggle]');
+    expect($('#close-history-filter')?.classList.contains('is-open')).toBe(true);
+    expect($('[data-close-filter-toggle]')?.getAttribute('aria-expanded')).toBe('true');
+    click('[data-close-filter-close]');
+    expect($('#close-history-filter')?.classList.contains('is-open')).toBe(false);
     // Y el volver devuelve al cierre, que es de donde se viene.
     click('.simple-head__back');
     await waitFor(() => $('#view-cierre')?.hidden === false, 'de vuelta al cierre');
@@ -220,17 +230,19 @@ describe('historial de cierres', () => {
     expect(filas()).toEqual([hoy, restarDias(hoy, 1), restarDias(hoy, 3)]);
 
     const resumen = $('#close-history-view').textContent;
-    expect(resumen).toContain('Días con cierre');
-    expect(resumen).toContain('Ventas entregadas');
-    expect(resumen).toContain('Efectivo en mano (del delivery)');
-    expect(resumen).toContain('Ganancia del delivery');
+    expect(resumen).toContain('3 cierres');
+    expect(resumen).toContain('3 ventas');
+    expect(resumen).toContain('DOP 5,000');
+    expect($('#close-history-summary')?.textContent).toContain('Ganancia del delivery');
+    expect($('#close-history-summary')?.textContent).toContain('Cuadre del intervalo');
     // La nota dice qué días se están mirando y de quién.
     expect($('#close-history-note')?.textContent).toContain(`Del ${fmt(restarDias(hoy, 6))} al ${fmt(hoy)}`);
     expect($('#close-history-note')?.textContent).toContain('Todo el equipo');
     // Cada fila trae el día, las ventas y el cuadre.
     const primera = $('[data-close-history-day]');
-    expect(primera.textContent).toMatch(/venta · efectivo/);
-    expect(primera.textContent).toMatch(/El delivery se gana/);
+    expect(primera.textContent).toMatch(/venta ·/);
+    expect(primera.textContent).toContain('DOP');
+    expect(primera.tagName).toBe('BUTTON');
   });
 
   it('filtra por 30 días y por «Este mes»', async () => {
@@ -259,7 +271,7 @@ describe('historial de cierres', () => {
     setValue('#close-to', ayer);
     click('#close-range-form button[type="submit"]');
     await waitFor(() => filas().length === 1 && filas()[0] === ayer, 'solo el día elegido');
-    expect($('#close-history-note')?.textContent).toBe(`Del ${fmt(ayer)} al ${fmt(ayer)} · Todo el equipo`);
+    expect($('#close-history-note')?.textContent).toContain(`Del ${fmt(ayer)} al ${fmt(ayer)} · Todo el equipo`);
     expect($('#sheet')?.hidden).toBe(true);
 
     // Y un intervalo sin cierres lo dice claro.
@@ -272,6 +284,26 @@ describe('historial de cierres', () => {
     expect(filas()).toEqual([]);
   });
 
+  it('muestra el desglose completo al resumir varios días', async () => {
+    await abrirHistorial();
+    click('[data-close-history-period="custom"]');
+    await waitFor(() => $('#close-range-form'), 'el calendario del historial');
+    const hoy = diaDeNegocio(new Date());
+    setValue('#close-from', restarDias(hoy, 3));
+    setValue('#close-to', hoy);
+    click('#close-range-form button[type="submit"]');
+
+    await waitFor(() => $('#close-history-note')?.textContent.includes('3 cierres'), 'el resumen de los tres días');
+    expect(filas()).toHaveLength(3);
+    const resumen = $('#close-history-summary')?.textContent ?? '';
+    expect(resumen).toContain('Ventas entregadas');
+    expect(resumen).toContain('DOP 5,000');
+    expect(resumen).toContain('Efectivo en mano');
+    expect(resumen).toContain('Transferencia');
+    expect(resumen).toContain('Ganancia del delivery');
+    expect(resumen).toContain('Cuadre del intervalo');
+  });
+
   it('al tocar un día se abre su cierre completo y se puede volver', async () => {
     await abrirHistorial();
     click('[data-close-history-period="7d"]');
@@ -281,8 +313,7 @@ describe('historial de cierres', () => {
 
     // Se abre la pantalla del cierre diario, pero con ESE día.
     await waitFor(() => $('#view-cierre')?.hidden === false, 'el cierre del día');
-    expect($('#daily-close-view')?.textContent).toContain(`Cierre del ${fmt(ayer)}`);
-    expect($('#daily-close-view')?.textContent).toContain(`día ya cerrado`);
+    expect($('.simple-head--close strong')?.textContent).toContain(`Cierre del ${fmt(ayer)}`);
     // El detalle del día: su venta, el cuadre y el desglose por delivery.
     expect($('#daily-close-view')?.textContent).toContain('Cliente de ayer');
     expect($('#daily-close-view')?.textContent).toContain('Ruben Reparto');
@@ -297,32 +328,23 @@ describe('historial de cierres', () => {
 
     // El cierre de HOY sigue siendo el de hoy (con su botón de cierre manual).
     click('[data-tab="cierre"]');
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
+    await waitFor(() => $('.simple-head--close strong')?.textContent === 'Cierre actual', 'el cierre actual');
     expect($('#daily-close-view')?.textContent).toContain('Cliente de hoy');
   });
 
-  it('se salta del cierre de hoy al historial (y vuelta) con el atajo de la barra', async () => {
+  it('el menú permite cambiar entre historial y cierre actual sin dejar un día antiguo seleccionado', async () => {
     await waitFor(() => datosCargados, 'los datos del panel');
-    click('[data-tab="cierre"]');
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
-
-    // El atajo vive en la barra de arriba, junto al volver: si no está, no hay
-    // forma razonable de llegar al historial desde el cierre.
-    const atajoHistorial = $('[data-close-history-go]');
-    expect(atajoHistorial).not.toBeNull();
-    expect(atajoHistorial.textContent).toContain('Historial');
-    expect($('.simple-head__actions')?.contains(atajoHistorial)).toBe(true);
-
-    click(atajoHistorial);
+    abrirMenuCierre();
+    click('[data-close-view="actual"]');
+    await waitFor(() => $('.simple-head--close strong')?.textContent === 'Cierre actual', 'el cierre actual');
+    abrirMenuCierre();
+    click('[data-close-view="history"]');
     await waitFor(() => $('#view-historial-cierres')?.hidden === false, 'el historial desde el atajo');
     expect(filas().length).toBeGreaterThan(0);
-
-    // Y de vuelta al cierre de hoy con el atajo del historial.
-    const atajoCierre = await waitFor(() => $('[data-close-today-go]'), 'el atajo hacia el cierre de hoy');
-    expect(atajoCierre.textContent).toContain('Cierre de hoy');
-    click(atajoCierre);
+    abrirMenuCierre();
+    click('[data-close-view="actual"]');
     await waitFor(() => $('#view-cierre')?.hidden === false, 'el cierre de hoy otra vez');
-    expect($('#daily-close-view')?.textContent).toContain('Cierre de hoy');
+    expect($('[data-daily-close-now]')).not.toBeNull();
   });
 
   it('cuando no hay nada en el intervalo lo dice, no deja la página vacía', async () => {
@@ -341,59 +363,4 @@ describe('historial de cierres', () => {
     await waitFor(() => filas().length > 0, 'las filas de vuelta');
   });
 
-  it('el cierre diario deja elegir VARIOS días y da el resumen de todo el tramo', async () => {
-    await waitFor(() => datosCargados, 'los datos del panel');
-    click('[data-tab="cierre"]');
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy');
-
-    // Los modos están en la propia pantalla del cierre (y el historial se entra de ahí).
-    expect($$('[data-close-scope]').map((chip) => chip.textContent.trim())).toEqual(['Un día', 'Varios días', 'Historial']);
-    expect($('[data-close-scope="dia"]')?.getAttribute('aria-pressed')).toBe('true');
-
-    click('[data-close-scope="rango"]');
-    const form = await waitFor(() => $('#close-period-range-form'), 'el calendario de varios días');
-    expect([...form.querySelectorAll('.field__label')].map((el) => el.textContent.trim())).toEqual(['Desde', 'Hasta']);
-
-    // Tres días seguidos: hoy, ayer y anteayer (las tres ventas del UAT caen ahí).
-    const hoy = diaDeNegocio(new Date());
-    setValue('#close-period-from', restarDias(hoy, 3));
-    setValue('#close-period-to', hoy);
-    click('#close-period-range-form button[type="submit"]');
-
-    const resumen = await waitFor(
-      () => ($('#daily-close-view')?.textContent?.includes('Resumen de varios días') ? $('#daily-close-view') : null),
-      'el resumen de varios días',
-    );
-    expect($('[data-close-scope="rango"]')?.getAttribute('aria-pressed')).toBe('true');
-    // El cuadro suma los días elegidos: 3 ventas entregadas.
-    expect(resumen.textContent).toContain('Ventas entregadas');
-    expect(resumen.textContent).toMatch(/Ventas entregadas\s*3/);
-    expect(resumen.querySelectorAll('[data-close-history-day]')).toHaveLength(3);
-    // Y dice el cuadre del tramo y lo que se gana el delivery.
-    expect(resumen.textContent).toContain('Ganancia del delivery');
-    expect(resumen.textContent).toMatch(/El delivery entrega|La empresa le entrega|Cierre cuadrado/);
-    expect(resumen.textContent).toContain('Ruben Reparto');
-    expect($('#daily-close-view')?.textContent).toContain(`del ${fmt(restarDias(hoy, 3))} al ${fmt(hoy)}`);
-
-    // Tocar un día del resumen abre el cierre de ESE día (no el de hoy).
-    const ayer = restarDias(hoy, 1);
-    click($(`[data-close-history-day="${ayer}"]`));
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes(`Cierre del ${fmt(ayer)}`), 'el cierre del día elegido');
-    expect($('[data-close-scope="dia"]')?.getAttribute('aria-pressed')).toBe('true');
-    expect($('#daily-close-view')?.textContent).toContain('Cliente de ayer');
-
-    // Un tramo de UN SOLO día abre su cierre, no el resumen.
-    click('[data-close-scope="rango"]');
-    await waitFor(() => $('#close-period-range-form'), 'el calendario otra vez');
-    setValue('#close-period-from', ayer);
-    setValue('#close-period-to', ayer);
-    click('#close-period-range-form button[type="submit"]');
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes(`Cierre del ${fmt(ayer)}`), 'el cierre del día único');
-    expect($('#daily-close-view')?.textContent).not.toContain('Resumen de varios días');
-
-    // Y «Un día» vuelve al cierre de hoy.
-    click('[data-close-scope="dia"]');
-    await waitFor(() => $('#daily-close-view')?.textContent?.includes('Cierre de hoy'), 'el cierre de hoy otra vez');
-    expect($('#daily-close-view')?.textContent).toContain('Cliente de hoy');
-  });
 });

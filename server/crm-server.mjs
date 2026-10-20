@@ -1,4 +1,4 @@
-import { handleOfflineOperation } from './offline-operations.mjs';
+import { handleOfflineOperation, operationStatuses } from './offline-operations.mjs';
 import { FULLTECH_CONTACT_TEMPLATE } from './fulltech-contact-template.mjs';
 import { QUOTE_WHATSAPP_TEMPLATE } from './quote-template.mjs';
 /**
@@ -80,7 +80,7 @@ import { createCallingStore } from './calling-store.mjs';
 import { createCallingService } from './calling-service.mjs';
 import { handleCallingRoute } from './calling-routes.mjs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -286,6 +286,13 @@ import {
 } from './stores.mjs';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ANDROID_APK_PATH = path.resolve(
+  process.env.PHYTO_ANDROID_APK_PATH ??
+    path.join(PROJECT_ROOT, 'apps', 'phyto_printer', 'build', 'app', 'outputs', 'flutter-apk', 'app-debug.apk'),
+);
+const DEFAULT_ANDROID_APK_URL =
+  'https://github.com/JUNIORPRUEVA/phytoemagrywed/releases/download/v1.01/app-debug.apk';
+const ANDROID_APK_URL = (process.env.PHYTO_ANDROID_APK_URL ?? DEFAULT_ANDROID_APK_URL).trim();
 
 function loadServerEnv() {
   if (process.env.NODE_ENV === 'test') return;
@@ -456,7 +463,25 @@ function resolveAdminDir(configured) {
   if (configured) return path.resolve(configured);
   if (process.env.PHYTO_ADMIN_DIR) return path.resolve(process.env.PHYTO_ADMIN_DIR);
   const built = path.join(process.cwd(), 'dist', 'admin');
-  return existsSync(built) ? built : path.join(process.cwd(), 'public', 'admin');
+  const source = path.join(process.cwd(), 'public', 'admin');
+  /*
+   * SE SIRVE EL PANEL MÁS RECIENTE, NO EL PRIMERO QUE APAREZCA.
+   *
+   * Antes, si existía `dist/admin` se usaba ese, aunque fuera de hace días. En
+   * local eso significaba que el panel seguía ejecutando código viejo: los
+   * arreglos ya publicados no llegaban al navegador y cambios como «marcar un
+   * chat como leído» se quedaban en cola para siempre. Se compara la fecha del
+   * `index.html` de cada carpeta y se sirve la más nueva.
+   */
+  const fecha = (dir) => {
+    try {
+      return statSync(path.join(dir, 'index.html')).mtimeMs;
+    } catch {
+      return -1;
+    }
+  };
+  if (fecha(source) > fecha(built)) return source;
+  return existsSync(built) ? built : source;
 }
 
 /** Tamaño máximo del cuerpo aceptado (un pedido ocupa ~1 kB). */
@@ -1695,7 +1720,7 @@ function deliveryNotificationText(kind) {
 }
 
 async function sendDeliveryReceiptToCustomer(ctx, { item, order, customer, conversation, actor = null }) {
-  const receipt = buildReceipt({ order, customer, businessName: 'Fulltech' });
+  const receipt = buildReceipt({ order, customer, businessName: 'FullTECH' });
   const filename = receiptFilename(receipt.order_number ?? item.id);
   const caption = deliveryNotificationText('delivered', customer, order);
   const actorFields = messageActorFields(actor);
@@ -3574,7 +3599,7 @@ const WA_TEMPLATE_SEED = [
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te escribimos de Phytoemagry.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
+    body: 'Hola {{1}}, te escribimos de FullTECH.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.',
     variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
@@ -3583,7 +3608,7 @@ const WA_TEMPLATE_SEED = [
      * AVISO DE LA EMPRESA (lo que se manda en las CAMPAÑAS).
      *
      * Es la misma familia que `phyto_contacto_personalizado_v1` —un hueco libre
-     * para el mensaje— pero el texto FIJO dice quién escribe: Fulltech, el
+     * para el mensaje— pero el texto FIJO dice quién escribe: FullTECH, el
      * distribuidor de Phytoemagry en Higüey. El negocio pidió que las campañas
      * salgan con esta presentación, y el texto fijo de una plantilla lo aprueba
      * Meta: por eso vive con su propio nombre en vez de tocar la genérica (que
@@ -3592,11 +3617,11 @@ const WA_TEMPLATE_SEED = [
      *   {{1}} nombre real del cliente · {{2}} mensaje libre (lo escribe el agente).
      */
     name: 'phyto_aviso_fulltech_v1',
-    friendly_name: 'Aviso de Fulltech (campañas)',
+    friendly_name: 'Aviso de FullTECH (campañas)',
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.',
+    body: 'Hola {{1}}, te escribimos de FullTECH, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.',
     variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
@@ -3610,7 +3635,7 @@ const WA_TEMPLATE_SEED = [
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te escribimos de Phytoemagry para dar seguimiento a tu última compra.\n\n{{2}}\n\nCuéntanos cómo te ha ido. Si tienes alguna pregunta o deseas realizar otro pedido, estamos disponibles para ayudarte.',
+    body: 'Hola {{1}}, te escribimos de FullTECH para dar seguimiento a tu última compra.\n\n{{2}}\n\nCuéntanos cómo te ha ido. Si tienes alguna pregunta o deseas realizar otro pedido, estamos disponibles para ayudarte.',
     variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
@@ -3624,7 +3649,7 @@ const WA_TEMPLATE_SEED = [
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te contactamos de Phytoemagry para dar seguimiento.\n\n{{2}}\n\nNos gustaría saber si todavía estás interesado/a o si necesitas más información. Si deseas hacer tu pedido, estamos disponibles para ayudarte.',
+    body: 'Hola {{1}}, te contactamos de FullTECH para dar seguimiento.\n\n{{2}}\n\nNos gustaría saber si todavía estás interesado/a o si necesitas más información. Si deseas hacer tu pedido, estamos disponibles para ayudarte.',
     variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
@@ -3665,7 +3690,7 @@ const WA_TEMPLATE_SEED = [
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te escribimos de Phytoemagry para dar seguimiento a tu solicitud. Si deseas continuar, estamos disponibles para ayudarte.',
+    body: 'Hola {{1}}, te escribimos de FullTECH para dar seguimiento a tu solicitud. Si deseas continuar, estamos disponibles para ayudarte.',
     variables: ['customer_name'],
     buttons: [],
   },
@@ -3898,7 +3923,7 @@ const WA_TEMPLATE_SEED = [
     group: 'SEGUIMIENTO',
     category: 'MARKETING',
     language: 'es',
-    body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Respóndenos por aquí, por favor.',
+    body: 'Hola {{1}}, te escribimos de FullTECH. {{2}} Respóndenos por aquí, por favor.',
     variables: ['customer_name', 'mensaje'],
     buttons: [],
   },
@@ -3957,8 +3982,30 @@ async function listWaTemplates(ctx, options = {}) {
   /** @type {any[]} */
   const out = [];
   for (const seed of WA_TEMPLATE_SEED) {
-    const existing = known.get(seed.name);
+    let existing = known.get(seed.name);
     if (existing) {
+      // Solo reescribe una copia CRM pendiente si sigue siendo exactamente la
+      // semilla antigua. Las plantillas sincronizadas con Meta y las editadas
+      // por el equipo conservan su texto y su estado.
+      const legacyBodies = [
+        String(seed.body ?? '').replaceAll('FullTECH', 'Phytoemagry'),
+        String(seed.body ?? '').replaceAll('FullTECH', 'Fulltech'),
+      ];
+      if (
+        existing.source === 'crm' &&
+        !existing.meta_template_id &&
+        !templateSendable(existing.status) &&
+        legacyBodies.includes(String(existing.body ?? ''))
+      ) {
+        const updated = {
+          ...existing,
+          friendly_name: seed.friendly_name ?? existing.friendly_name,
+          body: seed.body,
+          updated_at: new Date().toISOString(),
+        };
+        await ctx.db.update('wa_templates', existing.id, updated);
+        existing = updated;
+      }
       out.push(existing);
       continue;
     }
@@ -4940,6 +4987,51 @@ function serveAdminFile(res, urlPath, adminDir) {
   res.end(body);
 }
 
+function androidApkInfo(ctx) {
+  const configuredUrl = String(ctx.androidApk?.url ?? '').trim();
+  const filePath = path.resolve(String(ctx.androidApk?.path ?? ANDROID_APK_PATH));
+  const hasRemoteUrl = /^https?:\/\//i.test(configuredUrl);
+  const exists = existsSync(filePath) && statSync(filePath).isFile();
+  return {
+    available: hasRemoteUrl || exists,
+    source: hasRemoteUrl ? 'storage' : exists ? 'local' : 'missing',
+    url: hasRemoteUrl ? configuredUrl : '/api/admin/android-apk/download',
+    filename: 'phytoemagry-android.apk',
+    path: filePath,
+    sizeBytes: exists ? statSync(filePath).size : null,
+  };
+}
+
+function serveAndroidApk(req, res, ctx) {
+  const info = androidApkInfo(ctx);
+  if (/^https?:\/\//i.test(info.url)) {
+    res.writeHead(302, { location: info.url, 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  if (!info.available || !existsSync(info.path)) {
+    json(res, 404, {
+      ok: false,
+      error: 'apk_not_found',
+      message: 'El APK Android todavía no está publicado en el servidor.',
+    });
+    return;
+  }
+  const size = statSync(info.path).size;
+  res.writeHead(200, {
+    'content-type': 'application/vnd.android.package-archive',
+    'content-length': size,
+    'content-disposition': `attachment; filename="${info.filename}"`,
+    'cache-control': 'no-store',
+    'x-robots-tag': 'noindex, nofollow',
+  });
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  createReadStream(info.path).pipe(res);
+}
+
 async function deleteConversationFromCrm(ctx, conversation, actor) {
   const messages = await ctx.db.list('wa_messages', { limit: 5000 });
   let deletedMessages = 0;
@@ -5424,6 +5516,24 @@ async function handle(req, res, ctx) {
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
       json(res, 200, { ok: true, ...authPayload() });
+      return;
+    }
+
+    if (route === '/api/admin/android-apk/status' && req.method === 'GET') {
+      const info = androidApkInfo(ctx);
+      json(res, 200, {
+        ok: true,
+        available: info.available,
+        source: info.source,
+        url: info.url,
+        filename: info.filename,
+        sizeBytes: info.sizeBytes,
+      });
+      return;
+    }
+
+    if (route === '/api/admin/android-apk/download' && ['GET', 'HEAD'].includes(req.method ?? 'GET')) {
+      serveAndroidApk(req, res, ctx);
       return;
     }
 
@@ -6931,7 +7041,7 @@ async function handle(req, res, ctx) {
         return;
       }
       const receipt = buildReceipt({
-        businessName: 'Fulltech',
+        businessName: 'FullTECH',
         order: orderOf(result.item) ?? result.order,
         customer: result.customer,
       });
@@ -7052,9 +7162,71 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    if (route === '/api/admin/offline-operations/status' && req.method === 'POST') {
+      /*
+       * CONSULTA DE ESTADO, NO REENVÍO.
+       * Dice si el servidor llegó a recibir cada operación del teléfono y con qué
+       * código respondió, sin ejecutar nada y sin devolver cuerpos con datos.
+       */
+      const body = await readJsonBody(req);
+      const ids = Array.isArray(body?.ids) ? body.ids.map((value) => String(value ?? '')) : [];
+      json(res, 200, { ok: true, ...(await operationStatuses({ ctx, actor, keys: ids })) });
+      return;
+    }
+
+    if (route === '/api/admin/offline-operations/resolve' && req.method === 'POST') {
+      /*
+       * RESOLUCIÓN MANUAL CON AUDITORÍA.
+       * No toca pedidos, cobros ni inventario: solo deja constancia de que una
+       * persona revisó la operación y por qué la da por resuelta. El teléfono
+       * conserva la operación y su respaldo.
+       */
+      if (!requireAdmin()) return;
+      const body = await readJsonBody(req);
+      const id = String(body?.id ?? '').slice(0, 120);
+      const motivo = String(body?.motivo ?? '').slice(0, 300);
+      const tipo = String(body?.tipo ?? '').slice(0, 80);
+      if (!id || motivo.trim().length < 4) {
+        json(res, 422, { ok: false, error: 'invalid_resolution', message: 'Falta el identificador o el motivo.' });
+        return;
+      }
+      await ctx.audit?.record({
+        entity: 'offline_operation',
+        entityId: id,
+        action: 'offline_operation_resolved',
+        actor: actor?.display_name ?? null,
+        summary: `Operación offline marcada como resuelta (${tipo || 'sin tipo'}): ${motivo}`,
+        data: { motivo, tipo },
+        idempotencyKey: `offline-resolve:${id}:${Date.now()}`,
+      });
+      json(res, 200, { ok: true });
+      return;
+    }
+
     if (route === '/api/admin/notification-dismissals' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      const entries = Object.entries(body?.dismissed ?? {});
+      /*
+       * CLAVES DE VERSIONES ANTERIORES.
+       *
+       * `wa-failed:<n>` era la clave del descarte antes de que se estabilizara en
+       * `wa-failed` con su valor (2 = «descarté el aviso cuando había 2 fallos»).
+       * Un teléfono con la cola creada por la versión vieja la sigue enviando y
+       * antes se rechazaba el lote COMPLETO con `invalid_dismissals`, dejando sin
+       * sincronizar también los descartes nuevos. Aquí se traduce y se conserva
+       * el significado; el resto de validaciones sigue igual.
+       */
+      const normalizadas = new Map();
+      for (const [rawKey, value] of Object.entries(body?.dismissed ?? {})) {
+        const legado = /^wa-failed:(\d{1,6})$/.exec(rawKey);
+        if (legado) {
+          const numero = Number(legado[1]);
+          const previo = normalizadas.get('wa-failed');
+          normalizadas.set('wa-failed', typeof previo === 'number' ? Math.max(previo, numero) : numero);
+          continue;
+        }
+        normalizadas.set(rawKey, value);
+      }
+      const entries = [...normalizadas.entries()];
       if (entries.length > 500 || entries.some(([key, value]) =>
         !/^(wa-failed|scheduled-problem:[a-zA-Z0-9_-]{1,160})$/.test(key) ||
         !(value === true || (typeof value === 'number' && Number.isFinite(value) && value >= 0) || (typeof value === 'string' && value.length <= 80)))) {
@@ -8012,7 +8184,7 @@ async function handle(req, res, ctx) {
         return;
       }
 
-      const receipt = buildReceipt({ order, customer, businessName: 'Fulltech' });
+      const receipt = buildReceipt({ order, customer, businessName: 'FullTECH' });
       const filename = invoiceFilename(receipt.order_number ?? orderId);
       const dentroDeVentana = ctx.customers.canSendFreeText(conversacion);
       const clave = text(body.idempotencyKey, 120);
@@ -8268,7 +8440,7 @@ async function handle(req, res, ctx) {
       }
       const order = orderOf(item);
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
-      const receipt = buildReceipt({ order, customer, businessName: 'Fulltech' });
+      const receipt = buildReceipt({ order, customer, businessName: 'FullTECH' });
       /*
        * VISTA PREVIA del envío de la factura: EXACTAMENTE lo que va a salir, sin
        * enviarlo. El texto, el nombre del archivo y la ventana de 24 h los decide
@@ -8572,6 +8744,7 @@ async function handle(req, res, ctx) {
           orderId: paymentOrderId,
           actor,
           amount: body.amount,
+          expectedDue: body.expectedDue,
           method: body.method,
           note: body.note,
           evidenceUrl: body.evidenceUrl ?? body.evidence_url,
@@ -11045,6 +11218,8 @@ function descripcionMultimedia(mediaStore, storage, whatsappMedia) {
  * @param {string} [config.token] clave del panel (vacía = panel desactivado)
  * @param {string} [config.adminDir] carpeta de la app del panel
  * @param {string} [config.allowedOrigin] origen permitido por CORS
+ * @param {string} [config.androidApkPath] APK local para descarga desde el panel
+ * @param {string} [config.androidApkUrl] URL de storage/CDN del APK publicado
  * @param {boolean} [config.quiet] no imprimir el banner de arranque
  * @param {any} [config.metaCapi] cliente de CAPI ya construido (tests)
  * @param {string} [config.metaPixelId]
@@ -11063,8 +11238,10 @@ export async function startCrmServer(config = {}) {
     token: config.token ?? TOKEN,
     allowedOrigin: config.allowedOrigin ?? ALLOWED_ORIGIN,
     adminDir: resolveAdminDir(config.adminDir),
-    quiet: config.quiet ?? false,
+    androidApkPath: path.resolve(config.androidApkPath ?? ANDROID_APK_PATH),
+    androidApkUrl: config.androidApkUrl ?? ANDROID_APK_URL,
     storeOAuth: config.storeOAuth ?? STORE_OAUTH,
+    quiet: config.quiet ?? false,
   };
 
   const store = await createStore({ databaseUrl: settings.databaseUrl, dataFile: settings.dataFile });
@@ -11318,6 +11495,7 @@ export async function startCrmServer(config = {}) {
     token: settings.token,
     allowedOrigin: settings.allowedOrigin,
     adminDir: settings.adminDir,
+    androidApk: { path: settings.androidApkPath, url: settings.androidApkUrl },
     metaCapi,
     purchaseStatus: config.purchaseStatus ?? META_PURCHASE_STATUS,
     followups,
@@ -11332,6 +11510,28 @@ export async function startCrmServer(config = {}) {
     chatSharing: createChatSharingService({ settings: settingsService, customers }),
     proofreading,
     scheduler,
+    /*
+     * IMÁGENES PARA LA IA: solo las fotos del tramo reciente, descargadas de R2
+     * en el servidor y convertidas a data URL para el modelo. No salen del
+     * proceso, no se guardan y el navegador nunca ve el binario ni la clave.
+     */
+    aiMediaImages: async (messages = []) => {
+      const out = new Map();
+      if (!mediaStore || !storage?.enabled) return out;
+      const conFoto = messages.filter((row) => String(row?.type || '').toLowerCase() === 'image' && row?.id);
+      if (!conFoto.length) return out;
+      const rows = await mediaStore.byMessageIds(conFoto.map((row) => row.id)).catch(() => []);
+      const byMessage = new Map(rows.filter((row) => row.message_id).map((row) => [row.message_id, row]));
+      for (const msg of conFoto.slice(-3)) {
+        const meta = byMessage.get(msg.id);
+        const mime = String(meta?.mime_type || '').toLowerCase();
+        if (!meta?.object_key || !/^image\/(png|jpe?g|webp|gif)$/.test(mime)) continue;
+        const got = await storage.get(meta.object_key).catch(() => null);
+        if (!got?.ok || !got.buffer || got.buffer.length > 2 * 1024 * 1024) continue;
+        out.set(msg.id, [`data:${mime};base64,${got.buffer.toString('base64')}`]);
+      }
+      return out;
+    },
     // Multimedia: metadata (BD), binario (R2), Graph y el pipeline que los une.
     media: { store: mediaStore, storage, whatsapp: whatsappMedia, pipeline: mediaPipeline },
     whatsapp,

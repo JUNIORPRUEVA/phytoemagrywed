@@ -35,10 +35,13 @@ describe('arranque móvil: recursos de caché válidos',()=>{
 });
 describe('actualización de la app instalada',()=>{
  it.each([['/admin/app.js',false],['/admin/fulltech-logo.png',true]])('archivo ausente %s: activación=%s',async(missing,activated)=>{
-  const handlers=new Map(),skipWaiting=vi.fn();let install;
-  vm.runInNewContext(read('sw.js'),{self:{addEventListener:(key,fn)=>handlers.set(key,fn),skipWaiting},caches:{open:async()=>({add:async path=>{if(path===missing)throw new Error('network interrupted');}})}});
+  const handlers=new Map(),skipWaiting=vi.fn(),reports=[],warn=vi.fn();let install;
+  vm.runInNewContext(read('sw.js'),{console:{warn},setTimeout,clearTimeout,FullTECHOfflineStore:{put:async(key,value)=>reports.push([key,value])},self:{addEventListener:(key,fn)=>handlers.set(key,fn),skipWaiting},caches:{open:async()=>({add:async path=>{if(path===missing)throw new Error('network interrupted');}})}});
   handlers.get('install')({waitUntil:promise=>install=promise});
-  if(activated){await install;expect(skipWaiting).toHaveBeenCalledTimes(1);}else{await expect(install).rejects.toThrow('network interrupted');expect(skipWaiting).not.toHaveBeenCalled();}
+  await install;
+  expect(skipWaiting).toHaveBeenCalledTimes(1);
+  if(activated)expect(reports[0][1].failedRequired).toEqual([]);
+  else expect(reports[0][1].failedRequired).toContain(missing);
  });
 });
 describe('salida visible ante fallos del inicio',()=>{

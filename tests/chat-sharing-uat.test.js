@@ -120,7 +120,7 @@ describe('menú + real con datos guardados',()=>{
   });
   it('prepara todas las cuentas en un solo texto ordenado',async()=>{
     click('#wa-attach');click('#attach-banks');await waitFor(()=>$('[data-sharing-all]'));click('[data-sharing-all]');
-    expect($('#wa-text').value).toContain('Cuentas bancarias — FullTECH, SRL');expect($('#wa-text').value).toContain('000000009999');expect($('#wa-text').value).toContain('Moneda: USD');expect(sent).toHaveLength(0);input($('#wa-text'),'');
+    expect($('#wa-text').value).toContain('Cuentas bancarias — FullTECH');expect($('#wa-text').value).toContain('000000009999');expect($('#wa-text').value).toContain('Moneda: USD');expect(sent).toHaveLength(0);input($('#wa-text'),'');
   });
   it('permite elegir entre las dos webs y previsualiza solo la seleccionada',async()=>{
     click('#wa-attach');click('#attach-catalogs');await waitFor(()=>$('[data-sharing-use="1"]'));expect($('#sheet-body').textContent).toContain('Phytoemagry');expect($('#sheet-body').textContent).toContain('FullTECH');

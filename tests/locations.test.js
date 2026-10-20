@@ -704,7 +704,7 @@ describe('enviar una ubicación por WhatsApp', () => {
       body: JSON.stringify({
         name: 'phyto_mensaje_personalizado_v1',
         status: 'APPROVED',
-        body: 'Hola {{1}}, te escribimos de Phytoemagry. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
+        body: 'Hola {{1}}, te escribimos de FullTECH. {{2}} Cualquier duda, respóndenos por aquí y te ayudamos.',
         variables: ['customer_name', 'mensaje'],
         metaTemplateId: 'tpl-loc-personal',
         lastSyncedAt: new Date().toISOString(),

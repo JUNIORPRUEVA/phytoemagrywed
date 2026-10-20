@@ -88,7 +88,7 @@
     new MutationObserver(()=>{if(hidden&&!card.hidden)load();hidden=card.hidden;}).observe(card,{attributes:true,attributeFilter:['hidden']});
     document.querySelectorAll('[data-sharing-add]').forEach(button=>button.addEventListener('click',()=>{
       const kind=button.dataset.sharingAdd;
-      const defaults=kind==='catalogs'&&!$('sharing-edit-catalogs').children.length?{name:'Phytoemagry',url:'https://phytoemagryrd.lat/'}:{};
+      const defaults=kind==='catalogs'&&!$('sharing-edit-catalogs').children.length?{name:'FullTECH',url:'https://phytoemagryrd.lat/'}:{};
       const row=addRow(kind,defaults);row?.querySelector('input')?.focus({preventScroll:true});
     }));
     $('chat-sharing-form').addEventListener('submit',async event=>{

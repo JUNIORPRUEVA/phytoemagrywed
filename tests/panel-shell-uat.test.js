@@ -99,9 +99,10 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     }
     expect(posicion('aria-label="Ventas"')).toBeLessThan(posicion('aria-label="Entregas"'));
     expect(posicion('aria-label="Entregas"')).toBeLessThan(posicion('aria-label="Seguimiento"'));
-    // Cierre, Reportes y el bloque de sistema quedan FUERA de los desplegables.
+    // Cierre y Reportes quedan FUERA de los desplegables; «Sistema» ya no existe
+    // (sus tres acciones se movieron fuera del menú).
     expect(html).toContain('aria-label="Cierre y reportes"');
-    expect(html).toContain('aria-label="Sistema"');
+    expect(html).not.toContain('aria-label="Sistema"');
     expect(html).not.toContain('Pedidos y compras');
     // El móvil no cambia: los grupos ya no se pintan y «Principal» se oculta.
     expect(html).toContain('/admin/drawer-menu.css');
@@ -133,24 +134,6 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(app).toContain('logout: svg(');
   });
 
-  it('el menú lleva a la web de la tienda con un enlace de verdad', () => {
-    /*
-     * «Ir a la web»: la raíz del MISMO dominio donde vive el panel es la tienda
-     * (`phytoemagryrd.lat/`). Tiene que ser un enlace real (`<a href>`), no un
-     * botón que llame a una función, y abrirse en otra pestaña para no perder el
-     * panel abierto.
-     */
-    const enlace = html.match(/<a[^>]*id="drawer-web"[\s\S]*?<\/a>/);
-    expect(enlace).toBeTruthy();
-    expect(enlace[0]).toContain('href="/"');
-    expect(enlace[0]).toContain('target="_blank"');
-    expect(enlace[0]).toContain('rel="noopener noreferrer"');
-    expect(enlace[0]).toContain('Ir a la web');
-    // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
-    expect(app).toContain('web: svg(');
-    expect(css).toContain('.drawer__item--link');
-  });
-
   it('el menú tiene «Compartir app» y comparte el enlace SIN la clave', () => {
     /*
      * El botón sirve para pasarle el panel a otra persona (un vendedor, un
@@ -160,7 +143,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
      */
     const item = html.match(/<button[^>]*id="drawer-share"[\s\S]*?<\/button>/);
     expect(item).toBeTruthy();
-    expect(item[0]).toContain('Compartir aplicación');
+    expect(item[0]).toContain('Compartir app cliente');
     expect(item[0]).toContain('data-icon="share"');
     // Quien pinta los iconos tiene el suyo (si no, el hueco sale vacío).
     expect(app).toContain('share: svg(');
@@ -178,14 +161,30 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(app).toContain('https://wa.me/?text=');
   });
 
-  it('Configuración no conserva la app Flutter ni su bridge nativo', () => {
+  it('Configuración incluye Impresora y usa el bridge nativo sin deep links', () => {
     expect(html).toContain('id="settings-menu"');
-    expect(html).not.toContain('id="config-impresora"');
-    expect(html).not.toContain('id="printer-config"');
-    expect(app).not.toContain('PhytoDeviceBridge');
-    expect(app).not.toContain('nativePrinterRequest');
-    expect(app).not.toContain('/api/admin/android-apk/');
-    expect(css).not.toContain('.printer-settings');
+    expect(html).toContain('id="config-impresora"');
+    expect(html).toContain('id="printer-config"');
+    expect(app).toContain('PhytoDeviceBridge');
+    expect(app).toContain("nativePrinterRequest('printerStatus'");
+    expect(app).toContain("nativePrinterRequest('configurePrinter'");
+    expect(app).toContain("nativePrinterRequest('testPrint'");
+    expect(app).toContain("nativePrinterRequest('printReceipt'");
+    expect(app).toContain('data-native-printer="configure"');
+    expect(app).toContain('data-native-printer="test"');
+    expect(app).toContain('Para imprimir por Bluetooth desde el teléfono, instala la app de FullTECH para Android.');
+    expect(app).toContain('/api/admin/android-apk/download');
+    expect(app).toContain('Descargar app para Android');
+    expect(app).toContain('Cómo instalar y probar la impresora');
+    expect(app).toContain('Si el teléfono pide permiso para instalar');
+    expect(app).toContain('confirma la instalación solo si el archivo viene desde este botón del CRM');
+    expect(app).toContain('Imprimir prueba');
+    expect(app).not.toContain('flutter build apk --debug');
+    expect(app).not.toContain('PHYTO_ANDROID_APK_URL');
+    expect(app).not.toContain('apps/phyto_printer/build/app/outputs/flutter-apk/app-debug.apk');
+    expect(app).not.toContain('phytoemagry-printer://');
+    expect(css).toContain('.printer-settings');
+    expect(css).toContain('.printer-settings__guide');
   });
 
   it('los iconos son UN sistema (SVG), no emojis mezclados', () => {

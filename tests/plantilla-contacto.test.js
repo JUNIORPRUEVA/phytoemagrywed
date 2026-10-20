@@ -25,7 +25,7 @@ const NOMBRE = 'Juan Pérez';
 
 /** El cuerpo que TIENE que estar registrado en Meta, palabra por palabra. */
 const CUERPO =
-  'Hola {{1}}, te escribimos de Phytoemagry.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.';
+  'Hola {{1}}, te escribimos de FullTECH.\n\n{{2}}\n\nSi necesitas alguna información adicional, estamos disponibles para ayudarte.';
 
 let tmpDir;
 let app;
@@ -394,16 +394,35 @@ describe('enviar un mensaje no toca nada más', () => {
  * mudanza, el mensaje final sea PALABRA POR PALABRA el que pidió el negocio.
  */
 const CUERPO_FULLTECH =
-  'Hola {{1}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.';
+  'Hola {{1}}, te escribimos de FullTECH, distribuidor de Phytoemagry en Higüey.\n\n{{2}}\n\nCualquier duda, respóndenos por aquí y te ayudamos.';
 const AVISO_MUDANZA =
   'Nos mudamos temporalmente a La Otra Banda y ahora trabajamos de forma virtual, con almacen en Higuey. Tenemos delivery de 8 a. m. a 9 p. m. Para pedidos o consultas, escribenos por aqui. Entrega rapida.';
 
 describe('la plantilla de las campañas (aviso de Fulltech)', () => {
+  it('actualiza solo las semillas CRM antiguas que siguen pendientes', async () => {
+    const initial = await listaPlantillas();
+    const legacy = initial.templates.find((row) => row.name === 'phyto_seguimiento_cliente_v1');
+    expect(legacy).toBeTruthy();
+    await app.collections.update('wa_templates', legacy.id, {
+      body: 'Hola {{1}}, te escribimos de Phytoemagry para dar seguimiento a tu solicitud. Si deseas continuar, estamos disponibles para ayudarte.',
+      source: 'crm',
+      status: 'pending_approval',
+      sendable: false,
+      meta_template_id: null,
+    });
+
+    const refreshed = await listaPlantillas();
+    const migrated = refreshed.templates.find((row) => row.name === legacy.name);
+    expect(migrated.body).toContain('te escribimos de FullTECH');
+    expect(migrated.status).toBe('pending_approval');
+    expect(migrated.sendable).toBe(false);
+  });
+
   it('está en el catálogo con DOS variables y su texto fijo exacto', async () => {
     const data = await listaPlantillas();
     const plantilla = data.templates.find((row) => row.name === 'phyto_aviso_fulltech_v1');
     expect(plantilla).toBeTruthy();
-    expect(plantilla.friendly_name).toBe('Aviso de Fulltech (campañas)');
+    expect(plantilla.friendly_name).toBe('Aviso de FullTECH (campañas)');
     expect(plantilla.category).toBe('MARKETING');
     expect(plantilla.language).toBe('es');
     expect(plantilla.body).toBe(CUERPO_FULLTECH);
@@ -416,7 +435,7 @@ describe('la plantilla de las campañas (aviso de Fulltech)', () => {
     const [antes, despues] = CUERPO_FULLTECH.split('{{2}}');
     const final = `${antes.replace('{{1}}', '{{nombre}}')}${AVISO_MUDANZA}${despues}`.trim();
     expect(final).toBe(
-      'Hola {{nombre}}, te escribimos de Fulltech, distribuidor de Phytoemagry en Higüey.\n\n' +
+      'Hola {{nombre}}, te escribimos de FullTECH, distribuidor de Phytoemagry en Higüey.\n\n' +
         'Nos mudamos temporalmente a La Otra Banda y ahora trabajamos de forma virtual, con almacen en Higuey. ' +
         'Tenemos delivery de 8 a. m. a 9 p. m. Para pedidos o consultas, escribenos por aqui. Entrega rapida.\n\n' +
         'Cualquier duda, respóndenos por aquí y te ayudamos.',
@@ -450,7 +469,7 @@ describe('la plantilla de las campañas (aviso de Fulltech)', () => {
       expect(sync.ok).toBe(true);
       const plantilla = (await listaPlantillas()).templates.find((row) => row.name === 'phyto_aviso_fulltech_v1');
       expect(plantilla.meta_template_id).toBe('900000000000001');
-      expect(plantilla.friendly_name).toBe('Aviso de Fulltech (campañas)');
+      expect(plantilla.friendly_name).toBe('Aviso de FullTECH (campañas)');
       expect(plantilla.variables).toEqual(['customer_name', 'mensaje']);
       expect(plantilla.body).toBe(CUERPO_FULLTECH);
       // Sigue SIN aprobar: la aprobación la decide Meta, no la sincronización.

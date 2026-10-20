@@ -642,7 +642,7 @@
   });
   function stopLive(){source?.close();source=null;if(poll)clearInterval(poll);poll=null;}
   function startLive(){
-    if(!pages.includes(page)||!authenticated||document.hidden)return;
+    if(!pages.includes(page)||!authenticated||!window.document||document.hidden)return;
     if(!source&&typeof EventSource==='function'){
       source=new EventSource('/api/admin/store/events');
       source.addEventListener('catalog.changed',()=>load());

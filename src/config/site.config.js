@@ -27,14 +27,14 @@ import { envString, isDev } from '../lib/env.js';
 export const siteConfig = {
   /** ------------------------------------------------------------------ MARCA */
   brand: {
-    name: 'Phytoemagry',
+    name: 'FullTECH',
     /** Claim corto. PENDIENTE: solo si existe un texto aprobado. */
     tagline: null,
     /** Ruta a un logo propio (SVG/WebP). Si es null se usa el nombre en texto. */
-    logo: null,
-    logoAlt: 'Phytoemagry',
+    logo: '/assets/img/fulltech-logo.png',
+    logoAlt: 'FullTECH',
     /** Color de marca para meta theme-color (debe coincidir con --pe-brand-700). */
-    themeColor: '#0B6B4F',
+    themeColor: '#087BEE',
   },
 
   /** -------------------------------------------------------------------- SEO */
@@ -42,9 +42,9 @@ export const siteConfig = {
     /** Dominio final sin barra final. PENDIENTE de confirmar (ej: https://phytoemagry.com). */
     siteUrl: envString('SEO_SITE_URL'),
     /** Título por defecto de la home. Editable. */
-    title: 'Phytoemagry | Información del producto y compra directa',
+    title: 'FullTECH | Información del producto y compra directa',
     /** Plantilla de título para páginas internas. */
-    titleTemplate: '%s | Phytoemagry',
+    titleTemplate: '%s | FullTECH',
     /** Meta description (sin claims médicos ni promesas). */
     description:
       'Información de Phytoemagry: presentación, disponibilidad, formas de compra y contacto directo por WhatsApp.',
@@ -63,7 +63,7 @@ export const siteConfig = {
       /** SOLO dígitos con código de país, ej: '56912345678'. Vacío => se ocultan los botones de WhatsApp. */
       number: envString('PHYTO_WHATSAPP_NUMBER'),
       /** Mensaje inicial (sin información médica). */
-      defaultMessage: 'Hola, estoy interesado/a en recibir información sobre Phytoemagry.',
+      defaultMessage: 'Hola, soy cliente de FullTECH y quiero información sobre Phytoemagry.',
       /** Adjunta `Ref: <campaña>` al mensaje para identificar el origen del contacto. */
       includeRefInMessage: true,
       /** Horario de atención mostrado junto al CTA (null => no se muestra). */
@@ -210,7 +210,7 @@ export const siteConfig = {
     groups: [
       {
         id: 'group_1',
-        name: 'Comunidad Phytoemagry 1',
+        name: 'Comunidad FullTECH 1',
         url: 'https://chat.whatsapp.com/DzhnvGqRxwq38CHJc05bGz?mode=gi_t',
         active: true,
         priority: 1,
@@ -218,7 +218,7 @@ export const siteConfig = {
       },
       {
         id: 'group_2',
-        name: 'Comunidad Phytoemagry 2',
+        name: 'Comunidad FullTECH 2',
         url: 'https://chat.whatsapp.com/CrB5NoaCBdIIKBO35bKfrz?mode=ac_t',
         active: true,
         priority: 2,
@@ -226,7 +226,7 @@ export const siteConfig = {
       },
       {
         id: 'group_3',
-        name: 'Comunidad Phytoemagry 3',
+        name: 'Comunidad FullTECH 3',
         url: 'https://chat.whatsapp.com/H4p1nmI1w9x0rGjQ8MvLRK',
         active: true,
         priority: 3,
@@ -234,7 +234,7 @@ export const siteConfig = {
       },
       {
         id: 'group_4',
-        name: 'Comunidad Phytoemagry 4',
+        name: 'Comunidad FullTECH 4',
         url: 'https://chat.whatsapp.com/GWHAEb67e2JA59cQ0H8qRV',
         active: true,
         priority: 4,
@@ -242,7 +242,7 @@ export const siteConfig = {
       },
       {
         id: 'group_5',
-        name: 'Comunidad Phytoemagry 5',
+        name: 'Comunidad FullTECH 5',
         url: 'https://chat.whatsapp.com/Da9M4Zml4p3Kxc3lME8JqC?s=cl&p=a&mlu=4',
         active: true,
         priority: 5,

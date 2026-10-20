@@ -68,6 +68,7 @@ async function api(path, options = {}) {
 }
 
 const BUCKETS = [
+  ['revision', 'Revisión pendiente'],
   ['sin_iniciar', 'Sin iniciar'],
   ['en_camino', 'En camino'],
   ['atrasados', 'Atrasados'],
@@ -127,6 +128,7 @@ function rowHtml(row) {
       <p class="sup-row__next">${esc(row.next_action)}</p>
       <div class="sup-row__actions">
         <a class="sup-btn" href="${esc(row.deep_link)}">Abrir pedido</a>
+        ${row.review_reason && row.responsible ? `<button class="sup-btn" type="button" data-sup-include="${esc(row.id)}">Incluir en seguimiento</button>` : ''}
         <button class="sup-btn sup-btn--ghost" type="button" data-sup-postpone="${esc(row.id)}" data-sup-number="${esc(row.order_number)}">Posponer</button>
       </div>
     </article>`;
@@ -281,7 +283,7 @@ async function dailySummary() {
 
 async function saveSettings() {
   if (state.busy) return;
-  const payload = {};
+  const payload = { ...state.data?.settings };
   document.querySelectorAll('[data-sup-setting]').forEach((input) => {
     const key = input.dataset.supSetting;
     payload[key] = input.type === 'checkbox' ? input.checked : Number(input.value);
@@ -292,6 +294,27 @@ async function saveSettings() {
     const result = await api('/api/admin/delivery-supervisor/settings', { method: 'POST', body: JSON.stringify(payload) });
     if (state.data) state.data.settings = result.settings;
     toast('Reglas guardadas');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.busy = '';
+    render();
+  }
+}
+
+async function includeInFollowUp(orderId) {
+  if (state.busy || !state.data?.settings) return;
+  state.busy = `include:${orderId}`;
+  render();
+  try {
+    const settings = state.data.settings;
+    const includeOrderIds = [...new Set([...(settings.includeOrderIds ?? []), orderId])];
+    await api('/api/admin/delivery-supervisor/settings', {
+      method: 'POST',
+      body: JSON.stringify({ ...settings, includeOrderIds }),
+    });
+    state.data = await api('/api/admin/delivery-supervisor');
+    toast('Pedido incluido; el supervisor lo revisará en la próxima pasada.');
   } catch (error) {
     toast(error.message);
   } finally {
@@ -464,6 +487,11 @@ document.addEventListener('click', (event) => {
   const postpone = target.closest('[data-sup-postpone]');
   if (postpone) {
     openPostpone(postpone.dataset.supPostpone, postpone.dataset.supNumber ?? 'pedido');
+    return;
+  }
+  const include = target.closest('[data-sup-include]');
+  if (include) {
+    includeInFollowUp(include.dataset.supInclude);
     return;
   }
   if (target.closest('[data-sup-postpone-cancel]')) {

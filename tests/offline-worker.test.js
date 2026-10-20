@@ -7,7 +7,7 @@ function worker(){
   let online=false,status=200;
   const context={URL,Request,Response,Headers,console,setTimeout,clearTimeout,Date,
     self:{location:{origin:'https://crm.test'},addEventListener:(name,fn)=>handlers[name]=fn},
-    FulltechOfflineStore:{get:async k=>records.get(k),remove:async k=>records.delete(k),entries:async()=>[...records.entries()]},
+    FullTECHOfflineStore:{get:async k=>records.get(k),remove:async k=>records.delete(k),entries:async()=>[...records.entries()]},
     fetch:async()=>{if(!online)throw new TypeError('offline');return new Response('{}',{status});},
     caches:{match:async(request,options)=>{const u=new URL(typeof request==='string'?request:request.url,'https://crm.test');if(options?.ignoreSearch)u.search='';return shell.get(u.href)?.clone();}},
   };

@@ -214,6 +214,8 @@ el adaptador definitivo; no basarlo en ejemplos no oficiales sin contrastarlos.
 - Contratos oficiales verificados en el navegador, incluyendo señalización y permisos.
 - Implementados cliente Meta, almacenamiento SQL, worker de webhooks, reservas
   atómicas, rutas autenticadas y controles WebRTC en el panel.
+- Soporte de micrófono implementado en Android; análisis y 20 pruebas Flutter
+  correctos; APK release compilado.
 - Meta: llamadas ENABLED, suscripción calls confirmada y messages preservada.
   Icono entrante oculto durante la puesta en servicio. Plantilla de permiso
   creada en estado PENDING al comprobarla inicialmente.

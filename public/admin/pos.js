@@ -5,7 +5,7 @@ const doc=()=>(typeof document==='undefined'||!document?null:document);
 const $=s=>doc()?.querySelector(s)??null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
-const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:'',deliveryMethod:'delivery',scheduledAt:'',deliveryNotes:'',deliveryReference:'',deliveryAgentId:'',deliveryContact:null,paymentStatus:'pending',feeReviewed:false,openAck:false,guidedFlow:false});
+const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:'',deliveryMethod:'delivery',scheduledAt:'',deliveryNotes:'',deliveryReference:'',deliveryAgentId:'',deliveryContact:null,paymentStatus:'pending',paymentMethod:'CASH',orderPrefs:null,saveOrderPrefs:true,feeReviewed:false,openAck:false,guidedFlow:false});
 const personIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg>';
 const quotesIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h5"/></svg>';
 const actionIcon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({quick:'<path d="m13 2-9 12h7l-1 8 10-13h-8z"/>',ticket:'<path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zM15 5v3m0 3v2m0 3v3"/>',save:'<path d="M5 3h12l4 4v14H3V3h2zm2 0v6h10V3M7 21v-8h10v8"/>',note:'<path d="M4 4h11l5 5v11H4zM15 4v5h5M8 12h8M8 16h6"/>',stock:'<path d="m3 7 9-4 9 4v12l-9 3-9-3zM3 7l9 4 9-4M12 11v11M16 3v6M13 6h6"/>',product:'<path d="M4 5h16v15H4zM4 10h16M12 13v5m-2.5-2.5h5"/>',more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'})[name]||''}</svg>`;
@@ -77,6 +77,7 @@ function show(title,body,submitText,onSubmit){
 function chooseClient(){
   show('Seleccionar cliente',`<div class="pos-client-toolbar"><label class="field"><span class="field__label">Buscar cliente</span><input class="field__input" type="search" id="pos-client-search" placeholder="Nombre o teléfono" autocomplete="off"></label><button type="button" class="btn btn--ghost" id="pos-client-new">+ Agregar</button><button type="button" class="btn btn--primary" id="pos-client-select" disabled>Seleccionar</button></div><div class="pos-new-client" hidden><h3>Nuevo cliente</h3><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="120"></label><label class="field"><span class="field__label">Teléfono con código de país</span><input class="field__input" name="phone" type="tel" placeholder="+1 809 555 1234"></label><button class="btn btn--primary" type="submit">Guardar y seleccionar</button></div><div id="pos-customer-results" role="group" aria-label="Clientes"></div>`,null,async form=>{
     if(!String(form.get('phone')||'').trim())throw new Error('Escribe el teléfono del nuevo cliente.');
+    await initialize();
     const data=await api('customers',{name:form.get('name'),phone:form.get('phone')});customers.push(data.customer);selectClient(data.customer);modal.close();
   });
   let selected=null;
@@ -152,6 +153,10 @@ async function confirmSale(mode){
 }
 async function complete(mode,paymentMethod,acknowledgeOpen=false){
   const sale=totals();if(sale.error)throw new Error(sale.error);
+  const prefsSnapshot=mode==='order'&&draft.customer?.id&&draft.saveOrderPrefs!==false&&draft.items[0]?{
+    customerId:draft.customer.id,
+    orderPrefs:{variantId:draft.items[0].variantId,quantity:Math.max(1,Number(draft.items[0].quantity)||1),paymentMethod:paymentMethod||'CASH',locationId:draft.location?.id??null,note:draft.notes||null},
+  }:null;
   if(operation&&operation.mode!==mode)throw new Error('Primero revisa el resultado de la operación anterior.');
   if(!operation&&draft.ticketId)await saveActiveTicket();
   operation ||= {mode,payload:{requestId:crypto.randomUUID(),mode,customerId:draft.customer.id,conversationId:draft.conversationId,
@@ -165,6 +170,9 @@ async function complete(mode,paymentMethod,acknowledgeOpen=false){
   busy=true;persist();render();const epoch=generation;
   try{
     const result=await api(mode==='quote'?'quotes':'checkout',operation.payload);if(epoch!==generation)return;
+    if(prefsSnapshot&&!result.pending){
+      try{await fetch(`/api/admin/customers/${encodeURIComponent(prefsSnapshot.customerId)}`,{method:'PATCH',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({orderPrefs:prefsSnapshot.orderPrefs})});}catch{}
+    }
     const label=result.pending?'Guardado en este dispositivo':mode==='quote'?'Cotización guardada':mode==='order'?'Pedido guardado':'Venta cobrada';
     draft=empty();operation=null;expanded=false;persist();message=label;render();
     if(mode==='quote'){
@@ -657,18 +665,20 @@ async function openOrderCompletion(){
         <button type="button" class="pos-order-toggle" data-order-lines aria-expanded="false"><span id="pos-order-count"></span><span aria-hidden="true">⌄</span></button>
         <div id="pos-order-lines" class="pos-order-detail" hidden>${orderLinesHtml()}</div>
         <div id="pos-order-totals">${orderTotalsHtml()}</div>
-        <label class="pos-order-inline"><span>Cobro</span><select class="field__select" data-order-field="paymentStatus"><option value="pending" ${draft.paymentStatus==='paid'?'':'selected'}>Pendiente</option><option value="paid" ${draft.paymentStatus==='paid'?'selected':''}>Pagado</option></select></label>
+        <label class="pos-order-inline"><span>Forma de pago</span><select class="field__select" data-order-field="paymentMethod"><option value="CASH" ${draft.paymentMethod==='TRANSFER'?'':'selected'}>Efectivo</option><option value="TRANSFER" ${draft.paymentMethod==='TRANSFER'?'selected':''}>Transferencia</option></select></label>
+        <label class="pos-order-inline"><span>Estado del cobro</span><select class="field__select" data-order-field="paymentStatus"><option value="pending" ${draft.paymentStatus==='paid'?'':'selected'}>Pendiente</option><option value="paid" ${draft.paymentStatus==='paid'?'selected':''}>Pagado</option></select></label>
+        <label class="pos-order-prefs"><input type="checkbox" data-order-save-prefs ${draft.saveOrderPrefs===false?'':'checked'}><span><strong>Lo de siempre</strong><small>Guardar este pedido como preferencia del cliente</small></span></label>
         <div id="pos-order-check">${orderMissingHtml(faltas)}</div>${acuse}${ackHtml}
       </section>
     </div>
     <p class="pos-order-error" id="pos-order-error" role="alert"></p>
     <div class="pos-order-menu" id="pos-order-menu" hidden>
-      <button type="button" data-order-confirm-assign ${faltas.length?'disabled':''}>Confirmar y asignar repartidor</button>
-      <button type="button" data-order-send ${faltas.length?'disabled':''}>Confirmar y enviar por WhatsApp</button>
+      <button type="button" data-order-confirm-assign ${faltas.length||busy?'disabled':''}>Confirmar y asignar repartidor</button>
+      <button type="button" data-order-send ${faltas.length||busy?'disabled':''}>Confirmar y enviar por WhatsApp</button>
     </div>
     <footer class="pos-order-foot">
       <button type="button" class="pos-order-dots" data-order-menu aria-label="Más opciones" aria-expanded="false">⋯</button>
-      <button type="button" class="btn btn--primary" data-order-confirm ${faltas.length?'disabled':''}>Confirmar pedido</button>
+      <button type="button" class="btn btn--primary" data-order-confirm ${faltas.length||busy?'disabled':''}>Confirmar pedido</button>
     </footer>
   </div>`;
   if(!modal.open)modal.showModal();
@@ -730,14 +740,14 @@ async function postAdmin(path,body){
 async function confirmGuidedOrder({assign=false,send=false}={}){
   const faltas=orderRequirements();
   if(faltas.length){refreshOrderCompletion();return;}
-  const agentId=draft.deliveryAgentId;
-  const resultado=await complete('order','CASH',draft.openAck||!orderOpenOrders.length);
+  const pedidoConfirmado=structuredClone(draft);
+  const resultado=await complete('order',pedidoConfirmado.paymentMethod||'CASH',pedidoConfirmado.openAck||!orderOpenOrders.length);
   const orderId=resultado?.orderId;
   if(!orderId)return;
-  const destino=String(draft.deliveryAssignee||'');
+  const destino=String(pedidoConfirmado.deliveryAssignee||'');
   if(assign){
     if(destino.startsWith('user:')){
-      await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/assign`,{deliveryUserId:destino.slice(5),deliveryNote:draft.notes||''});
+      await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/assign`,{deliveryUserId:destino.slice(5),deliveryNote:pedidoConfirmado.notes||''});
       message='Pedido confirmado y asignado a quien lo entrega.';
     }else if(destino.startsWith('contact:')){
       message='Pedido confirmado. El contacto de entrega queda en el pedido: avísale por WhatsApp.';
@@ -786,6 +796,7 @@ document.addEventListener('input',e=>{
 document.addEventListener('change',e=>{
   const campo=e.target.closest('[data-order-field]');if(campo&&campo.tagName==='SELECT'){const key=campo.dataset.orderField;draft[key]=campo.value;persist();refreshOrderCompletion();scheduleTicketSave();return;}
   const ack=e.target.closest('[data-order-open-ack]');if(ack){draft.openAck=ack.checked;persist();refreshOrderCompletion();return;}
+  const savePrefs=e.target.closest('[data-order-save-prefs]');if(savePrefs){draft.saveOrderPrefs=savePrefs.checked;persist();return;}
   const ubicacion=e.target.closest('[data-order-location-select]');
   if(ubicacion){
     const filas=JSON.parse(ubicacion.dataset.locations||'[]');
@@ -801,7 +812,26 @@ window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;
   if(operation){message='Revisa el resultado de la operación anterior antes de iniciar otro pedido.';render();return;}
-  const apply=()=>{draft.customer=customers.find(c=>c.id===context.customerId)||(context.customer?.id===context.customerId?context.customer:null);draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';changed();};
+  const apply=async()=>{
+    const listedCustomer=customers.find(c=>c.id===context.customerId);
+    const customer=context.customer?.id===context.customerId?{...listedCustomer,...context.customer}:listedCustomer||null;
+    const prefs=customer?.orderPrefs??customer?.order_prefs??null;
+    draft.customer=customer;draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';
+    if(!draft.items.length&&prefs){
+      const variantId=prefs.variantId??prefs.variant_id;
+      const quantity=Math.max(1,Math.min(9999,Number(prefs.quantity)||1));
+      if(products.some(product=>product.id===variantId))draft.items=[{variantId,quantity,discount:{}}];
+      const paymentMethod=prefs.paymentMethod??prefs.payment_method;
+      if(['CASH','TRANSFER'].includes(paymentMethod))draft.paymentMethod=paymentMethod;
+      if(!draft.notes)draft.notes=String(prefs.note??'').slice(0,2000);
+      draft.orderPrefs=structuredClone(prefs);
+      const locationId=prefs.locationId??prefs.location_id;
+      if(locationId){
+        try{const response=await fetch(`/api/admin/customers/${encodeURIComponent(context.customerId)}/locations`,{credentials:'same-origin',cache:'no-store'});const data=await response.json();const saved=(data.locations||[]).find(location=>location.id===locationId);if(saved)draft.location=saved;}catch{}
+      }
+    }
+    changed();
+  };
   if(draft.items.length&&draft.customer?.id!==context.customerId)show('Cambiar cliente del carrito','<p>Se conservarán los artículos y se asignarán al cliente seleccionado.</p>','Continuar',()=>{apply();modal.close();});else apply();
 });
 window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}});

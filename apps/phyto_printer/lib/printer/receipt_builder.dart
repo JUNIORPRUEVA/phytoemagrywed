@@ -16,7 +16,7 @@ class ReceiptBuilder {
 
   List<int> buildTestTicket(PrinterDevice device) {
     reset();
-    text('PHYTOEMAGRY', align: ReceiptAlign.center, bold: true);
+    text('FULLTECH', align: ReceiptAlign.center, bold: true);
     feed();
     text('Prueba de impresion', align: ReceiptAlign.center);
     feed();
@@ -37,7 +37,7 @@ class ReceiptBuilder {
 
   List<int> buildOrderTicket(ReceiptOrder order) {
     reset();
-    text('PHYTOEMAGRY', align: ReceiptAlign.center, bold: true);
+    text('FULLTECH', align: ReceiptAlign.center, bold: true);
     text('Factura de compra', align: ReceiptAlign.center);
     feed();
     keyValue('Pedido:', order.orderNumber);

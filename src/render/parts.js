@@ -43,7 +43,7 @@ export function renderHeader(view) {
     .join('');
 
   const logo = view.site.brand.logo
-    ? `<img src="${escapeHtml(view.site.brand.logo)}" alt="${escapeHtml(view.site.brand.logoAlt)}" width="140" height="36" decoding="async">`
+    ? `<img src="${escapeHtml(view.site.brand.logo)}" alt="${escapeHtml(view.site.brand.logoAlt)}" width="40" height="40" decoding="async">`
     : `<span class="pe-logo__text">${escapeHtml(view.site.brand.name)}</span>`;
 
   return `<header class="pe-header" data-header>

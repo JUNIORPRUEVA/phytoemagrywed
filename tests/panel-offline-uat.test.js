@@ -266,7 +266,7 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
     panel.setValue('.pos-modal-form [name=name]', 'Pedido Sin Red');
     panel.setValue('.pos-modal-form [name=phone]', '8095559999');
     panel.$('.pos-modal-form').dispatchEvent(new panel.win.Event('submit',{bubbles:true,cancelable:true}));
-    await waitFor(()=>panel.$('#pos-client').textContent.includes('Pedido Sin Red'),'cliente local del pedido');
+    await waitFor(()=>{const error=panel.$('.pos-modal-error')?.textContent;if(error)throw new Error(error);return panel.$('#pos-client').textContent.includes('Pedido Sin Red');},'cliente local del pedido');
     panel.click('[data-pos-add="capsules_10"]');panel.click('[data-pos-add="capsules_10"]');
     panel.click('[data-pos-expand]');panel.click('[data-pos-pending]');
     await waitFor(()=>panel.$('.pos-dialog').getAttribute('aria-label')==='Guardar pedido','confirmar pedido local');

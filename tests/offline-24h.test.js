@@ -69,7 +69,7 @@ it('cobra offline, mantiene el recibo provisional y descuenta stock una sola vez
   const result=await (await call(w,'pos/checkout',body)).json();expect(result).toMatchObject({ok:true,pending:true,total_cents:20050});
   const stock=await (await call(w,'store/products')).json();expect(stock.products.find(p=>p.id===product.id).quantity).toBe(8);
   expect(result.receiptUrl).toMatch(/^\/admin\/receipt-viewer\.html\?pdf=/);
-  expect((await w.FulltechOfflineStore.entries()).some(([k])=>k.endsWith(result.pdfUrl))).toBe(true);
+  expect((await w.FulltechOfflineStore.validProjection((await w.FulltechOfflineStore.get('identity')).key)).records.some(([url])=>url.endsWith(result.pdfUrl))).toBe(true);
   const cold=await page(),pdfResponse=await cold.fetch(result.pdfUrl);
   expect(pdfResponse.headers.get('content-type')).toBe('application/pdf');
   const bytes=new Uint8Array(await pdfResponse.arrayBuffer());expect(new TextDecoder().decode(bytes.slice(0,8))).toBe('%PDF-1.4');
@@ -108,9 +108,20 @@ it('inicia reparto sin red, conserva puntos antiguos y sincroniza la ruta y su c
 },30000);
 it('no encola mensajes, llamadas ni contraseñas y cerrar sesión bloquea el acceso a datos privados',async()=>{
   const w=await page();await prepare(w);online=false;
-  for(const route of ['calling/calls','conversations/test/messages','users/me/password'])expect((await call(w,route,{text:'hola'})).status).toBe(503);
+  for(const route of ['calling/calls','conversations/test/messages','users/me/password','ai/reply-suggestion'])expect((await call(w,route,{text:'hola'})).status).toBe(503);
   expect(await w.FulltechOffline.listQueue()).toHaveLength(0);await w.FulltechOffline.forget();
   expect((await call(w,'store/products')).status).toBe(503);const cold=await page();expect((await call(cold,'pos/customers')).status).toBe(503);
+});
+it('una sugerencia IA requiere red y nunca se mete en la cola de sincronización',async()=>{
+  const w=await page();await prepare(w);const owner=(await w.FulltechOfflineStore.get('identity')).key;
+  const pending={id:'pending-conversation',path:'/api/admin/conversations',method:'POST',body:{},localId:'local_chat_pending',at:Date.now(),state:'pending',local:{body:'{}',status:200,headers:[]}};
+  await w.FulltechOfflineStore.put('queue:'+owner,[pending]);
+  let calls=0;w.offlineTransport=async()=>{calls+=1;return new Response('{"ok":true,"text":"respuesta de prueba"}',{status:200,headers:{'content-type':'application/json'}});};
+  const response=await call(w,'ai/reply-suggestion',{conversationId:pending.localId});
+  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ok:true,text:'respuesta de prueba'});expect(calls).toBe(1);
+  expect(await w.FulltechOffline.listQueue()).toEqual([pending]);
+  online=false;expect((await call(w,'ai/reply-suggestion',{conversationId:'cnv_online_only'})).status).toBe(503);
+  expect(await w.FulltechOffline.listQueue()).toEqual([pending]);
 });
 it('no confirma un guardado si el diario local no tiene espacio',async()=>{
   const w=await page();await prepare(w);online=false;
@@ -140,6 +151,21 @@ it('muestra los cambios de ambas colas en el menú sin tapar la pantalla con avi
   // La barra de actualizar NO se mete dentro del menú (empezaría oculta).
   expect(w.document.querySelector('#update-bar')).toBeTruthy();
   expect(w.document.querySelector('.drawer__foot #update-bar')).toBeNull();
+});
+it('los rechazos históricos no se presentan como sincronización pendiente y siguen recuperables',async()=>{
+  const w=await page();await prepare(w);const owner=(await w.FulltechOfflineStore.get('identity')).key;
+  const historical={id:'android-old-404',state:'review',historical:true,status:404,path:'/api/admin/old-route',method:'POST',body:{original:'preservar'},at:123,error:'HTTP 404'};
+  await w.FulltechOfflineStore.put('queue:'+owner,[historical]);
+  w.document.body.innerHTML='<footer class="drawer__foot"><button id="drawer-offline"></button></footer>';
+  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  w.eval(readFileSync('public/admin/offline-ui.js','utf8'));w.dispatchEvent(new w.Event('DOMContentLoaded'));
+  await new Promise(r=>setTimeout(r,30));
+  expect(w.document.querySelector('.drawer__offline').hidden).toBe(true);
+  w.document.querySelector('#drawer-offline').click();
+  await new Promise(r=>setTimeout(r,30));
+  expect(w.document.querySelector('.offline-dialog').textContent).toContain('HTTP 404');
+  expect(await w.FulltechOffline.listQueue()).toEqual([historical]);
+  expect((await w.FulltechOffline.exportRecovery()).operaciones).toEqual([historical]);
 });
 it('mantiene varios tickets y convierte una cotización local en venta al reconectar',async()=>{
   const w=await page();await prepare(w);online=false;
@@ -221,4 +247,307 @@ it('abre la app completa en frío sin localStorage usando solo la descarga de In
   for(let i=0;i<150;i++){if(!w.document.querySelector('#app').hidden&&w.document.querySelector('[data-store-detail]'))break;await new Promise(r=>setTimeout(r,20));}
   expect(w.document.querySelector('#app').hidden).toBe(false);expect(w.document.querySelector('#store-catalogo').textContent).toContain('Cable USB');
   expect(w.document.body.dataset.tab).toBe('catalogo');
+});
+
+
+it('un cambio que el móvil cree sin red se envía igual si el servidor responde',async()=>{
+  /*
+   * CAUSA REAL DE «TENGO QUE SALIR A SINCRONIZAR».
+   *
+   * `navigator.onLine` se equivoca (VPN, wifi cautivo, app reanudada). El envío
+   * de la cola del panel lo comprobaba ANTES de intentar nada y se rendía: el
+   * cambio quedaba en el aparato y el reintento automático volvía a rendirse.
+   * Quien decide es el servidor.
+   */
+  const w=await page();await prepare(w);
+  online=false; // el navegador dice «sin conexión»…
+  w.offlineTransport=(url,options={})=>fetch(new URL(url,app.url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),cookie}}); // …pero la red funciona
+  const response=await w.fetch('/api/admin/store/categories',{method:'POST',headers:{'content-type':'application/json','x-fulltech-legacy-outbox':'1'},body:JSON.stringify({name:'Sin aviso de red'})});
+  expect(response.status).toBe(201);
+  const list=await (await server('store/categories')).json();
+  expect(list.categories.some(c=>c.name==='Sin aviso de red')).toBe(true);
+});
+it('una cola del panel atascada no bloquea las operaciones nuevas',async()=>{
+  /*
+   * LAS DOS COLAS SON INDEPENDIENTES.
+   *
+   * Antes, si la cola del panel devolvía un rechazo, `synchronize()` terminaba
+   * sin enviar NADA del diario de operaciones: un cambio viejo bloqueaba para
+   * siempre todo lo nuevo.
+   */
+  const w=await page();await prepare(w);
+  w.localStorage.setItem('pe_crm_outbox',JSON.stringify([{kind:'desconocido',key:'POST /api/admin/no-existe',label:'Cambio viejo',method:'POST',path:'/api/admin/no-existe',body:{},at:Date.now(),tries:0}]));
+  online=false;
+  await call(w,'store/categories',{name:'Nueva con cola vieja'});
+  expect((await w.FulltechOffline.listQueue()).length).toBe(1);
+  online=true;
+  await w.FulltechOffline.synchronize();
+  const list=await (await server('store/categories')).json();
+  expect(list.categories.some(c=>c.name==='Nueva con cola vieja')).toBe(true);
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+});
+it('la cola sigue visible y enviable cuando la copia local de 24 h caducó',async()=>{
+  /*
+   * CADUCAR NO ES PERDER.
+   *
+   * `listQueue()` devolvía [] si la autorización local tenía más de 24 h: los
+   * cambios seguían en el aparato pero el panel no los veía ni los enviaba.
+   */
+  const w=await page();await prepare(w);online=false;
+  await call(w,'store/categories',{name:'Guardada antes de caducar'});
+  const identity=await w.FulltechOfflineStore.get('identity');identity.verifiedAt-=86400001;await w.FulltechOfflineStore.put('identity',identity);
+  expect((await w.FulltechOffline.listQueue()).length).toBe(1);
+  online=true;
+  await w.FulltechOffline.synchronize();
+  const list=await (await server('store/categories')).json();
+  expect(list.categories.some(c=>c.name==='Guardada antes de caducar')).toBe(true);
+});
+it('una marca de leído no se guarda como cambio pendiente',async()=>{
+  /*
+   * EL CAMBIO FANTASMA.
+   *
+   * Abrir un chat manda `POST /conversations/:id/read`. Sin red, eso se guardaba
+   * en la cola y el panel mostraba para siempre «1 cambio pendiente de
+   * sincronizar» que ya no significaba nada. No es trabajo de nadie: si no sale,
+   * se descarta.
+   */
+  const w=await page();await prepare(w);online=false;
+  const response=await w.fetch('/api/admin/conversations/cnv_prueba/read',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  expect(response.ok).toBe(true);
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+  expect(JSON.parse(w.localStorage.getItem('pe_crm_outbox')||'[]')).toHaveLength(0);
+});
+it('una marca de leído vieja guardada en la cola se descarta al sincronizar',async()=>{
+  const w=await page();await prepare(w);
+  const owner=(await w.FulltechOfflineStore.get('identity')).key;
+  await w.FulltechOfflineStore.put('queue:'+owner,[{id:'vieja',path:'/api/admin/conversations/cnv_prueba/read',method:'POST',body:{},localId:'local_vieja',at:Date.now()-90000000,state:'pending',local:{body:'{}',status:200,headers:[]}}]);
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(1);
+  await w.FulltechOffline.synchronize();
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+});
+it('el motor envía solo: nadie tiene que pulsar «Sincronizar»',async()=>{
+  /*
+   * EL COMPORTAMIENTO QUE SE PEDÍA: COMO UN MENSAJE DE WHATSAPP.
+   *
+   * Se guarda un cambio sin red y se recupera la red. Sin llamar a
+   * `synchronize()` desde la prueba, sin pulsar nada y sin tocar la app: el
+   * motor lo envía por su cuenta.
+   */
+  const w=await page();await prepare(w);online=false;
+  w.eval(readFileSync('public/admin/sync-engine.js','utf8'));
+  await call(w,'store/categories',{name:'Auto sin botón'});
+  expect((await w.FulltechOffline.listQueue()).length).toBe(1);
+  w.FulltechSync.configure({
+    pending:()=>w.FulltechOffline.pendientes(),
+    flush:async()=>{const r=await w.FulltechOffline.synchronize();return {...r};},
+  });
+  online=true; // vuelve la red: el motor se despierta por sí mismo
+  w.dispatchEvent(new w.Event('online'));
+  await new Promise(r=>setTimeout(r,2500));
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+  const list=await (await server('store/categories')).json();
+  expect(list.categories.some(c=>c.name==='Auto sin botón')).toBe(true);
+});
+it('Cloud First: pendientes y rechazos no ocultan datos nuevos ni bloquean escrituras independientes',async()=>{
+  const w=await page();await prepare(w);online=false;
+  await call(w,'store/categories',{name:'Pendiente local'});
+  /*
+   * AHORA LOS CAMBIOS SE ENVÍAN SOLOS.
+   *
+   * Con la sincronización automática, un pendiente desaparece en cuanto hay red;
+   * para seguir probando el escenario de «rechazo en la cola» se marca como
+   * revisión ANTES de volver a estar en línea (los rechazos no se reenvían solos).
+   */
+  const key='queue:'+(await w.FulltechOfflineStore.get('identity')).key;
+  await w.FulltechOfflineStore.update(key,q=>q.map(p=>({...p,state:'review'})));
+  online=true;
+  await server('store/products/'+product.id+'/stock',{type:'in',quantity:3,reason:'Cambio remoto',requestId:crypto.randomUUID()});
+  const response=await call(w,'store/products');
+  expect(response.headers.get('x-fulltech-offline')).toBeNull();
+  expect((await response.json()).products.find(p=>p.id===product.id).quantity).toBe(13);
+  const write=await (await call(w,'store/categories',{name:'Directa nube'})).json();
+  expect(write.pending).not.toBe(true);
+  expect((await w.FulltechOffline.listQueue()).length).toBe(1);
+  online=false;
+  expect((await (await call(w,'store/products')).json()).products.find(p=>p.id===product.id).quantity).toBe(13);
+});
+it('Cloud First: navigator.onLine false no impide consultar un backend accesible',async()=>{
+  const w=await page();await prepare(w);online=false;
+  w.offlineTransport=(url,options)=>fetch(new URL(url,app.url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),cookie}});
+  const r=await call(w,'store/categories',{name:'Red real'});
+  expect((await r.json()).pending).not.toBe(true);expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+});
+it('404 y 422 no se convierten en desconexión ni en éxito local',async()=>{
+  const w=await page();await prepare(w);
+  for(const code of [404,422]){
+    w.offlineTransport=async()=>new Response(JSON.stringify({ok:false,error:'not_found'}),{status:code});
+    expect((await call(w,'store/products')).status).toBe(code);
+    expect((await call(w,'store/categories',{name:'No guardar'})).status).toBe(code);
+  }
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+});
+it('consulta el estado de una respuesta larga sin truncar el JSON',async()=>{
+  const id=crypto.randomUUID();await server('store/categories',{name:'Respuesta registrada'},id);
+  const result=await (await server('offline-operations/status',{ids:[id]})).json();
+  expect(result.estados[0]).toMatchObject({estado:'completada',aplicada:true,http:201});
+});
+it('una resolución rechazada conserva la operación en revisión',async()=>{
+  const w=await page();await prepare(w);online=false;await call(w,'store/categories',{name:'Conservar'});
+  const key='queue:'+(await w.FulltechOfflineStore.get('identity')).key;
+  await w.FulltechOfflineStore.update(key,q=>q.map(p=>({...p,state:'review'})));
+  const entry=(await w.FulltechOffline.listQueue())[0];
+  w.offlineTransport=async()=>new Response('{}',{status:403});
+  await expect(w.FulltechOffline.resolver(entry.id,'No autorizada')).rejects.toThrow('no confirmó');
+  expect((await w.FulltechOffline.listQueue())[0].state).toBe('review');
+});
+it('la migración transaccional conserva el original y no resucita operaciones confirmadas',async()=>{
+  const w=await page();await prepare(w);const store=w.FulltechOfflineStore;
+  const owner=(await store.get('identity')).key,target='queue:'+owner,source='queue:'+JSON.stringify([...JSON.parse(owner),[]]);
+  const entry={id:crypto.randomUUID(),state:'pending',body:{name:'Legado'},path:'/api/admin/store/categories',method:'POST'};
+  await store.put(source,[entry]);await store.adoptQueue(source,target);
+  expect(await store.get(target)).toEqual([entry]);expect(await store.get(source)).toEqual([entry]);
+  await store.put(target,[]);await store.adoptQueue(source,target);
+  expect(await store.get(target)).toEqual([]);expect((await store.get('migration-backup:'+source)).operaciones).toEqual([entry]);
+});
+it('una copia dañada se respalda y reemplaza desde la nube sin tocar la cola',async()=>{
+  const w=await page();await prepare(w);const store=w.FulltechOfflineStore,owner=(await store.get('identity')).key;
+  const key='response:'+owner+':'+app.url+'/api/admin/store/products';
+  await store.put(key,{owner,body:'dañado'});await call(w,'store/products');
+  expect((await store.get('repair-backup:'+key)).original.body).toBe('dañado');
+  expect((await store.get('repair:'+key)).state).toBe('replaced-from-server');
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+});
+it('una sesión revocada impide enviar la cola y conserva sus datos',async()=>{
+  const w=await page();await prepare(w);online=false;await call(w,'store/categories',{name:'No enviar'});
+  const owner=(await w.FulltechOfflineStore.get('identity')).key;let writes=0;
+  w.offlineTransport=async(url,opts)=>{if(opts.method==='POST')writes++;return new Response('{}',{status:401});};
+  online=true;await w.FulltechOffline.synchronize();
+  expect(writes).toBe(0);expect(w.FulltechOffline.valid()).toBe(false);
+  expect(await w.FulltechOfflineStore.get('queue:'+owner)).toHaveLength(1);
+});
+
+it('un rechazo no bloquea una operación independiente y no se reintenta infinitamente',async()=>{
+  const w=await page();await prepare(w);online=false;
+  await call(w,'store/categories',{name:'Primera'});await call(w,'store/categories',{name:'Segunda'});
+  const owner=(await w.FulltechOfflineStore.get('identity')).key;
+  await w.FulltechOfflineStore.update('queue:'+owner,q=>q.map((p,i)=>i===0?{...p,path:'/api/admin/ruta-antigua'}:p));
+  online=true;await w.FulltechOffline.synchronize();
+  const remaining=await w.FulltechOffline.listQueue();expect(remaining).toHaveLength(1);expect(remaining[0].state).toBe('review');
+  expect((await (await server('store/products')).json()).categories.some(c=>c.name==='Segunda')).toBe(true);
+  await w.FulltechOffline.synchronize();expect((await w.FulltechOffline.listQueue())[0].attempts).toBe(1);
+});
+it('si falla el respaldo se anota pero no se detiene el envío',async()=>{
+  /*
+   * EL RESPALDO PROTEGE, NO BLOQUEA.
+   *
+   * Antes, un respaldo fallido (cuota llena) detenía TODOS los envíos en silencio:
+   * el panel decía «pendiente» para siempre y parecía que había que pulsar
+   * «Sincronizar». La operación solo se borra cuando el SERVIDOR confirma y lleva
+   * su clave de idempotencia, así que enviarla sin respaldo no pierde nada.
+   */
+  const w=await page();await prepare(w);online=false;await call(w,'store/categories',{name:'Conservar respaldo'});
+  const backup=w.FulltechOfflineStore.backupQueue;w.FulltechOfflineStore.backupQueue=()=>Promise.reject(new Error('quota respaldo'));
+  online=true;
+  await w.FulltechOffline.synchronize();
+  expect((await (await server('store/products')).json()).categories.some(c=>c.name==='Conservar respaldo')).toBe(true);
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+  expect(w.FulltechOffline.diagnostics().some(d=>d.path==='/offline/respaldo')).toBe(true);
+  w.FulltechOfflineStore.backupQueue=backup;
+});
+it('una respuesta 200 inválida no confirma ni elimina una operación',async()=>{
+  const w=await page();await prepare(w);online=false;await call(w,'store/categories',{name:'Sin evidencia'});
+  online=true;w.offlineTransport=async(url,options)=>String(url).endsWith('/store/categories')?new Response('<html>Error proxy</html>'):fetch(new URL(url,app.url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),cookie}});
+  await w.FulltechOffline.synchronize();expect((await w.FulltechOffline.listQueue())[0].state).toBe('review');
+});
+
+it('dos sesiones SSE reciben el pedido confirmado en el backend',async()=>{
+  const login=await server('login',{token:'offline-test-token'}),secondCookie=login.headers.get('set-cookie').split(';')[0];
+  const controllers=[new AbortController(),new AbortController()];
+  const timer=setTimeout(()=>controllers.forEach(c=>c.abort()),4000);
+  try{
+    const responses=await Promise.all([cookie,secondCookie].map((session,i)=>fetch(app.url+'/api/admin/events?device=uat-'+i,{headers:{cookie:session},signal:controllers[i].signal})));
+    const readers=responses.map(r=>r.body.getReader());
+    await Promise.all(readers.map(r=>r.read()));
+    const result=await (await server('orders',{name:'Pedido SSE',phone:'8095550311',paymentMethod:'CASH',items:[{variantId:'capsules_10',quantity:1}]})).json();
+    expect(result.ok).toBe(true);
+    const events=await Promise.all(readers.map(async reader=>{
+      let text='';while(!text.includes('order.created')){const part=await reader.read();if(part.done)break;text+=new TextDecoder().decode(part.value);}return text;
+    }));
+    for(const event of events)expect(event).toContain('order.created');
+  }finally{clearTimeout(timer);controllers.forEach(c=>c.abort());}
+});
+
+it('reconstruye stock pendiente sobre nube nueva, sin duplicar proyecciones ni contaminar confirmados',async()=>{
+  const w=await page();await prepare(w);online=false;
+  await call(w,'pos/checkout',{requestId:crypto.randomUUID(),mode:'invoice',customerId:customer.id,items:[{variantId:product.id,quantity:2}],expectedTotal:20050,paymentMethod:'CASH'});
+  const owner=(await w.FulltechOfflineStore.get('identity')).key;
+  const cloud=await w.FulltechOfflineStore.get('response:'+owner+':'+app.url+'/api/admin/store/products');
+  expect(JSON.parse(new TextDecoder().decode(cloud.body)).products.find(p=>p.id===product.id).quantity).toBe(10);
+  online=true;await server('store/products/'+product.id+'/stock',{type:'in',quantity:3,reason:'Otro terminal',requestId:crypto.randomUUID()});
+  expect((await (await call(w,'store/products')).json()).products.find(p=>p.id===product.id).quantity).toBe(13);
+  online=false;
+  for(let i=0;i<3;i++)expect((await (await call(w,'store/products')).json()).products.find(p=>p.id===product.id).quantity).toBe(11);
+  await w.FulltechOfflineStore.update('queue:'+owner,q=>q.map(p=>({...p,state:'review'})));
+  expect((await (await call(w,'store/products')).json()).products.find(p=>p.id===product.id).quantity).toBe(13);
+});
+it('aísla rechazos históricos sin borrar payloads ni bloquear lecturas y escrituras nuevas',async()=>{
+  const w=await page();await prepare(w);const owner=(await w.FulltechOfflineStore.get('identity')).key;
+  const old=[404,404,422].map((status,i)=>({id:crypto.randomUUID(),state:'review',status,path:'/api/admin/ruta-antigua',method:'POST',body:{original:i},error:i===2?'invalid_dismissals':'HTTP 404 not_found',at:123+i}));
+  await w.FulltechOfflineStore.put('queue:'+owner,old);await call(w,'session');
+  expect((await w.FulltechOffline.listQueue()).every(p=>p.historical&&p.state==='review')).toBe(true);
+  await call(w,'store/categories',{name:'Operación nueva'});await w.FulltechOffline.synchronize();
+  const recovery=await w.FulltechOffline.exportRecovery();expect(recovery.operaciones.map(p=>p.body)).toEqual(old.map(p=>p.body));
+  expect(recovery.original.operaciones).toEqual(old);
+  expect((await (await server('store/products')).json()).categories.some(c=>c.name==='Operación nueva')).toBe(true);
+});
+it('un recuento antiguo no sobrescribe stock confirmado más reciente',async()=>{
+  const w=await page();await prepare(w);await server('inventory/restock',{quantity:100,unitCost:'10',reason:'Inicial',idempotencyKey:crypto.randomUUID()});await call(w,'inventory');
+  online=false;await call(w,'inventory/count',{countedQuantity:95,reason:'Recuento local',idempotencyKey:crypto.randomUUID()});
+  online=true;await server('inventory/adjust',{direction:'in',quantity:10,reason:'Entrada remota',idempotencyKey:crypto.randomUUID()});
+  await w.FulltechOffline.synchronize();
+  expect((await w.FulltechOffline.listQueue())[0].state).toBe('review');
+  expect((await (await server('inventory')).json()).stock).toBe(110);
+});
+async function paymentOrder(){
+  const r=await (await server('orders',{name:'Pago Cloud First',phone:'8095550332',paymentMethod:'CASH',items:[{variantId:'capsules_10',quantity:1}]})).json();return r.item.id;
+}
+it('cobros concurrentes no pierden entradas ni superan el saldo y una copia vieja no borra el pago',async()=>{
+  const id=await paymentOrder(),old=await (await server('orders/'+id)).json();
+  const results=await Promise.all([100,150].map(amount=>server('orders/'+id+'/payments',{amount,method:'CASH',idempotencyKey:crypto.randomUUID()})));
+  expect(results.every(r=>r.ok)).toBe(true);
+  const after=await (await server('orders/'+id)).json();expect(after.order.payment.entries).toHaveLength(2);
+  expect(after.order.payment.received_total).toBe(250);
+  await app.ctx.store.update(id,{orderJson:JSON.stringify(old.order)});
+  expect((await (await server('orders/'+id)).json()).order.payment.received_total).toBe(250);
+  const racing=await Promise.all([1,2].map(()=>server('orders/'+id+'/payments',{amount:2000,method:'CASH',idempotencyKey:crypto.randomUUID()})));
+  expect(racing.filter(r=>r.ok)).toHaveLength(1);
+  expect((await (await server('orders/'+id)).json()).order.payment.received_total).toBe(2250);
+});
+it('un cobro offline reserva el saldo pero no declara dinero confirmado; conflicto remoto queda en revisión',async()=>{
+  const id=await paymentOrder(),w=await page();await prepare(w);await call(w,'orders/'+id);online=false;
+  const local=await (await call(w,'orders/'+id+'/payments',{amount:100,method:'CASH',idempotencyKey:crypto.randomUUID()})).json();
+  expect(local.pending).toBe(true);expect(local.order.payment?.entries||[]).toHaveLength(0);expect(local.order.pendingFinancial).toHaveLength(1);
+  online=true;await server('orders/'+id+'/payments',{amount:200,method:'CASH',idempotencyKey:crypto.randomUUID()});
+  await w.FulltechOffline.synchronize();expect((await w.FulltechOffline.listQueue())[0].state).toBe('review');
+  expect((await (await server('orders/'+id)).json()).order.payment.received_total).toBe(200);
+});
+it('dos cobros offline consecutivos mantienen sus precondiciones y se confirman una sola vez',async()=>{
+  const id=await paymentOrder(),w=await page();await prepare(w);await call(w,'orders/'+id);online=false;
+  for(const amount of [100,150])expect((await (await call(w,'orders/'+id+'/payments',{amount,method:'CASH',idempotencyKey:crypto.randomUUID()})).json()).pending).toBe(true);
+  online=true;await w.FulltechOffline.synchronize();await w.FulltechOffline.synchronize();
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+  const result=await (await server('orders/'+id)).json();expect(result.order.payment.received_total).toBe(250);expect(result.order.payment.entries).toHaveLength(2);
+});
+it('un cambio de permisos en otra pestaña invalida la copia privada anterior',async()=>{
+  const w=await page();await prepare(w);const auth=await w.FulltechOfflineStore.get('identity');
+  await w.FulltechOfflineStore.put('identity',{...auth,permissions:['permission-revoked'],legacyCacheDisabled:true});online=false;
+  expect((await call(w,'store/products')).status).toBe(503);
+});
+it('la migración puede adoptar entradas nuevas sin resucitar las ya procesadas',async()=>{
+  const w=await page();await prepare(w);const store=w.FulltechOfflineStore,owner=(await store.get('identity')).key;
+  const target='queue:'+owner,source='queue:'+JSON.stringify([...JSON.parse(owner),['old']]);
+  const first={id:crypto.randomUUID(),state:'pending'},second={id:crypto.randomUUID(),state:'pending'};
+  await store.put(source,[first]);await store.adoptQueue(source,target);await store.put(target,[]);
+  await store.put(source,[first,second]);await store.adoptQueue(source,target);
+  expect(await store.get(target)).toEqual([second]);expect((await store.get('migration-backup:'+source)).operaciones).toEqual([first]);
 });

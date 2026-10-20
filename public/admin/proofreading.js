@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   let worker, timer, maxTimer, watchdog, inFlight, pending, version = 0;
-  const REVIEW_DELAY = 180;
+  const REVIEW_DELAY = 120;
   const MAX_WAIT = 600;
   function clearScheduled() { clearTimeout(timer); clearTimeout(maxTimer); maxTimer = null; }
   let composing = false;
@@ -12,7 +12,7 @@
   let unavailable = false;
   let retryAt = 0;
   let lastReview, sendAttempt, sendTimer, bypass;
-  let aiTimer, aiTimeout, aiAbort, aiJob;
+  let aiTimer, aiTimeout, aiAbort, aiJob, aiFallback;
   const aiCache = new Map();
   const area = () => document.querySelector('#wa-text');
   const conversation = () => document.querySelector('#wa-actions')?.dataset.conversation || '';
@@ -20,11 +20,18 @@
     return job && job.area === area() && job.area.isConnected && job.text === job.area.value && job.context === conversation() && document.body.dataset.tab === 'whatsapp' && document.body.dataset.waView !== 'list' && !document.querySelector('#app')?.hidden;
   }
   function cancelAI() {
-    clearTimeout(aiTimer); clearTimeout(aiTimeout);
+    clearTimeout(aiTimer); clearTimeout(aiTimeout); clearTimeout(aiFallback);
+    aiFallback = null;
     aiAbort?.abort(); aiAbort = null; aiJob = null;
   }
   function requestSupport(job, suggestion) {
-    if (!isCurrent(job) || !suggestion?.uncertain?.length) return;
+    if (!isCurrent(job)) return;
+    clearTimeout(aiFallback); aiFallback = null;
+    const local = Boolean(suggestion?.uncertain?.length || suggestion?.edits?.length);
+    // Con dudas locales se pide enseguida; sin ellas también se pide (una frase
+    // puede tener todas las palabras válidas y aun así llevar tildes o
+    // concordancia mal) pero con más calma y solo desde tres palabras.
+    if (!local && job.text.trim().split(/\s+/).filter(Boolean).length < 3) return;
     cancelAI();
     const key = JSON.stringify([job.context, job.text, [...ignored]]);
     const apply = result => {
@@ -39,7 +46,7 @@
     aiTimer = setTimeout(async () => {
       if (!isCurrent(job)) return;
       const controller = new AbortController(); aiAbort = controller;
-      aiTimeout = setTimeout(() => controller.abort(), 4500);
+      aiTimeout = setTimeout(() => controller.abort(), 5500);
       let result = null;
       try {
         const response = await fetch('/api/admin/proofreading', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: job.context, text: job.text }) });
@@ -53,7 +60,7 @@
         }
         if (aiAbort === controller) { clearTimeout(aiTimeout); aiAbort = null; aiJob = null; }
       }
-    }, 900);
+    }, local ? 900 : 1400);
   }
   function cancelSend() {
     clearTimeout(sendTimer);
@@ -242,6 +249,19 @@
     const job = { id: version, area: input, text: input.value, context: nextContext };
     pending = job;
     timer = setTimeout(pump, REVIEW_DELAY);
+    /*
+     * EN EL TELÉFONO EL WORKER PUEDE NO LLEGAR. Si el diccionario tarda o el
+     * navegador lo bloquea, `pump` nunca responde y el corrector quedaba mudo.
+     * La corrección del servidor NO necesita el diccionario local: se pide igual
+     * pasado un margen, y si el Worker contesta antes, su respuesta la cancela.
+     */
+    clearTimeout(aiFallback);
+    aiFallback = setTimeout(() => {
+      aiFallback = null;
+      if (!isCurrent(job)) return;
+      if (lastReview && isCurrent(lastReview.job)) return;
+      requestSupport(job, null);
+    }, 1600);
     // No reiniciar este límite con cada tecla: revisar también mientras escribe
     // seguido, conservando solo el borrador más reciente en la cola.
     if (maxTimer == null) maxTimer = setTimeout(() => { maxTimer = null; pump(); }, MAX_WAIT);
@@ -252,7 +272,49 @@
   document.addEventListener('compositionend', (event) => { if (event.target.id === 'wa-text') { composing = false; schedule(); } });
   // Conservar el teclado al tocar Usar/Omitir en teléfonos.
   document.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-proofreading]')) event.preventDefault(); });
-  document.addEventListener('click', (event) => {
+  document.addEventListener('click', async (event) => {
+    const aiButton = event.target.closest('#wa-ai-reply');
+    if (aiButton) {
+      event.preventDefault(); event.stopPropagation();
+      const id = conversation(), input = area();
+      if (!id || aiButton.disabled || !input || document.body.dataset.waView === 'list') return;
+      aiButton.disabled = true;
+      let box = document.querySelector('#wa-ai-reply-result');
+      if (!box) { box = document.createElement('div'); box.id = 'wa-ai-reply-result'; box.className = 'wa-proofreading wa-ai-reply-result'; input.closest('#wa-composer')?.prepend(box); }
+      box.replaceChildren();
+      const status = document.createElement('span'); status.className = 'wa-proofreading__text'; status.setAttribute('role', 'status'); status.textContent = 'Preparando sugerencia…'; box.append(status); box.hidden = false;
+      const controller = new AbortController();
+      try {
+        const response = await fetch('/api/admin/ai/reply-suggestion', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: id }) });
+        const result = response.ok ? await response.json() : null;
+        if (id !== conversation() || !box.isConnected) return;
+        box.replaceChildren();
+        const text = document.createElement('span'); text.className = 'wa-proofreading__text'; text.setAttribute('role', 'status');
+        if (result?.ok && result.ai && typeof result.text === 'string') {
+          text.textContent = result.text; box.append(text);
+          const use = document.createElement('button'); use.type = 'button'; use.textContent = 'Usar respuesta';
+          use.addEventListener('click', () => { if (id !== conversation() || !area()) return; area().value = result.text; area().dispatchEvent(new Event('input', { bubbles: true })); area().focus({ preventScroll: true }); box.hidden = true; });
+          box.append(use);
+        } else {
+          text.textContent = response.status === 503
+            ? 'Conéctate al servidor para pedir una sugerencia. No se guardará como mensaje pendiente.'
+            : result?.reason === 'limit_reached'
+            ? 'Se alcanzó el límite de uso de IA. Inténtalo más tarde.'
+            : result?.reason === 'awaiting_customer'
+              ? 'El último mensaje lo envió tu equipo. Espera la respuesta del cliente para sugerir qué contestar.'
+              : result?.reason === 'unknown_direction'
+                ? 'No pude confirmar quién envió el último mensaje. No generaré una respuesta para evitar confusiones.'
+                : result?.reason === 'no_messages'
+                  ? 'No hay un mensaje reciente del cliente para responder.'
+                  : 'No se pudo generar la respuesta. Comprueba DeepSeek en Configuración.';
+          box.append(text);
+        }
+        const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Cerrar'; close.addEventListener('click', () => { box.hidden = true; }); box.append(close);
+      } catch {
+        if (id === conversation() && box.isConnected) { box.replaceChildren(); const error = document.createElement('span'); error.className = 'wa-proofreading__text'; error.textContent = 'No se pudo conectar para sugerir la respuesta.'; box.append(error); }
+      } finally { aiButton.disabled = false; }
+      return;
+    }
     if (event.target.closest('#wa-send')) { setTimeout(schedule, 0); return; }
     const button = event.target.closest('[data-proofreading]');
     if (!button) return;

@@ -145,7 +145,9 @@ async function persist(ctx, row, order, payment, patch = {}) {
     },
     updated_at: at,
   };
-  const updated = await ctx.store.update(row.id, { orderJson: JSON.stringify(next) });
+  if(!ctx.store.compareOrder)throw Object.assign(new Error('El almacén no permite confirmar pagos de forma atómica.'),{code:'payment_storage_unavailable'});
+  const updated=await ctx.store.compareOrder(row.id,row.order_json??row.orderJson??null,JSON.stringify(next));
+  if(!updated)throw Object.assign(new Error('El pedido cambió durante el cobro.'),{code:'payment_conflict'});
   const saved = parseOrderJson(updated) ?? next;
   return saved;
 }
@@ -156,7 +158,7 @@ async function persist(ctx, row, order, payment, patch = {}) {
  * Es la única puerta para convertir dinero en «cobrado». No se puede cobrar de
  * más, ni sobre un pedido cancelado, ni dos veces con la misma clave.
  */
-export async function registerCustomerPayment(input) {
+async function registerCustomerPaymentOnce(input) {
   const { ctx, orderId, actor = null } = input;
   const fresh = await freshOrder(ctx, orderId);
   if (!fresh) return fail(404, 'not_found', 'Ese pedido no existe.');
@@ -175,6 +177,7 @@ export async function registerCustomerPayment(input) {
   if (idempotencyKey && block.entries.some((entry) => entry.idempotency_key === idempotencyKey)) {
     return { ok: true, duplicate: true, order, payment: block };
   }
+  if(input.expectedDue!==undefined&&money2(input.expectedDue)!==block.due)return fail(409,'payment_conflict','El saldo cambió. Revisa el cobro antes de confirmarlo.');
   if (block.legacy) {
     return fail(409, 'already_paid', 'Este pedido ya figura pagado (registro anterior). Para corregirlo usa una reversión autorizada.');
   }
@@ -238,7 +241,7 @@ export async function registerCustomerPayment(input) {
  * empresa. Solo administración (no se auto-certifica). No crea movimientos de
  * caja: anota la entrega para poder cuadrar y auditar.
  */
-export async function registerCourierHandover(input) {
+async function registerCourierHandoverOnce(input) {
   const { ctx, orderId, actor = null } = input;
   const fresh = await freshOrder(ctx, orderId);
   if (!fresh) return fail(404, 'not_found', 'Ese pedido no existe.');
@@ -248,15 +251,12 @@ export async function registerCourierHandover(input) {
   if (block.cashReceived <= 0) return fail(409, 'no_cash_collected', 'Este pedido no tiene cobros en efectivo que rendir.');
   if (!block.courier.user_id && !block.courier.name) return fail(409, 'no_courier', 'Este pedido no tiene repartidor asignado.');
 
+  const idempotencyKey = clean(input.idempotencyKey, 160);
+  if (idempotencyKey && block.courier.handovers.some(entry=>entry.idempotency_key===idempotencyKey))return {ok:true,duplicate:true,order,payment:block};
+  if(input.expectedPending!==undefined&&money2(input.expectedPending)!==block.courier.pending)return fail(409,'handover_conflict','El saldo por rendir cambió. Revisa la rendición.');
   const amount = money2(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) return fail(422, 'invalid_amount', 'Escribe un importe mayor que cero.');
-  if (amount > block.courier.pending + 0.005) {
-    return fail(422, 'handover_exceeds', `Solo quedan ${block.courier.pending.toFixed(2)} en efectivo por rendir.`, { pending: block.courier.pending });
-  }
-  const idempotencyKey = clean(input.idempotencyKey, 160);
-  if (idempotencyKey && block.courier.handovers.some((entry) => entry.idempotency_key === idempotencyKey)) {
-    return { ok: true, duplicate: true, order, payment: block };
-  }
+  if (amount > block.courier.pending + 0.005)return fail(422,'handover_exceeds','El importe supera el efectivo pendiente.',{pending:block.courier.pending});
 
   const at = ctx.clock().toISOString();
   const handover = {
@@ -302,3 +302,15 @@ export async function registerCourierHandover(input) {
 
   return { ok: true, duplicate: false, order: saved, payment: after, handover };
 }
+
+// Reintentar una comparación fallida es seguro: todavía no hubo escritura.
+async function atomicPayment(input,operation){
+  for(let attempt=0;attempt<3;attempt++){
+    try{return await operation(input);}catch(error){
+      if(error.code!=='payment_conflict')throw error;
+    }
+  }
+  return fail(409,'payment_conflict','El pedido cambió. Revisa los saldos antes de volver a intentar.');
+}
+export const registerCustomerPayment=input=>atomicPayment(input,registerCustomerPaymentOnce);
+export const registerCourierHandover=input=>atomicPayment(input,registerCourierHandoverOnce);

@@ -1,6 +1,6 @@
-# Phytoemagry Android
+# FullTECH Android
 
-Aplicacion Android principal de Phytoemagry. Carga el CRM existente en un
+Aplicacion Android de FullTECH. Carga el CRM existente en un
 WebView y agrega una capa nativa segura para impresion termica Bluetooth
 Classic + ESC/POS.
 
