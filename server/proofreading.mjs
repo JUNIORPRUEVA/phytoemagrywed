@@ -132,18 +132,14 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
       let value = null;
       try {
         /*
-         * La revisión con IA cubre TODAS las respuestas, no solo las que el
-         * diccionario local marca como dudosas: una frase puede tener todas las
-         * palabras válidas y aun así llevar tildes, concordancia o puntuación
-         * incorrectas. El diccionario local sigue dando la propuesta inmediata;
-         * esto añade la segunda opinión del modelo sobre el mismo borrador.
+         * La revisión con IA cubre TODAS las respuestas. NO se filtra por el
+         * diccionario local: cuando el texto no tiene faltas de diccionario,
+         * `checker()` devuelve `null`, y ese era justo el caso que se quedaba
+         * sin corregir (tildes, concordancia, puntuación). El diccionario sigue
+         * dando la propuesta inmediata en el navegador; esto añade la segunda
+         * opinión del modelo sobre el mismo borrador.
          */
         if (!(await reserve(config, actorId))) return null;
-        const review = await Promise.resolve()
-          .then(() => checker())
-          .then((check) => check(text, { names }))
-          .catch(() => null);
-        if (!review) return null;
         const response = await fetchImpl('https://api.deepseek.com/chat/completions', {
           method: 'POST', signal: AbortSignal.timeout(6000),
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },

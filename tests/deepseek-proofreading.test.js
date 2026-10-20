@@ -28,9 +28,11 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     await reopened.save({enabled:true,dailyLimit:12});expect((await reopened.status()).configured).toBe(true);
     await reopened.save({removeKey:true,enabled:false});expect(await reopened.status()).toMatchObject({configured:false,enabled:false});
   });
-  it('no llama sin configurar o si el diccionario local no responde',async()=>{
+  it('sin configurar no llama; configurado revisa aunque el diccionario no encuentre nada',async()=>{
     const f=fixture();expect(await f.service.correct(f.input)).toBeNull();expect(f.fetchImpl).not.toHaveBeenCalled();
-    const g=fixture({checker:async()=>()=>null});await enable(g);expect(await g.service.correct(g.input)).toBeNull();expect(g.fetchImpl).not.toHaveBeenCalled();
+    // `null` del diccionario significa «no encontró faltas», no «no corrijas»: la IA igual revisa.
+    const g=fixture({checker:async()=>()=>null,fetchImpl:vi.fn(async()=>result('hola'))});await enable(g);
+    expect((await g.service.correct(g.input)).correctedText).toBe('hola');expect(g.fetchImpl).toHaveBeenCalledTimes(1);
   });
   it('corrige también cuando el diccionario local no marca ninguna duda',async()=>{
     /*
