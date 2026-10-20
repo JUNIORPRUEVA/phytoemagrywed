@@ -102,7 +102,7 @@
       La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
       sobre la geometría y los colores de esa pantalla.
     -->
-    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-13-chat-actions-list" />
+    <link rel="stylesheet" href="/admin/wa-lista.css?v=wa-14-columnas-gestos" />
     <!--
       Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
       todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
@@ -531,6 +531,19 @@
               </div>
               <div class="wa__delivery-cta" id="wa-delivery-cta" hidden></div>
               <div class="wa__composer" id="wa-composer"></div>
+              <!--
+                COLUMNAS LATERALES DEL CHAT: a la izquierda, las respuestas
+                rápidas y todo lo que se comparte (ubicación, cuentas, tienda,
+                web); a la derecha, las acciones de la conversación. Se abren
+                deslizando o tocando las pestañas finas de los bordes.
+              -->
+              <div class="wa-cols" id="wa-chat-cols"></div>
+              <button class="wa-edge wa-edge--left" id="wa-edge-left" type="button" aria-label="Abrir respuestas y envíos rápidos" title="Respuestas y envíos">
+                <span aria-hidden="true">›</span>
+              </button>
+              <button class="wa-edge wa-edge--right" id="wa-edge-right" type="button" aria-label="Abrir acciones de la conversación" title="Acciones">
+                <span aria-hidden="true">‹</span>
+              </button>
             </div>
 
             <p class="wa__placeholder" id="wa-placeholder">
@@ -1096,7 +1109,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=compartir-chat-2" defer></script>
+    <script src="/admin/app.js?v=compartir-chat-5" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>

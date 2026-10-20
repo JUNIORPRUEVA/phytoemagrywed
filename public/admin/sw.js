@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v201-compartir-chat-20261020';
+const VERSION = 'crm-v203-columnas-gestos-2-20261020';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -358,7 +358,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       const cache = await caches.open(VERSION);
       const exact = await caches.match(request);
-      const base = usable(exact) ? null : await caches.match(url.origin + url.pathname);
+      /* Un recurso pedido con `?v=` NUNCA se sirve desde la copia sin versión:
+         si no está cacheada ESA versión, se pide a la red. Así una publicación
+         nueva no queda tapada por el app.js viejo guardado en el armazón. */
+      const base = usable(exact) || url.search ? null : await caches.match(url.origin + url.pathname);
       const cached = usable(exact) ? exact : usable(base) ? base : null;
       const refresh = (async () => {
         try {

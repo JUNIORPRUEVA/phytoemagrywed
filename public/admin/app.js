@@ -10630,8 +10630,10 @@
    */
   function waSelectionDrawer() {
     const count = state.wa.selected.size;
-    if (!count) return '';
     const archived = state.wa.filter === 'archivados';
+    /* Sin nada seleccionado el panel también se abre (gesto ←): muestra las
+       acciones generales de la bandeja en vez de las de una selección. */
+    if (!count && !state.wa.actionsOpen) return '';
     const visibles = waVisibleConversations().length;
     const todas = visibles > 0 && count >= visibles;
     const abierto = state.wa.actionsOpen === true;
@@ -10725,18 +10727,29 @@
       ]),
       grupo('Eliminar', [accion('data-wa-bulk="delete"', ICONS.trash, 'Eliminar chats', 'Requiere confirmación', 'wa-bulk__item--danger')]),
     ].join('');
+    /* Sin selección: lo que se puede hacer en la bandeja sin elegir chats. */
+    const general = grupo('Conversaciones', [
+      accion('data-wa-panel-new="1"', ICONS.chat, 'Nueva conversación', 'Escribe el teléfono y abre el chat'),
+      accion(
+        'data-wa-panel-archived="1"',
+        ICONS.box,
+        archived ? 'Volver a la bandeja' : 'Ver chats archivados',
+        archived ? 'Los chats activos, otra vez' : 'Los que salieron de la bandeja',
+      ),
+      seleccionarTodas,
+    ]);
     return `<div class="wa-actions" data-open="${abierto ? '1' : '0'}">
       <button class="wa-actions__backdrop" data-wa-actions-close="1" type="button" aria-label="Cerrar las acciones" tabindex="-1"></button>
       <aside class="wa-actions__drawer" role="dialog" aria-label="Acciones de las conversaciones seleccionadas"${abierto ? '' : ' inert'}>
         <header class="wa-actions__head">
           <div>
-            <strong class="wa-bulk__count">${count} seleccionada${count === 1 ? '' : 's'}</strong>
+            <strong class="wa-bulk__count">${count ? `${count} seleccionada${count === 1 ? '' : 's'}` : 'Conversaciones'}</strong>
             <small>${fila ? escapeHtml(waDisplayName(fila)) : 'Elige qué hacer'}</small>
           </div>
-          <button class="wa-actions__x" data-wa-sel-clear="1" type="button" aria-label="Cancelar la selección"><span aria-hidden="true">✕</span></button>
+          <button class="wa-actions__x" data-wa-sel-clear="1" type="button" aria-label="Cerrar el panel"><span aria-hidden="true">✕</span></button>
         </header>
         <div class="wa-actions__list" role="menu" aria-label="Qué quieres hacer con las conversaciones">
-          ${deUna || enLote}
+          ${deUna || (count ? enLote : general)}
         </div>
       </aside>
       <button class="wa-actions__pill" data-wa-actions-open="1" type="button" aria-label="Abrir las acciones de la selección">
@@ -10765,16 +10778,17 @@
     /* La primera vez que se elige una fila se despliega el panel; si el usuario
        lo cierra, no se vuelve a abrir solo al sumar otra conversación. */
     if (seleccionando && seleccionAnterior === 0) state.wa.actionsOpen = true;
-    if (!seleccionando) state.wa.actionsOpen = false;
     seleccionAnterior = count;
     const barra = $('#wa-sel');
+    /* El panel se pinta también sin selección (gesto ← en la bandeja). */
+    const visible = seleccionando || state.wa.actionsOpen === true;
     if (barra) {
-      barra.hidden = !seleccionando;
-      barra.innerHTML = seleccionando ? waSelectionDrawer() : '';
+      barra.hidden = !visible;
+      barra.innerHTML = visible ? waSelectionDrawer() : '';
     }
     if (seleccionando) state.wa.filtersOpen = false;
     document.body.dataset.waFilters = state.wa.filtersOpen ? 'open' : 'closed';
-    document.body.dataset.waSelection = seleccionando ? '1' : '0';
+    document.body.dataset.waSelection = visible ? '1' : '0';
     /* La cabecera y los filtros NO se ocultan: el panel se abre por encima. */
     const box = $('#wa-conversations');
     if (box) box.classList.toggle('wa__convs--sel', seleccionando);
@@ -13176,6 +13190,9 @@
     const box = $('#wa');
     const list = $('#wa-conversations');
     const previousView = box?.dataset.view;
+    /* Al cambiar de vista las columnas laterales se cierran: no tiene sentido
+       arrastrarlas a la lista (ni al revés). */
+    if (previousView !== view) closeChatColumns();
     if (previousView === 'list' && view === 'chat' && list) state.wa.listScrollTop = list.scrollTop;
     if (box) box.dataset.view = view;
     /* La hoja de estilos necesita saberlo para el modo "conversación a pantalla
@@ -15075,16 +15092,10 @@
    * «Buscar en esta conversación» NO va aquí: la lupa ya está en la cabecera del
    * chat y tenerla dos veces era ruido.
    */
-  function openChatActions(customerId, conversationId) {
+  function chatActionsMenuHtml(customerId, conversationId) {
     const customer = customerById(customerId);
-    if (!customer) return;
-    const conversacion =
-      state.wa.chat?.conversation?.id === conversationId
-        ? state.wa.chat.conversation
-        : state.conversations.find((row) => row.id === conversationId) ?? null;
-    openSheet(
-      '¿Qué quieres hacer?',
-      `
+    if (!customer) return '';
+    return `
       <div class="menu-list">
         <button class="menu-item menu-item--primary" data-order-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
           conversationId ?? '',
@@ -15146,9 +15157,110 @@
           <span><strong>Asignación</strong></span>
         </button>
       </div>
-    `,
-      { variant: 'chat-actions' },
+    `;
+  }
+
+  function openChatActions(customerId, conversationId) {
+    const html = chatActionsMenuHtml(customerId, conversationId);
+    if (!html) return;
+    openSheet('¿Qué quieres hacer?', html, { variant: 'chat-actions' });
+  }
+
+  /*
+   * COLUMNAS LATERALES DEL CHAT (deslizar dentro de una conversación).
+   *
+   *  · Izquierda  → respuestas rápidas + todo lo que se comparte (ubicación
+   *                 GPS, ubicación del negocio, cuentas, tienda y web).
+   *  · Derecha    → las acciones de la conversación (las mismas del botón ⋮).
+   *
+   * Son columnas FINAS con lista compacta: cada fila es una línea y media, así
+   * caben muchas cosas sin scroll largo. Se abren deslizando, con las pestañas
+   * de los bordes o con el gesto inverso, y se cierran tocando fuera.
+   */
+  const waColumnsHost = () => $('#wa-chat-cols');
+
+  function chatColumnConversation() {
+    return (
+      state.wa.chat?.conversation ??
+      state.conversations.find((row) => row.id === state.wa.selectedId) ??
+      null
     );
+  }
+
+  function quickColumnHtml() {
+    const rows = quickRepliesAll();
+    const lista = rows.length
+      ? rows
+          .map(
+            (row) => `<button class="wa-col__item" data-qr-insert="${escapeHtml(row.id)}" type="button">
+              <strong>${escapeHtml(row.name ?? '')}</strong>
+              <small>${escapeHtml(qrPreview(row.body))}</small>
+            </button>`,
+          )
+          .join('')
+      : '<p class="wa-col__empty">Sin respuestas rápidas guardadas.</p>';
+    return `
+      <div class="wa-col" data-side="left" data-open="0">
+        <button class="wa-col__backdrop" data-wa-col-close="1" type="button" aria-label="Cerrar" tabindex="-1"></button>
+        <aside class="wa-col__panel" role="dialog" aria-label="Respuestas y envíos rápidos">
+          <header class="wa-col__head">
+            <strong>Respuestas y envíos</strong>
+            <button class="wa-col__x" data-wa-col-close="1" type="button" aria-label="Cerrar">✕</button>
+          </header>
+          <div class="wa-col__body">
+            <p class="wa-col__label">Responder rápido</p>
+            <div class="wa-col__list">${lista}</div>
+            <p class="wa-col__label">Compartir</p>
+            <div class="wa-col__list">
+              <button class="wa-col__item" data-wa-col-gps="1" type="button"><strong>Ubicación GPS</strong><small>Ubicación de este equipo</small></button>
+              <button class="wa-col__item" data-wa-col-locations="1" type="button"><strong>Ubicación del negocio</strong><small>Direcciones guardadas</small></button>
+              <button class="wa-col__item" data-wa-col-banks="1" type="button"><strong>Cuentas bancarias</strong><small>Datos para transferencias</small></button>
+              <button class="wa-col__item" data-wa-col-store="1" type="button"><strong>Tienda online</strong><small>Enlace de la tienda</small></button>
+              <button class="wa-col__item" data-wa-col-web="1" type="button"><strong>Página web</strong><small>Web del negocio</small></button>
+            </div>
+          </div>
+        </aside>
+      </div>`;
+  }
+
+  function actionsColumnHtml() {
+    const conversation = chatColumnConversation();
+    const conversationId = state.wa.selectedId ?? conversation?.id ?? '';
+    const customerId = conversation?.customer_id ?? '';
+    const contenido = customerId
+      ? chatActionsMenuHtml(customerId, conversationId)
+      : '<p class="wa-col__empty">Esta conversación no tiene ficha de cliente.</p>';
+    return `
+      <div class="wa-col" data-side="right" data-open="0">
+        <button class="wa-col__backdrop" data-wa-col-close="1" type="button" aria-label="Cerrar" tabindex="-1"></button>
+        <aside class="wa-col__panel" role="dialog" aria-label="Acciones de la conversación">
+          <header class="wa-col__head">
+            <strong>Acciones</strong>
+            <button class="wa-col__x" data-wa-col-close="1" type="button" aria-label="Cerrar">✕</button>
+          </header>
+          <div class="wa-col__body">${contenido}</div>
+        </aside>
+      </div>`;
+  }
+
+  function closeChatColumns() {
+    const host = waColumnsHost();
+    host?.querySelectorAll('.wa-col').forEach((col) => { col.dataset.open = '0'; });
+    delete document.body.dataset.waCol;
+  }
+
+  /** Abre una columna (`left` = respuestas/envíos, `right` = acciones). */
+  function openChatColumn(side) {
+    const host = waColumnsHost();
+    if (!host) return;
+    if (!state.wa.selectedId) return;
+    closeChatColumns();
+    host.innerHTML = quickColumnHtml() + actionsColumnHtml();
+    const col = host.querySelector(`.wa-col[data-side="${side}"]`);
+    if (!col) return;
+    col.dataset.open = '1';
+    document.body.dataset.waCol = side;
+    col.querySelector('.wa-col__x')?.focus({ preventScroll: true });
   }
 
   /**
@@ -22165,12 +22277,57 @@
       msgPressTimer = null;
       msgPressFrom = null;
     };
-    document.addEventListener('pointerdown', (event) => {
-      if (event.pointerType === 'touch' && window.matchMedia('(max-width: 700px)').matches && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) {
-        window.__billingSwipeStart = event.clientX >= window.innerWidth - 34
-          ? { x: event.clientX, y: event.clientY }
-          : null;
+    /*
+     * UN SOLO GESTO HORIZONTAL PARA TODO EL PANEL.
+     *
+     * Antes solo contaba si empezabas en los últimos 34 px del borde derecho y
+     * en pantallas de móvil: por eso «costaba mucho trabajo» deslizar. Ahora se
+     * mide en cualquier punto (dedo o ratón), con un umbral corto y exigiendo
+     * que el movimiento sea claramente horizontal para no robar el scroll.
+     */
+    let swipeGesture = null;
+    const swipeBlockedTarget = (target) =>
+      target?.closest?.(
+        'input,textarea,select,[contenteditable="true"],[data-no-swipe],.leaflet-container,audio,video,input[type="range"],.qr__search',
+      );
+
+    function handleHorizontalSwipe(direction) {
+      /* 1) Cualquier columna abierta: se cierra con el gesto CONTRARIO al que
+         la abrió (izquierda →, derecha ←). El mismo gesto no hace nada. */
+      const columna = document.body.dataset.waCol;
+      if (columna) {
+        if (columna === 'left' && direction < 0) closeChatColumns();
+        else if (columna === 'right' && direction > 0) closeChatColumns();
+        return;
       }
+      /* 2) Menú lateral: se cierra deslizando al contrario de como se abrió. */
+      if (state.drawer) {
+        if (direction < 0) closeDrawer();
+        return;
+      }
+      /* 3) Hoy: abrir el menú (→) y Facturación (←). Solo en la portada. */
+      if (state.tab === 'hoy') {
+        if (direction > 0) openDrawer();
+        else setTab('catalogo');
+        return;
+      }
+      if (state.tab !== 'whatsapp') return;
+      /* 4) Dentro de un chat: ← acciones · → respuestas y envíos. */
+      if (document.body.dataset.waView === 'chat') {
+        openChatColumn(direction > 0 ? 'left' : 'right');
+        return;
+      }
+      /* 5) En la bandeja: ← acciones · → nueva conversación. */
+      if (direction < 0) {
+        state.wa.actionsOpen = true;
+        renderWaSelectionUi();
+        return;
+      }
+      $('#wa-new-chat')?.click();
+    }
+
+    document.addEventListener('pointerdown', (event) => {
+      swipeGesture = swipeBlockedTarget(event.target) ? null : { x: event.clientX, y: event.clientY, at: Date.now() };
       if (event.button !== 0) return;
       if (event.target.closest?.('[data-media-view],[data-audio-play],[data-audio-seek],[data-undo],[data-media-retry]')) return;
       const burbuja = event.target.closest?.('#thread [data-message]');
@@ -22184,26 +22341,18 @@
       }, 480);
     });
     document.addEventListener('pointerup', (event) => {
-      const start = window.__billingSwipeStart;
-      window.__billingSwipeStart = null;
+      const start = swipeGesture;
+      swipeGesture = null;
       if (!start) return;
+      if (Date.now() - start.at > 900) return;
       const dx = event.clientX - start.x;
       const dy = event.clientY - start.y;
-      if (dx < -78 && Math.abs(dy) < 64 && !event.target.closest?.('input,textarea,select,[contenteditable="true"]')) {
-        /*
-         * DENTRO DE UN CHAT el gesto abre las ACCIONES de esa conversación (las
-         * mismas del botón flotante). Fuera del chat se conserva el atajo a
-         * Facturación.
-         */
-        if (state.tab === 'whatsapp' && document.body.dataset.waView === 'chat') {
-          const acciones = document.querySelector('#wa-actions');
-          if (acciones && !acciones.hidden && !acciones.disabled) acciones.click();
-          return;
-        }
-        if (state.tab === 'catalogo') return;
-        setTab('catalogo');
-      }
-    });
+      /* Umbral corto (46 px) y horizontal de verdad: fácil de acertar. */
+      if (Math.abs(dx) < 46 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+      if (swipeBlockedTarget(event.target)) return;
+      handleHorizontalSwipe(dx > 0 ? 1 : -1);
+    }, { passive: true });
+    document.addEventListener('pointercancel', () => { swipeGesture = null; }, { passive: true });
     document.addEventListener('pointermove', (event) => {
       if (!msgPressFrom) return;
       if (Math.abs(event.clientX - msgPressFrom.x) > 12 || Math.abs(event.clientY - msgPressFrom.y) > 12) msgPressCancel();
@@ -22425,6 +22574,30 @@
         const found = messages.find((row) => row.location?.id === id)?.location ?? null;
         if (found) openLocationActions({ location: found, conversationId: state.wa.selectedId });
         return;
+      }
+      // --- columnas laterales del chat (gesto o pestañas de los bordes) ---
+      if (event.target.closest('[data-wa-col-close]')) {
+        closeChatColumns();
+        return;
+      }
+      const colBoton = event.target.closest(
+        '[data-wa-col-gps],[data-wa-col-locations],[data-wa-col-banks],[data-wa-col-store],[data-wa-col-web]',
+      );
+      if (colBoton) {
+        const conversationId = state.wa.selectedId;
+        closeChatColumns();
+        if (!conversationId) return;
+        if (colBoton.hasAttribute('data-wa-col-gps')) sendDeviceLocation(conversationId);
+        else if (colBoton.hasAttribute('data-wa-col-locations')) openBusinessSharing(conversationId, 'locations');
+        else if (colBoton.hasAttribute('data-wa-col-banks')) openBusinessSharing(conversationId, 'banks');
+        else if (colBoton.hasAttribute('data-wa-col-store')) openChatLinkShare(conversationId, 'store');
+        else openChatLinkShare(conversationId, 'web');
+        return;
+      }
+      if (document.body.dataset.waCol) {
+        if (event.target.closest('#wa-chat-cols [data-qr-insert]') || event.target.closest('#wa-chat-cols .menu-item')) {
+          closeChatColumns();
+        }
       }
       // --- acciones comerciales (S4/S5): pedido, comprobante, programar ---
       if (event.target.closest('#wa-actions')) {
@@ -23581,7 +23754,25 @@
       }
       if (event.target.closest('[data-wa-sel-clear]')) {
         state.wa.selected.clear();
+        state.wa.actionsOpen = false;
         renderWaList();
+        return;
+      }
+      if (event.target.closest('[data-wa-panel-new]')) {
+        state.wa.actionsOpen = false;
+        renderWaSelectionUi();
+        openNewConversationSheet();
+        return;
+      }
+      if (event.target.closest('[data-wa-panel-archived]')) {
+        state.wa.actionsOpen = false;
+        state.wa.filter = state.wa.filter === 'archivados' ? 'todos' : 'archivados';
+        guardarFiltrosActuales();
+        state.wa.selected.clear();
+        $$('[data-wa-filter]').forEach((button) =>
+          button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),
+        );
+        refreshWhatsapp().catch(() => renderWaList());
         return;
       }
       const selAll = event.target.closest('[data-wa-sel-all]');
@@ -24021,6 +24212,10 @@
 
     // En el móvil, ← vuelve a la lista de conversaciones.
     $('#wa-back').addEventListener('click', () => setWaView('list'));
+
+    /* Las pestañas finas de los bordes abren las mismas columnas que el gesto. */
+    $('#wa-edge-left')?.addEventListener('click', () => openChatColumn('left'));
+    $('#wa-edge-right')?.addEventListener('click', () => openChatColumn('right'));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         refreshDevicePermissions().catch(() => {});
