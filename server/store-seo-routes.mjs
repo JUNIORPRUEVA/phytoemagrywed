@@ -99,8 +99,16 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
       shell = '';
     }
     if (!shell) {
-      /* Sin HTML base se deja que nginx sirva el archivo estático. */
-      return false;
+      /*
+       * Sin HTML base se responde 503 a propósito: nginx tiene un `error_page`
+       * que sirve el índice estático de la PWA. Devolver 404 aquí rompería la
+       * portada (pasó en el primer intento de este release).
+       */
+      return send(res, req, 503, 'Portada no disponible en este momento.', {
+        ...baseHeaders,
+        'content-type': 'text/plain; charset=utf-8',
+        'retry-after': '30',
+      });
     }
     const page = renderStoreShell({ html: shell, origin, indexable, products, siteName: seo.siteName });
     return send(res, req, 200, page.html, { ...baseHeaders, 'content-type': 'text/html; charset=utf-8' });
@@ -149,13 +157,27 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
 }
 
 /**
- * HTML base de la PWA. Se lee una vez y se guarda 60 s: la inyección SEO se hace
- * por petición, el archivo no cambia salvo despliegue.
+ * HTML base de la PWA. En el repositorio está en `public/store/index.html`; en
+ * la imagen de producción nginx lo sirve desde `/usr/share/nginx/html/store/`.
+ * Se prueban las dos rutas y se cachea 60 s.
  */
 async function readStoreShell() {
   if (shellCache.html && Date.now() - shellCache.at < 60000) return shellCache.html;
   const { readFile } = await import('node:fs/promises');
-  const html = await readFile(new URL('../public/store/index.html', import.meta.url), 'utf8');
-  shellCache = { html, at: Date.now() };
-  return html;
+  const candidates = [
+    new URL('../public/store/index.html', import.meta.url),
+    new URL('file:///usr/share/nginx/html/store/index.html'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const html = await readFile(candidate, 'utf8');
+      if (html.includes('<html')) {
+        shellCache = { html, at: Date.now() };
+        return html;
+      }
+    } catch {
+      /* se prueba la siguiente ruta */
+    }
+  }
+  return '';
 }
