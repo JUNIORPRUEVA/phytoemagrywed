@@ -1248,7 +1248,12 @@ body[data-tab='whatsapp'] .wa-col__panel {
   flex-direction: column;
   width: min(78%, 292px);
   overflow: hidden;
-  background: var(--wa-page);
+  /*
+   * EL FONDO ES EL DEL TEMA (el mismo de las tarjetas y del chat), no el negro
+   * de WhatsApp: en modo oscuro este panel se veía como una losa aparte.
+   */
+  background: var(--pe-card-bg, var(--surface));
+  color: var(--text-primary);
   box-shadow: 0 18px 48px rgba(11, 20, 26, 0.28);
   pointer-events: none;
   transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1305,10 +1310,53 @@ body[data-tab='whatsapp'] .wa-col__body {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  overflow: hidden;
-  padding: 4px 8px calc(12px + env(safe-area-inset-bottom, 0px));
+  gap: 8px;
+  /*
+   * UN SOLO DESPLAZAMIENTO para las dos secciones.
+   *
+   * Antes «Responder rápido» se estiraba para ocupar el alto libre y, cuando
+   * había pocas respuestas, quedaba una banda vacía en medio (el «hueco negro»
+   * entre respuestas y compartir). Ahora cada bloque mide lo que mide su
+   * contenido y el hueco simplemente no existe.
+   */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 8px calc(78px + env(safe-area-inset-bottom, 0px));
+  scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+}
+
+body[data-tab='whatsapp'] .wa-col__body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Botón flotante para editar la propia columna (respuestas y datos). */
+body[data-tab='whatsapp'] .wa-col__fab {
+  position: absolute;
+  right: 12px;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pe-brand-text);
+  color: var(--pe-on-brand);
+  box-shadow: 0 6px 18px rgba(11, 20, 26, 0.26);
+  cursor: pointer;
+}
+
+body[data-tab='whatsapp'] .wa-col__fab:hover,
+body[data-tab='whatsapp'] .wa-col__fab:focus-visible {
+  filter: brightness(1.06);
+}
+
+body[data-tab='whatsapp'] .wa-col__fab .svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* Dos bloques: «Responder rápido» se lleva el espacio libre y «Compartir»
@@ -1319,14 +1367,15 @@ body[data-tab='whatsapp'] .wa-col__section {
   min-height: 0;
 }
 
+/* Los dos bloques miden lo que mide su contenido: ni uno se estira de más. */
 body[data-tab='whatsapp'] .wa-col__section:first-child {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
 }
 
 body[data-tab='whatsapp'] .wa-col__section--share {
   flex: 0 0 auto;
-  padding-top: 2px;
-  border-top: 1px solid var(--wa-line);
+  padding-top: 8px;
+  border-top: 1px solid var(--pe-line, var(--wa-line));
 }
 
 /* La barra de desplazamiento NO se ve: aparece solo al desplazar. */

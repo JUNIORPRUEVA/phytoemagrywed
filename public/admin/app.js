@@ -15290,8 +15290,12 @@
 
   function quickColumnHtml() {
     const rows = quickRepliesAll();
-    const visibles = waQuickExpanded ? rows : rows.slice(0, QUICK_VISIBLE);
-    const ocultas = Math.max(0, rows.length - visibles.length);
+    /*
+     * AQUÍ SE VEN TODAS. La columna entera se desplaza (respuestas + compartir),
+     * así que recortar la lista con «Ver más» solo dejaba una franja vacía entre
+     * los dos bloques: el hueco que se veía en medio.
+     */
+    const visibles = rows;
     const lista = rows.length
       ? visibles
           .map(
@@ -15302,9 +15306,7 @@
           )
           .join('')
       : '<p class="wa-col__empty">Sin respuestas rápidas guardadas.</p>';
-    const verMas = ocultas
-      ? `<button class="wa-col__more" data-wa-col-more="1" type="button">Ver más (${ocultas})</button>`
-      : '';
+    const verMas = '';
     return `
       <div class="wa-col" data-side="left" data-open="0">
         <button class="wa-col__backdrop" data-wa-col-close="1" type="button" aria-label="Cerrar" tabindex="-1"></button>
@@ -15330,6 +15332,10 @@
               </div>
             </section>
           </div>
+          <button class="wa-col__fab" data-wa-col-edit="1" type="button"
+            aria-label="Editar respuestas rápidas y datos para compartir" title="Editar">
+            ${ICONS.edit}
+          </button>
         </aside>
       </div>`;
   }
@@ -22755,6 +22761,39 @@
       // --- columnas laterales del chat (gesto o pestañas de los bordes) ---
       if (event.target.closest('[data-wa-col-close]')) {
         closeChatColumns();
+        return;
+      }
+      /*
+       * EDITAR LA PROPIA COLUMNA. El botón flotante abre un menú corto con las
+       * dos cosas que se cambian desde aquí: las respuestas rápidas (crear,
+       * editar o borrar) y los datos que se comparten (ubicaciones, cuentas y
+       * catálogos, que viven en Configuración).
+       */
+      if (event.target.closest('[data-wa-col-edit]')) {
+        openSheet(
+          'Editar esta columna',
+          `<p class="view__hint">Lo que cambies aquí vale para todas las conversaciones.</p>
+           <div class="menu-list">
+            <button class="menu-item" data-chat-col-edit="quick" type="button">
+              <span class="menu-item__icon" aria-hidden="true">${ICONS.spark}</span>
+              <span><strong>Respuestas rápidas</strong><small>Crear, editar o eliminar</small></span>
+            </button>
+            <button class="menu-item" data-chat-col-edit="share" type="button">
+              <span class="menu-item__icon" aria-hidden="true">${ICONS.gear}</span>
+              <span><strong>Datos para compartir</strong><small>Ubicaciones, cuentas y catálogos</small></span>
+            </button>
+          </div>`,
+          { variant: 'menu' },
+        );
+        return;
+      }
+      const colEditAction = event.target.closest('[data-chat-col-edit]');
+      if (colEditAction) {
+        const tipo = colEditAction.dataset.chatColEdit;
+        closeSheet();
+        closeChatColumns();
+        if (tipo === 'quick') openQuickReplies();
+        else openSettingsPage('compartir');
         return;
       }
       if (event.target.closest('[data-wa-col-more]')) {
