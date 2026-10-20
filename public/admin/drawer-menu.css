@@ -764,6 +764,54 @@
   height: 17px;
 }
 
+/* Fila de compartir: la opción ocupa el ancho y a su lado va «ir al sitio». */
+#drawer .drawer__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#drawer .drawer__row > .drawer__item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#drawer .drawer__go {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid var(--pe-line);
+  border-radius: 4px 10px 10px 4px;
+  background: var(--pe-page-bg);
+  color: var(--text-secondary);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#drawer .drawer__go:hover,
+#drawer .drawer__go:focus-visible {
+  border-color: color-mix(in srgb, var(--pe-brand-text) 28%, transparent);
+  background: var(--pe-brand-soft);
+  color: var(--pe-brand-text);
+}
+
+#drawer .drawer__go .drawer__icon {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+#drawer .drawer__go .drawer__icon .svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.9;
+}
+
 /* ------------------------------------------------------- Pie de una fila */
 #drawer .drawer__foot {
   display: block;

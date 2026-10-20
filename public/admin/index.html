@@ -382,9 +382,18 @@
             <details class="drawer__fold">
               <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir<span class="drawer__chev" aria-hidden="true"></span></summary>
               <nav class="drawer__subnav" aria-label="Compartir">
-                <button class="drawer__item drawer__item--sub" id="drawer-share" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app cliente</button>
-                <button class="drawer__item drawer__item--sub" id="drawer-share-web" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Compartir catálogo Fulltech</button>
-                <button class="drawer__item drawer__item--sub" id="drawer-share-store" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="bag"></span>Tienda online</button>
+                <div class="drawer__row">
+                  <button class="drawer__item drawer__item--sub" id="drawer-share" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app cliente</button>
+                  <a class="drawer__go" href="/admin/" target="_blank" rel="noopener noreferrer" aria-label="Ir al panel" title="Ir al panel"><span class="drawer__icon" aria-hidden="true" data-icon="openIn"></span></a>
+                </div>
+                <div class="drawer__row">
+                  <button class="drawer__item drawer__item--sub" id="drawer-share-web" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Compartir catálogo Fulltech</button>
+                  <a class="drawer__go" href="/" target="_blank" rel="noopener noreferrer" aria-label="Ir a la web" title="Ir a la web"><span class="drawer__icon" aria-hidden="true" data-icon="openIn"></span></a>
+                </div>
+                <div class="drawer__row">
+                  <button class="drawer__item drawer__item--sub" id="drawer-share-store" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="bag"></span>Tienda online</button>
+                  <a class="drawer__go" href="/store/" target="_blank" rel="noopener noreferrer" aria-label="Ir a la tienda online" title="Ir a la tienda online"><span class="drawer__icon" aria-hidden="true" data-icon="openIn"></span></a>
+                </div>
               </nav>
             </details>
           </section>

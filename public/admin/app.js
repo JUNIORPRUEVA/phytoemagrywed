@@ -712,6 +712,8 @@
     web: svg('<circle cx="12" cy="12" r="8.6"/><path d="M3.6 9.5h16.8M3.6 14.5h16.8"/><path d="M12 3.4c2.2 2.4 3.3 5.3 3.3 8.6s-1.1 6.2-3.3 8.6c-2.2-2.4-3.3-5.3-3.3-8.6S9.8 5.8 12 3.4z"/>'),
     /* «Compartir app»: dos puntos unidos por líneas. */
     share: svg('<circle cx="17.6" cy="5.9" r="2.7"/><circle cx="6.4" cy="12" r="2.7"/><circle cx="17.6" cy="18.1" r="2.7"/><path d="M8.8 10.7l6.4-3.4M8.8 13.3l6.4 3.4"/>'),
+    /* «Ir al sitio»: flecha que sale del recuadro (abre en otra pestaña). */
+    openIn: svg('<path d="M13.8 4.6h5.6v5.6"/><path d="M19.4 4.6l-7.9 7.9"/><path d="M18.4 13.9v4.3a1.8 1.8 0 0 1-1.8 1.8H6.2a1.8 1.8 0 0 1-1.8-1.8V7.8A1.8 1.8 0 0 1 6.2 6h4.4"/>'),
     /* «Sincronizar datos»: flechas en círculo, el gesto de volver a pedirlo todo. */
     refresh: svg('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20.4 4.4v4.4H16"/>'),
     /* «Instalar la app»: un teléfono con la flecha de descarga. */
