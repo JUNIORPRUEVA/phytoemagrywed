@@ -53,8 +53,19 @@ const initials = value => String(value||'F').trim().split(/\s+/).map(p=>p[0]).sl
 const orderStatus = {nuevo:'Recibido',confirmado:'Confirmado',en_preparacion:'En preparación',enviado:'En camino',entregado:'Entregado',cancelado:'Cancelado',perdido:'No disponible'};
 const requestStatus = {nuevo:'Recibida',en_revision:'En revisión',cotizado:'Cotizada',aprobado:'Aprobada',anticipo_pendiente:'Anticipo pendiente',en_proceso:'En proceso',completado:'Completada',rechazado:'No disponible',cancelado:'Cancelada'};
 const dateText = value => value?new Intl.DateTimeFormat('es-DO',{dateStyle:'medium'}).format(new Date(value)):'';
-function providerButtons(){const available=[['google','Google']].filter(([key])=>session.providers[key]);return `${available.length?`<div class="provider-row">${available.map(([key,label])=>`<a class="button button-outline" href="/api/store/account/auth/${key}/start">Continuar con ${label}</a>`).join('')}</div>`:''}<div class="provider-row" id="google-signin" hidden></div>${available.length?'<div class="auth-divider"><span>o usa tu correo</span></div>':''}`}
-function authShell(title, subtitle, body){return `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${esc(title)}</h1></div><section class="auth-card"><p class="auth-lead">${esc(subtitle)}</p>${body}</section>${footer()}`}
+const GOOGLE_ICON = '<svg class="google-g" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.8-.4-4H24v7.6h12c-.2 1.9-1.5 4.8-4.4 6.7l6.7 5.2c3.9-3.6 6.8-8.9 6.8-15.5z"/><path fill="#34A853" d="M24 47c6.5 0 11.9-2.1 15.8-5.9l-7.5-5.8c-2 1.4-4.7 2.4-8.3 2.4-6.2 0-11.5-4.1-13.4-9.8l-7.8 6C6.6 41.8 14.6 47 24 47z"/><path fill="#FBBC05" d="M10.6 27.9c-.5-1.4-.8-2.9-.8-4.4s.3-3 .7-4.4l-7.8-6C1.7 16.3 1 20 1 23.5s.7 7.2 1.9 10.4l7.7-6z"/><path fill="#EA4335" d="M24 9.9c3.5 0 6.6 1.2 9 3.5l6.7-6.5C35.9 3.1 30.5 1 24 1 14.6 1 6.6 6.2 2.8 13.1l7.8 6C12.5 13.6 17.8 9.9 24 9.9z"/></svg>'
+/*
+ * «Continuar con Google»: solo se enlaza cuando el servidor confirma que el
+ * proveedor está configurado. Si no lo está, el botón queda desactivado: nunca
+ * se simula un acceso ni se manda al cliente a una pantalla que falla.
+ */
+function googleOption(label='Continuar con Google'){
+  const inner=`${GOOGLE_ICON}<span>${esc(label)}</span>`;
+  return session.providers.google===true
+    ? `<a class="button button-outline button-block auth-google" href="/api/store/account/auth/google/start">${inner}</a>`
+    : `<button class="button button-outline button-block auth-google" type="button" disabled>${inner}</button><small class="auth-hint">Google estará disponible muy pronto.</small>`;
+}
+function authHead(title){return `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${esc(title)}</h1></div>`}
 async function api(path){const r=await fetch(path,{headers:{accept:'application/json'}});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}
 const href = route => `/store/#/${route}`;
 function productCard(p){return `<article class="product-card"><a href="${href(`product/${encodeURIComponent(p.id)}`)}" class="product-link" aria-label="Ver ${esc(p.name)}"><div class="product-image">${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy">`:'<span class="image-fallback" aria-hidden="true">◈</span>'}</div><div class="product-info"><h3 class="product-name">${esc(p.name)}</h3><div class="product-bottom"><span class="price">${money(p)}</span><span class="card-arrow" aria-hidden="true">›</span></div><span class="availability ${p.availabilityState==='UNAVAILABLE'?'out':''}">${avail(p)}</span></div></a><div class="card-actions">${canBuy(p)?`<button class="button button-block" type="button" data-add-cart="${esc(p.id)}">Agregar</button>`:`<a class="button button-outline button-block" href="${requestHref(p)}">Solicitar producto</a>`}</div></article>`}
@@ -222,22 +233,127 @@ async function renderRequest(params = new URLSearchParams()){
 }
 /* Tras entrar: si había algo en el carrito, se vuelve al pedido (no se pierde). */
 function afterAuth(){location.hash=readCart().length?'/checkout':'/account'}
+
+/* -------------------------------------------------------------- INICIAR SESIÓN */
 async function renderLogin(message=''){
   setNav('account');await ensureProviders();
-  main.innerHTML=`${authShell('Entrar', message||'Tu cuenta FULLTECH, sin complicaciones.', `${providerButtons()}<form id="login-form"><label class="field"><span class="field__label">Teléfono o correo</span><input class="field__input" name="identifier" autocomplete="username" required></label><label class="field"><span class="field__label">Contraseña</span><input class="field__input" name="password" type="password" autocomplete="current-password" required></label><p class="form-error" id="auth-error" role="alert"></p><button class="button button-block" type="submit">Entrar</button></form><p class="auth-alt">¿No tienes cuenta? <a href="#/account/register">Crear cuenta</a></p>`)}`;
+  main.innerHTML=`${authHead('Iniciar sesión')}
+    <section class="auth-panel">
+      ${message?`<p class="auth-note">${esc(message)}</p>`:''}
+      <form id="login-form" class="auth-form" novalidate>
+        <label class="field"><span class="field__label">Correo electrónico</span><input class="field__input" name="identifier" type="email" autocomplete="username" inputmode="email" placeholder="tucorreo@dominio.com" required></label>
+        <label class="field"><span class="field__label">Contraseña</span><input class="field__input" name="password" type="password" autocomplete="current-password" required></label>
+        <p class="form-error" id="auth-error" role="alert"></p>
+        <button class="button button-block" type="submit">Entrar</button>
+      </form>
+      <a class="auth-link" href="#/account/recover">¿Olvidaste tu contraseña?</a>
+      <div class="auth-divider"><span>o</span></div>
+      ${googleOption()}
+      <p class="auth-alt">¿No tienes cuenta? <a href="#/account/register">Crear cuenta</a></p>
+    </section>${footer()}`;
   bindAuthBack();
   $('#login-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#auth-error').textContent='';try{const data=await apiPost('/api/store/account/login',{identifier:form.identifier.value.trim(),password:form.password.value});session.account=data.account;session.loaded=true;afterAuth();}catch(error){$('#auth-error').textContent=error.message;button.disabled=false;}};
 }
+
+/* --------------------------------------------------- CREAR CUENTA (elegir vía) */
 async function renderRegister(){
   setNav('account');await ensureProviders();
-  main.innerHTML=`${authShell('Crear cuenta','Guarda tus pedidos y solicitudes en un solo lugar.', `${providerButtons()}<form id="register-form"><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" autocomplete="name" maxlength="120" required></label><label class="field"><span class="field__label">Teléfono</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label><label class="field"><span class="field__label">Correo (opcional)</span><input class="field__input" name="email" type="email" autocomplete="email" maxlength="160"></label><label class="field"><span class="field__label">Contraseña</span><input class="field__input" name="password" type="password" autocomplete="new-password" minlength="8" required></label><label class="field"><span class="field__label">Número de un pedido anterior (si ya compraste)</span><input class="field__input" name="orderNumber" maxlength="60" placeholder="Ej. PE-123456"></label><small class="field-help">Solo hace falta si ese teléfono ya tiene historial con nosotros.</small><p class="form-error" id="auth-error" role="alert"></p><button class="button button-block" type="submit">Crear mi cuenta</button></form><p class="auth-alt">¿Ya tienes cuenta? <a href="#/account/login">Entrar</a></p>`)}`;
+  main.innerHTML=`${authHead('Crear cuenta')}
+    <section class="auth-panel auth-panel--choice">
+      <p class="auth-sub auth-sub--center">Elige cómo quieres crear tu cuenta.</p>
+      <div class="auth-stack">
+        ${googleOption()}
+        <a class="button button-outline button-block" href="#/account/register/manual">Crear cuenta manual</a>
+      </div>
+    </section>${footer()}`;
   bindAuthBack();
-  $('#register-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#auth-error').textContent='';try{const data=await apiPost('/api/store/account/register',{name:form.name.value.trim(),phone:form.phone.value.trim(),email:form.email.value.trim(),password:form.password.value,orderNumber:form.orderNumber.value.trim()});session.account=data.account;session.loaded=true;afterAuth();}catch(error){$('#auth-error').textContent=error.message;button.disabled=false;}};
 }
+
+/*
+ * REGISTRO MANUAL EN DOS PASOS: primero los datos y después el teléfono, en una
+ * pantalla aparte. El servidor recibe UNA sola petición al final, así que el
+ * contrato de `/api/store/account/register` no cambia.
+ */
+const manualSignup={name:'',surname:'',email:'',password:''};
+async function renderRegisterManual(params=new URLSearchParams()){
+  setNav('account');
+  if(params.get('step')==='phone'){
+    main.innerHTML=`${authHead('Tu número de teléfono')}
+      <section class="auth-panel">
+        <p class="auth-sub">Lo usamos para coordinar la entrega de tu pedido.</p>
+        <form id="phone-step" class="auth-form" novalidate>
+          <label class="field"><span class="field__label">Tu número de teléfono</span><input class="field__input" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="809 000 0000" required></label>
+          <p class="form-error" id="auth-error" role="alert"></p>
+          <button class="button button-block" type="submit">Guardar y continuar</button>
+        </form>
+        <a class="auth-link auth-link--left" href="#/account/register/manual">Volver</a>
+      </section>${footer()}`;
+    bindAuthBack();
+    $('#phone-step').onsubmit=async event=>{
+      event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#auth-error').textContent='';
+      try{
+        const data=await apiPost('/api/store/account/register',{name:`${manualSignup.name} ${manualSignup.surname}`.trim(),phone:form.phone.value.trim(),email:manualSignup.email,password:manualSignup.password});
+        Object.assign(manualSignup,{name:'',surname:'',email:'',password:''});
+        session.account=data.account;session.loaded=true;afterAuth();
+      }catch(error){$('#auth-error').textContent=error.message;button.disabled=false;}
+    };
+    return;
+  }
+  main.innerHTML=`${authHead('Crear cuenta')}
+    <section class="auth-panel">
+      <form id="manual-form" class="auth-form" novalidate>
+        <label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" autocomplete="given-name" maxlength="60" value="${esc(manualSignup.name)}" required></label>
+        <label class="field"><span class="field__label">Apellido</span><input class="field__input" name="surname" autocomplete="family-name" maxlength="60" value="${esc(manualSignup.surname)}" required></label>
+        <label class="field"><span class="field__label">Correo electrónico</span><input class="field__input" name="email" type="email" autocomplete="email" inputmode="email" maxlength="160" placeholder="tucorreo@dominio.com" value="${esc(manualSignup.email)}" required></label>
+        <label class="field"><span class="field__label">Contraseña</span><input class="field__input" name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+        <label class="field"><span class="field__label">Confirmar contraseña</span><input class="field__input" name="confirm" type="password" autocomplete="new-password" minlength="8" required></label>
+        <p class="form-error" id="auth-error" role="alert"></p>
+        <button class="button button-block" type="submit">Continuar</button>
+      </form>
+      <p class="auth-alt">¿Ya tienes cuenta? <a href="#/account/login">Iniciar sesión</a></p>
+    </section>${footer()}`;
+  bindAuthBack();
+  $('#manual-form').onsubmit=event=>{
+    event.preventDefault();const form=event.target,error=$('#auth-error');
+    const name=form.name.value.trim(),surname=form.surname.value.trim(),email=form.email.value.trim(),password=form.password.value,confirm=form.confirm.value;
+    error.textContent='';
+    if(name.length<2){error.textContent='Escribe tu nombre.';return}
+    if(surname.length<2){error.textContent='Escribe tu apellido.';return}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){error.textContent='Escribe un correo válido.';return}
+    if(password.length<8){error.textContent='La contraseña necesita al menos 8 caracteres.';return}
+    if(password!==confirm){error.textContent='Las contraseñas no coinciden.';return}
+    Object.assign(manualSignup,{name,surname,email,password});
+    location.hash='/account/register/manual?step=phone';
+  };
+}
+
+/* ------------------------------------------------------ RECUPERAR CONTRASEÑA */
+async function renderRecover(){
+  setNav('account');
+  main.innerHTML=`${authHead('Recuperar acceso')}
+    <section class="auth-panel">
+      <p class="auth-sub">Escribe tu correo y te enviamos un enlace para crear una contraseña nueva.</p>
+      <form id="recover-form" class="auth-form" novalidate>
+        <label class="field"><span class="field__label">Correo electrónico</span><input class="field__input" name="identifier" type="email" autocomplete="username" inputmode="email" required></label>
+        <p class="form-error" id="auth-error" role="alert"></p>
+        <p class="form-ok" id="recover-ok" role="status"></p>
+        <button class="button button-block" type="submit">Enviar enlace</button>
+      </form>
+      <p class="auth-alt"><a href="#/account/login">Volver a iniciar sesión</a></p>
+    </section>${footer()}`;
+  bindAuthBack();
+  $('#recover-form').onsubmit=async event=>{
+    event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#auth-error').textContent='';$('#recover-ok').textContent='';
+    try{const data=await apiPost('/api/store/account/recover',{identifier:form.identifier.value.trim()});$('#recover-ok').textContent=data.message||'Si el dato coincide con una cuenta, te enviamos un enlace para recuperar el acceso.';}
+    catch(error){$('#auth-error').textContent=error.message;}
+    finally{button.disabled=false;}
+  };
+}
+
 async function renderComplete(params){
   setNav('account');const token=params.get('token')||'';
-  const body=token?`<form id="complete-form"><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" autocomplete="name" maxlength="120" required></label><label class="field"><span class="field__label">Teléfono</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label><label class="field"><span class="field__label">Número de un pedido anterior (si ya compraste)</span><input class="field__input" name="orderNumber" maxlength="60" placeholder="Ej. PE-123456"></label><small class="field-help">Solo si ese teléfono ya tiene historial con nosotros.</small><p class="form-error" id="auth-error" role="alert"></p><button class="button button-block" type="submit">Terminar mi cuenta</button></form>`:`<p class="auth-note">El enlace caducó. Vuelve a entrar con Google o Apple.</p><a class="button button-block" href="#/account">Volver a mi cuenta</a>`;
-  main.innerHTML=`${authShell('Completa tu cuenta','Solo falta tu teléfono para vincular tus compras.',body)}`;
+  const body=token?`<form id="complete-form" class="auth-form" novalidate><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" autocomplete="name" maxlength="120" required></label><label class="field"><span class="field__label">Tu número de teléfono</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label><label class="field"><span class="field__label">Número de un pedido anterior (si ya compraste)</span><input class="field__input" name="orderNumber" maxlength="60" placeholder="Ej. PE-123456"></label><p class="form-error" id="auth-error" role="alert"></p><button class="button button-block" type="submit">Terminar mi cuenta</button></form>`:`<p class="auth-sub">El enlace caducó. Vuelve a intentarlo.</p><a class="button button-block" href="#/account/login">Volver a iniciar sesión</a>`;
+  main.innerHTML=`${authHead('Completa tu cuenta')}${token?'<p class="auth-sub">Solo falta tu teléfono para vincular tus compras.</p>':''}<section class="auth-panel">${body}</section>${footer()}`;
   bindAuthBack();
   if(token)$('#complete-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#auth-error').textContent='';try{const data=await apiPost('/api/store/account/complete',{token,name:form.name.value.trim(),phone:form.phone.value.trim(),orderNumber:form.orderNumber.value.trim()});session.account=data.account;session.loaded=true;location.hash='/account';}catch(error){$('#auth-error').textContent=error.message;button.disabled=false;}};
 }
@@ -245,7 +361,16 @@ function bindAuthBack(){const back=$('[data-back]');if(back)back.onclick=()=>his
 async function renderAccount(){
   setNav('account');await Promise.all([ensureSession(true),ensureProviders()]);
   if(!session.account){
-    main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Mi cuenta</h1></div><section class="account-hero"><span class="eyebrow">FULLTECH STORE</span><h2>Tu espacio en FULLTECH</h2><p>Pedidos, solicitudes y preferencias en un solo lugar.</p><div class="account-actions"><a class="button" href="#/account/login">Entrar</a><a class="button button-outline" href="#/account/register">Crear cuenta</a></div></section><section class="account-card"><h3>Compra y solicita a tu manera</h3><ul class="account-benefits"><li>Historial de pedidos y estados.</li><li>Solicitudes con seguimiento y cotización.</li><li>Tus preferencias, siempre a mano.</li></ul><p class="account-foot">Acceso con Google, Apple o tu teléfono.</p></section>${footer()}`;
+    main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Mi cuenta</h1></div>
+      <section class="auth-hero">
+        <span class="auth-hero__mark" aria-hidden="true">F</span>
+        <span class="auth-hero__label">TU ESPACIO</span>
+        <p>Inicia sesión o crea tu cuenta para ver tus pedidos y solicitudes.</p>
+        <div class="auth-stack">
+          <a class="button button-light button-block" href="#/account/login">Iniciar sesión</a>
+          <a class="button button-outline-light button-block" href="#/account/register">Crear cuenta</a>
+        </div>
+      </section>${footer()}`;
     bindAuthBack();return;
   }
   let counts={orders_count:0,requests_count:0};try{counts=await api('/api/store/account/me');session.account=counts.account||session.account}catch{}
@@ -300,7 +425,7 @@ function requestCard(request){
   return `<article class="request-card"><div class="request-head"><span class="status-chip status-chip--${esc(request.status)}">${esc(requestStatus[request.status]||request.status)}</span><strong>${esc(request.title)}</strong></div><p class="request-date">${esc(dateText(request.created_at))}${request.images?` · ${request.images} foto${request.images===1?'':'s'}`:''}</p>${quote}${payment}${events?`<ul class="request-timeline">${events}</ul>`:''}${actions}${transfer}</article>`;
 }
 function renderNotice(title){setNav('');main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${title}</h1></div><div class="empty"><h3>Próximamente</h3><p>Esta función aún no está disponible.</p></div>${footer()}`;$('[data-back]').onclick=()=>history.back()}
-async function route(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='catalog')return renderCatalog(params);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request')return renderRequest(params);if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/complete')return renderComplete(params);if(path==='account/requests')return renderRequests();return renderHome()}
+async function route(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='catalog')return renderCatalog(params);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request')return renderRequest(params);if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='account/requests')return renderRequests();return renderHome()}
 function openDrawer(open){if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open))}
 $('#menu-button').onclick=()=>openDrawer(true);$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
 updateCartBadge();
