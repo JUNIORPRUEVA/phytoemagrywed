@@ -44,7 +44,7 @@ describe('FULLTECH Store public catalog API', () => {
     expect((await request('/api/admin/store/products', { auth: false })).status).toBe(401);
   });
 
-  it('builds the homepage from published products, featured first, and published services only', async () => {
+  it('builds the homepage from published products only (services stay in the CRM)', async () => {
     const featured = await product('Cámara destacada', `FEA-${randomUUID().slice(0, 8)}`, { category: 'Seguridad' });
     const normal = await product('Router disponible', `NOR-${randomUUID().slice(0, 8)}`);
     const serviceResult = await request('/api/admin/store/products', { method: 'POST', body: {
@@ -59,9 +59,10 @@ describe('FULLTECH Store public catalog API', () => {
     const home = await request('/api/store/home', { auth: false });
     expect(home.data.featured).toBe(true);
     expect(home.data.products.map(row => row.id)).toEqual([featured.id, normal.id]);
-    expect(home.data.services.map(row => row.id)).toEqual([serviceResult.data.product.id]);
-    expect(home.data.categories.sort()).toEqual(['Instalación', 'Seguridad']);
-    expect(home.data.total).toBe(3);
+    // FASE 1: los servicios NUNCA aparecen en el escaparate.
+    expect(home.data.services).toEqual([]);
+    expect(home.data.categories.sort()).toEqual(['Seguridad']);
+    expect(home.data.total).toBe(2);
   });
 
   it('whitelists public fields and never leaks costs or internal CRM values', async () => {
@@ -70,7 +71,7 @@ describe('FULLTECH Store public catalog API', () => {
     const result = await request('/api/store/products/' + p.id, { auth: false });
     expect(result.status).toBe(200);
     expect(result.data.product).toMatchObject({ id: p.id, name: 'Cámara Fulltech', kind: 'product', price: 1250.5, currency: 'DOP', availability: 'available', featured: true });
-    expect(Object.keys(result.data.product).sort()).toEqual(['availability', 'brand', 'category', 'currency', 'description', 'featured', 'id', 'imageUrl', 'kind', 'name', 'price', 'shortDescription'].sort());
+    expect(Object.keys(result.data.product).sort()).toEqual(['availability', 'availabilityState', 'brand', 'category', 'currency', 'description', 'featured', 'id', 'imageUrl', 'kind', 'name', 'price', 'purchaseable', 'shortDescription', 'warranty'].sort());
     expect(JSON.stringify(result.data)).not.toMatch(/cost|supplier|margin|updated_by|stock_movements/i);
   });
 
@@ -93,7 +94,7 @@ describe('FULLTECH Store public catalog API', () => {
     expect((await request(`/api/store/products/${hidden.id}/image`, { auth: false })).status).toBe(404);
   });
 
-  it('keeps published products and services in sync and archives without losing history', async () => {
+  it('keeps published products in sync, hides services and archives without losing history', async () => {
     const created = await product('Producto sincronizado', `SYN-${randomUUID().slice(0, 8)}`);
     const serviceResult = await request('/api/admin/store/products', { method: 'POST', body: {
       kind: 'service', name: 'Servicio sincronizado', sku: `SRV-${randomUUID().slice(0, 8)}`,
@@ -107,12 +108,13 @@ describe('FULLTECH Store public catalog API', () => {
     const catalog = await request('/api/store/catalog?kind=all&limit=48', { auth: false });
     expect(catalog.data.products).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: created.id, kind: 'product' }),
-      expect.objectContaining({ id: service.id, kind: 'service' }),
     ]));
+    expect(catalog.data.products.some(row => row.id === service.id)).toBe(false);
     const archived = await request(`/api/admin/store/products/${created.id}`, { method: 'DELETE' });
     expect(archived.status).toBe(200);
     expect(archived.data.archived).toMatchObject({ id: created.id, archived: true });
-    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products.map(row => row.id)).toEqual([service.id]);
+    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products).toEqual([]);
+    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products).toEqual([]);
     expect((await request(`/api/store/products/${created.id}`, { auth: false })).status).toBe(404);
     const admin = await request('/api/admin/store/products');
     expect(admin.data.products.some(row => row.id === created.id)).toBe(false);
@@ -120,7 +122,7 @@ describe('FULLTECH Store public catalog API', () => {
     const restored = await request(`/api/admin/store/products/${created.id}/restore`, { method: 'POST', body: {} });
     expect(restored.status).toBe(200);
     expect(restored.data.product).toMatchObject({ id: created.id, archived: false, active: false });
-    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products.map(row => row.id)).toEqual([service.id]);
+    expect((await request('/api/store/catalog?q=sincronizado', { auth: false })).data.products).toEqual([]);
     const legacy = admin.data.products.find(row => row.legacy);
     expect((await request(`/api/admin/store/products/${legacy.id}`, { method: 'DELETE' })).status).toBe(409);
   });

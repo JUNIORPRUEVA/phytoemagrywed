@@ -1,4 +1,5 @@
 import { STORE_REQUEST_STATUSES } from './store-accounts.mjs';
+import { maskPhone, phoneRequirement } from './store-verifications.mjs';
 
 const COOKIE = 'ft_store_session';
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
@@ -95,7 +96,8 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
   const accounts = ctx.storeAccounts;
   const accountRoute = route === '/api/store/account' || route.startsWith('/api/store/account/');
   const requestRoute = route === '/api/store/requests' || route.startsWith('/api/store/requests/');
-  if (!accountRoute && !requestRoute) return false;
+  const orderRoute = route === '/api/store/orders';
+  if (!accountRoute && !requestRoute && !orderRoute) return false;
   if (!accounts) {
     json(res, 503, { ok: false, error: 'accounts_unavailable', message: 'La cuenta estará disponible en breve.' });
     return true;
@@ -117,6 +119,39 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
   const stateChanging = req.method === 'POST' || req.method === 'PATCH' || req.method === 'DELETE';
   const oauthCallback = /^\/api\/store\/account\/auth\/(google|apple)\/callback$/.test(route);
   if (stateChanging && !oauthCallback && !sameOrigin(req)) return send(403, { ok: false, error: 'cross_origin', message: 'No pudimos verificar la solicitud.' });
+
+  /*
+   * TELÉFONO OBLIGATORIO, VERIFICACIÓN NO.
+   *
+   * Para enviar un pedido o una solicitud el cliente necesita un número
+   * GUARDADO en su cuenta. La confirmación por SMS está APLAZADA en la Fase 1:
+   * no se pide código ni se marca nada como verificado.
+   */
+  const phoneGate = (session) => {
+    const requirement = phoneRequirement(session.account);
+    if (!requirement.ok) {
+      return {
+        ok: false,
+        error: 'phone_required',
+        message: requirement.message,
+        phone_url: '/store/verify/',
+      };
+    }
+    /*
+     * El pedido se registra contra el cliente del CRM. Si el número guardado ya
+     * tenía historial, la cuenta necesita la prueba de un pedido para enlazarse:
+     * sin eso no se puede vender ni se enseña nada del historial ajeno.
+     */
+    if (!session.account.customer_id) {
+      return {
+        ok: false,
+        error: 'phone_required',
+        message: 'Ese teléfono ya tiene historial con nosotros. Escribe el número de un pedido anterior para enlazar tu cuenta.',
+        phone_url: '/store/verify/',
+      };
+    }
+    return null;
+  };
 
   try {
     if (route === '/api/store/account/providers' && req.method === 'GET') {
@@ -221,7 +256,22 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
       const session = requireAccount();
       if (!session) return true;
       const [orders, requests] = await Promise.all([accounts.ordersForCustomer(session.account.customer_id), accounts.listRequestsForCustomer(session.account.customer_id)]);
-      return send(200, { ok: true, account: accounts.viewAccount(session.account, session.customer), customer: { id: session.customer?.id ?? null, name: session.customer?.name ?? '' }, orders_count: orders.length, requests_count: requests.length });
+      const verification = ctx.storeVerifications ? await ctx.storeVerifications.phoneStatus(session.account.id, session.account.phone_e164) : null;
+      const emailVerified = ctx.storeVerifications ? await ctx.storeVerifications.emailVerified(session.account) : false;
+      return send(200, {
+        ok: true,
+        account: {
+          ...accounts.viewAccount(session.account, session.customer),
+          phone_saved: Boolean(session.account.phone_e164),
+          phone_verified: verification ? verification.verified : false,
+          phone_otp_enabled: Boolean(verification?.otp_enabled),
+          phone_masked: verification?.masked ?? (session.account.phone_e164 ? maskPhone(session.account.phone_e164) : null),
+        },
+        customer: { id: session.customer?.id ?? null, name: session.customer?.name ?? '' },
+        orders_count: orders.length,
+        requests_count: requests.length,
+        email_verified: emailVerified,
+      });
     }
 
     if (route === '/api/store/account/me' && req.method === 'PATCH') {
@@ -244,9 +294,32 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
       return send(200, { ok: true, requests: await accounts.listRequestsForCustomer(session.account.customer_id) });
     }
 
+    if (route === '/api/store/orders' && req.method === 'POST') {
+      const current = requireAccount();
+      if (!current) return true;
+      const blocked = await phoneGate(current);
+      if (blocked) return send(403, blocked);
+      if (typeof ctx.createStoreOrder !== 'function') {
+        return send(503, { ok: false, error: 'orders_unavailable', message: 'Los pedidos de la tienda no están disponibles ahora mismo.' });
+      }
+      let body;
+      try { body = await readJson(req, 30000); } catch { return send(400, { ok: false, error: 'invalid_body', message: 'No pudimos leer el pedido.' }); }
+      const result = await ctx.createStoreOrder(current, body && typeof body === 'object' ? body : {});
+      if (!result?.ok) {
+        return send(result?.status ?? 422, {
+          ok: false,
+          error: result?.error ?? 'order_failed',
+          message: result?.message ?? 'No pudimos registrar el pedido.',
+        });
+      }
+      return send(201, { ok: true, duplicate: result.duplicate === true, order: result.order });
+    }
+
     if (route === '/api/store/requests' && req.method === 'POST') {
       const session = requireAccount();
       if (!session) return true;
+      const blocked = await phoneGate(session);
+      if (blocked) return send(403, blocked);
       const body = await readJson(req, 4600000);
       const result = await accounts.createRequest(session.account, body);
       return send(result.duplicate ? 200 : 201, { ok: true, request: result.request, duplicate: result.duplicate });
@@ -278,6 +351,16 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
       if (!session) return true;
       const body = await readJson(req, 20000);
       const request = await accounts.decideRequest(decisionMatch[1], session.account, body);
+      return send(200, { ok: true, request });
+    }
+
+    /* El cliente reporta la transferencia del anticipo (no la confirma). */
+    const transferMatch = /^\/api\/store\/requests\/([a-zA-Z0-9_-]+)\/transfer$/.exec(route);
+    if (transferMatch && req.method === 'POST') {
+      const session = requireAccount();
+      if (!session) return true;
+      const body = await readJson(req, 900000);
+      const request = await accounts.reportTransfer(transferMatch[1], session.account, body);
       return send(200, { ok: true, request });
     }
 

@@ -190,7 +190,7 @@ describe('FULLTECH Store customer accounts', () => {
       method: 'PATCH', cookie: adminCookie, body: { quote: { amount: '3500.00', notes: 'Incluye instalación.' } },
     });
     expect(quoted.status).toBe(200);
-    expect(quoted.data.request).toMatchObject({ status: 'cotizado', quote: { amount: 3500, currency: 'DOP' } });
+    expect(quoted.data.request).toMatchObject({ status: 'cotizado', quote: { amount: 3500, currency: 'DOP', advance_percent: 30, advance_amount: 1050 } });
 
     const customerView = await api(`/api/store/requests/${requestId}`, { cookie: owner.cookie });
     expect(customerView.data.request.status).toBe('cotizado');
@@ -201,10 +201,26 @@ describe('FULLTECH Store customer accounts', () => {
       method: 'POST', cookie: owner.cookie, body: { decision: 'accept' },
     });
     expect(accepted.status).toBe(200);
-    expect(accepted.data.request.status).toBe('aprobado');
+    /* Con anticipo configurado, aceptar deja la solicitud esperando el pago. */
+    expect(accepted.data.request.status).toBe('anticipo_pendiente');
     expect((await api(`/api/store/requests/${requestId}/decision`, { method: 'POST', cookie: owner.cookie, body: { decision: 'accept' } })).status).toBe(409);
 
-    const filtered = await api('/api/admin/store/requests?status=aprobado', { cookie: adminCookie });
+    /* El cliente REPORTA la transferencia: no se confirma sola. */
+    const reported = await api(`/api/store/requests/${requestId}/transfer`, {
+      method: 'POST', cookie: owner.cookie, body: { reference: 'REF-123', amount: '1050.00' },
+    });
+    expect(reported.status).toBe(200);
+    expect(reported.data.request.payment).toMatchObject({ status: 'reported', amount: 1050 });
+
+    /* Solo administración verifica, y confirmar no marca pagado el total. */
+    const confirmed = await api(`/api/admin/store/requests/${requestId}`, {
+      method: 'PATCH', cookie: adminCookie, body: { payment: { decision: 'confirmed' } },
+    });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.data.request.payment.status).toBe('confirmed');
+    expect(confirmed.data.request.status).toBe('en_proceso');
+
+    const filtered = await api('/api/admin/store/requests?status=en_proceso', { cookie: adminCookie });
     expect(filtered.data.requests.some((row) => row.id === requestId)).toBe(true);
   });
 

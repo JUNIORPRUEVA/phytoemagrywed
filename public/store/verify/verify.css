@@ -1,0 +1,29 @@
+/* Confirmación del número — reutiliza los tokens de la tienda. */
+.verify-loading{display:grid;place-items:center;gap:12px;padding:56px 0;color:var(--muted);font-size:13px}
+.verify-spinner{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--brand);animation:verify-spin .8s linear infinite}
+@keyframes verify-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.verify-spinner{animation:none}}
+
+.verify-panel{max-width:480px;margin:0 auto}
+.verify-head{text-align:center;margin-bottom:18px}
+.verify-head h1{margin:8px 0 6px;font-size:clamp(22px,4.4vw,28px);letter-spacing:-.7px;color:var(--ink)}
+.verify-head p{margin:0;color:var(--muted);font-size:14px;line-height:1.55}
+.verify-card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:var(--shadow)}
+.verify-steps{display:flex;gap:6px;margin:0 0 16px}
+.verify-steps span{height:3px;flex:1;border-radius:999px;background:var(--line)}
+.verify-steps span.on{background:var(--brand)}
+.verify-form{display:grid;gap:12px}
+.verify-code{letter-spacing:.42em;text-align:center;font-size:22px;font-weight:700;padding-left:.42em}
+.verify-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.verify-actions .button{flex:1;min-width:140px}
+.verify-hint{color:var(--muted);font-size:12px;margin:10px 0 0;line-height:1.5}
+.verify-error{color:#a34e52;font-size:13px;min-height:18px;margin:2px 0 0}
+.verify-note{background:var(--canvas);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--muted);font-size:13px;line-height:1.55;margin:0 0 14px}
+.verify-done{text-align:center}
+.verify-done .success-icon{margin:0 auto 12px}
+.verify-done h1{font-size:22px;margin:0 0 8px;letter-spacing:-.5px;color:var(--ink)}
+.verify-done p{color:var(--muted);font-size:14px;margin:0 0 16px;line-height:1.55}
+.verify-badge{display:inline-flex;align-items:center;gap:6px;background:#e2f6ee;color:#23795f;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:650;margin-bottom:10px}
+.verify-uat{font-size:11px;color:var(--muted);margin-top:12px;word-break:break-all}
+@media (max-width:420px){.verify-card{padding:16px}.verify-code{font-size:20px;letter-spacing:.32em}}
+@media (prefers-color-scheme:dark){.verify-badge{background:#153a2d;color:#89e0bf}.verify-error{color:#f0919a}}

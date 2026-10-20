@@ -21,8 +21,13 @@ const safeJson = (value, fallback = {}) => {
 };
 const normProof = (value) => String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const normTitle = (value) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/*
+ * Mensaje ÚNICO para un alta que no se puede completar: no confirma si el
+ * teléfono ya existe ni a qué cuenta pertenece (evita enumerar cuentas).
+ */
+const GENERIC_EXISTS = 'No pudimos crear la cuenta con esos datos. Si ya tienes una, inicia sesión o recupera tu acceso.';
 
-export const STORE_REQUEST_STATUSES = ['nuevo', 'en_revision', 'cotizado', 'aprobado', 'en_proceso', 'completado', 'rechazado', 'cancelado'];
+export const STORE_REQUEST_STATUSES = ['nuevo', 'en_revision', 'cotizado', 'aprobado', 'anticipo_pendiente', 'en_proceso', 'completado', 'rechazado', 'cancelado'];
 
 /**
  * Cuentas de cliente de FULLTECH Store.
@@ -202,12 +207,12 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (email && !isEmail(email)) throw fail('invalid_email', 'Escribe un correo válido.');
     const key = await assertEmailAvailable(email);
 
-    if (await accountBy('phone_e164', phone)) throw fail('account_exists', 'Ya existe una cuenta con ese teléfono. Inicia sesión.', 409);
+    if (await accountBy('phone_e164', phone)) throw fail('account_exists', GENERIC_EXISTS, 409);
 
     const existing = await customers.findByPhone(phone);
     let customer = existing;
     if (existing) {
-      if (await accountBy('customer_id', existing.id)) throw fail('account_exists', 'Ya existe una cuenta con ese teléfono. Inicia sesión.', 409);
+      if (await accountBy('customer_id', existing.id)) throw fail('account_exists', GENERIC_EXISTS, 409);
       /*
        * Vincular una cuenta a un cliente que ya está en el CRM exige prueba de
        * propiedad. Sin ella, cualquiera que conozca un teléfono podría ver su
@@ -260,6 +265,79 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (account.status !== 'active') throw fail('account_inactive', 'Esta cuenta está pendiente de verificación.', 403);
     const customer = account.customer_id ? await customers.get(account.customer_id) : null;
     return { account: publicAccount(account, customer), customer };
+  }
+
+  /** Contraseña nueva tras una recuperación verificada. Cierra las sesiones. */  async function setPassword(accountId, password) {
+    const value = String(password ?? '');
+    if (value.length < 8 || value.length > 200) throw fail('invalid_password', 'La contraseña debe tener al menos 8 caracteres.');
+    const row = (await sql.query('SELECT id FROM fulltech_customer_accounts_v1 WHERE id=$1', [accountId])).rows[0];
+    if (!row) throw fail('not_found', 'La cuenta ya no existe.', 404);
+    const now = clock().toISOString();
+    await sql.query('UPDATE fulltech_customer_accounts_v1 SET password_hash=$1, status=$2, updated_at=$3 WHERE id=$4', [await hashPassword(value), 'active', now, accountId]);
+    /*
+     * Una contraseña nueva invalida lo anterior: si alguien tenía una sesión
+     * abierta con el acceso robado, deja de servir.
+     */
+    await sql.query('UPDATE fulltech_customer_sessions_v1 SET revoked_at=$1 WHERE account_id=$2 AND revoked_at IS NULL', [now, accountId]);
+    return { ok: true };
+  }
+
+  /**
+   * GUARDA EL TELÉFONO EN LA CUENTA — estado NO verificado.
+   *
+   * La Fase 1 no verifica por SMS: el número se guarda como dato de contacto y
+   * queda marcado como `unverified` (ver `store-verifications.mjs`). Aquí solo
+   * se comprueba que no pertenezca ya a otra cuenta de la tienda, para que dos
+   * personas no compartan identidad por un número mal escrito.
+   */
+  async function setPhone(accountId, rawPhone) {
+    const account = await accountBy('id', accountId);
+    if (!account) throw fail('not_found', 'La cuenta no existe.', 404);
+    const e164 = customers.normalizePhone(rawPhone);
+    if (!e164) throw fail('invalid_phone', 'Escribe un teléfono válido.');
+    const other = (await sql.query('SELECT id FROM fulltech_customer_accounts_v1 WHERE phone_e164=$1 AND id<>$2 LIMIT 1', [e164, accountId])).rows[0];
+    if (other) throw fail('phone_in_use', 'Ese número ya está asociado a otra cuenta. Inicia sesión con ella.', 409);
+    const now = clock().toISOString();
+    await sql.query('UPDATE fulltech_customer_accounts_v1 SET phone_e164=$1, updated_at=$2 WHERE id=$3', [e164, now, accountId]);
+    if (account.customer_id) {
+      const customer = await customers.get(account.customer_id);
+      /*
+       * El cliente del CRM se actualiza SOLO si el número no pertenece a otro:
+       * escribir un teléfono no puede apropiarse de un historial ajeno.
+       */
+      const clash = await customers.findByPhone(e164);
+      if (customer && (!clash || clash.id === customer.id) && customer.phone_e164 !== e164) {
+        await customers.update(customer.id, { phone_e164: e164, phone: e164 });
+      }
+    }
+    return { ...account, phone_e164: e164 };
+  }
+
+  /**
+   * Vincula la cuenta con un cliente del CRM cuando es SEGURO.
+   *
+   * - Si ya está vinculada, no hace nada.
+   * - Si el teléfono no existe en el CRM, se crea el cliente (`source: tienda`).
+   * - Si el teléfono YA tiene historial, se exige el número de un pedido: sin esa
+   *   prueba no se enlaza y tampoco se enseña nada del historial ajeno.
+   */
+  async function ensureCustomerForPhone(account, orderNumber) {
+    if (!account?.id) return { linked: false, reason: 'no_account' };
+    if (account.customer_id) return { linked: true, customer_id: account.customer_id };
+    const phone = customers.normalizePhone(account.phone_e164);
+    if (!phone) return { linked: false, reason: 'no_phone' };
+    const name = clean(account.profile?.name, 120);
+    try {
+      const customer = await resolveCustomerForAccount(name, phone, orderNumber);
+      await sql.query('UPDATE fulltech_customer_accounts_v1 SET customer_id=$1, status=$2, updated_at=$3 WHERE id=$4', [
+        customer.id, 'active', clock().toISOString(), account.id,
+      ]);
+      return { linked: true, customer_id: customer.id };
+    } catch (error) {
+      if (error?.code === 'verification_required') return { linked: false, reason: 'needs_proof' };
+      if (error?.code === 'account_exists') return { linked: false, reason: 'account_exists' };
+      throw error;
+    }
   }
 
   async function updateProfile(account, input = {}) {
@@ -339,7 +417,30 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
       details: doc.details ?? '',
       reference_url: doc.reference_url ?? null,
       status: doc.status,
-      quote: doc.quote ? { amount: Number(doc.quote.amount_cents) / 100, currency: doc.quote.currency ?? 'DOP', notes: doc.quote.notes ?? '', valid_until: doc.quote.valid_until ?? null } : null,
+      quote: doc.quote ? {
+        amount: Number(doc.quote.amount_cents) / 100,
+        currency: doc.quote.currency ?? 'DOP',
+        notes: doc.quote.notes ?? '',
+        valid_until: doc.quote.valid_until ?? null,
+        advance_percent: Number(doc.quote.advance_percent ?? 0),
+        advance_amount: Number(doc.quote.advance_amount_cents ?? 0) / 100,
+        eta: doc.quote.eta ?? '',
+        terms: doc.quote.terms ?? '',
+        warranty: doc.quote.warranty ?? '',
+      } : null,
+      /*
+       * PAGO: el cliente ve lo que él mismo reportó y si administración lo
+       * confirmó. Un comprobante NUNCA se toma como pago confirmado.
+       */
+      payment: doc.payment ? {
+        status: doc.payment.status ?? 'reported',
+        reported_at: doc.payment.reported_at ?? null,
+        amount: Number(doc.payment.amount_cents ?? 0) / 100,
+        reference: doc.payment.reference ?? '',
+        verified_at: doc.payment.verified_at ?? null,
+        reason: doc.payment.reason ?? null,
+        has_proof: Boolean(doc.payment.proof),
+      } : null,
       images: Number(doc.image_count ?? 0),
       created_at: doc.created_at,
       updated_at: doc.updated_at,
@@ -420,10 +521,49 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     const decision = input.decision === 'accept' ? 'aprobado' : input.decision === 'decline' ? 'cancelado' : null;
     if (!decision) throw fail('invalid_decision', 'Elige aceptar o rechazar la cotización.');
     const now = clock().toISOString();
-    doc.status = decision;
-    doc.events = [...(doc.events ?? []), { at: now, status: decision, by: 'Cliente', note: clean(input.note, 300) || null }];
+    const advance = Number(doc.quote?.advance_amount_cents ?? 0);
+    doc.status = decision === 'aprobado' && advance > 0 ? 'anticipo_pendiente' : decision;
+    doc.events = [...(doc.events ?? []), { at: now, status: doc.status, by: 'Cliente', note: clean(input.note, 300) || null, visible: true }];
     doc.updated_at = now;
-    await sql.query('UPDATE fulltech_store_requests_v1 SET status=$1,doc=$2,updated_at=$3 WHERE id=$4', [decision, JSON.stringify(doc), now, id]);
+    await sql.query('UPDATE fulltech_store_requests_v1 SET status=$1,doc=$2,updated_at=$3 WHERE id=$4', [doc.status, JSON.stringify(doc), now, id]);
+    return publicRequest(doc);
+  }
+
+  /**
+   * El cliente REPORTA una transferencia. Nunca se marca como pagada: queda
+   * «reported» hasta que un administrador verifique el dinero.
+   */
+  async function reportTransfer(id, account, input = {}) {
+    const doc = await requestForAccount(id, account);
+    if (!doc) throw fail('not_found', 'La solicitud no existe.', 404);
+    if (!doc.quote?.amount_cents) throw fail('not_quoted', 'Todavía no hay una propuesta para esta solicitud.', 409);
+    if (!['aprobado', 'anticipo_pendiente', 'en_proceso'].includes(doc.status)) {
+      throw fail('not_accepted', 'Acepta la propuesta antes de reportar el pago.', 409);
+    }
+    if (doc.payment?.verified_at) throw fail('payment_already_verified', 'Ese pago ya fue verificado.', 409);
+    const now = clock().toISOString();
+    const expected = Number(doc.quote.advance_amount_cents ?? 0);
+    const amount = moneyToCents(input.amount) ?? expected;
+    if (amount === null || amount <= 0) throw fail('invalid_amount', 'Escribe el monto transferido.');
+    if (expected > 0 && amount > expected) throw fail('amount_too_high', 'El monto no puede superar el anticipo acordado.');
+    let proof = null;
+    if (input.proof) {
+      const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(input.proof));
+      if (!match) throw fail('invalid_proof', 'El comprobante debe ser una imagen JPG, PNG o WebP.');
+      if (match[2].length > 700000) throw fail('proof_too_large', 'El comprobante es demasiado grande (máx. 500 KB).');
+      proof = `data:image/${match[1]};base64,${match[2]}`;
+    }
+    doc.payment = {
+      status: 'reported',
+      reported_at: now,
+      amount_cents: amount,
+      reference: clean(input.reference, 120),
+      note: clean(input.note, 300),
+      proof,
+    };
+    doc.events = [...(doc.events ?? []), { at: now, status: doc.status, by: 'Cliente', note: 'Transferencia reportada (pendiente de verificación)', visible: true }];
+    doc.updated_at = now;
+    await sql.query('UPDATE fulltech_store_requests_v1 SET doc=$1,updated_at=$2 WHERE id=$3', [JSON.stringify(doc), now, id]);
     return publicRequest(doc);
   }
 
@@ -450,14 +590,50 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (input.quote !== undefined) {
       const amount = moneyToCents(input.quote?.amount);
       if (amount === null || amount <= 0) throw fail('invalid_quote', 'Escribe un monto válido para la cotización.');
+      const percent = input.quote?.advance_percent === undefined || input.quote?.advance_percent === ''
+        ? 30
+        : Number(input.quote.advance_percent);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw fail('invalid_advance', 'El anticipo debe estar entre 0 y 100%.');
       doc.quote = {
         amount_cents: amount,
         currency: 'DOP',
         notes: clean(input.quote?.notes, 1000),
         valid_until: input.quote?.valid_until ? clean(input.quote.valid_until, 40) : null,
+        advance_percent: Math.round(percent),
+        advance_amount_cents: Math.round(amount * percent / 100),
+        eta: clean(input.quote?.eta, 120),
+        terms: clean(input.quote?.terms, 2000),
+        warranty: clean(input.quote?.warranty, 500),
         created_at: now,
       };
+      /* Una propuesta nueva invalida la aceptación y el pago anteriores. */
+      doc.payment = null;
+      doc.accepted_at = null;
       if (input.status === undefined) nextStatus = 'cotizado';
+    }
+    /*
+     * VERIFICACIÓN DEL ADMINISTRADOR. Confirmar un anticipo NO marca pagado todo
+     * el pedido ni crea una venta: solo deja constancia de que el dinero llegó.
+     */
+    if (input.payment !== undefined) {
+      const decision = input.payment?.decision;
+      if (!['confirmed', 'rejected'].includes(decision)) throw fail('invalid_payment_decision', 'Elige confirmar o rechazar el pago.');
+      if (!doc.payment?.reported_at) throw fail('no_payment_report', 'El cliente todavía no ha reportado la transferencia.');
+      if (doc.payment?.verified_at) throw fail('payment_already_verified', 'Ese pago ya fue verificado.', 409);
+      doc.payment = {
+        ...doc.payment,
+        status: decision,
+        verified_at: now,
+        verified_by: 'Administración',
+        reason: clean(input.payment?.reason, 300) || null,
+      };
+      if (decision === 'confirmed') {
+        if (['anticipo_pendiente', 'aprobado'].includes(nextStatus)) nextStatus = 'en_proceso';
+        doc.events = [...(doc.events ?? []), { at: now, status: nextStatus, by: 'Administración', note: 'Anticipo confirmado', visible: true }];
+      } else {
+        nextStatus = 'anticipo_pendiente';
+        doc.events = [...(doc.events ?? []), { at: now, status: nextStatus, by: 'Administración', note: 'Transferencia rechazada', visible: true }];
+      }
     }
     if (nextStatus === 'cotizado' && !doc.quote) throw fail('quote_required', 'Agrega el monto de la cotización antes de marcarla como cotizada.');
     if (nextStatus !== doc.status || input.admin_notes !== undefined || input.quote !== undefined) {
@@ -584,9 +760,10 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   return {
-    register, login, session, revokeSession, createSession, updateProfile,
+    register, login, session, revokeSession, createSession, updateProfile, setPassword,
+    setPhone, ensureCustomerForPhone,
     accountForCustomer, ordersForCustomer, oauthLogin, completePendingLink,
-    createRequest, listRequestsForCustomer, getRequest, requestImage, decideRequest,
+    createRequest, listRequestsForCustomer, getRequest, requestImage, decideRequest, reportTransfer,
     adminListRequests, adminUpdateRequest,
     accountBy,
     viewAccount: (account, customer) => publicAccount(account, customer),

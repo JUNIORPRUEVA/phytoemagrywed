@@ -115,6 +115,11 @@ import { createStoreAccounts } from './store-accounts.mjs';
 import { handleStoreAccountRoute } from './store-account-routes.mjs';
 import { handleStoreRequestsAdminRoute } from './store-requests-admin-routes.mjs';
 import { createStoreOAuth } from './store-oauth.mjs';
+/* Identidad de cliente (teléfono verificado, correo) y SEO de la tienda. */
+import { createMailSender, createSmsSender, createStoreVerifications } from './store-verifications.mjs';
+import { handleStoreAuthRoute } from './store-auth-routes.mjs';
+import { createGoogleIdVerifier } from './store-google-idtoken.mjs';
+import { handleStoreSeoRoute } from './store-seo-routes.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
@@ -346,6 +351,35 @@ const STORE_OAUTH = {
     redirectUri: (process.env.PHYTO_APPLE_REDIRECT_URI ?? '').trim(),
   },
 };
+/*
+ * Verificación del teléfono y correo del cliente, y SEO público de la tienda.
+ *
+ * NADA se activa solo: sin proveedor aprobado (SMS o correo) la tienda lo dice
+ * y no simula envíos. `PHYTO_STORE_SMS_MODE=outbox` es SOLO para UAT local: deja
+ * el código en `data/uat/sms-outbox.log` y nunca sale a la red. El índice de
+ * Google queda cerrado mientras `PHYTO_STORE_INDEXABLE` no sea `true`.
+ */
+const STORE_SMS = {
+  mode: (process.env.PHYTO_STORE_SMS_MODE ?? 'off').trim().toLowerCase(),
+  url: (process.env.PHYTO_STORE_SMS_URL ?? '').trim(),
+  token: (process.env.PHYTO_STORE_SMS_TOKEN ?? '').trim(),
+  from: (process.env.PHYTO_STORE_SMS_FROM ?? '').trim(),
+  outboxPath: path.resolve(process.env.PHYTO_STORE_SMS_OUTBOX ?? path.join('data', 'uat', 'sms-outbox.log')),
+};
+const STORE_MAIL = {
+  mode: (process.env.PHYTO_STORE_MAIL_MODE ?? 'off').trim().toLowerCase(),
+  url: (process.env.PHYTO_STORE_MAIL_URL ?? '').trim(),
+  token: (process.env.PHYTO_STORE_MAIL_TOKEN ?? '').trim(),
+  from: (process.env.PHYTO_STORE_MAIL_FROM ?? '').trim(),
+  outboxPath: path.resolve(process.env.PHYTO_STORE_MAIL_OUTBOX ?? path.join('data', 'uat', 'mail-outbox.log')),
+};
+const STORE_SEO = {
+  indexable: (process.env.PHYTO_STORE_INDEXABLE ?? 'false').trim().toLowerCase() === 'true',
+  publicUrl: (process.env.PHYTO_STORE_PUBLIC_URL ?? process.env.PHYTO_PUBLIC_URL ?? '').trim(),
+  siteName: (process.env.PHYTO_STORE_SITE_NAME ?? 'FULLTECH Store').trim(),
+};
+/* Verificación por SMS: APLAZADA. Solo se enciende con `PHYTO_STORE_PHONE_OTP=enabled`. */
+const STORE_PHONE_OTP = (process.env.PHYTO_STORE_PHONE_OTP ?? 'off').trim().toLowerCase() === 'enabled';
 if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
   webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
   console.log('[push] Web Push configurado (llaves VAPID presentes).');
@@ -3120,7 +3154,12 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
   }
 
   const paymentMethod = normalizePaymentMethod(body.paymentMethod ?? body.payment_method);
-  if (!paymentMethod) {
+  /*
+   * Un pedido de la TIENDA nace SIN método de pago y SIN cobro: el pago se
+   * acuerda después con el equipo. Solo el panel exige elegir método aquí.
+   */
+  const isStoreOrder = body.origin === 'FULLTECH_STORE';
+  if (!paymentMethod && !isStoreOrder) {
     return {
       ok: false,
       status: 422,
@@ -3175,6 +3214,18 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
       error: /** @type {any} */ (error).message,
       message: 'Elige un producto o servicio activo del catálogo.',
     };
+  }
+  /*
+   * TRAZABILIDAD DE LA TIENDA: origen, forma de entrega y el SNAPSHOT de la
+   * garantía que el cliente vio al comprar (las ediciones posteriores no
+   * cambian lo ya acordado).
+   */
+  if (isStoreOrder) {
+    built.order.origin = 'FULLTECH_STORE';
+    built.order.origin_label = 'Pedido tienda';
+    built.order.fulfillment_method = body.fulfillment === 'pickup' ? 'pickup' : 'delivery';
+    built.order.payment_status = 'pending';
+    built.order.warranty_snapshot = Array.isArray(body.warrantySnapshot) ? body.warrantySnapshot : [];
   }
   /*
    * La ubicación elegida queda en el HISTORIAL del cliente con su procedencia
@@ -3300,6 +3351,79 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
     customer,
     delivered,
     status,
+  };
+}
+
+/**
+ * PEDIDO DESDE LA TIENDA (origen FULLTECH_STORE).
+ *
+ * Reglas que se cumplen aquí:
+ *  · el cliente sale de la SESIÓN de la cuenta (nunca del navegador);
+ *  · precios, disponibilidad y garantía se validan en el servidor;
+ *  · el pedido nace PENDIENTE de confirmación y SIN pago;
+ *  · no se descuenta inventario (solo se comprueba que haya).
+ */
+async function createStoreOrder(ctx, session, body = {}) {
+  if (!ctx.storeCatalog) {
+    return { ok: false, status: 503, error: 'store_unavailable', message: 'La tienda no está disponible ahora mismo.' };
+  }
+  const account = session?.account ?? null;
+  const customerId = account?.customer_id ?? session?.customer?.id ?? null;
+  if (!customerId) {
+    return { ok: false, status: 401, error: 'unauthorized', message: 'Inicia sesión para hacer un pedido.' };
+  }
+  let lines;
+  try {
+    lines = await ctx.storeCatalog.publicOrderItems(body.items);
+  } catch (error) {
+    return { ok: false, status: error.status ?? 422, error: error.code ?? 'invalid_cart', message: error.message };
+  }
+  const fulfillment = body.fulfillment === 'pickup' ? 'pickup' : 'delivery';
+  const address = fulfillment === 'delivery'
+    ? String(body.address ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
+    : '';
+  if (fulfillment === 'delivery' && address.length < 8) {
+    return { ok: false, status: 422, error: 'address_required', message: 'Escribe la dirección de entrega.' };
+  }
+  const notes = String(body.notes ?? '').trim().slice(0, 500);
+  const requestKey = String(body.requestKey ?? '').trim();
+  const idempotentId = /^[A-Za-z0-9_-]{8,80}$/.test(requestKey) ? requestKey : undefined;
+  const result = await createOrder(
+    ctx,
+    {
+      id: idempotentId,
+      customerId: customerId,
+      items: lines.map((line) => ({ variantId: line.id, quantity: line.quantity })),
+      origin: 'FULLTECH_STORE',
+      source: 'FULLTECH_STORE',
+      channel: 'store',
+      fulfillment,
+      delivery: { method: fulfillment, address, note: notes },
+      notes,
+      warrantySnapshot: lines.map((line) => ({
+        product_id: line.id,
+        name: line.name,
+        unit_price: line.price,
+        quantity: line.quantity,
+        warranty: line.warranty,
+        captured_at: new Date().toISOString(),
+      })),
+    },
+    null,
+  );
+  if (!result?.ok) return result;
+  return {
+    ok: true,
+    duplicate: result.duplicate === true,
+    order: {
+      id: result.item?.id ?? result.order?.id ?? null,
+      number: result.order?.order_number ?? null,
+      status: result.order?.status ?? 'nuevo',
+      total: result.order?.total ?? null,
+      currency: result.order?.currency ?? 'DOP',
+      fulfillment,
+      payment_status: 'pending',
+    },
   };
 }
 
@@ -5119,6 +5243,12 @@ async function handle(req, res, ctx) {
 
   // Tienda pública: solo lectura y con una proyección separada del CRM.
   if (await handleStorePublicRoute({ req, res, route, url, ctx, json })) return;
+
+  // SEO de la tienda: página de producto renderizada en servidor, sitemap y robots.
+  if (await handleStoreSeoRoute({ req, res, route, ctx })) return;
+
+  // Identidad de la tienda: teléfono verificado, correo y Google Identity Services.
+  if (await handleStoreAuthRoute({ req, res, route, url, ctx, json, readJson: readJsonBody })) return;
 
   // Cuenta de cliente y solicitudes de la tienda (sesión propia, separada del panel).
   if (await handleStoreAccountRoute({ req, res, route, url, ctx, json, readJson: readJsonBody })) return;
@@ -11334,6 +11464,10 @@ export async function startCrmServer(config = {}) {
     androidApkPath: path.resolve(config.androidApkPath ?? ANDROID_APK_PATH),
     androidApkUrl: config.androidApkUrl ?? ANDROID_APK_URL,
     storeOAuth: config.storeOAuth ?? STORE_OAUTH,
+    storeSms: config.storeSms ?? STORE_SMS,
+    storeMail: config.storeMail ?? STORE_MAIL,
+    storeSeo: config.storeSeo ?? STORE_SEO,
+    storePhoneOtp: config.storePhoneOtp ?? STORE_PHONE_OTP,
     quiet: config.quiet ?? false,
   };
 
@@ -11582,6 +11716,27 @@ export async function startCrmServer(config = {}) {
   });
   const storeOAuth = createStoreOAuth({ config: settings.storeOAuth, fetchImpl: config.storeOAuthFetch ?? fetch, clock: config.clock });
 
+  /*
+   * Identidad de cliente: OTP de teléfono, confirmación de correo, recuperación
+   * de contraseña y verificación del `credential` de Google Identity Services.
+   */
+  const googleId = createGoogleIdVerifier({
+    clientId: settings.storeOAuth?.google?.clientId ?? '',
+    fetchImpl: config.storeOAuthFetch ?? fetch,
+    clock: config.clock,
+  });
+  const storeVerifications = await createStoreVerifications({
+    backend: db.kind,
+    handle: store.handle,
+    accounts: storeAccounts,
+    customers,
+    sms: createSmsSender({ ...settings.storeSms, fetchImpl: config.smsFetch ?? fetch }),
+    mail: createMailSender({ ...settings.storeMail, fetchImpl: config.mailFetch ?? fetch }),
+    links: { publicUrl: settings.storeOAuth?.publicUrl ?? settings.storeSeo?.publicUrl ?? '' },
+    clock: config.clock,
+    otpEnabled: settings.storePhoneOtp === true,
+  });
+
   const ctx = {
     store,
     db,
@@ -11599,8 +11754,13 @@ export async function startCrmServer(config = {}) {
     storeCatalog,
     storeAccounts,
     storeOAuth,
+    storeVerifications,
+    googleId,
+    storeSeo: settings.storeSeo,
     settings: settingsService,
     chatSharing: createChatSharingService({ settings: settingsService, customers }),
+    /* Alta de pedidos desde la tienda: mismo motor de pedidos del CRM. */
+    createStoreOrder: (account, body) => createStoreOrder(ctx, account, body),
     proofreading,
     scheduler,
     /*

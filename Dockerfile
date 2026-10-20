@@ -247,6 +247,28 @@ http {
             try_files $uri =404;
         }
 
+        # SEO de la tienda: la página de cada artículo publicado, el sitemap y
+        # el robots.txt los renderiza el servidor del CRM (el catálogo es la
+        # fuente de verdad). El resto de `/store/` sigue siendo estático.
+        location = /store/robots.txt {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        location = /store/sitemap.xml {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        location ^~ /store/p/ {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         location ^~ /admin/ {
             try_files $uri $uri/ /admin/index.html;
             expires -1;

@@ -1,8 +1,8 @@
-const VERSION = 'fulltech-store-v9';
+const VERSION = 'fulltech-store-v16';
 const SHELL = [
   '/store/',
   '/store/index.html',
-  '/store/store.css',
+  '/store/store.css?v=5',
   '/store/premium.css?v=2',
   '/store/store.js',
   '/store/manifest.webmanifest',

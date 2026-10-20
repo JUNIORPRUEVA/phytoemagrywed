@@ -472,50 +472,45 @@ describe('UAT del panel con multimedia', () => {
     expect(saliente.querySelector('[data-media-view]')).toBeTruthy();
   }, 30000);
 
-  it('grabar una nota de voz: detener NO envía, y se puede previsualizar antes', async () => {
+  it('grabar una nota de voz: tocar el micro graba ya, detener NO envía y se puede escuchar', async () => {
     const antes = sends;
+    // Un toque en el micrófono EMPIEZA a grabar: sin hoja ni segundo botón.
     click($('#wa-mic') ?? $('#wa-mic'));
-    await waitFor(() => $('#rec-start'), 'la hoja de grabación', 8000);
-    click('#rec-start');
-    await waitFor(() => !$('#rec-stop').hidden, 'grabando', 8000);
+    await waitFor(() => $('#rec-stop'), 'grabando', 8000);
     expect($('#rec-time').textContent).toMatch(/^\d+:\d\d$/);
 
     click('#rec-stop');
     const preview = await waitFor(() => {
       const box = $('#rec-preview');
-      return !box.hidden && box.querySelector('audio') ? box : null;
+      return box && box.querySelector('audio') ? box : null;
     }, 'la previsualización del audio', 8000);
-    expect(preview.innerHTML).toContain('Nota de voz');
-    expect($('#rec-send').hidden).toBe(false);
-    expect($('#rec-reset').hidden).toBe(false);
+    expect(preview.innerHTML).toMatch(/nota de voz/i);
+    expect(preview.querySelector('audio')).toBeTruthy();
+    expect($('#rec-reset')).toBeTruthy();
+    expect($('#rec-send').disabled).toBe(false);
     expect(sends).toBe(antes); // DETENER nunca envía
 
-    // Borrar y regrabar: vuelve al principio sin enviar nada.
+    // «Grabar de nuevo»: vuelve a grabar en el acto sin enviar nada.
     click('#rec-reset');
-    expect($('#rec-start').hidden).toBe(false);
-    expect($('#rec-send').hidden).toBe(true);
+    await waitFor(() => $('#rec-stop'), 'grabando de nuevo', 8000);
     expect(sends).toBe(antes);
 
-    // Grabar otra vez y enviar.
-    click('#rec-start');
-    await waitFor(() => !$('#rec-stop').hidden, 'grabando de nuevo', 8000);
+    // Detener otra vez y enviar.
     click('#rec-stop');
-    await waitFor(() => !$('#rec-send').hidden && !$('#rec-send').disabled, 'listo para enviar', 8000);
+    await waitFor(() => $('#rec-send') && !$('#rec-send').disabled, 'listo para enviar', 8000);
     click('#rec-send');
     await waitFor(() => sends === antes + 1, 'la nota de voz enviada', 8000);
-    // El envío llega al servidor antes de que el panel cierre la hoja: se espera.
-    await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar', 8000);
+    // Al enviar, el compositor vuelve a su campo de texto normal.
+    await waitFor(() => $('#wa-text'), 'el compositor normal tras enviar', 8000);
   }, 30000);
 
   it('si el navegador graba en webm, se envía convertido (y sin conversor, NO se finge compatibilidad)', async () => {
     FakeRecorder.mimeType = 'audio/webm;codecs=opus';
     const antes = sends;
     click($('#wa-mic'));
-    await waitFor(() => $('#rec-start'), 'la hoja de grabación', 8000);
-    click('#rec-start');
-    await waitFor(() => !$('#rec-stop').hidden, 'grabando', 8000);
+    await waitFor(() => $('#rec-stop'), 'grabando', 8000);
     click('#rec-stop');
-    await waitFor(() => !$('#rec-send').hidden, 'la previsualización', 8000);
+    await waitFor(() => $('#rec-preview audio'), 'la previsualización', 8000);
     // En ambos casos se avisa de que es WebM (el usuario no tiene que adivinar).
     const aviso = $('#rec-preview').textContent;
     expect(aviso).toMatch(/webm/i);
@@ -526,7 +521,7 @@ describe('UAT del panel con multimedia', () => {
       expect(aviso).toMatch(/ogg\/opus/i);
       click('#rec-send');
       await waitFor(() => sends === antes + 1, 'la nota webm enviada convertida', 8000);
-      await waitFor(() => $('#sheet').hidden === true, 'la hoja cerrada tras enviar', 8000);
+      await waitFor(() => $('#wa-text'), 'el compositor normal tras enviar', 8000);
     } else {
       // Sin conversor: se puede oír, pero no enviar. Y se dice la causa real.
       expect($('#rec-send').disabled).toBe(true);
@@ -536,7 +531,8 @@ describe('UAT del panel con multimedia', () => {
       expect(click('#rec-send')).toBe(false);
       await sleep(250);
       expect(sends).toBe(antes);
-      click('#rec-reset');
+      click('#rec-cancel');
+      await waitFor(() => $('#wa-text'), 'el compositor normal', 8000);
     }
     FakeRecorder.mimeType = 'audio/ogg;codecs=opus';
   }, 30000);

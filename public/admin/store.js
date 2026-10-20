@@ -450,6 +450,20 @@
       <label class="field"><span class="field__label">Descripción corta (opcional)</span><input class="field__input" name="store_short_description" maxlength="240" value="${esc(p.store_short_description)}"></label></div>
       <label class="field"><span class="field__label">Descripción pública (opcional)</span><textarea class="field__input" name="store_public_description" maxlength="2000">${esc(p.store_public_description)}</textarea></label>
     </section>
+    <section class="store-publication store-product-public-fields"><h3>Disponibilidad en la tienda</h3><p class="store-muted">Independiente de publicar: decide si el cliente puede comprarlo ya o pedirlo.</p>
+      <label class="field"><span class="field__label">¿Se puede comprar?</span><select class="field__select" name="store_availability"><option value="AVAILABLE_NOW">Disponible para entrega</option><option value="ON_REQUEST">Disponible bajo pedido</option><option value="UNAVAILABLE">No disponible</option></select><small>Si lleva control de existencias y llega a cero, la compra se bloquea aunque esté marcado como disponible.</small></label>
+    </section>
+    <section class="store-publication store-product-public-fields"><h3>Garantía</h3><p class="store-muted">Esto se muestra al cliente tal cual. No prometas coberturas que no puedas cumplir.</p>
+      <label class="store-check"><input name="warranty_available" type="checkbox" ${p.warranty_available ? 'checked' : ''}> Ofrecer garantía comercial</label>
+      <div class="store-form-grid"><label class="field"><span class="field__label">Duración (meses)</span><input class="field__input" name="warranty_months" type="number" min="0" max="120" value="${Number(p.warranty_months) || 0}"></label>
+      <label class="field"><span class="field__label">Quién la ofrece</span><select class="field__select" name="warranty_provider"><option value="FULLTECH">FULLTECH</option><option value="manufacturer">Fabricante</option><option value="other">Otro</option></select></label></div>
+      <label class="field"><span class="field__label">Qué cubre (público)</span><textarea class="field__input" name="warranty_coverage" maxlength="1000" rows="2">${esc(p.warranty_coverage)}</textarea></label>
+      <label class="field"><span class="field__label">Qué no cubre (público)</span><textarea class="field__input" name="warranty_exclusions" maxlength="1000" rows="2">${esc(p.warranty_exclusions)}</textarea></label>
+      <label class="field"><span class="field__label">Condiciones (público)</span><textarea class="field__input" name="warranty_conditions" maxlength="2000" rows="3">${esc(p.warranty_conditions)}</textarea></label>
+      <label class="field"><span class="field__label">Cómo reclamar (público)</span><textarea class="field__input" name="warranty_claim" maxlength="1000" rows="2">${esc(p.warranty_claim)}</textarea></label>
+      <label class="field"><span class="field__label">Nota pública breve</span><input class="field__input" name="warranty_public_notes" maxlength="500" value="${esc(p.warranty_public_notes)}"></label>
+      <label class="field"><span class="field__label">Notas internas (no se publican)</span><textarea class="field__input" name="warranty_private_notes" maxlength="1000" rows="2">${esc(p.warranty_private_notes)}</textarea></label>
+    </section>
     <label class="field"><span class="field__label">Imagen del producto</span><input class="field__input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label>
     <div id="store-image-preview">${p.image_url?photo(p):''}</div><p id="store-image-help"></p>
     <div class="store-form-grid"><label class="field"><span class="field__label">Precio de venta (RD$)</span><input class="field__input" name="price" type="number" min="0" step="0.01" required value="${p.price_cents!==undefined?(p.price_cents/100).toFixed(2):''}"></label>
@@ -460,6 +474,8 @@
     ${!p.legacy?`<label class="store-check"><input name="track_stock" type="checkbox" ${p.track_stock!==false?'checked':''}> Controlar existencias <small>Si se desmarca, se vende sin control de inventario (se compra al proveedor cuando lo piden)</small></label>`:''}
     <p class="store-form-error" role="alert"></p></div><div class="store-form-footer"><button class="btn btn--primary btn--block" type="submit">Guardar artículo</button></div></form>`;
     dialog.querySelector('[name=kind]').value=p.kind||'product';toggleKind();dialog.showModal();
+    const availabilitySelect=dialog.querySelector('[name=store_availability]');if(availabilitySelect)availabilitySelect.value=p.store_availability||(p.track_stock===false?'ON_REQUEST':'AVAILABLE_NOW');
+    const providerSelect=dialog.querySelector('[name=warranty_provider]');if(providerSelect)providerSelect.value=p.warranty_provider||'FULLTECH';
   }
   function toggleKind(){const service=dialog.querySelector('[name=kind]')?.value==='service';dialog.querySelectorAll('[data-stock-field]').forEach(e=>e.hidden=service);dialog.querySelector('#store-image-help').textContent=service?'La imagen es opcional para servicios.':'Selecciona una imagen. Obligatoria para productos.';}
   async function imageFile(file) {

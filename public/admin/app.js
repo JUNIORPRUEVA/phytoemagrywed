@@ -12074,7 +12074,7 @@
           <button class="composer-btn" id="wa-mic" type="button" aria-label="Grabar nota de voz"
             title="${
               puedeGrabar
-                ? 'Grabar nota de voz'
+                ? 'Grabar nota de voz: empieza al tocar'
                 : 'Este navegador no permite grabar: usa + para adjuntar un audio'
             }"><span class="wa-compose-glyph wa-compose-glyph--mic" aria-hidden="true"></span></button>
           <button class="composer-btn composer-btn--send" id="wa-send" type="button" aria-label="Enviar mensaje" hidden><span class="wa-compose-glyph wa-compose-glyph--send" aria-hidden="true"></span></button>
@@ -12129,6 +12129,8 @@
 
   function renderWaChat() {
     window.dispatchEvent(new CustomEvent('phyto:calling-context', { detail: null }));
+    // Cambiar de conversación mientras se graba descarta la nota de voz.
+    if (voiceNote && voiceNote.conversationId !== state.wa.selectedId) voiceNoteRelease();
     const pane = $('#wa-chat-pane');
     const placeholder = $('#wa-placeholder');
     if (!pane || !placeholder) return;
@@ -12339,7 +12341,7 @@
       (deliveryChatMode
         ? '<p class="wa-delivery-sign">Este mensaje se enviará con tu firma de repartidor.</p>'
         : '');
-    if (composerHtml !== state.wa.composerHtml) {
+    if (composerHtml !== state.wa.composerHtml && !voiceNote) {
       state.wa.composerHtml = composerHtml;
       $('#wa-composer').innerHTML = composerHtml;
       const area = $('#wa-text');
@@ -12981,179 +12983,271 @@
     });
   }
 
-  /**
-   * GRABAR una nota de voz: permiso → grabar (con contador) → DETENER →
-   * PREVISUALIZAR → borrar/regrabar → ENVIAR. Nunca se envía al detener.
+  /*
+   * NOTA DE VOZ EN EL PROPIO COMPOSITOR (como WhatsApp).
+   *
+   * Un toque en el micrófono EMPIEZA a grabar: no hay hoja intermedia ni un
+   * segundo botón «Grabar». Mientras graba, el compositor se convierte en una
+   * barra con el punto rojo, el tiempo y dos acciones: cancelar y detener. Al
+   * detener se puede escuchar y elegir «Enviar» o «Grabar de nuevo». Nada sale
+   * hasta pulsar «Enviar»: grabar nunca envía.
    */
-  function openRecorder(conversationId) {
-    if (!conversationId) return;
+  let voiceNote = null;
+
+  const voiceNoteOk = () => Boolean(voiceNote);
+
+  /** Corta el micrófono (evita dejar la luz encendida) sin tocar el archivo. */
+  function voiceNoteStopStream(sesion) {
+    sesion?.stream?.getTracks?.().forEach((track) => track.stop());
+    if (sesion) sesion.stream = null;
+  }
+
+  /** Suelta TODO: temporizador, micrófono, grabadora y archivo temporal. */
+  function voiceNoteRelease(sesion = voiceNote) {
+    if (!sesion) return;
+    if (sesion.timer) clearInterval(sesion.timer);
+    sesion.timer = null;
+    if (sesion.recorder) {
+      // Si se está soltando a propósito, no hay previsualización que pintar.
+      sesion.recorder.onstop = null;
+      sesion.recorder.ondataavailable = null;
+      if (sesion.recorder.state !== 'inactive') {
+        try {
+          sesion.recorder.stop();
+        } catch {
+          /* la grabadora ya estaba parada */
+        }
+      }
+    }
+    voiceNoteStopStream(sesion);
+    if (sesion.objectUrl) URL.revokeObjectURL(sesion.objectUrl);
+    sesion.objectUrl = null;
+    if (voiceNote === sesion) voiceNote = null;
+  }
+
+  /** Vuelve a dejar el compositor normal (sin nota de voz en curso). */
+  function voiceNoteRestoreComposer() {
+    voiceNoteRelease();
+    state.wa.composerHtml = null; // obliga a repintar el compositor normal
+    renderWaChat();
+  }
+
+  /** Barra de espera: se está pidiendo el permiso del micrófono. */
+  function voiceNoteRenderStarting(sesion) {
+    const box = $('#wa-composer');
+    if (!box || voiceNote !== sesion) return;
+    box.innerHTML = `
+      <div class="composer-bar composer-bar--rec" role="group" aria-label="Preparando el micrófono">
+        <div class="composer-rec">
+          <span class="rec-dot" aria-hidden="true"></span>
+          <span class="composer-rec__time">0:00</span>
+          <span class="composer-rec__label">Pidiendo el micrófono…</span>
+        </div>
+        <div class="composer-rec-actions">
+          <button class="composer-btn" id="rec-cancel" type="button" aria-label="Cancelar" title="Cancelar">
+            ${ICONS.trash}
+          </button>
+        </div>
+      </div>`;
+    $('#rec-cancel')?.addEventListener('click', () => {
+      voiceNoteRestoreComposer();
+      toast('Grabación cancelada');
+    });
+  }
+
+  /** Barra mientras se graba: punto rojo, tiempo, cancelar y detener. */
+  function voiceNoteRenderRecording(sesion) {
+    const box = $('#wa-composer');
+    if (!box || voiceNote !== sesion) return;
+    box.innerHTML = `
+      <div class="composer-bar composer-bar--rec" role="group" aria-label="Grabando nota de voz">
+        <div class="composer-rec" id="rec-status">
+          <span class="rec-dot" aria-hidden="true"></span>
+          <span class="composer-rec__time" id="rec-time">0:00</span>
+          <span class="composer-rec__label">Grabando…</span>
+        </div>
+        <div class="composer-rec-actions">
+          <button class="composer-btn" id="rec-cancel" type="button" aria-label="Cancelar la grabación"
+            title="Cancelar y descartar">${ICONS.trash}</button>
+          <button class="composer-btn composer-btn--send" id="rec-stop" type="button"
+            aria-label="Detener la grabación" title="Detener y escuchar">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2.4" fill="currentColor"></rect>
+            </svg>
+          </button>
+        </div>
+      </div>`;
+    $('#rec-cancel')?.addEventListener('click', () => {
+      voiceNoteRestoreComposer();
+      toast('Grabación descartada');
+    });
+    $('#rec-stop')?.addEventListener('click', () => voiceNoteStop(sesion));
+  }
+
+  /** Detener: se arma el audio y se muestra para decidir (no envía nada). */
+  function voiceNoteStop(sesion) {
+    if (!sesion || voiceNote !== sesion) return;
+    if (sesion.timer) clearInterval(sesion.timer);
+    sesion.timer = null;
+    sesion.phase = 'stopping';
+    if (sesion.recorder && sesion.recorder.state !== 'inactive') sesion.recorder.stop();
+  }
+
+  /** Previsualización: se puede escuchar, enviar o grabar de nuevo. */
+  function voiceNoteRenderPreview(sesion) {
+    const box = $('#wa-composer');
+    if (!box || voiceNote !== sesion || !sesion.blob) return;
+    const realType = sesion.mime || '';
+    /*
+     * Si el navegador grabó en un formato que WhatsApp no acepta, hay dos
+     * verdades y no se mezclan: si el servidor sabe convertirlo se puede
+     * enviar (y se dice); si no, se deja escuchar pero no enviar, y se explica
+     * la causa real (falta ffmpeg).
+     */
+    const seConvierte = audioConvertible(realType) && puedeConvertirAudio();
+    const sinSalida = !audioSendable(realType) && !seConvierte;
+    const aviso = sinSalida
+      ? audioConvertible(realType)
+        ? `<p class="rule rule--warn">El servidor no tiene el conversor instalado (falta <strong>ffmpeg</strong>),
+             y este navegador graba en <strong>${escapeHtml(realType)}</strong>. Mientras no se instale, adjunta un
+             audio en <strong>M4A, MP3, AAC, AMR u OGG/Opus</strong>.</p>`
+        : `<p class="rule rule--warn">Tu navegador grabó en <strong>${escapeHtml(realType || 'un formato desconocido')}</strong>,
+             que WhatsApp todavía no acepta. Puedes oírlo y grabarlo de nuevo, o adjuntar un audio OGG, M4A o MP3.</p>`
+      : !audioSendable(realType)
+        ? `<p class="view__hint">Grabado en <strong>${escapeHtml(realType)}</strong>: al enviarlo se convierte a
+             <strong>OGG/Opus</strong>.</p>`
+        : '';
+    box.innerHTML = `
+      <div class="composer-rec-panel" id="rec-preview" role="group" aria-label="Nota de voz grabada">
+        <div class="composer-rec-head">
+          <span class="composer-rec__time" id="rec-time">${fmtSeconds(sesion.duration)}</span>
+          <span class="composer-rec__label">Escúchala antes de enviar</span>
+          <button class="composer-btn composer-btn--sm" id="rec-cancel" type="button"
+            aria-label="Descartar la nota de voz" title="Descartar">${ICONS.trash}</button>
+        </div>
+        <audio class="composer-rec__audio" src="${escapeHtml(sesion.objectUrl)}" controls preload="metadata"></audio>
+        ${aviso}
+        <div class="composer-rec-buttons">
+          <button class="btn btn--ghost" id="rec-reset" type="button">Grabar de nuevo</button>
+          <button class="btn btn--primary" id="rec-send" type="button" ${sinSalida ? 'disabled' : ''}>Enviar</button>
+        </div>
+      </div>`;
+    $('#rec-cancel')?.addEventListener('click', () => {
+      voiceNoteRestoreComposer();
+      toast('Nota de voz descartada');
+    });
+    $('#rec-reset')?.addEventListener('click', () => voiceNoteRestart());
+    $('#rec-send')?.addEventListener('click', (event) => voiceNoteSend(event.currentTarget));
+  }
+
+  /** «Grabar de nuevo»: borra la toma y empieza a grabar en el acto. */
+  function voiceNoteRestart() {
+    const conversationId = voiceNote?.conversationId ?? state.wa.selectedId;
+    voiceNoteRelease();
+    if (conversationId) openRecorder(conversationId);
+  }
+
+  /** «Enviar»: sube la nota de voz y devuelve el compositor normal. */
+  async function voiceNoteSend(button) {
+    const sesion = voiceNote;
+    if (!sesion?.blob) return;
+    const conversationId = sesion.conversationId;
+    const type = sesion.blob.type || 'audio/ogg';
+    const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'm4a' : 'audio';
+    const file = new File([sesion.blob], `nota-de-voz.${ext}`, { type });
+    await working(button, 'Enviando…', async () => {
+      try {
+        await uploadMediaFile({ conversationId, kind: 'audio', file, key: uploadKey('audio') });
+        voiceNoteRestoreComposer();
+        toast('Nota de voz enviada');
+        await load({ keepTab: true });
+        await loadWaThread(conversationId, { force: true });
+      } catch (error) {
+        if (error.message !== 'unauthorized') await avisoEnvioAmbiguo(error);
+      }
+    });
+  }
+
+  /**
+   * El micrófono del compositor: graba YA. Si el navegador no puede, se ofrece
+   * adjuntar un audio en su lugar (sin fingir que se grabó).
+   */
+  async function openRecorder(conversationId) {
+    if (!conversationId || voiceNote) return;
     const supportedType = detectSupportedRecordingType();
     if (!navigator.mediaDevices?.getUserMedia || supportedType === null) {
-      openSheet(
-        'Nota de voz',
-        `<p class="rule rule--warn">Este navegador no permite grabar directamente. Puedes adjuntar un archivo
-         de audio con el botón <strong>+</strong>.</p>
-         <button class="btn btn--ghost btn--block" id="rec-attach" type="button">Adjuntar un audio</button>`,
-      );
-      $('#rec-attach').addEventListener('click', () => openAttachSheet(conversationId));
+      toast('Este navegador no permite grabar: adjunta el audio con el botón +');
+      openAttachSheet(conversationId);
       return;
     }
-
-    openSheet(
-      'Nota de voz',
-      `
-      <p class="view__hint">Se graba con el micrófono del teléfono y <strong>no se envía hasta que tú lo mandes</strong>.</p>
-      <div class="rec-status" id="rec-status"><span class="rec-dot" hidden></span><span id="rec-time">0:00</span></div>
-      <div class="attach-preview" id="rec-preview" hidden></div>
-      <button class="btn btn--primary btn--block" id="rec-start" type="button">Grabar</button>
-      <button class="btn btn--danger btn--block" id="rec-stop" type="button" hidden>Detener</button>
-      <button class="btn btn--ghost btn--block" id="rec-reset" type="button" hidden>Borrar y regrabar</button>
-      <button class="btn btn--primary btn--block" id="rec-send" type="button" hidden>Enviar</button>
-      <button class="btn btn--ghost btn--block" id="rec-attach" type="button">Adjuntar un audio en su lugar</button>
-      `,
-    );
-
-    let recorder = null;
-    let chunks = [];
-    let blob = null;
-    let objectUrl = null;
-    let startedAt = 0;
-    let timer = null;
+    const sesion = {
+      conversationId,
+      phase: 'starting',
+      mime: supportedType || '',
+      stream: null,
+      recorder: null,
+      chunks: [],
+      startedAt: 0,
+      duration: 0,
+      timer: null,
+      blob: null,
+      objectUrl: null,
+    };
+    voiceNote = sesion;
+    voiceNoteRenderStarting(sesion);
     let stream = null;
-
-    const preview = $('#rec-preview');
-    const tick = () => {
-      const seconds = (Date.now() - startedAt) / 1000;
-      $('#rec-time').textContent = fmtSeconds(seconds);
-      if (seconds >= 300) $('#rec-stop').click(); // tope de duración del audio
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      if (voiceNote === sesion) voiceNoteRestoreComposer();
+      toast('No se pudo usar el micrófono (permiso denegado)');
+      return;
+    }
+    // Se canceló o se cambió de conversación mientras pedía el permiso.
+    if (voiceNote !== sesion) {
+      voiceNoteStopStream({ stream });
+      return;
+    }
+    sesion.stream = stream;
+    sesion.chunks = [];
+    sesion.recorder = new window.MediaRecorder(stream, supportedType ? { mimeType: supportedType } : undefined);
+    sesion.recorder.ondataavailable = (event) => {
+      if (event.data?.size) sesion.chunks.push(event.data);
     };
-
-    const reset = () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = null;
-      blob = null;
-      preview.hidden = true;
-      preview.innerHTML = '';
-      $('#rec-time').textContent = '0:00';
-      $('#rec-start').hidden = false;
-      $('#rec-stop').hidden = true;
-      $('#rec-reset').hidden = true;
-      $('#rec-send').hidden = true;
-      $('#rec-status').querySelector('.rec-dot').hidden = true;
-    };
-
-    const stopStream = () => {
-      stream?.getTracks?.().forEach((track) => track.stop());
-      stream = null;
-    };
-
-    $('#rec-start').addEventListener('click', async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch {
-        toast('No se pudo usar el micrófono (permiso denegado)');
+    sesion.recorder.onstop = () => {
+      if (voiceNote !== sesion) {
+        voiceNoteStopStream(sesion);
         return;
       }
-      chunks = [];
-      // El tipo REAL lo dice el grabador; lo guardamos tal cual (sin suponer).
-      recorder = new window.MediaRecorder(stream, supportedType ? { mimeType: supportedType } : undefined);
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size) chunks.push(event.data);
-      };
-      recorder.onstop = () => {
-        clearInterval(timer);
-        const realType = recorder?.mimeType || chunks[0]?.type || supportedType || '';
-        blob = new Blob(chunks, { type: realType });
-        objectUrl = URL.createObjectURL(blob);
-        preview.hidden = false;
-        preview.innerHTML = `
-          <audio src="${escapeHtml(objectUrl)}" controls preload="metadata"></audio>
-          <p class="attach-preview__meta"><span>Nota de voz</span>
-          <span>${escapeHtml(realType || 'tipo desconocido')} · ${fmtBytes(blob.size)}</span></p>`;
-        $('#rec-status').querySelector('.rec-dot').hidden = true;
-        $('#rec-start').hidden = true;
-        $('#rec-stop').hidden = true;
-        $('#rec-reset').hidden = false;
-        $('#rec-send').hidden = false;
-        /*
-         * Si el navegador grabó en un formato que WhatsApp no acepta, hay dos
-         * verdades distintas y no se mezclan:
-         *   · el servidor sabe convertirlo → se puede enviar, y se dice que se
-         *     convierte a OGG/Opus;
-         *   · no sabe → no se deja enviar y se explica qué adjuntar.
-         * Prometer compatibilidad sin comprobarla no es aceptable en ningún caso.
-         */
-        const seConvierte = audioConvertible(realType) && puedeConvertirAudio();
-        if (!audioSendable(realType) && !seConvierte) {
-          // No se finge compatibilidad: si el servidor no sabe convertirlo, no se
-          // puede mandar. Y se dice la causa REAL (falta el conversor), no se
-          // culpa al formato a secas: así se arregla de verdad (instalar ffmpeg).
-          $('#rec-send').disabled = true;
-          preview.insertAdjacentHTML(
-            'beforeend',
-            audioConvertible(realType)
-              ? `<p class="rule rule--warn">El servidor no tiene el conversor instalado (falta <strong>ffmpeg</strong>),
-                 y este navegador graba en <strong>${escapeHtml(realType)}</strong>. Mientras no se instale, adjunta un
-                 audio en <strong>M4A, MP3, AAC, AMR u OGG/Opus</strong> con «Adjuntar un audio en su lugar».</p>`
-              : `<p class="rule rule--warn">Tu navegador grabó en <strong>${escapeHtml(realType || 'un formato desconocido')}</strong>,
-                 que WhatsApp todavía no acepta. Puedes oírlo y borrarlo, o adjuntar un audio en OGG, M4A o MP3.</p>`,
-          );
-        } else {
-          $('#rec-send').disabled = false;
-          if (!audioSendable(realType)) {
-            preview.insertAdjacentHTML(
-              'beforeend',
-              `<p class="view__hint">Grabado en <strong>${escapeHtml(realType)}</strong>: al enviarlo se convierte a
-               <strong>OGG/Opus</strong>.</p>`,
-            );
-          }
-        }
-        stopStream();
-      };
-      recorder.start();
-      startedAt = Date.now();
-      timer = setInterval(tick, 200);
-      $('#rec-time').textContent = '0:00';
-      $('#rec-status').querySelector('.rec-dot').hidden = false;
-      $('#rec-start').hidden = true;
-      $('#rec-stop').hidden = false;
-      $('#rec-reset').hidden = true;
-      $('#rec-send').hidden = true;
-    });
-
-    $('#rec-stop').addEventListener('click', () => {
-      if (recorder && recorder.state !== 'inactive') recorder.stop();
-    });
-
-    $('#rec-reset').addEventListener('click', () => {
-      reset();
-    });
-
-    $('#rec-send').addEventListener('click', async (event) => {
-      if (!blob) return;
-      const file = new File([blob], `nota-de-voz.${(blob.type || '').includes('ogg') ? 'ogg' : 'audio'}`, {
-        type: blob.type || 'audio/ogg',
-      });
-      await working(event.currentTarget, 'Enviando…', async () => {
-        try {
-          await uploadMediaFile({ conversationId, kind: 'audio', file, key: uploadKey('audio') });
-          toast('Nota de voz enviada');
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-          closeSheet();
-          await load({ keepTab: true });
-          await loadWaThread(conversationId, { force: true });
-        } catch (error) {
-          if (error.message !== 'unauthorized') await avisoEnvioAmbiguo(error);
-        }
-      });
-    });
-
-    $('#rec-attach').addEventListener('click', () => openAttachSheet(conversationId));
-    closeSheetCleanup = () => {
-      clearInterval(timer);
-      if (recorder && recorder.state !== 'inactive') recorder.stop();
-      stopStream();
+      if (sesion.timer) clearInterval(sesion.timer);
+      sesion.timer = null;
+      // El tipo REAL lo dice el grabador; se guarda tal cual (sin suponer).
+      const realType = sesion.recorder?.mimeType || sesion.chunks[0]?.type || supportedType || '';
+      sesion.mime = realType;
+      sesion.blob = new Blob(sesion.chunks, { type: realType });
+      sesion.objectUrl = URL.createObjectURL(sesion.blob);
+      sesion.duration = Math.max(1, Math.round((Date.now() - sesion.startedAt) / 1000));
+      sesion.phase = 'preview';
+      voiceNoteStopStream(sesion);
+      voiceNoteRenderPreview(sesion);
     };
+    try {
+      sesion.recorder.start();
+    } catch {
+      voiceNoteRestoreComposer();
+      toast('No se pudo empezar a grabar');
+      return;
+    }
+    sesion.phase = 'recording';
+    sesion.startedAt = Date.now();
+    voiceNoteRenderRecording(sesion);
+    sesion.timer = setInterval(() => {
+      if (voiceNote !== sesion) return;
+      const seconds = (Date.now() - sesion.startedAt) / 1000;
+      const time = $('#rec-time');
+      if (time) time.textContent = fmtSeconds(seconds);
+      if (seconds >= 300) voiceNoteStop(sesion); // tope de duración del audio
+    }, 200);
   }
 
   /** Al cerrar la hoja: nada de micrófono abierto ni temporizadores vivos. */
@@ -22122,22 +22216,22 @@
       setTab(button.dataset.tab);
     }));
 
-    /* «Compartir app»: manda el enlace del panel (sin la clave) a otra persona. */
-    $('#drawer-share')?.addEventListener('click', () => {
-      closeDrawer();
-      sharePanelApp();
-    });
-
-    /* «Compartir página web»: el enlace público de la tienda. */
+    /* «Phytoemagry Tienda»: el enlace público de la tienda (portada). */
     $('#drawer-share-web')?.addEventListener('click', () => {
       closeDrawer();
       shareStoreWeb();
     });
 
-    /* «Tienda online»: el enlace directo a FULLTECH Store (catálogo y cuenta). */
+    /* «Fulltech»: el enlace directo a FULLTECH Store (catálogo y cuenta). */
     $('#drawer-share-store')?.addEventListener('click', () => {
       closeDrawer();
       shareOnlineStore();
+    });
+
+    /* «Tienda Panel CRM»: manda el enlace del panel (sin la clave) a otra persona. */
+    $('#drawer-share')?.addEventListener('click', () => {
+      closeDrawer();
+      sharePanelApp();
     });
 
     $('#settings-offline-data')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('fulltech:offline-open')));

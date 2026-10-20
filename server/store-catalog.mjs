@@ -6,6 +6,59 @@ import { moneyToCents } from './inventory.mjs';
 
 const fail = (code, message, status = 422) => Object.assign(new Error(message), { code, status });
 const clean = (v, n = 160) => String(v ?? '').trim().slice(0, n);
+
+/*
+ * DISPONIBILIDAD COMERCIAL (independiente de la publicación).
+ *
+ *   AVAILABLE_NOW → se puede comprar ya (si el stock lo permite).
+ *   ON_REQUEST    → se consigue bajo pedido: no se compra directo.
+ *   UNAVAILABLE   → no se puede comprar (se puede pedir por «Lo conseguimos por ti»).
+ *
+ * REGLA QUE NO SE ROMPE: un producto con control de existencias y 0 unidades
+ * NO se puede comprar aunque alguien lo haya marcado AVAILABLE_NOW.
+ */
+const AVAILABILITY_STATES = new Set(['AVAILABLE_NOW', 'ON_REQUEST', 'UNAVAILABLE']);
+
+export function effectiveAvailability(product) {
+  if (!product) return 'UNAVAILABLE';
+  if (product.kind === 'service') return 'UNAVAILABLE';
+  const declared = AVAILABILITY_STATES.has(product.store_availability)
+    ? product.store_availability
+    : product.track_stock === false || product.product_type === 'third_party'
+      ? 'ON_REQUEST'
+      : 'AVAILABLE_NOW';
+  if (declared !== 'AVAILABLE_NOW') return declared;
+  if (product.track_stock !== false) {
+    if (product.quantity === null || product.quantity === undefined) return 'ON_REQUEST';
+    if (Number(product.quantity) <= 0) return 'UNAVAILABLE';
+  }
+  return 'AVAILABLE_NOW';
+}
+
+/** Garantía PÚBLICA: nunca incluye las notas internas. */
+export function publicWarranty(product) {
+  const p = product ?? {};
+  const available = p.warranty_available === true;
+  const months = Math.max(0, Math.min(120, Number(p.warranty_months) || 0));
+  const provider = ['FULLTECH', 'manufacturer', 'other'].includes(p.warranty_provider) ? p.warranty_provider : '';
+  const label = available
+    ? months > 0
+      ? `Garantía de ${months} ${months === 1 ? 'mes' : 'meses'}`
+      : provider === 'manufacturer'
+        ? 'Garantía del fabricante'
+        : 'Garantía disponible'
+    : 'Sin garantía comercial adicional';
+  const conditions = clean(p.warranty_conditions, 2000);
+  return {
+    available, months, provider, label,
+    coverage: clean(p.warranty_coverage, 1000),
+    exclusions: clean(p.warranty_exclusions, 1000),
+    conditions,
+    claim: clean(p.warranty_claim, 1000),
+    notes: clean(p.warranty_public_notes, 500),
+    hasDetails: Boolean(conditions || p.warranty_coverage || p.warranty_exclusions || p.warranty_claim),
+  };
+}
 const integer = (v) => v !== '' && v !== null && Number.isSafeInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 100000000;
 const money = (v) => { const n = moneyToCents(v); if (n === null || n > 10000000000) throw fail('invalid_money', 'Escribe un importe válido, con hasta dos decimales.'); return n; };
 
@@ -88,6 +141,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     const items = pubs.flatMap(pub => {
       const p = byId.get(pub.product_id);
       if (!p?.active) return [];
+      /*
+       * FASE 1: la tienda SOLO vende productos. Los servicios siguen existiendo
+       * en el CRM, pero no se listan, no se buscan y no se pueden pedir.
+       */
+      if (p.kind === 'service') return [];
       let availability;
       if (p.kind === 'service') availability = 'consult';
       else if (p.track_stock === false || p.product_type === 'third_party') availability = 'by_order';
@@ -98,8 +156,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       return [{
         id: p.id, kind: p.kind === 'service' ? 'service' : 'product', name: p.store_public_name || p.name,
         category: p.category || null, price: Number(p.price_cents) / 100, currency: 'DOP',
-        availability, shortDescription: p.store_short_description || '', description: p.store_public_description || '',
+        availability, availabilityState: effectiveAvailability(p),
+        purchaseable: effectiveAvailability(p) === 'AVAILABLE_NOW',
+        shortDescription: p.store_short_description || '', description: p.store_public_description || '',
         brand: p.store_brand || null,
+        warranty: publicWarranty(p),
         imageUrl: p.image_url ? `/api/store/products/${encodeURIComponent(p.id)}/image` : null,
         featured: Boolean(Number(pub.featured)), sortOrder: Number(pub.sort_order),
       }];
@@ -275,6 +336,22 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         store_short_description: clean(input.store_short_description ?? previous?.store_short_description ?? '', 240),
         store_public_description: clean(input.store_public_description ?? previous?.store_public_description ?? '', 2000),
         store_brand: clean(input.store_brand ?? previous?.store_brand ?? '', 100),
+        store_availability: AVAILABILITY_STATES.has(input.store_availability)
+          ? input.store_availability
+          : previous?.store_availability ?? (trackStock && productType === 'own' ? 'AVAILABLE_NOW' : 'ON_REQUEST'),
+        warranty_available: input.warranty_available === undefined
+          ? Boolean(previous?.warranty_available)
+          : input.warranty_available === true || String(input.warranty_available) === 'true' || String(input.warranty_available) === 'on',
+        warranty_months: Math.max(0, Math.min(120, Number(input.warranty_months ?? previous?.warranty_months ?? 0) || 0)),
+        warranty_provider: ['FULLTECH', 'manufacturer', 'other'].includes(input.warranty_provider)
+          ? input.warranty_provider
+          : previous?.warranty_provider ?? '',
+        warranty_coverage: clean(input.warranty_coverage ?? previous?.warranty_coverage ?? '', 1000),
+        warranty_exclusions: clean(input.warranty_exclusions ?? previous?.warranty_exclusions ?? '', 1000),
+        warranty_conditions: clean(input.warranty_conditions ?? previous?.warranty_conditions ?? '', 2000),
+        warranty_claim: clean(input.warranty_claim ?? previous?.warranty_claim ?? '', 1000),
+        warranty_public_notes: clean(input.warranty_public_notes ?? previous?.warranty_public_notes ?? '', 500),
+        warranty_private_notes: clean(input.warranty_private_notes ?? previous?.warranty_private_notes ?? '', 1000),
         price_cents: money(input.price), cost_cents: previous?.legacy ? 0 : money(input.cost),
         track_stock: trackStock, active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
@@ -465,7 +542,33 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       return one(id, q);
     });
   }
-  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,publicProducts,searchPublicProducts,publicImage,archive,restore,
+  /**
+   * Valida el carrito de la tienda contra el catálogo vivo y devuelve las
+   * líneas con PRECIO y GARANTÍA del servidor (nunca se confía en el navegador).
+   */
+  async function publicOrderItems(input) {
+    const rows = Array.isArray(input) ? input.slice(0, 30) : [];
+    if (!rows.length) throw fail('empty_cart', 'El carrito está vacío.', 422);
+    const pubs = await publicProducts();
+    const byId = new Map(pubs.map(p => [p.id, p]));
+    const lines = [];
+    for (const raw of rows) {
+      const id = clean(raw?.id, 80);
+      const quantity = Number(raw?.quantity);
+      const p = byId.get(id);
+      if (!p) throw fail('product_unavailable', 'Uno de los productos ya no está disponible.', 409);
+      /* Doble puerta: aunque llegue un id de servicio, aquí no pasa. */
+      if (p.kind !== 'product') throw fail('service_not_sellable', 'Los servicios no se venden por la tienda.', 422);
+      if (!p.purchaseable) throw fail('not_purchaseable', `${p.name} no se puede comprar ahora mismo.`, 409);
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+        throw fail('invalid_quantity', `Revisa la cantidad de ${p.name}.`, 422);
+      }
+      lines.push({ id: p.id, quantity, name: p.name, price: p.price, warranty: p.warranty });
+    }
+    return lines;
+  }
+
+  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,publicProducts,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

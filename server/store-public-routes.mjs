@@ -10,9 +10,12 @@ function publicProduct(product) {
     price: product.price,
     currency: product.currency,
     availability: product.availability,
+    availabilityState: product.availabilityState,
+    purchaseable: product.purchaseable === true,
     shortDescription: product.shortDescription,
     description: product.description,
     brand: product.brand,
+    warranty: product.warranty ?? null,
     imageUrl: product.imageUrl,
     featured: product.featured,
   };

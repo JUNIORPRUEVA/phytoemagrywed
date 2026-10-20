@@ -11,7 +11,7 @@
     <link rel="manifest" href="/store/manifest.webmanifest" />
     <link rel="icon" href="/store/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/store/icon-192.png" />
-    <link rel="stylesheet" href="/store/store.css" />
+    <link rel="stylesheet" href="/store/store.css?v=5" />
     <link rel="stylesheet" href="/store/premium.css?v=2" />
     <title>FULLTECH Store</title>
   </head>
@@ -22,8 +22,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
         </button>
         <a class="wordmark" href="/store/" aria-label="FULLTECH Store, inicio"><span class="brand-mark">F</span><span>FULL<span>TECH</span><small>STORE</small></span></a>
-        <button class="icon-button cart-shortcut" data-route="cart" aria-label="Carrito, próximamente" title="Carrito · Próximamente">
+        <button class="icon-button cart-shortcut" data-route="cart" aria-label="Carrito" title="Carrito">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>
+          <span class="cart-badge" data-cart-badge hidden></span>
         </button>
       </header>
 
@@ -53,6 +54,5 @@
       <div class="drawer-bottom"><span class="status-dot"></span> Tu tienda FULLTECH</div>
     </aside>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/store/store.js?v=9"></script>
-  </body>
+    <script type="module" src="/store/store.js?v=14"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
 </html>

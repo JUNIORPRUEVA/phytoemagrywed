@@ -6,8 +6,10 @@
   const date = (value) => (value ? new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '');
   const STATUSES = [
     ['nuevo', 'Nueva'], ['en_revision', 'En revisión'], ['cotizado', 'Cotizada'], ['aprobado', 'Aprobada'],
+    ['anticipo_pendiente', 'Anticipo pendiente'],
     ['en_proceso', 'En proceso'], ['completado', 'Completada'], ['rechazado', 'No disponible'], ['cancelado', 'Cancelada'],
   ];
+  const PAYMENT_LABEL = { reported: 'Reportado (sin verificar)', confirmed: 'Confirmado', rejected: 'Rechazado' };
   const STATUS_LABEL = Object.fromEntries(STATUSES);
   const host = () => document.getElementById('admin-requests');
   const state = { loaded: false, loading: false, requests: [], canManage: false, selected: null, status: '', q: '', error: '', notice: '' };
@@ -81,11 +83,13 @@
       ${request.reference_url ? `<p class="requests-detail__link"><a href="${esc(request.reference_url)}" target="_blank" rel="noopener noreferrer">Abrir enlace enviado por el cliente</a></p>` : ''}
       ${images ? `<div class="requests-photos">${images}</div>` : ''}
       <ul class="requests-timeline">${timeline}</ul>
-      ${request.quote ? `<div class="requests-quote-read"><span>Cotización enviada</span><strong>${money(request.quote.amount, request.quote.currency)}</strong>${request.quote.notes ? `<p>${esc(request.quote.notes)}</p>` : ''}</div>` : ''}
+      ${request.quote ? `<div class="requests-quote-read"><span>Propuesta enviada</span><strong>${money(request.quote.amount, request.quote.currency)}</strong>${request.quote.advance_amount > 0 ? `<p>Anticipo ${request.quote.advance_percent}%: ${money(request.quote.advance_amount, request.quote.currency)}</p>` : ''}${request.quote.notes ? `<p>${esc(request.quote.notes)}</p>` : ''}</div>` : ''}
+      ${request.payment ? `<div class="requests-payment"><h4>Anticipo reportado por el cliente</h4><p><strong>${money(request.payment.amount, 'DOP')}</strong>${request.payment.reference ? ` · Ref. ${esc(request.payment.reference)}` : ''} · ${esc(date(request.payment.reported_at))}</p><p class="store-muted">Estado: ${esc(PAYMENT_LABEL[request.payment.status] || request.payment.status)}${request.payment.verified_at ? ` · verificado ${esc(date(request.payment.verified_at))}` : ''}${request.payment.reason ? ` · ${esc(request.payment.reason)}` : ''}</p>${request.payment.status === 'reported' ? '<div class="requests-payment__actions"><button class="btn btn--primary btn--sm" type="button" data-payment-confirm>Confirmar anticipo</button><button class="btn btn--ghost btn--sm" type="button" data-payment-reject>Rechazar</button></div>' : ''}<p class="store-muted">Confirmar el anticipo no marca el pedido como pagado: el resto se cobra por los canales normales.</p></div>` : ''}
       ${state.canManage ? `<form class="requests-form" id="request-admin-form" data-request-id="${esc(request.id)}">
         <label class="field"><span class="field__label">Estado</span><select class="field__select" name="status">${STATUSES.map(([value, label]) => `<option value="${value}" ${request.status === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <div class="requests-form__grid">
-          <label class="field"><span class="field__label">Monto de la cotización (RD$)</span><input class="field__input" name="quoteAmount" inputmode="decimal" placeholder="0.00" value="${esc(quoteValue)}"></label>
+          <label class="field"><span class="field__label">Monto de la propuesta (RD$)</span><input class="field__input" name="quoteAmount" inputmode="decimal" placeholder="0.00" value="${esc(quoteValue)}"></label>
+          <label class="field"><span class="field__label">Anticipo (%)</span><input class="field__input" name="advancePercent" type="number" min="0" max="100" step="1" value="${Number(request.quote?.advance_percent ?? 30)}"></label>
           <label class="field"><span class="field__label">Válida hasta (opcional)</span><input class="field__input" name="quoteUntil" type="date" value="${esc(request.quote?.valid_until ? String(request.quote.valid_until).slice(0, 10) : '')}"></label>
         </div>
         <label class="field"><span class="field__label">Nota de la cotización (visible al cliente)</span><textarea class="field__input" name="quoteNotes" rows="2" maxlength="1000">${esc(request.quote?.notes ?? '')}</textarea></label>
@@ -129,6 +133,7 @@
           amount: String(data.quoteAmount).trim(),
           notes: String(data.quoteNotes ?? '').trim(),
           valid_until: String(data.quoteUntil ?? '').trim() || null,
+          advance_percent: String(data.advancePercent ?? '').trim() || 30,
         };
       }
       try {
@@ -170,6 +175,30 @@
       state.selected = null;
       state.notice = '';
       render();
+      return;
+    }
+    /*
+     * VERIFICAR EL ANTICIPO: solo aquí se da por bueno el dinero. Nunca se
+     * confirma por subir un comprobante ni por un mensaje del cliente.
+     */
+    const paymentButton = event.target.closest('[data-payment-confirm],[data-payment-reject]');
+    if (paymentButton) {
+      const request = state.requests.find((row) => row.id === state.selected);
+      if (!request) return;
+      const decision = paymentButton.hasAttribute('data-payment-confirm') ? 'confirmed' : 'rejected';
+      const reason = decision === 'rejected' ? (window.prompt('Motivo del rechazo (opcional)') ?? '') : '';
+      paymentButton.disabled = true;
+      api(`/${encodeURIComponent(request.id)}`, { method: 'PATCH', body: { payment: { decision, reason } } })
+        .then((result) => {
+          state.requests = state.requests.map((row) => (row.id === result.request.id ? { ...row, ...result.request, customer: row.customer } : row));
+          state.notice = decision === 'confirmed' ? 'Anticipo confirmado.' : 'Transferencia rechazada.';
+          render();
+        })
+        .catch((error) => {
+          paymentButton.disabled = false;
+          state.notice = error.message;
+          render();
+        });
       return;
     }
     const photo = event.target.closest('[data-request-photo]');
