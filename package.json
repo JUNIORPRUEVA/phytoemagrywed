@@ -22,6 +22,7 @@
     "check:content": "node scripts/check-content.mjs",
     "smoke:r2": "node scripts/r2-smoke.mjs",
     "import:historical-whatsapp": "node --experimental-sqlite scripts/import-historical-whatsapp-contacts.mjs",
+    "configure:fulltech-whatsapp-profile": "node scripts/configure-fulltech-whatsapp-profile.mjs",
     "audit:historical-whatsapp:prod": "node scripts/audit-historical-whatsapp-production.mjs",
     "audit:content": "node scripts/audit-content.mjs",
     "inspect:render": "node scripts/inspect-render.mjs",

@@ -14306,9 +14306,34 @@
       </div>`,
     );
 
+    /*
+     * CUENTA DE LA TIENDA: se muestra el acceso del cliente a FULLTECH Store y
+     * sus últimas solicitudes. La cuenta se enlaza por teléfono con prueba de
+     * pedido; aquí solo se LEE (no se puede suplantar la sesión del cliente).
+     */
+    const storeAccount = profile.store_account ?? null;
+    const storeRequests = profile.store_requests ?? [];
+    const storeRequestStatus = { nuevo: 'Recibida', en_revision: 'En revisión', cotizado: 'Cotizada', aprobado: 'Aprobada', en_proceso: 'En proceso', completado: 'Completada', rechazado: 'No disponible', cancelado: 'Cancelada' };
+    const storeSection = customerProfileSection(
+      'Cuenta en FULLTECH Store',
+      storeAccount
+        ? `<dl class="facts profile-facts">
+            ${profileFact('Estado', storeAccount.status === 'active' ? 'Activa' : 'Pendiente de verificación')}
+            ${profileFact('Teléfono', escapeHtml(storeAccount.phone ?? '—'))}
+            ${profileFact('Correo', escapeHtml(storeAccount.email ?? '—'))}
+            ${profileFact('Acceso', escapeHtml([storeAccount.providers?.password ? 'Teléfono y contraseña' : null, storeAccount.providers?.google ? 'Google' : null, storeAccount.providers?.apple ? 'Apple' : null].filter(Boolean).join(' · ') || '—'))}
+            ${profileFact('Creada', storeAccount.created_at ? escapeHtml(fmtWhen(storeAccount.created_at)) : '—')}
+          </dl>
+          <p class="view__hint">${storeRequests.length ? `${storeRequests.length} solicitud(es) enviadas desde la tienda.` : 'Sin solicitudes enviadas desde la tienda.'}</p>
+          ${storeRequests.length ? `<ul class="profile-store-requests">${storeRequests.slice(0, 5).map((row) => `<li><strong>${escapeHtml(row.title)}</strong><span>${escapeHtml(storeRequestStatus[row.status] ?? row.status)} · ${escapeHtml(fmtWhen(row.created_at))}</span></li>`).join('')}</ul>` : ''}`
+        : '<p class="view__hint">Este cliente todavía no tiene cuenta en FULLTECH Store. Se vinculará al crearla con su teléfono y el número de un pedido.</p>',
+      'profile-card--wide',
+    );
+
     box.innerHTML = `${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
       <div class="profile-grid">
         ${personal}
+        ${storeSection}
         ${groupsSection}
         ${prefsSection}
         ${stageHtml}
@@ -21451,6 +21476,41 @@
     }
   }
 
+  /**
+   * TIENDA ONLINE: el enlace directo a FULLTECH Store (catálogo, cuenta y
+   * solicitudes). Se comparte igual que la web: hoja nativa, copiar o WhatsApp.
+   */
+  async function shareOnlineStore() {
+    const url = `${location.origin}/store/`;
+    const texto = `FULLTECH Store: ${url}\nCompra, consulta tus pedidos y pide lo que necesites.`;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        await navigator.share({ title: 'FULLTECH Store', text: texto, url });
+        return true;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Enlace de la tienda online copiado');
+      return true;
+    } catch {
+      openSheet(
+        'Tienda online',
+        `<div class="field">
+          <span class="field__label">Enlace de FULLTECH Store</span>
+          <input class="field__input" id="share-store-url" type="text" readonly value="${escapeHtml(url)}" />
+        </div>
+        <p class="view__hint">Cópialo y mándalo: es la tienda pública, sin acceso al panel.</p>
+        <a class="btn btn--primary btn--block" href="https://wa.me/?text=${encodeURIComponent(texto)}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp</a>`,
+        { variant: 'menu' },
+      );
+      $('#share-store-url')?.select();
+      return false;
+    }
+  }
+
   async function sharePanelApp() {
     const url = panelShareUrl();
     const texto = panelShareMessage(url);
@@ -21504,11 +21564,12 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'delivery', 'mapa', 'supervisor', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
     clientes: 'Clientes',
+    solicitudes: 'Solicitudes de clientes',
     delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
     supervisor: 'Supervisor IA',
@@ -21874,6 +21935,12 @@
     $('#drawer-share-web')?.addEventListener('click', () => {
       closeDrawer();
       shareStoreWeb();
+    });
+
+    /* «Tienda online»: el enlace directo a FULLTECH Store (catálogo y cuenta). */
+    $('#drawer-share-store')?.addEventListener('click', () => {
+      closeDrawer();
+      shareOnlineStore();
     });
 
     $('#settings-offline-data')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('fulltech:offline-open')));

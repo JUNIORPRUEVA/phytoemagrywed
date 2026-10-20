@@ -296,6 +296,9 @@
                 <button class="drawer__item drawer__item--sub" data-tab="cotizaciones" type="button">
                   <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Cotizaciones
                 </button>
+                <button class="drawer__item drawer__item--sub" data-tab="solicitudes" type="button" data-permission="orders.read">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Solicitudes
+                </button>
                 <button class="drawer__item drawer__item--sub" data-tab="recuento" type="button">
                   <span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Recuento
                 </button>
@@ -381,6 +384,7 @@
               <nav class="drawer__subnav" aria-label="Compartir">
                 <button class="drawer__item drawer__item--sub" id="drawer-share" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir app cliente</button>
                 <button class="drawer__item drawer__item--sub" id="drawer-share-web" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Compartir catálogo Fulltech</button>
+                <button class="drawer__item drawer__item--sub" id="drawer-share-store" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="bag"></span>Tienda online</button>
               </nav>
             </details>
           </section>
@@ -755,6 +759,10 @@
           <h2 class="view__title">Tiendas proveedoras</h2>
           <div id="admin-tiendas"></div>
         </section>
+        <section class="view" id="view-solicitudes" hidden>
+          <h2 class="view__title">Bandeja de solicitudes</h2>
+          <div id="admin-requests"></div>
+        </section>
         <section class="view" id="view-productos" hidden>
           <h2 class="view__title">Inventario de productos</h2>
           <button class="btn btn--ghost" data-tab="inventario" type="button">Volver al inventario de la tienda</button>
@@ -1079,7 +1087,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-      <script src="/admin/app.js?v=arranque-ligero-156" defer></script>
+    <script src="/admin/app.js?v=tienda-online-arranque-ligero-3" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
@@ -1087,13 +1095,13 @@
     <script src="/admin/deepseek-settings.js?v=3" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=3" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
-    <script src="/admin/store.js?v=cloud-first-3" defer></script>
+    <script src="/admin/store.js?v=tienda-online-1" defer></script>
+    <script src="/admin/store-requests.js?v=2" defer></script>
     <script src="/admin/recogidas.js?v=1" type="module"></script>
     <script src="/admin/supervisor.js?v=4" type="module"></script>
     <script src="/admin/pos.js?v=pedido-16" type="module"></script>
   </body>
 </html>
-
 
 
 

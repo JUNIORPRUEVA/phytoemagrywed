@@ -110,6 +110,11 @@ import {
 import { createInventoryService, centsToMoney } from './inventory.mjs';
 import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
+import { handleStorePublicRoute } from './store-public-routes.mjs';
+import { createStoreAccounts } from './store-accounts.mjs';
+import { handleStoreAccountRoute } from './store-account-routes.mjs';
+import { handleStoreRequestsAdminRoute } from './store-requests-admin-routes.mjs';
+import { createStoreOAuth } from './store-oauth.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
@@ -325,6 +330,22 @@ const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
 const WEB_PUSH_PUBLIC_KEY = (process.env.PHYTO_WEB_PUSH_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? '').trim();
 const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.env.VAPID_PRIVATE_KEY ?? '').trim();
 const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT || 'https://phytoemagryrd.lat').trim();
+// OAuth de clientes (opcional): sin credenciales, la tienda usa teléfono y contraseña.
+const STORE_OAUTH = {
+  publicUrl: (process.env.PHYTO_PUBLIC_URL ?? '').trim(),
+  google: {
+    clientId: (process.env.PHYTO_GOOGLE_CLIENT_ID ?? '').trim(),
+    clientSecret: (process.env.PHYTO_GOOGLE_CLIENT_SECRET ?? '').trim(),
+    redirectUri: (process.env.PHYTO_GOOGLE_REDIRECT_URI ?? '').trim(),
+  },
+  apple: {
+    clientId: (process.env.PHYTO_APPLE_CLIENT_ID ?? '').trim(),
+    teamId: (process.env.PHYTO_APPLE_TEAM_ID ?? '').trim(),
+    keyId: (process.env.PHYTO_APPLE_KEY_ID ?? '').trim(),
+    privateKey: (process.env.PHYTO_APPLE_PRIVATE_KEY ?? '').trim(),
+    redirectUri: (process.env.PHYTO_APPLE_REDIRECT_URI ?? '').trim(),
+  },
+};
 if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
   webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
   console.log('[push] Web Push configurado (llaves VAPID presentes).');
@@ -5096,6 +5117,12 @@ async function handle(req, res, ctx) {
     return;
   }
 
+  // Tienda pública: solo lectura y con una proyección separada del CRM.
+  if (await handleStorePublicRoute({ req, res, route, url, ctx, json })) return;
+
+  // Cuenta de cliente y solicitudes de la tienda (sesión propia, separada del panel).
+  if (await handleStoreAccountRoute({ req, res, route, url, ctx, json, readJson: readJsonBody })) return;
+
   // Confirmación limitada a un envío: no requiere la cookie de una app cerrada.
   if (route === '/api/push/receipts' && req.method === 'POST') {
     const body = await readJsonBody(req, 2048);
@@ -6183,6 +6210,7 @@ async function handle(req, res, ctx) {
     if (await handleSupplierRoutes({req,res,route,ctx,actor,json,readJson:readJsonBody,
   can:permission=>hasPermission(actor,permission),
   sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
+  if (await handleStoreRequestsAdminRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,can:permission=>hasPermission(actor,permission)})) return;
   if (await handleStoreCatalogRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
       can:permission=>hasPermission(actor,permission),
       sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
@@ -6761,7 +6789,13 @@ async function handle(req, res, ctx) {
           orders: profile.purchases ?? [],
           includeInternal: hasPermission(actor, 'admin.full'),
         });
-        json(res, 200, { ok: true, ...profile, history });
+        const [storeAccount, storeRequests] = ctx.storeAccounts
+          ? await Promise.all([
+              ctx.storeAccounts.accountForCustomer(customerId),
+              ctx.storeAccounts.listRequestsForCustomer(customerId, 10),
+            ])
+          : [null, []];
+        json(res, 200, { ok: true, ...profile, history, store_account: storeAccount, store_requests: storeRequests });
         return;
       }
 
@@ -11299,6 +11333,7 @@ export async function startCrmServer(config = {}) {
     adminDir: resolveAdminDir(config.adminDir),
     androidApkPath: path.resolve(config.androidApkPath ?? ANDROID_APK_PATH),
     androidApkUrl: config.androidApkUrl ?? ANDROID_APK_URL,
+    storeOAuth: config.storeOAuth ?? STORE_OAUTH,
     quiet: config.quiet ?? false,
   };
 
@@ -11527,6 +11562,26 @@ export async function startCrmServer(config = {}) {
   });
   schedulerRef.current = scheduler;
 
+  /*
+   * Cuentas de cliente y solicitudes de la tienda. Son tablas aditivas y
+   * separadas: no tocan clientes, pedidos, facturas ni inventario. Si no hay SQL
+   * (JSONL), la tienda sigue mostrando el catálogo y las cuentas quedan apagadas.
+   */
+  const storeAccounts = await createStoreAccounts({
+    backend: db.kind,
+    handle: store.handle,
+    customers,
+    listOrders: () => store.listAdmin({ limit: 5000 }),
+    findCustomerByEmail: async (email) => {
+      const key = String(email ?? '').trim().toLowerCase();
+      if (!key) return null;
+      const rows = await db.list('customers', { limit: 2000 });
+      return rows.find((row) => String(row.email ?? '').trim().toLowerCase() === key) ?? null;
+    },
+    clock: config.clock,
+  });
+  const storeOAuth = createStoreOAuth({ config: settings.storeOAuth, fetchImpl: config.storeOAuthFetch ?? fetch, clock: config.clock });
+
   const ctx = {
     store,
     db,
@@ -11542,6 +11597,8 @@ export async function startCrmServer(config = {}) {
     users,
     inventory,
     storeCatalog,
+    storeAccounts,
+    storeOAuth,
     settings: settingsService,
     chatSharing: createChatSharingService({ settings: settingsService, customers }),
     proofreading,

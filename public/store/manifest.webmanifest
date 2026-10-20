@@ -1,0 +1,18 @@
+{
+  "id": "/store/",
+  "name": "FULLTECH Store",
+  "short_name": "FULLTECH",
+  "description": "Explora el catálogo de FULLTECH.",
+  "lang": "es-DO",
+  "start_url": "/store/",
+  "scope": "/store/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f6f8fb",
+  "theme_color": "#f7f8fa",
+  "icons": [
+    { "src": "/store/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "/store/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/store/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
