@@ -12,7 +12,7 @@
   let unavailable = false;
   let retryAt = 0;
   let lastReview, sendAttempt, sendTimer, bypass;
-  let aiTimer, aiTimeout, aiAbort, aiJob;
+  let aiTimer, aiTimeout, aiAbort, aiJob, aiFallback;
   const aiCache = new Map();
   const area = () => document.querySelector('#wa-text');
   const conversation = () => document.querySelector('#wa-actions')?.dataset.conversation || '';
@@ -20,11 +20,13 @@
     return job && job.area === area() && job.area.isConnected && job.text === job.area.value && job.context === conversation() && document.body.dataset.tab === 'whatsapp' && document.body.dataset.waView !== 'list' && !document.querySelector('#app')?.hidden;
   }
   function cancelAI() {
-    clearTimeout(aiTimer); clearTimeout(aiTimeout);
+    clearTimeout(aiTimer); clearTimeout(aiTimeout); clearTimeout(aiFallback);
+    aiFallback = null;
     aiAbort?.abort(); aiAbort = null; aiJob = null;
   }
   function requestSupport(job, suggestion) {
     if (!isCurrent(job)) return;
+    clearTimeout(aiFallback); aiFallback = null;
     const local = Boolean(suggestion?.uncertain?.length || suggestion?.edits?.length);
     // Con dudas locales se pide enseguida; sin ellas también se pide (una frase
     // puede tener todas las palabras válidas y aun así llevar tildes o
@@ -247,6 +249,19 @@
     const job = { id: version, area: input, text: input.value, context: nextContext };
     pending = job;
     timer = setTimeout(pump, REVIEW_DELAY);
+    /*
+     * EN EL TELÉFONO EL WORKER PUEDE NO LLEGAR. Si el diccionario tarda o el
+     * navegador lo bloquea, `pump` nunca responde y el corrector quedaba mudo.
+     * La corrección del servidor NO necesita el diccionario local: se pide igual
+     * pasado un margen, y si el Worker contesta antes, su respuesta la cancela.
+     */
+    clearTimeout(aiFallback);
+    aiFallback = setTimeout(() => {
+      aiFallback = null;
+      if (!isCurrent(job)) return;
+      if (lastReview && isCurrent(lastReview.job)) return;
+      requestSupport(job, null);
+    }, 1600);
     // No reiniciar este límite con cada tecla: revisar también mientras escribe
     // seguido, conservando solo el borrador más reciente en la cola.
     if (maxTimer == null) maxTimer = setTimeout(() => { maxTimer = null; pump(); }, MAX_WAIT);
