@@ -765,8 +765,26 @@ describe('despliegue: el Dockerfile y la config de nginx no se separan', () => {
       `${match[1]} ${match[2] ?? ''}`.trim(),
     );
 
-  it('no hay dos `location` iguales en el mismo servidor (nginx no arrancaría)', () => {
-    for (const [name, config] of [
+  /**
+   * EL AUDIO QUE NO SE ENVIABA (fallo real en producción, 2026-10-20).
+   *
+   * La nota de voz viaja como CUERPO CRUDO a `/api/admin/conversations/:id/media`
+   * y pesa ~0,5 MB por cada 30 s. El contenedor traía `client_max_body_size 256k`
+   * para los JSON: nginx respondía 413 ANTES de llegar al servidor, el panel
+   * decía «no se pudo enviar» y el audio se quedaba grabado sin salir.
+   * Aquí se exige que el bloque `/api/` deje pasar al menos el máximo de audio.
+   */
+  it('nginx deja subir los archivos del panel (no solo JSON): audio ≥ 16 MB', () => {
+    const limiteMb = (config) => {
+      const desdeApi = config.slice(config.indexOf('location ^~ /api/'));
+      const match = desdeApi.match(/client_max_body_size\s+(\d+)m;/);
+      return match ? Number(match[1]) : 0;
+    };
+    expect(limiteMb(inlineConfig()), 'Dockerfile: /api/ debe admitir el audio de 16 MB').toBeGreaterThanOrEqual(16);
+    expect(limiteMb(nginxConf), 'nginx/phytoemagry.conf: /api/ debe admitir el audio de 16 MB').toBeGreaterThanOrEqual(16);
+  });
+
+  it('no hay dos `location` iguales en el mismo servidor (nginx no arrancaría)', () => {    for (const [name, config] of [
       ['Dockerfile', inlineConfig()],
       ['nginx/phytoemagry.conf', nginxConf],
     ]) {

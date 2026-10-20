@@ -12658,8 +12658,21 @@
       body = {};
     }
     if (!response.ok) {
-      const error = new Error(body.message ?? 'No se pudo enviar el archivo');
+      /*
+       * NGINX PUEDE CORTAR ANTES DE LLEGAR AL SERVIDOR (413 «too large») y
+       * entonces la respuesta no es JSON: `body` queda vacío. Se dice la causa
+       * real en vez de un «no se pudo enviar» que no explica nada.
+       */
+      const message =
+        body.message ??
+        (response.status === 413
+          ? 'El servidor rechazó el archivo por tamaño (413). Prueba con una nota más corta o adjunta uno más pequeño.'
+          : response.status === 502 || response.status === 504
+            ? 'El servidor no respondió a tiempo. Vuelve a intentarlo en unos segundos.'
+            : 'No se pudo enviar el archivo');
+      const error = new Error(message);
       error.body = body;
+      error.status = response.status;
       throw error;
     }
     return body;
@@ -12676,7 +12689,7 @@
     toast(
       ambiguo
         ? 'No se pudo confirmar si el mensaje salió. No se reintenta solo: míralo en Ajustes → «Envíos de archivo por revisar».'
-        : error.body?.message ?? 'No se pudo enviar el archivo',
+        : error.body?.message ?? error.message ?? 'No se pudo enviar el archivo',
     );
     if (ambiguo) {
       closeSheet();

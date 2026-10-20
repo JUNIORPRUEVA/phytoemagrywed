@@ -223,6 +223,13 @@ http {
             gzip_types application/json;
             gzip_min_length 1024;
             gzip_comp_level 6;
+            # SUBIDAS DEL PANEL (imagen, nota de voz, PDF): el archivo viaja como
+            # CUERPO CRUDO y una nota de voz de 30 s ya pesa ~0,5 MB. Con el
+            # `client_max_body_size 256k` de arriba, nginx respondía 413 ANTES de
+            # llegar al servidor (se grababa y se escuchaba, pero «Enviar» no
+            # hacía nada). Aquí se deja pasar el máximo que acepta el servidor
+            # (PDF 100 MB, audio 16 MB, imagen 5 MB), que además valida cada uno.
+            client_max_body_size 110m;
         }
 
         # --------------------------------------------- app del panel (PWA)
