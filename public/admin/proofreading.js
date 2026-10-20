@@ -44,7 +44,7 @@
     aiTimer = setTimeout(async () => {
       if (!isCurrent(job)) return;
       const controller = new AbortController(); aiAbort = controller;
-      aiTimeout = setTimeout(() => controller.abort(), 4500);
+      aiTimeout = setTimeout(() => controller.abort(), 5500);
       let result = null;
       try {
         const response = await fetch('/api/admin/proofreading', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: job.context, text: job.text }) });
