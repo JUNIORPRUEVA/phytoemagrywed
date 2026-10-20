@@ -110,3 +110,38 @@ El candidato **no es limpio**:
 ```
 
 Rollback: `docker service rollback ventas_fulltech-tienda-pwa` (imagen anterior `af91481`).
+
+## 8. Resultado del despliegue (2026-10-20, 18:52–19:00 UTC)
+
+**Bloqueo resuelto.** El límite `client_max_body_size 110m` sigue en `location ^~ /api/` (heredado del commit `00af106`) y el límite global `256k` se mantiene para rutas públicas. Comprobado con la configuración real en un nginx aislado: `2 MB → /api/` pasa (502 al no haber upstream) y `2 MB → /store/` da **413**.
+
+**Incidente y recuperación.** El primer despliegue (`83f9e9d`) devolvió **404 en `/store/`**: en la imagen el HTML de la PWA está en `/usr/share/nginx/html/store/index.html`, no en `/app/public/store/`. Se ejecutó `docker service rollback` (~2 min de indisponibilidad de la portada) y se corrigió con `e3f5872`, que prueba ambas rutas y responde **503** si no hay HTML base para que nginx sirva el índice estático.
+
+**Release publicado** (`ventas_fulltech-tienda-pwa`):
+
+| Dato | Valor |
+| --- | --- |
+| Imagen | `easypanel/ventas/phytoemagrywed:seo-e3f5872-20261020T185556Z` |
+| `GIT_SHA` | `e3f5872d52eb9ee2bbbbedb41224549685cc6a4c` |
+| Env añadido | `PHYTO_STORE_PUBLIC_URL=https://fulltechrd.com`, `SEO_SITE_URL=https://fulltechrd.com`, `PHYTO_STORE_INDEXABLE=false` |
+| Rollback | `docker service rollback ventas_fulltech-tienda-pwa` → `easypanel/ventas/fulltech-tienda-pwa` |
+| Respaldo previo | `/root/phyto-seo-backups/tienda-20261020T185242Z.json` |
+
+**Verificado en producción**
+
+| Recurso | Resultado |
+| --- | --- |
+| `/store/` | 200, 4 735 B, `noindex`, **7 enlaces rastreables** a `/store/p/…` |
+| `/store/p/capsules_5` | 200, canonical `https://fulltechrd.com/store/p/capsules_5`, `Product` + `Offer` `InStock` 1 250 DOP |
+| `/store/sitemap.xml` | 200 `application/xml`, **8 URLs, todas en `fulltechrd.com`, sin host interno** |
+| `/store/robots.txt` | 200, cierre total (entorno aún no indexable) |
+| `/robots.txt` | 200, `Sitemap: …/sitemap.xml` + `Sitemap: …/store/sitemap.xml` |
+| `/api/health` | 200 (healthcheck cada 30 s) |
+| POST 2 MB → `/api/health` | 200 (sin 413) |
+| POST 2 MB → `/api/admin/media` | 401 (auth, sin 413) |
+| `/api/store/home`, `/store/verify/` | 200 |
+| Logs | sin errores ni excepciones |
+| `ventas_phytoemagrywed` | intacto (misma imagen, 1/1); su `robots.txt` sigue igual |
+
+**Pendiente de decisión (no bloquea):** activar `PHYTO_STORE_INDEXABLE=true`. Este servicio conserva `PHYTO_WHATSAPP_MOCK=1` y no tiene credenciales R2: indexar la tienda llevaría tráfico a un checkout que crea el pedido pero no avisa al negocio por WhatsApp. Antes de activarlo, completar el entorno de ese servicio (o servir el dominio desde el servicio con entorno completo) y aprobar el contenido.
+
