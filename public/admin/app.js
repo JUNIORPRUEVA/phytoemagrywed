@@ -12707,7 +12707,6 @@
         <button class="menu-item" id="attach-banks" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.doc}</span><span><strong>Cuentas bancarias</strong><small>Las cuentas del negocio, listas para enviar</small></span></button>
         <button class="menu-item" id="attach-store" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span><span><strong>Tienda online</strong><small>Compartir el enlace de la tienda</small></span></button>
         <button class="menu-item" id="attach-web" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.web}</span><span><strong>Página web</strong><small>Compartir la web del negocio</small></span></button>
-        <button class="menu-item" id="attach-panel" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.share}</span><span><strong>Panel (app)</strong><small>Compartir el enlace del panel de trabajo</small></span></button>
       </div>
       ${isAdmin() ? '<button class="btn btn--ghost btn--block" id="attach-configure" type="button">Configurar opciones para compartir</button>' : ''}
       <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
@@ -12725,7 +12724,6 @@
     $('#attach-banks').addEventListener('click', () => openBusinessSharing(conversationId, 'banks'));
     $('#attach-store').addEventListener('click', () => openChatLinkShare(conversationId, 'store'));
     $('#attach-web').addEventListener('click', () => openChatLinkShare(conversationId, 'web'));
-    $('#attach-panel').addEventListener('click', () => openChatLinkShare(conversationId, 'panel'));
     $('#attach-configure')?.addEventListener('click', () => { closeSheet(); openSettingsPage('compartir'); });
 
     if (soloUbicacion) return;
@@ -12796,7 +12794,6 @@
   function chatShareLink(kind) {
     const base = location.origin;
     if (kind === 'store') return { title: 'Tienda online', url: `${base}/store/`, text: `FULLTECH Store: ${base}/store/\nCompra, consulta tus pedidos y pide lo que necesites.`, open: 'Abrir la tienda' };
-    if (kind === 'panel') return { title: 'Panel (app)', url: `${base}/admin/`, text: `Panel de trabajo de FullTECH: ${base}/admin/\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`, open: 'Abrir el panel' };
     return { title: 'Página web', url: `${base}/`, text: `FullTECH · Phytoemagry: ${base}/`, open: 'Abrir la web' };
   }
 
