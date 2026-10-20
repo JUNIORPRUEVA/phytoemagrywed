@@ -12696,12 +12696,18 @@
                  <span><strong>Audio</strong><small>Un archivo de audio · hasta 16 MB</small></span>
                </button>`
         }
+        <button class="menu-item" id="attach-gps" type="button">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.pin}</span>
+          <span><strong>Ubicación GPS</strong><small>Usar la ubicación de este equipo y enviarla al cliente</small></span>
+        </button>
         <button class="menu-item" id="attach-location" type="button">
           <span class="menu-item__icon" aria-hidden="true">📍</span>
-          <span><strong>Ubicación</strong><small>Ubicaciones del negocio y otras ubicaciones</small></span>
+          <span><strong>Ubicaciones del negocio</strong><small>Elegir una ubicación guardada</small></span>
         </button>
-        <button class="menu-item" id="attach-banks" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.doc}</span><span><strong>Cuentas bancarias</strong><small>Copiar una cuenta o preparar los datos para enviar</small></span></button>
-        <button class="menu-item" id="attach-catalogs" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span><span><strong>Catálogo</strong><small>Elegir la página web que quieres compartir</small></span></button>
+        <button class="menu-item" id="attach-banks" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.doc}</span><span><strong>Cuentas bancarias</strong><small>Las cuentas del negocio, listas para enviar</small></span></button>
+        <button class="menu-item" id="attach-store" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span><span><strong>Tienda online</strong><small>Compartir el enlace de la tienda</small></span></button>
+        <button class="menu-item" id="attach-web" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.web}</span><span><strong>Página web</strong><small>Compartir la web del negocio</small></span></button>
+        <button class="menu-item" id="attach-panel" type="button"><span class="menu-item__icon" aria-hidden="true">${ICONS.share}</span><span><strong>Panel (app)</strong><small>Compartir el enlace del panel de trabajo</small></span></button>
       </div>
       ${isAdmin() ? '<button class="btn btn--ghost btn--block" id="attach-configure" type="button">Configurar opciones para compartir</button>' : ''}
       <input id="attach-image-input" type="file" accept="${IMAGE_ACCEPT}" hidden />
@@ -12710,13 +12716,16 @@
       { variant: 'menu' },
     );
 
+    $('#attach-gps').addEventListener('click', () => { closeSheet(); sendDeviceLocation(conversationId); });
     $('#attach-location').addEventListener('click', () => {
       closeSheet();
       openBusinessSharing(conversationId, 'locations');
     });
 
     $('#attach-banks').addEventListener('click', () => openBusinessSharing(conversationId, 'banks'));
-    $('#attach-catalogs').addEventListener('click', () => openBusinessSharing(conversationId, 'catalogs'));
+    $('#attach-store').addEventListener('click', () => openChatLinkShare(conversationId, 'store'));
+    $('#attach-web').addEventListener('click', () => openChatLinkShare(conversationId, 'web'));
+    $('#attach-panel').addEventListener('click', () => openChatLinkShare(conversationId, 'panel'));
     $('#attach-configure')?.addEventListener('click', () => { closeSheet(); openSettingsPage('compartir'); });
 
     if (soloUbicacion) return;
@@ -12732,6 +12741,76 @@
     };
     $('#attach-image').addEventListener('click', () => pick('#attach-image-input', 'image'));
     $('#attach-audio').addEventListener('click', () => pick('#attach-audio-input', 'audio'));
+  }
+
+  /**
+   * UBICACIÓN DEL EQUIPO (GPS del PC o del teléfono) para enviarla a la
+   * conversación: se pide al sistema, se muestra y solo sale si se confirma.
+   */
+  async function sendDeviceLocation(conversationId) {
+    if (state.wa.selectedId !== conversationId) { toast('Vuelve a abrir la conversación.'); return; }
+    openSheet('Ubicación GPS', '<p class="view__hint" role="status">Buscando la ubicación de este equipo…</p>');
+    const found = await getBrowserLocation();
+    if (!found.ok) { closeSheet(); toast(found.message); return; }
+    const location = found.location;
+    const url = locationMapUrl(location);
+    openSheet(
+      'Enviar ubicación GPS',
+      `<p class="rule">Esta es la ubicación de este equipo. No se envía nada hasta que pulses «Enviar ubicación».</p>
+       ${locationChip(location, { withActions: false })}
+       ${url ? `<a class="btn btn--ghost btn--block" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Abrir en el mapa</a>` : ''}
+       <button class="btn btn--primary btn--block" id="gps-send" type="button">Enviar ubicación</button>
+       <button class="btn btn--ghost btn--block" id="gps-cancel" type="button">Cancelar</button>`,
+    );
+    $('#gps-cancel').addEventListener('click', () => closeSheet());
+    $('#gps-send').addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Enviando…', async () => {
+        try {
+          await api(`/api/admin/conversations/${encodeURIComponent(conversationId)}/location`, {
+            method: 'POST',
+            body: JSON.stringify({
+              latitude: location.latitude,
+              longitude: location.longitude,
+              name: location.name ?? undefined,
+              address: location.address ?? undefined,
+              source: 'browser_geolocation',
+              confirmed: true,
+              idempotencyKey: uploadKey('gps'),
+            }),
+          });
+          toast('Ubicación enviada');
+          closeSheet();
+          await loadWaThread(conversationId, { force: true });
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo enviar la ubicación');
+        }
+      });
+    });
+  }
+
+  /**
+   * ENLACES PÚBLICOS para el cliente: tienda, web y panel. Siempre con el
+   * dominio del panel (`location.origin`), nunca una ruta de API ni un
+   * backend: la tienda vive en `/store/` y la web en `/`.
+   */
+  function chatShareLink(kind) {
+    const base = location.origin;
+    if (kind === 'store') return { title: 'Tienda online', url: `${base}/store/`, text: `FULLTECH Store: ${base}/store/\nCompra, consulta tus pedidos y pide lo que necesites.`, open: 'Abrir la tienda' };
+    if (kind === 'panel') return { title: 'Panel (app)', url: `${base}/admin/`, text: `Panel de trabajo de FullTECH: ${base}/admin/\nÁbrelo en el móvil (se puede instalar como app) y entra con el usuario que te demos.`, open: 'Abrir el panel' };
+    return { title: 'Página web', url: `${base}/`, text: `FullTECH · Phytoemagry: ${base}/`, open: 'Abrir la web' };
+  }
+
+  function openChatLinkShare(conversationId, kind) {
+    const link = chatShareLink(kind);
+    openSheet(
+      link.title,
+      `<p class="view__hint">Se prepara un mensaje con el enlace para que lo revises antes de enviarlo.</p>
+       <div class="wa-preview">${escapeHtml(link.text)}</div>
+       <a class="btn btn--ghost btn--block" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.open)}</a>
+       <button class="btn btn--primary btn--block" id="sharing-link-use" type="button">Usar este enlace</button>`,
+      { variant: 'menu' },
+    );
+    $('#sharing-link-use').addEventListener('click', () => sharingDraft(conversationId, link.text));
   }
 
   function sharingDraft(conversationId, text) {
@@ -12780,7 +12859,17 @@
         closeSheet();openSendLocation({conversationId,customerId:customer?.id||null});
       });
       panel.querySelectorAll('[data-sharing-copy]').forEach(button=>button.addEventListener('click',()=>copySharingText(rows[Number(button.dataset.sharingCopy)].number,button)));
-      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>sharingDraft(conversationId,`Cuentas bancarias — FullTECH\n\n${rows.map(row=>row.message).join('\n\n')}`));
+      panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>{
+        const cuentas=rows.map((row,i)=>[
+          `${i+1}) ${row.bank}`,
+          `Titular: ${row.holder}`,
+          row.type?`Tipo: ${row.type}`:null,
+          `Cuenta: ${row.number}`,
+          `Moneda: ${row.currency}`,
+          row.note||null,
+        ].filter(Boolean).join('\n')).join('\n\n');
+        sharingDraft(conversationId,`Cuentas bancarias — FullTECH\n\n${cuentas}`);
+      });
       panel.querySelectorAll('[data-sharing-use]').forEach(button=>button.addEventListener('click',()=>{
         const row=rows[Number(button.dataset.sharingUse)];
         if(kind==='banks') sharingDraft(conversationId,row.message);
