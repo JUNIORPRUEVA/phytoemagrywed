@@ -12862,17 +12862,16 @@
       panel.querySelector('[data-sharing-all]')?.addEventListener('click',()=>{
         const cuentas=rows.map((row,i)=>[
           `${i+1}) ${row.bank}`,
-          `Titular: ${row.holder}`,
-          row.type?`Tipo: ${row.type}`:null,
-          `Cuenta: ${row.number}`,
+          `A nombre de: ${row.holder}`,
+          `${row.type||'Cuenta'}: ${row.number}`,
           `Moneda: ${row.currency}`,
           row.note||null,
         ].filter(Boolean).join('\n')).join('\n\n');
-        sharingDraft(conversationId,`Cuentas bancarias — FullTECH\n\n${cuentas}`);
+        sharingDraft(conversationId,`CUENTAS BANCARIAS — FULLTECH, SRL\nAquí tiene nuestras cuentas para realizar sus transferencias.\n\n${cuentas}\n\nGracias por preferirnos.`);
       });
       panel.querySelectorAll('[data-sharing-use]').forEach(button=>button.addEventListener('click',()=>{
         const row=rows[Number(button.dataset.sharingUse)];
-        if(kind==='banks') sharingDraft(conversationId,row.message);
+        if(kind==='banks') sharingDraft(conversationId,[row.bank,`A nombre de: ${row.holder}`,`${row.type||'Cuenta'}: ${row.number}`,`Moneda: ${row.currency}`,row.note||null].filter(Boolean).join('\n'));
         else if(kind==='catalogs') {
           openSheet(row.name,`<p class="view__hint">Revisa el catálogo antes de agregarlo al mensaje.</p><div class="wa-preview">${escapeHtml(row.text)}</div><a class="btn btn--ghost btn--block" href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">Abrir página web</a><button class="btn btn--primary btn--block" id="sharing-catalog-use" type="button">Usar este catálogo</button>`);
           $('#sharing-catalog-use').addEventListener('click',()=>sharingDraft(conversationId,row.text));
