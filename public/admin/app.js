@@ -777,6 +777,79 @@
     return Number(part('hour')) * 60 + Number(part('minute'));
   }
 
+  /** Partes de fecha/hora de un instante EN LA ZONA DEL NEGOCIO (República Dominicana). */
+  function businessParts(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: BUSINESS_TIME_ZONE,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(date);
+    const part = (type) => parts.find((entry) => entry.type === type)?.value ?? '00';
+    return {
+      year: Number(part('year')),
+      month: Number(part('month')),
+      day: Number(part('day')),
+      hour: Number(part('hour')) % 24,
+      minute: Number(part('minute')),
+      second: Number(part('second')),
+    };
+  }
+
+  /** `YYYY-MM-DD` de un instante, en hora de RD (para un campo de fecha). */
+  const businessDateValue = (value = new Date()) => {
+    const won = businessParts(value);
+    return won ? `${won.year}-${String(won.month).padStart(2, '0')}-${String(won.day).padStart(2, '0')}` : '';
+  };
+
+  /** `HH:mm` de un instante, en hora de RD (para un campo de hora). */
+  const businessTimeValue = (value = new Date()) => {
+    const won = businessParts(value);
+    return won ? `${String(won.hour).padStart(2, '0')}:${String(won.minute).padStart(2, '0')}` : '';
+  };
+
+  /**
+   * Fecha `YYYY-MM-DD` + hora `HH:mm` elegidas EN HORA DE RD → instante exacto
+   * (ISO UTC). NO usa la zona del dispositivo: un teléfono en otra zona horaria
+   * programaba el mensaje a una hora distinta a la que el operador escribió.
+   */
+  function businessDateTimeToISO(day, time) {
+    const [year, month, date] = String(day ?? '').split('-').map(Number);
+    const [hour, minute] = String(time || '00:00').split(':').map(Number);
+    if (![year, month, date, hour, minute].every((value) => Number.isFinite(value))) return '';
+    const guess = Date.UTC(year, month - 1, date, hour, minute, 0);
+    const offsetAt = (instant) => {
+      const won = businessParts(new Date(instant));
+      return won
+        ? Date.UTC(won.year, won.month - 1, won.day, won.hour, won.minute, won.second) - instant
+        : 0;
+    };
+    const first = offsetAt(guess);
+    let instant = guess - first;
+    // Segunda pasada: cubre los bordes de un cambio de desfase (si lo hubiera).
+    const second = offsetAt(instant);
+    if (second !== first) instant = guess - second;
+    return new Date(instant).toISOString();
+  }
+
+  /** Valor de un `datetime-local` («YYYY-MM-DDTHH:mm») → instante exacto en hora de RD. */
+  function businessLocalInputToISO(value) {
+    const [day, time] = String(value ?? '').split('T');
+    return businessDateTimeToISO(day, String(time || '00:00').slice(0, 5));
+  }
+
+  /** Fecha y hora escritas SIEMPRE en hora de RD (nunca la del teléfono). */
+  const fmtBusinessDateTime = (value, options = { dateStyle: 'short', timeStyle: 'short' }) => {    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat('es-DO', { timeZone: BUSINESS_TIME_ZONE, ...options }).format(date);
+  };
+
   /** `YYYY-MM-DD` de hoy en la zona horaria del negocio. */
   const todayISO = () => businessDayISO();
 
@@ -2772,9 +2845,7 @@
   function scheduledDashboardRow(row) {
     const customer = customerById(row.customer_id);
     const conversation = conversationForCustomer(row.customer_id);
-    const when = row.scheduled_at
-      ? new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.scheduled_at))
-      : '';
+    const when = row.scheduled_at ? fmtBusinessDateTime(row.scheduled_at) : '';
     const body = String(row.template_body ?? row.text ?? '').trim();
     const reason = ['FAILED', 'BLOCKED'].includes(String(row.status ?? '').toUpperCase()) ? scheduledFriendlyReason(row) : '';
     return `<article class="today-row today-row--scheduled">
@@ -3872,10 +3943,8 @@
     );
 
     const start = new Date(Date.now() + 2 * 60000);
-    $('#campaign-start').value = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(
-      2,
-      '0',
-    )}T${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+    // El campo de inicio se rellena en hora de RD (no la del dispositivo).
+    $('#campaign-start').value = `${businessDateValue(start)}T${businessTimeValue(start)}`;
 
     const selectedTemplate = () => (state.templates ?? []).find((template) => template.name === $('#campaign-template')?.value) ?? null;
     const messageText = () => String($('#campaign-message')?.value ?? '').trim();
@@ -3982,7 +4051,7 @@
       const count = recipients().length;
       const blocked = campaignPool().filter((customer) => customerCampaignOptOut(customer)).length;
       const interval = Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2);
-      const estimated = count > 0 ? new Date(new Date($('#campaign-start')?.value || Date.now()).getTime() + (count - 1) * interval * 60000) : null;
+      const estimated = count > 0 ? new Date(Date.parse(businessLocalInputToISO($('#campaign-start')?.value)) + (count - 1) * interval * 60000) : null;
       $('#campaign-preview').textContent = template ? campaignRenderDesired(messageText()) : 'Elige una plantilla aprobada.';
       const filterText = CAMPAIGN_FILTERS.find(([m, s]) => m === mode && s === historicalStatus)?.[2] ?? 'Destinatarios';
       $('#campaign-summary').textContent =
@@ -4010,7 +4079,7 @@
         templateValues: oneBasedValues(),
         customMessage: messageText(),
         requireExactBody: true,
-        startAt: new Date($('#campaign-start')?.value || Date.now()).toISOString(),
+        startAt: businessLocalInputToISO($('#campaign-start')?.value) || new Date().toISOString(),
         intervalMinutes: Math.max(2, Number($('#campaign-interval')?.value ?? 2) || 2),
         timeZone: BUSINESS_TIME_ZONE,
       };
@@ -4810,7 +4879,7 @@
         return;
       }
       const valores = libre === null ? {} : { [libre + 1]: texto };
-      const scheduledAt = new Date(`${fecha}T${hora}:00`).toISOString();
+      const scheduledAt = businessDateTimeToISO(fecha, hora);
       await working(event.currentTarget, 'Programando…', async () => {
         let hechos = 0;
         const fallos = [];
@@ -8367,8 +8436,7 @@
     const row = (state.scheduledRows ?? []).find((entry) => entry.id === id);
     if (!row) return;
     const customer = row.customer ?? customerById(row.customer_id);
-    const date = new Date(row.scheduled_at);
-    const when = Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('es', { dateStyle: 'long', timeStyle: 'short' }).format(date);
+    const when = fmtBusinessDateTime(row.scheduled_at, { dateStyle: 'long', timeStyle: 'short' });
     openSheet(customerName(customer), `<p class="outreach-caption">${escapeHtml(when)} · ${escapeHtml(scheduledStateTitle(row.status))}</p>
       <p class="outreach-detail-text">${escapeHtml(row.template_body || row.text || 'Sin contenido guardado')}</p>
       ${['FAILED', 'BLOCKED'].includes(row.status) ? `<p class="outreach-feedback">${escapeHtml(scheduledFriendlyReason(row))}</p>` : ''}
@@ -8416,8 +8484,7 @@
     $('#scheduled-list-caption').textContent = `${SCHEDULE_FILTERS.find(([key]) => key === state.scheduledFilter)?.[1] ?? 'Todos'} · ${visible.length} ${visible.length === 1 ? 'mensaje' : 'mensajes'}`;
     list.innerHTML = visible.map((row) => {
       const customer = row.customer ?? customerById(row.customer_id);
-      const date = new Date(row.scheduled_at);
-      const when = Number.isNaN(date.getTime()) ? 'Fecha no disponible' : new Intl.DateTimeFormat('es', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+      const when = fmtBusinessDateTime(row.scheduled_at) || 'Fecha no disponible';
       return `<article class="outreach-row" data-schedule-row="${escapeHtml(row.id)}">
         <button class="outreach-row__copy" data-schedule-details="${escapeHtml(row.id)}" type="button"><strong>${escapeHtml(customerName(customer))}</strong><span>${escapeHtml(row.template_body || row.text || 'Sin contenido guardado')}</span></button>
         <div class="outreach-row__when"><time datetime="${escapeHtml(row.scheduled_at)}">${escapeHtml(when)}</time><small>${escapeHtml(scheduledStateTitle(row.status))}</small></div>
@@ -8508,8 +8575,10 @@
     }
     const approved = (state.templates ?? []).filter((template) => waTemplateApproved(template) && scheduledTemplateSupported(template)).sort((a, b) => Number(waTemplateFreeSlot(b) !== null) - Number(waTemplateFreeSlot(a) !== null));
     const initial = new Date(Date.now() + 60 * 60000);
-    const localDate = `${initial.getFullYear()}-${String(initial.getMonth() + 1).padStart(2, '0')}-${String(initial.getDate()).padStart(2, '0')}`;
-    const localTime = `${String(initial.getHours()).padStart(2, '0')}:${String(initial.getMinutes()).padStart(2, '0')}`;
+    // La fecha y la hora del formulario son SIEMPRE de República Dominicana,
+    // no las del reloj del dispositivo.
+    const localDate = businessDateValue(initial);
+    const localTime = businessTimeValue(initial);
     openSheet('Programar mensaje', `<form class="outreach-form" id="outreach-schedule-form">
       <fieldset><legend>1. Elige uno o varios clientes</legend>${outreachPickerHtml()}</fieldset>
       <fieldset><legend>2. Prepara el mensaje</legend>
@@ -8522,7 +8591,7 @@
       <fieldset><legend>3. Elige cuándo enviarlo</legend><div class="outreach-two">
         <label class="field"><span class="field__label">Fecha</span><input class="field__input" id="outreach-date" type="date" value="${localDate}" required /></label>
         <label class="field"><span class="field__label">Hora</span><input class="field__input" id="outreach-time" type="time" value="${localTime}" required /></label>
-      </div><p class="outreach-caption">Hora de este dispositivo: ${escapeHtml(Intl.DateTimeFormat().resolvedOptions().timeZone)}. El envío se guarda con su hora exacta.</p></fieldset>
+      </div><p class="outreach-caption">Hora de República Dominicana (${escapeHtml(BUSINESS_TIME_ZONE)}). El mensaje sale a esa hora, aunque el teléfono esté en otra zona.</p></fieldset>
       <div class="outreach-preview"><label for="outreach-preview-client">Vista previa por cliente</label><select class="field__select" id="outreach-preview-client" aria-label="Cliente de la vista previa"></select><p id="outreach-preview-text"></p></div>
       <p class="outreach-feedback" id="outreach-save-feedback" role="status" aria-live="polite"></p>
       <button class="btn btn--primary btn--block" id="outreach-schedule-save" type="submit" disabled>Selecciona los clientes</button>
@@ -8577,9 +8646,10 @@
       if (busy) return;
       const rows = picker.rows();
       const feedback = $('#outreach-save-feedback');
-      const when = new Date(`${$('#outreach-date').value}T${$('#outreach-time').value}:00`);
+      // Fecha y hora elegidas EN HORA DE RD → instante exacto.
+      const whenISO = businessDateTimeToISO($('#outreach-date').value, $('#outreach-time').value);
       if (!rows.length) { feedback.textContent = 'Selecciona al menos un cliente.'; return; }
-      if (!Number.isFinite(when.getTime()) || when.getTime() <= Date.now()) { feedback.textContent = 'Elige una fecha y hora futuras.'; return; }
+      if (!whenISO || Date.parse(whenISO) <= Date.now()) { feedback.textContent = 'Elige una fecha y hora futuras (hora de RD).'; return; }
       const text = $('#outreach-text').value.trim();
       const current = template();
       if (isText() && !text) { feedback.textContent = 'Escribe el mensaje que quieres enviar.'; return; }
@@ -8587,7 +8657,7 @@
       const payloads = rows.map((customer) => {
         const values = isText() ? {} : valuesFor(customer);
         const missing = Object.values(values).some((value) => !value);
-        return { customer, missing, body: { customerId: customer.id, conversationId: conversationForCustomer(customer.id)?.id, scheduledAt: when.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, type: isText() ? 'text' : 'template', text: isText() ? text : undefined, template: isText() ? undefined : current.name, templateValues: isText() ? undefined : Object.fromEntries(Object.entries(values).map(([index, value]) => [Number(index) + 1, value])) } };
+        return { customer, missing, body: { customerId: customer.id, conversationId: conversationForCustomer(customer.id)?.id, scheduledAt: whenISO, timeZone: BUSINESS_TIME_ZONE, type: isText() ? 'text' : 'template', text: isText() ? text : undefined, template: isText() ? undefined : current.name, templateValues: isText() ? undefined : Object.fromEntries(Object.entries(values).map(([index, value]) => [Number(index) + 1, value])) } };
       });
       const incomplete = payloads.find((row) => row.missing);
       if (incomplete) { feedback.textContent = `Faltan datos en el mensaje de ${customerName(incomplete.customer)}. Completa los campos y revisa su vista previa.`; return; }
@@ -14732,9 +14802,7 @@
       scheduled.length
         ? `<div class="sch-list">${scheduled
             .map((row) => {
-              const cuando = new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(
-                new Date(row.scheduled_at),
-              );
+              const cuando = fmtBusinessDateTime(row.scheduled_at);
               const sinSalir = ['FAILED', 'BLOCKED'].includes(String(row?.status ?? '').toUpperCase());
               return `<article class="sch-item${sinSalir ? ' sch-item--warn' : ''}">
                 <div class="sch-item__head">
@@ -15183,9 +15251,7 @@
           scheduled.length
             ? `<div class="sch-list">${scheduled
                 .map((row) => {
-                  const cuando = new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(
-                    new Date(row.scheduled_at),
-                  );
+                  const cuando = fmtBusinessDateTime(row.scheduled_at);
                   const sinSalir = ['FAILED', 'BLOCKED'].includes(String(row?.status ?? '').toUpperCase());
                   return `<article class="sch-item${sinSalir ? ' sch-item--warn' : ''}">
                     <div class="sch-item__head">
@@ -20465,8 +20531,8 @@
     const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
     if (!customer) return;
     const dentroDeVentana = state.wa.chat?.customer?.id === customerId ? state.wa.chat?.canSendFreeText !== false : null;
-    const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    // La hora del formulario es la de RD, no la del reloj del dispositivo.
+    const time = businessTimeValue();
 
     /**
      * Lo que se está programando AHORA MISMO.
@@ -20736,10 +20802,9 @@
     $$('[data-sch-quick]').forEach((chip) =>
       chip.addEventListener('click', () => {
         const when = new Date(Date.now() + Number(chip.dataset.schQuick) * 60000);
-        $('#sch-date').value = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(
-          when.getDate(),
-        ).padStart(2, '0')}`;
-        $('#sch-time').value = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+        // También en hora de RD: el atajo no puede depender del reloj del teléfono.
+        $('#sch-date').value = businessDateValue(when);
+        $('#sch-time').value = businessTimeValue(when);
       }),
     );
 
@@ -20802,8 +20867,8 @@
               customerId: customer.id,
               conversationId: conversationId || undefined,
               orderId: orderId || undefined,
-              // La hora local del teléfono → instante exacto (sin desfases).
-              scheduledAt: new Date(`${date}T${hora}:00`).toISOString(),
+              // Fecha y hora elegidas EN HORA DE RD → instante exacto (sin desfases).
+              scheduledAt: businessDateTimeToISO(date, hora),
               timeZone: BUSINESS_TIME_ZONE,
               type: esTextoLibre() ? 'text' : 'template',
               template: esTextoLibre() ? undefined : plan.templateName,
@@ -20873,12 +20938,8 @@
       return;
     }
     const date = new Date(row.scheduled_at);
-    const valueDate = Number.isNaN(date.getTime())
-      ? todayISO()
-      : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    const valueTime = Number.isNaN(date.getTime())
-      ? '09:00'
-      : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    const valueDate = Number.isNaN(date.getTime()) ? todayISO() : businessDateValue(date);
+    const valueTime = Number.isNaN(date.getTime()) ? '09:00' : businessTimeValue(date);
     openSheet(
       'Editar mensaje programado',
       `<p class="view__hint">Solo se puede editar mientras está pendiente. Si ya salió, queda como historial.</p>
@@ -20911,7 +20972,7 @@
       }
       await working(event.currentTarget, 'Guardando…', async () => {
         const saved = await scheduledAction(row.id, 'edit', {
-          scheduledAt: new Date(`${day}T${hour}:00`).toISOString(),
+          scheduledAt: businessDateTimeToISO(day, hour),
           ...scheduledEditPayload(row, text),
         });
         if (saved) closeSheet();
