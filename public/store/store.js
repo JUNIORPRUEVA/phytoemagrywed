@@ -107,10 +107,13 @@ async function renderHome(){
       <div class="ft-hero__copy">
         <span class="ft-hero__eyebrow">${materialIcon('security',{size:14})} FULLTECH STORE</span>
         <h1>Todo lo que necesitas,<br>en un solo lugar</h1>
-        <p>Tecnología, hogar, seguridad y más al mejor precio.</p>
+        <p>Tecnología, hogar y seguridad para tu día a día.</p>
         <a class="ft-hero__cta" href="${href('catalog')}">Ver productos ${materialIcon('arrow-right',{size:18})}</a>
       </div>
-      <div class="ft-hero__art" aria-hidden="true"><img src="/store/assets/img/hero-productos.jpg" alt="" width="720" height="420" loading="eager" decoding="async"></div>
+      <div class="ft-hero__art" aria-hidden="true">
+        <img src="/store/assets/img/hero-productos.jpg" alt="" width="720" height="420" loading="eager" decoding="async">
+        <span class="ft-hero__tag">Compra segura</span>
+      </div>
     </section>`;
 
     const benefits=`<section class="ft-benefits" aria-label="Ventajas de comprar en FULLTECH Store">
@@ -139,6 +142,7 @@ async function renderHome(){
     </section>`;
 
     main.innerHTML=`${searchEntryMarkup()}${catNav}${hero}${benefits}${productsSection}${request}${footer()}`;
+    syncFloatingRequest();
   }catch{
     main.innerHTML=`<div class="state-error"><h1>No pudimos cargar la tienda</h1><p>Revisa tu conexión e inténtalo de nuevo.</p><button class="button" id="retry-home">Intentar de nuevo</button></div>${footer()}`;
     $('#retry-home').onclick=renderHome;
@@ -156,7 +160,7 @@ function homeCard(p){
     : `<a class="ft-card__cta ft-card__cta--ghost" href="${requestHref(p)}">Solicitar</a>`;
   return `<article class="ft-card">
     <a class="ft-card__media" href="${href('product/'+encodeURIComponent(p.id))}" aria-label="Ver ${esc(p.name)}">
-      ${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy" decoding="async" onerror="this.closest('.ft-card__media').classList.add('ft-card__media--error')">`:`<span class="ft-card__fallback">${icon('package','ft-icon--lg')}</span>`}
+      ${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy" decoding="async" onerror="this.closest('.ft-card__media').classList.add('ft-card__media--error')">`:`<span class="ft-card__fallback">${materialIcon('package',{size:28})}</span>`}
     </a>
     <div class="ft-card__body">
       <h3 class="ft-card__name"><a href="${href('product/'+encodeURIComponent(p.id))}" style="color:inherit;text-decoration:none">${esc(p.name)}</a></h3>
@@ -552,7 +556,7 @@ function renderNotice(title){setNav('');main.innerHTML=`<div class="page-head"><
 async function renderSearch(params){
   setNav('search');
   const initial=params.get('q')||'';
-  const idle=`<div class="ft-section__head"><h2>Buscar en la tienda</h2></div><p class="ft-section__note">Escribe el nombre de un producto, marca o categoría.</p><div class="ft-search__idle"><a class="ft-card__cta ft-card__cta--ghost ft-search__idle-cta" href="${href('catalog')}">Ver todo el catálogo ${icon('arrow-right','ft-icon--sm')}</a></div>`;
+  const idle=`<div class="ft-section__head"><h2>Buscar en la tienda</h2></div><p class="ft-section__note">Escribe el nombre de un producto, marca o categoría.</p><div class="ft-search__idle"><a class="ft-card__cta ft-card__cta--ghost ft-search__idle-cta" href="${href('catalog')}">Ver todo el catálogo ${materialIcon('arrow-right',{size:16})}</a></div>`;
   main.innerHTML=`<div class="ft-searchbar">${searchMarkup(initial)}</div><div id="search-body" aria-live="polite">${idle}</div>${footer()}`;
   const input=$('#store-search');
   const body=$('#search-body');
@@ -567,7 +571,7 @@ async function renderSearch(params){
       if(mine!==seq)return;
       const items=d.products||[];
       body.innerHTML=items.length
-        ?`<div class="ft-section__head"><h2>${items.length} resultado${items.length===1?'':'s'}</h2><a class="ft-section__link" href="${href('catalog')}?q=${encodeURIComponent(q)}">Ver en el catálogo ${icon('chevron-right','ft-icon--sm')}</a></div><div class="ft-grid">${items.map(homeCard).join('')}</div>`
+        ?`<div class="ft-section__head"><h2>${items.length} resultado${items.length===1?'':'s'}</h2><a class="ft-section__link" href="${href('catalog')}?q=${encodeURIComponent(q)}">Ver en el catálogo ${materialIcon('chevron-right',{size:16})}</a></div><div class="ft-grid">${items.map(homeCard).join('')}</div>`
         :`<div class="empty"><h3>Sin resultados para “${esc(q)}”</h3><p>Prueba con otro nombre o pide que te lo consigamos.</p><a class="button button-outline" href="${href('request')}">Solicitar producto</a></div>`;
     }catch{
       if(mine!==seq)return;
@@ -584,6 +588,15 @@ async function renderSearch(params){
 async function route(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request')return renderRequest(params);if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='account/requests')return renderRequests();return renderHome()}
 function openDrawer(open){if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open))}
 $('#menu-button').onclick=()=>openDrawer(true);$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
+/*
+ * Banner flotante «¿No lo encuentras?»: se muestra en cuanto el cliente
+ * desplaza, y queda pegado sobre la barra inferior. Al cargar no tapa precios.
+ */
+function syncFloatingRequest(){
+  const banner=document.querySelector('.ft-request');
+  if(banner)banner.classList.toggle('is-visible',window.scrollY>60);
+}
+window.addEventListener('scroll',syncFloatingRequest,{passive:true});
 updateCartBadge();
 /*
  * FRESCURA DE DISPONIBILIDAD: el catálogo visible se vuelve a pedir cada minuto
