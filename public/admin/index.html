@@ -80,7 +80,8 @@
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/admin/admin.css?v=audio-1" />
-    <link rel="stylesheet" href="/admin/store.css?v=etiqueta-5" />
+    <link rel="stylesheet" href="/admin/store.css?v=billing-cards-1" />
+    <link rel="stylesheet" href="/admin/product-editor.css?v=billing-cards-2" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
     <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
     <link rel="stylesheet" href="/admin/pos.css?v=pedido-15" />
@@ -125,6 +126,12 @@
     <link rel="stylesheet" href="/admin/ios.css?v=ios-1" />
     <link rel="stylesheet" href="/admin/daily-close.css?v=close-compact-2" />
     <link rel="stylesheet" href="/admin/outreach.css?v=5" />
+    <!--
+      CENTRO DE OPERACIONES (tickets internos). Va la ÚLTIMA: todo su estilo vive
+      bajo `body[data-tab='ops']` y con prefijo `.ops-`, así que no puede tocar el
+      chat del cliente ni el resto del panel.
+    -->
+    <link rel="stylesheet" href="/admin/ops.css?v=ops-5" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -331,6 +338,20 @@
                 </button>
               </nav>
             </details>
+          </section>
+
+          <section class="drawer__section" aria-label="Operación">
+            <nav class="drawer__nav">
+              <!--
+                CENTRO DE OPERACIONES: los tickets internos del equipo. Va en una
+                sección propia (no en «Principal») porque en móvil «Principal» está
+                oculta y esta pantalla tiene que alcanzarse desde el menú.
+              -->
+              <button class="drawer__item" data-tab="ops" type="button" data-permission="tickets.read">
+                <span class="drawer__icon" aria-hidden="true" data-icon="spark"></span>Centro IA
+                <span class="drawer__badge" data-drawer-badge="ops" hidden></span>
+              </button>
+            </nav>
           </section>
 
           <section class="drawer__section" aria-label="Seguimiento">
@@ -645,6 +666,14 @@
         <section class="view" id="view-supervisor" hidden></section>
         <div id="sup-postpone" hidden></div>
         <div id="sup-preview" hidden></div>
+
+        <!--
+          CENTRO DE OPERACIONES (tickets internos).
+          Bandeja + conversación, pintadas por `ops.js`. Es el espacio de trabajo
+          del EQUIPO (pedidos, incidencias, asignaciones) y NO el chat del cliente:
+          colecciones, rutas y permisos distintos.
+        -->
+        <section class="view" id="view-ops" hidden></section>
 
         <!-- PERFIL DEL CLIENTE -->
         <section class="view view--customer-profile" id="view-perfil-cliente" hidden>
@@ -1116,7 +1145,7 @@
     <script src="/admin/startup-recovery.js?v=1" defer></script>
     <script src="/admin/offline-storage.js?v=3" defer></script>
     <script src="/admin/sync-engine.js?v=3" defer></script>
-    <script src="/admin/offline.js?v=31" defer></script>
+    <script src="/admin/offline.js?v=32" defer></script>
     <!-- Tiempo real: un solo SSE por pestaña (va después de offline.js, que envuelve fetch). -->
     <script src="/admin/realtime.js?v=1" defer></script>
     <script src="/admin/offline-ui.js?v=9" defer></script>
@@ -1126,14 +1155,19 @@
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
-    <script src="/admin/proofreading.js?v=15" defer></script>
+    <script src="/admin/proofreading.js?v=16" defer></script>
     <script src="/admin/deepseek-settings.js?v=3" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=3" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
-    <script src="/admin/store.js?v=tienda-online-1" defer></script>
+    <script src="/admin/store.js?v=billing-cards-1" defer></script>
     <script src="/admin/store-requests.js?v=3" defer></script>
     <script src="/admin/recogidas.js?v=1" type="module"></script>
     <script src="/admin/supervisor.js?v=4" type="module"></script>
+    <!--
+      CENTRO DE OPERACIONES: módulo propio (como `supervisor.js`). Se pinta en
+      `#view-ops` cuando la pestaña activa es `ops` y no toca `app.js`.
+    -->
+    <script src="/admin/ops.js?v=ops-5" type="module"></script>
     <script src="/admin/pos.js?v=pedido-confirmar-18" type="module"></script>
   </body>
 </html>

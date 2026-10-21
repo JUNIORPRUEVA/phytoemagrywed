@@ -2472,7 +2472,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div><button class="pos-swipe-close" data-billing-close type="button" aria-label="Cerrar facturación" title="Cerrar">${ICONS.close}</button>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -2688,7 +2688,8 @@
     });
     if (isDeliveryUser()) {
       $$('[data-tab]').forEach((node) => {
-        if (!['delivery', 'whatsapp', 'ajustes', 'perfil', 'cierre', 'historial-cierres'].includes(node.dataset.tab)) node.hidden = true;
+        /* `ops` entra aquí: el repartidor tiene sus propios tickets internos. */
+        if (!['delivery', 'whatsapp', 'ops', 'ajustes', 'perfil', 'cierre', 'historial-cierres'].includes(node.dataset.tab)) node.hidden = true;
       });
     } else {
       $$('[data-tab]').forEach((node) => {
@@ -10870,11 +10871,17 @@
     const kind = conversationAssignmentKind(conversation);
     const mine = kind === 'mine';
     /*
-     * NADIE SE ASIGNA CONVERSACIONES SOLO (lo pidió el negocio): «Asignármela a mí»
-     * es de administración. Un agente la PIDE y espera; administración decide.
+     * TOMAR UNA CONVERSACIÓN LIBRE.
+     *
+     * Antes «Asignármela a mí» era solo de administración: un agente pedía y
+     * esperaba. El negocio cambió la regla: si el cliente escribe y nadie la
+     * tiene, CUALQUIER agente la toma; en cuanto uno la toma queda exclusiva y
+     * los demás solo pueden pedirla. Se manda el permiso del servidor
+     * (`chats.take_unassigned`) y solo se ofrece si NO tiene responsable.
      */
-    const canTake = Boolean(me) && !mine && isAdmin();
-    const canRequest = Boolean(me) && !mine && !isAdmin();
+    const libre = !conversation.assigned_user_id;
+    const canTake = Boolean(me) && libre && (isAdmin() || hasPermission('chats.take_unassigned'));
+    const canRequest = Boolean(me) && !mine && !canTake;
     const canRelease = Boolean(conversation.assigned_user_id) && (mine || isAdmin());
     // La lista del equipo la pide quien puede administrar (si no, sobra la llamada).
     if (isAdmin() && !(state.users ?? []).length) await loadUsers().catch(() => {});
@@ -13858,11 +13865,11 @@
        * error con «Reintentar» —que sería mentira— se deja dicho el motivo y se
        * ofrece lo único que ese usuario puede hacer: PEDIRLA.
        */
-      if (error.body?.error === 'not_your_conversation') {
+      if (error.body?.error === 'not_your_conversation' || error.body?.error === 'conversation_assigned') {
         state.wa.locked = {
           conversationId,
           message: error.body.message ?? 'Esta conversación no está a tu nombre. Pide que te la asignen.',
-          assignedName: error.body.assigned_display_name ?? null,
+          assignedName: error.body.assigned_display_name ?? error.body.assigned_display_name_snapshot ?? null,
         };
         state.wa.threadError = false;
         renderWaChat();
@@ -22571,7 +22578,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'ops', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -22580,6 +22587,7 @@
     delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
     supervisor: 'Supervisor IA',
+    ops: 'Centro de operaciones',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
@@ -22617,7 +22625,7 @@
       if (!options.silent) toast('Supervisor disponible solo para administración');
       tab = isDeliveryUser() ? 'delivery' : 'hoy';
     }
-    if (isDeliveryUser() && !['delivery', 'whatsapp', 'perfil', 'ajustes', 'cierre', 'historial-cierres'].includes(tab)) tab = 'delivery';
+    if (isDeliveryUser() && !['delivery', 'whatsapp', 'ops', 'perfil', 'ajustes', 'cierre', 'historial-cierres'].includes(tab)) tab = 'delivery';
     if (tab !== 'whatsapp') {
       state.wa.searchOpen = false;
       state.wa.filtersOpen = false;
@@ -22871,6 +22879,8 @@
       window.dispatchEvent(new Event('fulltech:close-actions'));openDrawer();
     });
     window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
+    /* Continuar un pedido pendiente desde facturación: abre ESE pedido, no otro. */
+    window.addEventListener('fulltech:order-edit',e=>{const orderId=e.detail?.orderId;if(orderId)openOrderEditor(orderId);});
     /*
      * Deja un mensaje escrito en el chat del cliente sin enviarlo: se abre la
      * conversación con el borrador puesto y la persona solo pulsa Enviar.

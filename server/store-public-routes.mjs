@@ -17,13 +17,14 @@ function publicProduct(product) {
     brand: product.brand,
     warranty: product.warranty ?? null,
     imageUrl: product.imageUrl,
+    images: product.images,
     featured: product.featured,
   };
 }
 
 export async function handleStorePublicRoute({ req, res, route, url, ctx, json }) {
   const catalog = ctx.storeCatalog;
-  const imageMatch = /^\/api\/store\/products\/([a-zA-Z0-9_-]+)\/image$/.exec(route);
+  const imageMatch = /^\/api\/store\/products\/([a-zA-Z0-9_-]+)\/(?:image|images\/([a-zA-Z0-9_-]+))$/.exec(route);
   const productMatch = /^\/api\/store\/products\/([a-zA-Z0-9_-]+)$/.exec(route);
   if (route !== '/api/store/catalog' && route !== '/api/store/categories' && route !== '/api/store/home' && !imageMatch && !productMatch) return false;
   if (!catalog) {
@@ -38,7 +39,7 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
   }
 
   if (imageMatch) {
-    const image = await catalog.publicImage(decodeURIComponent(imageMatch[1]));
+    const image = await catalog.publicImage(decodeURIComponent(imageMatch[1]),imageMatch[2]);
     if (!image) {
       res.writeHead(404, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
       res.end();

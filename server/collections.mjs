@@ -306,6 +306,163 @@ export const COLLECTIONS = Object.freeze({
     },
     unique: ['idempotency_key'],
   },
+  /*
+   * CENTRO DE OPERACIONES — TICKETS INTERNOS (`phytoemagry_ops_tickets`).
+   *
+   * NO tiene nada que ver con las conversaciones de WhatsApp del cliente: aquí
+   * se trabaja puertas adentro (pedidos, entregas, incidencias, asignaciones) y
+   * cada ticket es un hilo propio. Son colecciones SEPARADAS a propósito: una
+   * consulta del chat del cliente no puede ver jamás un mensaje interno, y
+   * viceversa.
+   *
+   * `active_key` es ÚNICO pero se pone a NULL al cerrar el ticket. Postgres y
+   * SQLite permiten muchos NULL en un índice único, así que:
+   *   - no puede existir DOS VECES el mismo flujo activo (un pedido, una
+   *     incidencia por pedido…),
+   *   - pero sí puede haber varios tickets históricos ya cerrados del mismo
+   *     asunto, que es lo correcto.
+   */
+  ops_tickets: {
+    indexed: {
+      number: 'text',
+      type: 'text',
+      entity_type: 'text',
+      entity_id: 'text',
+      status: 'text',
+      waiting_on: 'text',
+      priority: 'text',
+      assigned_user_id: 'text',
+      assigned_agent_id: 'text',
+      parent_ticket_id: 'text',
+      due_at: 'text',
+      follow_up_at: 'text',
+      last_message_at: 'text',
+      active_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['number', 'active_key'],
+  },
+  /*
+   * MENSAJES INTERNOS DEL TICKET (`phytoemagry_ops_ticket_messages`).
+   *
+   * `client_key` es ÚNICA: un doble toque, un reintento de red o un reenvío del
+   * agente no escriben dos veces el mismo mensaje.
+   *
+   * `seq` ordena el hilo y `seq_key` es el mismo número con ceros delante para
+   * que ordenar por la columna indexada (texto) dé el MISMO resultado que
+   * ordenar por número. Sin eso, «10» quedaría antes que «9».
+   */
+  ops_ticket_messages: {
+    indexed: {
+      ticket_id: 'text',
+      seq_key: 'text',
+      author_type: 'text',
+      author_id: 'text',
+      kind: 'text',
+      client_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['client_key'],
+  },
+  /*
+   * PARTICIPANTES DEL TICKET: quién puede leerlo y hasta dónde ha leído.
+   *
+   * `last_read_seq` y `last_ack_seq` son estados DISTINTOS a propósito: leer un
+   * mensaje no es acusar recibo y ninguna de las dos cosas completa la tarea
+   * (regla de la Fase 6).
+   */
+  ops_ticket_participants: {
+    indexed: {
+      ticket_id: 'text',
+      participant_type: 'text',
+      participant_id: 'text',
+      role: 'text',
+      last_read_seq: 'text',
+      last_ack_seq: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * LÍNEA DE TIEMPO ESTRUCTURADA (transiciones, acuses, creación).
+   * Los mensajes viven en la colección de mensajes; aquí van los HECHOS, para
+   * poder reconstruir la historia del ticket sin interpretar texto libre.
+   */
+  ops_ticket_events: {
+    indexed: {
+      ticket_id: 'text',
+      kind: 'text',
+      actor_id: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * AGENTES AUTORIZADOS (Etapa D).
+   *
+   * `key` es la identidad estable (`delivery_supervisor`). `tools` es la lista
+   * blanca de herramientas y `version` sube en cada cambio de configuración:
+   * así se sabe con qué contrato se ejecutó un run antiguo.
+   */
+  ops_agents: {
+    indexed: { key: 'text', enabled: 'text', kind: 'text', version: 'text', updated_at: 'text' },
+    unique: ['key'],
+  },
+  /*
+   * EJECUCIONES DURABLES. Un run es «un agente trabajando en un ticket».
+   * El estado vive en la BASE: un reinicio no pierde trabajo. `lease_until`
+   * marca quién lo tiene tomado y hasta cuándo (recuperación de huérfanos).
+   */
+  ops_agent_runs: {
+    indexed: {
+      agent_key: 'text',
+      ticket_id: 'text',
+      workflow_key: 'text',
+      status: 'text',
+      next_run_at: 'text',
+      lease_until: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /* PASOS: append-only, uno por vuelta. `step_key` único = no se repite un paso. */
+  ops_agent_steps: {
+    indexed: { run_id: 'text', step_key: 'text', kind: 'text', status: 'text', created_at: 'text' },
+    unique: ['step_key'],
+  },
+  /* INVOCACIONES DE HERRAMIENTA (con su resultado, para no repetir efectos). */
+  ops_tool_calls: {
+    indexed: {
+      run_id: 'text',
+      ticket_id: 'text',
+      tool: 'text',
+      status: 'text',
+      approval_id: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * APROBACIONES HUMANAS. Guardan los PARÁMETROS EXACTOS propuestos: aprobar
+   * vale solo para eso, una vez, y caduca.
+   */
+  ops_agent_approvals: {
+    indexed: {
+      ticket_id: 'text',
+      run_id: 'text',
+      agent_key: 'text',
+      tool: 'text',
+      status: 'text',
+      expires_at: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
 });
 
 /** Nombres reales de colección (valida contra la definición). */

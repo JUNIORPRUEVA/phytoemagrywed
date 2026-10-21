@@ -12,7 +12,7 @@ import {handleOfflineOperation} from '../server/offline-operations.mjs';
 import {offlineReport} from '../public/admin/offline-report.js';
 import {calculateSale} from '../public/admin/pos-math.js';
 let app,dir,cookie,doms,online,idb,product,customer;
-const IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS7kAAAAASUVORK5CYII=';
+const IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
 async function server(route,body,key){return fetch(app.url+'/api/admin/'+route,{method:body?'POST':'GET',headers:{cookie,'content-type':'application/json',...(key?{'x-fulltech-operation':key}:{})},...(body?{body:JSON.stringify(body)}:{})});}
 async function page(full=false){
   const dom=new JSDOM(full?readFileSync('public/admin/index.html','utf8'):'<html><body></body></html>',{url:app.url+'/admin/',runScripts:'outside-only',pretendToBeVisual:true});doms.push(dom);
@@ -38,6 +38,15 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{for(const d of doms){d.window.dispatchEvent(new d.window.Event('phyto:calling-logout'));}await new Promise(r=>setTimeout(r,30));doms.forEach(d=>d.window.close());await app?.close();rmSync(dir,{recursive:true,force:true});});
 async function prepare(w){await call(w,'session');for(const route of ['data','store/products','pos/customers','pos/tickets','pos/quotes'])await call(w,route);}
+it('requiere conexión para galería y publicación sin encolar ni afirmar cambios locales',async()=>{
+  const w=await page();await prepare(w);online=false;
+  const before=(await (await call(w,'store/products')).json()).products.find(p=>p.id===product.id);
+  for(const [route,body] of [['store/products/'+product.id,{...before,images:[]}],['store/products/'+product.id+'/publication',{status:'published'}]]){
+    const result=await call(w,route,body);expect(result.status).toBe(503);expect((await result.json()).message).toContain('necesitan conexión');
+  }
+  expect(await w.FulltechOffline.listQueue()).toHaveLength(0);
+  expect((await (await call(w,'store/products')).json()).products.find(p=>p.id===product.id).image_url).toBe(before.image_url);
+});
 it('reintentar una creación y un movimiento con la misma clave no duplica stock ni productos',async()=>{
   const body={kind:'service',name:'Instalación',sku:'INSTALL-1',price:'10.50',cost:'2'};
   const key=crypto.randomUUID(),a=await (await server('store/products',body,key)).json(),b=await (await server('store/products',body,key)).json();

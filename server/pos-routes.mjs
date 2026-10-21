@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {calculateSale,manualProducts} from '../public/admin/pos-math.js';
 import {orderOf,receiptPdf} from './orders.mjs';
 import {ticketsFor} from './pos-tickets.mjs';
+import {normalizeGroups} from './business-groups.mjs';
 
 const queues = new WeakMap();
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -62,18 +63,18 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
     if(route.startsWith('/api/admin/pos/context/')&&req.method==='GET') {
       const customerId=decodeURIComponent(route.slice('/api/admin/pos/context/'.length));
       const rows=await ctx.store.listAdmin({limit:5000});
-      return send(200,{ok:true,openOrders:rows.filter(i=>i.customer_id===customerId&&!['entregado','cancelado','perdido'].includes(i.status)).map(i=>({id:i.id,number:i.order_number||i.id}))});
+      return send(200,{ok:true,openOrders:rows.filter(i=>i.customer_id===customerId&&!['entregado','cancelado','perdido'].includes(i.status)).map(i=>({id:i.id,number:i.order_number||i.id,status:i.status||'',total:Number(i.total||0),created_at:i.created_at||'',items:Array.isArray(i.items)?i.items.length:null}))});
     }
     if(route==='/api/admin/pos/customers' && req.method==='POST') {
       if(!can('orders.create')) return send(403,{ok:false});
       const body=await readJson(req);
       const found=await ctx.customers.findOrCreateByPhone({name:String(body.name||'').slice(0,120),phone:body.phone,source:'manual'});
       if(!found.ok) return send(422,{ok:false,message:'Escribe un teléfono válido con código de país.'});
-      return send(200,{ok:true,customer:{id:found.customer.id,name:found.customer.name,phone_e164:found.customer.phone_e164}});
+      return send(200,{ok:true,customer:{id:found.customer.id,name:found.customer.name,phone_e164:found.customer.phone_e164,groups:Array.isArray(found.customer.groups)?found.customer.groups:[]}});
     }
     if(route==='/api/admin/pos/customers' && req.method==='GET') {
       const rows=await db.list('customers',{limit:5000});
-      return send(200,{ok:true,actorId:actor.id||actor.role,canCreate:can('orders.create'),isAdmin:actor.role==='ADMIN',customers:rows.map(c=>({id:c.id,name:c.name,phone_e164:c.phone_e164}))});
+      return send(200,{ok:true,actorId:actor.id||actor.role,canCreate:can('orders.create'),isAdmin:actor.role==='ADMIN',customers:rows.map(c=>({id:c.id,name:c.name,phone_e164:c.phone_e164,groups:normalizeGroups(c.groups,{fallback:null})}))});
     }
     // Quién puede llevar el pedido: repartidores, agentes que entregan y contactos guardados.
     if(route==='/api/admin/pos/assignees' && req.method==='GET') {

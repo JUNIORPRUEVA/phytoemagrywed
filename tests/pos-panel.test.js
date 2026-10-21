@@ -5,7 +5,7 @@ import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {calculateSale} from '../public/admin/pos-math.js';
 const script=readFileSync('public/admin/pos.js','utf8').replace(/^import[^\n]+\n/,'');
 const store=readFileSync('public/admin/store.js','utf8');
-let dom,w,requests,admin,customers,fail,products,tickets,ticketCounter;
+let dom,w,requests,admin,customers,fail,products,tickets,ticketCounter,pendingOrders;
 const flush=async()=>{for(let i=0;i<15;i++)await new Promise(r=>setImmediate(r));};
 const click=s=>w.document.querySelector(s).click();
 const fill=(name,value)=>{w.document.querySelector(`.pos-dialog [name=${name}]`).value=value;};
@@ -15,10 +15,10 @@ beforeEach(async()=>{
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};w.HTMLElement.prototype.scrollIntoView=function(){};
   w.structuredClone=structuredClone;w.calculateSale=calculateSale;w.EventSource=class{addEventListener(){}close(){}};
   w.crypto.randomUUID=()=> 'b1234567-1234-1234-1234-123456789000';
-  requests=[];tickets=new Map();ticketCounter=0;admin=true;fail=false;customers=[{id:'c1',name:'Cliente <script>',phone_e164:'+18095550101'}];
+  requests=[];tickets=new Map();ticketCounter=0;admin=true;fail=false;pendingOrders={};customers=[{id:'c1',name:'Cliente <script>',phone_e164:'+18095550101',groups:['PHYTOEMAGRY']},{id:'c2',name:'Cliente Secundario',phone_e164:'+18095550202',groups:['FULLTECH — Ventas generales']}];
   products=[{id:'p1',name:'Producto Fulltech',sku:'P1',active:true,kind:'product',track_stock:true,quantity:5,price_cents:125050,cost_cents:60025,image_url:'/image'}];
   w.fetch=vi.fn(async(url,options={})=>{requests.push({url,...options});
-    let data=url.endsWith('/store/products')?{products,categories:[],movements:[],canManage:admin}:url.endsWith('/pos/customers')?{customers,isAdmin:admin,canCreate:true,actorId:admin?'admin':'agent'}:{orderId:'order1',quoteId:'quote1',receiptUrl:'/api/admin/orders/order1/receipt'};
+    let data=url.endsWith('/store/products')?{products,categories:[],movements:[],canManage:admin}:url.endsWith('/pos/customers')?{customers,isAdmin:admin,canCreate:true,actorId:admin?'admin':'agent'}:url.includes('/pos/context/')?{openOrders:pendingOrders[decodeURIComponent(url.split('/pos/context/')[1])]||[]}:{orderId:'order1',quoteId:'quote1',receiptUrl:'/api/admin/orders/order1/receipt'};
     if(url.includes('/pos/tickets')){
       const body=options.body?JSON.parse(options.body):null,id=url.split('/tickets/')[1]?.split('/')[0];
       if(body){const key=id||'ticket_'+(++ticketCounter),old=tickets.get(key);const ticket=url.endsWith('/discard')?{...old,status:'discarded',version:old.version+1}:{id:key,name:body.name||old?.name||'Ticket '+ticketCounter,version:(old?.version||0)+1,status:'open',draft:{...body.draft,customer:customers.find(c=>c.id===body.draft?.customerId)||null}};tickets.set(key,ticket);data={ticket};}
@@ -143,6 +143,9 @@ it('los gestos de los bordes abren cada drawer y los gestos verticales o central
    * gesto es el de las respuestas rápidas (lo maneja el chat, no el borde).
    */
   swipe(4,200,110,208);expect(main).not.toHaveBeenCalled();
+  /* En FACTURACIÓN ese mismo gesto abre el SELECTOR DE CLIENTE, no el menú. */
+  expect(w.document.querySelector('.pos-client-dialog').open).toBe(true);
+  click('[data-pos-close]');expect(w.document.querySelector('.pos-client-dialog').open).toBe(false);
   w.document.body.dataset.tab='hoy';
   swipe(4,200,110,208);expect(main.mock.calls[0][0].detail.open).toBe(true);
   w.document.body.dataset.tab='catalogo';
@@ -163,6 +166,61 @@ it('cada ticket ofrece editar y eliminar en sus tres puntos, conservando el nomb
 it('busca y confirma un cliente desde el selector de pantalla completa',async()=>{
   click('[data-pos-client]');expect(w.document.querySelector('.pos-client-dialog').open).toBe(true);
   const search=w.document.querySelector('#pos-client-search');search.value='no existe';search.dispatchEvent(new w.Event('input'));expect(w.document.querySelectorAll('[data-client-choice]')).toHaveLength(0);
-  search.value='Cliente';search.dispatchEvent(new w.Event('input'));click('[data-client-choice]');expect(w.document.querySelector('#pos-client-select').disabled).toBe(false);
-  click('#pos-client-select');expect(w.document.querySelector('[data-pos-client]').textContent).toContain('Cliente <script>');expect(w.document.querySelector('.pos-dialog').open).toBe(false);
+  search.value='Cliente';search.dispatchEvent(new w.Event('input'));
+  expect(w.document.querySelector('#pos-client-search')).toBe(search);
+  click('[data-client-choice]');await flush();
+  expect(w.document.querySelector('[data-pos-client]').textContent).toContain('Cliente <script>');expect(w.document.querySelector('.pos-dialog').open).toBe(false);
+});
+/* FILTRO POR ORIGEN: se apoya en los grupos guardados, nunca en el nombre. */
+it('filtra clientes por grupo sin perder la búsqueda escrita',async()=>{
+  click('[data-pos-client]');expect(w.document.querySelector('#pos-client-chips').hidden).toBe(true);
+  click('#pos-client-filter');expect(w.document.querySelector('#pos-client-chips').hidden).toBe(false);
+  const search=w.document.querySelector('#pos-client-search');search.value='Cliente';search.dispatchEvent(new w.Event('input'));
+  click('[data-client-filter="fulltech"]');
+  const rows=[...w.document.querySelectorAll('[data-client-choice]')].map(r=>r.textContent);
+  expect(rows).toHaveLength(1);expect(rows[0]).toContain('Cliente Secundario');expect(rows[0]).toContain('FULLTECH');
+  expect(w.document.querySelector('#pos-client-search').value).toBe('Cliente');
+  click('[data-client-filter="phyto"]');
+  expect([...w.document.querySelectorAll('[data-client-choice]')].map(r=>r.textContent).join(' ')).toContain('Cliente <script>');
+  click('[data-client-filter="all"]');
+  expect(w.document.querySelectorAll('[data-client-choice]')).toHaveLength(2);
+});
+/*
+ * AISLAMIENTO DE CARRITOS: abrir otro cliente NO puede llevarse sus artículos.
+ */
+it('el carrito de un cliente no se traspasa al abrir otro cliente',async()=>{
+  w.dispatchEvent(new w.CustomEvent('fulltech:pos-context',{detail:{customerId:'c1',conversationId:'chat1'}}));await flush();
+  click('[data-pos-add]');click('[data-pos-add]');
+  expect(w.document.querySelector('.pos-cart-lines').textContent).toContain('Producto Fulltech');
+  w.dispatchEvent(new w.CustomEvent('fulltech:pos-context',{detail:{customerId:'c2'}}));await flush();
+  expect(w.document.querySelector('.pos-total').textContent).toContain('0.00');
+  expect(w.document.querySelector('[data-pos-client]').textContent).toContain('Cliente Secundario');
+  /* El carrito de c1 quedó guardado COMO SUYO, no se perdió. */
+  expect([...tickets.values()].some(t=>t.draft.customer?.id==='c1'&&t.draft.items.reduce((n,i)=>n+i.quantity,0)===2)).toBe(true);
+  w.dispatchEvent(new w.CustomEvent('fulltech:pos-context',{detail:{customerId:'c1',conversationId:'chat1'}}));await flush();
+  expect(w.document.querySelector('.pos-cart-lines').textContent).toContain('Producto Fulltech');
+  expect(w.document.querySelector('.pos-total').textContent).toContain('2,501.00');
+});
+/* El buscador del catálogo debe seguir siendo EL MISMO nodo mientras se escribe. */
+it('el buscador de facturación no reemplaza el campo al escribir',()=>{
+  const first=w.document.querySelector('#store-search');
+  first.value='Prod';first.dispatchEvent(new w.Event('input'));
+  const second=w.document.querySelector('#store-search');
+  expect(second).toBe(first);expect(second.value).toBe('Prod');
+  expect(w.document.querySelectorAll('.store-product')).toHaveLength(1);
+});
+/* Un pedido pendiente propio se ofrece, nunca se modifica solo. */
+it('ofrece continuar el pedido pendiente del cliente o crear uno nuevo',async()=>{
+  pendingOrders={c1:[{id:'o1',number:'PED-1',status:'nuevo',total:1250},{id:'o2',number:'PED-2',status:'nuevo',total:900}]};
+  w.dispatchEvent(new w.CustomEvent('fulltech:pos-context',{detail:{customerId:'c1',conversationId:'chat1'}}));await flush();
+  const dialog=w.document.querySelector('.pos-dialog');
+  expect(dialog.textContent).toContain('Pedido pendiente encontrado');
+  expect(dialog.querySelectorAll('[data-pending-order]')).toHaveLength(2);
+  expect(dialog.querySelector('[data-pending-continue]').disabled).toBe(true);
+  dialog.querySelector('[data-pending-order="o2"]').click();
+  expect(dialog.querySelector('[data-pending-continue]').disabled).toBe(false);
+  const edit=vi.fn();w.addEventListener('fulltech:order-edit',edit);
+  dialog.querySelector('[data-pending-continue]').click();await flush();
+  expect(edit.mock.calls[0][0].detail.orderId).toBe('o2');
+  expect(requests.some(r=>r.url.includes('/checkout'))).toBe(false);
 });

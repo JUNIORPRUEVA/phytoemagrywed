@@ -78,7 +78,7 @@ it('exige cliente y comprueba que el chat le pertenece',async()=>{
   expect((await call('pos/checkout',body({deliveryFee:0.5}))).status).toBe(422);
 });
 it('protege la última unidad, descuenta una sola vez y mantiene el descuento en el comprobante',async()=>{
-  const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS7kAAAAASUVORK5CYII=';
+  const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
   const product=(await call('store/products',{kind:'product',sku:'PROD-01',name:'Producto de prueba',image,price:'100.01',cost:'50',quantity:1})).data.product;
   const input=body({items:[{variantId:product.id,quantity:1,discount:{type:'percent',value:10}}],discount:{},expectedTotal:9001});
   const results=await Promise.all([call('pos/checkout',input),call('pos/checkout',{...input,requestId:randomUUID()})]);

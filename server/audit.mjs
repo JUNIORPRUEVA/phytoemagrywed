@@ -93,6 +93,39 @@ export const AUDIT_ACTIONS = Object.freeze([
   'conversation_assigned',
   'conversation_reassigned',
   'conversation_released',
+  /*
+   * CENTRO DE OPERACIONES (tickets internos). Es una traza distinta de la del
+   * chat del cliente: aquí se audita el trabajo interno (quién abrió un ticket,
+   * quién escribió, quién acusó recibo, quién lo cambió de estado y quién lo
+   * cerró). `entity` siempre es 'ticket'.
+   */
+  'ticket_created',
+  'ticket_message_sent',
+  'ticket_acknowledged',
+  'ticket_status_changed',
+  'ticket_assigned',
+  'ticket_resolved',
+  'ticket_participant_added',
+  'ticket_participant_removed',
+  /*
+   * SEGUIMIENTO DE LA TAREA (Etapa C): iniciar, registrar avance, reportar un
+   * problema, pedir ayuda, completar y escalar. Son actos distintos de «leer» y
+   * distintos de «cerrar el ticket».
+   */
+  'ticket_task_updated',
+  'ticket_task_completed',
+  'ticket_escalated',
+  /*
+   * AGENTES (Etapa D): alta/cambio de configuración, asignación a un ticket y
+   * todo el circuito de aprobación humana (pedida, decidida, ejecutada).
+   */
+  'agent_created',
+  'agent_updated',
+  'agent_approval_requested',
+  'agent_approval_decided',
+  'agent_approval_executed',
+  'agent_approval_failed',
+  'ticket_agent_assigned',
 ]);
 
 function newId() {

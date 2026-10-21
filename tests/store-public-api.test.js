@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startCrmServer } from '../server/crm-server.mjs';
 
-const IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS7kAAAAASUVORK5CYII=';
+const IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
 let app, dir, cookie;
 const request = async (route, { method = 'GET', body, auth = true } = {}) => {
   const response = await fetch(`${app.url}${route}`, {
@@ -71,7 +71,7 @@ describe('FULLTECH Store public catalog API', () => {
     const result = await request('/api/store/products/' + p.id, { auth: false });
     expect(result.status).toBe(200);
     expect(result.data.product).toMatchObject({ id: p.id, name: 'Cámara Fulltech', kind: 'product', price: 1250.5, currency: 'DOP', availability: 'available', featured: true });
-    expect(Object.keys(result.data.product).sort()).toEqual(['availability', 'availabilityState', 'brand', 'category', 'currency', 'description', 'featured', 'id', 'imageUrl', 'kind', 'name', 'price', 'purchaseable', 'shortDescription', 'warranty'].sort());
+    expect(Object.keys(result.data.product).sort()).toEqual(['availability', 'availabilityState', 'brand', 'category', 'currency', 'description', 'featured', 'id', 'imageUrl', 'images', 'kind', 'name', 'price', 'purchaseable', 'shortDescription', 'warranty'].sort());
     expect(JSON.stringify(result.data)).not.toMatch(/cost|supplier|margin|updated_by|stock_movements/i);
   });
 

@@ -72,22 +72,132 @@ function show(title,body,submitText,onSubmit){
   closeActions();modal.classList.toggle('pos-client-dialog',title==='Seleccionar cliente');modal.classList.toggle('pos-tickets-dialog',title==='Tickets');
   modal.innerHTML=`<form class="pos-modal-form"><header><h2>${esc(title)}</h2><button class="pos-icon" type="button" data-pos-close aria-label="Cerrar">×</button></header><div class="pos-modal-body">${body}<p class="pos-modal-error" role="alert"></p></div>${submitText?`<footer><button class="btn btn--primary" type="submit">${esc(submitText)}</button></footer>`:''}</form>`;
   modal.setAttribute('aria-label',title);if(!modal.open)modal.showModal();
-  modal.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const epoch=generation,button=modal.querySelector('[type=submit]');if(button.disabled)return;button.disabled=true;try{await onSubmit(new FormData(e.target));}catch(err){const error=modal.querySelector('.pos-modal-error');if(error&&epoch===generation)error.textContent=err.message;}finally{button.disabled=false;}});
+  modal.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();if(!onSubmit)return;const epoch=generation,button=modal.querySelector('[type=submit]');if(!button||button.disabled)return;button.disabled=true;try{await onSubmit(new FormData(e.target));}catch(err){const error=modal.querySelector('.pos-modal-error');if(error&&epoch===generation)error.textContent=err.message;}finally{button.disabled=false;}});
 }
+/*
+ * EL CLIENTE DEL CARRITO ES UN DATO, NO UN TEXTO.
+ *
+ * El grupo de negocio sale del campo `groups` del cliente guardado: nunca se
+ * deduce del nombre ni del teléfono. Un cliente sin grupo aparece en «Todos» y
+ * no se escribe nada en su ficha por el hecho de filtrar.
+ */
+let posClient={query:'',filter:'all'};
+const filterIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>';
+const clientGroupKeys=c=>(Array.isArray(c?.groups)?c.groups:[]).map(g=>String(g).trim().toLocaleLowerCase('es'));
+const clientMatches=(c,filter)=>filter==='all'||clientGroupKeys(c).some(g=>g.startsWith(filter==='phyto'?'phytoemagry':'fulltech'));
+const clientGroupLabel=c=>{const keys=clientGroupKeys(c);if(keys.some(g=>g.startsWith('phytoemagry')))return 'PHYTOEMAGRY';if(keys.some(g=>g.startsWith('fulltech')))return 'FULLTECH';return '';};
+const clientInitials=name=>String(name||'?').trim().split(/\s+/).slice(0,2).map(part=>part[0]).join('').toUpperCase();
 function chooseClient(){
-  show('Seleccionar cliente',`<div class="pos-client-toolbar"><label class="field"><span class="field__label">Buscar cliente</span><input class="field__input" type="search" id="pos-client-search" placeholder="Nombre o teléfono" autocomplete="off"></label><button type="button" class="btn btn--ghost" id="pos-client-new">+ Agregar</button><button type="button" class="btn btn--primary" id="pos-client-select" disabled>Seleccionar</button></div><div class="pos-new-client" hidden><h3>Nuevo cliente</h3><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="120"></label><label class="field"><span class="field__label">Teléfono con código de país</span><input class="field__input" name="phone" type="tel" placeholder="+1 809 555 1234"></label><button class="btn btn--primary" type="submit">Guardar y seleccionar</button></div><div id="pos-customer-results" role="group" aria-label="Clientes"></div>`,null,async form=>{
+  show('Seleccionar cliente',`<div class="pos-client-toolbar"><label class="store-search field"><span class="sr-only">Buscar cliente</span><input class="field__input" type="search" id="pos-client-search" placeholder="Buscar por nombre o teléfono" autocomplete="off" enterkeyhint="search"></label><div class="pos-client-tools"><button type="button" class="pos-client-tool" id="pos-client-filter" aria-label="Filtrar por grupo de negocio" aria-controls="pos-client-chips" aria-expanded="false">${filterIcon}${posClient.filter!=='all'?'<span class="pos-client-tool-dot" aria-hidden="true"></span>':''}</button><button type="button" class="pos-client-tool" id="pos-client-new" aria-label="Agregar cliente" title="Agregar cliente" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div></div><div class="pos-client-chips" id="pos-client-chips" role="group" aria-label="Grupo de negocio" hidden><button type="button" data-client-filter="all" aria-pressed="true">Todos</button><button type="button" data-client-filter="phyto" aria-pressed="false">PHYTOEMAGRY</button><button type="button" data-client-filter="fulltech" aria-pressed="false">FULLTECH</button></div><div class="pos-new-client" hidden><h3>Nuevo cliente</h3><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="120"></label><label class="field"><span class="field__label">Teléfono con código de país</span><input class="field__input" name="phone" type="tel" placeholder="+1 809 555 1234"></label><button class="btn btn--primary" type="submit">Guardar y seleccionar</button></div><div id="pos-customer-results" role="group" aria-label="Clientes"></div>`,null,async form=>{
     if(!String(form.get('phone')||'').trim())throw new Error('Escribe el teléfono del nuevo cliente.');
     await initialize();
-    const data=await api('customers',{name:form.get('name'),phone:form.get('phone')});customers.push(data.customer);selectClient(data.customer);modal.close();
+    const data=await api('customers',{name:form.get('name'),phone:form.get('phone')});customers.push(data.customer);modal.close();await enterCustomer({customer:data.customer,askOrders:false});
   });
-  let selected=null;
-  const results=()=>{const q=$('#pos-client-search').value.trim().toLocaleLowerCase();$('#pos-customer-results').innerHTML=customers.filter(c=>(c.name+' '+c.phone_e164).toLocaleLowerCase().includes(q)).map(c=>`<button type="button" class="pos-customer-row" data-client-choice="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><span class="pos-customer-avatar" aria-hidden="true">${esc((c.name||'?').slice(0,1).toUpperCase())}</span><span><strong>${esc(c.name||c.phone_e164)}</strong><small>${esc(c.phone_e164)}</small></span><span class="pos-customer-check" aria-hidden="true">${selected?.id===c.id?'✓':''}</span></button>`).join('')||'<p class="pos-empty">No encontramos clientes. Puedes agregar uno nuevo.</p>';};
-  $('#pos-customer-results').addEventListener('click',e=>{const row=e.target.closest('[data-client-choice]');if(!row)return;selected=customers.find(c=>c.id===row.dataset.clientChoice);$('#pos-client-select').disabled=!selected;results();});
-  $('#pos-client-select').addEventListener('click',()=>{if(selected){selectClient(selected);modal.close();}});
+  /*
+   * La lista NO se reconstruye al filtrar: se reescribe solo el contenedor de
+   * resultados, así el buscador conserva el texto, el foco y el teclado.
+   */
+  const results=()=>{
+    const q=String($('#pos-client-search')?.value||'').trim().toLocaleLowerCase();
+    posClient.query=String($('#pos-client-search')?.value||'');
+    const rows=customers.filter(c=>clientMatches(c,posClient.filter)&&(String(c.name||'')+' '+String(c.phone_e164||'')).toLocaleLowerCase().includes(q));
+    const host=$('#pos-customer-results');
+    if(host)host.innerHTML=rows.length?rows.map(c=>{
+      const tag=clientGroupLabel(c),current=draft.customer?.id===c.id;
+      return `<button type="button" class="pos-customer-row" data-client-choice="${esc(c.id)}" aria-pressed="${current}"><span class="pos-customer-avatar" aria-hidden="true">${esc(clientInitials(c.name))}</span><span class="pos-customer-main"><strong>${esc(c.name||c.phone_e164||'Cliente')}</strong>${c.phone_e164?`<small>${esc(c.phone_e164)}</small>`:''}</span>${tag?`<span class="pos-customer-tag">${esc(tag)}</span>`:''}<span class="pos-customer-check" aria-hidden="true">${current?'✓':''}</span></button>`;
+    }).join(''):'<p class="pos-empty">No encontramos clientes con esa búsqueda o filtro.</p>';
+  };
+  const syncFilters=()=>{
+    modal.querySelectorAll('[data-client-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.clientFilter===posClient.filter)));
+    const trigger=$('#pos-client-filter');
+    if(trigger){trigger.classList.toggle('is-filtered',posClient.filter!=='all');trigger.setAttribute('aria-expanded',String(!$('#pos-client-chips')?.hidden));}
+  };
+  $('#pos-customer-results').addEventListener('click',e=>{
+    const row=e.target.closest('[data-client-choice]');if(!row)return;
+    const customer=customers.find(c=>c.id===row.dataset.clientChoice);if(!customer)return;
+    modal.close();runAction(()=>enterCustomer({customer}));
+  });
+  $('#pos-client-filter').addEventListener('click',()=>{const chips=$('#pos-client-chips');if(chips)chips.hidden=!chips.hidden;syncFilters();});
+  $('#pos-client-chips').addEventListener('click',e=>{const button=e.target.closest('[data-client-filter]');if(!button)return;posClient.filter=button.dataset.clientFilter||'all';syncFilters();results();});
   $('#pos-client-new').addEventListener('click',()=>{const form=modal.querySelector('.pos-new-client');form.hidden=!form.hidden;$('#pos-client-new').setAttribute('aria-expanded',String(!form.hidden));if(!form.hidden)form.querySelector('input').focus();});
-  $('#pos-client-search').addEventListener('input',results);results();
+  $('#pos-client-search').addEventListener('input',results);
+  $('#pos-client-chips').hidden=posClient.filter==='all';
+  syncFilters();
+  results();
 }
 function selectClient(customer){draft.customer=customer;draft.conversationId='';draft.location=null;draft.quoteId=null;draft.createdOrderId=null;draft.orderDirty=false;changed();}
+
+/* ------------------------------------------------------------------ *
+ * UN CARRITO, UN CLIENTE.
+ *
+ * El carrito vive en memoria y se guarda en el SERVIDOR como ticket
+ * versionado. Al abrir el contexto de otro cliente NUNCA se traspasan sus
+ * artículos: el carrito anterior se guarda COMO SUYO y el cliente nuevo abre
+ * su propio borrador (el suyo guardado, o uno vacío). La propiedad de un
+ * pedido no se cambia de forma implícita en ningún camino.
+ * ------------------------------------------------------------------ */
+function applyCustomer({customer,conversationId='',location=null}={}){
+  const same=Boolean(customer)&&draft.customer?.id===customer.id;
+  draft.customer=customer||null;
+  draft.conversationId=conversationId||(same?draft.conversationId:'');
+  draft.location=location??(same?draft.location:null);
+  if(!draft.location&&!same)draft.address='';
+  draft.quoteId=null;draft.createdOrderId=null;draft.orderDirty=false;
+  changed();
+}
+async function isolateCartFor(customerId){
+  if(!draft.items.length||draft.customer?.id===customerId)return true;
+  try{await saveActiveTicket();}
+  catch(error){message=`No se pudo guardar el carrito de ${draft.customer?.name||'el cliente anterior'}: ${error.message}`;render();return false;}
+  draft=empty();persist();
+  return true;
+}
+async function ticketForCustomer(customerId){
+  try{const data=await api('tickets');return (data.tickets||[]).find(t=>(t.draft?.customer?.id||t.draft?.customerId)===customerId&&(!t.status||t.status==='open'))||null;}
+  catch{return null;}
+}
+async function pendingOrders(customerId){
+  try{const data=await getAdmin(`/api/admin/pos/context/${encodeURIComponent(customerId)}`);return data.openOrders||[];}
+  catch{return [];}
+}
+async function openCustomerCart({customer,conversationId='',location=null}={}){
+  if(!(await isolateCartFor(customer.id)))return;
+  if(!draft.items.length){
+    const own=await ticketForCustomer(customer.id);
+    if(own)draft={...empty(),...own.draft,ticketId:own.id,ticketVersion:own.version,ticketName:own.name,ticketDirty:false};
+  }
+  applyCustomer({customer,conversationId,location});
+}
+async function enterCustomer({customer,conversationId='',location=null,askOrders=true}={}){
+  if(!customer)return;
+  const orders=askOrders?await pendingOrders(customer.id):[];
+  if(orders.length){offerPendingOrders({customer,conversationId,location,orders});return;}
+  await openCustomerCart({customer,conversationId,location});
+}
+/*
+ * PEDIDOS PENDIENTES DEL PROPIO CLIENTE. Nada se toca hasta que la persona
+ * decide: no se fusionan pedidos ni se reasigna la propiedad de ninguno.
+ */
+function offerPendingOrders({customer,conversationId='',location=null,orders=[],onNew=null}={}){
+  const total=orders.length,multiple=total>1;
+  /* El total del pedido viene en pesos (no en centavos): no se usa `cash`. */
+  const orderState={nuevo:'Nuevo',confirmado:'Confirmado',preparando:'Preparando',en_camino:'En camino',entregado:'Entregado',cancelado:'Cancelado',perdido:'Perdido'};
+  const rows=orders.map(o=>{
+    const meta=[orderState[o.status]||o.status||'',o.total!=null?new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(o.total)):'',o.items?`${o.items} ${o.items===1?'artículo':'artículos'}`:'',o.created_at?String(o.created_at).slice(0,10):''].filter(Boolean).join(' · ');
+    return `<button type="button" class="pos-pending-row" data-pending-order="${esc(o.id)}" aria-pressed="${!multiple&&orders[0].id===o.id}"><span class="pos-pending-main"><strong>${esc(o.number||o.id)}</strong>${meta?`<small>${esc(meta)}</small>`:''}</span><span class="pos-customer-check" aria-hidden="true">${!multiple&&orders[0].id===o.id?'✓':''}</span></button>`;
+  }).join('');
+  show('Pedido pendiente encontrado',`<p class="pos-muted">${esc(customer?.name||'Este cliente')} ${multiple?`tiene ${total} pedidos abiertos`:'tiene un pedido abierto'}. Elige qué hacer; hasta que decidas no se modifica ninguno.</p><div class="pos-pending-list">${rows}</div><div class="pos-pending-actions"><button type="button" class="btn btn--primary" data-pending-continue>Continuar pedido</button><button type="button" class="btn btn--ghost" data-pending-new>Crear pedido nuevo</button><button type="button" class="btn btn--ghost" data-pending-cancel>Cancelar</button></div>`,null,null);
+  let picked=multiple?null:orders[0].id;
+  const sync=()=>{
+    modal.querySelectorAll('[data-pending-order]').forEach(row=>{const on=row.dataset.pendingOrder===picked;row.setAttribute('aria-pressed',String(on));const check=row.querySelector('.pos-customer-check');if(check)check.textContent=on?'✓':'';});
+    const go=modal.querySelector('[data-pending-continue]');if(go)go.disabled=!picked;
+  };
+  modal.querySelectorAll('[data-pending-order]').forEach(row=>row.addEventListener('click',()=>{picked=row.dataset.pendingOrder;sync();}));
+  modal.querySelector('[data-pending-continue]')?.addEventListener('click',()=>{const orderId=picked;modal.close();if(orderId)window.dispatchEvent(new CustomEvent('fulltech:order-edit',{detail:{orderId,customerId:customer?.id||'',conversationId}}));});
+  modal.querySelector('[data-pending-new]')?.addEventListener('click',()=>{modal.close();runAction(()=>onNew?onNew():openCustomerCart({customer,conversationId,location}));});
+  modal.querySelector('[data-pending-cancel]')?.addEventListener('click',()=>modal.close());
+  sync();
+}
 function editDiscount(index){
   const target=index==='total'?draft:draft.items[Number(index)];if(!target)return;
   show(index==='total'?'Descuento general':'Descuento del artículo',`<label class="field"><span class="field__label">Tipo</span><select class="field__select" name="type"><option value="amount" ${target.discount?.type!=='percent'?'selected':''}>Monto fijo (RD$)</option><option value="percent" ${target.discount?.type==='percent'?'selected':''}>Porcentaje (%)</option></select></label><label class="field"><span class="field__label">Valor</span><input class="field__input" type="number" name="value" min="0" step="0.01" value="${Number(target.discount?.value||0)}" required></label><p class="pos-muted">El monto fijo se aplica a toda la línea. Usa 0 para quitar el descuento.</p>`,'Aplicar',form=>{
@@ -205,7 +315,13 @@ let searchOpen=false,searchBar=null;
 function syncSearchBar(){
   searchBar=$('#store-catalogo .store-search-line')||$('#pos-search-host .store-search-line')||searchBar;
   const host=$('#pos-search-host'),detail=new URLSearchParams(location.search).has('product');
-  if(host&&searchBar&&!detail)host.append(searchBar);
+  /*
+   * TECLADO MÓVIL. `append` de un nodo que ya está en su sitio lo DESMONTA y lo
+   * vuelve a insertar, y al desmontarse el campo pierde el foco: en Android/iOS
+   * eso cierra el teclado después de la PRIMERA letra. Solo se mueve de verdad
+   * cuando el buscador está en otro contenedor.
+   */
+  if(host&&searchBar&&!detail&&searchBar.parentElement!==host)host.append(searchBar);
   $('.pos-appbar')?.classList.toggle('pos-search-open',searchOpen&&!detail);
   $('[data-pos-search-open]')?.classList.toggle('pos-search-filtered',!!searchBar?.querySelector('input')?.value||!!searchBar?.querySelector('.store-filter-dot'));
 }
@@ -309,7 +425,11 @@ document.addEventListener('pointerdown',e=>{
    * el gesto del propio chat (app.js); aquí solo cuenta la portada.
    */
   const enPortada=document.body.dataset.tab==='hoy';
-  const mode=actionsDrawer.open?'close-actions':document.body.dataset.drawer==='open'?'close-main':e.clientX<=20&&enPortada?'main':e.clientX>=window.innerWidth-20&&document.body.dataset.tab==='catalogo'?'actions':null;
+  /*
+   * En FACTURACIÓN el borde izquierdo abre el SELECTOR DE CLIENTE (nunca el
+   * menú general, que sigue limitado a la portada).
+   */
+  const mode=actionsDrawer.open?'close-actions':document.body.dataset.drawer==='open'?'close-main':e.clientX<=20&&enPortada?'main':e.clientX<=20&&document.body.dataset.tab==='catalogo'?'client':e.clientX>=window.innerWidth-20&&document.body.dataset.tab==='catalogo'?'actions':null;
   if(!mode||e.target.closest('input,textarea,select,[contenteditable=true]'))return;
   edgeGesture={id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now(),mode};
   if(edgeZones.includes(e.target))e.target.setPointerCapture?.(e.pointerId);
@@ -325,6 +445,7 @@ document.addEventListener('pointerup',e=>{
   const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
   if(Date.now()-gesture.at>900||Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.5)return;
   if(gesture.mode==='main'&&dx>0)window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:true}}));
+  if(gesture.mode==='client'&&dx>0)chooseClient();
   if(gesture.mode==='actions'&&dx<0)actions();
   if(gesture.mode==='close-actions'&&dx>0)closeActions();
   if(gesture.mode==='close-main'&&dx<0)window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
@@ -943,11 +1064,24 @@ window.addEventListener('fulltech:tab',e=>{closeActions();edgeGesture=null;if(e.
 window.addEventListener('fulltech:pos-context',async e=>{
   const epoch=generation;await initialize();if(epoch!==generation)return;const context=e.detail;
   if(operation){message='Revisa el resultado de la operación anterior antes de iniciar otro pedido.';render();return;}
+  const targetId=context.customerId;
   const apply=async()=>{
-    const listedCustomer=customers.find(c=>c.id===context.customerId);
-    const customer=context.customer?.id===context.customerId?{...listedCustomer,...context.customer}:listedCustomer||null;
+    /*
+     * AISLAMIENTO: si en pantalla está el carrito de OTRO cliente, se guarda
+     * COMO SUYO (ticket) y este cliente abre SU propio contexto. Antes se
+     * ofrecía «cambiar el cliente del carrito», que traspasaba artículos de un
+     * cliente a otro; eso ya no ocurre nunca.
+     */
+    if(!(await isolateCartFor(targetId)))return;
+    const listedCustomer=customers.find(c=>c.id===targetId);
+    const customer=context.customer?.id===targetId?{...listedCustomer,...context.customer}:listedCustomer||null;
     const prefs=customer?.orderPrefs??customer?.order_prefs??null;
-    draft.customer=customer;draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';
+    /* Su propio borrador guardado, si lo tiene: se retoma tal cual. */
+    if(!draft.items.length){
+      const own=await ticketForCustomer(targetId);
+      if(own)draft={...empty(),...own.draft,ticketId:own.id,ticketVersion:own.version,ticketName:own.name,ticketDirty:false};
+    }
+    draft.customer=customer;draft.conversationId=context.conversationId||'';draft.location=context.location||draft.location||null;draft.quoteId=null;draft.flow='order';
     // Pedido nuevo: nunca se reutiliza el id de un pedido anterior.
     draft.createdOrderId=null;draft.orderDirty=false;
     if(!draft.items.length&&prefs){
@@ -965,7 +1099,11 @@ window.addEventListener('fulltech:pos-context',async e=>{
     }
     changed();
   };
-  if(draft.items.length&&draft.customer?.id!==context.customerId)show('Cambiar cliente del carrito','<p>Se conservarán los artículos y se asignarán al cliente seleccionado.</p>','Continuar',()=>{apply();modal.close();});else apply();
+  const listed=customers.find(c=>c.id===targetId)||null;
+  const customer=context.customer?.id===targetId?{...listed,...context.customer}:listed;
+  const openOrders=await pendingOrders(targetId);
+  if(openOrders.length)offerPendingOrders({customer,conversationId:context.conversationId||'',location:context.location||null,orders:openOrders,onNew:apply});
+  else await apply();
 });
 window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}});
 window.addEventListener('phyto:calling-logout',()=>{generation++;quotesEpoch++;closeActions();actionsDrawer.innerHTML='';edgeGesture=null;clearTimeout(ticketSaveTimer);searchOpen=false;searchBar=null;quotesPage()?.replaceChildren();document.querySelector('.pos-document-toast')?.remove();loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});

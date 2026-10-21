@@ -49,6 +49,33 @@ export const REALTIME_TYPES = Object.freeze([
   'customer.updated',
   'supervisor.changed',
   'whatsapp.message_received',
+  /*
+   * CENTRO DE OPERACIONES (tickets internos).
+   *
+   * `message.*` y `task.*` son los nombres canónicos de la Etapa C: son los que
+   * podrá consumir un agente futuro (recibir un mensaje, saber que se acusó o que
+   * el trabajo se completó). `ticket.message`/`ticket.updated` se mantienen porque
+   * la Etapa B los publicaba.
+   */
+  'ticket.created',
+  'ticket.updated',
+  'ticket.message',
+  'ticket.status_changed',
+  'ticket.assigned',
+  'ticket.escalated',
+  'ticket.resolved',
+  'message.created',
+  'message.read',
+  'task.acknowledged',
+  'task.completed',
+  /*
+   * EJECUCIÓN DE AGENTES (Etapa D). Los publica el motor de agentes; sirven
+   * para que la ficha muestre en vivo qué está haciendo un agente y para que
+   * un futuro agente sepa que otro terminó sin acoplarse a ningún modelo.
+   */
+  'agent.execution.started',
+  'agent.execution.completed',
+  'agent.execution.failed',
 ]);
 
 const ID = '[^/]+';
@@ -301,9 +328,20 @@ export function eventFromMutation({ method, route = '', status = 0, body = null 
  *   - `panel`    → cualquiera con el permiso.
  *   - `assignee` → administración o el repartidor implicado (nunca el resto).
  *   - `label`    → igual que panel, pero el evento no habla de una persona.
+ *   - `ticket`   → SOLO los participantes de ese ticket (o quien puede verlos
+ *                  todos). Un ticket es una conversación interna: el resto del
+ *                  panel no tiene por qué enterarse de que existe.
  */
 export function clientAccepts(event, { actor = null, can = () => false } = {}) {
   if (event.requires && !can(event.requires)) return false;
+  if (event.audience === 'ticket') {
+    const role = String(actor?.role ?? '');
+    if (role === 'ADMIN' || can('tickets.read_all')) return true;
+    const me = String(actor?.id ?? '');
+    if (!me) return false;
+    const ids = Array.isArray(event.data?.participant_ids) ? event.data.participant_ids : [];
+    return ids.includes(me);
+  }
   if (event.audience !== 'assignee') return true;
   const role = String(actor?.role ?? '');
   if (role === 'ADMIN') return true;

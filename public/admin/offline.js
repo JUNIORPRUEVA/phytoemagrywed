@@ -539,7 +539,6 @@
       }else{
         if(target&&!product)return localError('El artículo no está descargado.');
         if(!String(body.name||'').trim()||!String(body.sku||'').trim())return localError('Escribe nombre y código del artículo.');
-        if(body.kind==='product'&&!body.image&&!product?.image_url)return localError('Agrega la imagen del producto.');
         if(snapshot.products.some(p=>p.sku===String(body.sku).toUpperCase()&&p!==product))return localError('Ese código ya existe.');
         const category=snapshot.categories.find(c=>c.id===body.category_id);
         const next={...product,...body,id:product?.id||id,sku:String(body.sku).toUpperCase(),price_cents:money(body.price),cost_cents:money(body.cost),quantity:product?.quantity??Number(body.quantity||0),version:(product?.version||0)+1,track_stock:body.kind==='product',active:body.active!==false,category:category?.name||body.category||'',image_url:body.image||product?.image_url||null,pending:true};
@@ -678,6 +677,7 @@
     if(!mine)return localError('Conéctate para renovar el acceso sin conexión de 24 horas.',401);
     if(protectedWrite(url))return localError('Esta acción requiere conexión con el servicio.',503);
     let body=options.body?JSON.parse(options.body):{};
+    if(url.pathname.startsWith('/api/admin/store/products')&&(body.images!==undefined||url.pathname.endsWith('/publication')))return localError('Los cambios de galería y publicación necesitan conexión. Conserva el formulario y vuelve a guardar cuando haya servicio.',503);
     if(/password|apiKey|accessToken|secret/i.test(JSON.stringify(Object.keys(body))))return localError('Las contraseñas y claves se cambian con conexión segura al servidor.',503);
     const paymentPath=url.pathname.match(/^\/api\/admin\/orders\/([^/]+)\/payments$/);
     if(paymentPath&&options.method==='POST'){

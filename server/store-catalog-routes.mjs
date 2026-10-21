@@ -17,9 +17,11 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
   const publicationMatch=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)\/publication$/.exec(route);
   const restoreMatch=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)\/restore$/.exec(route);
   const categoryImage=/^\/api\/admin\/store\/categories\/(category_[a-zA-Z0-9_-]+)\/image$/.exec(route);
+  const galleryImage=/^\/api\/admin\/store\/products\/([a-zA-Z0-9_-]+)\/images\/([a-zA-Z0-9_-]+)$/.exec(route);
   try {
-    if((match?.[2]==='image'||categoryImage)&&req.method==='GET') {
-      const image=await catalog.image(categoryImage?.[1]||match[1]);
+    if(route==='/api/admin/store/gallery-audit'&&req.method==='GET')return actor.role==='ADMIN'?send(200,{ok:true,...await catalog.galleryAudit()}):send(403,{ok:false,error:'forbidden'});
+    if((match?.[2]==='image'||categoryImage||galleryImage)&&req.method==='GET') {
+      const image=await catalog.image(categoryImage?.[1]||galleryImage?.[1]||match[1],galleryImage?.[2]);
       if(!image)return send(404,{ok:false,error:'not_found'});
       res.writeHead(200,{'content-type':image.mime,'cache-control':'private, no-cache','x-content-type-options':'nosniff'});
       res.end(Buffer.from(image.data,'base64'));return true;
@@ -45,7 +47,7 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
       await ctx.audit?.record({entity:'product',entityId:restored.id,action:'store.product_restored',actor:actor.display_name,summary:`Artículo restaurado (sin publicar): ${restored.name}`});
       return send(200,{ok:true,product:restored});
     }
-    const body=await readJson(req,1500000);
+    const body=await readJson(req,4500000);
     if(route==='/api/admin/store/categories'&&req.method==='POST')return send(201,{ok:true,category:await catalog.createCategory(body,actor)});
     if(route==='/api/admin/store/products'&&req.method==='POST') return send(201,{ok:true,product:await catalog.save(body,actor)});
     if(publicationMatch&&req.method==='POST') {

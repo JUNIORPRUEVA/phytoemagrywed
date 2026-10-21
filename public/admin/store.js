@@ -36,7 +36,7 @@
       method:verb,headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
     if(r.status===401){if(generation===epoch&&wasAuthenticated)window.dispatchEvent(new Event('fulltech:session-expired'));throw new Error('Tu sesión terminó. Vuelve a entrar.');}
     const data=await r.json();
-    if(!r.ok||!data.ok)throw new Error(data.message||'No se pudo completar la operación. Actualiza y vuelve a intentarlo.');
+    if(!r.ok||!data.ok)throw Object.assign(new Error(data.message||'No se pudo completar la operación. Actualiza y vuelve a intentarlo.'),{code:data.error});
     return data;
   }
   async function load(force=false) {
@@ -73,7 +73,8 @@
     node?.focus({preventScroll:true});if(node?.setSelectionRange&&start!==null)try{node.setSelectionRange(start,end);}catch{}
   }
   function head() {return '<p id="store-notice" class="store-notice" role="status" aria-live="polite"></p>';}
-  function photo(p){return p.image_url?`<img class="store-photo" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" width="96" height="96">`:'<div class="store-photo store-photo--empty" aria-label="Servicio">Servicio</div>';}
+  function photo(p){return p.image_url?`<img class="store-photo" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" width="96" height="96">`:'<div class="store-photo store-photo--empty" aria-label="Sin imagen">Sin imagen</div>';}
+  document.addEventListener('click',event=>{const thumb=event.target.closest('[data-detail-image]');if(!thumb)return;const detail=thumb.closest('.product-details'),image=detail.querySelector('.product-summary__image img');if(image){image.src=thumb.dataset.detailImage;detail.querySelectorAll('[data-detail-image]').forEach(button=>button.setAttribute('aria-pressed',String(button===thumb)));}});
   /*
    * CÓMO SE LEE EL STOCK. «Sin control de inventario» NO es «Agotado»: un
    * artículo que se compra al proveedor cuando lo piden no tiene existencias que
@@ -97,8 +98,6 @@
    */
   const procedencia=(p)=>p.product_type??(p.legacy?'own':(p.track_stock===false?'third_party':'own'));
   const etiquetaProcedencia=(p)=>procedencia(p)==='third_party'?'De terceros':'Propio';
-  // La etiqueta de procedencia se ve como un distintivo pequeño, no como texto suelto.
-  const claseProcedencia=(p)=>`store-product__origin${procedencia(p)==='third_party'?' store-product__origin--third':''}`;
   const gruposNegocio=()=>[...new Set(products.map(p=>p.business_group).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
   function cards() {
     const search=query.toLocaleLowerCase();
@@ -107,7 +106,7 @@
     box.dataset.layout=layout;
     box.innerHTML=rows.length?`<div class="store-items">${rows.map(p=>`<article class="store-product${p.active?'':' store-product--inactive'}" data-product-id="${esc(p.id)}">
       <a class="store-product__visual" href="/admin/?v=catalogo&amp;product=${encodeURIComponent(p.id)}" data-store-detail="${esc(p.id)}" aria-label="Ver detalle de ${esc(p.name)}">${photo(p)}${!p.active?'<span class="store-product__badge">Inactivo</span>':p.track_stock&&p.quantity===0?'<span class="store-product__badge">Agotado</span>':''}</a>
-      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><small class="${claseProcedencia(p)}">${esc(etiquetaProcedencia(p))}</small>${sinControl(p)?'<small class="store-product__policy">Sin control de inventario</small>':''}<span class="pos-card-plus" aria-hidden="true">${svg('plus')}</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
+      <button type="button" class="store-product__body pos-add" data-pos-add="${esc(p.id)}" ${!p.active?'disabled':''} aria-label="Agregar ${esc(p.name)} al carrito"><h4>${esc(p.name)}</h4><strong class="store-price">${cash(p.price_cents)}</strong><span class="pos-card-plus" aria-hidden="true">${svg('plus')}</span><span class="pos-card-quantity" hidden></span></button></article>`).join('')}</div>`:'<div class="store-empty"><h3>No encontramos artículos</h3><p>Prueba otra búsqueda o categoría.</p><button class="btn btn--ghost" type="button" data-store-clear>Mostrar todos</button></div>';
     window.dispatchEvent(new Event('fulltech:pos-render'));
 
   }
@@ -182,13 +181,41 @@
   }
   function detail(p) {
     if(!p)return `<div class="store-empty"><h2 id="store-detail-title" tabindex="-1">Artículo no encontrado</h2><p>Puede que ya no esté disponible para tu cuenta.</p></div>`;
-    return `<article class="store-detail"><div class="store-detail__image">${photo(p)}</div><div class="store-detail__content"><div class="store-detail__eyebrow">${p.kind==='service'?'Servicio':'Producto'}<span class="store-status${p.active?' store-status--active':''}">${p.active?'Activo':'Inactivo'}</span></div>
-      <h2 id="store-detail-title" tabindex="-1">${esc(p.name)}</h2><p class="store-muted">${esc(p.sku)}</p><strong class="store-detail__price">${cash(p.price_cents)}</strong><p class="store-muted">Precio de venta</p>
-      <dl class="store-detail-facts"><div><dt>Categoría</dt><dd>${esc(categoryName(p))}</dd></div><div><dt>Procedencia</dt><dd>${esc(etiquetaProcedencia(p))}</dd></div>${p.business_group?`<div><dt>Grupo de negocio</dt><dd>${esc(p.business_group)}</dd></div>`:''}${canManage?`<div><dt>Costo ${p.kind==='service'?'del servicio':'por unidad'}</dt><dd>${cash(p.cost_cents)}</dd></div>`:''}<div><dt>${p.kind==='service'?'Inventario':(sinControl(p)?'Inventario':'Existencias')}</dt><dd>${esc(stockLabel(p))}</dd></div>${p.kind==='product'&&!p.legacy&&!sinControl(p)?`<div><dt>Stock mínimo</dt><dd>${p.min_stock} unidades</dd></div>`:''}</dl>
-      <section class="store-suppliers" id="store-suppliers" data-product="${esc(p.id)}"><h3>Tiendas disponibles</h3><p class="store-muted">Cargando tiendas…</p></section>
-      ${canManage?`<section class="store-publication"><h3>Catálogo / Tienda</h3><p class="store-muted">Estado: <strong>${p.store_publication?.status==='published'?'Publicado en FULLTECH Store':'Oculto en FULLTECH Store'}</strong> · ${p.store_publication?.featured?'Artículo destacado':'Sin destacar'}. Se publica automáticamente al guardar; retíralo si no debe aparecer en la tienda.</p><button class="btn ${p.store_publication?.status==='published'?'btn--ghost':'btn--primary'}" type="button" data-store-publication="${esc(p.id)}" data-next-status="${p.store_publication?.status==='published'?'unpublished':'published'}" ${p.store_publication?.status!=='published'&&!p.active?'disabled':''}>${p.store_publication?.status==='published'?'Retirar de la tienda':'Publicar en FULLTECH Store'}</button><button class="btn btn--ghost" type="button" data-store-featured="${esc(p.id)}" data-next-featured="${!p.store_publication?.featured}" ${p.store_publication?.status!=='published'?'disabled':''}>${p.store_publication?.featured?'Quitar destacado':'Destacar en inicio'}</button>${!p.active&&p.store_publication?.status!=='published'?'<small class="store-muted">Activa el artículo en el catálogo para publicarlo.</small>':''}</section>`:''}
-      ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el mismo inventario de cápsulas de Phytoemagry.</p>':''}<div class="store-actions">${canManage?`<button class="btn btn--primary" type="button" data-store-edit="${esc(p.id)}">Editar artículo</button>`:''}${canManage&&!p.legacy?`<button class="btn btn--ghost" type="button" data-store-archive="${esc(p.id)}">Archivar artículo</button>`:''}${p.track_stock?`<button class="btn btn--ghost" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver stock</button>`:''}</div></div>
-      <section class="store-detail-description"><h3>Descripción</h3><p>${esc(p.description||'Este artículo todavía no tiene descripción.')}</p></section></article>`;
+    const service=p.kind==='service',published=p.store_publication?.status==='published';
+    const fact=(label,value)=>`<div><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
+    const text=(label,value)=>value?`<div class="product-description"><h3>${esc(label)}</h3><p>${esc(value)}</p></div>`:'';
+    return `<article class="store-detail product-details">
+      <header class="product-summary">
+        <div class="product-summary__image">${photo(p)}</div>
+        <div class="product-summary__identity"><h2 id="store-detail-title" tabindex="-1">${esc(p.name)}</h2><p>${esc(p.sku)} · ${service?'Servicio':'Producto'} · <span>${p.active?'Activo':'Inactivo'}</span></p></div>
+        ${canManage?`<button class="btn btn--ghost btn--sm" type="button" data-store-edit="${esc(p.id)}" aria-label="Editar artículo">Editar</button>`:''}
+      </header>
+      ${p.images?.length>1?`<nav class="product-detail-thumbs" aria-label="Imágenes del producto">${p.images.map((entry,i)=>`<button type="button" data-detail-image="${esc(entry.url)}" aria-label="Ver imagen ${i+1}" aria-pressed="${i===0}"><img src="${esc(entry.url)}" alt="Imagen ${i+1}" width="48" height="48"></button>`).join('')}</nav>`:''}
+      <dl class="store-detail-facts product-facts">
+        ${fact('Precio de venta',cash(p.price_cents))}
+        ${canManage?fact(service?'Costo del servicio':'Costo unitario',cash(p.cost_cents))+fact('Ganancia por unidad',cash(p.price_cents-p.cost_cents)):''}
+        ${fact('Inventario',esc(stockLabel(p)))}${fact('Categoría',esc(categoryName(p)))}${fact('Procedencia',esc(etiquetaProcedencia(p)))}
+        ${p.business_group?fact('Grupo de negocio',esc(p.business_group)):''}
+      </dl>
+      <details class="product-accordion product-detail-inventory"><summary>Inventario y acciones</summary><div class="product-accordion-body">
+        ${p.kind==='product'&&!p.legacy&&!sinControl(p)?`<p class="store-muted">Stock mínimo: ${Number(p.min_stock||0)} unidades</p>`:''}
+        ${p.legacy?'<p class="store-detail-note">Estas presentaciones comparten el inventario de cápsulas de Phytoemagry. El costo se administra desde Gestionar cápsulas.</p>':''}
+        <div class="store-actions">${p.track_stock?`<button class="btn btn--ghost btn--sm" type="button" data-tab="${p.legacy?'productos':'inventario'}">Ver stock</button>`:''}${canManage&&!p.legacy?`<button class="btn btn--ghost btn--sm" type="button" data-store-archive="${esc(p.id)}">Archivar artículo</button>`:''}</div>
+      </div></details>
+      <details class="product-accordion"><summary>Descripciones y atributos</summary><div class="product-accordion-body">
+        ${text('Descripción interna',p.description||'Sin descripción interna.')}${text('Marca',p.store_brand)}
+      </div></details>
+      <details class="product-accordion"><summary>Tienda en línea <small>${published?'Publicado':'Oculto'}</small></summary><div class="product-accordion-body">
+        ${text('Nombre público',p.store_public_name)}${text('Descripción corta',p.store_short_description)}${text('Descripción pública',p.store_public_description)}
+        <p class="store-muted">${({AVAILABLE_NOW:'Disponible para entrega',ON_REQUEST:'Disponible bajo pedido',UNAVAILABLE:'No disponible'})[p.store_availability]||'Disponibilidad según inventario'}${p.store_publication?.featured?' · Destacado':''}</p>
+        ${canManage?`<div class="store-actions"><button class="btn btn--ghost btn--sm" type="button" data-store-publication="${esc(p.id)}" data-next-status="${published?'unpublished':'published'}" ${!published&&!p.active?'disabled':''}>${published?'Retirar de la tienda':'Publicar en FULLTECH Store'}</button><button class="btn btn--ghost btn--sm" type="button" data-store-featured="${esc(p.id)}" data-next-featured="${!p.store_publication?.featured}" ${!published?'disabled':''}>${p.store_publication?.featured?'Quitar destacado':'Destacar en inicio'}</button></div>${!p.active&&!published?'<p class="store-muted">Activa el artículo para publicarlo.</p>':''}`:''}
+      </div></details>
+      <details class="product-accordion"><summary>Garantía comercial</summary><div class="product-accordion-body">
+        ${p.warranty_available?`<p class="store-muted">${Number(p.warranty_months||0)} meses · ${esc(({FULLTECH:'FULLTECH',manufacturer:'Fabricante',other:'Otro'})[p.warranty_provider]||'Sin proveedor indicado')}</p>${text('Cobertura',p.warranty_coverage)}${text('Exclusiones',p.warranty_exclusions)}${text('Condiciones',p.warranty_conditions)}${text('Cómo reclamar',p.warranty_claim)}${text('Nota pública',p.warranty_public_notes)}`:'<p class="store-muted">Sin garantía comercial registrada.</p>'}
+        ${canManage?text('Notas internas',p.warranty_private_notes):''}
+      </div></details>
+      <details class="product-accordion"><summary>Tiendas disponibles</summary><div class="product-accordion-body"><section class="store-suppliers" id="store-suppliers" data-product="${esc(p.id)}"><p class="store-muted">Cargando tiendas…</p></section></div></details>
+    </article>`;
   }
   function render() {
     const box=root();if(!box)return;
@@ -200,7 +227,7 @@
       const selected=detailId();d.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
       if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));window.dispatchEvent(new Event('fulltech:catalog-view'));cargarTiendas(selected);return;}
       d.querySelector('#pos-search-host .store-search-line')?.remove();
-      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}"></label>${canManage?`<button type="button" class="store-filter-trigger" data-store-archived aria-label="Artículos archivados" title="Archivados"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M6 7v12h12V7M9 4h6l1 3H8l1-3Z"/></svg></button>`:''}<button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
+      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}" autocomplete="off" enterkeyhint="done"></label>${canManage?`<button type="button" class="store-filter-trigger" data-store-archived aria-label="Artículos archivados" title="Archivados"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M6 7v12h12V7M9 4h6l1 3H8l1-3Z"/></svg></button>`:''}<button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
       <div id="store-product-grid"></div>${`<button class="store-fab pos-actions-fab" type="button" data-pos-actions aria-label="Acciones de facturación" title="Acciones"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>`}`;
       cards();window.dispatchEvent(new Event('fulltech:catalog-view'));
     }else {
@@ -434,26 +461,46 @@
       categoryDialog.close();if(filterDrawer.open)openFilters();await load();
     }catch(err){form.querySelector('[role=alert]').textContent=err.message;}finally{button.disabled=false;}
   });
-  let editing=null,imageData=null;
+  let editing=null,productSaving=false,imageLoading=false,gallery=[],galleryDirty=false,replaceImage=null,gallerySession=0;
   function edit(id) {
-    editing=products.find(p=>p.id===id)||null;imageData=null;const p=editing||{};
-    dialog.innerHTML=`<form id="store-product-form"><div class="store-toolbar"><h2>${editing?'Editar artículo':'Crear producto o servicio'}</h2><button type="button" class="store-icon-button" data-store-close aria-label="Cerrar formulario">${svg('close')}</button></div><div class="store-form-body">
-    <label class="field"><span class="field__label">Tipo</span><select class="field__select" name="kind" ${editing?'disabled':''}><option value="product">Producto</option><option value="service">Servicio</option></select></label>
-    <label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" value="${esc(p.name)}" maxlength="160" required></label>
-    <div class="store-form-grid"><label class="field"><span class="field__label">Código / SKU</span><input class="field__input" name="sku" value="${esc(p.sku)}" maxlength="60" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" required placeholder="Ej. CAM-001"></label>
-    <div class="field"><label class="field__label" for="store-product-category">Categoría</label><div class="store-category-input"><select class="field__select" name="category_id" id="store-product-category">${categoryOptions(p.category_id||categoryRows.find(c=>c.name===p.category)?.id||'')}</select><button class="store-icon-button" type="button" data-category-new aria-label="Agregar categoría">${svg('plus')}</button></div></div></div>
-
-    <label class="field"><span class="field__label">Descripción interna</span><textarea class="field__input" name="description" maxlength="2000">${esc(p.description)}</textarea><small>Solo para el equipo; no se muestra en la tienda.</small></label>
-    <section class="store-publication store-product-public-fields"><h3>Contenido público de la tienda</h3><p class="store-muted">Estos datos sí los verán tus clientes. El artículo aparece en la tienda al guardarlo; puedes retirarlo desde la ficha.</p>
+    editing=products.find(p=>p.id===id)||null;productSaving=false;imageLoading=false;galleryDirty=false;replaceImage=null;gallerySession++;const p=editing||{};
+    gallery=(p.images??(p.image_url?[{id:p.id,url:p.image_url}]:[])).map(e=>({...e}));
+    dialog.innerHTML=`<form id="store-product-form" class="product-editor"><div class="store-toolbar"><h2 id="product-editor-title">${editing?'Editar artículo':'Crear producto'}</h2><button type="button" class="store-icon-button" data-store-close aria-label="Cerrar formulario">${svg('close')}</button></div>
+    <div class="store-form-body">
+      <div class="product-essential">
+        <div class="store-form-grid product-type-code">
+          <label class="field"><span class="field__label">Tipo</span><select class="field__select" name="kind" ${editing?'disabled':''}><option value="product">Producto</option><option value="service">Servicio</option></select></label>
+          <label class="field"><span class="field__label">Código / SKU</span><input class="field__input" name="sku" value="${esc(p.sku)}" maxlength="60" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" required placeholder="Ej. CAM-001" autocapitalize="characters" spellcheck="false"><small class="product-code-full" hidden></small></label>
+        </div>
+        <label class="field"><span class="field__label">Nombre</span><textarea class="field__input product-name-input" name="name" rows="1" maxlength="160" required autocomplete="off">${esc(p.name)}</textarea></label>
+    <div class="store-form-grid"><label class="field"><span class="field__label">Precio de venta (RD$)</span><input class="field__input" name="price" type="number" min="0" step="0.01" required value="${p.price_cents!==undefined?(p.price_cents/100).toFixed(2):''}"></label>
+    <label class="field"><span class="field__label">${p.legacy?'Costo por cápsulas (RD$)':'Costo unitario (RD$)'}</span><input class="field__input" name="cost" type="number" min="0" step="0.01" required ${p.legacy?'readonly':''} value="${p.cost_cents!==undefined?(p.cost_cents/100).toFixed(2):''}"></label></div>
+        <div class="field"><label class="field__label" for="store-product-category">Categoría</label><div class="store-category-input"><select class="field__select" name="category_id" id="store-product-category">${categoryOptions(p.category_id||categoryRows.find(c=>c.name===p.category)?.id||'')}</select><button class="store-icon-button" type="button" data-category-new aria-label="Agregar categoría">${svg('plus')}</button></div></div>
+    ${!editing?'<label class="field" data-stock-field><span class="field__label">Cantidad inicial</span><input class="field__input" name="quantity" type="number" min="0" step="1" value="0" required></label>':''}
+        <div class="product-image-field product-gallery-editor">
+          <div class="product-gallery-heading"><span class="field__label">Imágenes <small>Opcionales al guardar</small></span><span id="product-image-counter" aria-live="polite"></span></div>
+          <div id="store-image-preview" class="product-image-slots"></div>
+          <label class="product-image-picker"><span class="sr-only">Seleccionar imágenes</span><input name="image" type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label="Seleccionar imágenes" aria-describedby="store-image-help"></label><small id="store-image-help">Hasta 3 fotos · JPG, PNG o WebP · 12 MB por archivo.</small><p id="product-image-progress" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <details class="product-accordion" data-product-section="information"><summary>Información adicional</summary><div class="product-accordion-body">
+        <label class="field"><span class="field__label">Marca</span><input class="field__input" name="store_brand" maxlength="100" value="${esc(p.store_brand)}"></label>
+        <label class="field"><span class="field__label">Descripción interna</span><textarea class="field__input" name="description" maxlength="2000" rows="2">${esc(p.description)}</textarea><small>Solo para el equipo.</small></label>
+      </div></details>
+      <details class="product-accordion" data-product-section="inventory" data-stock-field><summary>Configuración de inventario</summary><div class="product-accordion-body">
+    ${!p.legacy?`<label class="store-check"><input name="track_stock" type="checkbox" ${p.track_stock!==false?'checked':''}> Controlar existencias <small>Si se desmarca, se vende sin control de inventario (se compra al proveedor cuando lo piden)</small></label>`:''}
+    ${!p.legacy?`<label class="field" data-stock-field><span class="field__label">Stock mínimo</span><input class="field__input" name="min_stock" type="number" min="0" step="1" value="${p.min_stock||0}" required></label>`:'<p>El costo y las cápsulas se administran desde Inventario → Gestionar cápsulas.</p>'}
+      </div></details>
+      <details class="product-accordion" data-product-section="store"><summary>Información de la tienda</summary><div class="product-accordion-body"><div class="product-service-image-host"></div>
+        <p class="product-form-note">${editing?'La edición conserva el estado de publicación.':'Se guarda oculto. Puedes publicarlo desde la ficha.'}</p>
       <label class="field"><span class="field__label">Nombre público (opcional)</span><input class="field__input" name="store_public_name" maxlength="160" value="${esc(p.store_public_name)}" placeholder="Usar el nombre del artículo"></label>
-      <div class="store-form-grid"><label class="field"><span class="field__label">Marca (opcional)</span><input class="field__input" name="store_brand" maxlength="100" value="${esc(p.store_brand)}"></label>
-      <label class="field"><span class="field__label">Descripción corta (opcional)</span><input class="field__input" name="store_short_description" maxlength="240" value="${esc(p.store_short_description)}"></label></div>
+      <label class="field"><span class="field__label">Descripción corta</span><input class="field__input" name="store_short_description" maxlength="240" value="${esc(p.store_short_description)}"></label>
       <label class="field"><span class="field__label">Descripción pública (opcional)</span><textarea class="field__input" name="store_public_description" maxlength="2000">${esc(p.store_public_description)}</textarea></label>
-    </section>
-    <section class="store-publication store-product-public-fields"><h3>Disponibilidad en la tienda</h3><p class="store-muted">Independiente de publicar: decide si el cliente puede comprarlo ya o pedirlo.</p>
+
       <label class="field"><span class="field__label">¿Se puede comprar?</span><select class="field__select" name="store_availability"><option value="AVAILABLE_NOW">Disponible para entrega</option><option value="ON_REQUEST">Disponible bajo pedido</option><option value="UNAVAILABLE">No disponible</option></select><small>Si lleva control de existencias y llega a cero, la compra se bloquea aunque esté marcado como disponible.</small></label>
-    </section>
-    <section class="store-publication store-product-public-fields"><h3>Garantía</h3><p class="store-muted">Esto se muestra al cliente tal cual. No prometas coberturas que no puedas cumplir.</p>
+
+      </div></details>
+      <details class="product-accordion" data-product-section="warranty"><summary>Garantía comercial</summary><div class="product-accordion-body">
       <label class="store-check"><input name="warranty_available" type="checkbox" ${p.warranty_available ? 'checked' : ''}> Ofrecer garantía comercial</label>
       <div class="store-form-grid"><label class="field"><span class="field__label">Duración (meses)</span><input class="field__input" name="warranty_months" type="number" min="0" max="120" value="${Number(p.warranty_months) || 0}"></label>
       <label class="field"><span class="field__label">Quién la ofrece</span><select class="field__select" name="warranty_provider"><option value="FULLTECH">FULLTECH</option><option value="manufacturer">Fabricante</option><option value="other">Otro</option></select></label></div>
@@ -463,21 +510,79 @@
       <label class="field"><span class="field__label">Cómo reclamar (público)</span><textarea class="field__input" name="warranty_claim" maxlength="1000" rows="2">${esc(p.warranty_claim)}</textarea></label>
       <label class="field"><span class="field__label">Nota pública breve</span><input class="field__input" name="warranty_public_notes" maxlength="500" value="${esc(p.warranty_public_notes)}"></label>
       <label class="field"><span class="field__label">Notas internas (no se publican)</span><textarea class="field__input" name="warranty_private_notes" maxlength="1000" rows="2">${esc(p.warranty_private_notes)}</textarea></label>
-    </section>
-    <label class="field"><span class="field__label">Imagen del producto</span><input class="field__input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label>
-    <div id="store-image-preview">${p.image_url?photo(p):''}</div><p id="store-image-help"></p>
-    <div class="store-form-grid"><label class="field"><span class="field__label">Precio de venta (RD$)</span><input class="field__input" name="price" type="number" min="0" step="0.01" required value="${p.price_cents!==undefined?(p.price_cents/100).toFixed(2):''}"></label>
-    <label class="field"><span class="field__label">${p.legacy?'Costo por cápsulas (RD$)':'Costo unitario (RD$)'}</span><input class="field__input" name="cost" type="number" min="0" step="0.01" required ${p.legacy?'readonly':''} value="${p.cost_cents!==undefined?(p.cost_cents/100).toFixed(2):''}"></label></div>
-    ${!editing?'<label class="field" data-stock-field><span class="field__label">Cantidad inicial</span><input class="field__input" name="quantity" type="number" min="0" step="1" value="0" required></label>':''}
-    ${!p.legacy?`<label class="field" data-stock-field><span class="field__label">Stock mínimo</span><input class="field__input" name="min_stock" type="number" min="0" step="1" value="${p.min_stock||0}" required></label>`:'<p>El costo y las cápsulas se administran desde Inventario → Gestionar cápsulas.</p>'}
-    <label class="store-check"><input name="active" type="checkbox" ${p.active!==false?'checked':''}> Disponible para nuevas ventas</label>
-    ${!p.legacy?`<label class="store-check"><input name="track_stock" type="checkbox" ${p.track_stock!==false?'checked':''}> Controlar existencias <small>Si se desmarca, se vende sin control de inventario (se compra al proveedor cuando lo piden)</small></label>`:''}
-    <p class="store-form-error" role="alert"></p></div><div class="store-form-footer"><button class="btn btn--primary btn--block" type="submit">Guardar artículo</button></div></form>`;
-    dialog.querySelector('[name=kind]').value=p.kind||'product';toggleKind();dialog.showModal();
+
+      </div></details>
+      <details class="product-accordion" data-product-section="settings"><summary>Configuración adicional</summary><div class="product-accordion-body">
+        <label class="store-check"><input name="active" type="checkbox" ${p.active!==false?'checked':''}> Disponible para nuevas ventas</label>
+      </div></details>
+    </div><div class="store-form-footer"><p class="store-form-error" role="alert" aria-live="polite"></p><button class="btn btn--primary btn--block" type="submit">Guardar producto</button></div></form>`;
+    dialog.querySelector('[name=kind]').value=p.kind||'product';toggleKind();renderGallery();dialog.showModal();syncProductViewport();sizeProductName();window.requestAnimationFrame?.(sizeProductName);
     const availabilitySelect=dialog.querySelector('[name=store_availability]');if(availabilitySelect)availabilitySelect.value=p.store_availability||(p.track_stock===false?'ON_REQUEST':'AVAILABLE_NOW');
     const providerSelect=dialog.querySelector('[name=warranty_provider]');if(providerSelect)providerSelect.value=p.warranty_provider||'FULLTECH';
   }
-  function toggleKind(){const service=dialog.querySelector('[name=kind]')?.value==='service';dialog.querySelectorAll('[data-stock-field]').forEach(e=>e.hidden=service);dialog.querySelector('#store-image-help').textContent=service?'La imagen es opcional para servicios.':'Selecciona una imagen. Obligatoria para productos.';}
+  function toggleKind(){
+    const form=dialog.querySelector('#store-product-form');if(!form)return;
+    const service=form.elements.kind.value==='service';
+    const tracked=!service&&(editing?.legacy||form.elements.track_stock?.checked!==false);
+    form.querySelectorAll('[data-stock-field]').forEach(node=>{node.hidden=service;});
+    for(const name of ['quantity','min_stock']){
+      const input=form.elements[name];if(!input)continue;
+      input.disabled=!tracked;input.closest('.field').hidden=!tracked;
+    }
+    if(form.elements.track_stock)form.elements.track_stock.disabled=service;
+    form.elements.image.required=false;
+    form.querySelector('[type=submit]').textContent=`Guardar ${service?'servicio':'producto'}`;
+    form.querySelector('#product-editor-title').textContent=editing?`Editar ${service?'servicio':'producto'}`:`Crear ${service?'servicio':'producto'}`;
+    if(!editing?.legacy)form.elements.cost.closest('.field').querySelector('.field__label').textContent=service?'Costo del servicio (RD$)':'Costo unitario (RD$)';
+  }
+  function renderGallery(){
+    const host=dialog.querySelector('#store-image-preview');if(!host)return;
+    dialog.querySelector('#product-image-counter').textContent=`${gallery.length}/3`;
+    host.innerHTML=Array.from({length:3},(_,i)=>{const entry=gallery[i];return entry?`<div class="product-image-slot ${i===0?'is-primary':''}"><img src="${esc(entry.data||entry.url)}" alt="${i===0?'Imagen principal':`Imagen ${i+1}`}" width="100" height="88"><span class="product-image-tag">${i===0?'Principal':`Foto ${i+1}`}</span><div class="product-image-tools"><button type="button" data-gallery-replace="${i}" aria-label="Reemplazar imagen ${i+1}" title="Reemplazar">↻</button>${i?`<button type="button" data-gallery-primary="${i}" aria-label="Usar imagen ${i+1} como principal" title="Usar como principal">☆</button><button type="button" data-gallery-move="${i}" aria-label="Mover imagen ${i+1} a la izquierda" title="Mover a la izquierda">←</button>`:''}<button type="button" data-gallery-remove="${i}" aria-label="Quitar imagen ${i+1}" title="Quitar">×</button></div></div>`:`<button type="button" class="product-image-slot product-image-add" data-gallery-add ${imageLoading||productSaving?'disabled':''} aria-label="Agregar imagen ${i+1}"><span>＋</span><small>${i===0?'Agregar foto':'Opcional'}</small></button>`;}).join('');
+    host.querySelectorAll('button').forEach(button=>{button.disabled=imageLoading||productSaving;});
+    dialog.querySelector('[name=image]').disabled=imageLoading||productSaving||gallery.length===3&&replaceImage===null;
+  }
+  dialog.addEventListener('click',event=>{
+    const action=event.target.closest('[data-gallery-add],[data-gallery-replace],[data-gallery-primary],[data-gallery-move],[data-gallery-remove]');if(!action||imageLoading||productSaving)return;
+    const input=dialog.querySelector('[name=image]'),error=dialog.querySelector('[role=alert]');error.textContent='';
+    if(action.hasAttribute('data-gallery-add')||action.hasAttribute('data-gallery-replace')){
+      replaceImage=action.hasAttribute('data-gallery-replace')?Number(action.dataset.galleryReplace):null;
+      input.disabled=false;input.multiple=replaceImage===null;input.value='';input.click();return;
+    }
+    const index=Number(action.dataset.galleryRemove??action.dataset.galleryPrimary??action.dataset.galleryMove);
+    if(action.hasAttribute('data-gallery-remove')){
+      if(gallery.length===1&&editing?.store_publication?.status==='published'){error.textContent='Retira primero el artículo de la tienda para quitar la última imagen.';return;}
+      gallery.splice(index,1);
+    }else{const entry=gallery.splice(index,1)[0];gallery.splice(action.hasAttribute('data-gallery-primary')?0:index-1,0,entry);}
+    galleryDirty=true;replaceImage=null;renderGallery();
+  });
+  function sizeProductName(){
+    const field=dialog.querySelector('.product-name-input');if(field){field.style.height='auto';field.style.height=`${Math.max(42,field.scrollHeight+4)}px`;}
+    const code=dialog.querySelector('[name=sku]'),row=dialog.querySelector('.product-type-code'),preview=dialog.querySelector('.product-code-full');
+    if(code&&row){row.dataset.longCode=String(code.value.length>18);if(preview){preview.textContent=code.value;preview.hidden=code.value.length<=38;}}
+  }
+  dialog.addEventListener('input',event=>{if(event.target.classList.contains('product-name-input')||event.target.name==='sku')sizeProductName();});
+  function syncProductViewport(){
+    if(!dialog.open)return;
+    sizeProductName();
+    const viewport=window.visualViewport;
+    if(viewport&&window.matchMedia?.('(max-width:640px)').matches){
+      dialog.style.setProperty('--product-editor-height',`${viewport.height}px`);
+      dialog.style.setProperty('--product-editor-top',`${viewport.offsetTop}px`);
+    }else{
+      dialog.style.removeProperty('--product-editor-height');dialog.style.removeProperty('--product-editor-top');
+    }
+  }
+  window.visualViewport?.addEventListener('resize',syncProductViewport);
+  window.visualViewport?.addEventListener('scroll',syncProductViewport);
+  window.addEventListener('resize',syncProductViewport);
+  function revealProductField(field){
+    if(!field)return;
+    let parent=field.parentElement;
+    while(parent&&parent!==dialog){if(parent.tagName==='DETAILS')parent.open=true;parent=parent.parentElement;}
+    field.focus({preventScroll:true});field.scrollIntoView?.({block:'nearest'});
+  }
+  dialog.addEventListener('invalid',event=>revealProductField(event.target),true);
   async function imageFile(file) {
     if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>12*1024*1024)throw new Error('Selecciona una imagen JPG, PNG o WebP de hasta 12 MB.');
     const url=URL.createObjectURL(file);
@@ -486,26 +591,44 @@
       const scale=Math.min(1,1200/Math.max(img.width,img.height));
       const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
       const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);
-      const data=canvas.toDataURL('image/jpeg',0.82);if(data.length>1400000)throw new Error('La imagen sigue siendo muy grande. Elige una más pequeña.');return data;
+      const data=canvas.toDataURL('image/jpeg',0.82);if(data.length>1350000)throw new Error('La imagen sigue siendo muy grande. Elige una más pequeña.');return data;
     }finally{URL.revokeObjectURL(url);}
   }
   dialog.addEventListener('change',async e=>{
-    if(e.target.name==='kind')toggleKind();
+    if(e.target.name==='kind'||e.target.name==='track_stock')toggleKind();
     if(e.target.name==='image'&&e.target.files[0]) {
-      const button=dialog.querySelector('[type=submit]');button.disabled=true;const error=dialog.querySelector('[role=alert]');error.textContent='';
-      try {const data=await imageFile(e.target.files[0]);if(!dialog.open||!e.target.isConnected)return;imageData=data;document.getElementById('store-image-preview').innerHTML=`<img src="${imageData}" alt="Vista previa de la imagen" class="store-photo">`;}
-      catch(err){if(!e.target.isConnected)return;imageData=null;error.textContent=err.message;document.getElementById('store-image-preview').innerHTML=editing?.image_url?photo(editing):'';e.target.value='';}finally{button.disabled=false;}
+      if(imageLoading||productSaving)return;
+      const button=dialog.querySelector('[type=submit]'),files=[...e.target.files],session=gallerySession,target=replaceImage,progress=dialog.querySelector('#product-image-progress');imageLoading=true;button.disabled=true;renderGallery();const error=dialog.querySelector('[role=alert]');error.textContent='';
+      try {
+        if(files.length>(target===null?3-gallery.length:1))throw new Error('Puedes guardar un máximo de 3 imágenes.');
+        const additions=[];
+        for(let i=0;i<files.length;i++){progress.textContent=`Preparando imagen ${i+1} de ${files.length}…`;const data=await imageFile(files[i]);if(additions.some(e=>e.data===data)||gallery.some((e,j)=>j!==target&&e.data===data))throw new Error('Esta imagen ya está seleccionada.');additions.push({data});}
+        if(!dialog.open||session!==gallerySession)return;
+        if(target===null)gallery.push(...additions);else gallery.splice(target,1,...additions);
+        galleryDirty=true;
+      }catch(err){if(session===gallerySession)error.textContent=err.message;}
+      finally{if(session===gallerySession){imageLoading=false;replaceImage=null;progress.textContent='';e.target.value='';button.disabled=productSaving;renderGallery();}}
     }
   });
+  dialog.addEventListener('cancel',event=>{if(event.target.name==='image'){replaceImage=null;renderGallery();}},true);
   dialog.addEventListener('click',e=>{if(e.target.closest('[data-store-close]'))dialog.close();if(e.target.closest('[data-category-new]'))openCategory();const restoreButton=e.target.closest('[data-store-restore]');if(restoreButton){restoreButton.disabled=true;const error=dialog.querySelector('[role=alert]');if(error)error.textContent='';request(`products/${encodeURIComponent(restoreButton.dataset.storeRestore)}/restore`,undefined,'POST').then(async()=>{await load(true);await openArchived();notice('Artículo restaurado. Actívalo y publícalo cuando corresponda.');}).catch(err=>{restoreButton.disabled=false;if(error)error.textContent=err.message;});}})
   dialog.addEventListener('submit',async e=>{
-    if(e.target.id!=='store-product-form')return;e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');
-    button.disabled=true;form.querySelector('[role=alert]').textContent='';
+    if(e.target.id!=='store-product-form')return;
+    e.preventDefault();const form=e.target,button=form.querySelector('[type=submit]');
+    if(productSaving||imageLoading)return;
+    if(!form.checkValidity()){form.reportValidity();return;}
+    productSaving=true;button.disabled=true;button.textContent='Guardando…';button.setAttribute('aria-busy','true');form.querySelector('[role=alert]').textContent='';
     const data=Object.fromEntries(new FormData(form));data.kind=editing?.kind||data.kind;data.active=form.elements.active.checked;
-    if(form.elements.track_stock)data.track_stock=form.elements.track_stock.checked;
-    delete data.image;if(imageData)data.image=imageData;if(editing)data.version=editing.version;
-    try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load(true);notice('Artículo guardado.');}
-    catch(err){form.querySelector('[role=alert]').textContent=err.message;}finally{button.disabled=false;}
+    if(form.elements.track_stock)data.track_stock=data.kind==='product'&&form.elements.track_stock.checked;
+    data.warranty_available=form.elements.warranty_available.checked;
+    delete data.image;if(galleryDirty)data.images=gallery.map(entry=>entry.data?{data:entry.data}:{id:entry.id});if(editing)data.version=editing.version;
+    try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load(true);notice(`${data.kind==='service'?'Servicio':'Producto'} guardado.`);}
+    catch(err){
+      form.querySelector('[role=alert]').textContent=err.message;
+      const field={duplicate_sku:'sku',invalid_product:'sku',category_not_found:'category_id',invalid_quantity:'min_stock',policy_locked:'track_stock',invalid_money:'price'}[err.code];
+      if(['image_required','invalid_image','image_limit'].includes(err.code))revealProductField(form.querySelector('.product-image-slots button'));
+      else if(field)revealProductField(form.elements[field]);
+    }finally{productSaving=false;button.disabled=imageLoading;button.removeAttribute('aria-busy');button.textContent=`Guardar ${data.kind==='service'?'servicio':'producto'}`;}
   });
   document.addEventListener('click',e=>{
     // La barra de búsqueda del catálogo se mueve a la cabecera del POS
@@ -562,6 +685,11 @@
     const editButton=e.target.closest('[data-store-edit]');if(editButton)edit(editButton.dataset.storeEdit);
   });
   document.addEventListener('input',e=>{if(e.target.id==='store-search'){query=e.target.value;cards();}if(e.target.id==='stock-search')filterStock();if(e.target.closest('#store-stock-form')&&e.target.id!=='stock-search')updateCount();});
+  /*
+   * TECLADO MÓVIL: la acción «Listo» solo CIERRA el teclado. No cobra, no
+   * guarda y no cambia de pantalla; los resultados ya se filtran al escribir.
+   */
+  document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='store-search'){e.preventDefault();e.target.blur();}});
   document.addEventListener('change',e=>{if(e.target.id==='store-kind'){kind=e.target.value;cards();}if(e.target.closest('#store-stock-form')){if(e.target.name==='productId'){delete e.target.form.dataset.expected;delete e.target.form.dataset.requestId;}updateCount();}});
   function filterStock(){
     const form=document.getElementById('store-stock-form');if(!form)return;

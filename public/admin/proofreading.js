@@ -448,47 +448,86 @@
   document.addEventListener('compositionend', (event) => { if (event.target.id === 'wa-text') { composing = false; composingAt = 0; schedule(); } });
   // Conservar el teclado al tocar Usar/Omitir en teléfonos.
   document.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-proofreading]')) event.preventDefault(); });
+  /*
+   * SUGERIR RESPUESTA — botón flotante ✦ del chat.
+   *
+   * Reglas que no se rompen:
+   *   - NUNCA se envía nada: la propuesta se coloca en el borrador solo si la
+   *     persona pulsa «Usar respuesta», y desde ahí puede editarla;
+   *   - una sola consulta a la vez (pulsar varias veces no multiplica peticiones);
+   *   - si se cambia de conversación, la respuesta que llega tarde se descarta y
+   *     no aparece en el chat equivocado;
+   *   - el botón SIEMPRE vuelve a quedar usable: con error, sin red o por plazo.
+   */
+  const AI_REPLY_TIMEOUT = 20000;
+  let aiReplyBusy = false;
+  const AI_REPLY_MENSAJES = {
+    limit_reached: 'Se alcanzó el límite diario de IA. Puedes seguir escribiendo a mano.',
+    provider_balance: 'La cuenta de la IA no tiene saldo. Recarga DeepSeek en Configuración y reintenta.',
+    provider_auth: 'La clave de la IA ya no es válida. Revísala en Configuración.',
+    rate_limited: 'La IA está recibiendo demasiadas peticiones. Espera unos segundos y reintenta.',
+    provider_unavailable: 'La IA no está disponible en este momento. Reintenta en un rato.',
+    timeout: 'La IA tardó demasiado en responder. Reintenta.',
+    invalid_response: 'La IA respondió algo que no se puede usar. Reintenta.',
+    deepseek_unavailable: 'La IA no está activada. Actívala en Configuración.',
+    awaiting_customer: 'El último mensaje lo envió tu equipo. Espera la respuesta del cliente para sugerir qué contestar.',
+    unknown_direction: 'No pude confirmar quién envió el último mensaje. No generaré una respuesta para evitar confusiones.',
+    no_messages: 'No hay un mensaje reciente del cliente para responder.',
+  };
+  const aiReplyMensaje = (result, status) => (status === 503
+    ? 'Sin conexión con el servidor: no se pudo pedir la sugerencia.'
+    : AI_REPLY_MENSAJES[result?.reason] ?? 'No se pudo generar la respuesta. Reintenta o revisa DeepSeek en Configuración.');
+  async function pedirSugerenciaIA(boton) {
+    if (aiReplyBusy) return;
+    const id = conversation(), input = area();
+    if (!id || !input || document.body.dataset.waView === 'list') return;
+    aiReplyBusy = true;
+    boton.disabled = true;
+    let box = document.querySelector('#wa-ai-reply-result');
+    if (!box) { box = document.createElement('div'); box.id = 'wa-ai-reply-result'; box.className = 'wa-proofreading wa-ai-reply-result'; input.closest('#wa-composer')?.prepend(box); }
+    const pintar = (texto, acciones = []) => {
+      box.replaceChildren();
+      const span = document.createElement('span'); span.className = 'wa-proofreading__text'; span.setAttribute('role', 'status'); span.textContent = texto; box.append(span);
+      for (const [etiqueta, alPulsar] of acciones) { const accion = document.createElement('button'); accion.type = 'button'; accion.textContent = etiqueta; accion.addEventListener('click', alPulsar); box.append(accion); }
+      box.hidden = false;
+    };
+    const reintentar = () => { box.hidden = true; void pedirSugerenciaIA(boton); };
+    const cerrar = () => { box.hidden = true; };
+    pintar('Preparando sugerencia…');
+    const controller = new AbortController();
+    const reloj = setTimeout(() => controller.abort(), AI_REPLY_TIMEOUT);
+    try {
+      const response = await fetch('/api/admin/ai/reply-suggestion', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: id }) });
+      const result = response.ok ? await response.json() : null;
+      if (id !== conversation() || !box.isConnected) return;
+      if (result?.ok && result.ai && typeof result.text === 'string' && result.text.trim()) {
+        const texto = result.text.trim();
+        pintar(texto, [
+          ['Usar respuesta', () => { if (id !== conversation() || !area()) return; area().value = texto; area().dispatchEvent(new Event('input', { bubbles: true })); area().focus({ preventScroll: true }); box.hidden = true; }],
+          ['Cerrar', cerrar],
+        ]);
+      } else {
+        pintar(aiReplyMensaje(result, response.status), [['Reintentar', reintentar], ['Cerrar', cerrar]]);
+      }
+    } catch (error) {
+      if (id === conversation() && box.isConnected) {
+        pintar(error?.name === 'AbortError'
+          ? 'La IA tardó demasiado en responder. Reintenta.'
+          : 'No se pudo conectar para sugerir la respuesta. Reintenta.', [['Reintentar', reintentar], ['Cerrar', cerrar]]);
+      }
+    } finally {
+      clearTimeout(reloj);
+      aiReplyBusy = false;
+      // Nunca queda desactivado: si se cambió de chat, el siguiente render lo fija.
+      if (id === conversation()) boton.disabled = false;
+    }
+  }
   document.addEventListener('click', async (event) => {
     const aiButton = event.target.closest('#wa-ai-reply');
     if (aiButton) {
       event.preventDefault(); event.stopPropagation();
-      const id = conversation(), input = area();
-      if (!id || aiButton.disabled || !input || document.body.dataset.waView === 'list') return;
-      aiButton.disabled = true;
-      let box = document.querySelector('#wa-ai-reply-result');
-      if (!box) { box = document.createElement('div'); box.id = 'wa-ai-reply-result'; box.className = 'wa-proofreading wa-ai-reply-result'; input.closest('#wa-composer')?.prepend(box); }
-      box.replaceChildren();
-      const status = document.createElement('span'); status.className = 'wa-proofreading__text'; status.setAttribute('role', 'status'); status.textContent = 'Preparando sugerencia…'; box.append(status); box.hidden = false;
-      const controller = new AbortController();
-      try {
-        const response = await fetch('/api/admin/ai/reply-suggestion', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: id }) });
-        const result = response.ok ? await response.json() : null;
-        if (id !== conversation() || !box.isConnected) return;
-        box.replaceChildren();
-        const text = document.createElement('span'); text.className = 'wa-proofreading__text'; text.setAttribute('role', 'status');
-        if (result?.ok && result.ai && typeof result.text === 'string') {
-          text.textContent = result.text; box.append(text);
-          const use = document.createElement('button'); use.type = 'button'; use.textContent = 'Usar respuesta';
-          use.addEventListener('click', () => { if (id !== conversation() || !area()) return; area().value = result.text; area().dispatchEvent(new Event('input', { bubbles: true })); area().focus({ preventScroll: true }); box.hidden = true; });
-          box.append(use);
-        } else {
-          text.textContent = response.status === 503
-            ? 'Conéctate al servidor para pedir una sugerencia. No se guardará como mensaje pendiente.'
-            : result?.reason === 'limit_reached'
-            ? 'Se alcanzó el límite de uso de IA. Inténtalo más tarde.'
-            : result?.reason === 'awaiting_customer'
-              ? 'El último mensaje lo envió tu equipo. Espera la respuesta del cliente para sugerir qué contestar.'
-              : result?.reason === 'unknown_direction'
-                ? 'No pude confirmar quién envió el último mensaje. No generaré una respuesta para evitar confusiones.'
-                : result?.reason === 'no_messages'
-                  ? 'No hay un mensaje reciente del cliente para responder.'
-                  : 'No se pudo generar la respuesta. Comprueba DeepSeek en Configuración.';
-          box.append(text);
-        }
-        const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Cerrar'; close.addEventListener('click', () => { box.hidden = true; }); box.append(close);
-      } catch {
-        if (id === conversation() && box.isConnected) { box.replaceChildren(); const error = document.createElement('span'); error.className = 'wa-proofreading__text'; error.textContent = 'No se pudo conectar para sugerir la respuesta.'; box.append(error); }
-      } finally { aiButton.disabled = false; }
+      if (aiButton.disabled || aiReplyBusy || !conversation() || !area() || document.body.dataset.waView === 'list') return;
+      await pedirSugerenciaIA(aiButton);
       return;
     }
     if (event.target.closest('#wa-send')) { setTimeout(schedule, 0); return; }

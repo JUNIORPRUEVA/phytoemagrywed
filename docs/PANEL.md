@@ -755,3 +755,65 @@ dice quién la tiene y ofrece **«Solicitar que me la asignen»** (avisa a admin
 cambia nada por sí solo). La regla la impone el **servidor**, no la pantalla, así que no
 se puede saltar desde el navegador. En cuanto administración la asigna, el chat funciona
 con normalidad para esa persona.
+
+---
+
+## Centro de operaciones (tickets internos)
+
+Es el espacio de trabajo **de puertas adentro**: cada pedido, entrega, incidencia o
+encargo es un *ticket* con su conversación. **Aquí no se habla con el cliente**: no hay
+WhatsApp, ni teléfono, ni dirección a la vista. Se habla entre el equipo.
+
+Menú lateral → **Operación → Centro IA** (o `?v=ops`).
+
+### Por qué no es el chat de WhatsApp
+
+- **Es un registro, no un mensaje suelto.** Cada ticket guarda quién lo abrió, para cuándo
+  es, con qué pedido va y qué se ha hecho. El chat de WhatsApp se borra de la vista; el
+  ticket queda.
+- **Son tres estados distintos, no uno:** leer (abrir el hilo), **acusar recibo**
+  (confirmar que lo viste) y **completar el trabajo**. El panel los pinta por separado a
+  propósito: leer no es acusar, y acusar no es dar el trabajo por hecho.
+- **El aviso llega aunque no tengas el panel abierto** (por la campana y, si aceptaste las
+  notificaciones, al teléfono). El enlace del aviso abre **ese** ticket.
+
+### Lo que se hace en un ticket
+
+| Botón / acción | Para qué |
+| --- | --- |
+| **Acusar recibo** | «Lo vi y me encargo». Aparece solo cuando ya has leído. |
+| **Trabajo → Iniciar / Avance / Problema / Ayuda / Completar / Escalar** | Dejar constancia de por dónde va, sin escribir un párrafo. |
+| **Ficha (ⓘ)** | Estado, plazo, participantes, trabajo y actividad, en un sitio. |
+| **Resolver** | Cierra el ticket. Y **solo cierra el ticket**: completar el trabajo es otra cosa. |
+| **Esperando a una persona / a un agente / respuesta externa** | Que quede escrito a quién se espera. |
+
+Cuando alguien responde, el ticket **deja de estar «en espera»** y vuelve a estar en
+curso. Un mensaje de un agente **no** cuenta como respuesta de una persona.
+
+### Agentes de IA (solo administración)
+
+Un agente no es un compañero de trabajo: es un **ayudante automático** que puede mirar un
+ticket y escribir en él, con **permisos muy limitados** y con una regla que no se salta
+nunca: **lo importante lo decide una persona**.
+
+- **Dónde se dan de alta**: barra del centro → **Agentes IA**. Se marca con casillas qué
+  puede hacer (mirar el ticket, ver el estado del pedido, escribir, pedir acuse, escalar…).
+  Los permisos **los calcula el servidor** a partir de esas casillas: no se pueden escribir
+  a mano.
+- **Dónde se asigna**: en la ficha de un ticket → **Agentes**. A partir de ahí el agente
+  aparece como participante (con su chip «IA») y trabaja solo.
+- **Aprobaciones**: cuando un agente quiere hacer algo con consecuencias (por ejemplo,
+  **cerrar** un ticket), **no lo hace**: pide permiso. La petición aparece en el hilo como
+  una tarjeta con **los datos exactos** de lo que va a hacer y en la barra
+  **Aprobaciones**. Si dice «sí», se ejecuta **una sola vez**; si dice «no», no se ejecuta
+  nada y queda el motivo escrito. Las peticiones caducan a las 24 h.
+- **Qué NO puede hacer un agente, hoy**: cerrar un ticket por su cuenta, cambiar importes,
+  cancelar o devolver un pedido, tocar datos sensibles del cliente, consultar la base de
+  datos «por libre», ejecutar comandos en el servidor o escribirle a un cliente. Esas
+  capacidades **no existen** en el sistema, no es que estén apagadas.
+- **Si un agente falla, el ticket sigue igual**: probar un agente nunca bloquea el trabajo
+  del equipo.
+
+> El agente de esta versión sigue una pauta fija (mirar, saludar, responder, pedir acuse,
+> escalar si se pasa el plazo). **No hay ningún modelo de lenguaje conectado**: cuando se
+> conecte uno, los permisos y las aprobaciones son los mismos.

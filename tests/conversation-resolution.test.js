@@ -129,7 +129,21 @@ describe('finalizar una conversación sin bloquear el contacto', () => {
     expect(created.user.id).toBeTruthy();
     const login = await request('/api/admin/auth/login', 'POST', { username: created.user.username, password: 'Resolution-12345' }, '');
     const agentCookie = login.headers.get('set-cookie').split(';')[0];
+
+    /*
+     * REGLA DEL NEGOCIO: una conversación libre la atiende cualquier agente, pero
+     * en cuanto tiene dueño queda exclusiva (solo administración la reasigna).
+     * Aquí se le da dueño para comprobar el bloqueo del resto de agentes.
+     */
+    const dueno = (await (await request('/api/admin/users', 'POST', { username: 'resolution-owner@test.local', password: 'Resolution-12345', displayName: 'Dueña', role: 'AGENT' })).json()).user;
+    expect(dueno.id).toBeTruthy();
+    expect((await request(`/api/admin/conversations/${conversation.id}/assign`, 'POST', { userId: dueno.id })).status).toBe(200);
+
     expect((await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST', undefined, agentCookie)).status).toBe(403);
     expect((await request(`/api/admin/conversations/${conversation.id}/reopen`, 'POST', undefined, agentCookie)).status).toBe(403);
+    // El dueño sí puede.
+    const loginDueno = await request('/api/admin/auth/login', 'POST', { username: 'resolution-owner@test.local', password: 'Resolution-12345' }, '');
+    const duenoCookie = loginDueno.headers.get('set-cookie').split(';')[0];
+    expect((await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST', undefined, duenoCookie)).status).toBe(200);
   });
 });

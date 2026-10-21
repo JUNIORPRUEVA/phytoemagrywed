@@ -129,6 +129,25 @@ export function createScheduler(deps) {
    * que seguir aunque el navegador esté cerrado.
    */
   const deliverySupervisorTick = deps.deliverySupervisorTick ?? null;
+  /*
+   * PLAZOS DE LOS TICKETS INTERNOS (Etapa C). Corre aquí por la misma razón que
+   * el supervisor: el aviso de un plazo vencido no puede depender de que alguien
+   * tenga el panel abierto. Si no hay tickets con plazo, la pasada no hace nada.
+   */
+  const opsDeadlineTick = deps.opsDeadlineTick ?? null;
+  /*
+   * PUENTE CON EL SUPERVISOR DE DELIVERY (Etapa E). Abre el ticket interno del
+   * pedido que necesita atención y le asigna el agente. Va ANTES del tick de
+   * agentes para que el ticket recién abierto pueda trabajarse en la misma
+   * vuelta.
+   */
+  const opsDeliveryTicketTick = deps.opsDeliveryTicketTick ?? null;
+  /*
+   * AGENTES (Etapa D). Una vuelta ejecuta como máximo un paso por run; el
+   * trabajo sigue aunque nadie tenga el panel abierto, y si un agente revienta
+   * no puede llevarse por delante los recordatorios ni los plazos.
+   */
+  const opsAgentTick = deps.opsAgentTick ?? null;
   const clock = deps.clock ?? (() => new Date());
   const log = deps.log ?? (() => {});
   const staleMs = Number(deps.staleMs ?? DEFAULT_STALE_MS);
@@ -153,7 +172,25 @@ export function createScheduler(deps) {
           return null;
         })
       : null;
-    return { recovered, due: due.length, sent, delivery, supervisor };
+    const deadline = opsDeadlineTick
+      ? await opsDeadlineTick().catch((error) => {
+          log(`[crm] plazos de tickets: ${error?.message ?? error}`);
+          return null;
+        })
+      : null;
+    const deliveryTickets = opsDeliveryTicketTick
+      ? await opsDeliveryTicketTick().catch((error) => {
+          log(`[crm] tickets de reparto: ${error?.message ?? error}`);
+          return null;
+        })
+      : null;
+    const agent = opsAgentTick
+      ? await opsAgentTick().catch((error) => {
+          log(`[crm] agentes: ${error?.message ?? error}`);
+          return null;
+        })
+      : null;
+    return { recovered, due: due.length, sent, delivery, supervisor, deadline, deliveryTickets, agent };
   }
 
   /** Marca una fila como bloqueada y crea la alerta para el operador (una sola vez). */

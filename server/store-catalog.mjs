@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createSqlQuery } from './sql-query.mjs';
 import { productConfig } from '../src/config/product.config.js';
 import { moneyToCents } from './inventory.mjs';
+import sharp from 'sharp';
 
 const fail = (code, message, status = 422) => Object.assign(new Error(message), { code, status });
 const clean = (v, n = 160) => String(v ?? '').trim().slice(0, n);
@@ -74,6 +75,20 @@ export function parseProductImage(value) {
   return { mime, data: bytes.toString('base64') };
 }
 
+// Decode pixels, not only the file signature. Bound decompression and honor EXIF.
+async function usableImage(image, optimize = false) {
+  try {
+    const decoder = sharp(Buffer.from(image.data, 'base64'), {limitInputPixels: 40000000, failOn: 'error'});
+    if (optimize) {
+      const bytes = await decoder.rotate().resize({width:1200,height:1200,fit:'inside',withoutEnlargement:true}).webp({quality:82}).toBuffer();
+      if(bytes.length>1024*1024)throw new Error('image_too_large');
+      return {mime:'image/webp',data:bytes.toString('base64')};
+    }
+    await decoder.raw().toBuffer();
+    return image;
+  } catch { throw fail('invalid_image', 'La imagen está dañada o no se puede abrir. Usa JPG, PNG o WebP de hasta 1 MB.'); }
+}
+
 /** Catálogo POS persistente. No modifica las tablas ni las unidades históricas de Phytoemagry. */
 export async function createStoreCatalog({ backend, handle, legacyInventory, clock = () => new Date() }) {
   const sql = createSqlQuery({ backend, handle });
@@ -114,15 +129,18 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   async function setPublication(id, input) {
     const status = input?.status;
     if (!['published', 'unpublished'].includes(status)) throw fail('invalid_publication_status', 'Elige si el artículo se publica o se mantiene oculto.');
-    const current = await one(id);
+    return transaction(async q => {
+    const current = await one(id, q, true);
     if (!current) throw fail('not_found', 'El artículo ya no existe.', 404);
     if (status === 'published' && !current.active) throw fail('inactive_product', 'Activa el artículo en el catálogo antes de publicarlo.', 409);
+    if (status === 'published') await requireGallery(current, q);
     const featured = input?.featured === true;
     const rawOrder = input?.sort_order ?? 0;
     if (!Number.isSafeInteger(Number(rawOrder)) || Number(rawOrder) < 0 || Number(rawOrder) > 1000000) throw fail('invalid_sort_order', 'El orden debe ser un número válido.');
-    await sql.query('INSERT INTO fulltech_store_publication_v1(product_id,status,featured,sort_order,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(product_id) DO UPDATE SET status=excluded.status,featured=excluded.featured,sort_order=excluded.sort_order,updated_at=excluded.updated_at', [id, status, featured ? 1 : 0, Number(rawOrder), clock().toISOString()]);
+    await q('INSERT INTO fulltech_store_publication_v1(product_id,status,featured,sort_order,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(product_id) DO UPDATE SET status=excluded.status,featured=excluded.featured,sort_order=excluded.sort_order,updated_at=excluded.updated_at', [id, status, featured ? 1 : 0, Number(rawOrder), clock().toISOString()]);
     changed();
     return { product_id: id, status, featured, sort_order: Number(rawOrder) };
+    });
   }
   async function publicationStates() {
     return Object.fromEntries((await sql.query('SELECT product_id,status,featured,sort_order,updated_at FROM fulltech_store_publication_v1')).rows.map(row => [row.product_id, { status: row.status, featured: Boolean(Number(row.featured)), sort_order: Number(row.sort_order), updated_at: row.updated_at }]));
@@ -161,7 +179,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         shortDescription: p.store_short_description || '', description: p.store_public_description || '',
         brand: p.store_brand || null,
         warranty: publicWarranty(p),
-        imageUrl: p.image_url ? `/api/store/products/${encodeURIComponent(p.id)}/image` : null,
+        imageUrl: p.images[0] ? publicGallery(p)[0].url : null,
+        images: publicGallery(p),
         featured: Boolean(Number(pub.featured)), sortOrder: Number(pub.sort_order),
         /* Fecha real de publicación: única fuente válida para <lastmod>. */
         updatedAt: pub.updated_at ?? null,
@@ -182,20 +201,44 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     }
     return (await publicProducts()).filter(product => matches.has(product.id));
   }
-  async function image(id) {
-    const stored=(await sql.query('SELECT mime,data FROM fulltech_product_images_v1 WHERE id=$1',[id])).rows[0];
+  const galleryRefs = p => Array.isArray(p?.gallery) ? p.gallery : p?.image_url ? [{id:p.id,created_at:p.created_at}] : [];
+  const galleryView = p => galleryRefs(p).map((entry,order)=>({...entry,order,primary:order===0,url:`/api/admin/store/products/${encodeURIComponent(p.id)}/images/${encodeURIComponent(entry.id)}?v=${p.version}`}));
+  const publicGallery = p => p.images.map(({id,order,primary})=>({id,order,primary,url:`/api/store/products/${encodeURIComponent(p.id)}/images/${encodeURIComponent(id)}?v=${p.version}`}));
+  async function storedImage(id, q=sql.query) {
+    const stored=(await q('SELECT mime,data FROM fulltech_product_images_v1 WHERE id=$1',[id])).rows[0];
     if(stored)return stored;
     const seed=productConfig.variants.find(p=>p.id===id);
     if(!seed)return null;
-    const data=await readFile(new URL(`../public${seed.image}-320.webp`,import.meta.url));
-    return {mime:'image/webp',data:data.toString('base64')};
+    try {const data=await readFile(new URL(`../public${seed.image}-320.webp`,import.meta.url));return {mime:'image/webp',data:data.toString('base64')};}catch{return null;}
   }
-  async function publicImage(id) {
+  async function image(id, imageId=null) {
+    if(id.startsWith('category_')&&!imageId)return storedImage(id);
+    const p=await one(id);if(!p)return null;
+    const refs=galleryRefs(p), entry=imageId?refs.find(e=>e.id===imageId):refs[0];
+    return entry?storedImage(entry.id):null;
+  }
+  async function requireGallery(p,q) {
+    const refs=galleryRefs(p);
+    if(!refs.length)throw fail('image_required','Agrega al menos una imagen válida antes de publicar. Para quitar la última imagen, retira primero el artículo de la tienda.',409);
+    for(const entry of refs){const data=await storedImage(entry.id,q);if(!data)throw fail('invalid_image','Una imagen no está disponible. Reemplázala antes de publicar.',409);await usableImage(data);}
+  }
+  async function galleryAudit() {
+    const result=[];
+    for(const [id,pub] of Object.entries(await publicationStates()))if(pub.status==='published'){
+      const p=await one(id);try{if(!p)throw new Error('not_found');await requireGallery(p,sql.query);}catch(e){result.push({id,sku:p?.sku,error:e.code||'not_found'});}
+    }
+    const referenced=new Set();
+    for(const row of (await sql.query('SELECT doc FROM fulltech_catalog_v1')).rows)for(const entry of galleryRefs(JSON.parse(row.doc)))referenced.add(entry.id);
+    for(const row of (await sql.query('SELECT id FROM fulltech_categories_v1')).rows)referenced.add(row.id);
+    const retained=(await sql.query('SELECT id FROM fulltech_product_images_v1')).rows.filter(row=>!referenced.has(row.id)).length;
+    return {invalidPublished:result,retainedUnreferencedImages:retained};
+  }
+  async function publicImage(id, imageId=null) {
     const pub = (await sql.query('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1', [id])).rows[0];
     if (pub?.status !== 'published') return null;
     const p = await one(id);
     if (!p?.active) return null;
-    return image(id);
+    return image(id,imageId);
   }
   let ordersTail = Promise.resolve();
   async function orderLock(fn) {
@@ -217,7 +260,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       finally { client?.release(); }
     });
   }
-  const decode = r => r ? { ...JSON.parse(r.doc), quantity: Number(r.quantity), version: Number(r.version) } : null;
+  const decode = r => {if(!r)return null;const p={...JSON.parse(r.doc),quantity:Number(r.quantity),version:Number(r.version)};return {...p,images:galleryView(p)};};
   const normalizeSearch = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
   async function indexProductSearch(q, product) {
     const tokens = [...new Set(normalizeSearch(`${product.name} ${product.store_public_name || ''} ${product.sku} ${product.category || ''} ${product.description || ''} ${product.store_short_description || ''} ${product.store_public_description || ''} ${product.store_brand || ''}`).split(/[^a-z0-9]+/).filter(token => token.length > 0 && token.length <= 80))];
@@ -275,7 +318,13 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       image_url: p.image_url, sale_price_cents: p.price_cents };
   }
   async function save(input, actor, id = null) {
-    const image = input.image ? parseProductImage(input.image) : null;
+    if(input.images!==undefined&&(!Array.isArray(input.images)||input.images.length>3))throw fail('image_limit','Puedes guardar un máximo de 3 imágenes.');
+    if(input.images!==undefined&&input.image)throw fail('invalid_image','Envía una sola lista de imágenes.');
+    const image = input.image ? await usableImage(parseProductImage(input.image)) : null;
+    const incoming = input.images===undefined ? null : await Promise.all(input.images.map(async entry=>{
+      if(!entry||typeof entry!=='object'||Boolean(entry.id)===Boolean(entry.data))throw fail('invalid_image','Cada imagen debe ser nueva o pertenecer a este producto.');
+      return entry.data?{content:await usableImage(parseProductImage(entry.data),true)}:{id:String(entry.id)};
+    }));
     return transaction(async q => {
       const previous = id ? await one(id, q, true) : null;
       if (id && !previous) throw fail('not_found', 'El producto ya no existe.', 404);
@@ -327,7 +376,6 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       }
       const name = clean(input.name), sku = clean(input.sku, 60).toUpperCase();
       if (!name || !/^[A-Z0-9][A-Z0-9._-]{0,59}$/.test(sku)) throw fail('invalid_product', 'Escribe un nombre y un código válido sin espacios.');
-      if (kind === 'product' && !image && !previous?.image_url && !previous?.imported_from) throw fail('image_required', 'Agrega la imagen del producto.');
       if (!integer(input.min_stock ?? 0)) throw fail('invalid_quantity', 'El stock mínimo debe ser un número entero mayor o igual a cero.');
       let category=null;
       if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
@@ -358,10 +406,20 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         track_stock: trackStock, active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
         updated_at: clock().toISOString(), updated_by: actor?.display_name || 'Administración' };
-      if (image) {
-        await q('INSERT INTO fulltech_product_images_v1(id,mime,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET mime=excluded.mime,data=excluded.data', [p.id,image.mime,image.data]);
-        p.image_url = `/api/admin/store/products/${encodeURIComponent(p.id)}/image?v=${(previous?.version || 0)+1}`;
+      const previousRefs=galleryRefs(previous);
+      const entries=incoming??(image?[{content:image},...previousRefs.slice(1)]:null);
+      if(entries){
+        const seen=new Set();p.gallery=[];
+        for(const entry of entries){
+          if(entry.content){const key=`image_${randomUUID()}`;await q('INSERT INTO fulltech_product_images_v1(id,mime,data) VALUES($1,$2,$3)',[key,entry.content.mime,entry.content.data]);p.gallery.push({id:key,created_at:clock().toISOString()});}
+          else{const known=previousRefs.find(e=>e.id===entry.id);if(!known||seen.has(entry.id))throw fail('invalid_image','La imagen no pertenece a este producto o está repetida.');const bytes=await storedImage(entry.id,q);if(!bytes)throw fail('invalid_image','La imagen ya no está disponible. Reemplázala.');await usableImage(bytes);seen.add(entry.id);p.gallery.push(known);}
+        }
+        // Immutable image rows preserve historical references and permit rollback.
+        p.image_url=p.gallery.length?`/api/admin/store/products/${encodeURIComponent(p.id)}/image?v=${(previous?.version||0)+1}`:null;
       }
+      delete p.images;
+      const publication=(await q('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1',[p.id])).rows[0];
+      if(publication?.status==='published')await requireGallery(p,q);
       const initial = kind === 'product' && !previous ? Number(input.quantity ?? 0) : 0;
       if (!integer(initial)) throw fail('invalid_quantity', 'La cantidad inicial debe ser un número entero mayor o igual a cero.');
       if (previous) await q('UPDATE fulltech_catalog_v1 SET sku=$1,doc=$2,version=version+1 WHERE id=$3', [sku,JSON.stringify(p),p.id]);
@@ -570,7 +628,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return lines;
   }
 
-  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,publicProducts,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
+  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

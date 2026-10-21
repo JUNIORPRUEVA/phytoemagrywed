@@ -58,6 +58,97 @@ it('permite crear un servicio sin inventario y conserva el formulario si el serv
   expect(form.querySelector('[role=alert]').textContent).toBe('Conexión interrumpida');expect(form.elements.name.value).toBe('Instalación');
   expect(w.document.querySelector('dialog.store-product-dialog').open).toBe(true);
 });
+it('mantiene obligatorios visibles y conserva todos los campos secundarios en secciones cerradas',async()=>{
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
+  const form=w.document.querySelector('#store-product-form');
+  for(const name of ['kind','name','sku','price','cost','category_id','quantity','image'])expect(form.elements[name].closest('details')).toBeNull();
+  expect(form.elements.sku.required).toBe(true);expect(form.elements.image.required).toBe(false);
+  expect(form.querySelectorAll('details[open]')).toHaveLength(0);
+  expect([...form.elements].map(node=>node.name).filter(Boolean).sort()).toEqual(['kind','name','sku','price','cost','category_id','quantity','image','description','store_brand','store_public_name','store_short_description','store_public_description','store_availability','warranty_available','warranty_months','warranty_provider','warranty_coverage','warranty_exclusions','warranty_conditions','warranty_claim','warranty_public_notes','warranty_private_notes','min_stock','track_stock','active'].sort());
+  expect(form.textContent).toContain('Se guarda oculto');
+});
+it('al cambiar de tipo conserva valores e imágenes opcionales y no envía inventario para servicios',async()=>{
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
+  const form=w.document.querySelector('#store-product-form');
+  form.elements.quantity.value='9';form.elements.min_stock.value='3';form.elements.description.value='Notas internas';form.elements.store_public_description.value='Descripción pública larga';
+  const kind=value=>{form.elements.kind.value=value;form.elements.kind.dispatchEvent(new w.Event('change',{bubbles:true}));};
+  kind('service');expect(form.elements.quantity.disabled).toBe(true);expect(form.elements.image.required).toBe(false);
+  expect(form.elements.image.closest('.product-gallery-editor')).not.toBeNull();
+  expect(form.querySelector('[type=submit]').textContent).toBe('Guardar servicio');
+  kind('product');expect(form.elements.quantity.value).toBe('9');expect(form.elements.min_stock.value).toBe('3');expect(form.elements.track_stock.checked).toBe(true);
+  expect(form.elements.description.value).toBe('Notas internas');expect(form.elements.store_public_description.value).toBe('Descripción pública larga');
+  kind('service');form.elements.name.value='Instalación';form.elements.sku.value='INST-2';form.elements.price.value='200';form.elements.cost.value='50';
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
+  const body=JSON.parse(requests.find(r=>r.url==='/api/admin/store/products'&&r.options.body).options.body);
+  expect(body.track_stock).toBe(false);expect(body.quantity).toBeUndefined();expect(body.min_stock).toBeUndefined();
+});
+it('un campo inválido dentro de un acordeón se abre y recibe foco sin perder los datos',async()=>{
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
+  const form=w.document.querySelector('#store-product-form'),section=form.querySelector('[data-product-section=inventory]');
+  form.elements.name.value='Producto con notas';form.elements.min_stock.value='-1';
+  form.elements.min_stock.dispatchEvent(new w.Event('invalid',{bubbles:false,cancelable:true}));
+  expect(section.open).toBe(true);expect(w.document.activeElement).toBe(form.elements.min_stock);expect(form.elements.name.value).toBe('Producto con notas');
+});
+it('evita solicitudes duplicadas mientras guarda y conserva las garantías desactivadas explícitamente',async()=>{
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
+  const form=w.document.querySelector('#store-product-form');form.elements.kind.value='service';form.elements.kind.dispatchEvent(new w.Event('change',{bubbles:true}));
+  Object.entries({name:'Servicio',sku:'SERV-3',price:'125.50',cost:'20.25'}).forEach(([key,value])=>form.elements[key].value=value);
+  let finish;w.fetch.mockImplementationOnce(async(url,options)=>{requests.push({url,options});await new Promise(resolve=>{finish=resolve;});return{ok:true,json:async()=>({ok:true})};});
+  const submit=()=>form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));submit();submit();
+  expect(form.querySelector('[type=submit]').disabled).toBe(true);expect(form.querySelector('[type=submit]').textContent).toBe('Guardando…');
+  const writes=requests.filter(row=>row.options.body&&row.url==='/api/admin/store/products');expect(writes).toHaveLength(1);expect(JSON.parse(writes[0].options.body).warranty_available).toBe(false);
+  finish();await flush();expect(w.document.querySelector('.store-product-dialog').open).toBe(false);
+});
+it('un código duplicado del servidor conserva el formulario y enfoca el SKU',async()=>{
+  await tab('catalogo');w.document.querySelector('[data-store-detail]').click();w.document.querySelector('[data-store-edit]').click();
+  const form=w.document.querySelector('#store-product-form');form.elements.description.value='No perder estas notas';
+  w.fetch.mockResolvedValueOnce({ok:false,json:async()=>({ok:false,error:'duplicate_sku',message:'Ese código ya pertenece a otro producto.'})});
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
+  expect(w.document.activeElement).toBe(form.elements.sku);expect(form.elements.description.value).toBe('No perder estas notas');
+  expect(form.querySelector('[role=alert]').textContent).toContain('Ese código');expect(form.querySelector('[type=submit]').disabled).toBe(false);
+});
+it('un rechazo de política de stock abre inventario y conserva la información escrita',async()=>{
+  await tab('catalogo');w.document.querySelector('[data-store-detail]').click();w.document.querySelector('[data-store-edit]').click();
+  const form=w.document.querySelector('#store-product-form');form.elements.track_stock.checked=false;form.elements.track_stock.dispatchEvent(new w.Event('change',{bubbles:true}));
+  form.elements.description.value='Información que debe conservarse';
+  w.fetch.mockResolvedValueOnce({ok:false,json:async()=>({ok:false,error:'policy_locked',message:'Deja primero las existencias en cero.'})});
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
+  expect(form.querySelector('[data-product-section=inventory]').open).toBe(true);expect(w.document.activeElement).toBe(form.elements.track_stock);
+  expect(form.elements.description.value).toBe('Información que debe conservarse');
+});
+it('rechaza una imagen incompatible sin borrar el borrador ni bloquear el botón de guardar',async()=>{
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
+  const form=w.document.querySelector('#store-product-form');form.elements.name.value='Borrador con imagen';
+  Object.defineProperty(form.elements.image,'files',{configurable:true,value:[new w.File(['svg'],'bad.svg',{type:'image/svg+xml'})]});
+  form.elements.image.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
+  expect(form.querySelector('[role=alert]').textContent).toContain('JPG, PNG o WebP');expect(form.elements.name.value).toBe('Borrador con imagen');expect(form.querySelector('[type=submit]').disabled).toBe(false);
+});
+it('edita tres imágenes, elige principal, ordena y quita una sin perder las otras',async()=>{
+  products[0].images=[1,2,3].map(i=>({id:'img'+i,url:'/photo'+i}));products[0].version=7;
+  await tab('catalogo');w.document.querySelector('[data-store-detail]').click();w.document.querySelector('[data-store-edit]').click();
+  const form=w.document.querySelector('#store-product-form');
+  expect(form.querySelector('#product-image-counter').textContent).toBe('3/3');expect(form.querySelector('[data-gallery-add]')).toBeNull();
+  form.querySelector('[data-gallery-primary="2"]').click();form.querySelector('[data-gallery-move="2"]').click();form.querySelector('[data-gallery-remove="2"]').click();
+  expect(form.querySelector('#product-image-counter').textContent).toBe('2/3');
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
+  const body=JSON.parse(requests.find(r=>r.options?.method==='PATCH').options.body);
+  expect(body.images).toEqual([{id:'img3'},{id:'img2'}]);expect(body.version).toBe(7);
+});
+it('bloquea quitar la última imagen publicada y no envía imágenes sin cambios',async()=>{
+  products[0].images=[{id:'old',url:'/old'}];products[0].store_publication={status:'published'};
+  await tab('catalogo');w.document.querySelector('[data-store-detail]').click();w.document.querySelector('[data-store-edit]').click();
+  const form=w.document.querySelector('#store-product-form');form.querySelector('[data-gallery-remove="0"]').click();
+  expect(form.querySelector('[role=alert]').textContent).toContain('Retira primero');expect(form.querySelector('#product-image-counter').textContent).toBe('1/3');
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();
+  const body=JSON.parse(requests.find(r=>r.options?.method==='PATCH').options.body);expect(body.images).toBeUndefined();
+});
+it('rechaza un lote de cuatro archivos sin borrar las fotos anteriores ni el borrador',async()=>{
+  await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
+  const form=w.document.querySelector('#store-product-form');form.elements.name.value='No perder';
+  Object.defineProperty(form.elements.image,'files',{configurable:true,value:Array.from({length:4},()=>new w.File(['png'],'photo.png',{type:'image/png'}))});
+  form.elements.image.dispatchEvent(new w.Event('change',{bubbles:true}));await flush();
+  expect(form.querySelector('[role=alert]').textContent).toContain('máximo de 3');expect(form.elements.name.value).toBe('No perder');expect(form.querySelector('#product-image-counter').textContent).toBe('0/3');expect(form.querySelector('[type=submit]').disabled).toBe(false);
+});
 it('cerrar sesión borra el catálogo y cualquier edición con costos visibles',async()=>{
   await tab('catalogo');w.dispatchEvent(new w.Event('fulltech:store-create'));
   w.dispatchEvent(new w.Event('phyto:calling-logout'));
@@ -91,12 +182,17 @@ it('usa tarjetas compactas, alterna lista/cuadrícula y conserva la preferencia'
   expect(w.localStorage.getItem('fulltech.catalog.layout')).toBe('list');
 });
 it('abre una página de detalle con enlace propio, regresa y respeta la privacidad del agente',async()=>{
-  products[0].description='Descripción completa';await tab('catalogo');
+  products[0].description='Descripción completa';products[0].product_type='third_party';await tab('catalogo');
+  const card=w.document.querySelector('.store-product');
+  expect(card.textContent).toContain(products[0].name);
+  expect(card.textContent).toContain('1,250.50');
+  expect(card.textContent).not.toMatch(/Descripción completa|De terceros|unidades|Sin control de inventario/);
   w.document.querySelector('[data-store-detail]').click();
   expect(new URL(w.location.href).searchParams.get('product')).toBe('p1');
   expect(w.document.querySelector('#store-detail-title').textContent).toBe(products[0].name);
   expect(w.document.querySelector('.store-detail').textContent).toContain('600.25');
   expect(w.document.querySelector('.store-detail').textContent).toContain('Descripción completa');
+  expect(w.document.querySelector('.store-detail').textContent).toContain('De terceros');
   expect(w.document.querySelector('[data-store-back],.store-detail-nav')).toBeNull();
   w.dispatchEvent(new w.CustomEvent('fulltech:back',{cancelable:true}));await new Promise(r=>setTimeout(r,20));await flush();expect(w.document.querySelector('#store-search')).not.toBeNull();
   canManage=false;await tab('inventario');await tab('catalogo');w.document.querySelector('[data-store-detail]').click();

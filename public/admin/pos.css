@@ -395,3 +395,47 @@ body[data-quote-detail='true'] .quotes-appbar .wa-appbar__actions{visibility:hid
   .pos-order-dialog{inset:50% auto auto 50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 40px));height:auto;max-height:88dvh;margin:0;border-radius:18px}
   .pos-order-body{gap:12px;padding:14px}
 }
+
+/* ------------------------------------------------------------------ *
+ * SELECTOR DE CLIENTE COMPACTO (facturación)
+ *
+ * Cabecera baja con buscador + filtro + agregar en UNA fila, y una lista de
+ * filas finas (avatar, nombre, teléfono, grupo) en vez de tarjetas grandes.
+ * Todo con currentColor para que funcione igual en claro y en oscuro.
+ * ------------------------------------------------------------------ */
+.pos-client-dialog .pos-modal-form>header{padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top))}
+.pos-client-dialog .pos-modal-form>header h2{font-size:1rem;margin:0}
+.pos-client-dialog .pos-modal-body{padding:0 max(12px,calc((100vw - 900px)/2))}
+.pos-client-toolbar{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #7186a22c;flex-shrink:0}
+.pos-client-toolbar .store-search{flex:1;min-width:0;margin:0}
+.pos-client-toolbar .field__input{height:40px;border-radius:12px}
+.pos-client-tools{display:flex;gap:6px;flex-shrink:0}
+.pos-client-tool{position:relative;display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid #7186a240;border-radius:12px;background:transparent;color:inherit;cursor:pointer}
+.pos-client-tool svg{width:19px;height:19px}
+.pos-client-tool:hover,.pos-client-tool:focus-visible{outline:2px solid #6e9ef5;outline-offset:1px}
+.pos-client-tool.is-filtered{border-color:#3478ef;color:#3478ef}
+.pos-client-tool-dot{position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:50%;background:#3478ef}
+.pos-client-chips{display:flex;gap:6px;padding:8px 0 4px;flex-shrink:0;overflow-x:auto;scrollbar-width:none}
+.pos-client-chips::-webkit-scrollbar{display:none}
+.pos-client-chips[hidden]{display:none}
+.pos-client-chips button{flex:0 0 auto;padding:6px 12px;border:1px solid #7186a240;border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:.76rem;line-height:1.2;white-space:nowrap;cursor:pointer}
+.pos-client-chips button[aria-pressed=true]{border-color:#3478ef;background:#3478ef1a;color:#3478ef;font-weight:600}
+.pos-client-dialog .pos-customer-row{display:flex;align-items:center;gap:10px;width:100%;padding:9px 8px;margin:0;border:0;border-bottom:1px solid #7186a222;border-radius:0;background:none;color:inherit;text-align:left;cursor:pointer}
+.pos-client-dialog .pos-customer-row:last-child{border-bottom:0}
+.pos-client-dialog .pos-customer-row:hover,.pos-client-dialog .pos-customer-row:focus-visible{background:#3478ef12}
+.pos-client-dialog .pos-customer-row[aria-pressed=true]{background:#3478ef12}
+.pos-client-dialog .pos-customer-avatar{width:34px;height:34px;font-size:.72rem;font-weight:600}
+.pos-customer-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.pos-customer-main strong{font-size:.86rem;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pos-customer-main small{font-size:.74rem;opacity:.62;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pos-customer-tag{flex:0 0 auto;font-size:.58rem;letter-spacing:.05em;text-transform:uppercase;opacity:.55;white-space:nowrap}
+.pos-client-dialog .pos-customer-check{flex:0 0 16px;margin:0;font-size:15px;text-align:center}
+/* Pedidos pendientes del cliente: decisión explícita, nunca automática. */
+.pos-pending-list{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.pos-pending-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid #7186a240;border-radius:12px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.pos-pending-row[aria-pressed=true]{border-color:#3478ef;background:#3478ef14}
+.pos-pending-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pos-pending-main strong{font-size:.86rem}
+.pos-pending-main small{font-size:.72rem;opacity:.62}
+.pos-pending-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.pos-pending-actions .btn{flex:1 1 140px}

@@ -23,6 +23,18 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'chats.read',
     'chats.reply',
     'chats.transfer_own',
+    /*
+     * TOMAR UNA CONVERSACIÓN SIN ASIGNAR.
+     *
+     * El negocio lo pidió así: si el cliente escribe y nadie la tiene, CUALQUIER
+     * agente puede atenderla; en cuanto uno la toma queda exclusiva para él (solo
+     * administración puede reasignarla). Sin este permiso, un agente solo podía
+     * pedirla y esperar, y el cliente quedaba sin respuesta.
+     *
+     * NO se le da al rol DELIVERY: el repartidor entra a los chats de sus
+     * entregas, no a la bandeja general.
+     */
+    'chats.take_unassigned',
     'followups.read',
     'followups.create',
     'followups.update',
@@ -43,6 +55,22 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'delivery.location.update_own',
     'delivery.tracking.start',
     'delivery.tracking.stop',
+    /*
+     * CENTRO DE OPERACIONES (tickets internos).
+     *
+     * Un agente ve TODOS los tickets (`tickets.read_all`) porque coordina la
+     * operación, pero eso NO le da acceso a datos del cliente que no pueda ver
+     * ya: la proyección del ticket recorta lo que exige `clients.read`.
+     * Cerrar un ticket sí es una acción con consecuencias → `tickets.close`.
+     */
+    'tickets.read',
+    'tickets.read_all',
+    'tickets.create',
+    'tickets.reply',
+    'tickets.ack',
+    'tickets.update',
+    'tickets.close',
+    'tickets.participants.manage',
   ]),
   DELIVERY: Object.freeze([
     'chats.read',
@@ -51,6 +79,15 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'delivery.location.update_own',
     'delivery.tracking.start',
     'delivery.tracking.stop',
+    /*
+     * El repartidor entra al Centro de Operaciones SOLO a sus tickets: no tiene
+     * `tickets.read_all`, así que únicamente ve donde es participante o donde el
+     * ticket está asignado a él. Puede responder y acusar recibo, pero no cerrar
+     * ni reasignar.
+     */
+    'tickets.read',
+    'tickets.reply',
+    'tickets.ack',
   ]),
   OPERADOR: Object.freeze([
     'clients.read',
@@ -60,6 +97,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'chats.read',
     'chats.reply',
     'chats.transfer_own',
+    'chats.take_unassigned',
     'followups.read',
     'followups.create',
     'followups.update',
@@ -70,6 +108,14 @@ export const ROLE_PERMISSIONS = Object.freeze({
     'orders.create',
     'orders.update_operational',
     'delivery.manage',
+    'tickets.read',
+    'tickets.read_all',
+    'tickets.create',
+    'tickets.reply',
+    'tickets.ack',
+    'tickets.update',
+    'tickets.close',
+    'tickets.participants.manage',
   ]),
 });
 export const SYSTEM_ACTOR = Object.freeze({

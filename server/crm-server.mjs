@@ -121,6 +121,15 @@ import { handleStoreAuthRoute } from './store-auth-routes.mjs';
 import { createGoogleIdVerifier } from './store-google-idtoken.mjs';
 import { handleStoreSeoRoute } from './store-seo-routes.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
+/*
+ * CENTRO DE OPERACIONES (tickets internos). Módulo APARTE, con sus propias
+ * colecciones (`ops_*`) y sus rutas `/api/admin/ops/*`: no comparte ni una línea
+ * con el chat de WhatsApp del cliente.
+ */
+import { handleOpsRoute } from './ops/routes.mjs';
+import { onTicketEvent as opsOnTicketEvent, opsAgentTick } from './ops/agents.mjs';
+import { opsDeliveryTicketTick } from './ops/delivery-tickets.mjs';
+import { opsDeadlineTick } from './ops/notify.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
 import { createRealtimeHub, eventFromMutation } from './realtime.mjs';
@@ -1353,6 +1362,22 @@ async function closeActiveTrackingForOrder(ctx, orderId, status, actor = null) {
   return closed;
 }
 
+/**
+ * AVISO DEL CENTRO DE OPERACIONES: se guarda y se intenta el push.
+ *
+ * El orden importa: primero la fila en `user_notifications` (idempotente por
+ * clave) y después el envío. Si el push falla, el aviso sigue estando y su
+ * estado real queda en `push_jobs`. Es el mismo camino que usan WhatsApp y los
+ * pedidos, sin inventar un segundo sistema de avisos.
+ */
+async function notifyOpsUser(ctx, input) {
+  const created = await createUserNotification(ctx, input);
+  if (created?.notification && !created.duplicate) {
+    await sendPushForNotification(ctx, created.notification).catch(() => null);
+  }
+  return created;
+}
+
 async function createUserNotification(ctx, input) {
   // Un reintento del mismo suceso no debe recrear el aviso ni reenviar su push.
   if (input.idempotencyKey) {
@@ -2415,13 +2440,20 @@ async function conversationAccess(ctx, actor) {
 }
 
 /**
- * LA REGLA DE ORO: ¿puede este usuario ABRIR esta conversación?
+ * LA REGLA: ¿puede este usuario ABRIR esta conversación?
  *
- * El negocio lo pidió BLINDADO: un agente (o repartidor) que no administra solo
- * entra en lo que es SUYO. Lo demás se sigue viendo en la LISTA (nombre y último
- * mensaje, como en WhatsApp), pero el contenido —hilo, seguimientos, escribir—
- * necesita que alguien se lo asigne. Y para eso está la solicitud, que avisa a
- * administración.
+ *  · Administración (`chats.force_reassign`): todo.
+ *  · Lo que ya es SUYO (asignado a él, o cliente de una entrega suya): sí.
+ *  · SIN ASIGNAR: cualquier agente con `chats.take_unassigned` puede abrirla y
+ *    contestar. Es lo que pidió el negocio: si el cliente escribe y nadie la
+ *    tiene, el que esté disponible la atiende; al contestar queda a su nombre y
+ *    desde ese momento es exclusiva (los demás reciben 403 y solo administración
+ *    puede reasignarla).
+ *  · Asignada a OTRO: no. Se sigue viendo en la lista (nombre y último mensaje),
+ *    pero el hilo y la escritura necesitan que se la asignen.
+ *
+ * El rol DELIVERY no tiene `chats.take_unassigned`: el repartidor entra a los
+ * chats de sus entregas, no a la bandeja general.
  *
  * @param {any} ctx
  * @param {any} actor
@@ -2430,7 +2462,45 @@ async function conversationAccess(ctx, actor) {
 async function canOpenConversation(ctx, actor, conversation) {
   if (!conversation) return false;
   const access = await conversationAccess(ctx, actor);
-  return access.all || access.conversationIds.has(conversation.id);
+  if (access.all || access.conversationIds.has(conversation.id)) return true;
+  const sinAsignar = !conversation.assigned_user_id && !conversation.assigned_to;
+  return sinAsignar && hasPermission(actor, 'chats.take_unassigned');
+}
+
+/**
+ * TOMA LA CONVERSACIÓN SI ESTÁ LIBRE (al contestar por primera vez).
+ *
+ * Atómico: `assignConversation` corre bajo el candado de la conversación y con
+ * `mode: 'take'` devuelve `already_assigned` si otro agente se adelantó. Así dos
+ * agentes que escriben a la vez no se pisan: el segundo recibe 403 con el nombre
+ * de quien la tomó, en vez de mandar un mensaje que ya no le corresponde.
+ *
+ * @returns {Promise<{ok: true, conversation?: any}|{ok: false, assigned_display_name_snapshot?: string|null}>}
+ */
+async function claimConversationIfFree(ctx, actor, conversation) {
+  if (!conversation || conversation.assigned_user_id || conversation.assigned_to) return { ok: true };
+  if (!actor?.id || actor.actor_type !== 'USER') return { ok: true }; // clave legacy: no se apropia nada
+  if (!hasPermission(actor, 'chats.take_unassigned')) return { ok: true };
+  const result = await ctx.customers.assignConversation(conversation.id, {
+    mode: 'take',
+    userId: actor.id,
+    displayName: actor.display_name ?? null,
+    byUserId: actor.id,
+    byDisplayName: actor.display_name ?? null,
+  });
+  if (result?.ok) {
+    await ctx.audit?.record({
+      entity: 'conversation',
+      entityId: conversation.id,
+      action: 'conversation.taken_on_reply',
+      actor: actor.display_name ?? null,
+      summary: 'Tomó la conversación sin asignar al contestar',
+      data: { user_id: actor.id, customer_id: conversation.customer_id ?? null },
+      idempotencyKey: `conversation.taken:${conversation.id}:${actor.id}`,
+    });
+    return { ok: true, conversation: result.conversation };
+  }
+  return { ok: false, assigned_display_name_snapshot: result?.assigned_display_name_snapshot ?? null };
 }
 
 /** ¿Puede este usuario trabajar con ese cliente (seguimientos, tareas)? */
@@ -6511,6 +6581,19 @@ async function handle(req, res, ctx) {
       can:permission=>hasPermission(actor,permission),
       sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
 
+  /*
+   * CENTRO DE OPERACIONES (tickets internos).
+   *
+   * Va ANTES del resto de rutas de `/api/admin/*` para que `/api/admin/ops/...`
+   * no caiga en ningún manejador genérico. El buscador de pedidos se INYECTA:
+   * así el módulo comprueba el pedido de verdad sin conocer el almacén legacy.
+   */
+  if (await handleOpsRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
+      can:permission=>hasPermission(actor,permission),
+      findOrder:id=>findOrderItem(ctx.store,id),
+      listOrders:()=>ctx.store.listAdmin({limit:5000}),
+      notify:(input)=>notifyOpsUser(ctx,input)})) return;
+
     if (route === '/api/admin/inventory' && req.method === 'GET') {
       const snapshot = await ctx.inventory.catalog();
       const stock = await ctx.inventory.stock();
@@ -10468,9 +10551,12 @@ async function handle(req, res, ctx) {
       if (action === 'messages' && req.method === 'POST') {
         if (!requirePermission('chats.reply')) return;
         /*
-         * BLINDADO: sin la conversación asignada no se contesta. Antes valía con
-         * que estuviera SIN asignar (cualquiera podía responder y nadie sabía de
-         * quién era); ahora el que quiere atenderla la PIDE y administración decide.
+         * REGLA DE ATENCIÓN.
+         *
+         * · Sin asignar: cualquier agente puede contestar, y al hacerlo la toma
+         *   (queda exclusiva para él).
+         * · Asignada a otro: no se contesta (solo administración o el repartidor
+         *   de esa entrega).
          */
         if (!(await canOpenConversation(ctx, actor, conversation))) {
           denyConversation(res, json, conversation);
@@ -10489,6 +10575,25 @@ async function handle(req, res, ctx) {
             message: `Esta conversación ya está asignada a ${conversation.assigned_display_name_snapshot ?? 'otro agente'}.`,
           });
           return;
+        }
+        /*
+         * TOMAR LA CONVERSACIÓN LIBRE ANTES DE ESCRIBIR.
+         *
+         * Atómico: si dos agentes contestan a la vez a la misma conversación sin
+         * asignar, solo uno se la queda; el otro recibe 403 aquí mismo y NO se
+         * envía nada al cliente. Sin esto, ambos responderían y nadie sabría de
+         * quién es el hilo.
+         */
+        if (!conversation.assigned_user_id && !deliveryOrderContext) {
+          const tomada = await claimConversationIfFree(ctx, actor, conversation);
+          if (!tomada.ok) {
+            json(res, 403, {
+              ok: false,
+              error: 'conversation_assigned',
+              message: `Otro agente acaba de tomar esta conversación${tomada.assigned_display_name_snapshot ? ` (${tomada.assigned_display_name_snapshot})` : ''}. Pide que te la asignen si necesitas atenderla.`,
+            });
+            return;
+          }
         }
         /** @type {any} */
         let body = {};
@@ -11977,6 +12082,46 @@ export async function startCrmServer(config = {}) {
     resolveTemplate: (name) => approvedTemplate(ctxRef.current, name),
     deliveryControlTick: () => deliveryControlTick(ctxRef.current),
     deliverySupervisorTick: () => supervisorTick(ctxRef.current, supervisorBridge(ctxRef.current)),
+    /* Plazos de los tickets internos: aviso aunque nadie tenga el panel abierto. */
+    opsDeadlineTick: () =>
+      opsDeadlineTick({
+        ctx: ctxRef.current,
+        deps: { notify: (input) => notifyOpsUser(ctxRef.current, input) },
+      }),
+    /*
+     * AGENTES (Etapa D). Una vuelta = como máximo un paso por run. Las
+     * herramientas que necesitan leer pedidos los reciben inyectados: el motor
+     * de agentes no conoce el almacén legacy.
+     */
+    opsAgentTick: () =>
+      opsAgentTick({
+        ctx: ctxRef.current,
+        deps: {
+          notify: (input) => notifyOpsUser(ctxRef.current, input),
+          findOrder: (id) => findOrderItem(ctxRef.current.store, id),
+          /*
+           * MODELO DE LENGUAJE (Etapa E). Se inyecta la consulta del servicio
+           * de corrección, que ya tiene la clave cifrada, la política de modelo
+           * y el contador diario. Si no hay clave o está apagado devuelve null
+           * y el agente sigue con su pauta determinista.
+           */
+          llm: config.opsLlm
+            ? config.opsLlm.plan
+            : (input) => ctxRef.current.proofreading?.plan?.(input),
+        },
+      }),
+    /*
+     * PUENTE SUPERVISOR → CENTRO DE OPERACIONES: abre el ticket del pedido que
+     * necesita atención y le pone al agente encima. No envía nada al cliente.
+     */
+    opsDeliveryTicketTick: () =>
+      opsDeliveryTicketTick({
+        ctx: ctxRef.current,
+        deps: {
+          listOrders: () => ctxRef.current.store.listAdmin({ limit: 5000 }),
+          findOrder: (id) => findOrderItem(ctxRef.current.store, id),
+        },
+      }),
     clock: config.clock,
     intervalMs: config.schedulerIntervalMs,
     log: settings.quiet ? () => {} : (message) => console.log(message),
@@ -12100,6 +12245,18 @@ export async function startCrmServer(config = {}) {
   };
   ctxRef.current = ctx;
   chatEventsRef.current = (info) => emitChatEvent(ctx, info);
+  /*
+   * GANCHO DE AGENTES (Etapa D). `publishTicketEvent` lo llama tras publicar un
+   * evento de ticket para marcar trabajo pendiente; es "dispara y olvida" y
+   * nunca puede tumbar la operación que sí se guardó.
+   */
+  ctx.opsAgents = {
+    onTicketEvent: (input) => {
+      Promise.resolve()
+        .then(() => opsOnTicketEvent({ ctx: ctxRef.current, ...input }))
+        .catch((error) => console.error('[ops] onTicketEvent:', error));
+    },
+  };
 
   /**
    * Quién firma una petición de multimedia: la MISMA sesión que el resto del panel
@@ -12381,6 +12538,11 @@ export async function startCrmServer(config = {}) {
     whatsapp,
     purchaseStatus: ctx.purchaseStatus,
     businessCompletedPurchaseStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
+    /*
+     * Aviso interno (persistente + push). Se expone también para las pruebas y
+     * para las pasadas que no nacen de una petición HTTP (plazos de tickets).
+     */
+    notifyUser: (input) => notifyOpsUser(ctx, input),
     ctx,
     close,
   };

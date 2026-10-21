@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v220-hora-rd-20261021';
+const VERSION = 'crm-v229-centro-operaciones-d-admin-20261022';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -68,10 +68,14 @@ const SHELL = [
   '/admin/calling.js',
   '/admin/store.js',
   '/admin/store.css',
+  '/admin/product-editor.css',
   '/admin/stock.css',
   '/admin/realtime.js',
   '/admin/supervisor.js',
   '/admin/supervisor.css',
+  /* Centro de operaciones (tickets internos). */
+  '/admin/ops.js',
+  '/admin/ops.css',
   '/admin/pos.js',
   '/admin/pos-math.js',
   '/admin/quote-document.js',

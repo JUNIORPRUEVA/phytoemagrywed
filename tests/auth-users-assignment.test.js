@@ -327,43 +327,122 @@ describe('multiusuario, auth y asignación', () => {
     pedroCookie = (await login('pedro@phyto.local', PEDRO_PASS)).cookie;
   });
 
-  it('NADIE se asigna una conversación solo: los agentes reciben 403 y administración la asigna', async () => {
+  it('una conversación SIN asignar la toma cualquier agente y desde ahí queda exclusiva (solo administración la mueve)', async () => {
     expect((await inbound('wamid.AUTH1', PHONE, 'Hola')).status).toBe(200);
     conversation = await waitFor(async () => {
       const rows = (await body(await request('/api/admin/conversations'))).conversations;
       return rows.find((row) => row.customer?.phone_e164 === `+${PHONE}`);
     });
     /*
-     * El negocio lo pidió así: un agente no se pone al frente de una conversación
-     * por su cuenta (ni «robándola» ni tomando una sin asignar). La PIDE y
-     * administración decide quién la lleva.
+     * REGLA DEL NEGOCIO: si el cliente escribe y la conversación no es de nadie,
+     * CUALQUIER agente puede tomarla. Dos agentes a la vez: solo uno gana y el
+     * otro recibe 403 (no se pisan).
      */
     const [a, b] = await Promise.all([
       request(`/api/admin/conversations/${conversation.id}/take`, { method: 'POST', body: '{}' }, mariaCookie),
       request(`/api/admin/conversations/${conversation.id}/take`, { method: 'POST', body: '{}' }, pedroCookie),
     ]);
-    expect([a.status, b.status]).toEqual([403, 403]);
-    const sinDueno = (await body(await request(`/api/admin/conversations/${conversation.id}/messages`, {}, adminCookie))).conversation;
-    expect(sinDueno.assigned_user_id ?? null).toBe(null);
+    const ganadores = [a.status, b.status].filter((status) => status === 200);
+    expect(ganadores).toHaveLength(1);
+    expect([a.status, b.status].filter((status) => status === 403)).toHaveLength(1);
 
-    // La petición del agente avisa a administración (no cambia la asignación).
-    const peticion = await request(`/api/admin/conversations/${conversation.id}/assignment-request`, { method: 'POST' }, mariaCookie);
+    const tomaMaria = a.status === 200;
+    const duenoCookie = tomaMaria ? mariaCookie : pedroCookie;
+    const otroCookie = tomaMaria ? pedroCookie : mariaCookie;
+    const otro = tomaMaria ? pedro : maria;
+    const dueno = tomaMaria ? maria : pedro;
+
+    // El dueño abre y contesta.
+    const comoDueno = await request(`/api/admin/conversations/${conversation.id}/messages`, {}, duenoCookie);
+    expect(comoDueno.status).toBe(200);
+    expect((await body(comoDueno)).conversation.assigned_user_id).toBe(dueno.id);
+
+    // El otro agente ya NO puede abrir ni contestar.
+    const abreOtro = await request(`/api/admin/conversations/${conversation.id}/messages`, {}, otroCookie);
+    expect(abreOtro.status).toBe(403);
+    expect((await body(abreOtro)).error).toBe('not_your_conversation');
+    const contestaOtro = await request(`/api/admin/conversations/${conversation.id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body: 'Hola, te atiendo yo' }),
+    }, otroCookie);
+    expect(contestaOtro.status).toBe(403);
+
+    // Tampoco puede «quitársela» con take.
+    const robo = await request(`/api/admin/conversations/${conversation.id}/take`, { method: 'POST', body: '{}' }, otroCookie);
+    expect(robo.status).toBe(403);
+
+    // La petición de asignación sigue existiendo y avisa a administración.
+    const peticion = await request(`/api/admin/conversations/${conversation.id}/assignment-request`, { method: 'POST' }, otroCookie);
     expect(peticion.status).toBe(202);
     const avisos = (await app.collections.list('user_notifications', { limit: 200 })).filter(
       (row) => row.type === 'CONVERSATION_ASSIGNMENT_REQUESTED',
     );
     expect(avisos.length).toBeGreaterThanOrEqual(1);
-    expect(avisos[0].data.requested_by_user_id).toBe(maria.id);
-    expect(avisos[0].recipient_user_id).not.toBe(maria.id);
-    const sigueIgual = (await body(await request(`/api/admin/conversations/${conversation.id}/messages`, {}, adminCookie))).conversation;
-    expect(sigueIgual.assigned_user_id ?? null).toBe(null);
+    expect(avisos[0].data.requested_by_user_id).toBe(otro.id);
+    expect(avisos[0].recipient_user_id).not.toBe(otro.id);
 
-    // Y administración la asigna (aquí empieza la historia de la conversación).
-    const asignada = await request(`/api/admin/conversations/${conversation.id}/assign`, {
+    // Administración sí entra y puede reasignarla.
+    const comoAdmin = await request(`/api/admin/conversations/${conversation.id}/messages`, {}, adminCookie);
+    expect(comoAdmin.status).toBe(200);
+    const reasignada = await request(`/api/admin/conversations/${conversation.id}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: otro.id }),
+    });
+    expect(reasignada.status).toBe(200);
+    const ahoraOtro = await request(`/api/admin/conversations/${conversation.id}/messages`, {}, otroCookie);
+    expect(ahoraOtro.status).toBe(200);
+
+    /*
+     * Se deja la conversación en manos de María a propósito: quien gane la toma es
+     * aleatorio (según qué petición llegue antes) y las pruebas siguientes dan por
+     * hecho que María lleva este cliente.
+     */
+    const paraMaria = await request(`/api/admin/conversations/${conversation.id}/assign`, {
       method: 'POST',
       body: JSON.stringify({ userId: maria.id }),
     });
-    expect(asignada.status).toBe(200);
+    expect(paraMaria.status).toBe(200);
+    expect((await request(`/api/admin/conversations/${conversation.id}/messages`, {}, mariaCookie)).status).toBe(200);
+    expect((await request(`/api/admin/conversations/${conversation.id}/messages`, {}, pedroCookie)).status).toBe(403);
+  });
+
+  it('si dos agentes contestan a la vez una conversación libre, solo uno se la queda; el repartidor no puede tomarla', async () => {
+    const OTRO_TELEFONO = '18095559999';
+    expect((await inbound('wamid.AUTH2', OTRO_TELEFONO, 'Buenas, quiero info')).status).toBe(200);
+    const libre = await waitFor(async () => {
+      const rows = (await body(await request('/api/admin/conversations'))).conversations;
+      return rows.find((row) => row.customer?.phone_e164 === `+${OTRO_TELEFONO}`);
+    });
+    expect(libre.assigned_user_id ?? null).toBe(null);
+
+    // El repartidor no tiene el permiso: no puede tomar la conversación.
+    const deliveryLogin = await login('delivery@phyto.local', 'Delivery-12345');
+    const delReparto = await request(`/api/admin/conversations/${libre.id}/take`, { method: 'POST', body: '{}' }, deliveryLogin.cookie);
+    expect(delReparto.status).toBe(403);
+    expect((await request(`/api/admin/conversations/${libre.id}/messages`, {}, deliveryLogin.cookie)).status).toBe(403);
+
+    // Dos agentes contestan a la vez sin que nadie la tenga: uno gana.
+    const respuestas = await Promise.all([
+      request(`/api/admin/conversations/${libre.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ body: 'Te atiendo yo' }),
+      }, mariaCookie),
+      request(`/api/admin/conversations/${libre.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ body: 'Te atiendo yo' }),
+      }, pedroCookie),
+    ]);
+    const estados = respuestas.map((r) => r.status).sort();
+    expect(estados).toEqual([200, 403]);
+    const perdedor = await body(respuestas.find((r) => r.status === 403));
+    expect(['not_your_conversation', 'conversation_assigned']).toContain(perdedor.error);
+
+    // Quedó en manos de exactamente uno, y el otro ya no entra.
+    const quedo = (await body(await request(`/api/admin/conversations/${libre.id}/messages`, {}, adminCookie))).conversation;
+    expect([maria.id, pedro.id]).toContain(quedo.assigned_user_id);
+    const ganoMaria = quedo.assigned_user_id === maria.id;
+    expect((await request(`/api/admin/conversations/${libre.id}/messages`, {}, ganoMaria ? mariaCookie : pedroCookie)).status).toBe(200);
+    expect((await request(`/api/admin/conversations/${libre.id}/messages`, {}, ganoMaria ? pedroCookie : mariaCookie)).status).toBe(403);
   });
 
   it('NO ADMIN queda bloqueado en datos sensibles, eliminación y ajustes', async () => {
@@ -382,11 +461,13 @@ describe('multiusuario, auth y asignación', () => {
     expect(dataResponse.status).toBe(200);
     expect(JSON.stringify(data.items)).not.toMatch(/cost|profit|margin/i);
     /*
-     * Un agente NO se asigna conversaciones solo (ni toma las sin asignar): eso es
-     * de administración. La petición de asignación es lo suyo.
+     * Un agente SÍ puede tomar una conversación sin asignar (regla del negocio),
+     * pero sigue sin poder administrar usuarios ni ajustes. El repartidor, en
+     * cambio, no entra a la bandeja general: no tiene ese permiso.
      */
-    expect(data.auth.permissions).not.toContain('chats.take_unassigned');
+    expect(data.auth.permissions).toContain('chats.take_unassigned');
     expect(data.auth.permissions).not.toContain('users.manage');
+    expect(data.auth.permissions).not.toContain('settings.manage');
 
     const deleteCustomer = await request(`/api/admin/customers/${customerId}`, { method: 'DELETE' }, mariaCookie);
     expect(deleteCustomer.status).toBe(403);

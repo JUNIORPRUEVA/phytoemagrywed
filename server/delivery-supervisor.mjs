@@ -257,8 +257,18 @@ export function responsibleOf(order) {
   return null;
 }
 
+/**
+ * Primera fecha válida de la lista.
+ *
+ * OJO (corregido en la Etapa E): acepta también **números**. Antes solo pasaba
+ * cadenas a `Date.parse`, y `supervisionOf` le pasa `assignedAt` ya convertido a
+ * milisegundos; `Date.parse(<número>)` devuelve NaN, así que `startedAt` salía 0
+ * y **la etapa `in_transit` nunca se marcaba como atrasada** (el supervisor no
+ * avisaba nunca de una entrega en curso que se estaba pasando de tiempo).
+ */
 const firstTime = (...values) => {
   for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
     const parsed = Date.parse(value ?? '');
     if (Number.isFinite(parsed)) return parsed;
   }

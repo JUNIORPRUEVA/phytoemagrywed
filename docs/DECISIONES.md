@@ -1373,6 +1373,42 @@ persona». Está en el menú lateral, en **Sistema**, entre «Perfil» e «Ir a 
 4. **Probado en el navegador de verdad** (los dos caminos: hoja nativa y portapapeles) y
    en la prueba de la piel del panel. El service worker sube a `crm-v32-compartir-app`.
 
+## 50. Agentes de IA en los tickets internos: catálogo cerrado y aprobación humana
+
+El Centro de Operaciones (etapas A–D, ver `docs/OPS-CENTER-ETAPA-A…D.md`) permite que agentes
+autorizados trabajen dentro de las conversaciones internas. Lo que se decidió, y por qué:
+
+1. **El agente no tiene la base de datos.** No recibe `ctx.db`: solo puede llamar a las herramientas de
+   `server/ops/tools.mjs`, que es una **lista cerrada**. Lo que no está en esa lista no existe — ni
+   siquiera como «capacidad pendiente»: `db.query_raw`, `server.exec` y `whatsapp.send_external` están
+   declaradas como `forbidden` para que quede escrito en el código, no solo en un documento.
+2. **Los permisos se derivan, no se aceptan.** El alta de un agente manda **herramientas**; el servidor
+   calcula los permisos y los contrasta con una lista blanca. Un agente no puede tener
+   `tickets.close` ni `orders.update_operational`, ni aunque se lo pidan por la API.
+3. **Lo irreversible lo decide una persona.** Las herramientas `high_impact` no se ejecutan nunca sin
+   una aprobación **con esos parámetros exactos**, que ve y firma alguien con el permiso concreto
+   (hoy `ticket.close` → `tickets.close`). La aprobación dura 24 h y **se ejecuta una sola vez**;
+   además, la ejecuta la persona que aprobó (con su identidad y su `can`), no el agente.
+4. **El trabajo es durable.** Cada paso se guarda con su lease en la base de datos: si el proceso se
+   cae a media ejecución, el run vuelve a la cola con un intento más. Los efectos van con clave de
+   idempotencia, así que un reintento no duplica un mensaje ni un cierre.
+5. **El planificador es determinista y está aislado.** `planStep` no llama a ninguna red: recibe
+   `{ticket, run, agent}` y devuelve un paso. Es **el único punto** que habría que sustituir para
+   conectar un modelo real; permisos, aprobaciones, idempotencia y recuperación no cambiarían.
+   Mientras eso no se autorice, **no hay ningún proveedor de IA conectado**.
+6. **Un agente no es una persona.** Sus mensajes llevan `author_type: 'agent'` y su participación es de
+   tipo `agent`; su mensaje **no** da por atendida una espera humana. En el panel se distingue con un
+   chip «IA» y tiene su propio bloque (distinto de «Participantes»).
+7. **Fallar no rompe nada.** Un evento de ticket solo *marca* trabajo pendiente; si el agente falla,
+   el ticket sigue igual. Un paso de lectura opcional que falla (por ejemplo, el estado del pedido
+   vinculado) se anota como error y el plan continúa en vez de reintentar en bucle.
+8. **Asignar es de una persona.** Dar de alta y asignar agentes exige `admin.full` / `tickets.update`.
+   Un agente nunca se asigna a sí mismo ni se despierta en tickets donde no se le ha puesto.
+
+Lo que queda **fuera a propósito**: activar `order.change_total`, `order.cancel`, `order.refund` y
+`customer.update_sensitive` (dinero y datos sensibles), y cualquier envío al cliente. Esas cuatro están
+registradas y **desactivadas**: activarlas exige autorización expresa y su propio circuito de pruebas.
+
 
 
 

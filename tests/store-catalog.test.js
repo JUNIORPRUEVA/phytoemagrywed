@@ -6,7 +6,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {startCrmServer} from '../server/crm-server.mjs';
 import {parseProductImage} from '../server/store-catalog.mjs';
-const IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS7kAAAAASUVORK5CYII=';
+const IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
 let app,dir,cookie,databaseUrl;
 async function call(route,body,method='POST',auth=cookie){
   const verb=body?method:method==='POST'?'GET':method;
@@ -48,14 +48,14 @@ it('crea productos con foto, costos, precio exacto y cantidad; persisten al rein
   app=await startCrmServer({port:0,host:'127.0.0.1',databaseUrl,dataFile:path.join(dir,'catalog.sqlite'),token:'catalog-test-token',quiet:true,schedulerEnabled:false});
   expect((await list()).data.products.find(x=>x.id===id)).toMatchObject({quantity:5,price_cents:125050});
 });
-it('exige foto para productos, evita códigos duplicados y rechaza importes y cantidades inválidos',async()=>{
-  expect((await create({image:undefined})).data.error).toBe('image_required');
+it('permite guardar sin foto, evita códigos duplicados y rechaza importes y cantidades inválidos',async()=>{
+  expect((await create({image:undefined,sku:'SIN-FOTO'})).status).toBe(201);
   expect((await create({cost:'-1'})).status).toBe(422);
   expect((await create({quantity:1.5})).status).toBe(422);
   expect((await create({price:'1.234'})).status).toBe(422);
   expect((await create()).status).toBe(201);
   expect((await create({sku:'cam-001'})).status).toBe(409);
-  expect((await list()).data.products.filter(x=>!x.legacy)).toHaveLength(1);
+  expect((await list()).data.products.filter(x=>!x.legacy)).toHaveLength(2);
 });
 it('no admite SVG ni imágenes con contenido o tamaños inválidos',()=>{
   expect(()=>parseProductImage('data:image/svg+xml;base64,PHN2Zz4=')).toThrow();

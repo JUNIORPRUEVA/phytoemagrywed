@@ -91,6 +91,11 @@ docs/                contrato del CRM, guía del panel, pendientes y decisiones 
 tests/               unidades, render, flujos de cliente, API del CRM, panel y contenido
 public/admin/        el mini-CRM instalable (PWA): una página, sin frameworks
 
+> El **Centro de operaciones** (tickets internos y agentes de IA) vive en `server/ops/` y
+> `public/admin/ops.js`. Su manual, en `docs/PANEL.md` → «Centro de operaciones»; el diseño
+> y las garantías, en `docs/OPS-CENTER-ETAPA-A…D.md`, y el resumen de reglas en
+> `docs/DECISIONES.md` §50.
+
 ### Editar contenido
 
 1. Abre `src/config/*.config.js` y rellena **solo datos reales y aprobados**.
