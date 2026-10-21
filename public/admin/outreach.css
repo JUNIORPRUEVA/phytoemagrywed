@@ -1,0 +1,110 @@
+/* Lista y appbar de Seguimiento. Los filtros viven únicamente en el drawer. */
+body:is([data-tab='seguimientos'],[data-tab='mensajes']) .topbar,
+body:is([data-tab='seguimientos'],[data-tab='mensajes']) #menu,
+body:is([data-tab='seguimientos'],[data-tab='mensajes']) #state-pill { display: none !important; }
+body:is([data-tab='seguimientos'],[data-tab='mensajes']) #mobile-header { display: block; position: sticky; top: 0; width: 100%; z-index: 30; background: var(--pe-appbar-bg); border-bottom: 1px solid var(--pe-line); }
+body:is([data-tab='seguimientos'],[data-tab='mensajes']) .app { padding-top: 0; }
+body:is([data-tab='seguimientos'],[data-tab='mensajes']) .content { margin-top: 0; padding-top: 0; }
+.outreach { max-width: 1120px; margin-inline: auto; padding: 14px 0 40px; }
+.outreach-appbar { max-width: 1200px; min-height: 72px; box-sizing: border-box; padding: 12px 24px; margin-inline: auto; display: flex; align-items: center; gap: 12px; }
+.outreach-appbar h1 { margin: 0; font-size: 1.06rem; line-height: 1.4; font-weight: 550; white-space: nowrap; letter-spacing: -.02em; }
+.outreach-appbar-search-host { flex: 1; min-width: 0; margin-left: auto; display: flex; justify-content: flex-end; }
+.outreach-appbar .outreach-search { width: min(100%, 320px); min-height: 40px; margin: 0; border: 0; background: var(--pe-control-bg); border-radius: 9px; font-size: .85rem; box-shadow: none; }
+.outreach-icon { width: 40px; height: 40px; padding: 9px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 40px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.outreach-icon svg { width: 21px; height: 21px; flex-shrink: 0; }
+.outreach-icon:hover { background: var(--pe-chip-bg); color: var(--text-primary); }
+.outreach-icon:disabled { opacity: .4; cursor: default; }
+.outreach-icon:focus-visible, .outreach-row__copy:focus-visible { outline: 2px solid var(--phyto-primary); outline-offset: -2px; }
+.outreach-create { color: var(--phyto-primary); }
+.outreach-search-toggle { display: none; }
+[data-outreach-filter-open] { position: relative; }
+[data-outreach-filter-open][data-active='true']::after { content: ''; position: absolute; width: 5px; height: 5px; top: 7px; right: 7px; border-radius: 50%; background: var(--phyto-primary); }
+.outreach-list-caption { margin: 9px 0 8px; color: var(--text-secondary); font-size: .76rem; line-height: 1.5; }
+.outreach-list, body[data-tab='seguimientos'] #list-seguimientos { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+.outreach-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 22px; width: 100%; box-sizing: border-box; min-height: 88px; padding: 16px 0; border: 0; border-bottom: 1px solid var(--pe-line); border-radius: 0; background: transparent; box-shadow: none; }
+.outreach-row__copy { min-width: 0; display: grid; gap: 7px; padding: 5px 0; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.outreach-row__copy strong { font-weight: 550; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outreach-row__copy span { color: var(--text-secondary); font-size: .82rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outreach-row__when { display: grid; justify-items: end; gap: 6px; color: var(--text-secondary); font-size: .76rem; white-space: nowrap; }
+.outreach-row__when small { font-size: .72rem; }
+.outreach-row__when .outreach-overdue { color: var(--danger); }
+.outreach-row__actions { display: flex; align-items: center; gap: 2px; }
+.outreach-row__actions .outreach-icon { width: 36px; height: 40px; flex-basis: 36px; padding: 9px; }
+.outreach-row__actions .outreach-icon svg { width: 18px; height: 18px; }
+.outreach-empty { padding: 60px 16px; text-align: center; }
+.outreach-empty > span { color: var(--text-secondary); font-size: 1.4rem; }
+.outreach-empty h3 { font-size: 1rem; font-weight: 550; margin: 18px 0 8px; }
+.outreach-empty p, .outreach-caption { color: var(--text-secondary); font-size: .82rem; line-height: 1.6; }
+.outreach-caption { margin: 0 0 16px; }
+.outreach-detail-text { font-size: .92rem; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 20px; }
+.outreach-filter-drawer[hidden] { display: none !important; }
+.outreach-filter-drawer { position: fixed; inset: 0; z-index: 850; }
+.outreach-filter-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, .28); }
+.outreach-filter-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(350px, calc(100vw - 36px)); box-sizing: border-box; padding: calc(20px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px)); background: var(--pe-card-bg); border-left: 1px solid var(--pe-line); display: flex; flex-direction: column; gap: 12px; overflow-y: auto; box-shadow: -16px 0 60px rgba(0,0,0,.12); }
+.outreach-filter-panel header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+.outreach-filter-panel h2 { font-size: 1.1rem; font-weight: 550; margin: 0; }
+.outreach-filter-label { color: var(--text-secondary); font-size: .78rem; margin: 0; }
+.outreach-filter-options { display: flex; flex-direction: column; gap: 4px; margin-bottom: 24px; }
+.outreach-filter-options .chip { display: flex; align-items: center; justify-content: space-between; min-height: 50px; width: 100%; padding: 12px; margin: 0; border: 0; border-radius: 9px; box-shadow: none; background: transparent; font-size: .88rem; text-align: left; font-weight: 450; color: var(--text-primary); }
+.outreach-filter-options .chip small { color: var(--text-secondary); font-size: .76rem; }
+.outreach-filter-options .chip[aria-pressed='true'] { background: var(--pe-chip-bg); color: var(--phyto-primary); }
+.outreach-filter-panel > .btn:last-child { margin-top: auto; }
+body[data-outreach-filters='open'] .content { overflow: hidden; }
+@media (max-width: 700px) {
+  .outreach-appbar { min-height: 60px; padding: 8px 12px; gap: 4px; }
+  .outreach-appbar h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .95rem; }
+  .outreach-appbar-search-host { display: none; }
+  .outreach-search-toggle { display: inline-flex; }
+  .outreach-appbar[data-search-open='true'] h1, .outreach-appbar[data-search-open='true'] .outreach-appbar-create { display: none; }
+  .outreach-appbar[data-search-open='true'] .outreach-appbar-search-host { display: flex; }
+  .outreach-appbar[data-search-open='true'] .outreach-search { width: 100%; }
+  .outreach { padding-top: 8px; }
+  .outreach-row { gap: 8px; grid-template-columns: minmax(0,1fr) auto; padding: 14px 0; min-height: 82px; }
+  .outreach-row__copy { grid-column: 1; grid-row: 1; }
+  .outreach-row__when { grid-column: 1; grid-row: 2; display: flex; justify-items: start; gap: 8px; font-size: .72rem; margin-top: -5px; }
+  .outreach-row > .outreach-icon, .outreach-row__actions { grid-column: 2; grid-row: 1 / 3; }
+}
+.outreach-picker { display: grid; gap: 12px; }
+.outreach-recipients { max-height: 250px; overflow-y: auto; border: 1px solid var(--pe-line); border-radius: 12px; }
+.outreach-recipient { display: flex; align-items: center; gap: 12px; padding: 13px 16px; min-height: 58px; cursor: pointer; border-bottom: 1px solid var(--pe-line); }
+.outreach-recipient:last-child { border-bottom: 0; }
+.outreach-recipient input { width: 18px; height: 18px; accent-color: var(--phyto-primary); flex-shrink: 0; }
+.outreach-recipient span { display: grid; gap: 3px; font-size: .88rem; }
+.outreach-recipient small { color: var(--text-secondary); font-size: .76rem; }
+.outreach-recipient:has(input:checked) { background: var(--pe-chip-bg); }
+.outreach-recipient:has(input:disabled) { opacity: .6; cursor: default; }
+.outreach-form { display: grid; gap: 20px; }
+.outreach-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.outreach-form legend { font-size: .88rem; font-weight: 650; margin-bottom: 14px; }
+.outreach-form .field { margin-block: 12px; }
+.outreach-form .field__select { max-width: 100%; text-overflow: ellipsis; }
+.outreach-form .outreach-caption { margin: 8px 0; }
+.outreach-form .outreach-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.outreach-preview { border-radius: 14px; padding: 18px; background: var(--pe-chip-bg); }
+.outreach-preview p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .88rem; line-height: 1.65; margin: 12px 0 0; }
+.outreach-preview label { font-size: .78rem; color: var(--text-secondary); }
+.outreach-preview select { margin-top: 10px; }
+.outreach-feedback { white-space: pre-line; font-size: .83rem; line-height: 1.6; color: var(--text-secondary); }
+.outreach-feedback:empty { display: none; }
+.outreach-list .tag { text-transform: none; letter-spacing: 0; font-weight: 500; }
+body #sheet:is([data-variant='outreach'],[data-variant='outreach-small']) .sheet__panel {
+  width: min(960px, calc(100vw - 40px)); max-width: 960px;
+  left: 50%; right: auto; top: 50%; bottom: auto; transform: translate(-50%, -50%);
+  border-radius: 22px; border: 1px solid var(--pe-line);
+}
+body #sheet[data-variant='outreach-small'] .sheet__panel { width: min(560px, calc(100vw - 32px)); }
+body #sheet:is([data-variant='outreach'],[data-variant='outreach-small']) .sheet__body { padding: 24px; }
+@media (min-width: 800px) {
+  #outreach-schedule-form { grid-template-columns: 1fr 1.15fr; grid-template-areas: 'clients message' 'preview timing' 'feedback feedback' 'save save'; gap: 24px 32px; align-items: start; }
+  #outreach-schedule-form > fieldset:nth-of-type(1) { grid-area: clients; }
+  #outreach-schedule-form > fieldset:nth-of-type(2) { grid-area: message; }
+  #outreach-schedule-form > fieldset:nth-of-type(3) { grid-area: timing; }
+  #outreach-schedule-form > .outreach-preview { grid-area: preview; }
+  #outreach-save-feedback { grid-area: feedback; margin: 0; }
+  #outreach-schedule-save { grid-area: save; margin: 0; }
+}
+.outreach :is(button,input):focus-visible, .outreach-form :is(button,input,select,textarea):focus-visible { outline: 2px solid var(--phyto-primary); outline-offset: 3px; }
+@media (max-width: 640px) {
+  body #sheet:is([data-variant='outreach'],[data-variant='outreach-small']) .sheet__panel { width: 100%; left: 0; top: auto; bottom: 0; transform: none; border-radius: 22px 22px 0 0; }
+  body #sheet:is([data-variant='outreach'],[data-variant='outreach-small']) .sheet__body { padding: 18px 18px calc(24px + var(--safe-bottom, 0px)); }
+}

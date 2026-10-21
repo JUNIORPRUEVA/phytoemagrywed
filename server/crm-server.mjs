@@ -11477,6 +11477,22 @@ async function handle(req, res, ctx) {
           });
           return;
         }
+        // This queue stores body text parameters. Documents, media headers and
+        // dynamic buttons need their dedicated send flow and cannot be promised
+        // as a scheduled text message without those additional parameters.
+        const header = check.template.header;
+        const unsupportedHeader = header && (
+          String(header.format ?? '').toUpperCase() !== 'TEXT' || /\{\{/.test(header.text ?? '')
+        );
+        const unsupportedButton = (check.template.buttons ?? []).some((button) => /\{\{/.test(button.url ?? '') || String(button.type ?? '').toUpperCase() === 'COPY_CODE');
+        if (unsupportedHeader || unsupportedButton) {
+          json(res, 422, {
+            ok: false,
+            error: 'unsupported_scheduled_template',
+            message: 'Esta plantilla necesita un archivo o datos adicionales. Para programar, elige una plantilla de texto.',
+          });
+          return;
+        }
         /*
          * EL CONTENIDO SE CONGELA AQUÍ. Lo que el agente ve y aprueba al programar
          * es EXACTAMENTE lo que se enviará cuando llegue la hora: los parámetros y

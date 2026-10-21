@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v217-arranque-offline-20261020';
+const VERSION = 'crm-v219-seguimiento-lista-20261021';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -29,6 +29,7 @@ const SHELL = [
   '/admin/index.html',
   '/admin/admin.css',
   '/admin/settings.css',
+  '/admin/outreach.css',
   '/admin/fulltech.css',
   '/admin/navigation.css',
   '/admin/conversation-list.css',

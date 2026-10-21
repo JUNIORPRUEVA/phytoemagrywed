@@ -304,6 +304,12 @@
     statuses: [],
     // Ventas (S4/S5/S6): cola de programados, ajustes, estados y auditoría.
     scheduled: null,
+    scheduledRows: null,
+    scheduledLoading: false,
+    scheduledError: '',
+    scheduledFilter: 'pending',
+    scheduledSearch: '',
+    followupSearch: '',
     settings: null,
     commercial: null,
     orderStatuses: [],
@@ -1427,9 +1433,24 @@
       type: 'manual',
       pending: true,
     };
-    const actuales = Array.isArray(state.followups) ? state.followups : state.followups?.items ?? [];
-    if (Array.isArray(state.followups)) state.followups = [...actuales, fila];
-    else if (state.followups) state.followups = { ...state.followups, items: [...actuales, fila] };
+    placeLocalFollowup(fila);
+  }
+
+  function placeLocalFollowup(row) {
+    const reference = todayISO();
+    const buckets = Array.isArray(state.followups) ? { items: state.followups } : { ...(state.followups ?? {}) };
+    for (const key of ['today', 'overdue', 'upcoming', 'completed', 'items']) buckets[key] = (buckets[key] ?? []).filter((entry) => entry.id !== row.id);
+    if (row.status === 'pending') {
+      const key = row.scheduled_at < reference ? 'overdue' : row.scheduled_at === reference ? 'today' : 'upcoming';
+      buckets[key].push(row);
+      buckets[key].sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
+    } else if (row.status === 'completed') buckets.completed.push(row);
+    buckets.items.push(row);
+    state.followups = buckets;
+    if (state.hoy) {
+      state.hoy.seguimientosHoy = buckets.today.length;
+      state.hoy.seguimientosVencidos = buckets.overdue.length;
+    }
     saveSnapshot();
   }
 
@@ -1456,6 +1477,8 @@
      * de la app sigue vivo en la pantalla de acceso y no tiene nada que pedir.
      */
     state.auth = null;
+    state.scheduledRows = null;
+    state.scheduledError = '';
     state.sessionRejected = true;
     $('#app').hidden = true;
     $('#login').hidden = false;
@@ -2341,6 +2364,38 @@
   function renderMobileHeader() {
     const box = $('#mobile-header');
     if (!box) return;
+    const isOutreach = ['seguimientos', 'mensajes'].includes(state.tab);
+    if (box.dataset.outreachTab && (!isOutreach || box.dataset.outreachTab !== state.tab)) {
+      const oldTab = box.dataset.outreachTab;
+      const store = $(`#view-${oldTab} .outreach-search-store`);
+      for (const control of box.querySelectorAll('.outreach-search, .outreach-create')) store?.append(control);
+      delete box.dataset.outreachTab;
+    }
+    if (isOutreach) {
+      if (box.dataset.outreachTab === state.tab && box.querySelector('.outreach-appbar')) return;
+      const followup = state.tab === 'seguimientos';
+      const input = $(followup ? '#followup-search' : '#scheduled-search');
+      const create = $(followup ? '#followup-create' : '#scheduled-create');
+      box.dataset.outreachTab = state.tab;
+      box.innerHTML = `<div class="outreach-appbar">
+        <button class="outreach-icon outreach-appbar-back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+        <h1>${followup ? 'Seguimientos' : 'Mensajes programados'}</h1>
+        <div class="outreach-appbar-search-host"></div>
+        <button class="outreach-icon outreach-search-toggle" data-outreach-search-toggle type="button" aria-label="Buscar">${ICONS.search}</button>
+        <button class="outreach-icon" data-outreach-filter-open type="button" aria-label="${followup ? 'Filtrar seguimientos' : 'Filtrar mensajes'}" aria-controls="outreach-filter-${state.tab}" aria-expanded="false">${ICONS.filter}</button>
+        <div class="outreach-appbar-create"></div>
+      </div>`;
+      if (input) box.querySelector('.outreach-appbar-search-host').append(input);
+      if (create) {
+        const label = followup ? 'Nuevo seguimiento' : 'Programar mensaje';
+        create.className = 'outreach-icon outreach-create';
+        create.setAttribute('aria-label', label);
+        create.title = label;
+        create.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>';
+        box.querySelector('.outreach-appbar-create').append(create);
+      }
+      return;
+    }
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
@@ -3256,31 +3311,17 @@
   function followupCard(row) {
     const customer = row.customer ?? customerById(row.customer_id);
     const conversation = conversationForCustomer(row.customer_id);
-    const late = row.scheduled_at < todayISO();
-    return `<article class="item ${late ? 'item--hoy' : ''}">
-        <div class="item__top">
-          <div>
-            <p class="item__name">${escapeHtml(customer?.name ?? customer?.phone_e164 ?? 'Cliente')}</p>
-            <span class="tag tag--recordatorio">${escapeHtml(fmtDay(row.scheduled_at))}</span>
-            <span class="tag">${escapeHtml(followupLabel(row.type))}</span>
-            ${row.origin === 'manual' ? '<span class="tag">Manual</span>' : ''}
-          </div>
-        </div>
-        <p class="item__meta">${escapeHtml(row.reason ?? 'Seguimiento')}</p>
-        <div class="item__actions">
-          ${
-            conversation
-              ? `<button class="btn btn--whatsapp btn--sm" data-chat="${escapeHtml(conversation.id)}" data-followup="${
-                  escapeHtml(row.id)
-                }" type="button">Escribir ahora</button>`
-              : ''
-          }
-          <button class="btn btn--ghost btn--sm" data-followup-done="${escapeHtml(row.id)}" type="button">Hecho</button>
-          <button class="btn btn--ghost btn--sm" data-followup-postpone="${escapeHtml(row.id)}" type="button">+3 días</button>
-          <button class="btn btn--ghost btn--sm" data-followup-cancel="${escapeHtml(row.id)}" type="button">Cancelar</button>
-          ${customer ? `<button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(customer.id)}" type="button">Ficha</button>` : ''}
-        </div>
-      </article>`;
+    const name = customerName(customer);
+    return `<article class="outreach-row">
+      <button class="outreach-row__copy" ${conversation ? `data-chat="${escapeHtml(conversation.id)}" data-followup="${escapeHtml(row.id)}"` : `data-customer="${escapeHtml(row.customer_id)}"`} type="button">
+        <strong>${escapeHtml(name)}</strong><span>${escapeHtml(row.reason ?? 'Seguimiento')}</span>
+      </button>
+      <div class="outreach-row__when"><time datetime="${escapeHtml(row.scheduled_at)}" ${row.scheduled_at < todayISO() ? 'class="outreach-overdue"' : ''}>${escapeHtml(fmtDay(row.scheduled_at))}</time>${row.pending ? '<small>Pendiente de sincronizar</small>' : ''}</div>
+      <div class="outreach-row__actions">
+        <button class="outreach-icon" data-followup-done="${escapeHtml(row.id)}" type="button" ${row.pending ? 'disabled' : ''} aria-label="Marcar como hecho el seguimiento de ${escapeHtml(name)}" title="Marcar hecho">${ICONS.checkCircle}</button>
+        <button class="outreach-icon" data-followup-more="${escapeHtml(row.id)}" type="button" ${row.pending ? 'disabled' : ''} aria-label="Más opciones del seguimiento de ${escapeHtml(name)}" title="Más opciones">${ICONS.more || '⋯'}</button>
+      </div>
+    </article>`;
   }
 
   /** Tarjeta de una conversación de WhatsApp. */
@@ -8267,32 +8308,25 @@
     if (!box) return;
     const followups = state.followups ?? {};
     const filtro = state.followupsFilter ?? 'todo';
+    const query = state.followupSearch.trim().toLocaleLowerCase();
+    const matches = (row) => !query || [customerName(row.customer ?? customerById(row.customer_id)), row.reason, row.customer?.phone_e164].join(' ').toLocaleLowerCase().includes(query);
+
     const chips = $('#seguimientos-filtros');
     if (chips) {
       chips.innerHTML = FOLLOWUP_FILTERS.map(([value, text]) => {
         const total = followupBulk(value, followups).length;
-        return `<button class="chip chip--filter" data-followup-filter="${value}" aria-pressed="${value === filtro}" type="button">${
-          total ? `${text} ${total}` : text
-        }</button>`;
+        return `<button class="chip chip--filter" data-followup-filter="${value}" aria-pressed="${value === filtro}" type="button"><span>${text}</span><small>${total}</small></button>`;
       }).join('');
     }
-    const bloque = (titulo, filas) =>
-      filas?.length
-        ? `<h2 class="view__title">${escapeHtml(titulo)} (${filas.length})</h2>${filas.map(followupCard).join('')}`
-        : '';
-    const html = [
-      ['vencidos', 'Vencidos', followups.overdue],
-      ['hoy', 'Para hoy', followups.today],
-      ['proximos', 'Próximos', followups.upcoming],
-    ]
-      .filter(([id]) => filtro === 'todo' || filtro === id)
-      .map(([, titulo, filas]) => bloque(titulo, filas))
-      .filter(Boolean)
-      .join('');
+    const visible = followupBulk(filtro, followups).filter(matches);
+    const filterTitle = FOLLOWUP_FILTERS.find(([key]) => key === filtro)?.[1] ?? 'Todos';
+    if (state.tab === 'seguimientos') updateOutreachFilterButton();
+    $('#followup-list-caption').textContent = `${filterTitle} · ${visible.length} ${visible.length === 1 ? 'seguimiento' : 'seguimientos'}`;
+    const html = visible.map(followupCard).join('');
     box.innerHTML =
       html ||
-      (filtro === 'todo'
-        ? emptyState('No hay seguimientos pendientes. Se crean solos al entregar una compra.')
+      (query ? emptyState('No hay seguimientos que coincidan con tu búsqueda.') : filtro === 'todo'
+        ? `<div class="outreach-empty"><span aria-hidden="true">✓</span><h3>Todo al día</h3><p>Crea un seguimiento para recordar tu próxima atención.</p><button class="btn btn--ghost" data-outreach-followup type="button">Crear seguimiento</button></div>`
         : `<div class="empty">
             <p>No hay seguimientos en «${escapeHtml(
               FOLLOWUP_FILTERS.find(([value]) => value === filtro)?.[1] ?? '',
@@ -8306,24 +8340,290 @@
   /** Cliente marcado como "no contactar" (segundo toque confirma). */
   let pendingOptOut = null;
 
+
+  let outreachFilterOpener = null;
+  function closeOutreachFilters(restoreFocus = true) {
+    for (const drawer of $$('.outreach-filter-drawer')) drawer.hidden = true;
+    for (const button of $$('[data-outreach-filter-open]')) button.setAttribute('aria-expanded', 'false');
+    delete document.body.dataset.outreachFilters;
+    if (restoreFocus && outreachFilterOpener?.isConnected) outreachFilterOpener.focus();
+    outreachFilterOpener = null;
+  }
+  function openOutreachFilters(button) {
+    const drawer = $(`#outreach-filter-${state.tab}`);
+    if (!drawer) return;
+    closeOutreachFilters(false);
+    outreachFilterOpener = button;
+    drawer.hidden = false;
+    document.body.dataset.outreachFilters = 'open';
+    button.setAttribute('aria-expanded', 'true');
+    (drawer.querySelector('[aria-pressed="true"]') ?? drawer.querySelector('aside')).focus();
+  }
+  function updateOutreachFilterButton() {
+    const button = $('[data-outreach-filter-open]');
+    if (button) button.dataset.active = String(state.tab === 'seguimientos' ? (state.followupsFilter ?? 'todo') !== 'todo' : state.scheduledFilter !== 'pending');
+  }
+  function openScheduledDetails(id) {
+    const row = (state.scheduledRows ?? []).find((entry) => entry.id === id);
+    if (!row) return;
+    const customer = row.customer ?? customerById(row.customer_id);
+    const date = new Date(row.scheduled_at);
+    const when = Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('es', { dateStyle: 'long', timeStyle: 'short' }).format(date);
+    openSheet(customerName(customer), `<p class="outreach-caption">${escapeHtml(when)} · ${escapeHtml(scheduledStateTitle(row.status))}</p>
+      <p class="outreach-detail-text">${escapeHtml(row.template_body || row.text || 'Sin contenido guardado')}</p>
+      ${['FAILED', 'BLOCKED'].includes(row.status) ? `<p class="outreach-feedback">${escapeHtml(scheduledFriendlyReason(row))}</p>` : ''}
+      <div class="item__actions">${scheduledCanEdit(row) ? `<button class="btn btn--primary" data-scheduled-edit="${escapeHtml(id)}" type="button">Editar</button><button class="btn btn--ghost" data-scheduled-cancel="${escapeHtml(id)}" type="button">Cancelar envío</button>` : ''}<button class="btn btn--ghost" data-customer="${escapeHtml(row.customer_id)}" type="button">Ver cliente</button></div>`, { variant: 'outreach-small' });
+  }
+
+  const scheduledTemplateSupported = (template) => (!template.header || (String(template.header.format ?? '').toUpperCase() === 'TEXT' && !/\{\{/.test(template.header.text ?? ''))) && !(template.buttons ?? []).some((button) => /\{\{/.test(button.url ?? '') || String(button.type ?? '').toUpperCase() === 'COPY_CODE');
+  const SCHEDULE_FILTERS = [['pending', 'Pendientes'], ['sent', 'Enviados'], ['problems', 'Sin enviar'], ['all', 'Todos']];
+  const scheduleGroup = (row) => scheduledIsPending(row) ? 'pending' : ['SENT', 'DELIVERED', 'READ'].includes(row.status) ? 'sent' : 'problems';
+  let scheduledRequest = null;
+
+  async function refreshScheduled() {
+    if (scheduledRequest) return scheduledRequest;
+    state.scheduledLoading = true;
+    state.scheduledError = '';
+    renderMensajes();
+    const identity = notificationUserKey();
+    scheduledRequest = (async () => {
+      try {
+        const data = await api('/api/admin/scheduled');
+        if (identity === notificationUserKey() && !$('#app').hidden) state.scheduledRows = data.scheduled ?? [];
+      } catch (error) {
+        if (error.message !== 'unauthorized') state.scheduledError = 'No se pudo actualizar la bandeja. Comprueba tu conexión y pulsa Actualizar.';
+      } finally {
+        state.scheduledLoading = false;
+        scheduledRequest = null;
+        renderMensajes();
+      }
+    })();
+    return scheduledRequest;
+  }
+
   function renderMensajes() {
-    const list = state.messages.length
-      ? state.messages
-          .map(
-            (message) => `<article class="item">
-              <p class="item__name">${escapeHtml(message.name)}</p>
-              <p class="item__meta">${escapeHtml(message.body)}</p>
-              <div class="item__actions">
-                <button class="btn btn--ghost btn--sm" data-edit-message="${escapeHtml(message.id)}" type="button">Editar</button>
-                <button class="btn ${pendingDelete === message.id ? 'btn--danger' : 'btn--ghost'} btn--sm" data-del-message="${escapeHtml(
-                  message.id,
-                )}" type="button">${pendingDelete === message.id ? '¿Seguro? Toca otra vez' : 'Borrar'}</button>
-              </div>
-            </article>`,
-          )
-          .join('')
-      : emptyState('No hay plantillas todavía.');
-    $('#list-mensajes').innerHTML = list;
+    const list = $('#scheduled-list');
+    if (!list) return;
+    const rows = state.scheduledRows ?? [];
+    const count = (key) => rows.filter((row) => scheduleGroup(row) === key).length;
+
+    $('#scheduled-filters').innerHTML = SCHEDULE_FILTERS.map(([key, label]) => `<button class="chip chip--filter" data-schedule-filter="${key}" aria-pressed="${state.scheduledFilter === key}" type="button"><span>${label}</span><small>${key === 'all' ? rows.length : count(key)}</small></button>`).join('');
+    $('#scheduled-feedback').textContent = state.scheduledError || (state.scheduledLoading ? 'Actualizando mensajes…' : '');
+    $('#scheduled-refresh').disabled = state.scheduledLoading;
+    const query = state.scheduledSearch.trim().toLocaleLowerCase();
+    const visible = rows.filter((row) => (state.scheduledFilter === 'all' || scheduleGroup(row) === state.scheduledFilter) && (!query || [customerName(row.customer ?? customerById(row.customer_id)), row.customer?.phone_e164, row.template_body, row.text].join(' ').toLocaleLowerCase().includes(query))).sort((a, b) => state.scheduledFilter === 'pending' ? a.scheduled_at.localeCompare(b.scheduled_at) : b.scheduled_at.localeCompare(a.scheduled_at));
+    if (state.tab === 'mensajes') updateOutreachFilterButton();
+    $('#scheduled-list-caption').textContent = `${SCHEDULE_FILTERS.find(([key]) => key === state.scheduledFilter)?.[1] ?? 'Todos'} · ${visible.length} ${visible.length === 1 ? 'mensaje' : 'mensajes'}`;
+    list.innerHTML = visible.map((row) => {
+      const customer = row.customer ?? customerById(row.customer_id);
+      const date = new Date(row.scheduled_at);
+      const when = Number.isNaN(date.getTime()) ? 'Fecha no disponible' : new Intl.DateTimeFormat('es', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+      return `<article class="outreach-row" data-schedule-row="${escapeHtml(row.id)}">
+        <button class="outreach-row__copy" data-schedule-details="${escapeHtml(row.id)}" type="button"><strong>${escapeHtml(customerName(customer))}</strong><span>${escapeHtml(row.template_body || row.text || 'Sin contenido guardado')}</span></button>
+        <div class="outreach-row__when"><time datetime="${escapeHtml(row.scheduled_at)}">${escapeHtml(when)}</time><small>${escapeHtml(scheduledStateTitle(row.status))}</small></div>
+        <button class="outreach-icon" data-schedule-details="${escapeHtml(row.id)}" type="button" aria-label="Ver mensaje programado de ${escapeHtml(customerName(customer))}">${ICONS.more || '⋯'}</button>
+      </article>`;
+    }).join('') || (state.scheduledLoading && state.scheduledRows === null ? emptyState('Cargando tus mensajes…') : state.scheduledError && state.scheduledRows === null ? emptyState('La bandeja no está disponible. Pulsa Actualizar para volver a intentarlo.') : `<div class="outreach-empty"><span aria-hidden="true">${query ? '⌕' : '◷'}</span><h3>${query ? 'Sin coincidencias' : state.scheduledFilter === 'pending' ? 'Sin mensajes pendientes' : state.scheduledFilter === 'sent' ? 'Todavía no hay envíos' : state.scheduledFilter === 'problems' ? 'Sin mensajes por revisar' : 'Tu bandeja está al día'}</h3><p>${query ? 'Prueba con otro nombre o texto.' : 'Aquí verás los mensajes y el resultado de cada envío.'}</p>${!query ? '<button class="btn btn--ghost" data-outreach-schedule type="button">Programar un mensaje</button>' : ''}</div>`);
+  }
+
+  /** La búsqueda no pierde los destinatarios marcados fuera del filtro. */
+  function mountOutreachPicker({ multiple = true, onChange = () => {} } = {}) {
+    const selected = new Set();
+    const customers = [...state.customers].sort((a, b) => customerName(a).localeCompare(customerName(b), 'es'));
+    const box = $('#outreach-recipients');
+    const search = $('#outreach-client-search');
+    const available = (customer) => !multiple || (!customer.do_not_contact && Boolean(customer.phone_e164));
+    const visible = () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      return customers.filter((customer) => `${customerName(customer)} ${customer.phone_e164 ?? ''}`.toLocaleLowerCase().includes(query));
+    };
+    function paint() {
+      box.innerHTML = visible().map((customer) => `<label class="outreach-recipient"><input type="${multiple ? 'checkbox' : 'radio'}" name="outreach-recipient" data-outreach-recipient="${escapeHtml(customer.id)}" ${selected.has(customer.id) ? 'checked' : ''} ${available(customer) ? '' : 'disabled'} /><span>${escapeHtml(customerName(customer))}<small>${escapeHtml(customer.phone_e164 ?? 'Sin teléfono')}${customer.do_not_contact ? ' · No contactar' : ''}</small></span></label>`).join('') || '<p class="outreach-caption">No encontramos clientes con esa búsqueda.</p>';
+      const all = visible().filter(available);
+      if ($('#outreach-select-visible')) $('#outreach-select-visible').textContent = all.length && all.every((customer) => selected.has(customer.id)) ? 'Quitar selección visible' : 'Seleccionar todos los visibles';
+      $('#outreach-selected').textContent = `${selected.size} ${selected.size === 1 ? 'cliente seleccionado' : 'clientes seleccionados'}`;
+    }
+    search.addEventListener('input', paint);
+    search.addEventListener('keydown', (event) => { if (event.key === 'Enter') event.preventDefault(); });
+    box.addEventListener('change', (event) => {
+      const input = event.target.closest('[data-outreach-recipient]');
+      if (!input) return;
+      if (!multiple) selected.clear();
+      if (input.checked) selected.add(input.dataset.outreachRecipient);
+      else selected.delete(input.dataset.outreachRecipient);
+      paint(); onChange();
+    });
+    $('#outreach-select-visible')?.addEventListener('click', () => {
+      const rows = visible().filter(available);
+      const all = rows.length && rows.every((customer) => selected.has(customer.id));
+      rows.forEach((customer) => all ? selected.delete(customer.id) : selected.add(customer.id));
+      paint(); onChange();
+    });
+    paint();
+    return { rows: () => customers.filter((customer) => selected.has(customer.id)), remove: (id) => { selected.delete(id); paint(); } };
+  }
+
+  function outreachPickerHtml(multiple = true) {
+    return `<div class="outreach-picker"><input class="field__input" id="outreach-client-search" autocomplete="off" type="search" placeholder="Buscar por nombre o teléfono" aria-label="Buscar destinatarios" /><div class="outreach-recipients" id="outreach-recipients"></div><div class="item__actions">${multiple ? '<button class="btn btn--ghost btn--sm" id="outreach-select-visible" type="button">Seleccionar todos</button>' : ''}<span class="outreach-caption" id="outreach-selected" role="status"></span></div></div>`;
+  }
+
+  function openFollowupOptions(id) {
+    const row = followupBulk('todo').find((entry) => entry.id === id);
+    if (!row) return;
+    openSheet('Gestionar seguimiento', `<p class="outreach-caption">${escapeHtml(customerName(row.customer ?? customerById(row.customer_id)))} · ${escapeHtml(row.reason ?? 'Seguimiento')}</p>
+      <label class="field"><span class="field__label">Cambiar fecha</span><input class="field__input" id="outreach-followup-date" type="date" value="${escapeHtml(row.scheduled_at)}" /></label>
+      <button class="btn btn--primary" id="outreach-followup-reschedule" type="button">Guardar fecha</button>
+      <div class="item__actions">${conversationForCustomer(row.customer_id) ? `<button class="btn btn--ghost btn--sm" data-chat="${escapeHtml(conversationForCustomer(row.customer_id).id)}" type="button">Abrir conversación</button>` : ''}<button class="btn btn--ghost btn--sm" data-followup-postpone="${escapeHtml(id)}" type="button">Posponer 3 días</button>
+      ${hasPermission('followups.delete') ? `<button class="btn btn--ghost btn--sm" data-followup-cancel="${escapeHtml(id)}" type="button">Cancelar seguimiento</button>` : ''}
+      <button class="btn btn--ghost btn--sm" data-customer="${escapeHtml(row.customer_id)}" type="button">Ver cliente</button></div>`, { variant: 'outreach-small' });
+    $('#outreach-followup-reschedule').addEventListener('click', (event) => {
+      const date = $('#outreach-followup-date').value;
+      if (!date) { toast('Elige la nueva fecha'); return; }
+      void working(event.currentTarget, 'Guardando…', async () => { if (await followupAction(id, 'reschedule', { date })) closeSheet(); });
+    });
+  }
+
+  function openFollowupPicker() {
+    openSheet('Nuevo seguimiento', `<div class="outreach-form"><fieldset><legend>¿A quién vas a dar seguimiento?</legend>${outreachPickerHtml(false)}</fieldset><button class="btn btn--primary btn--block" id="outreach-followup-next" type="button" disabled>Continuar</button></div>`, { variant: 'outreach-small' });
+    const picker = mountOutreachPicker({ multiple: false, onChange: () => { $('#outreach-followup-next').disabled = !picker.rows().length; } });
+    $('#outreach-followup-next').addEventListener('click', () => {
+      const customer = picker.rows()[0];
+      if (customer) openFollowupForm({ customerId: customer.id, conversationId: conversationForCustomer(customer.id)?.id });
+    });
+  }
+
+  async function openScheduledComposer() {
+    openSheet('Programar mensaje', '<p class="outreach-caption" role="status">Preparando clientes y plantillas…</p>');
+    const body = $('#sheet-body');
+    const marker = body.firstElementChild;
+    try {
+      const data = await api('/api/admin/wa-templates');
+      // Do not reopen a sheet that the person already dismissed or replaced.
+      if ($('#sheet').hidden || body.firstElementChild !== marker) return;
+      state.templates = data.templates ?? state.templates;
+    } catch {
+      if ($('#sheet').hidden || body.firstElementChild !== marker) return;
+      body.innerHTML = '<p class="outreach-feedback" role="alert">No se pudieron cargar las plantillas. Comprueba tu conexión y vuelve a abrir el formulario.</p>';
+      return;
+    }
+    const approved = (state.templates ?? []).filter((template) => waTemplateApproved(template) && scheduledTemplateSupported(template)).sort((a, b) => Number(waTemplateFreeSlot(b) !== null) - Number(waTemplateFreeSlot(a) !== null));
+    const initial = new Date(Date.now() + 60 * 60000);
+    const localDate = `${initial.getFullYear()}-${String(initial.getMonth() + 1).padStart(2, '0')}-${String(initial.getDate()).padStart(2, '0')}`;
+    const localTime = `${String(initial.getHours()).padStart(2, '0')}:${String(initial.getMinutes()).padStart(2, '0')}`;
+    openSheet('Programar mensaje', `<form class="outreach-form" id="outreach-schedule-form">
+      <fieldset><legend>1. Elige uno o varios clientes</legend>${outreachPickerHtml()}</fieldset>
+      <fieldset><legend>2. Prepara el mensaje</legend>
+        <label class="field"><span class="field__label">Formato del mensaje</span><select class="field__select" id="outreach-mode"><option value="template" ${approved.length ? '' : 'disabled'}>Plantilla aprobada de WhatsApp</option><option value="text" ${approved.length ? '' : 'selected'}>Texto libre · atención en las últimas 24 h</option></select></label>
+        <label class="field" id="outreach-template-field"><span class="field__label">Plantilla</span><select class="field__select" id="outreach-template">${approved.map((template) => `<option value="${escapeHtml(template.name)}">${escapeHtml(waTemplateLabel(template))}</option>`).join('')}</select></label>
+        <div id="outreach-variables"></div>
+        <label class="field" id="outreach-text-field"><span class="field__label">Tu mensaje</span><textarea class="field__area" id="outreach-text" rows="4" maxlength="1200" placeholder="Escribe lo que quieres comunicar…"></textarea></label>
+        <p class="outreach-caption" id="outreach-format-note"></p>
+      </fieldset>
+      <fieldset><legend>3. Elige cuándo enviarlo</legend><div class="outreach-two">
+        <label class="field"><span class="field__label">Fecha</span><input class="field__input" id="outreach-date" type="date" value="${localDate}" required /></label>
+        <label class="field"><span class="field__label">Hora</span><input class="field__input" id="outreach-time" type="time" value="${localTime}" required /></label>
+      </div><p class="outreach-caption">Hora de este dispositivo: ${escapeHtml(Intl.DateTimeFormat().resolvedOptions().timeZone)}. El envío se guarda con su hora exacta.</p></fieldset>
+      <div class="outreach-preview"><label for="outreach-preview-client">Vista previa por cliente</label><select class="field__select" id="outreach-preview-client" aria-label="Cliente de la vista previa"></select><p id="outreach-preview-text"></p></div>
+      <p class="outreach-feedback" id="outreach-save-feedback" role="status" aria-live="polite"></p>
+      <button class="btn btn--primary btn--block" id="outreach-schedule-save" type="submit" disabled>Selecciona los clientes</button>
+    </form>`, { variant: 'outreach' });
+    const form = $('#outreach-schedule-form');
+    const session = idLocal('schedule');
+    const attempts = new Map();
+    let busy = false;
+    const template = () => approved.find((row) => row.name === $('#outreach-template').value);
+    const isText = () => $('#outreach-mode').value === 'text';
+    const picker = mountOutreachPicker({ onChange: renderPreview });
+    function valuesFor(customer) {
+      const current = template();
+      const auto = waTemplateAutoValues(customer, conversationForCustomer(customer.id)?.id);
+      const slot = current ? waTemplateFreeSlot(current) : null;
+      const values = {};
+      waTemplateHuecos(current).forEach((key, index) => {
+        values[index] = index === slot ? $('#outreach-text').value.trim() : String(form.querySelector(`[data-outreach-var="${index}"]`)?.value.trim() || auto[key] || '').trim();
+      });
+      return values;
+    }
+    function renderPreview() {
+      if (!form.isConnected || busy) return;
+      const rows = picker.rows();
+      const select = $('#outreach-preview-client');
+      const previous = select.value;
+      select.innerHTML = rows.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customerName(customer))}</option>`).join('');
+      if (rows.some((row) => row.id === previous)) select.value = previous;
+      const customer = rows.find((row) => row.id === select.value);
+      $('#outreach-preview-text').textContent = !customer ? 'Selecciona un cliente para revisar su mensaje.' : isText() ? $('#outreach-text').value.trim() || 'Tu mensaje aparecerá aquí.' : template() ? waRenderTemplatePreview(template(), valuesFor(customer)) : 'No hay plantillas aprobadas disponibles.';
+      const save = $('#outreach-schedule-save');
+      save.disabled = !rows.length;
+      save.textContent = rows.length ? `Programar ${rows.length === 1 ? '1 mensaje' : `${rows.length} mensajes`}` : 'Selecciona los clientes';
+    }
+    function renderFormat() {
+      const current = template();
+      const slot = current ? waTemplateFreeSlot(current) : null;
+      $('#outreach-template-field').hidden = isText();
+      $('#outreach-text-field').hidden = !isText() && slot === null;
+      $('#outreach-text').maxLength = isText() ? 1200 : 800;
+      $('#outreach-variables').innerHTML = isText() ? '' : waTemplateHuecos(current).map((key, index) => index === slot || ['customer_name', 'nombre', 'phone'].includes(key) ? '' : `<label class="field"><span class="field__label">${escapeHtml(waVariableLabel(key, index))}</span><input class="field__input" data-outreach-var="${index}" placeholder="Dato de cada cliente, o escribe un valor común" /></label>`).join('');
+      $('#outreach-format-note').textContent = isText() ? 'El texto libre solo se envía si la ventana de 24 horas sigue abierta a la hora elegida. Para enviar después, usa una plantilla aprobada.' : 'Cada cliente recibe su propio mensaje. El nombre y los datos del pedido se completan por separado; revisa cada vista previa.';
+      renderPreview();
+    }
+    $('#outreach-mode').addEventListener('change', renderFormat);
+    $('#outreach-template').addEventListener('change', renderFormat);
+    form.addEventListener('input', (event) => { if (!event.target.closest('#outreach-client-search')) renderPreview(); });
+    $('#outreach-preview-client').addEventListener('change', renderPreview);
+    renderFormat();
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const rows = picker.rows();
+      const feedback = $('#outreach-save-feedback');
+      const when = new Date(`${$('#outreach-date').value}T${$('#outreach-time').value}:00`);
+      if (!rows.length) { feedback.textContent = 'Selecciona al menos un cliente.'; return; }
+      if (!Number.isFinite(when.getTime()) || when.getTime() <= Date.now()) { feedback.textContent = 'Elige una fecha y hora futuras.'; return; }
+      const text = $('#outreach-text').value.trim();
+      const current = template();
+      if (isText() && !text) { feedback.textContent = 'Escribe el mensaje que quieres enviar.'; return; }
+      if (!isText() && !current) { feedback.textContent = 'Elige una plantilla aprobada.'; return; }
+      const payloads = rows.map((customer) => {
+        const values = isText() ? {} : valuesFor(customer);
+        const missing = Object.values(values).some((value) => !value);
+        return { customer, missing, body: { customerId: customer.id, conversationId: conversationForCustomer(customer.id)?.id, scheduledAt: when.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, type: isText() ? 'text' : 'template', text: isText() ? text : undefined, template: isText() ? undefined : current.name, templateValues: isText() ? undefined : Object.fromEntries(Object.entries(values).map(([index, value]) => [Number(index) + 1, value])) } };
+      });
+      const incomplete = payloads.find((row) => row.missing);
+      if (incomplete) { feedback.textContent = `Faltan datos en el mensaje de ${customerName(incomplete.customer)}. Completa los campos y revisa su vista previa.`; return; }
+      busy = true;
+      const controls = [...form.querySelectorAll('button,input,select,textarea')];
+      const disabledBefore = controls.map((control) => control.disabled);
+      controls.forEach((control) => { control.disabled = true; });
+      form.querySelectorAll('fieldset').forEach((group) => { group.disabled = true; });
+      let saved = 0;
+      const failures = [];
+      for (const entry of payloads) {
+        feedback.textContent = `Programando ${saved + failures.length + 1} de ${rows.length}…`;
+        const fingerprint = JSON.stringify(entry.body);
+        if (!attempts.has(fingerprint)) attempts.set(fingerprint, `${session}:${attempts.size}`);
+        try {
+          await api('/api/admin/scheduled', { method: 'POST', body: JSON.stringify({ ...entry.body, idempotencyKey: attempts.get(fingerprint) }) });
+          saved += 1;
+          picker.remove(entry.customer.id);
+        } catch (error) {
+          failures.push(`${customerName(entry.customer)}: ${error.offline ? 'Sin conexión. Vuelve a intentarlo.' : error.body?.message || 'No se pudo programar.'}`);
+        }
+      }
+      busy = false;
+      form.querySelectorAll('fieldset').forEach((group) => { group.disabled = false; });
+      controls.forEach((control, index) => { control.disabled = disabledBefore[index]; });
+      if (failures.length) {
+        renderPreview();
+        feedback.textContent = `${saved} de ${rows.length} mensajes programados.\n${failures.join('\n')}\nLos clientes pendientes siguen seleccionados para reintentar.`;
+      } else {
+        if (form.isConnected && !$('#sheet').hidden) closeSheet();
+        state.scheduledFilter = 'pending';
+        toast(`${saved} ${saved === 1 ? 'mensaje programado' : 'mensajes programados'}`);
+      }
+      await refreshScheduled();
+      await load({ keepTab: true }).catch(() => {});
+    });
   }
 
   const SETTINGS_PAGES = [
@@ -15055,6 +15355,7 @@
       <button class="btn btn--primary btn--block" id="fu-save" type="button">Crear seguimiento</button>
       <p class="view__hint">Es una TAREA para una persona: el sistema no envía nada solo. Aparecerá en HOY.</p>
       `,
+      { variant: 'outreach-small' },
     );
     const dateInput = $('#fu-date');
     $$('[data-fu-quick]').forEach((chip) =>
@@ -15069,6 +15370,7 @@
     $('#fu-save').addEventListener('click', async (event) => {
       const motivo = $('#fu-motivo').value;
       const nota = $('#fu-reason').value.trim();
+      if (!dateInput.value) { toast('Elige la fecha del seguimiento'); dateInput.focus(); return; }
       await working(event.currentTarget, 'Guardando…', async () => {
         /*
          * UN SEGUIMIENTO ES UNA TAREA PARA UNA PERSONA: se puede crear sin
@@ -15120,19 +15422,18 @@
       id,
       label: 'Cambio en un seguimiento',
       aplicar: () => {
-        const nuevo = action === 'complete' ? 'completed' : action === 'cancel' ? 'cancelled' : 'pending';
-        const listas = Array.isArray(state.followups) ? state.followups : state.followups?.items ?? [];
-        const fila = listas.find((row) => row.id === id) ?? null;
-        if (fila) {
-          fila.status = nuevo;
-          fila.pending = true;
-        }
-        saveSnapshot();
+        const rows = [...followupBulk('todo'), ...(state.followups?.completed ?? []), ...(state.followups?.items ?? [])];
+        const row = rows.find((entry) => entry.id === id);
+        if (row) placeLocalFollowup({ ...row,
+          status: action === 'complete' ? 'completed' : action === 'cancel' ? 'cancelled' : 'pending',
+          scheduled_at: action === 'reschedule' ? payload.date : action === 'postpone' ? payload.date || addDaysToISO(row.scheduled_at, Number(payload.days ?? 3)) : row.scheduled_at,
+          pending: true,
+        });
       },
     });
     if (!resultado.ok) {
       if (resultado.message) toast(resultado.message);
-      return;
+      return false;
     }
     toast(
       resultado.offline
@@ -15143,11 +15444,12 @@
     renderOutboxBanner();
     if (resultado.offline) {
       render();
-      return;
+      return true;
     }
     await load({ keepTab: true });
-    if (state.chat) await openChat(state.chat.id);
-    if (state.customerId) await openCustomer(state.customerId);
+    if (state.chat && state.tab === 'whatsapp') await openChat(state.chat.id);
+    if (state.customerId && state.tab === 'perfil-cliente') await openCustomer(state.customerId);
+    return true;
   }
   /** Pausar, reactivar, no contactar o volver a permitir mensajes. */
   async function customerAction(customerId, action) {
@@ -20227,6 +20529,7 @@
       </div>
       <button class="btn btn--primary btn--block" id="sch-save" type="button">Programar mensaje</button>
       `,
+      { variant: 'outreach-small' },
     );
 
     /** Los huecos de la plantilla que NO son el mensaje (el nombre, el pedido…). */
@@ -20550,14 +20853,18 @@
       });
       toast(action === 'cancel' ? 'Mensaje cancelado' : action === 'edit' ? 'Mensaje actualizado' : 'Mensaje reprogramado');
       await load({ keepTab: true });
-      if (state.customerId) await openCustomer(state.customerId);
+      if (state.tab === 'mensajes') await refreshScheduled();
+      if (state.customerId && state.tab === 'perfil-cliente') await openCustomer(state.customerId);
+      return true;
     } catch (error) {
-      if (error.message !== 'unauthorized') toast('No se pudo actualizar el mensaje');
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo actualizar el mensaje');
+      return false;
     }
   }
 
   function openScheduledEdit(id) {
     const row =
+      (state.scheduledRows ?? []).find((entry) => entry.id === id) ??
       (state.customerProfile?.scheduled ?? []).find((entry) => entry.id === id) ??
       [...(state.scheduled?.upcoming ?? []), ...(state.scheduled?.problems ?? [])].find((entry) => entry.id === id) ??
       null;
@@ -20588,6 +20895,7 @@
         <input class="field__input" id="sch-edit-time" type="time" value="${escapeHtml(valueTime)}" />
       </label>
       <button class="btn btn--primary btn--block" id="sch-edit-save" type="button">Guardar cambios</button>`,
+      { variant: 'outreach-small' },
     );
     $('#sch-edit-save')?.addEventListener('click', async (event) => {
       const text = String($('#sch-edit-text')?.value ?? '').trim();
@@ -20602,11 +20910,11 @@
         return;
       }
       await working(event.currentTarget, 'Guardando…', async () => {
-        await scheduledAction(row.id, 'edit', {
+        const saved = await scheduledAction(row.id, 'edit', {
           scheduledAt: new Date(`${day}T${hour}:00`).toISOString(),
           ...scheduledEditPayload(row, text),
         });
-        closeSheet();
+        if (saved) closeSheet();
       });
     });
   }
@@ -22224,13 +22532,14 @@
     cierre: 'Cierre actual',
     'historial-cierres': 'Historial de cierres',
     seguimientos: 'Seguimientos',
-    mensajes: 'Plantillas',
+    mensajes: 'Mensajes programados',
     ajustes: 'Configuración',
     usuarios: 'Usuarios',
     perfil: 'Mi perfil',
   };
 
   function setTab(tab, options = {}) {
+    closeOutreachFilters(false);
     if (tab === 'catalogo' && state.tab !== 'catalogo') window.__billingReturnTab = state.tab;
     if (
       ((tab === 'usuarios' || tab === 'mensajes') && !isAdmin()) ||
@@ -22402,6 +22711,7 @@
      * `renderCloseHistory` solo trabaja cuando la pestaña está abierta, así que
      * fuera de esta llamada no se calcula nada.
      */
+    if (tab === 'mensajes') void refreshScheduled();
     if (tab === 'historial-cierres') renderCloseHistory();
     if (tab === 'delivery') {
       refreshDeliveryTracking().then(() => renderDelivery()).catch(() => {});
@@ -22653,6 +22963,7 @@
       state.followupsFilter = chip.dataset.followupFilter;
       guardarFiltrosActuales();
       renderSeguimientos();
+      if (document.body.dataset.outreachFilters === 'open') $('#seguimientos-filtros [aria-pressed="true"]')?.focus();
     });
 
     /* El tema se elige desde Mi perfil (y desde Ajustes): un solo manejador. */
@@ -23944,6 +24255,7 @@
       }
       const scheduledCancel = event.target.closest('[data-scheduled-cancel]');
       if (scheduledCancel) {
+        if (scheduledCancel.closest('#sheet')) closeSheet();
         scheduledAction(scheduledCancel.dataset.scheduledCancel, 'cancel', { reason: 'cancelado en el panel' });
         return;
       }
@@ -24150,19 +24462,24 @@
         });
         return;
       }
+      const moreFollowup = event.target.closest('[data-followup-more]');
+      if (moreFollowup) { openFollowupOptions(moreFollowup.dataset.followupMore); return; }
       const done = event.target.closest('[data-followup-done]');
       if (done) {
-        followupAction(done.dataset.followupDone, 'complete');
+        if (done.closest('#sheet')) closeSheet();
+        void working(done, 'Guardando…', () => followupAction(done.dataset.followupDone, 'complete'));
         return;
       }
       const postpone = event.target.closest('[data-followup-postpone]');
       if (postpone) {
-        followupAction(postpone.dataset.followupPostpone, 'postpone', { days: 3 });
+        if (postpone.closest('#sheet')) closeSheet();
+        void working(postpone, 'Guardando…', () => followupAction(postpone.dataset.followupPostpone, 'postpone', { days: 3 }));
         return;
       }
       const cancel = event.target.closest('[data-followup-cancel]');
       if (cancel) {
-        followupAction(cancel.dataset.followupCancel, 'cancel', { reason: 'cancelado en el panel' });
+        if (cancel.closest('#sheet')) closeSheet();
+        void working(cancel, 'Guardando…', () => followupAction(cancel.dataset.followupCancel, 'cancel', { reason: 'cancelado en el panel' }));
         return;
       }
       const pause = event.target.closest('[data-pause]');
@@ -24530,7 +24847,45 @@
       }
     });
 
-    $('#nueva-plantilla').addEventListener('click', () => openMessageForm(null));
+    $('#nueva-plantilla')?.addEventListener('click', () => openMessageForm(null));
+    document.addEventListener('click', (event) => {
+      const open = event.target.closest('[data-outreach-filter-open]');
+      if (open) { openOutreachFilters(open); return; }
+      if (event.target.closest('[data-outreach-filter-close]')) { closeOutreachFilters(); return; }
+      const detail = event.target.closest('[data-schedule-details]');
+      if (detail) { openScheduledDetails(detail.dataset.scheduleDetails); return; }
+      if (event.target.closest('[data-outreach-search-toggle]')) {
+        const bar = $('#mobile-header .outreach-appbar');
+        const opened = bar.dataset.searchOpen !== 'true';
+        bar.dataset.searchOpen = String(opened);
+        const trigger = bar.querySelector('[data-outreach-search-toggle]');
+        trigger.setAttribute('aria-label', opened ? 'Cerrar búsqueda' : 'Buscar');
+        trigger.innerHTML = opened ? ICONS.close : ICONS.search;
+        if (opened) bar.querySelector('input')?.focus();
+        else { const input = bar.querySelector('input'); input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); }
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      const drawer = $('.outreach-filter-drawer:not([hidden])');
+      if (!drawer) return;
+      if (event.key === 'Escape') { event.preventDefault(); closeOutreachFilters(); return; }
+      if (event.key !== 'Tab') return;
+      const controls = [...drawer.querySelectorAll('aside button:not([disabled])')];
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && (document.activeElement === first || !drawer.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !drawer.contains(document.activeElement))) { event.preventDefault(); first?.focus(); }
+    });
+    $('#followup-create')?.addEventListener('click', openFollowupPicker);
+    $('#scheduled-create')?.addEventListener('click', () => void openScheduledComposer());
+    $('#scheduled-refresh')?.addEventListener('click', () => void refreshScheduled());
+    $('#followup-search')?.addEventListener('input', (event) => { state.followupSearch = event.target.value; renderSeguimientos(); });
+    $('#scheduled-search')?.addEventListener('input', (event) => { state.scheduledSearch = event.target.value; renderMensajes(); });
+    document.addEventListener('click', (event) => {
+      const filter = event.target.closest('[data-schedule-filter]');
+      if (filter) { state.scheduledFilter = filter.dataset.scheduleFilter; renderMensajes(); if (document.body.dataset.outreachFilters === 'open') $('#scheduled-filters [aria-pressed="true"]')?.focus(); }
+      if (event.target.closest('[data-outreach-followup]')) openFollowupPicker();
+      if (event.target.closest('[data-outreach-schedule]')) void openScheduledComposer();
+    });
     $('#clientes-acciones').addEventListener('click', () => openClientsActions());
     $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
     $('#pedidos-acciones').addEventListener('click', () => openPedidosAcciones());
@@ -24896,6 +25251,7 @@
      * plano. La mensajería en tiempo real NO depende de él.
      */
     setInterval(waPollTick, 20000);
+    setInterval(() => { if (state.tab === 'mensajes' && !document.hidden && !$('#app')?.hidden) void refreshScheduled(); }, 15000);
 
     /*
      * A partir de aquí todo se sincroniza por detrás (nunca recargando la
@@ -24975,7 +25331,8 @@
     }
   }
 
-  document.addEventListener('DOMContentLoaded', () => boot().catch(() => {
+  document.addEventListener('DOMContentLoaded', () => boot().catch((error) => {
+    console.error('[panel] No se pudo iniciar:', error);
     window.dispatchEvent(new Event('fulltech:startup-failed'));
   }));
 })();

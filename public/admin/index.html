@@ -124,6 +124,7 @@
     -->
     <link rel="stylesheet" href="/admin/ios.css?v=ios-1" />
     <link rel="stylesheet" href="/admin/daily-close.css?v=close-compact-2" />
+    <link rel="stylesheet" href="/admin/outreach.css?v=5" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -343,17 +344,8 @@
                   <span class="drawer__icon" aria-hidden="true" data-icon="clock"></span>Seguimientos
                 </button>
                 <button class="drawer__item drawer__item--sub" data-tab="mensajes" type="button" data-admin-only hidden>
-                  <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>Mensajes
+                  <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>Mensajes programados
                 </button>
-                <a
-                  class="drawer__item drawer__item--sub"
-                  href="#config/plantillas"
-                  data-settings-open="plantillas"
-                  data-admin-only
-                  hidden
-                >
-                  <span class="drawer__icon" aria-hidden="true" data-icon="note"></span>Plantillas
-                </a>
               </nav>
             </details>
           </section>
@@ -834,25 +826,39 @@
           <div class="list" id="close-history-view"></div>
         </section>
 
-        <!-- SEGUIMIENTOS (menú lateral) -->
-        <section class="view" id="view-seguimientos" hidden>
-          <h2 class="view__title">Seguimientos</h2>
-          <p class="view__hint">Tareas para una persona: el sistema avisa, pero <strong>nada se envía solo</strong>.</p>
-          <div class="chips" id="seguimientos-filtros"></div>
-          <div class="list" id="list-seguimientos"></div>
+        <!-- SEGUIMIENTO -->
+        <section class="view outreach" id="view-seguimientos" aria-label="Seguimientos" hidden>
+          <div class="outreach-search-store" hidden><input class="field__input outreach-search" id="followup-search" autocomplete="off" type="search" placeholder="Buscar cliente o motivo" aria-label="Buscar seguimientos" /><button id="followup-create" type="button">Nuevo seguimiento</button></div>
+          <p class="outreach-list-caption" id="followup-list-caption"></p>
+
+          <div class="list outreach-list" id="list-seguimientos"></div>
+          <div class="outreach-filter-drawer" id="outreach-filter-seguimientos" hidden>
+            <button class="outreach-filter-backdrop" data-outreach-filter-close type="button" aria-label="Cerrar filtros" tabindex="-1"></button>
+            <aside class="outreach-filter-panel" role="dialog" aria-modal="true" aria-labelledby="outreach-filter-title-seguimientos" tabindex="-1">
+              <header><h2 id="outreach-filter-title-seguimientos">Filtros</h2><button class="outreach-icon" data-outreach-filter-close type="button" aria-label="Cerrar filtros">×</button></header>
+              <p class="outreach-filter-label">Fecha del seguimiento</p>
+              <div class="outreach-filter-options" id="seguimientos-filtros" aria-label="Filtrar seguimientos"></div>
+
+              <button class="btn btn--primary" data-outreach-filter-close type="button">Ver resultados</button>
+            </aside>
+          </div>
         </section>
 
-        <!-- MENSAJES -->
-        <section class="view" id="view-mensajes" hidden>
-          <h2 class="view__title">Mensajes para clientes</h2>
-          <p class="view__hint">
-            Son plantillas de WhatsApp. Puedes usar <code>{nombre}</code>, <code>{frasco}</code>,
-            <code>{cantidad}</code>, <code>{total}</code> y <code>{negocio}</code>.
-          </p>
-          <div class="list" id="list-mensajes"></div>
-          <button class="btn btn--ghost btn--block" id="nueva-plantilla" type="button">
-            + Añadir plantilla
-          </button>
+        <section class="view outreach" id="view-mensajes" aria-label="Mensajes programados" hidden>
+          <div class="outreach-search-store" hidden><input class="field__input outreach-search" id="scheduled-search" autocomplete="off" type="search" placeholder="Buscar cliente o mensaje" aria-label="Buscar mensajes programados" /><button id="scheduled-create" type="button">Programar mensaje</button></div>
+          <p class="outreach-list-caption" id="scheduled-list-caption"></p>
+          <p class="outreach-feedback" id="scheduled-feedback" role="status"></p>
+          <div class="list outreach-list" id="scheduled-list"></div>
+          <div class="outreach-filter-drawer" id="outreach-filter-mensajes" hidden>
+            <button class="outreach-filter-backdrop" data-outreach-filter-close type="button" aria-label="Cerrar filtros" tabindex="-1"></button>
+            <aside class="outreach-filter-panel" role="dialog" aria-modal="true" aria-labelledby="outreach-filter-title-mensajes" tabindex="-1">
+              <header><h2 id="outreach-filter-title-mensajes">Filtros</h2><button class="outreach-icon" data-outreach-filter-close type="button" aria-label="Cerrar filtros">×</button></header>
+              <p class="outreach-filter-label">Estado del mensaje</p>
+              <div class="outreach-filter-options" id="scheduled-filters" aria-label="Filtrar mensajes"></div>
+              <button class="btn btn--ghost" id="scheduled-refresh" type="button">Actualizar mensajes</button>
+              <button class="btn btn--primary" data-outreach-filter-close type="button">Ver resultados</button>
+            </aside>
+          </div>
         </section>
 
         <!-- CONFIGURACIÓN -->
@@ -1116,7 +1122,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=pedido-confirmar-13" defer></script>
+    <script src="/admin/app.js?v=seguimiento-5" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
