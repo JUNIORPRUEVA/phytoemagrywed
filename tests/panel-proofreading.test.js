@@ -126,7 +126,7 @@ function setup() {
   $('#wa-send').addEventListener('click',()=>sends++);
   win.eval(script);
   win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
-  const type = (text) => { $('#wa-text').value=text; $('#wa-text').dispatchEvent(new win.Event('input',{bubbles:true})); };
+  const type = (text,composing=false) => { $('#wa-text').value=text; const event=new win.Event('input',{bubbles:true}); Object.defineProperty(event,'isComposing',{value:composing}); $('#wa-text').dispatchEvent(event); };
   const reply = (index=jobs.length-1, override) => {
     const job=jobs[index];
     instance.handlers.get('message')({data:override || {id:job.id,review:check(job.text,{names:job.names}),suggestion:check(job.text,{ignored:job.ignored,names:job.names})}});
@@ -431,9 +431,10 @@ describe('sugerencia discreta dentro de la app',()=>{
   });
   it('respeta composición del teclado y retira la sugerencia al enviar',async()=>{
     const ui=setup();ui.$('#wa-text').dispatchEvent(new ui.win.Event('compositionstart',{bubbles:true}));
-    ui.type('grasias');await vi.advanceTimersByTimeAsync(900);expect(ui.jobs).toHaveLength(0);
+    // Mientras el teclado compone, cada `input` llega con isComposing=true.
+    ui.type('grasias',true);await vi.advanceTimersByTimeAsync(900);expect(ui.jobs).toHaveLength(0);
     ui.$('#wa-text').dispatchEvent(new ui.win.Event('compositionend',{bubbles:true}));
-    await vi.advanceTimersByTimeAsync(600);ui.reply();ui.click('#wa-send');
+    ui.type('grasias');await vi.advanceTimersByTimeAsync(600);ui.reply();ui.click('#wa-send');
     [...ui.$('#wa-proofreading-confirm').querySelectorAll('button')].find(b=>b.textContent==='Enviar así').click();ui.type('');
     expect(ui.$('#wa-proofreading').hidden).toBe(true);expect(ui.sends).toBe(1);
   });

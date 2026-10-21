@@ -1,0 +1,293 @@
+{
+  "collection": "material-symbols",
+  "provider": "Iconify API",
+  "apiDocs": "https://iconify.design/docs/api/",
+  "upstream": "Google Material Symbols (Rounded)",
+  "upstreamDocs": "https://fonts.google.com/icons",
+  "license": "Apache-2.0",
+  "licenseUrl": "https://github.com/google/material-design-icons/blob/master/LICENSE",
+  "downloadedAt": "2026-10-21T03:07:55.765Z",
+  "grid": {
+    "viewBox": "0 0 24 24",
+    "color": "currentColor"
+  },
+  "icons": [
+    {
+      "concept": "home",
+      "variant": "outline",
+      "name": "home-outline-rounded",
+      "file": "material-symbols/home-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/home-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 399,
+      "sha256": "3d1554fbc92364dbbbcc6ae06e83e48ff9ab43aed9d8771536f4aca46e84663b",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "home",
+      "variant": "filled",
+      "name": "home-rounded",
+      "file": "material-symbols/home-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/home-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 361,
+      "sha256": "a1b9b239a7d9337aedabafae592cd8b600847dec834220f0e6064eccea7278e8",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "categories",
+      "variant": "outline",
+      "name": "grid-view-outline",
+      "file": "material-symbols/grid-view-outline.svg",
+      "url": "https://api.iconify.design/material-symbols/grid-view-outline.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 229,
+      "sha256": "215e7511ab3fa5d954248ca89c0cc41c281172531d6b9482db5d98bd2eb52767",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "categories",
+      "variant": "filled",
+      "name": "grid-view-rounded",
+      "file": "material-symbols/grid-view-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/grid-view-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 542,
+      "sha256": "170300e2a4ea1773df886418889e5184952758fff6446fb1078a26c3def2dec2",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "search",
+      "variant": "outline",
+      "name": "search-rounded",
+      "file": "material-symbols/search-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/search-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 387,
+      "sha256": "2aaa046ac15dcde48c913e2a8c3d36bdedffc5e55d4163e649835c195ae102da",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "cart",
+      "variant": "outline",
+      "name": "shopping-cart-outline-rounded",
+      "file": "material-symbols/shopping-cart-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/shopping-cart-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 565,
+      "sha256": "87dab95e83a41b0a20c43ea3d8e6f4a7cf0dc470870d10af4866ddcc0d4f0733",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "cart",
+      "variant": "filled",
+      "name": "shopping-cart-rounded",
+      "file": "material-symbols/shopping-cart-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/shopping-cart-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 532,
+      "sha256": "ead76ae367ae14f6ddf6fdfe9e0ad55e34b083a32f0a69e1311caec8790a23ab",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "account",
+      "variant": "outline",
+      "name": "person-outline-rounded",
+      "file": "material-symbols/person-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/person-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 582,
+      "sha256": "9bc9527514a953e92e7ba37f18a83a8b7e4615498221d532238753b544e0521b",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "account",
+      "variant": "filled",
+      "name": "person-rounded",
+      "file": "material-symbols/person-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/person-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 377,
+      "sha256": "2e573c58838ceff19b97ad2ef9eced5875ffaad5eceb17f5ff9284d4ded65caf",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "menu",
+      "variant": "outline",
+      "name": "menu-rounded",
+      "file": "material-symbols/menu-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/menu-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 372,
+      "sha256": "ecb7962992d3c4ffd37d2ae92e8e7a3491d248db3c2e9009f2636a8c65a921e9",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "notification",
+      "variant": "outline",
+      "name": "notifications-outline-rounded",
+      "file": "material-symbols/notifications-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/notifications-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 419,
+      "sha256": "cef645453d6a63780b44985c8d879ff443e3a3f3f676081a3eb3d21f7168e724",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "notification",
+      "variant": "filled",
+      "name": "notifications-rounded",
+      "file": "material-symbols/notifications-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/notifications-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 367,
+      "sha256": "6c694d398b5d920998b2a602e729e6cb73b1ddee450c7c00d53c4968818c1b40",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "heart",
+      "variant": "outline",
+      "name": "favorite-outline-rounded",
+      "file": "material-symbols/favorite-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/favorite-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 648,
+      "sha256": "5d08d2f98ec6a572ba8ab77ff23156841134dd674e2047d2726e7f047acbca87",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "heart",
+      "variant": "filled",
+      "name": "favorite-rounded",
+      "file": "material-symbols/favorite-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/favorite-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 383,
+      "sha256": "54d0f4fea247318e171fc8b436559350c6cca17425c6e2e3bc78d82822504ebc",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "truck",
+      "variant": "outline",
+      "name": "local-shipping-outline-rounded",
+      "file": "material-symbols/local-shipping-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/local-shipping-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 638,
+      "sha256": "e09838bd499c8f024b5cab3dcfdca44fbd2fdc98514e85df31fcc46f977491ca",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "truck",
+      "variant": "filled",
+      "name": "local-shipping-rounded",
+      "file": "material-symbols/local-shipping-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/local-shipping-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 567,
+      "sha256": "d8c690b398c4622217797fa8a1ec1328072c19127a17a48a4e85372eaf049cb1",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "security",
+      "variant": "outline",
+      "name": "security-outline-rounded",
+      "file": "material-symbols/security-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/security-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 417,
+      "sha256": "cb9bb6c59e139605f81b591ba22e1aeb669d37fc46ea1e07498969636a528234",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "security",
+      "variant": "filled",
+      "name": "security-rounded",
+      "file": "material-symbols/security-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/security-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 417,
+      "sha256": "cb9bb6c59e139605f81b591ba22e1aeb669d37fc46ea1e07498969636a528234",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "package",
+      "variant": "outline",
+      "name": "inventory-2-outline-rounded",
+      "file": "material-symbols/inventory-2-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/inventory-2-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 403,
+      "sha256": "6c0e91cce2251e8c164bce3a1b5fb41192883a30485dfe475577f8678c924abe",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "package",
+      "variant": "filled",
+      "name": "inventory-2-rounded",
+      "file": "material-symbols/inventory-2-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/inventory-2-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 385,
+      "sha256": "85dded43582628c129bc125ba25b5131c7da56bcfa6e120cffd2ea0d27c0be77",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "settings",
+      "variant": "outline",
+      "name": "settings-outline-rounded",
+      "file": "material-symbols/settings-outline-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/settings-outline-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 1295,
+      "sha256": "34df5abf41d0f112f47aef4d18d836bebb35ca214761668d9f840975fe973550",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "settings",
+      "variant": "filled",
+      "name": "settings-rounded",
+      "file": "material-symbols/settings-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/settings-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 907,
+      "sha256": "2b848ce01a6ed61d4d18eb053a33ae6f6e6abf8c072d023cc5a7592a5d77fd37",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "arrow-right",
+      "variant": "outline",
+      "name": "arrow-forward-rounded",
+      "file": "material-symbols/arrow-forward-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/arrow-forward-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 348,
+      "sha256": "a4d20ee6befbe69404b99577b7a8e4118b25c4c95846fcd4bcc4af3039e17f5f",
+      "license": "Apache-2.0"
+    },
+    {
+      "concept": "chevron-right",
+      "variant": "outline",
+      "name": "chevron-right-rounded",
+      "file": "material-symbols/chevron-right-rounded.svg",
+      "url": "https://api.iconify.design/material-symbols/chevron-right-rounded.svg",
+      "contentType": "image/svg+xml; charset=utf-8",
+      "bytes": 286,
+      "sha256": "7f4d4fec58b14c704112b1e4b0978f22ca2b434032b017a3c876585ad5e44e43",
+      "license": "Apache-2.0"
+    }
+  ],
+  "missingVariants": [
+    {
+      "concept": "arrow-right",
+      "variant": "filled",
+      "reason": "la colección no publica esta variante"
+    },
+    {
+      "concept": "chevron-right",
+      "variant": "filled",
+      "reason": "la colección no publica esta variante"
+    }
+  ],
+  "failures": []
+}

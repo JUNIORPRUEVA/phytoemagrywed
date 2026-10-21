@@ -132,6 +132,29 @@ export function createScheduler(deps) {
   const clock = deps.clock ?? (() => new Date());
   const log = deps.log ?? (() => {});
   const staleMs = Number(deps.staleMs ?? DEFAULT_STALE_MS);
+  /** Evita que dos pasadas del scheduler se ejecuten a la vez. */
+  let running = false;
+
+  /** El cuerpo real de una pasada (mensajes programados + supervisor). */
+  async function runTick(api) {
+    const recovered = await api.recoverStale();
+    const now = clock().getTime();
+    const rows = await api.list({ status: 'SCHEDULED' });
+    const due = rows.filter((row) => Date.parse(row.scheduled_at) <= now);
+    let sent = 0;
+    for (const row of due) {
+      const result = await api.process(row);
+      if (result?.status === 'SENT') sent += 1;
+    }
+    const delivery = deliveryControlTick ? await deliveryControlTick() : null;
+    const supervisor = deliverySupervisorTick
+      ? await deliverySupervisorTick().catch((error) => {
+          log(`[crm] supervisor de delivery: ${error?.message ?? error}`);
+          return null;
+        })
+      : null;
+    return { recovered, due: due.length, sent, delivery, supervisor };
+  }
 
   /** Marca una fila como bloqueada y crea la alerta para el operador (una sola vez). */
   async function block(doc, reason, extra = {}) {
@@ -520,25 +543,22 @@ export function createScheduler(deps) {
       return sent;
     },
 
-    /** Una pasada: recupera huérfanos y procesa lo que ya toca. */
+    /**
+     * Una pasada: recupera huérfanos y procesa lo que ya toca.
+     *
+     * NO SE SOLAPA CONSIGO MISMA. El bucle corre cada 30 s, pero una pasada con
+     * muchos pedidos y un proveedor lento puede tardar más: sin esta guarda dos
+     * pasadas se pisaban y el supervisor podía enviar el mismo aviso dos veces.
+     * Ahora la segunda se salta y el trabajo se hace en el ciclo siguiente.
+     */
     async tick() {
-      const recovered = await this.recoverStale();
-      const now = clock().getTime();
-      const rows = await this.list({ status: 'SCHEDULED' });
-      const due = rows.filter((row) => Date.parse(row.scheduled_at) <= now);
-      let sent = 0;
-      for (const row of due) {
-        const result = await this.process(row);
-        if (result?.status === 'SENT') sent += 1;
+      if (running) return { skipped: 'already_running', recovered: 0, due: 0, sent: 0, delivery: null, supervisor: null };
+      running = true;
+      try {
+        return await runTick(this);
+      } finally {
+        running = false;
       }
-      const delivery = deliveryControlTick ? await deliveryControlTick() : null;
-      const supervisor = deliverySupervisorTick
-        ? await deliverySupervisorTick().catch((error) => {
-            log(`[crm] supervisor de delivery: ${error?.message ?? error}`);
-            return null;
-          })
-        : null;
-      return { recovered, due: due.length, sent, delivery, supervisor };
     },
 
     /**

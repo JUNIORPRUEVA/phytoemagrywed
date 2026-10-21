@@ -79,21 +79,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=dia-78" />
+    <link rel="stylesheet" href="/admin/admin.css?v=audio-1" />
     <link rel="stylesheet" href="/admin/store.css?v=etiqueta-5" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
     <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
-    <link rel="stylesheet" href="/admin/pos.css?v=pedido-14" />
+    <link rel="stylesheet" href="/admin/pos.css?v=pedido-15" />
     <link rel="stylesheet" href="/admin/offline.css?v=1" />
     <!--
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
       DESPUÉS de admin.css a propósito: es la última palabra sobre esas piezas.
     -->
-    <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-2" />
+    <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-3" />
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=3" />
     <link rel="stylesheet" href="/admin/fulltech.css?v=4" />
-    <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-3" />
+    <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-4" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=3" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=10" />
     <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
@@ -107,7 +107,7 @@
       Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
       todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
     -->
-    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-2" />
+    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-3" />
     <!--
       El menú lateral en escritorio: lleva los cuatro destinos de la barra y
       ordena el resto en desplegables. En el móvil no cambia nada.
@@ -504,6 +504,16 @@
                   <p class="wa__chat-name" id="wa-chat-name"></p>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
+                <!--
+                  PEDIDOS ACTIVOS DEL CLIENTE: un solo acceso, compacto, al lado
+                  del nombre. Solo aparece si ESTE cliente tiene pedidos abiertos y
+                  el número dice cuántos. Abre el pedido (o elige cuál, si hay
+                  varios): no es un carrito de compra aparte.
+                -->
+                <button class="wa__head-icon wa__head-orders" id="wa-chat-orders" type="button" aria-label="Pedidos activos de este cliente" title="Pedidos activos de este cliente" hidden>
+                  <span class="ico" aria-hidden="true" data-icon="bag"></span>
+                  <span class="wa__head-orders-badge" id="wa-chat-orders-count" hidden>1</span>
+                </button>
                 <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación" title="Buscar en esta conversación">
                   <img class="wa-header-image" src="/admin/assets/icons/chat-search.png" alt="" aria-hidden="true" width="22" height="22" />
                 </button>
@@ -1106,11 +1116,11 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=columna-12" defer></script>
+    <script src="/admin/app.js?v=pedido-confirmar-13" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
-    <script src="/admin/proofreading.js?v=13" defer></script>
+    <script src="/admin/proofreading.js?v=15" defer></script>
     <script src="/admin/deepseek-settings.js?v=3" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=3" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
@@ -1118,7 +1128,7 @@
     <script src="/admin/store-requests.js?v=3" defer></script>
     <script src="/admin/recogidas.js?v=1" type="module"></script>
     <script src="/admin/supervisor.js?v=4" type="module"></script>
-    <script src="/admin/pos.js?v=gestos-17" type="module"></script>
+    <script src="/admin/pos.js?v=pedido-confirmar-18" type="module"></script>
   </body>
 </html>
 

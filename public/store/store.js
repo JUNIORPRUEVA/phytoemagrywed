@@ -1,4 +1,8 @@
 const $ = (s, root = document) => root.querySelector(s);
+import { hydrateIcons, hydrateMaterialIcons, paintMaterialIcon, materialIcon } from './icons.js';
+/* Cabecera y barra inferior usan la familia Material Symbols Rounded ya descargada. */
+hydrateMaterialIcons();
+hydrateIcons();
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = p => new Intl.NumberFormat('es-DO',{style:'currency',currency:p.currency||'DOP',maximumFractionDigits:0}).format(Number(p.price||0));
 const AVAIL_LABEL = { AVAILABLE_NOW: 'Disponible para entrega', ON_REQUEST: 'Disponible bajo pedido', UNAVAILABLE: 'No disponible' };
@@ -69,11 +73,100 @@ function authHead(title){return `<div class="page-head"><button class="back-butt
 async function api(path){const r=await fetch(path,{headers:{accept:'application/json'}});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}
 const href = route => `/store/#/${route}`;
 function productCard(p){return `<article class="product-card"><a href="${href(`product/${encodeURIComponent(p.id)}`)}" class="product-link" aria-label="Ver ${esc(p.name)}"><div class="product-image">${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy">`:'<span class="image-fallback" aria-hidden="true">◈</span>'}</div><div class="product-info"><h3 class="product-name">${esc(p.name)}</h3><div class="product-bottom"><span class="price">${money(p)}</span><span class="card-arrow" aria-hidden="true">›</span></div><span class="availability ${p.availabilityState==='UNAVAILABLE'?'out':''}">${avail(p)}</span></div></a><div class="card-actions">${canBuy(p)?`<button class="button button-block" type="button" data-add-cart="${esc(p.id)}">Agregar</button>`:`<a class="button button-outline button-block" href="${requestHref(p)}">Solicitar producto</a>`}</div></article>`}
-function searchMarkup(value=''){return `<label class="search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg><input id="store-search" type="search" value="${esc(value)}" placeholder="¿Qué estás buscando?" aria-label="Buscar productos y servicios" autocomplete="off"></label>`}
+function searchMarkup(value=''){return `<label class="ft-search">${materialIcon('search',{size:20})}<input id="store-search" type="search" value="${esc(value)}" placeholder="¿Qué buscas hoy?" aria-label="Buscar productos" autocomplete="off"></label>`}
+/* Portada: el buscador es una puerta de entrada a la pantalla de búsqueda real. */
+function searchEntryMarkup(){return `<a class="ft-search ft-search--entry" href="${href('search')}" aria-label="Buscar productos">${materialIcon('search',{size:20})}<span class="ft-search__placeholder">¿Qué buscas hoy?</span></a>`}
 function footer(){return `<footer class="footer">FULLTECH Store · República Dominicana</footer>`}
 function bindSearch(inputId='store-search'){const input=$(`#${inputId}`);if(input)input.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{const q=input.value.trim();location.hash=`/catalog?kind=${catalogState.kind}&q=${encodeURIComponent(q)}`},240)})}
-function setNav(route){bottom.hidden=route!=='home';document.querySelectorAll('.nav-item').forEach(a=>a.classList.toggle('active',a.dataset.route===route))}
-async function renderHome(){setNav('home');main.innerHTML=`${searchMarkup()}<div class="loading-cards"><div class="skeleton"></div><div class="skeleton"></div></div>`;bindSearch();try{homeData=await api('/api/store/home');const products=homeData.products||[],featured=products.filter(p=>p.featured),cats=homeData.categories||[],total=products.length;const rail=featured.length?`<section class="rail-section"><div class="section-head"><div><h2>Destacados</h2></div><a class="text-link" href="${href('catalog')}">Ver todo</a></div><div class="rail">${featured.map(p=>`<a class="rail-card" href="${href('product/'+encodeURIComponent(p.id))}"><div class="rail-image">${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy">`:''}</div><div class="rail-body"><strong>${esc(p.name)}</strong><span class="price">${money(p)}</span><span class="availability ${p.availabilityState==='UNAVAILABLE'?'out':''}">${avail(p)}</span></div></a>`).join('')}</div></section>`:'';main.innerHTML=`${searchMarkup()}<section class="hero"><div class="hero-content"><span class="eyebrow">FULLTECH STORE</span><h1>Lo que buscas, listo para ti.</h1><p>Productos disponibles con entrega a domicilio o recogida coordinada.</p><div class="hero-actions"><a class="button button-light" href="${href('catalog')}">Ver catálogo</a><a class="button button-outline" href="${href('request')}">Lo conseguimos por ti</a></div></div></section><section class="request-banner request-banner--top"><div><h2>¿No lo encuentras?</h2><p>Cuéntanos qué necesitas y lo buscamos por ti.</p></div><a class="button" href="${href('request')}">Solicitar producto</a></section>${rail}${cats.length?`<section><div class="section-head"><div><h2>Categorías</h2></div></div><div class="categories">${cats.map(c=>`<a class="chip" href="${href(`catalog?category=${encodeURIComponent(c)}`)}">${esc(c)}</a>`).join('')}</div></section>`:''}<section><div class="section-head"><div><h2>Productos</h2><p>${total} producto${total===1?'':'s'} disponible${total===1?'':'s'}.</p></div><a class="text-link" href="${href('catalog')}">Ver catálogo completo</a></div>${products.length?`<div class="product-grid">${products.map(productCard).join('')}</div>`:`<div class="empty"><h3>Aún no hay productos publicados</h3><p>Estamos preparando el catálogo. Vuelve pronto.</p></div>`}</section><section class="store-info"><div><strong>Entrega a domicilio</strong><small>Confirmamos costo y tiempo antes de aceptar tu pedido.</small></div><div><strong>Recogida coordinada</strong><small>Te avisamos cuándo está listo para retirar.</small></div></section>${footer()}`;bindSearch()}catch{main.innerHTML=`<div class="state-error"><h1>No pudimos cargar la tienda</h1><p>Revisa tu conexión e inténtalo de nuevo.</p><button class="button" id="retry-home">Intentar de nuevo</button></div>${footer()}`;$('#retry-home').onclick=renderHome}}
+function setNav(route){
+  /* La barra inferior es fija: se ve en todas las pantallas y marca la activa.
+     El ítem activo usa la variante FILLED; el resto, OUTLINE. */
+  document.querySelectorAll('.ft-nav__item').forEach(node=>{
+    const match=node.dataset.route===route;
+    node.classList.toggle('active',match);
+    if(match)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');
+    paintMaterialIcon(node.querySelector('[data-msr]'),node.dataset.route,{variant:match?'filled':'outline'});
+  });
+}
+/* Portada Fase 1: cabecera ligera, héroe degradado, beneficios, categorías
+   reales, productos destacados y banner de solicitud. Nada inventado: todo sale
+   de /api/store/home y de las mismas reglas de publicación del catálogo. */
+async function renderHome(){
+  setNav('home');
+  main.innerHTML=`${searchEntryMarkup()}<div class="loading-cards"><div class="skeleton"></div><div class="skeleton"></div></div>`;
+  try{
+    homeData=await api('/api/store/home');
+    const products=homeData.products||[];
+    const cats=(homeData.categories||[]).filter(Boolean);
+    const sellable=products.filter(p=>canBuy(p));
+    const featured=products.filter(p=>p.featured);
+    const highlight=(featured.length?featured:sellable).slice(0,6);
+    const total=products.length;
+
+    const hero=`<section class="ft-hero">
+      <div class="ft-hero__copy">
+        <span class="ft-hero__eyebrow">${materialIcon('security',{size:14})} FULLTECH STORE</span>
+        <h1>Todo lo que necesitas,<br>en un solo lugar</h1>
+        <p>Tecnología, hogar, seguridad y más al mejor precio.</p>
+        <a class="ft-hero__cta" href="${href('catalog')}">Ver productos ${materialIcon('arrow-right',{size:18})}</a>
+      </div>
+      <div class="ft-hero__art" aria-hidden="true"><img src="/store/assets/img/hero-productos.jpg" alt="" width="720" height="420" loading="eager" decoding="async"></div>
+    </section>`;
+
+    const benefits=`<section class="ft-benefits" aria-label="Ventajas de comprar en FULLTECH Store">
+      <article class="ft-benefit"><span class="ft-benefit__icon">${materialIcon('truck',{size:16})}</span><strong>Entrega a domicilio</strong></article>
+      <article class="ft-benefit"><span class="ft-benefit__icon">${materialIcon('security',{size:16})}</span><strong>Compra segura</strong></article>
+      <article class="ft-benefit"><span class="ft-benefit__icon">${materialIcon('package',{size:16})}</span><strong>Garantía</strong></article>
+    </section>`;
+
+    const catNav=cats.length?`<nav class="ft-catnav" aria-label="Categorías del catálogo">
+      <a href="${href('catalog')}" aria-current="true">Todo</a>
+      ${cats.map(c=>`<a href="${href(`catalog?category=${encodeURIComponent(c)}`)}">${esc(c)}</a>`).join('')}
+    </nav>`:'';
+
+    const cards=highlight.length?`<div class="ft-grid">${highlight.map(p=>homeCard(p)).join('')}</div>`
+      :`<div class="empty"><h3>Aún no hay productos publicados</h3><p>Estamos preparando el catálogo. Vuelve pronto.</p></div>`;
+
+    const productsSection=`<section class="ft-section">
+      <div class="ft-section__head"><h2>Productos destacados</h2><a href="${href('catalog')}">Ver catálogo ${materialIcon('chevron-right',{size:16})}</a></div>
+      ${cards}
+      <p class="ft-section__note">${total} producto${total===1?'':'s'} · precios en RD$</p>
+    </section>`;
+
+    const request=`<section class="ft-request">
+      <div class="ft-request__copy"><strong>¿No lo encuentras?</strong><small>Lo conseguimos por ti.</small></div>
+      <a class="ft-request__cta" href="${href('request')}">Solicitar ahora ${materialIcon('arrow-right',{size:16})}</a>
+    </section>`;
+
+    main.innerHTML=`${searchEntryMarkup()}${catNav}${hero}${benefits}${productsSection}${request}${footer()}`;
+  }catch{
+    main.innerHTML=`<div class="state-error"><h1>No pudimos cargar la tienda</h1><p>Revisa tu conexión e inténtalo de nuevo.</p><button class="button" id="retry-home">Intentar de nuevo</button></div>${footer()}`;
+    $('#retry-home').onclick=renderHome;
+  }
+}
+
+/** Tarjeta de producto de la portada: imagen, nombre, precio y estado reales. */
+function homeCard(p){
+  const state=p.availabilityState;
+  const stateClass=state==='UNAVAILABLE'?'ft-card__state ft-card__state--out':state==='ON_REQUEST'?'ft-card__state ft-card__state--order':'ft-card__state';
+  /* Etiqueta corta para la tarjeta: misma verdad que avail(p), sin frases largas. */
+  const stateLabel=p.availabilityState==='AVAILABLE_NOW'?'Disponible':p.availabilityState==='ON_REQUEST'?'Bajo pedido':'No disponible';
+  const action=canBuy(p)
+    ? `<button class="ft-card__cta" type="button" data-add-cart="${esc(p.id)}">${materialIcon('cart',{size:15})}<span>Agregar</span></button>`
+    : `<a class="ft-card__cta ft-card__cta--ghost" href="${requestHref(p)}">Solicitar</a>`;
+  return `<article class="ft-card">
+    <a class="ft-card__media" href="${href('product/'+encodeURIComponent(p.id))}" aria-label="Ver ${esc(p.name)}">
+      ${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy" decoding="async" onerror="this.closest('.ft-card__media').classList.add('ft-card__media--error')">`:`<span class="ft-card__fallback">${icon('package','ft-icon--lg')}</span>`}
+    </a>
+    <div class="ft-card__body">
+      <h3 class="ft-card__name"><a href="${href('product/'+encodeURIComponent(p.id))}" style="color:inherit;text-decoration:none">${esc(p.name)}</a></h3>
+      <span class="ft-card__price">${money(p)}</span>
+      <span class="${stateClass}"><span class="ft-card__dot"></span>${esc(stateLabel)}</span>
+      ${action}
+    </div>
+  </article>`;
+}
+
 async function renderCatalog(params){setNav('catalog');catalogState={kind:'product',category:params.get('category')||'',q:params.get('q')||'',page:1,pages:1};main.innerHTML=`${searchMarkup(catalogState.q)}<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Catálogo</h1></div><div class="catalog-controls"><div class="categories" id="kind-tabs"><span class="chip active" aria-current="true">Productos</span></div><select id="category-filter" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option></select></div><div id="catalog-result" aria-live="polite"></div>${footer()}`;bindSearch();$('[data-back]').onclick=()=>history.back();$('#kind-tabs').onclick=e=>{const b=e.target.closest('[data-kind]');if(b)location.hash=`/catalog?kind=${b.dataset.kind}`};try{const c=await api('/api/store/categories');$('#category-filter').innerHTML+= (c.categories||[]).map(v=>`<option value="${esc(v)}" ${v===catalogState.category?'selected':''}>${esc(v)}</option>`).join('')}catch{}$('#category-filter').onchange=e=>{catalogState.category=e.target.value;catalogState.page=1;loadCatalog()};await loadCatalog()}
 async function loadCatalog(append=false){const out=$('#catalog-result');if(!out)return;if(!append)out.innerHTML='<div class="loading-cards"><div class="skeleton"></div><div class="skeleton"></div></div>';const q=$('#store-search')?.value.trim()||catalogState.q;catalogState.q=q;const p=new URLSearchParams({page:String(catalogState.page),limit:'24',kind:'product'});if(q)p.set('q',q);if(catalogState.category)p.set('category',catalogState.category);try{const d=await api(`/api/store/catalog?${p}`);catalogState.pages=d.pagination?.pages||0;const items=d.products||[];const content=items.length?`<div class="product-grid">${items.map(productCard).join('')}</div>${catalogState.page<catalogState.pages?'<div class="more-wrap"><button class="button button-outline" id="load-more">Ver más</button></div>':''}`:`<div class="empty"><h3>${q?'No encontramos resultados':'Aún no hay '+(catalogState.kind==='service'?'servicios':catalogState.kind==='product'?'productos':'artículos')+' publicados'}</h3><p>${q?'Prueba con otro nombre o categoría.':'El catálogo se actualizará cuando haya contenido disponible.'}</p></div>`;out.innerHTML=append?out.innerHTML.replace(/<div class="more-wrap">[\s\S]*?<\/div>$/,'')+content:content;$('#load-more')?.addEventListener('click',()=>{catalogState.page++;loadCatalog(true)})}catch{out.innerHTML=`<div class="state-error"><h2>No pudimos cargar el catálogo</h2><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="button" id="retry-catalog">Intentar de nuevo</button></div>`;$('#retry-catalog').onclick=()=>loadCatalog()}}
 function warrantyBlock(w){if(!w||!w.available&&!w.conditions&&!w.coverage&&!w.exclusions&&!w.claim)return '';const details=(w.coverage||w.exclusions||w.conditions||w.claim)?`<details class="warranty"><summary>Consulta las condiciones de garantía</summary>${w.coverage?`<p><strong>Qué cubre:</strong> ${esc(w.coverage)}</p>`:''}${w.exclusions?`<p><strong>Qué no cubre:</strong> ${esc(w.exclusions)}</p>`:''}${w.conditions?`<p>${esc(w.conditions)}</p>`:''}${w.claim?`<p><strong>Cómo reclamar:</strong> ${esc(w.claim)}</p>`:''}</details>`:'';return `<div class="product-warranty"><span class="warranty-label">${esc(w.label)}</span>${w.notes?`<small>${esc(w.notes)}</small>`:''}${details}</div>`}
@@ -449,7 +542,46 @@ function requestCard(request){
   return `<article class="request-card"><div class="request-head"><span class="status-chip status-chip--${esc(request.status)}">${esc(requestStatus[request.status]||request.status)}</span><strong>${esc(request.title)}</strong></div><p class="request-date">${esc(dateText(request.created_at))}${request.images?` · ${request.images} foto${request.images===1?'':'s'}`:''}</p>${quote}${payment}${events?`<ul class="request-timeline">${events}</ul>`:''}${actions}${transfer}</article>`;
 }
 function renderNotice(title){setNav('');main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${title}</h1></div><div class="empty"><h3>Próximamente</h3><p>Esta función aún no está disponible.</p></div>${footer()}`;$('[data-back]').onclick=()=>history.back()}
-async function route(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='catalog')return renderCatalog(params);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request')return renderRequest(params);if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='account/requests')return renderRequests();return renderHome()}
+/* ------------------------------------------------------------- BÚSQUEDA */
+/*
+ * Pantalla de búsqueda real: el campo se enfoca al entrar, consulta el catálogo
+ * público con retardo (220 ms) y muestra resultados con las mismas tarjetas de
+ * la portada. No inventa datos: si no hay coincidencias lo dice y ofrece pedir
+ * el producto.
+ */
+async function renderSearch(params){
+  setNav('search');
+  const initial=params.get('q')||'';
+  const idle=`<div class="ft-section__head"><h2>Buscar en la tienda</h2></div><p class="ft-section__note">Escribe el nombre de un producto, marca o categoría.</p><div class="ft-search__idle"><a class="ft-card__cta ft-card__cta--ghost ft-search__idle-cta" href="${href('catalog')}">Ver todo el catálogo ${icon('arrow-right','ft-icon--sm')}</a></div>`;
+  main.innerHTML=`<div class="ft-searchbar">${searchMarkup(initial)}</div><div id="search-body" aria-live="polite">${idle}</div>${footer()}`;
+  const input=$('#store-search');
+  const body=$('#search-body');
+  let timer=null,seq=0;
+  const run=async()=>{
+    const q=input.value.trim();
+    const mine=++seq;
+    if(!q){body.innerHTML=idle;return}
+    body.innerHTML=`<p class="ft-section__note">Buscando “${esc(q)}”…</p>`;
+    try{
+      const d=await api(`/api/store/catalog?limit=12&kind=product&q=${encodeURIComponent(q)}`);
+      if(mine!==seq)return;
+      const items=d.products||[];
+      body.innerHTML=items.length
+        ?`<div class="ft-section__head"><h2>${items.length} resultado${items.length===1?'':'s'}</h2><a class="ft-section__link" href="${href('catalog')}?q=${encodeURIComponent(q)}">Ver en el catálogo ${icon('chevron-right','ft-icon--sm')}</a></div><div class="ft-grid">${items.map(homeCard).join('')}</div>`
+        :`<div class="empty"><h3>Sin resultados para “${esc(q)}”</h3><p>Prueba con otro nombre o pide que te lo consigamos.</p><a class="button button-outline" href="${href('request')}">Solicitar producto</a></div>`;
+    }catch{
+      if(mine!==seq)return;
+      body.innerHTML='<div class="state-error"><h2>No pudimos buscar</h2><p>Comprueba la conexión y vuelve a intentarlo.</p><button class="button" type="button" id="retry-search">Intentar de nuevo</button></div>';
+      $('#retry-search')?.addEventListener('click',run);
+    }
+  };
+  input.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(run,220)});
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(timer);run()}});
+  /* Foco inmediato: la acción «Buscar» de la barra inferior debe dejar el cursor listo. */
+  input.focus({preventScroll:true});
+  if(initial)await run();
+}
+async function route(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request')return renderRequest(params);if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='account/requests')return renderRequests();return renderHome()}
 function openDrawer(open){if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open))}
 $('#menu-button').onclick=()=>openDrawer(true);$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
 updateCartBadge();
@@ -463,12 +595,13 @@ async function refreshVisibleAvailability(){
   if(active&&active.closest?.('#checkout-form,#request-form'))return;
   if(active&&active.id==='store-search'&&String(active.value||'').trim())return;
   const hash=location.hash||'';
-  if(hash&&!hash.includes('/catalog'))return;
-  if(!hash||hash==='#/'||hash==='#/catalog'){
-    const y=window.scrollY;
-    await route();
-    window.scrollTo(0,y);
-  }
+  // Solo el catálogo se refresca al volver a la pestaña: re-renderizar la portada
+  // la dejaba en esqueletos si la API tardaba o fallaba (defecto detectado en UAT).
+  if(!hash.includes('/catalog'))return;
+  const y=window.scrollY;
+  await route();
+  window.scrollTo(0,y);
 }
 setInterval(()=>{if(document.visibilityState!=='visible')return;updateCartBadge();if(location.hash.includes('/cart'))renderCart();refreshVisibleAvailability();},60000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible')return;updateCartBadge();if(location.hash.includes('/cart'))renderCart();refreshVisibleAvailability();});window.addEventListener('hashchange',route);window.addEventListener('popstate',route);route();
+

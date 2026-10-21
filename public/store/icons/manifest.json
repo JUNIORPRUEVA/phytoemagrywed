@@ -1,0 +1,202 @@
+{
+  "source": {
+    "name": "lucide-static",
+    "version": "1.60.0",
+    "license": "ISC"
+  },
+  "generator": "scripts/build-store-icons.mjs",
+  "grid": {
+    "viewBox": "0 0 24 24",
+    "strokeWidth": 1.75,
+    "sizes": [
+      20,
+      24
+    ],
+    "color": "currentColor"
+  },
+  "count": 24,
+  "groups": {
+    "navegacion": [
+      "home",
+      "categories",
+      "search",
+      "menu"
+    ],
+    "compra": [
+      "cart",
+      "heart",
+      "plus",
+      "minus",
+      "close",
+      "arrow-right",
+      "chevron-right"
+    ],
+    "cuenta": [
+      "user",
+      "bell",
+      "orders",
+      "support",
+      "settings"
+    ],
+    "entrega": [
+      "truck",
+      "map-pin",
+      "package"
+    ],
+    "garantia": [
+      "shield-check"
+    ],
+    "categorias": [
+      "laptop",
+      "router",
+      "headphones",
+      "camera"
+    ]
+  },
+  "icons": [
+    {
+      "name": "home",
+      "group": "navegacion",
+      "lucide": "house",
+      "file": "home.svg"
+    },
+    {
+      "name": "categories",
+      "group": "navegacion",
+      "lucide": "layout-grid",
+      "file": "categories.svg"
+    },
+    {
+      "name": "search",
+      "group": "navegacion",
+      "lucide": "search",
+      "file": "search.svg"
+    },
+    {
+      "name": "menu",
+      "group": "navegacion",
+      "lucide": "menu",
+      "file": "menu.svg"
+    },
+    {
+      "name": "cart",
+      "group": "compra",
+      "lucide": "shopping-cart",
+      "file": "cart.svg"
+    },
+    {
+      "name": "heart",
+      "group": "compra",
+      "lucide": "heart",
+      "file": "heart.svg"
+    },
+    {
+      "name": "plus",
+      "group": "compra",
+      "lucide": "plus",
+      "file": "plus.svg"
+    },
+    {
+      "name": "minus",
+      "group": "compra",
+      "lucide": "minus",
+      "file": "minus.svg"
+    },
+    {
+      "name": "close",
+      "group": "compra",
+      "lucide": "x",
+      "file": "close.svg"
+    },
+    {
+      "name": "arrow-right",
+      "group": "compra",
+      "lucide": "arrow-right",
+      "file": "arrow-right.svg"
+    },
+    {
+      "name": "chevron-right",
+      "group": "compra",
+      "lucide": "chevron-right",
+      "file": "chevron-right.svg"
+    },
+    {
+      "name": "user",
+      "group": "cuenta",
+      "lucide": "user",
+      "file": "user.svg"
+    },
+    {
+      "name": "bell",
+      "group": "cuenta",
+      "lucide": "bell",
+      "file": "bell.svg"
+    },
+    {
+      "name": "orders",
+      "group": "cuenta",
+      "lucide": "clipboard-list",
+      "file": "orders.svg"
+    },
+    {
+      "name": "support",
+      "group": "cuenta",
+      "lucide": "headset",
+      "file": "support.svg"
+    },
+    {
+      "name": "settings",
+      "group": "cuenta",
+      "lucide": "settings",
+      "file": "settings.svg"
+    },
+    {
+      "name": "truck",
+      "group": "entrega",
+      "lucide": "truck",
+      "file": "truck.svg"
+    },
+    {
+      "name": "map-pin",
+      "group": "entrega",
+      "lucide": "map-pin",
+      "file": "map-pin.svg"
+    },
+    {
+      "name": "package",
+      "group": "entrega",
+      "lucide": "package",
+      "file": "package.svg"
+    },
+    {
+      "name": "shield-check",
+      "group": "garantia",
+      "lucide": "shield-check",
+      "file": "shield-check.svg"
+    },
+    {
+      "name": "laptop",
+      "group": "categorias",
+      "lucide": "laptop",
+      "file": "laptop.svg"
+    },
+    {
+      "name": "router",
+      "group": "categorias",
+      "lucide": "router",
+      "file": "router.svg"
+    },
+    {
+      "name": "headphones",
+      "group": "categorias",
+      "lucide": "headphones",
+      "file": "headphones.svg"
+    },
+    {
+      "name": "camera",
+      "group": "categorias",
+      "lucide": "camera",
+      "file": "camera.svg"
+    }
+  ]
+}

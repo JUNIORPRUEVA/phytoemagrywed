@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es-DO">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>FULLTECH Store · Previsualización de iconos</title>
+    <link rel="stylesheet" href="/store/design-system.css?v=4" />
+    <style>
+      body { margin: 0; background: var(--ft-bg); color: var(--ft-ink); font-family: var(--ft-font); }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+      h1 { font-size: 20px; letter-spacing: -0.4px; margin: 0 0 4px; }
+      .meta { font-size: 12.5px; color: var(--ft-muted); margin: 0 0 18px; line-height: 1.6; }
+      .meta code { background: #fff; border: 1px solid var(--ft-line); border-radius: 6px; padding: 1px 5px; }
+      h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ft-muted); margin: 26px 0 10px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+      .cell { background: var(--ft-surface); border: 1px solid var(--ft-line); border-radius: 12px; padding: 12px 8px 10px; text-align: center; }
+      .cell .pair { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--ft-navy); }
+      .cell .nm { display: block; margin-top: 8px; font-size: 11px; font-weight: 600; }
+      .cell .src { display: block; font-size: 9.5px; color: var(--ft-muted); }
+      .nav-demo { position: static; border-radius: 14px; border: 1px solid var(--ft-line); margin-top: 10px; box-shadow: none; }
+      .nav-demo .ft-nav__item { color: var(--ft-muted); }
+      .nav-demo .ft-nav__item.active { color: var(--ft-primary); background: var(--ft-primary-soft); }
+      .states { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .state-card { background: #fff; border: 1px solid var(--ft-line); border-radius: 12px; padding: 10px; }
+      .state-card h3 { margin: 0 0 6px; font-size: 11px; color: var(--ft-muted); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Previsualización del sistema de iconos</h1>
+      <p class="meta" id="meta">Cargando registro…</p>
+      <div id="groups"></div>
+
+      <h2>Barra inferior · 4 ítems (estado normal y activo)</h2>
+      <div class="states">
+        <div class="state-card">
+          <h3>Normal</h3>
+          <nav class="ft-nav nav-demo" id="nav-normal" aria-label="Demostración"></nav>
+        </div>
+        <div class="state-card">
+          <h3>Categorías activa</h3>
+          <nav class="ft-nav nav-demo" id="nav-active" aria-label="Demostración"></nav>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { ICON_SOURCE, ICON_GROUPS, ICON_LUCIDE_NAMES, icon, iconNames, hydrateIcons } from '/store/icons.js';
+
+      document.getElementById('meta').innerHTML =
+        `Fuente: <code>${ICON_SOURCE.library} v${ICON_SOURCE.version}</code> · licencia <code>${ICON_SOURCE.license}</code> · ` +
+        `${iconNames().length} iconos · rejilla 24×24 · trazo 1.75 · <code>currentColor</code>`;
+
+      const groupsEl = document.getElementById('groups');
+      const labels = {
+        navegacion: 'Navegación',
+        compra: 'Compra',
+        cuenta: 'Cuenta',
+        entrega: 'Entrega',
+        garantia: 'Garantía',
+        categorias: 'Categorías',
+      };
+      for (const [group, names] of Object.entries(ICON_GROUPS)) {
+        const section = document.createElement('section');
+        section.innerHTML = `<h2>${labels[group] ?? group} (${names.length})</h2>
+          <div class="grid">${names
+            .map(
+              (name) => `<div class="cell">
+                <span class="pair">${icon(name, '', { size: 24 })}${icon(name, '', { size: 20 })}</span>
+                <span class="nm">${name}</span>
+                <span class="src">${ICON_LUCIDE_NAMES[name]}</span>
+              </div>`,
+            )
+            .join('')}</div>`;
+        groupsEl.appendChild(section);
+      }
+
+      const navMarkup = (active) =>
+        [
+          ['home', 'Inicio', '/store/'],
+          ['categories', 'Categorías', '/store/#/catalog'],
+          ['cart', 'Carrito', '/store/#/cart'],
+          ['user', 'Mi cuenta', '/store/#/account'],
+        ]
+          .map(
+            ([key, label, href]) =>
+              `<a href="${href}" class="ft-nav__item${key === active ? ' active' : ''}">${icon(key, '', { size: 20 })}<span>${label}</span></a>`,
+          )
+          .join('');
+
+      const normal = document.getElementById('nav-normal');
+      const withActive = document.getElementById('nav-active');
+      normal.innerHTML = navMarkup('');
+      withActive.innerHTML = navMarkup('categories');
+      hydrateIcons();
+    </script>
+  </body>
+</html>

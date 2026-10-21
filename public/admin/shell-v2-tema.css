@@ -126,6 +126,19 @@
   --pe-on-brand: #0b2142;
   --pe-control-bg: #21324b;
   --pe-focus: #a8ceff;
+
+  /* Reproductor de audio: entrante frío y saliente verde, sin fondos blancos. */
+  --pe-audio-in-border: rgba(255, 255, 255, 0.1);
+  --pe-audio-in-ink: #afc0d9;
+  --pe-audio-in-accent: #8dbbff;
+  --pe-audio-in-track: rgba(141, 187, 255, 0.22);
+  --pe-audio-in-play-ink: #0b2142;
+  --pe-audio-out-bg: #16483a;
+  --pe-audio-out-border: rgba(84, 221, 162, 0.3);
+  --pe-audio-out-ink: #b8f0d5;
+  --pe-audio-out-accent: #54dda2;
+  --pe-audio-out-track: rgba(84, 221, 162, 0.24);
+  --pe-audio-out-play-ink: #062a1f;
 }
 
 /* El fondo de la app: plano y del color de la página (adiós al degradado). */
@@ -937,54 +950,11 @@ body[data-drawer='open'] .burger span:nth-child(3),
 /*
  * REPRODUCTOR DE AUDIO EN OSCURO.
  *
- * El reproductor del mensaje saliente llevaba el verde claro de WhatsApp escrito
- * a mano (#d5ecdd): en modo noche se veía como un parche blanco sobre la burbuja
- * azul. Aquí toma el tono del tema y el contraste de sus textos y controles.
+ * Ya no lleva colores escritos a mano: el componente lee `--audio-*`, que sale
+ * de las variables `--pe-audio-*` del tema (arriba). Así el audio entrante es
+ * frío (azul de la marca) y el saliente verde, sin el parche blanco del verde
+ * claro de WhatsApp que se veía sobre la burbuja oscura.
  */
-:root[data-theme='dark'] .audio {
-  border-color: var(--pe-border);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-:root[data-theme='dark'] .bubble--out .audio {
-  border-color: transparent;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-:root[data-theme='dark'] .audio__times {
-  color: rgba(234, 240, 253, 0.72);
-}
-
-:root[data-theme='dark'] .audio__play {
-  background: var(--pe-brand-text);
-  color: var(--pe-on-brand);
-}
-
-:root[data-theme='dark'] .audio__kind,
-:root[data-theme='dark'] .audio--playing .audio__kind {
-  color: var(--pe-brand-text);
-}
-
-:root[data-theme='dark'] .audio__seek::-webkit-slider-runnable-track {
-  background: linear-gradient(
-    90deg,
-    var(--pe-brand-text) var(--audio-progress, 0%),
-    rgba(255, 255, 255, 0.22) var(--audio-progress, 0%)
-  );
-}
-
-:root[data-theme='dark'] .audio__seek::-webkit-slider-thumb {
-  border-color: #0d1728;
-  background: var(--pe-brand-text);
-}
-
-:root[data-theme='dark'] .audio__seek::-moz-range-track {
-  background: rgba(255, 255, 255, 0.22);
-}
-
-:root[data-theme='dark'] .audio__seek::-moz-range-progress {
-  background: var(--pe-brand-text);
-}
 
 :root[data-theme='dark'] .bubble--failed {
   background: #4a2320;

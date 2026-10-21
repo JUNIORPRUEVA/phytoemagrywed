@@ -5,7 +5,7 @@ const doc=()=>(typeof document==='undefined'||!document?null:document);
 const $=s=>doc()?.querySelector(s)??null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
-const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:'',deliveryMethod:'delivery',scheduledAt:'',deliveryNotes:'',deliveryReference:'',deliveryAgentId:'',deliveryContact:null,paymentStatus:'pending',paymentMethod:'CASH',orderPrefs:null,saveOrderPrefs:true,feeReviewed:false,openAck:false,guidedFlow:false});
+const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:'',deliveryMethod:'delivery',scheduledAt:'',deliveryNotes:'',deliveryReference:'',deliveryAgentId:'',deliveryContact:null,paymentStatus:'pending',paymentMethod:'CASH',orderPrefs:null,saveOrderPrefs:true,feeReviewed:false,openAck:false,guidedFlow:false,createdOrderId:null,orderDirty:false});
 const personIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg>';
 const quotesIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h5"/></svg>';
 const actionIcon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({quick:'<path d="m13 2-9 12h7l-1 8 10-13h-8z"/>',ticket:'<path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zM15 5v3m0 3v2m0 3v3"/>',save:'<path d="M5 3h12l4 4v14H3V3h2zm2 0v6h10V3M7 21v-8h10v8"/>',note:'<path d="M4 4h11l5 5v11H4zM15 4v5h5M8 12h8M8 16h6"/>',stock:'<path d="m3 7 9-4 9 4v12l-9 3-9-3zM3 7l9 4 9-4M12 11v11M16 3v6M13 6h6"/>',product:'<path d="M4 5h16v15H4zM4 10h16M12 13v5m-2.5-2.5h5"/>',more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'})[name]||''}</svg>`;
@@ -20,7 +20,7 @@ actionsDrawer.addEventListener('click',e=>{
   if(e.target.closest('button'))closeActions();
 });
 function persist(){try{if(draftKey)localStorage.setItem(draftKey,JSON.stringify({draft,operation}));}catch{}}
-function changed(){operation=null;message='';draft.ticketDirty=true;persist();render();if(draft.ticketId||draft.flow==='order')scheduleTicketSave();}
+function changed(){operation=null;message='';draft.ticketDirty=true;if(draft.createdOrderId)draft.orderDirty=true;persist();render();if(draft.ticketId||draft.flow==='order')scheduleTicketSave();}
 async function api(path,body){
   const epoch=generation;
   const response=await fetch(`/api/admin/pos/${path}`,{credentials:'same-origin',cache:'no-store',method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
@@ -87,7 +87,7 @@ function chooseClient(){
   $('#pos-client-new').addEventListener('click',()=>{const form=modal.querySelector('.pos-new-client');form.hidden=!form.hidden;$('#pos-client-new').setAttribute('aria-expanded',String(!form.hidden));if(!form.hidden)form.querySelector('input').focus();});
   $('#pos-client-search').addEventListener('input',results);results();
 }
-function selectClient(customer){draft.customer=customer;draft.conversationId='';draft.location=null;draft.quoteId=null;changed();}
+function selectClient(customer){draft.customer=customer;draft.conversationId='';draft.location=null;draft.quoteId=null;draft.createdOrderId=null;draft.orderDirty=false;changed();}
 function editDiscount(index){
   const target=index==='total'?draft:draft.items[Number(index)];if(!target)return;
   show(index==='total'?'Descuento general':'Descuento del artículo',`<label class="field"><span class="field__label">Tipo</span><select class="field__select" name="type"><option value="amount" ${target.discount?.type!=='percent'?'selected':''}>Monto fijo (RD$)</option><option value="percent" ${target.discount?.type==='percent'?'selected':''}>Porcentaje (%)</option></select></label><label class="field"><span class="field__label">Valor</span><input class="field__input" type="number" name="value" min="0" step="0.01" value="${Number(target.discount?.value||0)}" required></label><p class="pos-muted">El monto fijo se aplica a toda la línea. Usa 0 para quitar el descuento.</p>`,'Aplicar',form=>{
@@ -151,7 +151,7 @@ async function confirmSale(mode){
   if(openOrders.length){const warning=document.createElement('label');warning.className='pos-check pos-open-warning';warning.innerHTML=`<input type="checkbox" name="acknowledgeOpen" required><span>El cliente ya tiene ${openOrders.length} pedido(s) sin cerrar (${openOrders.slice(0,3).map(o=>esc(o.number)).join(', ')+(openOrders.length>3?' y '+(openOrders.length-3)+' más':'')}). Confirmo que esta es una venta nueva.</span>`;modal.querySelector('.pos-modal-body').prepend(warning);}
   modal.querySelector('[name=received]')?.addEventListener('input',e=>{const value=Math.round(Number(e.target.value)*100)-sale.total_cents;$('#pos-change').textContent=value>=0?`Cambio: ${cash(value)}`:`Faltan ${cash(-value)}`;});
 }
-async function complete(mode,paymentMethod,acknowledgeOpen=false){
+async function complete(mode,paymentMethod,acknowledgeOpen=false,options={}){
   const sale=totals();if(sale.error)throw new Error(sale.error);
   const prefsSnapshot=mode==='order'&&draft.customer?.id&&draft.saveOrderPrefs!==false&&draft.items[0]?{
     customerId:draft.customer.id,
@@ -166,6 +166,7 @@ async function complete(mode,paymentMethod,acknowledgeOpen=false){
     deliveryAgentId:String(draft.deliveryAssignee||'').startsWith('user:')?draft.deliveryAssignee.slice(5):'',
     deliveryContact:String(draft.deliveryAssignee||'').startsWith('contact:')?{name:'',phone:draft.deliveryAssignee.slice(8)}:null,
     paymentStatus:mode==='invoice'?'paid':(draft.paymentStatus==='paid'?'paid':'pending'),guided:draft.guidedFlow===true,
+    ...(typeof options.needsDelivery==='boolean'?{needsDelivery:options.needsDelivery}:{}),
     quoteId:mode==='quote'?null:draft.quoteId,ticketId:draft.ticketId,ticketVersion:draft.ticketVersion,expectedTotal:sale.total_cents,paymentMethod,acknowledgeOpen}};
   busy=true;persist();render();const epoch=generation;
   try{
@@ -174,10 +175,23 @@ async function complete(mode,paymentMethod,acknowledgeOpen=false){
       try{await fetch(`/api/admin/customers/${encodeURIComponent(prefsSnapshot.customerId)}`,{method:'PATCH',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({orderPrefs:prefsSnapshot.orderPrefs})});}catch{}
     }
     const label=result.pending?'Guardado en este dispositivo':mode==='quote'?'Cotización guardada':mode==='order'?'Pedido guardado':'Venta cobrada';
-    draft=empty();operation=null;expanded=false;persist();message=label;render();
-    if(mode==='quote'){
-      modal.close();const id=result.document?.id||result.quoteId;openQuote(id);notifyQuote(id,label);
-    }else show(label,`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(result.number||'')}</span></p><a class="btn btn--primary" href="${esc(mode==='invoice'?`/admin/receipt-viewer.html?pdf=${encodeURIComponent(result.receiptUrl)}`:result.receiptUrl)}" target="_blank" rel="noopener">${mode==='invoice'?'Ver factura en PDF':'Ver comprobante / PDF'}</a>${mode==='order'?`<button class="btn btn--ghost" type="button" data-pos-delivery="${esc(result.orderId)}">Continuar entrega</button>`:''}<p class="pos-muted">${mode==='order'?'El pedido está pendiente. Puedes asignar su entrega ahora o desde Pedidos.':mode==='invoice'?'La venta quedó registrada en Pedidos con su factura vinculada.':'Documento comercial guardado.'}</p>`,null);
+    if(options.keepDraft){
+      /*
+       * EL PEDIDO YA EXISTE: se conserva el borrador para poder confirmarlo o
+       * asignarle reparto acto seguido sin volver a crearlo. El ticket se cierra
+       * (el servidor ya lo cerró) y queda anotado el id del pedido real.
+       */
+      operation=null;draft.ticketId=null;draft.ticketVersion=null;draft.ticketDirty=false;
+      if(result.orderId)draft.createdOrderId=result.orderId;
+    }else{
+      draft=empty();operation=null;expanded=false;
+    }
+    persist();message=label;render();
+    if(!options.silent){
+      if(mode==='quote'){
+        modal.close();const id=result.document?.id||result.quoteId;openQuote(id);notifyQuote(id,label);
+      }else show(label,`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(result.number||'')}</span></p><a class="btn btn--primary" href="${esc(mode==='invoice'?`/admin/receipt-viewer.html?pdf=${encodeURIComponent(result.receiptUrl)}`:result.receiptUrl)}" target="_blank" rel="noopener">${mode==='invoice'?'Ver factura en PDF':'Ver comprobante / PDF'}</a>${mode==='order'?`<button class="btn btn--ghost" type="button" data-pos-delivery="${esc(result.orderId)}">Continuar entrega</button>`:''}<p class="pos-muted">${mode==='order'?'El pedido está pendiente. Puedes asignar su entrega ahora o desde Pedidos.':mode==='invoice'?'La venta quedó registrada en Pedidos con su factura vinculada.':'Documento comercial guardado.'}</p>`,null);
+    }
     window.dispatchEvent(new Event('fulltech:pos-saved'));window.dispatchEvent(new Event('fulltech:catalog-updated'));
     return result;
   }catch(e){
@@ -584,19 +598,27 @@ function orderDraftState(){return draft.ticketId?'Guardado':'Sin guardar';}
 let assigneesCache=null;
 async function loadAssignees(){
   if(assigneesCache)return assigneesCache;
-  assigneesCache={users:[],contacts:[]};
+  assigneesCache={users:[],contacts:[],canAssignInternal:false,canAssignExternal:true};
   try{
     const response=await fetch('/api/admin/pos/assignees',{credentials:'same-origin',cache:'no-store'});
-    if(response.ok){const data=await response.json();assigneesCache={users:data.users||[],contacts:data.contacts||[]};}
-  }catch{assigneesCache={users:[],contacts:[]};}
+    if(response.ok){const data=await response.json();assigneesCache={users:data.users||[],contacts:data.contacts||[],canAssignInternal:data.canAssignInternal===true,canAssignExternal:data.canAssignExternal!==false};}
+  }catch{assigneesCache={users:[],contacts:[],canAssignInternal:false,canAssignExternal:true};}
   return assigneesCache;
 }
-function orderRequirements(){
+/*
+ * QUÉ FALTA PARA PODER GUARDAR EL PEDIDO.
+ *
+ * La ubicación NO está aquí: solo se exige cuando el pedido va a salir con un
+ * mensajero (`orderRequirements({delivery:true})`). Un retiro en tienda y un
+ * pedido que solo se confirma se guardan sin dirección, que es la verdad y evita
+ * inventar datos para poder avanzar.
+ */
+function orderRequirements({delivery=false}={}){
   const faltas=[];
   if(!draft.customer?.id)faltas.push({texto:'Elige el cliente del pedido.'});
   else if(!String(draft.customer.phone_e164||'').trim())faltas.push({texto:'El cliente no tiene teléfono válido.'});
   if(!draft.items.length)faltas.push({texto:'Agrega al menos un artículo.'});
-  if(!orderIsPickup()&&!orderHasCoords())faltas.push({texto:'Falta la ubicación de entrega.',visible:false});
+  if(delivery&&!orderIsPickup()&&!orderHasCoords())faltas.push({texto:'Falta la ubicación de entrega para enviarlo con un mensajero.'});
   if(draft.scheduledAt){
     const cuando=new Date(draft.scheduledAt);
     if(Number.isNaN(cuando.getTime()))faltas.push({texto:'La fecha de entrega no es válida.'});
@@ -621,25 +643,32 @@ function orderMissingHtml(faltas){
 }
 function refreshOrderCompletion(){
   const faltas=orderRequirements();
+  const paraDelivery=orderRequirements({delivery:true});
   const check=$('#pos-order-check');if(check)check.innerHTML=orderMissingHtml(faltas);
+  const hint=$('#pos-order-delivery-hint');
+  if(hint){
+    const faltaUbicacion=paraDelivery.find(f=>f.texto.includes('ubicación de entrega'));
+    hint.hidden=!faltaUbicacion;
+    hint.textContent=faltaUbicacion?`Para enviarlo con un mensajero: ${faltaUbicacion.texto.toLowerCase()}`:'';
+  }
   const totales=$('#pos-order-totals');if(totales)totales.innerHTML=orderTotalsHtml();
   const lineas=$('#pos-order-lines');if(lineas)lineas.innerHTML=orderLinesHtml();
   const cuenta=$('#pos-order-count');
   if(cuenta){const n=draft.items.reduce((a,i)=>a+i.quantity,0);cuenta.textContent=`${n} ${n===1?'artículo':'artículos'} · ${cash(totals().total_cents)}`;}
   const estado=$('#pos-order-draft-state');if(estado)estado.textContent=orderDraftState();
-  document.querySelectorAll('[data-order-confirm],[data-order-confirm-assign],[data-order-send]').forEach(b=>{b.disabled=faltas.length>0||busy;});
+  document.querySelectorAll('[data-order-confirm],[data-order-request]').forEach(b=>{b.disabled=faltas.length>0||busy;});
+  document.querySelectorAll('[data-order-confirm-delivery]').forEach(b=>{b.disabled=paraDelivery.length>0||busy;});
 }
 async function openOrderCompletion(){
   await initialize();
   if(!draft.customer?.id){chooseClient();message='Elige el cliente y vuelve a pulsar Continuar.';render();return;}
   if(!draft.items.length){message='Agrega al menos un artículo para continuar.';render();return;}
   draft.guidedFlow=true;
-  const {users:conductores,contacts:contactosGuardados}=await loadAssignees();
-  const opcionesEntrega=[
-    ...conductores.map(u=>`<option value="user:${esc(u.id)}" ${draft.deliveryAssignee===`user:${u.id}`?'selected':''}>${esc(u.name)}${u.role==='DELIVERY'?' · repartidor':' · agente'}</option>`),
-    ...contactosGuardados.map(c=>`<option value="contact:${esc(c.phone)}" ${draft.deliveryAssignee===`contact:${c.phone}`?'selected':''}>${esc(c.name)} · contacto</option>`),
-  ];
-  const entregaHtml=!orderIsPickup()&&opcionesEntrega.length?`<label class="pos-order-inline"><span>Quién entrega</span><select class="field__select" data-order-field="deliveryAssignee"><option value="">Sin asignar</option>${opcionesEntrega.join('')}</select></label>`:'';
+  /*
+   * AQUÍ NO SE PREGUNTA QUIÉN ENTREGA. El mensajero se elige en la acción
+   * «Confirmar + delivery», que es donde de verdad se asigna. Pedirlo dos veces
+   * solo llenaba la pantalla de detalles con un dato que todavía no toca.
+   */
   orderOpenOrders=[];
   try{orderOpenOrders=(await api('context/'+encodeURIComponent(draft.customer.id))).openOrders||[];}catch{orderOpenOrders=[];}
   const agentesHtml='';
@@ -667,8 +696,7 @@ async function openOrderCompletion(){
           <div class="pos-order-seg" role="group" aria-label="Cuándo"><button type="button" data-order-when="now" aria-pressed="${draft.scheduledAt?'false':'true'}">Ahora</button><button type="button" data-order-when="scheduled" aria-pressed="${draft.scheduledAt?'true':'false'}">Programado</button></div>
           <input class="field__input" id="pos-order-schedule" type="datetime-local" data-order-field="scheduledAt" value="${esc(draft.scheduledAt?String(draft.scheduledAt).slice(0,16):'')}" ${draft.scheduledAt?'':'hidden'} aria-label="Fecha y hora de entrega">
         </div>
-        ${entregaHtml}
-        <input class="field__input" data-order-field="notes" maxlength="2000" value="${esc(draft.notes||'')}" placeholder="Nota para el reparto (opcional)" aria-label="Nota para el reparto">
+        <input class="field__input" data-order-field="notes" maxlength="2000" value="${esc(draft.notes||'')}" placeholder="Observaciones del pedido (opcional)" aria-label="Observaciones del pedido">
       </section>
       <section class="pos-order-block">
         <button type="button" class="pos-order-toggle" data-order-lines aria-expanded="false"><span id="pos-order-count"></span><span aria-hidden="true">⌄</span></button>
@@ -677,17 +705,22 @@ async function openOrderCompletion(){
         <label class="pos-order-inline"><span>Forma de pago</span><select class="field__select" data-order-field="paymentMethod"><option value="CASH" ${draft.paymentMethod==='TRANSFER'?'':'selected'}>Efectivo</option><option value="TRANSFER" ${draft.paymentMethod==='TRANSFER'?'selected':''}>Transferencia</option></select></label>
         <label class="pos-order-inline"><span>Estado del cobro</span><select class="field__select" data-order-field="paymentStatus"><option value="pending" ${draft.paymentStatus==='paid'?'':'selected'}>Pendiente</option><option value="paid" ${draft.paymentStatus==='paid'?'selected':''}>Pagado</option></select></label>
         <label class="pos-order-prefs"><input type="checkbox" data-order-save-prefs ${draft.saveOrderPrefs===false?'':'checked'}><span><strong>Lo de siempre</strong><small>Guardar este pedido como preferencia del cliente</small></span></label>
-        <div id="pos-order-check">${orderMissingHtml(faltas)}</div>${acuse}${ackHtml}
+        <div id="pos-order-check">${orderMissingHtml(faltas)}</div>
+        <p class="pos-order-hint" id="pos-order-delivery-hint" hidden></p>
+        ${acuse}${ackHtml}
       </section>
     </div>
     <p class="pos-order-error" id="pos-order-error" role="alert"></p>
-    <div class="pos-order-menu" id="pos-order-menu" hidden>
-      <button type="button" data-order-confirm-assign ${faltas.length||busy?'disabled':''}>Confirmar y asignar repartidor</button>
-      <button type="button" data-order-send ${faltas.length||busy?'disabled':''}>Confirmar y enviar por WhatsApp</button>
-    </div>
+    <!--
+      LAS TRES ACCIONES DEL PEDIDO. Nada más en esta barra:
+        1. Pedir confirmación  → guarda pendiente y deja el mensaje escrito en el chat.
+        2. Confirmar + delivery → confirma y asigna mensajero en un solo paso.
+        3. Solo confirmar       → confirma sin crear entrega ni asignar a nadie.
+    -->
     <footer class="pos-order-foot">
-      <button type="button" class="pos-order-dots" data-order-menu aria-label="Más opciones" aria-expanded="false">⋯</button>
-      <button type="button" class="btn btn--primary" data-order-confirm ${faltas.length||busy?'disabled':''}>Confirmar pedido</button>
+      <button type="button" class="btn btn--primary" data-order-request ${faltas.length||busy?'disabled':''}>Pedir confirmación</button>
+      <button type="button" class="btn btn--ghost" data-order-confirm-delivery ${orderRequirements({delivery:true}).length||busy?'disabled':''}>Confirmar + delivery</button>
+      <button type="button" class="btn btn--ghost" data-order-confirm ${faltas.length||busy?'disabled':''}>Solo confirmar</button>
     </footer>
   </div>`;
   if(!modal.open)modal.showModal();
@@ -740,45 +773,132 @@ async function pedirDatosAlCliente(){
   render();
   window.dispatchEvent(new CustomEvent('fulltech:wa-compose',{detail:{conversationId:draft.conversationId,customerId:draft.customer?.id,text:texto}}));
 }
-async function postAdmin(path,body){
-  const response=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})});
+async function postAdmin(path,body,method='POST'){
+  const response=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})});
   const data=await response.json().catch(()=>({}));
   if(!response.ok||!data.ok)throw new Error(data.message||'No se pudo completar la acción.');
   return data;
 }
-async function confirmGuidedOrder({assign=false,send=false}={}){
+async function getAdmin(path){
+  const response=await fetch(path,{credentials:'same-origin',cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||!data.ok)throw new Error(data.message||'No se pudo completar la acción.');
+  return data;
+}
+
+/*
+ * EL PEDIDO EXISTE UNA SOLA VEZ.
+ *
+ * Las tres acciones necesitan un pedido guardado. La primera que se pulsa lo
+ * crea (idempotente por `requestId` en el servidor) y las demás REUTILIZAN ese
+ * mismo id: dos toques, un reintento o una red lenta no pueden crear dos pedidos.
+ * Si el borrador cambió después de guardarlo, se ACTUALIZA el pedido pendiente en
+ * vez de crear otro.
+ */
+async function ensureOrderSaved({needsDelivery=false}={}){
+  if(draft.createdOrderId){
+    if(draft.orderDirty)await updateSavedOrder(draft.createdOrderId);
+    return draft.createdOrderId;
+  }
+  const snapshot=structuredClone(draft);
+  const result=await complete('order',snapshot.paymentMethod||'CASH',Boolean(snapshot.openAck)||!orderOpenOrders.length,{silent:true,keepDraft:true,needsDelivery});
+  const orderId=result?.orderId||draft.createdOrderId;
+  if(!orderId)throw new Error('No se pudo guardar el pedido.');
+  draft.createdOrderId=orderId;draft.orderDirty=false;persist();
+  return orderId;
+}
+async function updateSavedOrder(orderId){
+  const sale=totals();if(sale.error)throw new Error(sale.error);
+  await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}`,{
+    items:sale.items.map(i=>({variantId:i.variantId,quantity:i.quantity,unitPrice:i.unit_price_cents/100,lineDiscountCents:i.discount_cents})),
+    discount:sale.discount_cents/100,
+    deliveryFee:Math.max(0,Math.round(Number(draft.deliveryFee)||0)),
+    notes:draft.notes||'',
+    paymentMethod:draft.paymentMethod||'CASH',
+    delivery:{method:orderIsPickup()?'pickup':'delivery',note:draft.deliveryNotes||'',reference:draft.deliveryReference||'',scheduledAt:draft.scheduledAt||''},
+  },'PATCH');
+  draft.orderDirty=false;persist();
+}
+
+/* ACCIÓN 1 — PEDIR CONFIRMACIÓN: guarda pendiente y deja el mensaje EN EL CHAT. */
+async function requestOrderConfirmation(){
   const faltas=orderRequirements();
-  if(faltas.length){refreshOrderCompletion();return;}
-  const pedidoConfirmado=structuredClone(draft);
-  const resultado=await complete('order',pedidoConfirmado.paymentMethod||'CASH',pedidoConfirmado.openAck||!orderOpenOrders.length);
-  const orderId=resultado?.orderId;
-  if(!orderId)return;
-  const destino=String(pedidoConfirmado.deliveryAssignee||'');
-  if(assign){
-    if(destino.startsWith('user:')){
-      await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/assign`,{deliveryUserId:destino.slice(5),deliveryNote:pedidoConfirmado.notes||''});
-      message='Pedido confirmado y asignado a quien lo entrega.';
-    }else if(destino.startsWith('contact:')){
-      message='Pedido confirmado. El contacto de entrega queda en el pedido: avísale por WhatsApp.';
-    }else{
-      message='Pedido confirmado. Puedes asignar quién lo lleva desde Pedidos.';
-    }
+  if(faltas.length){actionError(faltas[0].texto);return;}
+  const orderId=await ensureOrderSaved();
+  const data=await getAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/confirmation-message`);
+  const conversationId=data.conversationId||draft.conversationId||'';
+  const texto=String(data.text||'').trim();
+  if(data.sendable===false||!conversationId||!texto){
+    modal.close();
+    message=data.message||'Pedido guardado como pendiente. Ábrele el chat al cliente para pedirle confirmación.';
+    render();
+    window.dispatchEvent(new Event('fulltech:pos-saved'));
+    return;
   }
-  if(send){
-    try{
-      const envio=await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/invoice-whatsapp`,{});
-      message=envio.message||'Pedido enviado al cliente por WhatsApp.';
-    }catch(e){
-      message=`Pedido confirmado. No se pudo enviar: ${e.message}`;
-    }
-  }
+  modal.close();
+  message='Pedido pendiente de confirmación. El mensaje está escrito en el chat: revísalo y pulsa Enviar.';
   render();
+  window.dispatchEvent(new Event('fulltech:pos-saved'));
+  window.dispatchEvent(new CustomEvent('fulltech:wa-compose',{detail:{conversationId,customerId:draft.customer?.id,text:texto}}));
+}
+
+/* ACCIÓN 3 — SOLO CONFIRMAR: confirma sin mensajero, sin entrega y sin cobro. */
+async function confirmOrderOnly(){
+  const faltas=orderRequirements();
+  if(faltas.length){actionError(faltas[0].texto);return;}
+  const sale=totals();
+  const orderId=await ensureOrderSaved();
+  const data=await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/confirm`,{fulfillment:orderIsPickup()?'pickup':'delivery'});
+  draft=empty();operation=null;expanded=false;persist();message='Pedido confirmado';
+  render();
+  window.dispatchEvent(new Event('fulltech:pos-saved'));window.dispatchEvent(new Event('fulltech:catalog-updated'));
+  show('Pedido guardado y confirmado',`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(data.order?.order_number||'')}</span></p><p class="pos-muted">Quedó confirmado sin mensajero y sin crear una entrega. Tampoco se registró ningún cobro.</p><a class="btn btn--ghost" href="${esc(`/admin/receipt-viewer.html?pdf=${encodeURIComponent(`/api/admin/orders/${orderId}/receipt.pdf`)}`)}" target="_blank" rel="noopener">Ver comprobante</a>`,null);
+}
+
+/* ACCIÓN 2 — CONFIRMAR Y PASAR A DELIVERY: mensajero + nota + resumen. */
+async function openAssignDelivery(){
+  const faltas=orderRequirements({delivery:true});
+  if(faltas.length){actionError(faltas[0].texto);refreshOrderCompletion();return;}
+  const {users,contacts,canAssignInternal,canAssignExternal}=await loadAssignees();
+  const internos=canAssignInternal?users:[];
+  const externos=canAssignExternal?contacts:[];
+  if(!internos.length&&!externos.length){
+    actionError(canAssignInternal
+      ?'No hay repartidores ni agentes disponibles para asignar.'
+      :'No tienes autorización para asignar repartidores del equipo y no hay contactos de reparto guardados.');
+    return;
+  }
+  const sale=totals();
+  const opciones=[
+    ...internos.map(u=>`<option value="user:${esc(u.id)}" ${draft.deliveryAssignee===`user:${u.id}`?'selected':''}>${esc(u.name)}${u.role==='DELIVERY'?' · repartidor':' · agente'}</option>`),
+    ...externos.map(c=>`<option value="contact:${esc(c.phone)}" ${draft.deliveryAssignee===`contact:${c.phone}`?'selected':''}>${esc(c.name)} · externo</option>`),
+  ].join('');
+  const direccion=orderIsPickup()?'Retiro en tienda':(orderAddress()||'Sin dirección registrada');
+  const envio=Math.max(0,Math.round(Number(draft.deliveryFee)||0));
+  show('Confirmar y asignar reparto',`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(draft.customer?.name||'Cliente')}</span></p><div class="pos-order-where"><strong>${esc(direccion)}</strong><span>Envío: ${cash(envio*100)}${orderIsPickup()?' · el cliente recoge':''}</span></div><label class="field"><span class="field__label">Quién lo lleva</span><select class="field__select" name="assignee" required><option value="">Elige un mensajero</option>${opciones}</select></label><label class="field"><span class="field__label">Nota para el mensajero (opcional)</span><textarea class="field__input" name="note" maxlength="600" rows="2" placeholder="Portal, horario, cómo entrar…"></textarea></label><p class="pos-muted">Se confirma el pedido y se le asigna la entrega en un solo paso. El cliente no recibe ningún WhatsApp automático.</p>`,'Confirmar y asignar',async form=>{
+    const value=String(form.get('assignee')||'');
+    if(!value)throw new Error('Elige quién lleva el pedido.');
+    const note=String(form.get('note')||'').trim().slice(0,600);
+    const fulfillment=orderIsPickup()?'pickup':'delivery';
+    const orderId=await ensureOrderSaved({needsDelivery:!orderIsPickup()});
+    const payload=value.startsWith('user:')
+      ?{deliveryUserId:value.slice(5),deliveryNote:note,fulfillment}
+      :{deliveryContactPhone:value.slice(8),deliveryNote:note,fulfillment};
+    const data=await postAdmin(`/api/admin/orders/${encodeURIComponent(orderId)}/confirm`,payload);
+    const asignacion=data.assignment||{};
+    if(asignacion.attempted&&asignacion.ok===false){
+      // El pedido SÍ quedó confirmado; la asignación no. Se dice tal cual.
+      throw new Error(asignacion.message||'El pedido quedó confirmado, pero no se pudo asignar el mensajero. Asígnalo desde Pedidos.');
+    }
+    const quien=value.startsWith('user:')?internos.find(u=>u.id===value.slice(5))?.name:externos.find(c=>c.phone===value.slice(8))?.name;
+    draft=empty();operation=null;expanded=false;persist();message='Pedido confirmado y asignado';render();
+    window.dispatchEvent(new Event('fulltech:pos-saved'));window.dispatchEvent(new Event('fulltech:catalog-updated'));
+    show('Pedido confirmado y asignado',`<p class="pos-confirm-total"><strong>${cash(sale.total_cents)}</strong><span>${esc(data.order?.order_number||'')}</span></p><p class="pos-muted">Quedó confirmado y asignado${quien?` a ${esc(quien)}`:''}. Se avisó por el canal interno de reparto; no se envió nada al cliente.</p>`,null);
+  });
 }
 document.addEventListener('click',e=>{
   if(!modal.open||!modal.classList.contains('pos-order-dialog'))return;
   if(e.target.closest('[data-order-close]')){modal.close();render();return;}
-  const puntos=e.target.closest('[data-order-menu]');
-  if(puntos){const menu=$('#pos-order-menu');if(menu){menu.hidden=!menu.hidden;puntos.setAttribute('aria-expanded',String(!menu.hidden));}return;}
   const lineas=e.target.closest('[data-order-lines]');
   if(lineas){const detalle=$('#pos-order-lines');if(detalle){detalle.hidden=!detalle.hidden;lineas.setAttribute('aria-expanded',String(!detalle.hidden));}return;}
   if(e.target.closest('[data-order-ask-location]')||e.target.closest('[data-order-ask-ai]')){runAction(()=>pedirDatosAlCliente());return;}
@@ -790,9 +910,9 @@ document.addEventListener('click',e=>{
     else if(!draft.scheduledAt){const d=new Date(Date.now()+3600000);draft.scheduledAt=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
     persist();runAction(()=>openOrderCompletion());return;
   }
-  if(e.target.closest('[data-order-confirm]')){runAction(()=>confirmGuidedOrder({}));return;}
-  if(e.target.closest('[data-order-confirm-assign]')){runAction(()=>confirmGuidedOrder({assign:true}));return;}
-  if(e.target.closest('[data-order-send]')){runAction(()=>confirmGuidedOrder({send:true}));return;}
+  if(e.target.closest('[data-order-request]')){runAction(requestOrderConfirmation);return;}
+  if(e.target.closest('[data-order-confirm-delivery]')){runAction(openAssignDelivery);return;}
+  if(e.target.closest('[data-order-confirm]')){runAction(confirmOrderOnly);return;}
 });
 document.addEventListener('input',e=>{
   const campo=e.target.closest('[data-order-field]');if(!campo)return;
@@ -800,10 +920,12 @@ document.addEventListener('input',e=>{
   if(key==='deliveryFee'){draft.deliveryFee=Math.max(0,Math.round(Number(campo.value)||0));draft.feeReviewed=true;}
   else if(key==='scheduledAt'){draft.scheduledAt=campo.value?new Date(campo.value).toISOString():'';}
   else draft[key]=campo.value;
+  // Si el pedido ya está guardado, este cambio se aplicará a ESE pedido.
+  if(draft.createdOrderId)draft.orderDirty=true;
   persist();refreshOrderCompletion();scheduleTicketSave();
 });
 document.addEventListener('change',e=>{
-  const campo=e.target.closest('[data-order-field]');if(campo&&campo.tagName==='SELECT'){const key=campo.dataset.orderField;draft[key]=campo.value;persist();refreshOrderCompletion();scheduleTicketSave();return;}
+  const campo=e.target.closest('[data-order-field]');if(campo&&campo.tagName==='SELECT'){const key=campo.dataset.orderField;draft[key]=campo.value;if(draft.createdOrderId)draft.orderDirty=true;persist();refreshOrderCompletion();scheduleTicketSave();return;}
   const ack=e.target.closest('[data-order-open-ack]');if(ack){draft.openAck=ack.checked;persist();refreshOrderCompletion();return;}
   const savePrefs=e.target.closest('[data-order-save-prefs]');if(savePrefs){draft.saveOrderPrefs=savePrefs.checked;persist();return;}
   const ubicacion=e.target.closest('[data-order-location-select]');
@@ -826,6 +948,8 @@ window.addEventListener('fulltech:pos-context',async e=>{
     const customer=context.customer?.id===context.customerId?{...listedCustomer,...context.customer}:listedCustomer||null;
     const prefs=customer?.orderPrefs??customer?.order_prefs??null;
     draft.customer=customer;draft.conversationId=context.conversationId||'';draft.location=context.location||null;draft.quoteId=null;draft.flow='order';
+    // Pedido nuevo: nunca se reutiliza el id de un pedido anterior.
+    draft.createdOrderId=null;draft.orderDirty=false;
     if(!draft.items.length&&prefs){
       const variantId=prefs.variantId??prefs.variant_id;
       const quantity=Math.max(1,Math.min(9999,Number(prefs.quantity)||1));

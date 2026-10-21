@@ -3100,6 +3100,34 @@
     });
   }
 
+  /**
+   * PEDIDOS ABIERTOS DE ESTE CLIENTE EN ESTA CONVERSACIÓN.
+   *
+   * Es lo que alimenta el acceso compacto del encabezado del chat. Se exige que
+   * la conversación coincida (o que el pedido no tenga conversación): nunca se
+   * enseña en un chat el pedido de otro hilo del mismo cliente.
+   */
+  function chatActiveOrders(customerId, conversationId) {
+    if (!customerId) return [];
+    const hilo = String(conversationId ?? '');
+    return liveOrdersForCustomer(customerId).filter((item) => {
+      const deConversacion = String(item.conversation_id ?? itemOrder(item)?.conversation_id ?? '');
+      return !deConversacion || deConversacion === hilo;
+    });
+  }
+
+  /** Cómo se lee el estado COMERCIAL del pedido (no el logístico). */
+  const orderStatusText = (item) =>
+    ({
+      nuevo: 'Pendiente de confirmación',
+      confirmado: 'Confirmado',
+      en_preparacion: 'En preparación',
+      enviado: 'En camino',
+      entregado: 'Entregado',
+      cancelado: 'Cancelado',
+      perdido: 'Perdido',
+    })[String(itemOrder(item)?.status ?? item?.status ?? 'nuevo')] ?? 'Pendiente';
+
   /** «¿Cuál es el pedido más reciente?», con el MISMO criterio que el servidor. */
   const orderRecency = (item) => String(item?.updated_at ?? item?.created_at ?? item?.received_at ?? '');
   const ordersNewestFirst = (rows) =>
@@ -4842,6 +4870,21 @@
    * la ficha del pedido, que se abre tocando la fila: en una lista larga, eso es la
    * diferencia entre leerla y no leerla.
    */
+  /**
+   * ETIQUETA DEL ESTADO EN LA LISTA.
+   *
+   * El estado OPERATIVO agrupa para el mapa y el reparto (todo lo que no se ha
+   * entregado es «pendiente» allí), pero en la lista de trabajo eso borraba la
+   * diferencia entre un pedido recién creado y uno YA CONFIRMADO por el cliente.
+   * Se dice el estado comercial cuando aporta algo; el resto sigue igual.
+   */
+  function orderRowStatusLabel(item, estado) {
+    const status = String(itemOrder(item)?.status ?? item?.status ?? '');
+    if (status === 'confirmado') return 'Confirmado';
+    if (status === 'en_preparacion') return 'En preparación';
+    return operationalStatusLabel(estado);
+  }
+
   function orderRow(item, { pendiente = false } = {}) {
     const estado = orderOperational(item);
     const order = itemOrder(item) ?? {};
@@ -4892,7 +4935,7 @@
             ? `<span class="order-row__pay order-row__pay--${pagoTono}">${escapeHtml(paymentMethodLabel(pago))}</span>`
             : ''
         }
-        <span class="order-row__status" data-receipt="${escapeHtml(item.id)}" aria-label="Ver factura">${escapeHtml(operationalStatusLabel(estado))}</span>
+        <span class="order-row__status" data-receipt="${escapeHtml(item.id)}" aria-label="Ver factura">${escapeHtml(orderRowStatusLabel(item, estado))}</span>
       </span>
       <span class="order-row__ref">${escapeHtml(referencia)}</span>
     </button>`;
@@ -12147,6 +12190,71 @@
     }
   }
 
+  /**
+   * ACCESO A LOS PEDIDOS ACTIVOS EN LA CABECERA DEL CHAT.
+   *
+   * Un solo botón discreto (icono de bolsa + número). Aparece SOLO si ese cliente
+   * tiene pedidos abiertos en este hilo; se apaga solo cuando se cierran o se
+   * cancelan porque se repinta en cada refresco de datos (incluido el que dispara
+   * el POS al guardar) y también con los avisos en vivo.
+   */
+  function renderChatOrdersButton(customer, conversation) {
+    const button = $('#wa-chat-orders');
+    if (!button) return;
+    const pedidos = chatActiveOrders(customer?.id, conversation?.id ?? state.wa.selectedId ?? '');
+    const count = $('#wa-chat-orders-count');
+    button.hidden = pedidos.length === 0;
+    button.dataset.customer = customer?.id ?? '';
+    button.dataset.conversation = conversation?.id ?? state.wa.selectedId ?? '';
+    if (count) {
+      count.hidden = pedidos.length === 0;
+      count.textContent = String(pedidos.length);
+    }
+    const hayPendiente = pedidos.some((item) => String(itemOrder(item)?.status ?? item?.status ?? '') === 'nuevo');
+    button.classList.toggle('wa__head-orders--pending', hayPendiente);
+    const numero = pedidos.length === 1 ? itemOrder(pedidos[0])?.order_number ?? '' : '';
+    const etiqueta =
+      pedidos.length === 1
+        ? `Ver el pedido ${numero} de este cliente`
+        : `${pedidos.length} pedidos activos de este cliente`;
+    button.setAttribute('aria-label', etiqueta);
+    button.title = etiqueta;
+  }
+
+  /** Abre el pedido del cliente (o deja elegir cuál, si hay varios). */
+  function openChatOrders() {
+    const button = $('#wa-chat-orders');
+    const pedidos = chatActiveOrders(button?.dataset.customer, button?.dataset.conversation);
+    if (!pedidos.length) {
+      toast('Este cliente no tiene pedidos activos');
+      return;
+    }
+    if (pedidos.length === 1) {
+      openReceipt(pedidos[0].id);
+      return;
+    }
+    openSheet(
+      'Pedidos del cliente',
+      `
+      <p class="rule">Tiene ${pedidos.length} pedidos abiertos. Elige cuál quieres revisar.</p>
+      <div class="menu-list">
+        ${pedidos
+          .map((item) => {
+            const order = itemOrder(item) ?? {};
+            return `<button class="menu-item" data-order-open="${escapeHtml(item.id)}" type="button">
+              <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
+              <span><strong>${escapeHtml(order.order_number ?? 'Pedido')}</strong><small>${escapeHtml(
+                orderStatusText(item),
+              )} · ${escapeHtml(money(order.total ?? item.total, order.currency ?? item.currency))}</small></span>
+            </button>`;
+          })
+          .join('')}
+      </div>
+      `,
+      { variant: 'menu' },
+    );
+  }
+
   function renderWaChat() {
     window.dispatchEvent(new CustomEvent('phyto:calling-context', { detail: null }));
     // Cambiar de conversación mientras se graba descarta la nota de voz.
@@ -12160,6 +12268,7 @@
       placeholder.hidden = false;
       const actionsIdle = $('#wa-actions');
       if (actionsIdle) actionsIdle.hidden = false;
+      renderChatOrdersButton(null, null);
       return;
     }
     pane.hidden = false;
@@ -12218,6 +12327,7 @@
         $('#wa-ask-assign')?.addEventListener('click', (event) =>
           requestConversationAssignment(bloqueo.conversationId, event.currentTarget),
         );
+        renderChatOrdersButton(null, null);
         return;
       }
       $('#wa-chat-name').textContent = 'Conversación';
@@ -12241,10 +12351,12 @@
         actionsLoading.disabled = true;
         actionsLoading.hidden = Boolean(state.wa.deliveryOrderId);
       }
+      renderChatOrdersButton(null, null);
       return;
     }
 
     const { customer, conversation, messages, canSendFreeText } = data;
+    renderChatOrdersButton(customer, conversation);
     window.dispatchEvent(new CustomEvent('phyto:calling-context', { detail: { id: conversation.id, customerId: customer?.id } }));
     const deliveryChatMode = Boolean(data.deliveryContext?.asDelivery || state.wa.deliveryOrderId);
     const contactState = getConversationContactState(data);
@@ -19266,6 +19378,8 @@
     const clienteId = customerIdForItem(item);
     const conversacionId = conversationForCustomer(clienteId)?.id ?? item.conversation_id ?? '';
     const estado = orderOperational(item);
+    // Estado COMERCIAL (nuevo → confirmado → …): decide qué acciones se ofrecen.
+    const estadoComercial = esPedido ? String(itemOrder(item)?.status ?? item.status ?? 'nuevo') : '';
     const ubicacionPedido = esPedido ? itemOrder(item)?.delivery?.location ?? null : null;
     /*
      * REPARTIDOR EXTERNO: mensajero sin cuenta en el CRM. Si el pedido ya lo
@@ -19351,6 +19465,27 @@
               label: 'Cambiar el estado',
               note: `Ahora: ${operationalStatusLabel(estado)}`,
               data: { 'data-order-quick-status': item.id },
+            }
+          : null,
+        /*
+         * CONFIRMAR SIN PASAR POR «Cambiar el estado» (que exige ser ADMIN y un
+         * motivo). El pedido pendiente se confirma aquí; el reparto se asigna en
+         * el mismo paso o no se asigna.
+         */
+        esPedido && estadoComercial === 'nuevo'
+          ? {
+              icon: ICONS.check,
+              label: 'Confirmar el pedido',
+              note: 'Sin reparto: retiro o entrega que se gestiona después',
+              data: { 'data-order-confirm-only': item.id },
+            }
+          : null,
+        esPedido && estadoComercial === 'nuevo'
+          ? {
+              icon: ICONS.delivery,
+              label: 'Confirmar y asignar reparto',
+              note: 'Elige el mensajero en el mismo paso',
+              data: { 'data-order-confirm-delivery': item.id },
             }
           : null,
         {
@@ -19587,6 +19722,15 @@
     const repartidorExterno = order?.delivery?.external ?? null;
     const puedeRepartidorExterno =
       hasPermission('delivery.manage') || hasPermission('orders.update_operational') || hasPermission('delivery.tracking.manage_all');
+    /*
+     * CONFIRMAR DESDE EL CARRITO DEL CHAT. El pedido pendiente se confirma aquí
+     * mismo, con o sin reparto, sin pasar por «Cambiar estado» (que es solo de
+     * ADMIN y pide motivo). El estado se lee del pedido, no del comprobante.
+     */
+    const itemActual = state.items.find((row) => row.id === orderId) ?? item;
+    const estadoComercial = String(itemOrder(itemActual)?.status ?? order?.status ?? receipt.status ?? '');
+    const pendienteDeConfirmar = estadoComercial === 'nuevo';
+    const puedeOperarPedidos = hasPermission('orders.update_operational');
     // La venta facturada desde el POS guarda su factura: se abre ESA (mismo diseño que la cotización).
     const facturaPdf = order?.invoice_id ? `/api/admin/pos/invoices/${order.invoice_id}/pdf` : '';
     openSheetActionMenu({
@@ -19608,6 +19752,22 @@
           data: { 'data-receipt-wa': orderId },
         },
         mapLatLng(ubicacionPedido) ? { icon: ICONS.pin, label: 'Ver en mapa', data: { 'data-order-map': orderId } } : null,
+        pendienteDeConfirmar && puedeOperarPedidos
+          ? {
+              icon: ICONS.check,
+              label: 'Confirmar el pedido',
+              note: 'Sin reparto: retiro o entrega que se gestiona después',
+              data: { 'data-order-confirm-only': orderId },
+            }
+          : null,
+        pendienteDeConfirmar && puedeOperarPedidos
+          ? {
+              icon: ICONS.delivery,
+              label: 'Confirmar y asignar reparto',
+              note: 'Elige el mensajero en el mismo paso',
+              data: { 'data-order-confirm-delivery': orderId },
+            }
+          : null,
         hasPermission('delivery.tracking.manage_all') && abierto
           ? { icon: ICONS.send, label: 'Pasar a un delivery', data: { 'data-order-delivery': orderId } }
           : null,
@@ -19675,6 +19835,106 @@
           toast(error.body?.message ?? 'No se pudo eliminar el pedido');
         }
       }
+    });
+  }
+
+  /**
+   * CONFIRMAR DESDE LA FICHA DEL PEDIDO (el acceso del carrito del chat).
+   *
+   * Dos formas, las mismas del pedido guiado:
+   *   · sin reparto → confirma y nada más (retiro o entrega que se gestiona luego);
+   *   · con reparto → confirma y asigna en un solo paso, en un modal compacto.
+   * En ningún caso se marca el pedido como cobrado ni se crea una entrega por
+   * sorpresa: si la asignación falla, el pedido queda confirmado y se dice.
+   */
+  async function confirmOrderFromSheet(orderId, { withDelivery = false } = {}) {
+    const item = state.items.find((row) => row.id === orderId) ?? null;
+    const order = itemOrder(item) ?? {};
+    const fulfillment = order.fulfillment_method === 'pickup' || order.delivery?.method === 'pickup' ? 'pickup' : 'delivery';
+    if (!withDelivery) {
+      await working(null, 'Confirmando…', async () => {
+        try {
+          const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/confirm`, {
+            method: 'POST',
+            body: JSON.stringify({ fulfillment }),
+          });
+          applyServerOrderUpdate(data);
+          toast(data.duplicate ? 'Ese pedido ya estaba confirmado' : 'Pedido confirmado · sin entrega asignada');
+          await load({ silent: true });
+          await openReceipt(orderId);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo confirmar el pedido');
+        }
+      });
+      return;
+    }
+    let assignees = { users: [], contacts: [], canAssignInternal: false, canAssignExternal: true };
+    try {
+      assignees = await api('/api/admin/pos/assignees');
+    } catch { /* sin lista no se puede asignar: se explica abajo */ }
+    const internos = assignees.canAssignInternal ? assignees.users ?? [] : [];
+    const externos = assignees.canAssignExternal === false ? [] : assignees.contacts ?? [];
+    if (!internos.length && !externos.length) {
+      toast(
+        assignees.canAssignInternal
+          ? 'No hay repartidores disponibles'
+          : 'No tienes autorización para asignar repartidores y no hay contactos de reparto guardados',
+      );
+      return;
+    }
+    const place = order.delivery?.location?.address ?? order.delivery?.address ?? null;
+    openSheet(
+      `Confirmar y asignar · ${order.order_number ?? ''}`,
+      `
+      <p class="rule">Se confirma el pedido y se le asigna la entrega. El cliente no recibe ningún mensaje automático.</p>
+      <dl class="facts">
+        <div class="fact"><dt>Dirección</dt><dd>${escapeHtml(fulfillment === 'pickup' ? 'Retiro en tienda' : place ?? 'Sin dirección registrada')}</dd></div>
+        <div class="fact"><dt>Delivery</dt><dd>${escapeHtml(money(order.delivery_fee ?? order.delivery?.fee ?? 0, order.currency))}</dd></div>
+        <div class="fact"><dt>Total</dt><dd>${escapeHtml(money(order.total ?? item?.total ?? 0, order.currency))}</dd></div>
+      </dl>
+      <label class="field">
+        <span class="field__label">Quién lo lleva</span>
+        <select class="field__select" id="order-confirm-assignee">
+          <option value="">Elige un mensajero</option>
+          ${internos.map((user) => `<option value="user:${escapeHtml(user.id)}">${escapeHtml(user.name)}${user.role === 'DELIVERY' ? ' · repartidor' : ' · agente'}</option>`).join('')}
+          ${externos.map((contact) => `<option value="contact:${escapeHtml(contact.phone)}">${escapeHtml(contact.name)} · externo</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Nota para el mensajero (opcional)</span>
+        <textarea class="field__area" id="order-confirm-note" maxlength="600" rows="2" placeholder="Portal, horario, cómo entrar…"></textarea>
+      </label>
+      <button class="btn btn--primary btn--block" id="order-confirm-assign" type="button">Confirmar y asignar</button>
+      `,
+    );
+    $('#order-confirm-assign')?.addEventListener('click', async (event) => {
+      const target = $('#order-confirm-assignee')?.value ?? '';
+      if (!target) {
+        toast('Elige quién lleva el pedido');
+        return;
+      }
+      const note = $('#order-confirm-note')?.value.trim() ?? '';
+      const body = target.startsWith('user:')
+        ? { deliveryUserId: target.slice(5), deliveryNote: note, fulfillment }
+        : { deliveryContactPhone: target.slice(8), deliveryNote: note, fulfillment };
+      await working(event.currentTarget, 'Confirmando…', async () => {
+        try {
+          const data = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/confirm`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+          applyServerOrderUpdate(data);
+          if (data.assignment?.attempted && data.assignment?.ok === false) {
+            toast(data.assignment.message ?? 'El pedido quedó confirmado, pero no se pudo asignar el mensajero');
+          } else {
+            toast('Pedido confirmado y asignado');
+          }
+          await load({ silent: true });
+          await openReceipt(orderId);
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo confirmar el pedido');
+        }
+      });
     });
   }
 
@@ -23589,6 +23849,16 @@
         openReceipt(receipt.dataset.receipt);
         return;
       }
+      const orderConfirmOnly = event.target.closest('[data-order-confirm-only]');
+      if (orderConfirmOnly) {
+        confirmOrderFromSheet(orderConfirmOnly.dataset.orderConfirmOnly, { withDelivery: false });
+        return;
+      }
+      const orderConfirmDelivery = event.target.closest('[data-order-confirm-delivery]');
+      if (orderConfirmDelivery) {
+        confirmOrderFromSheet(orderConfirmDelivery.dataset.orderConfirmDelivery, { withDelivery: true });
+        return;
+      }
       const orderStatusChange = event.target.closest('[data-order-status-change]');
       if (orderStatusChange) {
         openOrderStatusSheet(orderStatusChange.dataset.orderStatusChange, {
@@ -23804,6 +24074,10 @@
       // acciones (el icono repetido que había en el compositor se quitó).
       if (event.target.closest('[data-wa-template]')) {
         openWaTemplateSheet();
+        return;
+      }
+      if (event.target.closest('#wa-chat-orders')) {
+        openChatOrders();
         return;
       }
       if (event.target.closest('[data-wa-ask-location]')) {

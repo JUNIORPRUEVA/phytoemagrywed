@@ -342,8 +342,8 @@ body[data-quote-detail='true'] .quotes-appbar .wa-appbar__actions{visibility:hid
 
 
 /* ---------------------------------------------------------------------------
- * PEDIDO GUIADO: una sola pantalla, tres bloques y un botón principal.
- * Lo secundario (asignar repartidor, enviar por WhatsApp) vive en el menú ⋯.
+ * PEDIDO GUIADO: una sola pantalla, tres bloques y TRES acciones al pie:
+ * pedir confirmación · confirmar y pasar a delivery · solo confirmar.
  * ------------------------------------------------------------------------ */
 .pos-order-dialog{inset:0;width:100%;max-width:none;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0;padding:0;background:var(--surface,#fff);color:var(--text-primary,#14243d)}
 .pos-order-dialog::backdrop{background:#0b1b2e66}
@@ -382,12 +382,15 @@ body[data-quote-detail='true'] .quotes-appbar .wa-appbar__actions{visibility:hid
 .pos-order-ai{justify-self:start;min-height:36px;padding:0 12px;border:.5px solid var(--phyto-primary,#145bd7);border-radius:10px;background:var(--phyto-primary-tint,#3574ef1a);color:var(--phyto-primary,#145bd7);font:inherit;font-size:.76rem;font-weight:700;cursor:pointer}
 .pos-order-error{margin:0;padding:0 12px;color:#b8453d;font-size:.76rem}
 .pos-order-error:empty{display:none}
-.pos-order-menu{display:grid;gap:6px;padding:8px 12px;border-top:1px solid var(--border-soft,#7186a226)}
-.pos-order-menu[hidden]{display:none}
-.pos-order-menu button{min-height:42px;border:.5px solid var(--border-soft,#7186a226);border-radius:11px;background:var(--surface,#fff);color:inherit;font:inherit;font-size:.82rem;font-weight:650;cursor:pointer}
-.pos-order-foot{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--border-soft,#7186a226);background:var(--surface,#fff)}
-.pos-order-foot .btn{min-height:46px}
-.pos-order-dots{display:grid;place-items:center;min-height:46px;border:.5px solid var(--border-soft,#7186a226);border-radius:12px;background:var(--surface-muted,#7186a20d);color:inherit;font:inherit;font-size:1.1rem;cursor:pointer}
+/*
+ * TRES ACCIONES, UNA SOLA VEZ: la principal ocupa el ancho (Pedir confirmación),
+ * y debajo van las dos que cierran el pedido. Nada de menús escondidos.
+ */
+.pos-order-foot{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--border-soft,#7186a226);background:var(--surface,#fff)}
+.pos-order-foot .btn{min-height:46px;padding:0 10px;font-size:.86rem}
+.pos-order-foot [data-order-request]{grid-column:1/-1}
+.pos-order-hint{margin:0;color:var(--text-secondary,#6b7a75);font-size:.72rem;line-height:1.4}
+.pos-order-hint[hidden]{display:none}
 @media(min-width:900px){
   .pos-order-dialog{inset:50% auto auto 50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 40px));height:auto;max-height:88dvh;margin:0;border-radius:18px}
   .pos-order-body{gap:12px;padding:14px}

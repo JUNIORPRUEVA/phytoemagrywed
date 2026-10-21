@@ -31,12 +31,15 @@
     "images": "python scripts/generate-placeholder-images.py",
     "images:hero": "python scripts/optimize-hero-image.py",
     "images:frascos": "python scripts/optimize-variant-images.py",
-    "images:admin": "python scripts/generate-admin-icons.py"
+    "images:admin": "python scripts/generate-admin-icons.py",
+    "icons:store": "node scripts/build-store-icons.mjs",
+    "icons:material": "node scripts/fetch-material-symbols.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
     "fake-indexeddb": "^6.2.6",
     "jsdom": "^26.1.0",
+    "lucide-static": "^1.60.0",
     "pdfjs-dist": "^6.4.299",
     "vitest": "^3.2.4"
   },

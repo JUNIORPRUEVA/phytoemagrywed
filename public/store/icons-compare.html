@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="es-DO">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>FULLTECH Store · Comparación de iconos</title>
+    <link rel="stylesheet" href="/store/design-system.css?v=5" />
+    <style>
+      body { margin: 0; background: var(--ft-bg); color: var(--ft-ink); font-family: var(--ft-font); }
+      .wrap { max-width: 1080px; margin: 0 auto; padding: 18px 12px 48px; }
+      h1 { font-size: 19px; letter-spacing: -0.4px; margin: 0 0 4px; }
+      .meta { font-size: 12px; color: var(--ft-muted); line-height: 1.6; margin: 0 0 14px; }
+      .meta code { background: #fff; border: 1px solid var(--ft-line); border-radius: 6px; padding: 1px 5px; }
+      table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--ft-line); border-radius: 12px; overflow: hidden; }
+      thead th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ft-muted); padding: 8px 8px; border-bottom: 1px solid var(--ft-line); background: #fbfcfe; }
+      tbody td { padding: 8px; border-bottom: 1px solid #f1f4f9; vertical-align: middle; }
+      tbody tr:last-child td { border-bottom: 0; }
+      .concept { font-size: 12px; font-weight: 700; }
+      .concept small { display: block; font-weight: 500; color: var(--ft-muted); font-size: 9.5px; letter-spacing: 0; }
+      .sizes, .pair { display: flex; align-items: flex-end; gap: 12px; color: var(--ft-navy); }
+      .sizes span, .pair span { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; }
+      .sizes b, .pair b { font-size: 8.5px; color: var(--ft-muted); font-weight: 600; white-space: nowrap; }
+      @media (max-width: 700px) {
+        .concept small { display: none; }
+        .sizes, .pair { gap: 8px; }
+      }
+      .tag { font-size: 8.5px; color: var(--ft-muted); display: block; margin-top: 2px; letter-spacing: 0.04em; }
+      .navdemo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; background: #fff; border: 1px solid var(--ft-line); border-radius: 12px; padding: 4px 6px; margin-top: 14px; max-width: 420px; }
+      .navdemo a { display: grid; justify-items: center; gap: 1px; padding: 4px 2px 3px; border-radius: 10px; color: var(--ft-muted); text-decoration: none; font-size: 10px; font-weight: 600; min-height: 48px; }
+      .navdemo a.active { color: #165dff; background: #e8f0ff; }
+      h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ft-muted); margin: 26px 0 8px; }
+      .legend { font-size: 11px; color: var(--ft-muted); margin: 6px 0 0; }
+      .notes { margin: 18px 0 0; padding: 12px 14px; background: #fff; border: 1px solid var(--ft-line); border-radius: 12px; font-size: 11.5px; line-height: 1.65; color: #334155; }
+      .notes b { color: var(--ft-ink); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Actual (Lucide) vs descargado (Material Symbols Rounded)</h1>
+      <p class="meta" id="meta">Cargando…</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 170px">Concepto</th>
+            <th style="width: 34%">Actual · Lucide (trazo)</th>
+            <th>Descargado · Material Symbols Rounded</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+
+      <h2>Barra inferior con Material Symbols Rounded · 20 px</h2>
+      <nav class="navdemo" id="navdemo" aria-label="Demostración de barra inferior"></nav>
+      <p class="legend">Activo en azul FULLTECH <code>#165DFF</code> · iconos filled · inactivos en gris.</p>
+
+      <div class="notes" id="notes"></div>
+    </div>
+
+    <script type="module">
+      import { icon } from '/store/icons.js';
+
+      const CONCEPTS = [
+        { key: 'home', label: 'Inicio', current: 'home', outline: 'home-outline-rounded', filled: 'home-rounded' },
+        { key: 'categories', label: 'Categorías', current: 'categories', outline: 'grid-view-outline', filled: 'grid-view-rounded' },
+        { key: 'search', label: 'Buscar', current: 'search', outline: 'search-rounded', filled: null },
+        { key: 'cart', label: 'Carrito', current: 'cart', outline: 'shopping-cart-outline-rounded', filled: 'shopping-cart-rounded' },
+        { key: 'account', label: 'Mi cuenta', current: 'user', outline: 'person-outline-rounded', filled: 'person-rounded' },
+        { key: 'menu', label: 'Menú', current: 'menu', outline: 'menu-rounded', filled: null },
+        { key: 'notification', label: 'Avisos', current: 'bell', outline: 'notifications-outline-rounded', filled: 'notifications-rounded' },
+        { key: 'heart', label: 'Favoritos', current: 'heart', outline: 'favorite-outline-rounded', filled: 'favorite-rounded' },
+        { key: 'truck', label: 'Entrega', current: 'truck', outline: 'local-shipping-outline-rounded', filled: 'local-shipping-rounded' },
+        { key: 'security', label: 'Seguridad', current: 'shield-check', outline: 'security-outline-rounded', filled: 'security-rounded' },
+        { key: 'package', label: 'Paquete', current: 'package', outline: 'inventory-2-outline-rounded', filled: 'inventory-2-rounded' },
+        { key: 'settings', label: 'Ajustes', current: 'settings', outline: 'settings-outline-rounded', filled: 'settings-rounded' },
+      ];
+      const SIZES = [20, 24, 28];
+
+      const cache = new Map();
+      async function load(name) {
+        if (!name) return null;
+        if (!cache.has(name)) {
+          const res = await fetch(`/store/assets/icons/material-symbols/${name}.svg`);
+          const text = res.ok ? await res.text() : '';
+          const inner = text.replace(/<svg[^>]*>/, '').replace(/<\/svg>/, '').trim();
+          cache.set(name, inner);
+        }
+        return cache.get(name);
+      }
+      const msr = (inner, size) =>
+        inner ? `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${inner}</svg>` : '';
+
+      const rows = document.getElementById('rows');
+      let ok = 0;
+      let missing = [];
+
+      for (const c of CONCEPTS) {
+        const [outline, filled] = await Promise.all([load(c.outline), load(c.filled)]);
+        if (outline) ok += 1;
+        if (!outline) missing.push(c.outline);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="concept">${c.label}<small>${c.outline}${c.filled ? ' · ' + c.filled : ' · sin variante'}</small></td>
+          <td><div class="sizes">${SIZES.map((s) => `<span>${icon(c.current, '', { size: s })}<b>${s}</b></span>`).join('')}</div></td>
+          <td>
+            <div class="pair">
+              ${SIZES.map((s) => `<span>${msr(outline, s)}<b>${s}</b></span>`).join('')}
+              ${filled ? `<span style="margin-left:10px">${msr(filled, 24)}<b>24 · filled</b></span>` : ''}
+            </div>
+          </td>`;
+        rows.appendChild(tr);
+      }
+
+      const nav = document.getElementById('navdemo');
+      const navItems = [
+        ['home-rounded', 'Inicio', true],
+        ['grid-view-rounded', 'Categorías', false],
+        ['shopping-cart-rounded', 'Carrito', false],
+        ['person-rounded', 'Mi cuenta', false],
+      ];
+      for (const [name, label, active] of navItems) {
+        const inner = await load(name);
+        const a = document.createElement('a');
+        a.href = '#';
+        a.className = active ? 'active' : '';
+        a.innerHTML = `${msr(inner, 20)}<span>${label}</span>`;
+        nav.appendChild(a);
+      }
+
+      document.getElementById('meta').innerHTML =
+        `Descargados con la <b>API oficial de Iconify</b> (${ok}/12 conceptos) · colección <code>material-symbols</code> · licencia <code>Apache-2.0</code> · ` +
+        `comparados con el sistema actual <code>lucide-static 1.60.0 · ISC</code>. Los tamaño son reales: 20 / 24 / 28 px.`;
+
+      document.getElementById('notes').innerHTML = `
+        <b>Lectura de la comparación.</b> Lucide es <b>trazo</b> (stroke 1.75) y Material Symbols Rounded es <b>relleno</b> (fill).
+        A 20 px el relleno se lee algo más denso y con más tinta; el trazo conserva mejor el aire y la sensación de interfaz ligera.
+        En la barra inferior con 4 ítems, los iconos filled <b>marcan mejor el estado activo</b> pero pesan visualmente más juntos.
+        ${missing.length ? `<br><b>Sin variante:</b> ${missing.join(', ')} (la colección solo publica una versión).` : ''}
+        <br><b>Observación de datos:</b> <code>security-rounded</code> y <code>security-outline-rounded</code> son idénticos (mismo SHA-256): la colección no distingue variante en ese icono.
+      `;
+    </script>
+  </body>
+</html>

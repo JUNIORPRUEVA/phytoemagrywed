@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v212-columna-chat-20261020';
+const VERSION = 'crm-v217-arranque-offline-20261020';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -151,6 +151,34 @@ self.addEventListener('install', (event) => {
         }
         if (failedRequired.length) {
           console.warn('[sw] archivos esenciales sin guardar:', failedRequired.join(', '));
+        }
+        /*
+         * LAS URL VERSIONADAS QUE USA EL HTML TAMBIÉN SE GUARDAN.
+         *
+         * El armazón guarda `/admin/app.js`, pero `index.html` pide
+         * `/admin/app.js?v=<versión>`. Si el service worker se instala y el
+         * usuario cierra la app antes de una segunda carga, esas URL con `?v=`
+         * no estaban en la caché. Aquí se leen del propio HTML y se guardan, así
+         * la PRIMERA instalación ya deja el panel completo para abrir sin red.
+         */
+        try {
+          const html = await cache.match('/admin/index.html');
+          const texto = html ? await html.text() : '';
+          const versionadas = new Set();
+          for (const hallado of texto.matchAll(/(?:src|href)="(\/admin\/[^"]+)"/g)) {
+            const ruta = hallado[1];
+            if (!/\.(?:js|mjs|css|png|jpe?g|svg|webp|woff2?|ttf|json)(?:\?|$)/.test(ruta)) continue;
+            versionadas.add(new URL(ruta, self.location.origin).href);
+          }
+          for (const absoluta of versionadas) {
+            try {
+              if (!(await cache.match(absoluta))) await conTope(cache.add(absoluta), 8000);
+            } catch {
+              /* Opcional: si falla, el respaldo sin versión lo resuelve al servir. */
+            }
+          }
+        } catch {
+          /* El HTML no está o no se puede leer: el armazón base ya quedó guardado. */
         }
         await globalThis.FullTECHOfflineStore?.put('shell',{version:VERSION,at:Date.now(),missing,failedRequired});
       })
@@ -341,6 +369,15 @@ self.addEventListener('fetch', (event) => {
   // Una página solo puede ser respaldo de otra navegación, nunca de JS/CSS.
   const navigation = request.mode === 'navigate' || request.destination === 'document' || /\/(?:index\.html)?$/.test(url.pathname);
   const resource = /\.(?:js|mjs|css|json)$/.test(url.pathname);
+  /*
+   * LAS IMÁGENES DEL PANEL SON RECURSOS LOCALES, NO PETICIONES DE RED.
+   *
+   * Antes caían en la rama de red-primero: el logo (155 KB) y los iconos se
+   * pedían al servidor en CADA apertura y, sin conexión, dependían de una
+   * coincidencia exacta de la URL. Con el armazón guardado se sirven al instante
+   * y se refrescan detrás (son estáticas y versionadas).
+   */
+  const imagenLocal = request.destination === 'image' && url.pathname.startsWith('/admin/');
   const usable = (response) => response && !(resource && /text\/html/i.test(response.headers.get('content-type') || ''));
 
   /*
@@ -354,15 +391,22 @@ self.addEventListener('fetch', (event) => {
    * copia local y se actualizan en segundo plano. Si el archivo no está en la
    * caché, se baja como siempre; si la red falla, la copia ya servida se queda.
    */
-  if (resource) {
+  if (resource || imagenLocal) {
     event.respondWith((async () => {
       const cache = await caches.open(VERSION);
       const exact = await caches.match(request);
-      /* Un recurso pedido con `?v=` NUNCA se sirve desde la copia sin versión:
-         si no está cacheada ESA versión, se pide a la red. Así una publicación
-         nueva no queda tapada por el app.js viejo guardado en el armazón. */
-      const base = usable(exact) || url.search ? null : await caches.match(url.origin + url.pathname);
-      const cached = usable(exact) ? exact : usable(base) ? base : null;
+      /*
+       * COPIA SIN VERSIÓN COMO RESPALDO (solo si la red falla).
+       *
+       * `index.html` pide `/admin/app.js?v=<versión>` mientras el `install`
+       * guarda `/admin/app.js`. Antes, con una `?v=` distinta, se respondía 503 y
+       * el panel NO ARRANCABA SIN CONEXIÓN: no se montaba ni la pantalla de
+       * entrada. Ahora, si no hay copia EXACTA se pregunta a la red (una
+       * publicación nueva se ve al abrir) y solo cuando la red no responde se
+       * sirve la copia guardada. `usable()` sigue impidiendo que un HTML se
+       * entregue como script o hoja.
+       */
+      const respaldo = usable(exact) ? null : await caches.match(url.origin + url.pathname);
       const refresh = (async () => {
         try {
           const response = await fetch(request);
@@ -373,14 +417,15 @@ self.addEventListener('fetch', (event) => {
           return null;
         }
       })();
-      if (cached) {
+      if (usable(exact)) {
         // La actualización no bloquea: se aprovecha el hueco del service worker.
         if (event.waitUntil) event.waitUntil(refresh.then(() => {}).catch(() => {}));
         else refresh.catch(() => {});
-        return cached;
+        return exact;
       }
       const response = await refresh;
       if (response) return response;
+      if (usable(respaldo)) return respaldo;
       return new Response('Recurso no disponible sin conexión', { status: 503, headers: { 'content-type': 'text/plain' } });
     })());
     return;

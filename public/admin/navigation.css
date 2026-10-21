@@ -191,3 +191,26 @@ body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) >
     scroll-padding-bottom: calc(152px + env(safe-area-inset-bottom,0px));
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * PEDIDOS ACTIVOS DEL CLIENTE EN LA CABECERA DEL CHAT.
+ *
+ * Un icono discreto junto a la lupa y la llamada. Solo se pinta cuando el
+ * cliente tiene pedidos abiertos en ESTE hilo; el número es cuántos. No es un
+ * carrito de compra: abre el pedido real del CRM.
+ * ------------------------------------------------------------------------ */
+body[data-tab='whatsapp'] .wa__head-orders { position: relative; }
+body[data-tab='whatsapp'] .wa__head-orders[hidden] { display: none; }
+body[data-tab='whatsapp'] .wa__head-orders .ico { display: grid; place-items: center; }
+body[data-tab='whatsapp'] .wa__head-orders .ico svg { width: 22px; height: 22px; }
+.wa__head-orders-badge {
+  position: absolute; top: 3px; right: 1px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; background: var(--pe-brand-text, #128c5d); color: var(--pe-on-brand, #fff);
+  font-size: .62rem; font-weight: 800; line-height: 16px; text-align: center;
+  box-shadow: 0 0 0 2px var(--pe-appbar-bg, #fff);
+}
+.wa__head-orders-badge[hidden] { display: none; }
+/* Con la búsqueda del hilo abierta la cabecera se queda solo con la búsqueda. */
+body[data-tab='whatsapp'] .wa__chat-head:has(.wa__thread-search:not([hidden])) > #wa-chat-orders { display: none; }
+/* Pedido pendiente de confirmación: el icono se marca en verde (discreto, sin texto). */
+body[data-tab='whatsapp'] .wa__head-orders--pending .ico { color: var(--pe-brand-text, #128c5d); }

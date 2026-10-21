@@ -9,7 +9,13 @@ function worker(){
     self:{location:{origin:'https://crm.test'},addEventListener:(name,fn)=>handlers[name]=fn},
     FullTECHOfflineStore:{get:async k=>records.get(k),remove:async k=>records.delete(k),entries:async()=>[...records.entries()]},
     fetch:async()=>{if(!online)throw new TypeError('offline');return new Response('{}',{status});},
-    caches:{match:async(request,options)=>{const u=new URL(typeof request==='string'?request:request.url,'https://crm.test');if(options?.ignoreSearch)u.search='';return shell.get(u.href)?.clone();}},
+    caches:{match:async(request,options)=>{const u=new URL(typeof request==='string'?request:request.url,'https://crm.test');if(options?.ignoreSearch)u.search='';return shell.get(u.href)?.clone();},
+      /*
+       * El service worker abre su caché versionada para guardar lo que sirve.
+       * El doble tiene que ofrecerla: sin `open` la rama de recursos lanzaba y
+       * la prueba fallaba por el arnés, no por el comportamiento.
+       */
+      open:async()=>({match:async(request,options)=>{const u=new URL(typeof request==='string'?request:request.url,'https://crm.test');if(options?.ignoreSearch)u.search='';return shell.get(u.href)?.clone();},put:async()=>{}})},
   };
   vm.runInNewContext(readFileSync('public/admin/sw.js','utf8'),context);
   return {records,setNetwork:(on,code=200)=>{online=on;status=code;},get:async(path,navigate=false)=>{let promise;handlers.fetch({request:{url:'https://crm.test'+path,method:'GET',mode:navigate?'navigate':'same-origin',headers:new Headers()},respondWith:p=>promise=p});return promise;}};
@@ -18,6 +24,16 @@ it('el arranque en frío usa el HTML y los módulos con versión usan su JavaScr
   const w=worker();expect(await (await w.get('/admin/?v=catalogo',true)).text()).toContain('<html>');
   expect(await (await w.get('/admin/pos.js?v=7')).text()).toContain('export const pos');
   expect((await w.get('/admin/archivo-inexistente.js')).status).toBe(503);
+});
+it('sin red, un módulo con OTRA versión se sirve desde la copia guardada (el panel tiene que abrir)',async()=>{
+  /*
+   * `index.html` pide `/admin/pos.js?v=<versión>` y el armazón guarda
+   * `/admin/pos.js`. Si cada publicación cambia la versión y el service worker
+   * solo aceptara la coincidencia exacta, el panel NO arrancaría sin conexión
+   * hasta abrirlo una vez con red (fallo real, medido en Chromium).
+   */
+  const w=worker();w.setNetwork(false);
+  expect(await (await w.get('/admin/pos.js?v=99')).text()).toContain('export const pos');
 });
 it('abre imágenes y recibos privados de la cuenta durante 24 h y bloquea acceso tras expirar o cambiar de cuenta',async()=>{
   const w=worker(),identity={key:'ADMIN-1',verifiedAt:Date.now()};w.records.set('identity',identity);

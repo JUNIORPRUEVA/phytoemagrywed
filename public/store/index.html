@@ -13,29 +13,49 @@
     <link rel="apple-touch-icon" href="/store/icon-192.png" />
     <link rel="stylesheet" href="/store/store.css?v=5" />
     <link rel="stylesheet" href="/store/premium.css?v=4" />
+    <link rel="stylesheet" href="/store/design-system.css?v=7" />
     <title>FULLTECH Store</title>
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <button class="icon-button" id="menu-button" aria-label="Abrir menú" aria-expanded="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
-        </button>
-        <a class="wordmark" href="/store/" aria-label="FULLTECH Store, inicio"><span class="brand-mark">F</span><span>FULL<span>TECH</span><small>STORE</small></span></a>
-        <button class="icon-button cart-shortcut" data-route="cart" aria-label="Carrito" title="Carrito">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>
-          <span class="cart-badge" data-cart-badge hidden></span>
-        </button>
+      <header class="ft-header">
+        <div class="ft-header__row">
+          <button class="ft-iconbtn" id="menu-button" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
+            <svg data-msr="menu" data-msr-size="22" aria-hidden="true"></svg>
+          </button>
+          <a class="ft-wordmark" href="/store/" aria-label="FULLTECH Store, inicio">
+            <span class="ft-wordmark__mark" aria-hidden="true">F</span>
+            <span>FULLTECH<small>STORE</small></span>
+          </a>
+          <div class="ft-header__actions">
+            <a class="ft-iconbtn cart-shortcut" href="/store/#/cart" data-route="cart" aria-label="Carrito" title="Carrito">
+              <svg data-msr="cart" data-msr-size="22" aria-hidden="true"></svg>
+              <span class="ft-cart-badge" data-cart-badge hidden></span>
+            </a>
+          </div>
+        </div>
       </header>
 
       <main id="main" tabindex="-1" aria-live="polite"></main>
 
-      <nav class="bottom-nav" id="bottom-nav" aria-label="Navegación principal">
-        <a href="/store/" class="nav-item active" data-route="home"><span class="nav-icon">⌂</span><span>Inicio</span></a>
-        <a href="/store/#/catalog" class="nav-item" data-route="catalog"><span class="nav-icon">▦</span><span>Catálogo</span></a>
-        <a href="/store/#/request" class="nav-item" data-route="request"><span class="nav-icon nav-plus">＋</span><span>Solicitar</span></a>
-        <a href="/store/#/orders" class="nav-item" data-route="orders"><span class="nav-icon">≡</span><span>Pedidos</span></a>
-        <a href="/store/#/account" class="nav-item" data-route="account"><span class="nav-icon">◯</span><span>Cuenta</span></a>
+      <nav class="ft-nav" id="bottom-nav" aria-label="Navegación principal">
+        <a href="/store/" class="ft-nav__item" data-route="home" aria-current="page">
+          <svg data-msr="home" data-msr-size="22" data-msr-variant="filled" aria-hidden="true"></svg>
+          <span>Inicio</span>
+        </a>
+        <a href="/store/#/catalog" class="ft-nav__item" data-route="catalog">
+          <svg data-msr="categories" data-msr-size="22" aria-hidden="true"></svg>
+          <span>Categorías</span>
+        </a>
+        <a href="/store/#/cart" class="ft-nav__item" data-route="cart">
+          <svg data-msr="cart" data-msr-size="22" aria-hidden="true"></svg>
+          <span>Carrito</span>
+          <span class="ft-cart-badge ft-cart-badge--nav" data-cart-badge hidden></span>
+        </a>
+        <a href="/store/#/account" class="ft-nav__item" data-route="account">
+          <svg data-msr="account" data-msr-size="22" aria-hidden="true"></svg>
+          <span>Mi cuenta</span>
+        </a>
       </nav>
     </div>
 
@@ -54,5 +74,6 @@
       <div class="drawer-bottom"><span class="status-dot"></span> Tu tienda FULLTECH</div>
     </aside>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/store/store.js?v=17"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
+    <script type="module" src="/store/icons.js?v=1"></script>
+    <script type="module" src="/store/store.js?v=22"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
 </html>

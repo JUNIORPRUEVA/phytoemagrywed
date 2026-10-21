@@ -171,6 +171,7 @@ function settingsHtml() {
         ${number('firstReminderMinutes', 'Primer aviso', 1, 1440, 'minutos')}
         ${number('followUpMinutes', 'Repetir cada', 5, 1440, 'minutos')}
         ${number('maxAttempts', 'Máximo de intentos', 1, 10)}
+        ${number('escalateAfterMinutes', 'Escalar a administración a los', 15, 43200, 'minutos')}
         ${number('lateAfterMinutes', 'Marcar atrasado a los', 15, 10080, 'minutos')}
         ${number('contactFromHour', 'Contactar desde las', 0, 23, 'h')}
         ${number('contactToHour', 'Contactar hasta las', 0, 23, 'h')}
@@ -198,6 +199,17 @@ function render() {
     return;
   }
   const counts = data.counts ?? {};
+  /*
+   * ÚLTIMA PASADA REAL. Sale del latido que escribe el backend (el scheduler
+   * corre cada 30 s); si nunca corrió, se dice tal cual: nada de indicadores
+   * fingidos.
+   */
+  const ultimaPasada = data.last_run_at
+    ? new Date(data.last_run_at).toLocaleString('es-DO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null;
+  const resumenPasada = data.last_run
+    ? `${data.last_run.reminders} aviso(s) · ${data.last_run.escalations} escalado(s)${data.last_run.deferred ? ` · ${data.last_run.deferred} fuera de horario` : ''}${data.last_run.capped ? ' · tope de lectura alcanzado' : ''}`
+    : null;
   const chips = BUCKETS.map(([key, label]) => `
     <button class="sup-chip${state.bucket === key ? ' sup-chip--on' : ''}" type="button" data-sup-bucket="${key}">
       <span>${esc(label)}</span><strong>${esc(counts[key] ?? 0)}</strong>
@@ -207,6 +219,7 @@ function render() {
       <div>
         <h2>Supervisor IA Delivery</h2>
         <p class="sup-lede">${data.enabled ? 'Seguimiento activo' : 'Supervisor apagado'} · actualizado ${esc(new Date(data.generated_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }))}</p>
+        <p class="sup-lede">${ultimaPasada ? `Última pasada automática: ${esc(ultimaPasada)}${resumenPasada ? ` · ${esc(resumenPasada)}` : ''}` : 'Sin pasadas automáticas registradas todavía.'}</p>
       </div>
       <div class="sup-head__actions">
         <button class="sup-btn sup-btn--ghost" type="button" data-sup-refresh>Actualizar</button>

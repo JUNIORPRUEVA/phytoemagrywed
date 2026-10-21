@@ -32,6 +32,14 @@ import { COURIER_STATUS, courierOf, savedCourierContacts } from './delivery-cour
 
 /** Ajustes del supervisor (un documento en la colección `settings`). */
 export const SUPERVISOR_SETTINGS_KEY = 'delivery_supervisor';
+/**
+ * LATIDO DE LA ÚLTIMA PASADA.
+ *
+ * Un solo documento que se sobrescribe: permite responder «¿cuándo corrió el
+ * supervisor?» con un dato real del backend, sin llenar la bitácora de ruido
+ * (una pasada cada 30 s son miles de filas al día). El panel lo muestra tal cual.
+ */
+export const SUPERVISOR_HEARTBEAT_KEY = 'delivery_supervisor_heartbeat';
 /** Bitácora persistente del supervisor (sobrevive reinicios). */
 export const SUPERVISOR_EVENTS = 'delivery_supervision_events';
 /** Plantilla del recordatorio al repartidor (crear en Meta; si no, queda pendiente). */
@@ -420,6 +428,43 @@ export async function supervisorEvent(ctx, input) {
   return result.duplicate ? { duplicate: true, event: await ctx.db.findBy(SUPERVISOR_EVENTS, 'idempotency_key', doc.idempotency_key) } : result;
 }
 
+/**
+ * RESERVA UN TRABAJO ANTES DE HACERLO (claim).
+ *
+ * El índice ÚNICO de `idempotency_key` es el árbitro: el primer proceso que
+ * inserta gana y cualquier otro recibe `duplicate`. Así, dos pasadas solapadas
+ * (un tick que tarda más de 30 s, un reinicio a mitad, dos instancias con la
+ * misma base) NO pueden enviar dos veces el mismo aviso.
+ *
+ * Antes el evento se escribía DESPUÉS de enviar: una caída entre el envío y el
+ * registro dejaba el aviso sin constancia y el tick siguiente lo repetía.
+ *
+ * @returns {Promise<{claimed: boolean, id?: string}>}
+ */
+async function claimSupervisorEvent(ctx, input) {
+  const at = ctx.clock().toISOString();
+  const doc = {
+    id: `dse_${randomUUID().replace(/-/g, '').slice(0, 20)}`,
+    order_id: input.orderId ?? null,
+    kind: input.kind ?? 'event',
+    stage: input.stage ?? null,
+    status: input.status ?? 'claimed',
+    detail: longText(input.detail, 600),
+    actor: clean(input.actor, 120),
+    data: input.data ?? null,
+    idempotency_key: clean(input.idempotencyKey, 200),
+    created_at: at,
+  };
+  const result = await ctx.db.insert(SUPERVISOR_EVENTS, doc);
+  return result?.duplicate ? { claimed: false } : { claimed: true, id: doc.id };
+}
+
+/** Cierra una reserva con el resultado real del intento. */
+async function settleSupervisorEvent(ctx, id, patch) {
+  if (!id) return null;
+  return ctx.db.update(SUPERVISOR_EVENTS, id, { ...patch, detail: longText(patch.detail, 600) }).catch(() => null);
+}
+
 function groupEvents(rows) {
   const map = new Map();
   for (const row of rows) {
@@ -612,6 +657,21 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
   let error = null;
   let messageId = null;
 
+  /*
+   * RESERVA PRIMERO. Si otro proceso (o una pasada anterior interrumpida) ya
+   * reservó este mismo intento, aquí no se envía nada: evita el doble aviso.
+   */
+  const claim = await claimSupervisorEvent(ctx, {
+    orderId: item.id,
+    kind: 'reminder',
+    stage: state.stage,
+    status: 'sending',
+    detail: `${state.nextAction} · enviando`,
+    actor: 'Supervisor IA',
+    idempotencyKey: `supervisor-reminder:${item.id}:${state.stage}:${attempt}`,
+  });
+  if (!claim.claimed) return 'duplicate';
+
   if (settings.whatsAppReminders && state.responsible?.type === 'external' && phone) {
     if (!ctx.whatsapp?.enabled) {
       status = 'failed';
@@ -665,15 +725,10 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
     if (status === 'skipped') status = 'notified';
   }
 
-  await supervisorEvent(ctx, {
-    orderId: item.id,
-    kind: 'reminder',
-    stage: state.stage,
+  await settleSupervisorEvent(ctx, claim.id, {
     status,
     detail: `${state.nextAction}${status === 'sent' ? ' · enviado' : status === 'notified' ? ' · aviso interno' : error ? ` · ${error}` : ''}`,
-    actor: 'Supervisor IA',
     data: { attempt, phone_masked: phone ? `***${phone.slice(-4)}` : null, error, message_id: messageId, responsible: state.responsible?.type ?? null },
-    idempotencyKey: `supervisor-reminder:${item.id}:${state.stage}:${attempt}`,
   });
   await ctx.audit?.record({
     entity: 'order',
@@ -702,8 +757,17 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
  */
 async function escalate(ctx, deps, { item, order, state, settings, reason }) {
   const key = `supervisor-escalation:${item.id}:${state.stage}:${reason}`;
-  const already = await ctx.db.findBy(SUPERVISOR_EVENTS, 'idempotency_key', key).catch(() => null);
-  if (already) return 0;
+  /* Reserva atómica: dos pasadas solapadas no escalan (ni escriben) dos veces. */
+  const claim = await claimSupervisorEvent(ctx, {
+    orderId: item.id,
+    kind: 'escalation',
+    stage: state.stage,
+    status: 'claiming',
+    detail: `Escalando a administración · ${state.nextAction}`,
+    actor: 'Supervisor IA',
+    idempotencyKey: key,
+  });
+  if (!claim.claimed) return 0;
   const number = orderNumberOf(order, item);
   const alerts = await notifySupervisorAdmins(ctx, deps, {
     type: 'DELIVERY_SUPERVISOR_ESCALATION',
@@ -720,20 +784,15 @@ async function escalate(ctx, deps, { item, order, state, settings, reason }) {
     },
   });
   const whatsapp = await sendEscalationWhatsApp(ctx, deps, { item, order, state, reason });
-  await supervisorEvent(ctx, {
-    orderId: item.id,
-    kind: 'escalation',
-    stage: state.stage,
+  await settleSupervisorEvent(ctx, claim.id, {
     status: alerts > 0 || whatsapp.sent > 0 ? 'notified' : 'recorded',
     detail: `Escalado a administración · ${state.nextAction}`,
-    actor: 'Supervisor IA',
     data: {
       reason,
       admins: alerts,
       elapsed_minutes: state.elapsedMinutes,
       whatsapp: whatsapp.results,
     },
-    idempotencyKey: key,
   });
   await ctx.audit?.record({
     entity: 'order',
@@ -816,6 +875,19 @@ async function sendEscalationWhatsApp(ctx, deps, { item, order, state, reason })
   let sent = 0;
   let failed = 0;
   for (const row of recipients) {
+    /* Reserva por administrador: un reintento no vuelve a escribirle. */
+    const waClaim = await claimSupervisorEvent(ctx, {
+      orderId: item.id,
+      kind: 'escalation_whatsapp',
+      stage: state.stage,
+      status: 'sending',
+      actor: 'Supervisor IA',
+      idempotencyKey: `delivery.supervisor_escalation_wa:${item.id}:${state.stage}:${reason}:${row.phone}`,
+    });
+    if (!waClaim.claimed) {
+      results.push({ admin: row.name, phone_masked: `***${row.phone.slice(-4)}`, status: 'duplicate', error: null });
+      continue;
+    }
     const message = await ctx.whatsapp
       .sendTemplate(row.phone, {
         name: check.template?.name ?? SUPERVISOR_ESCALATION_TEMPLATE,
@@ -834,6 +906,11 @@ async function sendEscalationWhatsApp(ctx, deps, { item, order, state, reason })
       message_id: message?.messageId ?? null,
     };
     results.push(entry);
+    await settleSupervisorEvent(ctx, waClaim.id, {
+      status,
+      detail: `Escalado por WhatsApp a ${row.name}`,
+      data: { ...entry, template: SUPERVISOR_ESCALATION_TEMPLATE },
+    });
     await ctx.audit?.record({
       entity: 'order',
       entityId: item.id,
@@ -887,8 +964,14 @@ export async function supervisorTick(ctx, deps = {}) {
   const now = ctx.clock().getTime();
   const timeZone = deps.timeZone ?? DEFAULT_TIME_ZONE;
   const users = deps.users ?? (await ctx.users.listUsers().catch(() => []));
-  const rows = (await ctx.store.listAdmin({ limit: 5000 })).filter((row) => row.type === 'order_intent');
-  const events = await ctx.db.list(SUPERVISOR_EVENTS, { limit: 20000 }).catch(() => []);
+  const todasLasFilas = await ctx.store.listAdmin({ limit: 5000 });
+  const rows = todasLasFilas.filter((row) => row.type === 'order_intent');
+  /*
+   * TOPE DE LECTURA VISIBLE. Con más de 5000 registros el almacén devuelve solo
+   * los primeros y un pedido fuera de ese corte NO se supervisa. Antes pasaba
+   * en silencio; ahora la pasada lo informa para que se pueda dimensionar.
+   */
+  const capped = todasLasFilas.length >= 5000;  const events = await ctx.db.list(SUPERVISOR_EVENTS, { limit: 20000 }).catch(() => []);
   const byOrder = groupEvents(events);
   const pickups = deps.pickups ?? (await pendingPickupsByOrder(ctx));
   const localHour = hourIn(timeZone, new Date(now));
@@ -966,6 +1049,25 @@ export async function supervisorTick(ctx, deps = {}) {
     }
 
     const attempts = remindersOf(history, state.stage).length;
+    /*
+     * ESCALADO POR TIEMPO (`escalateAfterMinutes`).
+     *
+     * Antes este ajuste solo se normalizaba: lo leía la configuración y no lo
+     * usaba nadie, así que «escalar a los N minutos» no existía de verdad.
+     *
+     * Exige que YA se haya avisado al menos una vez (`attempts >= 1`): el primer
+     * paso siempre es el recordatorio; el escalado por tiempo cubre el caso de
+     * una incidencia que sigue abierta después. Sin esa condición, un pedido
+     * viejo saltaba directo a administración sin que el repartidor supiera nada.
+     */
+    if (attempts >= 1 && state.elapsedMinutes >= settings.escalateAfterMinutes) {
+      if (escalations >= settings.maxEscalationsPerTick) {
+        limitados += 1;
+        continue;
+      }
+      escalations += await escalate(ctx, deps, { item, order, state, settings, reason: 'overdue' });
+      continue;
+    }
     if (attempts >= settings.maxAttempts) {
       // LÍMITE ALCANZADO: se deja de escribir y la incidencia sigue abierta.
       if (escalations >= settings.maxEscalationsPerTick) {
@@ -1025,7 +1127,16 @@ export async function supervisorTick(ctx, deps = {}) {
     }
   }
 
-  return { enabled: true, reminders, escalations, paused, deferred, postponedDue, daily, limited: limitados, excluded: excluidos };
+  /*
+   * LATIDO: deja constancia de que ESTA pasada ocurrió, con lo que hizo. Es un
+   * único documento que se sobrescribe (no engorda la bitácora) y es lo que el
+   * panel enseña como «última ejecución»: dato real del backend, no un reloj.
+   */
+  const resultado = { enabled: true, reminders, escalations, paused, deferred, postponedDue, daily, limited: limitados, excluded: excluidos, capped };
+  await ctx.settings
+    .write(SUPERVISOR_HEARTBEAT_KEY, { at: new Date(now).toISOString(), ...resultado })
+    .catch(() => null);
+  return resultado;
 }
 
 // ---------------------------------------------------------------- panel
@@ -1132,10 +1243,23 @@ export async function supervisorSnapshot(ctx, options = {}) {
     .slice(0, 12);
 
   const count = (list) => list.length;
+  const latido = (await ctx.settings.read(SUPERVISOR_HEARTBEAT_KEY).catch(() => null))?.value ?? null;
   return {
     ok: true,
     enabled: settings.enabled,
     generated_at: new Date(now).toISOString(),
+    /* Última pasada REAL del backend (el scheduler corre cada 30 s). */
+    last_run_at: latido?.at ?? null,
+    last_run: latido
+      ? {
+          reminders: latido.reminders ?? 0,
+          escalations: latido.escalations ?? 0,
+          deferred: latido.deferred ?? 0,
+          paused: latido.paused ?? 0,
+          limited: latido.limited ?? 0,
+          capped: latido.capped === true,
+        }
+      : null,
     settings,
     activation: {
       mode: settings.activationMode,

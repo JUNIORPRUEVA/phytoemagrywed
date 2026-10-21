@@ -80,7 +80,13 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       if(!can('orders.create')) return send(403,{ok:false});
       const users=typeof listDeliveryCandidates==='function'?await listDeliveryCandidates():[];
       const contacts=typeof listDeliveryContacts==='function'?await listDeliveryContacts():[];
-      return send(200,{ok:true,users,contacts});
+      /*
+       * QUÉ PUEDE HACER ESTE USUARIO. Asignar un repartidor DEL EQUIPO exige el
+       * mismo permiso que la ruta de asignación; los contactos externos guardados
+       * los puede usar quien opera pedidos. El panel lo pinta desde aquí para no
+       * ofrecer una opción que el servidor va a rechazar.
+       */
+      return send(200,{ok:true,users,contacts,canAssignInternal:can('delivery.tracking.manage_all'),canAssignExternal:can('orders.update_operational')||can('delivery.manage')||can('delivery.tracking.manage_all')});
     }
     if(route==='/api/admin/pos/quotes' && req.method==='GET') {
       const rows=await db.list('pos_documents',{by:'created_at',order:'desc',limit:1000});
@@ -189,9 +195,15 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       }
       if(!['CASH','TRANSFER'].includes(input.paymentMethod)) return send(422,{ok:false,message:'Selecciona efectivo o transferencia.'});
       if(!Number.isInteger(input.deliveryFee)||input.deliveryFee<0) return send(422,{ok:false,message:'El envío debe expresarse en pesos enteros.'});
-      // PEDIDO GUIADO (desde una conversación): delivery exige coordenadas; el retiro no.
+      /*
+       * PEDIDO GUIADO (desde una conversación). La ubicación solo es obligatoria
+       * cuando el pedido VA A SALIR CON UN MENSAJERO (`needsDelivery`): un retiro
+       * en tienda o un pedido que solo se confirma no necesitan dirección para
+       * quedar guardado. Así «Solo confirmar» no obliga a inventar una dirección.
+       */
       if(kind==='order'&&body.guided===true){
-        if(input.deliveryMethod!=='pickup'){
+        const exigeUbicacion=body.needsDelivery===undefined?true:body.needsDelivery===true;
+        if(exigeUbicacion&&input.deliveryMethod!=='pickup'){
           const punto=input.location;
           if(!punto||!Number.isFinite(Number(punto.latitude))||!Number.isFinite(Number(punto.longitude)))
             return send(422,{ok:false,error:'missing_location',message:'Falta la ubicación de entrega con coordenadas.'});

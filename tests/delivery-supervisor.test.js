@@ -89,8 +89,13 @@ function makeWorld({
       async list(name) {
         return name === SUPERVISOR_EVENTS ? [...world.events] : [];
       },
-      async update() {
-        return null;
+      async update(name, id, patch) {
+        /* El almacén real actualiza el documento; el falso tiene que igualarlo. */
+        if (name !== SUPERVISOR_EVENTS) return null;
+        const index = world.events.findIndex((entry) => entry.id === id);
+        if (index < 0) return null;
+        world.events[index] = { ...world.events[index], ...patch };
+        return world.events[index];
       },
       async get() {
         return null;
@@ -180,9 +185,15 @@ describe('estado de supervisión', () => {
       delivery: { delivery_user_id: 'usr_1', delivery_status: 'IN_TRANSIT', delivery_assigned_at: '2026-10-18T12:00:00.000Z' },
     });
     expect(interno.stage).toBe(SUPERVISOR_STAGES.IN_TRANSIT);
+    /*
+     * Fecha RELATIVA al reloj de la prueba: una fecha fija caducaba sola (a
+     * partir de ese día la posposición quedaba en el pasado y esta prueba
+     * empezaba a fallar sin que nada se hubiera roto).
+     */
+    const manana = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const pospuesto = supervisionOf({
       ...baseOrder(),
-      delivery: { ...baseOrder().delivery, supervisor: { postponed_until: '2026-10-20T12:00:00.000Z' } },
+      delivery: { ...baseOrder().delivery, supervisor: { postponed_until: manana } },
     });
     expect(pospuesto.stage).toBe(SUPERVISOR_STAGES.POSTPONED);
   });

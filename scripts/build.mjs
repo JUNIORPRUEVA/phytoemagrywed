@@ -158,6 +158,13 @@ export async function buildAssets(options = {}, outDir = DIST) {
 export async function copyPublic(outDir) {
   if (!existsSync(PUBLIC_DIR)) return;
   await cp(PUBLIC_DIR, outDir, { recursive: true });
+  /*
+   * La previsualización de iconos solo sirve para revisar el sistema en local:
+   * no debe viajar al paquete publicable.
+   */
+  await rm(path.join(outDir, 'store', 'icons-preview.html'), { force: true });
+  /* Igual con la comparación de iconos (Lucide vs Material Symbols). */
+  await rm(path.join(outDir, 'store', 'icons-compare.html'), { force: true });
   const pdfDir=path.join(outDir,'admin','vendor','pdfjs');
   await mkdir(pdfDir,{recursive:true});
   for(const file of ['pdf.mjs','pdf.worker.mjs'])await cp(path.join(ROOT,'node_modules','pdfjs-dist','build',file),path.join(pdfDir,file));

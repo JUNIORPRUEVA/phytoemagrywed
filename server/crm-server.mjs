@@ -145,6 +145,7 @@ import { createMediaRoutes } from './media-routes.mjs';
 import {
   ORDER_STATUS_LABELS,
   BUSINESS_COMPLETED_PURCHASE_STATUS,
+  ORDER_CLOSED_STATUSES,
   PAYMENT_METHOD_LABELS,
   PAYMENT_METHODS,
   buildOrder,
@@ -1096,55 +1097,6 @@ async function deliveryAccessScope(ctx, actor) {
 
 function orderDeliveryDeepLink(orderId) {
   return `/admin/?v=delivery&order=${encodeURIComponent(orderId)}`;
-}
-
-/**
- * Avisa a los ADMINISTRADORES activos de un pedido nuevo de la tienda.
- *
- * Canal: notificación interna + Web Push. No usa WhatsApp a propósito: el
- * número del negocio no admite mensajes libres sin plantilla aprobada y el
- * webhook lo consume una sola instancia (el CRM).
- *
- * @param {any} ctx
- * @param {any} item fila del pedido ya guardada
- * @param {any} order pedido normalizado
- * @param {any} customer cliente asociado
- * @returns {Promise<number>} avisos nuevos entregados a la cola de push
- */
-async function notifyAdminsStoreOrder(ctx, item, order, customer) {
-  if (!item?.id || !order) return 0;
-  const admins = (await ctx.users.listUsers()).filter((user) => user.active !== false && user.role === 'ADMIN');
-  if (!admins.length) return 0;
-  const customerName = notificationSafeName(customer, 'Cliente');
-  const money = new Intl.NumberFormat('es-DO', { style: 'currency', currency: order.currency || 'DOP', maximumFractionDigits: 0 }).format(Number(order.total || 0));
-  const delivery = order.fulfillment_method === 'pickup' ? 'Recogida coordinada' : 'Entrega a domicilio';
-  let created = 0;
-  for (const user of admins) {
-    const note = await createUserNotification(ctx, {
-      recipientUserId: user.id,
-      type: 'STORE_ORDER_CREATED',
-      title: `Nuevo pedido de la tienda · ${order.order_number ?? item.order_number ?? item.id}`,
-      body: `${customerName} · ${money} · ${delivery}`,
-      entityType: 'order',
-      entityId: item.id,
-      deepLink: orderDeliveryDeepLink(item.id),
-      data: {
-        order_id: item.id,
-        order_number: order.order_number ?? null,
-        customer_name: customerName,
-        total: order.total ?? null,
-        currency: order.currency ?? 'DOP',
-        channel: 'store',
-        vibrate: [150, 80, 150],
-      },
-      idempotencyKey: `store-order-created:${item.id}:${user.id}`,
-    });
-    if (note.notification && !note.duplicate) {
-      await sendPushForNotification(ctx, note.notification);
-      created += 1;
-    }
-  }
-  return created;
 }
 
 /**
@@ -2976,6 +2928,152 @@ async function transitionOrderStatus(ctx, input) {
   });
 }
 
+/**
+ * CONFIRMAR UN PEDIDO — NO ES COBRAR NI ENTREGAR.
+ *
+ * Es el paso comercial que faltaba: un pedido recién creado nace `nuevo`
+ * (pendiente de confirmación) y aquí pasa a `confirmado` con quién lo confirmó y
+ * cuándo. Lo que NO hace, a propósito:
+ *   · no marca el pedido como cobrado (`payment_status` no se toca);
+ *   · no descuenta inventario (eso pasa al entregar);
+ *   · no crea una entrega ni activa tracking;
+ *   · no manda ningún WhatsApp por su cuenta.
+ *
+ * La asignación de mensajero es OPCIONAL y va después de confirmar, para que un
+ * error de asignación no deje un pedido «confirmado» a medias ni una entrega
+ * fantasma: si falla, el pedido sigue confirmado y se dice que NO quedó asignado.
+ * Es idempotente: confirmar dos veces devuelve `duplicate: true` y no duplica ni
+ * el historial ni el aviso al repartidor.
+ */
+async function confirmOrder(ctx, input = {}) {
+  return withOrderTransitionLock(String(input.orderId ?? ''), async () => {
+    const item = await findOrderItem(ctx.store, input.orderId);
+    if (!item) return { ok: false, status: 404, error: 'not_found', message: 'Ese pedido no existe.' };
+    const order = orderOf(item);
+    if (!order) return { ok: false, status: 422, error: 'invalid_order', message: 'Ese pedido no se pudo leer.' };
+
+    const actor = input.actor ?? null;
+    const currentStatus = String(item.status ?? order.status ?? 'nuevo');
+    if (ORDER_CLOSED_STATUSES.includes(currentStatus)) {
+      return { ok: false, status: 409, error: 'order_closed', message: 'Ese pedido ya está cerrado: no se puede confirmar.' };
+    }
+
+    // Quién lleva el pedido se valida ANTES de escribir nada.
+    const deliveryUserId = text(input.deliveryUserId, 80);
+    const deliveryContactPhone = text(input.deliveryContactPhone, 40);
+    let deliveryUser = null;
+    if (deliveryUserId) {
+      deliveryUser = await ctx.users.get(deliveryUserId);
+      if (!deliveryUser || !canDeliver(deliveryUser) || deliveryUser.active === false) {
+        return { ok: false, status: 422, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor del equipo.' };
+      }
+    }
+
+    const at = ctx.clock().toISOString();
+    const fulfillment = input.fulfillment === 'pickup' ? 'pickup' : input.fulfillment === 'delivery' ? 'delivery' : null;
+    const yaConfirmado = ['confirmado', 'en_preparacion', 'enviado'].includes(currentStatus) || isCompletedPurchaseStatus(currentStatus);
+
+    let confirmedItem = item;
+    let confirmedOrder = order;
+    if (!yaConfirmado) {
+      const reason = manualReason(input.reason) ?? null;
+      const next = {
+        ...order,
+        status: 'confirmado',
+        confirmed_at: order.confirmed_at ?? at,
+        confirmed_by_user_id: actor?.actor_type === 'USER' ? actor.id : order.confirmed_by_user_id ?? null,
+        confirmed_by_display_name_snapshot:
+          actor?.actor_type === 'USER' ? actor.display_name : order.confirmed_by_display_name_snapshot ?? null,
+        ...(fulfillment
+          ? { fulfillment_method: fulfillment, fulfillment_label: fulfillment === 'pickup' ? 'Retiro en tienda' : 'Entrega' }
+          : {}),
+        status_history: [...(order.status_history ?? []), { status: 'confirmado', at, reason, source: 'PANEL_CONFIRM' }],
+        updated_at: at,
+      };
+      const updated = await ctx.store.update(item.id, { status: 'confirmado', orderJson: JSON.stringify(next) });
+      confirmedItem = updated ?? item;
+      confirmedOrder = orderOf(confirmedItem) ?? next;
+      await auditOrderStatusTransition(ctx, {
+        orderId: item.id,
+        previousStatus: currentStatus,
+        newStatus: 'confirmado',
+        actor,
+        reason,
+        changedAt: at,
+        source: 'PANEL_CONFIRM',
+        idempotencyKey: `order.confirmed:${item.id}`,
+      });
+    } else if (fulfillment && !order.fulfillment_method) {
+      // Reintento de una confirmación anterior: no se duplica el historial.
+      confirmedOrder = { ...confirmedOrder, fulfillment_method: fulfillment };
+      const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(confirmedOrder) });
+      confirmedItem = updated ?? confirmedItem;
+    }
+
+    /*
+     * ASIGNACIÓN (opcional). Solo si de verdad cambia de manos: repetir el mismo
+     * mensajero no vuelve a avisarle ni suma una versión de asignación.
+     */
+    let assignment = { attempted: false, ok: true, deliveryUserId: null, external: false };
+    const repartidorActual = text(confirmedOrder?.delivery?.delivery_user_id, 80);
+    const externoActual = text(confirmedOrder?.delivery?.external?.phone, 40);
+    if (deliveryUser && repartidorActual !== deliveryUser.id) {
+      assignment = { attempted: true, ok: true, deliveryUserId: deliveryUser.id, external: false };
+      try {
+        const assigned = await assignDeliveryToOrder(ctx, confirmedItem, deliveryUser, actor, {
+          assignmentNote: input.deliveryNote,
+        });
+        if (assigned?.item) {
+          confirmedItem = assigned.item;
+          confirmedOrder = assigned.order ?? confirmedOrder;
+        }
+      } catch (error) {
+        console.error('[crm] no se pudo asignar el delivery al confirmar', { code: error?.code });
+        assignment = { attempted: true, ok: false, deliveryUserId: deliveryUser.id, external: false, error: 'assign_failed' };
+      }
+    } else if (deliveryContactPhone && externoActual !== deliveryContactPhone) {
+      assignment = { attempted: true, ok: true, deliveryUserId: null, external: true };
+      try {
+        const result = await assignCourier({
+          ctx,
+          item: confirmedItem,
+          order: confirmedOrder,
+          contactPhone: deliveryContactPhone,
+          actor,
+        });
+        if (!result.ok) {
+          assignment = {
+            attempted: true,
+            ok: false,
+            deliveryUserId: null,
+            external: true,
+            error: result.error ?? 'assign_failed',
+            message: result.message ?? null,
+          };
+        } else if (result.order) {
+          confirmedOrder = result.order;
+          confirmedItem = (await findOrderItem(ctx.store, item.id)) ?? confirmedItem;
+        }
+      } catch (error) {
+        console.error('[crm] no se pudo asignar el repartidor externo al confirmar', { code: error?.code });
+        assignment = { attempted: true, ok: false, deliveryUserId: null, external: true, error: 'assign_failed' };
+      }
+    }
+
+    const fresh = (await findOrderItem(ctx.store, item.id)) ?? confirmedItem;
+    const finalOrder = orderOf(fresh) ?? confirmedOrder;
+    return {
+      ok: true,
+      duplicate: yaConfirmado && !assignment.attempted,
+      item: fresh,
+      order: finalOrder,
+      assignment,
+      confirmedAt: finalOrder.confirmed_at ?? at,
+      integrity: await validateOrderOperationalIntegrity(ctx, item.id),
+    };
+  });
+}
+
 async function cancelSale(ctx, orderId, input = {}, actor = null) {
   return withSaleCancellationLock(orderId, async () => {
     const reason = longText(input.reason, 500);
@@ -3466,22 +3564,6 @@ async function createStoreOrder(ctx, session, body = {}) {
     null,
   );
   if (!result?.ok) return result;
-  /*
-   * AVISO AL EQUIPO. Un pedido de la tienda entra por el servidor de la tienda,
-   * que corre en modo WhatsApp MOCK y sin credenciales de envío. Por eso el
-   * aviso va por NOTIFICACIÓN + WEB PUSH (la misma vía que ya usa el panel para
-   * los pedidos de reparto), no por WhatsApp: así no se duplica el consumidor
-   * del webhook ni se abre una ventana de mensajes al cliente.
-   *
-   * El pedido YA está guardado cuando se llega aquí: cualquier fallo del aviso
-   * se registra y se ignora (nunca pierde la venta). Es idempotente por
-   * pedido+usuario, así que un reintento no duplica avisos.
-   */
-  try {
-    await notifyAdminsStoreOrder(ctx, result.item, result.order, result.customer);
-  } catch (error) {
-    console.error('[crm] aviso de pedido de tienda no enviado', { orderId: result.item?.id ?? null, code: error?.code ?? error?.name });
-  }
   return {
     ok: true,
     duplicate: result.duplicate === true,
@@ -5219,8 +5301,22 @@ function serveAdminFile(req, res, urlPath, adminDir) {
     'content-length': body.length,
     vary: 'Accept-Encoding',
     ...(compressed ? { 'content-encoding': 'gzip' } : {}),
-    // El panel y su service worker nunca se cachean: publicar = ver el cambio ya.
-    'cache-control': 'no-cache, must-revalidate',
+    /*
+     * RECURSOS VERSIONADOS: CACHÉ LARGA. HTML Y SERVICE WORKER: NUNCA.
+     *
+     * Todo el panel salía con `no-cache, must-revalidate`, así que el navegador
+     * revalidaba 40+ archivos en cada apertura (y el logo de 155 KB otra vez).
+     * Un recurso pedido con `?v=…` cambia de URL cuando cambia de contenido, así
+     * que puede guardarse: se elige 1 día + `stale-while-revalidate` (no un año
+     * `immutable`) porque las versiones se suben a mano y un olvido dejaría un
+     * archivo viejo fijado demasiado tiempo.
+     *
+     * El HTML y `sw.js` siguen sin caché: publicar tiene que verse al abrir.
+     */
+    'cache-control':
+      /(?:^|&)v=/.test(String(req.url ?? '').split('?')[1] ?? '') && extension !== '.html' && !/(^|\/)sw\.js$/.test(relative)
+        ? 'public, max-age=86400, stale-while-revalidate=604800'
+        : 'no-cache, must-revalidate',
     'service-worker-allowed': '/admin/',
     'permissions-policy': 'geolocation=(self), microphone=(self), camera=(self)',
     'x-robots-tag': 'noindex, nofollow',
@@ -8833,6 +8929,53 @@ async function handle(req, res, ctx) {
         return;
       }
 
+      /*
+       * TEXTO PARA «PEDIR CONFIRMACIÓN» DESDE LA PROPIA FICHA DEL PEDIDO.
+       *
+       * Devuelve el resumen que leerá el cliente y la conversación donde debe
+       * salir. NO envía nada: el agente lo revisa y pulsa Enviar en el chat. El
+       * texto se construye aquí desde el pedido REAL (nunca desde el navegador).
+       */
+      if (action === 'confirmation-message') {
+        if (!requirePermission('chats.reply')) return;
+        if (!customer) {
+          json(res, 200, {
+            ok: true,
+            sendable: false,
+            error: 'order_without_customer',
+            message: 'Ese pedido no tiene cliente asignado: no hay a quién pedirle confirmación.',
+            conversationId: null,
+            text: null,
+          });
+          return;
+        }
+        const delPedido = order?.conversation_id ? await ctx.db.get('conversations', order.conversation_id) : null;
+        const conversacion =
+          delPedido && delPedido.customer_id === customer.id
+            ? delPedido
+            : await ctx.customers.conversationFor(customer.id, { create: false });
+        if (!conversacion || conversacion.customer_id !== customer.id) {
+          json(res, 200, {
+            ok: true,
+            sendable: false,
+            error: 'no_conversation',
+            message: 'Este cliente todavía no tiene una conversación de WhatsApp: el pedido quedó pendiente, ábrele un chat para pedirle la confirmación.',
+            conversationId: null,
+            text: orderConfirmationText(order, customer),
+          });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          sendable: true,
+          conversationId: conversacion.id,
+          customerId: customer.id,
+          order_number: order?.order_number ?? receipt.order_number ?? null,
+          text: orderConfirmationText(order, customer),
+        });
+        return;
+      }
+
       // Documento compartible de la factura.
       if (action === 'factura' || action === 'receipt.pdf' || action === 'receipt-pdf') {
         const pdf = receiptPdf(receipt, { timeZone: TIME_ZONE });
@@ -8889,6 +9032,64 @@ async function handle(req, res, ctx) {
         timeline: await orderTimeline(ctx, orderId, order),
         followups: followupRows.filter((row) => row.order_id === orderId || row.purchase_id === orderId),
         scheduled: (await ctx.scheduler.list()).filter((row) => row.order_id === orderId),
+      });
+      return;
+    }
+
+    /*
+     * CONFIRMAR EL PEDIDO (el paso que faltaba entre «creado» y «en reparto»).
+     *
+     * Ruta APARTE y a propósito: no acepta cualquier estado, no cobra y no
+     * entrega. Con `deliveryUserId` o `deliveryContactPhone` confirma Y asigna en
+     * la misma operación; sin ninguno, solo confirma (retiro en tienda o entrega
+     * que se gestiona después).
+     */
+    if (
+      route.startsWith('/api/admin/orders/') &&
+      route.endsWith('/confirm') &&
+      req.method === 'POST' &&
+      !route.slice('/api/admin/orders/'.length, -'/confirm'.length).includes('/')
+    ) {
+      if (!requirePermission('orders.update_operational', 'No tienes permiso para confirmar pedidos.')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/confirm'.length));
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const deliveryUserId = text(body.deliveryUserId ?? body.delivery_user_id, 80);
+      const deliveryContactPhone = text(
+        body.deliveryContactPhone ?? body.delivery_contact_phone ?? body.courierPhone,
+        40,
+      );
+      if (deliveryUserId && !requirePermission('delivery.tracking.manage_all', 'Solo ADMIN puede asignar repartidores del equipo.')) return;
+      if (deliveryContactPhone && !(can('orders.update_operational') || can('delivery.manage') || can('delivery.tracking.manage_all'))) {
+        forbid();
+        return;
+      }
+      const result = await confirmOrder(ctx, {
+        orderId,
+        actor,
+        deliveryUserId,
+        deliveryContactPhone,
+        deliveryNote: body.deliveryNote ?? body.delivery_note ?? body.note,
+        fulfillment: body.fulfillment,
+        reason: body.reason,
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        duplicate: result.duplicate === true,
+        confirmedAt: result.confirmedAt,
+        assignment: result.assignment,
+        item: sanitizeItemForPermissions(result.item, actor),
+        order: sanitizeOrderForPermissions(result.order, actor),
+        integrity: result.integrity,
       });
       return;
     }

@@ -1,0 +1,690 @@
+/* ============================================================================
+   FULLTECH STORE — SISTEMA DE DISEÑO (Fase 1)
+   Tokens, cabecera, héroe, beneficios, categorías, tarjetas de producto y
+   navegación inferior. Todo con prefijo `ft-` para no chocar con las hojas
+   existentes de catálogo, carrito y cuenta.
+   ========================================================================== */
+
+:root {
+  /* Marca */
+  --ft-primary: #165dff;
+  --ft-primary-soft: #e8f0ff;
+  --ft-navy: #0b1220;
+  --ft-blue: #2f7bff;
+  --ft-bg: #f5f7fb;
+  --ft-ink: #0f172a;
+  --ft-muted: #64748b;
+  --ft-surface: #ffffff;
+  --ft-line: #e6ebf3;
+  --ft-ok: #16a34a;
+  --ft-ok-soft: #e8f7ee;
+  --ft-alert: #ea580c;
+
+  /* Radios, sombras y espaciado */
+  --ft-r-sm: 10px;
+  --ft-r-md: 14px;
+  --ft-r-lg: 20px;
+  --ft-r-xl: 26px;
+  --ft-shadow-sm: 0 1px 2px #0f172a0a, 0 4px 12px #0f172a08;
+  --ft-shadow-md: 0 6px 20px #0f172a12;
+  --ft-shadow-lg: 0 16px 40px #0b122024;
+  --ft-gap: 8px;
+  /* Un único gutter móvil: nada de paddings anidados que roben ancho. */
+  --ft-pad: 5px;
+  --ft-edge: 4px;
+  /* Tipografía */
+  --ft-font: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* -------------------------------------------------------------- iconos */
+.micon { display: block; flex: 0 0 auto; }
+.ft-icon { width: 24px; height: 24px;
+  flex: 0 0 auto;
+  display: block;
+}
+.ft-icon--sm { width: 18px; height: 18px; }
+.ft-icon--lg { width: 28px; height: 28px; }
+
+/* El cajón debe quedar por encima de la cabecera fija (z-index 40) y del dock (45). */
+.drawer-scrim { z-index: 55; }
+.drawer { z-index: 56; }
+
+/* ------------------------------------------------------------- cabecera */
+.ft-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--ft-surface) 92%, transparent);
+  backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--ft-line);
+  padding: calc(2px + env(safe-area-inset-top)) var(--ft-pad) 2px;
+}
+/*
+ * ANCHO COMPLETO: en pantallas con la estructura nueva (portada, búsqueda),
+ * el gutter lo pone cada bloque con --ft-pad. Sin esto, el padding del `main`
+ * heredado se sumaba al de las secciones y el contenido perdía 30 px por lado.
+ */
+main:has(> .ft-search),
+main:has(> .ft-search--entry),
+main:has(> .ft-searchbar) {
+  padding-left: 0;
+  padding-right: 0;
+}
+.ft-header__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 40px;
+}
+.ft-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--ft-navy);
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  font-size: 13px;
+}
+.ft-wordmark__mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--ft-navy), var(--ft-primary));
+  box-shadow: 0 3px 8px #165dff30;
+}
+.ft-wordmark small {
+  display: block;
+  font-size: 7.5px;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: var(--ft-muted);
+}
+.ft-header__actions { display: inline-flex; align-items: center; gap: 4px; }
+.ft-iconbtn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ft-navy);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+.ft-iconbtn:hover { background: var(--ft-primary-soft); }
+.ft-iconbtn:active { transform: scale(0.96); }
+.ft-iconbtn:focus-visible { outline: 2px solid var(--ft-primary); outline-offset: 2px; }
+.ft-cart-badge {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--ft-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--ft-surface);
+}
+
+/* --------------------------------------------------------------- buscador */
+/* En móvil el buscador manda: ancho completo, 42 px y pegado a la cabecera. */
+.ft-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px var(--ft-pad) 0;
+  padding: 0 11px;
+  height: 42px;
+  border-radius: 11px;
+  background: var(--ft-surface);
+  border: 1px solid var(--ft-line);
+  box-shadow: 0 1px 2px #0f172a08;
+  color: var(--ft-muted);
+  font-size: 14px;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.ft-search:focus-within {
+  border-color: var(--ft-primary);
+  box-shadow: 0 0 0 3px #165dff1f;
+}
+/* Pantalla de búsqueda dedicada (#/search) */
+.ft-searchbar { padding: var(--ft-gap) var(--ft-pad) 0; }
+.ft-searchbar .ft-search { margin: 0; }
+#search-body { padding: 4px var(--ft-pad) 0; }
+#search-body > .ft-grid { margin-top: 2px; }
+.ft-search__idle { margin-top: 12px; }
+.ft-search__idle-cta { display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; }
+.ft-section__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--ft-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.ft-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ft-ink);
+  outline: none;
+}
+.ft-search input::placeholder { color: var(--ft-muted); }
+/* Portada: mismo aspecto, pero es un enlace a la pantalla de búsqueda. */
+.ft-search--entry {
+  text-decoration: none;
+  color: var(--ft-muted);
+  font-size: 14px;
+}
+.ft-search__placeholder { flex: 1; min-width: 0; }
+
+/* ------------------------------------------------ navegación de categorías */
+/* Pestañas compactas de una sola línea con indicador azul (sin píldoras). */
+.ft-catnav {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  margin: 4px var(--ft-pad) 0;
+  padding: 0;
+  height: 36px;
+  border-bottom: 1px solid var(--ft-line);
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.ft-catnav::-webkit-scrollbar { display: none; }
+.ft-catnav a {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 1px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--ft-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.ft-catnav a[aria-current="true"] { color: var(--ft-primary); border-bottom-color: var(--ft-primary); }
+
+/* ------------------------------------------------------------------- héroe */
+/* A sangre, SIN radio: bloque recto y elegante que ocupa todo el ancho. */
+.ft-hero {
+  position: relative;
+  margin: 0;
+  padding: 14px 14px 14px;
+  border-radius: 0;
+  color: #fff;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px;
+  align-items: center;
+  gap: 8px;
+  background:
+    radial-gradient(120% 120% at 88% 6%, #2f7bff59 0%, transparent 55%),
+    linear-gradient(135deg, var(--ft-navy) 0%, #122a52 55%, var(--ft-primary) 100%);
+  box-shadow: none;
+}
+.ft-hero__copy { position: relative; z-index: 1; min-width: 0; }
+.ft-hero__art {
+  position: relative;
+  z-index: 1;
+  justify-self: end;
+  width: 116px;
+}
+.ft-hero__art img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 6px 16px #050b18a6;
+}
+.ft-hero::after {
+  content: "";
+  position: absolute;
+  top: -70px;
+  right: -60px;
+  width: 190px;
+  height: 190px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffffff1f, transparent 70%);
+  pointer-events: none;
+}
+.ft-hero__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  color: #b9d2ff;
+  text-transform: uppercase;
+}
+.ft-hero h1 {
+  margin: 5px 0 3px;
+  font-size: clamp(17px, 5vw, 22px);
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  font-weight: 800;
+  text-wrap: balance;
+}
+.ft-hero p {
+  margin: 0;
+  color: #cbd9ef;
+  font-size: 11.5px;
+  line-height: 1.35;
+  max-width: 22ch;
+}
+.ft-hero__cta {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: #fff;
+  color: #12346c;
+  font-weight: 700;
+  font-size: 12.5px;
+  text-decoration: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.ft-hero__cta:hover { transform: translateY(-1px); box-shadow: 0 10px 22px #0000002e; }
+
+/* --------------------------------------------------------------- beneficios */
+/* Tres pastillas ligeras, alineadas y sin caja contenedora pesada. */
+.ft-benefits {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 8px var(--ft-pad) 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+.ft-benefit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 4px;
+  background: var(--ft-surface);
+  border: 1px solid #edf1f7;
+  border-radius: 9px;
+  box-shadow: none;
+  text-align: left;
+}
+.ft-benefit + .ft-benefit { border-left: 1px solid #edf1f7; }
+.ft-benefit__icon {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  border-radius: 0;
+  background: none;
+  color: var(--ft-ok);
+}
+.ft-benefit__icon svg { width: 16px; height: 16px; }
+.ft-benefit strong {
+  display: block;
+  font-size: 10px;
+  line-height: 1.15;
+  color: var(--ft-ink);
+  letter-spacing: -0.1px;
+}
+.ft-benefit small { display: none; }
+
+/* ----------------------------------------------------------------- secciones */
+.ft-section { margin: 10px var(--ft-pad) 0; }
+.ft-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.ft-section__head h2 {
+  margin: 0;
+  font-size: 14.5px;
+  letter-spacing: -0.3px;
+  color: var(--ft-ink);
+}
+.ft-section__head a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ft-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- categorías */
+.ft-catrow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 78px;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.ft-catrow::-webkit-scrollbar { display: none; }
+.ft-catcard {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 12px 6px;
+  border-radius: var(--ft-r-md);
+  background: var(--ft-surface);
+  border: 1px solid var(--ft-line);
+  box-shadow: var(--ft-shadow-sm);
+  text-decoration: none;
+  color: var(--ft-ink);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+.ft-catcard:hover { transform: translateY(-2px); border-color: #c9d9ff; }
+.ft-catcard__icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--ft-primary-soft);
+  color: var(--ft-primary);
+}
+.ft-catcard span {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- productos */
+.ft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ft-edge);
+}
+.ft-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--ft-surface);
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.ft-card:hover { transform: translateY(-2px); box-shadow: var(--ft-shadow-md); }
+.ft-card__media {
+  display: block;
+  aspect-ratio: 1 / 1;
+  background: linear-gradient(150deg, #fff, #f1f5fb);
+  padding: 0;
+}
+.ft-card__media img { width: 100%; height: 100%; object-fit: contain; }
+/* Si la imagen no carga, la tarjeta muestra el icono en lugar de un hueco vacío. */
+.ft-card__media--error::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b7c4d8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 3 7.5v9L12 21l9-4.5v-9z'/%3E%3Cpath d='m3 7.5 9 4.5 9-4.5M12 12v9'/%3E%3C/svg%3E") center/52px no-repeat;
+}
+.ft-card__media--error img { display: none; }
+.ft-card__fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #b7c4d8;
+}
+.ft-card__body { padding: 5px 6px 6px; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.ft-card__name {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.26;
+  color: var(--ft-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 29px;
+}
+.ft-card__price {
+  font-size: 15.5px;
+  font-weight: 800;
+  color: var(--ft-navy);
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.ft-card__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ft-ok);
+}
+.ft-card__state--out { color: var(--ft-muted); }
+.ft-card__state--order { color: var(--ft-alert); }
+.ft-card__dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.ft-card__cta {
+  margin-top: 2px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ft-primary);
+  color: #fff;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+.ft-card__cta:hover { background: #0f4fdb; }
+.ft-card__cta--ghost {
+  background: transparent;
+  color: var(--ft-primary);
+  border: 1px solid #c9d9ff;
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+}
+.ft-card__cta--ghost:hover { background: var(--ft-primary-soft); }
+.ft-card__fav {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: #ffffffd9;
+  color: var(--ft-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: var(--ft-shadow-sm);
+}
+.ft-card__fav[aria-pressed="true"] { color: #e11d48; }
+
+/* ------------------------------------------- banner de solicitud especial */
+.ft-request {
+  margin: 12px var(--ft-pad) 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+  background:
+    radial-gradient(90% 120% at 92% 10%, #2f7bff5c, transparent 60%),
+    linear-gradient(120deg, #0b1220, #165dff);
+  box-shadow: var(--ft-shadow-md);
+}
+.ft-request__copy { flex: 1; min-width: 0; }
+.ft-request strong { display: block; font-size: 14px; letter-spacing: -0.3px; }
+.ft-request small { display: block; margin-top: 1px; font-size: 11.5px; color: #cfdcf5; }
+.ft-request__cta {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 11px;
+  background: #fff;
+  color: #12346c;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* --------------------------------------------------------------- navegación */
+.ft-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  padding: 2px 4px calc(2px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, #ffffff 96%, transparent);
+  backdrop-filter: saturate(140%) blur(12px);
+  border-top: 1px solid #eef1f6;
+}
+.ft-nav__item {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 1px;
+  padding: 4px 2px 3px;
+  border-radius: 9px;
+  color: var(--ft-muted);
+  text-decoration: none;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
+}
+/* En pantallas estrechas la etiqueta no debe recortarse fuera de su columna. */
+.ft-nav__item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 380px) {
+  .ft-nav__item { font-size: 9px; }
+  .ft-nav__item svg { width: 19px; height: 19px; }
+}
+.ft-nav__item[aria-current="page"] { color: var(--ft-primary); background: #eef4ff; }
+.ft-nav__item:focus-visible { outline: 2px solid var(--ft-primary); outline-offset: 2px; }
+.ft-nav__item .ft-cart-badge--nav {
+  position: absolute;
+  top: -1px;
+  right: 50%;
+  transform: translateX(20px);
+  box-shadow: 0 0 0 2px var(--ft-surface);
+}
+.ft-section__note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--ft-muted);
+}
+
+/* El shell deja sitio para la barra fija + el área segura. */
+/* El pie también respeta el gutter único (el main ya no aporta padding). */
+.footer { padding-left: var(--ft-pad); padding-right: var(--ft-pad); }
+.app-shell { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+
+/* --------------------------------------------------------------- responsive */
+@media (min-width: 560px) {
+  :root { --ft-pad: 14px; --ft-edge: 10px; }
+  .ft-grid { gap: var(--ft-edge); }
+  .ft-catrow { grid-auto-columns: 92px; }
+}
+@media (min-width: 760px) {
+  :root { --ft-pad: 24px; --ft-edge: 14px; }
+  main:has(> .ft-search),
+  main:has(> .ft-search--entry),
+  main:has(> .ft-searchbar) {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+  .ft-header { padding-inline: 24px; }
+  .ft-hero, .ft-benefits, .ft-section, .ft-request { margin-inline: 0; }
+  .ft-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ft-hero { padding: 34px 32px; border-radius: 18px; }
+  .ft-hero h1 { font-size: 34px; max-width: 20ch; }
+  .ft-benefits { max-width: 640px; }
+  /* En tablet y escritorio el dock se centra: isla flotante, no barra a todo el ancho. */
+  .ft-nav {
+    left: 50%;
+    right: auto;
+    bottom: 16px;
+    transform: translateX(-50%);
+    width: calc(100% - 48px);
+    max-width: 560px;
+    border: 1px solid var(--ft-line);
+    border-radius: 18px;
+    box-shadow: var(--ft-shadow-lg);
+  }
+  /* El dock flota separado del borde: el contenido necesita más aire abajo. */
+  .app-shell { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+}
+@media (min-width: 1024px) {
+  .ft-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .ft-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .ft-header, .ft-hero, .ft-section, .ft-request { max-width: 1180px; margin-inline: auto; }
+  /* Las tres pastillas de confianza no deben estirarse a todo el ancho. */
+  .ft-benefits { max-width: 640px; margin-inline: auto; }
+  .ft-header { padding-inline: 0; }
+}
+
+/* Accesibilidad: sin animaciones si el sistema lo pide. */
+@media (prefers-reduced-motion: reduce) {
+  .ft-card, .ft-card:hover, .ft-hero__cta, .ft-hero__cta:hover, .ft-iconbtn, .ft-catcard, .ft-catcard:hover {
+    transition: none;
+    transform: none;
+  }
+}

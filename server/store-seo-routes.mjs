@@ -9,6 +9,7 @@
  * sale con `noindex` y `robots.txt` cierra el rastreo entero.
  */
 import {
+  renderCatalogPage,
   renderProductPage,
   renderRobots,
   renderSitemap,
@@ -21,6 +22,8 @@ import {
 const PRODUCT_PATH = /^\/store\/p\/([A-Za-z0-9_-]{1,80})$/;
 /** Portada de la tienda: se sirve la PWA con la cabecera SEO inyectada. */
 const STORE_HOME = '/store/';
+/** Catálogo rastreable (HTML plano con enlaces reales). */
+const STORE_CATALOG = '/store/catalogo';
 let shellCache = { html: '', at: 0 };
 
 function send(res, req, status, body, headers) {
@@ -39,7 +42,8 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
    */
   const rawPath = String(req.url ?? '').split('?')[0];
   const isHome = route === '/store';
-  if (route !== '/store/robots.txt' && route !== '/store/sitemap.xml' && !isProduct && !isHome) return false;
+  const isCatalog = route === STORE_CATALOG;
+  if (route !== '/store/robots.txt' && route !== '/store/sitemap.xml' && !isProduct && !isHome && !isCatalog) return false;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Allow', 'GET, HEAD');
     send(res, req, 405, 'Método no permitido', { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
@@ -114,6 +118,11 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
     return send(res, req, 200, page.html, { ...baseHeaders, 'content-type': 'text/html; charset=utf-8' });
   }
 
+  if (isCatalog) {
+    const page = renderCatalogPage({ origin, indexable, products, siteName: seo.siteName });
+    return send(res, req, 200, page.html, { ...baseHeaders, 'content-type': 'text/html; charset=utf-8' });
+  }
+
   if (route === '/store/sitemap.xml') {
     const { xml } = renderSitemap({ origin, products });
     /* Sin origen público válido no se publica un sitemap con hosts internos. */
@@ -152,7 +161,13 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
     return send(res, req, 404, missing.html, htmlHeaders);
   }
 
-  const page = renderProductPage({ product, origin, indexable: indexable && Boolean(origin), siteName: seo.siteName });
+  /*
+   * POLÍTICA DE INDEXACIÓN POR ARTÍCULO: solo se indexa lo que se puede comprar
+   * ahora. Un artículo agotado conserva su página (200 + canonical) pero sale
+   * `noindex`: nunca se retira ni se devuelve 410 por quedarse sin stock.
+   */
+  const sellable = product.purchaseable === true && product.availabilityState === 'AVAILABLE_NOW';
+  const page = renderProductPage({ product, origin, indexable: indexable && Boolean(origin) && sellable, siteName: seo.siteName });
   return send(res, req, 200, page.html, htmlHeaders);
 }
 

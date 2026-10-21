@@ -702,8 +702,52 @@
     background: transparent;
   }
 
+  /*
+   * AUDIO: el reproductor ES la burbuja (`.bubble--media`). Toma los colores de
+   * la conversación, como WhatsApp Web: blanco el del cliente y verde el del
+   * negocio. La dirección la decide la clase de la burbuja, no el archivo.
+   */
+  body[data-tab='whatsapp'] .bubble--in .audio,
   body[data-tab='whatsapp'] .bubble--out .audio {
-    background: transparent;
+    min-width: min(52vw, 300px);
+    max-width: 100%;
+    padding: 5px 10px 5px 5px;
+    border-radius: 8px;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+  }
+
+  body[data-tab='whatsapp'] .bubble--in .audio {
+    --audio-bg: var(--wad-bubble-in);
+    --audio-border: rgba(11, 20, 26, 0.08);
+    --audio-ink: var(--wad-ink-soft);
+    --audio-accent: var(--wad-teal-dark);
+    --audio-track: rgba(11, 20, 26, 0.16);
+    --audio-play-ink: #ffffff;
+  }
+
+  body[data-tab='whatsapp'] .bubble--out .audio {
+    --audio-bg: var(--wad-bubble-out);
+    --audio-border: transparent;
+    --audio-ink: rgba(17, 27, 33, 0.62);
+    --audio-accent: var(--wad-teal-dark);
+    --audio-track: rgba(17, 27, 33, 0.16);
+    --audio-play-ink: #ffffff;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--in .audio {
+    --audio-border: rgba(255, 255, 255, 0.08);
+    --audio-ink: var(--wad-ink-soft);
+    --audio-accent: var(--wad-teal);
+    --audio-track: rgba(255, 255, 255, 0.18);
+    --audio-play-ink: #0b141a;
+  }
+
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .bubble--out .audio {
+    --audio-ink: rgba(233, 237, 239, 0.78);
+    --audio-accent: var(--wad-teal);
+    --audio-track: rgba(255, 255, 255, 0.2);
+    --audio-play-ink: #0b141a;
   }
 
   body[data-tab='whatsapp'] .bubble:not(.bubble--media) .doc-card {
@@ -729,18 +773,6 @@
 
   body[data-tab='whatsapp'] .bubble--media .loc {
     margin: 1px 0;
-  }
-
-  body[data-tab='whatsapp'] .audio__seek::-webkit-slider-runnable-track {
-    background: linear-gradient(
-      90deg,
-      var(--wad-teal) var(--audio-progress, 0%),
-      rgba(11, 20, 26, 0.16) var(--audio-progress, 0%)
-    );
-  }
-
-  body[data-tab='whatsapp'] .audio__play {
-    background: var(--wad-teal);
   }
 
   /* Separadores de día: la misma píldora del tema, solo con más aire. */

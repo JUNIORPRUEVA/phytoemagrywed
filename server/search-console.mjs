@@ -25,6 +25,11 @@ export const GSC_WEBMASTERS_API = 'https://www.googleapis.com/webmasters/v3';
 export const GSC_INSPECTION_URL = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect';
 /** Alcance mínimo: leer propiedades, sitemaps y datos de rendimiento. */
 export const GSC_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
+/**
+ * Alcance de ESCRITURA, solo para enviar sitemaps. No se usa en ninguna lectura:
+ * el cliente pide un token aparte y solo cuando el envío está autorizado.
+ */
+export const GSC_WRITE_SCOPE = 'https://www.googleapis.com/auth/webmasters';
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const TOKEN_SAFETY_SECONDS = 60;
@@ -71,6 +76,7 @@ const headerValue = (headers, name) => {
  */
 export function createServiceAccountTokenProvider({
   credentials,
+  scope = GSC_SCOPE,
   fetchImpl = fetch,
   clock = () => new Date(),
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -87,6 +93,7 @@ export function createServiceAccountTokenProvider({
   }
 
   let cached = { token: '', expiresAt: 0 };
+  let requestedScope = scope;
 
   async function issue() {
     const now = Math.floor(clock().getTime() / 1000);
@@ -94,11 +101,13 @@ export function createServiceAccountTokenProvider({
     if (credentials?.private_key_id) header.kid = text(credentials.private_key_id, 120);
     const claims = {
       iss: email,
-      scope: GSC_SCOPE,
+      scope: text(scope, 120) || GSC_SCOPE,
       aud: tokenUri,
       iat: now,
       exp: now + 3600,
     };
+    /* SOLO para diagnóstico: el alcance pedido, nunca el token. */
+    requestedScope = claims.scope;
     const unsigned = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
     let assertion;
     try {
@@ -136,6 +145,9 @@ export function createServiceAccountTokenProvider({
 
   return {
     email,
+    get scope() {
+      return requestedScope;
+    },
     async token(force = false) {
       if (!force && cached.token && cached.expiresAt > clock().getTime()) return cached.token;
       return issue();
@@ -164,6 +176,7 @@ export function createMockTokenProvider({ token = 'mock-access-token' } = {}) {
 export function createSearchConsole({
   siteUrl = '',
   tokenProvider,
+  writeTokenProvider = null,
   fetchImpl = fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   allowSitemapSubmit = false,
@@ -175,8 +188,13 @@ export function createSearchConsole({
 
   const sitePath = encodeURIComponent(site);
 
-  async function call(url, { method = 'GET', body } = {}) {
-    const accessToken = await tokenProvider.token();
+  async function call(url, { method = 'GET', body, write = false } = {}) {
+    /*
+     * MÍNIMO PRIVILEGIO: las lecturas usan `webmasters.readonly`; solo el envío
+     * del sitemap pide un token con `webmasters` (escritura).
+     */
+    const provider = write && writeTokenProvider ? writeTokenProvider : tokenProvider;
+    const accessToken = await provider.token();
     let response;
     try {
       response = await abortable(fetchImpl, url, {
@@ -307,10 +325,11 @@ export function createSearchConsole({
      */
     async submitSitemap(feedUrl) {
       if (allowSitemapSubmit !== true) throw fail('gsc_sitemap_locked', submitBlockedReason, 403);
+      if (!writeTokenProvider) throw fail('gsc_write_scope_missing', 'El envío de sitemaps necesita un token con alcance de escritura.', 403);
       const feed = text(feedUrl, 2048);
       if (!/^https?:\/\//i.test(feed)) throw fail('gsc_invalid_url', 'El sitemap debe ser una URL absoluta.', 400);
-      const payload = await call(`${GSC_WEBMASTERS_API}/sites/${sitePath}/sitemaps/${encodeURIComponent(feed)}`, { method: 'PUT' });
-      return { submitted: feed, response: payload ?? {} };
+      const payload = await call(`${GSC_WEBMASTERS_API}/sites/${sitePath}/sitemaps/${encodeURIComponent(feed)}`, { method: 'PUT', write: true });
+      return { submitted: feed, scope: writeTokenProvider.scope ?? null, response: payload ?? {} };
     },
   };
 }
@@ -422,6 +441,7 @@ export async function createSearchConsoleFromEnv({ env = process.env, fetchImpl 
   const client = createSearchConsole({
     siteUrl: config.siteUrl,
     tokenProvider: createServiceAccountTokenProvider({ credentials, fetchImpl, clock, timeoutMs: config.timeoutMs }),
+    writeTokenProvider: createServiceAccountTokenProvider({ credentials, scope: GSC_WRITE_SCOPE, fetchImpl, clock, timeoutMs: config.timeoutMs }),
     fetchImpl,
     timeoutMs: config.timeoutMs,
     allowSitemapSubmit: config.submitAllowed,

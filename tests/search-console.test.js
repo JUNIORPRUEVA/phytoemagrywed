@@ -11,6 +11,7 @@ import {
   GSC_SCOPE,
   GSC_TOKEN_URL,
   GSC_WEBMASTERS_API,
+  GSC_WRITE_SCOPE,
   auditSeoReadiness,
   createMockFetch,
   createMockSearchConsole,
@@ -214,15 +215,25 @@ describe('Search Console · escritura bloqueada', () => {
     await expect(client.submitSitemap('https://fulltechrd.com/store/sitemap.xml')).rejects.toMatchObject({ code: 'gsc_sitemap_locked' });
   });
 
-  it('solo envía cuando el cliente recibe permiso explícito', async () => {
+  it('solo envía cuando el cliente recibe permiso explícito y con alcance de escritura', async () => {
     const { client, fetchImpl } = buildClientForSubmit(true);
     const result = await client.submitSitemap('https://fulltechrd.com/store/sitemap.xml');
     expect(result.submitted).toBe('https://fulltechrd.com/store/sitemap.xml');
+    expect(result.scope).toBe(GSC_WRITE_SCOPE);
     expect(fetchImpl.calls[1].method).toBe('PUT');
     expect(fetchImpl.calls[1].url).toBe(`${GSC_WEBMASTERS_API}/sites/${encodeURIComponent(SITE)}/sitemaps/${encodeURIComponent('https://fulltechrd.com/store/sitemap.xml')}`);
+    /* El token usado fue el de escritura, no el de solo lectura. */
+    const assertion = fetchImpl.calls[0].form.assertion;
+    const claims = JSON.parse(Buffer.from(assertion.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.scope).toBe(GSC_WRITE_SCOPE);
   });
 
-  function buildClientForSubmit(allowed) {
+  it('sin alcance de escritura no intenta enviar nada', async () => {
+    const { client } = buildClientForSubmit(true, { withWrite: false });
+    await expect(client.submitSitemap('https://fulltechrd.com/store/sitemap.xml')).rejects.toMatchObject({ code: 'gsc_write_scope_missing' });
+  });
+
+  function buildClientForSubmit(allowed, { withWrite = true } = {}) {
     const { credentials } = serviceAccount();
     const fetchImpl = transportWith({ api: () => jsonResponse(200, {}) });
     return {
@@ -231,8 +242,7 @@ describe('Search Console · escritura bloqueada', () => {
         siteUrl: SITE,
         tokenProvider: createServiceAccountTokenProvider({ credentials, fetchImpl }),
         fetchImpl,
-        allowSitemapSubmit: allowed,
-      }),
+        allowSitemapSubmit: allowed,        writeTokenProvider: withWrite ? createServiceAccountTokenProvider({ credentials, scope: GSC_WRITE_SCOPE, fetchImpl }) : null,      }),
     };
   }
 });

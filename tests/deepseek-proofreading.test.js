@@ -108,6 +108,23 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
       const f=fixture({fetchImpl:vi.fn(response)});await enable(f);expect(await f.service.correct(f.input)).toBeNull();
     }
   });
+  it('un proveedor colgado contesta dentro del plazo y el fallo NO se cachea',async()=>{
+    /*
+     * Medido en la UAT: con solo `AbortSignal.timeout` 1 de cada 10 consultas
+     * se quedaba ~14 s y llegaba vacía. Ahora la consulta tiene plazo propio y,
+     * si no hay respuesta, ese borrador se puede volver a pedir en el acto.
+     */
+    let colgado=true;
+    const fetchImpl=vi.fn(async()=>colgado?new Promise(()=>{}):result('hola'));
+    const f=fixture({fetchImpl,providerTimeoutMs:40});await enable(f);
+    const inicio=Date.now();
+    expect(await f.service.correct(f.input)).toBeNull();
+    expect(Date.now()-inicio).toBeLessThan(1000);
+    expect((await f.service.status()).usedToday).toBe(0);
+    colgado=false;
+    expect((await f.service.correct(f.input)).correctedText).toBe('hola');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
   it('prueba chat completions con una corrección sintética, sin consumir cuota diaria',async()=>{
     const f=fixture({fetchImpl:vi.fn(async()=>result('gracias'))});
     await enable(f);expect(await f.service.test()).toBe(true);expect(f.fetchImpl.mock.calls[0][0]).toBe('https://api.deepseek.com/chat/completions');expect((await f.service.status()).usedToday).toBe(0);
