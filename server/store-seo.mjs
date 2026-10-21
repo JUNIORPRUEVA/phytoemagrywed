@@ -64,8 +64,15 @@ export function storeOrigin(req, configured = '') {
   if (isPublicOrigin(fixed)) return fixed;
   const proto = String(req?.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim() || (req?.socket?.encrypted ? 'https' : 'http');
   const host = String(req?.headers?.['x-forwarded-host'] ?? req?.headers?.host ?? '').split(',')[0].trim();
-  const candidate = host ? `${proto}://${host}` : '';
-  return isPublicOrigin(candidate) ? candidate : '';
+  /*
+   * HTTPS SIEMPRE al derivar el host de la petición: en producción el TLS lo
+   * termina Traefik y nginx reenvía `http`, así que un canonical/ sitemap http
+   * sería un error. (Pasó de verdad cuando el panel borró la variable.)
+   */
+  const candidate = host ? `https://${host.replace(/^https?:\/\//, '')}` : '';
+  if (isPublicOrigin(candidate)) return candidate;
+  const local = host ? `${proto}://${host}` : '';
+  return isPublicOrigin(local) ? local : '';
 }
 
 export const productPath = (id) => `/store/p/${encodeURIComponent(String(id))}`;
@@ -291,7 +298,7 @@ export function renderStoreShell({ html = '', origin = '', indexable = false, pr
   const allowIndex = indexable === true && Boolean(publicOrigin);
 
   const links = products
-    .filter((product) => product?.id && product?.name)
+    .filter((product) => isSitemapEligible(product))
     .slice(0, 60)
     .map((product) => `      <li><a href="${escapeHtml(productCanonical(publicOrigin, product.id))}">${escapeHtml(product.name)}</a></li>`)
     .join('\n');
@@ -310,7 +317,7 @@ export function renderStoreShell({ html = '', origin = '', indexable = false, pr
     .join('\n    ');
 
   const noscript = links
-    ? `<noscript><nav aria-label="Productos publicados"><h2>Productos publicados</h2><ul>\n${links}\n    </ul></nav></noscript>`
+    ? `<noscript><nav aria-label="Productos publicados"><h2>Productos disponibles</h2><ul>\n${links}\n    </ul><p><a href="${escapeHtml(`${publicOrigin}/store/catalogo`)}">Ver el catálogo completo</a></p></nav></noscript>`
     : '';
 
   let output = String(html);
@@ -327,8 +334,51 @@ export function renderStoreShell({ html = '', origin = '', indexable = false, pr
 }
 
 /**
- * Sitemap con SOLO artículos publicados y activos.
- * Devuelve la lista de URLs incluidas (para poder comprobarla en UAT).
+ * Elegibilidad para el sitemap: publicado + activo + no archivado (ya filtrado
+ * por el catálogo) + disponibilidad POSITIVA confirmada. Un artículo agotado o
+ * «bajo pedido» conserva su página, pero NO entra al sitemap.
+ * @param {any} product
+ */
+export const isSitemapEligible = (product) =>
+  Boolean(
+    product?.id &&
+      product?.name &&
+      product.active !== false &&
+      product.purchaseable === true &&
+      product.availabilityState === 'AVAILABLE_NOW',
+  );
+
+/**
+ * Catálogo rastreable: HTML plano con enlaces reales a cada artículo vendible.
+ * Existe para que Google descubra todo el catálogo sin depender del buscador
+ * JavaScript de la PWA, y para que el catálogo pueda crecer sin límite.
+ */
+export function renderCatalogPage({ origin = '', indexable = false, products = [], siteName = 'FULLTECH Store' }) {
+  const base = cleanOrigin(origin);
+  const publicOrigin = isPublicOrigin(base) ? base : '';
+  const canonical = publicOrigin ? `${publicOrigin}/store/catalogo` : '';
+  const allowIndex = indexable === true && Boolean(publicOrigin);
+  const eligible = products.filter((product) => isSitemapEligible(product));
+  const title = `Catálogo de productos · ${siteName}`;
+  const description = 'Todos los productos disponibles para entrega en República Dominicana, con precio en pesos dominicanos (DOP).';
+  const items = eligible
+    .map((product) => {
+      const price = money(product.price, product.currency);
+      return `<li><a href="${escapeHtml(productCanonical(publicOrigin, product.id))}">${escapeHtml(product.name)}</a>${price ? ` — <span class="price">${escapeHtml(price)}</span>` : ''}</li>`;
+    })
+    .join('\n      ');
+  const body = `<nav class="crumbs" aria-label="Ruta de navegación"><a href="/store/">Inicio</a> › <span aria-current="page">Catálogo</span></nav>
+<main>
+<h1>Catálogo de productos</h1>
+<p>Productos disponibles para entrega en República Dominicana. Precios en pesos dominicanos (DOP).</p>
+${eligible.length ? `<ul class="sitemap-list">\n      ${items}\n</ul>` : '<p>No hay productos disponibles en este momento.</p>'}
+</main>`;
+  const html = pageShell({ title, description, canonical, indexable: allowIndex, siteName, body });
+  return { html, canonical, indexable: allowIndex, count: eligible.length };
+}
+
+/**
+ * Sitemap: portada, catálogo rastreable y SOLO artículos vendibles.
  * Sin un origen público válido devuelve `xml: null`: NUNCA se publica un sitemap
  * con hosts internos ni con URLs relativas.
  */
@@ -336,11 +386,14 @@ export function renderSitemap({ origin, products = [] }) {
   const base = cleanOrigin(origin);
   if (!isPublicOrigin(base)) return { xml: null, urls: [], included: [] };
   const seen = new Set();
-  const entries = [{ loc: `${base}/store/`, changefreq: 'daily', priority: '1.0', lastmod: '' }];
-  seen.add(entries[0].loc);
+  const entries = [
+    { loc: `${base}/store/`, changefreq: 'daily', priority: '1.0', lastmod: '' },
+    { loc: `${base}/store/catalogo`, changefreq: 'daily', priority: '0.9', lastmod: '' },
+  ];
+  entries.forEach((entry) => seen.add(entry.loc));
   const included = [];
   const sorted = [...products]
-    .filter((product) => product?.id && product?.name)
+    .filter((product) => isSitemapEligible(product))
     .sort((a, b) => String(a.id).localeCompare(String(b.id), 'en'));
   for (const product of sorted) {
     const loc = productCanonical(base, product.id);

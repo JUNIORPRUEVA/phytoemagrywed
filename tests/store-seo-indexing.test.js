@@ -26,6 +26,7 @@ const product = (over = {}) => ({
   price: 1250,
   currency: 'DOP',
   availabilityState: 'AVAILABLE_NOW',
+  purchaseable: true,
   shortDescription: 'Presentación de 5 cápsulas.',
   description: 'Presentación de 5 cápsulas con envío a todo el país.',
   imageUrl: '/api/store/products/capsules_5/image',
@@ -70,6 +71,7 @@ describe('Sitemap', () => {
     });
     expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
     expect(urls[0]).toBe(`${ORIGIN}/store/`);
+    expect(urls[1]).toBe(`${ORIGIN}/store/catalogo`);
     expect(new Set(urls).size).toBe(urls.length);
     expect(urls).toContain(`${ORIGIN}/store/p/capsules_10`);
     expect(urls.some((url) => url.includes('easypanel.host'))).toBe(false);
@@ -78,6 +80,24 @@ describe('Sitemap', () => {
     /* Determinista: mismo resultado con los productos en otro orden. */
     const other = renderSitemap({ origin: ORIGIN, products: [product({ id: 'capsules_10' }), product()] });
     expect(other.urls).toEqual(urls);
+  });
+
+  it('excluye agotados y bajo pedido, y no los borra del catálogo', () => {
+    const { urls, included } = renderSitemap({
+      origin: ORIGIN,
+      products: [
+        product({ id: 'ok' }),
+        product({ id: 'agotado', availabilityState: 'UNAVAILABLE', purchaseable: false }),
+        product({ id: 'bajo-pedido', availabilityState: 'ON_REQUEST', purchaseable: false }),
+        product({ id: 'dudoso', availabilityState: 'AVAILABLE_NOW', purchaseable: false }),
+        product({ id: 'inactivo', purchaseable: true, availabilityState: 'AVAILABLE_NOW', active: false }),
+      ],
+    });
+    expect(included).toEqual(['ok']);
+    expect(urls).toContain(`${ORIGIN}/store/p/ok`);
+    expect(urls).not.toContain(`${ORIGIN}/store/p/agotado`);
+    expect(urls).not.toContain(`${ORIGIN}/store/p/bajo-pedido`);
+    expect(urls).not.toContain(`${ORIGIN}/store/p/dudoso`);
   });
 
   it('no publica un sitemap con host interno ni con lista vacía inválida', () => {

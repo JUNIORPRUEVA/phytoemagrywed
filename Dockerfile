@@ -269,6 +269,12 @@ http {
             proxy_set_header Host $host;
             proxy_set_header X-Forwarded-Proto $scheme;
         }
+        location = /store/catalogo {
+            proxy_pass http://127.0.0.1:8787;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
         location ^~ /store/p/ {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
