@@ -727,11 +727,47 @@
     chevron: svg('<path d="M9.6 5.4l6.6 6.6-6.6 6.6"/>'),
   };
 
-  /** Pinta los iconos declarados en el HTML (`data-icon="..."`). */
+  /**
+   * Pinta los iconos declarados en el HTML (`data-icon="..."`).
+   *
+   * Dos familias, las mismas que usa el marcado:
+   *   `img:nombre` → la imagen configurada en `/admin/assets/icons/ui/nombre.png`
+   *   otra clave   → el dibujo vectorial de `ICONS`
+   *
+   * Antes solo se miraban los vectoriales, así que TODOS los `img:` del menú
+   * (Hoy, Chats, Pedidos, Clientes, Ventas…) se quedaban en blanco: el hueco
+   * vacío y ni un error de red que lo delatara.
+   */
   function paintIcons(root = document) {
     $$('[data-icon]', root).forEach((slot) => {
-      const art = ICONS[slot.dataset.icon];
-      if (art) slot.innerHTML = art;
+      const clave = String(slot.dataset.icon ?? '');
+      const art = ICONS[clave];
+      if (art) {
+        if (slot.dataset.iconPainted !== clave) {
+          slot.innerHTML = art;
+          slot.dataset.iconPainted = clave;
+        }
+        return;
+      }
+      if (!clave.startsWith('img:')) return;
+      const nombre = clave.slice(4).replace(/[^a-z0-9_-]/gi, '');
+      if (!nombre) return;
+      const src = `/admin/assets/icons/ui/${nombre}.png`;
+      const actual = slot.firstElementChild;
+      if (actual?.tagName === 'IMG' && actual.getAttribute('src') === src) return;
+      const img = document.createElement('img');
+      img.className = 'app-icon';
+      img.src = src;
+      img.alt = '';
+      img.decoding = 'async';
+      /* Si el archivo no está se anota y el hueco queda vacío, sin romper la fila. */
+      img.addEventListener('error', () => {
+        slot.dataset.iconMissing = clave;
+        img.remove();
+      });
+      slot.replaceChildren(img);
+      delete slot.dataset.iconMissing;
+      slot.dataset.iconPainted = clave;
     });
   }
 

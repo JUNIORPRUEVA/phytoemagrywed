@@ -395,3 +395,42 @@ Capturas: `docs/capturas/equipo-agentes-{escritorio,movil}-{light,dark}.png`,
 `equipo-agentes-dos-listones-antes.png` (uno de alta y el otro pendiente),
 `equipo-agentes-dos-listones.png` (los dos dados de alta),
 `equipo-agentes-oficina-supervisor.png` y `equipo-agentes-supervisor-pantalla.png`.
+
+---
+
+# 16. Los iconos del menú no se veían (2026-10-21)
+
+## 16.1 La causa
+
+El marcado declara los iconos del menú de dos formas:
+
+```html
+<span class="drawer__icon" data-icon="img:sun"></span>      <!-- la imagen configurada -->
+<span class="drawer__icon" data-icon="gear"></span>         <!-- un trazo vectorial -->
+```
+
+`paintIcons()` (en `app.js`) solo miraba el mapa de **vectoriales** (`ICONS`), así que las claves
+`img:sun`, `img:orders`, `img:cart`… no existían y el hueco se quedaba **vacío**. No había ningún
+error de red que lo delatara (el PNG ni se pedía): por eso «no cargan y no se ve por qué».
+
+## 16.2 El arreglo
+
+`paintIcons()` ahora atiende las dos familias:
+
+- `img:nombre` → `<img class="app-icon" src="/admin/assets/icons/ui/nombre.png">` (el estilo
+  `.drawer__icon .app-icon` ya existía con 20×20).
+- cualquier otra clave → el trazo vectorial de `ICONS`.
+
+Si un PNG faltara, se anota en el hueco (`data-icon-missing`) y la fila no se rompe. Y como los 18
+iconos de `assets/icons/ui/*.png` ya están en la lista `SHELL` del service worker, **se ven también
+sin conexión**: comprobado bloqueando las peticiones de `/assets/icons/ui/**` y recargando, los
+iconos siguen saliendo de la caché.
+
+## 16.3 Para verlo en un aparato que ya tenía la app
+
+El `app.js` cambió, así que se publicó con URL nueva (`app.js?v=premium-35`) y se subió la versión
+del service worker a `crm-v256-iconos-menu-20261021`. En el panel: abrir y pulsar **Actualizar** en
+la barra; si no aparece, **Ajustes → Buscar actualización** (o Ctrl+F5 en escritorio).
+
+Capturas: `docs/capturas/menu-iconos-escritorio.png`, `menu-iconos-movil-oscuro.png` y
+`menu-iconos-sin-red.png` (con las peticiones de los PNG bloqueadas).
