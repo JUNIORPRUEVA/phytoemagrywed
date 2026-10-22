@@ -61,12 +61,22 @@ export const COMMERCIAL_STATES = Object.freeze([
 /** Estados que solo puede fijar una persona. */
 export const MANUAL_COMMERCIAL_STATES = Object.freeze(['INTERESADO', 'PERDIDO']);
 
-export const CUSTOMER_STAGES = Object.freeze(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'INACTIVE']);
+export const CUSTOMER_STAGES = Object.freeze(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'REPEAT_CUSTOMER', 'INACTIVE']);
+
+/**
+ * LAS CUATRO ETAPAS DEL EMBUDO (las que ve el equipo).
+ *
+ * `INACTIVE` sigue existiendo SOLO por compatibilidad con decisiones humanas
+ * antiguas: no se ofrece en los filtros principales ni se aplica sola. Nunca se
+ * borra una etiqueta histórica.
+ */
+export const LIFECYCLE_STAGES = Object.freeze(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'REPEAT_CUSTOMER']);
 
 export const CUSTOMER_STAGE_LABELS = Object.freeze({
   PROSPECT: 'Prospecto',
   INTERESTED: 'Interesado',
   CUSTOMER: 'Cliente',
+  REPEAT_CUSTOMER: 'Recompra',
   INACTIVE: 'Inactivo',
 });
 
@@ -84,6 +94,19 @@ export const COMMERCIAL_STATE_LABELS = Object.freeze({
 
 /** Estados de un pedido cerrado (no piden trabajo). */
 const ORDER_CLOSED = ['entregado', 'cancelado', 'perdido'];
+
+/**
+ * Filtros de etapa de la bandeja → etapa real.
+ *
+ * «Clientes» se mantiene con su significado histórico (alguien con compra
+ * entregada, Recompras incluidas); el resto son etapas exactas.
+ */
+const STAGE_FILTERS = Object.freeze({
+  prospectos: 'PROSPECT',
+  interesados: 'INTERESTED',
+  recompra: 'REPEAT_CUSTOMER',
+  inactivos: 'INACTIVE',
+});
 
 /**
  * Deriva el estado comercial a partir de los hechos. Función PURA.
@@ -114,27 +137,165 @@ function normalizeCustomerStage(value) {
   return CUSTOMER_STAGES.includes(clean) ? clean : null;
 }
 
+/** Texto comparable: minúsculas, sin acentos y sin signos. */
+function plegar(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s¿?]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/*
+ * INTERÉS COMERCIAL — REGLAS DETERMINISTAS (sin IA, sin coste).
+ *
+ * Decide si un mensaje del cliente es EVIDENCIA fiable de interés por un
+ * producto. Es deliberadamente conservador: ante la duda NO marca interés (un
+ * prospecto mal ascendido ensucia los informes y engaña al vendedor), y lo que
+ * nunca puede hacer es degradar a alguien que ya compró: eso lo decide
+ * `resolveCustomerStage` mirando los pedidos, no los mensajes.
+ *
+ * Orden de comprobación (el primero que casa manda):
+ *   1. soporte de un pedido («¿dónde está mi pedido?») → NO es interés
+ *   2. negación («no me interesa», «no gracias»)       → NO es interés
+ *   3. intención explícita de compra                    → SÍ
+ *   4. precio de un producto                            → SÍ
+ *   5. disponibilidad de un producto                    → SÍ
+ *   6. mención concreta de producto o presentación      → SÍ
+ *   7. saludo, cortesía o texto ambiguo                 → NO (posible revisión)
+ */
+const SOPORTE_PEDIDO = /\b(donde\s+esta|donde\s+va|no\s+ha\s+llegado|no\s+lleg[oó]|cuando\s+lleg|reembolso|devolucion|cambiar\s+la\s+direccion|mi\s+pedido|el\s+pedido\s+que)\b/;
+const NEGACION = /\b(no\s+me\s+interesa|no\s+quiero|no\s+gracias|no\s+por\s+ahora|no\s+estoy\s+interesad|no\s+necesito)\b/;
+const INTENCION_COMPRA = /\b(quiero\s+(comprar|pedir|ordenar|apartar|reservar|llevar)|lo\s+quiero|me\s+interesa|me\s+lo\s+llevo|hacer\s+un\s+pedido|voy\s+a\s+comprar|apartame|reservame|mandame|enviame\s+(uno|dos|tres))\b/;
+const PRECIO = /\b(precio|cuanto\s+(cuesta|cuestan|vale|valen|es|sale)|a\s+como\s+(esta|sale)|tarifa|precios)\b/;
+const DISPONIBILIDAD = /\b(disponible|disponibilidad|tienen|tienes|hay\s+stock|queda|quedan|en\s+stock)\b/;
+const PRODUCTO = /\b(producto|productos|frasco|frascos|capsula|capsulas|phytoemagry|phyto|tratamiento|suplemento|pastilla|pastillas|unidad|unidades)\b/;
+const PRESENTACION = /\b(\d{1,3})\s*(capsulas|capsula|unidades|frasco)\b/;
+const CORTESIA = /\b(gracias|ok|okay|dale|listo|perfecto|buenas|hola|saludos|buenos\s+dias|buenas\s+tardes|buenas\s+noches|de\s+acuerdo|entiendo)\b/;
+
 /**
- * Nueva etapa compatible del cliente.
+ * ¿Este mensaje es evidencia fiable de interés comercial?
  *
- * Regla CUSTOMER documentada:
- * una compra real es un pedido `order_intent` con estado completado de negocio
- * (`entregado`).
- * Es la misma fuente de verdad que `totalsFrom().total_purchases`,
- * `has_purchase` en la bandeja y los reportes de ventas; un pedido creado,
- * confirmado, cancelado o perdido NO convierte automáticamente al cliente.
+ * @param {{ text?: string, type?: string }} input
+ * @returns {{ interested: boolean, reason: string, confidence: 'alta'|'media'|'baja', review?: boolean }}
+ */
+export function classifyInterest(input = {}) {
+  if (input.type && String(input.type) !== 'text') return { interested: false, reason: 'no_texto', confidence: 'baja' };
+  const texto = plegar(input.text);
+  if (!texto) return { interested: false, reason: 'sin_texto', confidence: 'baja' };
+  if (SOPORTE_PEDIDO.test(texto)) return { interested: false, reason: 'soporte_pedido', confidence: 'alta' };
+  if (NEGACION.test(texto)) return { interested: false, reason: 'negacion', confidence: 'alta' };
+  if (INTENCION_COMPRA.test(texto)) return { interested: true, reason: 'intencion_compra', confidence: 'alta' };
+  if (PRECIO.test(texto) && PRODUCTO.test(texto)) return { interested: true, reason: 'precio_producto', confidence: 'alta' };
+  if (PRECIO.test(texto)) return { interested: true, reason: 'pregunta_precio', confidence: 'media' };
+  if (DISPONIBILIDAD.test(texto) && PRODUCTO.test(texto)) return { interested: true, reason: 'disponibilidad', confidence: 'alta' };
+  if (PRODUCTO.test(texto) && PRESENTACION.test(texto)) return { interested: true, reason: 'producto_concreto', confidence: 'alta' };
+  if (PRODUCTO.test(texto) && /\b(pregunta|informacion|info|detalle|sirve|funciona|recomienda)\b/.test(texto)) {
+    return { interested: true, reason: 'consulta_producto', confidence: 'media' };
+  }
+  if (CORTESIA.test(texto) || texto.length <= 12) return { interested: false, reason: 'cortesia', confidence: 'alta' };
+  /*
+   * Sin señal clara. Si el texto parece comercial (pregunta abierta, palabras
+   * sueltas de catálogo) se deja marcado para que una persona lo mire; la etapa
+   * NO cambia.
+   */
+  const dudoso = /\b(cuanto|que|como|tienen|hay|sirve|para|sirve\s+para)\b/.test(texto) || /\?/.test(String(input.text ?? ''));
+  return { interested: false, reason: dudoso ? 'ambiguo' : 'sin_evidencia', confidence: 'baja', review: dudoso };
+}
+
+/** Evidencia de interés guardada en la ficha del cliente (o null).
  *
- * INTERESTED e INACTIVE son manuales durante esta transición.
+ * `interest_ignored_until` es la marca de SUPERSESIÓN: cuando una persona corrige
+ * la etapa a mano (por ejemplo, Interesado → Prospecto porque la clasificación
+ * automática se equivocó), la evidencia anterior a esa corrección deja de contar.
+ * Así el mismo mensaje viejo no vuelve a subir al cliente en el acto.
+ */
+export function interestEvidence(customer) {
+  const at = customer?.interest_at ?? null;
+  if (!at) return null;
+  const ignoradoHasta = customer?.interest_ignored_until ?? null;
+  if (ignoradoHasta && String(at) <= String(ignoradoHasta)) return null;
+  return {
+    at,
+    reason: customer.interest_reason ?? 'mensaje',
+    source: customer.interest_source ?? 'message',
+    message_id: customer.interest_message_id ?? null,
+    confidence: customer.interest_confidence ?? null,
+  };
+}
+
+/**
+ * ETAPA DEL CLIENTE — regla única y determinista.
+ *
+ *   1. ≥2 compras entregadas distintas → RECOMPRA
+ *   2. 1 compra entregada              → CLIENTE
+ *   3. pedido abierto (no cancelado)    → INTERESADO
+ *   4. evidencia de interés por mensaje → INTERESADO
+ *   5. etiqueta manual (INTERESADO / INACTIVO histórico) → esa
+ *   6. nada                             → PROSPECTO
+ *
+ * Nunca se baja a alguien que compró por inactividad, por archivar el chat ni
+ * por un mensaje de soporte: los pedidos entregados mandan siempre.
  */
 export function resolveCustomerStage(input = {}) {
   const purchases = input.purchases ?? [];
   const totals = input.totals ?? { total_purchases: purchases.filter((row) => isCompletedPurchaseStatus(row.status)).length };
-  if (Number(totals.total_purchases) > 0) {
-    return { stage: 'CUSTOMER', source: 'delivered_purchase', reason: 'pedido_entregado' };
+  const completadas = Number(totals.total_purchases ?? 0);
+  if (completadas >= 2) {
+    return {
+      stage: 'REPEAT_CUSTOMER',
+      source: 'delivered_purchases',
+      reason: 'dos_o_mas_pedidos_entregados',
+      evidence: { pedidos_entregados: completadas },
+    };
+  }
+  if (completadas === 1) {
+    return {
+      stage: 'CUSTOMER',
+      source: 'delivered_purchase',
+      reason: 'pedido_entregado',
+      evidence: { pedidos_entregados: 1, ultima_compra: totals.last_purchase_at ?? null },
+    };
+  }
+  const abiertos = purchases.filter(
+    (row) => row.type === 'order_intent' && !['entregado', 'cancelado', 'perdido'].includes(String(row.status ?? '')),
+  );
+  if (abiertos.length) {
+    return {
+      stage: 'INTERESTED',
+      source: 'order',
+      reason: 'pedido_creado',
+      evidence: { pedido: abiertos[0]?.order_number ?? abiertos[0]?.id ?? null, estado: abiertos[0]?.status ?? null },
+    };
   }
   const manual = normalizeCustomerStage(input.customer?.customer_stage_manual);
-  if (manual) return { stage: manual, source: 'manual', reason: `manual:${manual}` };
-  return { stage: 'PROSPECT', source: 'default', reason: 'sin_compra_entregada' };
+  const manualAt = input.customer?.customer_stage_manual_at ?? null;
+  const interes = interestEvidence(input.customer);
+  /*
+   * PRECEDENCIA ENTRE LA CORRECCIÓN HUMANA Y LA EVIDENCIA AUTOMÁTICA.
+   *
+   * Una decisión humana MANDA sobre la evidencia que existía CUANDO se tomó: si
+   * alguien corrige «Interesado → Prospecto», el mismo mensaje antiguo no puede
+   * devolverlo a Interesado al instante (defecto real corregido). Pero no la
+   * bloquea para siempre: un mensaje nuevo con interés real (posterior a la
+   * corrección) sí vuelve a subirlo, porque la evidencia es más reciente.
+   */
+  const manualVigente = Boolean(manual) && (!interes || !manualAt || String(interes.at) <= String(manualAt));
+  if (manual && manualVigente) {
+    return { stage: manual, source: 'manual', reason: `manual:${manual}`, evidence: { manual_at: manualAt } };
+  }
+  if (interes) {
+    return {
+      stage: 'INTERESTED',
+      source: interes.source,
+      reason: `interes:${interes.reason}`,
+      evidence: interes,
+    };
+  }
+  if (manual) return { stage: manual, source: 'manual', reason: `manual:${manual}`, evidence: { manual_at: manualAt } };
+  return { stage: 'PROSPECT', source: 'default', reason: 'sin_compra_ni_interes' };
 }
 
 function newId(prefix) {
@@ -385,20 +546,35 @@ export function createCustomerService(deps) {
       followupsByCustomer.set(row.customer_id, list);
     }
     const messagesByConversation = new Map();
+    /*
+     * ÍNDICE DE BÚSQUEDA (acotado).
+     *
+     * La bandeja ya lee los últimos 5.000 mensajes en UNA consulta. Aprovecharlos
+     * para buscar dentro del historial sale gratis: se guardan como mucho 200
+     * cuerpos por conversación (los más recientes, porque vienen en orden
+     * descendente) y solo el texto, sin adjuntos. Así «buscar» nunca hace una
+     * consulta por pulsación ni recorre la base entera.
+     */
+    const messageIndex = new Map();
+    const orderIndex = new Map();
     const inboundCustomers = new Set();
     for (const message of messages) {
-      /*
-       * UN MENSAJE QUITADO DEL CRM NO ES «LO ÚLTIMO QUE SE DIJO».
-       *
-       * Aquí se decide el resumen de la fila en la bandeja y si la conversación
-       * espera respuesta. Si alguien quitó ese mensaje del CRM, no puede seguir
-       * mandando en la lista: se busca el anterior que siga a la vista. El mensaje
-       * no se borra de la base (el cliente lo tiene en su WhatsApp): solo se
-       * aparta de la vista, con el registro de quién lo quitó y cuándo.
-       */
       if (message.deleted_at) continue;
       if (message.direction === 'inbound' && message.customer_id) inboundCustomers.add(message.customer_id);
       if (!messagesByConversation.has(message.conversation_id)) messagesByConversation.set(message.conversation_id, message);
+      const cuerpo = String(message.body ?? '').trim();
+      if (!cuerpo) continue;
+      const lista = messageIndex.get(message.conversation_id) ?? [];
+      if (lista.length >= 200) continue;
+      lista.push({ id: message.id, body: cuerpo, at: message.created_at, direction: message.direction });
+      messageIndex.set(message.conversation_id, lista);
+    }
+    for (const row of items) {
+      if (row.type !== 'order_intent' || !row.customer_id) continue;
+      const referencias = orderIndex.get(row.customer_id) ?? [];
+      const numero = String(row.order_number ?? '').trim();
+      if (numero) referencias.push(numero);
+      orderIndex.set(row.customer_id, referencias);
     }
     const states = new Map();
     const stages = new Map();
@@ -419,7 +595,7 @@ export function createCustomerService(deps) {
     return {
       conversations,
       customers,
-      context: { messagesByConversation, purchasesByCustomer, followupsByCustomer, states, stages, tags },
+      context: { messagesByConversation, purchasesByCustomer, followupsByCustomer, states, stages, tags, messageIndex, orderIndex },
     };
   }
 
@@ -486,6 +662,9 @@ export function createCustomerService(deps) {
         customer_stage: resolved.stage,
         customer_stage_source: resolved.source,
         customer_stage_reason: resolved.reason,
+        customer_stage_evidence: resolved.evidence ?? null,
+        interest_at: row.interest_at ?? null,
+        interest_reason: row.interest_reason ?? null,
         tags: context.tags.get(row.id) ?? [],
       };
     });
@@ -529,6 +708,7 @@ export function createCustomerService(deps) {
       customer_stage: stage.stage,
       customer_stage_source: stage.source,
       customer_stage_reason: stage.reason,
+      customer_stage_evidence: stage.evidence ?? null,
       tags: customer ? context.tags.get(customer.id) ?? [] : [],
       has_purchase: delivered.length > 0,
       last_purchase_at: delivered[0]?.received_at ?? null,
@@ -575,6 +755,7 @@ export function createCustomerService(deps) {
     const visible = rows.filter((row) => !row.deleted_at && !row.empty);
     const active = visible.filter((row) => !row.archived_at);
     const archived = visible.filter((row) => row.archived_at);
+    const porEtapa = (etapa) => active.filter((row) => row.customer_stage === etapa).length;
     return {
       todos: active.length,
       no_leidos: active.filter((row) => Number(row.unread_count) > 0).length,
@@ -585,14 +766,90 @@ export function createCustomerService(deps) {
       sin_asignar: active.filter((row) => !row.assigned_user_id).length,
       archivados: archived.length,
       unread_total: visible.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
+      /* Contadores por ETAPA comercial (la misma que pinta cada fila). */
+      prospectos: porEtapa('PROSPECT'),
+      interesados: porEtapa('INTERESTED'),
+      etapa_clientes: porEtapa('CUSTOMER'),
+      recompra: porEtapa('REPEAT_CUSTOMER'),
+      inactivos: porEtapa('INACTIVE'),
     };
+  }
+
+  /*
+   * PRIORIDAD DE VENTA (determinista y explicable).
+   *
+   * Se calcula solo con hechos que el CRM ya conoce y cada punto dice POR QUÉ:
+   * el panel puede enseñar el motivo, y no hay ninguna «caja negra». No cambia el
+   * orden por defecto (la bandeja sigue por actividad reciente); el usuario tiene
+   * que elegir «Atención» para verlo ordenado así.
+   */
+  function salesPriority(row) {
+    const razones = [];
+    let score = 0;
+    const minutos = row.last_message_at ? Math.max(0, (Date.now() - Date.parse(row.last_message_at)) / 60000) : 0;
+    if (row.status === 'HUMAN_REQUIRED') {
+      score += 45;
+      razones.push('pide una persona');
+    }
+    if (row.awaiting_reply === true) {
+      score += 30;
+      razones.push('espera respuesta');
+      if (Number(row.unread_count) > 0) {
+        score += 15;
+        razones.push('mensaje sin leer');
+      }
+    }
+    if (row.customer_stage === 'INTERESTED') {
+      score += 25;
+      razones.push('interesado');
+    }
+    if (!row.assigned_user_id) {
+      score += 12;
+      razones.push('sin asignar');
+    }
+    if (row.active_order?.status && ['nuevo', 'confirmado'].includes(String(row.active_order.status))) {
+      score += 20;
+      razones.push('pedido por confirmar');
+    }
+    if (row.next_followup && String(row.next_followup.scheduled_at).slice(0, 10) <= dayIn(clock(), timeZone)) {
+      score += 18;
+      razones.push('seguimiento vencido o de hoy');
+    }
+    if (minutos > 60 * 24) {
+      score += 8;
+      razones.push('más de 24 h esperando');
+    }
+    return { score, razones };
+  }
+
+  /** Tokens de una búsqueda: sin acentos, sin signos, todos deben aparecer. */
+  function searchTokens(value) {
+    return plegar(value)
+      .split(' ')
+      .filter((token) => token.length > 1)
+      .slice(0, 8);
+  }
+
+  /** Fragmento legible alrededor de la coincidencia. */
+  function snippetOf(body, tokens) {
+    const texto = String(body ?? '').replace(/\s+/g, ' ').trim();
+    const plegado = plegar(texto);
+    const primero = tokens[0] ?? '';
+    const indice = primero ? plegado.indexOf(primero) : -1;
+    if (indice < 0) return texto.slice(0, 90);
+    const desde = Math.max(0, indice - 28);
+    return `${desde > 0 ? '…' : ''}${texto.slice(desde, desde + 100).trim()}${texto.length > desde + 100 ? '…' : ''}`;
   }
 
   /** Filtros y orden de la bandeja sobre filas YA calculadas. */
   function filterConversationRows(items, options = {}) {
-    const needle = String(options.q ?? '').trim().toLowerCase();
+    const needle = String(options.q ?? '').trim();
+    const tokens = searchTokens(needle);
     const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.from ?? '')) ? String(options.from) : null;
     const toDay = /^\d{4}-\d{2}-\d{2}$/.test(String(options.to ?? '')) ? String(options.to) : null;
+    const stage = STAGE_FILTERS[String(options.stage ?? '')] ?? STAGE_FILTERS[String(options.filter ?? '')] ?? null;
+    const messageIndex = options.messageIndex ?? null;
+    const orderIndex = options.orderIndex ?? null;
     /*
      * BUSCAR ES BUSCAR EN TODAS — también en las archivadas.
      *
@@ -607,7 +864,7 @@ export function createCustomerService(deps) {
      * borra el texto vuelven a mandar tal cual estaban puestos: buscar no los
      * cambia.
      */
-    const buscando = needle.length > 0;
+    const buscando = tokens.length > 0;
     const filtered = items.filter((row) => {
       if (row.deleted_at) return false;
       /*
@@ -625,6 +882,7 @@ export function createCustomerService(deps) {
         }
         if (options.filter === 'no-leidos' && Number(row.unread_count) <= 0) return false;
         if (options.filter === 'pendientes' && row.awaiting_reply !== true) return false;
+        // «Clientes» = compra ENTREGADA (incluye Recompras), como siempre.
         if (options.filter === 'clientes' && row.has_purchase !== true) return false;
         if (options.filter === 'seguimiento' && !row.next_followup) return false;
         if (options.filter === 'mios' && options.currentUserId && row.assigned_user_id !== options.currentUserId) return false;
@@ -635,18 +893,55 @@ export function createCustomerService(deps) {
           if (fromDay && messageDay < fromDay) return false;
           if (toDay && messageDay > toDay) return false;
         }
+        // La etapa comercial se combina con el resto (no las borra).
+        if (stage && row.customer_stage !== stage) return false;
       }
-      if (needle) {
-        const haystack = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone, row.last_message?.body]
+      if (buscando) {
+        const cliente = [row.customer?.name, row.customer?.phone_e164, row.customer?.phone]
           .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        if (!haystack.includes(needle)) return false;
+          .join(' ');
+        let texto = plegar(cliente);
+        let match = null;
+        const cumple = (valor) => tokens.every((token) => valor.includes(token));
+        if (cumple(texto)) {
+          match = { campo: 'cliente', snippet: null, message_id: null, at: row.last_message_at };
+        }
+        if (!match && messageIndex) {
+          for (const mensaje of messageIndex.get(row.id) ?? []) {
+            const cuerpo = plegar(mensaje.body);
+            if (!cumple(cuerpo)) continue;
+            match = {
+              campo: 'mensaje',
+              snippet: snippetOf(mensaje.body, tokens),
+              message_id: mensaje.id,
+              at: mensaje.at,
+              direction: mensaje.direction,
+            };
+            break;
+          }
+        }
+        if (!match && orderIndex) {
+          const referencias = orderIndex.get(row.customer_id) ?? [];
+          const encontrada = referencias.find((numero) => cumple(plegar(numero)));
+          if (encontrada) match = { campo: 'pedido', snippet: encontrada, message_id: null, at: null };
+        }
+        if (!match) return false;
+        row.match = match;
+      } else if (row.match) {
+        delete row.match;
       }
       return true;
     });
+    const prioridad = options.sort === 'priority';
+    if (prioridad) {
+      for (const row of filtered) row.priority = salesPriority(row);
+    }
     const ordered = filtered.sort((a, b) => {
-      if (options.filter === 'pendientes') return compareConversationsRecent(a, b);
+      if (prioridad) {
+        const diferencia = (b.priority?.score ?? 0) - (a.priority?.score ?? 0);
+        if (diferencia) return diferencia;
+        return compareConversationsRecent(a, b);
+      }
       if (options.filter === 'seguimiento') return String(a.next_followup?.scheduled_at ?? '9999').localeCompare(String(b.next_followup?.scheduled_at ?? '9999'));
       if (options.filter === 'clientes' && options.order === 'purchase') return String(b.last_purchase_at ?? '').localeCompare(String(a.last_purchase_at ?? ''));
       return compareConversationsRecent(a, b);
@@ -802,6 +1097,18 @@ export function createCustomerService(deps) {
     async setCustomerStage(customerId, stage, input = {}) {
       const next = normalizeCustomerStage(stage);
       if (!next) return { ok: false, error: 'invalid_stage', stages: CUSTOMER_STAGES };
+      /*
+       * CLIENTE y RECOMPRA son HECHOS, no etiquetas: se derivan de los pedidos
+       * entregados y no se ponen a mano (si no, el informe mentiría).
+       */
+      if (['CUSTOMER', 'REPEAT_CUSTOMER'].includes(next)) {
+        return {
+          ok: false,
+          error: 'not_manual',
+          manual: ['PROSPECT', 'INTERESTED', 'INACTIVE'],
+          message: 'Cliente y Recompra se calculan con los pedidos entregados; no se asignan a mano.',
+        };
+      }
       const current = await db.get('customers', customerId);
       if (!current) return { ok: false, error: 'not_found' };
       const purchases = await purchasesOf(customerId);
@@ -816,8 +1123,25 @@ export function createCustomerService(deps) {
       }
       const before = resolveCustomerStage({ customer: current, purchases, totals });
       const now = new Date().toISOString();
+      /*
+       * IDEMPOTENCIA: pedir dos veces la misma etapa no escribe dos veces en el
+       * historial (un doble toque en el panel no debe ensuciar la traza).
+       */
+      if (current.customer_stage_manual === next && before.stage === next) {
+        return { ok: true, duplicate: true, customer: { ...current, customerStage: before.stage, customer_stage: before.stage }, from: before.stage, to: before.stage, history: null };
+      }
       const updated = await db.update('customers', customerId, {
         customer_stage_manual: next,
+        customer_stage_manual_at: now,
+        customer_stage_manual_by_user_id: input.actor?.id ?? null,
+        customer_stage_manual_by_display_name: input.actor?.display_name ?? null,
+        /*
+         * SUPERSESIÓN: la evidencia de interés anterior a esta corrección deja de
+         * contar. Sin esta marca, corregir «Interesado → Prospecto» no servía de
+         * nada: el mensaje que provocó el interés volvía a subirlo al instante.
+         */
+        interest_ignored_until: now,
+        interest_review: false,
         updated_at: now,
       });
       const after = resolveCustomerStage({ customer: updated, purchases, totals });
@@ -827,13 +1151,15 @@ export function createCustomerService(deps) {
         from_stage: before.stage,
         to_stage: after.stage,
         reason: short(input.reason, 500),
+        source: 'manual',
+        supersedes_interest_until: now,
         changed_by_user_id: input.actor?.id ?? null,
         changed_by_display_name: input.actor?.display_name ?? null,
         timestamp: now,
         created_at: now,
       };
       await db.insert('customer_stage_history', history);
-      return { ok: true, customer: { ...updated, customerStage: after.stage, customer_stage: after.stage }, from: before.stage, to: after.stage, history };
+      return { ok: true, duplicate: false, customer: { ...updated, customerStage: after.stage, customer_stage: after.stage }, from: before.stage, to: after.stage, history };
     },
 
     async clearCustomerStage(customerId, input = {}) {
@@ -842,7 +1168,19 @@ export function createCustomerService(deps) {
       const purchases = await purchasesOf(customerId);
       const before = resolveCustomerStage({ customer: current, purchases, totals: totalsFrom(purchases) });
       const now = new Date().toISOString();
-      const updated = await db.update('customers', customerId, { customer_stage_manual: null, updated_at: now });
+      /*
+       * VOLVER A AUTOMÁTICO también devuelve la voz a la evidencia guardada:
+       * se limpia la supersesión, así que el interés que ya estaba demostrado
+       * vuelve a contar. La evidencia NO se borra nunca.
+       */
+      const updated = await db.update('customers', customerId, {
+        customer_stage_manual: null,
+        customer_stage_manual_at: null,
+        customer_stage_manual_by_user_id: null,
+        customer_stage_manual_by_display_name: null,
+        interest_ignored_until: null,
+        updated_at: now,
+      });
       const after = resolveCustomerStage({ customer: updated, purchases, totals: totalsFrom(purchases) });
       const history = {
         id: newId('csh'),
@@ -850,6 +1188,7 @@ export function createCustomerService(deps) {
         from_stage: before.stage,
         to_stage: after.stage,
         reason: short(input.reason, 500) ?? 'volver_a_automatico',
+        source: 'manual_cleared',
         changed_by_user_id: input.actor?.id ?? null,
         changed_by_display_name: input.actor?.display_name ?? null,
         timestamp: now,
@@ -970,12 +1309,36 @@ export function createCustomerService(deps) {
       return tags.get(customerId) ?? [];
     },
 
+    /**
+     * RECONCILIACIÓN (solo lectura). Compara, cliente por cliente, lo que sale
+     * del cálculo automático con lo que se muestra, y señala las incoherencias
+     * sin tocar nada.
+     *
+     * `calculatedWithoutManual` responde a «qué diría el sistema sin la decisión
+     * humana»; si difiere de `customerStage`, hay una corrección manual vigente
+     * (no es un error, es una decisión: se informa con su motivo y su fecha).
+     */
     async customerStageDryRun(options = {}) {
       const rows = await db.list('customers', { limit: options.limit ?? 1000 });
       const stages = await stagesFor(rows);
       const states = await statesFor(rows);
-      return rows.map((customer) => {
+      const sinManual = new Map();
+      for (const customer of rows) {
+        const purchases = await purchasesOf(customer.id);
+        sinManual.set(
+          customer.id,
+          resolveCustomerStage({
+            /* Sin la decisión humana NI su marca de supersesión: es el cálculo puro. */
+            customer: { ...customer, customer_stage_manual: null, customer_stage_manual_at: null, interest_ignored_until: null },
+            purchases,
+            totals: totalsFrom(purchases),
+          }),
+        );
+      }
+      const report = rows.map((customer) => {
         const resolved = stages.get(customer.id) ?? resolveCustomerStage({ customer, purchases: [] });
+        const automatico = sinManual.get(customer.id) ?? resolved;
+        const interes = interestEvidence(customer);
         return {
           customerId: customer.id,
           name: customer.name ?? null,
@@ -984,9 +1347,18 @@ export function createCustomerService(deps) {
           customerStage: resolved.stage,
           reason: resolved.reason,
           source: resolved.source,
+          calculatedWithoutManual: automatico.stage,
+          manual: customer.customer_stage_manual ?? null,
+          manual_at: customer.customer_stage_manual_at ?? null,
+          purchase_count: (automatico.evidence?.pedidos_entregados ?? 0) || 0,
+          interest_at: interes?.at ?? null,
+          interest_reason: interes?.reason ?? null,
+          interest_superseded: Boolean(customer.interest_ignored_until && customer.interest_at && String(customer.interest_at) <= String(customer.interest_ignored_until)),
           wouldWrite: false,
         };
       });
+      const conflicts = report.filter((row) => row.manual && row.customerStage !== row.calculatedWithoutManual);
+      return { rows: report, conflicts, total: report.length };
     },
 
     update(id, patch) {
@@ -1053,7 +1425,14 @@ export function createCustomerService(deps) {
     async conversationPage(options = {}) {
       const { conversations, customers, context } = await loadInboxData();
       const rows = decorateConversations(conversations, customers, context);
-      return { conversations: filterConversationRows(rows, options), counts: countsFromRows(rows) };
+      return {
+        conversations: filterConversationRows(rows, {
+          ...options,
+          messageIndex: context.messageIndex,
+          orderIndex: context.orderIndex,
+        }),
+        counts: countsFromRows(rows),
+      };
     },
 
     /**
@@ -1065,7 +1444,11 @@ export function createCustomerService(deps) {
       const rows = decorateConversations(conversations, customers, context);
       return {
         customers: decorateCustomerRows(customers, context),
-        conversations: filterConversationRows(rows, options),
+        conversations: filterConversationRows(rows, {
+          ...options,
+          messageIndex: context.messageIndex,
+          orderIndex: context.orderIndex,
+        }),
         counts: countsFromRows(rows),
       };
     },
@@ -1245,7 +1628,20 @@ export function createCustomerService(deps) {
         resolved_at: null,
         resolved_message_id: null,
         resolved_by_user_id: null,
+        /*
+         * REAPERTURA POR MENSAJE DEL CLIENTE (política única y determinista).
+         *
+         * Si el chat estaba finalizado o archivado, el mensaje lo devuelve a la
+         * bandeja: se limpian `archived_at` y `resolved_at` y queda anotado
+         * cuándo y por qué. NO se crea otra conversación ni se pierde nada: se
+         * reutiliza la misma fila (`conversationFor` la busca por cliente) y el
+         * mensaje nuevo entra en el mismo hilo.
+         */
         archived_at: null,
+        archived_reason: null,
+        archived_by_user_id: null,
+        reopened_at: conversation.archived_at || conversation.resolved_at ? now : conversation.reopened_at ?? null,
+        reopen_reason: conversation.archived_at || conversation.resolved_at ? 'inbound_message' : conversation.reopen_reason ?? null,
         status: humanRequest || healthConcern ? 'HUMAN_REQUIRED' : conversation.status ?? 'AUTOMATIC',
         updated_at: now,
       });
@@ -1259,6 +1655,41 @@ export function createCustomerService(deps) {
         customerPatch.automation_state = 'PAUSED';
       } else if (humanRequest || healthConcern) {
         customerPatch.automation_state = 'HUMAN_REQUIRED';
+      }
+      /*
+       * EVIDENCIA DE INTERÉS: se calcula AQUÍ, una sola vez por mensaje, con
+       * reglas deterministas y sin llamar a ningún modelo.
+       *
+       * · Solo se guarda la PRIMERA evidencia (`interest_at` todavía vacío): el
+       *   historial no se reescribe y un mensaje genérico posterior no borra el
+       *   interés ya demostrado.
+       * · Un mensaje ambiguo no cambia la etapa: deja `interest_review` para que
+       *   una persona lo mire.
+       * · Un mensaje de soporte («¿dónde está mi pedido?») no toca nada.
+       * · Si el cliente suspendió el contacto, no se clasifica (privacidad).
+       */
+      const interes = optOut ? { interested: false, reason: 'opt_out' } : classifyInterest({ text: message.body, type: message.type ?? 'text' });
+      /*
+       * LA EVIDENCIA SUPERSEDIDA SE PUEDE REEMPLAZAR.
+       *
+       * Si una persona corrigió la etapa y la evidencia vieja quedó anulada
+       * (`interest_ignored_until`), un mensaje NUEVO con interés real escribe una
+       * evidencia nueva. Es la política de supersesión: la corrección frena el
+       * mensaje antiguo, no bloquea una venta futura.
+       */
+      const evidenciaAnulada =
+        customer.interest_ignored_until && (!customer.interest_at || String(customer.interest_at) <= String(customer.interest_ignored_until));
+      if (interes.interested && (!customer.interest_at || evidenciaAnulada)) {
+        customerPatch.interest_at = messageAt;
+        customerPatch.interest_reason = interes.reason;
+        customerPatch.interest_source = 'message';
+        customerPatch.interest_message_id = doc.id;
+        customerPatch.interest_confidence = interes.confidence ?? null;
+        customerPatch.interest_review = false;
+        if (evidenciaAnulada) customerPatch.interest_reopened_at = now;
+      } else if (interes.review === true && !customer.interest_at && customer.interest_review !== true) {
+        customerPatch.interest_review = true;
+        customerPatch.interest_review_reason = interes.reason;
       }
       await db.update('customers', customer.id, customerPatch);
 
@@ -1492,10 +1923,25 @@ export function createCustomerService(deps) {
       return { ok: true, duplicate: false, message: updated };
     },
 
-    async archiveConversation(conversationId, archived = true) {
+    /**
+     * ARCHIVAR ES UNA DECISIÓN HUMANA, Y SE ANOTA.
+     *
+     * No hay ningún proceso que llame a esto solo: la única entrada es la
+     * acción explícita del panel (menú «⋯» o panel de selección), que exige
+     * conversación autorizada y deja su rastro en la auditoría. Aquí se guarda
+     * además QUIÉN lo hizo y POR QUÉ, para poder reconstruirlo sin depender del
+     * registro de auditoría.
+     */
+    async archiveConversation(conversationId, archived = true, meta = {}) {
+      const now = new Date().toISOString();
       return db.update('conversations', conversationId, {
-        archived_at: archived ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
+        archived_at: archived ? now : null,
+        archived_reason: archived ? 'manual' : null,
+        archived_by_user_id: archived ? meta.byUserId ?? null : null,
+        archived_by_display_name_snapshot: archived ? meta.byDisplayName ?? null : null,
+        unarchived_at: archived ? null : now,
+        unarchived_by_user_id: archived ? null : meta.byUserId ?? null,
+        updated_at: now,
       });
     },
 
@@ -1522,11 +1968,20 @@ export function createCustomerService(deps) {
          * «Archivados» (se puede reabrir o desarchivar). No borra nada: el hilo y
          * el contador se conservan. Al reabrir se desarchiva.
          *
+         * Es una ACCIÓN HUMANA y confirmada (el menú del chat lo dice: «Sale de
+         * la bandeja y queda archivada»). Ningún reloj, webhook, cambio de
+         * asignación ni proceso de fondo entra por aquí: si algún día se añade
+         * uno, estaría rompiendo esta regla.
+         *
          * Si el cliente vuelve a escribir, `recordInbound` limpia `archived_at` y
          * `resolved_at`, así que el chat reaparece en la bandeja en la primera
          * fila (la lista va por `last_message_at` descendente).
          */
         archived_at: resolved ? now : null,
+        archived_reason: resolved ? 'finalize' : null,
+        archived_by_user_id: resolved ? userId : null,
+        unarchived_at: resolved ? null : now,
+        unarchived_by_user_id: resolved ? null : userId,
         updated_at: now,
       });
     },
@@ -1639,6 +2094,9 @@ export function createCustomerService(deps) {
           customer_stage: stage.stage,
           customer_stage_source: stage.source,
           customer_stage_reason: stage.reason,
+          customer_stage_evidence: stage.evidence ?? null,
+          interest_at: customer.interest_at ?? null,
+          interest_reason: customer.interest_reason ?? null,
           tags,
         },
         purchases,
@@ -1657,6 +2115,9 @@ export function createCustomerService(deps) {
         customer_stage: stage.stage,
         customer_stage_source: stage.source,
         customer_stage_reason: stage.reason,
+        customer_stage_evidence: stage.evidence ?? null,
+        interest_at: customer.interest_at ?? null,
+        interest_reason: customer.interest_reason ?? null,
         tags,
         stageHistory: await this.stageHistory(customerId),
         canSendFreeText: this.canSendFreeText(conversation),

@@ -161,11 +161,20 @@ const state = {
   office: null,
   officeKey: '',
   officeError: '',
-  officeTab: 'tickets',
-  /* Agente de Seguimiento */
+  officeTab: 'chat',
+  /*
+   * CONVERSACIÓN CON EL AGENTE (pedirle cuentas de su trabajo).
+   * Solo se guarda en memoria: el servidor responde leyendo sus registros y no
+   * escribe nada, así que no hay nada que persistir aquí.
+   */
+  officeChat: [],
+  officeAskBusy: false,  /* Agente de Seguimiento */
+  /* Consumo del proveedor IA de hoy (solo se pide a administración). */
+  aiUsage: null,
   workTab: 'chat',
   workChat: [],
   workBusy: '',
+  workCommercial: null,
   returnTo: null,
 };
 
@@ -377,11 +386,154 @@ const initialsOf = (name) => {
 };
 
 const OFFICE_TABS = [
+  ['chat', 'Conversación'],
   ['tickets', 'Asignados'],
   ['activity', 'Actividad'],
   ['tools', 'Herramientas'],
   ['delegations', 'Ayuda'],
 ];
+
+/**
+ * CABECERA COMPACTA del agente.
+ *
+ * Una sola línea con lo necesario para saber quién es y cómo está: volver, cara,
+ * nombre, especialidad y estado real. Antes había una tarjeta grande que
+ * repetía nombre, descripción, estadísticas y un botón de «pantalla completa»
+ * que duplicaba la navegación. Aquí solo queda la acción que no existe en otro
+ * sitio (la pantalla propia del supervisor).
+ */
+function officeHeadHtml({ agent, actions = '' }) {
+  return `<header class="centro-off__head">
+    <button class="centro-back" data-centro-nav="agents" type="button" aria-label="Volver a los agentes"><span aria-hidden="true">←</span></button>
+    <span class="centro-ava" data-state="${esc(agent.state)}" aria-hidden="true">${esc(initialsOf(agent.name))}</span>
+    <span class="centro-off__id">
+      <strong class="centro-off__name">${esc(agent.name)}</strong>
+      <span class="centro-off__role">${esc(agent.role ?? 'Agente interno')}${agent.planner === 'llm' ? ' · con modelo' : ' · pauta determinista'}</span>
+    </span>
+    <span class="centro-state" data-state="${esc(agent.state)}"><i aria-hidden="true"></i>${esc(STATE_LABELS[agent.state] ?? agent.state)}</span>
+    ${actions ? `<span class="centro-off__actions">${actions}</span>` : ''}
+  </header>`;
+}
+
+/* ------------------------------------------- conversación con un agente */
+
+/*
+ * PREGUNTAS DE UN CLIC. Son las que de verdad se hacen para pedir cuentas; el
+ * campo de escritura sigue libre para lo demás.
+ */
+const AGENT_SUGGESTIONS = [
+  '¿Qué hiciste hoy?',
+  '¿Qué tienes pendiente?',
+  '¿Qué necesitas que apruebe?',
+  '¿Qué problemas encontraste?',
+];
+
+/**
+ * TEXTO DEL AGENTE, EN FORMATO SEGURO.
+ *
+ * Todo se escapa primero y después se reconocen párrafos y listas. Nunca se
+ * inyecta HTML del modelo: si devuelve etiquetas, se ven como texto.
+ */
+function agentTextHtml(text) {
+  const lines = String(text ?? '').replace(/\r/g, '').split('\n');
+  const out = [];
+  let list = [];
+  const flush = () => {
+    if (list.length) {
+      out.push(`<ul>${list.join('')}</ul>`);
+      list = [];
+    }
+  };
+  for (const line of lines) {
+    const limpio = line.trim();
+    if (!limpio) {
+      flush();
+      continue;
+    }
+    const item = limpio.match(/^(?:·|-|\*)\s+(.+)$/);
+    if (item) list.push(`<li>${esc(item[1])}</li>`);
+    else {
+      flush();
+      out.push(`<p>${esc(limpio)}</p>`);
+    }
+  }
+  flush();
+  return out.join('') || '<p></p>';
+}
+
+function agentThreadHtml(messages, { agentName, emptyTitle, emptyHint }) {
+  if (!messages.length) {
+    return `<div class="centro-empty centro-empty--soft"><strong>${esc(emptyTitle)}</strong><span>${esc(emptyHint)}</span></div>`;
+  }
+  return messages
+    .map((entry) => {
+      if (entry.role === 'user') {
+        return `<article class="ops-msg is-mine">
+          <p class="ops-msg__who">Tú · ${esc(entry.at)}</p>
+          <div class="ops-msg__bubble">${agentTextHtml(entry.text)}</div>
+        </article>`;
+      }
+      const meta = [entry.model ? esc(entry.model) : '', entry.ms ? `${esc(entry.ms)} ms` : ''].filter(Boolean).join(' · ');
+      return `<article class="ops-msg ops-msg--agent">
+        <p class="ops-msg__who"><span class="ops-chip ops-chip--ai">IA</span> ${esc(agentName)}${meta ? ` · ${meta}` : ''}</p>
+        <div class="ops-msg__bubble">${agentTextHtml(entry.text)}</div>
+        ${entry.proposals?.length ? `<p class="centro-note">${entry.proposals.length} propuesta(s) enviadas a Aprobaciones. Nada se ha creado todavía.</p>` : ''}
+        ${entry.rejected?.length ? `<p class="centro-note">${entry.rejected.length} propuesta(s) descartada(s): ${esc(entry.rejected.map((row) => row.error).join(', '))}</p>` : ''}
+        ${entry.toolsUsed?.length ? `<p class="centro-note">Consultó ${esc(entry.toolsUsed.length)} registro(s): ${esc(entry.toolsUsed.map((row) => row.nombre ?? row.name).join(', '))}.</p>` : ''}
+        ${entry.degraded ? '<p class="centro-note">Sin modelo disponible: es el resumen de sus registros.</p>' : ''}
+      </article>`;
+    })
+    .join('');
+}
+
+function scrollThreadToEnd(id) {
+  /* La pestaña puede haberse cerrado mientras la petición estaba en el aire. */
+  if (!domAlive()) return;
+  const host = document.getElementById(id);
+  if (host) host.scrollTop = host.scrollHeight;
+  /*
+   * Segundo intento en el siguiente ciclo: el texto del agente puede terminar de
+   * acomodarse (fuentes, saltos de línea) DESPUÉS de pintar, y entonces el hilo
+   * queda un poco corto y las sugerencias se ven a medias.
+   */
+  setTimeout(() => {
+    if (!domAlive()) return;
+    const otra = document.getElementById(id);
+    if (otra) otra.scrollTop = otra.scrollHeight;
+  }, 80);
+}
+
+/** Conversación con un agente: hilo + compositor abajo (flex, sin `fixed`). */
+function officeChatHtml(data) {
+  const agent = data.agent ?? {};
+  const busy = state.officeAskBusy === true;
+  /*
+   * El Agente de Seguimiento trabaja con datos comerciales: sin acceso a
+   * seguimientos no se le puede interrogar. El servidor también lo bloquea;
+   * aquí solo se evita ofrecer un botón que iba a responder 403.
+   */
+  const puedePreguntar = !(agent.key === 'followup_agent' && !can('followups.read'));
+  return `<div class="centro-off__body centro-off__body--chat">
+    <div class="centro-thread" id="agent-thread">
+      ${agentThreadHtml(state.officeChat, {
+        agentName: agent.name ?? 'Agente',
+        emptyTitle: `Pregúntale a ${agent.name ?? 'el agente'} por su trabajo`,
+        emptyHint: '«¿Qué hiciste hoy?», «¿qué tienes pendiente?», «¿qué necesitas que apruebe?»',
+      })}
+      <div class="centro-suggests">
+        ${AGENT_SUGGESTIONS.map((texto) => `<button class="centro-chipbtn" data-ask-suggest="${esc(texto)}" type="button" ${puedePreguntar ? '' : 'disabled'}>${esc(texto)}</button>`).join('')}
+      </div>
+    </div>
+    ${
+      puedePreguntar
+        ? `<form class="centro-composer" data-agent-ask="${esc(agent.key)}">
+      <textarea name="message" rows="1" placeholder="Pregúntale por su trabajo…" aria-label="Pregunta para el agente" autocomplete="off"></textarea>
+      <button class="centro-send" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Consultando…' : 'Enviar'}</button>
+    </form>`
+        : '<p class="centro-note">Tu usuario no tiene acceso a la información comercial de este agente.</p>'
+    }
+  </div>`;
+}
 
 const DELEGATION_LABELS = {
   pending: 'Pendiente',
@@ -400,20 +552,19 @@ const STATE_LABELS = {
   paused: 'Desactivado',
 };
 
-/** Armazón del centro: cabecera con la marca, las secciones y las herramientas. */
+/** Armazón del centro: cabecera con la marca y las secciones. */
 function centroShellHtml() {
   return `
     <div class="centro" data-centro-screen="${esc(state.screen)}">
       <header class="centro__top">
         <div class="centro__brand">
           <span class="centro__logo" aria-hidden="true">IA</span>
-          <span class="centro__brandtext"><strong>Centro IA</strong><small>Equipo de agentes</small></span>
+          <span class="centro__brandtext"><strong>Centro IA</strong><small>Tu equipo de asistentes inteligentes</small></span>
         </div>
         <nav class="centro__seg" aria-label="Secciones del Centro IA">
-          <button class="centro__segbtn" data-centro-nav="agents" type="button" aria-current="${state.screen === 'agents'}">Agentes</button>
-          <button class="centro__segbtn" data-centro-nav="tickets" type="button" aria-current="false">Tickets</button>
+          <button class="centro__segbtn" data-centro-nav="agents" type="button" aria-current="${state.screen !== 'tickets'}">Agentes</button>
+          <button class="centro__segbtn" data-centro-nav="tickets" type="button" aria-current="${state.screen === 'tickets'}">Actividad y tickets</button>
         </nav>
-        <div class="centro__tools" id="centro-tools"></div>
       </header>
       <div class="centro__body" id="centro-body"></div>
     </div>`;
@@ -509,10 +660,10 @@ function directoryHtml() {
   if (!state.centro) return '<div class="centro-empty"><strong>Cargando el equipo…</strong></div>';
   const data = state.centro;
   const agents = data.agents ?? [];
-  const totals = data.totals ?? {};
   /* Los agentes que el centro conoce y aún no están dados de alta. */
   const faltan = data.canAdmin ? (data.knownAgents ?? []).filter((entry) => !entry.ready) : [];
   const pendientes = faltan.map(pendingAgentRowHtml).join('');
+  const aprobacionesPendientes = Number(state.pendingApprovalCount ?? 0) || 0;
   const empty = `
     <div class="centro-empty">
       <strong>Todavía no hay agentes</strong>
@@ -523,20 +674,15 @@ function directoryHtml() {
     <section class="centro-dir">
       <div class="centro-dir__head">
         <h2 class="centro-dir__title">Agentes</h2>
-        <button class="centro-link" data-centro-nav="tickets" type="button">Todos los tickets <span aria-hidden="true">→</span></button>
       </div>
-      <ul class="centro-stats">
-        ${centroStatHtml('Agentes', totals.active ?? 0, 'activos')}
-        ${centroStatHtml('Trabajando', totals.working ?? 0, 'ahora')}
-        ${centroStatHtml('Pendientes', totals.pending ?? 0, 'ejecuciones')}
-        ${centroStatHtml('Sin leer', totals.unread ?? 0, 'para agentes')}
-      </ul>
       ${
         agents.length || pendientes
           ? `<ul class="centro-team">${agents.map(agentCardHtml).join('')}${pendientes}</ul>`
           : empty
       }
-      <p class="centro-note">El estado y los contadores salen de las ejecuciones reales de cada agente.</p>
+      ${aprobacionesPendientes > 0 ? `<button class="centro-link centro-dir__approvals" data-ops-approvals type="button">${aprobacionesPendientes} aprobación(es) pendiente(s) <span aria-hidden="true">→</span></button>` : ''}
+      <p class="centro-note">El estado sale de las ejecuciones reales de cada agente.</p>
+      ${aiUsageHtml()}
     </section>`;
 }
 
@@ -558,6 +704,33 @@ async function loadCentro({ silent = false } = {}) {
     state.centroLoading = false;
     renderCentro();
   }
+  /*
+   * CONSUMO DEL MODELO: se pide aparte y sin bloquear. Si falla (o la persona no
+   * es administradora), el Centro IA funciona igual y simplemente no se muestra.
+   */
+  if (!can('admin.full')) return;
+  try {
+    const uso = await api('/api/admin/ops/ai/usage');
+    state.aiUsage = uso?.usage ?? null;
+  } catch {
+    state.aiUsage = null;
+  }
+  renderCentro();
+}
+
+/** Una línea con lo gastado hoy en el modelo. Nunca se presenta como factura. */
+function aiUsageHtml() {
+  const uso = state.aiUsage;
+  if (!uso) return '';
+  const llamadas = Number(uso.calls ?? 0) || 0;
+  const tokens = Number(uso.tokens?.total ?? 0) || 0;
+  const coste = typeof uso.estimatedCostUsd === 'number' ? uso.estimatedCostUsd : null;
+  const presupuesto = typeof uso.budgetUsd === 'number' ? uso.budgetUsd : null;
+  const partes = [`${llamadas} consulta(s) al modelo hoy`, `${tokens.toLocaleString('es-DO')} tokens`];
+  if (coste) partes.push(`~$${coste.toFixed(4)} estimado`);
+  if (presupuesto) partes.push(`de $${presupuesto.toFixed(2)} de presupuesto`);
+  else partes.push(`tope ${Number(uso.dailyCalls ?? 0) || 0} al día`);
+  return `<p class="centro-note centro-note--usage">${esc(partes.join(' · '))}</p>`;
 }
 
 /* ------------------------------------------------------- oficina del agente */
@@ -713,8 +886,14 @@ function officeHtml() {
   if (data.work) return workOfficeHtml(data);
   const agent = data.agent;
   const stats = data.stats ?? {};
-  const alerts = data.alerts?.length
-    ? `<div class="centro-alerts">${data.alerts
+  /*
+   * Solo los avisos que PIDEN algo. El informativo («planificador determinista»)
+   * ya se lee en la línea de especialidad de la cabecera y robaba espacio en el
+   * móvil justo donde tiene que ir la conversación.
+   */
+  const avisos = (data.alerts ?? []).filter((alert) => alert.tone !== 'info');
+  const alerts = avisos.length
+    ? `<div class="centro-alerts">${avisos
         .map((alert) => `<p class="centro-alert" data-tone="${esc(alert.tone)}">${esc(alert.text)}</p>`)
         .join('')}</div>`
     : '';
@@ -722,37 +901,29 @@ function officeHtml() {
     const count = key === 'tickets' ? Number(stats.assigned ?? 0) : key === 'tools' ? Number(stats.tools ?? 0) : key === 'delegations' ? Number(stats.delegations ?? 0) : 0;
     return `<button class="centro-tab" data-centro-office-tab="${key}" type="button" aria-current="${state.officeTab === key}">${esc(label)}${count > 0 ? `<span class="centro-tab__count">${count}</span>` : ''}</button>`;
   }).join('');
-  const body =
-    state.officeTab === 'activity'
-      ? officeActivityHtml(data)
-      : state.officeTab === 'tools'
-        ? officeToolsHtml(data)
-        : state.officeTab === 'delegations'
-          ? officeDelegationsHtml(data)
-          : officeTicketsHtml(data);
+  const chatMode = state.officeTab === 'chat';
+  const body = chatMode
+    ? officeChatHtml(data)
+    : `<div class="centro-off__body">${
+        state.officeTab === 'activity'
+          ? officeActivityHtml(data)
+          : state.officeTab === 'tools'
+            ? officeToolsHtml(data)
+            : state.officeTab === 'delegations'
+              ? officeDelegationsHtml(data)
+              : officeTicketsHtml(data)
+      }</div>`;
+  /* Su pantalla de siempre se abre DESDE aquí: no hay un acceso duplicado. */
+  const actions =
+    agent.key === 'delivery_supervisor'
+      ? '<button class="centro-btn centro-btn--ghost centro-btn--xs" data-centro-nav="supervisor" type="button">Pantalla del supervisor</button>'
+      : '';
   return `
-    <section class="centro-off">
-      <button class="centro-back" data-centro-nav="agents" type="button"><span aria-hidden="true">←</span> Agentes</button>
-
-      <div class="centro-id">
-        <span class="centro-ava centro-ava--lg" data-state="${esc(agent.state)}" aria-hidden="true">${esc(initialsOf(agent.name))}</span>
-        <div class="centro-id__main">
-          <h2 class="centro-id__name">${esc(agent.name)}<span class="centro-state" data-state="${esc(agent.state)}"><i aria-hidden="true"></i>${esc(STATE_LABELS[agent.state] ?? agent.state)}</span></h2>
-          <p class="centro-id__role">${esc(agent.role ?? 'Agente interno')} · v${esc(agent.version)}${agent.planner === 'llm' ? ' · con modelo' : ' · pauta determinista'}</p>
-          ${(agent.responsibilities ?? []).length ? `<ul class="centro-id__resp">${agent.responsibilities.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
-        </div>
-        <div class="centro-id__actions">
-          <span class="centro-meta" data-kind="pending">${esc(stats.pending ?? 0)} en curso</span>
-          <span class="centro-meta" data-kind="unread">${esc(stats.unread ?? 0)} sin leer</span>
-          <!-- Su pantalla de siempre se abre DESDE aquí: en el centro no hay un acceso aparte que lo duplique. -->
-          ${agent.key === 'delivery_supervisor' ? `<button class="centro-btn centro-btn--ghost" data-centro-nav="supervisor" type="button">Pantalla del supervisor</button>` : ''}
-          <button class="centro-btn centro-btn--ghost" data-centro-nav="tickets" type="button">Bandeja completa</button>
-        </div>
-      </div>
-
+    <section class="centro-off${chatMode ? ' centro-off--chat' : ''}">
+      ${officeHeadHtml({ agent, actions })}
       ${alerts}
       <nav class="centro-tabs" aria-label="Secciones del agente">${tabs}</nav>
-      <div class="centro-off__body">${body}</div>
+      ${body}
     </section>`;
 }
 
@@ -773,7 +944,7 @@ function officeHtml() {
  */
 
 const WORK_TABS = [
-  ['chat', 'Conversar'],
+  ['chat', 'Conversación'],
   ['followups', 'Seguimientos'],
   ['scheduled', 'Programados'],
   ['approvals', 'Aprobaciones'],
@@ -814,33 +985,32 @@ function proposalSummary(params = {}) {
   return bits.join(' · ');
 }
 
+/* Preguntas de un clic del agente comercial (las de todos los días). */
+const WORK_SUGGESTIONS = [
+  '¿Qué hiciste hoy?',
+  '¿Qué clientes necesitan seguimiento hoy?',
+  '¿A quién le puedo ofrecer recompra?',
+  '¿Qué pedidos están sin confirmar?',
+];
+
 function workChatHtml() {
-  const rows = state.workChat
-    .map((entry) => {
-      if (entry.role === 'user') {
-        return `<article class="ops-msg is-mine">
-          <p class="ops-msg__who">Tú · ${esc(entry.at)}</p>
-          <div class="ops-msg__bubble">${esc(entry.text).replace(/\n/g, '<br>')}</div>
-        </article>`;
-      }
-      const meta = [entry.model ? esc(entry.model) : '', entry.ms ? `${esc(entry.ms)} ms` : ''].filter(Boolean).join(' · ');
-      return `<article class="ops-msg ops-msg--agent">
-        <p class="ops-msg__who"><span class="ops-chip ops-chip--ai">IA</span> Agente de Seguimiento${meta ? ` · ${meta}` : ''}</p>
-        <div class="ops-msg__bubble">${esc(entry.text).replace(/\n/g, '<br>')}</div>
-        ${entry.proposals?.length ? `<p class="centro-note">${entry.proposals.length} propuesta(s) enviadas a Aprobaciones. Nada se ha creado todavía.</p>` : ''}
-        ${entry.rejected?.length ? `<p class="centro-note">${entry.rejected.length} propuesta(s) descartada(s): ${esc(entry.rejected.map((row) => row.error).join(', '))}</p>` : ''}
-      </article>`;
-    })
-    .join('');
-  return `
-    <div class="centro-chat">
-      ${rows || `<div class="centro-empty centro-empty--soft"><strong>Pregúntame por el trabajo comercial</strong><span>Por ejemplo: «¿qué clientes necesitan seguimiento hoy?» o «prepara un mensaje para recordar la recompra».</span></div>`}
+  const busy = state.workBusy === 'ask';
+  return `<div class="centro-off__body centro-off__body--chat">
+    <div class="centro-thread" id="agent-thread">
+      ${agentThreadHtml(state.workChat, {
+        agentName: 'Agente de Seguimiento',
+        emptyTitle: 'Pregúntame por el trabajo comercial',
+        emptyHint: '«¿qué clientes necesitan seguimiento hoy?», «¿a quién le puedo ofrecer recompra?», «prepara un mensaje para recordar la recompra».',
+      })}
+      <div class="centro-suggests">
+        ${WORK_SUGGESTIONS.map((texto) => `<button class="centro-chipbtn" data-ask-suggest="${esc(texto)}" type="button">${esc(texto)}</button>`).join('')}
+      </div>
     </div>
-    <form class="centro-ask" data-work-ask>
-      <textarea id="work-ask" name="message" rows="2" placeholder="Escribe qué necesitas…" ${state.workBusy ? 'disabled' : ''}></textarea>
-      <button class="centro-btn" type="submit" ${state.workBusy ? 'disabled' : ''}>${state.workBusy ? 'Pensando…' : 'Preguntar'}</button>
+    <form class="centro-composer" data-work-ask>
+      <textarea name="message" rows="1" placeholder="Escribe qué necesitas…" aria-label="Pregunta para el agente" autocomplete="off"></textarea>
+      <button class="centro-send" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Pensando…' : 'Enviar'}</button>
     </form>
-    <p class="centro-note">El agente consulta tus datos reales y solo <strong>propone</strong>. Nada se crea, se reprograma ni se envía sin tu aprobación.</p>`;
+  </div>`;
 }
 
 function workFollowupsHtml(work) {
@@ -997,38 +1167,21 @@ function workOfficeHtml(data) {
             : 0;
     return `<button class="centro-tab" data-work-tab="${key}" type="button" aria-current="${state.workTab === key}">${esc(label)}${count > 0 ? `<span class="centro-tab__count">${count}</span>` : ''}</button>`;
   }).join('');
-  const body =
-    state.workTab === 'followups'
-      ? workFollowupsHtml(work)
-      : state.workTab === 'scheduled'
-        ? workScheduledHtml(work)
-        : state.workTab === 'approvals'
-          ? workApprovalsHtml(work)
-          : workChatHtml(work);
-  const link = state.workTab === 'scheduled' ? 'mensajes' : 'seguimientos';
+  const chatMode = state.workTab === 'chat';
+  const body = chatMode
+    ? workChatHtml()
+    : `<div class="centro-off__body">${
+        state.workTab === 'followups'
+          ? workCommercialHtml() + workFollowupsHtml(work)
+          : state.workTab === 'scheduled'
+            ? workScheduledHtml(work)
+            : workApprovalsHtml(work)
+      }</div>`;
   return `
-    <section class="centro-off">
-      <button class="centro-back" data-centro-nav="agents" type="button"><span aria-hidden="true">←</span> Agentes</button>
-
-      <div class="centro-id">
-        <span class="centro-ava centro-ava--lg" data-state="${esc(agent.state)}" aria-hidden="true">${esc(initialsOf(agent.name))}</span>
-        <div class="centro-id__main">
-          <h2 class="centro-id__name">${esc(agent.name)}<span class="centro-state" data-state="${esc(agent.state)}"><i aria-hidden="true"></i>${esc(STATE_LABELS[agent.state] ?? agent.state)}</span></h2>
-          <p class="centro-id__role">${esc(agent.role ?? 'Seguimientos y mensajes programados')}${agent.planner === 'llm' ? ' · con modelo' : ' · pauta determinista'}</p>
-          <ul class="centro-id__resp">
-            <li>${esc(counts.today)} para hoy</li>
-            <li>${esc(counts.overdue)} vencidos</li>
-            <li>${esc(work.scheduled.pending)} programados</li>
-            <li>${esc(work.proposals.length)} propuestas</li>
-          </ul>
-        </div>
-        <div class="centro-id__actions">
-          <button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-full="${esc(link)}" type="button">Pantalla completa</button>
-        </div>
-      </div>
-
+    <section class="centro-off${chatMode ? ' centro-off--chat' : ''}">
+      ${officeHeadHtml({ agent })}
       <nav class="centro-tabs" aria-label="Secciones del agente">${tabs}</nav>
-      <div class="centro-off__body">${body}</div>
+      ${body}
     </section>`;
 }
 
@@ -1043,7 +1196,7 @@ function renderCentro() {
   document.querySelectorAll('[data-centro-nav]').forEach((button) => {
     const nav = button.dataset.centroNav;
     if (nav === 'agents' || nav === 'tickets') {
-      button.setAttribute('aria-current', String(nav === 'agents' ? state.screen === 'agents' : false));
+      button.setAttribute('aria-current', String(nav === 'agents' ? state.screen !== 'tickets' : state.screen === 'tickets'));
     }
   });
   renderCentroTools();
@@ -1072,12 +1225,17 @@ async function loadOffice(key, { silent = false } = {}) {
 async function openOffice(key) {
   state.screen = 'agent';
   state.officeKey = key;
-  state.officeTab = 'tickets';
+  /* Detalle centrado en la conversación: es la pestaña con la que se abre. */
+  state.officeTab = 'chat';
+  state.officeChat = [];
+  state.officeAskBusy = false;
+  state.workCommercial = null;
   state.office = null;
   state.officeError = '';
   ensureShell();
   renderCentro();
   await loadOffice(key);
+  scrollThreadToEnd('agent-thread');
 }
 
 /**
@@ -1157,13 +1315,55 @@ function backToCentro() {
 async function refreshWorkOffice() {
   if (!state.officeKey) return;
   await loadOffice(state.officeKey, { silent: true });
+  /*
+   * OPORTUNIDADES REALES: se piden aparte para no frenar la oficina. Si falla
+   * (sin permiso, sin red), la pestaña de seguimientos se pinta sin el bloque:
+   * nunca se inventan cifras.
+   */
+  try {
+    const data = await api('/api/admin/ops/work/commercial');
+    state.workCommercial = data.commercial ?? null;
+  } catch {
+    state.workCommercial = null;
+  }
+  renderCentro();
 }
 
 /**
- * Pregunta al agente.
+ * BLOQUE DE OPORTUNIDADES (solo lectura).
  *
- * La respuesta es texto + PROPUESTAS validadas por el servidor. Aquí no se
- * escribe nada: si algo hay que hacer, se aprueba en «Aprobaciones».
+ * Cada fila dice POR QUÉ se propone: días desde la última compra y si tiene o no
+ * pedido abierto. No se afirma consumo ni necesidad: el sistema no lo sabe.
+ */
+function workCommercialHtml() {
+  const c = state.workCommercial;
+  if (!c) return '';
+  const recompra = c.recompra?.filas ?? [];
+  const sinResponder = c.recuperacion?.sinResponder?.filas ?? [];
+  const sinConfirmar = c.recuperacion?.pedidosSinConfirmar?.filas ?? [];
+  const total = (c.recompra?.total ?? 0) + (c.recuperacion?.sinResponder?.total ?? 0) + (c.recuperacion?.pedidosSinConfirmar?.total ?? 0);
+  if (!total) return '';
+  const fila = (nombre, detalle, etiqueta) => `<li class="centro-work__item">
+      <span class="centro-work__num">${esc(nombre)}</span>
+      <span class="centro-work__what">${esc(detalle)}</span>
+      <span class="centro-chip" data-status="open">${esc(etiqueta)}</span>
+    </li>`;
+  return `<div class="centro-block" id="work-commercial">
+    <h3 class="centro-block__title">Oportunidades reales</h3>
+    <p class="centro-note">${esc(c.recompra?.total ?? 0)} con compra anterior · ${esc(c.recuperacion?.sinResponder?.total ?? 0)} conversación(es) sin responder · ${esc(c.recuperacion?.pedidosSinConfirmar?.total ?? 0)} pedido(s) sin confirmar · ${esc(c.fidelizacion?.total ?? 0)} cliente(s) frecuente(s). ${esc(c.excluidos?.sinContacto ?? 0)} fuera por baja o «no contactar».</p>
+    <ul class="centro-work">
+      ${recompra.slice(0, 4).map((row) => fila(row.nombre, `Compró hace ${row.diasDesdeUltimaCompra} días y no tiene pedido abierto`, 'recompra')).join('')}
+      ${sinResponder.slice(0, 3).map((row) => fila(row.nombre, `Escribió hace ${row.horasSinResponder} h y nadie contestó`, 'sin responder')).join('')}
+      ${sinConfirmar.slice(0, 3).map((row) => fila(row.nombre, `Pedido ${row.numero} sin terminar (${row.dias} días)`, 'sin confirmar')).join('')}
+    </ul>
+    <button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-tab="chat" type="button">Pedirle al agente que prepare mensajes</button>
+    <p class="centro-note">Son recomendaciones con su motivo; el agente no envía nada sin tu aprobación.</p>
+  </div>`;
+}
+
+/**
+ * Pregunta al agente. Su respuesta trae texto + PROPUESTAS validadas por el
+ * servidor. Aquí no se escribe nada: lo que haya que hacer se aprueba.
  */
 async function submitWorkAsk(rawText) {
   const message = String(rawText ?? '').trim();
@@ -1171,6 +1371,7 @@ async function submitWorkAsk(rawText) {
   state.workBusy = 'ask';
   state.workChat.push({ role: 'user', text: message, at: timeFmt.format(new Date()) });
   renderCentro();
+  scrollThreadToEnd('agent-thread');
   try {
     const data = await api('/api/admin/ops/work/chat', { method: 'POST', body: JSON.stringify({ message }) });
     state.workChat.push({
@@ -1188,6 +1389,54 @@ async function submitWorkAsk(rawText) {
   } finally {
     state.workBusy = '';
     await refreshWorkOffice();
+    scrollThreadToEnd('agent-thread');
+  }
+}
+
+/**
+ * PEDIRLE CUENTAS A CUALQUIER AGENTE (solo lectura).
+ *
+ * Responde con sus ejecuciones, tickets y propuestas reales. El servidor decide
+ * qué se puede contar; aquí solo se pinta. Un envío a la vez: si ya hay una
+ * pregunta en curso, el botón queda deshabilitado (sin duplicar la llamada).
+ */
+async function submitAgentAsk(key, rawText) {
+  const message = String(rawText ?? '').trim();
+  if (!message || state.officeAskBusy) return;
+  state.officeAskBusy = true;
+  /*
+   * HISTORIAL CORTO: las últimas vueltas de ESTA conversación, recortadas.
+   * Solo sirve para que una pregunta de seguimiento («y de esos, ¿cuál compró
+   * más?») tenga sentido. No se guarda nada: viaja en la petición y el servidor
+   * vuelve a recortarlo.
+   */
+  const history = state.officeChat
+    .slice(-6)
+    .map((entry) => ({ role: entry.role === 'user' ? 'user' : 'agent', text: String(entry.text ?? '').slice(0, 400) }))
+    .filter((entry) => entry.text);
+  state.officeChat.push({ role: 'user', text: message, at: timeFmt.format(new Date()) });
+  renderCentro();
+  scrollThreadToEnd('agent-thread');
+  try {
+    const data = await api(`/api/admin/ops/agents/${encodeURIComponent(key)}/ask`, {
+      method: 'POST',
+      body: JSON.stringify({ message, history }),
+    });
+    state.officeChat.push({
+      role: 'agent',
+      text: data.answer?.text ?? 'No tengo información suficiente.',
+      model: data.answer?.model ?? null,
+      ms: data.answer?.ms ?? null,
+      toolsUsed: Array.isArray(data.answer?.toolsUsed) ? data.answer.toolsUsed : [],
+      degraded: data.answer?.degraded === true || data.answer?.source === 'registros',
+      at: timeFmt.format(new Date()),
+    });
+  } catch (error) {
+    state.officeChat.push({ role: 'agent', text: error.message, at: timeFmt.format(new Date()) });
+  } finally {
+    state.officeAskBusy = false;
+    renderCentro();
+    scrollThreadToEnd('agent-thread');
   }
 }
 
@@ -2790,7 +3039,7 @@ function onViewClick(event) {
       '[data-ops-approve],[data-ops-reject],[data-ops-assign-agent],[data-ops-approvals],[data-ops-approvals-refresh],' +
       '[data-ops-agents],[data-ops-agent-edit],[data-ops-agent-new],' +
       '[data-centro-nav],[data-centro-agent],[data-centro-ticket],[data-centro-office-tab],[data-centro-reload],' +
-      '[data-work-tab],[data-work-approve],[data-work-reject],[data-work-fu],[data-work-sch],[data-work-full],[data-work-seed],[data-agent-seed]',
+      '[data-work-tab],[data-work-approve],[data-work-reject],[data-work-fu],[data-work-sch],[data-work-full],[data-work-seed],[data-agent-seed],[data-ask-suggest]',
   );
   if (!target) {
     /* Un clic fuera cierra los menús flotantes (sin cerrar la ficha). */
@@ -2845,6 +3094,20 @@ function onViewClick(event) {
   if (target.dataset.centroOfficeTab) {
     state.officeTab = target.dataset.centroOfficeTab;
     renderCentro();
+    if (state.officeTab === 'chat') scrollThreadToEnd('agent-thread');
+    return;
+  }
+  /*
+   * SUGERENCIA DE PREGUNTA: se escribe en el compositor y se envía. Es el mismo
+   * camino que si la persona la escribiera: una sola petición, sin duplicar.
+   */
+  if (target.dataset.askSuggest) {
+    event.preventDefault();
+    const texto = target.dataset.askSuggest;
+    const form = document.querySelector('[data-agent-ask], [data-work-ask]');
+    if (!form) return;
+    if (form.matches('[data-agent-ask]')) submitAgentAsk(form.dataset.agentAsk, texto);
+    else submitWorkAsk(texto);
     return;
   }
   /* ---------------- Agente de Seguimiento (oficina de trabajo) ---------------- */
@@ -3109,6 +3372,12 @@ function bind() {
       event.preventDefault();
       const field = event.target.querySelector('textarea[name="message"], #work-ask');
       submitWorkAsk(field?.value ?? '');
+      return;
+    }
+    if (event.target.matches('[data-agent-ask]')) {
+      event.preventDefault();
+      const field = event.target.querySelector('textarea[name="message"]');
+      submitAgentAsk(event.target.dataset.agentAsk, field?.value ?? '');
       return;
     }
     if (event.target.matches('[data-ops-reject-form]')) {

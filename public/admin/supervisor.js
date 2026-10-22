@@ -125,6 +125,8 @@ function rowHtml(row) {
         <span class="sup-tag${late ? ' sup-tag--late' : ''}">${esc(minutes(row.elapsed_minutes))}</span>
         <span class="sup-tag">${esc(responsable)}</span>
         ${attempts ? `<span class="sup-tag">${attempts}/${max || '—'} avisos</span>` : ''}
+        ${row.phone_missing ? '<span class="sup-tag sup-tag--late">Sin teléfono</span>' : ''}
+        ${row.delivered_reported_at && row.stage === 'awaiting_confirmation' ? '<span class="sup-tag">Reportada, falta confirmar</span>' : ''}
         ${postponed && row.postponed_until ? `<span class="sup-tag sup-tag--postponed">Hasta ${esc(dateShort(row.postponed_until))}</span>` : ''}
       </div>
       <p class="sup-row__next">${esc(row.next_action)}</p>
@@ -231,6 +233,7 @@ function settingsHtml() {
         ${check('internalNotifications', 'Avisos internos al repartidor')}
         ${check('whatsAppReminders', 'Recordatorios por WhatsApp')}
         ${check('useDeepSeek', 'Interpretar respuestas con DeepSeek')}
+        ${check('requireContactBeforeStart', 'Exigir contacto con el cliente antes de iniciar la entrega')}
         ${number('firstReminderMinutes', 'Primer aviso', 1, 1440, 'minutos')}
         ${number('followUpMinutes', 'Repetir cada', 5, 1440, 'minutos')}
         ${number('maxAttempts', 'Máximo de intentos', 1, 10)}

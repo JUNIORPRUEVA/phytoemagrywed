@@ -13,9 +13,8 @@
     <link rel="apple-touch-icon" href="/store/icon-192.png" />
     <link rel="stylesheet" href="/store/store.css?v=5" />
     <link rel="stylesheet" href="/store/premium.css?v=4" />
-    <link rel="stylesheet" href="/store/design-system.css?v=8" />
-    <link rel="stylesheet" href="/store/product-gallery.css?v=2" />
-    <title>FULLTECH Store</title>
+    <link rel="stylesheet" href="/store/design-system.css?v=10" />
+    <link rel="stylesheet" href="/store/product-gallery.css?v=2" />    <link rel="stylesheet" href="/store/storefront.css?v=2" />    <title>FULLTECH Store</title>
   </head>
   <body>
     <div class="app-shell">
@@ -25,9 +24,14 @@
             <svg data-msr="menu" data-msr-size="22" aria-hidden="true"></svg>
           </button>
           <a class="ft-wordmark" href="/store/" aria-label="FULLTECH Store, inicio">
-            <span class="ft-wordmark__mark" aria-hidden="true">F</span>
-            <span class="ft-wordmark__text"><i>FULL</i><b>TECH</b><small>STORE</small></span>
+            <picture>
+              <source type="image/webp" srcset="/store/assets/branding/fulltech-store-header-transparent-144.webp 1x, /store/assets/branding/fulltech-store-header-transparent-288.webp 2x, /store/assets/branding/fulltech-store-header-transparent-432.webp 3x" />
+              <img class="ft-logo" src="/store/assets/branding/fulltech-store-header-transparent-144.png" srcset="/store/assets/branding/fulltech-store-header-transparent-288.png 2x, /store/assets/branding/fulltech-store-header-transparent-432.png 3x" width="2355" height="528" alt="FULLTECH STORE" fetchpriority="high" />
+            </picture>
           </a>
+          <nav class="ft-header__nav" aria-label="Información">
+            <a href="/store/#/nosotros" data-route="nosotros">Nosotros</a>
+          </nav>
           <div class="ft-header__actions">
             <a class="ft-iconbtn cart-shortcut" href="/store/#/cart" data-route="cart" aria-label="Carrito" title="Carrito">
               <svg data-msr="cart" data-msr-size="22" aria-hidden="true"></svg>
@@ -62,12 +66,13 @@
 
     <div class="drawer-scrim" id="drawer-scrim" hidden></div>
     <aside class="drawer" id="drawer" aria-label="Menú FULLTECH" aria-hidden="true" inert>
-      <div class="drawer-head"><a class="wordmark" href="/store/"><span class="brand-mark">F</span><span>FULL<span>TECH</span><small>STORE</small></span></a><button class="icon-button" id="close-drawer" aria-label="Cerrar menú">×</button></div>
+      <div class="drawer-head"><a class="ft-drawer-logo" href="/store/" aria-label="FULLTECH Store, inicio"><picture><source type="image/webp" srcset="/store/assets/branding/fulltech-store-horizontal-240.webp 1x, /store/assets/branding/fulltech-store-horizontal-480.webp 2x, /store/assets/branding/fulltech-store-horizontal-720.webp 3x" /><img src="/store/assets/branding/fulltech-store-horizontal-240.png" srcset="/store/assets/branding/fulltech-store-horizontal-480.png 2x, /store/assets/branding/fulltech-store-horizontal-720.png 3x" width="240" height="84" alt="FULLTECH STORE" /></picture></a><button class="icon-button" id="close-drawer" aria-label="Cerrar menú">×</button></div>
       <p class="drawer-label">EXPLORA</p>
       <a href="/store/" data-route="home">Inicio</a>
       <a href="/store/#/catalog" data-route="catalog">Catálogo</a>
       <a href="/store/#/catalog?kind=service" data-route="catalog?kind=service">Servicios</a>
       <a href="/store/#/request" data-route="request">Lo conseguimos por ti</a>
+      <a href="/store/#/nosotros" data-route="nosotros">Nosotros</a>
       <div class="drawer-divider"></div>
       <p class="drawer-label">TU ESPACIO</p>
       <a href="/store/#/orders" data-route="orders">Mis pedidos</a>
@@ -76,5 +81,5 @@
     </aside>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="/store/icons.js?v=1"></script>
-    <script type="module" src="/store/store.js?v=25"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
+    <script type="module" src="/store/store.js?v=27"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
 </html>

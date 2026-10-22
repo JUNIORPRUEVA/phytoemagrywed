@@ -83,8 +83,15 @@ export function haversineMeters(a, b) {
 export function routeSummary(from, to) {
   const meters = haversineMeters(from, to);
   if (meters === null) return { distance_m: null, distance_label: 'Sin distancia', eta_seconds: null, eta_label: 'Sin ETA', provider: 'none' };
-  const walkingishMetersPerSecond = 5.5;
-  const eta = Math.max(60, Math.round(meters / walkingishMetersPerSecond));
+  /*
+   * UNA SOLA VELOCIDAD MEDIA EN TODO EL SISTEMA.
+   *
+   * El panel calculaba el ETA a 25 km/h y el servidor a 19,8: el mismo trayecto
+   * mostraba dos tiempos distintos según la pantalla. Se usa la misma constante
+   * (25 km/h) y se sigue diciendo que es una ESTIMACIÓN en línea recta.
+   */
+  const avgMetersPerSecond = 25_000 / 3600;
+  const eta = Math.max(60, Math.round(meters / avgMetersPerSecond));
   return {
     distance_m: meters,
     distance_label: meters >= 1000 ? `${(meters / 1000).toFixed(meters >= 10_000 ? 0 : 1)} km` : `${meters} m`,

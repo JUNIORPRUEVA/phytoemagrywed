@@ -129,7 +129,7 @@ body[data-tab='whatsapp'] #wa-conversations > .conv-wrap {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  min-height: 72px;
+  min-height: 56px;
   margin: 0;
   border: 0;
   border-radius: 0;
@@ -137,11 +137,17 @@ body[data-tab='whatsapp'] #wa-conversations > .conv-wrap {
   box-shadow: none;
 }
 
-/* Separador que arranca donde acaba el avatar (16 + 49 + 13 = 78 px). */
+/*
+ * SEPARADOR FINO.
+ *
+ * Antes arrancaba a 78 px porque había avatar. Ahora la fila empieza en el
+ * texto cuando no hay foto, así que la raya sangra solo 16 px (el mismo margen
+ * del nombre) y llega hasta el borde: prolijo con foto y sin foto.
+ */
 body[data-tab='whatsapp'] #wa-conversations > .conv-wrap::after {
   content: '';
   position: absolute;
-  left: 78px;
+  left: 16px;
   right: 0;
   bottom: 0;
   height: 1px;
@@ -153,20 +159,36 @@ body[data-tab='whatsapp'] #wa-conversations > .conv-wrap:last-child::after {
   display: none;
 }
 
-/* La fila entera es el botón, con el avatar delante del texto. */
+/*
+ * LA FILA ES UNA REJILLA DE DOS COLUMNAS × DOS FILAS.
+ *
+ *   [icono nombre]  .........  hora
+ *   [mensaje]       .........  responsable · etapa  (n)
+ *
+ * La columna derecha se mide sola (`auto`) y la izquierda se queda con todo lo
+ * que sobra (`minmax(0,1fr)` + `min-width:0` para que el truncado funcione).
+ * Así la hora y la ficha de gestión quedan alineadas en vertical, y el mensaje
+ * nunca empuja la derecha fuera de la pantalla.
+ */
 body[data-tab='whatsapp'] .conv,
 body[data-tab='whatsapp'] .conv:has(.conv__avatar) {
   display: grid;
-  grid-template-columns: 49px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  column-gap: 13px;
-  min-height: 72px;
-  padding: 10px 16px;
+  column-gap: 0;
+  min-height: 56px;
+  padding: 6px 12px 6px 16px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   text-align: left;
+}
+
+body[data-tab='whatsapp'] .conv--photo,
+body[data-tab='whatsapp'] .conv--photo:has(.conv__avatar) {
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 0;
 }
 
 body[data-tab='whatsapp'] .conv:hover,
@@ -188,7 +210,7 @@ body[data-tab='whatsapp'] .conv-wrap:has(.conv--active) {
 /* La marca azul de la izquierda de antes estorba: el fondo ya lo dice. */
 body[data-tab='whatsapp'] .conv-wrap:has(.conv--active)::after {
   content: '';
-  left: 78px;
+  left: 16px;
   right: 0;
   top: auto;
   bottom: 0;
@@ -203,27 +225,25 @@ body[data-tab='whatsapp'] .wa__list-title {
 }
 
 /* --------------------------------------------------------------- avatar */
+/*
+ * La foto REAL (si existe) ocupa el mismo sitio que el icono de clientes: un
+ * cuadrado pequeñito delante del nombre. Nunca hay círculo grande ni columna
+ * reservada cuando no hay imagen.
+ */
 body[data-tab='whatsapp'] .conv__avatar {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: 49px;
-  height: 49px;
+  display: block;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--conv-tone, var(--wa-teal));
-  color: #fff;
-  font-size: 19px;
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
+  background: var(--wa-line);
   box-shadow: none;
 }
 
 body[data-tab='whatsapp'] .conv__avatar-initials {
-  display: block;
-  transform: translateY(1px);
+  display: none;
 }
 
 body[data-tab='whatsapp'] .conv__avatar-photo {
@@ -233,26 +253,18 @@ body[data-tab='whatsapp'] .conv__avatar-photo {
   object-fit: cover;
 }
 
-/* Seleccionada: el visto tapa el avatar, como en WhatsApp. */
 body[data-tab='whatsapp'] .conv__avatar-check {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--wa-teal);
-}
-
-body[data-tab='whatsapp'] .conv__avatar-check .svg {
-  width: 26px;
-  height: 26px;
-  color: #fff;
+  display: none;
 }
 
 /* --------------------------------------------------------------- textos */
 body[data-tab='whatsapp'] .conv__body {
   display: grid;
-  align-content: center;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 1px;
   min-width: 0;
 }
 
@@ -260,14 +272,44 @@ body[data-tab='whatsapp'] .conv__line {
   gap: 8px;
 }
 
+body[data-tab='whatsapp'] .conv__line--top {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/*
+ * EL ICONO DE CLIENTES (clientes.png aportado).
+ *
+ * Decorativo: no es botón ni abre nada. 17 px, sin círculo, opacidad contenida
+ * para que el nombre siga mandando; en modo oscuro se invierte a blanco.
+ */
+body[data-tab='whatsapp'] .conv__icon {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+  opacity: 0.5;
+  vertical-align: middle;
+  user-select: none;
+}
+
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__icon {
+  filter: invert(1);
+  opacity: 0.62;
+}
+
 body[data-tab='whatsapp'] .conv__name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--wa-ink);
-  font-size: 16.5px;
+  font-size: 16px;
   font-weight: 400;
-  line-height: 1.28;
+  line-height: 1.22;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -277,16 +319,19 @@ body[data-tab='whatsapp'] .conv--unread .conv__name {
 }
 
 body[data-tab='whatsapp'] .conv__stamps {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
   flex: 0 0 auto;
-  max-width: 96px;
+  max-width: 104px;
   padding: 0;
 }
 
 body[data-tab='whatsapp'] .conv__when {
-  max-width: 96px;
+  max-width: 104px;
   overflow: hidden;
   color: var(--wa-ink-soft);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 400;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -298,6 +343,14 @@ body[data-tab='whatsapp'] .conv--unread .conv__when {
   font-weight: 600;
 }
 
+body[data-tab='whatsapp'] .conv__line--preview {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 body[data-tab='whatsapp'] .conv__preview {
   flex: 1 1 auto;
   display: inline-flex;
@@ -306,8 +359,8 @@ body[data-tab='whatsapp'] .conv__preview {
   min-width: 0;
   overflow: hidden;
   color: var(--wa-ink-soft);
-  font-size: 14px;
-  line-height: 1.3;
+  font-size: 13px;
+  line-height: 1.25;
   white-space: nowrap;
 }
 
@@ -325,31 +378,124 @@ body[data-tab='whatsapp'] .conv__kind {
 }
 
 body[data-tab='whatsapp'] .conv__kind .svg {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
 }
 
 /*
- * Las etiquetas de gestión (asignación, etapa, pedido, seguimiento) NO se pintan
- * en la fila: WhatsApp no las tiene y robaban el sitio al último mensaje. Siguen
- * en el DOM (las usa el «⋯» y la cabecera del chat), solo que sin ocupar línea.
+ * COLUMNA DERECHA DE LA SEGUNDA LÍNEA: responsable · etapa (y el contador).
+ *
+ * Antes era una tercera línea propia. Ahora vive debajo de la hora, alineada a
+ * la derecha. El tope se mide en `vw`/px, NO en porcentaje: un `max-width: 58%`
+ * dentro de una columna `auto` se resuelve contra la propia columna y la dejaba
+ * en 74 px (el responsable quedaba en «s…»). Con `min(46vw, 190px)` el bloque
+ * tiene sitio para «Sin asignar · Prospecto» y, si el nombre del agente es
+ * largo, se recorta sin empujar al último mensaje fuera de la pantalla.
  */
-body[data-tab='whatsapp'] .conv__flags {
-  display: none;
+body[data-tab='whatsapp'] .conv__meta {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(46vw, 190px);
+  line-height: 15px;
 }
 
-/* Contador de no leídos: círculo verde, sin campana ni borde. */
+body[data-tab='whatsapp'] .conv__flags {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wa-ink-soft);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv__assign {
+  flex: 0 1 auto;
+  /* Sin el tope del 48 % de admin.css: aquí el ancho lo decide la fila entera. */
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv__assign--empty {
+  color: var(--wa-ink-soft);
+  opacity: 0.72;
+}
+
+body[data-tab='whatsapp'] .conv__sep {
+  flex: 0 0 auto;
+  opacity: 0.5;
+}
+
+body[data-tab='whatsapp'] .conv__state {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--wa-ink-soft);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv__tag {
+  flex: 0 1 auto;
+  overflow: hidden;
+  /* Igual que el responsable: sin el tope del 48 % heredado. */
+  max-width: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--wa-line);
+  color: var(--wa-ink-soft);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .conv__picked {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  color: var(--wa-teal);
+}
+
+body[data-tab='whatsapp'] .conv__picked .svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.4;
+}
+
+/*
+ * Contador de no leídos: círculo verde dentro de la SEGUNDA línea.
+ *
+ * Antes vivía a la derecha del último mensaje, en su propia zona: ahora cabe en
+ * el grupo de gestión (después de «Sin asignar · Prospecto») con 17 px de alto,
+ * así no añade un tercer renglón ni empuja nada.
+ */
 body[data-tab='whatsapp'] .conv__unread {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--wa-accent);
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1;
   box-shadow: none;
@@ -373,7 +519,7 @@ body[data-tab='whatsapp'] .conv__unread .svg {
 
   body[data-tab='whatsapp'] .conv__more {
     width: 36px;
-    height: 72px;
+    height: 56px;
     opacity: 0;
     color: var(--wa-ink-soft);
     transition: opacity 120ms ease;
@@ -527,12 +673,17 @@ body[data-tab='whatsapp'] .wa__chat-avatar--empty::after {
 
 /* ------------------------------------------ filtros (panel lateral en móvil) */
 /*
- * El panel de filtros mantiene su sitio (se abre con el icono de filtrar), pero
- * con la piel de WhatsApp: fondo de la lista, píldoras grises y la elegida en
- * verde claro con texto verde oscuro.
+ * PANEL DE FILTROS: FILAS RECTANGULARES POR GRUPOS.
+ *
+ * Antes eran píldoras grandes todas iguales (y las preferencias mezcladas con los
+ * filtros). Ahora cada opción es una fila de 40 px con radio 7, agrupada por
+ * Bandeja / Etapa / Fecha / Orden, y el archivo va aparte abajo. La elegida se
+ * marca con un fondo azul muy suave y el texto en azul de la marca: se distingue
+ * sin gritar, también en oscuro.
  */
 @media (max-width: 979px) {
   body[data-tab='whatsapp'] #wa-filters {
+    width: min(82vw, 340px);
     border-left: 1px solid var(--wa-line);
     border-radius: 16px 0 0 16px;
     background: var(--wa-page);
@@ -557,24 +708,197 @@ body[data-tab='whatsapp'] .wa__chat-avatar--empty::after {
     background: transparent;
     color: var(--wa-icon);
   }
+}
 
-  body[data-tab='whatsapp'] #wa-filters .chip {
-    min-height: 38px;
-    padding: 8px 12px;
-    border: 0;
-    border-radius: 999px;
-    background: var(--wa-chip-bg);
-    color: var(--wa-ink);
-    font-size: 14px;
-    font-weight: 500;
-    text-align: left;
-  }
+body[data-tab='whatsapp'] .wa-filter-panel__body {
+  display: grid;
+  gap: 14px;
+  padding: 12px 12px 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
 
-  body[data-tab='whatsapp'] #wa-filters .chip[aria-pressed='true'] {
-    background: var(--wa-chip-on-bg);
-    color: var(--wa-chip-on-ink);
-    font-weight: 600;
-  }
+body[data-tab='whatsapp'] .wa-filter-group {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+body[data-tab='whatsapp'] .wa-filter-group__title {
+  margin: 0 0 3px;
+  padding: 0 6px;
+  color: var(--wa-ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+body[data-tab='whatsapp'] .wa-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--wa-ink);
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.25;
+  text-align: left;
+}
+
+body[data-tab='whatsapp'] .wa-filter-row:hover {
+  background: var(--wa-row-hover);
+}
+
+body[data-tab='whatsapp'] .wa-filter-row--on,
+body[data-tab='whatsapp'] .wa-filter-row[aria-checked='true'] {
+  background: rgba(18, 75, 170, 0.09);
+  color: #103f92;
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] body[data-tab='whatsapp'] .wa-filter-row--on,
+:root[data-theme='dark'] body[data-tab='whatsapp'] .wa-filter-row[aria-checked='true'] {
+  background: rgba(127, 176, 255, 0.16);
+  color: #cfe1ff;
+}
+
+body[data-tab='whatsapp'] .wa-filter-row__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='whatsapp'] .wa-filter-row__count {
+  flex: 0 0 auto;
+  min-width: 20px;
+  color: var(--wa-ink-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: right;
+}
+
+body[data-tab='whatsapp'] .wa-filter-row--on .wa-filter-row__count {
+  color: var(--wa-ink);
+}
+
+/* Un punto del color de la etapa a la izquierda de cada filtro de etapa. */
+body[data-tab='whatsapp'] .wa-filter-row[data-stage-tone] .wa-filter-row__label {
+  position: relative;
+  padding-left: 13px;
+}
+
+body[data-tab='whatsapp'] .wa-filter-row[data-stage-tone] .wa-filter-row__label::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--stage-color, var(--wa-ink-soft));
+}
+
+body[data-tab='whatsapp'] .wa-filter-row[data-stage-tone='prospectos'] { --stage-color: #7b8794; }
+body[data-tab='whatsapp'] .wa-filter-row[data-stage-tone='interesados'] { --stage-color: #1f6feb; }
+body[data-tab='whatsapp'] .wa-filter-row[data-stage-tone='clientes'] { --stage-color: #1f9d63; }
+body[data-tab='whatsapp'] .wa-filter-row[data-stage-tone='recompra'] { --stage-color: #7c5cd6; }
+
+/* El archivo va separado del resto: es un estado, no una etapa. */
+body[data-tab='whatsapp'] .wa-filter-group--archived {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--wa-line);
+}
+
+body[data-tab='whatsapp'] .wa-filter-panel__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--wa-line);
+}
+
+body[data-tab='whatsapp'] .wa-filter-panel__prefs {
+  display: inline-flex;
+  gap: 8px;
+}
+
+body[data-tab='whatsapp'] .wa-filter-panel__link {
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wa-ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+body[data-tab='whatsapp'] .wa-filter-panel__link:hover {
+  color: var(--wa-ink);
+  text-decoration: underline;
+}
+
+/* Etiqueta de etapa de la fila: punto de color + texto. Nunca color solo. */
+body[data-tab='whatsapp'] .conv__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+body[data-tab='whatsapp'] .conv__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+body[data-tab='whatsapp'] .conv__state--prospecto { color: #6b7785; }
+body[data-tab='whatsapp'] .conv__state--interesado { color: #1f6feb; }
+body[data-tab='whatsapp'] .conv__state--cliente { color: #1f8f5b; }
+body[data-tab='whatsapp'] .conv__state--recompra { color: #7150cf; }
+body[data-tab='whatsapp'] .conv__state--inactivo { color: var(--wa-ink-soft); }
+
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__state--prospecto { color: #9aa6b2; }
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__state--interesado { color: #7fb0ff; }
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__state--cliente { color: #6fd3a1; }
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__state--recompra { color: #b6a4ff; }
+
+/* Sin responsable: ámbar contenido (atención sin gritar). */
+body[data-tab='whatsapp'] .conv__assign--empty {
+  color: #a5691a;
+  opacity: 1;
+}
+
+:root[data-theme='dark'] body[data-tab='whatsapp'] .conv__assign--empty {
+  color: #e0b269;
+}
+
+/* Fragmento encontrado por la búsqueda: lupa pequeña delante. */
+body[data-tab='whatsapp'] .conv__hit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--wa-teal);
+}
+
+body[data-tab='whatsapp'] .conv__hit .svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.2;
 }
 
 /* -------------------------------------- panel de acciones (drawer derecho) */
@@ -855,34 +1179,55 @@ body[data-tab='whatsapp'] .wa-actions__pill b {
   font-weight: 700;
 }
 
-/* ------------------------------------- botón «Agregar cliente» tipo WhatsApp */
+/* ----------------------- botón flotante «nuevo chat» · azul FULLTECH premium */
+/*
+ * COMPACTO Y AZUL DE LA MARCA.
+ *
+ * Era un círculo verde de WhatsApp de 56 px con sombra ancha. Ahora es un
+ * botón de 52 px con el degradado FULLTECH, icono blanco y una elevación
+ * discreta (dos sombras cortas, sin halo). Sigue siendo el mismo botón —mismo
+ * id y mismo manejador— para abrir un chat nuevo; solo cambia la piel.
+ */
 body[data-tab='whatsapp'] .wa-new-chat {
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
   border: 0;
-  border-radius: 50%;
-  background: var(--wa-teal);
-  box-shadow: 0 4px 12px rgba(11, 20, 26, 0.28);
+  border-radius: 18px;
+  background: var(--ft-gradient);
+  box-shadow: 0 2px 6px rgba(18, 75, 170, 0.22), 0 1px 2px rgba(11, 20, 26, 0.12);
 }
 
 body[data-tab='whatsapp'] .wa-new-chat:hover,
 body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
-  background: #06cf9c;
-  box-shadow: 0 6px 16px rgba(11, 20, 26, 0.32);
+  background: var(--ft-gradient);
+  filter: brightness(1.06);
+  box-shadow: 0 4px 10px rgba(18, 75, 170, 0.26), 0 1px 2px rgba(11, 20, 26, 0.14);
+}
+
+/*
+ * En oscuro `--ft-gradient` se aclara (es el degradado de marca para texto), y
+ * un botón celeste con el «+» blanco se lee mal. Aquí el azul se mantiene
+ * profundo y el icono sigue blanco: mismo botón, mismo contraste en los dos temas.
+ */
+:root[data-theme='dark'] body[data-tab='whatsapp'] .wa-new-chat,
+:root[data-theme='dark'] body[data-tab='whatsapp'] .wa-new-chat:hover,
+:root[data-theme='dark'] body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
+  background: linear-gradient(125deg, #12459c 0%, #1a63e0 58%, #1f6ad8 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 body[data-tab='whatsapp'] .wa-new-chat__icon {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   color: #fff;
 }
 
 body[data-tab='whatsapp'] .wa-new-chat__icon .svg {
-  width: 28px;
-  height: 28px;
-  stroke-width: 1.9;
+  width: 26px;
+  height: 26px;
+  stroke-width: 2.2;
 }
 
 /* -------------------------------- hoja «Nuevo WhatsApp» (fina y estrecha) */

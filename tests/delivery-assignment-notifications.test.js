@@ -154,6 +154,35 @@ async function setConversationWindow(open = true) {
 }
 
 /**
+ * Configura el ÚNICO supervisor con la política de reparto (5 min / 30 min) y
+ * sin DeepSeek. `includeOldOrders` permite supervisar pedidos asignados cuyas
+ * fechas son anteriores al sello de activación de la prueba.
+ */
+async function configureSupervisor(overrides = {}) {
+  const response = await request('/api/admin/delivery-supervisor/settings', {
+    method: 'POST',
+    body: JSON.stringify({
+      enabled: true,
+      firstReminderMinutes: 5,
+      followUpMinutes: 30,
+      maxAttempts: 3,
+      lateAfterMinutes: 90,
+      escalateAfterMinutes: 30,
+      contactFromHour: 0,
+      contactToHour: 23,
+      whatsAppReminders: true,
+      internalNotifications: true,
+      useDeepSeek: false,
+      activatedAt: '2026-09-01T00:00:00.000Z',
+      includeOldOrders: true,
+      ...overrides,
+    }),
+  });
+  expect(response.status).toBe(200);
+  return json(response);
+}
+
+/**
  * Olvida el «ya se le avisó hace un momento» del aviso al cliente, para poder
  * probar otra asignación independiente (el aviso se limita a uno por ventana).
  */
@@ -366,11 +395,19 @@ describe('delivery assignment notifications and contact flow', () => {
     await setConversationWindow(true);
   });
 
-  it('control de atención: 5 min recuerda al delivery y 30 min escala a admins sin tocar el chat del cliente', async () => {
+  /*
+   * UN SOLO MOTOR DE RECORDATORIOS.
+   *
+   * Antes había dos: `deliveryControlTick` (5 min / 30 min, plantillas propias) y
+   * el supervisor. El heredado ya NO se ejecuta (`tick.delivery` es null) y su
+   * política se configura en el supervisor. Esta prueba comprueba las dos cosas:
+   * que el motor viejo no corre y que el que queda avisa UNA vez por hito.
+   */
+  it('un solo motor: el recordatorio heredado no corre y el supervisor avisa una sola vez', async () => {
     mockWhatsApp.sent = [];
     now = new Date('2026-10-04T10:00:00.000Z');
-    await approveTemplate('phyto_delivery_pedido_pendiente_v1', 'Hola {{1}}, recuerda pedido {{2}} {{3}}', ['delivery_display_name', 'order_number', 'delivery_deep_link']);
-    await approveTemplate('phyto_delivery_sin_atender_admin_v1', 'URGENTE pedido {{1}} delivery {{2}} {{3}}', ['order_number', 'delivery_display_name', 'delivery_deep_link']);
+    await approveTemplate('phyto_supervisor_recordatorio_v1', 'Hola {{1}}, pedido {{2}} {{3}}', ['delivery_display_name', 'order_number', 'delivery_deep_link']);
+    await configureSupervisor();
     const order = await createOrder();
     const assign = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',
@@ -381,52 +418,41 @@ describe('delivery assignment notifications and contact flow', () => {
 
     advance(4);
     let tick = await app.scheduler.tick();
-    expect(tick.delivery.reminders).toBe(0);
+    /* El motor retirado ya no existe en la pasada. */
+    expect(tick.delivery).toBeNull();
+    expect(tick.supervisor.reminders).toBe(0);
 
     advance(2);
     tick = await app.scheduler.tick();
-    expect(tick.delivery.reminders).toBeGreaterThanOrEqual(2);
+    expect(tick.supervisor.reminders).toBeGreaterThanOrEqual(1);
     expect(mockWhatsApp.sent.some((row) => row.to === '+18291111111')).toBe(true);
-    expect(mockWhatsApp.sent.some((row) => row.to === '+18292222222')).toBe(true);
-    const afterReminder = mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_delivery_pedido_pendiente_v1').length;
+    /* La plantilla del motor viejo ya no se usa. */
+    expect(mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_delivery_pedido_pendiente_v1')).toHaveLength(0);
+    const afterReminder = mockWhatsApp.sent.length;
 
+    /* Dos pasadas seguidas no duplican el aviso (clave de idempotencia única). */
     const repeated = await app.scheduler.tick();
-    expect(repeated.delivery.reminders).toBe(0);
-    expect(mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_delivery_pedido_pendiente_v1')).toHaveLength(afterReminder);
+    expect(repeated.supervisor.reminders).toBe(0);
+    expect(mockWhatsApp.sent).toHaveLength(afterReminder);
 
+    /* Y el chat del cliente no se toca por un recordatorio al repartidor. */
     const beforeMessages = (await app.collections.list('wa_messages', { limit: 1000 })).length;
     const first = await request(`/api/admin/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: JSON.stringify({ body: 'Hola, voy con su pedido' }),
     }, deliveryCookie);
     expect(first.status).toBe(200);
-    advance(25);
-    tick = await app.scheduler.tick();
-    const auditsAfterContact = await app.collections.list('audit', { limit: 1000 });
-    expect(auditsAfterContact.filter((row) => row.entity_id === order.item.id && row.action === 'delivery.escalation_30m_sent')).toHaveLength(0);
     const afterMessages = (await app.collections.list('wa_messages', { limit: 1000 })).length;
     expect(afterMessages).toBe(beforeMessages + 1);
-
-    now = new Date('2026-10-04T11:00:00.000Z');
-    const escalated = await createOrder();
-    await request(`/api/admin/orders/${escalated.item.id}/delivery/assign`, {
-      method: 'POST',
-      body: JSON.stringify({ deliveryUserId: delivery.id }),
-    });
-    advance(31);
-    const beforeEscalation = mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_delivery_sin_atender_admin_v1').length;
-    tick = await app.scheduler.tick();
-    expect(tick.delivery.escalations).toBeGreaterThanOrEqual(2);
-    expect(mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_delivery_sin_atender_admin_v1')).toHaveLength(beforeEscalation + 2);
-    const repeatedEscalation = await app.scheduler.tick();
-    expect(repeatedEscalation.delivery.escalations).toBe(0);
   });
 
-  it('reasignación cancela ciclo anterior y arranca contador nuevo', async () => {
+  it('reasignación: solo el repartidor nuevo recibe el aviso de ese pedido', async () => {
     mockWhatsApp.sent = [];
     now = new Date('2026-10-04T12:00:00.000Z');
-    await approveTemplate('phyto_delivery_pedido_pendiente_v1', 'Hola {{1}}, recuerda pedido {{2}} {{3}}', ['delivery_display_name', 'order_number', 'delivery_deep_link']);
+    await approveTemplate('phyto_supervisor_recordatorio_v1', 'Hola {{1}}, pedido {{2}} {{3}}', ['delivery_display_name', 'order_number', 'delivery_deep_link']);
+    await configureSupervisor();
     const order = await createOrder();
+    const numero = order.item.order_number ?? order.item.orderNumber ?? '';
     await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
@@ -438,21 +464,19 @@ describe('delivery assignment notifications and contact flow', () => {
     });
     advance(3);
     const tick = await app.scheduler.tick();
-    expect(tick.delivery.reminders).toBe(0);
-    advance(3);
+    expect(tick.delivery).toBeNull();
+    expect(tick.supervisor.reminders).toBe(0);
+    advance(5);
     const tickNew = await app.scheduler.tick();
-    expect(tickNew.delivery.reminders).toBe(2);
+    expect(tickNew.supervisor.reminders).toBeGreaterThanOrEqual(1);
     expect(mockWhatsApp.sent.some((row) => row.to === '+18293333333')).toBe(true);
-    expect(mockWhatsApp.sent.some((row) => row.to === '+18294444444')).toBe(true);
     /*
      * Al repartidor ANTERIOR no le llega nada de ESTE pedido. (Desde que el
      * supervisor escribe también a los repartidores del CRM puede tener avisos
      * de otros pedidos suyos: se comprueba por número de pedido, no por número
      * de teléfono.)
      */
-    const delPedidoViejo = mockWhatsApp.sent.some(
-      (row) => row.to === '+18291111111' && JSON.stringify(row).includes(order.item.order_number ?? order.item.orderNumber ?? ''),
-    );
+    const delPedidoViejo = mockWhatsApp.sent.some((row) => row.to === '+18291111111' && JSON.stringify(row).includes(numero));
     expect(delPedidoViejo).toBe(false);
   });
 

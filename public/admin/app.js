@@ -57,9 +57,11 @@
   const PREF_VALUES = {
     tab: ['hoy', 'whatsapp', 'pedidos', 'clientes', 'seguimientos', 'mapa', 'delivery', 'productos', 'catalogo', 'inventario', 'recuento', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'mensajes', 'ajustes', 'usuarios', 'perfil'],
     waFilter: ['todos', 'mios', 'sin-asignar', 'no-leidos', 'pendientes', 'clientes', 'seguimiento', 'archivados'],
+    waStage: ['', 'prospectos', 'interesados', 'clientes', 'recompra'],
+    waSort: ['recent', 'priority'],
     pedidosFilter: ['todo', 'pendiente', 'en-camino', 'entregado', 'cancelado'],
     followupsFilter: ['todo', 'vencidos', 'hoy', 'proximos'],
-    clientFilter: ['todos', 'clientes', 'interesados', 'prospectos', 'seguimiento'],
+    clientFilter: ['todos', 'prospectos', 'interesados', 'clientes', 'recompra', 'inactivos', 'seguimiento'],
     dateMode: ['all', 'today', 'yesterday', '7d', 'month', 'custom'],
   };
 
@@ -113,6 +115,10 @@
     if (tab) state.tab = tab;
     const waFilter = preferenciaValida(prefs.waFilter, PREF_VALUES.waFilter);
     if (waFilter) state.wa.filter = waFilter;
+    const waStage = preferenciaValida(prefs.waStage, PREF_VALUES.waStage);
+    if (waStage) state.wa.stage = waStage;
+    const waSort = preferenciaValida(prefs.waSort, PREF_VALUES.waSort);
+    if (waSort) state.wa.sort = waSort;
     const waDate = preferenciaRango(prefs.waDate);
     if (waDate) state.wa.date = waDate;
     const pedidosFilter = preferenciaValida(prefs.pedidosFilter, PREF_VALUES.pedidosFilter);
@@ -130,6 +136,8 @@
     guardarPreferencias({
       tab: state.tab,
       waFilter: state.wa.filter,
+      waStage: state.wa.stage ?? '',
+      waSort: state.wa.sort ?? 'recent',
       waDate: state.wa.date,
       pedidosFilter: state.pedidosFilter,
       pedidosDate: state.pedidosDate,
@@ -296,6 +304,16 @@
     // Historial de cierres: qué días se están mirando (7 días por defecto).
     closeHistoryPeriod: '7d',
     closeHistoryRange: { from: null, to: null },
+    /*
+     * LOS PEDIDOS DEL TRAMO, TAL COMO LOS MANDA EL SERVIDOR.
+     * La copia del panel (`state.items`) trae como mucho los 500 registros más
+     * nuevos de todos los tipos: con eso el historial perdía días antiguos y
+     * sumaba de menos. Aquí se guarda lo que devuelve
+     * `/api/admin/reports/delivered-orders` para el tramo que se está mirando.
+     * `{ key, items, truncated, at }`; `items: null` = ya se intentó y falló.
+     */
+    closeHistoryRemote: null,
+    closeHistoryLoading: null,
     // Cierre que se está mirando: `null` = el de hoy.
     closeDay: null,
     whatsapp: null,
@@ -468,6 +486,10 @@
     wa: {
       selectedId: null,
       filter: 'todos',
+      /* Etapa comercial seleccionada (`''` = todas). Se combina con el resto. */
+      stage: '',
+      /* Orden: actividad reciente (por defecto) o atención/prioridad de venta. */
+      sort: 'recent',
       date: { mode: 'all', from: '', to: '' },
       q: '',
       searchOpen: false,
@@ -678,6 +700,11 @@
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
     back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
+    /*
+     * FLECHA DE LA BANDEJA DE WHATSAPP: el trazo suelto de `flecha-izquierda.png`
+     * (chevron sin línea), que es lo que se pidió para volver a la lista.
+     */
+    chevronLeft: svg('<path d="M15.2 4.6 7.4 12l7.8 7.4"/>'),
     /* «⋮» de verdad: tres puntos RELLENOS (con trazo quedaban huecos y no se veían). */
     more: svg('<circle cx="12" cy="5.2" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="18.8" r="1.9" fill="currentColor" stroke="none"/>'),
     search: svg('<circle cx="10.8" cy="10.8" r="5.8"/><path d="m15.2 15.2 4.6 4.6"/>'),
@@ -2167,8 +2194,24 @@
     PROSPECT: 'Prospecto',
     INTERESTED: 'Interesado',
     CUSTOMER: 'Cliente',
+    REPEAT_CUSTOMER: 'Recompra',
     INACTIVE: 'Inactivo',
   }[value] ?? value ?? 'Prospecto');
+  /* Motivos de interés que manda el servidor (`interest_reason`). */
+  const INTEREST_REASON_LABELS = {
+    intencion_compra: 'quiere comprar',
+    precio_producto: 'preguntó el precio de un producto',
+    pregunta_precio: 'preguntó precios',
+    disponibilidad: 'preguntó disponibilidad',
+    producto_concreto: 'preguntó por una presentación',
+    consulta_producto: 'pidió información de un producto',
+    pedido_creado: 'tiene un pedido abierto',
+    soporte_pedido: 'consulta de un pedido',
+    ambiguo: 'mensaje ambiguo',
+    cortesia: 'saludo o cortesía',
+    negacion: 'dijo que no le interesa',
+    sin_evidencia: 'sin señal comercial',
+  };
   const customerTagsOf = (customerOrRow) => {
     const tags = customerOrRow?.tags ?? customerOrRow?.customer?.tags ?? [];
     return Array.isArray(tags) ? tags : [];
@@ -2508,7 +2551,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div><button class="pos-swipe-close" data-billing-close type="button" aria-label="Cerrar facturación" title="Cerrar">${ICONS.close}</button>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -2585,18 +2628,38 @@
     }
     if (state.tab === 'whatsapp') {
       if (state.wa.searchOpen) {
+        /*
+         * NO SE PIERDE EL FOCO AL BUSCAR.
+         *
+         * Cada refresco (y llega uno por pulsación) repinta la barra; sin esto el
+         * `innerHTML` se lleva el campo y el cursor, y escribir se corta a la
+         * segunda letra. Se conserva el foco y la posición del cursor.
+         */
+        const previo = document.activeElement?.id === 'wa-appbar-search' ? document.activeElement : null;
+        const cursor = previo?.selectionStart ?? null;
         box.innerHTML = `<div class="wa-appbar wa-appbar--search">
-          <button class="wa-appbar__back" data-wa-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.back}</button>
+          <button class="wa-appbar__back" data-wa-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.chevronLeft}</button>
           <input class="wa-appbar__search" id="wa-appbar-search" type="search" value="${escapeHtml(
             state.wa.q,
           )}" placeholder="Buscar conversación" aria-label="Buscar conversación" autocomplete="off" />
           <button class="wa-appbar__icon" data-wa-search-clear type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button>
         </div>`;
+        if (previo) {
+          const nuevo = $('#wa-appbar-search');
+          nuevo?.focus({ preventScroll: true });
+          if (nuevo && cursor !== null) {
+            try {
+              nuevo.setSelectionRange(cursor, cursor);
+            } catch {
+              /* el navegador no siempre deja mover el cursor de un `search` */
+            }
+          }
+        }
         return;
       }
       const inChat = document.body.dataset.waView === 'chat';
       box.innerHTML = `<div class="wa-appbar">
-        <button class="wa-appbar__back" ${inChat ? 'data-wa-chat-back' : 'data-simple-back'} type="button" aria-label="${inChat ? 'Volver a conversaciones' : 'Regresar'}">${ICONS.back}</button>
+        <button class="wa-appbar__back" ${inChat ? 'data-wa-chat-back' : 'data-simple-back'} type="button" aria-label="${inChat ? 'Volver a conversaciones' : 'Regresar'}">${ICONS.chevronLeft}</button>
         <div class="wa-appbar__title">
           <strong>WhatsApp${filtroPuesto(state.wa.filter, WA_FILTERS)}</strong>
         </div>
@@ -2678,6 +2741,11 @@
     }
     box.innerHTML = `<div class="simple-head">
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+      ${
+        state.tab === 'perfil'
+          ? '<img class="simple-head__logo" src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="24" height="24" decoding="async" aria-hidden="true">'
+          : ''
+      }
       <strong>${escapeHtml(currentViewTitle())}</strong>
     </div>`;
   }
@@ -3394,23 +3462,30 @@
   }
 
   function customerSegment(customer) {
-    const summary = customerSalesSummary(customer);
-    const commercial = customer.commercial_state ?? 'NUEVO';
-    if (summary.delivered.length > 0 || customer.has_purchase === true) return 'cliente';
-    if (['INTERESADO', 'PEDIDO_CREADO', 'CONFIRMADO', 'SEGUIMIENTO'].includes(commercial) || summary.orders.length > 0) {
-      return 'interesado';
-    }
+    /*
+     * La etapa la calcula el servidor (`customer_stage`). Aquí solo se traduce a
+     * un segmento de pantalla, sin segundas reglas que puedan contradecirla.
+     */
+    const etapa = customerStageOf(customer);
+    if (etapa === 'REPEAT_CUSTOMER') return 'recompra';
+    if (etapa === 'CUSTOMER') return 'cliente';
+    if (etapa === 'INTERESTED') return 'interesado';
+    if (etapa === 'INACTIVE') return 'inactivo';
     return 'prospecto';
   }
 
   const customerSegmentLabel = (segment, summary) =>
-    segment === 'cliente'
-      ? summary.delivered.length >= 2
-        ? 'Cliente frecuente'
-        : 'Cliente'
-      : segment === 'interesado'
-        ? 'Interesado'
-        : 'Prospecto';
+    segment === 'recompra'
+      ? 'Recompra'
+      : segment === 'cliente'
+        ? summary?.delivered?.length >= 2
+          ? 'Cliente frecuente'
+          : 'Cliente'
+        : segment === 'interesado'
+          ? 'Interesado'
+          : segment === 'inactivo'
+            ? 'Inactivo'
+            : 'Prospecto';
 
   const FOLLOWUP_LABELS = {
     thanks: 'Agradecimiento',
@@ -3524,7 +3599,13 @@
      * falle. Se dice qué pasa de verdad y qué hacer.
      */
     if (!wa) return { tone: 'sin-datos', text: 'El panel está mostrando una copia guardada y todavía no tiene el estado de WhatsApp. Conéctate y pulsa «Sincronizar» para comprobarlo; los chats guardados siguen disponibles.' };
-    if (wa.mode === 'mock') return { tone: 'mock', text: 'WhatsApp en modo local (pruebas): los mensajes no salen a Meta.' };
+    if (wa.mode === 'mock') {
+      return {
+        tone: 'mock',
+        text: 'Local · Sin envío',
+        detail: 'WhatsApp en modo local (pruebas): los mensajes no salen a Meta.',
+      };
+    }
     const reason = String(wa.reason ?? '');
     if (wa.send === 'ok') {
       return wa.receive === 'ok' ? null : { tone: 'receive', text: 'WhatsApp puede enviar, pero el webhook de recepción no está configurado en el servidor.' };
@@ -3542,7 +3623,18 @@
 
   function waNoticeHtml() {
     const notice = waConnectionNotice();
-    return notice ? `<p class="rule rule--warn" data-wa-notice="${notice.tone}">${escapeHtml(notice.text)}</p>` : '';
+    if (!notice) return '';
+    /*
+     * EN MODO LOCAL NO HACE FALTA UNA FRANJA AMARILLA. La información sigue
+     * estando (y se puede leer entera en el tooltip): «Local · Sin envío» dice lo
+     * mismo en una etiqueta y no roba altura al hilo.
+     */
+    if (notice.tone === 'mock') {
+      return `<span class="wa-env wa-env--mock" data-wa-notice="mock" role="status" title="${escapeHtml(
+        notice.detail ?? notice.text,
+      )}">${escapeHtml(notice.text)}</span>`;
+    }
+    return `<p class="rule rule--warn" data-wa-notice="${notice.tone}">${escapeHtml(notice.text)}</p>`;
   }
 
   function renderWhatsapp() {
@@ -3557,25 +3649,94 @@
 
     const filters = $('#wa-filters');
     if (filters) {
+      /*
+       * PANEL DE FILTROS EN BLOQUES.
+       *
+       * Antes era una lista plana de píldoras grandes donde «Notificaciones» y
+       * «Sonido» parecían filtros de conversación. Ahora:
+       *
+       *   Bandeja      → todos, míos, sin asignar, nuevos, pendientes
+       *   Etapa        → prospectos, interesados, clientes, recompra (con su cuenta)
+       *   Fecha        → el rango elegido, en un toque
+       *   Orden        → recientes / atención
+       *   Archivados   → aparte, abajo y separado (es un estado, no una etapa)
+       *   Preferencias → notificaciones y sonido, al final y en pequeño
+       *
+       * Cada opción es una fila rectangular (radio 7 px), no una píldora, y la
+       * etapa NO borra la fecha ni el resto: se combinan.
+       */
+      const cuenta = (valor) => {
+        const numero = waFilterCount(valor);
+        return Number.isFinite(Number(numero)) && Number(numero) > 0 ? `<span class="wa-filter-row__count">${numero}</span>` : '';
+      };
+      const fila = (attrs, texto, activo, extra = '') =>
+        `<button class="wa-filter-row${activo ? ' wa-filter-row--on' : ''}" ${attrs} type="button" role="menuitemradio" aria-checked="${activo ? 'true' : 'false'}"><span class="wa-filter-row__label">${texto}</span>${extra}</button>`;
+      const grupo = (titulo, filas) =>
+        `<div class="wa-filter-group" role="group" aria-label="${escapeHtml(titulo)}"><p class="wa-filter-group__title">${escapeHtml(titulo)}</p>${filas}</div>`;
+
+      const bandeja = [
+        ['todos', 'Todos'],
+        ['mios', 'Míos'],
+        ['sin-asignar', 'Sin asignar'],
+        ['no-leidos', 'Nuevos'],
+        ['pendientes', 'Pendientes'],
+      ]
+        .map(([valor, texto]) => fila(`data-wa-filter="${valor}"`, texto, state.wa.filter === valor, cuenta(valor)))
+        .join('');
+      const etapas = [
+        ['prospectos', 'Prospectos'],
+        ['interesados', 'Interesados'],
+        ['clientes', 'Clientes'],
+        ['recompra', 'Recompra'],
+      ]
+        .map(([valor, texto]) =>
+          fila(`data-wa-stage="${valor}" data-stage-tone="${valor}"`, texto, state.wa.stage === valor, cuenta(valor)),
+        )
+        .join('');
+      const fechaActiva = waDateRange();
+      const fechaTexto =
+        fechaActiva.mode === 'all'
+          ? 'Cualquier fecha'
+          : fechaActiva.mode === 'custom'
+            ? `${formatShortDate(fechaActiva.from)} – ${formatShortDate(fechaActiva.to)}`
+            : (WA_DATE_FILTERS.find(([modo]) => modo === fechaActiva.mode)?.[1] ?? 'Fecha');
+      const orden = [
+        ['recent', 'Recientes'],
+        ['priority', 'Atención'],
+      ]
+        .map(([valor, texto]) => fila(`data-wa-sort="${valor}"`, texto, (state.wa.sort ?? 'recent') === valor))
+        .join('');
+      const archivados = waFilterCount('archivados');
+
       filters.innerHTML = `<div class="wa-filter-panel__head">
         <span><strong>Filtros</strong><small>Conversaciones</small></span>
         <button class="wa-filter-panel__close" data-wa-filter-close type="button" aria-label="Cerrar filtros">${ICONS.close}</button>
       </div>
-      <div class="wa-filter-panel__group">` + WA_FILTERS.map(
-        ([value, text]) => {
-          const count = waFilterCount(value);
-          const label = Number.isFinite(Number(count)) && Number(count) > 0 ? `${text} ${count}` : text;
-          return (
-          `<button class="chip" data-wa-filter="${value}" aria-pressed="${
-            value === state.wa.filter
-          }" type="button">${label}</button>`
-          );
-        },
-      ).join('') + `</div><div class="wa-filter-panel__group wa-filter-panel__group--tools"><button class="chip" id="wa-notify" type="button">${
-        state.wa.notify ? 'Notificaciones activas' : 'Activar notificaciones'
-      }</button><button class="chip" id="wa-sound" aria-pressed="${state.wa.sound}" type="button">Sonido ${
-        state.wa.sound ? 'sí' : 'no'
-      }</button>${waDateChipHtml()}</div>`;
+      <div class="wa-filter-panel__body">
+        ${grupo('Bandeja', bandeja)}
+        ${grupo('Etapa del cliente', etapas)}
+        ${grupo('Fecha', fila('data-wa-date-open="1"', escapeHtml(fechaTexto), fechaActiva.mode !== 'all', ICONS.clock))}
+        ${grupo('Orden', orden)}
+        <div class="wa-filter-group wa-filter-group--archived" role="group" aria-label="Archivados">
+          ${fila(
+            'data-wa-archived="1"',
+            'Archivados',
+            state.wa.filter === 'archivados',
+            `<span class="wa-filter-row__count">${Number(archivados ?? 0)}</span>`,
+          )}
+        </div>
+      </div>
+      <div class="wa-filter-panel__foot">
+        <button class="wa-filter-panel__link" data-wa-clear-filters type="button">Limpiar filtros</button>
+        <span class="wa-filter-panel__prefs">
+          <button class="wa-filter-panel__link" id="wa-notify" type="button">${
+            state.wa.notify ? 'Notificaciones: sí' : 'Notificaciones: no'
+          }</button>
+          <button class="wa-filter-panel__link" id="wa-sound" aria-pressed="${state.wa.sound}" type="button">Sonido: ${
+            state.wa.sound ? 'sí' : 'no'
+          }</button>
+        </span>
+      </div>`;
     }
     const search = $('#wa-search');
     if (search && search.value !== state.wa.q) search.value = state.wa.q;
@@ -3608,9 +3769,20 @@
   function filteredCustomers() {
     const { filter, q } = state;
     let rows = state.customers.slice();
-    if (filter === 'clientes') rows = rows.filter((customer) => customerSegment(customer) === 'cliente');
+    /*
+     * UN SOLO CICLO DE VIDA (4 etapas) — el mismo que calcula el servidor.
+     *
+     * Antes esta pantalla se inventaba su propio segmento mirando el estado
+     * comercial («Nuevo», «En conversación»…), así que la bandeja decía
+     * «Prospecto» y aquí salía «Interesado» para el mismo cliente. Ahora manda
+     * `customer_stage`.
+     */
+    if (filter === 'clientes') rows = rows.filter((customer) => ['cliente', 'recompra'].includes(customerSegment(customer)));
+    if (filter === 'recompra') rows = rows.filter((customer) => customerSegment(customer) === 'recompra');
     if (filter === 'interesados') rows = rows.filter((customer) => customerSegment(customer) === 'interesado');
     if (filter === 'prospectos') rows = rows.filter((customer) => customerSegment(customer) === 'prospecto');
+    if (filter === 'inactivos') rows = rows.filter((customer) => customerSegment(customer) === 'inactivo');
+    // El seguimiento NO es una etapa: es una tarea pendiente (filtro operativo).
     if (filter === 'seguimiento') rows = rows.filter((customer) => Boolean(nextFollowupFor(customer.id) || customer.next_followup));
     // El grupo de negocio es un filtro APARTE del de segmento: se combinan.
     if (state.clientGroup && state.clientGroup !== 'todos') {
@@ -5394,6 +5566,9 @@
         detail: `última señal ${deliveryAgeLabel(age)}`,
       };
     }
+    if (state_ === 'unavailable') {
+      return { state: 'none', label: 'Ubicación no disponible', detail: 'activa la ubicación y vuelve a intentarlo' };
+    }
     return { state: 'none', label: 'GPS no disponible', detail: 'activa la ubicación para ver la ruta' };
   }
 
@@ -6637,6 +6812,7 @@
     renderOrdersMap();
     await load({ keepTab: true });
     toast(complete ? 'Entrega completada' : 'Tracking detenido');
+    return data;
   }
 
   function deliveryOrdersSorted() {
@@ -6698,7 +6874,7 @@
     const lastPoint = closedRoute ? mapLatLng(savedLast) ?? mapLatLng(savedStart) : mapLatLng(savedLast);
     /* `origin` es la salida de la ruta: el repartidor, nunca la tienda. */
     const origin = mapLatLng(devicePoint) ?? lastPoint;
-    const gpsState = mapLatLng(devicePoint) ? 'live' : lastPoint ? 'last' : 'none';
+    const gpsState = mapLatLng(devicePoint) ? 'live' : lastPoint ? 'last' : preview?.error ? 'unavailable' : 'none';
     const gpsAgeMin = deliverySignalAgeMinutes(devicePoint ?? savedLast ?? savedStart);
 
     const pickups = (Array.isArray(order?.pickups) ? order.pickups : [])
@@ -6778,39 +6954,14 @@
     </div>`;
   }
 
-  function deliveryCompactFactsHtml(order, session, status) {
-    const route = deliveryRouteSummary(order, session);
-    const deliveryFee = Number(order.delivery_fee ?? order.delivery?.fee ?? 0) || 0;
-    const pagado = String(order.payment_status ?? '').toLowerCase() === 'paid';
-    /*
-     * «Por cobrar» con saldo: si el cliente adelantó una parte, aquí se ve lo que
-     * falta de verdad, no una etiqueta genérica.
-     */
-    const saldo = Number(order?.payment?.due);
-    const pago = pagado
-      ? 'Pagado'
-      : Number.isFinite(saldo) && saldo >= 0 && saldo < (Number(order.total ?? 0) || 0)
-        ? `Faltan ${money(saldo, order.currency)}`
-        : 'Por cobrar';
-    const facts = [
-      ['Distancia', route.distanceLabel || 'Calculando'],
-      ['Llegada', route.etaLabel ? `${route.etaLabel} aprox.` : 'Calculando'],
-      ['Delivery cobrado', money(deliveryFee, order.currency)],
-      ['Pago', `${paymentMethodLabel(order.payment_method)} · ${pago}`],
-      ['Total', money(Number(order.total ?? 0) || 0, order.currency)],
-      ['GPS', route.gpsLabel || (status === 'EN_CAMINO' ? 'Esperando señal' : 'Al entrar al detalle')],
-    ];
-    return `<div class="delivery-compact-facts">
-      ${facts
-        .map(
-          ([label, value]) => `<div>
-            <span>${escapeHtml(label)}</span>
-            <strong>${escapeHtml(value)}</strong>
-          </div>`,
-        )
-        .join('')}
-    </div>`;
-  }
+  /*
+   * NOTA: aquí vivía `deliveryCompactFactsHtml` («Delivery cobrado», «GPS: al
+   * entrar al detalle», «Calculando»). Se retiró con el rediseño: mezclaba la
+   * TARIFA de envío con el dinero cobrado y dejaba «Calculando» para siempre
+   * cuando el teléfono negaba la ubicación. Su sustituto es `deliveryMoneyHtml`
+   * (dinero con nombres correctos) + la cabecera del mapa (distancia/ETA/GPS con
+   * estado real).
+   */
 
   function deliveryMapPreviewHtml(order, session, status) {
     const location = deliveryOrderLocation(order);
@@ -6923,7 +7074,10 @@
         ? `<p class="dv-map-head__warn">Sin señal de tu GPS: no se dibuja la ruta hasta que la ubicación esté activa.</p>`
         : route.gpsState === 'last'
           ? `<p class="dv-map-head__warn">Ruta desde tu última señal ${escapeHtml(deliveryAgeLabel(route.gpsAgeMin))}.</p>`
-          : ''}
+          : route.gpsState === 'unavailable'
+            ? `<p class="dv-map-head__warn">Ubicación no disponible. Activa el permiso del teléfono y vuelve a intentarlo.
+                <button class="dv-map-head__retry" data-dv-map-refresh type="button">Reintentar</button></p>`
+            : ''}
     </header>`;
   }
 
@@ -6934,52 +7088,6 @@
       <button class="dv-map-btn" data-dv-map-center="route" type="button" aria-label="Ver la ruta completa" title="Ver la ruta completa">${ICONS.search}</button>
       <button class="dv-map-btn" data-dv-map-refresh type="button" aria-label="Actualizar mi ubicación" title="Actualizar mi ubicación">${ICONS.retry}</button>
       <button class="dv-map-btn" data-dv-follow type="button" aria-label="Seguirme en el mapa" aria-pressed="true" title="Seguirme en el mapa">${ICONS.pin}</button>
-    </div>`;
-  }
-
-  /**
-   * ACCIONES DE LA ENTREGA EN EL MÓVIL.
-   *
-   * Todo lo que se hace con una mano: empezar, abrir en Google Maps (con el
-   * repartidor como ORIGEN real), llamar, WhatsApp, marcar la recogida, marcar
-   * entregado y reportar una incidencia. Reutiliza los estados y manejadores que
-   * ya existen: no hay un segundo sistema de entrega.
-   */
-  function deliveryActionPanelHtml(order, session, status, route) {
-    const phone = deliveryCustomerPhone(order);
-    const destino = deliveryOrderLocation(order);
-    const navUrl = route.destination
-      ? externalNavigationUrl(destino, route.origin ? { latitude: route.origin[0], longitude: route.origin[1] } : null)
-      : '';
-    const pickupPendiente = (route.pendientes ?? [])[0] ?? null;
-    const abierto = !['ENTREGADO', 'CANCELADO'].includes(status);
-    const cta =
-      status === 'EN_CAMINO'
-        ? `<button class="dv-act dv-act--go" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${
-            session?.id ? '' : 'disabled'
-          }>${ICONS.check}<span>Marcar entregado</span></button>`
-        : status === 'PENDIENTE' || status === 'EN_PROCESO'
-          ? `<button class="dv-act dv-act--go" data-delivery-start="${escapeHtml(order.id)}" type="button">${ICONS.delivery}<span>Iniciar entrega</span></button>`
-          : '';
-    return `<div class="dv-actions" role="group" aria-label="Acciones de la entrega">
-      ${cta}
-      ${navUrl ? `<a class="dv-act" href="${escapeHtml(navUrl)}" target="_blank" rel="noopener noreferrer">${ICONS.pin}<span>Google Maps</span></a>` : ''}
-      ${phone ? `<a class="dv-act" href="tel:${escapeHtml(phone)}">${ICONS.call ?? ICONS.phone}<span>Llamar</span></a>` : ''}
-      ${phone ? `<a class="dv-act" href="https://wa.me/${escapeHtml(phone)}" target="_blank" rel="noopener noreferrer">${ICONS.chat}<span>WhatsApp</span></a>` : ''}
-      ${
-        pickupPendiente?.id && abierto
-          ? `<button class="dv-act" data-dv-pickup-status="purchased" data-dv-pickup="${escapeHtml(pickupPendiente.id)}" type="button">${ICONS.box}<span>Marcar recogida</span></button>`
-          : ''
-      }
-      ${
-        /* El aviso rápido ya escrito (camino, llegando, llegué) sigue disponible. */
-        abierto
-          ? `<button class="dv-act" data-delivery-notice="${escapeHtml(order.id)}" type="button">${ICONS.send}<span>Enviar aviso</span></button>`
-          : ''
-      }
-      ${abierto
-        ? `<button class="dv-act" data-delivery-issue="${escapeHtml(order.id)}" type="button"><span class="dv-act__dot" aria-hidden="true"></span><span>Reportar incidencia</span></button>`
-        : ''}
     </div>`;
   }
 
@@ -7349,38 +7457,230 @@
     }
   }
 
-  function deliveryPrimaryAction(order, session) {
+  /*
+   * ==================================================================
+   *  UN SOLO FLUJO: ACEPTAR → CONTACTAR → EN CAMINO → ENTREGAR
+   * ==================================================================
+   *
+   * El orden lo define el SERVIDOR (`order.next_step`) y aquí solo se
+   * representa. Antes la pantalla tenía dos acciones primarias que se
+   * contradecían (una arriba para salir y otra abajo para contactar) y un texto
+   * que pedía contactar primero sin que el backend lo exigiera.
+   */
+  const DELIVERY_STEPS = ['accepted', 'contacted', 'on_the_way', 'delivered'];
+  const DELIVERY_STEP_TEXT = { accepted: 'Aceptar', contacted: 'Contactar', on_the_way: 'En camino', delivered: 'Entregar' };
+
+  function deliveryNextStep(order, session = deliverySessionForOrder(order?.id)) {
+    /*
+     * SIN RED NO SE FINGE NADA: si el repartidor cerró la entrega sin conexión,
+     * la sesión local queda marcada como pendiente y el pedido NO se da por
+     * entregado hasta que el servidor lo confirme.
+     */
+    if (session?.pending_status === 'completed') return 'sync_pending';
+    const step = String(order?.next_step ?? '');
+    if (['accepted', 'contacted', 'on_the_way', 'delivered', 'issue', 'done'].includes(step)) return step;
+    /* Respaldo para una copia guardada antes de este cambio. */
     const status = deliveryVisibleStatus(order, session);
-    if (status === 'PENDIENTE') {
-      /*
-       * MODO UAT: con la bandera encendida se puede INICIAR sin enviar el
-       * mensaje de contacto. No se marca al cliente como contactado: el pedido
-       * sigue diciendo la verdad. En producción la bandera no llega y este botón
-       * no existe.
-       */
-      const uatStart = state.uat?.skipDeliveryContact
-        ? `<button class="btn btn--ghost btn--sm" data-delivery-start="${escapeHtml(order.id)}" type="button" title="Modo UAT: inicia sin enviar WhatsApp">Iniciar (UAT, sin contacto)</button>`
-        : '';
-      return (
-        (order.conversation_id
-          ? `<button class="btn btn--primary btn--sm" data-delivery-contact="${escapeHtml(order.id)}" type="button">Aceptar y contactar</button>`
-          : '<span class="delivery-unavailable">Sin conversación</span>') + uatStart
-      );
+    if (status === 'ENTREGADO' || status === 'CANCELADO') return 'done';
+    if (status === 'INCIDENCIA') return 'issue';
+    if (status === 'EN_CAMINO') return 'delivered';
+    if (!order?.delivery_accepted_at) return 'accepted';
+    if (!deliveryContactedAtOf(order)) return 'contacted';
+    return 'on_the_way';
+  }
+
+  function deliveryContactedAtOf(order) {
+    const attempts = Array.isArray(order?.delivery?.delivery_contact_attempts) ? order.delivery.delivery_contact_attempts : [];
+    return order?.contacted_at ?? order?.delivery?.delivery_contacted_at ?? (attempts.length ? attempts[attempts.length - 1]?.at ?? null : null);
+  }
+
+  /** Barra de 4 pasos: se lee de un vistazo y no ocupa media pantalla. */
+  function deliveryStepsHtml(step) {
+    const index = DELIVERY_STEPS.indexOf(step);
+    return `<ol class="dv-steps" aria-label="Progreso de la entrega">
+      ${DELIVERY_STEPS.map((key, position) => {
+        const done = index >= 0 && position < index;
+        const active = position === index;
+        return `<li class="dv-steps__item${done ? ' is-done' : ''}${active ? ' is-active' : ''}"${active ? ' aria-current="step"' : ''}>
+          <i aria-hidden="true"></i><span>${escapeHtml(DELIVERY_STEP_TEXT[key])}</span>
+        </li>`;
+      }).join('')}
+    </ol>`;
+  }
+
+  /**
+   * DINERO, CON NOMBRES QUE NO ENGAÑAN.
+   *
+   * «Delivery cobrado» era la TARIFA de envío, no dinero cobrado: se cambia por
+   * «Envío (tarifa)». Y lo que falta por cobrar sale del saldo real del servidor
+   * (con los adelantos y las transferencias pendientes de verificar descontados).
+   */
+  function deliveryMoneyHtml(order) {
+    const payment = order?.payment ?? {};
+    const total = Number(payment.total ?? order?.total ?? 0) || 0;
+    const due = Number.isFinite(Number(payment.due)) ? Number(payment.due) : total;
+    const porVerificar = Number(payment.pendingVerification ?? 0) || 0;
+    const fee = Number(order?.delivery_fee ?? order?.delivery?.fee ?? 0) || 0;
+    const pagado = String(payment.status ?? '').toLowerCase() === 'paid' || (total > 0 && due <= 0);
+    const medio = payment.method ?? order?.payment_method;
+    return `<div class="dv-money">
+      <div class="dv-money__row"><span>Total</span><strong>${escapeHtml(money(total, order?.currency))}</strong></div>
+      ${fee ? `<div class="dv-money__row dv-money__row--muted"><span>Envío (tarifa)</span><span>${escapeHtml(money(fee, order?.currency))}</span></div>` : ''}
+      <div class="dv-money__row dv-money__row--due">
+        <span>${pagado ? 'Pago' : 'Por cobrar'}</span>
+        <strong>${pagado ? `Pagado${medio ? ` · ${escapeHtml(paymentMethodLabel(medio) ?? '')}` : ''}` : escapeHtml(money(due, order?.currency))}</strong>
+      </div>
+      ${porVerificar ? `<div class="dv-money__row dv-money__row--warn"><span>Transferencia por verificar</span><strong>${escapeHtml(money(porVerificar, order?.currency))}</strong></div>` : ''}
+    </div>`;
+  }
+
+  /** UNA acción primaria, la que toca. */
+  function deliveryPrimaryCtaHtml(order, session, step) {
+    const id = escapeHtml(order.id);
+    if (step === 'sync_pending') {
+      return `<button class="dv-primary dv-primary--blocked" type="button" disabled><span>Pendiente de sincronización</span></button>`;
     }
-    if (status === 'EN_PROCESO') {
-      return `<button class="btn btn--primary btn--sm" data-delivery-start="${escapeHtml(order.id)}" type="button">Iniciar</button>`;
+    if (step === 'accepted') {
+      return `<button class="dv-primary" data-delivery-accept="${id}" type="button">${ICONS.check ?? ''}<span>Aceptar entrega</span></button>`;
     }
-    if (status === 'EN_CAMINO') {
-      return `<button class="btn btn--primary btn--sm" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${session?.id ? '' : 'disabled'}>Finalizar</button>`;
+    if (step === 'contacted') {
+      return `<button class="dv-primary" data-dv-contact-sheet="${id}" type="button">${ICONS.chat ?? ''}<span>Contactar cliente</span></button>`;
     }
-    if (status === 'ENTREGADO') {
-      return `<button class="btn btn--ghost btn--sm" data-delivery-back type="button">Volver</button>`;
+    if (step === 'on_the_way') {
+      if (!deliveryOrderLocation(order)) {
+        return `<button class="dv-primary dv-primary--blocked" data-delivery-order-detail="${id}" type="button"><span>Falta la ubicación del cliente</span></button>`;
+      }
+      return `<button class="dv-primary" data-delivery-start="${id}" type="button">${ICONS.delivery ?? ''}<span>Iniciar entrega</span></button>`;
     }
-    if (status === 'INCIDENCIA') {
-      return `<button class="btn btn--ghost btn--sm" data-delivery-back type="button">Volver</button>`;
+    if (step === 'delivered') {
+      return `<button class="dv-primary dv-primary--finish" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${
+        session?.id ? '' : 'disabled'
+      }>${ICONS.check ?? ''}<span>Finalizar entrega</span></button>`;
     }
     return '';
   }
+
+  /** Lo de todos los días, en una fila; lo raro, en «Más». */
+  function deliverySecondaryActionsHtml(order, session) {
+    const phone = deliveryCustomerPhone(order);
+    const ruta = externalNavigationUrl(
+      deliveryOrderLocation(order),
+      order?.delivery?.delivery_start_location ?? order?.delivery?.route_snapshot?.start_location ?? session?.last_position,
+    );
+    return `<div class="dv-secondary" role="group" aria-label="Acciones secundarias">
+      ${phone ? `<a class="dv-sec" href="tel:${escapeHtml(phone)}">${ICONS.call ?? ICONS.phone ?? ''}<span>Llamar</span></a>` : ''}
+      ${phone ? `<a class="dv-sec" href="https://wa.me/${escapeHtml(phone)}" target="_blank" rel="noopener noreferrer">${ICONS.chat ?? ''}<span>WhatsApp</span></a>` : ''}
+      ${ruta ? `<a class="dv-sec" href="${escapeHtml(ruta)}" target="_blank" rel="noopener noreferrer">${ICONS.pin ?? ''}<span>Ruta</span></a>` : ''}
+      <button class="dv-sec" data-dv-more="${escapeHtml(order.id)}" type="button" aria-haspopup="menu">${ICONS.more ?? ICONS.chevron ?? ''}<span>Más</span></button>
+    </div>`;
+  }
+  /** Menú contextual: nada se pierde, solo deja de ocupar la pantalla. */
+  function openDeliveryMoreSheet(orderId) {
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    if (!order) return;
+    const session = deliverySessionForOrder(orderId);
+    const step = deliveryNextStep(order, session);
+    const pickupPendiente = (order.pickups ?? []).find((pickup) => !['purchased', 'to_customer', 'delivered'].includes(pickup.status));
+    const abierto = !['done', 'issue'].includes(step);
+    const admin = hasPermission('delivery.tracking.manage_all');
+    openSheet(
+      'Más acciones',
+      `<div class="dv-more">
+        <button class="dv-more__item" data-delivery-order-detail="${escapeHtml(orderId)}" type="button">Ver pedido</button>
+        ${abierto ? `<button class="dv-more__item" data-delivery-notice="${escapeHtml(orderId)}" type="button">Enviar aviso al cliente</button>` : ''}
+        ${pickupPendiente?.id ? `<button class="dv-more__item" data-dv-pickup-status="purchased" data-dv-pickup="${escapeHtml(pickupPendiente.id)}" type="button">Marcar recogida</button>` : ''}
+        ${abierto ? `<button class="dv-more__item dv-more__item--danger" data-delivery-issue="${escapeHtml(orderId)}" type="button">Reportar problema</button>` : ''}
+        ${session?.id ? `<button class="dv-more__item" data-delivery-stop="${escapeHtml(session.id)}" type="button">Detener el GPS</button>` : ''}
+        ${
+          admin && step === 'issue'
+            ? `<button class="dv-more__item" data-dv-issue-resolve="${escapeHtml(orderId)}" type="button">Resolver la incidencia</button>`
+            : ''
+        }
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  /**
+   * CONTACTAR — tres caminos y NINGUNO envía nada solo.
+   *
+   * · Llamar / WhatsApp abren el teléfono del repartidor y dejan registrado el
+   *   intento (queda la prueba de que lo intentó).
+   * · «Enviar mensaje» abre el chat del CRM con el texto listo.
+   * · «No pude contactar» registra el intento fallido y lleva a reportar.
+   */
+  function openDeliveryContactSheet(orderId) {
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    if (!order) return;
+    const phone = deliveryCustomerPhone(order);
+    const canChat = Boolean(order.conversation_id);
+    openSheet(
+      'Contactar al cliente',
+      `<div class="dv-contact-sheet">
+        <p class="dv-contact-sheet__who"><strong>${escapeHtml(order.customer?.name ?? 'Cliente')}</strong><span>${escapeHtml(
+          deliveryShortAddress(order),
+        )}</span></p>
+        <div class="dv-contact-sheet__grid">
+          ${
+            phone
+              ? `<button class="dv-act" data-dv-contact-call="${escapeHtml(orderId)}" type="button">${ICONS.call ?? ICONS.phone ?? ''}<span>Llamar</span></button>`
+              : ''
+          }
+          ${
+            phone
+              ? `<button class="dv-act" data-dv-contact-wa="${escapeHtml(orderId)}" type="button">${ICONS.chat ?? ''}<span>WhatsApp</span></button>`
+              : ''
+          }
+          ${
+            canChat
+              ? `<button class="dv-act" data-delivery-contact="${escapeHtml(order.id)}" type="button">${ICONS.send ?? ''}<span>Mensaje del CRM</span></button>`
+              : ''
+          }
+          <button class="dv-act" data-dv-contact-none="${escapeHtml(orderId)}" type="button"><span>No pude contactar</span></button>
+        </div>
+        ${phone ? '' : '<p class="rule rule--warn">Este pedido no tiene teléfono del cliente.</p>'}
+        <p class="rule">Al llamar o abrir WhatsApp se registra el intento de contacto. No se envía ningún mensaje automático.</p>
+      </div>`,
+      { variant: 'menu' },
+    );
+  }
+
+  async function acceptDelivery(orderId, button = null) {
+    try {
+      await working(button, 'Aceptando…', async () => {
+        await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/accept`, { method: 'POST', body: '{}' });
+        await load({ keepTab: true });
+        setTab('delivery', { silent: true });
+        renderDelivery();
+      });
+      toast('Entrega aceptada');
+    } catch (error) {
+      if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo aceptar la entrega');
+    }
+  }
+
+  async function recordDeliveryContactAttempt(orderId, channel, options = {}) {
+    await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/contact-attempt`, {
+      method: 'POST',
+      body: JSON.stringify({ channel, note: options.note ?? null }),
+    });
+    const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+    if (order) {
+      const at = new Date().toISOString();
+      order.contacted_at = at;
+      order.delivery = {
+        ...(order.delivery ?? {}),
+        delivery_contact_attempted_at: at,
+        delivery_contact_attempts: [
+          ...(Array.isArray(order.delivery?.delivery_contact_attempts) ? order.delivery.delivery_contact_attempts : []),
+          { channel, at },
+        ],
+      };
+      if (order.next_step === 'contacted') order.next_step = 'on_the_way';
+    }
+    renderDelivery();
+  }
+
 
   function deliveryQuickActions(order, status, session = null) {
     const customer = order?.customer ?? {};
@@ -7440,16 +7740,17 @@
   const deliveryCustomerPhone = (order) =>
     digits(order?.customer?.phone_e164 || order?.customer?.phone || order?.customer_phone || '');
 
-  /** Una sola acción grande, la que toca: empezar o terminar. */
+  /** Una sola acción grande, la que toca según el paso del servidor. */
   function deliveryCardCta(order) {
     const session = deliverySessionForOrder(order.id);
-    const status = deliveryVisibleStatus(order, session);
-    if (status === 'EN_CAMINO') {
-      return `<button class="dv-cta dv-cta--finish" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${
-        session?.id ? '' : 'disabled'
-      }>FINALIZAR</button>`;
+    const step = deliveryNextStep(order, session);
+    if (step === 'accepted') {
+      return `<button class="dv-cta" data-delivery-accept="${escapeHtml(order.id)}" type="button">ACEPTAR</button>`;
     }
-    if (status === 'PENDIENTE' || status === 'EN_PROCESO') {
+    if (step === 'contacted') {
+      return `<button class="dv-cta" data-dv-contact-sheet="${escapeHtml(order.id)}" type="button">CONTACTAR</button>`;
+    }
+    if (step === 'on_the_way') {
       /*
        * SIN DESTINO NO HAY ENTREGA. El servidor rechaza iniciar un pedido sin
        * ubicación (`missing_destination`): decirlo aquí evita un toque que solo
@@ -7459,6 +7760,14 @@
         return `<button class="dv-cta dv-cta--blocked" data-delivery-open="${escapeHtml(order.id)}" type="button">FALTA UBICACIÓN</button>`;
       }
       return `<button class="dv-cta" data-delivery-start="${escapeHtml(order.id)}" type="button">INICIAR</button>`;
+    }
+    if (step === 'delivered') {
+      return `<button class="dv-cta dv-cta--finish" data-delivery-complete="${escapeHtml(session?.id ?? '')}" type="button" ${
+        session?.id ? '' : 'disabled'
+      }>FINALIZAR</button>`;
+    }
+    if (step === 'issue') {
+      return `<button class="dv-cta dv-cta--blocked" data-delivery-open="${escapeHtml(order.id)}" type="button">VER INCIDENCIA</button>`;
     }
     return '';
   }
@@ -7723,54 +8032,47 @@
     input.click();
   }
 
-  /** Cobro pendiente: se muestra, pero finalizar NO registra ningún pago. */
-  function deliveryCashHtml(order) {
-    const cash = deliveryCashDue(order);
-    if (!cash) return '';
-    return `<div class="dv-cash">
-      <strong>Cobro pendiente ${escapeHtml(money(cash, order.currency))}</strong>
-      <small>Finalizar la entrega no registra el cobro: se cobra en el flujo de caja.</small>
-    </div>`;
-  }
-
+  /**
+   * PANEL DEL REPARTIDOR (móvil primero).
+   *
+   * Jerarquía: mapa → cliente/dirección → dinero → UNA acción → acciones
+   * secundarias. Nada de dos botones que hagan lo mismo ni de instrucciones que
+   * el backend no cumple.
+   */
   function deliveryDetailPanelHtml(order) {
     const session = deliverySessionForOrder(order.id);
     const status = deliveryVisibleStatus(order, session);
     const route = deliveryRouteSummary(order, session);
-    const ruta = externalNavigationUrl(
-      deliveryOrderLocation(order),
-      order?.delivery?.delivery_start_location ?? order?.delivery?.route_snapshot?.start_location ?? session?.last_position,
-    );
-    return `<section class="delivery-detail-panel" aria-label="Detalle de entrega">
+    const step = deliveryNextStep(order, session);
+    const abierto = !['done', 'issue', 'sync_pending'].includes(step);
+    return `<section class="delivery-detail-panel dv-panel" data-dv-step="${escapeHtml(step)}" aria-label="Detalle de entrega">
       ${deliveryHeaderHtml(order, session, status, route)}
-      ${deliveryActionPanelHtml(order, session, status, route)}
-      ${deliveryCashHtml(order)}
-      ${deliveryCompactFactsHtml(order, session, status)}
-      ${deliveryPickupsHtml(order)}
+      <div class="dv-who">
+        <strong>${escapeHtml(order.customer?.name ?? 'Cliente')}</strong>
+        <span>${escapeHtml(deliveryShortAddress(order))}</span>
+      </div>
+      ${deliveryMoneyHtml(order)}
+      ${
+        step === 'sync_pending'
+          ? `<div class="dv-sync"><strong>Pendiente de sincronización</strong><span>La entrega se guardó en el teléfono. Se confirmará al recuperar la conexión; hasta entonces el pedido NO se da por entregado.</span></div>`
+          : ''
+      }
+      ${
+        step === 'issue'
+          ? `<div class="dv-issue-open">
+              <strong>Incidencia reportada</strong>
+              <p>${escapeHtml(order.delivery?.issue_reason_label ?? 'Incidencia')}${
+                order.delivery?.issue_note ? ` · ${escapeHtml(order.delivery.issue_note)}` : ''
+              }</p>
+              <small>Esperando decisión administrativa.</small>
+            </div>`
+          : ''
+      }
+      ${step === 'done' ? '' : deliveryStepsHtml(step)}
+      ${abierto ? deliveryPickupsHtml(order) : ''}
       ${deliveryAssignmentNoteHtml(order)}
-      ${deliveryOrderSummaryHtml(order, session, status)}
-      <div class="delivery-step ${status === 'PENDIENTE' ? 'delivery-step--required' : ''}">
-        <span>${status === 'PENDIENTE' ? '1' : '✓'}</span>
-        <div>
-          <strong>${status === 'PENDIENTE' ? 'Primero contacta al cliente' : 'Cliente contactado'}</strong>
-          <small>${status === 'PENDIENTE' ? 'Luego podrás iniciar la entrega.' : 'Ya puedes continuar con la entrega.'}</small>
-        </div>
-      </div>
-      <div class="delivery-actions">
-        <button class="btn btn--ghost btn--sm" data-delivery-order-detail="${escapeHtml(order.id)}" type="button">Ver pedido</button>
-        ${ruta ? `<a class="btn btn--ghost btn--sm" href="${escapeHtml(ruta)}" target="_blank" rel="noopener noreferrer">Ruta</a>` : ''}
-        ${
-          status === 'INCIDENCIA'
-            ? `<div class="delivery-issue">
-                <strong>Incidencia reportada</strong>
-                <p><span>Motivo:</span> ${escapeHtml(order.delivery?.issue_reason_label ?? 'Incidencia')}</p>
-                ${order.delivery?.issue_note ? `<p><span>Nota:</span> ${escapeHtml(order.delivery.issue_note)}</p>` : ''}
-                <p>Esperando decisión administrativa.</p>
-              </div>`
-            : ''
-        }
-        ${deliveryPrimaryAction(order, session)}
-      </div>
+      ${deliveryPrimaryCtaHtml(order, session, step)}
+      ${step === 'done' ? `<button class="btn btn--ghost btn--block" data-delivery-back type="button">Volver a mis entregas</button>` : deliverySecondaryActionsHtml(order, session)}
     </section>`;
   }
 
@@ -7919,10 +8221,10 @@
     return rate * quantity;
   }
 
-  function dailyCloseModel(day = todayISO()) {
+  function dailyCloseModel(day = todayISO(), sourceItems = state.items) {
     const user = currentUser();
     const ownClose = !hasPermission('reports.profit.view');
-    const delivered = (state.items ?? [])
+    const delivered = (sourceItems ?? [])
       .filter((item) => item.type === 'order_intent')
       .map((item) => ({ item, order: itemOrder(item) }))
       .filter(
@@ -8018,7 +8320,20 @@
      */
     const day = state.closeDay ?? todayISO();
     const esHoy = day === todayISO();
-    const model = dailyCloseModel(day);
+    /*
+     * UN DÍA PASADO SE LEE DEL SERVIDOR.
+     * La copia del panel solo tiene los 500 registros más nuevos: abrir un
+     * cierre antiguo desde el historial podía enseñarlo vacío aunque el
+     * historial sí lo tuviera. Si la fuente del día ya está, se usa; si no, se
+     * pide y se repinta cuando llegue (sin dejar la pantalla en blanco).
+     */
+    const fuenteDia = esHoy ? null : closeHistorySource(day, day);
+    const model = dailyCloseModel(day, fuenteDia ?? state.items);
+    if (!esHoy && !closeHistoryRemoteState(day, day)) {
+      loadCloseHistoryRemote(day, day, () => {
+        if (state.tab === 'cierre' && (state.closeDay ?? todayISO()) === day) renderDailyClose();
+      }).catch(() => {});
+    }
     const deliveryEarnings = model.totals.deliveryFee + model.totals.commissions;
     const net = model.totals.cashHeldByDelivery - deliveryEarnings;
     const minutesNow = businessClockMinutes();
@@ -8095,6 +8410,12 @@
    */
   const closeHistoryRange = () => {
     const hoy = todayISO();
+    // Hoy y Ayer son días de NEGOCIO (America/Santo_Domingo), no UTC.
+    if (state.closeHistoryPeriod === 'hoy') return { from: hoy, to: hoy };
+    if (state.closeHistoryPeriod === 'ayer') {
+      const ayer = addDaysISO(-1);
+      return { from: ayer, to: ayer };
+    }
     if (state.closeHistoryPeriod === 'mes') return { from: `${hoy.slice(0, 7)}-01`, to: hoy };
     if (state.closeHistoryPeriod === 'custom') {
       const rango = state.closeHistoryRange ?? {};
@@ -8106,15 +8427,69 @@
     return { from: addDaysISO(state.closeHistoryPeriod === '30d' ? -29 : -6), to: hoy };
   };
 
-  /** Días entre dos fechas, las dos incluidas (con tope por si alguien pide años). */
-  function closeHistoryDays(from, to, tope = 400) {
+  /** El mismo tope que el servidor (`CLOSE_HISTORY_MAX_DAYS` en crm-server). */
+  const CLOSE_HISTORY_MAX_DAYS = 400;
+
+  /** Días del tramo, los dos incluidos, DEL MÁS NUEVO AL MÁS VIEJO. */
+  function closeHistoryDays(from, to, tope = CLOSE_HISTORY_MAX_DAYS) {
     const dias = [];
-    let dia = from;
-    while (dia <= to && dias.length < tope) {
+    let dia = to;
+    while (dia >= from && dias.length < tope) {
       dias.push(dia);
-      dia = addDaysToISO(dia, 1);
+      dia = addDaysToISO(dia, -1);
     }
     return dias;
+  }
+
+  /** Cuántos días abarca el tramo (para avisar si se recorta). */
+  function closeHistorySpan(from, to) {
+    const ms = Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`);
+    return Number.isFinite(ms) ? Math.round(ms / 86400000) + 1 : 1;
+  }
+
+  /* -------------------------------------------------- fuente del historial */
+
+  const closeHistoryKey = (from, to) => `${from}|${to}`;
+
+  /** Lo que ya se sabe de ese tramo (o `null` si no se ha pedido). */
+  function closeHistoryRemoteState(from, to) {
+    const remoto = state.closeHistoryRemote;
+    return remoto && remoto.key === closeHistoryKey(from, to) ? remoto : null;
+  }
+
+  /** Los pedidos del tramo si YA están; si no, `null` (se usa la copia local). */
+  function closeHistorySource(from, to) {
+    const remoto = closeHistoryRemoteState(from, to);
+    return remoto && Array.isArray(remoto.items) ? remoto.items : null;
+  }
+
+  /**
+   * PIDE AL SERVIDOR LOS PEDIDOS ENTREGADOS DEL TRAMO.
+   * Devuelve como mucho `CLOSE_HISTORY_MAX_DAYS` días; el servidor valida el
+   * rango y aplica el permiso (todo el equipo o solo lo propio). Un fallo no
+   * rompe el historial: se queda con la copia local y se dice con honestidad.
+   */
+  async function loadCloseHistoryRemote(from, to, after = null, options = {}) {
+    const key = closeHistoryKey(from, to);
+    if (state.closeHistoryLoading === key) return;
+    if (!options.force && closeHistoryRemoteState(from, to)) return;
+    state.closeHistoryLoading = key;
+    try {
+      const query = new URLSearchParams({ from, to });
+      const data = await api(`/api/admin/reports/delivered-orders?${query.toString()}`);
+      state.closeHistoryRemote = {
+        key,
+        items: Array.isArray(data.items) ? data.items : [],
+        truncated: data.truncated === true,
+        at: Date.now(),
+      };
+    } catch {
+      // Sin red o sin permiso: se recuerda el fallo para no reintentar en bucle.
+      state.closeHistoryRemote = { key, items: null, truncated: false, at: Date.now() };
+    } finally {
+      if (state.closeHistoryLoading === key) state.closeHistoryLoading = null;
+    }
+    if (typeof after === 'function') after();
   }
 
   /**
@@ -8126,11 +8501,11 @@
    * tienen algo y solo se calcula el cierre de esos: mismo resultado, mucho menos
    * trabajo. Las condiciones son las MISMAS que las de `dailyCloseModel`.
    */
-  function closeHistoryDaysWithSales(from, to) {
+  function closeHistoryDaysWithSales(from, to, sourceItems = state.items) {
     const user = currentUser();
     const ownClose = !hasPermission('reports.profit.view');
     const dias = new Set();
-    for (const item of state.items ?? []) {
+    for (const item of sourceItems ?? []) {
       if (item.type !== 'order_intent') continue;
       const order = itemOrder(item);
       if (getOrderOperationalStatus(order, deliverySessionForOrder(item.id)) !== 'ENTREGADO') continue;
@@ -8143,18 +8518,19 @@
 
   function closeHistoryData() {
     const { from, to } = closeHistoryRange();
-    return closeRangeData(from, to);
+    return closeRangeData(from, to, closeHistorySource(from, to));
   }
 
   /** LOS NÚMEROS DE UN TRAMO: el historial suma los mismos modelos diarios. */
-  function closeRangeData(from, to) {
-    const conVentas = closeHistoryDaysWithSales(from, to);
+  function closeRangeData(from, to, sourceItems = null) {
+    const items = Array.isArray(sourceItems) ? sourceItems : state.items;
+    const conVentas = closeHistoryDaysWithSales(from, to, items);
     const cierres = closeHistoryDays(from, to)
       .filter((day) => conVentas.has(day))
-      .map((day) => ({ day, model: dailyCloseModel(day) }))
-      .filter((row) => row.model.orders.length > 0)
-      // El más reciente primero: es el que se mira casi siempre.
-      .reverse();
+      .map((day) => ({ day, model: dailyCloseModel(day, items) }))
+      // El más reciente primero: es el que se mira casi siempre. `closeHistoryDays`
+      // ya viene de nuevo a viejo, así que aquí NO se invierte otra vez.
+      .filter((row) => row.model.orders.length > 0);
     const total = cierres.reduce(
       (acc, { model }) => {
         acc.days += 1;
@@ -8207,7 +8583,7 @@
         byDelivery.set(fila.id, actual);
       }
     }
-    return { from, to, cierres, total, byDelivery };
+    return { from, to, cierres, total, byDelivery, recortado: closeHistorySpan(from, to) > CLOSE_HISTORY_MAX_DAYS };
   }
 
   function closeHistoryRowHtml(day, model) {
@@ -8219,6 +8595,42 @@
       <span class="close-history__meta">${model.orders.length} venta${model.orders.length === 1 ? '' : 's'} · ${escapeHtml(settlementLabel(cuadre))}</span>
       <span class="close-history__open" aria-hidden="true">›</span>
     </button>`;
+  }
+
+  /** El tramo que se está mirando, en palabras cortas (para el control de fechas). */
+  function closeHistoryRangeLabel(from, to) {
+    if (state.closeHistoryPeriod === '7d') return '7 días';
+    if (state.closeHistoryPeriod === '30d') return '30 días';
+    if (state.closeHistoryPeriod === 'mes') return 'Este mes';
+    return from === to ? fmtShortDay(from) : `${fmtShortDay(from)} – ${fmtShortDay(to)}`;
+  }
+
+  /**
+   * HOY | AYER | INTERVALO: un solo control, siempre a la vista.
+   *
+   * Antes los filtros vivían en el panelito lateral que en el móvil está
+   * escondido tras un botón: para ver «ayer» había que abrir un menú. Ahora son
+   * tres botones seguidos (segmentado) y el tercero abre el calendario. Los
+   * rangos rápidos (7 días / 30 días / mes) siguen en el panelito, sin perder
+   * nada de lo que había.
+   */
+  function closeHistoryFiltersHtml(from, to) {
+    const modo = state.closeHistoryPeriod === 'hoy' ? 'hoy' : state.closeHistoryPeriod === 'ayer' ? 'ayer' : 'intervalo';
+    const boton = (valor, etiqueta, extra = '') =>
+      `<button class="close-history-seg__btn" data-close-history-quick="${valor}" type="button" aria-pressed="${
+        modo === valor
+      }">${escapeHtml(etiqueta)}${extra}</button>`;
+    return `<div class="close-history-seg" role="group" aria-label="Filtrar cierres por fecha">
+      ${boton('hoy', 'Hoy')}
+      ${boton('ayer', 'Ayer')}
+      ${boton(
+        'intervalo',
+        'Intervalo',
+        modo === 'intervalo'
+          ? `<span class="close-history-seg__range">· ${escapeHtml(closeHistoryRangeLabel(from, to))}</span>`
+          : '',
+      )}
+    </div>`;
   }
 
   function renderCloseHistory() {
@@ -8235,9 +8647,27 @@
     $$('[data-close-history-period]').forEach((chip) =>
       chip.setAttribute('aria-pressed', String(chip.dataset.closeHistoryPeriod === state.closeHistoryPeriod)),
     );
-    const { from, to, cierres, total } = closeHistoryData();
+    const { from, to } = closeHistoryRange();
+    const fuente = closeHistorySource(from, to);
+    const { cierres, total, recortado } = closeRangeData(from, to, fuente);
+    /*
+     * EL TRAMO SE PIDE AL SERVIDOR. La copia del panel solo tiene los registros
+     * más nuevos; la lista buena de pedidos entregados la da el backend. Se pinta
+     * YA con lo que haya (nunca en blanco) y se repinta cuando llega.
+     */
+    const remoto = closeHistoryRemoteState(from, to);
+    const cargando = state.closeHistoryLoading === closeHistoryKey(from, to);
+    const vencido = !remoto || Date.now() - Number(remoto.at ?? 0) > 60000;
+    if (vencido && !cargando) loadCloseHistoryRemote(from, to, () => renderCloseHistory(), { force: true }).catch(() => {});
+    const avisos = [
+      recortado ? `se muestran los últimos ${CLOSE_HISTORY_MAX_DAYS} días` : '',
+      remoto && remoto.items === null ? 'sin conexión: solo lo cargado en el panel' : '',
+      cargando ? 'actualizando…' : '',
+    ].filter(Boolean);
+    const aviso = avisos.length ? ` · ${avisos.join(' · ')}` : '';
     box.innerHTML = `
-      <p class="close-history__note" id="close-history-note">${total.days} cierre${total.days === 1 ? '' : 's'} · ${total.orders} venta${total.orders === 1 ? '' : 's'} · ${money(total.sales)} · Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(fmtShortDay(to))} · ${hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas'}</p>
+      ${closeHistoryFiltersHtml(from, to)}
+      <p class="close-history__note" id="close-history-note">${total.days} cierre${total.days === 1 ? '' : 's'} · ${total.orders} venta${total.orders === 1 ? '' : 's'} · ${money(total.sales)} · Del ${escapeHtml(fmtShortDay(from))} al ${escapeHtml(fmtShortDay(to))} · ${hasPermission('reports.profit.view') ? 'Todo el equipo' : 'Tus entregas'}${escapeHtml(aviso)}</p>
       <section class="close-history-summary" id="close-history-summary" aria-label="Resumen del intervalo">
         <h3 class="close-history-summary__title">Resumen del intervalo</h3>
         <dl class="close-history-summary__grid">
@@ -8284,6 +8714,7 @@
       from: rango.from,
       to: rango.to,
       prefix: 'close',
+      rechazarInvertido: true,
       onApply: (elegido) => {
         state.closeHistoryPeriod = 'custom';
         state.closeHistoryRange = elegido;
@@ -8303,6 +8734,29 @@
     refreshDeliveryPreviewPosition(orderId).catch(() => {});
   }
 
+  /**
+   * FINALIZAR — hoja compacta con lo ÚNICO que hace falta: confirmar, decir cómo
+   * pagó el cliente y (si quiere) comentar.
+   *
+   * El saldo sale del bloque de pago del SERVIDOR: si el pedido ya está pagado no
+   * se pide nada más (no se duplica el recibo); si falta dinero, el repartidor
+   * dice qué pasó de verdad. Nada se marca «pagado» sin registrar el cobro.
+   */
+  function deliveryPaymentState(order) {
+    const payment = order?.payment ?? {};
+    const total = Number(payment.total ?? order?.total ?? 0) || 0;
+    const due = Number.isFinite(Number(payment.due)) ? Number(payment.due) : total;
+    return {
+      total,
+      due: Math.max(0, due),
+      paid: String(payment.status ?? '').toLowerCase() === 'paid' || (total > 0 && due <= 0),
+      received: Number(payment.received ?? 0) || 0,
+      pendingVerification: Number(payment.pendingVerification ?? 0) || 0,
+      method: payment.method ?? order?.payment_method ?? null,
+      currency: order?.currency ?? 'DOP',
+    };
+  }
+
   function confirmDeliveryComplete(sessionId) {
     const session = (state.deliveryTracking ?? []).find((row) => row.id === sessionId) ?? selectedDeliverySession();
     if (!session?.id) {
@@ -8310,29 +8764,65 @@
       return;
     }
     const order = (state.deliveryOrders ?? []).find((row) => row.id === session.order_id) ?? null;
-    // El saldo sale del bloque de pago del servidor: los adelantos se descuentan.
-    const cash = deliveryCashDue(order);
+    const dinero = deliveryPaymentState(order);
     openSheet(
       'Finalizar entrega',
-      `<div class="delivery-confirm">
-        <p><strong>Cliente:</strong> ${escapeHtml(order?.customer?.name ?? session.customer?.name ?? 'Cliente')}</p>
-        <p><strong>Pedido:</strong> ${escapeHtml(order?.order_number ?? session.order?.order_number ?? session.order_id)}</p>
-        <p>¿Confirmas que el pedido fue entregado?</p>
+      `<div class="dv-finish" data-dv-session="${escapeHtml(session.id)}" data-dv-due="${dinero.due}">
+        <p class="dv-finish__who"><strong>${escapeHtml(order?.customer?.name ?? session.customer?.name ?? 'Cliente')}</strong>
+          <span>#${escapeHtml(order?.order_number ?? session.order?.order_number ?? session.order_id)}</span></p>
+        <p class="dv-finish__ask">¿Confirmas que el pedido fue entregado?</p>
         ${
-          cash
-            ? `<div class="dv-cash"><strong>Cobro pendiente ${escapeHtml(money(cash, order?.currency))}</strong><small>Finalizar la entrega no registra el cobro: se cobra en el flujo de caja.</small></div>`
-            : ''
+          dinero.paid
+            ? `<div class="dv-paid">
+                <strong>Pago registrado</strong>
+                <span>${escapeHtml(money(dinero.received || dinero.total, dinero.currency))}${
+                  dinero.method ? ` · ${escapeHtml(paymentMethodLabel(dinero.method) ?? '')}` : ''
+                }</span>
+              </div>`
+            : `<fieldset class="dv-pay">
+                <legend>¿Cómo pagó el cliente?</legend>
+                <div class="dv-pay__options">
+                  <button class="dv-pay__opt" data-dv-pay="cash" type="button" aria-pressed="false">Efectivo</button>
+                  <button class="dv-pay__opt" data-dv-pay="transfer" type="button" aria-pressed="false">Transferencia</button>
+                  <button class="dv-pay__opt" data-dv-pay="none" type="button" aria-pressed="false">No se recibió pago</button>
+                </div>
+                <div data-dv-pay-extra hidden></div>
+                <p class="dv-pay__due">Falta por cobrar <strong>${escapeHtml(money(dinero.due, dinero.currency))}</strong></p>
+              </fieldset>`
         }
         <label class="field">
-          <span class="field__label">Nota de entrega</span>
-          <textarea class="field__input" id="delivery-complete-note" rows="3" placeholder="Opcional"></textarea>
+          <span class="field__label">Comentario (opcional)</span>
+          <textarea class="field__input" id="delivery-complete-note" rows="2" maxlength="300" placeholder="Cliente pagó en efectivo, transferencia pendiente, recibió un familiar…"></textarea>
         </label>
         <div class="sheet-actions">
           <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
-          <button class="btn btn--primary" data-delivery-confirm-complete="${escapeHtml(session.id)}" type="button">Confirmar entrega</button>
+          <button class="btn btn--primary" data-delivery-confirm-complete="${escapeHtml(session.id)}" type="button" ${
+            dinero.paid ? '' : 'disabled'
+          }>Confirmar entrega</button>
         </div>
       </div>`,
     );
+  }
+
+  /** Texto del campo extra según el medio elegido. */
+  function deliveryPayExtraHtml(outcome, dinero) {
+    if (outcome === 'cash') {
+      return `<label class="field">
+        <span class="field__label">Importe recibido</span>
+        <input class="field__input" id="dv-pay-amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${escapeHtml(
+          dinero.due.toFixed(2),
+        )}" />
+        <small class="field__hint">Puede ser menos: queda el saldo pendiente.</small>
+      </label>`;
+    }
+    if (outcome === 'transfer') {
+      return `<label class="field">
+        <span class="field__label">Referencia de la transferencia (opcional)</span>
+        <input class="field__input" id="dv-pay-reference" type="text" maxlength="200" placeholder="Número o nota del banco" />
+        <small class="field__hint">Queda como «por verificar» hasta que administración la confirme.</small>
+      </label>`;
+    }
+    return '<p class="rule rule--warn">No se registra ningún cobro: el saldo sigue pendiente y finanzas lo verá.</p>';
   }
 
   function confirmDeliveryStop(sessionId) {
@@ -9535,15 +10025,8 @@
     if (!user) {
       // Sesión con la clave del panel: no hay cuenta personal que configurar.
       profileSig = null;
-      box.innerHTML = `<div class="card">
-        <p class="card__title">Estás dentro con la clave del panel</p>
-        <p class="card__text">
-          La clave del panel no es una cuenta personal: no tiene un nombre ni una contraseña propios que
-          cambiar. Entra con tu usuario y tu contraseña para tener tu perfil.
-        </p>
-        <button class="btn btn--ghost btn--block" id="profile-relogin" type="button">Cerrar sesión y entrar con usuario</button>
-      </div>`;
-      $('#profile-relogin')?.addEventListener('click', () => $('#logout').click());
+      box.innerHTML = `<p class="view__hint">Estás dentro con la clave del panel. No hay datos personales que
+        cambiar aquí: entra con tu usuario para tener nombre, teléfonos y clave propios.</p>`;
       return;
     }
     const earningsSig = ['AGENT', 'DELIVERY'].includes(user.role)
@@ -10336,10 +10819,10 @@
   /** Los filtros de la lista de Clientes, en un solo sitio (chips y título). */
   const CLIENT_FILTERS = [
     ['todos', 'Todos'],
-    ['clientes', 'Clientes'],
-    ['interesados', 'Interesados'],
     ['prospectos', 'Prospectos'],
-    ['seguimiento', 'Seguimiento'],
+    ['interesados', 'Interesados'],
+    ['clientes', 'Clientes'],
+    ['recompra', 'Recompra'],
   ];
 
   /**
@@ -10362,6 +10845,11 @@
       pendientes: counts.pendientes,
       clientes: counts.clientes,
       seguimiento: counts.seguimiento,
+      /* Contadores por etapa: los calcula el servidor sobre el alcance completo. */
+      prospectos: counts.prospectos,
+      interesados: counts.interesados,
+      recompra: counts.recompra,
+      // «Archivados» sí lleva número: es el archivo, y saber cuántos hay ayuda.
       archivados: counts.archivados,
     }[value];
   };
@@ -10774,9 +11262,9 @@
     ].join('|');
   };
 
-  /** Conversaciones visibles según el filtro y la búsqueda, la más reciente primero. */
+  /** Conversaciones visibles según el filtro, la etapa, la búsqueda y el orden. */
   function waVisibleConversations() {
-    const { filter, q } = state.wa;
+    const { filter, q, stage } = state.wa;
     let rows = state.conversations.slice();
     /*
      * BUSCAR ES BUSCAR EN TODAS.
@@ -10798,16 +11286,37 @@
       if (filter !== 'archivados') rows = rows.filter((row) => !row.archived_at);
       const dateRange = waDateRange();
       rows = rows.filter((row) => rowInWaDateRange(row, dateRange));
+      /*
+       * La ETAPA comercial se combina con lo anterior (no lo borra). Se compara
+       * con la etapa que ya resolvió el servidor: aquí no se recalcula nada.
+       */
+      if (stage) {
+        const etapa = { prospectos: 'PROSPECT', interesados: 'INTERESTED', clientes: 'CUSTOMER', recompra: 'REPEAT_CUSTOMER' }[stage];
+        rows = rows.filter((row) => row.customer_stage === etapa);
+      }
     }
-    if (q) {
-      const needle = q.toLowerCase();
+    if (buscando) {
+      /*
+       * La búsqueda de verdad la hace el SERVIDOR (nombre, teléfono, historial de
+       * mensajes y número de pedido) y marca `row.match` con el fragmento. Aquí
+       * solo se filtra lo que llega, sin volver a exigir que el texto esté en el
+       * último mensaje —eso borraría los aciertos dentro del historial—.
+       */
       rows = rows.filter((row) => {
+        if (row.match) return true;
         const customer = waCustomer(row);
+        const needle = q.toLowerCase();
         return [customer?.name, customer?.phone_e164, row.last_message?.body]
           .filter(Boolean)
           .join(' ')
           .toLowerCase()
           .includes(needle);
+      });
+    }
+    if (state.wa.sort === 'priority') {
+      return rows.sort((a, b) => {
+        const diferencia = Number(b.priority?.score ?? 0) - Number(a.priority?.score ?? 0);
+        return diferencia || compareWaRowsRecent(a, b);
       });
     }
     return rows.sort(compareWaRowsRecent);
@@ -10849,7 +11358,17 @@
     return `${date}/${month}/${year}`;
   }
 
-  /** Sello visible de la fila: fecha/hora real del último mensaje en la zona del negocio. */
+  /**
+   * SELLO VISIBLE DE LA FILA: fecha Y hora reales del último mensaje.
+   *
+   * La fuente es `last_message_at`, que SOLO se mueve al entrar o salir un
+   * mensaje (`recordInbound` / `recordOutbound`). `updated_at` y la fecha de
+   * modificación del cliente no se usan aquí: una ficha editada ayer no es una
+   * conversación de ayer.
+   *
+   * Zona horaria del negocio (America/Santo_Domingo) y texto en español:
+   * hoy → «10:42 AM» · ayer → «Ayer · 4:25 PM» · más viejo → «20 oct. · 3:12 PM».
+   */
   function waLastMessageStamp(iso) {
     if (!iso) return null;
     const date = new Date(iso);
@@ -10858,19 +11377,16 @@
     const today = todayISO();
     const diff = daysBetweenISO(today, messageDay);
     const time = formatWaTime(date);
-    /*
-     * Sello EXACTAMENTE como WhatsApp: la hora solo cuando es de hoy, «Ayer» al
-     * día siguiente, el día de la semana dentro de la semana y la fecha corta
-     * para lo antiguo. Menos texto = el nombre respira.
-     */
+    const diaCorto = new Intl.DateTimeFormat('es-DO', {
+      timeZone: BUSINESS_TIME_ZONE,
+      day: 'numeric',
+      month: 'short',
+    })
+      .format(date)
+      .replace('.', '')
+      .trim();
     const label =
-      diff === 0
-        ? time
-        : diff === 1
-          ? 'Ayer'
-          : diff > 1 && diff < 7
-            ? shortWeekday(date)
-            : formatShortDate(messageDay);
+      diff === 0 ? time : diff === 1 ? `Ayer · ${time}` : `${diaCorto} · ${time}`;
     return {
       label,
       day: messageDay,
@@ -11043,70 +11559,87 @@
         : WA_KIND_LABEL[tipo] ?? 'Adjunto'
       : 'Sin mensajes';
     const nombre = waDisplayName(row);
-    /*
-     * En la fila, el seguimiento es una ETIQUETA, no una frase: sin día de la
-     * semana (la fecha completa está dentro del chat) para que la línea de
-     * estado quede pequeña y no robe ancho al nombre.
-     */
-    const followupDay = row.next_followup ? String(row.next_followup.scheduled_at).slice(0, 10) : null;
-    const followupText = followupDay
-      ? `${followupDay < todayISO() ? 'vencido · ' : ''}${followupDay.slice(8, 10)}/${followupDay.slice(5, 7)}`
-      : null;
     const stage = customerStageOf(row);
-    const activeOrder = row.active_order?.status ? `Pedido · ${statusLabel(row.active_order.status)}` : null;
     const assignment = conversationAssignmentLabel(row);
-    const compactFlags = [customerStageLabel(stage), activeOrder, followupText].filter(Boolean).slice(0, 3);
-    const stateFlags = [
-      /*
-       * «Archivado» se dice cuando la fila aparece FUERA de la lista de archivados
-       * (por ejemplo, porque la trajo una búsqueda general): así­ se entiende por
-       * qué está ahí­. Dentro de esa lista sobra.
-       */
-      row.archived_at && state.wa.filter !== 'archivados' ? 'Archivado' : null,
-      awaiting ? 'Pendiente' : null,
-      row.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null,
-      ...compactFlags,
-    ].filter(Boolean);
-    const flags =
-      stateFlags.length || assignment
-        ? `<span class="conv__flags">
-            <span class="conv__assign ${row.assigned_user_id ? '' : 'conv__assign--empty'}">${escapeHtml(assignment)}</span>
-            ${stateFlags.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
-          </span>`
-        : '';
+    const tonoEtapa = {
+      PROSPECT: 'prospecto',
+      INTERESTED: 'interesado',
+      CUSTOMER: 'cliente',
+      REPEAT_CUSTOMER: 'recompra',
+      INACTIVE: 'inactivo',
+    }[stage] ?? 'prospecto';
+    /*
+     * DOS LÍNEAS, NO TRES.
+     *
+     * La ficha de gestión (responsable · etapa) deja de ocupar un renglón propio:
+     * se va a la DERECHA de la segunda línea, justo debajo de la hora. Así la
+     * fila dice lo mismo en 2 líneas —quién es, qué dijo y cuándo, quién la
+     * atiende y en qué punto está— y el último mensaje recupera el ancho que le
+     * robaba la tercera línea.
+     *
+     * La etapa es la REAL del CRM (`customer_stage`: Prospecto / Interesado /
+     * Cliente / Inactivo), no el estado de la conversación ni el del pedido.
+     * Solo se añade el aviso que exige acción (necesita una persona).
+     */
+    const alertas = [row.status === 'HUMAN_REQUIRED' ? 'Necesita una persona' : null].filter(Boolean);
     const selected = state.wa.selected.has(row.id);
     const sello = waLastMessageStamp(row.last_message_at);
     /*
-     * FOTO DEL CONTACTO, como WhatsApp: redonda y a la izquierda. Si el cliente
-     * todavía no tiene foto, se pintan sus iniciales sobre un color fijo. Al
-     * seleccionar, la foto se sustituye por el visto (el gesto de WhatsApp).
+     * ICONO O FOTO, NUNCA LOS DOS.
+     *
+     * WhatsApp Cloud API no entrega la foto del cliente, así que el hueco se
+     * identifica con el icono de clientes aportado (pequeño, delante del nombre,
+     * sin círculo de color). Si algún día hay foto real verificada, se pinta la
+     * foto en ese mismo sitio y el icono genérico desaparece.
      */
     const foto = customerPhotoUrl(customer);
-    const tono = waAvatarTone(row.customer_id || nombre);
-    return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}" data-conversation-row="${escapeHtml(row.id)}">
-      <button class="conv ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${unread ? 'conv--unread' : ''}" data-conv="${escapeHtml(
+    /*
+     * COINCIDENCIA DE BÚSQUEDA.
+     *
+     * El servidor marca `row.match` cuando el texto aparece en el historial (no
+     * solo en el último mensaje). Entonces la fila enseña ESE fragmento, para que
+     * se entienda por qué salió, sin perder el hilo original.
+     */
+    const coincidencia = row.match?.campo === 'mensaje' ? String(row.match.snippet ?? '').trim() : '';
+    const textoFila = coincidencia || texto;
+    const porQue = row.priority?.razones?.length ? `Atención: ${row.priority.razones.join(', ')}` : '';
+    return `<div class="conv-wrap ${selected ? 'conv-wrap--selected' : ''}" data-conversation-row="${escapeHtml(row.id)}"${porQue ? ` data-priority="${escapeHtml(porQue)}"` : ''}>
+      <button class="conv ${foto ? 'conv--photo' : ''} ${state.wa.selectedId === row.id ? 'conv--active' : ''} ${unread ? 'conv--unread' : ''}" data-conv="${escapeHtml(
         row.id,
-      )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}">
-        <span class="conv__avatar" style="--conv-tone: ${tono}" aria-hidden="true">
-          ${
-            foto
-              ? `<img class="conv__avatar-photo" src="${escapeHtml(foto)}" alt="" loading="lazy" decoding="async" />`
-              : `<span class="conv__avatar-initials">${escapeHtml(waInitials(nombre))}</span>`
-          }
-          ${selected ? `<span class="conv__avatar-check">${ICONS.check}</span>` : ''}
-        </span>
+      )}" type="button" aria-label="Abrir conversación con ${escapeHtml(nombre)}${porQue ? ` · ${escapeHtml(porQue)}` : ''}"${porQue ? ` title="${escapeHtml(porQue)}"` : ''}>
         <span class="conv__body">
           <span class="conv__line conv__line--top">
+            ${
+              foto
+                ? `<span class="conv__avatar" aria-hidden="true"><img class="conv__avatar-photo" src="${escapeHtml(foto)}" alt="" loading="lazy" decoding="async" /></span>`
+                : `<img class="conv__icon" src="/admin/assets/icons/ui/clientes.png" alt="" aria-hidden="true" width="17" height="17" decoding="async" draggable="false" />`
+            }
             <span class="conv__name">${escapeHtml(nombre)}</span>
-            <span class="conv__stamps"${sello ? ` title="${escapeHtml(sello.completo)}"` : ''}>${
-              sello ? `<span class="conv__when">${escapeHtml(sello.label)}</span>` : ''
-            }</span>
           </span>
+          <span class="conv__stamps"${sello ? ` title="${escapeHtml(sello.completo)}"` : ''}>${
+            sello ? `<span class="conv__when">${escapeHtml(sello.label)}</span>` : ''
+          }</span>
           <span class="conv__line conv__line--preview">
-            <span class="conv__preview">${kind ? `<span class="conv__kind" aria-hidden="true">${kind}</span>` : ''}<span>${escapeHtml(texto)}</span></span>
-            ${unread ? `<span class="conv__unread" aria-label="${unread} mensaje${unread === 1 ? '' : 's'} sin leer">${ICONS.bell}<span>${unread}</span></span>` : ''}
+            <span class="conv__preview">${
+              coincidencia
+                ? `<span class="conv__hit" aria-hidden="true">${ICONS.search}</span>`
+                : kind
+                  ? `<span class="conv__kind" aria-hidden="true">${kind}</span>`
+                  : ''
+            }<span>${escapeHtml(textoFila)}</span></span>
           </span>
-          ${flags}
+          <span class="conv__meta">
+            <span class="conv__flags">
+              <span class="conv__assign ${row.assigned_user_id ? '' : 'conv__assign--empty'}">${escapeHtml(assignment)}</span>
+              <span class="conv__sep" aria-hidden="true">·</span>
+              <span class="conv__state conv__state--${escapeHtml(tonoEtapa)}"><span class="conv__dot" aria-hidden="true"></span>${escapeHtml(
+                customerStageLabel(stage),
+              )}</span>
+              ${alertas.map((flag) => `<span class="conv__tag">${escapeHtml(flag)}</span>`).join('')}
+            </span>
+            ${unread ? `<span class="conv__unread" aria-label="${unread} mensaje${unread === 1 ? '' : 's'} sin leer">${ICONS.bell}<span>${unread}</span></span>` : ''}
+            ${selected ? `<span class="conv__picked" aria-hidden="true">${ICONS.check}</span>` : ''}
+          </span>
         </span>
       </button>
       <button class="conv__more" data-conv-more="${escapeHtml(row.id)}" type="button" aria-label="Más acciones de la conversación con ${escapeHtml(
@@ -11508,14 +12041,17 @@
 
   function openCustomerStageMenu(customerId) {
     const customer = customerById(customerId) ?? state.customerProfile?.customer ?? state.wa.chat?.customer ?? null;
-    const stages = state.customerStages.length
-      ? state.customerStages
-      : [
-          { value: 'PROSPECT', label: 'Prospecto' },
-          { value: 'INTERESTED', label: 'Interesado' },
-          { value: 'CUSTOMER', label: 'Cliente' },
-          { value: 'INACTIVE', label: 'Inactivo' },
-        ];
+    /*
+     * Solo se eligen las etapas que SON una decisión: Prospecto, Interesado e
+     * Inactivo. Cliente y Recompra los calcula el CRM con los pedidos entregados
+     * (si se pusieran a mano, el informe dejaría de ser cierto).
+     */
+    const stages = [
+      { value: 'PROSPECT', label: 'Prospecto' },
+      { value: 'INTERESTED', label: 'Interesado' },
+      { value: 'INACTIVE', label: 'Inactivo' },
+    ];
+    const automatica = customerStageOf(customer);
     openSheet(
       `Etapa · ${customer ? customerName(customer) : 'Cliente'}`,
       `<div class="menu-list">
@@ -11524,11 +12060,15 @@
             (entry) => `<button class="menu-item" data-customer-stage="${escapeHtml(customerId)}" data-stage="${escapeHtml(
               entry.value,
             )}" type="button">
-              <span class="menu-item__icon" aria-hidden="true">${entry.value === customerStageOf(customer) ? ICONS.check : ''}</span>
+              <span class="menu-item__icon" aria-hidden="true">${entry.value === automatica ? ICONS.check : ''}</span>
               <span><strong>${escapeHtml(entry.label)}</strong></span>
             </button>`,
           )
           .join('')}
+        <div class="menu-item menu-item--static">
+          <span class="menu-item__icon" aria-hidden="true">${ICONS.spark}</span>
+          <span><strong>${escapeHtml(customerStageLabel(automatica))}</strong><small>La calcula el CRM con los pedidos entregados y el interés demostrado</small></span>
+        </div>
       </div>`,
       { variant: 'menu' },
     );
@@ -11666,38 +12206,22 @@
     if (rows.length) {
       const html = rows.map(waRow).join('');
       /*
-       * LOS ARCHIVADOS SON DE LA EMPRESA, NO DE QUIEN LOS ARCHIVÓ.
+       * SIN CONTADOR DE ARCHIVADOS EN LA BANDEJA.
        *
-       * Al finalizar o archivar, el chat sale de la bandeja de trabajo para
-       * TODOS (el estado vive en la conversación), así que si alguien no sabe
-       * dónde mirar parece que otro se lo llevó. Este aviso lo deja claro y
-       * lleva a la lista de archivados en un toque: ahí los ve cualquiera.
+       * El aviso «N archivados · Ver» ocupaba una línea entera encima de la
+       * lista y convertía la bandeja en un tablero de estadísticas. Los chats
+       * archivados siguen accesibles desde el filtro «Archivados» (y desde la
+       * búsqueda, que busca en todas), sin cifras en la pantalla principal.
        */
-      const archivados = Number(state.wa.counts?.archivados ?? 0);
-      const avisoArchivados =
-        !buscando && state.wa.filter !== 'archivados' && archivados > 0
-          ? `<button class="wa-archived-hint" data-wa-archived-hint type="button" aria-label="Ver los ${archivados} chats archivados">
-              <span class="wa-archived-hint__icon" aria-hidden="true">${ICONS.box}</span>
-              <span class="wa-archived-hint__text"><strong>${archivados}</strong> archivado${archivados === 1 ? '' : 's'}</span>
-              <span class="wa-archived-hint__go" aria-hidden="true">Ver</span>
-            </button>`
-          : '';
-      const scope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date, archivados]);
-      if (window.PhytoConversationList) window.PhytoConversationList.render(box, avisoArchivados + html, scope);
-      else box.innerHTML = avisoArchivados + html;
+      const scope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date, rows.length]);
+      if (window.PhytoConversationList) window.PhytoConversationList.render(box, html, scope);
+      else box.innerHTML = html;
       return;
     }
     const filtroPuesto = state.wa.filter !== 'todos';
-    const archivadosFuera = Number(state.wa.counts?.archivados ?? 0);
-    const aLosArchivados =
-      archivadosFuera > 0 && state.wa.filter !== 'archivados'
-        ? `<button class="btn btn--ghost btn--sm" data-wa-archived-hint type="button">Ver ${archivadosFuera} archivado${
-            archivadosFuera === 1 ? '' : 's'
-          }</button>`
-        : '';
     box.innerHTML = filtroPuesto
-      ? `${emptyState(empty)}<div class="empty__actions"><button class="btn btn--ghost btn--sm" data-wa-filter-clear type="button">Ver todas</button>${aLosArchivados}</div>`
-      : `${emptyState(empty)}${aLosArchivados ? `<div class="empty__actions">${aLosArchivados}</div>` : ''}`;
+      ? `${emptyState(empty)}<div class="empty__actions"><button class="btn btn--ghost btn--sm" data-wa-filter-clear type="button">Ver todas</button></div>`
+      : `${emptyState(empty)}`;
   }
 
   function openNewConversationSheet() {
@@ -11943,13 +12467,30 @@
       },
     }[contactState];
     if (!copy || contactState === CONTACT_STATE.OPEN_WINDOW) return '';
-    return `<section class="wa-state wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}">
-      <div>
+    /*
+     * LA VENTANA CERRADA NO SE ANUNCIA.
+     * El compositor ya lo dice con su modo «Plantilla» y su placeholder. Un aviso
+     * más en la conversación solo robaba espacio: quien atiende sabe cuándo se
+     * cerró la ventana sin que se lo repitan ahí.
+     */
+    if (contactState === CONTACT_STATE.CLOSED_WINDOW) return '';
+    /*
+     * «ESPERANDO RESPUESTA» SE DICE EN UNA LÍNEA.
+     *
+     * Este aviso aparece justo después de enviar una plantilla y se quedaba
+     * tres renglones explicando lo que ya se sabe. Ahora: la etiqueta y el
+     * botón, nada más (el detalle completo sigue en el menú de la plantilla).
+     */
+    if (contactState === CONTACT_STATE.WAITING_CUSTOMER_REPLY) {
+      return `<section class="wa-state wa-state--mini wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}">
         <strong>${escapeHtml(copy.title)}</strong>
-        <p>${escapeHtml(copy.body)}</p>
-        ${copy.detail ? `<small>${escapeHtml(copy.detail)}</small>` : ''}
-      </div>
-      <button class="btn btn--whatsapp btn--sm" id="wa-open-template" type="button">${escapeHtml(copy.cta)}</button>
+        <button class="wa-state__action" id="wa-open-template" type="button">Enviar plantilla</button>
+      </section>`;
+    }
+    return `<section class="wa-state wa-state--mini wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}" title="${escapeHtml([copy.body, copy.detail].filter(Boolean).join(' '))}">
+      <strong>${escapeHtml(copy.title)}</strong>
+      <span class="sr-only">${escapeHtml([copy.body, copy.detail].filter(Boolean).join(' '))}</span>
+      ${copy.cta ? `<button class="wa-state__action" id="wa-open-template" type="button">${escapeHtml(copy.cta)}</button>` : ''}
     </section>`;
   }
 
@@ -12550,7 +13091,7 @@
         <span class="composer-left">
           <button class="composer-template-btn" id="wa-open-template" type="button">Plantilla</button>
         </span>
-        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" autocomplete="off" inputmode="text" enterkeyhint="enter" placeholder="Escribe lo que quieras decirle…"
+        <textarea id="wa-text" rows="1" lang="es-DO" spellcheck="true" autocorrect="on" autocapitalize="sentences" autocomplete="off" inputmode="text" enterkeyhint="enter" placeholder="Conversación cerrada. Escribe aquí para abrirla"
           aria-label="Mensaje que se enviará dentro de la plantilla"></textarea>
         </div>
         <span class="composer-end">
@@ -12673,8 +13214,13 @@
     const button = $('#wa-chat-orders');
     if (!button) return;
     const pedidos = chatActiveOrders(customer?.id, conversation?.id ?? state.wa.selectedId ?? '');
+    const todos = customer?.id ? ordersForCustomer(customer.id) : [];
     const count = $('#wa-chat-orders-count');
-    button.hidden = pedidos.length === 0;
+    /*
+     * EL BOTÓN LLEVA AL HISTORIAL COMPLETO: se muestra si el cliente tiene
+     * CUALQUIER pedido (no solo activos). El número es el de pedidos abiertos.
+     */
+    button.hidden = todos.length === 0;
     button.dataset.customer = customer?.id ?? '';
     button.dataset.conversation = conversation?.id ?? state.wa.selectedId ?? '';
     if (count) {
@@ -12687,43 +13233,85 @@
     const etiqueta =
       pedidos.length === 1
         ? `Ver el pedido ${numero} de este cliente`
-        : `${pedidos.length} pedidos activos de este cliente`;
+        : pedidos.length > 1
+          ? `${pedidos.length} pedidos activos de este cliente`
+          : `${todos.length} pedido${todos.length === 1 ? '' : 's'} de este cliente`;
     button.setAttribute('aria-label', etiqueta);
     button.title = etiqueta;
   }
 
-  /** Abre el pedido del cliente (o deja elegir cuál, si hay varios). */
+  /** Abre los pedidos del cliente en el cajón lateral (no en una hoja inferior). */
+  const ordersDrawer = document.createElement('dialog');
+  ordersDrawer.className = 'wa-orders-drawer';
+  ordersDrawer.setAttribute('aria-label', 'Pedidos del cliente');
+  document.body.append(ordersDrawer);
+
+  /** ¿El pedido sigue vivo? (ni entregado ni cancelado). */
+  const orderIsActive = (item) => {
+    const estado = getOrderOperationalStatus(itemOrder(item), deliverySessionForOrder(item.id));
+    return estado !== 'ENTREGADO' && estado !== 'CANCELADO';
+  };
+
+  /*
+   * TODOS LOS PEDIDOS DEL CLIENTE, EN ORDEN ÚTIL.
+   *
+   * Activos primero (del más antiguo al más nuevo: es el trabajo pendiente) y
+   * después el historial (del más reciente al más antiguo). Se filtra SIEMPRE
+   * por el id del cliente de esta conversación: nunca por nombre ni teléfono.
+   */
+  function fillOrdersDrawer(customer, orders) {
+    const fecha = (item) => String(item?.received_at ?? item?.created_at ?? '');
+    const activos = orders
+      .filter(orderIsActive)
+      .sort((a, b) => fecha(a).localeCompare(fecha(b)) || String(a.id).localeCompare(String(b.id)));
+    const historial = orders
+      .filter((item) => !orderIsActive(item))
+      .sort((a, b) => fecha(b).localeCompare(fecha(a)) || String(b.id).localeCompare(String(a.id)));
+    const fila = (item) => {
+      const order = itemOrder(item) ?? {};
+      return `<button class="wa-order-row" data-order-open="${escapeHtml(item.id)}" type="button">
+        <span class="wa-order-row__body">
+          <strong>${escapeHtml(order.order_number ?? 'Pedido')}</strong>
+          <small>${escapeHtml(orderStatusText(item))} · ${escapeHtml(fmtWhen(item.received_at ?? order.created_at))}</small>
+        </span>
+        <span class="wa-order-row__total">${escapeHtml(orderTotalOf(item) || '—')}</span>
+        <span class="wa-order-row__go" aria-hidden="true">Ver pedido</span>
+      </button>`;
+    };
+    const nombre = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Cliente';
+    ordersDrawer.innerHTML = `<header class="wa-orders-head">
+        <div><strong>Pedidos</strong><small>${escapeHtml(nombre)} · ${orders.length}</small></div>
+        <button class="wa-orders-close" type="button" data-orders-close aria-label="Cerrar pedidos">×</button>
+      </header>
+      <div class="wa-orders-body">
+        ${
+          orders.length
+            ? `${activos.length ? `<p class="wa-orders-group">Activos (${activos.length})</p>${activos.map(fila).join('')}` : ''}${
+                historial.length ? `<p class="wa-orders-group">Historial (${historial.length})</p>${historial.map(fila).join('')}` : ''
+              }`
+            : '<p class="wa-orders-empty">Este cliente todavía no tiene pedidos.</p>'
+        }
+      </div>`;
+  }
+
+  ordersDrawer.addEventListener('click', (event) => {
+    if (event.target === ordersDrawer || event.target.closest('[data-orders-close]')) {
+      ordersDrawer.close();
+      return;
+    }
+    // «Ver pedido» abre el visor autorizado del pedido y deja libre el chat.
+    if (event.target.closest('[data-order-open]')) ordersDrawer.close();
+  });
+
   function openChatOrders() {
     const button = $('#wa-chat-orders');
-    const pedidos = chatActiveOrders(button?.dataset.customer, button?.dataset.conversation);
-    if (!pedidos.length) {
-      toast('Este cliente no tiene pedidos activos');
+    const customerId = button?.dataset.customer || state.wa.chat?.customer?.id || '';
+    if (!customerId) {
+      toast('Abre una conversación con cliente para ver sus pedidos');
       return;
     }
-    if (pedidos.length === 1) {
-      openReceipt(pedidos[0].id);
-      return;
-    }
-    openSheet(
-      'Pedidos del cliente',
-      `
-      <p class="rule">Tiene ${pedidos.length} pedidos abiertos. Elige cuál quieres revisar.</p>
-      <div class="menu-list">
-        ${pedidos
-          .map((item) => {
-            const order = itemOrder(item) ?? {};
-            return `<button class="menu-item" data-order-open="${escapeHtml(item.id)}" type="button">
-              <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
-              <span><strong>${escapeHtml(order.order_number ?? 'Pedido')}</strong><small>${escapeHtml(
-                orderStatusText(item),
-              )} · ${escapeHtml(money(order.total ?? item.total, order.currency ?? item.currency))}</small></span>
-            </button>`;
-          })
-          .join('')}
-      </div>
-      `,
-      { variant: 'menu' },
-    );
+    fillOrdersDrawer(state.wa.chat?.customer ?? null, ordersForCustomer(customerId));
+    if (!ordersDrawer.open) ordersDrawer.showModal();
   }
 
   function renderWaChat() {
@@ -12747,7 +13335,8 @@
 
     const data = state.wa.chat;
     const headerCustomer = data?.customer ?? waCustomer(state.conversations.find((row) => row.id === state.wa.selectedId) ?? {});
-    $('#wa-chat-phone').textContent = headerCustomer?.phone_e164 || '';
+    const chatPhone = $('#wa-chat-phone');
+    chatPhone.textContent = headerCustomer?.phone_e164 || '';
     if (!data) {
       /*
        * BLINDADA: la conversación no está a su nombre. Ni hilo, ni compositor, ni
@@ -12760,12 +13349,14 @@
         const cliente = fila ? waCustomer(fila) : null;
         const nombreBloqueada = (cliente?.name ?? '').trim() || cliente?.phone_e164 || 'Conversación';
         $('#wa-chat-name').textContent = nombreBloqueada;
+        chatPhone.hidden = !chatPhone.textContent || chatPhone.textContent === nombreBloqueada;
         $('#wa-chat-meta').textContent = bloqueo.assignedName
           ? `Al frente de ${bloqueo.assignedName}`
           : 'Sin asignar';
         const avatarBloqueada = $('#wa-chat-avatar');
         if (avatarBloqueada) {
           setAvatarContent(avatarBloqueada, cliente, nombreBloqueada);
+          avatarBloqueada.hidden = !customerPhotoUrl(cliente);
           avatarBloqueada.disabled = true;
           avatarBloqueada.dataset.customer = '';
         }
@@ -12802,6 +13393,7 @@
         return;
       }
       $('#wa-chat-name').textContent = 'Conversación';
+      chatPhone.hidden = !chatPhone.textContent || chatPhone.textContent === 'Conversación';
       $('#wa-chat-meta').textContent = '';
       $('#thread').innerHTML = '<p class="view__hint">Cargando…</p>';
       $('#wa-composer').innerHTML = state.wa.threadError
@@ -12838,6 +13430,7 @@
      */
     const hilo = conPendientes(conversation, messages);
     $('#wa-chat-name').textContent = (customer?.name ?? '').trim() || customer?.phone_e164 || 'Conversación';
+    chatPhone.hidden = !chatPhone.textContent || chatPhone.textContent === $('#wa-chat-name').textContent;
     const headerTags = customerTagsOf(customer).slice(0, 1).map((tag) => tag.label);
     $('#wa-chat-meta').textContent = [
       customer ? customerStageLabel(customerStageOf(customer)) : null,
@@ -12871,16 +13464,15 @@
       actions.setAttribute('aria-label', `Acciones de la conversación. ${conversationAssignmentLabel(conversation)}`);
     }
 
-    const avatar = $('#wa-chat-avatar');
-    if (avatar) {
+    const avatar = $('#wa-chat-avatar');    if (avatar) {
       const photo = customerPhotoUrl(customer);
       setAvatarContent(avatar, customer, (customer?.name ?? '').trim() || customer?.phone_e164);
       /*
-       * El avatar se ve SIEMPRE, como en WhatsApp: con foto si la hay y, si no,
-       * con las iniciales y una pista de cámara que lleva a ponerle foto.
+       * EL CÍRCULO SOLO SI HAY FOTO. Sin foto no se pinta nada: ni iniciales ni
+       * cámara. La foto se pone desde la ficha del cliente.
        */
-      avatar.hidden = !customer?.id;
-      avatar.classList.toggle('wa__chat-avatar--empty', Boolean(customer?.id) && !photo);
+      avatar.hidden = !photo;
+      avatar.classList.remove('wa__chat-avatar--empty');
       avatar.dataset.customer = customer?.id ?? '';
       avatar.disabled = !customer?.id;
       avatar.setAttribute(
@@ -14433,7 +15025,7 @@
    * de verdad ha cambiado, para no borrar lo que una persona está escribiendo.
    */
   async function refreshWhatsapp() {
-    const requestedScope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date]);
+    const requestedScope = JSON.stringify([state.wa.filter, state.wa.q, state.wa.date, state.wa.stage, state.wa.sort]);
     const params = new URLSearchParams();
     /*
      * AL BUSCAR, EL CRM RECIBE SOLO EL TEXTO. Así­ la búsqueda es general de
@@ -14444,15 +15036,17 @@
       params.set('q', state.wa.q);
     } else {
       params.set('filter', state.wa.filter);
+      if (state.wa.stage) params.set('stage', state.wa.stage);
       const dateRange = waDateRange();
       if (dateRange.mode !== 'all') {
         if (dateRange.from) params.set('from', dateRange.from);
         if (dateRange.to) params.set('to', dateRange.to);
       }
     }
+    if (state.wa.sort === 'priority') params.set('sort', 'priority');
     const list = await api(`/api/admin/conversations?${params.toString()}`);
     if (!domAlive()) return; // la pestaña se cerró mientras respondía el CRM
-    if (requestedScope !== JSON.stringify([state.wa.filter, state.wa.q, state.wa.date])) return;
+    if (requestedScope !== JSON.stringify([state.wa.filter, state.wa.q, state.wa.date, state.wa.stage, state.wa.sort])) return;
     const rows = list.conversations ?? [];
     state.wa.counts = list.counts ?? state.wa.counts;
     const listSig = JSON.stringify(
@@ -14709,15 +15303,42 @@
       </dl>`,
     );
 
-    const stages = state.customerStages.length
-      ? state.customerStages
-      : [
-          { value: 'PROSPECT', label: 'Prospecto' },
-          { value: 'INTERESTED', label: 'Interesado' },
-          { value: 'CUSTOMER', label: 'Cliente' },
-          { value: 'INACTIVE', label: 'Inactivo' },
-        ];
-
+    const stages = [
+      { value: 'PROSPECT', label: 'Prospecto' },
+      { value: 'INTERESTED', label: 'Interesado' },
+      { value: 'INACTIVE', label: 'Inactivo' },
+    ];
+    /*
+     * «POR QUÉ ESTÁ EN ESTA ETAPA».
+     *
+     * El servidor manda `customer_stage_reason` y `customer_stage_evidence`
+     * (pedido entregado, pedido creado, interés por un mensaje con su fecha…).
+     * Se enseña tal cual, sin inventar: si no hay motivo, se dice.
+     */
+    const motivoEtapa = {
+      dos_o_mas_pedidos_entregados: 'Dos o más pedidos entregados',
+      pedido_entregado: 'Un pedido entregado',
+      pedido_creado: 'Tiene un pedido abierto',
+      sin_compra_ni_interes: 'Sin compra y sin interés demostrado',
+      'manual:INTERESTED': 'Lo marcó una persona',
+      'manual:INACTIVE': 'Lo marcó una persona como inactivo',
+    };
+    const reason = String(customer.customer_stage_reason ?? profile.customer_stage_reason ?? '');
+    const evidence = customer.customer_stage_evidence ?? profile.customer_stage_evidence ?? null;
+    const interestAt = customer.interest_at ?? profile.interest_at ?? null;
+    const interestReason = customer.interest_reason ?? profile.interest_reason ?? null;
+    const motivoTexto = reason.startsWith('interes:')
+      ? `Interés por un mensaje${interestAt ? ` (${fmtWhen(interestAt)})` : ''}`
+      : motivoEtapa[reason] ?? (reason || 'Automático');
+    const evidenciaTexto = reason.startsWith('interes:')
+      ? `Señal: ${INTEREST_REASON_LABELS[reason.slice('interes:'.length)] ?? interestReason ?? 'mensaje'}`
+      : evidence?.pedido
+        ? `Pedido ${evidence.pedido}${evidence.estado ? ` · ${statusLabel(evidence.estado)}` : ''}`
+        : evidence?.pedidos_entregados
+          ? `${evidence.pedidos_entregados} pedido(s) entregado(s)`
+          : '—';
+    const compras = customerPurchaseStats(customer.id);
+    const seguimiento = nextFollowupFor(customer.id) ?? customer.next_followup ?? null;
     const stageHtml = customerProfileSection(
       'Etapa del Cliente',
       `<label class="field profile-field">
@@ -14729,10 +15350,20 @@
                 `<option value="${escapeHtml(value.value)}" ${stage === value.value ? 'selected' : ''}>${escapeHtml(value.label)}</option>`,
             )
             .join('')}
+          ${
+            ['CUSTOMER', 'REPEAT_CUSTOMER'].includes(stage)
+              ? `<option value="${escapeHtml(stage)}" selected>${escapeHtml(customerStageLabel(stage))}</option>`
+              : ''
+          }
         </select>
+        <small class="field__hint">Cliente y Recompra se calculan solos con los pedidos entregados.</small>
       </label>
       <dl class="facts profile-facts">
         ${profileFact('Etapa actual', escapeHtml(customerStageLabel(stage)))}
+        ${profileFact('Por qué', escapeHtml(motivoTexto))}
+        ${profileFact('Evidencia', escapeHtml(evidenciaTexto))}
+        ${profileFact('Compras entregadas', escapeHtml(String(compras.delivered)))}
+        ${profileFact('Seguimiento', escapeHtml(seguimiento ? fmtWhen(seguimiento.scheduled_at) : '—'))}
         ${profileFact('Origen de etapa', escapeHtml(customer.customer_stage_source ?? profile.customer_stage_source ?? 'automático'))}
         ${profileFact('Estado comercial legacy', escapeHtml(commercialLabel(commercial)))}
         ${profileFact('Origen', escapeHtml(customer.source ?? '—'))}
@@ -17319,6 +17950,37 @@
   };
 
   /**
+   * MINIATURA DEL MAPA, SIN CLAVES NI SERVICIOS DE PAGO.
+   *
+   * Un solo mosaico de OpenStreetMap (256 px) colocado de forma que el punto
+   * exacto caiga en el centro de la tarjeta: una petición por ubicación, con
+   * `loading="lazy"` para que los mensajes que no se ven no pidan nada. La
+   * atribución va en el propio mapa, como exige la licencia, y `no-referrer`
+   * evita mandar la URL del panel al servidor de mosaicos.
+   */
+  const mapPreviewHtml = (location) => {
+    if (!locationCoordsOk(location)) return '';
+    const lat = Number(location.latitude);
+    const lon = Number(location.longitude);
+    const zoom = 15;
+    const escala = 2 ** zoom;
+    const rad = (lat * Math.PI) / 180;
+    const px = ((lon + 180) / 360) * escala;
+    const py = ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * escala;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return '';
+    const x = Math.floor(px);
+    const y = Math.floor(py);
+    const offX = Math.round((px - x) * 256);
+    const offY = Math.round((py - y) * 256);
+    return `<span class="loc__map" aria-hidden="true">
+        <img src="https://tile.openstreetmap.org/${zoom}/${x}/${y}.png" alt="" loading="lazy" decoding="async"
+          style="left:calc(50% - ${offX}px);top:calc(50% - ${offY}px)">
+        <span class="loc__map-pin"></span>
+        <span class="loc__map-credit">© OpenStreetMap</span>
+      </span>`;
+  };
+
+  /**
    * Componente de ubicación: UNA pieza compacta (nada de tarjeta dentro de otra).
    * Va dentro de la burbuja, así que respeta la alineación de siempre: entrante a
    * la izquierda, saliente a la derecha (§35).
@@ -17327,28 +17989,42 @@
     const url = locationMapUrl(location);
     const { address, who, age } = locationContext(location);
     const detalle = [address, age ? age.replace('Compartida', 'Compartida') : null].filter(Boolean).join(' · ');
-    return `<span class="loc" data-location="${escapeHtml(location?.id ?? '')}">
-        <span class="loc__head"><span class="loc__pin" aria-hidden="true">📍</span>
-          <span class="loc__title">${escapeHtml(locationTitle(location))}</span></span>
-        ${address ? `<span class="loc__address">${escapeHtml(address)}</span>` : ''}
-        <span class="loc__meta">${escapeHtml(who)}${detalle && !address ? ` · ${escapeHtml(detalle)}` : ''}</span>
-        <span class="loc__actions">
-          ${
-            url && options.withMap !== false
-              ? `<button class="loc__link" data-open-map="${mapLocationAttr(location)}" data-map-title="${escapeHtml(
-                  locationTitle(location),
-                )}" type="button">Ver en mapa</button>`
-              : ''
-          }
-          ${
-            !url && options.withMap !== false ? '<span class="loc__link loc__link--off">Sin coordenadas legibles</span>' : ''
-          }
-          ${
-            options.withActions !== false
-              ? `<button class="loc__more" type="button" data-loc-menu="${escapeHtml(location?.id ?? '')}" aria-label="Más acciones de la ubicación">${ICONS.more}</button>`
-              : ''
-          }
+    const mapa = options.withMap !== false ? mapPreviewHtml(location) : '';
+    const boton = options.withActions !== false
+      ? `<button class="loc__more" type="button" data-loc-menu="${escapeHtml(location?.id ?? '')}" aria-label="Más acciones de la ubicación">${ICONS.more}</button>`
+      : '';
+    const id = escapeHtml(location?.id ?? '');
+    const titulo = escapeHtml(locationTitle(location));
+    const direccion = address ? `<span class="loc__address">${escapeHtml(address)}</span>` : '';
+    const meta = `<span class="loc__meta">${escapeHtml(who)}${detalle && !address ? ` · ${escapeHtml(detalle)}` : ''}</span>`;
+    /*
+     * CON MAPA, LA TARJETA ES EL MAPA.
+     * El mosaico ocupa toda la tarjeta y la información flota encima, en una
+     * franja legible muy pequeña al pie; el «⋯» flota en la esquina. Nada de
+     * bloques apilados: se ve el lugar sin abrir nada.
+     */
+    if (mapa) {
+      return `<span class="loc loc--map" data-location="${id}">
+        ${mapa}
+        ${boton}
+        <span class="loc__info">
+          <span class="loc__head"><span class="loc__pin" aria-hidden="true">📍</span>
+            <span class="loc__title">${titulo}</span></span>
+          ${direccion}
+          ${meta}
         </span>
+      </span>`;
+    }
+    return `<span class="loc" data-location="${id}">
+        <span class="loc__head"><span class="loc__pin" aria-hidden="true">📍</span>
+          <span class="loc__title">${titulo}</span></span>
+        ${direccion}
+        ${meta}
+        ${
+          options.withActions !== false
+            ? `<span class="loc__actions">${!url && options.withMap !== false ? '<span class="loc__link loc__link--off">Sin coordenadas legibles</span>' : ''}${boton}</span>`
+            : ''
+        }
       </span>`;
   }
 
@@ -21205,7 +21881,7 @@
    * historial de cierres. Cada pantalla pone su título, su pista y qué hacer al
    * aplicar; los ids llevan prefijo para no pisarse entre ellas.
    */
-  function openRangeSheet({ title, hint, from, to, prefix, onApply, submitLabel = 'Ver el intervalo' }) {
+  function openRangeSheet({ title, hint, from, to, prefix, onApply, submitLabel = 'Ver el intervalo', rechazarInvertido = false }) {
     openSheet(
       title,
       `<form id="${prefix}-range-form" class="report-range">
@@ -21218,6 +21894,7 @@
           <span class="field__label">Hasta</span>
           <input class="field__input" type="date" id="${prefix}-to" name="to" value="${escapeHtml(to)}" />
         </label>
+        <p class="form-error" id="${prefix}-range-error" role="alert" hidden></p>
         <button class="btn btn--primary btn--block" type="submit">${escapeHtml(submitLabel)}</button>
       </form>`,
       // Centrada en escritorio: el calendario se pidió EN EL MEDIO de la pantalla.
@@ -21227,8 +21904,26 @@
       event.preventDefault();
       const desde = String($(`#${prefix}-from`)?.value ?? '').trim();
       const hasta = String($(`#${prefix}-to`)?.value ?? '').trim();
+      const error = $(`#${prefix}-range-error`);
+      const avisar = (texto) => {
+        if (error) {
+          error.textContent = texto;
+          error.hidden = false;
+        }
+        toast(texto);
+      };
       if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
-        toast('Elige las dos fechas: desde y hasta.');
+        avisar('Elige las dos fechas: desde y hasta.');
+        return;
+      }
+      /*
+       * LA FECHA FINAL NO PUEDE IR ANTES QUE LA INICIAL.
+       * Donde se pide (el historial de cierres) se avisa y no se aplica nada, en
+       * vez de intercambiarlas en silencio: se pedía 1–15 y se enseñaba 15–1.
+       * Los reportes conservan el intercambio de siempre.
+       */
+      if (rechazarInvertido && hasta < desde) {
+        avisar('La fecha «hasta» no puede ser anterior a la fecha «desde».');
         return;
       }
       const elegido = desde <= hasta ? { from: desde, to: hasta } : { from: hasta, to: desde };
@@ -23791,6 +24486,121 @@
         }
         return;
       }
+      const deliveryAccept = event.target.closest('[data-delivery-accept]');
+      if (deliveryAccept) {
+        acceptDelivery(deliveryAccept.dataset.deliveryAccept, deliveryAccept).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo aceptar la entrega');
+        });
+        return;
+      }
+      const contactSheet = event.target.closest('[data-dv-contact-sheet]');
+      if (contactSheet) {
+        openDeliveryContactSheet(contactSheet.dataset.dvContactSheet);
+        return;
+      }
+      const contactCall = event.target.closest('[data-dv-contact-call]');
+      if (contactCall) {
+        const orderId = contactCall.dataset.dvContactCall;
+        const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+        const phone = deliveryCustomerPhone(order);
+        closeSheet();
+        /* Se registra el intento y se abre el marcador: lo hace la persona. */
+        recordDeliveryContactAttempt(orderId, 'call')
+          .then(() => {
+            if (phone) window.location.href = `tel:${phone}`;
+          })
+          .catch(() => toast('No se pudo registrar el intento de llamada'));
+        return;
+      }
+      const contactWa = event.target.closest('[data-dv-contact-wa]');
+      if (contactWa) {
+        const orderId = contactWa.dataset.dvContactWa;
+        const order = (state.deliveryOrders ?? []).find((row) => row.id === orderId);
+        const phone = deliveryCustomerPhone(order);
+        closeSheet();
+        recordDeliveryContactAttempt(orderId, 'whatsapp')
+          .then(() => {
+            if (phone) window.open(`https://wa.me/${phone}`, '_blank', 'noopener');
+          })
+          .catch(() => toast('No se pudo registrar el intento de WhatsApp'));
+        return;
+      }
+      const contactNone = event.target.closest('[data-dv-contact-none]');
+      if (contactNone) {
+        const orderId = contactNone.dataset.dvContactNone;
+        working(contactNone, 'Guardando…', async () => {
+          await recordDeliveryContactAttempt(orderId, 'other', { note: 'No se pudo contactar' });
+          closeSheet();
+          toast('Anotado: no se pudo contactar');
+        }).catch(() => toast('No se pudo guardar'));
+        return;
+      }
+      const dvMore = event.target.closest('[data-dv-more]');
+      if (dvMore) {
+        openDeliveryMoreSheet(dvMore.dataset.dvMore);
+        return;
+      }
+      const dvPay = event.target.closest('[data-dv-pay]');
+      if (dvPay) {
+        const outcome = dvPay.dataset.dvPay;
+        document.querySelectorAll('[data-dv-pay]').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button === dvPay));
+        });
+        const sheet = document.querySelector('.dv-finish');
+        const due = Number(sheet?.dataset.dvDue ?? 0) || 0;
+        const extra = document.querySelector('[data-dv-pay-extra]');
+        if (extra) {
+          extra.innerHTML = deliveryPayExtraHtml(outcome, { due });
+          extra.hidden = false;
+        }
+        const confirm = document.querySelector('[data-delivery-confirm-complete]');
+        if (confirm) confirm.disabled = false;
+        return;
+      }
+      const issueResolve = event.target.closest('[data-dv-issue-resolve]');
+      if (issueResolve) {
+        const orderId = issueResolve.dataset.dvIssueResolve;
+        const key = '#dv-issue-resolution';
+        openSheet(
+          'Resolver incidencia',
+          `<div class="delivery-confirm">
+            <p>Queda registrado quién decide, por qué y a qué hora.</p>
+            <label class="field">
+              <span class="field__label">Qué se decidió</span>
+              <textarea class="field__input" id="dv-issue-resolution" rows="3" maxlength="300" placeholder="Se habló con el cliente y confirma la dirección…"></textarea>
+            </label>
+            <div class="sheet-actions">
+              <button class="btn btn--ghost" data-close-sheet type="button">Cancelar</button>
+              <button class="btn btn--primary" data-dv-issue-resolution-save="${escapeHtml(orderId)}" type="button">Reanudar la entrega</button>
+            </div>
+          </div>`,
+        );
+        void key;
+        return;
+      }
+      const issueResolutionSave = event.target.closest('[data-dv-issue-resolution-save]');
+      if (issueResolutionSave) {
+        const orderId = issueResolutionSave.dataset.dvIssueResolutionSave;
+        const note = String($('#dv-issue-resolution')?.value ?? '').trim();
+        if (note.length < 3) {
+          toast('Escribe qué se decidió');
+          return;
+        }
+        working(issueResolutionSave, 'Guardando…', async () => {
+          await api(`/api/admin/orders/${encodeURIComponent(orderId)}/delivery/issue/resolve`, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'resume', note }),
+          });
+          closeSheet();
+          await load({ keepTab: true });
+          setTab('delivery', { silent: true });
+          renderDelivery();
+          toast('Incidencia resuelta: la entrega puede reanudarse');
+        }).catch((error) => {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo resolver la incidencia');
+        });
+        return;
+      }
       const deliveryStart = event.target.closest('[data-delivery-start]');
       if (deliveryStart) {
         startDelivery(deliveryStart.dataset.deliveryStart, deliveryStart).catch((error) => {
@@ -23871,8 +24681,40 @@
       if (deliveryConfirmComplete) {
         const sessionId = deliveryConfirmComplete.dataset.deliveryConfirmComplete;
         const note = String($('#delivery-complete-note')?.value ?? '').trim();
+        const sheet = document.querySelector('.dv-finish');
+        const due = Number(sheet?.dataset.dvDue ?? 0) || 0;
+        const chosen = document.querySelector('[data-dv-pay][aria-pressed="true"]');
+        const outcome = chosen?.dataset.dvPay ?? null;
+        /** Cobro tal como lo declara el repartidor (o null si ya estaba pagado). */
+        let payment = null;
+        if (due > 0) {
+          if (!outcome) {
+            toast('Elige cómo pagó el cliente');
+            return;
+          }
+          if (outcome === 'cash') {
+            const amount = Number($('#dv-pay-amount')?.value ?? due);
+            if (!Number.isFinite(amount) || amount <= 0) {
+              toast('Escribe el importe que recibió');
+              return;
+            }
+            payment = { outcome: 'cash', amount, expectedDue: due, note: note || null };
+          } else if (outcome === 'transfer') {
+            payment = {
+              outcome: 'transfer',
+              amount: due,
+              expectedDue: due,
+              note: String($('#dv-pay-reference')?.value ?? '').trim() || note || null,
+            };
+          } else {
+            payment = { outcome: 'none', note: note || null };
+          }
+        }
         working(deliveryConfirmComplete, 'Confirmando…', async () => {
-          await stopDelivery(sessionId, true, note ? { note } : {});
+          const result = await stopDelivery(sessionId, true, {
+            ...(note ? { note } : {}),
+            ...(payment ? { payment } : {}),
+          });
           closeSheet();
           /*
            * AL TERMINAR SE VUELVE A «MIS ENTREGAS», no a la pantalla de inicio:
@@ -23883,7 +24725,8 @@
           delete document.body.dataset.deliveryDetail;
           setTab('delivery', { silent: true });
           renderDelivery();
-          toast('Entrega finalizada. Ya está en el historial.');
+          const cobrado = result?.payment_recorded ? ' · cobro registrado' : '';
+          toast(`Entrega finalizada. Ya está en el historial.${cobrado}`);
         }).catch((error) => {
           if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudo completar');
         });
@@ -23946,6 +24789,17 @@
         }
         renderDailyClose();
         toast('Corte calculado con las entregas de hoy');
+        return;
+      }
+      const closeHistoryQuick = event.target.closest('[data-close-history-quick]');
+      if (closeHistoryQuick) {
+        const modo = closeHistoryQuick.dataset.closeHistoryQuick;
+        if (modo === 'intervalo') {
+          openCloseHistoryRangeSheet();
+          return;
+        }
+        state.closeHistoryPeriod = modo;
+        renderCloseHistory();
         return;
       }
       const closeHistoryChip = event.target.closest('[data-close-history-period]');
@@ -25206,17 +26060,74 @@
         return;
       }
       const chip = event.target.closest('[data-wa-filter]');
-      if (!chip) return;
-      state.wa.filter = chip.dataset.waFilter;
-      // El filtro elegido se recuerda: al volver a entrar sigue puesto.
-      guardarFiltrosActuales();
-      state.wa.filtersOpen = false;
-      document.body.dataset.waFilters = 'closed';
-      state.wa.selected.clear();
-      $$('[data-wa-filter]').forEach((button) =>
-        button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),
-      );
-      refreshWhatsapp().catch(() => renderWaList());
+      if (chip) {
+        state.wa.filter = chip.dataset.waFilter;
+        /*
+         * «Archivados» es un estado de la CONVERSACIÓN, no una etapa: al elegirlo
+         * se limpia la etapa para no mezclar dos ejes (y se avisa con el rótulo
+         * del panel). El resto de filtros se combinan.
+         */
+        if (state.wa.filter === 'archivados' && state.wa.stage) state.wa.stage = '';
+        guardarFiltrosActuales();
+        state.wa.filtersOpen = false;
+        document.body.dataset.waFilters = 'closed';
+        state.wa.selected.clear();
+        state.wa.listSig = null;
+        $$('[data-wa-filter]').forEach((button) =>
+          button.setAttribute('aria-pressed', String(button.dataset.waFilter === state.wa.filter)),
+        );
+        refreshWhatsapp().catch(() => renderWaList());
+        renderWhatsapp();
+        return;
+      }
+      /* Etapa comercial: se combina con bandeja, fecha y búsqueda. */
+      const etapa = event.target.closest('[data-wa-stage]');
+      if (etapa) {
+        const valor = etapa.dataset.waStage;
+        state.wa.stage = state.wa.stage === valor ? '' : valor;
+        if (state.wa.stage && state.wa.filter === 'archivados') state.wa.filter = 'todos';
+        guardarFiltrosActuales();
+        state.wa.selected.clear();
+        state.wa.listSig = null;
+        refreshWhatsapp().catch(() => renderWaList());
+        renderWhatsapp();
+        return;
+      }
+      /* Orden: actividad reciente (por defecto) o atención/prioridad de venta. */
+      const ordenFila = event.target.closest('[data-wa-sort]');
+      if (ordenFila) {
+        state.wa.sort = ordenFila.dataset.waSort === 'priority' ? 'priority' : 'recent';
+        guardarFiltrosActuales();
+        state.wa.listSig = null;
+        refreshWhatsapp().catch(() => renderWaList());
+        renderWhatsapp();
+        return;
+      }
+      if (event.target.closest('[data-wa-archived]')) {
+        state.wa.filter = state.wa.filter === 'archivados' ? 'todos' : 'archivados';
+        if (state.wa.filter === 'archivados') state.wa.stage = '';
+        guardarFiltrosActuales();
+        state.wa.filtersOpen = false;
+        document.body.dataset.waFilters = 'closed';
+        state.wa.selected.clear();
+        state.wa.listSig = null;
+        refreshWhatsapp().catch(() => renderWaList());
+        renderWhatsapp();
+        return;
+      }
+      if (event.target.closest('[data-wa-clear-filters]')) {
+        state.wa.filter = 'todos';
+        state.wa.stage = '';
+        state.wa.sort = 'recent';
+        state.wa.date = { mode: 'all', from: '', to: '' };
+        state.wa.q = '';
+        guardarFiltrosActuales();
+        state.wa.selected.clear();
+        state.wa.listSig = null;
+        refreshWhatsapp().catch(() => renderWaList());
+        renderWhatsapp();
+        return;
+      }
     });
     $('#wa-new-chat').addEventListener('click', () => openNewConversationSheet());
 

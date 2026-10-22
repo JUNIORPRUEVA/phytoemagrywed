@@ -43,6 +43,8 @@ import {
 import { toolCatalog } from './tools.mjs';
 import { agentOffice, centroDirectory } from './centro.mjs';
 import { delegationsForTicket } from './collaboration.mjs';
+import { commercialSnapshot } from './commercial.mjs';
+import { agentAsk, agentFacts, factsToText } from './ask.mjs';
 import {
   applyWorkDecision,
   buildWorkSystemPrompt,
@@ -59,7 +61,7 @@ function clean(value, max = 120) {
   return String(value ?? '').trim().slice(0, max);
 }
 
-export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJson, can, findOrder = null, listOrders = null, notify = null, llm = null }) {
+export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJson, can, findOrder = null, listOrders = null, notify = null, llm = null, ai = null, aiTools = null }) {
   if (!/^\/api\/admin\/ops(?:\/|$)/.test(route)) return false;
 
   const send = (status, body) => {
@@ -323,6 +325,106 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
     }
 
     /*
+     * OPORTUNIDADES COMERCIALES (SOLO LECTURA).
+     *
+     * Resumen acotado —no la base— de lo que se puede ver: quién compró y no
+     * ha vuelto, quién escribió y sigue sin respuesta, pedidos sin confirmar y
+     * clientes frecuentes. Cada fila lleva su evidencia; los clientes con «no
+     * contactar» o baja de WhatsApp quedan fuera y solo se cuentan.
+     */
+    if (route === '/api/admin/ops/work/commercial' && method === 'GET') {
+      if (!can('followups.read')) {
+        return send(403, { ok: false, error: 'forbidden', message: 'No tienes acceso a seguimientos.' });
+      }
+      const commercial = await commercialSnapshot({ ctx, can, actor, limits: { rows: 8 } });
+      return send(200, { ok: true, commercial });
+    }
+
+    /*
+     * CONSUMO Y PRESUPUESTO DEL PROVEEDOR IA.
+     *
+     * Es la contabilidad del propio CRM (llamadas, tokens, latencia y coste
+     * ESTIMADO con las tarifas que se configuren). No es la factura del
+     * proveedor y se dice en la respuesta.
+     */
+    if (route === '/api/admin/ops/ai/usage' && method === 'GET') {
+      if (!can('admin.full')) return send(403, { ok: false, error: 'forbidden', message: 'Solo administración.' });
+      const usage = typeof ctx.proofreading?.opsUsage === 'function' ? await ctx.proofreading.opsUsage() : null;
+      if (!usage) {
+        return send(200, { ok: true, usage: null, message: 'Este servidor no tiene el proveedor de IA configurado.' });
+      }
+      return send(200, { ok: true, usage });
+    }
+
+    /*
+     * PEDIRLE CUENTAS A UN AGENTE.
+     *
+     * Solo LEE: contesta con sus ejecuciones, sus tickets y sus propuestas. No
+     * escribe nada ni cambia el planificador del supervisor. Si el modelo no
+     * está disponible contesta igual con el resumen determinista de registros.
+     */
+    const askMatch = new RegExp(`^/api/admin/ops/agents/(${ID})/ask$`).exec(route);
+    if (askMatch && method === 'POST') {
+      const body = await readBody();
+      if (body.__error) return send(400, { ok: false, error: 'bad_request', message: 'No se pudo leer la petición.' });
+      const message = clean(body.message, 800);
+      if (!message) return send(422, { ok: false, error: 'message_required', message: 'Escribe qué quieres preguntar.' });
+      /*
+       * AUTORIZACIÓN POR RECURSO. El Agente de Seguimiento trabaja con datos
+       * comerciales (clientes, compras, oportunidades): no se le puede
+       * interrogar sin `followups.read`, aunque se tenga acceso a tickets. Los
+       * demás agentes cuentan su propia operación y basta con `tickets.read`.
+       */
+      if (askMatch[1] === 'followup_agent' && !can('followups.read')) {
+        return send(403, { ok: false, error: 'forbidden', message: 'No tienes acceso a seguimientos comerciales.' });
+      }
+      /*
+       * HISTORIAL CORTO Y ACOTADO. Permite preguntas de seguimiento («y de esos,
+       * ¿cuál compró más?») sin guardar nada en el servidor: lo manda el cliente,
+       * se recortan los turnos y este usuario solo ve su propia conversación.
+       */
+      const history = Array.isArray(body.history)
+        ? body.history
+            .slice(-6)
+            .map((turno) => ({ role: turno?.role === 'agent' ? 'agent' : 'user', text: clean(turno?.text, 600) }))
+            .filter((turno) => turno.text)
+        : [];
+      const result = await agentAsk({ ctx, actor, can, key: askMatch[1], message, ai, aiTools, history });
+      if (!result.ok) {
+        const estado = result.error === 'agent_not_found' ? 404 : 422;
+        return send(estado, {
+          ok: false,
+          error: result.error ?? 'ask_failed',
+          message: result.error === 'agent_not_found' ? 'Ese agente no existe.' : 'No se pudo responder la pregunta.',
+        });
+      }
+      /*
+       * RASTRO DE CONSUMO. Se anota SIEMPRE: con modelo (tokens y milisegundos)
+       * o sin él (respuesta de registros). Es la única forma de saber cuánto
+       * gasta el Centro IA sin mirar la consola del proveedor.
+       */
+      await ctx.audit?.record?.({
+        entity: 'ops_agent',
+        entityId: askMatch[1],
+        action: 'ops.agent_asked',
+        actor: actor?.display_name ?? actor?.id ?? null,
+        summary: result.answer.source === 'modelo'
+          ? `${askMatch[1]}: respuesta del modelo (${result.answer.usage?.total ?? 0} tokens, ${result.answer.ms ?? 0} ms${result.answer.toolsUsed?.length ? `, ${result.answer.toolsUsed.length} consulta(s)` : ''})`
+          : `${askMatch[1]}: respuesta de registros${result.answer.reason ? ` (${result.answer.reason})` : ''}`,
+        data: {
+          source: result.answer.source,
+          reason: result.answer.reason ?? null,
+          model: result.answer.model ?? null,
+          tokens: result.answer.usage ?? null,
+          ms: result.answer.ms ?? null,
+          rounds: result.answer.rounds ?? null,
+          tools: (result.answer.toolsUsed ?? []).map((row) => row.name),
+        },
+      }).catch(() => {});
+      return send(200, { ok: true, ...result });
+    }
+
+    /*
      * CONVERSAR CON EL AGENTE.
      *
      * El modelo SOLO razona y propone: la respuesta trae texto y propuestas
@@ -339,28 +441,82 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
       const message = clean(body.message, 1000);
       if (!message) return send(422, { ok: false, error: 'message_required', message: 'Escribe qué necesitas.' });
       const snapshot = await workSnapshot({ ctx, actor, can });
+      /*
+       * SIN PROVEEDOR DE IA SE CONTESTA IGUAL, CON LOS REGISTROS.
+       * Antes esto devolvía 503 y la pestaña «Conversar» quedaba inservible. Un
+       * resumen de lo que de verdad hay (seguimientos, cola, propuestas) es útil
+       * y no inventa nada: no se ejecuta ni se propone ninguna acción.
+       */
       if (typeof llm !== 'function') {
-        return send(503, { ok: false, error: 'llm_unavailable', message: 'El modelo no está configurado en este servidor.' });
+        const facts = await agentFacts({ ctx, can, key: 'followup_agent', actor });
+        return send(200, {
+          ok: true,
+          reply: facts.ok ? factsToText(facts.facts) : 'No tengo información suficiente todavía.',
+          proposals: [],
+          rejected: [],
+          model: null,
+          ms: null,
+          degraded: true,
+        });
+      }
+      /* Oportunidades reales del CRM, acotadas, para que pueda priorizar. */
+      let commercial = null;
+      try {
+        commercial = await commercialSnapshot({ ctx, can, actor, limits: { rows: 8 } });
+      } catch {
+        commercial = null;
       }
       let answer = null;
       try {
         answer = await llm({
           system: buildWorkSystemPrompt(),
-          user: buildWorkUserPrompt({ message, snapshot }),
+          user: buildWorkUserPrompt({ message, snapshot, commercial }),
           maxTokens: 900,
-          actorId: 'ops-agent:followup_agent',
+          actorId: `ops-agent:followup_agent:${actor?.id ?? 'anon'}`,
         });
       } catch {
         answer = null;
       }
       if (!answer) {
-        return send(503, {
-          ok: false,
-          error: 'llm_unavailable',
-          message: 'El modelo no respondió. Las listas y las programaciones siguen funcionando.',
+        /*
+         * El proveedor falló (plazo, tope, clave o red). Se dice y se contesta
+         * con los registros: NADA se simula como si fuera del modelo.
+         */
+        const facts = await agentFacts({ ctx, can, key: 'followup_agent', actor });
+        await ctx.audit?.record?.({
+          entity: 'ops_agent',
+          entityId: 'followup_agent',
+          action: 'ops.agent_asked',
+          actor: actor?.display_name ?? actor?.id ?? null,
+          summary: 'followup_agent: el modelo no respondió; se contestó con registros',
+          data: { source: 'registros', reason: 'proveedor' },
+        }).catch(() => {});
+        return send(200, {
+          ok: true,
+          reply: facts.ok ? factsToText(facts.facts) : 'No tengo información suficiente todavía.',
+          proposals: [],
+          rejected: [],
+          model: null,
+          ms: null,
+          degraded: true,
+          reason: 'proveedor',
         });
       }
       const applied = await applyWorkDecision({ ctx, actor, can, raw: answer.json });
+      await ctx.audit?.record?.({
+        entity: 'ops_agent',
+        entityId: 'followup_agent',
+        action: 'ops.agent_asked',
+        actor: actor?.display_name ?? actor?.id ?? null,
+        summary: `followup_agent: respuesta del modelo (${answer.usage?.total ?? 0} tokens, ${answer.ms ?? 0} ms, ${applied.proposals.length} propuesta(s))`,
+        data: {
+          source: 'modelo',
+          model: answer.model ?? null,
+          tokens: answer.usage ?? null,
+          ms: answer.ms ?? null,
+          proposals: applied.proposals.length,
+        },
+      }).catch(() => {});
       return send(200, {
         ok: true,
         reply: applied.reply,
@@ -369,6 +525,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
         model: answer.model ?? null,
         ms: answer.ms ?? null,
         usage: answer.usage ?? null,
+        source: 'modelo',
       });
     }
 

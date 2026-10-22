@@ -28,7 +28,7 @@ import {
   supervisorSettings,
 } from '../delivery-supervisor.mjs';
 import { assignAgentToTicket } from './agents.mjs';
-import { createTicket } from './tickets.mjs';
+import { createTicket, taskAction } from './tickets.mjs';
 
 /** Agente de IA de reparto que se asigna al ticket (si está dado de alta). */
 export const DELIVERY_AGENT_KEY = 'delivery_supervisor';
@@ -201,6 +201,60 @@ export async function openDeliveryTicketsFromSupervision({
 }
 
 /**
+ * CIERRE DEL TRABAJO DEL SUPERVISOR.
+ *
+ * Cuando la entrega termina (entregada o cancelada), el ticket interno se
+ * quedaba abierto para siempre: el agente no tenía forma de enterarse y la
+ * bandeja se llenaba de tickets de pedidos ya cerrados.
+ *
+ * Aquí se marca TAN SOLO la TAREA como terminada (no se cierra el ticket: eso
+ * sigue siendo una decisión humana con su permiso). Es determinista, idempotente
+ * y deja su evento en el hilo.
+ */
+export async function closeDeliveredTickets({ ctx, deps = {}, orders = [], limit = 20 } = {}) {
+  const cerrados = new Set(['entregado', 'cancelado', 'perdido']);
+  const porId = new Map();
+  for (const row of orders) {
+    const order = parseOrderRow(row);
+    if (!order) continue;
+    if (!cerrados.has(String(order.status ?? row.status ?? ''))) continue;
+    porId.set(String(row.id), String(order.status ?? row.status));
+  }
+  if (!porId.size) return { completed: [] };
+
+  const tickets = await ctx.db.list('ops_tickets', { limit: 500 }).catch(() => []);
+  const completed = [];
+  for (const ticket of tickets) {
+    if (completed.length >= limit) break;
+    if (String(ticket.entity_type) !== 'order') continue;
+    /*
+     * SOLO LOS TICKETS DE REPARTO. Un ticket de otro flujo (una factura, una
+     * reclamación) atado al mismo pedido NO se toca: su trabajo no es la entrega.
+     */
+    if (String(ticket.type) !== 'delivery' && String(ticket.assigned_agent_id ?? '') !== DELIVERY_AGENT_KEY) continue;
+    if (['resolved', 'cancelled'].includes(String(ticket.status))) continue;
+    if (ticket.task?.completed_at) continue;
+    const estado = porId.get(String(ticket.entity_id));
+    if (!estado) continue;
+    try {
+      const result = await taskAction({
+        ctx,
+        actor: SUPERVISION_ACTOR,
+        can: () => true,
+        id: ticket.id,
+        action: 'complete',
+        note: `La entrega quedó ${estado === 'entregado' ? 'entregada' : 'cerrada'}. El supervisor da su trabajo por terminado; el ticket queda para cierre humano.`,
+        deps,
+      });
+      if (result?.ok) completed.push({ ticketId: ticket.id, orderId: ticket.entity_id, estado });
+    } catch {
+      /* Un ticket que falla no puede parar el resto de la pasada. */
+    }
+  }
+  return { completed };
+}
+
+/**
  * Una vuelta del puente, tal y como la llama el scheduler.
  *
  * Separa el tick del centro de operaciones para que un fallo del supervisor no
@@ -214,5 +268,11 @@ export async function opsDeliveryTicketTick({ ctx, deps = {}, agentKey = DELIVER
   } catch (error) {
     return { created: [], existing: [], skipped: [], errors: [{ error: 'orders_unavailable', message: String(error?.message ?? error).slice(0, 200) }] };
   }
-  return openDeliveryTicketsFromSupervision({ ctx, deps, orders: rows, agentKey });
+  const abiertos = await openDeliveryTicketsFromSupervision({ ctx, deps, orders: rows, agentKey });
+  /*
+   * DESPUÉS de abrir: las entregas que ya cerraron sueltan su trabajo. Va en la
+   * misma pasada para que un pedido entregado no deje el ticket «en curso».
+   */
+  const cierre = await closeDeliveredTickets({ ctx, deps, orders: rows }).catch(() => ({ completed: [] }));
+  return { ...abiertos, completed: cierre.completed ?? [] };
 }

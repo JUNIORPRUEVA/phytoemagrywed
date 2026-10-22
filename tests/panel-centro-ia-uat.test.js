@@ -206,10 +206,20 @@ describe('Centro IA · oficina de agentes', () => {
   it('abre la oficina del agente con sus tickets y sus herramientas', async () => {
     const card = $$('.centro-card').find((node) => node.textContent.includes('Supervisor de reparto'));
     click(card);
-    await waitFor(() => $('.centro-off'), 'la oficina del agente');
-    await waitFor(() => $$('[data-centro-ticket]').length >= 1, 'los tickets asignados');
+    await waitFor(() => $('.centro-off__name'), 'la oficina del agente cargada');
 
-    expect($('.centro-id__name')?.textContent).toContain('Supervisor de reparto');
+    /* Cabecera compacta: nombre, especialidad y estado en una línea. */
+    expect($('.centro-off__name')?.textContent).toContain('Supervisor de reparto');
+    expect($('.centro-off__head')).toBeTruthy();
+    expect($('.centro-id')).toBeNull();
+
+    /* Se abre en su CONVERSACIÓN, con el compositor dentro del panel. */
+    await waitFor(() => Boolean($('.centro-thread')), 'el hilo de conversación');
+    expect($('.centro-composer textarea')).toBeTruthy();
+
+    /* Asignados: sus tickets, con su contenido real. */
+    click($('[data-centro-office-tab="tickets"]'));
+    await waitFor(() => $$('[data-centro-ticket]').length >= 1, 'los tickets asignados');
     const row = $('[data-centro-ticket]');
     expect(row.textContent).toContain('Entrega sin confirmar');
 
@@ -235,8 +245,8 @@ describe('Centro IA · oficina de agentes', () => {
     const back = $('[data-ops-back]');
     expect(back.getAttribute('aria-label')).toContain('oficina');
     click(back);
-    await waitFor(() => Boolean($('.centro-off')), 'de vuelta en la oficina');
-    expect($('.centro-id__name')?.textContent).toContain('Supervisor de reparto');
+    await waitFor(() => $('.centro-off__name'), 'de vuelta en la oficina');
+    expect($('.centro-off__name')?.textContent).toContain('Supervisor de reparto');
   });
 
   it('la bandeja completa sigue disponible desde el centro', async () => {
@@ -273,10 +283,76 @@ describe('Centro IA · oficina de agentes', () => {
     expect($('#view-ops')?.querySelector('[data-sup-run]')).toBeNull();
   }, 30_000);
 
+  it('el detalle es una conversación: pregunta al agente y contesta con sus registros', async () => {
+    await openCentro();
+    const card = $$('.centro-card').find((node) => node.textContent.includes('Supervisor de reparto'));
+    click(card);
+    await waitFor(() => Boolean($('.centro-thread')), 'el hilo de la conversación');
+    /* Las preguntas de un clic están ahí y el campo de escritura también. */
+    const sugerencias = $$('[data-ask-suggest]').map((node) => node.dataset.askSuggest);
+    expect(sugerencias).toContain('¿Qué hiciste hoy?');
+    expect(sugerencias).toContain('¿Qué necesitas que apruebe?');
+
+    click($$('[data-ask-suggest]').find((node) => node.dataset.askSuggest === '¿Qué hiciste hoy?'));
+    /* La respuesta sale del servidor y viene de sus registros reales. */
+    await waitFor(
+      () => $$('.ops-msg--agent').some((node) => /registros|ticket|ejecucion|ejecución|pendiente/i.test(node.textContent)),
+      'la respuesta del agente',
+      15_000,
+    );
+    const respuesta = $$('.ops-msg--agent').at(-1).textContent;
+    expect(respuesta).toContain('Supervisor de reparto');
+    /* Nada se ejecuta: solo se lee. */
+    expect(app.whatsapp?.sent?.length ?? 0).toBe(0);
+  }, 30_000);
+
   it('la barra del centro ofrece aprobaciones y administración a quien puede', async () => {
     await openCentro();
+    /*
+     * La fila de iconos del encabezado ya NO está: esas funciones viven en
+     * «Actividad y tickets», que es donde tienen sentido.
+     */
+    expect($('#centro-tools')).toBeNull();
+    expect($$('.centro-stats')).toHaveLength(0);
+    click($('[data-centro-nav="tickets"]'));
+    await waitFor(() => Boolean($('#ops-rows')), 'la bandeja de actividad y tickets');
     expect($('[data-ops-approvals]')).toBeTruthy();
     expect($('[data-ops-agents]')).toBeTruthy();
+  }, 30_000);
+
+  it('muestra el consumo del modelo del día sin presentarlo como factura', async () => {
+    const respuesta = await api('/api/admin/ops/ai/usage');
+    expect(respuesta.status).toBe(200);
+    const { usage } = await respuesta.json();
+    expect(usage).toBeTruthy();
+    expect(usage.tokens).toBeTruthy();
+    expect(usage.note).toContain('No es la factura');
+
+    await openCentro();
+    const nota = await waitFor(
+      () => $$('.centro-note').find((node) => node.textContent.includes('consulta(s) al modelo hoy')),
+      'la línea de consumo del modelo',
+    );
+    expect(nota.textContent).toMatch(/tokens/);
+  }, 30_000);
+
+  it('pedir cuentas acepta historial y nunca crea nada por sí solo', async () => {
+    const antes = app.whatsapp?.sent?.length ?? 0;
+    const respuesta = await api('/api/admin/ops/agents/delivery_supervisor/ask', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: '¿Y de esas entregas, cuál lleva más tiempo?',
+        history: [
+          { role: 'user', text: '¿Qué entregas supervisas?' },
+          { role: 'agent', text: 'Una entrega en curso.' },
+        ],
+      }),
+    });
+    expect(respuesta.status).toBe(200);
+    const cuerpo = await respuesta.json();
+    expect(String(cuerpo.answer?.text ?? '').length).toBeGreaterThan(10);
+    expect(cuerpo.proposals ?? null).toBeNull();
+    expect(app.whatsapp?.sent?.length ?? 0).toBe(antes);
   }, 30_000);
 
   it('no se ha enviado ni un WhatsApp', () => {

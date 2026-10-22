@@ -1,0 +1,467 @@
+/* ==================================================================
+ * FLUJO ÚNICO DE ENTREGA — «Mis entregas» (móvil primero)
+ * ==================================================================
+ *
+ * Una sola acción primaria por paso, dinero con nombres claros y acciones
+ * secundarias agrupadas. Pensado para leerse al sol, con una mano y con guantes:
+ * tipografía firme, contraste alto y objetivos táctiles de 46 px o más.
+ *
+ * Este archivo se carga DESPUÉS de admin.css para ganar a las reglas
+ * anteriores del detalle de entrega sin tener que borrarlas (el mapa y el
+ * panel siguen usando la misma estructura).
+ */
+
+.delivery-detail-panel.dv-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px 10px 12px;
+  max-height: min(70%, 580px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- cliente y dirección ------------------------------------------------ */
+
+.dv-who {
+  display: grid;
+  gap: 1px;
+  padding: 8px 11px;
+  border-radius: 12px;
+  background: var(--pe-card-bg, #fff);
+  border: 1px solid var(--pe-line, #e3e8ef);
+}
+
+.dv-who strong {
+  font-size: 0.95rem;
+  font-weight: 850;
+  letter-spacing: -0.01em;
+  color: var(--pe-ink-900, #0d1b2a);
+}
+
+.dv-who span {
+  font-size: 0.74rem;
+  line-height: 1.35;
+  opacity: 0.72;
+}
+
+/* --- dinero ------------------------------------------------------------- */
+
+.dv-money {
+  display: grid;
+  gap: 2px;
+  padding: 8px 11px;
+  border-radius: 12px;
+  background: var(--pe-card-bg, #fff);
+  border: 1px solid var(--pe-line, #e3e8ef);
+}
+
+.dv-money__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.dv-money__row > span:first-child {
+  opacity: 0.7;
+}
+
+.dv-money__row strong {
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.dv-money__row--muted {
+  opacity: 0.66;
+}
+
+.dv-money__row--due {
+  margin-top: 2px;
+  padding-top: 5px;
+  border-top: 1px dashed var(--pe-line, #e3e8ef);
+  font-size: 0.82rem;
+}
+
+.dv-money__row--due > span:first-child {
+  opacity: 1;
+  font-weight: 800;
+}
+
+.dv-money__row--due strong {
+  font-size: 1.02rem;
+}
+
+.dv-money__row--warn strong,
+.dv-money__row--warn > span:first-child {
+  color: #a35b00;
+}
+
+/* --- pasos (una sola línea) -------------------------------------------- */
+
+.dv-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 2px;
+  list-style: none;
+}
+
+.dv-steps__item {
+  flex: 1 1 0;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--pe-ink-500, #6b7a8d);
+}
+
+.dv-steps__item i {
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--pe-line, #e3e8ef);
+}
+
+.dv-steps__item.is-done i {
+  background: #0b6b4f;
+}
+
+.dv-steps__item.is-active {
+  color: #0b6b4f;
+}
+
+.dv-steps__item.is-active i {
+  background: #0b6b4f;
+}
+
+/* --- acción primaria ---------------------------------------------------- */
+
+.dv-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #0f7a5a, #0b6b4f);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  box-shadow: 0 14px 28px rgba(11, 107, 79, 0.28);
+  cursor: pointer;
+}
+
+.dv-primary .svg {
+  width: 20px;
+  height: 20px;
+}
+
+.dv-primary--finish {
+  background: linear-gradient(180deg, #1257c9, #0f47a8);
+  box-shadow: 0 14px 28px rgba(15, 71, 168, 0.3);
+}
+
+.dv-primary--blocked {
+  background: var(--pe-card-bg, #fff);
+  color: var(--pe-ink-900, #0d1b2a);
+  border: 1px dashed var(--pe-line, #e3e8ef);
+  box-shadow: none;
+  font-size: 0.88rem;
+}
+
+.dv-primary[disabled] {
+  opacity: 0.55;
+  box-shadow: none;
+  cursor: default;
+}
+
+.dv-primary:active:not([disabled]) {
+  transform: translateY(1px) scale(0.995);
+}
+
+/* --- acciones secundarias ---------------------------------------------- */
+
+.dv-secondary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dv-sec {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-height: 52px;
+  padding: 7px 4px;
+  border: 1px solid var(--pe-line, #e3e8ef);
+  border-radius: 12px;
+  background: var(--pe-card-bg, #fff);
+  color: var(--pe-ink-900, #0d1b2a);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dv-sec .svg {
+  width: 18px;
+  height: 18px;
+}
+
+.dv-sec:active {
+  transform: scale(0.98);
+}
+
+/* --- menú contextual ---------------------------------------------------- */
+
+.dv-more {
+  display: grid;
+  gap: 6px;
+}
+
+.dv-more__item {
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--pe-line, #e3e8ef);
+  border-radius: 12px;
+  background: var(--pe-card-bg, #fff);
+  color: var(--pe-ink-900, #0d1b2a);
+  font-size: 0.86rem;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dv-more__item--danger {
+  color: #a4262c;
+  border-color: rgba(164, 38, 44, 0.28);
+}
+
+/* --- contacto ----------------------------------------------------------- */
+
+.dv-contact-sheet {
+  display: grid;
+  gap: 10px;
+}
+
+.dv-contact-sheet__who {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.dv-contact-sheet__who span {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+.dv-contact-sheet__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* --- finalizar: cobro --------------------------------------------------- */
+
+.dv-finish {
+  display: grid;
+  gap: 10px;
+}
+
+.dv-finish__who {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.dv-finish__who span {
+  font-size: 0.76rem;
+  opacity: 0.7;
+}
+
+.dv-finish__ask {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.dv-paid {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(11, 107, 79, 0.3);
+  background: rgba(11, 107, 79, 0.08);
+  color: #0b6b4f;
+  font-size: 0.8rem;
+}
+
+.dv-paid strong {
+  font-size: 0.88rem;
+}
+
+.dv-pay {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.dv-pay legend {
+  padding: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.dv-pay__options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.dv-pay__opt {
+  min-height: 48px;
+  padding: 8px 6px;
+  border: 1px solid var(--pe-line, #e3e8ef);
+  border-radius: 12px;
+  background: var(--pe-card-bg, #fff);
+  color: var(--pe-ink-900, #0d1b2a);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.dv-pay__opt[aria-pressed='true'] {
+  border-color: #0b6b4f;
+  background: rgba(11, 107, 79, 0.12);
+  color: #0b6b4f;
+  box-shadow: inset 0 0 0 1px #0b6b4f;
+}
+
+.dv-pay__due {
+  margin: 8px 0 0;
+  font-size: 0.76rem;
+  opacity: 0.8;
+}
+
+/* --- incidencia / sincronización --------------------------------------- */
+
+.dv-issue-open,
+.dv-sync {
+  display: grid;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.dv-issue-open {
+  border: 1px solid rgba(164, 38, 44, 0.28);
+  background: rgba(164, 38, 44, 0.07);
+  color: #8c1f25;
+}
+
+.dv-sync {
+  border: 1px solid rgba(163, 91, 0, 0.32);
+  background: rgba(163, 91, 0, 0.09);
+  color: #7a4400;
+}
+
+.dv-issue-open strong,
+.dv-sync strong {
+  font-size: 0.8rem;
+}
+
+.dv-issue-open p,
+.dv-sync span {
+  margin: 0;
+  opacity: 0.9;
+}
+
+/* --- reintento de ubicación en la cabecera ----------------------------- */
+
+.dv-map-head__retry {
+  margin-left: 6px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+  font-size: 0.7rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+/* --- tema oscuro -------------------------------------------------------- */
+
+:root[data-theme='dark'] .dv-who,
+:root[data-theme='dark'] .dv-money,
+:root[data-theme='dark'] .dv-sec,
+:root[data-theme='dark'] .dv-more__item,
+:root[data-theme='dark'] .dv-pay__opt,
+:root[data-theme='dark'] .dv-primary--blocked {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eaf1fd;
+}
+
+:root[data-theme='dark'] .dv-who strong {
+  color: #eaf1fd;
+}
+
+:root[data-theme='dark'] .dv-paid {
+  border-color: rgba(84, 221, 162, 0.35);
+  background: rgba(84, 221, 162, 0.12);
+  color: #8bf0c4;
+}
+
+:root[data-theme='dark'] .dv-pay__opt[aria-pressed='true'] {
+  border-color: #54dda2;
+  background: rgba(84, 221, 162, 0.16);
+  color: #8bf0c4;
+  box-shadow: inset 0 0 0 1px #54dda2;
+}
+
+:root[data-theme='dark'] .dv-sync {
+  border-color: rgba(255, 196, 92, 0.34);
+  background: rgba(255, 196, 92, 0.12);
+  color: #ffd48a;
+}
+
+:root[data-theme='dark'] .dv-issue-open {
+  border-color: rgba(255, 120, 130, 0.34);
+  background: rgba(255, 120, 130, 0.12);
+  color: #ffb3b8;
+}
+
+/* --- pantallas estrechas ------------------------------------------------ */
+
+@media (max-width: 359px) {
+  .dv-secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dv-pay__options {
+    grid-template-columns: 1fr;
+  }
+
+  .dv-steps__item span {
+    font-size: 0.54rem;
+  }
+}

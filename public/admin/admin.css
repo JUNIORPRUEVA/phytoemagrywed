@@ -6030,6 +6030,49 @@ body[data-wa-view='chat'] .float-btn--menu {
 .wa-state__action:focus-visible { outline: 2px solid var(--pe-focus); outline-offset: 1px; }
 
 /*
+ * ENTORNO LOCAL: una etiqueta, no una franja.
+ * Dice lo mismo («los mensajes no salen a Meta») sin ocupar una línea entera;
+ * el texto completo queda en el tooltip y en el estado de WhatsApp.
+ */
+.wa-env {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.7;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.wa-env--mock {
+  border-color: rgba(198, 138, 25, 0.32);
+  background: rgba(198, 138, 25, 0.12);
+  color: #8a5a05;
+}
+
+.wa-env--mock::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #c68a19;
+}
+
+:root[data-theme='dark'] .wa-env--mock {
+  border-color: rgba(224, 168, 60, 0.34);
+  background: rgba(224, 168, 60, 0.16);
+  color: #f0c579;
+}
+
+:root[data-theme='dark'] .wa-env--mock::before { background: #f0c579; }
+
+/*
  * Vista previa del mensaje de una plantilla: se ven los huecos ya rellenos, tal
  * como se van a enviar por WhatsApp (el texto fijo de la plantilla no cambia).
  */
@@ -6539,6 +6582,137 @@ body[data-wa-view='chat'] .float-btn--menu {
   box-shadow: none;
 }
 .loc__head { display: flex; align-items: center; gap: 8px; }
+/*
+ * TARJETA DE UBICACIÓN: EL MAPA ES LA TARJETA.
+ *
+ * El mosaico ocupa todo el ancho y todo el alto; encima flotan, en una franja
+ * legible, el nombre, la dirección y el origen en letra muy pequeña; el «⋯»
+ * flota en la esquina superior derecha. Nada de bloques apilados: la ubicación
+ * se entiende de un vistazo y la tarjeta no se hace más alta de la cuenta.
+ */
+.loc__map {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #e8eef5;
+}
+.loc--map {
+  position: relative;
+  display: block;
+  /*
+   * ANCHO PROPIO, NO NEGOCIABLE. Toda la información va absoluta sobre el
+   * mapa, así que sin un ancho propio la tarjeta mediría 0 y la burbuja se
+   * quedaría vacía (el «⋯» flotaba suelto sobre el avatar).
+   */
+  width: 240px;
+  max-width: 100%;
+  min-height: 150px;
+  padding: 0;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  max-height: 220px;
+  border-radius: 16px;
+  border: 1px solid rgba(20, 91, 215, 0.14);
+  background: #e8eef5;
+  box-shadow: 0 6px 16px rgba(20, 60, 120, 0.1);
+}
+.loc--map .loc__map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+.loc__map img {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+.loc__map-pin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--pe-brand-700, #145bd7);
+  border: 2.5px solid #fff;
+  box-shadow: 0 2px 8px rgba(10, 30, 70, 0.45);
+}
+.loc__map-credit {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #33475f;
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+.loc--map .loc__map-credit {
+  top: 7px;
+  right: auto;
+  bottom: auto;
+  left: 7px;
+}
+/* Franja de información flotante: letra pequeña, siempre legible sobre el mapa. */
+.loc__info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 22px 9px 7px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  background: linear-gradient(to top, rgba(8, 18, 34, 0.86) 0%, rgba(8, 18, 34, 0.58) 52%, rgba(8, 18, 34, 0) 100%);
+  pointer-events: none;
+}
+.loc__info .loc__head { gap: 4px; }
+.loc__info .loc__pin {
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  font-size: 9px;
+}
+.loc__info .loc__title { font-size: 11px; font-weight: 650; letter-spacing: 0; }
+.loc__info .loc__address {
+  display: block;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #fff;
+  opacity: 0.94;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loc__info .loc__meta { font-size: 9.5px; line-height: 1.3; color: #fff; opacity: 0.78; }
+/* El «⋯» flota en la esquina, sin ocupar una fila dentro de la tarjeta. */
+.loc--map .loc__more {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  margin: 0;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(20, 91, 215, 0.18);
+  box-shadow: 0 3px 10px rgba(10, 30, 70, 0.25);
+}
+:root[data-theme='dark'] .loc--map .loc__more {
+  background: rgba(17, 29, 48, 0.92);
+  border-color: rgba(255, 255, 255, 0.14);
+}
 .loc__pin {
   flex: 0 0 auto;
   display: grid;
@@ -14940,3 +15114,98 @@ body[data-tab='hoy'] .stat__arrow .svg {
   width: 22px;
   height: 22px;
 }
+
+/* ================================================================== *
+ * PEDIDOS DEL CLIENTE: CAJON LATERAL (70% del ancho en el movil).
+ * ================================================================== */
+.wa-orders-drawer{position:fixed;inset:0 0 0 auto;margin:0;width:70vw;max-width:min(360px,70vw);height:100dvh;max-height:100dvh;padding:0;border:0;border-left:1px solid rgba(20,91,215,.14);border-radius:16px 0 0 16px;background:var(--pe-surface,#fff);color:var(--text-primary,#17243b);overflow:hidden}
+.wa-orders-drawer[open]{display:flex;flex-direction:column}
+.wa-orders-drawer::backdrop{background:rgba(6,16,29,.42)}
+.wa-orders-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px;border-bottom:1px solid rgba(20,91,215,.1)}
+.wa-orders-head strong{display:block;font-size:.95rem;letter-spacing:-.01em}
+.wa-orders-head small{display:block;margin-top:2px;font-size:.7rem;color:var(--text-secondary,#5b6b85)}
+.wa-orders-close{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;border:1px solid rgba(20,91,215,.14);border-radius:10px;background:#fff;color:inherit;font-size:18px;line-height:1;cursor:pointer}
+.wa-orders-body{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:8px 10px calc(16px + env(safe-area-inset-bottom,0px))}
+.wa-orders-group{margin:10px 2px 6px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-secondary,#5b6b85);opacity:.85}
+.wa-order-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 8px;width:100%;margin-bottom:6px;padding:9px 10px;border:1px solid rgba(20,91,215,.12);border-radius:12px;background:#fff;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.wa-order-row:hover{background:#f4f8ff;border-color:rgba(20,91,215,.22)}
+.wa-order-row__body{min-width:0}
+.wa-order-row__body strong{display:block;font-size:.82rem;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wa-order-row__body small{display:block;margin-top:2px;font-size:.68rem;color:var(--text-secondary,#5b6b85);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wa-order-row__total{font-size:.8rem;font-weight:650;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.wa-order-row__go{grid-column:1/-1;justify-self:start;font-size:.66rem;font-weight:650;color:var(--pe-brand-700,#145bd7)}
+.wa-orders-empty{padding:24px 8px;text-align:center;font-size:.8rem;color:var(--text-secondary,#5b6b85)}
+:root[data-theme='dark'] .wa-orders-drawer{background:#111d30;border-left-color:rgba(255,255,255,.08)}
+:root[data-theme='dark'] .wa-orders-close{background:#16243a;border-color:rgba(255,255,255,.12)}
+:root[data-theme='dark'] .wa-order-row{background:#16243a;border-color:rgba(255,255,255,.08)}
+:root[data-theme='dark'] .wa-order-row:hover{background:#1b2c46;border-color:rgba(255,255,255,.14)}
+@media(min-width:900px){.wa-orders-drawer{width:min(380px,42vw);max-width:380px}}
+
+/* CABECERA DEL CHAT ULTRA FINA (44 px de contenido, botones de 32). */
+body[data-tab='whatsapp'] .wa__chat-head{min-height:44px;gap:6px;padding:calc(2px + env(safe-area-inset-top,0px)) 8px 2px}
+body[data-tab='whatsapp'] .wa__back,
+body[data-tab='whatsapp'] .wa__head-icon{width:32px;height:32px;border-radius:9px;box-shadow:none}
+body[data-tab='whatsapp'] .wa__chat-who strong{font-size:.86rem}
+body[data-tab='whatsapp'] .wa__chat-who small{font-size:.68rem}
+
+/* Carrito del usuario en la cabecera del chat (PNG negro con alfa). */
+.wa-head-cart{display:block;width:19px;height:19px;object-fit:contain;pointer-events:none}
+:root[data-theme='dark'] .wa-head-cart{filter:invert(1)}
+
+/* ================================================================== *
+ * APPBAR DEL CHAT: ULTRA FINA (estilo Temu).
+ * 44 px de contenido = 40 px de control + 2/2 de aire; la safe area del
+ * telefono se suma aparte. Iconos de 20 px dentro de zonas tactiles de 40.
+ * ================================================================== */
+body[data-tab='whatsapp'] .wa__chat-head{
+  min-height:44px;
+  gap:6px;
+  padding:calc(2px + env(safe-area-inset-top,0px)) 8px 2px;
+  align-items:center;
+}
+body[data-tab='whatsapp'] .wa__back,
+body[data-tab='whatsapp'] .wa__head-icon{
+  width:40px;height:40px;min-width:40px;
+  border-radius:11px;
+  box-shadow:none;
+  border-color:rgba(20,91,215,.1);
+}
+body[data-tab='whatsapp'] .wa__chat-who{gap:0;line-height:1.15}
+body[data-tab='whatsapp'] .wa__chat-who strong{font-size:.85rem;line-height:1.2}
+body[data-tab='whatsapp'] .wa__chat-who small{font-size:.66rem;line-height:1.2;margin-top:1px}
+body[data-tab='whatsapp'] .wa__chat-avatar{width:32px;height:32px;min-width:32px;font-size:11px}
+body[data-tab='whatsapp'] .wa__head-icon .ico,
+body[data-tab='whatsapp'] .wa__back .ico{display:grid;place-items:center}
+body[data-tab='whatsapp'] .wa__head-icon img,
+body[data-tab='whatsapp'] .wa__back img,
+body[data-tab='whatsapp'] .wa__head-icon .svg,
+body[data-tab='whatsapp'] .wa__back .svg{width:20px;height:20px}
+body[data-tab='whatsapp'] .wa-head-cart{width:20px;height:20px}
+body[data-tab='whatsapp'] .wa__head-orders-badge{
+  top:1px;right:1px;
+  min-width:15px;height:15px;line-height:15px;font-size:9px;
+}
+
+/* ================================================================== *
+ * MI PERFIL: COMPACTO Y ORDENADO.
+ * Sin titulo repetido, sin selector de tema (vive en el menu) y sin boton de
+ * salir: solo los datos que la persona puede cambiar.
+ * ================================================================== */
+.view--profile{padding-top:0}
+.simple-head__logo{width:24px;height:24px;object-fit:contain;flex:0 0 auto}
+.view--profile .profile-account{
+  display:flex;align-items:center;gap:10px;
+  padding:2px 2px 10px;margin:0;border:0;background:none;box-shadow:none;
+}
+.view--profile .profile-account .avatar--lg{width:40px;height:40px;min-width:40px;font-size:13px}
+.view--profile .profile-account__body strong{font-size:.92rem;line-height:1.2}
+.view--profile .profile-account__body small{font-size:.7rem;opacity:.7}
+.view--profile .card{padding:12px;margin-bottom:10px;border-radius:14px}
+.view--profile .card__title{font-size:.86rem;margin:0 0 3px;letter-spacing:-.01em}
+.view--profile .card__text{font-size:.73rem;line-height:1.45;margin:0 0 8px;opacity:.78}
+.view--profile .field{margin-bottom:8px}
+.view--profile .field__label{font-size:.67rem;margin-bottom:3px}
+.view--profile .field__input{min-height:38px;font-size:.82rem;border-radius:10px}
+.view--profile .view__hint{font-size:.68rem;line-height:1.45;margin:4px 0 8px;opacity:.8}
+.view--profile .btn--block{min-height:38px;font-size:.82rem;border-radius:11px}
+.view--profile .profile-earnings{padding:12px;border-radius:14px;margin-bottom:10px}

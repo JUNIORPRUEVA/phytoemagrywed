@@ -79,7 +79,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=chat-limpio-1" />
+    <link rel="stylesheet" href="/admin/admin.css?v=perfil-1" />
     <link rel="stylesheet" href="/admin/store.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/product-editor.css?v=billing-cards-2" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
@@ -97,18 +97,18 @@
     <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-4" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=3" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=11" />
-    <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
+    <link rel="stylesheet" href="/admin/conversation-list.css?v=lista-dos-lineas-1" />
     <link rel="stylesheet" href="/admin/composer-mobile.css?v=4" />
     <!--
       La piel de la lista de chats va la ÚLTIMA a propósito: es la que manda
       sobre la geometría y los colores de esa pantalla.
     -->
-    <link rel="stylesheet" href="/admin/wa-lista.css?v=columna-16" />
+    <link rel="stylesheet" href="/admin/wa-lista.css?v=filtros-etapas-1" />
     <!--
       Escritorio (≥ 980 px): el chat se viste como WhatsApp Web. Va después de
       todo y TODO lo suyo está dentro de esa medida, así que el móvil no cambia.
     -->
-    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-3" />
+    <link rel="stylesheet" href="/admin/wa-desktop.css?v=wa-desk-4" />
     <!--
       El menú lateral en escritorio: lleva los cuatro destinos de la barra y
       ordena el resto en desplegables. En el móvil no cambia nada.
@@ -124,7 +124,7 @@
       así que en Android y en el ordenador no cambia absolutamente nada.
     -->
     <link rel="stylesheet" href="/admin/ios.css?v=ios-1" />
-    <link rel="stylesheet" href="/admin/daily-close.css?v=close-compact-2" />
+    <link rel="stylesheet" href="/admin/daily-close.css?v=close-filtros-3" />
     <link rel="stylesheet" href="/admin/outreach.css?v=5" />
     <link rel="stylesheet" href="/admin/assistant.css?v=3" />
     <!--
@@ -132,7 +132,9 @@
       bajo `body[data-tab='ops']` y con prefijo `.ops-`, así que no puede tocar el
       chat del cliente ni el resto del panel.
     -->
-    <link rel="stylesheet" href="/admin/ops.css?v=ops-8" />
+    <link rel="stylesheet" href="/admin/ops.css?v=ops-10" />
+    <link rel="stylesheet" href="/admin/chat-appbar.css?v=custom-icons-1" />
+    <link rel="stylesheet" href="/admin/delivery-flow.css?v=flujo-1" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -354,7 +356,7 @@
                 oculta y esta pantalla tiene que alcanzarse desde el menú.
               -->
               <button class="drawer__item" data-tab="ops" type="button" data-permission="tickets.read">
-                <span class="drawer__icon" aria-hidden="true" data-icon="img:robot"></span>Centro IA
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:robot"></span>Agentes IA
                 <span class="drawer__badge" data-drawer-badge="ops" hidden></span>
               </button>
             </nav>
@@ -485,7 +487,6 @@
                   aria-expanded="false"
                   aria-controls="drawer"
                 >
-                  <img class="app-icon app-icon--menu" src="/admin/assets/icons/ui/menu.png" alt="" aria-hidden="true" draggable="false" />
                   <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
                 </button>
               </div>
@@ -497,7 +498,7 @@
                 como el resto de acciones rápidas.
               -->
               <button class="wa-new-chat" id="wa-new-chat" type="button" aria-label="Agregar cliente para WhatsApp" title="Agregar cliente">
-                <span class="ico wa-new-chat__icon" aria-hidden="true" data-icon="chat"></span>
+                <span class="ico wa-new-chat__icon" aria-hidden="true" data-icon="plus"></span>
               </button>
             </div>
 
@@ -505,7 +506,7 @@
             <div class="wa__chat" id="wa-chat-pane" hidden>
               <div class="wa__chat-head">
                 <button class="wa__back" id="wa-back" type="button" aria-label="Volver a conversaciones">
-                  <span class="ico" aria-hidden="true" data-icon="back"></span>
+                  <img class="wa-header-image wa-header-image--back" src="/admin/assets/icons/chat-back-custom.png" alt="" aria-hidden="true" width="20" height="20" />
                 </button>
                 <button
                   class="avatar avatar--sm wa__chat-avatar"
@@ -516,8 +517,10 @@
                   disabled
                 ></button>
                 <div class="wa__chat-who">
-                  <p class="wa__chat-phone" id="wa-chat-phone" dir="ltr"></p>
-                  <p class="wa__chat-name" id="wa-chat-name"></p>
+                  <div class="wa__chat-identity">
+                    <p class="wa__chat-phone" id="wa-chat-phone" dir="ltr"></p>
+                    <p class="wa__chat-name" id="wa-chat-name"></p>
+                  </div>
                   <p class="wa__chat-meta" id="wa-chat-meta"></p>
                 </div>
                 <!--
@@ -527,7 +530,7 @@
                   varios): no es un carrito de compra aparte.
                 -->
                 <button class="wa__head-icon wa__head-orders" id="wa-chat-orders" type="button" aria-label="Pedidos activos de este cliente" title="Pedidos activos de este cliente" hidden>
-                  <span class="ico" aria-hidden="true" data-icon="bag"></span>
+                  <img class="wa-header-image wa-header-image--orders" src="/admin/assets/icons/chat-cart-custom.png" alt="" aria-hidden="true" width="20" height="20" />
                   <span class="wa__head-orders-badge" id="wa-chat-orders-count" hidden>1</span>
                 </button>
                 <button class="wa__head-icon" id="wa-thread-search-open" type="button" aria-label="Buscar en esta conversación" title="Buscar en esta conversación">
@@ -1050,16 +1053,6 @@
 
         <!-- MI PERFIL (el usuario que tiene la sesión) -->
         <section class="view view--profile" id="view-perfil" hidden>
-          <h2 class="view__title">Mi perfil</h2>
-          <div class="profile-brand" aria-label="Negocio: FullTECH">
-            <img src="/admin/fulltech-logo-transparent.png?v=1" alt="Logo de FullTECH" width="44" height="44" decoding="async" />
-            <strong>FullTECH</strong>
-          </div>
-          <p class="view__hint">
-            Tu nombre y tu clave son tuyos: aquí los cambias sin pedirle nada a nadie.
-          </p>
-          <!-- La apariencia es tuya, y aquí entra cualquier rol (no solo admin). -->
-          <div data-tema-picker></div>
           <div id="profile-view"></div>
         </section>
       </main>
@@ -1154,7 +1147,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=premium-35" defer></script>
+    <script src="/admin/app.js?v=flujo-entrega-1" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
@@ -1166,13 +1159,13 @@
     <script src="/admin/store.js?v=premium-22" defer></script>
     <script src="/admin/store-requests.js?v=3" defer></script>
     <script src="/admin/recogidas.js?v=1" type="module"></script>
-    <script src="/admin/supervisor.js?v=6" type="module"></script>
+    <script src="/admin/supervisor.js?v=7" type="module"></script>
     <!--
       CENTRO DE OPERACIONES: módulo propio (como `supervisor.js`). Se pinta en
       `#view-ops` cuando la pestaña activa es `ops` y no toca `app.js`.
     -->
-    <script src="/admin/ops.js?v=ops-8" type="module"></script>
-    <script src="/admin/pos.js?v=premium-34" type="module"></script>
+    <script src="/admin/ops.js?v=ops-11" type="module"></script>
+    <script src="/admin/pos.js?v=premium-37" type="module"></script>
   </body>
 </html>
 

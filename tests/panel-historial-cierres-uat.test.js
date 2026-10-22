@@ -363,4 +363,130 @@ describe('historial de cierres', () => {
     await waitFor(() => filas().length > 0, 'las filas de vuelta');
   });
 
+  /* ------------------------------------------------------------------ */
+  /* FILTROS DE FECHA: HOY | AYER | INTERVALO                            */
+  /* ------------------------------------------------------------------ */
+
+  it('filtra con Hoy, Ayer e Intervalo desde el control de fechas', async () => {
+    await abrirHistorial();
+    const hoy = diaDeNegocio(new Date());
+    const ayer = restarDias(hoy, 1);
+
+    // El control está SIEMPRE a la vista: no vive en el panelito del móvil.
+    const segmentos = $$('[data-close-history-quick]');
+    expect(segmentos.map((boton) => boton.dataset.closeHistoryQuick)).toEqual(['hoy', 'ayer', 'intervalo']);
+    expect(segmentos[0].textContent.trim()).toBe('Hoy');
+    expect(segmentos[1].textContent.trim()).toBe('Ayer');
+    expect(segmentos[2].textContent).toContain('Intervalo');
+
+    click('[data-close-history-quick="hoy"]');
+    expect($('[data-close-history-quick="hoy"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect($('[data-close-history-quick="ayer"]')?.getAttribute('aria-pressed')).toBe('false');
+    await waitFor(() => filas().length === 1 && filas()[0] === hoy, 'solo el cierre de hoy');
+    expect($('#close-history-note')?.textContent).toContain(`Del ${fmt(hoy)} al ${fmt(hoy)}`);
+    expect($('#close-history-view')?.textContent).not.toContain('Cliente de ayer');
+
+    click('[data-close-history-quick="ayer"]');
+    expect($('[data-close-history-quick="ayer"]')?.getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => filas().length === 1 && filas()[0] === ayer, 'solo el cierre de ayer');
+    expect($('#close-history-note')?.textContent).toContain(`Del ${fmt(ayer)} al ${fmt(ayer)}`);
+    // Y es UN día con UNA venta: el filtro no arrastra el de hoy ni el de hace tres días.
+    expect($('#close-history-view')?.textContent).toContain('1 cierre');
+    expect($('#close-history-view')?.textContent).toContain('1 venta');
+
+    // «Intervalo» abre el calendario y lo elegido manda.
+    click('[data-close-history-quick="intervalo"]');
+    await waitFor(() => $('#close-range-form'), 'el calendario del historial');
+    setValue('#close-from', restarDias(hoy, 3));
+    setValue('#close-to', hoy);
+    click('#close-range-form button[type="submit"]');
+    await waitFor(() => filas().length === 3, 'los tres días del intervalo');
+    expect($('[data-close-history-quick="intervalo"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect($('[data-close-history-quick="intervalo"]')?.textContent).toContain('Intervalo');
+  });
+
+  it('rechaza un intervalo con la fecha final antes que la inicial', async () => {
+    await abrirHistorial();
+    click('[data-close-history-quick="hoy"]');
+    const antes = filas().slice();
+    expect(antes).toHaveLength(1);
+
+    click('[data-close-history-quick="intervalo"]');
+    await waitFor(() => $('#close-range-form'), 'el calendario del historial');
+    const hoy = diaDeNegocio(new Date());
+    setValue('#close-from', hoy);
+    setValue('#close-to', restarDias(hoy, 5));
+    click('#close-range-form button[type="submit"]');
+
+    const error = await waitFor(() => {
+      const nodo = $('#close-range-error');
+      return nodo && !nodo.hidden ? nodo : null;
+    }, 'el aviso del intervalo invertido');
+    expect(error.textContent).toContain('no puede ser anterior');
+    // El calendario sigue abierto y NO se aplicó nada: la lista no cambia.
+    expect($('#sheet')?.hidden).toBe(false);
+    expect(filas()).toEqual(antes);
+
+    click('[data-close-sheet]');
+    await waitFor(() => $('#sheet')?.hidden === true, 'el calendario cerrado');
+    expect(filas()).toEqual(antes);
+  });
+
+  it('el historial cuadra con los pedidos entregados que da el servidor', async () => {
+    await abrirHistorial();
+    const hoy = diaDeNegocio(new Date());
+    const desde = restarDias(hoy, 3);
+    click('[data-close-history-quick="intervalo"]');
+    await waitFor(() => $('#close-range-form'), 'el calendario del historial');
+    setValue('#close-from', desde);
+    setValue('#close-to', hoy);
+    click('#close-range-form button[type="submit"]');
+    await waitFor(() => filas().length === 3, 'los tres días');
+
+    // La fuente de verdad: los pedidos entregados del tramo, del servidor.
+    const respuesta = await fetch(`${app.url}/api/admin/reports/delivered-orders?from=${desde}&to=${hoy}`, {
+      headers: { cookie },
+    });
+    expect(respuesta.status).toBe(200);
+    const datos = await respuesta.json();
+    expect(datos.scope).toBe('all');
+    expect(datos.truncated).toBe(false);
+    expect(datos.items).toHaveLength(3);
+    const sumaOrigen = datos.items.reduce((total, item) => {
+      const orden = typeof item.order_json === 'string' ? JSON.parse(item.order_json) : item.order_json;
+      return total + Number(orden?.total ?? item.total ?? 0);
+    }, 0);
+
+    // El panel enseña exactamente esa suma, ni un peso más ni uno menos.
+    const numero = (texto) => Number(String(texto ?? '').replace(/[^\d-]/g, '')) || 0;
+    const totalPintado = [...$$('#close-history-summary dd')].find(
+      (_dd, indice) => $$('#close-history-summary dt')[indice]?.textContent.trim() === 'Total vendido',
+    );
+    expect(numero(totalPintado?.textContent)).toBe(Math.round(sumaOrigen));
+    // Y las tres ventas son de tres días distintos, ninguna repetida.
+    const diasOrigen = datos.items.map((item) => {
+      const orden = typeof item.order_json === 'string' ? JSON.parse(item.order_json) : item.order_json;
+      return diaDeNegocio(new Date(orden?.delivered_at ?? orden?.updated_at ?? item.updated_at));
+    });
+    expect(new Set(diasOrigen).size).toBe(3);
+  });
+
+  it('el servidor rechaza un intervalo inválido o demasiado largo', async () => {
+    const hoy = diaDeNegocio(new Date());
+    const invalido = await fetch(`${app.url}/api/admin/reports/delivered-orders?from=2026-13-45&to=${hoy}`, {
+      headers: { cookie },
+    });
+    expect(invalido.status).toBe(422);
+
+    const largo = await fetch(`${app.url}/api/admin/reports/delivered-orders?from=2015-01-01&to=${hoy}`, {
+      headers: { cookie },
+    });
+    expect(largo.status).toBe(422);
+    expect((await largo.json()).error).toBe('range_too_long');
+
+    // Sin sesión no se ve nada: el permiso se comprueba en el backend.
+    const sinSesion = await fetch(`${app.url}/api/admin/reports/delivered-orders?from=${hoy}&to=${hoy}`);
+    expect(sinSesion.status).toBe(401);
+  });
+
 });

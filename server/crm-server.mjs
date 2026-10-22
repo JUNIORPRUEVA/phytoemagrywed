@@ -96,6 +96,7 @@ import {
   MANUAL_COMMERCIAL_STATES,
   CUSTOMER_STAGES,
   CUSTOMER_STAGE_LABELS,
+  LIFECYCLE_STAGES,
 } from './customers.mjs';
 import { addDays, createFollowupEngine, dayIn, resolveDailyCapsules, resolvePlan } from './followups.mjs';
 import { BUSINESS_GROUPS, normalizeGroups } from './business-groups.mjs';
@@ -127,6 +128,17 @@ import { handleSupplierRoutes } from './suppliers-routes.mjs';
  * con el chat de WhatsApp del cliente.
  */
 import { handleOpsRoute } from './ops/routes.mjs';
+/*
+ * MOTORES DEL CENTRO IA QUE CORREN SOLOS.
+ *
+ * `scheduler.mjs` ya sabía ejecutar estos tres ticks, pero el servidor NUNCA se
+ * los pasaba: los pedidos con problemas no abrían su ticket interno, los agentes
+ * no daban un solo paso y los plazos no se revisaban. Se conectan aquí, con el
+ * mismo puente que usan las rutas (permisos y notificaciones de siempre).
+ */
+import { opsAgentTick } from './ops/agents.mjs';
+import { opsDeadlineTick } from './ops/notify.mjs';
+import { opsDeliveryTicketTick } from './ops/delivery-tickets.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
 import { createRealtimeHub, eventFromMutation } from './realtime.mjs';
@@ -209,6 +221,7 @@ import {
   supervisorAnswer,
   supervisorDiagnostics,
   supervisorPreview,
+  supervisorSettings,
   supervisorSnapshot,
   supervisorTick,
 } from './delivery-supervisor.mjs';
@@ -217,6 +230,7 @@ import {
   paymentSummaryForDelivery,
   registerCourierHandover,
   registerCustomerPayment,
+  setPaymentVerification,
 } from './order-payments.mjs';
 
 /**
@@ -273,6 +287,25 @@ function supervisorBridge(ctx) {
         source: options.source ?? 'SUPERVISOR_AI',
         reason: options.reason ?? null,
       }),
+  };
+}
+
+/**
+ * PUENTE DE LOS MOTORES DEL CENTRO IA.
+ *
+ * Es el MISMO juego de dependencias que ya usa `handleOpsRoute`, para que un
+ * tick automático no tenga más poder que una persona del equipo: lectura de
+ * pedidos, notificación interna, push y —si está configurado— el modelo.
+ */
+function opsBridge(ctx) {
+  return {
+    findOrder: (id) => findOrderItem(ctx.store, id),
+    listOrders: () => ctx.store.listAdmin({ limit: 5000 }),
+    notifyUser: (input) => createUserNotification(ctx, input),
+    push: (notification) => sendPushForNotification(ctx, notification),
+    llm: (args) => ctx.proofreading?.plan?.(args) ?? null,
+    ai: (args) => ctx.proofreading?.answer?.(args) ?? { ok: false, reason: 'sin_configurar' },
+    users: () => ctx.users.listUsers().catch(() => []),
   };
 }
 
@@ -341,6 +374,13 @@ const BOOTSTRAP_ADMIN_USER = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_USER ?? '').
 const BOOTSTRAP_ADMIN_PASSWORD = (process.env.PHYTO_CRM_BOOTSTRAP_ADMIN_PASSWORD ?? '').trim();
 const ALLOWED_ORIGIN = (process.env.PHYTO_CRM_ALLOWED_ORIGIN ?? '').trim();
 const TIME_ZONE = (process.env.PHYTO_CRM_TZ ?? 'America/Santo_Domingo').trim();
+/*
+ * HISTORIAL DE CIERRES: hasta cuántos días se reconstruyen de una vez.
+ * El panel dibuja un día por renglón y el servidor recorre los pedidos de la
+ * base completa: sin tope, un «desde 2019» congela el móvil. Los dos lados usan
+ * el MISMO número para no enseñar un rango que el otro no va a servir.
+ */
+const CLOSE_HISTORY_MAX_DAYS = 400;
 const WEB_PUSH_PUBLIC_KEY = (process.env.PHYTO_WEB_PUSH_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY ?? '').trim();
 const WEB_PUSH_PRIVATE_KEY = (process.env.PHYTO_WEB_PUSH_PRIVATE_KEY ?? process.env.VAPID_PRIVATE_KEY ?? '').trim();
 const WEB_PUSH_SUBJECT = (process.env.PHYTO_WEB_PUSH_SUBJECT || 'https://phytoemagryrd.lat').trim();
@@ -1026,6 +1066,17 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, opti
       delivery_assigned_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
       delivery_status: status,
       delivery_contacted_at: previousUserId && previousUserId !== deliveryUser?.id ? null : current.delivery?.delivery_contacted_at ?? null,
+      /*
+       * REASIGNAR EMPIEZA DE CERO para el nuevo repartidor: ni la aceptación ni
+       * los intentos de contacto del anterior le pertenecen. El historial no se
+       * borra del pedido (`contact_attempts` se conserva abajo), solo deja de
+       * contar como hecho por quien lleva ahora el pedido.
+       */
+      delivery_accepted_at: previousUserId && previousUserId !== deliveryUser?.id ? null : current.delivery?.delivery_accepted_at ?? null,
+      delivery_accepted_by_user_id: previousUserId && previousUserId !== deliveryUser?.id ? null : current.delivery?.delivery_accepted_by_user_id ?? null,
+      delivery_accepted_by_display_name_snapshot:
+        previousUserId && previousUserId !== deliveryUser?.id ? null : current.delivery?.delivery_accepted_by_display_name_snapshot ?? null,
+      delivery_contact_attempts: Array.isArray(current.delivery?.delivery_contact_attempts) ? current.delivery.delivery_contact_attempts : [],
       delivery_assignment_version: assignmentVersion,
       delivery_previous_user_id: previousUserId && previousUserId !== deliveryUser?.id ? previousUserId : current.delivery?.delivery_previous_user_id ?? null,
       delivery_assignment_note: assignmentNote ?? null,
@@ -1165,7 +1216,41 @@ function publicDeliveryOrder(item, order, customer = null, conversation = null, 
     delivered_at: order?.delivered_at ?? null,
     items_count: (order?.items ?? []).reduce((sum, line) => sum + Math.max(1, Number(line?.quantity ?? 1) || 1), 0),
     pickups: Array.isArray(pickups) ? pickups : [],
+    /*
+     * EL PASO SIGUIENTE LO DECIDE EL SERVIDOR.
+     *
+     * La pantalla del repartidor no vuelve a inventar la secuencia: pide
+     * `next_step` y pinta UNA acción. Así el panel y el backend no pueden
+     * contradecirse (era exactamente el fallo: el texto decía «primero contacta»
+     * y un botón decía «Iniciar entrega»).
+     */
+    next_step: deliveryNextStepOf(order),
+    delivery_accepted_at: order?.delivery?.delivery_accepted_at ?? null,
+    contacted_at: deliveryContactedAtOf(order),
   };
+}
+
+/** ¿Se registró algún intento de contacto (llamada, WhatsApp o mensaje del CRM)? */
+function deliveryContactedAtOf(order) {
+  const attempts = Array.isArray(order?.delivery?.delivery_contact_attempts) ? order.delivery.delivery_contact_attempts : [];
+  const last = attempts.length ? attempts[attempts.length - 1]?.at ?? null : null;
+  return order?.delivery?.delivery_contacted_at ?? last ?? null;
+}
+
+/**
+ * SIGUIENTE PASO CANÓNICO DEL REPARTO.
+ *
+ * accepted → contacted → on_the_way → delivered. Es el único sitio donde se
+ * define el orden; la app solo lo representa.
+ */
+function deliveryNextStepOf(order) {
+  const status = String(order?.status ?? '');
+  if (['entregado', 'cancelado', 'perdido'].includes(status)) return 'done';
+  if (String(order?.delivery?.delivery_status ?? '').toUpperCase() === 'ISSUE_REPORTED') return 'issue';
+  if (order?.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) return 'delivered';
+  if (!order?.delivery?.delivery_accepted_at) return 'accepted';
+  if (!deliveryContactedAtOf(order)) return 'contacted';
+  return 'on_the_way';
 }
 
 async function visibleDeliveryOrders(ctx, actor) {
@@ -2552,11 +2637,41 @@ async function reportDeliveryIssue(ctx, item, actor, input = {}) {
     return { ok: false, status: 422, error: 'missing_note', message: 'Escribe una nota para explicar la incidencia.' };
   }
   const at = ctx.clock().toISOString();
+  /*
+   * UNA INCIDENCIA ABIERTA A LA VEZ.
+   *
+   * Antes, pulsar dos veces creaba dos registros (la clave de auditoría incluía
+   * la hora exacta) y el pedido no tenía historial: solo el «último motivo». Ahora
+   * cada incidencia es un hecho con su id y, mientras una esté abierta, no se
+   * acepta otra: se resuelve primero. Eso evita duplicados y escalados dobles.
+   */
+  const previousIssues = Array.isArray(order.delivery?.issues) ? order.delivery.issues : [];
+  if (previousIssues.some((issue) => !issue.resolved_at)) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'issue_pending',
+      message: 'Ya hay una incidencia abierta en este pedido. Espera la decisión administrativa.',
+    };
+  }
+  const issue = {
+    id: newId('iss'),
+    reason: reasonCode,
+    reason_label: DELIVERY_ISSUE_REASONS[reasonCode],
+    note: note || null,
+    at,
+    by_user_id: actor.id,
+    by_display_name: actor.display_name ?? null,
+    channel: text(input.channel, 20) ?? 'panel',
+    resolved_at: null,
+  };
   const next = {
     ...order,
     delivery: {
       ...(order.delivery ?? {}),
       delivery_status: DELIVERY_OPERATIONAL_STATUSES.ISSUE_REPORTED,
+      issues: [...previousIssues, issue].slice(-50),
+      issue_id: issue.id,
       issue_reason: reasonCode,
       issue_reason_label: DELIVERY_ISSUE_REASONS[reasonCode],
       issue_note: note || null,
@@ -2584,9 +2699,9 @@ async function reportDeliveryIssue(ctx, item, actor, input = {}) {
       timestamp: at,
       tracking_closed: closed.length,
     },
-    idempotencyKey: `delivery.issue:${item.id}:${actor.id}:${at}`,
+    idempotencyKey: `delivery.issue:${item.id}:${issue.id}`,
   });
-  return { ok: true, order: orderOf(updated) ?? next, closedTracking: closed };
+  return { ok: true, order: orderOf(updated) ?? next, closedTracking: closed, issue };
 }
 
 /** Identificador aleatorio corto (mismo patrón que el resto del CRM). */
@@ -2947,6 +3062,23 @@ async function transitionOrderStatus(ctx, input) {
       const updated = await ctx.store.update(item.id, { status: 'enviado', orderJson: JSON.stringify(inTransitOrder) });
       result = { ok: true, item: updated, order: inTransitOrder };
     } else if (target === 'ENTREGADO') {
+      /*
+       * UN PEDIDO CANCELADO NO SE "ENTREGA".
+       *
+       * Antes, si el pedido se cancelaba mientras el repartidor iba en camino y
+       * él confirmaba por WhatsApp, la transición lo marcaba entregado (y la
+       * carrera se resolvía en silencio). Cancelar y entregar son decisiones
+       * incompatibles: si de verdad se entregó, hay que reabrirlo primero con su
+       * motivo y su autor.
+       */
+      if (String(previousStatus) === 'cancelado' || String(order.delivery?.delivery_status ?? '').toUpperCase() === 'CANCELLED') {
+        return {
+          ok: false,
+          status: 409,
+          error: 'order_cancelled',
+          message: 'El pedido está cancelado. Reábrelo antes de marcarlo como entregado.',
+        };
+      }
       if (!isCompletedPurchaseStatus(item.status)) {
         const check = await ensureInventoryForSale(ctx, { ...item, status: BUSINESS_COMPLETED_PURCHASE_STATUS });
         if (!check.ok) return check;
@@ -5456,7 +5588,7 @@ async function handle(req, res, ctx) {
 
   // --------------------------------------------------------------- público
   if (route === '/api/health') {
-    json(res, 200, { ok: true, storage: store.kind, items: await store.count() });
+    json(res, 200, { ok: true, storage: store.kind, uat: ctx.uatMode === true, items: await store.count() });
     return;
   }
 
@@ -5961,7 +6093,7 @@ async function handle(req, res, ctx) {
         actorName: actor?.display_name ?? null,
       });
       if (!result.ok) {
-        json(res, result.error === 'duplicate_user' ? 409 : 422, { ok: false, error: result.error });
+        json(res, result.error === 'duplicate_user' ? 409 : 422, { ok: false, error: result.error, message: result.message ?? null });
         return;
       }
       json(res, 201, { ok: true, user: result.user });
@@ -6053,7 +6185,7 @@ async function handle(req, res, ctx) {
         json(res, result.error === 'not_found' ? 404 : 422, {
           ok: false,
           error: result.error,
-          message: result.error === 'invalid_user' ? 'El nombre visible no puede quedar vacío.' : null,
+          message: result.error === 'invalid_user' ? 'El nombre visible no puede quedar vacío.' : result.message ?? null,
         });
         return;
       }
@@ -6096,6 +6228,7 @@ async function handle(req, res, ctx) {
         json(res, result.error === 'last_admin' ? 409 : result.error === 'not_found' ? 404 : 422, {
           ok: false,
           error: result.error,
+          message: result.message ?? null,
         });
         return;
       }
@@ -6277,7 +6410,8 @@ async function handle(req, res, ctx) {
           manual: MANUAL_COMMERCIAL_STATES,
           deprecated: 'commercial_state se mantiene por compatibilidad; la UI nueva debe usar customerStage.',
         },
-        customerStages: CUSTOMER_STAGES.map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
+        customerStages: LIFECYCLE_STAGES.map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
+        customerStagesLegacy: CUSTOMER_STAGES.filter((value) => !LIFECYCLE_STAGES.includes(value)).map((value) => ({ value, label: CUSTOMER_STAGE_LABELS[value] ?? value })),
         customerTags: deliveryScope.restricted ? [] : await ctx.customers.listTags(),
         deliveryTracking: light ? [] : await listVisibleTracking(ctx, actor),
         deliveryOrders: light ? [] : await visibleDeliveryOrders(ctx, actor),
@@ -6574,7 +6708,24 @@ async function handle(req, res, ctx) {
   if (await handleOpsRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
       can:permission=>hasPermission(actor,permission),
       findOrder:id=>findOrderItem(ctx.store,id),
-      listOrders:()=>ctx.store.listAdmin({limit:5000})})) return;
+      listOrders:()=>ctx.store.listAdmin({limit:5000}),
+      /*
+       * EL MISMO PROVEEDOR DE IA DEL CORRECTOR, SIN UNA SEGUNDA VÍA DE GASTO.
+       *
+       * `plan` devuelve JSON (lo usa la conversación del Agente de Seguimiento,
+       * que necesita propuestas validadas) y `answer` devuelve texto libre (lo
+       * usa «pedirle cuentas» a cualquier agente). Las dos pasan por la clave
+       * guardada, el plazo, el tope por minuto y el límite diario del corrector.
+       */
+      llm:(args)=>ctx.proofreading?.plan?.(args) ?? null,
+      ai:(args)=>ctx.proofreading?.answer?.(args) ?? { ok:false, reason:'sin_configurar' },
+      /*
+       * `askWithTools` deja que el Agente de Seguimiento PIDA consultas de
+       * lectura (clientes, compras, pedidos, conversaciones, catálogo). Las
+       * ejecuta el servidor con los permisos de la persona; el modelo solo ve
+       * el resultado acotado y nunca recibe SQL ni credenciales.
+       */
+      aiTools:(args)=>ctx.proofreading?.askWithTools?.(args) ?? null })) return;
 
     if (route === '/api/admin/inventory' && req.method === 'GET') {
       const snapshot = await ctx.inventory.catalog();
@@ -6694,6 +6845,81 @@ async function handle(req, res, ctx) {
         limit: url.searchParams.get('offline')==='1'?5000:500,
       });
       json(res, 200, { ok: true, report });
+      return;
+    }
+
+    /*
+     * LA FUENTE DEL HISTORIAL DE CIERRES.
+     *
+     * El panel calculaba el historial con lo que tenía cargado, y `/api/admin/data`
+     * entrega como mucho los 500 registros MÁS NUEVOS de todos los tipos. Con más
+     * volumen de conversaciones y pedidos, los días de cierre antiguos DESAPARECÍAN
+     * del historial y los totales del intervalo salían a menos aunque la nota
+     * dijera otra cosa. Este endpoint devuelve los pedidos ENTREGADOS del tramo
+     * leídos de la base completa, con el MISMO criterio de fecha que el panel
+     * (día de negocio en RD) y el mismo alcance de permisos que el cierre:
+     *   - con `reports.profit.view`: todo el equipo;
+     *   - sin él: solo las entregas del propio usuario.
+     * No crea, modifica ni borra nada: es lectura pura.
+     */
+    if (route === '/api/admin/reports/delivered-orders' && req.method === 'GET') {
+      if (!authenticated) {
+        json(res, 401, { ok: false, error: 'unauthorized', message: 'Entra con tu clave.' });
+        return;
+      }
+      const diaValido = (value) => {
+        const texto = String(value ?? '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(texto)) return null;
+        const [year, month, date] = texto.split('-').map(Number);
+        const built = new Date(Date.UTC(year, month - 1, date));
+        return built.toISOString().slice(0, 10) === texto ? texto : null;
+      };
+      const hoy = dayIn(ctx.clock(), TIME_ZONE);
+      const pedidoDesde = diaValido(url.searchParams.get('from'));
+      const pedidoHasta = diaValido(url.searchParams.get('to'));
+      if ((url.searchParams.has('from') && !pedidoDesde) || (url.searchParams.has('to') && !pedidoHasta)) {
+        json(res, 422, { ok: false, error: 'invalid_date', message: 'Las fechas del intervalo no son válidas.' });
+        return;
+      }
+      const desde = pedidoDesde ?? hoy;
+      const hasta = pedidoHasta ?? desde;
+      const inicio = desde <= hasta ? desde : hasta;
+      const fin = desde <= hasta ? hasta : desde;
+      const dias = Math.round((Date.parse(`${fin}T00:00:00.000Z`) - Date.parse(`${inicio}T00:00:00.000Z`)) / 86400000) + 1;
+      if (dias > CLOSE_HISTORY_MAX_DAYS) {
+        json(res, 422, {
+          ok: false,
+          error: 'range_too_long',
+          message: `El intervalo no puede pasar de ${CLOSE_HISTORY_MAX_DAYS} días.`,
+        });
+        return;
+      }
+      const todoElEquipo = can('reports.profit.view');
+      const rows = await store.listAdmin({ limit: 5000 });
+      const items = [];
+      for (const row of rows) {
+        if (row.type !== 'order_intent') continue;
+        const order = orderOf(row);
+        if (!order) continue;
+        // Mismo criterio de «entregado» que el panel (no basta el estado del item).
+        if (String(order.status ?? '').trim().toLowerCase() !== 'entregado') continue;
+        if (!todoElEquipo && String(order?.delivery?.delivery_user_id ?? '') !== String(actor?.id ?? '')) continue;
+        const cuando =
+          order.delivered_at ?? order.updated_at ?? row.updated_at ?? row.received_at ?? order.created_at;
+        const dia = cuando ? dayIn(new Date(cuando), TIME_ZONE) : '';
+        if (!dia || dia < inicio || dia > fin) continue;
+        items.push(sanitizeItemForPermissions(row, actor));
+      }
+      json(res, 200, {
+        ok: true,
+        from: inicio,
+        to: fin,
+        scope: todoElEquipo ? 'all' : 'own',
+        count: items.length,
+        // 5000 es el tope de `listAdmin`: si se alcanza, se dice en vez de mentir.
+        truncated: rows.length >= 5000,
+        items,
+      });
       return;
     }
 
@@ -7013,8 +7239,10 @@ async function handle(req, res, ctx) {
       const report = await ctx.customers.customerStageDryRun({ limit: Number(url.searchParams.get('limit') || 1000) });
       json(res, 200, {
         ok: true,
-        rule: `CUSTOMER = cliente con al menos un pedido order_intent en estado ${BUSINESS_COMPLETED_PURCHASE_STATUS}; INTERESTED e INACTIVE son manuales mientras no exista compra completada.`,
-        report,
+        rule: `RECOMPRA = 2+ pedidos order_intent en estado ${BUSINESS_COMPLETED_PURCHASE_STATUS}; CLIENTE = 1 pedido ${BUSINESS_COMPLETED_PURCHASE_STATUS}; INTERESADO = pedido abierto o evidencia de interés en un mensaje (precio, producto, intención de compra); PROSPECTO = resto. Cliente y Recompra no se asignan a mano. Una corrección manual manda sobre la evidencia anterior a ella; un mensaje con interés NUEVO posterior vuelve a contar.`,
+        report: report.rows,
+        conflicts: report.conflicts,
+        total: report.total,
       });
       return;
     }
@@ -7207,15 +7435,17 @@ async function handle(req, res, ctx) {
           entityId: customerId,
           action: 'customer.stage_changed',
           actor: actor?.display_name ?? null,
-          summary: `Etapa: ${result.from} → ${result.to}`,
+          summary: result.duplicate ? `Etapa sin cambios: ${result.to}` : `Etapa: ${result.from} → ${result.to}`,
           data: {
             customer_id: customerId,
             from_stage: result.from,
             to_stage: result.to,
+            duplicate: result.duplicate === true,
             changed_by_user_id: actor?.id ?? null,
             changed_by_display_name: actor?.display_name ?? null,
             reason: longText(body.reason, 500),
-            timestamp: result.history.timestamp,
+            /* En un duplicado no hay fila nueva de historial que fechar. */
+            timestamp: result.history?.timestamp ?? new Date().toISOString(),
           },
         });
         json(res, 200, { ok: true, customer: result.customer, from: result.from, to: result.to, history: result.history });
@@ -8068,6 +8298,8 @@ async function handle(req, res, ctx) {
         }
         const body = await readJsonBody(req).catch(() => ({}));
         const deliveryNote = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : '';
+        /** Cobro declarado en esta misma llamada (si lo hubo). */
+        let declaredPayment = null;
         const required = action === 'complete' ? 'delivery.tracking.stop' : 'delivery.tracking.stop';
         if (!requirePermission(required)) return;
         if (action === 'complete' && session.status === 'COMPLETED') {
@@ -8092,6 +8324,73 @@ async function handle(req, res, ctx) {
               json(res, check.status ?? 409, { ok: false, error: check.error, message: check.message, available: check.available, required: check.required });
               return;
             }
+          }
+          /*
+           * COBRO DECLARADO POR EL REPARTIDOR AL CERRAR (paso 3 del flujo).
+           *
+           * El repartidor dice qué pasó con el dinero: efectivo, transferencia o
+           * nada. Se usa la MISMA puerta financiera del resto del CRM
+           * (`registerCustomerPayment`) con las mismas reglas: no se puede cobrar
+           * de más, no se cobra sobre un pedido cerrado y una clave de
+           * idempotencia estable (`delivery-complete:<sesión>:<medio>`) hace que
+           * reintentar la finalización REUTILICE el cobro en vez de duplicarlo.
+           *
+           * Un cobro en efectivo queda como dinero en poder del repartidor hasta
+           * la rendición (`/payments/handover`, que sigue siendo de administración).
+           * Una transferencia queda «reportada» y NO reduce el saldo hasta que
+           * administración la verifique contra el banco.
+           */
+          const intent = body?.payment && typeof body.payment === 'object' ? body.payment : null;
+          const outcome = String(intent?.outcome ?? '').toLowerCase();
+          if (intent && ['cash', 'transfer'].includes(outcome)) {
+            const fresh = await findOrderItem(store, session.order_id);
+            const freshOrder = orderOf(fresh);
+            const guard = await paymentAuthorization(ctx, actor, freshOrder, can);
+            if (!guard.ok) {
+              json(res, guard.status, { ok: false, error: guard.error, message: guard.message });
+              return;
+            }
+            const method = outcome === 'cash' ? 'CASH' : 'TRANSFER';
+            const registered = await registerCustomerPayment({
+              ctx,
+              orderId: session.order_id,
+              actor,
+              amount: intent.amount,
+              expectedDue: intent.expectedDue,
+              method,
+              note: longText(intent.note, 300) ?? deliveryNote ?? null,
+              evidenceUrl: intent.evidenceUrl ?? intent.evidence_url,
+              verification: method === 'TRANSFER' ? 'pending' : undefined,
+              source: 'courier',
+              idempotencyKey: `delivery-complete:${session.id}:${outcome}`,
+            });
+            if (!registered.ok) {
+              /* Sin cobro no se cierra: nada de «entregado y pagado» inventado. */
+              json(res, registered.status ?? 422, {
+                ok: false,
+                error: registered.error ?? 'payment_failed',
+                message: registered.message ?? 'No se pudo registrar el cobro.',
+                due: registered.due ?? null,
+                payment_recorded: false,
+                completed: false,
+              });
+              return;
+            }
+            declaredPayment = registered.payment ?? null;
+          } else if (intent && outcome === 'none') {
+            /*
+             * SIN PAGO: no se inventa nada y el saldo se queda. Se deja
+             * constancia para que finanzas vea el pendiente con su motivo.
+             */
+            await ctx.audit?.record({
+              entity: 'order',
+              entityId: session.order_id,
+              action: 'delivery.payment_not_received',
+              actor: actor?.display_name ?? null,
+              summary: 'El repartidor cierra la entrega sin recibir pago',
+              data: { order_id: session.order_id, note: longText(intent.note, 300) ?? deliveryNote ?? null, session_id: session.id },
+              idempotencyKey: `delivery.payment-none:${session.id}`,
+            });
           }
         }
         const status = action === 'complete' ? 'COMPLETED' : 'CANCELLED';
@@ -8141,7 +8440,12 @@ async function handle(req, res, ctx) {
           }
         }
         await emitDeliveryEvent(ctx, action === 'complete' ? 'delivery.completed' : 'delivery.tracking_stopped', ended);
-        json(res, 200, { ok: true, session: await publicSessionWithOrder(ctx, ended), order });
+        json(res, 200, {
+          ok: true,
+          session: await publicSessionWithOrder(ctx, ended),
+          order,
+          ...(declaredPayment ? { payment: declaredPayment, payment_recorded: true } : {}),
+        });
         return;
       }
     }
@@ -8479,6 +8783,217 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    /*
+     * PASO 1 DEL FLUJO — ACEPTAR LA ENTREGA.
+     *
+     * Es un HECHO OPERATIVO distinto del contacto: dice «me hago cargo de este
+     * pedido». NO envía nada al cliente (nada de WhatsApp por aceptar) y NO
+     * inicia el GPS. Idempotente: aceptar dos veces devuelve el mismo pedido.
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/accept') && req.method === 'POST') {
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/accept'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      if (!order) {
+        json(res, 422, { ok: false, error: 'invalid_order' });
+        return;
+      }
+      const manageAll = hasPermission(actor, 'delivery.tracking.manage_all');
+      const assigned = Boolean(actor?.id) && order.delivery?.delivery_user_id === actor.id;
+      if (!assigned && !manageAll) {
+        forbid();
+        return;
+      }
+      if (['entregado', 'cancelado', 'perdido'].includes(String(order.status ?? ''))) {
+        json(res, 409, { ok: false, error: 'order_closed', message: 'Este pedido ya está cerrado.' });
+        return;
+      }
+      if (String(order.delivery?.delivery_status ?? '').toUpperCase() === 'ISSUE_REPORTED') {
+        json(res, 409, { ok: false, error: 'issue_pending_admin', message: 'La incidencia está esperando decisión administrativa.' });
+        return;
+      }
+      if (order.delivery?.delivery_accepted_at) {
+        json(res, 200, { ok: true, duplicate: true, order: sanitizeOrderForPermissions(order, actor) });
+        return;
+      }
+      const at = ctx.clock().toISOString();
+      const next = {
+        ...order,
+        delivery: {
+          ...(order.delivery ?? {}),
+          delivery_accepted_at: at,
+          delivery_accepted_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
+          delivery_accepted_by_display_name_snapshot: actor?.display_name ?? null,
+        },
+        updated_at: at,
+      };
+      const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: item.id,
+        action: 'delivery.accepted',
+        actor: actor?.display_name ?? null,
+        summary: 'El repartidor aceptó la entrega',
+        data: { order_id: item.id, delivery_user_id: order.delivery?.delivery_user_id ?? null },
+        idempotencyKey: `delivery.accepted:${item.id}:${order.delivery?.delivery_assignment_version ?? 1}`,
+      });
+      json(res, 200, { ok: true, duplicate: false, order: sanitizeOrderForPermissions(orderOf(updated) ?? next, actor) });
+      return;
+    }
+
+    /*
+     * INTENTO DE CONTACTO — queda REGISTRADO aunque no haya mensaje enviado.
+     *
+     * «Llamé y no contestó» es información operativa real. El panel la usa para
+     * dejar de pedir el contacto y para que el supervisor/administración sepa qué
+     * pasó. No se envía nada al cliente desde aquí.
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/contact-attempt') && req.method === 'POST') {
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/contact-attempt'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      if (!order) {
+        json(res, 422, { ok: false, error: 'invalid_order' });
+        return;
+      }
+      const manageAll = hasPermission(actor, 'delivery.tracking.manage_all');
+      const assigned = Boolean(actor?.id) && order.delivery?.delivery_user_id === actor.id;
+      if (!assigned && !manageAll) {
+        forbid();
+        return;
+      }
+      if (['entregado', 'cancelado', 'perdido'].includes(String(order.status ?? ''))) {
+        json(res, 409, { ok: false, error: 'order_closed', message: 'Este pedido ya está cerrado.' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const channel = ['call', 'whatsapp', 'crm', 'visit', 'other'].includes(String(body.channel ?? ''))
+        ? String(body.channel)
+        : 'other';
+      const previous = Array.isArray(order.delivery?.delivery_contact_attempts) ? order.delivery.delivery_contact_attempts : [];
+      const last = previous[previous.length - 1] ?? null;
+      const at = ctx.clock().toISOString();
+      /* Dos toques seguidos del MISMO canal no son dos intentos: es el mismo. */
+      if (last && last.channel === channel && Date.parse(at) - Date.parse(last.at ?? 0) < 60_000) {
+        json(res, 200, { ok: true, duplicate: true, order: sanitizeOrderForPermissions(order, actor) });
+        return;
+      }
+      const attempt = {
+        id: newId('cat'),
+        channel,
+        at,
+        by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
+        by_display_name: actor?.display_name ?? null,
+        note: longText(body.note, 200) ?? null,
+      };
+      const next = {
+        ...order,
+        delivery: {
+          ...(order.delivery ?? {}),
+          delivery_contact_attempts: [...previous, attempt].slice(-50),
+          delivery_contact_attempted_at: at,
+          delivery_contact_last_channel: channel,
+        },
+        updated_at: at,
+      };
+      const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: item.id,
+        action: 'delivery.contact_attempt',
+        actor: actor?.display_name ?? null,
+        summary: `Intento de contacto (${channel})`,
+        data: { order_id: item.id, channel, attempt_id: attempt.id, note: attempt.note },
+        idempotencyKey: `delivery.contact-attempt:${item.id}:${channel}:${Math.floor(Date.parse(at) / 60000)}`,
+      });
+      json(res, 200, { ok: true, duplicate: false, order: sanitizeOrderForPermissions(orderOf(updated) ?? next, actor) });
+      return;
+    }
+
+    /*
+     * RESOLVER UNA INCIDENCIA — decisión administrativa, con rastro.
+     *
+     * Antes la única forma de salir de una incidencia era REINICIAR la entrega, y
+     * eso borraba el estado sin dejar quién ni por qué. Aquí se cierra con actor,
+     * motivo y hora, y el pedido queda listo para reintentar (sin arrancar nada).
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/issue/resolve') && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.manage_all', 'Solo administración resuelve incidencias.')) return;
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/issue/resolve'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const order = orderOf(item);
+      if (!order) {
+        json(res, 422, { ok: false, error: 'invalid_order' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const action = ['resume', 'cancel'].includes(String(body.action ?? '')) ? String(body.action) : 'resume';
+      const note = longText(body.note ?? body.resolutionNote, 300) ?? '';
+      if (note.trim().length < 3) {
+        json(res, 422, { ok: false, error: 'missing_note', message: 'Escribe qué se decidió (mínimo 3 caracteres).' });
+        return;
+      }
+      const issues = Array.isArray(order.delivery?.issues) ? order.delivery.issues : [];
+      const openIssues = issues.filter((issue) => !issue.resolved_at);
+      if (!openIssues.length && String(order.delivery?.delivery_status ?? '').toUpperCase() !== 'ISSUE_REPORTED') {
+        json(res, 409, { ok: false, error: 'no_open_issue', message: 'Este pedido no tiene una incidencia abierta.' });
+        return;
+      }
+      const at = ctx.clock().toISOString();
+      const audited = { actor: actor?.display_name ?? null, action, note, at };
+      const nextIssues = issues.map((issue) =>
+        issue.resolved_at ? issue : { ...issue, resolved_at: at, resolution: action, resolution_note: note, resolved_by_display_name: actor?.display_name ?? null },
+      );
+      const nextDelivery = {
+        ...(order.delivery ?? {}),
+        issues: nextIssues,
+        issue_resolved_at: at,
+        issue_resolution: action,
+        issue_resolution_note: note,
+        issue_resolved_by_display_name_snapshot: actor?.display_name ?? null,
+      };
+      const next = { ...order, delivery: nextDelivery, updated_at: at };
+      if (action === 'resume') {
+        next.delivery.delivery_status = order.delivery?.delivery_user_id
+          ? DELIVERY_OPERATIONAL_STATUSES.READY_FOR_DELIVERY
+          : DELIVERY_OPERATIONAL_STATUSES.PENDING_CONTACT;
+      }
+      const updated = await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: item.id,
+        action: 'delivery.issue_resolved',
+        actor: actor?.display_name ?? null,
+        summary: `Incidencia resuelta: ${action === 'cancel' ? 'se cancela' : 'se reanuda'} · ${note}`,
+        data: { order_id: item.id, resolution: action, note, issues: openIssues.map((issue) => issue.id ?? null), ...audited },
+        idempotencyKey: `delivery.issue-resolved:${item.id}:${at}`,
+      });
+      json(res, 200, { ok: true, order: sanitizeOrderForPermissions(orderOf(updated) ?? next, actor) });
+      return;
+    }
+
     if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/start') && req.method === 'POST') {
       const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/start'.length));
       const canStartOwn = can('delivery.tracking.start');
@@ -8493,6 +9008,8 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
+      /* Política vigente (UN documento de ajustes: el del supervisor). */
+      const requireContactBeforeStart = (await supervisorSettings(ctx).catch(() => null))?.requireContactBeforeStart === true;
       const result = await withOrderTransitionLock(orderId, async () => {
         const item = await findOrderItem(store, orderId);
         if (!item) return { status: 404, body: { ok: false, error: 'not_found' } };
@@ -8523,6 +9040,59 @@ async function handle(req, res, ctx) {
         if (!canManageAll && order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.ISSUE_REPORTED) {
           return { status: 409, body: { ok: false, error: 'issue_pending_admin', message: 'La incidencia está esperando decisión administrativa.' } };
         }
+        /*
+         * REINICIAR NO BORRA LA INCIDENCIA.
+         *
+         * Antes, cuando administración reiniciaba una entrega con incidencia, el
+         * `delivery_status` se sobrescribía a IN_TRANSIT y no quedaba ni quién ni
+         * por qué. Ahora el reinicio administrativo CIERRA la incidencia con su
+         * actor, su nota y su hora (y se audita), de modo que la decisión es
+         * visible después.
+         */
+        let workingOrder = order;
+        if (canManageAll && order.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.ISSUE_REPORTED) {
+          const resolvedAt = ctx.clock().toISOString();
+          const notaReinicio = longText(body.resolutionNote ?? body.resolution_note, 300) ?? 'Reanudada por administración';
+          const issues = Array.isArray(order.delivery?.issues) ? order.delivery.issues : [];
+          const resolvedIssues = issues.map((issue) =>
+            issue.resolved_at
+              ? issue
+              : { ...issue, resolved_at: resolvedAt, resolution: 'restarted_by_admin', resolution_note: notaReinicio, resolved_by_display_name: actor?.display_name ?? null },
+          );
+          workingOrder = {
+            ...order,
+            delivery: {
+              ...(order.delivery ?? {}),
+              issues: resolvedIssues,
+              issue_resolved_at: resolvedAt,
+              issue_resolution: 'restarted_by_admin',
+              issue_resolution_note: notaReinicio,
+              issue_resolved_by_display_name_snapshot: actor?.display_name ?? null,
+            },
+            updated_at: resolvedAt,
+          };
+          await ctx.store.update(item.id, { orderJson: JSON.stringify(workingOrder) });
+          await ctx.audit?.record({
+            entity: 'order',
+            entityId: item.id,
+            action: 'delivery.issue_resolved',
+            actor: actor?.display_name ?? null,
+            summary: `Incidencia resuelta al reiniciar la entrega · ${notaReinicio}`,
+            data: { order_id: item.id, resolution: 'restarted_by_admin', note: notaReinicio, issues: resolvedIssues.filter((issue) => !issue.resolved_at).length },
+            idempotencyKey: `delivery.issue-restarted:${item.id}:${resolvedAt}`,
+          });
+        }
+        /*
+         * POLÍTICA DE CONTACTO PREVIO (ajuste, apagado por defecto).
+         *
+         * Si el negocio la enciende, el repartidor debe haber registrado ALGÚN
+         * intento (llamada, WhatsApp o mensaje del CRM). Se acepta el teléfono
+         * como contacto válido: exigir un WhatsApp entregado bloquearía entregas
+         * legítimas. Administración no queda atrapada por este ajuste.
+         */
+        if (!canManageAll && requireContactBeforeStart && !deliveryContactedAtOf(workingOrder)) {
+          return { status: 409, body: { ok: false, error: 'contact_required', message: 'Registra primero el contacto con el cliente (llamada, WhatsApp o mensaje).' } };
+        }
         const existing = (await ctx.db.list('delivery_tracking_sessions', { limit: 1000 })).find(
           (row) => row.order_id === orderId && row.status === ACTIVE_TRACKING_STATUS,
         );
@@ -8532,9 +9102,9 @@ async function handle(req, res, ctx) {
           }
           return { status: 200, body: { ok: true, duplicate: true, session: await publicSessionWithOrder(ctx, existing) } };
         }
-        let effectiveOrder = order;
+        let effectiveOrder = workingOrder;
         if (!assignedUserId || assignedUserId !== deliveryUser.id) {
-          effectiveOrder = (await assignDeliveryToOrder(ctx, item, deliveryUser, actor))?.order ?? order;
+          effectiveOrder = (await assignDeliveryToOrder(ctx, item, deliveryUser, actor))?.order ?? workingOrder;
         }
         if (effectiveOrder.delivery?.delivery_status !== DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT) {
           effectiveOrder = {
@@ -8923,6 +9493,66 @@ async function handle(req, res, ctx) {
       }
       const order = orderOf(item);
       const customer = item.customer_id ? await ctx.customers.get(item.customer_id) : null;
+      /*
+       * EL REPARTIDOR RECIBE LO JUSTO PARA ENTREGAR.
+       *
+       * Antes esta misma respuesta le devolvía el historial de auditoría interno,
+       * los seguimientos del cliente, los mensajes programados y el detalle de
+       * TODOS los cobros (con el nombre de quién los anotó y sus notas). Nada de
+       * eso hace falta para llevar un pedido: aquí se proyecta solo lo operativo
+       * y el resumen del saldo. El resto sigue disponible para oficina.
+       */
+      if (isDeliveryOnly(actor)) {
+        const location = order?.delivery?.location ?? null;
+        json(res, 200, {
+          ok: true,
+          delivery_view: true,
+          item: { id: item.id, order_number: order?.order_number ?? item.order_number ?? null, status: item.status ?? null },
+          order: {
+            id: item.id,
+            order_number: order?.order_number ?? item.order_number ?? null,
+            status: order?.status ?? item.status ?? null,
+            currency: order?.currency ?? item.currency ?? 'DOP',
+            items: order?.items ?? [],
+            notes: order?.notes ?? null,
+            customer_id: order?.customer_id ?? item.customer_id ?? null,
+            conversation_id: order?.conversation_id ?? item.conversation_id ?? null,
+            payment_method: order?.payment_method ?? null,
+            payment_status: order?.payment_status ?? null,
+            total: Number(order?.total ?? 0) || 0,
+            delivery_fee: Number(order?.delivery_fee ?? order?.delivery?.fee ?? 0) || 0,
+            created_at: order?.created_at ?? item.received_at ?? null,
+            delivery: {
+              location,
+              delivery_status: deliveryStatusOf(order),
+              delivery_assigned_at: order?.delivery?.delivery_assigned_at ?? null,
+              delivery_accepted_at: order?.delivery?.delivery_accepted_at ?? null,
+              delivery_contacted_at: deliveryContactedAtOf(order),
+              delivery_assignment_note: order?.delivery?.delivery_assignment_note ?? null,
+              delivery_assignment_note_by_display_name_snapshot:
+                order?.delivery?.delivery_assignment_note_by_display_name_snapshot ?? null,
+              issue_id: order?.delivery?.issue_id ?? null,
+              issue_reason_label: order?.delivery?.issue_reason_label ?? null,
+              issue_note: order?.delivery?.issue_note ?? null,
+            },
+          },
+          customer: customer ? { id: customer.id, name: customer.name, phone_e164: customer.phone_e164 } : null,
+          receipt: {
+            order_number: order?.order_number ?? item.order_number ?? null,
+            items: order?.items ?? [],
+            subtotal: order?.subtotal ?? null,
+            discount: order?.discount ?? null,
+            delivery_fee: Number(order?.delivery_fee ?? 0) || 0,
+            total: Number(order?.total ?? 0) || 0,
+            currency: order?.currency ?? 'DOP',
+            date: order?.created_at ?? null,
+            location_label: location?.name ?? location?.address ?? null,
+          },
+          /* Solo saldo y medio: sin autores, notas ni rendiciones. */
+          payment: paymentSummaryForDelivery(order),
+        });
+        return;
+      }
       const receipt = buildReceipt({ order, customer, businessName: 'FullTECH' });
       /*
        * VISTA PREVIA del envío de la factura: EXACTAMENTE lo que va a salir, sin
@@ -9352,9 +9982,53 @@ async function handle(req, res, ctx) {
       }
 
       /*
+       * VERIFICAR (O RECHAZAR) UN COBRO DECLARADO.
+       *
+       * Una transferencia que el repartidor da por hecha NO es dinero cobrado: hay
+       * que comprobarla. Solo administración firma esa verificación; hasta
+       * entonces el saldo sigue abierto y el cobro aparece como «por verificar».
+       * Rechazar no borra el registro: lo marca, para no perder la trazabilidad.
+       */
+      if (
+        paymentOrderId &&
+        paymentAction === 'payments' &&
+        paymentSub &&
+        rest.split('/')[3] === 'verify' &&
+        req.method === 'POST'
+      ) {
+        if (!requireAdmin()) return;
+        let body = {};
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          body = {};
+        }
+        const result = await setPaymentVerification({
+          ctx,
+          orderId: paymentOrderId,
+          paymentId: paymentSub,
+          actor,
+          decision: body.decision,
+          note: body.note,
+        });
+        if (!result.ok) {
+          json(res, result.status ?? 422, { ok: false, error: result.error, message: result.message });
+          return;
+        }
+        json(res, 200, {
+          ok: true,
+          duplicate: result.duplicate === true,
+          payment: result.payment,
+          order: sanitizeOrderForPermissions(result.order, actor),
+        });
+        return;
+      }
+
+      /*
        * RENDICIÓN: el efectivo que el repartidor le entrega a la empresa. No es
        * un cobro (el cliente ya pagó) ni un movimiento de caja: es la trazabilidad
-       * de dónde está el dinero que lleva el repartidor. Solo administración.
+       * de dónde está el dinero que lleva el repartidor. Solo administración, y
+       * nunca se suma al cobro: son dos hechos distintos.
        */
       if (paymentOrderId && paymentAction === 'payments' && paymentSub === 'handover' && req.method === 'POST') {
         if (!requireAdmin()) return;
@@ -9940,6 +10614,8 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/conversations' && req.method === 'GET') {
       const filter = text(url.searchParams.get('filter'), 30) ?? 'todos';
       const order = text(url.searchParams.get('order'), 30) ?? null;
+      const stage = text(url.searchParams.get('stage'), 20) ?? null;
+      const sort = text(url.searchParams.get('sort'), 20) === 'priority' ? 'priority' : 'recent';
       const q = text(url.searchParams.get('q'), 120) ?? '';
       const dateRange = conversationDateRange(url.searchParams, ctx.clock ?? (() => new Date()));
       if (!dateRange.ok) {
@@ -9949,6 +10625,8 @@ async function handle(req, res, ctx) {
       const page = await ctx.customers.conversationPage({
         filter,
         order,
+        stage,
+        sort,
         q,
         from: dateRange.from,
         to: dateRange.to,
@@ -10393,13 +11071,20 @@ async function handle(req, res, ctx) {
           denyConversation(res, json, conversation);
           return;
         }
-        const updated = await ctx.customers.archiveConversation(conversation.id, action === 'archive');
+        const updated = await ctx.customers.archiveConversation(conversation.id, action === 'archive', {
+          byUserId: actor?.id ?? null,
+          byDisplayName: actor?.display_name ?? null,
+        });
         await ctx.audit?.record({
           entity: 'conversation',
           entityId: conversation.id,
           action: action === 'archive' ? 'conversation.archived' : 'conversation.unarchived',
           summary: action === 'archive' ? 'Conversación archivada' : 'Conversación desarchivada',
-          data: { customer_id: conversation.customer_id },
+          data: {
+            customer_id: conversation.customer_id,
+            by_user_id: actor?.id ?? null,
+            reason: action === 'archive' ? 'manual' : null,
+          },
         });
         json(res, 200, { ok: true, conversation: updated });
         return;
@@ -12091,8 +12776,30 @@ export async function startCrmServer(config = {}) {
     audit,
     // La plantilla se resuelve contra el mismo criterio que el envío manual.
     resolveTemplate: (name) => approvedTemplate(ctxRef.current, name),
-    deliveryControlTick: () => deliveryControlTick(ctxRef.current),
+    /*
+     * UN SOLO SUPERVISOR.
+     *
+     * Aquí estaba conectado el motor HEREDADO, que escribía al mismo repartidor
+     * (recordatorio a los 5 min) y a los mismos administradores (escalado a los
+     * 30 min, con una lista de teléfonos fija en el código). Su política se
+     * importa UNA vez a los ajustes del supervisor
+     * (`importLegacyControlPolicy`) y su documento `delivery_control` se conserva
+     * como historia, pero YA NO SE EJECUTA: dos calendarios sobre el mismo pedido
+     * producían avisos duplicados.
+     */
     deliverySupervisorTick: () => supervisorTick(ctxRef.current, supervisorBridge(ctxRef.current)),
+    /*
+     * LOS TRES TICKS DEL CENTRO IA, POR FIN CONECTADOS.
+     *
+     * Orden: primero los plazos de los tickets (avisan de lo que vence), luego
+     * el puente que abre el ticket de un reparto en riesgo y, al final, el motor
+     * de agentes, para que el ticket recién abierto pueda trabajarse en la misma
+     * vuelta. Cada uno tiene su propio `try/catch` dentro del scheduler: si uno
+     * falla, los otros dos siguen.
+     */
+    opsDeadlineTick: () => opsDeadlineTick({ ctx: ctxRef.current, deps: opsBridge(ctxRef.current) }),
+    opsDeliveryTicketTick: () => opsDeliveryTicketTick({ ctx: ctxRef.current, deps: opsBridge(ctxRef.current) }),
+    opsAgentTick: () => opsAgentTick({ ctx: ctxRef.current, deps: opsBridge(ctxRef.current) }),
     clock: config.clock,
     intervalMs: config.schedulerIntervalMs,
     log: settings.quiet ? () => {} : (message) => console.log(message),
@@ -12141,6 +12848,7 @@ export async function startCrmServer(config = {}) {
   });
 
   const ctx = {
+    uatMode: config.uatMode === true && store.kind === 'sqlite' && path.resolve(store.file) === path.resolve('data/uat/phyto-uat.sqlite'),
     store,
     db,
     token: settings.token,

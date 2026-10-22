@@ -1,0 +1,426 @@
+/* ============================================================================
+   FULLTECH STORE — PORTADA COMERCIAL (Fase 2)
+   Carrusel de categorías con imagen, ofertas verificadas, barra de filtros y
+   página «Nosotros». Se carga DESPUÉS de design-system.css: solo añade clases
+   nuevas (`ft-cattile`, `ft-badge`, `ft-toolbar`, `about-*`), sin reescribir la
+   identidad visual existente.
+   ========================================================================== */
+
+/* El encabezado usa la IMAGEN aprobada del logo. Esta regla fija su tamaño de
+   forma explícita: si el sistema de diseño se reescribe, el logo no puede
+   crecer al tamaño natural del archivo (2355 px) y romper la cabecera. */
+.ft-wordmark {
+  flex: 0 1 144px;
+  max-width: 144px;
+}
+.ft-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2355 / 528;
+}
+.ft-drawer-logo { display: block; width: 240px; max-width: calc(100% - 46px); }
+
+/* ------------------------------------------------- carrusel de categorías */
+.ft-cats {
+  margin: 12px 0 0;
+}
+.ft-catstrip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 128px;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px var(--ft-pad) 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.ft-catstrip::-webkit-scrollbar { display: none; }
+.ft-cattile {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(150deg, #12346c, #165dff);
+  box-shadow: var(--ft-shadow-sm);
+  text-decoration: none;
+  scroll-snap-align: start;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.ft-cattile:active { transform: scale(0.985); }
+.ft-cattile:hover { box-shadow: var(--ft-shadow-md); }
+.ft-cattile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.95;
+}
+.ft-cattile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #0b122000 38%, #0b1220d9 100%);
+}
+.ft-cattile__body {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 1;
+  padding: 8px 9px 9px;
+  color: #fff;
+}
+.ft-cattile__name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.1px;
+}
+.ft-cattile__count {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  color: #cfdcf5;
+}
+.ft-cattile__fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #ffffffb3;
+}
+/* Todas las categorías: ficha neutra al final del carrusel. */
+.ft-cattile--all {
+  background: linear-gradient(140deg, #e8f0ff, #f7f9ff);
+  color: var(--ft-primary);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 8px;
+}
+.ft-cattile--all::after { display: none; }
+.ft-cattile--all .ft-cattile__name { color: var(--ft-navy); }
+.ft-cattile--all .ft-cattile__count { color: var(--ft-muted); }
+
+/* ------------------------------------------------------- ofertas y precios */
+/* La tarjeta del catálogo usa la clase heredada `.product-card`: se ancla para
+   que el distintivo de oferta no se coloque contra la página. */
+.product-card { position: relative; }
+.ft-card { position: relative; }
+.ft-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  line-height: 1.5;
+  box-shadow: 0 2px 6px #e11d4833;
+}
+.ft-badge--soft {
+  background: var(--ft-ok-soft);
+  color: #0f7a3d;
+  box-shadow: none;
+}
+.ft-card__price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 1px;
+}
+.ft-card__price-row .ft-card__price { margin-top: 0; }
+.ft-card__price--old {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ft-muted);
+  text-decoration: line-through;
+  font-variant-numeric: tabular-nums;
+}
+/* Sección de ofertas: mismo grid, con una franja de color muy discreta. */
+.ft-section--offers .ft-section__head h2 { color: #b91c1c; }
+.ft-section--offers .ft-section__head a { color: #b91c1c; }
+
+/* ------------------------------------------------ barra de filtros y orden */
+.ft-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px var(--ft-pad) 0;
+}
+.ft-toolbar__select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--ft-line);
+  border-radius: 10px;
+  background: var(--ft-surface);
+  color: var(--ft-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ft-toolbar__select:focus-visible { outline: 2px solid var(--ft-primary); outline-offset: 1px; }
+.ft-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px var(--ft-pad) 0;
+  scrollbar-width: none;
+}
+.ft-chips::-webkit-scrollbar { display: none; }
+.ft-chip {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--ft-line);
+  background: var(--ft-surface);
+  color: var(--ft-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.ft-chip[aria-current="true"] {
+  background: var(--ft-primary);
+  border-color: var(--ft-primary);
+  color: #fff;
+}
+.ft-applied {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px var(--ft-pad) 0;
+  font-size: 11.5px;
+  color: var(--ft-muted);
+}
+.ft-applied__clear {
+  border: 1px solid var(--ft-line);
+  background: var(--ft-surface);
+  color: var(--ft-primary);
+  border-radius: 999px;
+  height: 26px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ft-results-note {
+  margin: 8px var(--ft-pad) 0;
+  font-size: 11.5px;
+  color: var(--ft-muted);
+}
+
+/* --------------------------------------------------------------- nosotros */
+.about-hero {
+  margin: 10px var(--ft-pad) 0;
+  padding: 20px 18px;
+  border-radius: var(--ft-r-lg);
+  color: #fff;
+  background:
+    radial-gradient(120% 130% at 92% 0%, #2f7bff66, transparent 62%),
+    linear-gradient(120deg, #0b1220, #165dff);
+  box-shadow: var(--ft-shadow-md);
+}
+.about-hero__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #cfdcf5;
+}
+.about-hero h1 {
+  margin: 8px 0 6px;
+  font-size: 24px;
+  line-height: 1.15;
+  letter-spacing: -0.6px;
+}
+.about-hero p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #dde8ff;
+  max-width: 46ch;
+}
+.about-section { margin: 16px var(--ft-pad) 0; }
+.about-section h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  letter-spacing: -0.3px;
+  color: var(--ft-ink);
+}
+.about-section p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #3f4d63;
+}
+.about-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.about-value {
+  padding: 11px 12px;
+  border: 1px solid var(--ft-line);
+  border-radius: 13px;
+  background: var(--ft-surface);
+  box-shadow: var(--ft-shadow-sm);
+}
+.about-value strong {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ft-ink);
+}
+.about-value small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ft-muted);
+}
+.about-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #3f4d63;
+}
+.about-list li { margin-bottom: 3px; }
+.about-actions {
+  display: grid;
+  gap: 8px;
+  margin: 16px var(--ft-pad) 0;
+}
+.about-actions .button { text-align: center; }
+.about-note {
+  margin: 12px var(--ft-pad) 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ft-muted);
+}
+/* Entrada «Nosotros» en la portada: tarjeta sobria, sin competir con ofertas. */
+.ft-about-entry {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 16px var(--ft-pad) 0;
+  padding: 13px 14px;
+  border-radius: 15px;
+  border: 1px solid var(--ft-line);
+  background: linear-gradient(120deg, #ffffff, #f3f7ff);
+  box-shadow: var(--ft-shadow-sm);
+  text-decoration: none;
+  color: inherit;
+}
+.ft-about-entry__icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--ft-primary-soft);
+  color: var(--ft-primary);
+}
+.ft-about-entry__copy { flex: 1; min-width: 0; }
+.ft-about-entry strong { display: block; font-size: 13px; letter-spacing: -0.2px; }
+.ft-about-entry small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--ft-muted); }
+.ft-about-entry__arrow { color: var(--ft-primary); flex: 0 0 auto; }
+
+/* Enlace «Nosotros» de la cabecera: solo donde sobra espacio (tablet/escritorio). */
+.ft-header__nav { display: none; }
+@media (min-width: 760px) {
+  .ft-header__nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    margin-left: auto;
+    margin-right: 10px;
+  }
+  .ft-header__nav a {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ft-muted);
+    text-decoration: none;
+  }
+  .ft-header__nav a[aria-current="page"],
+  .ft-header__nav a:hover { color: var(--ft-primary); }
+}
+
+/* ------------------------------------------------------------ responsive */
+@media (min-width: 560px) {
+  .ft-catstrip { grid-auto-columns: 156px; }
+  .ft-cattile__name { font-size: 12.5px; }
+  .about-values { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .about-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 520px; }
+}
+@media (min-width: 760px) {
+  .ft-catstrip { grid-auto-columns: 176px; gap: 10px; }
+  .ft-cats { margin-inline: 0; }
+  .about-hero { margin-inline: 0; padding: 32px 30px; }
+  .about-hero h1 { font-size: 32px; }
+  .about-section, .about-note, .about-actions, .ft-about-entry { margin-inline: 0; }
+  .ft-results-note, .ft-applied, .ft-toolbar { margin-inline: 0; }
+  .ft-chips { margin-inline: 0; }
+}
+@media (min-width: 1280px) {
+  .ft-cats, .about-hero, .about-section, .about-note, .about-actions, .ft-about-entry {
+    max-width: 1180px;
+    margin-inline: auto;
+  }
+  .ft-catstrip { padding-inline: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ft-cattile, .ft-cattile:hover { transition: none; transform: none; }
+}
+
+/* Existing approved catalog photography; stable dimensions, no external media. */
+.about-photo { margin: 16px var(--ft-pad); max-width: 560px; }
+.about-photo img { display: block; width: 100%; height: auto; aspect-ratio: 12 / 7; object-fit: contain; border-radius: 16px; }
+.about-photo figcaption { color: var(--ft-muted); font-size: 12px; margin-top: 6px; }
+/* Keep the approved logo centered even with the desktop information link. */
+@media (min-width: 760px) {
+  .ft-header__row { position: relative; }
+  .ft-header__row .ft-wordmark { position: absolute; left: 50%; transform: translateX(-50%); width: 144px; }
+}
+/* Constrain intrinsic portrait/landscape sizes to the existing square card slot. */
+.ft-card__media { position: relative; flex-shrink: 0; overflow: hidden; }
+.ft-card__media img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.ft-card__media .image-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; font-size: 12px; }
+.ft-card__body .ft-card__cta { margin-top: auto; }
+/* Preserve the existing mixed theme while keeping discovery text legible. */
+@media (prefers-color-scheme: dark) {
+  .ft-section__head h2, .about-section h2 { color: #edf3fb; }
+  .ft-section__note, .ft-results-note, .about-section p, .about-list,
+  .about-note, .about-photo figcaption { color: #b3c0d2; }
+  .about-value { background: #111b2a; border-color: #28364a; }
+  .about-value strong { color: #edf3fb; }
+  .about-value small { color: #b3c0d2; }
+  .ft-about-entry { background: #111b2a; border-color: #28364a; color: #edf3fb; }
+  .ft-about-entry small { color: #b3c0d2; }
+}

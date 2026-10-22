@@ -1,0 +1,88 @@
+{
+  "source": "assets/branding/fulltech-store-approved-original.png",
+  "sha256": "7a03445532e0660cba37b5b088ac52143e5f2b79da023e177fd63ba691240fd2",
+  "fullCrop": {
+    "left": 28,
+    "top": 232,
+    "width": 1604,
+    "height": 562
+  },
+  "compact": {
+    "width": 2394,
+    "height": 562
+  },
+  "assets": [
+    {
+      "file": "public/store/assets/branding/fulltech-store-horizontal-240.png",
+      "bytes": 30657,
+      "width": 240,
+      "height": 84
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-horizontal-240.webp",
+      "bytes": 19786,
+      "width": 240,
+      "height": 84
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-horizontal-480.png",
+      "bytes": 106950,
+      "width": 480,
+      "height": 168
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-horizontal-480.webp",
+      "bytes": 63880,
+      "width": 480,
+      "height": 168
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-horizontal-720.png",
+      "bytes": 228190,
+      "width": 720,
+      "height": 252
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-horizontal-720.webp",
+      "bytes": 130480,
+      "width": 720,
+      "height": 252
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-compact-192.png",
+      "bytes": 19092,
+      "width": 192,
+      "height": 45
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-compact-192.webp",
+      "bytes": 11402,
+      "width": 192,
+      "height": 45
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-compact-384.png",
+      "bytes": 64811,
+      "width": 384,
+      "height": 90
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-compact-384.webp",
+      "bytes": 34966,
+      "width": 384,
+      "height": 90
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-compact-576.png",
+      "bytes": 137306,
+      "width": 576,
+      "height": 135
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-compact-576.webp",
+      "bytes": 69994,
+      "width": 576,
+      "height": 135
+    }
+  ]
+}

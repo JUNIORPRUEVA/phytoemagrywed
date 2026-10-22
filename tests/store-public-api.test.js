@@ -70,9 +70,40 @@ describe('FULLTECH Store public catalog API', () => {
     expect((await publish(p.id, { featured: true })).status).toBe(200);
     const result = await request('/api/store/products/' + p.id, { auth: false });
     expect(result.status).toBe(200);
-    expect(result.data.product).toMatchObject({ id: p.id, name: 'Cámara Fulltech', kind: 'product', price: 1250.5, currency: 'DOP', availability: 'available', featured: true });
-    expect(Object.keys(result.data.product).sort()).toEqual(['availability', 'availabilityState', 'brand', 'category', 'currency', 'description', 'featured', 'id', 'imageUrl', 'images', 'kind', 'name', 'price', 'purchaseable', 'shortDescription', 'warranty'].sort());
+    expect(result.data.product).toMatchObject({ id: p.id, name: 'Cámara Fulltech', kind: 'product', price: 1250.5, currency: 'DOP', availability: 'available', featured: true, compareAtPrice: null, discountPercent: null });
+    expect(Object.keys(result.data.product).sort()).toEqual(['availability', 'availabilityState', 'brand', 'category', 'compareAtPrice', 'createdAt', 'publishedAt', 'currency', 'description', 'discountPercent', 'featured', 'id', 'imageUrl', 'images', 'kind', 'name', 'price', 'purchaseable', 'shortDescription', 'warranty'].sort());
     expect(JSON.stringify(result.data)).not.toMatch(/cost|supplier|margin|updated_by|stock_movements/i);
+  });
+
+  it('publishes only genuine configured offers and rejects an invalid previous price', async () => {
+    const onSale = await product('Router oferta', `OFR-${randomUUID().slice(0, 8)}`, { category: 'Redes', price: '800.00', compare_at_price: '1000.00' });
+    const regular = await product('Router normal', `RTR-${randomUUID().slice(0, 8)}`, { category: 'Redes', price: '900.00' });
+    await publish(onSale.id);
+    await publish(regular.id);
+    const detail = await request('/api/store/products/' + onSale.id, { auth: false });
+    expect(detail.data.product).toMatchObject({ price: 800, compareAtPrice: 1000, discountPercent: 20 });
+    const regularDetail = await request('/api/store/products/' + regular.id, { auth: false });
+    expect(regularDetail.data.product).toMatchObject({ compareAtPrice: null, discountPercent: null });
+    const offers = await request('/api/store/catalog?offers=true', { auth: false });
+    expect(offers.data.products.map(row => row.id)).toEqual([onSale.id]);
+    const home = await request('/api/store/home', { auth: false });
+    expect(home.data.sections.offers.map(row => row.id)).toContain(onSale.id);
+    expect(home.data.categoryCards.find(tile => tile.name === 'Redes')).toMatchObject({ count: 2 });
+    const invalid = await request('/api/admin/store/products', { method: 'POST', body: {
+      kind: 'product', name: 'Oferta falsa', sku: `BAD-${randomUUID().slice(0, 8)}`, price: '900.00', cost: '100.00', quantity: 1, image: IMAGE, compare_at_price: '800.00',
+    } });
+    expect(invalid.status).toBe(422);
+    expect(invalid.data.error).toBe('invalid_compare_at');
+  });
+
+  it('sorts the catalog by price and publication date', async () => {
+    const cheap = await product('Artículo barato', `SOR-${randomUUID().slice(0, 8)}`, { price: '100.00', cost: '40.00' });
+    const pricey = await product('Artículo caro', `SOR-${randomUUID().slice(0, 8)}`, { price: '900.00', cost: '400.00' });
+    await publish(cheap.id);
+    await publish(pricey.id);
+    expect((await request('/api/store/catalog?sort=price-asc', { auth: false })).data.products.map(row => row.id)).toEqual([cheap.id, pricey.id]);
+    expect((await request('/api/store/catalog?sort=price-desc', { auth: false })).data.products.map(row => row.id)).toEqual([pricey.id, cheap.id]);
+    expect((await request('/api/store/catalog?sort=inventado', { auth: false })).data.sort).toBe('relevance');
   });
 
   it('serves images only for active and published products', async () => {
@@ -190,5 +221,25 @@ describe('FULLTECH Store public catalog API', () => {
     expect(nonAdmin.status).toBe(401);
     expect((await request('/api/store/catalog?kind=internal', { auth: false })).status).toBe(400);
     expect((await request('/api/store/catalog?limit=0', { auth: false })).data.pagination.limit).toBe(24);
+  });
+});
+
+
+describe('discovery integrity', () => {
+  it('records first publication once, excludes private keywords, and keeps homepage sections distinct', async () => {
+    const p = await product('Adaptador público', 'DISCOVERY-SKU-991', { category: 'Conectividad', description: 'confidentialmarginword', store_short_description: 'USB Ethernet', compare_at_price: '1500.00' });
+    await publish(p.id);
+    const first = (await request(`/api/store/products/${p.id}`, {auth:false})).data.product;
+    expect(Number.isFinite(Date.parse(first.publishedAt))).toBe(true);
+    await publish(p.id, { featured: true, sort_order: 2 });
+    const next = (await request(`/api/store/products/${p.id}`, {auth:false})).data.product;
+    expect(next.publishedAt).toBe(first.publishedAt);
+    for (const q of ['DISCOVERY-SKU-991', 'USB', 'Conectividad']) expect((await request('/api/store/catalog?q='+encodeURIComponent(q), {auth:false})).data.products.map(p=>p.id)).toContain(p.id);
+    expect((await request('/api/store/catalog?q=confidentialmarginword', {auth:false})).data.products).toEqual([]);
+    const home=(await request('/api/store/home', {auth:false})).data;
+    const ids=Object.values(home.sections).flat().map(p=>p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(home.categoryCards.find(c=>c.name==='Conectividad').count).toBe(1);
+    expect((await request('/api/store/catalog?offers=1', {auth:false})).data.products.map(p=>p.id)).toContain(p.id);
   });
 });

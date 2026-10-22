@@ -1,0 +1,157 @@
+/* Appbar móvil de la conversación. La safe area se suma fuera de los 44 px. */
+@media (max-width: 979px) {
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head {
+    box-sizing: border-box;
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
+    height: calc(44px + env(safe-area-inset-top, 0px));
+    min-height: calc(44px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) calc(6px + env(safe-area-inset-right, 0px)) 0 calc(6px + env(safe-area-inset-left, 0px));
+    background: var(--pe-appbar-bg);
+    border-bottom: 1px solid var(--pe-line);
+    box-shadow: none;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head > :is(.wa__back, .wa__head-icon) {
+    display: grid;
+    flex: 0 0 40px;
+    place-items: center;
+    box-sizing: border-box;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-primary);
+    box-shadow: none;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head > :is(#wa-back, #wa-chat-orders, #wa-thread-search-open, #wa-calling-button) {
+    flex-basis: 44px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head > :is(.wa__back, .wa__head-icon):hover {
+    background: var(--pe-hover, rgb(127 127 127 / 9%));
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head > :is(.wa__back, .wa__head-icon):focus-visible {
+    outline: 2px solid var(--pe-brand-text);
+    outline-offset: -2px;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__head-orders[hidden] {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head > .wa__chat-avatar {
+    display: none !important;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-who {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+    max-width: none;
+    margin: 0;
+    padding: 0 3px;
+    line-height: 1.15;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-identity {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] :is(.wa__chat-phone, .wa__chat-name, .wa__chat-meta) {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-phone[hidden] {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-name {
+    flex: 1 1 auto;
+    order: 1;
+    color: var(--text-primary);
+    font-size: .86rem;
+    font-weight: 650;
+    line-height: 1.2;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-phone {
+    flex: 0 1 auto;
+    order: 2;
+    color: var(--text-secondary);
+    font-size: .68rem;
+    font-weight: 500;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-meta {
+    width: 100%;
+    color: var(--text-secondary);
+    font-size: .67rem;
+    font-weight: 450;
+    line-height: 1.15;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa-header-image {
+    display: block;
+    flex: none;
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    pointer-events: none;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__head-orders-badge {
+    top: 0;
+    right: 0;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    font-size: .58rem;
+    line-height: 15px;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head:has(.wa__thread-search:not([hidden])) .wa__chat-who,
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head:has(.wa__thread-search:not([hidden])) > :is(#wa-back, #wa-chat-orders, #wa-thread-search-open, #wa-calling-button) {
+    display: none;
+  }
+
+  body[data-tab='whatsapp'][data-wa-view='chat'] .wa__chat-head:has(.wa__thread-search:not([hidden])) .wa__thread-search {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+    height: 40px;
+  }
+}

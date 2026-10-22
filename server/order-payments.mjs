@@ -55,23 +55,42 @@ export function normalizePaymentMethod(value) {
   return PAYMENT_METHODS.includes(raw) ? raw : null;
 }
 
+/**
+ * ¿CUENTA ESTE COBRO COMO DINERO RECIBIDO?
+ *
+ * Una TRANSFERENCIA declarada por el repartidor queda «reportada» hasta que
+ * una persona autorizada la verifica contra el banco. Hasta entonces NO reduce
+ * el saldo: decir lo contrario sería dar por cobrado un dinero que nadie ha
+ * comprobado. Los cobros históricos (sin campo `verification`) cuentan como
+ * verificados, así que nada antiguo cambia de valor.
+ */
+export function isVerifiedPayment(entry) {
+  return String(entry?.verification ?? 'verified').toLowerCase() !== 'pending';
+}
+
 /** Bloque de pago normalizado (nunca muta el pedido). */
 export function paymentBlockOf(order) {
   const source = order?.payment ?? {};
   const entries = Array.isArray(source.entries) ? source.entries.filter(Boolean) : [];
   const total = money2(order?.total ?? 0);
-  const received = money2(entries.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0));
+  const verified = entries.filter(isVerifiedPayment);
+  const received = money2(verified.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0));
+  /* Dinero declarado que todavía NO se puede dar por cobrado. */
+  const pendingVerification = money2(
+    entries.filter((entry) => !isVerifiedPayment(entry)).reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0),
+  );
   const legacyPaid = String(order?.payment_status ?? '').toLowerCase() === 'paid' && !entries.length;
   const voided = String(order?.payment_status ?? '').toLowerCase() === 'void';
   const due = voided || legacyPaid ? 0 : money2(Math.max(0, total - received));
   const status = voided ? 'void' : legacyPaid || (total > 0 && due <= 0) ? 'paid' : received > 0 ? 'partial' : 'pending';
-  const cashReceived = money2(entries.filter((entry) => normalizePaymentMethod(entry.method) === 'CASH').reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0));
+  const cashReceived = money2(verified.filter((entry) => normalizePaymentMethod(entry.method) === 'CASH').reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0));
   const handovers = Array.isArray(source.courier?.handovers) ? source.courier.handovers.filter(Boolean) : [];
   const handedOver = money2(handovers.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0));
   return {
     version: 1,
     total,
     received,
+    pendingVerification,
     due,
     status,
     legacy: legacyPaid,
@@ -96,6 +115,7 @@ export function paymentSummaryForDelivery(order) {
     status: block.status,
     due: block.due,
     received: block.received,
+    pendingVerification: block.pendingVerification,
     total: block.total,
     method: block.method,
   };
@@ -186,8 +206,15 @@ async function registerCustomerPaymentOnce(input) {
   if (!Number.isFinite(amount) || amount <= 0) return fail(422, 'invalid_amount', 'Escribe un importe mayor que cero.');
   const method = normalizePaymentMethod(input.method) ?? normalizePaymentMethod(order.payment_method);
   if (!method) return fail(422, 'invalid_method', 'Elige el medio de pago (efectivo o transferencia).');
-  if (amount > block.due + 0.005) {
-    return fail(422, 'amount_exceeds_due', `El importe supera lo que falta por cobrar (${block.due.toFixed(2)}).`, { due: block.due });
+  /*
+   * El tope se mide contra lo que FALTA DE VERDAD: un cobro ya declarado (aunque
+   * esté pendiente de verificar) ocupa su parte del saldo. Sin esto, una misma
+   * transferencia declarada dos veces pasaría el control porque el saldo aún no
+   * se había movido.
+   */
+  const disponible = money2(Math.max(0, block.due - (block.pendingVerification ?? 0)));
+  if (amount > disponible + 0.005) {
+    return fail(422, 'amount_exceeds_due', `El importe supera lo que falta por cobrar (${disponible.toFixed(2)}).`, { due: disponible });
   }
 
   const at = ctx.clock().toISOString();
@@ -201,16 +228,34 @@ async function registerCustomerPaymentOnce(input) {
     note: clean(input.note, MAX_NOTE),
     evidence_url: clean(input.evidenceUrl ?? input.evidence_url, MAX_EVIDENCE),
     idempotency_key: idempotencyKey,
+    /*
+     * QUIÉN LO DECLARA Y SI ESTÁ COMPROBADO.
+     *
+     * `source: 'courier'` deja escrito que el dato viene del repartidor en la
+     * puerta (no de caja). Una transferencia nace `verification: 'pending'`:
+     * suma al saldo declarado, pero NO al cobrado hasta que administración la
+     * verifique. El efectivo se verifica al contarlo en la rendición.
+     */
+    source: clean(input.source, 20),
+    ...(method === 'TRANSFER' && String(input.verification ?? '').toLowerCase() === 'pending'
+      ? { verification: 'pending' }
+      : {}),
   };
   const payment = {
     ...(order.payment ?? {}),
     entries: [...block.entries, entry],
     last_payment_at: at,
   };
+  /*
+   * UN SOLO COBRO PUEDE EMPUJAR `payment_status` A «paid», y solo si con ESTE
+   * cobro (verificado) se cubre el total. Un ingreso pendiente de verificación
+   * nunca marca el pedido como pagado.
+   */
+  const willBePaid = entry.verification === 'pending' ? false : money2(block.received + amount) >= block.total;
   const saved = await persist(ctx, row, order, payment, {
     payment_method: order.payment_method ?? method,
-    payment_status: money2(block.received + amount) >= block.total ? 'paid' : 'pending',
-    ...(money2(block.received + amount) >= block.total ? { paid_at: order.paid_at ?? at } : {}),
+    payment_status: willBePaid ? 'paid' : order.payment_status === 'void' ? 'void' : 'pending',
+    ...(willBePaid ? { paid_at: order.paid_at ?? at } : {}),
   });
   const after = paymentBlockOf(saved);
 
@@ -303,6 +348,62 @@ async function registerCourierHandoverOnce(input) {
   return { ok: true, duplicate: false, order: saved, payment: after, handover };
 }
 
+/**
+ * VERIFICA (O RECHAZA) UN COBRO DECLARADO PENDIENTE.
+ *
+ * Solo administración: es la firma de que el banco o la caja confirman el
+ * dinero. Verificar recalcula el saldo y puede dejar el pedido «paid»; rechazar
+ * lo deja tal cual estaba (nunca destruye el registro: se marca).
+ */
+async function setPaymentVerificationOnce(input) {
+  const { ctx, orderId, paymentId, actor = null } = input;
+  const decision = String(input.decision ?? 'verified').toLowerCase() === 'rejected' ? 'rejected' : 'verified';
+  const fresh = await freshOrder(ctx, orderId);
+  if (!fresh) return fail(404, 'not_found', 'Ese pedido no existe.');
+  const { row, order } = fresh;
+  const block = paymentBlockOf(order);
+  const entry = block.entries.find((row) => String(row.id) === String(paymentId));
+  if (!entry) return fail(404, 'payment_not_found', 'Ese cobro no existe en el pedido.');
+  if (isVerifiedPayment(entry) && String(entry.verification ?? '') !== 'rejected') {
+    return { ok: true, duplicate: true, order, payment: block, entry };
+  }
+  const at = ctx.clock().toISOString();
+  const entries = block.entries.map((current) =>
+    String(current.id) === String(paymentId)
+      ? {
+          ...current,
+          verification: decision,
+          verified_at: at,
+          verified_by_user_id: actor?.actor_type === 'USER' ? actor.id : null,
+          verified_by_display_name: clean(actor?.display_name, 120),
+          verification_note: clean(input.note, MAX_NOTE),
+        }
+      : current,
+  );
+  const payment = { ...(order.payment ?? {}), entries };
+  /*
+   * Se decide «pagado» ANTES de escribir (una sola escritura atómica): si al
+   * verificar este cobro se cubre el total, el pedido pasa a `paid`; si no, se
+   * queda donde estaba. Rechazar nunca borra el registro, solo lo marca.
+   */
+  const projected = paymentBlockOf({ ...order, payment: { ...payment, entries } });
+  const paidNow = decision === 'verified' && projected.status === 'paid';
+  const saved = await persist(ctx, row, order, payment, {
+    ...(paidNow ? { payment_status: 'paid', paid_at: order.paid_at ?? at } : {}),
+  });
+  const after = paymentBlockOf(saved);
+  await ctx.audit?.record({
+    entity: 'order',
+    entityId: row.id,
+    action: decision === 'rejected' ? 'order.payment_verification_rejected' : 'order.payment_verified',
+    actor: actor?.display_name ?? null,
+    summary: `${decision === 'rejected' ? 'Cobro rechazado' : 'Cobro verificado'}: ${entry.amount.toFixed(2)} ${entry.method} · queda ${after.due.toFixed(2)}`,
+    data: { order_id: row.id, payment_id: entry.id, amount: entry.amount, method: entry.method, due_after: after.due },
+    idempotencyKey: `order.payment-verification:${row.id}:${entry.id}:${decision}`,
+  });
+  return { ok: true, duplicate: false, order: saved, payment: after, entry };
+}
+
 // Reintentar una comparación fallida es seguro: todavía no hubo escritura.
 async function atomicPayment(input,operation){
   for(let attempt=0;attempt<3;attempt++){
@@ -314,3 +415,4 @@ async function atomicPayment(input,operation){
 }
 export const registerCustomerPayment=input=>atomicPayment(input,registerCustomerPaymentOnce);
 export const registerCourierHandover=input=>atomicPayment(input,registerCourierHandoverOnce);
+export const setPaymentVerification=input=>atomicPayment(input,setPaymentVerificationOnce);

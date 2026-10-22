@@ -1,0 +1,53 @@
+{
+  "source": "assets/branding/fulltech-store-compact-master.png",
+  "crop": {
+    "left": 8,
+    "top": 9,
+    "width": 2355,
+    "height": 528
+  },
+  "assets": [
+    {
+      "file": "public/store/assets/branding/fulltech-store-header-transparent-144.png",
+      "bytes": 12389,
+      "width": 144,
+      "height": 32,
+      "hasAlpha": true
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-header-transparent-144.webp",
+      "bytes": 9836,
+      "width": 144,
+      "height": 32,
+      "hasAlpha": true
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-header-transparent-288.png",
+      "bytes": 39601,
+      "width": 288,
+      "height": 65,
+      "hasAlpha": true
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-header-transparent-288.webp",
+      "bytes": 28182,
+      "width": 288,
+      "height": 65,
+      "hasAlpha": true
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-header-transparent-432.png",
+      "bytes": 79435,
+      "width": 432,
+      "height": 97,
+      "hasAlpha": true
+    },
+    {
+      "file": "public/store/assets/branding/fulltech-store-header-transparent-432.webp",
+      "bytes": 52894,
+      "width": 432,
+      "height": 97,
+      "hasAlpha": true
+    }
+  ]
+}

@@ -214,7 +214,22 @@ export function createProofreadingService({ settings, secret, fetchImpl = fetch,
     }
     const enabled = input.enabled === true;
     if (enabled && !decrypt(credential)) throw new Error('Guarda una clave API para activar las correcciones.');
-    await settings.write(SETTING, { enabled, model: DEEPSEEK_MODEL, dailyLimit, credential });
+    /*
+     * PRESUPUESTO Y TARIFAS (opcionales).
+     * Las tarifas solo sirven para ESTIMAR el gasto en dinero: no son la factura
+     * del proveedor. Si no se configuran, se sigue usando el tope diario de
+     * llamadas de siempre (límite compartido con el Centro IA).
+     */
+    const limite = (valor, anterior, max) => {
+      if (valor === undefined) return anterior ?? null;
+      const n = Number(valor);
+      if (!Number.isFinite(n) || n < 0 || n > max) throw new Error('Ese valor no es válido.');
+      return n > 0 ? n : null;
+    };
+    const dailyBudgetUsd = limite(input.dailyBudgetUsd, current.dailyBudgetUsd, 1e6);
+    const priceInputPerM = limite(input.priceInputPerM, current.priceInputPerM, 1000);
+    const priceOutputPerM = limite(input.priceOutputPerM, current.priceOutputPerM, 1000);
+    await settings.write(SETTING, { enabled, model: DEEPSEEK_MODEL, dailyLimit, credential, dailyBudgetUsd, priceInputPerM, priceOutputPerM });
     cache.clear(); users.clear();
     return status();
   }
@@ -588,6 +603,330 @@ Contesta el último mensaje recibido resolviendo lo que pregunta. Responde EN EL
       return null;
     }
   }
+  /**
+   * RESPUESTA DE TEXTO LIBRE (Centro IA).
+   *
+   * Es el MISMO proveedor, la MISMA clave, el MISMO plazo, el MISMO tope por
+   * minuto y el MISMO contador diario que el corrector: no se abre una segunda
+   * vía de gasto. Solo devuelve texto; no ejecuta nada ni toca datos.
+   *
+   * Devuelve `{ ok, text, model, ms, usage, reason }`:
+   *   - `ok:false, reason:'sin_configurar'` → no hay clave o está apagado.
+   *   - `ok:false, reason:'limite'`         → tope por minuto o diario.
+   *   - `ok:false, reason:'plazo'`          → el proveedor no contestó a tiempo.
+   *   - `ok:false, reason:<providerReason>` → rechazo del proveedor (saldo, clave…).
+   * Un intento fallido NO se cobra (se devuelve la cuota).
+   */
+  async function answer({ system, user, maxTokens = 500, actorId = 'ops-agent', agent = null, timeoutMs = providerTimeoutMs } = {}) {
+    if (typeof system !== 'string' || !system.trim()) return { ok: false, reason: 'sin_sistema' };
+    if (typeof user !== 'string' || !user.trim()) return { ok: false, reason: 'sin_pregunta' };
+    /* El contexto ya viene acotado; este tope es la última barrera de gasto. */
+    if (user.length > 14000) return { ok: false, reason: 'contexto_demasiado_grande' };
+    const config = await read(), apiKey = decrypt(config.credential);
+    if (!config.enabled || !apiKey) return { ok: false, reason: 'sin_configurar' };
+    if (await budgetBlocked(config)) return { ok: false, reason: 'presupuesto' };
+    const reserved = await reserve(config, actorId);
+    if (!reserved) return { ok: false, reason: 'limite' };
+    const started = clock().getTime();
+    /* Quién gastó: el agente si lo dice, si no el actor que pidió la consulta. */
+    const quien = typeof agent === 'string' && agent.trim() ? agent.trim().slice(0, 40) : actorId;
+    try {
+      const response = await withDeadline(fetchImpl('https://api.deepseek.com/chat/completions', {
+        method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: DEEPSEEK_MODEL,
+          thinking: { type: 'disabled' },
+          temperature: 0.2,
+          max_tokens: Math.min(900, Math.max(64, Number(maxTokens) || 500)),
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+        }),
+      }), timeoutMs);
+      if (!response.ok) {
+        await release(reserved);
+        await addOpsUsage({ agent: quien, config, ok: false });
+        return { ok: false, reason: providerReason(response.status) };
+      }
+      const result = await response.json(), choice = result.choices?.[0];
+      const text = String(choice?.message?.content ?? '').trim();
+      /* Truncado o vacío = no hay respuesta utilizable: no se cobra. */
+      if (choice?.finish_reason !== 'stop' || !text) {
+        await release(reserved);
+        await addOpsUsage({ agent: quien, config, ok: false });
+        return { ok: false, reason: choice?.finish_reason === 'length' ? 'truncado' : 'vacia' };
+      }
+      const usage = {
+        prompt: Number(result.usage?.prompt_tokens ?? 0) || 0,
+        completion: Number(result.usage?.completion_tokens ?? 0) || 0,
+        total: Number(result.usage?.total_tokens ?? 0) || 0,
+      };
+      const ms = Math.max(0, clock().getTime() - started);
+      await addOpsUsage({ agent: quien, usage, ms, config, ok: true });
+      return {
+        ok: true,
+        text: text.slice(0, 2000),
+        model: typeof result.model === 'string' ? result.model : DEEPSEEK_MODEL,
+        ms,
+        usage,
+      };
+    } catch (error) {
+      await release(reserved).catch(() => {});
+      await addOpsUsage({ agent: quien, config, ok: false });
+      return { ok: false, reason: error?.message === 'provider_deadline' ? 'plazo' : 'red' };
+    }
+  }
 
-  return { status, save, test, correct, compose, suggestReply, interpret, plan };
+  /* ======================================================================
+   * CONSUMO Y PRESUPUESTO DEL CENTRO IA
+   *
+   * Se acumula por día en los ajustes (`ops_ai_usage`), así que sobrevive a un
+   * reinicio del servidor. NO es la factura del proveedor: es una ESTIMACIÓN
+   * calculada con las tarifas que el negocio configure (si las configura).
+   * ====================================================================== */
+
+  const OPS_USAGE = 'ops_ai_usage';
+
+  const numero = (value, max = 1e9) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.min(n, max) : 0;
+  };
+
+  /** Coste estimado con las tarifas configuradas (por millón de tokens). */
+  function estimatedCost(usage, config) {
+    const entrada = numero(config?.priceInputPerM, 1000);
+    const salida = numero(config?.priceOutputPerM, 1000);
+    if (!entrada && !salida) return null;
+    const prompt = Number(usage?.prompt ?? 0) || 0;
+    const completion = Number(usage?.completion ?? 0) || 0;
+    return Math.round(((prompt / 1e6) * entrada + (completion / 1e6) * salida) * 1e6) / 1e6;
+  }
+
+  async function readOpsUsage() {
+    const valor = (await settings.read(OPS_USAGE))?.value;
+    const day = today();
+    if (!valor || valor.day !== day) return { day, calls: 0, prompt: 0, completion: 0, total: 0, ms: 0, costUsd: 0, byAgent: {} };
+    return {
+      day: valor.day,
+      calls: Number(valor.calls ?? 0) || 0,
+      prompt: Number(valor.prompt ?? 0) || 0,
+      completion: Number(valor.completion ?? 0) || 0,
+      total: Number(valor.total ?? 0) || 0,
+      ms: Number(valor.ms ?? 0) || 0,
+      costUsd: Number(valor.costUsd ?? 0) || 0,
+      byAgent: valor.byAgent && typeof valor.byAgent === 'object' ? valor.byAgent : {},
+    };
+  }
+
+  /** Anota UNA operación (una llamada al proveedor) y devuelve el acumulado. */
+  async function addOpsUsage({ agent = 'ops', usage = null, ms = 0, config = {}, ok = true, rounds = 1, tools = 0 } = {}) {
+    const run = lockPersist.then(async () => {
+      const actual = await readOpsUsage();
+      const prompt = Number(usage?.prompt ?? 0) || 0;
+      const completion = Number(usage?.completion ?? 0) || 0;
+      const total = Number(usage?.total ?? 0) || (prompt + completion);
+      const coste = estimatedCost({ prompt, completion }, config) ?? 0;
+      const clave = String(agent || 'ops');
+      const suyo = actual.byAgent[clave] ?? { calls: 0, total: 0, ms: 0 };
+      const siguiente = {
+        day: actual.day,
+        calls: actual.calls + 1,
+        prompt: actual.prompt + prompt,
+        completion: actual.completion + completion,
+        total: actual.total + total,
+        ms: actual.ms + Math.max(0, Number(ms) || 0),
+        costUsd: Math.round((actual.costUsd + coste) * 1e6) / 1e6,
+        byAgent: {
+          ...actual.byAgent,
+          [clave]: {
+            calls: suyo.calls + 1,
+            total: suyo.total + total,
+            ms: suyo.ms + Math.max(0, Number(ms) || 0),
+          },
+        },
+      };
+      await settings.write(OPS_USAGE, siguiente);
+      return { ...siguiente, lastOk: ok === true, rounds, tools };
+    });
+    lockPersist = run.catch(() => {});
+    return run;
+  }
+  let lockPersist = Promise.resolve();
+
+  /**
+   * Lo que se ha gastado hoy y cuánto queda de presupuesto.
+   * `budgetUsd` es opcional: sin tarifa configurada no hay presupuesto en dinero
+   * (se sigue usando el tope diario de llamadas de siempre).
+   */
+  async function opsUsage() {
+    const config = await read();
+    const uso = await readOpsUsage();
+    const budget = numero(config?.dailyBudgetUsd, 1e6);
+    const coste = Math.round((estimatedCost({ prompt: uso.prompt, completion: uso.completion }, config) ?? 0) * 1e6) / 1e6;
+    return {
+      day: uso.day,
+      calls: uso.calls,
+      tokens: { prompt: uso.prompt, completion: uso.completion, total: uso.total },
+      ms: uso.ms,
+      estimatedCostUsd: coste,
+      budgetUsd: budget || null,
+      remainingUsd: budget ? Math.max(0, Math.round((budget - coste) * 1e6) / 1e6) : null,
+      /* Tarifas configuradas a mano: sirven para estimar, no son la factura. */
+      prices: {
+        inputPerM: numero(config?.priceInputPerM, 1000) || null,
+        outputPerM: numero(config?.priceOutputPerM, 1000) || null,
+      },
+      dailyCalls: config.dailyLimit || DAILY_LIMIT_DEFAULT,
+      enabled: config.enabled === true,
+      byAgent: uso.byAgent,
+      note: 'Costo estimado con las tarifas configuradas. No es la factura del proveedor.',
+    };
+  }
+
+  /** `false` si el presupuesto en dinero del día ya se agotó. */
+  async function budgetBlocked(config) {
+    const budget = numero(config?.dailyBudgetUsd, 1e6);
+    if (!budget) return false;
+    const entrada = numero(config?.priceInputPerM, 1000);
+    const salida = numero(config?.priceOutputPerM, 1000);
+    if (!entrada && !salida) return false;
+    const uso = await readOpsUsage();
+    const coste = estimatedCost({ prompt: uso.prompt, completion: uso.completion }, config) ?? 0;
+    return coste >= budget;
+  }
+
+  /* ======================================================================
+   * CONSULTA CON HERRAMIENTAS DE LECTURA
+   *
+   * El modelo puede PEDIR datos (herramientas registradas) y el servidor los
+   * ejecuta con los permisos de la persona. El modelo nunca ejecuta nada: solo
+   * elige qué consultar. Como mucho `maxRounds` vueltas y 4 herramientas por
+   * vuelta, para que una pregunta no se convierta en una factura.
+   * ====================================================================== */
+
+  async function askWithTools({
+    system,
+    user,
+    history = [],
+    tools = [],
+    runTool = null,
+    maxRounds = 3,
+    maxTokens = 500,
+    actorId = 'ops-agent',
+    agent = 'ops',
+    timeoutMs = providerTimeoutMs,
+  } = {}) {
+    if (typeof system !== 'string' || !system.trim()) return { ok: false, reason: 'sin_sistema' };
+    if (typeof user !== 'string' || !user.trim()) return { ok: false, reason: 'sin_pregunta' };
+    if (user.length > 14000) return { ok: false, reason: 'contexto_demasiado_grande' };
+    const config = await read(), apiKey = decrypt(config.credential);
+    if (!config.enabled || !apiKey) return { ok: false, reason: 'sin_configurar' };
+    if (await budgetBlocked(config)) return { ok: false, reason: 'presupuesto' };
+
+    const messages = [{ role: 'system', content: system }];
+    for (const turno of (Array.isArray(history) ? history : []).slice(-6)) {
+      const texto = String(turno?.text ?? '').slice(0, 600);
+      if (!texto) continue;
+      messages.push({ role: turno?.role === 'agent' ? 'assistant' : 'user', content: texto });
+    }
+    messages.push({ role: 'user', content: user });
+
+    const usadas = [];
+    let tokens = { prompt: 0, completion: 0, total: 0 };
+    const started = clock().getTime();
+    let modelo = DEEPSEEK_MODEL;
+    let vueltas = 0;
+
+    for (let ronda = 0; ronda < Math.max(1, Math.min(4, maxRounds)); ronda += 1) {
+      vueltas += 1;
+      const reserved = await reserve(config, actorId);
+      if (!reserved) return { ok: false, reason: 'limite', usage: tokens, rounds: vueltas, toolsUsed: usadas };
+      let result = null;
+      try {
+        const response = await withDeadline(fetchImpl('https://api.deepseek.com/chat/completions', {
+          method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: DEEPSEEK_MODEL,
+            thinking: { type: 'disabled' },
+            temperature: 0.2,
+            max_tokens: Math.min(900, Math.max(64, Number(maxTokens) || 500)),
+            messages,
+            ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+          }),
+        }), timeoutMs);
+        if (!response.ok) {
+          await release(reserved);
+          await addOpsUsage({ agent, ms: clock().getTime() - started, config, ok: false, rounds: vueltas, tools: usadas.length });
+          return { ok: false, reason: providerReason(response.status), usage: tokens, rounds: vueltas, toolsUsed: usadas };
+        }
+        result = await response.json();
+      } catch (error) {
+        await release(reserved).catch(() => {});
+        await addOpsUsage({ agent, ms: clock().getTime() - started, config, ok: false, rounds: vueltas, tools: usadas.length });
+        return {
+          ok: false,
+          reason: error?.message === 'provider_deadline' ? 'plazo' : 'red',
+          usage: tokens,
+          rounds: vueltas,
+          toolsUsed: usadas,
+        };
+      }
+
+      modelo = typeof result.model === 'string' ? result.model : DEEPSEEK_MODEL;
+      tokens = {
+        prompt: tokens.prompt + (Number(result.usage?.prompt_tokens ?? 0) || 0),
+        completion: tokens.completion + (Number(result.usage?.completion_tokens ?? 0) || 0),
+        total: tokens.total + (Number(result.usage?.total_tokens ?? 0) || 0),
+      };
+      const choice = result.choices?.[0];
+      const llamadas = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls.slice(0, 4) : [];
+
+      if (llamadas.length && typeof runTool === 'function') {
+        messages.push(choice.message);
+        for (const llamada of llamadas) {
+          const nombre = String(llamada?.function?.name ?? '');
+          let args = {};
+          try {
+            args = JSON.parse(llamada?.function?.arguments || '{}');
+          } catch {
+            args = {};
+          }
+          const salida = await runTool(nombre, args);
+          usadas.push({ name: nombre, ok: salida?.ok !== false, error: salida?.error ?? null });
+          messages.push({
+            role: 'tool',
+            tool_call_id: llamada.id,
+            content: JSON.stringify(salida).slice(0, 6000),
+          });
+        }
+        continue;
+      }
+
+      const text = String(choice?.message?.content ?? '').trim();
+      if (!text) {
+        await release(reserved);
+        await addOpsUsage({ agent, ms: clock().getTime() - started, config, ok: false, rounds: vueltas, tools: usadas.length });
+        return { ok: false, reason: choice?.finish_reason === 'length' ? 'truncado' : 'vacia', usage: tokens, rounds: vueltas, toolsUsed: usadas };
+      }
+      await addOpsUsage({ agent, usage: tokens, ms: clock().getTime() - started, config, ok: true, rounds: vueltas, tools: usadas.length });
+      return {
+        ok: true,
+        text: text.slice(0, 2500),
+        model: modelo,
+        ms: Math.max(0, clock().getTime() - started),
+        usage: tokens,
+        rounds: vueltas,
+        toolsUsed: usadas,
+      };
+    }
+
+    /* Se acabaron las vueltas pidiendo datos: se dice, no se inventa. */
+    await addOpsUsage({ agent, usage: tokens, ms: clock().getTime() - started, config, ok: false, rounds: vueltas, tools: usadas.length });
+    return { ok: false, reason: 'sin_respuesta', usage: tokens, rounds: vueltas, toolsUsed: usadas };
+  }
+
+  return { status, save, test, correct, compose, suggestReply, interpret, plan, answer, askWithTools, opsUsage, estimatedCost };
 }

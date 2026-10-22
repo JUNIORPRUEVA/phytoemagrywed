@@ -92,6 +92,36 @@ export const OPS_TOOLS = Object.freeze({
     audit: 'call',
     requiresApproval: false,
   },
+  /*
+   * ESTADO DE LA ENTREGA (Supervisor de Reparto).
+   *
+   * Lee el pedido y devuelve SOLO lo que hace falta para supervisar: en qué
+   * etapa está, cuántos minutos lleva, si el repartidor acusó recibo, si
+   * reportó la entrega y si tiene teléfono con el que se le pueda escribir.
+   * No expone importes, dirección ni teléfono del cliente. No escribe nada.
+   */
+  'delivery.get_status': {
+    effect: 'read',
+    scope: 'order',
+    risk: 'low',
+    permission: 'orders.read',
+    enabled: true,
+    description: 'Etapa de la entrega, minutos transcurridos, acuse del repartidor y si tiene teléfono',
+    schema: { orderId: { type: 'string', required: true } },
+    inputs: { orderId: 'Identificador del pedido' },
+    outputs: {
+      stage: 'Etapa de supervisión',
+      nextAction: 'Qué toca ahora',
+      elapsedMinutes: 'Minutos desde el ancla',
+      acknowledged: 'El repartidor acusó recibo',
+      deliveredReported: 'El repartidor reportó la entrega',
+      courierPhone: 'Tiene teléfono (true/false/null)',
+    },
+    timeoutMs: 8000,
+    idempotent: true,
+    audit: 'call',
+    requiresApproval: false,
+  },
   'ticket.post_message': {
     effect: 'write',
     scope: 'ticket',

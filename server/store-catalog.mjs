@@ -108,10 +108,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     product_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'unpublished',
     featured INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL)`);
+  await sql.query('CREATE TABLE IF NOT EXISTS fulltech_store_first_publication_v1 (product_id TEXT PRIMARY KEY, published_at TEXT NOT NULL)');
   await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_publication_status_order_idx ON fulltech_store_publication_v1(status, sort_order, product_id)');
-  await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_search_terms_v1 (
+  await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_search_terms_v2 (
     product_id TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(product_id,token))`);
-  await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_search_token_product_idx ON fulltech_store_search_terms_v1(token,product_id)');
+  await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_search_token_product_v2_idx ON fulltech_store_search_terms_v2(token,product_id)');
   for (const p of productConfig.variants) {
     const doc = { id: p.id, sku: `PHYTO-${p.capsules}`, kind: 'product', name: `Phytoemagry · ${p.capsules} cápsulas`,
       category: 'Phytoemagry', description: '', price_cents: p.price * 100, cost_cents: 0,
@@ -134,6 +135,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     if (!current) throw fail('not_found', 'El artículo ya no existe.', 404);
     if (status === 'published' && !current.active) throw fail('inactive_product', 'Activa el artículo en el catálogo antes de publicarlo.', 409);
     if (status === 'published') await requireGallery(current, q);
+    const prior = (await q('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1', [id])).rows[0];
+    if (status === 'published' && prior?.status !== 'published') await q('INSERT INTO fulltech_store_first_publication_v1(product_id,published_at) VALUES($1,$2) ON CONFLICT(product_id) DO NOTHING', [id, clock().toISOString()]);
     const featured = input?.featured === true;
     const rawOrder = input?.sort_order ?? 0;
     if (!Number.isSafeInteger(Number(rawOrder)) || Number(rawOrder) < 0 || Number(rawOrder) > 1000000) throw fail('invalid_sort_order', 'El orden debe ser un número válido.');
@@ -147,7 +150,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   async function publicProducts() {
     if (publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
-    const pubs = (await sql.query("SELECT product_id,featured,sort_order,updated_at FROM fulltech_store_publication_v1 WHERE status='published' ORDER BY sort_order,product_id")).rows;
+    const pubs = (await sql.query("SELECT p.product_id,p.featured,p.sort_order,p.updated_at,f.published_at FROM fulltech_store_publication_v1 p LEFT JOIN fulltech_store_first_publication_v1 f ON f.product_id=p.product_id WHERE p.status='published' ORDER BY p.sort_order,p.product_id")).rows;
     if (!pubs.length) { publicCache = { items: [], expiresAt: Date.now() + 5000 }; return []; }
     /*
      * El contenido público se deriva SIEMPRE del registro vivo del catálogo:
@@ -174,6 +177,18 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       return [{
         id: p.id, kind: p.kind === 'service' ? 'service' : 'product', name: p.store_public_name || p.name,
         category: p.category || null, price: Number(p.price_cents) / 100, currency: 'DOP',
+        /*
+         * OFERTA: solo existe si una persona configuró un precio anterior MÁS
+         * ALTO que el de venta. El descuento se calcula aquí (servidor), nunca en
+         * el navegador, para que nadie pueda inventar un porcentaje.
+         */
+        compareAtPrice: Number(p.compare_at_cents) > Number(p.price_cents) ? Number(p.compare_at_cents) / 100 : null,
+        discountPercent: Number(p.compare_at_cents) > Number(p.price_cents)
+          ? Math.max(1, Math.round((1 - Number(p.price_cents) / Number(p.compare_at_cents)) * 100))
+          : null,
+        /* Fechas reales: creación del registro y publicación en la tienda. */
+        createdAt: p.created_at ?? null,
+        publishedAt: pub.published_at ?? null,
         availability, availabilityState: effectiveAvailability(p),
         purchaseable: effectiveAvailability(p) === 'AVAILABLE_NOW',
         shortDescription: p.store_short_description || '', description: p.store_public_description || '',
@@ -194,7 +209,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     if (!terms.length) return publicProducts();
     let matches = null;
     for (const term of terms) {
-      const rows = (await sql.query('SELECT product_id FROM fulltech_store_search_terms_v1 WHERE token LIKE $1', [`${term}%`])).rows;
+      const rows = (await sql.query('SELECT product_id FROM fulltech_store_search_terms_v2 WHERE token LIKE $1', [`${term}%`])).rows;
       const ids = new Set(rows.map(row => row.product_id));
       matches = matches === null ? ids : new Set([...matches].filter(id => ids.has(id)));
       if (!matches.size) return [];
@@ -263,11 +278,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   const decode = r => {if(!r)return null;const p={...JSON.parse(r.doc),quantity:Number(r.quantity),version:Number(r.version)};return {...p,images:galleryView(p)};};
   const normalizeSearch = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
   async function indexProductSearch(q, product) {
-    const tokens = [...new Set(normalizeSearch(`${product.name} ${product.store_public_name || ''} ${product.sku} ${product.category || ''} ${product.description || ''} ${product.store_short_description || ''} ${product.store_public_description || ''} ${product.store_brand || ''}`).split(/[^a-z0-9]+/).filter(token => token.length > 0 && token.length <= 80))];
-    await q('DELETE FROM fulltech_store_search_terms_v1 WHERE product_id=$1', [product.id]);
-    for (const token of tokens) await q('INSERT INTO fulltech_store_search_terms_v1(product_id,token) VALUES($1,$2) ON CONFLICT(product_id,token) DO NOTHING', [product.id, token]);
+    const tokens = [...new Set(normalizeSearch(`${product.name} ${product.store_public_name || ''} ${product.sku} ${product.category || ''} ${product.store_short_description || ''} ${product.store_public_description || ''} ${product.store_brand || ''}`).split(/[^a-z0-9]+/).filter(token => token.length > 0 && token.length <= 80))];
+    await q('DELETE FROM fulltech_store_search_terms_v2 WHERE product_id=$1', [product.id]);
+    for (const token of tokens) await q('INSERT INTO fulltech_store_search_terms_v2(product_id,token) VALUES($1,$2) ON CONFLICT(product_id,token) DO NOTHING', [product.id, token]);
   }
-  if (Number((await sql.query('SELECT COUNT(*) AS count FROM fulltech_store_search_terms_v1')).rows[0]?.count || 0) === 0) {
+  if (Number((await sql.query('SELECT COUNT(*) AS count FROM fulltech_store_search_terms_v2')).rows[0]?.count || 0) === 0) {
     for (const row of (await sql.query('SELECT id,doc FROM fulltech_catalog_v1')).rows) await indexProductSearch(sql.query, { ...JSON.parse(row.doc), id: row.id });
   }
   const one = async (id, q = sql.query, lock = false) => decode((await q('SELECT * FROM fulltech_catalog_v1 WHERE id=$1'+(lock&&backend==='postgres'?' FOR UPDATE':''), [id])).rows[0]);
@@ -376,6 +391,21 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       }
       const name = clean(input.name), sku = clean(input.sku, 60).toUpperCase();
       if (!name || !/^[A-Z0-9][A-Z0-9._-]{0,59}$/.test(sku)) throw fail('invalid_product', 'Escribe un nombre y un código válido sin espacios.');
+      /*
+       * PRECIO ANTERIOR (ofertas): opcional. Se guarda SOLO si es mayor que el
+       * precio de venta; si no, se rechaza. En un PATCH sin el campo se conserva
+       * el valor que ya tuviera el artículo.
+       */
+      const priceCents = money(input.price);
+      let compareCents = previous?.compare_at_cents ?? null;
+      if (input.compare_at_price !== undefined) {
+        compareCents = input.compare_at_price === '' || input.compare_at_price === null
+          ? null
+          : money(input.compare_at_price);
+      }
+      if (compareCents !== null && compareCents <= priceCents) {
+        throw fail('invalid_compare_at', 'El precio anterior debe ser mayor que el precio de venta.');
+      }
       if (!integer(input.min_stock ?? 0)) throw fail('invalid_quantity', 'El stock mínimo debe ser un número entero mayor o igual a cero.');
       let category=null;
       if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
@@ -402,7 +432,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         warranty_claim: clean(input.warranty_claim ?? previous?.warranty_claim ?? '', 1000),
         warranty_public_notes: clean(input.warranty_public_notes ?? previous?.warranty_public_notes ?? '', 500),
         warranty_private_notes: clean(input.warranty_private_notes ?? previous?.warranty_private_notes ?? '', 1000),
-        price_cents: money(input.price), cost_cents: previous?.legacy ? 0 : money(input.cost),
+        price_cents: priceCents, compare_at_cents: compareCents,
+        cost_cents: previous?.legacy ? 0 : money(input.cost),
         track_stock: trackStock, active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
         updated_at: clock().toISOString(), updated_by: actor?.display_name || 'Administración' };

@@ -126,8 +126,11 @@ describe('Mi perfil', () => {
   });
 
   it('el perfil se abre desde la cabecera; compartir queda al pie', () => {
-    expect($('#view-perfil .profile-brand img')?.getAttribute('src')).toContain('fulltech-logo.png');
-    expect($('#view-perfil .profile-brand strong')?.textContent).toBe('FullTECH');
+    click('.drawer__brand');
+    // El logo ya no ocupa una tarjeta: vive en la cabecera de la pantalla.
+    expect($('#mobile-header .simple-head__logo')?.getAttribute('src')).toContain('fulltech-logo');
+    // Un solo «Mi perfil»: el de la cabecera, no repetido en el cuerpo.
+    expect($('#view-perfil .view__title')).toBeNull();
     // La cabecera del menú ES el acceso al perfil (no se repite como opción).
     const marca = $('.drawer__brand');
     expect(marca?.dataset.tab).toBe('perfil');

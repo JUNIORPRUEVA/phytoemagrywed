@@ -39,7 +39,7 @@ describe('delivery tracking frontend UAT guards', () => {
      *   · si no hay ninguna, NO se dibuja ruta (`hasRoute` exige origen real).
      */
     expect(app).toContain('const origin = mapLatLng(devicePoint) ?? lastPoint;');
-    expect(app).toContain("const gpsState = mapLatLng(devicePoint) ? 'live' : lastPoint ? 'last' : 'none';");
+    expect(app).toContain("const gpsState = mapLatLng(devicePoint) ? 'live' : lastPoint ? 'last' : preview?.error ? 'unavailable' : 'none';");
     expect(app).toContain('hasRoute: Boolean(origin) && routePoints.length >= 2,');
     expect(app).toContain('function deliveryGpsFreshness');
     expect(app).toContain('function deliverySignalAgeMinutes');
@@ -58,10 +58,28 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain("touchZoom: 'center'");
     expect(app).toContain('scrollWheelZoom: true');
     expect(app).toContain('maxZoom: 22');
-    expect(app).toContain('Delivery cobrado');
-    expect(app).toContain('Primero contacta al cliente');
-    expect(app).toContain('Luego podrás iniciar la entrega.');
-    expect(app).toContain('Aceptar y contactar');
+    /*
+     * FLUJO ÚNICO: la pantalla ya no lleva dos acciones primarias que se
+     * contradigan ni un texto que pida un contacto que el backend no exige.
+     * El orden lo manda el servidor (`next_step`) y aquí se representa.
+     */
+    expect(app).toContain('function deliveryNextStep');
+    expect(app).toContain('function deliveryPrimaryCtaHtml');
+    expect(app).toContain('function deliveryStepsHtml');
+    expect(app).toContain('Aceptar entrega');
+    expect(app).toContain('Iniciar entrega');
+    expect(app).toContain('Finalizar entrega');
+    expect(app).toContain('Envío (tarifa)');
+    expect(app).not.toContain('Primero contacta al cliente');
+    expect(app).not.toContain('Aceptar y contactar');
+    /*
+     * En el PANEL DEL REPARTIDOR la tarifa de envío no puede llamarse «Delivery
+     * cobrado» (se leía como dinero cobrado). En reportes y cierre diario ese
+     * texto sí significa ingreso por envío y se conserva: se acota la búsqueda.
+     */
+    const panelEntrega = app.slice(app.indexOf('function deliveryMoneyHtml'), app.indexOf('function openDeliveryMoreSheet'));
+    expect(panelEntrega).not.toContain('Delivery cobrado');
+    expect(panelEntrega).toContain('Por cobrar');
     expect(app).toContain('data-delivery-order-detail');
     expect(app).toContain('Ver pedido');
     expect(app).toContain('Este mensaje se enviará con tu firma de repartidor.');
@@ -106,13 +124,15 @@ describe('delivery tracking frontend UAT guards', () => {
     expect(app).toContain('data-dv-follow');
     expect(app).toContain('function centerDeliveryDetail');
     expect(app).toContain('function refreshDeliveryDetailPosition');
-    // Acciones del móvil (misma entrega de siempre, solo cambia la puerta de entrada).
-    expect(app).toContain('function deliveryActionPanelHtml');
+    // Acciones del móvil: UNA primaria por paso y las secundarias agrupadas.
+    expect(app).toContain('function deliveryPrimaryCtaHtml');
+    expect(app).toContain('function deliverySecondaryActionsHtml');
+    expect(app).toContain('function openDeliveryMoreSheet');
     expect(app).toContain('Iniciar entrega');
-    expect(app).toContain('Marcar entregado');
-    expect(app).toContain('Google Maps');
+    expect(app).toContain('Finalizar entrega');
+    expect(app).toContain('Ruta');
     expect(app).toContain('Marcar recogida');
-    expect(app).toContain('Reportar incidencia');
+    expect(app).toContain('Reportar problema');
     // El mapa de administración sigue siendo el de supervisión múltiple.
     expect(app).toContain('function renderMapLive');
     expect(app).toContain('function fitDeliveryBounds');

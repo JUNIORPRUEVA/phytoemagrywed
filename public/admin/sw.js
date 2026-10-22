@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v256-iconos-menu-20261021';
+const VERSION = 'crm-v268-flujo-entrega-20261022';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -107,6 +107,7 @@ const SHELL = [
   '/admin/pos-math.js',
   '/admin/quote-document.js',
   '/admin/pos.css',
+  '/admin/delivery-flow.css',
   '/admin/manifest.json',
   '/admin/vendor/leaflet/leaflet.css',
   '/admin/vendor/leaflet/leaflet.js',

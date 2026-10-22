@@ -37,6 +37,12 @@ import { notifyAckRequired, notifyApprovalRequested, ticketRecipients } from './
 import { AGENT_PERMISSIONS, OPS_TOOLS, assignableTools, toolOf, timeoutOf, validateArgs } from './tools.mjs';
 import { planWithLlm } from './llm.mjs';
 import { listCollaborators, markAccepted, requestHelp, settleDelegationOfRun } from './collaboration.mjs';
+/*
+ * EL MOTOR DE REPARTO ES DETERMINISTA Y VIVE APARTE. La herramienta
+ * `delivery.get_status` solo LEE lo que ya decide `supervisionOf`; el agente no
+ * puede cambiar etapas, ni cerrar entregas, ni saltarse permisos desde aquí.
+ */
+import { courierPhonesByUser, parseOrderRow, supervisionOf, supervisorSettings } from '../delivery-supervisor.mjs';
 
 /** Estados de un run. `succeeded/failed/cancelled` son finales. */
 export const AGENT_RUN_STATUSES = Object.freeze([
@@ -547,6 +553,25 @@ export function planStep({ ticket, run, agent, now = null, collaborators = [] })
    * útil en vez de una frase genérica. Si el agente no tiene la herramienta, se
    * salta sin más: el plan no depende de ella.
    */
+  /*
+   * ESTADO DE LA ENTREGA (Supervisor de Reparto). Va UNA sola vez y sustituye a
+   * la lectura del pedido: devuelve la etapa, los minutos y el estado del pedido,
+   * así que pedir las dos serían dos pasos para el mismo dato. La etapa la decide
+   * el motor determinista, no el modelo.
+   */
+  if (
+    !state.deliveryChecked &&
+    ticket.entity_type === 'order' &&
+    ticket.entity_id &&
+    has('delivery.get_status')
+  ) {
+    return {
+      type: 'tool',
+      tool: 'delivery.get_status',
+      args: { orderId: ticket.entity_id },
+      note: 'estado de la entrega',
+    };
+  }
   if (
     !state.orderChecked &&
     ticket.entity_type === 'order' &&
@@ -562,11 +587,12 @@ export function planStep({ ticket, run, agent, now = null, collaborators = [] })
   }
   if (!state.greeted && sent < maxMessages && has('ticket.post_message')) {
     const orderState = state.orderStatus ? ` Ahora mismo el pedido va por «${state.orderStatus}».` : '';
+    const deliveryState = state.deliveryNextAction ? ` En reparto toca: ${state.deliveryNextAction}.` : '';
     return {
       type: 'tool',
       tool: 'ticket.post_message',
       args: {
-        body: `Me encargo de este ticket (${ticket.number}).${orderState} Os aviso por aquí de cualquier avance y os pido confirmación cuando toque.`,
+        body: `Me encargo de este ticket (${ticket.number}).${orderState}${deliveryState} Os aviso por aquí de cualquier avance y os pido confirmación cuando toque.`,
         clientKey: `agent:${run.id}:greet`,
       },
       note: 'saludo inicial',
@@ -578,6 +604,22 @@ export function planStep({ ticket, run, agent, now = null, collaborators = [] })
       tool: 'ticket.request_ack',
       args: { note: 'Confirma el acuse cuando lo veas, por favor.' },
       note: 'pedir acuse',
+    };
+  }
+  /*
+   * LA ENTREGA YA CERRÓ: EL SUPERVISOR DA SU TRABAJO POR TERMINADO.
+   *
+   * La etapa la dice el motor determinista (`delivery.get_status`). Cuando el
+   * pedido está entregado o cancelado, el agente NO cierra el ticket (eso sigue
+   * siendo de una persona): solo marca su tarea como terminada para que el
+   * ticket pueda cerrarse con una decisión humana.
+   */
+  if (state.deliveryStage === 'closed' && !state.workCompleted && has('ticket.complete_work')) {
+    return {
+      type: 'tool',
+      tool: 'ticket.complete_work',
+      args: { note: 'La entrega quedó cerrada; termino mi supervisión y el ticket queda para cierre humano.' },
+      note: 'cerrar la supervisión',
     };
   }
   /* ¿Hay una respuesta humana nueva después de lo último que procesó? */
@@ -731,6 +773,45 @@ async function executeTool({ ctx, deps, agent, ticket, run, name, args, actor, a
     }
     /* Solo estado operativo: ni importes ni datos personales. */
     return { ok: true, result: { orderId: row.id, number: row.order_number ?? order.order_number ?? null, status: row.status ?? order.status ?? null } };
+  }
+  /*
+   * ESTADO DE LA ENTREGA (Supervisor de Reparto).
+   *
+   * Reutiliza el motor determinista: la etapa la decide `supervisionOf`, no el
+   * modelo. Se devuelve lo justo para que el agente sepa qué toca y si puede
+   * escribirle al repartidor. Sin importes, sin dirección y sin teléfonos.
+   */
+  if (name === 'delivery.get_status') {
+    if (!can('orders.read')) {
+      return { ok: false, error: { code: 'agent_permission_denied', message: 'Falta orders.read', retryable: false } };
+    }
+    const row = typeof deps?.findOrder === 'function' ? await deps.findOrder(args.orderId) : null;
+    if (!row) return { ok: false, error: { code: 'order_not_found', message: 'El pedido no existe', retryable: false } };
+    const order = parseOrderRow(row) ?? {};
+    const users = typeof deps?.users === 'function' ? ((await deps.users()) ?? []) : [];
+    const settings = await supervisorSettings(ctx);
+    const state = supervisionOf(order, {
+      settings,
+      now: ctx.clock ? ctx.clock().getTime() : Date.now(),
+      phoneByUser: courierPhonesByUser(users),
+    });
+    return {
+      ok: true,
+      result: {
+        orderId: row.id,
+        number: order.order_number ?? row.order_number ?? null,
+        status: row.status ?? order.status ?? null,
+        stage: state.stage,
+        nextAction: state.nextAction,
+        elapsedMinutes: state.elapsedMinutes ?? 0,
+        responsible: state.responsible?.name ?? null,
+        courierPhone: state.hasPhone ?? null,
+        acknowledged: Boolean(order.delivery?.supervisor?.acknowledged_at),
+        deliveredReported: Boolean(
+          order.delivery?.supervisor?.delivered_reported_at ?? order.delivery?.external?.delivered_reported_at,
+        ),
+      },
+    };
   }
   if (name === 'ticket.post_message') {
     const posted = await postMessage({
@@ -1183,7 +1264,7 @@ export async function opsAgentTick({ ctx, deps = {} }) {
            * matar el trabajo: se anota el paso como error, se marca como hecha
            * y el plan sigue por donde iba (sin reintentar en bucle).
            */
-          if (decision.tool === 'order.get_status' || decision.tool === 'agent.request_help') {
+          if (decision.tool === 'order.get_status' || decision.tool === 'agent.request_help' || decision.tool === 'delivery.get_status') {
             patch = {
               status: 'pending',
               step: (Number(run.step ?? 0) || 0) + 1,
@@ -1191,9 +1272,11 @@ export async function opsAgentTick({ ctx, deps = {} }) {
               next_run_at: at,
               state: {
                 ...(run.state ?? {}),
-                ...(decision.tool === 'order.get_status'
-                  ? { orderChecked: true, orderStatus: null }
-                  : { helpRequested: true, helpFailed: outcome.error?.code ?? 'error' }),
+                ...(decision.tool === 'delivery.get_status'
+                  ? { deliveryChecked: true, deliveryStage: null }
+                  : decision.tool === 'order.get_status'
+                    ? { orderChecked: true, orderStatus: null }
+                    : { helpRequested: true, helpFailed: outcome.error?.code ?? 'error' }),
               },
               last_error: outcome.error ?? null,
             };
@@ -1224,6 +1307,15 @@ export async function opsAgentTick({ ctx, deps = {} }) {
           if (decision.tool === 'order.get_status') {
             state.orderChecked = true;
             state.orderStatus = outcome.result?.status ?? null;
+          }
+          if (decision.tool === 'delivery.get_status') {
+            state.deliveryChecked = true;
+            state.deliveryStage = outcome.result?.stage ?? null;
+            state.deliveryNextAction = outcome.result?.nextAction ?? null;
+            state.courierPhone = outcome.result?.courierPhone ?? null;
+            /* La misma lectura trae el estado del pedido: no se pide otra vez. */
+            state.orderChecked = true;
+            state.orderStatus = outcome.result?.status ?? state.orderStatus ?? null;
           }
           if (decision.tool === 'ticket.post_message') {
             state.messagesSent = (Number(state.messagesSent ?? 0) || 0) + 1;

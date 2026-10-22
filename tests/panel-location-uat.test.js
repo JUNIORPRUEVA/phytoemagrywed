@@ -250,29 +250,28 @@ describe('componente de ubicación en el chat', () => {
   /** El componente de la ubicación que dice 'Casa' (hay otro con nombre raro). */
   const chipCasa = () => $$('#thread .loc').find((node) => node.textContent.includes('Casa')) ?? null;
 
-  it('se ve como una pieza compacta y «Ver en mapa» abre el mapa AQUÍ DENTRO', async () => {
+  it('la ubicación se ve en la burbuja y el mapa grande se abre desde «⋯»', async () => {
     await openChat();
     const chip = await waitFor(chipCasa, 'el componente de ubicación de Casa');
     expect(chip.textContent).toContain('Casa');
     expect(chip.textContent).toContain(L1.address);
     expect(chip.textContent).toMatch(/Compartida por el cliente/i);
     /*
-     * La acción del chip es un BOTÓN: abre el mapa dentro del panel. Antes era un
-     * enlace a Google Maps que sacaba al navegador (y hacía perder el hilo).
+     * LA UBICACIÓN SE VE SIN PULSAR NADA: miniatura del mapa con el punto exacto
+     * del cliente. Ya no hay botón grande «Ver en mapa»: el mapa completo vive
+     * en el menú «⋯» del componente, junto al resto de acciones.
      */
-    const accion = chip.querySelector('.loc__link');
-    expect(accion.tagName).toBe('BUTTON');
-    expect(chip.querySelectorAll('a[target="_blank"]')).toHaveLength(0);
-    // Lleva las coordenadas EXACTAS que mandó el cliente: no hay que volver a pedirlas.
-    expect(JSON.parse(accion.dataset.openMap)).toMatchObject({
-      latitude: L1.latitude,
-      longitude: L1.longitude,
-      name: L1.name,
-    });
+    const miniatura = chip.querySelector('.loc__map img');
+    expect(miniatura).not.toBe(null);
+    expect(miniatura.getAttribute('src')).toMatch(/^https:\/\/tile\.openstreetmap\.org\/15\/\d+\/\d+\.png$/);
+    expect(miniatura.getAttribute('loading')).toBe('lazy');
+    expect(chip.querySelector('.loc__map-pin')).not.toBe(null);
+    expect(chip.textContent).not.toContain('Ver en mapa');
     // Un solo componente: nada de tarjeta dentro de tarjeta.
     expect($$('#thread .loc .loc')).toHaveLength(0);
 
-    click(accion);
+    click(chip.querySelector('.loc__more'));
+    click(await waitFor(() => $('#sheet-body [data-loc-map]'), 'la opción «Ver en el mapa»'));
     /*
      * Se abre LA PANTALLA DEL MAPA (la única que hay: mapa y entregas), centrada
      * en el punto y con su ficha de acciones encima. Nada de pestañas nuevas.
@@ -280,8 +279,6 @@ describe('componente de ubicación en el chat', () => {
     await waitFor(() => !$('#view-mapa').hidden, 'la pantalla del mapa');
     const lienzo = await waitFor(() => $('#orders-map'), 'el mapa dentro de la app');
     expect(dom.window.__abrioPestana).toBeUndefined();
-    expect($('#sheet-title').textContent).toBe('Casa');
-    expect($('#sheet-body').textContent).toContain('El mapa está centrado en este punto');
     // En jsdom no hay Leaflet: el aviso de la pantalla lo dice en vez de quedarse mudo.
     const aviso = await waitFor(() => ($('#orders-map-notice')?.textContent ? $('#orders-map-notice') : null), 'el aviso del mapa');
     expect(aviso.textContent).toContain('No se pudo cargar el mapa');
@@ -309,7 +306,8 @@ describe('componente de ubicación en el chat', () => {
     expect(textos).toContain('<script>');
     expect(dom.window.__xss).toBeUndefined();
     expect($$('#thread .loc script')).toHaveLength(0);
-    expect($$('#thread .loc img')).toHaveLength(0);
+    // El único <img> del componente es el mosaico del mapa: nada de imágenes de WhatsApp sin guardar.
+    expect($$('#thread .loc img').filter((img) => !img.closest('.loc__map'))).toHaveLength(0);
   }, 20000);
 
   it('la lista de chats muestra «Ubicación», no el JSON', async () => {

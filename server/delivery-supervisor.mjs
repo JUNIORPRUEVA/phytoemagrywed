@@ -47,6 +47,35 @@ export const SUPERVISOR_REMINDER_TEMPLATE = 'phyto_supervisor_recordatorio_v1';
 /** Plantilla de escalamiento a administración (ya existe en el catálogo). */
 export const SUPERVISOR_ESCALATION_TEMPLATE = 'phyto_delivery_sin_atender_admin_v1';
 
+/**
+ * ÚNICA POLÍTICA DE AVISOS DEL REPARTO.
+ *
+ * Antes había DOS motores escribiendo al mismo repartidor: el antiguo
+ * `deliveryControlTick` (recordatorio a los 5 min con su propia plantilla y
+ * escalado a los 30 min a una lista de teléfonos fija en el código) y este
+ * supervisor. El motor antiguo ya no se ejecuta; su política se conserva AQUÍ,
+ * como valores configurables y con una sola clave de idempotencia por hito.
+ *
+ * Si una instalación tenía el motor antiguo configurado, `supervisorSettings()`
+ * importa sus minutos UNA vez (ver `LEGACY_CONTROL_KEY`). Después manda este
+ * documento y nada más: no pueden convivir dos calendarios.
+ */
+export const DELIVERY_SUPERVISION_POLICY = Object.freeze({
+  firstReminderMinutes: 10,
+  followUpMinutes: 30,
+  maxAttempts: 3,
+  lateAfterMinutes: 90,
+  escalateAfterMinutes: 120,
+});
+
+/**
+ * Documento del motor RETIRADO. Solo se LEE, para migrar su política.
+ * No se borra: es historia operativa y la app no vuelve a escribir en él.
+ */
+export const LEGACY_CONTROL_KEY = 'delivery_control';
+/** Marca de «ya migré la política antigua» (documento aparte, no se normaliza). */
+export const LEGACY_IMPORT_KEY = 'delivery_supervisor_legacy_import';
+
 const CLOSED_STATUSES = Object.freeze(['entregado', 'cancelado', 'perdido']);
 const ACTIVE_PICKUP_STATUSES = Object.freeze(['pending_purchase', 'assigned', 'on_the_way']);
 const DEFAULT_TIME_ZONE = 'America/Santo_Domingo';
@@ -113,6 +142,16 @@ export const DEFAULT_SUPERVISOR_SETTINGS = Object.freeze({
   includeOrderIds: [],
   maxRemindersPerTick: 8,
   maxEscalationsPerTick: 10,
+  /*
+   * POLÍTICA DE CONTACTO (apagada por defecto).
+   *
+   * El panel decía «Primero contacta al cliente» pero el backend nunca lo exigía.
+   * Ahora es un AJUSTE REAL: si se enciende, `POST /delivery/start` rechaza al
+   * repartidor que no haya registrado ningún intento de contacto (llamada,
+   * WhatsApp o mensaje del CRM). Se deja apagado para no bloquear en la calle a
+   * quien ya contactó por teléfono sin pasar por el panel.
+   */
+  requireContactBeforeStart: false,
 });
 
 const clean = (value, max = 160) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max) || null;
@@ -173,13 +212,60 @@ export function normalizeSupervisorSettings(raw = null) {
       : [],
     maxRemindersPerTick: bounded(read('maxRemindersPerTick', 'max_reminders_per_tick', DEFAULT_SUPERVISOR_SETTINGS.maxRemindersPerTick), DEFAULT_SUPERVISOR_SETTINGS.maxRemindersPerTick, 1, 100),
     maxEscalationsPerTick: bounded(read('maxEscalationsPerTick', 'max_escalations_per_tick', DEFAULT_SUPERVISOR_SETTINGS.maxEscalationsPerTick), DEFAULT_SUPERVISOR_SETTINGS.maxEscalationsPerTick, 1, 100),
+    requireContactBeforeStart: flag(read('requireContactBeforeStart', 'require_contact_before_start', DEFAULT_SUPERVISOR_SETTINGS.requireContactBeforeStart), DEFAULT_SUPERVISOR_SETTINGS.requireContactBeforeStart),
   };
+}
+
+/**
+ * IMPORTA UNA SOLA VEZ la política del motor antiguo (5 min / 30 min).
+ *
+ * No copia destinatarios ni plantillas: eso ya vive en el supervisor. Solo los
+ * minutos, que es lo que el negocio tenía configurado. La marca de migración va
+ * en su PROPIO documento para que guardar cualquier otro ajuste no la borre (si
+ * se borrara, la política antigua se volvería a imponer en cada guardado).
+ */
+async function importLegacyControlPolicy(ctx, settings) {
+  const marca = await ctx.settings.read(LEGACY_IMPORT_KEY).catch(() => null);
+  if (marca?.value?.importedAt) return settings;
+  const doc = await ctx.settings.read(LEGACY_CONTROL_KEY).catch(() => null);
+  const legacy = doc?.value;
+  if (!legacy || typeof legacy !== 'object') return settings;
+  const reminder = Number(legacy.deliveryReminderMinutes ?? legacy.delivery_reminder_minutes);
+  const escalation = Number(legacy.deliveryAdminEscalationMinutes ?? legacy.delivery_admin_escalation_minutes);
+  const next = { ...settings };
+  /*
+   * SOLO SE IMPORTA UNA POLÍTICA REAL Y ACTIVA.
+   *
+   * Un valor enorme (p. ej. 100000) era la forma de APAGAR el motor antiguo: no
+   * es una política, es un interruptor. Importarlo dejaría al supervisor mudo
+   * durante un mes. Se aceptan únicamente valores operativos.
+   */
+  if (Number.isFinite(reminder) && reminder > 0 && reminder <= 60) {
+    next.firstReminderMinutes = bounded(reminder, settings.firstReminderMinutes, 1, 24 * 60);
+  }
+  if (Number.isFinite(escalation) && escalation >= 15 && escalation <= 240) {
+    next.escalateAfterMinutes = bounded(escalation, settings.escalateAfterMinutes, 15, 30 * 24 * 60);
+  }
+  if (next.firstReminderMinutes === settings.firstReminderMinutes && next.escalateAfterMinutes === settings.escalateAfterMinutes) {
+    return settings;
+  }
+  const importedAt = ctx.clock().toISOString();
+  await ctx.settings.write(SUPERVISOR_SETTINGS_KEY, next).catch(() => null);
+  await ctx.settings
+    .write(LEGACY_IMPORT_KEY, {
+      importedAt,
+      firstReminderMinutes: next.firstReminderMinutes,
+      escalateAfterMinutes: next.escalateAfterMinutes,
+    })
+    .catch(() => null);
+  return next;
 }
 
 /** Lee los ajustes guardados (con los valores de fábrica de respaldo). */
 export async function supervisorSettings(ctx) {
   const doc = await ctx.settings.read(SUPERVISOR_SETTINGS_KEY).catch(() => null);
-  const settings = normalizeSupervisorSettings(doc?.value);
+  /* El motor antiguo ya no corre: su política se importa aquí, una sola vez. */
+  const settings = await importLegacyControlPolicy(ctx, normalizeSupervisorSettings(doc?.value));
   /*
    * MIGRACIÓN DE INSTALACIONES ANTIGUAS: antes de `activatedAt`, algunas
    * instalaciones ya tenían el supervisor habilitado pero ninguna fecha de
@@ -258,6 +344,25 @@ export function responsibleOf(order) {
 }
 
 /**
+ * TELÉFONO DE CADA REPARTIDOR DEL CRM, por id de usuario.
+ *
+ * El teléfono NO vive en el pedido (el repartidor interno es un usuario): se
+ * resuelve una vez por pasada y se pasa a `supervisionOf` para que el estado
+ * diga si a esa entrega **se le puede escribir o no**. Antes el dato solo se
+ * buscaba en el momento de enviar, así que una entrega asignada a alguien sin
+ * número se veía como «al día» y nunca se escalaba.
+ */
+export function courierPhonesByUser(users = []) {
+  const map = new Map();
+  for (const user of Array.isArray(users) ? users : []) {
+    if (!user?.id || user.active === false) continue;
+    const phone = toE164(user.personal_phone) ?? toE164(user.fleet_phone);
+    if (phone) map.set(String(user.id), phone);
+  }
+  return map;
+}
+
+/**
  * Primera fecha válida de la lista.
  *
  * OJO (corregido en la Etapa E): acepta también **números**. Antes solo pasaba
@@ -329,6 +434,14 @@ export function supervisionOf(order, options = {}) {
   const settings = normalizeSupervisorSettings(options.settings ?? {});
   const now = Number.isFinite(options.now) ? options.now : Date.now();
   const pendingPickups = Math.max(0, Number(options.pendingPickups ?? 0) || 0);
+  const phoneByUser = options.phoneByUser instanceof Map ? options.phoneByUser : null;
+  /** Teléfono con el que se le puede escribir a este responsable (o null). */
+  const phoneOf = (responsible) => {
+    if (!responsible) return null;
+    if (responsible.type === 'external') return responsible.phone ?? null;
+    if (!phoneByUser) return null;
+    return phoneByUser.get(String(responsible.userId ?? '')) ?? null;
+  };
   const status = String(order?.status ?? '');
   if (!order || CLOSED_STATUSES.includes(status)) {
     return { stage: SUPERVISOR_STAGES.CLOSED, severity: 'ok', nextAction: STAGE_NEXT_ACTION.closed, closed: true, responsible: null };
@@ -336,11 +449,13 @@ export function supervisionOf(order, options = {}) {
   const supervisor = order.delivery?.supervisor ?? {};
   const postponedUntilMs = firstTime(supervisor.postponed_until);
   if (postponedUntilMs && postponedUntilMs > now) {
+    const postponedResponsible = responsibleOf(order);
     return {
       stage: SUPERVISOR_STAGES.POSTPONED,
       severity: 'ok',
       nextAction: STAGE_NEXT_ACTION.postponed,
-      responsible: responsibleOf(order),
+      responsible: postponedResponsible,
+      phone: phoneOf(postponedResponsible),
       postponedUntil: new Date(postponedUntilMs).toISOString(),
       postponeReason: clean(supervisor.postpone_reason, 200),
       anchorAt: postponedUntilMs,
@@ -350,12 +465,17 @@ export function supervisionOf(order, options = {}) {
   }
 
   const responsible = responsibleOf(order);
+  const phone = phoneOf(responsible);
+  /* Se sabe si hay teléfono cuando es externo (viene en el pedido) o cuando
+     quien llama pasó el mapa de teléfonos del equipo. */
+  const phoneKnown = Boolean(responsible) && (responsible.type === 'external' || Boolean(phoneByUser));
   if (!responsible) {
     return {
       stage: SUPERVISOR_STAGES.NO_RESPONSIBLE,
       severity: 'critical',
       nextAction: STAGE_NEXT_ACTION.no_responsible,
       responsible: null,
+      phone: null,
       anchorAt: firstTime(order.created_at),
       elapsedMinutes: Math.max(0, Math.round((now - firstTime(order.created_at)) / 60000)),
       pendingPickups,
@@ -409,6 +529,17 @@ export function supervisionOf(order, options = {}) {
     severity,
     nextAction: STAGE_NEXT_ACTION[stage] ?? STAGE_NEXT_ACTION.pending_start,
     responsible,
+    /*
+     * SIN TELÉFONO NO SE PUEDE AVISAR. Se dice aquí, en el estado, para que la
+     * pasada lo escale con ese motivo exacto y el chat pueda explicarlo. No
+     * cambia la etapa: cambiarla rompería la máquina de estados del pedido.
+     *
+     * `hasPhone: null` = no se sabe (quien llama no pasó los teléfonos de los
+     * usuarios). Nunca se afirma «no tiene teléfono» sin haberlo comprobado.
+     */
+    phone,
+    hasPhone: phoneKnown ? Boolean(phone) : null,
+    missingPhone: phoneKnown ? !phone : false,
     anchorAt: anchorAt || now,
     elapsedMinutes,
     pendingPickups,
@@ -1008,6 +1139,8 @@ export async function supervisorTick(ctx, deps = {}) {
   const now = ctx.clock().getTime();
   const timeZone = deps.timeZone ?? DEFAULT_TIME_ZONE;
   const users = deps.users ?? (await ctx.users.listUsers().catch(() => []));
+  /* Una sola lectura de teléfonos por pasada: la usan el estado y el envío. */
+  const phoneByUser = courierPhonesByUser(users);
   const todasLasFilas = await ctx.store.listAdmin({ limit: 5000 });
   const rows = todasLasFilas.filter((row) => row.type === 'order_intent');
   /*
@@ -1027,6 +1160,7 @@ export async function supervisorTick(ctx, deps = {}) {
   let deferred = 0;
   let postponedDue = 0;
   let limitados = 0;
+  let sinTelefono = 0;
   const excluidos = {};
 
   for (const item of rows) {
@@ -1045,7 +1179,7 @@ export async function supervisorTick(ctx, deps = {}) {
       excluidos[elegibilidad.reason] = (excluidos[elegibilidad.reason] ?? 0) + 1;
       continue;
     }
-    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0 });
+    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0, phoneByUser });
     if (state.stage === SUPERVISOR_STAGES.CLOSED) continue;
     const history = byOrder.get(item.id) ?? [];
 
@@ -1089,6 +1223,36 @@ export async function supervisorTick(ctx, deps = {}) {
     const lastReplyAt = firstTime(order.delivery?.supervisor?.last_reply_at);
     if (lastReplyAt && now - lastReplyAt < settings.followUpMinutes * 60000) {
       paused += 1;
+      continue;
+    }
+
+    /*
+     * REPARTIDOR SIN TELÉFONO: NO ES UN AVISO, ES UN BLOQUEO.
+     *
+     * Antes el recordatorio quedaba en `skipped` (o solo en la campana del
+     * panel) y el supervisor se quedaba esperando a que alguien lo notara. A la
+     * entrega no se le puede escribir, así que se escala a administración UNA
+     * vez por etapa con este motivo exacto, para que registren o confirmen el
+     * número. No se inventa ningún teléfono ni se escribe a nadie más.
+     */
+    if (state.missingPhone) {
+      if (escalations >= settings.maxEscalationsPerTick) {
+        limitados += 1;
+        continue;
+      }
+      /*
+       * El escalado es el que decide si esto es la PRIMERA vez de esta etapa
+       * (devuelve 1 una sola vez). Solo en esa primera vez se deja además el
+       * aviso interno al repartidor: si tiene cuenta en el CRM, la campana le
+       * llega aunque no haya teléfono. Así no se repite en cada pasada.
+       */
+      const claimed = await escalate(ctx, deps, { item, order, state, settings, reason: 'courier_without_phone' });
+      if (claimed) {
+        sinTelefono += 1;
+        const status = await sendReminder(ctx, deps, { item, order, state, settings, attempt: remindersOf(history, state.stage).length + 1 });
+        if (status === 'notified') reminders += 1;
+      }
+      escalations += claimed;
       continue;
     }
 
@@ -1176,7 +1340,7 @@ export async function supervisorTick(ctx, deps = {}) {
    * único documento que se sobrescribe (no engorda la bitácora) y es lo que el
    * panel enseña como «última ejecución»: dato real del backend, no un reloj.
    */
-  const resultado = { enabled: true, reminders, escalations, paused, deferred, postponedDue, daily, limited: limitados, excluded: excluidos, capped };
+  const resultado = { enabled: true, reminders, escalations, paused, deferred, postponedDue, daily, limited: limitados, withoutPhone: sinTelefono, excluded: excluidos, capped };
   await ctx.settings
     .write(SUPERVISOR_HEARTBEAT_KEY, { at: new Date(now).toISOString(), ...resultado })
     .catch(() => null);
@@ -1195,6 +1359,18 @@ const rowForPanel = (item, order, state, attempts, settings) => ({
   responsible: state.responsible
     ? { type: state.responsible.type, name: state.responsible.name, user_id: state.responsible.userId ?? null }
     : null,
+  /* Sin teléfono no se le puede escribir: el panel lo dice en la fila. */
+  has_phone: state.hasPhone ?? null,
+  phone_missing: state.missingPhone === true,
+  /*
+   * LO QUE PIDIÓ EL REPARTIDOR, ya resuelto: si acusó recibo, cuándo escribió
+   * por última vez y si reportó la entrega. Es lo que permite responder «¿el
+   * repartidor confirmó?» sin adivinar.
+   */
+  acknowledged_at: order.delivery?.supervisor?.acknowledged_at ?? null,
+  last_reply_at: order.delivery?.supervisor?.last_reply_at ?? null,
+  delivered_reported_at:
+    order.delivery?.supervisor?.delivered_reported_at ?? order.delivery?.external?.delivered_reported_at ?? null,
   stage: state.stage,
   severity: state.severity,
   next_action: state.nextAction,
@@ -1220,6 +1396,7 @@ export async function supervisorSnapshot(ctx, options = {}) {
   const events = await ctx.db.list(SUPERVISOR_EVENTS, { limit: 5000 }).catch(() => []);
   const byOrder = groupEvents(events);
   const pickups = options.pickups ?? (await pendingPickupsByOrder(ctx));
+  const phoneByUser = courierPhonesByUser(users);
   const dayStart = now - 24 * 60 * 60 * 1000;
 
   const buckets = {
@@ -1234,10 +1411,13 @@ export async function supervisorSnapshot(ctx, options = {}) {
   };
 
   const excluded = {};
+  /* Pedidos a los que NO se les puede escribir porque el repartidor no tiene número. */
+  let withoutPhone = 0;
+  const withoutPhoneSample = [];
   for (const item of rows) {
     const order = parseOrderRow(item);
     if (!order) continue;
-    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0 });
+    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0, phoneByUser });
     const history = byOrder.get(item.id) ?? [];
     const attempts = remindersOf(history, state.stage).length;
     const row = rowForPanel(item, order, state, attempts, settings);
@@ -1276,6 +1456,12 @@ export async function supervisorSnapshot(ctx, options = {}) {
     if (state.stage === SUPERVISOR_STAGES.ISSUE || state.stage === SUPERVISOR_STAGES.NO_RESPONSIBLE) buckets.incidencias.push(row);
     if (state.severity === 'late' && state.stage !== SUPERVISOR_STAGES.POSTPONED) buckets.atrasados.push(row);
     if (attempts >= settings.maxAttempts) buckets.sin_respuesta.push(row);
+    if (state.missingPhone) {
+      withoutPhone += 1;
+      if (withoutPhoneSample.length < 20) {
+        withoutPhoneSample.push({ order_id: item.id, order_number: row.order_number, responsible: row.responsible?.name ?? null, stage: row.stage });
+      }
+    }
   }
 
   const byUrgency = (a, b) => b.elapsed_minutes - a.elapsed_minutes;
@@ -1322,7 +1508,9 @@ export async function supervisorSnapshot(ctx, options = {}) {
       pospuestos: count(buckets.pospuestos),
       incidencias: count(buckets.incidencias),
       confirmadas: count(buckets.confirmadas),
+      without_phone: withoutPhone,
     },
+    without_phone: { total: withoutPhone, sample: withoutPhoneSample },
     buckets,
     upcoming,
     activity: events.slice(0, 25).map((row) => ({
@@ -1951,19 +2139,42 @@ export async function supervisorDiagnostics(ctx, deps = {}) {
 
   const filas = (await ctx.store.listAdmin({ limit: 5000 })).filter((row) => row.type === 'order_intent');
   const pickups = deps.pickups ?? (await pendingPickupsByOrder(ctx));
+  const phoneByUser = courierPhonesByUser(users);
   let abiertos = 0;
   let internos = 0;
   let externos = 0;
   let sinTelefono = 0;
+  let atrasados = 0;
   const pedidosSinTelefono = [];
+  /** Entregas abiertas, acotadas: es lo que el chat del supervisor puede contar. */
+  const pedidos = [];
   for (const item of filas) {
     if (abiertos >= 300) break;
     const order = parseOrderRow(item);
     if (!order) continue;
     if (!supervisionEligibility(order, settings, item.id).eligible) continue;
-    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0 });
+    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0, phoneByUser });
     if (state.stage === SUPERVISOR_STAGES.CLOSED || state.stage === SUPERVISOR_STAGES.POSTPONED) continue;
     abiertos += 1;
+    if (state.severity === 'late') atrasados += 1;
+    if (pedidos.length < 15) {
+      pedidos.push({
+        order_id: item.id,
+        order_number: orderNumberOf(order, item),
+        stage: state.stage,
+        next_action: state.nextAction,
+        elapsed_minutes: state.elapsedMinutes ?? 0,
+        severity: state.severity ?? 'ok',
+        responsible: state.responsible?.name ?? null,
+        responsible_type: state.responsible?.type ?? null,
+        has_phone: state.hasPhone ?? null,
+        acknowledged: Boolean(order.delivery?.supervisor?.acknowledged_at),
+        delivered_reported: Boolean(
+          order.delivery?.supervisor?.delivered_reported_at ?? order.delivery?.external?.delivered_reported_at,
+        ),
+        last_reply_at: order.delivery?.supervisor?.last_reply_at ?? null,
+      });
+    }
     if (state.responsible?.type === 'external') {
       externos += 1;
       continue;
@@ -2072,7 +2283,7 @@ export async function supervisorDiagnostics(ctx, deps = {}) {
       escalation: { name: SUPERVISOR_ESCALATION_TEMPLATE, ok: Boolean(plantillaEscalado?.ok), status: plantillaEscalado?.template?.status ?? null, reason: plantillaEscalado?.reason ?? null },
     },
     couriers: repartidores,
-    orders: { open: abiertos, internal: internos, external: externos, without_phone: sinTelefono, without_phone_sample: pedidosSinTelefono },
+    orders: { open: abiertos, internal: internos, external: externos, without_phone: sinTelefono, without_phone_sample: pedidosSinTelefono, late: atrasados, rows: pedidos },
   };
 }
 
@@ -2138,9 +2349,47 @@ export function supervisorAnswer(diagnostics, question = '') {
 
   if (hay('pedido', 'atrasad', 'abiert', 'quien', 'cuant')) {
     const o = d.orders ?? {};
+    const filas = (o.rows ?? []).filter((row) => {
+      if (hay('atrasad', 'tarde', 'demorad')) return row.severity === 'late';
+      if (hay('incidencia', 'problema')) return row.stage === 'issue' || row.stage === 'no_responsible';
+      if (hay('acuse', 'confirm')) return !row.acknowledged;
+      return true;
+    });
+    const detalle = filas
+      .slice(0, 8)
+      .map(
+        (row) =>
+          `· ${row.order_number}: ${row.next_action} · ${row.elapsed_minutes} min · ${row.responsible ?? 'sin repartidor'}${row.has_phone === false ? ' (SIN teléfono)' : ''}${row.acknowledged ? ' · acusó recibo' : ''}`,
+      )
+      .join('\n');
+    const titulo = hay('atrasad', 'tarde', 'demorad')
+      ? `Tengo ${o.late ?? 0} entrega(s) atrasada(s)`
+      : hay('acuse', 'confirm')
+        ? 'Estas entregas no tienen acuse del repartidor'
+        : hay('incidencia', 'problema')
+          ? 'Estas entregas tienen una incidencia'
+          : `Tengo ${o.open ?? 0} entrega(s) abierta(s): ${o.internal ?? 0} con repartidor del CRM y ${o.external ?? 0} con contacto externo`;
     return {
       topic: 'orders',
-      answer: `Tengo ${o.open ?? 0} pedido(s) abierto(s): ${o.internal ?? 0} con repartidor del CRM y ${o.external ?? 0} con contacto externo.${o.without_phone ? ` ${o.without_phone} de ellos son de un repartidor sin teléfono, así que a esos no les puedo escribir.` : ''}`,
+      answer: `${titulo}.${o.without_phone ? ` ${o.without_phone} de ellas son de un repartidor sin teléfono, así que a esas no se les puede escribir.` : ''}${detalle ? `\n${detalle}` : '\nNo hay ninguna en ese estado ahora mismo.'}`,
+    };
+  }
+
+  if (hay('quien tiene', 'quien lleva', 'asignad')) {
+    const filas = (d.orders?.rows ?? []).filter((row) => row.responsible);
+    return {
+      topic: 'orders',
+      answer: filas.length
+        ? `Ahora mismo:\n${filas.slice(0, 8).map((row) => `· ${row.order_number} lo lleva ${row.responsible}${row.has_phone === false ? ' (sin teléfono registrado)' : ''}`).join('\n')}`
+        : 'No tengo ninguna entrega abierta con repartidor asignado.',
+    };
+  }
+
+  if (hay('aprob', 'aprobar', 'autoriz')) {
+    return {
+      topic: 'approvals',
+      answer:
+        'Yo no pido aprobaciones: mi trabajo es avisar, recordar y escalar. Lo que necesite decisión (cerrar un ticket, cambiar un pedido) queda en Aprobaciones para que lo decida una persona. Nunca cierro una entrega por mi cuenta.',
     };
   }
 

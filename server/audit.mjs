@@ -14,6 +14,16 @@ import { randomBytes } from 'node:crypto';
 export const AUDIT_ACTIONS = Object.freeze([
   'conversation.resolved',
   'conversation.reopened',
+  /*
+   * ARCHIVAR Y DESARCHIVAR TAMBIÉN SE AUDITAN.
+   *
+   * Faltaban en esta lista blanca, y `record()` ignora en silencio las acciones
+   * desconocidas: el panel creía dejar rastro de cada archivado y no guardaba
+   * NADA. Con el contador de archivados fuera de la bandeja, este rastro es la
+   * única forma de saber quién sacó un chat de la lista de trabajo.
+   */
+  'conversation.archived',
+  'conversation.unarchived',
   'order.created',
   'order.updated',
   'order.status_changed',
@@ -31,12 +41,26 @@ export const AUDIT_ACTIONS = Object.freeze([
   'delivery.admin_delivery_notification_sent',
   'delivery.admin_delivery_notification_failed',
   'delivery.issue_reported',
+  /*
+   * FLUJO ÚNICO DE ENTREGA: aceptar, intentar contactar, resolver una incidencia
+   * y cerrar sin cobro son hechos operativos con consecuencias (bloquean o
+   * desbloquean la entrega, dejan dinero pendiente). Si no están en esta lista,
+   * `record()` los descarta EN SILENCIO y el rastro desaparece.
+   */
+  'delivery.accepted',
+  'delivery.contact_attempt',
+  'delivery.issue_resolved',
+  'delivery.payment_not_received',
+  'delivery.started',
   'order.cancelled',
   /*
    * DINERO DEL PEDIDO: cobrar al cliente y rendir el efectivo del repartidor son
    * actos separados de la entrega y quedan en la traza con su importe.
    */
   'order.payment_registered',  'order.courier_handover_registered',
+  /* Una transferencia declarada por el repartidor necesita firma de caja. */
+  'order.payment_verified',
+  'order.payment_verification_rejected',
   /* Operaciones offline que una persona da por resueltas tras revisarlas. */
   'offline_operation_resolved',
   'sale.cancelled',
@@ -48,6 +72,13 @@ export const AUDIT_ACTIONS = Object.freeze([
   'message.sent',
   'message.failed',
   'message.blocked',
+  /*
+   * CENTRO IA: cada vez que se le pregunta a un agente quedan el origen de la
+   * respuesta (modelo o registros), el modelo, los tokens y el tiempo. Sin esto
+   * no hay forma de auditar el gasto de IA ni de distinguir una respuesta
+   * generada de un resumen de datos.
+   */
+  'ops.agent_asked',
   'message.cancelled',
   // Recuperación EXCEPCIONAL de un envío ambiguo (SEND_UNKNOWN): quién lo revisó
   // y qué decidió. No es una acción normal del vendedor y queda registrado.

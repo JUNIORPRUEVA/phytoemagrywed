@@ -627,8 +627,27 @@
           if(!Number.isFinite(Number(body.lat))||!Number.isFinite(Number(body.lng))||Math.abs(body.lat)>90||Math.abs(body.lng)>180)return localError('La ubicación no es válida.');
           session.last_position={latitude:Number(body.lat),longitude:Number(body.lng),accuracy:body.accuracy,heading:body.heading,speed:body.speed,recorded_at:new Date(body.timestamp||Date.now()).toISOString(),stale:false};
         }else if(path.endsWith('/stop')||path.endsWith('/complete')){
-          session.status=path.endsWith('/complete')?'COMPLETED':'CANCELLED';session.ended_at=now;
-          if(session.status==='COMPLETED'&&order.status!=='entregado'){const error=await consumeStock(order.items);if(error)return localError(error);item.status=order.status='entregado';}
+          /*
+           * SIN RED NO SE DA NADA POR ENTREGADO.
+           *
+           * Antes, «finalizar» sin conexión ponía el pedido en «entregado» en el
+           * teléfono (y consumía stock de la copia local) antes de que el servidor
+           * lo confirmara: si la sincronización fallaba, el repartidor veía
+           * entregado un pedido que seguía abierto y el inventario no cuadraba.
+           * Ahora la finalización queda PENDIENTE DE SINCRONIZACIÓN, se muestra
+           * así y el estado del pedido NO cambia hasta que el servidor responda.
+           *
+           * Detener el GPS SÍ se aplica en local (no hay dinero ni venta de por
+           * medio y el servidor hace exactamente lo mismo).
+           *
+           * Tampoco se encola ningún cobro: el dinero no se anota sin conexión.
+           */
+          if(path.endsWith('/stop')){
+            session.status='CANCELLED';session.ended_at=now;
+          }else{
+            if(body&&body.payment)return localError('El cobro necesita conexión: sin red no se registra dinero.',503);
+            session.pending_status='completed';session.ended_at=now;
+          }
         }else return localError('Esta operación de reparto requiere conexión.',503);
       }
       session.pending=true;session.updated_at=now;item.pending=true;item.order_json=JSON.stringify(order);

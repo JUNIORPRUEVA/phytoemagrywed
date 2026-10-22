@@ -434,3 +434,38 @@ la barra; si no aparece, **Ajustes → Buscar actualización** (o Ctrl+F5 en esc
 
 Capturas: `docs/capturas/menu-iconos-escritorio.png`, `menu-iconos-movil-oscuro.png` y
 `menu-iconos-sin-red.png` (con las peticiones de los PNG bloqueadas).
+
+## 16.4 El botón del menú en móvil (mismo día)
+
+La cabecera móvil (`.dashboard-head__menu`, la de la pantalla HOY) llevaba **solo** las tres barras
+CSS, pero la regla `.dashboard-head__menu:not([aria-expanded='true']) .burger { display: none }`
+las ocultaba esperando la imagen del menú… que no estaba. Resultado: un **cuadro vacío** en la
+esquina. Ahora ese botón lleva también `menu.png` (22×22), igual que el botón flotante: cerrado se
+ve el icono, y al abrir vuelven las barras (aspa). Comprobado en navegador: escritorio 54×54 con
+imagen 22×22, móvil 42×42 con imagen 22×22, y el cajón con sus 26 entradas y **ningún** hueco vacío.
+El botón del menú de WhatsApp (`.wa__menu`) se queda con sus barras: si se le añade la imagen
+saldrían los dos iconos a la vez.
+
+Capturas: `docs/capturas/menu-boton-escritorio.png`, `menu-boton-movil.png` y `menu-cajon-movil.png`.
+
+---
+
+# 17. Facturación: la X flotante de cerrar (2026-10-22)
+
+En la pantalla de Facturación había **dos** botones con forma de X y no eran lo mismo:
+
+| Botón | Dónde | Qué hacía | Qué se hizo |
+| --- | --- | --- | --- |
+| `.pos-swipe-close` («Cerrar facturación») | Flotante, fijo arriba a la derecha (`position:fixed`), justo encima del nombre del ticket | Salía de Facturación y volvía a la pestaña anterior | **Eliminado** (lo pidió el negocio: para salir está el «←» del appbar) |
+| `[data-pos-remove-client]` («Quitar cliente») | En la fila del cliente | Quita el cliente de la venta, **no** cierra la pantalla | Se quedó como estaba (mi primer cambio lo movió sin que se hubiera pedido y se revirtió) |
+
+El botón flotante vivía en `app.js`, en la cabecera móvil de `state.tab === 'catalogo'`, con
+`position:fixed; top:66px; right:12px`: por eso parecía «flotar sobre el nombre del ticket».
+
+Comprobado en navegador real: ya no existe `.pos-swipe-close` ni `[data-billing-close]`; el chip del
+ticket sigue mostrando el nombre del cliente; el «←» del appbar sigue sacando de Facturación
+(`hoy → catalogo → hoy`); y «Quitar cliente» sigue en su sitio. Pruebas: `pos-panel` y `store-panel`
+**50/50**, y `panel-centro-ia-uat` en verde (58/58 en el lote).
+
+Publicado con `app.js?v=premium-37` y service worker `crm-v259-facturacion-sin-x-20261022`.
+Captura: `docs/capturas/facturacion-sin-x-flotante.png`.

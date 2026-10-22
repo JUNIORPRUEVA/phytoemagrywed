@@ -429,6 +429,7 @@ const whatsapp = {
 
 // ------------------------------------------------------------ servidor + API
 const app = await startCrmServer({
+  uatMode: true,
   port: PUERTO,
   host: '127.0.0.1',
   dataFile: DB_FILE,

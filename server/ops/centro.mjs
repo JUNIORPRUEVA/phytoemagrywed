@@ -67,7 +67,24 @@ const KNOWN_AGENTS = [
       role: 'Seguimiento de entregas',
       responsibilities: ['Vigilar entregas sin confirmar', 'Pedir acuse al repartidor'],
       ticketTypes: ['delivery'],
-      tools: ['ticket.get_context', 'ticket.post_message', 'ticket.request_ack', 'agent.request_help'],
+      /*
+       * HERRAMIENTAS DEL SUPERVISOR.
+       *
+       * Además de las de ticket, lleva las dos LECTURAS que necesita para hablar
+       * con datos: el estado del pedido y el de la entrega (etapa, minutos y si
+       * el repartidor tiene teléfono). Todas son `read` o dejan rastro en el
+       * hilo; ninguna puede cerrar un pedido ni escribir a un cliente.
+       */
+      tools: [
+        'ticket.get_context',
+        'order.get_status',
+        'delivery.get_status',
+        'ticket.post_message',
+        'ticket.request_ack',
+        'ticket.escalate',
+        'ticket.complete_work',
+        'agent.request_help',
+      ],
       config: { followUpMinutes: 20 },
     },
   },

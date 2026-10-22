@@ -462,14 +462,14 @@ describe('la fila de la lista', () => {
     expect(stamps.getAttribute('title')).toMatch(/\d{1,2}:\d{2}/);
   });
 
-  it('muestra «Ayer» cuando el último mensaje fue ayer (sin la hora)', () => {
+  it('muestra «Ayer» CON la hora cuando el último mensaje fue ayer', () => {
     const row = $(`[data-conv="${ids.luis}"]`);
-    expect(row.querySelector('.conv__when').textContent).toBe('Ayer');
+    expect(row.querySelector('.conv__when').textContent).toMatch(/^Ayer · \d{1,2}:\d{2} (AM|PM)$/);
   });
 
-  it('muestra fecha corta para conversaciones antiguas', () => {
+  it('muestra día y mes con la hora para conversaciones antiguas', () => {
     const row = $(`[data-conv="${ids.maria}"]`);
-    expect(row.querySelector('.conv__when').textContent).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(row.querySelector('.conv__when').textContent).toMatch(/^\d{1,2} [a-z]{3,4} · \d{1,2}:\d{2} (AM|PM)$/i);
   });
 
   it('muestra la imagen del cliente como último mensaje, no un JSON ni coordenadas', () => {
@@ -478,12 +478,15 @@ describe('la fila de la lista', () => {
     expect(row.querySelector('.conv__kind')).not.toBeNull();
   });
 
-  it('la línea de estado es una etiqueta pequeña (no una frase con el día de la semana)', () => {
+  it('la segunda línea lleva el mensaje a la izquierda y responsable · etapa a la derecha', () => {
     const row = $(`[data-conv="${ids.luis}"]`);
-    const tags = [...row.querySelectorAll('.conv__tag')].map((tag) => tag.textContent);
-    expect(tags).toContain('Prospecto');
-    expect(row.querySelector('.conv__assign--empty').textContent).toBe('Sin asignar');
-    for (const tag of tags) expect(tag).not.toMatch(/,/);
+    // La etapa es texto pequeño y gris (`.conv__state`), dentro del bloque derecho.
+    expect(row.querySelector('.conv__meta .conv__state').textContent).toBe('Prospecto');
+    expect(row.querySelector('.conv__meta .conv__assign--empty').textContent).toBe('Sin asignar');
+    // Ya NO existe una tercera línea de metadatos.
+    expect(row.querySelector('.conv__line--meta')).toBeNull();
+    // Los avisos que exigen acción sí llevan píldora, y sin comas (una idea por etiqueta).
+    for (const tag of [...row.querySelectorAll('.conv__tag')]) expect(tag.textContent).not.toMatch(/,/);
   });
 
   it('cada fila termina en un «⋯» (y ya no hay un botón «Sel» aparte)', () => {
@@ -514,7 +517,15 @@ describe('el menú «⋯» de una conversación', () => {
     expect($('#sheet-body [data-customer-stage-menu]').dataset.customerStageMenu).toBe(customerId);
     expect($('#sheet-body [data-customer-tags]').dataset.customerTags).toBe(customerId);
     click('#sheet-body [data-customer-stage-menu]');
-    expect($$('#sheet-body [data-customer-stage]').length).toBeGreaterThanOrEqual(4);
+    /*
+     * Solo se ofrecen las etapas que son una DECISIÓN (Prospecto, Interesado,
+     * Inactivo). Cliente y Recompra las calcula el CRM con los pedidos
+     * entregados, así que no aparecen como botones.
+     */
+    const opciones = $$('#sheet-body [data-customer-stage]').map((button) => button.dataset.stage);
+    expect(opciones).toEqual(['PROSPECT', 'INTERESTED', 'INACTIVE']);
+    expect(opciones).not.toContain('CUSTOMER');
+    expect(opciones).not.toContain('REPEAT_CUSTOMER');
     expect($$('#sheet-body [data-customer-stage]').every((button) => button.dataset.customerStage === customerId)).toBe(true);
   });
 
@@ -586,7 +597,12 @@ describe('selección de varias conversaciones (el gesto de WhatsApp)', () => {
     expect($('#wa-sel [data-conv-act="delete"]')).not.toBeNull();
     expect($('#wa-sel .wa-actions__label').textContent).toBeTruthy();
     expect($$('#wa-sel .wa-bulk__item .wa-bulk__icon svg').length).toBe($$('#wa-sel .wa-bulk__item').length);
-    expect($(`[data-conv="${ids.luis}"] .conv__avatar svg`)).not.toBeNull();
+    /*
+     * Sin foto real NO hay avatar: la marca de "elegida" es un visto pequeño al
+     * final de la tercera línea, no un círculo con iniciales.
+     */
+    expect($(`[data-conv="${ids.luis}"] .conv__avatar`)).toBeNull();
+    expect($(`[data-conv="${ids.luis}"] .conv__picked svg`)).not.toBeNull();
   });
 
   it('cerrar el panel NO borra la selección y la píldora «Acciones» lo reabre', async () => {
@@ -839,7 +855,7 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
     expect($('#wa-composer').textContent).not.toContain('Esperando respuesta');
   }, 12000);
 
-  it('con ventana expirada muestra CLOSED_WINDOW, no NEW_CONTACT', async () => {
+  it('con ventana expirada NO se anuncia la ventana: el compositor pasa a «Plantilla»', async () => {
     const phone = '18095550777';
     NOMBRES[phone] = 'Cliente UX Expirado';
     await inbound(phone, 'wamid.UX-OLD-1', {
@@ -854,9 +870,17 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
       9000,
     );
     click(row);
-    await waitFor(() => $('#wa-composer [data-wa-contact-state="CLOSED_WINDOW"]'), 'estado ventana cerrada', 9000);
-    expect($('#wa-composer').textContent).toContain('Ventana de atención finalizada');
-    expect($('#wa-composer').textContent).toContain('La ventana de atención de 24 horas terminó');
+    /*
+     * Ya no hay tarjeta de «Ventana de atención finalizada»: el estado se ve solo
+     * en el compositor (modo Plantilla + su placeholder). Quien atiende sabe
+     * cuándo se cerró la ventana sin que se lo repitan en el hilo.
+     */
+    await waitFor(() => $('#wa-text'), 'el compositor cerrado', 9000);
+    expect($('#wa-composer [data-wa-contact-state="CLOSED_WINDOW"]')).toBeNull();
+    expect($('#wa-composer').textContent).not.toContain('Ventana de atención finalizada');
+    expect($('#wa-composer').textContent).not.toContain('La ventana de atención de 24 horas terminó');
+    expect($('#wa-open-template').textContent).toContain('Plantilla');
+    expect($('#wa-text').getAttribute('placeholder')).toContain('Conversación cerrada. Escribe aquí para abrirla');
   }, 12000);
 
   it('template fallido renderiza tarjeta amigable y mapea #132000', async () => {
@@ -898,7 +922,7 @@ describe('escribir el mensaje de un chat nuevo (fuera de la ventana de 24 h)', (
 
     const area = await waitFor(() => $('#wa-text'), 'el compositor del chat nuevo', 9000);
     expect(area.getAttribute('aria-label')).toBe('Mensaje que se enviará dentro de la plantilla');
-    expect(area.getAttribute('placeholder')).toContain('Escribe lo que quieras decirle');
+    expect(area.getAttribute('placeholder')).toContain('Conversación cerrada. Escribe aquí para abrirla');
     area.value = 'Tu pedido ya salió para tu dirección.';
     area.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 
@@ -1306,22 +1330,28 @@ describe('la lista que se pinta es la nueva', () => {
     expect(app_js).toContain('wa-bulk__item');
   });
 
-  it('la lista tiene la piel de WhatsApp (avatar, dos líneas, contador verde)', () => {
+  it('la lista tiene la piel de WhatsApp (dos líneas, icono de cliente, contador verde)', () => {
     const wa = readFileSync(path.join(ADMIN_DIR, 'wa-lista.css'), 'utf8');
     // La hoja va la última y solo toca la pantalla de chats.
     expect(html).toContain('/admin/wa-lista.css');
     expect(wa).toContain("body[data-tab='whatsapp']");
-    // Medidas de WhatsApp: fila 72, avatar 49, nombre 16,5 y vista previa 14.
-    expect(wa).toContain('min-height: 72px');
-    expect(wa).toContain('width: 49px');
-    expect(wa).toContain('font-size: 16.5px');
-    expect(wa).toContain('font-size: 14px');
-    // El contador de no leídos es verde y redondo, y las etiquetas de gestión no
-    // ocupan línea en la fila.
+    // Fila compacta (56 px), nombre 16, vista previa 13 y foto/avatar pequeño (18).
+    expect(wa).toContain('min-height: 56px');
+    expect(wa).toContain('width: 18px');
+    expect(wa).toContain('width: 17px');
+    expect(wa).toContain('font-size: 16px');
+    expect(wa).toContain('font-size: 13px');
+    // Dos filas × dos columnas: izquierda (icono+nombre / mensaje) y derecha
+    // (hora / responsable · etapa). Las iniciales ya no se pintan.
+    expect(wa).toMatch(/\.conv__body \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/);
+    expect(wa).toMatch(/\.conv__stamps \{[^}]*grid-column: 2/);
+    expect(wa).toMatch(/\.conv__meta \{[^}]*grid-column: 2/);
+    expect(wa).toContain('.conv__icon');
+    expect(wa).toMatch(/\.conv__avatar-initials \{\s*display: none;/);
     expect(wa).toContain('background: var(--wa-accent)');
     expect(wa).toContain('.conv__flags');
-    expect(app_js).toContain('conv__avatar');
-    expect(app_js).toContain('waAvatarTone');
+    expect(app_js).toContain('conv__icon');
+    expect(app_js).toContain('/admin/assets/icons/ui/clientes.png');
   });
 
   it('la barra de selección vive en la cabecera de la lista', () => {

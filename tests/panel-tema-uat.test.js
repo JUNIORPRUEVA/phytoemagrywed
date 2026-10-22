@@ -102,11 +102,13 @@ afterAll(async () => {
 });
 
 describe('el tema se elige y se queda elegido', () => {
-  it('el panel abre el selector en Mi perfil y en Configuración', () => {
+  it('el panel abre el selector en Configuración (el perfil ya no lo repite)', () => {
     click('.drawer__brand');
-    const enPerfil = $$('#view-perfil [data-tema-picker] [data-tema]');
-    expect(enPerfil.map((b) => b.dataset.tema)).toEqual(['light', 'dark', 'auto']);
-    expect($('#view-perfil [data-tema-picker] .tema-card')).toBeTruthy();
+    /*
+     * La apariencia vive en el menú lateral y en Configuración. En «Mi perfil» se
+     * quitó a propósito para dejarlo compacto: no debe volver a aparecer ahí.
+     */
+    expect($('#view-perfil [data-tema-picker]')).toBeNull();
     // Y las MISMAS opciones en Configuración, para quien las busque ahí­.
     const enAjustes = $$('#config-tema [data-tema-picker] [data-tema]');
     expect(enAjustes.map((b) => b.dataset.tema)).toEqual(['light', 'dark', 'auto']);

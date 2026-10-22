@@ -1,7 +1,42 @@
 import { pbkdf2, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { toWaId } from './whatsapp.mjs';
 
 const derive = promisify(pbkdf2);
+
+/**
+ * TELÉFONO DEL REPARTIDOR, VALIDADO EN EL BACKEND.
+ *
+ * Antes se guardaba lo que escribiera la persona (hasta 40 caracteres: «abc»,
+ * «mañana llamo», «123»). Ese texto se normalizaba al enviar, así que un número
+ * incompleto podía convertirse en un destino equivocado y los recordatorios del
+ * supervisor se perdían sin saber por qué.
+ *
+ * Regla única y reutilizable: el número tiene que poder normalizarse (8–15
+ * dígitos) y, si empieza por 1 (RD/US), tiene que tener los 11 dígitos de un
+ * número real. Un valor vacío sigue siendo válido: significa «no guardado».
+ *
+ * @returns {{ok: true, value: string|null} | {ok: false, error: string}}
+ */
+export function validateUserPhone(raw) {
+  if (raw === null || raw === undefined || String(raw).trim() === '') return { ok: true, value: null };
+  const digits = toWaId(raw);
+  if (!digits) {
+    return { ok: false, error: 'Escribe un teléfono con código de área (por ejemplo 809 555 1234).' };
+  }
+  /*
+   * Un número REAL con código de país tiene 11 dígitos o más (RD/US: 1 + 10).
+   * Con menos, o es un número incompleto o le falta el código de país; en los dos
+   * casos el aviso del supervisor se perdería (o iría a otra persona).
+   */
+  if (digits.length < 11) {
+    return { ok: false, error: 'Al número le faltan dígitos. Escríbelo completo, por ejemplo 809 555 1234.' };
+  }
+  if (digits.startsWith('1') && digits.length !== 11) {
+    return { ok: false, error: 'Un número de República Dominicana o Estados Unidos tiene 10 dígitos después del 1 (por ejemplo 809 555 1234).' };
+  }
+  return { ok: true, value: `+${digits}` };
+}
 
 export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR']);
 
@@ -261,8 +296,11 @@ export function createUserService(deps) {
     const firstName = short(input.firstName ?? input.first_name, 80);
     const lastName = short(input.lastName ?? input.last_name, 80);
     const displayName = short(input.displayName ?? input.display_name, 120) ?? ([firstName, lastName].filter(Boolean).join(' ') || username);
-    const personalPhone = short(input.personalPhone ?? input.personal_phone, 40);
-    const fleetPhone = short(input.fleetPhone ?? input.fleet_phone, 40);
+    /* El teléfono se valida ANTES de guardar: es el canal del supervisor. */
+    const personalPhone = validateUserPhone(input.personalPhone ?? input.personal_phone);
+    if (!personalPhone.ok) return { ok: false, error: 'invalid_phone', message: `Teléfono personal: ${personalPhone.error}` };
+    const fleetPhone = validateUserPhone(input.fleetPhone ?? input.fleet_phone);
+    if (!fleetPhone.ok) return { ok: false, error: 'invalid_phone', message: `Teléfono de flota: ${fleetPhone.error}` };
     if (!username || !displayName) return { ok: false, error: 'invalid_user' };
     const password = await hashPassword(input.password);
     if (!password.ok) return { ok: false, error: password.error };
@@ -275,8 +313,8 @@ export function createUserService(deps) {
       username,
       password_hash: password.hash,
       role,
-      personal_phone: personalPhone,
-      fleet_phone: fleetPhone,
+      personal_phone: personalPhone.value,
+      fleet_phone: fleetPhone.value,
       active: input.active === false ? false : true,
       created_at: at,
       updated_at: at,
@@ -321,8 +359,17 @@ export function createUserService(deps) {
       update.display_name = displayName;
     }
     if (patch.role !== undefined) update.role = nextRole;
-    if (patch.personalPhone !== undefined || patch.personal_phone !== undefined) update.personal_phone = short(patch.personalPhone ?? patch.personal_phone, 40);
-    if (patch.fleetPhone !== undefined || patch.fleet_phone !== undefined) update.fleet_phone = short(patch.fleetPhone ?? patch.fleet_phone, 40);
+    if (patch.personalPhone !== undefined || patch.personal_phone !== undefined) {
+      /* Solo se valida (y se escribe) si viene el campo: no se sobrescribe solo. */
+      const personalPhone = validateUserPhone(patch.personalPhone ?? patch.personal_phone);
+      if (!personalPhone.ok) return { ok: false, error: 'invalid_phone', message: `Teléfono personal: ${personalPhone.error}` };
+      update.personal_phone = personalPhone.value;
+    }
+    if (patch.fleetPhone !== undefined || patch.fleet_phone !== undefined) {
+      const fleetPhone = validateUserPhone(patch.fleetPhone ?? patch.fleet_phone);
+      if (!fleetPhone.ok) return { ok: false, error: 'invalid_phone', message: `Teléfono de flota: ${fleetPhone.error}` };
+      update.fleet_phone = fleetPhone.value;
+    }
     if (patch.active !== undefined) update.active = nextActive;
     if (patch.password !== undefined) {
       const password = await hashPassword(patch.password);

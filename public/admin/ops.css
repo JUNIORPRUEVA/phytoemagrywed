@@ -1669,6 +1669,18 @@ body[data-tab='ops'] .centro-tab__count {
   place-items: center;
 }
 
+/*
+ * LAS CUATRO PESTAÑAS DE LA OFICINA, SIN QUE SE ESCONDA NINGUNA.
+ * En un móvil de 390 px «Aprobaciones» quedaba fuera de la tira: la cuarta
+ * pestaña —justo la que exige aprobación humana— solo se veía si se adivinaba
+ * que la fila se podía deslizar. En pantalla estrecha pasan a dos líneas:
+ * nada se esconde y todo se toca sin scroll lateral.
+ */
+@media (max-width: 520px) {
+  body[data-tab='ops'] .centro-tabs { flex-wrap: wrap; overflow-x: visible; row-gap: 0; }
+  body[data-tab='ops'] .centro-tab { padding: 0 8px; font-size: 12px; }
+}
+
 body[data-tab='ops'] .centro-off__body { display: flex; flex-direction: column; gap: 12px; }
 body[data-tab='ops'] .centro-block { display: flex; flex-direction: column; gap: 7px; }
 body[data-tab='ops'] .centro-block__title {
@@ -1915,3 +1927,148 @@ body[data-tab='ops'] .centro-seed span { display: block; margin-top: 2px; font-s
 body[data-tab='ops'] .centro-seed .centro-btn { flex: none; }
 
 :root[data-theme='dark'] body[data-tab='ops'] .centro-ask textarea { background: #111726; border-color: #26303f; color: var(--ops-ink); }
+
+/* ==========================================================================
+   CENTRO IA — detalle compacto y conversación con el compositor abajo
+   ========================================================================== */
+
+/* Cabecera de UNA línea: volver, cara, nombre, especialidad y estado real. */
+body[data-tab='ops'] .centro-off__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 4px 2px 8px;
+  border-bottom: 1px solid var(--ops-line);
+}
+body[data-tab='ops'] .centro-off__head .centro-back { flex: none; margin: 0; padding: 0 4px; min-height: 30px; }
+body[data-tab='ops'] .centro-off__head .centro-ava { flex: none; width: 32px; height: 32px; font-size: 11px; }
+body[data-tab='ops'] .centro-off__id { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+body[data-tab='ops'] .centro-off__name { font-size: 14px; font-weight: 700; color: var(--ops-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body[data-tab='ops'] .centro-off__role { font-size: 11px; font-weight: 500; color: var(--ops-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body[data-tab='ops'] .centro-off__head .centro-state { flex: none; }
+body[data-tab='ops'] .centro-off__actions { flex: none; display: flex; align-items: center; gap: 6px; }
+
+/*
+ * CONVERSACIÓN: la ocupa el detalle entero.
+ * Columna flex: cabecera y pestañas no se mueven, el hilo crece y el compositor
+ * queda abajo. SIN `position: fixed`: no tapa nada, no rompe el armazón y con el
+ * teclado del móvil abierto (100dvh) sigue visible.
+ */
+body[data-tab='ops'] .centro-off--chat {
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px;
+  height: calc(100dvh - 176px);
+  min-height: 380px;
+}
+body[data-tab='ops'] .centro-off__body--chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+body[data-tab='ops'] .centro-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 10px 12px;
+  border: 1px solid var(--ops-line);
+  border-radius: 14px;
+  background: var(--ops-surface);
+}
+body[data-tab='ops'] .centro-thread .ops-msg { max-width: 100%; }
+body[data-tab='ops'] .centro-thread .ops-msg__bubble { font-size: 13px; line-height: 1.55; }
+body[data-tab='ops'] .centro-thread .ops-msg__bubble p { margin: 0 0 7px; }
+body[data-tab='ops'] .centro-thread .ops-msg__bubble p:last-child { margin-bottom: 0; }
+body[data-tab='ops'] .centro-thread .ops-msg__bubble ul { display: grid; gap: 3px; margin: 4px 0 7px; padding-left: 18px; }
+
+body[data-tab='ops'] .centro-suggests { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-top: auto; padding: 1px 1px 3px; }
+body[data-tab='ops'] .centro-suggests::-webkit-scrollbar { display: none; }
+body[data-tab='ops'] .centro-chipbtn {
+  flex: none;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--ops-line);
+  border-radius: 999px;
+  background: var(--ops-surface);
+  color: var(--ops-ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+body[data-tab='ops'] .centro-chipbtn:hover { border-color: var(--ops-accent); color: var(--ops-ink); }
+
+body[data-tab='ops'] .centro-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 5px;
+  padding-bottom: max(5px, env(safe-area-inset-bottom, 0px));
+  border: 1px solid var(--ops-line-strong);
+  border-radius: 14px;
+  background: var(--ops-surface);
+}
+body[data-tab='ops'] .centro-composer:focus-within { border-color: var(--ops-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ops-accent) 16%, transparent); }
+body[data-tab='ops'] .centro-composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  max-height: 132px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ops-ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: none;
+  overflow-y: auto;
+}
+body[data-tab='ops'] .centro-composer textarea:focus { outline: none; }
+body[data-tab='ops'] .centro-send {
+  flex: none;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ops-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+body[data-tab='ops'] .centro-send:disabled { opacity: .6; cursor: progress; }
+
+/* El acceso a aprobaciones del listado (sustituye a los iconos del encabezado). */
+body[data-tab='ops'] .centro-dir__approvals { display: inline-flex; margin: 4px 0 0; }
+
+@media (min-width: 900px) {
+  body[data-tab='ops'] .centro-off--chat { height: calc(100dvh - 150px); }
+}
+@media (max-width: 520px) {
+  /*
+   * CABECERA EN DOS LÍNEAS EN MÓVIL, no en tres.
+   * Nombre y estado arriba (el estado a la derecha, con su punto de color) y la
+   * acción propia debajo, alineada a la derecha. Así el encabezado ocupa ~100 px
+   * y la conversación se queda con el resto de la pantalla.
+   */
+  body[data-tab='ops'] .centro-off__head {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'back ava id state'
+      'actions actions actions actions';
+    align-items: center;
+    gap: 2px 8px;
+  }
+  body[data-tab='ops'] .centro-off__head .centro-back { grid-area: back; }
+  body[data-tab='ops'] .centro-off__head .centro-ava { grid-area: ava; }
+  body[data-tab='ops'] .centro-off__id { grid-area: id; }
+  body[data-tab='ops'] .centro-off__head .centro-state { grid-area: state; justify-self: end; font-size: 10.5px; }
+  body[data-tab='ops'] .centro-off__actions { grid-area: actions; justify-content: flex-end; width: auto; }
+  body[data-tab='ops'] .centro-off--chat { height: calc(100dvh - 180px); }
+}

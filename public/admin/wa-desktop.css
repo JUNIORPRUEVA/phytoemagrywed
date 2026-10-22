@@ -366,7 +366,7 @@
     font-weight: 600;
   }
 
-  /* Agregar cliente: círculo verde, como el botón de WhatsApp. */
+  /* Agregar cliente: el mismo botón azul FULLTECH que en el móvil. */
   body[data-tab='whatsapp'] .wa-new-chat {
     position: absolute;
     right: 22px;
@@ -374,15 +374,24 @@
     width: 52px;
     height: 52px;
     border: 0;
-    border-radius: 50%;
-    background: var(--wad-teal);
-    box-shadow: 0 3px 10px rgba(11, 20, 26, 0.3);
+    border-radius: 18px;
+    background: var(--ft-gradient);
+    box-shadow: 0 2px 6px rgba(18, 75, 170, 0.22), 0 1px 2px rgba(11, 20, 26, 0.12);
   }
 
   body[data-tab='whatsapp'] .wa-new-chat:hover,
   body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
-    background: var(--wad-teal-dark);
-    box-shadow: 0 5px 16px rgba(11, 20, 26, 0.34);
+    background: var(--ft-gradient);
+    filter: brightness(1.06);
+    box-shadow: 0 4px 10px rgba(18, 75, 170, 0.26), 0 1px 2px rgba(11, 20, 26, 0.14);
+  }
+
+  /* En oscuro se mantiene el azul profundo con el «+» blanco (contraste). */
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa-new-chat,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa-new-chat:hover,
+  :root[data-theme='dark'] body[data-tab='whatsapp'] .wa-new-chat:focus-visible {
+    background: linear-gradient(125deg, #12459c 0%, #1a63e0 58%, #1f6ad8 100%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
   /* ------------------------------------------------- columna derecha */
