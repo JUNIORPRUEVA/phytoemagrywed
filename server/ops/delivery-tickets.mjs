@@ -29,6 +29,7 @@ import {
 } from '../delivery-supervisor.mjs';
 import { assignAgentToTicket } from './agents.mjs';
 import { createTicket, taskAction } from './tickets.mjs';
+import { postMessage } from './messages.mjs';
 
 /** Agente de IA de reparto que se asigna al ticket (si está dado de alta). */
 export const DELIVERY_AGENT_KEY = 'delivery_supervisor';
@@ -47,10 +48,12 @@ const ALWAYS_NEEDS_PERSON = new Set([
   SUPERVISOR_STAGES.SEND_FAILED,
   SUPERVISOR_STAGES.ISSUE,
   SUPERVISOR_STAGES.AWAITING_CONFIRMATION,
+  SUPERVISOR_STAGES.NOT_ACCEPTED,
 ]);
 
 const STAGE_TITLES = Object.freeze({
   no_responsible: 'Pedido sin responsable de reparto',
+  not_accepted: 'El repartidor no ha aceptado la entrega',
   not_confirmed: 'El repartidor no ha confirmado el pedido',
   send_failed: 'Falló el envío del pedido al repartidor',
   pending_start: 'El reparto no ha arrancado',
@@ -63,6 +66,7 @@ const STAGE_TITLES = Object.freeze({
 const STAGE_PRIORITY = Object.freeze({
   issue: 'urgent',
   no_responsible: 'urgent',
+  not_accepted: 'high',
   send_failed: 'high',
   awaiting_confirmation: 'high',
   not_confirmed: 'high',
@@ -198,6 +202,110 @@ export async function openDeliveryTicketsFromSupervision({
   }
 
   return { created, existing, skipped, errors, evaluated: orders.length };
+}
+
+/**
+ * TICKET DEL PEDIDO (el «chat» del Centro IA).
+ *
+ * Reutiliza el ticket activo del flujo `supervision` y, si todavía no existe
+ * (porque la comunicación ocurre antes de que el pedido esté en riesgo), lo abre.
+ * Un pedido = UN ticket activo: `createTicket` ya deduplica por `active_key`.
+ */
+export async function ensureDeliveryTicket({ ctx, deps = {}, order, orderId = null, agentKey = DELIVERY_AGENT_KEY } = {}) {
+  const id = String(orderId ?? order?.id ?? '');
+  if (!id) return null;
+  const tickets = await ctx.db.list('ops_tickets', { where: { entity_id: id }, limit: 50 }).catch(() => []);
+  const vivo = tickets.find(
+    (row) => String(row.entity_type) === 'order' && !['resolved', 'cancelled'].includes(String(row.status)),
+  );
+  if (vivo) return vivo;
+  const responsible = responsibleOf(order ?? {});
+  const created = await createTicket({
+    ctx,
+    actor: SUPERVISION_ACTOR,
+    can: () => true,
+    findOrder: deps.findOrder ?? null,
+    deps,
+    input: {
+      type: 'delivery',
+      title: `Seguimiento de la entrega · ${order?.order_number ?? id}`,
+      description: 'Supervisión de la entrega y comunicaciones con el repartidor.',
+      priority: 'high',
+      entityType: 'order',
+      entityId: id,
+      workflowKey: 'supervision',
+      assignedUserId: responsible?.type === 'internal' ? responsible.userId : null,
+      requiresAck: false,
+    },
+  }).catch(() => null);
+  const ticket = created?.ticket ?? (created?.status === 409 ? created?.ticket : null);
+  if (!ticket?.id) return null;
+  if (agentKey) {
+    await assignAgentToTicket({ ctx, deps, actor: SUPERVISION_ACTOR, can: () => true, ticketId: ticket.id, agentKey }).catch(() => null);
+  }
+  return ticket;
+}
+
+/**
+ * UNA COMUNICACIÓN EXTERNA EN EL CHAT DEL PEDIDO.
+ *
+ * `direction`:
+ *   outbound → lo envió el supervisor (WhatsApp real; estado del proveedor).
+ *   inbound  → lo escribió el repartidor (respuesta verificada del webhook).
+ *   system   → nota de supervisión (escalado, petición de datos).
+ *
+ * El estado NUNCA se inventa: si el proveedor no confirmó, queda `pending` o
+ * `failed` con el motivo. Idempotente por `clientKey`.
+ */
+export async function recordExternalMessage({
+  ctx,
+  deps = {},
+  orderId,
+  order = null,
+  orderNumber = null,
+  direction = 'outbound',
+  channel = 'whatsapp',
+  to = null,
+  status = 'sent',
+  providerId = null,
+  error = null,
+  kind = 'text',
+  attempt = null,
+  body = '',
+  at = null,
+  authorName = null,
+  clientKey = null,
+} = {}) {
+  const texto = String(body ?? '').trim();
+  if (!orderId || !texto) return null;
+  const ticket = await ensureDeliveryTicket({ ctx, deps, order, orderId });
+  if (!ticket?.id) return null;
+  const quien = direction === 'inbound' ? authorName ?? 'Repartidor' : direction === 'system' ? 'Supervisor IA' : 'Supervisor IA Delivery';
+  const key = clientKey ?? `wa:${direction}:${providerId ?? at ?? ctx.clock().toISOString()}:${orderId}:${kind}`;
+  const resultado = await postMessage({
+    ctx,
+    actor: { id: 'SYSTEM', display_name: quien, role: 'SYSTEM', actor_type: 'SYSTEM' },
+    can: () => true,
+    ticketId: ticket.id,
+    body: texto,
+    clientKey: key,
+    deps,
+    authorType: direction === 'inbound' ? 'user' : 'agent',
+    kind: direction === 'system' ? 'note' : 'text',
+    meta: {
+      channel: direction === 'system' ? 'supervisor' : 'whatsapp',
+      direction,
+      to: to ? `***${String(to).slice(-4)}` : null,
+      status,
+      provider_id: providerId ?? null,
+      error: error ?? null,
+      attempt,
+      order_number: orderNumber ?? order?.order_number ?? null,
+      at: at ?? ctx.clock().toISOString(),
+      tz: 'America/Santo_Domingo',
+    },
+  }).catch(() => null);
+  return resultado?.ok ? { ticketId: ticket.id, messageId: resultado.message?.id ?? null } : null;
 }
 
 /**

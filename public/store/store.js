@@ -1,5 +1,5 @@
 const $ = (s, root = document) => root.querySelector(s);
-import { hydrateIcons, hydrateMaterialIcons, paintMaterialIcon, materialIcon } from './icons.js';
+import { hydrateIcons, hydrateMaterialIcons, paintMaterialIcon, materialIcon } from './custom-icons.js?v=1';
 import {galleryMarkup,mountGallery,mountCardImageFallbacks} from './product-gallery.js?v=2';
 /* Cabecera y barra inferior usan la familia Material Symbols Rounded ya descargada. */
 hydrateMaterialIcons();
@@ -44,15 +44,37 @@ function setCartQuantity(id, quantity) {
   writeCart(rows);
 }
 function removeFromCart(id) { writeCart(readCart().filter(r => r.id !== id)); }
+let previousCartCount=null,cartPulseTimer;
+const addFeedback=new WeakMap();
+function confirmAdded(button){
+  if(!button)return;
+  let state=addFeedback.get(button);
+  if(!state){state={html:button.innerHTML};addFeedback.set(button,state)}
+  clearTimeout(state.timer);
+  button.innerHTML=materialIcon('cart',{size:18})+'<span>Agregado</span>';
+  button.classList.add('is-added');
+  const status=document.getElementById('cart-feedback-status');
+  if(status)status.textContent=`Producto agregado. ${cartCount()} artículos en el carrito.`;
+  state.timer=setTimeout(()=>{if(button.isConnected){button.innerHTML=state.html;button.classList.remove('is-added')}addFeedback.delete(button)},1200);
+}
 function updateCartBadge() {
   const n = cartCount();
   document.querySelectorAll('[data-cart-badge]').forEach(badge => { badge.textContent = n ? String(n) : ''; badge.hidden = !n; });
   const shortcut = document.querySelector('.cart-shortcut');
-  if (shortcut) shortcut.setAttribute('aria-label', n ? `Carrito (${n})` : 'Carrito');
+  if (shortcut) {
+    shortcut.setAttribute('aria-label', n ? `Carrito (${n})` : 'Carrito');
+    shortcut.classList.toggle('has-items',n>0);
+    if(previousCartCount!==null&&n!==previousCartCount&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      shortcut.classList.remove('cart-feedback');void shortcut.offsetWidth;shortcut.classList.add('cart-feedback');
+      clearTimeout(cartPulseTimer);cartPulseTimer=setTimeout(()=>shortcut.classList.remove('cart-feedback'),420);
+    }
+  }
+  document.querySelector('.ft-nav__item[data-route=cart]')?.classList.toggle('has-items',n>0);
+  previousCartCount=n;
 }
 let homeData = null, catalogState = {kind:'all',category:'',q:'',page:1,pages:1}, searchTimer;
 const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false} };
-async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(d.message||'No pudimos completar la operación.');error.code=d.error||'';throw error;}return d}
+async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(d.message||'No pudimos completar la operación.');error.code=d.error||'';error.status=r.status;throw error;}return d}
 async function ensureSession(force=false){if(session.loaded&&!force)return session.account;try{const d=await api('/api/store/account/me');session.account=d.account}catch{session.account=null}session.loaded=true;return session.account}
 async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})}}catch{}return session.providers}
 const initials = value => String(value||'F').trim().split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
@@ -71,7 +93,7 @@ function googleOption(label='Continuar con Google'){
     ? `<a class="button button-outline button-block auth-google" href="/api/store/account/auth/google/start">${inner}</a>`
     : `<button class="button button-outline button-block auth-google" type="button" disabled>${inner}</button><small class="auth-hint">Google estará disponible muy pronto.</small>`;
 }
-function authHead(title){return `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${esc(title)}</h1></div>`}
+function authHead(title){return `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>${esc(title)}</h1></div>`}
 async function api(path){const r=await fetch(path,{headers:{accept:'application/json'}});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}
 const href = route => `/store/#/${route}`;
 /*
@@ -96,7 +118,7 @@ function productCard(p){
         <span class="availability ${p.availabilityState==='UNAVAILABLE'?'out':''}">${avail(p)}</span>
       </div>
     </a>
-    <div class="card-actions">${canBuy(p)?`<button class="button button-block" type="button" data-add-cart="${esc(p.id)}">Agregar</button>`:`<a class="button button-outline button-block" href="${requestHref(p)}">Solicitar producto</a>`}</div>
+    <div class="card-actions">${canBuy(p)?`<button class="button button-block" type="button" data-add-cart="${esc(p.id)}">${materialIcon('cart',{size:18})}<span>Agregar</span></button>`:`<a class="button button-outline button-block" href="${requestHref(p)}">Solicitar producto</a>`}</div>
   </article>`
 }
 function searchMarkup(value=''){return `<label class="ft-search">${materialIcon('search',{size:20})}<input id="store-search" type="search" value="${esc(value)}" placeholder="¿Qué buscas hoy?" aria-label="Buscar productos" autocomplete="off"></label>`}
@@ -282,8 +304,8 @@ async function renderCatalog(params){
   setNav('catalog');
   catalogState={kind:'product',category:params.get('category')||'',q:params.get('q')||'',sort:SORT_LABELS.some(([v])=>v===params.get('sort'))?params.get('sort'):'relevance',offers:params.get('offers')==='1',featured:params.get('featured')==='true',page:1,pages:1};
   main.innerHTML=`${searchMarkup(catalogState.q)}
-    <div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Catálogo</h1></div>
-    <div class="ft-toolbar">
+    <div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Catálogo</h1></div>
+    <div class="ft-toolbar">${materialIcon('filter',{size:20})}
       <select id="category-filter" class="ft-toolbar__select" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option></select>
       <select id="sort-select" class="ft-toolbar__select" aria-label="Ordenar resultados">${SORT_LABELS.map(([value,label])=>`<option value="${value}"${value===catalogState.sort?' selected':''}>${label}</option>`).join('')}</select>
     </div>
@@ -347,7 +369,7 @@ async function loadCatalog(append=false){
     if(count)count.textContent=total?`${total} producto${total===1?'':'s'}${q?` para «${q}»`:''}`:'';
     const content=items.length
       ? `<div class="product-grid">${items.map(productCard).join('')}</div>${catalogState.page<catalogState.pages?'<div class="more-wrap"><button class="button button-outline" id="load-more">Ver más</button></div>':''}`
-      : `<div class="empty"><h3>${q?`Sin resultados para «${esc(q)}»`:'Aún no hay productos publicados'}</h3><p>${q?'Prueba con otro nombre, otra categoría u otro orden.':'El catálogo se actualizará cuando haya contenido disponible.'}</p>${(catalogState.q||catalogState.category||catalogState.offers)?'<button class="button button-outline" type="button" id="empty-clear">Ver todo el catálogo</button>':''}<a class="button button-block" href="${href('request')}" style="margin-top:8px">Pedir que lo consigan</a></div>`;
+      : `<div class="empty"><h3>${q?`Sin resultados para «${esc(q)}»`:catalogState.category?`No hay productos en «${esc(catalogState.category)}»`:'Aún no hay productos publicados'}</h3><p>${q?'Prueba con otro nombre, otra categoría u otro orden.':catalogState.category?'Esa categoría está vacía ahora mismo.':'El catálogo se actualizará cuando haya contenido disponible.'}</p>${(catalogState.q||catalogState.category||catalogState.offers)?'<button class="button button-outline" type="button" id="empty-clear">Ver todo el catálogo</button>':''}<a class="button button-block" href="${href('request')}" style="margin-top:8px">Pedir que lo consigan</a></div>`;
     out.innerHTML=append?out.innerHTML.replace(/<div class="more-wrap">[\s\S]*?<\/div>$/,'')+content:content;
     $('#load-more')?.addEventListener('click',async e=>{e.currentTarget.disabled=true;catalogState.page++;await loadCatalog(true);syncCatalogHash()});
     $('#empty-clear')?.addEventListener('click',()=>$('#clear-filters')?.click());
@@ -358,9 +380,9 @@ async function loadCatalog(append=false){
   }
 }
 function warrantyBlock(w){if(!w||!w.available&&!w.conditions&&!w.coverage&&!w.exclusions&&!w.claim)return '';const details=(w.coverage||w.exclusions||w.conditions||w.claim)?`<details class="warranty"><summary>Consulta las condiciones de garantía</summary>${w.coverage?`<p><strong>Qué cubre:</strong> ${esc(w.coverage)}</p>`:''}${w.exclusions?`<p><strong>Qué no cubre:</strong> ${esc(w.exclusions)}</p>`:''}${w.conditions?`<p>${esc(w.conditions)}</p>`:''}${w.claim?`<p><strong>Cómo reclamar:</strong> ${esc(w.claim)}</p>`:''}</details>`:'';return `<div class="product-warranty"><span class="warranty-label">${esc(w.label)}</span>${w.notes?`<small>${esc(w.notes)}</small>`:''}${details}</div>`}
-async function renderProduct(id){setNav('product');main.innerHTML='<div class="loading-cards"><div class="skeleton"></div></div>';try{const {product:p}=await api(`/api/store/products/${encodeURIComponent(id)}`);const consultar=`#/request?title=${encodeURIComponent(p.name)}&details=${encodeURIComponent(`Consulta por: ${p.name}${p.category?` (${p.category})`:''}`)}`;main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button></div><article class="detail">${galleryMarkup(p)}<div class="detail-copy"><span class="product-category">${esc(p.category||'FULLTECH')}${p.brand?` · ${esc(p.brand)}`:''}</span><h1>${esc(p.name)}</h1>${priceRow(p,'price')}<p>${esc(p.description||p.shortDescription||'')}</p><span class="availability">${avail(p)}</span><div class="detail-actions">${canBuy(p)?`<button class="button" type="button" id="add-to-cart">Agregar al carrito</button>`:`<a class="button" href="${consultar}">Solicitar producto</a>`}<button class="button button-outline" id="share-product">Compartir</button></div>${warrantyBlock(p.warranty)}</div></article>${footer()}`;mountGallery(main);$('[data-back]').onclick=()=>history.back();$('#add-to-cart')?.addEventListener('click',()=>{addToCart(p.id,1);const b=$('#add-to-cart');if(b){b.textContent='Agregado ✓';setTimeout(()=>{if(b.isConnected)b.textContent='Agregar al carrito'},1400)}});$('#share-product').onclick=async()=>{try{await navigator.share({title:p.name,url:location.href})}catch{await navigator.clipboard?.writeText(location.href);$('#share-product').textContent='Enlace copiado'}}}catch{main.innerHTML=`<div class="state-error"><h1>Producto no disponible</h1><p>Este artículo no aparece en el catálogo público.</p><a class="button" href="${href('catalog')}">Volver al catálogo</a></div>`}}
+async function renderProduct(id){setNav('product');main.innerHTML='<div class="loading-cards"><div class="skeleton"></div></div>';try{const {product:p}=await api(`/api/store/products/${encodeURIComponent(id)}`);const consultar=`#/request?title=${encodeURIComponent(p.name)}&details=${encodeURIComponent(`Consulta por: ${p.name}${p.category?` (${p.category})`:''}`)}`;main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button></div><article class="detail">${galleryMarkup(p)}<div class="detail-copy"><span class="product-category">${esc(p.category||'FULLTECH')}${p.brand?` · ${esc(p.brand)}`:''}</span><h1>${esc(p.name)}</h1>${priceRow(p,'price')}<p>${esc(p.description||p.shortDescription||'')}</p><span class="availability">${avail(p)}</span><div class="detail-actions">${canBuy(p)?`<button class="button" type="button" id="add-to-cart">${materialIcon('cart',{size:20})}<span>Agregar al carrito</span></button>`:`<a class="button" href="${consultar}">Solicitar producto</a>`}<button class="button button-outline" id="share-product">${materialIcon('share',{size:18})} Compartir</button></div>${warrantyBlock(p.warranty)}</div></article>${footer()}`;mountGallery(main);$('[data-back]').onclick=()=>history.back();$('#add-to-cart')?.addEventListener('click',()=>{addToCart(p.id,1);const b=$('#add-to-cart');confirmAdded(b)});$('#share-product').onclick=async()=>{try{await navigator.share({title:p.name,url:location.href})}catch{await navigator.clipboard?.writeText(location.href);$('#share-product').textContent='Enlace copiado'}}}catch{main.innerHTML=`<div class="state-error"><h1>Producto no disponible</h1><p>Este artículo no aparece en el catálogo público.</p><a class="button" href="${href('catalog')}">Volver al catálogo</a></div>`}}
 /* ---------------------------------------------------------------- CARRITO */
-async function cartCatalog() {
+async function cartCatalog(rows = readCart()) {
   const d = await api('/api/store/catalog?limit=48');
   const map = new Map((d.products || []).map(p => [p.id, p]));
   /*
@@ -368,7 +390,7 @@ async function cartCatalog() {
    * en la primera página, se pide SU ficha. Antes, con catálogos grandes, el
    * artículo desaparecía del carrito sin explicación.
    */
-  for (const row of readCart()) {
+  for (const row of rows) {
     if (map.has(row.id)) continue;
     try { const { product } = await api(`/api/store/products/${encodeURIComponent(row.id)}`); if (product) map.set(product.id, product); } catch { /* se muestra lo guardado */ }
   }
@@ -379,7 +401,7 @@ async function renderCart() {
   setNav('cart');
   const rows = readCart();
   if (!rows.length) {
-    main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Tu carrito</h1></div><div class="empty"><h3>Tu carrito está vacío</h3><p>Agrega productos del catálogo para hacer tu pedido.</p></div><a class="button button-block" href="${href('catalog')}">Ver catálogo</a>${footer()}`;
+    main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Tu carrito</h1></div><div class="empty"><h3>Tu carrito está vacío</h3><p>Agrega productos del catálogo para hacer tu pedido.</p></div><a class="button button-block" href="${href('catalog')}">Ver catálogo</a>${footer()}`;
     $('[data-back]').onclick = () => history.back();
     return;
   }
@@ -394,8 +416,8 @@ async function renderCart() {
     else problemas.push({ ...row, product: p ?? null });
   }
   const total = items.reduce((n, r) => n + r.product.price * r.quantity, 0);
-  main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Tu carrito</h1></div>
-    ${items.length ? `<ul class="cart-list">${items.map(r => `<li class="cart-item"><div class="cart-item__info"><strong>${esc(r.product.name)}</strong><small>${money(r.product)} c/u · ${esc(avail(r.product))}</small></div><div class="cart-qty"><button type="button" data-cart-minus="${esc(r.id)}" aria-label="Quitar uno">−</button><span>${r.quantity}</span><button type="button" data-cart-plus="${esc(r.id)}" aria-label="Agregar uno">+</button></div><div class="cart-item__total">${money({ price: r.product.price * r.quantity, currency: r.product.currency })}</div><button class="cart-remove" type="button" data-cart-remove="${esc(r.id)}" aria-label="Quitar del carrito">✕</button></li>`).join('')}</ul><p class="cart-total"><span>Total</span><strong>${money({ price: total, currency: 'DOP' })}</strong></p>` : ''}
+  main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Tu carrito</h1></div>
+    ${items.length ? `<ul class="cart-list">${items.map(r => `<li class="cart-item"><div class="cart-item__info"><strong>${esc(r.product.name)}</strong><small>${money(r.product)} c/u · ${esc(avail(r.product))}</small></div><div class="cart-qty"><button type="button" data-cart-minus="${esc(r.id)}" aria-label="Quitar uno">${materialIcon('down',{size:16})}</button><span>${r.quantity}</span><button type="button" data-cart-plus="${esc(r.id)}" aria-label="Agregar uno">${materialIcon('plus',{size:16})}</button></div><div class="cart-item__total">${money({ price: r.product.price * r.quantity, currency: r.product.currency })}</div><button class="cart-remove" type="button" data-cart-remove="${esc(r.id)}" aria-label="Quitar del carrito">${materialIcon('delete',{size:18})}</button></li>`).join('')}</ul><p class="cart-total"><span>Total</span><strong>${money({ price: total, currency: 'DOP' })}</strong></p>` : ''}
     ${problemas.length ? `<section class="cart-problems"><h2>Algo cambió</h2>${problemas.map(r => `<div class="cart-problem"><p><strong>${esc(r.product?.name || 'Un producto')}</strong> no está disponible para compra directa.</p><div class="cart-problem__actions">${r.product ? `<a class="button button-outline" href="${requestHref(r.product)}">Quiero que me lo consigan</a>` : ''}<button class="button button-ghost" type="button" data-cart-remove="${esc(r.id)}">Quitar del carrito</button></div></div>`).join('')}</section>` : ''}
     <div class="cart-actions">${items.length ? `<a class="button button-block" href="${href('checkout')}">Continuar con el pedido</a>` : ''}<a class="button button-outline button-block" href="${href('catalog')}">Seguir comprando</a></div>${footer()}`;
   $('[data-back]').onclick = () => history.back();
@@ -403,63 +425,103 @@ async function renderCart() {
 
 async function renderCheckout() {
   setNav('checkout');
-  const rows = readCart();
-  if (!rows.length) { location.hash = '#/cart'; return; }
+  let rows = readCart();
   await ensureSession(true);
   if (!session.account) {
-    main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Finalizar pedido</h1></div><section class="account-card auth-required"><h2>Entra para completar tu pedido</h2><p>Necesitamos identificarte para enviarte el pedido y avisarte del estado.</p><div class="account-actions"><a class="button" href="#/account/login">Entrar</a><a class="button button-outline" href="#/account/register">Crear cuenta</a></div></section>${footer()}`;
+    main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Finalizar pedido</h1></div><section class="account-card auth-required"><h2>Entra para completar tu pedido</h2><p>Necesitamos identificarte para enviarte el pedido y avisarte del estado.</p><div class="account-actions"><a class="button" href="#/account/login">Entrar</a><a class="button button-outline" href="#/account/register">Crear cuenta</a></div></section>${footer()}`;
     $('[data-back]').onclick = () => history.back();
     return;
   }
+  const draftKey = `fulltech_checkout_v1:${session.account.id}`;
+  let draft;
+  try { draft = JSON.parse(sessionStorage.getItem(draftKey) || 'null'); } catch { /* invalid local draft */ }
+  if (!draft || typeof draft !== 'object') draft = {};
+  const saveDraft = () => sessionStorage.setItem(draftKey, JSON.stringify(draft));
+  if (!draft.requestKey) draft.requestKey = `store_${crypto.randomUUID().replaceAll('-', '')}`;
+  saveDraft();
+  if (draft.pending) rows = draft.pending.items;
+  if (!rows.length) { location.hash = '#/cart'; return; }
   let byId = new Map();
-  try { byId = await cartCatalog(); } catch { /* se valida igual en el servidor */ }
+  try { byId = await cartCatalog(rows); } catch { /* se valida igual en el servidor */ }
   /*
    * TELÉFONO VERIFICADO: el carrito NO se pierde. Se muestra el paso de
    * confirmación y, al volver, el cliente sigue exactamente donde estaba.
    */
   if (session.account.phone_saved === false) {
-    main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Agrega tu número</h1></div><section class="account-card"><h2>Un paso más y sigues</h2><p>Necesitamos tu número de teléfono para coordinar la entrega. Tu carrito queda guardado.</p><div class="account-actions"><a class="button" href="/store/verify/?next=%2Fstore%2F%23%2Fcheckout">Agregar número</a><a class="button button-outline" href="#/cart">Volver al carrito</a></div></section>${footer()}`;
+    main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Agrega tu número</h1></div><section class="account-card"><h2>Un paso más y sigues</h2><p>Necesitamos tu número de teléfono para coordinar la entrega. Tu carrito queda guardado.</p><div class="account-actions"><a class="button" href="/store/verify/?next=%2Fstore%2F%23%2Fcheckout">Agregar número</a><a class="button button-outline" href="#/cart">Volver al carrito</a></div></section>${footer()}`;
     $('[data-back]').onclick = () => history.back();
     return;
   }
   const total = rows.reduce((n, r) => n + (byId.get(r.id)?.price ?? 0) * r.quantity, 0);
-  const requestKey = `store_${(crypto.randomUUID?.() || String(Date.now())).replaceAll('-', '')}`;
-  main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Finalizar pedido</h1></div>
-    <p class="page-intro">${rows.length} artículo${rows.length === 1 ? '' : 's'} · <strong>${money({ price: total, currency: 'DOP' })}</strong></p>
+  if (!draft.pending && rows.some(r => !canBuy(byId.get(r.id) || {}))) {
+    main.innerHTML = `<section class="empty"><h1>Revisa tu carrito</h1><p>No pudimos confirmar todos los productos. Revisa la disponibilidad o vuelve a intentar cuando tengas conexión.</p><a class="button" href="#/cart">Volver al carrito</a></section>`;
+    return;
+  }
+  main.innerHTML = `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Finalizar pedido</h1></div>
+    <p class="page-intro">${esc(session.account.name)} · ${esc(session.account.phone || '')}</p>
+    <section class="account-card checkout-summary" aria-label="Resumen del pedido"><h2>Resumen del pedido</h2>
+      ${rows.map(r => `<p>${r.quantity} × ${esc(byId.get(r.id)?.name || 'Producto')} <strong>${money({price:(byId.get(r.id)?.price || 0)*r.quantity})}</strong></p>`).join('')}
+      <p>Subtotal de productos: <strong>${money({price:total})}</strong></p>
+      <p>Entrega: costo por confirmar. El total final se acuerda contigo antes de aceptar el pedido.</p>
+      <p>Pago: a coordinar con el equipo. No se cobra en esta pantalla.</p>
+    </section>
     <form id="checkout-form" class="request-form">
       <fieldset class="checkout-methods"><legend>¿Cómo lo quieres recibir?</legend>
         <label class="checkout-method"><input type="radio" name="fulfillment" value="delivery" checked> <span><strong>Entrega a domicilio</strong><small>Te confirmamos el costo y el tiempo antes de aceptar el pedido.</small></span></label>
         <label class="checkout-method"><input type="radio" name="fulfillment" value="pickup"> <span><strong>Recogida coordinada</strong><small>Te confirmamos disponibilidad, lugar y hora antes de que pases.</small></span></label>
       </fieldset>
-      <div id="checkout-address"><label class="field"><span class="field__label">Dirección de entrega</span><textarea class="field__input" name="address" rows="2" maxlength="240" placeholder="Calle, número, sector, referencia"></textarea></label></div>
+      <div id="checkout-address"><label class="field"><span class="field__label">Dirección de entrega</span><textarea class="field__input" name="address" autocomplete="street-address" rows="2" minlength="8" maxlength="240" placeholder="Calle, número, sector, referencia"></textarea></label></div>
       <label class="field"><span class="field__label">Indicaciones (opcional)</span><input class="field__input" name="notes" maxlength="500" placeholder="Horario, referencia o cualquier detalle"></label>
       <p class="form-error" id="checkout-error" role="alert"></p>
-      <button class="button button-block" type="submit">Realizar pedido</button>
+      <button class="button button-block" type="submit">Solicitar confirmación del pedido</button>
     </form>
     <p class="checkout-note">Tu pedido queda <strong>pendiente de confirmación</strong>. No se cobra nada ahora ni se reserva el inventario hasta que el equipo lo confirme.</p>${footer()}`;
   $('[data-back]').onclick = () => history.back();
   const form = $('#checkout-form');
-  const toggleAddress = () => { $('#checkout-address').hidden = form.fulfillment.value !== 'delivery'; };
+  form.fulfillment.value = draft.fulfillment === 'pickup' ? 'pickup' : 'delivery';
+  form.address.value = draft.address || '';
+  form.notes.value = draft.notes || '';
+  const toggleAddress = () => { $('#checkout-address').hidden = form.fulfillment.value !== 'delivery'; form.address.required = form.fulfillment.value === 'delivery'; };
+  form.addEventListener('input', () => {
+    draft.fulfillment = form.fulfillment.value; draft.address = form.address.value; draft.notes = form.notes.value; saveDraft();
+  });
+  if (draft.pending) {
+    form.querySelector('[type=submit]').textContent = 'Comprobar pedido enviado';
+    form.querySelectorAll('input,textarea').forEach(input => input.disabled = true);
+    $('#checkout-error').textContent = 'El envío anterior no se confirmó. Comprueba su resultado antes de crear otro pedido.';
+  }
+  let submitting = false;
   form.fulfillment.forEach(radio => radio.addEventListener('change', toggleAddress));
   toggleAddress();
   form.onsubmit = async event => {
     event.preventDefault();
+    if (submitting) return;
+    submitting = true;
     const button = form.querySelector('[type=submit]');
     button.disabled = true;
     $('#checkout-error').textContent = '';
     try {
-      const data = await apiPost('/api/store/orders', {
-        items: readCart().map(r => ({ id: r.id, quantity: r.quantity })),
-        fulfillment: form.fulfillment.value,
-        address: form.address.value.trim(),
-        notes: form.notes.value.trim(),
-        requestKey,
-      });
-      writeCart([]);
+      if (!draft.pending) {
+        draft.pending = { items: rows.map(r => ({id:r.id, quantity:r.quantity})),
+          fulfillment: form.fulfillment.value, address: form.address.value.trim(),
+          notes: form.notes.value.trim(), requestKey: draft.requestKey };
+        saveDraft();
+      }
+      const data = await apiPost('/api/store/orders', draft.pending);
+      sessionStorage.removeItem(draftKey);
+      if (JSON.stringify(readCart()) === JSON.stringify(draft.pending.items)) writeCart([]);
       main.innerHTML = `<div class="state-success"><h1>Recibimos tu pedido</h1><p>Te confirmaremos los detalles pronto.</p>${data.order?.number ? `<p class="order-number">Pedido <strong>${esc(data.order.number)}</strong></p>` : ''}<p class="muted">Queda pendiente de confirmación.</p><a class="button button-block" href="${href('orders')}">Ver mis pedidos</a><a class="button button-outline button-block" href="/store/">Volver al inicio</a></div>${footer()}`;
     } catch (error) {
-      $('#checkout-error').textContent = error.message;
+      if (error.status >= 400 && error.status < 500) {
+        delete draft.pending; saveDraft();
+        form.querySelectorAll('input,textarea').forEach(input => input.disabled = false);
+      } else {
+        form.querySelectorAll('input,textarea').forEach(input => input.disabled = true);
+        button.textContent = 'Comprobar pedido enviado';
+      }
+      $('#checkout-error').textContent = error.message + (draft.pending ? ' Reintenta para comprobar el mismo pedido; no se enviará uno nuevo.' : '');
     } finally {
+      submitting = false;
       button.disabled = false;
     }
   };
@@ -470,9 +532,7 @@ document.addEventListener('click', event => {
   if (add) {
     event.preventDefault();
     addToCart(add.dataset.addCart, 1);
-    const original = add.textContent;
-    add.textContent = 'Agregado ✓';
-    setTimeout(() => { if (add.isConnected) add.textContent = original; }, 1400);
+    confirmAdded(add);
     return;
   }
   const plus = event.target.closest('[data-cart-plus]');
@@ -502,13 +562,13 @@ async function renderRequest(params = new URLSearchParams()){
   setNav('request');
   await ensureSession(true);
   if(!session.account){
-    main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Lo conseguimos por ti</h1></div><section class="account-card auth-required"><span class="eyebrow">LO CONSEGUIMOS POR TI</span><h2>Cuéntanos qué necesitas</h2><p>Entra o crea tu cuenta para guardar la solicitud y seguir su estado.</p><div class="account-actions"><a class="button" href="#/account/login">Entrar</a><a class="button button-outline" href="#/account/register">Crear cuenta</a></div></section>${footer()}`;
+    main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Lo conseguimos por ti</h1></div><section class="account-card auth-required"><span class="eyebrow">LO CONSEGUIMOS POR TI</span><h2>Cuéntanos qué necesitas</h2><p>Entra o crea tu cuenta para guardar la solicitud y seguir su estado.</p><div class="account-actions"><a class="button" href="#/account/login">Entrar</a><a class="button button-outline" href="#/account/register">Crear cuenta</a></div></section>${footer()}`;
     $('[data-back]').onclick=()=>history.back();
     return;
   }
   let requestKind='product',images=[];
   const requestKey=`req_${(crypto.randomUUID?.()||String(Date.now())).replaceAll('-','')}`;
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Lo conseguimos por ti</h1></div><p class="page-intro">Descríbenos el producto o servicio. Te responderemos con una cotización.</p><form id="request-form" class="request-form"><div class="categories" id="request-kind"><button type="button" class="chip active" data-kind="product">Producto</button><button type="button" class="chip" data-kind="service">Servicio</button></div><label class="field"><span class="field__label">¿Qué necesitas?</span><input class="field__input" name="title" maxlength="120" required placeholder="Ej. Router de doble banda" value="${esc(params.get('title') || '')}"></label><label class="field"><span class="field__label">Detalles (opcional)</span><textarea class="field__input" name="details" maxlength="2000" rows="3" placeholder="Marca, modelo, cantidad o cualquier detalle útil">${esc(params.get('details') || '')}</textarea></label><label class="field"><span class="field__label">Enlace (opcional)</span><input class="field__input" name="referenceUrl" type="url" maxlength="500" inputmode="url" placeholder="https://..."></label><label class="field"><span class="field__label">Fotos (opcional, hasta 3)</span><input class="field__input" id="request-images" type="file" accept="image/jpeg,image/png,image/webp" multiple></label><div class="photo-grid" id="request-previews"></div><p class="form-error" id="request-error" role="alert"></p><button class="button button-block" type="submit">Enviar solicitud</button></form>${footer()}`;
+  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Lo conseguimos por ti</h1></div><p class="page-intro">Descríbenos el producto o servicio. Te responderemos con una cotización.</p><form id="request-form" class="request-form"><div class="categories" id="request-kind"><button type="button" class="chip active" data-kind="product">Producto</button><button type="button" class="chip" data-kind="service">Servicio</button></div><label class="field"><span class="field__label">¿Qué necesitas?</span><input class="field__input" name="title" maxlength="120" required placeholder="Ej. Router de doble banda" value="${esc(params.get('title') || '')}"></label><label class="field"><span class="field__label">Detalles (opcional)</span><textarea class="field__input" name="details" maxlength="2000" rows="3" placeholder="Marca, modelo, cantidad o cualquier detalle útil">${esc(params.get('details') || '')}</textarea></label><label class="field"><span class="field__label">Enlace (opcional)</span><input class="field__input" name="referenceUrl" type="url" maxlength="500" inputmode="url" placeholder="https://..."></label><label class="field"><span class="field__label">Fotos (opcional, hasta 3)</span><input class="field__input" id="request-images" type="file" accept="image/jpeg,image/png,image/webp" multiple></label><div class="photo-grid" id="request-previews"></div><p class="form-error" id="request-error" role="alert"></p><button class="button button-block" type="submit">Enviar solicitud</button></form>${footer()}`;
   $('[data-back]').onclick=()=>history.back();
   $('#request-kind').onclick=event=>{const button=event.target.closest('[data-kind]');if(!button)return;requestKind=button.dataset.kind;$('#request-kind').querySelectorAll('[data-kind]').forEach(node=>node.classList.toggle('active',node===button));};
   $('#request-images').onchange=async event=>{renderRequestError('');const files=[...event.target.files].slice(0,3);if(event.target.files.length>3)renderRequestError('Puedes adjuntar hasta 3 fotos.');try{images=await Promise.all(files.map(compressImage));$('#request-previews').innerHTML=images.map(src=>`<img src="${src}" alt="Vista previa de la foto">`).join('');}catch(error){images=[];$('#request-previews').innerHTML='';renderRequestError(error.message);event.target.value='';}};
@@ -517,7 +577,7 @@ async function renderRequest(params = new URLSearchParams()){
     try{
       const data=await apiPost('/api/store/requests',{kind:requestKind,title:form.title.value.trim(),details:form.details.value.trim(),referenceUrl:form.referenceUrl.value.trim(),images,requestKey});
       const duplicate=Boolean(data.duplicate);
-      main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${duplicate?'Solicitud ya registrada':'Solicitud recibida'}</h1></div><section class="success-card"><span class="success-icon" aria-hidden="true">✓</span><h2>${duplicate?'Ya teníamos tu solicitud':'Gracias, la tenemos'}</h2><p>${duplicate?'No creamos otra igual. Puedes seguir su estado en tu cuenta.':'Te responderemos aquí con el estado y la cotización.'}</p><span class="request-code">${esc(String(data.request.id).slice(-8).toUpperCase())}</span><div class="account-actions"><a class="button" href="#/account/requests">Ver mis solicitudes</a><a class="button button-outline" href="/store/">Seguir explorando</a></div></section>${footer()}`;
+      main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>${duplicate?'Solicitud ya registrada':'Solicitud recibida'}</h1></div><section class="success-card"><span class="success-icon" aria-hidden="true">✓</span><h2>${duplicate?'Ya teníamos tu solicitud':'Gracias, la tenemos'}</h2><p>${duplicate?'No creamos otra igual. Puedes seguir su estado en tu cuenta.':'Te responderemos aquí con el estado y la cotización.'}</p><span class="request-code">${esc(String(data.request.id).slice(-8).toUpperCase())}</span><div class="account-actions"><a class="button" href="#/account/requests">Ver mis solicitudes</a><a class="button button-outline" href="/store/">Seguir explorando</a></div></section>${footer()}`;
       $('[data-back]').onclick=()=>history.back();
     }catch(error){renderRequestError(error.message);button.disabled=false;}
   };
@@ -676,7 +736,7 @@ function bindAuthBack(){const back=$('[data-back]');if(back)back.onclick=()=>his
 async function renderAccount(){
   setNav('account');await Promise.all([ensureSession(true),ensureProviders()]);
   if(!session.account){
-    main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Mi cuenta</h1></div>
+    main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Mi cuenta</h1></div>
       <section class="auth-hero">
         <span class="auth-hero__mark" aria-hidden="true">F</span>
         <span class="auth-hero__label">TU ESPACIO</span>
@@ -690,7 +750,7 @@ async function renderAccount(){
   }
   let counts={orders_count:0,requests_count:0};try{counts=await api('/api/store/account/me');session.account=counts.account||session.account}catch{}
   const account=session.account;
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Mi cuenta</h1></div><section class="account-hero account-hero--signed"><span class="account-avatar" aria-hidden="true">${esc(initials(account.name))}</span><div><span class="eyebrow">TU CUENTA</span><h2>${esc(account.name||'Mi cuenta')}</h2><p>${esc(account.phone||'')}${account.email?' · '+esc(account.email):''}</p></div></section><div class="account-grid"><a class="account-tile" href="#/orders"><strong>${Number(counts.orders_count)||0}</strong><span>Pedidos</span></a><a class="account-tile" href="#/account/requests"><strong>${Number(counts.requests_count)||0}</strong><span>Solicitudes</span></a></div>${account.phone_saved === false ? `<section class="account-card"><h3>Agrega tu número</h3><p class="auth-note">Lo necesitas para tu próximo pedido o solicitud. No enviamos códigos: solo guardamos el número.</p><a class="button button-outline button-block" href="/store/verify/?next=%2Fstore%2F%23%2Faccount">Agregar número</a></section>` : ''}<section class="account-card"><h3>Preferencias</h3><label class="switch-row"><span>Contactarme por WhatsApp</span><input type="checkbox" id="pref-contact" ${account.preferences?.contact!=='phone'?'checked':''}></label><label class="switch-row"><span>Recibir novedades</span><input type="checkbox" id="pref-marketing" ${account.preferences?.marketing?'checked':''}></label><button class="button button-outline button-block" id="save-preferences">Guardar preferencias</button></section><section class="account-card"><h3>Mis datos</h3><form id="profile-form"><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" value="${esc(account.name)}" maxlength="120" required></label><label class="field"><span class="field__label">Correo (opcional)</span><input class="field__input" name="email" type="email" value="${esc(account.email||'')}" maxlength="160"></label><p class="form-error" id="profile-error" role="alert"></p><button class="button button-block" type="submit">Guardar datos</button></form></section><button class="button button-ghost button-block" id="logout">Cerrar sesión</button>${footer()}`;
+  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Mi cuenta</h1></div><section class="account-hero account-hero--signed"><span class="account-avatar" aria-hidden="true">${esc(initials(account.name))}</span><div><span class="eyebrow">TU CUENTA</span><h2>${esc(account.name||'Mi cuenta')}</h2><p>${esc(account.phone||'')}${account.email?' · '+esc(account.email):''}</p></div></section><div class="account-grid"><a class="account-tile" href="#/orders"><strong>${Number(counts.orders_count)||0}</strong><span>Pedidos</span></a><a class="account-tile" href="#/account/requests"><strong>${Number(counts.requests_count)||0}</strong><span>Solicitudes</span></a></div>${account.phone_saved === false ? `<section class="account-card"><h3>Agrega tu número</h3><p class="auth-note">Lo necesitas para tu próximo pedido o solicitud. No enviamos códigos: solo guardamos el número.</p><a class="button button-outline button-block" href="/store/verify/?next=%2Fstore%2F%23%2Faccount">Agregar número</a></section>` : ''}<section class="account-card"><h3>Preferencias</h3><label class="switch-row"><span>Contactarme por WhatsApp</span><input type="checkbox" id="pref-contact" ${account.preferences?.contact!=='phone'?'checked':''}></label><label class="switch-row"><span>Recibir novedades</span><input type="checkbox" id="pref-marketing" ${account.preferences?.marketing?'checked':''}></label><button class="button button-outline button-block" id="save-preferences">Guardar preferencias</button></section><section class="account-card"><h3>Mis datos</h3><form id="profile-form"><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" value="${esc(account.name)}" maxlength="120" required></label><label class="field"><span class="field__label">Correo (opcional)</span><input class="field__input" name="email" type="email" value="${esc(account.email||'')}" maxlength="160"></label><p class="form-error" id="profile-error" role="alert"></p><button class="button button-block" type="submit">Guardar datos</button></form></section><button class="button button-ghost button-block" id="logout">Cerrar sesión</button>${footer()}`;
   bindAuthBack();
   $('#save-preferences').onclick=async()=>{const button=$('#save-preferences');button.disabled=true;try{const data=await apiPost('/api/store/account/me',{preferences:{contact:$('#pref-contact').checked?'whatsapp':'phone',marketing:$('#pref-marketing').checked}},'PATCH');session.account=data.account;button.textContent='Preferencias guardadas';}catch(error){button.textContent='No se pudo guardar';}finally{setTimeout(()=>{button.disabled=false;button.textContent='Guardar preferencias'},1400);}};
   $('#profile-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#profile-error').textContent='';try{const data=await apiPost('/api/store/account/me',{name:form.name.value.trim(),email:form.email.value.trim()},'PATCH');session.account=data.account;renderAccount();}catch(error){$('#profile-error').textContent=error.message;button.disabled=false;}};
@@ -700,7 +760,7 @@ async function renderOrders(){
   setNav('orders');await ensureSession(true);
   if(!session.account)return renderLogin('Entra para ver tus pedidos.');
   let rows=[];try{rows=(await api('/api/store/account/orders')).orders||[]}catch{}
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Mis pedidos</h1></div>${rows.length?`<div class="order-list">${rows.map(orderCard).join('')}</div>`:'<div class="empty"><h3>Todavía no hay pedidos</h3><p>Cuando compres, tus pedidos aparecerán aquí.</p><a class="button" href="#/catalog">Ver catálogo</a></div>'}${footer()}`;
+  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Mis pedidos</h1></div>${rows.length?`<div class="order-list">${rows.map(orderCard).join('')}</div>`:'<div class="empty"><h3>Todavía no hay pedidos</h3><p>Cuando compres, tus pedidos aparecerán aquí.</p><a class="button" href="#/catalog">Ver catálogo</a></div>'}${footer()}`;
   bindAuthBack();
 }
 function orderCard(order){const items=(order.items||[]).map(item=>`${esc(item.name)} × ${item.quantity}`).join(' · ');return `<article class="order-card"><div class="order-head"><strong>${esc(order.order_number)}</strong><span class="status-chip">${esc(orderStatus[order.status]||order.status)}</span></div><p class="order-date">${esc(dateText(order.received_at))}</p><p class="order-items">${items||'—'}</p><div class="order-total">${new Intl.NumberFormat('es-DO',{style:'currency',currency:order.currency||'DOP'}).format(Number(order.total||0))}</div></article>`}
@@ -708,7 +768,7 @@ async function renderRequests(){
   setNav('account');await ensureSession(true);
   if(!session.account)return renderLogin('Entra para ver tus solicitudes.');
   let rows=[];try{rows=(await api('/api/store/account/requests')).requests||[]}catch{}
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Mis solicitudes</h1></div>${rows.length?`<div class="request-list">${rows.map(requestCard).join('')}</div>`:'<div class="empty"><h3>Aún no has pedido nada especial</h3><p>Cuéntanos qué buscas y te conseguimos una cotización.</p><a class="button" href="#/request">Crear solicitud</a></div>'}${footer()}`;
+  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Mis solicitudes</h1></div>${rows.length?`<div class="request-list">${rows.map(requestCard).join('')}</div>`:'<div class="empty"><h3>Aún no has pedido nada especial</h3><p>Cuéntanos qué buscas y te conseguimos una cotización.</p><a class="button" href="#/request">Crear solicitud</a></div>'}${footer()}`;
   bindAuthBack();
   main.onclick=async event=>{
     const button=event.target.closest('[data-request-decision]');if(!button)return;
@@ -739,7 +799,7 @@ function requestCard(request){
   const actions=request.status==='cotizado'?`<div class="request-actions"><button class="button" type="button" data-request-decision="accept" data-request-id="${esc(request.id)}">Aceptar</button><button class="button button-outline" type="button" data-request-decision="decline" data-request-id="${esc(request.id)}">Rechazar</button></div>`:'';
   return `<article class="request-card"><div class="request-head"><span class="status-chip status-chip--${esc(request.status)}">${esc(requestStatus[request.status]||request.status)}</span><strong>${esc(request.title)}</strong></div><p class="request-date">${esc(dateText(request.created_at))}${request.images?` · ${request.images} foto${request.images===1?'':'s'}`:''}</p>${quote}${payment}${events?`<ul class="request-timeline">${events}</ul>`:''}${actions}${transfer}</article>`;
 }
-function renderNotice(title){setNav('');main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>${title}</h1></div><div class="empty"><h3>Próximamente</h3><p>Esta función aún no está disponible.</p></div>${footer()}`;$('[data-back]').onclick=()=>history.back()}
+function renderNotice(title){setNav('');main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>${title}</h1></div><div class="empty"><h3>Próximamente</h3><p>Esta función aún no está disponible.</p></div>${footer()}`;$('[data-back]').onclick=()=>history.back()}
 /* ------------------------------------------------------------- BÚSQUEDA */
 /*
  * Pantalla de búsqueda real: el campo se enfoca al entrar, consulta el catálogo
@@ -790,17 +850,32 @@ async function renderSearch(params){
 const STORE_WHATSAPP = '18494240621';
 const STORE_WHATSAPP_TEXT = encodeURIComponent('Hola, soy cliente de FULLTECH Store y quiero hacer una consulta.');
 async function renderAbout(){
+const presentation=`<section class="ft-intro" aria-labelledby="ft-intro-title">
+      <div class="ft-intro-brand" aria-label="FULLTECH"><span>FULL</span>TECH</div>
+      <h2 id="ft-intro-title">Tecnología, herramientas y soluciones profesionales.</h2>
+      <picture class="ft-intro-visual">
+        <img class="ft-intro-photo" src="/store/assets/presentation/fulltech-scene-800.webp"
+          srcset="/store/assets/presentation/fulltech-scene-480.webp 480w, /store/assets/presentation/fulltech-scene-800.webp 800w, /store/assets/presentation/fulltech-scene-1200.webp 1200w, /store/assets/presentation/fulltech-scene-1448.webp 1448w"
+          sizes="(min-width: 1000px) 650px, (min-width: 768px) 90vw, calc(100vw - 32px)"
+          width="1448" height="1086" alt="Computadora, teléfono, accesorios, cámaras y herramientas junto a un portón automatizado en una instalación moderna."
+          fetchpriority="high" loading="eager" decoding="async">
+      </picture>
+      <p class="ft-intro-description">En FULLTECH ofrecemos productos tecnológicos, herramientas, sistemas de cámaras de seguridad y soluciones de automatización de portones para hogares y negocios.</p>
+      <div class="ft-intro-actions"><a class="button ft-intro-explore" href="${href('catalog')}">Explorar productos ${materialIcon('arrow-right',{size:18})}</a><button type="button" class="ft-intro-services-link" data-scroll-services>Conoce nuestras soluciones</button></div>
+    </section>`;
+  const services=`<section class="ft-intro-services" id="fulltech-services" aria-labelledby="ft-services-title">
+      <div class="ft-intro-services-copy"><span class="ft-intro-kicker">PARA HOGARES Y NEGOCIOS</span><h2 id="ft-services-title">Soluciones que te acompañan.</h2>
+        <p>Estamos ubicados en Higüey, República Dominicana.</p>
+        <ul><li>Tecnología y accesorios.</li><li>Herramientas y equipos.</li><li>Cámaras de seguridad.</li><li>Instalación de motores para portones.</li><li>Asesoría y búsqueda de productos por solicitud.</li></ul>
+        <a class="button button-outline ft-intro-install" href="https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent('Hola FULLTECH, quiero consultar una instalación y solicitar una cotización.')}" target="_blank" rel="noopener">Consultar instalación ${materialIcon('whatsapp',{size:18})}</a>
+      </div>
+      <div class="ft-intro-sourcing"><span class="ft-intro-kicker">BÚSQUEDA POR SOLICITUD</span><h2>¿No encuentras lo que buscas?</h2><p>¡En FULLTECH te lo conseguimos!</p><a class="button ft-intro-request" href="${href('request')}">Solicitar un producto ${materialIcon('arrow-right',{size:18})}</a></div>
+    </section>`;
   setNav('nosotros');
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Nosotros</h1></div><div class="loading-cards"><div class="skeleton"></div></div>`;
+  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Nosotros</h1></div><div class="loading-cards"><div class="skeleton"></div></div>`;
   $('[data-back]').onclick=()=>history.back();
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">‹</button><h1>Nosotros</h1></div>
-    <section class="about-hero">
-      <span class="about-hero__eyebrow">${materialIcon('security',{size:14})} FULLTECH STORE</span>
-      <h1>Tecnología y suministros con acompañamiento real</h1>
-      <p>Somos FULLTECH, SRL. Vendemos productos que tenemos en existencia y conseguimos los que no están en el catálogo, siempre con el precio y la disponibilidad a la vista antes de que decidas.</p>
-    </section>
-
-    <figure class="about-photo"><img src="/store/assets/img/hero-productos.jpg" alt="Selección de productos del catálogo FULLTECH" width="720" height="420" loading="lazy" decoding="async"><figcaption>Consulta cada ficha para conocer sus características y disponibilidad.</figcaption></figure>
+  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Nosotros</h1></div>
+    ${presentation}${services}
     <section class="about-section">
       <h2>Quiénes somos</h2>
       <p>FULLTECH Store es la tienda en línea de FULLTECH, SRL, una empresa dominicana. Trabajamos con dos tipos de artículos: los que salen de nuestro propio almacén y los que se consiguen con proveedores. En la ficha de cada producto y en el carrito verás siempre cuál es el caso, sin letra pequeña.</p>
@@ -850,10 +925,11 @@ async function renderAbout(){
 
     <div class="about-actions">
       <a class="button" href="${href('catalog')}">Explorar productos</a>
-      <a class="button button-outline" href="https://wa.me/${STORE_WHATSAPP}?text=${STORE_WHATSAPP_TEXT}" target="_blank" rel="noopener">Escribir por WhatsApp</a>
+      <a class="button button-outline" href="https://wa.me/${STORE_WHATSAPP}?text=${STORE_WHATSAPP_TEXT}" target="_blank" rel="noopener">${materialIcon('whatsapp',{size:18})} Escribir por WhatsApp</a>
     </div>
     <p class="about-note">Las condiciones de garantía, plazos de entrega y formas de pago se confirman en cada pedido antes de cobrar.</p>
     ${footer()}`;
+  $('[data-scroll-services]')?.addEventListener('click', () => $('#fulltech-services').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));
   $('[data-back]').onclick=()=>history.back();
 }
 

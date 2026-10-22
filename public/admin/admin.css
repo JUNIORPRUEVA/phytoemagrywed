@@ -15209,3 +15209,51 @@ body[data-tab='whatsapp'] .wa__head-orders-badge{
 .view--profile .view__hint{font-size:.68rem;line-height:1.45;margin:4px 0 8px;opacity:.8}
 .view--profile .btn--block{min-height:38px;font-size:.82rem;border-radius:11px}
 .view--profile .profile-earnings{padding:12px;border-radius:14px;margin-bottom:10px}
+
+/* ================================================================== *
+ * HOY · INDICADOR EN CERO = RESPUESTA, NO ATAJO.
+ *
+ * Una tarjeta sin nada dentro no viaja a una lista vacía: se queda en su
+ * sitio, con su número real, apagada (borde punteado, sin sombra) y con una
+ * línea corta y neutra en lugar de la flecha. Sin rojos ni ámbar: un cero no
+ * es una alerta, es buena noticia.
+ * ================================================================== */
+body[data-tab='hoy'] .stat--empty{
+  border:1px dashed rgba(11,27,58,.14);
+  background:rgba(255,255,255,.55);
+  box-shadow:none;
+  cursor:default;
+}
+body[data-tab='hoy'] .stat--empty::after{display:none}
+body[data-tab='hoy'] .stat--empty .stat__icon{
+  background:transparent;
+  color:#98a3b6;
+  box-shadow:inset 0 0 0 1px rgba(11,27,58,.10);
+}
+body[data-tab='hoy'] .stat--empty .stat__value{color:#a3acbc;font-weight:700}
+body[data-tab='hoy'] .stat--empty .stat__label{color:#7d8798}
+body[data-tab='hoy'] .stat--empty .stat__arrow{display:none}
+body[data-tab='hoy'] .stat__hint{
+  grid-column:1 / -1;
+  grid-row:3;
+  margin-top:1px;
+  color:#8d97a8;
+  font-size:.68rem;
+  font-weight:600;
+  line-height:1.2;
+}
+:root[data-theme='dark'] body[data-tab='hoy'] .stat--empty{
+  border-color:rgba(255,255,255,.14);
+  background:rgba(255,255,255,.025);
+}
+:root[data-theme='dark'] body[data-tab='hoy'] .stat--empty .stat__icon{
+  background:transparent;
+  color:#7d8aa2;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+}
+:root[data-theme='dark'] body[data-tab='hoy'] .stat--empty .stat__value,
+:root[data-theme='dark'] body[data-tab='hoy'] .stat--empty .stat__label,
+:root[data-theme='dark'] body[data-tab='hoy'] .stat__hint{color:#8e9bb3}
+@media (max-width:979px){
+  body[data-tab='hoy'] .stat__hint{font-size:.62rem}
+}

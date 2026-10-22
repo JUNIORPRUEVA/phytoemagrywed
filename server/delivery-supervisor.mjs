@@ -61,7 +61,7 @@ export const SUPERVISOR_ESCALATION_TEMPLATE = 'phyto_delivery_sin_atender_admin_
  * documento y nada más: no pueden convivir dos calendarios.
  */
 export const DELIVERY_SUPERVISION_POLICY = Object.freeze({
-  firstReminderMinutes: 10,
+  firstReminderMinutes: 5,
   followUpMinutes: 30,
   maxAttempts: 3,
   lateAfterMinutes: 90,
@@ -89,6 +89,13 @@ const MAX_ESCALATION_RECIPIENTS = 4;
 export const SUPERVISOR_STAGES = Object.freeze({
   CLOSED: 'closed',
   NO_RESPONSIBLE: 'no_responsible',
+  /*
+   * ASIGNACIÓN SIN ACEPTAR. Es la etapa que manda el calendario exacto:
+   * T+5 primer WhatsApp, T+20 recordatorio corto, T+30 escalado a administración.
+   * En cuanto el repartidor acepta (acción autenticada), esta etapa desaparece y
+   * los avisos de aceptación se detienen.
+   */
+  NOT_ACCEPTED: 'not_accepted',
   NOT_CONFIRMED: 'not_confirmed',
   SEND_FAILED: 'send_failed',
   PENDING_START: 'pending_start',
@@ -102,6 +109,7 @@ export const SUPERVISOR_STAGES = Object.freeze({
 /** Texto de la SIGUIENTE ACCIÓN. Es lo único que se le pide al repartidor. */
 export const STAGE_NEXT_ACTION = Object.freeze({
   no_responsible: 'Asignar un responsable',
+  not_accepted: 'Aceptar la entrega asignada',
   not_confirmed: 'Enviar el pedido al repartidor',
   send_failed: 'Reenviar el pedido (falló el envío)',
   pending_start: 'Iniciar la entrega',
@@ -115,7 +123,26 @@ export const STAGE_NEXT_ACTION = Object.freeze({
 
 export const DEFAULT_SUPERVISOR_SETTINGS = Object.freeze({
   enabled: true,
-  firstReminderMinutes: 10,
+  /*
+   * CALENDARIO EXACTO DE ACEPTACIÓN (desde la asignación vigente):
+   *   T+0  aviso INTERNO al repartidor (no se envía WhatsApp todavía)
+   *   T+5  primer WhatsApp con el pedido y el enlace para aceptar
+   *   T+20 segundo recordatorio CORTO (acceptSecondMinutes)
+   *   T+30 escalado a administración (acceptEscalateMinutes)
+   * Los tres umbrales son configurables; estos son los del negocio.
+   */
+  firstReminderMinutes: 5,
+  acceptSecondMinutes: 20,
+  acceptEscalateMinutes: 30,
+  /*
+   * PRIMER CONTACTO ENRIQUECIDO (apagado por defecto).
+   *
+   * Con `true`, el primer aviso al repartidor sale con la plantilla de reparto
+   * (productos, cobro, dirección, mapa, instrucciones) y el enlace para aceptar.
+   * Se deja apagado hasta que el negocio apruebe esa plantilla y valide el flujo
+   * en producción: cambiarlo no puede sorprender a una instalación en marcha.
+   */
+  sendFullFirstContact: true,
   followUpMinutes: 30,
   maxAttempts: 3,
   lateAfterMinutes: 90,
@@ -186,6 +213,9 @@ export function normalizeSupervisorSettings(raw = null) {
     enabled: flag(source.enabled, DEFAULT_SUPERVISOR_SETTINGS.enabled),
     firstReminderMinutes: bounded(read('firstReminderMinutes', 'first_reminder_minutes', DEFAULT_SUPERVISOR_SETTINGS.firstReminderMinutes), DEFAULT_SUPERVISOR_SETTINGS.firstReminderMinutes, 1, 24 * 60),
     followUpMinutes: bounded(read('followUpMinutes', 'follow_up_minutes', DEFAULT_SUPERVISOR_SETTINGS.followUpMinutes), DEFAULT_SUPERVISOR_SETTINGS.followUpMinutes, 5, 24 * 60),
+    acceptSecondMinutes: bounded(read('acceptSecondMinutes', 'accept_second_minutes', DEFAULT_SUPERVISOR_SETTINGS.acceptSecondMinutes), DEFAULT_SUPERVISOR_SETTINGS.acceptSecondMinutes, 6, 24 * 60),
+    acceptEscalateMinutes: bounded(read('acceptEscalateMinutes', 'accept_escalate_minutes', DEFAULT_SUPERVISOR_SETTINGS.acceptEscalateMinutes), DEFAULT_SUPERVISOR_SETTINGS.acceptEscalateMinutes, 6, 48 * 60),
+    sendFullFirstContact: flag(read('sendFullFirstContact', 'send_full_first_contact', DEFAULT_SUPERVISOR_SETTINGS.sendFullFirstContact), DEFAULT_SUPERVISOR_SETTINGS.sendFullFirstContact),
     maxAttempts: bounded(read('maxAttempts', 'max_attempts', DEFAULT_SUPERVISOR_SETTINGS.maxAttempts), DEFAULT_SUPERVISOR_SETTINGS.maxAttempts, 1, 10),
     lateAfterMinutes: bounded(read('lateAfterMinutes', 'late_after_minutes', DEFAULT_SUPERVISOR_SETTINGS.lateAfterMinutes), DEFAULT_SUPERVISOR_SETTINGS.lateAfterMinutes, 15, 7 * 24 * 60),
     escalateAfterMinutes: bounded(read('escalateAfterMinutes', 'escalate_after_minutes', DEFAULT_SUPERVISOR_SETTINGS.escalateAfterMinutes), DEFAULT_SUPERVISOR_SETTINGS.escalateAfterMinutes, 15, 30 * 24 * 60),
@@ -504,18 +534,34 @@ export function supervisionOf(order, options = {}) {
     else if (pendingType === 'confirm_delivery') stage = SUPERVISOR_STAGES.AWAITING_CONFIRMATION;
     else if (state === 'IN_TRANSIT' || status === 'enviado') stage = SUPERVISOR_STAGES.IN_TRANSIT;
     else if (pendingPickups) stage = SUPERVISOR_STAGES.PICKUP_PENDING;
+    /*
+     * SIN ACEPTAR MANDA EL CALENDARIO. Mientras no haya `delivery_accepted_at`
+     * (acción autenticada del repartidor asignado, `POST /delivery/accept`), la
+     * etapa es NOT_ACCEPTED: T+5 primer WhatsApp, T+20 recordatorio corto y
+     * T+30 escalado. Al aceptar, la etapa pasa a «iniciar entrega» y los avisos
+     * de aceptación se detienen.
+     */
+    else if (!order.delivery?.delivery_accepted_at && !order.delivery?.supervisor?.acknowledged_at) stage = SUPERVISOR_STAGES.NOT_ACCEPTED;
     else stage = SUPERVISOR_STAGES.PENDING_START;
   }
 
   const assignedAt = firstTime(supervisor.assigned_at, order.delivery?.delivery_assigned_at, order.delivery?.external?.assigned_at, order.created_at);
+  const acceptedAt = firstTime(order.delivery?.delivery_accepted_at, supervisor.acknowledged_at);
   const startedAt = firstTime(supervisor.started_at, order.delivery?.external?.started_at, order.delivery?.delivery_started_at, assignedAt);
   const reportedAt = firstTime(order.delivery?.external?.delivered_reported_at, supervisor.delivered_reported_at, now);
+  /*
+   * ANCLA DE LA ETAPA. La aceptación es el hito que corta el calendario: una vez
+   * aceptada, los avisos se cuentan desde la aceptación (no desde la asignación),
+   * así el recordatorio de «inicia la entrega» no sale pegado al de aceptar.
+   */
   const anchorAt =
     stage === SUPERVISOR_STAGES.IN_TRANSIT
       ? startedAt
       : stage === SUPERVISOR_STAGES.AWAITING_CONFIRMATION
         ? reportedAt
-        : assignedAt;
+        : stage === SUPERVISOR_STAGES.PENDING_START || stage === SUPERVISOR_STAGES.PICKUP_PENDING
+          ? acceptedAt || assignedAt
+          : assignedAt;
   const elapsedMinutes = anchorAt ? Math.max(0, Math.round((now - anchorAt) / 60000)) : 0;
   const severity =
     elapsedMinutes >= settings.lateAfterMinutes
@@ -540,6 +586,10 @@ export function supervisionOf(order, options = {}) {
     phone,
     hasPhone: phoneKnown ? Boolean(phone) : null,
     missingPhone: phoneKnown ? !phone : false,
+    /* Aceptación AUTORITATIVA (acción autenticada), no un «ok» por WhatsApp. */
+    accepted: Boolean(acceptedAt),
+    acceptedAt: acceptedAt ? new Date(acceptedAt).toISOString() : null,
+    assignedAt: assignedAt ? new Date(assignedAt).toISOString() : null,
     anchorAt: anchorAt || now,
     elapsedMinutes,
     pendingPickups,
@@ -822,10 +872,62 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
    * su teléfono personal y, si no tiene, el de la flota.
    */
   let channel = null;
+  /* Enlace AUTORIZADO para abrir la entrega (sin tokens en la URL). */
+  const link = typeof deps.orderDeepLink === 'function' ? deps.orderDeepLink(item.id) : null;
+  /*
+   * PRIMER CONTACTO = RESUMEN COMPLETO. El T+5 no es un «recuérdame»: lleva el
+   * pedido (productos, dirección, cobro, instrucciones) y el enlace para aceptar.
+   * Se construye con la plantilla de reparto ya aprobada y, si no está
+   * disponible, se cae al recordatorio corto con el enlace.
+   */
+  const primerContacto = settings.sendFullFirstContact === true && attempt === 1 && !state.accepted && typeof deps.sendCourierFirstContact === 'function';
+  let primerContactoActivo = primerContacto;
+  let cuerpoChat = `${state.nextAction}`;
   if (settings.whatsAppReminders && phone) {
     if (!ctx.whatsapp?.enabled) {
       status = 'failed';
       error = 'whatsapp_not_configured';
+    } else if (primerContactoActivo) {
+      const rico = await deps
+        .sendCourierFirstContact({ item, order, phone, link, state })
+        .catch((failure) => ({ ok: false, reason: failure?.message ?? 'send_failed' }));
+      if (rico?.ok) {
+        status = 'sent';
+        channel = rico.channel ?? 'template';
+        messageId = rico.messageId ?? null;
+        if (rico.text) cuerpoChat = rico.text;
+      } else {
+        /* Sin plantilla de reparto aprobada se intenta el recordatorio corto. */
+        const corto = await deps
+          .sendCourierFirstContact({ item, order, phone, link, state, fallback: true })
+          .catch((failure) => ({ ok: false, reason: failure?.message ?? 'send_failed' }));
+        if (corto?.ok) {
+          status = 'sent';
+          channel = corto.channel ?? 'template';
+          messageId = corto.messageId ?? null;
+          if (corto.text) cuerpoChat = corto.text;
+        } else {
+          /*
+           * SIN PLANTILLAS APROBADAS se intenta texto libre con el enlace. Es la
+           * única vía fuera de plantilla y solo entrega dentro de la ventana de
+           * 24 h; si Meta lo rechaza, el estado queda «pendiente» con el motivo.
+           */
+          error = clean(rico?.reason ?? corto?.reason ?? 'send_failed', 200);
+          const texto = `Hola ${state.responsible.name}, tienes el pedido ${number} para entregar: ${state.nextAction}.${link ? `\n${link}` : ''}`.slice(0, MAX_TEXT);
+          const libre = await ctx.whatsapp
+            .sendText(phone, texto, { idempotencyKey: `supervisor-reminder:${item.id}:${state.stage}:${attempt}` })
+            .catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
+          if (libre?.ok) {
+            status = 'sent';
+            channel = 'text';
+            messageId = libre.messageId ?? null;
+            cuerpoChat = texto;
+          } else {
+            status = 'pending';
+            error = clean(`${error}: ${libre?.error?.message ?? 'send_failed'}`, 200);
+          }
+        }
+      }
     } else {
       if (typeof deps.refreshTemplate === 'function') await deps.refreshTemplate(SUPERVISOR_REMINDER_TEMPLATE).catch(() => null);
       const check = typeof deps.checkTemplate === 'function' ? await deps.checkTemplate(SUPERVISOR_REMINDER_TEMPLATE) : { ok: false, reason: 'template_check_unavailable' };
@@ -837,7 +939,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
             components: [
               {
                 type: 'body',
-                parameters: [state.responsible.name, number, state.nextAction].map((text) => ({ type: 'text', text: String(text).slice(0, MAX_TEXT) })),
+                parameters: [state.responsible.name, number, primerContactoActivo ? `${state.nextAction}${link ? ` · ${link}` : ''}` : state.nextAction].map((text) => ({ type: 'text', text: String(text).slice(0, MAX_TEXT) })),
               },
             ],
           })
@@ -846,6 +948,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
           status = 'sent';
           channel = 'template';
           messageId = sent.messageId ?? null;
+          cuerpoChat = `Recordatorio: ${state.nextAction}${link ? ` · ${link}` : ''}`;
         } else {
           status = 'failed';
           error = clean(sent?.error?.message ?? sent?.reason ?? 'send_failed', 200);
@@ -857,7 +960,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
          * el estado queda «pendiente» (la causa de fondo es la plantilla).
          */
         const motivoPlantilla = check?.reason ?? 'template_not_approved';
-        const texto = `Hola ${state.responsible.name}, te recuerdo el pedido ${number}: ${state.nextAction}. Cuando lo hagas, avísame por aquí.`.slice(0, MAX_TEXT);
+        const texto = `Hola ${state.responsible.name}, te recuerdo el pedido ${number}: ${state.nextAction}.${link ? `\n${link}` : ''}`.slice(0, MAX_TEXT);
         const sent = await ctx.whatsapp
           .sendText(phone, texto, { idempotencyKey: `supervisor-reminder:${item.id}:${state.stage}:${attempt}` })
           .catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
@@ -914,6 +1017,29 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
     data: { order_id: item.id, stage: state.stage, status, error, responsible: state.responsible?.name ?? null },
     idempotencyKey: `delivery.supervisor_reminder:${item.id}:${state.stage}:${attempt}:${status}`,
   });
+  /*
+   * AL CHAT DEL CENTRO IA. Cada intento real (enviado, pendiente o fallido) se
+   * deja en el ticket del pedido con su canal, destinatario y estado del
+   * proveedor. Es lo que permite ver «qué se dijo y qué pasó» sin mirar logs.
+   */
+  if (typeof deps.recordExternalMessage === 'function' && (status === 'sent' || status === 'pending' || status === 'failed')) {
+    await deps
+      .recordExternalMessage({
+        orderId: item.id,
+        order,
+        orderNumber: number,
+        direction: 'outbound',
+        channel: channel ?? 'whatsapp',
+        to: phone,
+        status,
+        providerId: messageId,
+        error,
+        kind: 'reminder',
+        attempt,
+        body: cuerpoChat,
+      })
+      .catch(() => null);
+  }
   return status;
 }
 
@@ -959,6 +1085,28 @@ async function escalate(ctx, deps, { item, order, state, settings, reason }) {
     },
   });
   const whatsapp = await sendEscalationWhatsApp(ctx, deps, { item, order, state, reason });
+  /*
+   * EL ESCALADO TAMBIÉN QUEDA EN EL CHAT DEL PEDIDO, con lo que necesita quien
+   * lo lea: pedido, repartidor, desde cuándo, intentos y estado real del envío.
+   * No se envía nada nuevo por WhatsApp aquí: solo se documenta.
+   */
+  if (typeof deps.recordExternalMessage === 'function') {
+    const intentos = (deps.supervisionEvents ?? [])
+      .filter((row) => row.order_id === item.id && row.kind === 'reminder')
+      .map((row) => `${row.data?.attempt ?? '?'}→${row.status}`);
+    await deps
+      .recordExternalMessage({
+        orderId: item.id,
+        direction: 'system',
+        channel: 'supervisor',
+        status: alerts > 0 || whatsapp.sent > 0 ? 'notified' : 'recorded',
+        kind: 'escalation',
+        body: `Escalado a administración (${reason}). Pedido ${number} · ${state.responsible?.name ?? 'sin responsable'} · ${state.elapsedMinutes} min sin resolver · ${state.nextAction}${
+          intentos.length ? ` · avisos: ${intentos.join(', ')}` : ''
+        }${whatsapp.sent ? ` · WhatsApp a ${whatsapp.sent} administrador(es)` : whatsapp.pending ? ' · WhatsApp pendiente (revisar plantilla/configuración)' : ''}`,
+      })
+      .catch(() => null);
+  }
   await settleSupervisorEvent(ctx, claim.id, {
     status: alerts > 0 || whatsapp.sent > 0 ? 'notified' : 'recorded',
     detail: `Escalado a administración · ${state.nextAction}`,
@@ -1268,7 +1416,7 @@ export async function supervisorTick(ctx, deps = {}) {
      * una incidencia que sigue abierta después. Sin esa condición, un pedido
      * viejo saltaba directo a administración sin que el repartidor supiera nada.
      */
-    if (attempts >= 1 && state.elapsedMinutes >= settings.escalateAfterMinutes) {
+    if (attempts >= 1 && state.elapsedMinutes >= (state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED ? settings.acceptEscalateMinutes : settings.escalateAfterMinutes)) {
       if (escalations >= settings.maxEscalationsPerTick) {
         limitados += 1;
         continue;
@@ -1287,7 +1435,17 @@ export async function supervisorTick(ctx, deps = {}) {
     }
 
     const lastAttemptAt = Math.max(0, ...remindersOf(history, state.stage).map((row) => Date.parse(row.created_at ?? '') || 0));
-    const dueAt = attempts === 0 ? state.anchorAt + settings.firstReminderMinutes * 60000 : lastAttemptAt + settings.followUpMinutes * 60000;
+    /*
+     * EL PRIMER PLAZO DEPENDE DE LA ETAPA. Para ACEPTAR son los 5 minutos del
+     * negocio; una vez aceptada, insistir en «inicia la entrega» a los 5 minutos
+     * sería ruido: se espera el intervalo completo (15).
+     */
+    const primeraEspera = settings.firstReminderMinutes;
+    /* Si es la segunda vez, se cuenta desde el PRIMER aviso. */
+    const intervalo = state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED
+      ? Math.max(1, settings.acceptSecondMinutes - settings.firstReminderMinutes)
+      : settings.followUpMinutes;
+    const dueAt = attempts === 0 ? state.anchorAt + primeraEspera * 60000 : lastAttemptAt + intervalo * 60000;
     if (now < dueAt) continue;
 
     if (!inHours) {
@@ -1451,7 +1609,7 @@ export async function supervisorSnapshot(ctx, options = {}) {
       continue;
     }
     if (state.stage === SUPERVISOR_STAGES.POSTPONED) buckets.pospuestos.push(row);
-    if ([SUPERVISOR_STAGES.NOT_CONFIRMED, SUPERVISOR_STAGES.SEND_FAILED, SUPERVISOR_STAGES.PENDING_START, SUPERVISOR_STAGES.PICKUP_PENDING].includes(state.stage)) buckets.sin_iniciar.push(row);
+    if ([SUPERVISOR_STAGES.NOT_CONFIRMED, SUPERVISOR_STAGES.SEND_FAILED, SUPERVISOR_STAGES.PENDING_START, SUPERVISOR_STAGES.PICKUP_PENDING, SUPERVISOR_STAGES.NOT_ACCEPTED].includes(state.stage)) buckets.sin_iniciar.push(row);
     if (state.stage === SUPERVISOR_STAGES.IN_TRANSIT || state.stage === SUPERVISOR_STAGES.AWAITING_CONFIRMATION) buckets.en_camino.push(row);
     if (state.stage === SUPERVISOR_STAGES.ISSUE || state.stage === SUPERVISOR_STAGES.NO_RESPONSIBLE) buckets.incidencias.push(row);
     if (state.severity === 'late' && state.stage !== SUPERVISOR_STAGES.POSTPONED) buckets.atrasados.push(row);
@@ -1588,7 +1746,11 @@ export async function supervisorPreview(ctx, options = {}) {
       continue;
     }
     const lastAttemptAt = Math.max(0, ...remindersOf(history, state.stage).map((row) => Date.parse(row.created_at ?? '') || 0));
-    const dueAt = attempts === 0 ? state.anchorAt + settings.firstReminderMinutes * 60000 : lastAttemptAt + settings.followUpMinutes * 60000;
+    const primeraEsperaPreview = settings.firstReminderMinutes;
+    const intervaloPreview = state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED
+      ? Math.max(1, settings.acceptSecondMinutes - settings.firstReminderMinutes)
+      : settings.followUpMinutes;
+    const dueAt = attempts === 0 ? state.anchorAt + primeraEsperaPreview * 60000 : lastAttemptAt + intervaloPreview * 60000;
     if (now < dueAt) continue;
     const phone = await recipientPhoneOf(ctx, state.responsible, users);
     candidatos += 1;

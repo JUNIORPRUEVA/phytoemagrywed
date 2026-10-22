@@ -86,3 +86,10 @@
   .section-head .text-link { margin-left: auto; }
   .hero { padding: 22px 18px; }
 }
+
+/* Checkout: compact summary and readable choices in both supported themes. */
+.checkout-summary { padding: 14px; margin-bottom: 16px; }
+.checkout-summary h2 { font-size: 1rem; margin: 0 0 10px; }
+.checkout-summary p { margin: 6px 0; font-size: .85rem; line-height: 1.45; }
+.checkout-method { background: var(--paper); color: var(--ink); border-color: var(--line); min-height: 44px; }
+.checkout-method:focus-within { outline: 2px solid var(--brand); outline-offset: 2px; }

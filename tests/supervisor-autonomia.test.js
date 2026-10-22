@@ -158,10 +158,10 @@ describe('Supervisor IA: plazos configurados', () => {
   it('avisa al cumplirse el primer plazo y NO escala antes de tiempo', async () => {
     const { ctx, deps, world } = mundo({ ordenes: [pedido()], supervisor: { escalateAfterMinutes: 30 } });
 
-    world.now = minutos(9);
-    expect((await supervisorTick(ctx, deps)).reminders).toBe(0); // aún no toca
+    world.now = minutos(4);
+    expect((await supervisorTick(ctx, deps)).reminders).toBe(0); // aún no toca (el plazo es 5)
 
-    world.now = minutos(11);
+    world.now = minutos(6);
     const primero = await supervisorTick(ctx, deps);
     expect(primero.reminders).toBe(1);
     expect(world.sends).toHaveLength(1);

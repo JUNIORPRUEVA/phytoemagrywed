@@ -247,14 +247,17 @@ describe('supervisor de delivery con el servidor real', () => {
     expect(run.status).toBe(200);
     const resultado = await json(run);
     expect(resultado.result.reminders).toBeGreaterThanOrEqual(1);
-    const reminder = mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_supervisor_recordatorio_v1');
-    expect(reminder.length).toBeGreaterThanOrEqual(1);
-    expect(reminder.at(-1).to).toBe(`+${COURIER_PHONE}`);
-    expect(reminder.at(-1).template.components[0].parameters.map((entry) => entry.text)).toEqual([
-      'Mensajero Pedro',
-      order.order.order_number,
-      'Iniciar la entrega',
-    ]);
+    /*
+     * EL PRIMER AVISO ES EL PEDIDO COMPLETO (T+5). Lleva productos, cobro,
+     * dirección, mapa, instrucciones y el ENLACE para aceptar la entrega.
+     */
+    const primero = mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_pedido_repartidor_v1');
+    expect(primero.length).toBeGreaterThanOrEqual(1);
+    expect(primero.at(-1).to).toBe(`+${COURIER_PHONE}`);
+    const parametros = primero.at(-1).template.components[0].parameters.map((entry) => entry.text);
+    expect(parametros[0]).toBe('Mensajero Pedro');
+    expect(parametros[1]).toBe(order.order.order_number);
+    expect(String(parametros[7])).toContain('/admin/?v=delivery&order=');
 
     const snapshot = await json(await request('/api/admin/delivery-supervisor'));
     expect(snapshot.counts.sin_iniciar).toBeGreaterThanOrEqual(1);

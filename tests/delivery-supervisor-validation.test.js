@@ -266,9 +266,14 @@ describe('ciclo con repartidor INTERNO', () => {
     expect(notifications.some((row) => row.type === 'DELIVERY_SUPERVISOR_REMINDER' && row.recipient_user_id === agentId)).toBe(true);
     /*
      * REGLA NUEVA: al repartidor con cuenta en el CRM también se le escribe por
-     * WhatsApp de verdad (antes solo campana). Se usa su teléfono guardado.
+     * WhatsApp de verdad, usando su teléfono guardado. Con el calendario de
+     * aceptación activo el PRIMER aviso es el contacto completo (pedido +
+     * enlace), no el recordatorio corto.
      */
-    expect(mockWhatsApp.sent.filter((row) => row.to === `+${AGENT_PHONE}` && row.template?.name === 'phyto_supervisor_recordatorio_v1')).toHaveLength(1);
+    const alRepartidor = mockWhatsApp.sent.filter((row) => row.to === `+${AGENT_PHONE}`);
+    expect(alRepartidor.length).toBeGreaterThanOrEqual(1);
+    const primerCuerpo = alRepartidor[0].body ?? JSON.stringify(alRepartidor[0].template ?? {});
+    expect(primerCuerpo).toContain(created.order.order_number);
 
     // El agente responde desde SU teléfono por el webhook (como en producción).
     await inbound(AGENT_PHONE, 'Voy para allá');

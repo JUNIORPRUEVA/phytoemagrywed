@@ -638,7 +638,10 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
    * líneas con PRECIO y GARANTÍA del servidor (nunca se confía en el navegador).
    */
   async function publicOrderItems(input) {
-    const rows = Array.isArray(input) ? input.slice(0, 30) : [];
+    if (Array.isArray(input) && (input.length > 30 || new Set(input.map(row => row?.id)).size !== input.length)) {
+      throw fail('invalid_cart', 'El carrito admite hasta 30 productos distintos, sin líneas repetidas.', 422);
+    }
+    const rows = Array.isArray(input) ? input : [];
     if (!rows.length) throw fail('empty_cart', 'El carrito está vacío.', 422);
     const pubs = await publicProducts();
     const byId = new Map(pubs.map(p => [p.id, p]));

@@ -79,7 +79,7 @@ import { createCallingApi } from './calling-api.mjs';
 import { createCallingStore } from './calling-store.mjs';
 import { createCallingService } from './calling-service.mjs';
 import { handleCallingRoute } from './calling-routes.mjs';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -138,7 +138,7 @@ import { handleOpsRoute } from './ops/routes.mjs';
  */
 import { opsAgentTick } from './ops/agents.mjs';
 import { opsDeadlineTick } from './ops/notify.mjs';
-import { opsDeliveryTicketTick } from './ops/delivery-tickets.mjs';
+import { opsDeliveryTicketTick, recordExternalMessage } from './ops/delivery-tickets.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
 import { createRealtimeHub, eventFromMutation } from './realtime.mjs';
@@ -209,6 +209,7 @@ import {
   COURIER_STATUS,
   savedCourierContacts,
   assignCourier,
+  buildCourierPayload,
   sendOrderToCourier,
   handleCourierInbound,
 } from './delivery-courier.mjs';
@@ -279,6 +280,49 @@ function supervisorBridge(ctx) {
     timeZone: TIME_ZONE,
     /* Enlace ABSOLUTO al pedido: el escalado por WhatsApp se abre en un teléfono. */
     orderDeepLink: (orderId) => absoluteDeliveryDeepLink(orderId),
+    /*
+     * PRIMER CONTACTO (T+5). Lleva el pedido de verdad: cliente, productos,
+     * cobro, dirección, mapa e instrucciones, más el enlace autorizado para
+     * aceptar. Reutiliza la plantilla de reparto que ya existe; si no está
+     * aprobada, el motor cae al recordatorio corto con el mismo enlace.
+     */
+    sendCourierFirstContact: async ({ item, order, phone, link, state, fallback = false }) => {
+      const check = await approvedTemplate(ctx, fallback ? SUPERVISOR_REMINDER_TEMPLATE : COURIER_TEMPLATE).catch(() => null);
+      if (!check?.ok) return { ok: false, reason: check?.reason ?? 'template_not_approved' };
+      const nombre = state?.responsible?.name ?? 'Repartidor';
+      const numero = order?.order_number ?? item?.order_number ?? item?.id ?? '';
+      const variables = fallback
+        ? [nombre, String(numero), `${state?.nextAction ?? 'Aceptar la entrega'}${link ? ` · ${link}` : ''}`]
+        : buildCourierPayload({
+            order,
+            customer: order?.customer_id ? await ctx.customers.get(order.customer_id).catch(() => null) : null,
+            contact: { name: nombre, phone },
+            destination: orderDestination(order),
+          }).variables;
+      if (!fallback && link) {
+        /* El enlace va en LAS INSTRUCCIONES: no cambia la estructura aprobada. */
+        variables[7] = `${variables[7]}\nAcepta la entrega aquí: ${link}`.slice(0, 300);
+      }
+      const sent = await ctx.whatsapp
+        .sendTemplate(phone, {
+          name: check.template?.name ?? (fallback ? SUPERVISOR_REMINDER_TEMPLATE : COURIER_TEMPLATE),
+          language: check.template?.language ?? 'es',
+          components: [{ type: 'body', parameters: variables.map((text) => ({ type: 'text', text: String(text).slice(0, 300) })) }],
+        })
+        .catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
+      if (!sent?.ok) return { ok: false, reason: sent?.error?.message ?? sent?.reason ?? 'send_failed' };
+      return {
+        ok: true,
+        channel: 'template',
+        messageId: sent.messageId ?? null,
+        text: fallback
+          ? `Recordatorio: ${state?.nextAction ?? 'Aceptar la entrega'}${link ? ` · ${link}` : ''}`
+          : [`Pedido ${numero} para ${nombre}`, ...variables.slice(2, 8)].join('\n'),
+      };
+    },
+    /* Cada comunicación externa se guarda en el chat del pedido (Centro IA). */
+    recordExternalMessage: (args) =>
+      recordExternalMessage({ ctx, deps: { findOrder: (id) => findOrderItem(ctx.store, id), listOrders: () => ctx.store.listAdmin({ limit: 5000 }) }, ...args }),
     completeDelivery: (orderId, options = {}) =>
       transitionOrderStatus(ctx, {
         orderId,
@@ -2331,6 +2375,10 @@ async function notifyAdminsDeliveryCompleted(ctx, item, order, actor = null) {
 }
 
 async function deliveryControlTick(ctx) {
+  // Motor ANTIGUO de control de reparto. El Supervisor IA lo sustituye: si está activo,
+  // este tick no debe enviar nada para no duplicar mensajes ni tener dos calendarios.
+  const supervisorActive = await supervisorSettings(ctx).then((saved) => saved?.enabled === true).catch(() => false);
+  if (supervisorActive) return { skipped: 'supervisor_active', reminders: 0, escalations: 0 };
   const settings = await deliveryControlSettings(ctx);
   const now = ctx.clock().getTime();
   const rows = await ctx.store.listAdmin({ limit: 5000 });
@@ -3600,6 +3648,12 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
     built.row.orderJson = JSON.stringify(built.order);
   }
   const saved = await ctx.store.save(built.row);
+  // Another server may win the unique-ID insert after our initial lookup.
+  // Store retries must never overwrite the winning persisted order.
+  if (isStoreOrder && saved.duplicate) {
+    const existing = await ctx.store.getAdmin(built.row.id);
+    return { ok: true, duplicate: true, item: existing, order: orderOf(existing), customer, status: existing.status };
+  }
   const item = await ctx.store.update(built.row.id, {
     status,
     notes: built.order.notes,
@@ -3701,6 +3755,11 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
  *  · no se descuenta inventario (solo se comprueba que haya).
  */
 async function createStoreOrder(ctx, session, body = {}) {
+  if (!ctx.storeCatalog) return { ok: false, status: 503, error: 'store_unavailable' };
+  return ctx.storeCatalog.orderLock(() => createStoreOrderUnlocked(ctx, session, body));
+}
+
+async function createStoreOrderUnlocked(ctx, session, body = {}) {
   if (!ctx.storeCatalog) {
     return { ok: false, status: 503, error: 'store_unavailable', message: 'La tienda no está disponible ahora mismo.' };
   }
@@ -3708,6 +3767,24 @@ async function createStoreOrder(ctx, session, body = {}) {
   const customerId = account?.customer_id ?? session?.customer?.id ?? null;
   if (!customerId) {
     return { ok: false, status: 401, error: 'unauthorized', message: 'Inicia sesión para hacer un pedido.' };
+  }
+  const requestKey = String(body.requestKey ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(requestKey)) {
+    return { ok: false, status: 422, error: 'request_key_required', message: 'Recarga el checkout antes de enviar el pedido.' };
+  }
+  // Scope browser keys to the authenticated customer. Replay the persisted
+  // order before checking current catalog state; retries never mutate it.
+  const idempotentId = 'store_' + createHash('sha256').update(customerId + ':' + requestKey).digest('hex').slice(0, 48);
+  const scoped = await ctx.store.getAdmin(idempotentId);
+  const legacy = scoped ? null : await ctx.store.getAdmin(requestKey);
+  const previous = scoped || (legacy?.customer_id === customerId && orderOf(legacy)?.origin === 'FULLTECH_STORE' ? legacy : null);
+  if (previous) {
+    const order = orderOf(previous);
+    return { ok: true, duplicate: true, order: {
+      id: previous.id, number: order?.order_number, status: previous.status,
+      total: order?.total, currency: order?.currency ?? 'DOP',
+      fulfillment: order?.fulfillment_method, payment_status: order?.payment_status ?? 'pending',
+    } };
   }
   let lines;
   try {
@@ -3723,9 +3800,7 @@ async function createStoreOrder(ctx, session, body = {}) {
     return { ok: false, status: 422, error: 'address_required', message: 'Escribe la dirección de entrega.' };
   }
   const notes = String(body.notes ?? '').trim().slice(0, 500);
-  const requestKey = String(body.requestKey ?? '').trim();
-  const idempotentId = /^[A-Za-z0-9_-]{8,80}$/.test(requestKey) ? requestKey : undefined;
-  const result = await createOrder(
+  const result = await createOrderUnlocked(
     ctx,
     {
       id: idempotentId,
@@ -5200,6 +5275,29 @@ export async function processWebhookPayload(ctx, body) {
       });
       if (supervisor?.handled) {
         console.log(`[crm] supervisor de delivery · ${supervisor.reason} · pedido ${supervisor.orderId ?? '—'}`);
+        /*
+         * LA RESPUESTA DEL REPARTIDOR TAMBIÉN VA AL CHAT DEL PEDIDO.
+         * Se guarda con su texto real y la identidad de quien escribió; si el
+         * mensaje era ambiguo, queda igual (es lo que pasó) pero NO cambia el
+         * estado de la entrega.
+         */
+        if (supervisor.orderId) {
+          const item = await findOrderItem(ctx.store, supervisor.orderId).catch(() => null);
+          await recordExternalMessage({
+            ctx,
+            deps: { findOrder: (id) => findOrderItem(ctx.store, id) },
+            orderId: supervisor.orderId,
+            order: item ? orderOf(item) : null,
+            orderNumber: item ? orderOf(item)?.order_number ?? item.order_number ?? null : null,
+            direction: 'inbound',
+            channel: 'whatsapp',
+            status: 'received',
+            providerId: inbound?.waMessageId ?? inbound?.id ?? null,
+            kind: 'reply',
+            authorName: `Repartidor (${inbound?.fromE164 ?? inbound?.from ?? 'WhatsApp'})`,
+            body: String(inbound?.text?.body ?? inbound?.body ?? '').slice(0, 600),
+          }).catch(() => null);
+        }
       } else {
         const courier = await handleCourierInbound({
           ctx,

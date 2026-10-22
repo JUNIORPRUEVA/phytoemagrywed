@@ -1,0 +1,130 @@
+[
+  {
+    "name": "home",
+    "source": "C:/Users/pc/Downloads/pagina-de-inicio.png",
+    "archive": "assets/branding/store-icons-original/home.png",
+    "target": "public/store/assets/icons/custom/home.png",
+    "bytes": 2583,
+    "sha256": "699ca334a7912e27415dcc3c4bdad02904f94b849a344b5b6c8a25287d85832b"
+  },
+  {
+    "name": "categories",
+    "source": "C:/Users/pc/Downloads/categoria.png",
+    "archive": "assets/branding/store-icons-original/categories.png",
+    "target": "public/store/assets/icons/custom/categories.png",
+    "bytes": 1425,
+    "sha256": "6c4eed431ec824708191b8cf655b9fb9a30e3ceb99f0f3eacf6de179454ba4ab"
+  },
+  {
+    "name": "filter",
+    "source": "C:/Users/pc/Downloads/filtrar (1).png",
+    "archive": "assets/branding/store-icons-original/filter.png",
+    "target": "public/store/assets/icons/custom/filter.png",
+    "bytes": 606,
+    "sha256": "a4d0b8dae1b1276424debacd8bdf760e67eb3c82175a7bf6e38ae8aacb872f94"
+  },
+  {
+    "name": "back",
+    "source": "C:/Users/pc/Downloads/flecha-izquierda.png",
+    "archive": "assets/branding/store-icons-original/back.png",
+    "target": "public/store/assets/icons/custom/back.png",
+    "bytes": 775,
+    "sha256": "7c3ae0e81ca58f97d4ae08d0863fbe748ba4a0e7a906f00ff3f7f206935ec251"
+  },
+  {
+    "name": "share",
+    "source": "C:/Users/pc/Downloads/compartir.png",
+    "archive": "assets/branding/store-icons-original/share.png",
+    "target": "public/store/assets/icons/custom/share.png",
+    "bytes": 2464,
+    "sha256": "eae49501205b3ad3029a7e0684d9409f0d1be1bb6c4bdec9e6f2735943663a69"
+  },
+  {
+    "name": "truck",
+    "source": "C:/Users/pc/Downloads/el-tiempo-de-entrega.png",
+    "archive": "assets/branding/store-icons-original/truck.png",
+    "target": "public/store/assets/icons/custom/truck.png",
+    "bytes": 3817,
+    "sha256": "3a4253dda290a1d95c83ae5a21b801ed243bdb7ced967a64b1c3d73c5b91d218"
+  },
+  {
+    "name": "cart",
+    "source": "C:/Users/pc/Downloads/carro.png",
+    "archive": "assets/branding/store-icons-original/cart.png",
+    "target": "public/store/assets/icons/custom/cart.png",
+    "bytes": 2040,
+    "sha256": "e42e9da45060b0eeaff8a087ffd3f6304f27c85324cf16185bb7d1f78c42e8c9"
+  },
+  {
+    "name": "whatsapp",
+    "source": "C:/Users/pc/Downloads/whatsapp (3).png",
+    "archive": "assets/branding/store-icons-original/whatsapp.png",
+    "target": "public/store/assets/icons/custom/whatsapp.png",
+    "bytes": 3504,
+    "sha256": "aa8006b3e8631aeffafa85914c4ccee1babe12f4c1068ecd222fa3c7819567d3"
+  },
+  {
+    "name": "account",
+    "source": "C:/Users/pc/Downloads/usuario.png",
+    "archive": "assets/branding/store-icons-original/account.png",
+    "target": "public/store/assets/icons/custom/account.png",
+    "bytes": 2764,
+    "sha256": "85ce46b22b6b9727f700ea39a692f92304f3a9e7b979f1bac66c96abc72c786e"
+  },
+  {
+    "name": "down",
+    "source": "C:/Users/pc/Downloads/abajo.png",
+    "archive": "assets/branding/store-icons-original/down.png",
+    "target": "public/store/assets/icons/custom/down.png",
+    "bytes": 1246,
+    "sha256": "e3e4866f445ef57c2f1201913527133abcd902de292798003cbca52386b46f5c"
+  },
+  {
+    "name": "up",
+    "source": "C:/Users/pc/Downloads/arriba.png",
+    "archive": "assets/branding/store-icons-original/up.png",
+    "target": "public/store/assets/icons/custom/up.png",
+    "bytes": 1216,
+    "sha256": "8d2e61f8b256408c0affc13fdc26f5504fcf3e0bc3e9b5c07dcab50f36607bec"
+  },
+  {
+    "name": "plus",
+    "source": "C:/Users/pc/Downloads/mas (1).png",
+    "archive": "assets/branding/store-icons-original/plus.png",
+    "target": "public/store/assets/icons/custom/plus.png",
+    "bytes": 570,
+    "sha256": "570876c33258860b2e17a39291619cc9a0d5f3c4847bebda36d4421326e5ecea"
+  },
+  {
+    "name": "close",
+    "source": "C:/Users/pc/Downloads/cruz-quitar-signo.png",
+    "archive": "assets/branding/store-icons-original/close.png",
+    "target": "public/store/assets/icons/custom/close.png",
+    "bytes": 927,
+    "sha256": "b82b6cfffa5a22f4b2dc6895174a1a887725fc9fe12d27487a601150677e52d7"
+  },
+  {
+    "name": "menu",
+    "source": "C:/Users/pc/Downloads/menu (2).png",
+    "archive": "assets/branding/store-icons-original/menu.png",
+    "target": "public/store/assets/icons/custom/menu.png",
+    "bytes": 666,
+    "sha256": "8cb72ee9fa30b299783be0d40f5e708db873984c27c2824d066af6c7bacfa738"
+  },
+  {
+    "name": "delete",
+    "source": "C:/Users/pc/Downloads/eliminar (2).png",
+    "archive": "assets/branding/store-icons-original/delete.png",
+    "target": "public/store/assets/icons/custom/delete.png",
+    "bytes": 1638,
+    "sha256": "dcb19b32be8f2a6d52ee6e332d1a3e22c7e0e09daeb137269470ce25170ddfcd"
+  },
+  {
+    "name": "search",
+    "source": "C:/Users/pc/Downloads/lupa.png",
+    "archive": "assets/branding/store-icons-original/search.png",
+    "target": "public/store/assets/icons/custom/search.png",
+    "bytes": 2208,
+    "sha256": "0e7abbf6f8dd01e611c5f6bef6528cdaf59194da1cc6bd10dfaf2fdb337f1693"
+  }
+]

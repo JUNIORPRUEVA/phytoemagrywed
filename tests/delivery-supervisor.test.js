@@ -338,7 +338,7 @@ describe('motor de recordatorios', () => {
 
   it('espera el primer plazo antes de escribir', async () => {
     const { ctx, deps, world } = makeWorld({ orders: [baseOrder()] });
-    world.now = '2026-10-18T12:05:00.000Z'; // 5 min después de asignar
+    world.now = '2026-10-18T12:04:00.000Z'; // 4 min después de asignar (el plazo es 5)
     const result = await supervisorTick(ctx, deps);
     expect(result.reminders).toBe(0);
     expect(world.sends).toHaveLength(0);
@@ -753,7 +753,7 @@ describe('foto para el panel', () => {
   it('los ajustes se normalizan y respetan límites', async () => {
     const { ctx } = makeWorld();
     const settings = await supervisorSettings(ctx);
-    expect(settings).toMatchObject({ enabled: true, firstReminderMinutes: 10, maxAttempts: 3 });
+    expect(settings).toMatchObject({ enabled: true, firstReminderMinutes: 5, maxAttempts: 3 });
     const { ctx: otro } = makeWorld({ supervisor: { firstReminderMinutes: 99999, maxAttempts: 0, contactFromHour: -5 } });
     const clamped = await supervisorSettings(otro);
     expect(clamped.firstReminderMinutes).toBe(1440);

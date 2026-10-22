@@ -443,6 +443,15 @@
     tab: 'hoy',
     filter: 'todos',
     q: '',
+    /*
+     * VIAJES TEMPORALES DESDE HOY (por pestaña de destino).
+     *
+     * Cada atajo del tablero abre su pantalla con el filtro puesto, pero eso NO
+     * es una elección de la persona: se guarda aquí —en memoria, junto a la
+     * instantánea de lo que había puesto— y se devuelve tal cual al volver. Así
+     * el filtro temporal nunca llega a `localStorage`.
+     */
+    hoyContexto: {},
     clientSearchOpen: false,
     clientFiltersOpen: false,
     /*
@@ -500,6 +509,8 @@
       draft: '',
       listSig: null,
       chatSig: null,
+      /** Punto de lectura que hay que devolver en cuanto la lista se vuelva a pintar. */
+      scrollPendiente: null,
       counts: null,
       /** Ya se pidió al servidor la lista de archivados (evita pedirla en bucle). */
       archivadosPedidos: false,
@@ -2862,6 +2873,7 @@
       {
         label: 'Sin responder',
         value: sinResponder,
+        empty: 'Sin mensajes pendientes',
         alert: sinResponder > 0,
         goto: 'whatsapp',
         waFilter: 'pendientes',
@@ -2871,6 +2883,7 @@
       {
         label: 'Sin asignar',
         value: sinAsignar,
+        empty: 'Nada por asignar',
         alert: sinAsignar > 0,
         goto: 'whatsapp',
         waFilter: 'sin-asignar',
@@ -2880,6 +2893,7 @@
       {
         label: 'Pedidos pendientes',
         value: pedidosPendientes,
+        empty: 'Sin pedidos pendientes',
         alert: pedidosPendientes > 0,
         goto: 'pedidos',
         orderFilter: 'pendiente',
@@ -2896,6 +2910,7 @@
       {
         label: 'Seguimientos vencidos',
         value: seguimientosVencidos,
+        empty: 'Ninguno vencido',
         alert: seguimientosVencidos > 0,
         goto: 'seguimientos',
         followupFilter: 'vencidos',
@@ -2905,14 +2920,15 @@
       {
         label: 'Seguimientos de hoy',
         value: seguimientosHoy,
+        empty: 'Nada agendado para hoy',
         goto: 'seguimientos',
         followupFilter: 'hoy',
         icon: ICONS.users,
         tone: 'green',
       },
-      { label: 'Clientes', value: clientes.length, goto: 'clientes', clientFilter: 'todos', icon: ICONS.person, tone: 'green' },
-      { label: 'Interesados', value: interesados, goto: 'clientes', clientFilter: 'interesados', icon: ICONS.spark, tone: 'amber' },
-      { label: 'Con compra', value: compradores, goto: 'clientes', clientFilter: 'clientes', icon: ICONS.bag, tone: 'purple' },
+      { label: 'Clientes', value: clientes.length, empty: 'Sin clientes registrados', goto: 'clientes', clientFilter: 'todos', icon: ICONS.person, tone: 'green' },
+      { label: 'Interesados', value: interesados, empty: 'Sin interesados', goto: 'clientes', clientFilter: 'interesados', icon: ICONS.spark, tone: 'amber' },
+      { label: 'Con compra', value: compradores, empty: 'Sin clientes con compra', goto: 'clientes', clientFilter: 'clientes', icon: ICONS.bag, tone: 'purple' },
     ];
     /* Los filtros viajan CON la tarjeta: al llegar ya están puestos. */
     const filtrosDeLaTarjeta = (card) =>
@@ -2926,16 +2942,30 @@
         .filter(Boolean)
         .join(' ');
     $('#stats').innerHTML = cards
-      .map(
-        (card) => `<button class="stat stat--${card.tone} ${card.alert ? 'stat--alert' : ''}" data-goto="${card.goto}" ${filtrosDeLaTarjeta(
-          card,
-        )} type="button">
+      .map((card) => {
+        /*
+         * CERO NO ES UN ATAJO: ES UNA RESPUESTA.
+         *
+         * Un indicador sin nada dentro ya dice lo que hay que saber («no hay
+         * pendientes»), así que no se viaja a una lista vacía ni se toca ningún
+         * filtro del destino. La tarjeta sigue en su sitio, con su número real,
+         * apagada y con una línea discreta en lugar de la flecha.
+         */
+        const conteo = Number(card.value) || 0;
+        const vacia = conteo === 0;
+        const vacio = card.empty ?? 'Sin actividad registrada';
+        return `<button class="stat stat--${card.tone} ${card.alert ? 'stat--alert' : ''} ${
+          vacia ? 'stat--empty' : ''
+        }" data-goto="${card.goto}" data-count="${conteo}" ${filtrosDeLaTarjeta(card)} type="button" ${
+          vacia ? `disabled aria-disabled="true" title="${escapeHtml(vacio)}"` : ''
+        }>
             <span class="stat__icon" aria-hidden="true">${card.icon}</span>
             <span class="stat__value">${card.value}</span>
             <span class="stat__label">${escapeHtml(card.label)}</span>
             <span class="stat__arrow" aria-hidden="true">${ICONS.chevron}</span>
-          </button>`,
-      )
+            ${vacia ? `<span class="stat__hint">${escapeHtml(vacio)}</span>` : ''}
+          </button>`;
+      })
       .join('');
   }
 
@@ -12203,6 +12233,27 @@
       (Number(state.wa.counts?.archivados ?? 0) > 0
         ? 'No hay conversaciones activas: lo que hay está en «Archivados».'
         : 'No hay conversaciones con este filtro.');
+    /*
+     * VOLVER ES VOLVER AL MISMO SITIO: punto de lectura de la lista.
+     *
+     * Al llegar desde un atajo de HOY el filtro cambia (otro ámbito), y el
+     * gestor de la lista manda el scroll a cero. Si la persona venía de una
+     * lista larga, aquí se devuelve a su altura mientras dura el regreso.
+     */
+    const pendiente = state.wa.scrollPendiente;
+    if (pendiente) {
+      if (Date.now() < pendiente.hasta) {
+        const objetivo = Number(pendiente.top) || 0;
+        box.scrollTop = objetivo;
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => {
+            if (box.scrollTop !== objetivo) box.scrollTop = objetivo;
+          });
+        }
+      } else {
+        state.wa.scrollPendiente = null;
+      }
+    }
     if (rows.length) {
       const html = rows.map(waRow).join('');
       /*
@@ -23398,6 +23449,18 @@
 
   function setTab(tab, options = {}) {
     closeOutreachFilters(false);
+    /*
+     * EL PUNTO DE LECTURA DE LA BANDEJA SE APUNTA ANTES DE OCULTARLA.
+     *
+     * Al ocultar una pantalla, el navegador devuelve el scroll de sus listas a
+     * cero: si se lee después ya vale 0 y volver a WhatsApp empezaría siempre
+     * por el principio. Se guarda aquí, que es el último momento con el valor
+     * verdadero.
+     */
+    if (state.tab === 'whatsapp' && tab !== 'whatsapp') {
+      const lista = $('#wa-conversations');
+      if (lista) state.wa.listScrollTop = lista.scrollTop;
+    }
     if (tab === 'catalogo' && state.tab !== 'catalogo') window.__billingReturnTab = state.tab;
     if (
       ((tab === 'usuarios' || tab === 'mensajes') && !isAdmin()) ||
@@ -23470,12 +23533,26 @@
       if (storeTabs.includes(tab)) nextUrl.hash = '';
       if (nextUrl.href !== location.href) history[options.replaceHistory?'replaceState':'pushState']({ tab }, '', nextUrl);
     }
+    /*
+     * VOLVER DE UN ATAJO DE HOY: SE DEVUELVE EL SITIO EXACTO.
+     *
+     * Se pregunta ANTES de cambiar `state.tab` (hace falta saber de dónde se
+     * viene) y ·solo· si de verdad se entra en esa pantalla desde otra: tocar la
+     * pestaña en la que ya se está no es «volver». En el viaje de IDA
+     * (`temporal`) no se toca nada, que si no se desharía el filtro recién
+     * puesto.
+     */
+    const vuelveDeUnAtajo = !options.temporal && state.tab !== tab && Boolean(state.hoyContexto[tab]);
     state.tab = tab;
+    if (vuelveDeUnAtajo) cerrarContextoDeHoy(tab);
     window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
     localStorage.setItem(TAB_KEY, tab);
-    // Cambiar de pestaña tambien guarda los filtros que hubiera puestos: asi­ una
-    // tarjeta de HOY que lleva a «Pedidos pendientes» deja puesto ese filtro.
-    guardarFiltrosActuales();
+    /*
+     * Cambiar de pestaña guarda los filtros que hubiera puestos. En un viaje de
+     * IDA desde HOY no: el filtro es del atajo, no una preferencia de la persona
+     * (ese era el defecto que dejaba la bandeja «pegada» en Pendientes).
+     */
+    if (!options.temporal) guardarFiltrosActuales();
     if (state.drawer) closeDrawer();
     // Fuera de WhatsApp no se mantiene el canal en vivo (ni gastos de más).
     if (tab !== 'whatsapp') stopWhatsappEvents();
@@ -23578,6 +23655,187 @@
     renderCustomerCampaignFab();
   }
 
+  /*
+   * ==========================================================================
+   *  ATAJOS DE HOY: UN VIAJE DE IDA Y VUELTA
+   * ==========================================================================
+   *
+   * QUÉ PASABA (el defecto que arregla esto).
+   *
+   * Un atajo del tablero escribía el filtro de destino EN EL MISMO sitio donde
+   * se guardan las preferencias de la persona (`state`) y, como cambiar de
+   * pestaña guarda los filtros puestos, el filtro del atajo acababa en
+   * `localStorage`. Resultado: se abría «Mensajes sin responder» desde HOY, se
+   * salía y, para siempre, la bandeja seguía filtrada por «Pendientes» aunque
+   * nunca se hubiera elegido. El tablero secuestraba la preferencia del usuario.
+   *
+   * CÓMO SE ARREGLA (sin tocar la navegación del panel).
+   *
+   *   1. ANTES de aplicar el filtro del atajo se toma una INSTANTÁNEA de lo que
+   *      la persona tenía puesto en esa pantalla (filtros, etapa, fechas,
+   *      búsqueda, conversación abierta, punto de lectura y borrador).
+   *   2. El filtro del atajo se aplica como CONTEXTO TEMPORAL y no se persiste
+   *      (`setTab` no llama a `guardarFiltrosActuales` en ese viaje).
+   *   3. Al volver a esa pantalla —por donde sea: menú, botón ←, gesto— se
+   *      devuelve la instantánea, y los datos se vuelven a pedir al servidor:
+   *      se restaura la PREFERENCIA, nunca los números de entonces.
+   *   4. Si dentro del viaje la persona toca un filtro o abre una conversación,
+   *      manda su elección: el contexto se descarta y no se pisa nada.
+   *
+   * Cada pestaña tiene su propio contexto, así que dos atajos seguidos (o un
+   * viaje encima de otro) no se pisan entre sí.
+   */
+  const CONTEXTO_HOY = {
+    whatsapp: {
+      vigilar: ['wa.filter', 'wa.stage', 'wa.q', 'wa.date', 'wa.selectedId'],
+      instantanea: ['wa.filter', 'wa.stage', 'wa.q', 'wa.date', 'wa.selectedId', 'wa.draft', 'wa.listScrollTop'],
+    },
+    pedidos: {
+      vigilar: ['pedidosFilter', 'pedidosDate', 'pedidosSearch'],
+      instantanea: ['pedidosFilter', 'pedidosDate', 'pedidosSearch'],
+    },
+    seguimientos: { vigilar: ['followupsFilter'], instantanea: ['followupsFilter'] },
+    clientes: { vigilar: ['filter', 'q'], instantanea: ['filter', 'q'] },
+  };
+
+  /** Lee (y escribe) un campo del estado por su ruta: «wa.filter», «filter»… */
+  function leerRuta(ruta) {
+    return ruta.split('.').reduce((caja, clave) => (caja == null ? caja : caja[clave]), state);
+  }
+  function escribirRuta(ruta, valor) {
+    const partes = ruta.split('.');
+    const clave = partes.pop();
+    const caja = partes.reduce((nodo, nombre) => (nodo[nombre] ??= {}), state);
+    caja[clave] = valor;
+  }
+
+  /**
+   * Huella de un conjunto de campos. Sirve para saber si lo que hay puesto ahora
+   * es todavía lo que puso el atajo o si la persona ya lo cambió por su cuenta.
+   * Las claves de los objetos se ordenan: dos fechas iguales escritas en distinto
+   * orden no son «un cambio».
+   */
+  function huellaDeRutas(rutas) {
+    return rutas
+      .map((ruta) => {
+        const valor = leerRuta(ruta) ?? null;
+        if (valor && typeof valor === 'object') {
+          return JSON.stringify(Object.keys(valor).sort().map((clave) => [clave, valor[clave]]));
+        }
+        return JSON.stringify(valor);
+      })
+      .join('|');
+  }
+
+  /** Lo que la persona tenía puesto en esa pantalla, antes de que HOY la toque. */
+  function instantaneaDelDestino(destino) {
+    const guardar = CONTEXTO_HOY[destino].instantanea;
+    const copia = {};
+    for (const ruta of guardar) copia[ruta] = leerRuta(ruta);
+    /*
+     * EL PUNTO DE LECTURA ESTÁ EN LA PANTALLA, NO EN EL ESTADO.
+     * `state.wa.listScrollTop` solo se apunta al pasar de la lista al chat; si la
+     * persona simplemente baja por la lista, la verdad está en el scroll de su
+     * contenedor. Sin esto, la vuelta empezaba siempre por el principio.
+     */
+    if (destino === 'whatsapp') {
+      const lista = $('#wa-conversations');
+      copia['wa.listScrollTop'] = Math.max(Number(copia['wa.listScrollTop']) || 0, Number(lista?.scrollTop) || 0);
+    }
+    return copia;
+  }
+
+  /**
+   * Abre el destino con el filtro del atajo y deja apuntado cómo se vuelve.
+   * `preparar` limpia lo que estorba (búsquedas abiertas, selecciones) DESPUÉS
+   * de copiar la instantánea y ANTES de aplicar el filtro.
+   */
+  function abrirConContextoDeHoy(destino, aplicar, preparar) {
+    const config = CONTEXTO_HOY[destino];
+    if (!config) {
+      setTab(destino);
+      return;
+    }
+    const pendiente = state.hoyContexto[destino];
+    /*
+     * DOS ATAJOS SEGUIDOS NO CORROMPEN LA VUELTA: si ya hay un viaje abierto a
+     * esta pantalla se conserva SU instantánea (la de la persona). Tomar una
+     * nueva copiaría el filtro temporal del atajo anterior y lo haría pasar por
+     * preferencia propia.
+     */
+    const instantanea = pendiente?.instantanea ?? instantaneaDelDestino(destino);
+    preparar?.();
+    for (const [ruta, valor] of Object.entries(aplicar)) escribirRuta(ruta, valor);
+    state.hoyContexto[destino] = {
+      instantanea,
+      aplicado: huellaDeRutas(config.vigilar),
+      at: Date.now(),
+    };
+    setTab(destino, { temporal: true });
+    /*
+     * Si el rol no puede entrar ahí, `setTab` lleva a otra parte y el viaje no
+     * existe: se deshace el filtro del atajo (no queda contaminando) y no se
+     * apunta nada que luego «devuelva» a una pantalla prohibida.
+     */
+    if (state.tab !== destino) {
+      delete state.hoyContexto[destino];
+      for (const ruta of config.vigilar) {
+        if (ruta in instantanea) escribirRuta(ruta, instantanea[ruta]);
+      }
+    }
+  }
+
+  /**
+   * Vuelta del viaje. Devuelve `true` si se restauró la instantánea; `false` si
+   * la persona tomó el mando dentro del viaje (entonces se respeta lo suyo).
+   */
+  function cerrarContextoDeHoy(tab) {
+    const pendiente = state.hoyContexto[tab];
+    if (!pendiente) return false;
+    delete state.hoyContexto[tab];
+    if (huellaDeRutas(CONTEXTO_HOY[tab].vigilar) !== pendiente.aplicado) return false;
+    for (const [ruta, valor] of Object.entries(pendiente.instantanea)) escribirRuta(ruta, valor);
+    /*
+     * SI HABÍA UNA BÚSQUEDA PUESTA, EL BUSCADOR VUELVE ABIERTO CON SU TEXTO.
+     *
+     * La bandera de «buscador abierto» no sirve para esto: salir de la pestaña
+     * la apaga (es lo correcto: fuera de la pantalla no hay caja de búsqueda).
+     * Se deduce del propio texto guardado, que si es una lista filtrada sin la
+     * caja a la vista, nadie entiende por qué faltan filas.
+     */
+    if (tab === 'clientes' && state.q) state.clientSearchOpen = true;
+    if (tab === 'pedidos' && state.pedidosSearch) state.pedidosSearchOpen = true;
+    if (tab === 'whatsapp' && state.wa.q) state.wa.searchOpen = true;
+    if (tab === 'whatsapp') {
+      /*
+       * La lista se vuelve a pedir al servidor con el filtro de siempre: lo que
+       * vuelve son las preferencias, no los contadores de hace un rato.
+       */
+      state.wa.listSig = null;
+      const seleccionada = pendiente.instantanea['wa.selectedId'];
+      const borrador = pendiente.instantanea['wa.draft'] ?? '';
+      if (seleccionada) {
+        // El hilo se relee: se recupera la conversación, no sus mensajes viejos.
+        selectConversation(seleccionada, { draft: borrador }).catch(() => {});
+      } else {
+        setWaView('list');
+        /*
+         * La lista se repinta DOS veces al volver: primero con lo que ya había en
+         * memoria y luego con lo que contesta el servidor. El punto de lectura
+         * se sostiene unas décimas para que valga en las dos (y se abandona solo
+         * si nadie lo usa).
+         */
+        state.wa.scrollPendiente = {
+          top: Number(pendiente.instantanea['wa.listScrollTop']) || 0,
+          hasta: Date.now() + 4000,
+        };
+      }
+    }
+    // Se puede repintar la vista aunque ya estuviera pintada: el filtro cambió.
+    viewsPintadas.delete(tab);
+    return true;
+  }
+
   /**
    * UNA TARJETA DE HOY NO LLEVA A UNA PANTALLA: LLEVA A UNA LISTA CONCRETA.
    *
@@ -23586,56 +23844,89 @@
    * mentir. Aquí se deja puesto el filtro (y se limpia lo que estorba) ANTES de
    * entrar, y se repinta la lista de destino para que lo primero que se vea sea
    * exactamente lo que decía la tarjeta.
+   *
+   * El filtro que trae la tarjeta es TEMPORAL (`abrirConContextoDeHoy`): no se
+   * guarda como preferencia y al volver se devuelve lo que había.
    */
   function abrirDesdeTarjeta(card) {
     const destino = card.dataset.goto ?? 'hoy';
     closeSheet();
+    /*
+     * TARJETA EN CERO: no hay nada que enseñar. Ni viaje, ni carga de datos, ni
+     * filtro puesto en el destino. (El botón ya viene desactivado; esto cubre
+     * también un toque que llegue por programa.)
+     */
+    if (card.dataset.count !== undefined && Number(card.dataset.count) === 0) return;
     if (card.dataset.waFilter) {
-      state.wa.selectedId = null;
-      state.wa.chat = null;
-      state.wa.chatSig = null;
-      state.wa.threadSeq = (state.wa.threadSeq ?? 0) + 1;
-      state.wa.searchOpen = false;
-      state.wa.filtersOpen = false;
-      state.wa.selected.clear();
-      state.wa.listSig = null;
-      state.wa.listScrollTop = 0;
-      setWaView('list');
-      state.wa.filter = card.dataset.waFilter;
-      state.wa.q = '';
-      // Todas las fechas: si no, una conversación de ayer desaparecía de la lista.
-      state.wa.date = { mode: 'all', from: '', to: '' };
+      abrirConContextoDeHoy(
+        'whatsapp',
+        {
+          'wa.filter': card.dataset.waFilter,
+          /* La etapa se limpia: si no, el número de la tarjeta no cuadraría con la lista. */
+          'wa.stage': '',
+          'wa.q': '',
+          // Todas las fechas: si no, una conversación de ayer desaparecía de la lista.
+          'wa.date': { mode: 'all', from: '', to: '' },
+          'wa.selectedId': null,
+        },
+        () => {
+          state.wa.chat = null;
+          state.wa.chatSig = null;
+          state.wa.threadSeq = (state.wa.threadSeq ?? 0) + 1;
+          state.wa.searchOpen = false;
+          state.wa.filtersOpen = false;
+          state.wa.selected.clear();
+          state.wa.listSig = null;
+          state.wa.listScrollTop = 0;
+          setWaView('list');
+        },
+      );
+      renderWhatsapp();
+      $('#wa-conversations').scrollTop = 0;
+      return;
     }
-    if (card.dataset.orderFilter) state.pedidosFilter = card.dataset.orderFilter;
-    if (destino === 'pedidos') {
-      state.pedidosSearch = '';
-      state.pedidosSearchOpen = false;
-      state.pedidosFiltersOpen = false;
-      state.pedidosSel.clear();
+    if (card.dataset.orderFilter) {
+      abrirConContextoDeHoy(
+        'pedidos',
+        {
+          pedidosFilter: card.dataset.orderFilter,
+          pedidosDate: { mode: card.dataset.orderDate ?? 'today', from: '', to: '' },
+          pedidosSearch: '',
+        },
+        () => {
+          state.pedidosSearchOpen = false;
+          state.pedidosFiltersOpen = false;
+          state.pedidosSel.clear();
+        },
+      );
+      renderPedidos();
+      return;
     }
-    if (card.dataset.orderDate) state.pedidosDate = { mode: card.dataset.orderDate, from: '', to: '' };
-    if (card.dataset.followupFilter) state.followupsFilter = card.dataset.followupFilter;
+    if (card.dataset.followupFilter) {
+      abrirConContextoDeHoy('seguimientos', { followupsFilter: card.dataset.followupFilter });
+      renderSeguimientos();
+      return;
+    }
     if (card.dataset.clientFilter) {
-      state.clientSearchOpen = false;
-      state.clientFiltersOpen = false;
-      state.filter = card.dataset.clientFilter;
-      state.q = '';
-      const search = $('#search');
-      if (search) search.value = '';
+      abrirConContextoDeHoy(
+        'clientes',
+        { filter: card.dataset.clientFilter, q: '' },
+        () => {
+          state.clientSearchOpen = false;
+          state.clientFiltersOpen = false;
+          const search = $('#search');
+          if (search) search.value = '';
+        },
+      );
       // Los chips de Clientes se pintan al arrancar: al cambiar el filtro desde
       // fuera hay que marcarlos, o el chip activo seguiría diciendo «Todos».
       $$('[data-filter]').forEach((button) =>
         button.setAttribute('aria-pressed', String(button.dataset.filter === state.filter)),
       );
+      renderClientes();
+      return;
     }
     setTab(destino);
-    if (destino === 'whatsapp') {
-      renderWhatsapp();
-      $('#wa-conversations').scrollTop = 0;
-    }
-    if (destino === 'pedidos') renderPedidos();
-    if (destino === 'clientes') renderClientes();
-    if (destino === 'seguimientos') renderSeguimientos();
   }
 
   // ---------------------------------------------------------------- eventos
@@ -23997,6 +24288,17 @@
     });
 
     document.addEventListener('click', (event) => {
+      /*
+       * UNA TARJETA DE HOY TIENE UN SOLO CAMINO: EL SUYO.
+       *
+       * Las tarjetas del tablero llevan `data-order-filter` y `data-order-date`
+       * para que el atajo sepa a qué lista va. Este manejador global también
+       * reconoce esos atributos (son los chips de la pantalla de Pedidos), así
+       * que un clic en la tarjeta se entendía ADEMÁS como «la persona eligió ese
+       * filtro» y lo guardaba como preferencia: el secuestro que se está
+       * corrigiendo. Desde aquí se ignora; de las tarjetas se ocupa `#stats`.
+       */
+      if (event.target.closest('#stats [data-goto]')) return;
       if (event.target.closest('[data-billing-close]')) { const back = window.__billingReturnTab; window.__billingReturnTab = null; setTab(back && back !== 'catalogo' ? back : 'hoy'); return; }
       const settingsLink = event.target.closest('[data-settings-open]');
       const resolution = event.target.closest('[data-conversation-resolution]');

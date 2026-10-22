@@ -1348,6 +1348,121 @@ body[data-tab='ops'] .centro__body {
   padding-bottom: 26px;
 }
 
+/* ------------------------------------------------- chats del supervisor */
+
+body[data-tab='ops'] .centro-chats {
+  display: grid;
+  grid-template-columns: minmax(0, 330px) minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  max-width: 1180px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+body[data-tab='ops'] .centro-chats__list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+body[data-tab='ops'] .centro-chat {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 11px;
+  border: 1px solid var(--ops-line);
+  border-radius: 11px;
+  background: var(--ops-surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+body[data-tab='ops'] .centro-chat:hover { border-color: var(--ops-line-strong); }
+body[data-tab='ops'] .centro-chat.is-active { border-color: var(--ops-accent); background: var(--ops-surface-2); }
+body[data-tab='ops'] .centro-chat__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+body[data-tab='ops'] .centro-chat__num { font-size: 13px; font-weight: 700; color: var(--ops-ink); }
+body[data-tab='ops'] .centro-chat__when { font-size: 11px; color: var(--ops-muted); white-space: nowrap; }
+body[data-tab='ops'] .centro-chat__who { font-size: 12px; color: var(--ops-ink-2); }
+body[data-tab='ops'] .centro-chat__preview {
+  font-size: 12px;
+  color: var(--ops-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body[data-tab='ops'] .centro-chat__chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+
+body[data-tab='ops'] .centro-chatpane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--ops-line);
+  border-radius: 12px;
+  background: var(--ops-surface);
+  overflow: hidden;
+}
+body[data-tab='ops'] .centro-chatpane__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--ops-line);
+  background: var(--ops-surface-2);
+}
+body[data-tab='ops'] .centro-chatpane__who { min-width: 0; flex: 1 1 auto; }
+body[data-tab='ops'] .centro-chatpane__num { margin: 0; font-size: 13px; font-weight: 700; color: var(--ops-ink); }
+body[data-tab='ops'] .centro-chatpane__sub {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ops-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body[data-tab='ops'] .centro-chatpane__thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  max-height: min(62vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Mensajes: se distingue lo enviado por WhatsApp, lo recibido y lo interno. */
+body[data-tab='ops'] .ops-msg--wa .ops-msg__bubble { border-left: 3px solid #25d366; }
+body[data-tab='ops'] .ops-msg--in .ops-msg__bubble { border-left: 3px solid var(--ops-accent); }
+body[data-tab='ops'] .ops-msg__error { margin: 4px 0 0; font-size: 11.5px; color: #b42318; }
+
+body[data-tab='ops'] .ops-chip--warn { background: #fff4e5; color: #b54708; }
+body[data-tab='ops'] .ops-chip--ok { background: #e7f6ec; color: #067647; }
+body[data-tab='ops'] .ops-chip--alert { background: #fdecea; color: #b42318; }
+body[data-tab='ops'] .ops-chip--wa { background: #e7f8ee; color: #067647; }
+body[data-tab='ops'] .ops-chip--wa-sent { background: #eef2f6; color: #344054; }
+body[data-tab='ops'] .ops-chip--wa-delivered { background: #e7f6ec; color: #067647; }
+body[data-tab='ops'] .ops-chip--wa-read { background: #e6f0ff; color: #175cd3; }
+body[data-tab='ops'] .ops-chip--wa-failed { background: #fdecea; color: #b42318; }
+body[data-tab='ops'] .ops-chip--wa-pending { background: #fff4e5; color: #b54708; }
+body[data-tab='ops'] .ops-chip--in { background: #eef2f6; color: #344054; }
+body[data-tab='ops'] .ops-chip--note { background: #f4f3ff; color: #5925dc; }
+
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--warn,
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--wa-pending { background: #2b2113; color: #fdb022; }
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--ok,
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--wa,
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--wa-delivered { background: #10281a; color: #75e0a7; }
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--alert,
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--wa-failed { background: #2c1414; color: #fda29b; }
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--wa-read { background: #10203a; color: #84caff; }
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--in,
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--wa-sent { background: #1a2231; color: #cfd6e4; }
+:root[data-theme='dark'] body[data-tab='ops'] .ops-chip--note { background: #1e1a35; color: #bdb4fe; }
+
+@media (max-width: 860px) {
+  body[data-tab='ops'] .centro-chats { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  body[data-tab='ops'] .centro-chats.is-open .centro-chats__list { display: none; }
+  body[data-tab='ops'] .centro-chatpane__thread { max-height: none; }
+}
+
 /* ----------------------------------------------------------- el equipo */
 
 body[data-tab='ops'] .centro-dir { padding: 14px 12px 6px; max-width: 1180px; margin: 0 auto; }

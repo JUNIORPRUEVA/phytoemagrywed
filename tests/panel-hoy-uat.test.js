@@ -324,26 +324,26 @@ describe('HOY: cada tarjeta lleva su filtro', () => {
   it('«Seguimientos vencidos» deja a la vista solo ese bloque', async () => {
     click('[data-goto="seguimientos"][data-followup-filter="vencidos"]');
     await waitFor(() => dom.window.document.body.dataset.tab === 'seguimientos', 'la pantalla de seguimientos');
-    expect($('#seguimientos-filtros [data-followup-filter="vencidos"]').getAttribute('aria-pressed')).toBe('true');
-    const lista = $('#list-seguimientos').textContent;
-    expect(lista).toContain('Vencidos');
-    expect(lista).not.toContain('Para hoy');
-    expect(lista).not.toContain('Próximos');
+    await waitFor(() => $('#list-seguimientos').textContent.includes('Llamar'), 'el seguimiento vencido');
+    // Se comprueba el CONTENIDO (qué seguimiento se ve), no un rótulo: es lo que
+    // de verdad decide si la lista enseña lo que decía la tarjeta.
+    expect($('#list-seguimientos').textContent).toContain('Llamar');
+    expect($('#list-seguimientos').textContent).not.toContain('Escribir');
   });
 
   it('«Seguimientos de hoy» deja a la vista solo los de hoy', async () => {
     click('[data-goto="seguimientos"][data-followup-filter="hoy"]');
-    await waitFor(() => $('#list-seguimientos').textContent.includes('Para hoy'), 'los seguimientos de hoy');
-    const lista = $('#list-seguimientos').textContent;
-    expect(lista).not.toContain('Vencidos');
-    expect($('#seguimientos-filtros [data-followup-filter="hoy"]').getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => $('#list-seguimientos').textContent.includes('Escribir'), 'los seguimientos de hoy');
+    expect($('#list-seguimientos').textContent).toContain('Escribir');
+    expect($('#list-seguimientos').textContent).not.toContain('Llamar');
   });
 
   it('«Sin responder» entra en la bandeja con el filtro de pendientes', async () => {
     const valor = Number($('[data-wa-filter="pendientes"] .stat__value').textContent);
     click('[data-wa-filter="pendientes"]');
     await waitFor(() => dom.window.document.body.dataset.tab === 'whatsapp', 'la bandeja');
-    expect($('#wa-filters [data-wa-filter="pendientes"]').getAttribute('aria-pressed')).toBe('true');
+    // El panel de filtros usa `role="menuitemradio"`: el estado va en aria-checked.
+    expect($('#wa-filters [data-wa-filter="pendientes"]').getAttribute('aria-checked')).toBe('true');
     const filas = await waitFor(() => {
       const encontradas = $$('#wa-conversations [data-conv]');
       return encontradas.length ? encontradas : null;
@@ -468,6 +468,16 @@ describe('HOY: navegación independiente y finalizar chats', () => {
       click('[data-tab="hoy"]');
       const card = $('[data-goto="clientes"][data-client-filter="' + filter + '"]');
       const expected = Number(card.querySelector('.stat__value').textContent);
+      /*
+       * UNA TARJETA EN CERO NO VIAJA: se queda apagada, con su número real y su
+       * línea de vacío. Si se pulsara, la lista que se vería no sería la suya.
+       */
+      if (expected === 0) {
+        expect(card.disabled).toBe(true);
+        expect(card.querySelector('.stat__hint')).not.toBeNull();
+        continue;
+      }
+      expect(card.disabled).toBe(false);
       click(card);
       expect($$('#list-clientes .client-row')).toHaveLength(expected);
       expect($('#chips [data-filter="' + filter + '"]').getAttribute('aria-pressed')).toBe('true');

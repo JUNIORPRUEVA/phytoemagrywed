@@ -176,6 +176,20 @@ const state = {
   workBusy: '',
   workCommercial: null,
   returnTo: null,
+  /*
+   * CHATS DEL SUPERVISOR. Cada pedido supervisado tiene UN chat con todo lo que
+   * se dijo: avisos internos, WhatsApp enviados (con su estado real) y las
+   * respuestas del repartidor. Se lee del servidor; aquí solo se guarda lo
+   * último que llegó para no repintar en blanco.
+   */
+  chats: [],
+  chatsLoading: false,
+  chatsError: '',
+  chatsTz: 'America/Santo_Domingo',
+  chatTicketId: '',
+  chatTicket: null,
+  chatMessages: [],
+  chatBusy: false,
 };
 
 const VIEW = () => document.getElementById('view-ops');
@@ -552,6 +566,9 @@ const STATE_LABELS = {
   paused: 'Desactivado',
 };
 
+/* Secciones que viven dentro del armazón del Centro IA. */
+const CENTRO_NAV = ['agents', 'chats', 'tickets', 'agent'];
+
 /** Armazón del centro: cabecera con la marca y las secciones. */
 function centroShellHtml() {
   return `
@@ -562,12 +579,179 @@ function centroShellHtml() {
           <span class="centro__brandtext"><strong>Centro IA</strong><small>Tu equipo de asistentes inteligentes</small></span>
         </div>
         <nav class="centro__seg" aria-label="Secciones del Centro IA">
-          <button class="centro__segbtn" data-centro-nav="agents" type="button" aria-current="${state.screen !== 'tickets'}">Agentes</button>
+          <button class="centro__segbtn" data-centro-nav="agents" type="button" aria-current="${CENTRO_NAV.includes(state.screen) ? state.screen === 'agents' : true}">Agentes</button>
+          <button class="centro__segbtn" data-centro-nav="chats" type="button" aria-current="${state.screen === 'chats'}">Chats</button>
           <button class="centro__segbtn" data-centro-nav="tickets" type="button" aria-current="${state.screen === 'tickets'}">Actividad y tickets</button>
         </nav>
       </header>
       <div class="centro__body" id="centro-body"></div>
     </div>`;
+}
+
+/* ------------------------------------------------- chats del supervisor */
+
+/*
+ * LO QUE SE DICE POR WHATSAPP Y LO QUE SOLO SE ANOTA.
+ *
+ * El chat de un pedido mezcla tres cosas y no se pueden confundir: lo que el
+ * supervisor escribió al repartidor por WhatsApp (con su estado REAL: enviado,
+ * entregado, leído, falló), lo que el repartidor contestó, y las notas internas
+ * del equipo/IA que NUNCA salieron por WhatsApp. Cada burbuja lo dice.
+ */
+const WA_STATUS_LABELS = {
+  sent: 'Enviado',
+  delivered: 'Entregado',
+  read: 'Leído',
+  failed: 'Falló',
+  pending: 'Pendiente',
+};
+
+/* Estado del TICKET (no del mensaje): es el que se ve en la lista de chats. */
+const CHAT_STATUS_LABELS = {
+  open: 'Abierto',
+  in_progress: 'En curso',
+  waiting_human: 'Esperando persona',
+  waiting_agent: 'Esperando IA',
+  waiting_external: 'Esperando respuesta',
+  resolved: 'Resuelto',
+  closed: 'Cerrado',
+};
+
+const chatMetaOf = (message) => (message?.meta && typeof message.meta === 'object' ? message.meta : {});
+
+function chatRowHtml(row) {
+  const unread = Number(row.unread ?? 0) || 0;
+  const numero = row.orderNumber ?? row.number ?? 'Pedido';
+  return `
+    <button class="centro-chat${String(row.ticketId) === String(state.chatTicketId) ? ' is-active' : ''}" type="button" data-chat-open="${esc(row.ticketId)}">
+      <span class="centro-chat__top">
+        <span class="centro-chat__num">${esc(numero)}</span>
+        <span class="centro-chat__when">${esc(stamp(row.lastActivity) ?? '')}</span>
+      </span>
+      <span class="centro-chat__who">${esc(row.customerName ?? 'Cliente')}${row.courierName ? ` · ${esc(row.courierName)}` : ''}</span>
+      <span class="centro-chat__preview">${esc(row.lastPreview ?? 'Todavía sin mensajes')}</span>
+      <span class="centro-chat__chips">
+        ${row.status ? `<span class="ops-chip" data-status="${esc(row.status)}">${esc(CHAT_STATUS_LABELS[row.status] ?? row.status)}</span>` : ''}
+        ${row.agent ? `<span class="ops-chip ops-chip--ai">IA · ${esc(row.agent)}</span>` : ''}
+        ${row.blocker ? `<span class="ops-chip ops-chip--warn">${esc(row.blocker)}</span>` : ''}
+        ${row.accepted === true ? '<span class="ops-chip ops-chip--ok">Aceptado</span>' : ''}
+        ${row.accepted === false ? '<span class="ops-chip ops-chip--alert">Sin aceptar</span>' : ''}
+        ${unread > 0 ? `<span class="ops-chip ops-chip--unread">${unread} sin leer</span>` : ''}
+      </span>
+    </button>`;
+}
+
+function chatMessageHtml(message) {
+  const meta = chatMetaOf(message);
+  const canal = String(meta.channel ?? '');
+  const esExterno = ['whatsapp', 'template', 'text'].includes(canal);
+  const entrante = esExterno && meta.direction === 'inbound';
+  const estado = esExterno ? WA_STATUS_LABELS[meta.status] ?? null : null;
+  const esAgente = message.authorType === 'agent';
+  const esSistema = meta.direction === 'system';
+  const notaInterna = esAgente && !esExterno && !esSistema;
+  const quien = entrante
+    ? message.authorName ?? 'Repartidor'
+    : esAgente
+      ? message.authorName ?? 'Supervisor IA'
+      : message.authorName ?? 'Equipo';
+  const etiqueta = entrante
+    ? '<span class="ops-chip ops-chip--in">Recibido</span>'
+    : esExterno
+      ? `<span class="ops-chip ops-chip--wa">WhatsApp</span>${estado ? `<span class="ops-chip ops-chip--wa-${esc(meta.status ?? 'pending')}">${esc(estado)}</span>` : ''}`
+      : esSistema
+        ? '<span class="ops-chip ops-chip--in">Sistema</span>'
+        : notaInterna
+          ? '<span class="ops-chip ops-chip--note">Nota interna · no se envió</span>'
+          : '<span class="ops-chip ops-chip--in">Interno</span>';
+  return `
+    <article class="ops-msg${esAgente ? ' ops-msg--agent' : ''}${entrante ? ' ops-msg--in' : ''}${esExterno ? ' ops-msg--wa' : ''}" data-seq="${esc(message.seq)}">
+      <p class="ops-msg__who">${etiqueta} ${esc(quien)} · ${esc(stamp(message.createdAt) ?? '')}</p>
+      <div class="ops-msg__bubble">${esc(message.body).replace(/\n/g, '<br>')}</div>
+      ${esExterno && meta.status === 'failed' && meta.error ? `<p class="ops-msg__error">${esc(meta.error)}</p>` : ''}
+    </article>`;
+}
+
+function chatPaneHtml() {
+  const fila = state.chats.find((row) => String(row.ticketId) === String(state.chatTicketId)) ?? null;
+  const numero = fila?.orderNumber ?? state.chatTicket?.number ?? 'Pedido';
+  const cabecera = `
+    <header class="centro-chatpane__head">
+      <button class="ops-iconbtn" data-chat-back type="button" aria-label="Volver a los chats">${ICONS.back}</button>
+      <div class="centro-chatpane__who">
+        <p class="centro-chatpane__num">${esc(numero)}</p>
+        <p class="centro-chatpane__sub">${esc(fila?.customerName ?? 'Cliente')}${fila?.courierName ? ` · ${esc(fila.courierName)}` : ''}${
+          fila?.agent ? ` · IA ${esc(fila.agent)}` : ''
+        }</p>
+      </div>
+      ${fila?.deepLink ? `<a class="centro-btn centro-btn--ghost centro-btn--xs" href="${esc(fila.deepLink)}">Abrir pedido</a>` : ''}
+    </header>`;
+  const cuerpo = state.chatBusy
+    ? '<div class="ops-thread__empty"><p>Cargando la conversación…</p></div>'
+    : state.chatMessages.length
+      ? state.chatMessages.map(chatMessageHtml).join('')
+      : '<div class="ops-thread__empty"><p>Este pedido todavía no tiene mensajes.</p></div>';
+  return `<section class="centro-chatpane">${cabecera}<div class="centro-chatpane__thread">${cuerpo}</div></section>`;
+}
+
+function chatsScreenHtml() {
+  if (state.chatsLoading && !state.chats.length) {
+    return '<div class="ops-thread__empty"><p>Cargando chats…</p></div>';
+  }
+  if (state.chatsError) {
+    return `<div class="ops-thread__empty"><p><strong>No se pudieron cargar los chats</strong></p><p>${esc(state.chatsError)}</p></div>`;
+  }
+  if (!state.chats.length) {
+    return `<div class="ops-thread__empty">
+      <p><strong>Todavía no hay chats</strong></p>
+      <p>Aquí aparece el historial de cada pedido supervisado: lo que se avisó por WhatsApp, lo que contestó el repartidor y las notas internas.</p>
+    </div>`;
+  }
+  return `
+    <div class="centro-chats${state.chatTicketId ? ' is-open' : ''}">
+      <div class="centro-chats__list">${state.chats.map(chatRowHtml).join('')}</div>
+      ${state.chatTicketId ? chatPaneHtml() : ''}
+    </div>`;
+}
+
+async function loadChats({ silent = false } = {}) {
+  if (!silent) {
+    state.chatsLoading = true;
+    state.chatsError = '';
+    renderCentro();
+  }
+  try {
+    const data = await api('/api/admin/ops/chats');
+    state.chats = data.chats ?? [];
+    state.chatsTz = data.tz ?? state.chatsTz;
+    state.chatsError = '';
+  } catch (error) {
+    state.chatsError = error.message;
+  } finally {
+    state.chatsLoading = false;
+    renderCentro();
+  }
+}
+
+async function openChat(ticketId) {
+  if (!ticketId) return;
+  state.chatTicketId = String(ticketId);
+  state.chatTicket = null;
+  state.chatMessages = [];
+  state.chatBusy = true;
+  renderCentro();
+  try {
+    const data = await api(`/api/admin/ops/tickets/${encodeURIComponent(ticketId)}`);
+    if (!domAlive() || String(state.chatTicketId) !== String(ticketId)) return;
+    state.chatTicket = data.ticket ?? null;
+    state.chatMessages = data.messages ?? [];
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.chatBusy = false;
+    renderCentro();
+    scrollThreadToEnd('centro-chatpane__thread');
+  }
 }
 
 /** Aprobaciones y administración: los MISMOS botones de siempre, sin duplicar. */
@@ -1190,13 +1374,14 @@ function renderCentro() {
   if (!domAlive()) return;
   const host = document.getElementById('centro-body');
   if (!host) return;
-  host.innerHTML = state.screen === 'agent' ? officeHtml() : directoryHtml();
+  host.innerHTML =
+    state.screen === 'agent' ? officeHtml() : state.screen === 'chats' ? chatsScreenHtml() : directoryHtml();
   const view = VIEW();
   if (view) view.dataset.centroScreen = state.screen;
   document.querySelectorAll('[data-centro-nav]').forEach((button) => {
     const nav = button.dataset.centroNav;
-    if (nav === 'agents' || nav === 'tickets') {
-      button.setAttribute('aria-current', String(nav === 'agents' ? state.screen !== 'tickets' : state.screen === 'tickets'));
+    if (nav === 'agents' || nav === 'chats' || nav === 'tickets') {
+      button.setAttribute('aria-current', String(state.screen === nav || (nav === 'agents' && state.screen === 'agent')));
     }
   });
   renderCentroTools();
@@ -3039,6 +3224,7 @@ function onViewClick(event) {
       '[data-ops-approve],[data-ops-reject],[data-ops-assign-agent],[data-ops-approvals],[data-ops-approvals-refresh],' +
       '[data-ops-agents],[data-ops-agent-edit],[data-ops-agent-new],' +
       '[data-centro-nav],[data-centro-agent],[data-centro-ticket],[data-centro-office-tab],[data-centro-reload],' +
+      '[data-chat-open],[data-chat-back],' +
       '[data-work-tab],[data-work-approve],[data-work-reject],[data-work-fu],[data-work-sch],[data-work-full],[data-work-seed],[data-agent-seed],[data-ask-suggest]',
   );
   if (!target) {
@@ -3072,6 +3258,17 @@ function onViewClick(event) {
       loadInbox();
       return;
     }
+    if (nav === 'chats') {
+      state.returnTo = null;
+      state.screen = 'chats';
+      state.chatTicketId = '';
+      state.chatTicket = null;
+      state.chatMessages = [];
+      ensureShell();
+      renderCentro();
+      loadChats();
+      return;
+    }
     state.returnTo = null;
     state.screen = 'agents';
     state.officeKey = '';
@@ -3089,6 +3286,19 @@ function onViewClick(event) {
   if (target.dataset.centroTicket) {
     event.preventDefault();
     openTicketFromCentro(target.dataset.centroTicket);
+    return;
+  }
+  if (target.dataset.chatOpen) {
+    event.preventDefault();
+    openChat(target.dataset.chatOpen);
+    return;
+  }
+  if (target.dataset.chatBack !== undefined) {
+    event.preventDefault();
+    state.chatTicketId = '';
+    state.chatTicket = null;
+    state.chatMessages = [];
+    renderCentro();
     return;
   }
   if (target.dataset.centroOfficeTab) {

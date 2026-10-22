@@ -347,6 +347,76 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
      * ESTIMADO con las tarifas que se configuren). No es la factura del
      * proveedor y se dice en la respuesta.
      */
+    /*
+     * CHATS DEL CENTRO IA (conversaciones operativas de los agentes).
+     *
+     * No hay un segundo motor de mensajería: son los TICKETS de reparto, con el
+     * pedido, el repartidor, el agente y el estado REAL del último contacto. El
+     * detalle reutiliza `GET /api/admin/ops/tickets/:id`.
+     */
+    if (route === '/api/admin/ops/chats' && method === 'GET') {
+      if (!can('tickets.read')) return send(403, { ok: false, error: 'forbidden', message: 'No tienes acceso al Centro IA.' });
+      const tickets = await ctx.db.list('ops_tickets', { by: 'last_message_at', order: 'desc', limit: 200 });
+      const deReparto = tickets.filter(
+        (row) => String(row.type) === 'delivery' || String(row.assigned_agent_id ?? '') === 'delivery_supervisor',
+      );
+      const pedidos = new Map();
+      if (typeof listOrders === 'function') {
+        try {
+          for (const item of (await listOrders()) ?? []) {
+            if (item?.type !== 'order_intent') continue;
+            let order = null;
+            try {
+              order = JSON.parse(item.orderJson ?? item.order_json ?? '{}') ?? {};
+            } catch {
+              order = {};
+            }
+            pedidos.set(String(item.id), {
+              number: order.order_number ?? item.order_number ?? item.id,
+              customerName: order.customer_name ?? item.name ?? null,
+              status: order.status ?? item.status ?? null,
+              courier: order.delivery?.delivery_user_name_snapshot ?? order.delivery?.external?.contact_name ?? null,
+              accepted: Boolean(order.delivery?.delivery_accepted_at),
+            });
+          }
+        } catch {
+          /* sin pedidos: los chats se muestran igual con lo que dice el ticket */
+        }
+      }
+      const participants = await ctx.db.list('ops_ticket_participants', { limit: 1000 }).catch(() => []);
+      const leidos = new Map(
+        participants
+          .filter((row) => String(row.user_id) === String(actor?.id ?? ''))
+          .map((row) => [String(row.ticket_id), Number(row.last_read_seq ?? 0) || 0]),
+      );
+      const chats = deReparto.map((ticket) => {
+        const pedido = pedidos.get(String(ticket.entity_id)) ?? null;
+        const metadata = ticket.metadata && typeof ticket.metadata === 'object' ? ticket.metadata : {};
+        const lastSeq = Number(ticket.last_seq ?? 0) || 0;
+        return {
+          ticketId: ticket.id,
+          number: ticket.number ?? null,
+          title: ticket.title ?? null,
+          status: ticket.status ?? null,
+          priority: ticket.priority ?? null,
+          agent: ticket.assigned_agent_id ?? null,
+          orderId: ticket.entity_id ?? null,
+          orderNumber: pedido?.number ?? metadata.order_number ?? null,
+          customerName: pedido?.customerName ?? null,
+          courierName: pedido?.courier ?? metadata.courier_name ?? null,
+          orderStatus: pedido?.status ?? null,
+          accepted: pedido?.accepted ?? null,
+          lastActivity: ticket.last_message_at ?? ticket.updated_at ?? null,
+          lastPreview: ticket.last_message_preview ?? null,
+          lastKind: ticket.last_message_kind ?? null,
+          unread: Math.max(0, lastSeq - (leidos.get(String(ticket.id)) ?? 0)),
+          blocker: metadata.blocker ?? null,
+          deepLink: `/admin/?v=delivery&order=${encodeURIComponent(ticket.entity_id ?? '')}`,
+        };
+      });
+      return send(200, { ok: true, chats, total: chats.length, tz: 'America/Santo_Domingo' });
+    }
+
     if (route === '/api/admin/ops/ai/usage' && method === 'GET') {
       if (!can('admin.full')) return send(403, { ok: false, error: 'forbidden', message: 'Solo administración.' });
       const usage = typeof ctx.proofreading?.opsUsage === 'function' ? await ctx.proofreading.opsUsage() : null;
@@ -355,6 +425,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
       }
       return send(200, { ok: true, usage });
     }
+
 
     /*
      * PEDIRLE CUENTAS A UN AGENTE.
