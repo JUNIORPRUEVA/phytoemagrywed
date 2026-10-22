@@ -13,12 +13,13 @@ lenguaje real al marco de agentes ya existente, sin abrir ni un permiso nuevo.
 |---|---|
 | ¿Está el adaptador del modelo implementado y probado? | **Sí** — 20 pruebas del adaptador/enrutado. |
 | ¿Se habla con DeepSeek con el código que ya existe? | **Sí** — 7 pruebas del transporte real (URL, modelo, cabeceras, cuota, plazos). |
-| ¿Se ha ejecutado el agente con el proveedor REAL? | **NO.** No hay clave de DeepSeek en este entorno (`configured:false`) y no la he inventado. |
-| ¿Se puede afirmar que el agente «funciona con IA»? | **NO todavía.** Sería exactamente lo que el encargo prohíbe afirmar sin proveedor real. |
+| ¿Se ha ejecutado el agente con el proveedor REAL? | **Sí** — 3 llamadas reales a `deepseek-flash` (1421 / 1278 / 1519 ms; 3334 tokens). Ver §7. |
+| ¿Se puede afirmar que el agente «funciona con IA»? | **Sí, en UAT aislada**: conversación, latencias y consumo son datos del proveedor, no de un simulador. |
+| ¿Ha hablado con algún cliente? | **No** — 0 mensajes de WhatsApp (el mock revienta si alguien lo intenta). |
 | ¿Rompe algo de lo anterior? | **No** — 170 pruebas en verde (centro, DeepSeek y supervisor). |
 
-**Veredicto: GO del código · NO-GO de «agente operativo»** hasta ejecutar la UAT con clave (una orden,
-ver §7).
+**Veredicto: GO del código y GO del agente en UAT con proveedor real · NO-GO de despliegue.**
+Falta revisar el tono con el negocio y decidir el despliegue (§9).
 
 ---
 
@@ -218,43 +219,94 @@ Nada de esto toca WhatsApp, pedidos, importes ni permisos.
 
 ---
 
-## 7. UAT real (Fase 5) — **pendiente de clave**
+## 7. UAT real (Fase 5) — **ejecutada con el proveedor real**
 
-El script `.tmp/uat-ops-llm.mjs` hace el recorrido completo de la fase 3 del encargo:
+Script: `.tmp/uat-ops-llm.mjs`. Recorrido (Fase 3 del encargo):
 
 pedido ficticio atrasado → el supervisor le abre el ticket → el agente lee el estado del pedido →
-escribe al empleado (modelo real) → el empleado contesta con faltas → el agente interpreta y responde →
-se mide latencia y tokens → se abre el ticket en Chromium y se captura.
+escribe al empleado → el empleado contesta con faltas → el agente interpreta y responde → se miden
+latencia y tokens → se abre el ticket en Chromium y se captura.
 
-**Estado hoy:** el entorno **no tiene clave de DeepSeek**: la base local no tiene credencial
-(`data/phytoemagry.sqlite` → sin ajustes; `data/uat/phyto-uat.sqlite` → documento vacío) y no hay
-`DEEPSEEK_*` en `.env`. Ejecutado tal cual, el script se detiene diciéndolo:
+**Cómo se ejecutó (y una corrección importante):** di por hecho que no había clave porque leí el
+documento de ajustes por el nivel equivocado. El servicio de ajustes guarda el contenido en
+`doc.value` (`{id, key, value, …}`), no en la raíz del documento. Al leerlo bien, la clave **sí estaba**
+en `data/uat/phyto-uat.sqlite`: `enabled:true`, `model:"deepseek-flash"`, `dailyLimit:800` y credencial
+cifrada (`iv/tag/data`). Está cifrada con el token del entorno de UAT del repo (`phyto-uat`,
+`scripts/uat-env.mjs`).
+
+Para no tocar los datos de UAT del usuario, el script **no abre esa base**: arranca una base temporal y
+le copia el ajuste **cifrado tal cual** (nunca ve la clave en claro), con el mismo token, de modo que
+descifra igual que en el panel. Alternativa equivalente: `$env:PHYTO_UAT_DEEPSEEK_KEY` + `npm` normal.
 
 ```
-NO HAY CLAVE DEL PROVEEDOR: no se puede afirmar que el agente sea operativo.
-  $env:PHYTO_UAT_DEEPSEEK_KEY = "sk-..."
-  node .tmp/uat-ops-llm.mjs
+proveedor: {"configured":true,"enabled":true,"model":"deepseek-flash",
+            "clave":"reutilizada del entorno UAT (cifrada)","usadasHoy":0,"tope":800}
 ```
 
-**Cómo cerrarlo (una orden):**
+**Conversación real (texto devuelto por el modelo, pedido PE-D23D14):**
 
-1. Poner la clave **tú mismo** (no la pegues en el chat): en el panel, *Ajustes → API key DeepSeek*
-   (queda cifrada en la base), o en la variable de entorno `PHYTO_UAT_DEEPSEEK_KEY` solo para esta UAT.
-2. `node .tmp/uat-ops-llm.mjs`.
-3. El script imprime la conversación real, la latencia de cada llamada, los tokens por llamada, y una
-   tabla de comprobaciones (cero WhatsApp, ticket abierto, sin aprobaciones, respuesta tras la
-   respuesta del empleado, español, sin entregas inventadas, pintado en el navegador) y **sale con
-   código distinto de 0 si algo falla**.
+```
+[agent] Supervisor de reparto: Luis, el pedido PE-D23D14 sigue en tránsito y ya lleva 120 minutos en
+        ese punto. Cuando puedas, confirma la entrega en el sistema o avísame si hay alguna novedad.
+[agent] Supervisor de reparto: Confirma el acuse cuando lo veas, por favor.
+[user]  Luis Paredes: ola, ya lo tengo en la moto, salgo ahora pa ya
+[agent] Supervisor de reparto: Gracias, Luis. Quedo pendiente de que confirmes la entrega de PE-D23D14
+        en el sistema cuando llegues; si surge algo en el camino, avísame por aquí.
+```
 
-### Datos de consumo
+**Decisiones del modelo, paso a paso** (todo lo demás lo decide el motor, no el modelo):
+
+| Paso | Planificador | Acción | Modo | ms | Tokens |
+|---|---|---|---|---|---|
+| Esperar | `llm` | `wait` | `idle` | 1421 | 1203 |
+| Esperar | `llm` | `wait` | `idle` | 1278 | 1102 |
+| Pedir acuse | `deterministic` | — | — | — | — |
+| Escribir respuesta al empleado | `llm` | `message` | `reply` | 1519 | 1029 |
+| Leer estado del pedido | `deterministic` | — | — | — | — (ver nota) |
+
+Notas que importan:
+
+- Las dos primeras llamadas **no escribieron nada**: el modelo eligió `wait` en modo `idle`. Es la
+  comprobación en vivo del arreglo R2 (antes escribía en todas las vueltas).
+- El saludo inicial y la petición de acuse son **deterministas**: el modelo solo redacta contenido, no
+  el «plumbing» del flujo.
+- `order.get_status` devolvió `order_not_found` porque el pedido de la UAT es sintético y no está en el
+  catálogo real; el paso se registró como error y **el run continuó** (camino tolerante funcionando de
+  verdad, no solo en la prueba unitaria).
+- El agente no cerró el ticket, no pidió ninguna aprobación y no afirmó ninguna entrega.
+
+**Comprobaciones (automáticas, el script sale con código ≠ 0 si alguna falla):** 7/7 en verde.
+
+```
+OK   cero mensajes al cliente
+OK   el ticket sigue abierto (el agente no cierra)
+OK   ninguna aprobación pendiente
+OK   el agente respondió al empleado tras su respuesta
+OK   los mensajes del agente están en español
+OK   el agente no afirmó una entrega que no consta
+OK   el hilo se pinta en el navegador real
+```
+
+Captura del hilo tras el recorrido: `docs/capturas/ops-llm-movil-claro.png` (móvil 390×844, tema claro,
+con la etiqueta `IA`, el acuse pendiente y sin desbordamiento horizontal).
+
+### Datos de consumo (medidos)
 
 | Dato | Valor |
 |---|---|
-| Llamadas reales al proveedor | **0** (no hay clave) |
-| Tokens consumidos | **0** |
-| Coste | **0** — no se ha llamado al proveedor |
-| Consumo esperado por paso | ~900 tokens de entrada y ~40 de salida (medido en el transporte con una carga equivalente) |
-| Tope | `PROVIDER_TIMEOUT_MS` 8 s por llamada · cuota diaria del panel (por defecto 800, máximo 5000) |
+| Llamadas reales al proveedor | **3** (`deepseek-flash`) |
+| Latencia por llamada | **1421 / 1278 / 1519 ms** (mín. 1278, máx. 1519, media ≈ 1406 ms) |
+| Tokens | **3334** en total: 3129 de entrada y 205 de salida |
+| Tokens por llamada | 1203 (1147+56) · 1102 (1051+51) · 1029 (931+98) |
+| Respuestas rechazadas o reintentos | **0** (`fallbacks: 0`) |
+| Llamada de prueba previa | 1517 ms y 51 tokens (ping de JSON mínimo) |
+| Tope vigente | `PROVIDER_TIMEOUT_MS` 8 s por llamada · cuota del panel 800/día (`dailyLimit`) |
+| Coste | No se calcula en el repo: depende de la tarifa del proveedor; con 3129 tokens de entrada y 205 de salida por conversación de 4 mensajes, el orden de magnitud es de milésimas de unidad monetaria |
+
+Lo útil para dimensionar: **cada llamada de respuesta cuesta ~1000 tokens de entrada** (el prompt de
+sistema son ~600-700 y el contexto del ticket el resto). Con una conversación de 4 mensajes son 3
+llamadas porque el motor solo consulta al modelo cuando hay algo que decidir (responder o esperar),
+no en cada paso.
 
 ---
 
@@ -262,12 +314,13 @@ NO HAY CLAVE DEL PROVEEDOR: no se puede afirmar que el agente sea operativo.
 
 | # | Riesgo | Estado |
 |---|---|---|
-| E1 | **No hay ejecución con proveedor real** | Bloquea declarar el agente operativo. Script listo; falta la clave. |
-| E2 | El modelo puede redactar algo correcto pero poco útil (tono, longitud) | Acotado por prompt («1 a 3 frases») y por la pauta; se afina con la UAT real. |
-| E3 | Coste por ticket: 1 llamada por mensaje redactado | Cuota diaria del panel + `maxMessagesPerRun` (6) por run. |
+| E1 | **No hay ejecución con proveedor real** | **Cerrado.** 3 llamadas reales a `deepseek-flash` con conversación, latencia y tokens medidos (§7). |
+| E2 | El modelo puede redactar algo correcto pero poco útil (tono, longitud) | Acotado por prompt («1 a 3 frases»). En la UAT real las tres respuestas fueron naturales y en español; el tono se afina con el negocio. |
+| E3 | Coste por ticket: 1 llamada por mensaje redactado | Cuota diaria del panel + `maxMessagesPerRun` (6) por run. Medido: ~1000 tokens de entrada por llamada. |
 | E4 | El prompt crece con el hilo | Solo 10 mensajes y 600 caracteres por mensaje; `user` > 12 000 caracteres se rechaza. |
 | E5 | Un solo proceso (multi-réplica) | Sigue igual que en la Etapa D (riesgo R3). |
 | E6 | La detección de invención es por patrones | Cubre entregas y números de pedido; no es comprensión semántica. Añadir patrones es barato. |
+| E7 | La clave guardada está cifrada con el token del entorno (`phyto-uat`) | Si se cambia `PHYTO_CRM_TOKEN`, la credencial deja de descifrar (`configured:false`) y hay que volver a guardarla desde el panel. Es el comportamiento esperado, pero conviene saberlo antes de rotar el token. |
 
 ---
 
@@ -282,11 +335,18 @@ NO HAY CLAVE DEL PROVEEDOR: no se puede afirmar que el agente sea operativo.
 - ✅ Tres fallos reales encontrados y corregidos (R1 del supervisor, R2 del spam, R3 del responsable borrado).
 - ✅ 170 pruebas en verde, incluido el transporte con el proveedor.
 
-**NO-GO** para declarar el agente operativo, y **NO-GO** para desplegar:
+**GO del agente en UAT aislada** (ya no es un «mock»):
 
-- ❌ No hay ninguna ejecución con el proveedor real en este entorno (sin clave).
-- ❌ No se ha activado ninguna herramienta `high_impact`.
+- ✅ 3 llamadas reales a `deepseek-flash`, 1278-1519 ms, 3334 tokens, 0 reintentos.
+- ✅ Conversación natural en español con el empleado, entendiendo un mensaje con faltas.
+- ✅ 7/7 comprobaciones: cero WhatsApp, ticket abierto, sin aprobaciones, respuesta tras la del
+  empleado, español, sin entrega inventada, pintado en el navegador.
+- ✅ El modelo eligió **no escribir** en dos vueltas seguidas (modo `idle`).
+
+**NO-GO** para desplegar (sigue igual, y es lo que corresponde):
+
+- ❌ No se ha activado ninguna herramienta `high_impact`; siguen desactivadas por catálogo.
 - ❌ Nada commiteado, empujado ni desplegado, y producción sin tocar.
+- ❌ El hilo de un cliente real y el tono final los tiene que validar el negocio.
 
-Con la clave puesta y la UAT en verde, el paso siguiente es revisar el tono de los mensajes con el
-negocio y solo entonces decidir el despliegue.
+Paso siguiente: revisar el tono de los mensajes con el negocio y solo entonces decidir el despliegue.

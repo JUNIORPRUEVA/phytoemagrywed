@@ -76,6 +76,8 @@ export const REALTIME_TYPES = Object.freeze([
   'agent.execution.started',
   'agent.execution.completed',
   'agent.execution.failed',
+  /* COLABORACIÓN (Centro IA): una petición de ayuda cambia el estado del ticket. */
+  'agent.delegation.changed',
 ]);
 
 const ID = '[^/]+';

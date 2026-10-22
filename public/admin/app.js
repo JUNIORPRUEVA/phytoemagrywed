@@ -158,6 +158,15 @@
     ['auto', 'Como el teléfono', 'contrast'],
   ];
   const TEMA_BARRA = { light: '#145bd7', dark: '#0b1424' };
+  /*
+   * El sol del tema «Claro» es el icono entregado por el usuario (PNG local
+   * optimizado). Los demás temas siguen con su vector de siempre.
+   */
+  const temaIcono = (name) => {
+    if (name === 'sun') return '<img class="app-icon" src="/admin/assets/icons/ui/sun.png" alt="" aria-hidden="true" draggable="false">';
+    if (name === 'moon') return '<img class="app-icon" src="/admin/assets/icons/ui/moon.png" alt="" aria-hidden="true" draggable="false">';
+    return ICONS[name];
+  };
 
   const temaDeLaPersona = () => document.documentElement.dataset.tema ?? 'auto';
   const temaDelTelefono = () =>
@@ -178,7 +187,7 @@
           ([valor, texto, icono]) => `<button class="tema-opt" data-tema="${valor}" type="button" role="radio" aria-checked="${
             valor === elegido
           }">
-              <span class="tema-opt__icon" aria-hidden="true">${ICONS[icono]}</span>
+              <span class="tema-opt__icon" aria-hidden="true">${temaIcono(icono)}</span>
               <span class="tema-opt__label">${escapeHtml(texto)}</span>
             </button>`,
         ).join('')}
@@ -194,7 +203,7 @@
     // sigue valiendo (si ya estaba elegido se respeta), pero no ocupa sitio aquí.
     const temasMenu = TEMAS.filter(([key]) => key !== 'auto');
     if (!box.children.length) box.innerHTML = temasMenu.map(([key, label, icon]) =>
-      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${ICONS[icon]}</span><span>${label}</span></button>`
+      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${temaIcono(icon)}</span><span>${label}</span></button>`
     ).join('');
     box.querySelectorAll('[data-tema]').forEach((button) => {
       button.setAttribute('aria-checked', String(button.dataset.tema === temaDeLaPersona()));
@@ -677,7 +686,7 @@
     /* Ajustes = mandos que se deslizan (un engranaje aquí se confundía con el sol de Hoy). */
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
-    back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
+    back: '<img class="app-icon app-icon--back" src="/admin/assets/icons/ui/back.png" alt="" aria-hidden="true" draggable="false">',
     /* «⋮» de verdad: tres puntos RELLENOS (con trazo quedaban huecos y no se veían). */
     more: svg('<circle cx="12" cy="5.2" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="18.8" r="1.9" fill="currentColor" stroke="none"/>'),
     search: svg('<circle cx="10.8" cy="10.8" r="5.8"/><path d="m15.2 15.2 4.6 4.6"/>'),
@@ -730,7 +739,17 @@
   /** Pinta los iconos declarados en el HTML (`data-icon="..."`). */
   function paintIcons(root = document) {
     $$('[data-icon]', root).forEach((slot) => {
-      const art = ICONS[slot.dataset.icon];
+      const key = slot.dataset.icon;
+      /*
+       * ICONOS ENTREGADOS POR EL USUARIO: `data-icon="img:<nombre>"` pinta un PNG
+       * local ya optimizado (72 px, `scripts/optimize-ui-icons.py`). Se resuelve
+       * desde disco como el resto del panel: nada se pide a un servidor externo.
+       */
+      if (key.startsWith('img:')) {
+        slot.innerHTML = `<img class="app-icon" src="/admin/assets/icons/ui/${key.slice(4)}.png" alt="" aria-hidden="true" draggable="false">`;
+        return;
+      }
+      const art = ICONS[key];
       if (art) slot.innerHTML = art;
     });
   }
@@ -2472,7 +2491,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false"><img class="pos-ico" src="/admin/assets/icons/billing/options.png" alt="" aria-hidden="true" draggable="false"></button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -2521,7 +2540,8 @@
       const unreadNotifications = unreadNotificationCount();
       box.innerHTML = `<div class="dashboard-head">
         <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
-          <!-- Tres barras que se convierten en ✕ al abrir: se ve que hay menú. -->
+          <!-- Icono entregado por el usuario; al abrir vuelve el aspa de barras. -->
+          <img class="app-icon app-icon--menu" src="/admin/assets/icons/ui/menu.png" alt="" aria-hidden="true" draggable="false">
           <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="dashboard-head__title">
@@ -2529,11 +2549,11 @@
           <span>CRM</span>
         </div>
         <div class="dashboard-head__actions">
-          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil">${ICONS.person}</button>
+          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil"><img class="app-icon app-icon--quick" src="/admin/assets/icons/ui/user.png" alt="" aria-hidden="true" draggable="false"></button>
           <button class="dashboard-head__quick ${unreadNotifications ? 'dashboard-head__quick--alert' : ''}" data-dashboard-notifications type="button" aria-label="${
             unreadNotifications ? `${unreadNotifications} notificación(es)` : 'Sin notificaciones'
           }" title="Notificaciones">
-            ${ICONS.bell}
+            <img class="app-icon app-icon--quick" src="/admin/assets/icons/ui/bell.png" alt="" aria-hidden="true" draggable="false">
             ${unreadNotifications ? `<span class="dashboard-head__badge">${unreadNotifications > 99 ? '99+' : unreadNotifications}</span>` : ''}
           </button>
         </div>
@@ -22587,7 +22607,7 @@
     delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
     supervisor: 'Supervisor IA',
-    ops: 'Centro de operaciones',
+    ops: 'Centro IA',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
@@ -22967,6 +22987,22 @@
     });
 
     $('#settings-offline-data')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('fulltech:offline-open')));
+
+    /*
+     * Navegación pedida por un módulo (p. ej. el Centro IA abre el Supervisor
+     * IA). Los módulos no tocan `setTab` directamente: piden la pestaña y el
+     * panel decide, con sus permisos y su historial.
+     */
+    window.addEventListener('fulltech:navigate', (event) => {
+      const tab = String(event?.detail?.tab ?? '');
+      if (!VIEWS.includes(tab)) return;
+      setTab(tab);
+      /* Si además piden un registro concreto, se le pasa al módulo. */
+      const detalle = event?.detail ?? {};
+      if (tab === 'ops' && (detalle.orderId || detalle.ticketId)) {
+        window.dispatchEvent(new CustomEvent('fulltech:ops-open', { detail: detalle }));
+      }
+    });
 
     $('#search').addEventListener('input', (event) => {
       state.q = event.target.value.trim();

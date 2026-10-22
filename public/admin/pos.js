@@ -5,14 +5,75 @@ const doc=()=>(typeof document==='undefined'||!document?null:document);
 const $=s=>doc()?.querySelector(s)??null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
-const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:'',deliveryMethod:'delivery',scheduledAt:'',deliveryNotes:'',deliveryReference:'',deliveryAgentId:'',deliveryContact:null,paymentStatus:'pending',paymentMethod:'CASH',orderPrefs:null,saveOrderPrefs:true,feeReviewed:false,openAck:false,guidedFlow:false,createdOrderId:null,orderDirty:false});
+const empty=()=>({items:[],discount:{},customer:null,conversationId:'',location:null,deliveryFee:0,address:'',notes:'',quoteId:null,flow:'order',ticketId:null,ticketVersion:null,ticketName:'',ticketNameAuto:true,deliveryMethod:'delivery',scheduledAt:'',deliveryNotes:'',deliveryReference:'',deliveryAgentId:'',deliveryContact:null,paymentStatus:'pending',paymentMethod:'CASH',orderPrefs:null,saveOrderPrefs:true,feeReviewed:false,openAck:false,guidedFlow:false,createdOrderId:null,orderDirty:false});
 const personIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg>';
 const quotesIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7M9 16h5"/></svg>';
-const actionIcon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({quick:'<path d="m13 2-9 12h7l-1 8 10-13h-8z"/>',ticket:'<path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zM15 5v3m0 3v2m0 3v3"/>',save:'<path d="M5 3h12l4 4v14H3V3h2zm2 0v6h10V3M7 21v-8h10v8"/>',note:'<path d="M4 4h11l5 5v11H4zM15 4v5h5M8 12h8M8 16h6"/>',stock:'<path d="m3 7 9-4 9 4v12l-9 3-9-3zM3 7l9 4 9-4M12 11v11M16 3v6M13 6h6"/>',product:'<path d="M4 5h16v15H4zM4 10h16M12 13v5m-2.5-2.5h5"/>',more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'})[name]||''}</svg>`;
+const actionIcon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({quick:'<path d="m13 2-9 12h7l-1 8 10-13h-8z"/>',ticket:'<path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zM15 5v3m0 3v2m0 3v3"/>',save:'<path d="M5 3h12l4 4v14H3V3h2zm2 0v6h10V3M7 21v-8h10v8"/>',note:'<path d="M4 4h11l5 5v11H4zM15 4v5h5M8 12h8M8 16h6"/>',stock:'<path d="m3 7 9-4 9 4v12l-9 3-9-3zM3 7l9 4 9-4M12 11v11M16 3v6M13 6h6"/>',product:'<path d="M4 5h16v15H4zM4 10h16M12 13v5m-2.5-2.5h5"/>',orders:'<path d="M4 6h16M4 12h16M4 18h10"/>',more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'})[name]||''}</svg>`;
+/*
+ * ICONOS ENTREGADOS POR EL USUARIO. Los originales son PNG de 512 px (43-176 KB);
+ * `scripts/optimize-billing-icons.py` los deja en 96 px (0,6-2,2 KB), que cubre
+ * pantallas 4x sin perder nitidez. Son negros con alfa: en superficies oscuras
+ * se invierten con CSS (`.pos-ico`), así un solo archivo sirve en claro y oscuro.
+ */
+const posIcon=name=>`<img class="pos-ico" src="/admin/assets/icons/billing/${name}.png" alt="" aria-hidden="true" draggable="false">`;
 let draft=empty(),products=[],customers=[],suppliers=[],isAdmin=false,canCreate=false,expanded=false,busy=false,loaded=false,generation=0,operation=null,message='',initializing=null,dragged=false,draftKey=null;
 const root=$('#pos-root'),client=document.createElement('div');client.id='pos-client';root?.parentElement.prepend(client);
 const modal=document.createElement('dialog');modal.className='pos-dialog';document.body.append(modal);
 const actionsDrawer=document.createElement('dialog');actionsDrawer.className='pos-actions-drawer';actionsDrawer.setAttribute('aria-label','Acciones de facturación');document.body.append(actionsDrawer);
+/* CAJÓN LATERAL DE CLIENTES: 70% del ancho, alto completo, sin salir de facturación. */
+const clientDrawer=document.createElement('aside');
+clientDrawer.id='pos-client-drawer';clientDrawer.className='pos-drawer';clientDrawer.setAttribute('aria-label','Seleccionar cliente');clientDrawer.setAttribute('aria-hidden','true');document.body.append(clientDrawer);
+const clientScrim=document.createElement('div');clientScrim.className='pos-drawer-scrim pos-drawer-scrim--client';document.body.append(clientScrim);
+let clientDrawerOpen=false,drawerOpenDrag=null,drawerCloseDrag=null,drawerOpenedAt=0;
+/*
+ * CAJÓN DE TICKETS: el mismo lenguaje que el de clientes, pero entra por la
+ * DERECHA con su propia animación y se cierra arrastrando hacia la derecha.
+ */
+const ticketsDrawer=document.createElement('aside');
+ticketsDrawer.id='pos-tickets-drawer';ticketsDrawer.className='pos-drawer pos-drawer--right';
+ticketsDrawer.setAttribute('aria-label','Tickets de venta');ticketsDrawer.setAttribute('aria-hidden','true');document.body.append(ticketsDrawer);
+const ticketsScrim=document.createElement('div');ticketsScrim.className='pos-drawer-scrim pos-drawer-scrim--tickets';document.body.append(ticketsScrim);
+let ticketsDrawerOpen=false,ticketsCloseDrag=null,ticketsOpenedAt=0;
+function openTicketsDrawer(){
+  if(ticketsDrawerOpen)return;
+  /* Un cajón cada vez: si el de clientes está abierto, se cierra antes. */
+  if(clientDrawerOpen)closeClientDrawer();
+  ticketsDrawerOpen=true;ticketsOpenedAt=Date.now();
+  document.body.dataset.posTicketDrawer='open';
+  ticketsDrawer.setAttribute('aria-hidden','false');
+  ticketsDrawer.style.transform='';
+}
+function closeTicketsDrawer(){
+  if(!ticketsDrawerOpen)return;
+  ticketsDrawerOpen=false;ticketsCloseDrag=null;
+  delete document.body.dataset.posTicketDrawer;
+  ticketsDrawer.setAttribute('aria-hidden','true');
+  ticketsDrawer.classList.remove('pos-dragging');ticketsDrawer.style.transform='';
+}
+/* El clic sintético que sigue al arrastre no debe cerrar el cajón recién abierto. */
+ticketsScrim.addEventListener('click',()=>{if(Date.now()-ticketsOpenedAt<320)return;closeTicketsDrawer();});
+ticketsDrawer.addEventListener('click',e=>{
+  if(e.target.closest('[data-pos-tickets-close]')){closeTicketsDrawer();return;}
+  if(e.target.closest('[data-pos-tickets-new]'))runAction(newTicket);
+});
+ticketsDrawer.addEventListener('pointerdown',e=>{
+  if(e.pointerType!=='touch'||!ticketsDrawerOpen)return;
+  if(e.target.closest('input,textarea,select,[contenteditable=true]'))return;
+  ticketsCloseDrag={id:e.pointerId,x:e.clientX,y:e.clientY,moved:false,width:ticketsDrawer.getBoundingClientRect().width||340};
+  ticketsDrawer.classList.add('pos-dragging');
+},{passive:true});
+document.addEventListener('pointermove',e=>{
+  if(!ticketsCloseDrag||ticketsCloseDrag.id!==e.pointerId)return;
+  const dx=e.clientX-ticketsCloseDrag.x,dy=e.clientY-ticketsCloseDrag.y;
+  if(!ticketsCloseDrag.moved&&Math.abs(dy)>14&&Math.abs(dy)>Math.abs(dx)){ticketsCloseDrag=null;ticketsDrawer.classList.remove('pos-dragging');ticketsDrawer.style.transform='';return;}
+  if(dx>0){ticketsCloseDrag.moved=true;ticketsCloseDrag.lastX=e.clientX;ticketsDrawer.style.transform=`translate3d(${Math.min(ticketsCloseDrag.width,dx)}px,0,0)`;}
+},{passive:true});
+document.addEventListener('pointerup',e=>{
+  if(!ticketsCloseDrag||ticketsCloseDrag.id!==e.pointerId)return;
+  const gesture=ticketsCloseDrag;ticketsCloseDrag=null;ticketsDrawer.classList.remove('pos-dragging');ticketsDrawer.style.transform='';
+  const fin=gesture.lastX??e.clientX;
+  if(gesture.moved&&fin-gesture.x>=Math.max(48,gesture.width*0.25))closeTicketsDrawer();
+});
 function closeActions(){actionsDrawer.close();delete document.body.dataset.posActions;document.querySelectorAll('[data-pos-actions]').forEach(b=>b.setAttribute('aria-expanded','false'));}
 actionsDrawer.addEventListener('cancel',e=>{e.preventDefault();closeActions();});
 actionsDrawer.addEventListener('click',e=>{
@@ -40,14 +101,13 @@ function updateBadges(){
 }
 function render(){
   if(!root)return;
-  const sale=totals(),quantity=draft.items.reduce((n,i)=>n+i.quantity,0),disabled=!draft.items.length||!!sale.error||!canCreate||busy;
+  const sale=totals(),quantity=draft.items.reduce((n,i)=>n+i.quantity,0),descuento=(Number(sale.discount_cents)||0)+(sale.items||[]).reduce((n,i)=>n+(Number(i.discount_cents)||0),0),disabled=!draft.items.length||!!sale.error||!canCreate||busy;
   const wide=window.matchMedia?.('(min-width:900px)').matches;
-  client.innerHTML=`<button type="button" class="pos-client-button" data-pos-client><span class="pos-client-icon">${personIcon}</span><strong>${esc(draft.customer?.name||'Selecciona cliente')}</strong><span class="pos-client-chevron" aria-hidden="true">⌄</span></button>${draft.customer?'<button class="pos-icon" type="button" data-pos-remove-client aria-label="Quitar cliente">×</button>':''}<button class="pos-tickets-trigger" type="button" data-pos-tickets aria-haspopup="dialog">${actionIcon('ticket')}<span>Tickets</span></button>`;
+  client.innerHTML=`<button type="button" class="pos-client-button" data-pos-client><span class="pos-client-icon">${posIcon('customer')}</span><strong>${esc(draft.customer?.name||'Selecciona cliente')}</strong><span class="pos-client-chevron" aria-hidden="true">${posIcon('chevron-down')}</span></button>${draft.customer?`<button class="pos-icon pos-remove-client" type="button" data-pos-remove-client aria-label="Quitar cliente">${posIcon('remove')}</button>`:''}<button class="pos-tickets-trigger" type="button" data-pos-tickets aria-haspopup="dialog">${posIcon('tickets')}<span class="pos-tickets-name">${esc(draft.customer?clientFirstName(draft.customer):'Tickets')}</span></button>`;
   root.classList.toggle('pos-expanded',expanded);
-  root.innerHTML=`<section class="pos-cart" aria-label="Carrito de venta"><button class="pos-cart-handle" type="button" data-pos-expand aria-expanded="${expanded||wide}" ${wide?'disabled':''} aria-label="${expanded||wide?'Contraer':'Expandir'} carrito"><span class="pos-grip"></span><span>Carrito <small>${quantity} ${quantity===1?'artículo':'artículos'}</small></span><span>${expanded?'⌄':'⌃'}</span></button><div class="pos-cart-lines" ${expanded?'':'inert'}>${sale.items.length?sale.items.map((line,index)=>`<article class="pos-cart-line"><button type="button" class="pos-line-edit" data-pos-edit="${index}" aria-label="Editar cantidad y descuento de ${esc(line.name)}"><span class="pos-line-qty" data-pos-quantity="${index}">${line.quantity}</span><span class="pos-line-info"><strong>${esc(line.name)}</strong><small>${cash(line.unit_price_cents)} c/u${line.discount_cents?` · <span class="pos-line-save">−${cash(line.discount_cents)}</span>`:''}</small></span></button><span class="pos-line-total"><strong>${cash(line.subtotal_cents)}</strong></span></article>`).join(''):'<p class="pos-empty">Toca + en un artículo para comenzar.</p>'}</div>${draft.notes?`<button type="button" class="pos-cart-note" data-pos-note aria-label="Editar nota del pedido">${actionIcon('note')}<span>${esc(draft.notes)}</span></button>`:''}<div class="pos-cart-tools" ${expanded?'':'hidden'}><button type="button" class="pos-text" data-pos-options>Envío y notas</button><button type="button" class="pos-text" data-pos-pending ${disabled?'disabled':''}>Guardar pedido</button><button type="button" class="pos-text" data-pos-clear ${!draft.items.length||busy?'disabled':''}>Vaciar</button></div></section><div class="pos-feedback" role="status" aria-live="polite">${esc(message||sale.error||'')}</div><section class="pos-summary" aria-label="Resumen de venta"><div class="pos-summary-values">${isAdmin?`<div class="pos-profit"><small>Ganancia</small><strong>${sale.profit_cents===undefined?'—':cash(sale.profit_cents)}</strong></div>`:'<span></span>'}<button type="button" class="pos-discount-total" data-pos-discount="total"><small>Descuento</small><strong>${cash(sale.discount_cents)}</strong></button><div class="pos-total"><small>Total</small><strong>${cash(sale.total_cents)}</strong></div></div><div class="pos-actions"><button type="button" class="btn btn--ghost" data-pos-quote ${disabled?'disabled':''}>Cotizar</button><button type="button" class="btn btn--primary" data-pos-pay ${disabled?'disabled':''}>${busy?'Guardando…':orderFromChat()?'Continuar':'Cobrar'}</button></div></section>`;
+  root.innerHTML=`<section class="pos-cart" aria-label="Carrito de venta"><button class="pos-cart-handle" type="button" data-pos-expand aria-expanded="${expanded||wide}" ${wide?'disabled':''} aria-label="${expanded||wide?'Contraer':'Expandir'} carrito"><span class="pos-grip"></span><span>Carrito <small>${quantity} ${quantity===1?'artículo':'artículos'}</small></span><span class="pos-cart-chevron" aria-hidden="true">${posIcon(expanded?'chevron-down':'chevron-up')}</span></button><div class="pos-cart-lines" ${expanded?'':'inert'}>${sale.items.length?sale.items.map((line,index)=>`<article class="pos-cart-line"><button type="button" class="pos-line-edit" data-pos-edit="${index}" aria-label="Editar cantidad y descuento de ${esc(line.name)}"><span class="pos-line-qty" data-pos-quantity="${index}">${line.quantity}</span><span class="pos-line-info"><strong>${esc(line.name)}</strong><small>${cash(line.unit_price_cents)} c/u${line.discount_cents?` · <span class="pos-line-save">−${cash(line.discount_cents)}</span>`:''}</small></span></button><span class="pos-line-total"><strong>${cash(line.subtotal_cents)}</strong></span></article>`).join(''):'<p class="pos-empty">Toca + en un artículo para comenzar.</p>'}</div>${draft.notes?`<button type="button" class="pos-cart-note" data-pos-note aria-label="Editar nota del pedido">${actionIcon('note')}<span>${esc(draft.notes)}</span></button>`:''}<div class="pos-cart-tools" ${expanded?'':'hidden'}><button type="button" class="pos-text" data-pos-options>Envío y notas</button><button type="button" class="pos-text" data-pos-pending ${disabled?'disabled':''}>Guardar pedido</button><button type="button" class="pos-text" data-pos-clear ${!draft.items.length||busy?'disabled':''}>Vaciar</button></div></section><div class="pos-feedback" role="status" aria-live="polite">${esc(message||sale.error||'')}</div><section class="pos-summary" aria-label="Resumen de venta"><div class="pos-summary-values">${isAdmin?`<div class="pos-profit"><small>Ganancia</small><strong>${sale.profit_cents===undefined?'—':cash(sale.profit_cents)}</strong></div>`:'<span></span>'}${descuento>0?`<button type="button" class="pos-discount-total" data-pos-discount="total"><small>Descuento</small><strong>${cash(descuento)}</strong></button>`:''}<div class="pos-total"><small>Total</small><strong>${cash(sale.total_cents)}</strong></div></div><div class="pos-actions"><button type="button" class="btn btn--ghost pos-quote-btn" data-pos-quote ${disabled?'disabled':''}>Cotizar</button><button type="button" class="btn btn--primary" data-pos-pay ${disabled?'disabled':''}>${busy?'Guardando…':orderFromChat()?'Continuar':'Cobrar'}</button></div></section>`;
   root.querySelector('.pos-cart-lines')?.removeAttribute('inert');
   root.classList.toggle('pos-has-items',!!sale.items.length);
-  const cartCaption=root.querySelector('.pos-cart-handle>span:nth-child(2)');if(cartCaption&&draft.ticketName)cartCaption.innerHTML=`${esc(draft.ticketName)} <small>${quantity} ${quantity===1?'artículo':'artículos'}</small>`;
   if(wide){root.querySelector('.pos-cart-tools')?.removeAttribute('hidden');}
   updateBadges();
   const handle=$('[data-pos-expand]');let startY=null;
@@ -86,46 +146,119 @@ const filterIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const clientGroupKeys=c=>(Array.isArray(c?.groups)?c.groups:[]).map(g=>String(g).trim().toLocaleLowerCase('es'));
 const clientMatches=(c,filter)=>filter==='all'||clientGroupKeys(c).some(g=>g.startsWith(filter==='phyto'?'phytoemagry':'fulltech'));
 const clientGroupLabel=c=>{const keys=clientGroupKeys(c);if(keys.some(g=>g.startsWith('phytoemagry')))return 'PHYTOEMAGRY';if(keys.some(g=>g.startsWith('fulltech')))return 'FULLTECH';return '';};
-const clientInitials=name=>String(name||'?').trim().split(/\s+/).slice(0,2).map(part=>part[0]).join('').toUpperCase();
-function chooseClient(){
-  show('Seleccionar cliente',`<div class="pos-client-toolbar"><label class="store-search field"><span class="sr-only">Buscar cliente</span><input class="field__input" type="search" id="pos-client-search" placeholder="Buscar por nombre o teléfono" autocomplete="off" enterkeyhint="search"></label><div class="pos-client-tools"><button type="button" class="pos-client-tool" id="pos-client-filter" aria-label="Filtrar por grupo de negocio" aria-controls="pos-client-chips" aria-expanded="false">${filterIcon}${posClient.filter!=='all'?'<span class="pos-client-tool-dot" aria-hidden="true"></span>':''}</button><button type="button" class="pos-client-tool" id="pos-client-new" aria-label="Agregar cliente" title="Agregar cliente" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div></div><div class="pos-client-chips" id="pos-client-chips" role="group" aria-label="Grupo de negocio" hidden><button type="button" data-client-filter="all" aria-pressed="true">Todos</button><button type="button" data-client-filter="phyto" aria-pressed="false">PHYTOEMAGRY</button><button type="button" data-client-filter="fulltech" aria-pressed="false">FULLTECH</button></div><div class="pos-new-client" hidden><h3>Nuevo cliente</h3><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="120"></label><label class="field"><span class="field__label">Teléfono con código de país</span><input class="field__input" name="phone" type="tel" placeholder="+1 809 555 1234"></label><button class="btn btn--primary" type="submit">Guardar y seleccionar</button></div><div id="pos-customer-results" role="group" aria-label="Clientes"></div>`,null,async form=>{
-    if(!String(form.get('phone')||'').trim())throw new Error('Escribe el teléfono del nuevo cliente.');
-    await initialize();
-    const data=await api('customers',{name:form.get('name'),phone:form.get('phone')});customers.push(data.customer);modal.close();await enterCustomer({customer:data.customer,askOrders:false});
-  });
-  /*
-   * La lista NO se reconstruye al filtrar: se reescribe solo el contenedor de
-   * resultados, así el buscador conserva el texto, el foco y el teclado.
-   */
-  const results=()=>{
-    const q=String($('#pos-client-search')?.value||'').trim().toLocaleLowerCase();
-    posClient.query=String($('#pos-client-search')?.value||'');
-    const rows=customers.filter(c=>clientMatches(c,posClient.filter)&&(String(c.name||'')+' '+String(c.phone_e164||'')).toLocaleLowerCase().includes(q));
-    const host=$('#pos-customer-results');
-    if(host)host.innerHTML=rows.length?rows.map(c=>{
-      const tag=clientGroupLabel(c),current=draft.customer?.id===c.id;
-      return `<button type="button" class="pos-customer-row" data-client-choice="${esc(c.id)}" aria-pressed="${current}"><span class="pos-customer-avatar" aria-hidden="true">${esc(clientInitials(c.name))}</span><span class="pos-customer-main"><strong>${esc(c.name||c.phone_e164||'Cliente')}</strong>${c.phone_e164?`<small>${esc(c.phone_e164)}</small>`:''}</span>${tag?`<span class="pos-customer-tag">${esc(tag)}</span>`:''}<span class="pos-customer-check" aria-hidden="true">${current?'✓':''}</span></button>`;
-    }).join(''):'<p class="pos-empty">No encontramos clientes con esa búsqueda o filtro.</p>';
-  };
-  const syncFilters=()=>{
-    modal.querySelectorAll('[data-client-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.clientFilter===posClient.filter)));
-    const trigger=$('#pos-client-filter');
-    if(trigger){trigger.classList.toggle('is-filtered',posClient.filter!=='all');trigger.setAttribute('aria-expanded',String(!$('#pos-client-chips')?.hidden));}
-  };
-  $('#pos-customer-results').addEventListener('click',e=>{
-    const row=e.target.closest('[data-client-choice]');if(!row)return;
-    const customer=customers.find(c=>c.id===row.dataset.clientChoice);if(!customer)return;
-    modal.close();runAction(()=>enterCustomer({customer}));
-  });
-  $('#pos-client-filter').addEventListener('click',()=>{const chips=$('#pos-client-chips');if(chips)chips.hidden=!chips.hidden;syncFilters();});
-  $('#pos-client-chips').addEventListener('click',e=>{const button=e.target.closest('[data-client-filter]');if(!button)return;posClient.filter=button.dataset.clientFilter||'all';syncFilters();results();});
-  $('#pos-client-new').addEventListener('click',()=>{const form=modal.querySelector('.pos-new-client');form.hidden=!form.hidden;$('#pos-client-new').setAttribute('aria-expanded',String(!form.hidden));if(!form.hidden)form.querySelector('input').focus();});
-  $('#pos-client-search').addEventListener('input',results);
-  $('#pos-client-chips').hidden=posClient.filter==='all';
-  syncFilters();
-  results();
+/*
+ * CAJÓN DE CLIENTES (drawer lateral)
+ *
+ * Sustituye al diálogo a pantalla completa: abre desde la izquierda al ~70% del
+ * ancho, deja ver el carrito detrás y sigue el dedo. NO lleva el título
+ * «Seleccionar cliente»: empieza directamente por la barra de herramientas.
+ * El buscador, el filtro y el alta de cliente viven aquí dentro, así que nunca
+ * se abandona la facturación.
+ */
+function clientDrawerHtml(){
+  return `<div class="pos-drawer-head"><div class="pos-client-toolbar"><label class="store-search field"><span class="sr-only">Buscar cliente</span><input class="field__input" type="search" id="pos-client-search" placeholder="Nombre o teléfono" autocomplete="off" enterkeyhint="search" value="${esc(posClient.query)}"></label><div class="pos-client-tools"><button type="button" class="pos-client-tool" id="pos-client-filter" aria-label="Filtrar por grupo de negocio" aria-controls="pos-client-chips" aria-expanded="false">${filterIcon}${posClient.filter!=='all'?'<span class="pos-client-tool-dot" aria-hidden="true"></span>':''}</button><button type="button" class="pos-client-tool pos-client-add" id="pos-client-new" aria-label="Agregar cliente" aria-expanded="false">${posIcon('plus')}</button></div></div><div class="pos-client-chips" id="pos-client-chips" role="group" aria-label="Grupo de negocio" hidden><button type="button" data-client-filter="all">Todos</button><button type="button" data-client-filter="phyto">PHYTOEMAGRY</button><button type="button" data-client-filter="fulltech">FULLTECH</button></div></div><form class="pos-new-client" hidden><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" maxlength="120"></label><label class="field"><span class="field__label">Teléfono con código de país</span><input class="field__input" name="phone" type="tel" placeholder="+1 809 555 1234"></label><button class="btn btn--primary" type="submit">Guardar y seleccionar</button><p class="pos-modal-error" role="alert"></p></form><div id="pos-customer-results" role="group" aria-label="Clientes"></div><div class="pos-drawer-foot"><button type="button" class="pos-text" data-pos-close>Cerrar</button></div>`;
 }
-function selectClient(customer){draft.customer=customer;draft.conversationId='';draft.location=null;draft.quoteId=null;draft.createdOrderId=null;draft.orderDirty=false;changed();}
+const drawerWidth=()=>clientDrawer.getBoundingClientRect().width||Math.min(window.innerWidth*0.7,340);
+/* Desplazamiento en px durante el arrastre: 0 = abierto, -ancho = cerrado. */
+function drawerShift(x){
+  clientDrawer.style.transform=x===null?'':`translate3d(${Math.round(x)}px,0,0)`;
+  clientScrim.style.opacity=x===null?'':String(Math.max(0,Math.min(1,1+x/Math.max(1,drawerWidth()))));
+}
+function openClientDrawer(){
+  if(clientDrawerOpen)return;
+  /* Un cajón cada vez: si el de tickets está abierto, se cierra antes. */
+  if(ticketsDrawerOpen)closeTicketsDrawer();
+  clientDrawerOpen=true;
+  drawerOpenedAt=Date.now();
+  document.body.dataset.posDrawer='open';
+  clientDrawer.setAttribute('aria-hidden','false');
+  clientDrawer.style.transform='';clientScrim.style.opacity='';
+}
+function closeClientDrawer(){
+  if(!clientDrawerOpen)return;
+  clientDrawerOpen=false;drawerOpenDrag=null;drawerCloseDrag=null;
+  delete document.body.dataset.posDrawer;
+  clientDrawer.setAttribute('aria-hidden','true');
+  clientDrawer.classList.remove('pos-dragging');
+  clientDrawer.style.transform='';clientScrim.style.opacity='';
+}
+async function clientCreateSubmit(e){
+  if(!e.target.closest('.pos-new-client'))return;
+  e.preventDefault();
+  const form=e.target,error=form.querySelector('.pos-modal-error'),data=new FormData(form);
+  if(!String(data.get('phone')||'').trim()){if(error)error.textContent='Escribe el teléfono del nuevo cliente.';return;}
+  const button=form.querySelector('[type=submit]');if(button)button.disabled=true;
+  if(error)error.textContent='';
+  try{
+    await initialize();
+    const created=await api('customers',{name:data.get('name'),phone:data.get('phone')});
+    customers.push(created.customer);closeClientDrawer();await enterCustomer({customer:created.customer,askOrders:false});
+  }catch(err){if(error)error.textContent=err.message;}
+  finally{if(button)button.disabled=false;}
+}
+/*
+ * El clic que algunos navegadores sintetizan al soltar el dedo aterriza en el
+ * velo y cerraba el cajón recién abierto: se ignora el del primer instante.
+ */
+clientScrim.addEventListener('click',()=>{if(Date.now()-drawerOpenedAt<320)return;closeClientDrawer();});
+/* Delegación única: el cajón se puede abrir por botón o por gesto y siempre responde. */
+clientDrawer.addEventListener('click',e=>{
+  if(e.target.closest('[data-pos-close]')){closeClientDrawer();return;}
+  const row=e.target.closest('[data-client-choice]');
+  if(row){const customer=customers.find(c=>c.id===row.dataset.clientChoice);if(!customer)return;closeClientDrawer();runAction(()=>enterCustomer({customer}));return;}
+  if(e.target.closest('#pos-client-filter')){const chips=$('#pos-client-chips');if(chips)chips.hidden=!chips.hidden;syncClientFilters();return;}
+  const filter=e.target.closest('[data-client-filter]');
+  if(filter){posClient.filter=filter.dataset.clientFilter||'all';syncClientFilters();renderClientRows();return;}
+  if(e.target.closest('#pos-client-new')){
+    const form=clientDrawer.querySelector('.pos-new-client');form.hidden=!form.hidden;
+    $('#pos-client-new').setAttribute('aria-expanded',String(!form.hidden));
+    if(!form.hidden)form.querySelector('input').focus();
+  }
+});
+clientDrawer.addEventListener('input',e=>{if(e.target.id==='pos-client-search')renderClientRows();});clientDrawer.addEventListener('submit',clientCreateSubmit);
+const clientFirstName=c=>String(c?.name||c?.phone_e164||'').trim().split(/\s+/)[0]||'';
+const clientInitials=name=>String(name||'?').trim().split(/\s+/).slice(0,2).map(part=>part[0]).join('').toUpperCase();
+/*
+ * La lista NO se reconstruye al filtrar: se reescribe solo el contenedor de
+ * resultados, así el buscador conserva el texto, el foco y el teclado.
+ */
+function renderClientRows(){
+  const input=$('#pos-client-search');
+  if(!input)return;
+  posClient.query=input.value;
+  const q=input.value.trim().toLocaleLowerCase();
+  const rows=customers.filter(c=>clientMatches(c,posClient.filter)&&(String(c.name||'')+' '+String(c.phone_e164||'')).toLocaleLowerCase().includes(q));
+  const host=$('#pos-customer-results');
+  if(host)host.innerHTML=rows.length?rows.map(c=>{
+    const tag=clientGroupLabel(c),current=draft.customer?.id===c.id;
+    return `<button type="button" class="pos-customer-row" data-client-choice="${esc(c.id)}" aria-pressed="${current}"><span class="pos-customer-avatar" aria-hidden="true">${esc(clientInitials(c.name))}</span><span class="pos-customer-main"><strong>${esc(c.name||c.phone_e164||'Cliente')}</strong>${c.phone_e164?`<small>${esc(c.phone_e164)}</small>`:''}</span>${tag?`<span class="pos-customer-tag">${esc(tag)}</span>`:''}<span class="pos-customer-check" aria-hidden="true">${current?'✓':''}</span></button>`;
+  }).join(''):'<p class="pos-empty">No encontramos clientes con esa búsqueda o filtro.</p>';
+}
+function syncClientFilters(){
+  clientDrawer.querySelectorAll('[data-client-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.clientFilter===posClient.filter)));
+  const trigger=$('#pos-client-filter');
+  if(trigger){trigger.classList.toggle('is-filtered',posClient.filter!=='all');trigger.setAttribute('aria-expanded',String(!$('#pos-client-chips')?.hidden));}
+}
+/* Pinta el cajón completo (barra + filtros + lista) cuando se abre. */
+function mountClientDrawer(){
+  clientDrawer.innerHTML=clientDrawerHtml();
+  syncClientFilters();renderClientRows();
+  $('#pos-client-search')?.addEventListener('input',renderClientRows);
+}
+function chooseClient(){
+  mountClientDrawer();
+  openClientDrawer();
+}
+/*
+ * NOMBRE DEL TICKET = NOMBRE DEL CLIENTE.
+ * El id del ticket (y su registro en la base) NO cambia nunca: solo la etiqueta.
+ * Si el cliente se quita, vuelve la etiqueta genérica del servidor.
+ */
+function syncTicketName(){
+  if(!draft.ticketNameAuto)return;
+  draft.ticketName=draft.customer?clientFirstName(draft.customer):'';
+}
+function selectClient(customer){draft.customer=customer;draft.conversationId='';draft.location=null;draft.quoteId=null;draft.createdOrderId=null;draft.orderDirty=false;syncTicketName();changed();}
 
 /* ------------------------------------------------------------------ *
  * UN CARRITO, UN CLIENTE.
@@ -143,6 +276,7 @@ function applyCustomer({customer,conversationId='',location=null}={}){
   draft.location=location??(same?draft.location:null);
   if(!draft.location&&!same)draft.address='';
   draft.quoteId=null;draft.createdOrderId=null;draft.orderDirty=false;
+  syncTicketName();
   changed();
 }
 async function isolateCartFor(customerId){
@@ -349,8 +483,8 @@ function saveActiveTicket(){
   });return ticketSaveTail;
 }
 function useTicket(ticket){
-  draft={...empty(),...ticket.draft,ticketId:ticket.id,ticketVersion:ticket.version,ticketName:ticket.name,ticketDirty:false};
-  operation=null;expanded=!!draft.items.length;persist();render();modal.close();
+  draft={...empty(),...ticket.draft,ticketId:ticket.id,ticketVersion:ticket.version,ticketName:ticket.name,ticketNameAuto:false,ticketDirty:false};
+  operation=null;expanded=!!draft.items.length;persist();render();modal.close();closeTicketsDrawer();
   window.dispatchEvent(new CustomEvent('fulltech:pos-navigate',{detail:{tab:'catalogo'}}));
 }
 async function newTicket(){
@@ -360,8 +494,8 @@ function ticketTotal(t){try{return cash(calculateSale(t.draft.items,products,t.d
 async function ticketList(){
   await saveActiveTicket();const data=await api('tickets');
   const active=data.tickets.filter(t=>['open','processing'].includes(t.status));
-  show('Tickets',`<div class="pos-ticket-list" role="list">${active.map(t=>`<article class="pos-ticket-row" role="listitem"><button class="pos-ticket-open" type="button" data-pos-ticket="${esc(t.id)}" ${t.status!=='open'?'disabled':''}><span><strong>${esc(t.name||'Ticket sin nombre')}</strong><small>${esc(t.draft.customer?.name||'Sin cliente')} · ${t.draft.items.reduce((n,i)=>n+i.quantity,0)} artículos${t.status==='processing'?' · En revisión':''}</small></span><strong>${ticketTotal(t)}</strong></button>${t.status==='open'?`<button class="pos-ticket-more" type="button" data-pos-ticket-menu="${esc(t.id)}" aria-label="Opciones de ${esc(t.name||'ticket')}" aria-haspopup="menu" aria-expanded="false">${actionIcon('more')}</button><div class="pos-ticket-menu" role="menu" aria-label="Acciones de ${esc(t.name||'ticket')}" data-ticket-menu="${esc(t.id)}" hidden><button type="button" role="menuitem" data-pos-ticket-rename="${esc(t.id)}">Editar ticket</button><button type="button" role="menuitem" class="pos-ticket-danger" data-pos-ticket-discard="${esc(t.id)}">Eliminar ticket</button></div>`:''}</article>`).join('')||'<p class="pos-empty">No tienes tickets pendientes.</p>'}</div><details class="pos-ticket-history"><summary>Tickets finalizados</summary>${data.tickets.filter(t=>t.status==='completed').map(t=>`<p>${esc(t.name)} <a class="pos-text" href="${esc(t.result?.receiptUrl||'#')}" target="_blank" rel="noopener">Ver documento</a></p>`).join('')||'<p>Todavía no hay tickets finalizados.</p>'}</details>`,null);
-  const add=document.createElement('button');add.type='button';add.className='pos-text pos-ticket-new';add.dataset.posNewTicket='';add.innerHTML=`${actionIcon('ticket')}Nuevo`;add.setAttribute('aria-label','Nuevo ticket');modal.querySelector('header h2').after(add);
+  ticketsDrawer.innerHTML=`<div class="pos-drawer-head"><div class="pos-tickets-head"><strong>Tickets</strong><div class="pos-client-tools"><button type="button" class="pos-client-tool" data-pos-tickets-new aria-label="Nuevo ticket">${posIcon('plus')}</button><button type="button" class="pos-client-tool" data-pos-tickets-close aria-label="Cerrar tickets">${posIcon('remove')}</button></div></div></div><div class="pos-ticket-drawer-body">`+`<div class="pos-ticket-list" role="list">${active.map(t=>`<article class="pos-ticket-row" role="listitem"><button class="pos-ticket-open" type="button" data-pos-ticket="${esc(t.id)}" ${t.status!=='open'?'disabled':''}><span><strong>${esc(t.name||'Ticket sin nombre')}</strong><small>${esc(t.draft.customer?.name||'Sin cliente')} · ${t.draft.items.reduce((n,i)=>n+i.quantity,0)} ${t.draft.items.reduce((n,i)=>n+i.quantity,0)===1?'artículo':'artículos'}${t.status==='processing'?' · En revisión':''}</small></span><strong>${ticketTotal(t)}</strong></button>${t.status==='open'?`<button class="pos-ticket-more" type="button" data-pos-ticket-menu="${esc(t.id)}" aria-label="Opciones de ${esc(t.name||'ticket')}" aria-haspopup="menu" aria-expanded="false">${actionIcon('more')}</button><div class="pos-ticket-menu" role="menu" aria-label="Acciones de ${esc(t.name||'ticket')}" data-ticket-menu="${esc(t.id)}" hidden><button type="button" role="menuitem" data-pos-ticket-rename="${esc(t.id)}">Editar ticket</button><button type="button" role="menuitem" class="pos-ticket-danger" data-pos-ticket-discard="${esc(t.id)}">Eliminar ticket</button></div>`:''}</article>`).join('')||'<p class="pos-empty">No tienes tickets pendientes.</p>'}</div><details class="pos-ticket-history"><summary>Tickets finalizados</summary>${data.tickets.filter(t=>t.status==='completed').map(t=>`<p>${esc(t.name)} <a class="pos-text" href="${esc(t.result?.receiptUrl||'#')}" target="_blank" rel="noopener">Ver documento</a></p>`).join('')||'<p>Todavía no hay tickets finalizados.</p>'}</details>`+`</div>`;
+  openTicketsDrawer();
 }
 async function openTicket(id){
   await saveActiveTicket();const {ticket}=await api('tickets/'+id);
@@ -373,7 +507,8 @@ async function renameTicket(id){
     const name=String(value||'').trim();if(!name)throw new Error('Escribe un nombre para el ticket.');
     if(name===ticket.name)return;
     const result=await api('tickets/'+id,{version:ticket.version,name,draft:ticket.draft});
-    if(draft.ticketId===id){draft.ticketName=result.ticket.name;draft.ticketVersion=result.ticket.version;persist();render();}
+    /* Nombre puesto a mano: el cliente ya no lo sobrescribe al cambiar. */
+    if(draft.ticketId===id){draft.ticketName=result.ticket.name;draft.ticketNameAuto=false;draft.ticketVersion=result.ticket.version;persist();render();}
   };
   show('Editar ticket',`<label class="field"><span class="field__label">Nombre del ticket</span><input class="field__input" name="name" maxlength="80" value="${esc(ticket.name)}" required></label><button class="btn btn--ghost btn--block" type="button" data-ticket-edit-lines>Editar productos y cliente</button>`,'Guardar nombre',async form=>{await saveName(form.get('name'));await ticketList();});
   modal.querySelector('[data-ticket-edit-lines]').addEventListener('click',()=>runAction(async()=>{await saveName(modal.querySelector('[name=name]').value);await openTicket(id);}));
@@ -405,7 +540,7 @@ function manualSale(){
 function actions(){
   if(busy||modal.open)return;
   window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
-  actionsDrawer.innerHTML=`<header><strong>Acciones</strong><button class="pos-icon" type="button" data-actions-close aria-label="Cerrar acciones">×</button></header><nav class="pos-action-menu" aria-label="Acciones de venta"><span class="pos-action-section">Ventas</span><button type="button" data-pos-manual>${actionIcon('quick')}<span>Venta rápida<small>Fuera de inventario</small></span></button><button type="button" data-pos-new-ticket>${actionIcon('ticket')}<span>Nuevo ticket</span></button><button type="button" data-pos-note>${actionIcon('note')}<span>Agregar nota<small>${draft.notes?'Nota guardada':'Instrucciones del pedido'}</small></span></button>${isAdmin?`<span class="pos-action-section">Catálogo</span><button type="button" data-pos-stock>${actionIcon('stock')}<span>Agregar stock</span></button><button type="button" data-pos-create-product>${actionIcon('product')}<span>Nuevo producto<small>Producto o servicio</small></span></button>`:''}</nav>`;
+  actionsDrawer.innerHTML=`<header><strong>Acciones</strong><button class="pos-icon" type="button" data-actions-close aria-label="Cerrar acciones">×</button></header><nav class="pos-action-menu" aria-label="Acciones de venta"><span class="pos-action-section">Ventas</span><button type="button" data-pos-manual>${actionIcon('quick')}<span>Venta rápida<small>Venta directa</small></span></button><button type="button" data-pos-note>${actionIcon('note')}<span>Agregar nota<small>${draft.notes?'Nota guardada':'Información interna'}</small></span></button><button type="button" data-pos-orders>${actionIcon('orders')}<span>Ir a pedidos<small>Gestionar pedidos</small></span></button>${isAdmin?`<span class="pos-action-section">Catálogo</span><button type="button" data-pos-create-product>${actionIcon('product')}<span>Nuevo producto<small>Producto o servicio</small></span></button><button type="button" data-pos-stock>${actionIcon('stock')}<span>Agregar stock<small>Entrada de mercancía</small></span></button>`:''}</nav>`;
   document.body.dataset.posActions='open';document.querySelectorAll('[data-pos-actions]').forEach(b=>b.setAttribute('aria-expanded','true'));actionsDrawer.showModal();
 }
 window.addEventListener('fulltech:close-actions',closeActions);
@@ -415,7 +550,7 @@ const edgeZones=['left','right'].map(side=>{const zone=document.createElement('d
 let edgeGesture=null;
 document.addEventListener('pointerdown',e=>{
   if(!['touch','pen'].includes(e.pointerType)||e.isPrimary===false||window.innerWidth>979||$('#app')?.hidden!==false||busy)return;
-  if(modal.open||document.querySelector('dialog[open]:not(.pos-actions-drawer)')||$('#sheet')?.hidden===false)return;
+  if(modal.open||document.querySelector('dialog[open]:not(.pos-actions-drawer)')||$('#sheet')?.hidden===false||clientDrawerOpen||ticketsDrawerOpen)return;
   /*
    * EL MENÚ PRINCIPAL SOLO SE ABRE DESDE «HOY».
    *
@@ -432,17 +567,43 @@ document.addEventListener('pointerdown',e=>{
   const mode=actionsDrawer.open?'close-actions':document.body.dataset.drawer==='open'?'close-main':e.clientX<=20&&enPortada?'main':e.clientX<=20&&document.body.dataset.tab==='catalogo'?'client':e.clientX>=window.innerWidth-20&&document.body.dataset.tab==='catalogo'?'actions':null;
   if(!mode||e.target.closest('input,textarea,select,[contenteditable=true]'))return;
   edgeGesture={id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now(),mode};
+  /* Abrir el cajón siguiendo el dedo desde el primer píxel. */
+  if(mode==='client'){
+    drawerOpenDrag={width:drawerWidth()};mountClientDrawer();clientDrawer.classList.add('pos-dragging');
+    /* Sin esto el navegador se queda el gesto horizontal y lo cancela (pointercancel). */
+    document.body.style.touchAction='none';
+    drawerShift(-drawerOpenDrag.width);
+  }
   if(edgeZones.includes(e.target))e.target.setPointerCapture?.(e.pointerId);
 },{passive:true});
 document.addEventListener('pointermove',e=>{
   if(!edgeGesture||edgeGesture.id!==e.pointerId)return;
   const dx=e.clientX-edgeGesture.x,dy=e.clientY-edgeGesture.y;
-  if(Math.abs(dy)>20&&Math.abs(dy)>Math.abs(dx)){edgeGesture=null;return;}
+  if(Math.abs(dy)>20&&Math.abs(dy)>Math.abs(dx)){edgeGesture=null;drawerOpenDrag=null;clientDrawer.classList.remove('pos-dragging');drawerShift(null);return;}
+  if(edgeGesture.mode==='client'&&drawerOpenDrag){
+    const ancho=drawerOpenDrag.width,recorrido=Math.max(0,dx);
+    drawerOpenDrag.lastX=e.clientX;
+    drawerShift(Math.min(0,-ancho+recorrido));
+    if(e.cancelable)e.preventDefault();
+    return;
+  }
   if(Math.abs(dx)>25&&Math.abs(dx)>Math.abs(dy)*1.5&&e.cancelable)e.preventDefault();
 },{passive:false});
 document.addEventListener('pointerup',e=>{
   const gesture=edgeGesture;edgeGesture=null;if(!gesture||gesture.id!==e.pointerId)return;
   const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+  /* El cajón se decide antes del umbral general: su umbral es el 30% del ancho. */
+  if(gesture.mode==='client'){
+    const ancho=drawerOpenDrag?.width||drawerWidth();
+    /* Algunos navegadores informan clientX=0 al soltar: manda la última posición real. */
+    const fin=drawerOpenDrag?.lastX??e.clientX;
+    drawerOpenDrag=null;
+    document.body.style.touchAction='';
+    clientDrawer.classList.remove('pos-dragging');drawerShift(null);
+    if(Date.now()-gesture.at<1800&&fin-gesture.x>=Math.max(56,ancho*0.3))openClientDrawer();
+    else clientScrim.style.opacity='';
+    return;
+  }
   if(Date.now()-gesture.at>900||Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.5)return;
   if(gesture.mode==='main'&&dx>0)window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:true}}));
   if(gesture.mode==='client'&&dx>0)chooseClient();
@@ -450,22 +611,46 @@ document.addEventListener('pointerup',e=>{
   if(gesture.mode==='close-actions'&&dx>0)closeActions();
   if(gesture.mode==='close-main'&&dx<0)window.dispatchEvent(new CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
 });
-document.addEventListener('pointercancel',()=>{edgeGesture=null;});
+document.addEventListener('pointercancel',()=>{edgeGesture=null;drawerOpenDrag=null;drawerCloseDrag=null;document.body.style.touchAction='';clientDrawer.classList.remove('pos-dragging');drawerShift(null);});
+/*
+ * CERRAR EL CAJÓN CON EL DEDO (derecha → izquierda). El desplazamiento vertical
+ * manda siempre: si el gesto es vertical se cancela y la lista conserva su scroll.
+ */
+clientDrawer.addEventListener('pointerdown',e=>{
+  if(e.pointerType!=='touch'||!clientDrawerOpen)return;
+  if(e.target.closest('input,textarea,select,[contenteditable=true]'))return;
+  drawerCloseDrag={id:e.pointerId,x:e.clientX,y:e.clientY,moved:false,width:drawerWidth()};
+  clientDrawer.classList.add('pos-dragging');
+},{passive:true});
+document.addEventListener('pointermove',e=>{
+  if(!drawerCloseDrag||drawerCloseDrag.id!==e.pointerId)return;
+  const dx=e.clientX-drawerCloseDrag.x,dy=e.clientY-drawerCloseDrag.y;
+  if(!drawerCloseDrag.moved&&Math.abs(dy)>14&&Math.abs(dy)>Math.abs(dx)){drawerCloseDrag=null;clientDrawer.classList.remove('pos-dragging');drawerShift(null);return;}
+  if(dx<0){drawerCloseDrag.moved=true;drawerCloseDrag.lastX=e.clientX;drawerShift(Math.max(-drawerCloseDrag.width,dx));}
+},{passive:true});
+document.addEventListener('pointerup',e=>{
+  if(!drawerCloseDrag||drawerCloseDrag.id!==e.pointerId)return;
+  const gesture=drawerCloseDrag;drawerCloseDrag=null;clientDrawer.classList.remove('pos-dragging');
+  const ancho=gesture.width,fin=gesture.lastX??e.clientX;drawerShift(null);
+  if(gesture.moved&&fin-gesture.x<=-Math.max(48,ancho*0.25))closeClientDrawer();
+});
 
-function closeTicketMenus(){modal.querySelectorAll('[data-ticket-menu]').forEach(n=>n.hidden=true);modal.querySelectorAll('[data-pos-ticket-menu]').forEach(n=>n.setAttribute('aria-expanded','false'));}
+/* Los menús de ticket viven en el CAJÓN DE TICKETS (antes, en el diálogo). */
+function closeTicketMenus(){document.querySelectorAll('[data-ticket-menu]').forEach(n=>n.hidden=true);document.querySelectorAll('[data-pos-ticket-menu]').forEach(n=>n.setAttribute('aria-expanded','false'));}
 document.addEventListener('click',e=>{
   const toggle=e.target.closest('[data-pos-ticket-menu]');
   if(toggle){
-    const id=toggle.dataset.posTicketMenu,menu=[...modal.querySelectorAll('[data-ticket-menu]')].find(n=>n.dataset.ticketMenu===id),wasOpen=menu&&!menu.hidden;
-    closeTicketMenus();if(menu&&!wasOpen){menu.classList.toggle('pos-ticket-menu--above',modal.getBoundingClientRect().bottom-toggle.getBoundingClientRect().bottom<115);menu.hidden=false;toggle.setAttribute('aria-expanded','true');menu.querySelector('button')?.focus();}return;
+    const id=toggle.dataset.posTicketMenu,menu=[...document.querySelectorAll('[data-ticket-menu]')].find(n=>n.dataset.ticketMenu===id),wasOpen=menu&&!menu.hidden;
+    closeTicketMenus();if(menu&&!wasOpen){menu.classList.toggle('pos-ticket-menu--above',ticketsDrawer.getBoundingClientRect().bottom-toggle.getBoundingClientRect().bottom<115);menu.hidden=false;toggle.setAttribute('aria-expanded','true');menu.querySelector('button')?.focus();}return;
   }
   if(!e.target.closest('.pos-ticket-menu'))closeTicketMenus();
 });
-modal.addEventListener('keydown',e=>{
-  const menu=modal.querySelector('[data-ticket-menu]:not([hidden])');if(!menu)return;
+document.addEventListener('keydown',e=>{
+  if(!ticketsDrawerOpen)return;
+  const menu=document.querySelector('[data-ticket-menu]:not([hidden])');if(!menu)return;
   const buttons=[...menu.querySelectorAll('button')],index=buttons.indexOf(document.activeElement);
   if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}
-  if(e.key==='Escape'){e.preventDefault();const id=menu.dataset.ticketMenu;closeTicketMenus();[...modal.querySelectorAll('[data-pos-ticket-menu]')].find(n=>n.dataset.posTicketMenu===id)?.focus();}
+  if(e.key==='Escape'){e.preventDefault();const id=menu.dataset.ticketMenu;closeTicketMenus();[...document.querySelectorAll('[data-pos-ticket-menu]')].find(n=>n.dataset.posTicketMenu===id)?.focus();}
 });
 
 // Las cotizaciones tienen página y detalle propios, separados de la venta activa.
@@ -628,6 +813,7 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-pos-new-ticket]'))runAction(newTicket);
   if(e.target.closest('[data-pos-tickets]'))runAction(ticketList);
   if(e.target.closest('[data-pos-manual]'))manualSale();
+  if(e.target.closest('[data-pos-orders]')){closeActions();window.dispatchEvent(new CustomEvent('fulltech:pos-navigate',{detail:{tab:'pedidos'}}));}
   if(e.target.closest('[data-pos-create-product]')){modal.close();window.dispatchEvent(new Event('fulltech:store-create'));}
   if(e.target.closest('[data-pos-stock]')){modal.close();window.dispatchEvent(new CustomEvent('fulltech:pos-navigate',{detail:{tab:'inventario'}}));}
   const ticket=e.target.closest('[data-pos-ticket]');if(ticket)runAction(()=>openTicket(ticket.dataset.posTicket));
@@ -1084,6 +1270,7 @@ window.addEventListener('fulltech:pos-context',async e=>{
     draft.customer=customer;draft.conversationId=context.conversationId||'';draft.location=context.location||draft.location||null;draft.quoteId=null;draft.flow='order';
     // Pedido nuevo: nunca se reutiliza el id de un pedido anterior.
     draft.createdOrderId=null;draft.orderDirty=false;
+    syncTicketName();
     if(!draft.items.length&&prefs){
       const variantId=prefs.variantId??prefs.variant_id;
       const quantity=Math.max(1,Math.min(9999,Number(prefs.quantity)||1));
@@ -1105,7 +1292,7 @@ window.addEventListener('fulltech:pos-context',async e=>{
   if(openOrders.length)offerPendingOrders({customer,conversationId:context.conversationId||'',location:context.location||null,orders:openOrders,onNew:apply});
   else await apply();
 });
-window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}});
+window.addEventListener('fulltech:back',e=>{if(actionsDrawer.open){closeActions();e.preventDefault();}else if(ticketsDrawerOpen){closeTicketsDrawer();e.preventDefault();}else if(clientDrawerOpen){closeClientDrawer();e.preventDefault();}else if(modal.open){modal.close();e.preventDefault();}else if(document.body.dataset.tab==='cotizaciones'&&new URLSearchParams(location.search).has('quote')){if(history.state?.posQuote)history.back();else quotesList();e.preventDefault();}else if(document.body.dataset.tab==='catalogo'&&searchOpen){setSearchOpen(false);e.preventDefault();}});
 window.addEventListener('phyto:calling-logout',()=>{generation++;quotesEpoch++;closeActions();actionsDrawer.innerHTML='';edgeGesture=null;clearTimeout(ticketSaveTimer);searchOpen=false;searchBar=null;quotesPage()?.replaceChildren();document.querySelector('.pos-document-toast')?.remove();loaded=false;draft=empty();products=[];customers=[];isAdmin=false;canCreate=false;operation=null;busy=false;modal.close();modal.innerHTML='';root?.replaceChildren();client.replaceChildren();try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{}draftKey=null;});
 window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
 if(document.body.dataset.tab==='catalogo')initialize();

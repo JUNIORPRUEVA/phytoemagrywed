@@ -14824,3 +14824,66 @@ body[data-tab='hoy'] .stat__arrow .svg {
   object-fit: cover;
   box-shadow: 0 2px 10px rgb(14 53 106 / 15%);
 }
+
+/* ================================================================== *
+ * ICONOS ENTREGADOS POR EL USUARIO (menú, drawer, avisos, perfil)
+ *
+ * PNG negros con transparencia real, ya recortados y reducidos a 72 px por
+ * `scripts/optimize-ui-icons.py`. Un solo archivo por icono: en tema oscuro se
+ * invierte por CSS, así no hay copias duplicadas ni filtros que emborronen.
+ * ================================================================== */
+.app-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.app-icon--menu {
+  width: 22px;
+  height: 22px;
+}
+.app-icon--quick {
+  width: 21px;
+  height: 21px;
+}
+/* «Atrás»: la flecha entregada por el usuario. */
+.app-icon--back {
+  width: 20px;
+  height: 20px;
+}
+:root[data-theme='dark'] .app-icon:not(.app-icon--color) {
+  filter: invert(1);
+}
+/* El botón del menú: icono propio cerrado y, abierto, el aspa de siempre. */
+.float-btn--menu:not([aria-expanded='true']) .burger,
+.dashboard-head__menu:not([aria-expanded='true']) .burger {
+  display: none;
+}
+.float-btn--menu[aria-expanded='true'] .app-icon--menu,
+.dashboard-head__menu[aria-expanded='true'] .app-icon--menu {
+  display: none;
+}
+/* El hueco del drawer centra el PNG igual que los iconos vectoriales. */
+.drawer__icon .app-icon {
+  width: 20px;
+  height: 20px;
+}
+/* El sol de «tema claro» va algo menor: comparte fila con texto. */
+.drawer__theme .app-icon {
+  width: 17px;
+  height: 17px;
+}
+.tema-opt .app-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* La barra inferior mantiene el tamaño de siempre para el PNG. */
+.tab__icon .app-icon {
+  width: 22px;
+  height: 22px;
+}

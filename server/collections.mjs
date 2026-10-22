@@ -147,6 +147,27 @@ export const COLLECTIONS = Object.freeze({
     unique: ['key'],
   },
   /*
+   * PROPUESTAS DEL ASISTENTE IA (`phytoemagry_assistant_proposals`).
+   *
+   * Una propuesta es una OPERACIÓN PREPARADA que todavía NO se ha ejecutado:
+   * pedido, cotización, nota o seguimiento. Vive aparte de `ops_*` (que son
+   * ejecuciones de agentes sobre tickets) porque aquí quien confirma es una
+   * persona desde el chat. `status` es la máquina de estados (pending →
+   * executing → executed/failed, o cancelled) y `fingerprint` detecta que los
+   * parámetros cambiaron: una confirmación vieja no puede ejecutar otra cosa.
+   */
+  assistant_proposals: {
+    indexed: {
+      conversation_id: 'text',
+      customer_id: 'text',
+      created_by: 'text',
+      type: 'text',
+      status: 'text',
+      created_at: 'text',
+      expires_at: 'text',
+    },
+  },
+  /*
    * TIENDAS PROVEEDORAS (`phytoemagry_suppliers`).
    *
    * Un producto de terceros se compra en una tienda concreta; la tienda lleva
@@ -458,6 +479,25 @@ export const COLLECTIONS = Object.freeze({
       tool: 'text',
       status: 'text',
       expires_at: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * COLABORACIÓN ENTRE AGENTES (Centro IA).
+   *
+   * Una delegación es «el agente A le pide a B que mire ESTE ticket». No crea
+   * otro ticket ni mueve permisos: guarda quién pidió qué a quién, en qué
+   * cadena (para cortar bucles) y cómo terminó.
+   */
+  ops_agent_delegations: {
+    indexed: {
+      ticket_id: 'text',
+      from_agent_key: 'text',
+      to_agent_key: 'text',
+      status: 'text',
+      run_id: 'text',
       idempotency_key: 'text',
       created_at: 'text',
     },

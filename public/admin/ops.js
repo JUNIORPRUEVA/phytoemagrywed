@@ -153,6 +153,20 @@ const state = {
   rejectOpen: false,
   rejectTarget: '',
   rejectBusy: false,
+  /* Centro IA: equipo → oficina → tickets (la conversación es la de siempre). */
+  screen: 'agents',
+  centro: null,
+  centroLoading: false,
+  centroError: '',
+  office: null,
+  officeKey: '',
+  officeError: '',
+  officeTab: 'tickets',
+  /* Agente de Seguimiento */
+  workTab: 'chat',
+  workChat: [],
+  workBusy: '',
+  returnTo: null,
 };
 
 const VIEW = () => document.getElementById('view-ops');
@@ -295,6 +309,7 @@ function shellHtml() {
     <div class="ops" data-ops-view="list">
       <aside class="ops-list" aria-label="Tickets">
         <div class="ops-list__tools">
+          <button class="ops-iconbtn" data-centro-nav="agents" type="button" aria-label="Volver al equipo de agentes">${ICONS.back}</button>
           <label class="ops-search">
             <span aria-hidden="true">${ICONS.search}</span>
             <input id="ops-search" type="search" placeholder="Buscar ticket, pedido…" autocomplete="off" />
@@ -327,9 +342,882 @@ function shellHtml() {
 
 function ensureShell() {
   const view = VIEW();
-  if (!view || view.dataset.ready === '1') return;
-  view.innerHTML = shellHtml();
+  if (!view) return;
+  const shell = state.screen === 'tickets' ? 'tickets' : 'centro';
+  if (view.dataset.shell === shell) return;
+  view.innerHTML = shell === 'tickets' ? shellHtml() : centroShellHtml();
+  view.dataset.shell = shell;
   view.dataset.ready = '1';
+  /* El armazón nuevo puede cambiar de vista: la barra se pinta después. */
+  renderCentroTools();
+}
+
+/* ====================================================== CENTRO IA — EQUIPO */
+
+/*
+ * El Centro IA tiene TRES pantallas sobre ESTE mismo módulo:
+ *
+ *   agents   la oficina virtual: quién es cada agente y cómo está (entrada)
+ *   agent    la oficina de UN agente: sus tickets, su trabajo y sus herramientas
+ *   tickets  la bandeja de siempre (lista + conversación)
+ *
+ * La conversación NO se duplica: al abrir un ticket se usa el mismo chat de la
+ * bandeja, y el botón de volver regresa a la oficina de la que se vino.
+ */
+
+const isCentroScreen = () => state.screen !== 'tickets';
+
+const initialsOf = (name) => {
+  const parts = String(name ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0] ?? '');
+  return parts.join('').toUpperCase() || 'IA';
+};
+
+const OFFICE_TABS = [
+  ['tickets', 'Asignados'],
+  ['activity', 'Actividad'],
+  ['tools', 'Herramientas'],
+  ['delegations', 'Ayuda'],
+];
+
+const DELEGATION_LABELS = {
+  pending: 'Pendiente',
+  accepted: 'En curso',
+  completed: 'Completada',
+  rejected: 'Rechazada',
+  failed: 'Falló',
+  cancelled: 'Cancelada',
+};
+
+const STATE_LABELS = {
+  working: 'Trabajando',
+  waiting_human: 'Esperando aprobación',
+  waiting: 'En espera',
+  idle: 'En reposo',
+  paused: 'Desactivado',
+};
+
+/** Armazón del centro: cabecera con la marca, las secciones y las herramientas. */
+function centroShellHtml() {
+  return `
+    <div class="centro" data-centro-screen="${esc(state.screen)}">
+      <header class="centro__top">
+        <div class="centro__brand">
+          <span class="centro__logo" aria-hidden="true">IA</span>
+          <span class="centro__brandtext"><strong>Centro IA</strong><small>Equipo de agentes</small></span>
+        </div>
+        <nav class="centro__seg" aria-label="Secciones del Centro IA">
+          <button class="centro__segbtn" data-centro-nav="agents" type="button" aria-current="${state.screen === 'agents'}">Agentes</button>
+          <button class="centro__segbtn" data-centro-nav="tickets" type="button" aria-current="false">Tickets</button>
+          <button class="centro__segbtn" data-centro-nav="supervisor" type="button" aria-current="false">Supervisor IA</button>
+        </nav>
+        <div class="centro__tools" id="centro-tools"></div>
+      </header>
+      <div class="centro__body" id="centro-body"></div>
+    </div>`;
+}
+
+/** Aprobaciones y administración: los MISMOS botones de siempre, sin duplicar. */
+function centroToolsHtml() {
+  const approvals = can('tickets.close');
+  const admin = can('admin.full');
+  if (!approvals && !admin) return '';
+  const pending = Number(state.pendingApprovalCount ?? 0) || 0;
+  return `
+    ${approvals ? `<button class="centro-tool" data-ops-approvals type="button" aria-label="Aprobaciones pendientes">${ICONS.shield}<span>Aprobaciones</span>${pending > 0 ? `<span class="centro-tool__count">${pending > 99 ? '99+' : pending}</span>` : ''}</button>` : ''}
+    ${admin ? `<button class="centro-tool" data-ops-agents type="button" aria-label="Administrar agentes">${ICONS.bot}<span>Agentes</span></button>` : ''}`;
+}
+
+function renderCentroTools() {
+  if (!domAlive()) return;
+  const host = document.getElementById('centro-tools');
+  if (!host) return;
+  host.innerHTML = centroToolsHtml();
+}
+
+/* ------------------------------------------------------------ el equipo */
+
+function centroStatHtml(label, value, hint) {
+  return `<li class="centro-stat"><span class="centro-stat__value">${esc(value)}</span><span class="centro-stat__label">${esc(label)}</span><span class="centro-stat__hint">${esc(hint)}</span></li>`;
+}
+
+function agentCardHtml(agent) {
+  const pending = Number(agent.pending ?? 0) || 0;
+  const unread = Number(agent.unread ?? 0) || 0;
+  const role = agent.role || (agent.responsibilities ?? [])[0] || 'Sin responsabilidad asignada';
+  return `
+    <li class="centro-team__item">
+      <button class="centro-card" data-centro-agent="${esc(agent.key)}" type="button">
+        <span class="centro-ava" data-state="${esc(agent.state)}" aria-hidden="true">${esc(initialsOf(agent.name))}</span>
+        <span class="centro-card__body">
+          <span class="centro-card__line">
+            <strong class="centro-card__name">${esc(agent.name)}</strong>
+            <span class="centro-state" data-state="${esc(agent.state)}"><i aria-hidden="true"></i>${esc(STATE_LABELS[agent.state] ?? agent.state)}</span>
+          </span>
+          <span class="centro-card__role">${esc(role)}</span>
+          <span class="centro-card__meta">
+            ${pending > 0 ? `<span class="centro-meta" data-kind="pending">${pending} en curso</span>` : ''}
+            ${unread > 0 ? `<span class="centro-meta" data-kind="unread">${unread} sin leer</span>` : ''}
+            ${agent.assigned > 0 ? `<span class="centro-meta">${esc(agent.assigned)} ticket(s)</span>` : ''}
+            <span class="centro-meta" data-kind="tools">${esc(agent.toolCount ?? 0)} herramientas</span>
+            ${agent.planner === 'llm' ? '<span class="centro-meta" data-kind="llm">con modelo</span>' : ''}
+          </span>
+        </span>
+        <span class="centro-chev" aria-hidden="true">›</span>
+      </button>
+    </li>`;
+}
+
+function directoryHtml() {
+  if (state.centroError) {
+    return `<div class="centro-empty centro-empty--error">
+      <strong>No se pudo cargar el equipo</strong>
+      <span>${esc(state.centroError)}</span>
+      <button class="centro-btn" data-centro-reload type="button">Reintentar</button>
+    </div>`;
+  }
+  if (!state.centro) return '<div class="centro-empty"><strong>Cargando el equipo…</strong></div>';
+  const data = state.centro;
+  const agents = data.agents ?? [];
+  const totals = data.totals ?? {};
+  const empty = `
+    <div class="centro-empty">
+      <strong>Todavía no hay agentes</strong>
+      <span>Cuando se registre un agente aparecerá aquí, sin tocar el código.</span>
+      ${data.canAdmin ? '<button class="centro-btn" data-ops-agents type="button">Registrar el primero</button>' : ''}
+    </div>`;
+  return `
+    <section class="centro-dir">
+      <div class="centro-dir__head">
+        <h2 class="centro-dir__title">Agentes</h2>
+        <button class="centro-link" data-centro-nav="tickets" type="button">Todos los tickets <span aria-hidden="true">→</span></button>
+      </div>
+      <ul class="centro-stats">
+        ${centroStatHtml('Agentes', totals.active ?? 0, 'activos')}
+        ${centroStatHtml('Trabajando', totals.working ?? 0, 'ahora')}
+        ${centroStatHtml('Pendientes', totals.pending ?? 0, 'ejecuciones')}
+        ${centroStatHtml('Sin leer', totals.unread ?? 0, 'para agentes')}
+      </ul>
+      ${agents.length ? `<ul class="centro-team">${agents.map(agentCardHtml).join('')}</ul>` : empty}
+      ${
+        data.workAgent && !data.workAgent.ready && data.canAdmin
+          ? `<div class="centro-seed">
+              <div>
+                <strong>Agente de Seguimiento</strong>
+                <span>Seguimientos y mensajes programados en una sola oficina. Su alta la haces tú, no se crea sola.</span>
+              </div>
+              <button class="centro-btn centro-btn--xs" data-work-seed type="button">Dar de alta</button>
+            </div>`
+          : ''
+      }
+      <p class="centro-note">El estado y los contadores salen de las ejecuciones reales de cada agente.</p>
+    </section>`;
+}
+
+async function loadCentro({ silent = false } = {}) {
+  if (!can('tickets.read')) return;
+  if (!silent) {
+    state.centroLoading = true;
+    state.centroError = '';
+    renderCentro();
+  }
+  try {
+    const data = await api('/api/admin/ops/centro');
+    state.centro = data;
+    state.pendingApprovalCount = Number(data.totals?.pendingApprovals ?? 0) || 0;
+    state.centroError = '';
+  } catch (error) {
+    state.centroError = error.message;
+  } finally {
+    state.centroLoading = false;
+    renderCentro();
+  }
+}
+
+/* ------------------------------------------------------- oficina del agente */
+
+function officeTicketHtml(row) {
+  const unread = Number(row.unread ?? 0) || 0;
+  return `
+    <button class="ops-row${unread ? ' is-unread' : ''}" data-centro-ticket="${esc(row.id)}" type="button">
+      <span class="ops-row__mark" data-type="${esc(row.type)}" aria-hidden="true">${TYPE_ICONS[row.type] ?? TYPE_ICONS.admin}</span>
+      <span class="ops-row__body">
+        <span class="ops-row__line1">
+          <span class="ops-row__num">${esc(row.number)}</span>
+          <span class="ops-row__type">${esc(row.typeLabel)}</span>
+          <span class="ops-row__time">${esc(stamp(row.lastMessageAt))}</span>
+        </span>
+        <span class="ops-row__title">${esc(row.title)}</span>
+        <span class="ops-row__line2">
+          <span class="ops-chip" data-status="${esc(row.status)}">${esc(row.statusLabel)}</span>
+          <span class="ops-chip" data-priority="${esc(row.priority)}">${esc(row.priorityLabel)}</span>
+          ${row.requiresAck ? '<span class="ops-tag ops-tag--ack">Acuse</span>' : ''}
+        </span>
+      </span>
+      ${unread > 0 ? `<span class="ops-row__count" aria-label="${unread} sin leer">${unread > 99 ? '99+' : unread}</span>` : '<span class="ops-row__count is-empty"></span>'}
+    </button>`;
+}
+
+function officeTicketsHtml(data) {
+  const pending = data.pending ?? [];
+  const assigned = data.assigned ?? [];
+  const pendingHtml = pending.length
+    ? `<div class="centro-block">
+        <h3 class="centro-block__title">Trabajo en curso</h3>
+        <ul class="centro-work">
+          ${pending
+            .map(
+              (row) => `<li class="centro-work__item">
+                <span class="centro-work__num">${esc(row.ticketNumber ?? row.ticketId)}</span>
+                <span class="centro-work__what">${esc(row.title ?? '')}</span>
+                <span class="centro-chip" data-status="${esc(row.status)}">${esc(RUN_STATE_LABELS[row.status] ?? row.status)}</span>
+                ${row.lastError ? `<span class="centro-work__err">${esc(row.lastError.code ?? 'error')}</span>` : ''}
+              </li>`,
+            )
+            .join('')}
+        </ul>
+      </div>`
+    : '';
+  const listHtml = assigned.length
+    ? `<div class="centro-block">
+        <h3 class="centro-block__title">Tickets asignados</h3>
+        <div class="centro-tickets">${assigned.map(officeTicketHtml).join('')}</div>
+      </div>`
+    : `<div class="centro-empty centro-empty--soft">
+        <strong>Sin tickets asignados</strong>
+        <span>Cuando se le asigne trabajo aparecerá aquí, con su conversación.</span>
+      </div>`;
+  return pendingHtml + listHtml;
+}
+
+function officeActivityHtml(data) {
+  const rows = data.activity ?? [];
+  if (!rows.length) {
+    return '<div class="centro-empty centro-empty--soft"><strong>Sin actividad todavía</strong><span>Los pasos de cada ejecución se verán aquí.</span></div>';
+  }
+  return `<ul class="centro-feed">
+    ${rows
+      .map(
+        (row) => `<li class="centro-feed__item" data-status="${esc(row.status)}">
+          <span class="centro-feed__dot" aria-hidden="true"></span>
+          <span class="centro-feed__body">
+            <span class="centro-feed__line">
+              <strong>${esc(row.summary ?? row.kind ?? 'paso')}</strong>
+              <span class="centro-feed__time">${esc(stamp(row.at))}</span>
+            </span>
+            <span class="centro-feed__meta">
+              ${row.ticketNumber ? `<span>${esc(row.ticketNumber)}</span>` : ''}
+              <span>${esc(row.kind ?? '')}</span>
+              ${row.planner ? `<span>${row.planner === 'llm' ? 'modelo' : 'pauta'}</span>` : ''}
+            </span>
+          </span>
+        </li>`,
+      )
+      .join('')}
+  </ul>`;
+}
+
+function officeToolsHtml(data) {
+  const tools = data.agent?.tools ?? [];
+  if (!tools.length) {
+    return '<div class="centro-empty centro-empty--soft"><strong>Sin herramientas</strong><span>Este agente no puede ejecutar nada.</span></div>';
+  }
+  return `<ul class="centro-tools">
+    ${tools
+      .map(
+        (tool) => `<li class="centro-toolrow">
+          <span class="centro-toolrow__head">
+            <code class="centro-toolrow__name">${esc(tool.name)}</code>
+            <span class="centro-badge" data-risk="${esc(tool.risk)}">${esc(tool.risk === 'high' ? 'riesgo alto' : tool.risk === 'medium' ? 'riesgo medio' : 'riesgo bajo')}</span>
+            ${tool.requiresApproval ? '<span class="centro-badge" data-approval="1">con aprobación</span>' : ''}
+          </span>
+          <span class="centro-toolrow__desc">${esc(tool.description)}</span>
+          <span class="centro-toolrow__meta">
+            ${tool.permission ? `<span>${esc(tool.permission)}</span>` : ''}
+            <span>${Number(tool.timeoutMs ?? 0) / 1000} s</span>
+            <span>${tool.idempotent ? 'idempotente' : 'no idempotente'}</span>
+          </span>
+        </li>`,
+      )
+      .join('')}
+  </ul>`;
+}
+
+function officeDelegationsHtml(data) {
+  const rows = data.delegations ?? [];
+  if (!rows.length) {
+    return '<div class="centro-empty centro-empty--soft"><strong>Sin colaboraciones</strong><span>Aquí se ven las ayudas pedidas y recibidas.</span></div>';
+  }
+  return `<ul class="centro-dels">
+    ${rows
+      .map(
+        (row) => `<li class="centro-del" data-status="${esc(row.status)}">
+          <span class="centro-del__head">
+            <span class="centro-badge" data-direction="${esc(row.direction)}">${row.direction === 'out' ? 'pidió ayuda' : 'recibió ayuda'}</span>
+            <span class="centro-chip" data-status="${esc(row.status)}">${esc(DELEGATION_LABELS[row.status] ?? row.status)}</span>
+            ${row.ticketNumber ? `<span class="centro-del__ticket">${esc(row.ticketNumber)}</span>` : ''}
+          </span>
+          <span class="centro-del__text">${esc(row.question)}</span>
+          <span class="centro-del__meta">${esc(row.direction === 'out' ? `a ${row.toName}` : `de ${row.fromName}`)} · ${esc(stamp(row.requestedAt))}</span>
+        </li>`,
+      )
+      .join('')}
+  </ul>`;
+}
+
+function officeHtml() {
+  if (state.officeError) {
+    return `<section class="centro-off">
+      <button class="centro-back" data-centro-nav="agents" type="button"><span aria-hidden="true">←</span> Agentes</button>
+      <div class="centro-empty centro-empty--error">
+        <strong>No se pudo abrir la oficina</strong>
+        <span>${esc(state.officeError)}</span>
+        <button class="centro-btn" data-centro-reload type="button">Reintentar</button>
+      </div>
+    </section>`;
+  }
+  const data = state.office;
+  if (!data) {
+    return `<section class="centro-off">
+      <button class="centro-back" data-centro-nav="agents" type="button"><span aria-hidden="true">←</span> Agentes</button>
+      <div class="centro-empty"><strong>Abriendo la oficina…</strong></div>
+    </section>`;
+  }
+  /* El Agente de Seguimiento tiene su propia oficina (sin tickets). */
+  if (data.work) return workOfficeHtml(data);
+  const agent = data.agent;
+  const stats = data.stats ?? {};
+  const alerts = data.alerts?.length
+    ? `<div class="centro-alerts">${data.alerts
+        .map((alert) => `<p class="centro-alert" data-tone="${esc(alert.tone)}">${esc(alert.text)}</p>`)
+        .join('')}</div>`
+    : '';
+  const tabs = OFFICE_TABS.map(([key, label]) => {
+    const count = key === 'tickets' ? Number(stats.assigned ?? 0) : key === 'tools' ? Number(stats.tools ?? 0) : key === 'delegations' ? Number(stats.delegations ?? 0) : 0;
+    return `<button class="centro-tab" data-centro-office-tab="${key}" type="button" aria-current="${state.officeTab === key}">${esc(label)}${count > 0 ? `<span class="centro-tab__count">${count}</span>` : ''}</button>`;
+  }).join('');
+  const body =
+    state.officeTab === 'activity'
+      ? officeActivityHtml(data)
+      : state.officeTab === 'tools'
+        ? officeToolsHtml(data)
+        : state.officeTab === 'delegations'
+          ? officeDelegationsHtml(data)
+          : officeTicketsHtml(data);
+  return `
+    <section class="centro-off">
+      <button class="centro-back" data-centro-nav="agents" type="button"><span aria-hidden="true">←</span> Agentes</button>
+
+      <div class="centro-id">
+        <span class="centro-ava centro-ava--lg" data-state="${esc(agent.state)}" aria-hidden="true">${esc(initialsOf(agent.name))}</span>
+        <div class="centro-id__main">
+          <h2 class="centro-id__name">${esc(agent.name)}<span class="centro-state" data-state="${esc(agent.state)}"><i aria-hidden="true"></i>${esc(STATE_LABELS[agent.state] ?? agent.state)}</span></h2>
+          <p class="centro-id__role">${esc(agent.role ?? 'Agente interno')} · v${esc(agent.version)}${agent.planner === 'llm' ? ' · con modelo' : ' · pauta determinista'}</p>
+          ${(agent.responsibilities ?? []).length ? `<ul class="centro-id__resp">${agent.responsibilities.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
+        </div>
+        <div class="centro-id__actions">
+          <span class="centro-meta" data-kind="pending">${esc(stats.pending ?? 0)} en curso</span>
+          <span class="centro-meta" data-kind="unread">${esc(stats.unread ?? 0)} sin leer</span>
+          <button class="centro-btn centro-btn--ghost" data-centro-nav="tickets" type="button">Bandeja completa</button>
+        </div>
+      </div>
+
+      ${alerts}
+      <nav class="centro-tabs" aria-label="Secciones del agente">${tabs}</nav>
+      <div class="centro-off__body">${body}</div>
+    </section>`;
+}
+
+/* ------------------------------------- AGENTE DE SEGUIMIENTO (oficina) */
+
+/*
+ * La oficina del Agente de Seguimiento no son tickets: son cuatro secciones
+ * sobre el trabajo comercial real (seguimientos y mensajes programados).
+ *
+ *   Conversar    se pregunta en lenguaje natural; el modelo consulta y PROPONE
+ *   Seguimientos listado real con acciones de una persona
+ *   Programados  cola real con su estado de envío
+ *   Aprobaciones propuestas pendientes + lo último ejecutado o rechazado
+ *
+ * Las acciones de las listas las hace la PERSONA que está en el panel (por eso
+ * no piden aprobación: ella es la aprobación). Las del modelo llegan aquí como
+ * propuestas y hay que aprobarlas.
+ */
+
+const WORK_TABS = [
+  ['chat', 'Conversar'],
+  ['followups', 'Seguimientos'],
+  ['scheduled', 'Programados'],
+  ['approvals', 'Aprobaciones'],
+];
+
+function workDayLabel(value) {
+  if (!value) return '—';
+  const text = String(value);
+  const date = new Date(text.length <= 10 ? `${text}T12:00:00` : text);
+  if (Number.isNaN(date.getTime())) return '—';
+  return dayFmt.format(date);
+}
+
+function workWhenLabel(value) {
+  const date = new Date(String(value ?? ''));
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${dayFmt.format(date)} · ${timeFmt.format(date)}`;
+}
+
+const SCHEDULED_LABELS = {
+  SCHEDULED: 'Programado',
+  PROCESSING: 'Enviando',
+  SENT: 'Enviado',
+  DELIVERED: 'Entregado',
+  READ: 'Leído',
+  FAILED: 'Falló',
+  CANCELLED: 'Cancelado',
+  BLOCKED: 'Bloqueado',
+};
+
+function proposalSummary(params = {}) {
+  const bits = [];
+  if (params.customerName) bits.push(params.customerName);
+  if (params.date) bits.push(`fecha ${params.date}`);
+  if (params.scheduledAt) bits.push(workWhenLabel(params.scheduledAt));
+  if (params.reason) bits.push(params.reason);
+  if (params.text) bits.push(`«${String(params.text).slice(0, 80)}»`);
+  return bits.join(' · ');
+}
+
+function workChatHtml() {
+  const rows = state.workChat
+    .map((entry) => {
+      if (entry.role === 'user') {
+        return `<article class="ops-msg is-mine">
+          <p class="ops-msg__who">Tú · ${esc(entry.at)}</p>
+          <div class="ops-msg__bubble">${esc(entry.text).replace(/\n/g, '<br>')}</div>
+        </article>`;
+      }
+      const meta = [entry.model ? esc(entry.model) : '', entry.ms ? `${esc(entry.ms)} ms` : ''].filter(Boolean).join(' · ');
+      return `<article class="ops-msg ops-msg--agent">
+        <p class="ops-msg__who"><span class="ops-chip ops-chip--ai">IA</span> Agente de Seguimiento${meta ? ` · ${meta}` : ''}</p>
+        <div class="ops-msg__bubble">${esc(entry.text).replace(/\n/g, '<br>')}</div>
+        ${entry.proposals?.length ? `<p class="centro-note">${entry.proposals.length} propuesta(s) enviadas a Aprobaciones. Nada se ha creado todavía.</p>` : ''}
+        ${entry.rejected?.length ? `<p class="centro-note">${entry.rejected.length} propuesta(s) descartada(s): ${esc(entry.rejected.map((row) => row.error).join(', '))}</p>` : ''}
+      </article>`;
+    })
+    .join('');
+  return `
+    <div class="centro-chat">
+      ${rows || `<div class="centro-empty centro-empty--soft"><strong>Pregúntame por el trabajo comercial</strong><span>Por ejemplo: «¿qué clientes necesitan seguimiento hoy?» o «prepara un mensaje para recordar la recompra».</span></div>`}
+    </div>
+    <form class="centro-ask" data-work-ask>
+      <textarea id="work-ask" name="message" rows="2" placeholder="Escribe qué necesitas…" ${state.workBusy ? 'disabled' : ''}></textarea>
+      <button class="centro-btn" type="submit" ${state.workBusy ? 'disabled' : ''}>${state.workBusy ? 'Pensando…' : 'Preguntar'}</button>
+    </form>
+    <p class="centro-note">El agente consulta tus datos reales y solo <strong>propone</strong>. Nada se crea, se reprograma ni se envía sin tu aprobación.</p>`;
+}
+
+function workFollowupsHtml(work) {
+  const groups = [
+    ['Vencidos', work.followups.overdue, 'overdue'],
+    ['Hoy', work.followups.today, 'today'],
+    ['Próximos', work.followups.upcoming, 'upcoming'],
+  ].filter(([, rows]) => rows.length);
+  const canCancel = can('followups.delete');
+  if (!groups.length) {
+    return `<div class="centro-empty centro-empty--soft"><strong>Sin seguimientos pendientes</strong><span>Cuando haya tareas de seguimiento aparecerán aquí, con su cliente y su motivo.</span></div>`;
+  }
+  return groups
+    .map(
+      ([label, rows]) => `<div class="centro-block">
+        <h3 class="centro-block__title">${esc(label)} (${rows.length})</h3>
+        <ul class="centro-work">
+          ${rows
+            .map(
+              (row) => `<li class="centro-work__item">
+                <span class="centro-work__num">${esc(row.customerName)}</span>
+                <span class="centro-work__what">${esc(row.reason ?? 'Seguimiento')}</span>
+                <span class="centro-chip" data-status="${esc(row.status ?? 'open')}">${esc(workDayLabel(row.scheduledAt))}</span>
+                <span class="centro-work__actions">
+                  <button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-fu="complete" data-work-id="${esc(row.id)}" type="button">Completar</button>
+                  <button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-fu="postpone" data-work-id="${esc(row.id)}" type="button">+1 día</button>
+                  ${canCancel ? `<button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-fu="cancel" data-work-id="${esc(row.id)}" type="button">Cancelar</button>` : ''}
+                </span>
+              </li>`,
+            )
+            .join('')}
+        </ul>
+      </div>`,
+    )
+    .join('');
+}
+
+function workScheduledHtml(work) {
+  const rows = work.scheduled.rows.filter((row) => ['SCHEDULED', 'PROCESSING', 'FAILED', 'BLOCKED'].includes(row.status));
+  const recent = work.scheduled.rows
+    .filter((row) => ['SENT', 'DELIVERED', 'READ', 'CANCELLED'].includes(row.status))
+    .slice(-6)
+    .reverse();
+  const canCancel = can('followups.delete');
+  const head = `<div class="centro-block">
+    <h3 class="centro-block__title">Cola de envío</h3>
+    <p class="centro-note">${esc(work.scheduled.pending)} pendiente(s) · ${esc(work.scheduled.failed)} con problema. El programador los envía por su cuenta, sin depender del navegador ni del modelo.</p>
+  </div>`;
+  const queue = rows.length
+    ? `<ul class="centro-work">
+    ${rows
+      .map(
+        (row) => `<li class="centro-work__item" data-work-status="${esc(row.status)}">
+          <span class="centro-work__num">${esc(row.customerName)}</span>
+          <span class="centro-work__what">${esc(row.preview ?? 'Sin vista previa')}${row.error ? ` · <span class="centro-work__err">${esc(row.error)}</span>` : ''}</span>
+          <span class="centro-chip" data-status="${esc(row.status === 'SCHEDULED' ? 'waiting' : row.status === 'FAILED' || row.status === 'BLOCKED' ? 'resolved' : 'open')}">${esc(SCHEDULED_LABELS[row.status] ?? row.status)}</span>
+          <span class="centro-meta">${esc(workWhenLabel(row.scheduledAt))}</span>
+          <span class="centro-work__actions">
+            ${row.status === 'SCHEDULED' ? `<button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-sch="reschedule" data-work-id="${esc(row.id)}" type="button">+1 hora</button>` : ''}
+            ${canCancel && ['SCHEDULED'].includes(row.status) ? `<button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-sch="cancel" data-work-id="${esc(row.id)}" type="button">Cancelar</button>` : ''}
+          </span>
+        </li>`,
+      )
+      .join('')}
+  </ul>`
+    : `<div class="centro-empty centro-empty--soft"><strong>Nada en la cola</strong><span>Los mensajes programados aparecerán aquí con su estado de envío real.</span></div>`;
+  /* Historial: lo que YA salió (o se canceló) no se mezcla con lo pendiente. */
+  const history = recent.length
+    ? `<div class="centro-block">
+        <h3 class="centro-block__title">Historial reciente</h3>
+        <ul class="centro-work">
+          ${recent
+            .map(
+              (row) => `<li class="centro-work__item" data-work-status="${esc(row.status)}">
+                <span class="centro-work__num">${esc(row.customerName)}</span>
+                <span class="centro-work__what">${esc(row.preview ?? 'Sin vista previa')}</span>
+                <span class="centro-chip" data-status="resolved">${esc(SCHEDULED_LABELS[row.status] ?? row.status)}</span>
+                <span class="centro-meta">${esc(workWhenLabel(row.sentAt ?? row.scheduledAt))}</span>
+              </li>`,
+            )
+            .join('')}
+        </ul>
+      </div>`
+    : '';
+  return `${head}${queue}${history}`;
+}
+
+function workApprovalsHtml(work) {
+  const pending = work.proposals ?? [];
+  const recent = work.recentProposals ?? [];
+  const pendingHtml = pending.length
+    ? `<ul class="centro-dels">
+        ${pending
+          .map(
+            (row) => `<li class="centro-del" data-status="pending">
+              <span class="centro-del__head">
+                <span class="centro-badge${row.risk === 'medium' ? '' : ''}">${esc(row.label)}</span>
+                <span class="centro-chip" data-status="waiting">Pendiente</span>
+                <span class="centro-del__ticket">${esc(row.decidedAt ? '' : workWhenLabel(row.requestedAt))}</span>
+              </span>
+              <span class="centro-del__text">${esc(proposalSummary(row.params))}</span>
+              ${row.justification ? `<span class="centro-del__meta">${esc(row.justification)}</span>` : ''}
+              <span class="centro-work__actions">
+                <button class="centro-btn centro-btn--xs" data-work-approve="${esc(row.id)}" type="button" ${state.workBusy ? 'disabled' : ''}>Aprobar</button>
+                <button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-reject="${esc(row.id)}" type="button" ${state.workBusy ? 'disabled' : ''}>Rechazar</button>
+              </span>
+            </li>`,
+          )
+          .join('')}
+      </ul>`
+    : `<div class="centro-empty centro-empty--soft"><strong>Sin propuestas pendientes</strong><span>Lo que proponga el agente en la conversación aparecerá aquí para que lo apruebes.</span></div>`;
+  const recentHtml = recent.length
+    ? `<div class="centro-block">
+        <h3 class="centro-block__title">Actividad reciente</h3>
+        <ul class="centro-feed">
+          ${recent
+            .map(
+              (row) => `<li class="centro-feed__item" data-status="${row.status === 'consumed' ? 'ok' : row.status === 'rejected' ? 'error' : 'waiting'}">
+                <span class="centro-feed__dot" aria-hidden="true"></span>
+                <span class="centro-feed__body">
+                  <span class="centro-feed__line">
+                    <strong>${esc(row.label)}</strong>
+                    <span class="centro-feed__time">${esc(workWhenLabel(row.decidedAt))}</span>
+                  </span>
+                  <span class="centro-feed__meta">
+                    <span>${esc(row.statusLabel)}</span>
+                    <span>${esc(proposalSummary(row.params))}</span>
+                    ${row.decidedByName ? `<span>por ${esc(row.decidedByName)}</span>` : ''}
+                  </span>
+                </span>
+              </li>`,
+            )
+            .join('')}
+        </ul>
+      </div>`
+    : '';
+  return `<div class="centro-block">
+      <h3 class="centro-block__title">Propuestas pendientes (${pending.length})</h3>
+    </div>${pendingHtml}${recentHtml}`;
+}
+
+function workOfficeHtml(data) {
+  const agent = data.agent;
+  const work = data.work;
+  const counts = work.followups.counts;
+  const tabs = WORK_TABS.map(([key, label]) => {
+    const count =
+      key === 'followups'
+        ? counts.today + counts.overdue
+        : key === 'scheduled'
+          ? work.scheduled.pending + work.scheduled.failed
+          : key === 'approvals'
+            ? work.proposals.length
+            : 0;
+    return `<button class="centro-tab" data-work-tab="${key}" type="button" aria-current="${state.workTab === key}">${esc(label)}${count > 0 ? `<span class="centro-tab__count">${count}</span>` : ''}</button>`;
+  }).join('');
+  const body =
+    state.workTab === 'followups'
+      ? workFollowupsHtml(work)
+      : state.workTab === 'scheduled'
+        ? workScheduledHtml(work)
+        : state.workTab === 'approvals'
+          ? workApprovalsHtml(work)
+          : workChatHtml(work);
+  const link = state.workTab === 'scheduled' ? 'mensajes' : 'seguimientos';
+  return `
+    <section class="centro-off">
+      <button class="centro-back" data-centro-nav="agents" type="button"><span aria-hidden="true">←</span> Agentes</button>
+
+      <div class="centro-id">
+        <span class="centro-ava centro-ava--lg" data-state="${esc(agent.state)}" aria-hidden="true">${esc(initialsOf(agent.name))}</span>
+        <div class="centro-id__main">
+          <h2 class="centro-id__name">${esc(agent.name)}<span class="centro-state" data-state="${esc(agent.state)}"><i aria-hidden="true"></i>${esc(STATE_LABELS[agent.state] ?? agent.state)}</span></h2>
+          <p class="centro-id__role">${esc(agent.role ?? 'Seguimientos y mensajes programados')}${agent.planner === 'llm' ? ' · con modelo' : ' · pauta determinista'}</p>
+          <ul class="centro-id__resp">
+            <li>${esc(counts.today)} para hoy</li>
+            <li>${esc(counts.overdue)} vencidos</li>
+            <li>${esc(work.scheduled.pending)} programados</li>
+            <li>${esc(work.proposals.length)} propuestas</li>
+          </ul>
+        </div>
+        <div class="centro-id__actions">
+          <button class="centro-btn centro-btn--ghost centro-btn--xs" data-work-full="${esc(link)}" type="button">Pantalla completa</button>
+        </div>
+      </div>
+
+      <nav class="centro-tabs" aria-label="Secciones del agente">${tabs}</nav>
+      <div class="centro-off__body">${body}</div>
+    </section>`;
+}
+
+/** Repinta SOLO el cuerpo del centro (la cabecera no se toca). */
+function renderCentro() {
+  if (!domAlive()) return;
+  const host = document.getElementById('centro-body');
+  if (!host) return;
+  host.innerHTML = state.screen === 'agent' ? officeHtml() : directoryHtml();
+  const view = VIEW();
+  if (view) view.dataset.centroScreen = state.screen;
+  document.querySelectorAll('[data-centro-nav]').forEach((button) => {
+    const nav = button.dataset.centroNav;
+    if (nav === 'agents' || nav === 'tickets') {
+      button.setAttribute('aria-current', String(nav === 'agents' ? state.screen === 'agents' : false));
+    }
+  });
+  renderCentroTools();
+}
+
+async function loadOffice(key, { silent = false } = {}) {
+  if (!key) return;
+  if (!silent) {
+    state.office = null;
+    state.officeError = '';
+    renderCentro();
+  }
+  try {
+    const data = await api(`/api/admin/ops/agents/${encodeURIComponent(key)}/office`);
+    state.office = data;
+    state.officeError = '';
+    if (data?.work && state.workTab === 'tickets') state.workTab = 'chat';
+  } catch (error) {
+    state.office = null;
+    state.officeError = error.message;
+  } finally {
+    renderCentro();
+  }
+}
+
+async function openOffice(key) {
+  state.screen = 'agent';
+  state.officeKey = key;
+  state.officeTab = 'tickets';
+  state.office = null;
+  state.officeError = '';
+  ensureShell();
+  renderCentro();
+  await loadOffice(key);
+}
+
+/**
+ * Abre un ticket desde el Centro IA.
+ *
+ * Reutiliza la conversación de siempre: cambia a la pantalla de tickets y deja
+ * marcado de dónde se vino, para que el botón de volver regrese a la oficina.
+ */
+function openTicketFromCentro(id) {
+  state.returnTo = state.screen === 'agent' ? 'agent' : 'agents';
+  state.screen = 'tickets';
+  ensureShell();
+  renderRows();
+  loadTicket(id);
+}
+
+/**
+ * Abre el ticket ABIERTO de un pedido (enlace desde una ficha de reparto o de
+ * pedido). Si el pedido no tiene ticket, se dice; no se inventa uno.
+ */
+async function openOrderTicket(orderId) {
+  if (!orderId) return;
+  try {
+    const data = await api(`/api/admin/ops/orders/${encodeURIComponent(orderId)}/ticket`);
+    if (data?.ticket?.id) {
+      state.returnTo = null;
+      state.screen = 'tickets';
+      ensureShell();
+      renderRows();
+      await loadTicket(data.ticket.id);
+      return;
+    }
+    toast('Ese pedido no tiene ticket abierto');
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+/** Lo que el panel pide desde cualquier módulo: «abre el Centro IA en…». */
+function onOpenRequest(event) {
+  const detail = event?.detail ?? {};
+  if (state.tab !== 'ops') return;
+  if (detail.orderId) {
+    boot().then(() => openOrderTicket(detail.orderId));
+    return;
+  }
+  if (detail.ticketId) {
+    boot().then(() => loadTicket(detail.ticketId));
+  }
+}
+
+/** Vuelve del chat a la oficina (o al equipo) sin perder el contexto. */
+function backToCentro() {
+  const target = state.returnTo;
+  state.returnTo = null;
+  state.selectedId = '';
+  state.ticket = null;
+  state.messages = [];
+  state.events = [];
+  state.menuOpen = false;
+  if (target === 'agent' && state.officeKey) {
+    state.screen = 'agent';
+    ensureShell();
+    renderCentro();
+    loadOffice(state.officeKey, { silent: true });
+    return;
+  }
+  state.screen = 'agents';
+  ensureShell();
+  renderCentro();
+  loadCentro({ silent: true });
+}
+
+/* ------------------------- acciones del Agente de Seguimiento */
+
+/** Refresca la oficina de trabajo (seguimientos, cola y propuestas). */
+async function refreshWorkOffice() {
+  if (!state.officeKey) return;
+  await loadOffice(state.officeKey, { silent: true });
+}
+
+/**
+ * Pregunta al agente.
+ *
+ * La respuesta es texto + PROPUESTAS validadas por el servidor. Aquí no se
+ * escribe nada: si algo hay que hacer, se aprueba en «Aprobaciones».
+ */
+async function submitWorkAsk(rawText) {
+  const message = String(rawText ?? '').trim();
+  if (!message || state.workBusy) return;
+  state.workBusy = 'ask';
+  state.workChat.push({ role: 'user', text: message, at: timeFmt.format(new Date()) });
+  renderCentro();
+  try {
+    const data = await api('/api/admin/ops/work/chat', { method: 'POST', body: JSON.stringify({ message }) });
+    state.workChat.push({
+      role: 'agent',
+      text: data.reply ?? 'No tengo una respuesta para eso.',
+      proposals: data.proposals ?? [],
+      rejected: data.rejected ?? [],
+      model: data.model ?? null,
+      ms: data.ms ?? null,
+      at: timeFmt.format(new Date()),
+    });
+  } catch (error) {
+    /* Si el modelo no está, se dice: las listas y la cola siguen funcionando. */
+    state.workChat.push({ role: 'agent', text: error.message, at: timeFmt.format(new Date()) });
+  } finally {
+    state.workBusy = '';
+    await refreshWorkOffice();
+  }
+}
+
+/** Aprueba o rechaza una propuesta (la persona es quien decide). */
+async function decideWorkProposalUi(proposalId, approve) {
+  if (!proposalId || state.workBusy) return;
+  state.workBusy = 'decide';
+  renderCentro();
+  try {
+    const data = await api(`/api/admin/ops/work/proposals/${encodeURIComponent(proposalId)}/${approve ? 'approve' : 'reject'}`, {
+      method: 'POST',
+      body: JSON.stringify({ note: approve ? '' : 'Rechazada desde el Centro IA' }),
+    });
+    if (approve) toast(data.executed ? 'Aprobada y ejecutada' : 'Aprobada, pero no se pudo ejecutar');
+    else toast('Propuesta rechazada');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.workBusy = '';
+    await refreshWorkOffice();
+  }
+}
+
+/** Acción de una persona sobre un seguimiento (usa la ruta de siempre). */
+async function workFollowupAction(action, followupId) {
+  if (!followupId) return;
+  const payload =
+    action === 'postpone'
+      ? { action: 'postpone', days: 1 }
+      : action === 'cancel'
+        ? { action: 'cancel', reason: 'Cancelado desde el Centro IA' }
+        : { action: 'complete' };
+  try {
+    await api(`/api/admin/followups/${encodeURIComponent(followupId)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+    toast(action === 'complete' ? 'Seguimiento completado' : action === 'postpone' ? 'Movido un día' : 'Seguimiento cancelado');
+    await refreshWorkOffice();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+/** Acción de una persona sobre un mensaje programado (ruta de siempre). */
+async function workScheduledAction(action, scheduledId) {
+  if (!scheduledId) return;
+  const payload =
+    action === 'cancel'
+      ? { action: 'cancel', reason: 'Cancelado desde el Centro IA' }
+      : { action: 'reschedule', scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+  try {
+    await api(`/api/admin/scheduled/${encodeURIComponent(scheduledId)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+    toast(action === 'cancel' ? 'Mensaje cancelado' : 'Reprogramado una hora más tarde');
+    await refreshWorkOffice();
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 /* --------------------------------------------------------------- bandeja */
@@ -451,8 +1339,10 @@ function chatHeadHtml() {
   }
   const menu = state.menuOpen ? menuHtml(ticket) : '';
   const unread = Number(ticket.unreadCount ?? 0) || 0;
+  /* Si el ticket se abrió desde la oficina de un agente, volver vuelve allí. */
+  const fromOffice = state.returnTo === 'agent';
   return `
-    <button class="ops-iconbtn ops-back" data-ops-back type="button" aria-label="Volver a la lista">${ICONS.back}</button>
+    <button class="ops-iconbtn ops-back" data-ops-back type="button" aria-label="${fromOffice ? 'Volver a la oficina del agente' : 'Volver a la lista'}">${ICONS.back}</button>
     <div class="ops-chat__who">
       <p class="ops-chat__num">${esc(ticket.number)}<span class="ops-chip" data-status="${esc(ticket.status)}">${esc(ticket.statusLabel)}</span>${
         unread > 0 ? `<span class="ops-chip ops-chip--unread">${unread} sin leer</span>` : ''
@@ -1873,7 +2763,9 @@ function onViewClick(event) {
       '[data-ops-sheet-close],[data-ops-order-pick],[data-ops-order-clear],[data-ops-detail],[data-ops-task],[data-ops-task-menu],' +
       '[data-ops-mention],[data-ops-mention-user],[data-ops-older],[data-ops-add-user],[data-ops-drop-user],' +
       '[data-ops-approve],[data-ops-reject],[data-ops-assign-agent],[data-ops-approvals],[data-ops-approvals-refresh],' +
-      '[data-ops-agents],[data-ops-agent-edit],[data-ops-agent-new]',
+      '[data-ops-agents],[data-ops-agent-edit],[data-ops-agent-new],' +
+      '[data-centro-nav],[data-centro-agent],[data-centro-ticket],[data-centro-office-tab],[data-centro-reload],' +
+      '[data-work-tab],[data-work-approve],[data-work-reject],[data-work-fu],[data-work-sch],[data-work-full],[data-work-seed]',
   );
   if (!target) {
     /* Un clic fuera cierra los menús flotantes (sin cerrar la ficha). */
@@ -1890,6 +2782,91 @@ function onViewClick(event) {
     return;
   }
 
+  if (target.dataset.centroNav) {
+    event.preventDefault();
+    const nav = target.dataset.centroNav;
+    if (nav === 'supervisor') {
+      /* La pantalla del supervisor es ÚNICA: se navega a ella, no se copia. */
+      window.dispatchEvent(new CustomEvent('fulltech:navigate', { detail: { tab: 'supervisor' } }));
+      return;
+    }
+    if (nav === 'tickets') {
+      state.returnTo = null;
+      state.screen = 'tickets';
+      ensureShell();
+      renderRows();
+      loadInbox();
+      return;
+    }
+    state.returnTo = null;
+    state.screen = 'agents';
+    state.officeKey = '';
+    state.office = null;
+    ensureShell();
+    renderCentro();
+    loadCentro();
+    return;
+  }
+  if (target.dataset.centroAgent) {
+    event.preventDefault();
+    openOffice(target.dataset.centroAgent);
+    return;
+  }
+  if (target.dataset.centroTicket) {
+    event.preventDefault();
+    openTicketFromCentro(target.dataset.centroTicket);
+    return;
+  }
+  if (target.dataset.centroOfficeTab) {
+    state.officeTab = target.dataset.centroOfficeTab;
+    renderCentro();
+    return;
+  }
+  /* ---------------- Agente de Seguimiento (oficina de trabajo) ---------------- */
+  if (target.dataset.workTab) {
+    state.workTab = target.dataset.workTab;
+    renderCentro();
+    /* Al cambiar de sección se piden los datos frescos: la cola y las
+       propuestas cambian solas (las mueve el programador, no la pantalla). */
+    refreshWorkOffice();
+    return;
+  }
+  if (target.dataset.workApprove) {
+    decideWorkProposalUi(target.dataset.workApprove, true);
+    return;
+  }
+  if (target.dataset.workReject) {
+    decideWorkProposalUi(target.dataset.workReject, false);
+    return;
+  }
+  if (target.dataset.workFu) {
+    workFollowupAction(target.dataset.workFu, target.dataset.workId);
+    return;
+  }
+  if (target.dataset.workSch) {
+    workScheduledAction(target.dataset.workSch, target.dataset.workId);
+    return;
+  }
+  if (target.dataset.workFull) {
+    /* Las pantallas completas siguen existiendo: el centro es la puerta principal. */
+    window.dispatchEvent(new CustomEvent('fulltech:navigate', { detail: { tab: target.dataset.workFull } }));
+    return;
+  }
+  if (target.hasAttribute('data-work-seed')) {
+    event.preventDefault();
+    api('/api/admin/ops/work/agent', { method: 'POST', body: JSON.stringify({}) })
+      .then((data) => {
+        toast(data.existing ? 'El agente ya existía' : 'Agente de Seguimiento dado de alta');
+        return loadCentro();
+      })
+      .catch((error) => toast(error.message));
+    return;
+  }
+  if (target.hasAttribute('data-centro-reload')) {
+    if (state.screen === 'agent' && state.officeKey) loadOffice(state.officeKey);
+    else loadCentro();
+    return;
+  }
   if (target.dataset.opsOpen) {
     event.preventDefault();
     /* Desde la bandeja de aprobaciones se salta AL ticket: la hoja se cierra. */
@@ -1907,6 +2884,11 @@ function onViewClick(event) {
     return;
   }
   if (target.hasAttribute('data-ops-back')) {
+    /* Si el ticket se abrió desde una oficina, se vuelve a esa oficina. */
+    if (state.returnTo) {
+      backToCentro();
+      return;
+    }
     state.selectedId = '';
     state.ticket = null;
     state.messages = [];
@@ -2071,6 +3053,12 @@ function bind() {
       submitAgentForm(event.target);
       return;
     }
+    if (event.target.matches('[data-work-ask]')) {
+      event.preventDefault();
+      const field = event.target.querySelector('textarea[name="message"], #work-ask');
+      submitWorkAsk(field?.value ?? '');
+      return;
+    }
     if (event.target.matches('[data-ops-reject-form]')) {
       event.preventDefault();
       const note = fieldValue(event.target, 'note').trim();
@@ -2129,6 +3117,11 @@ function bind() {
 /** Al volver a la pestaña o a la pestaña del navegador, refrescar una vez. */
 function refreshIfVisible() {
   if (state.tab !== 'ops' || !state.booted) return;
+  if (isCentroScreen()) {
+    loadCentro({ silent: true });
+    if (state.screen === 'agent' && state.officeKey) loadOffice(state.officeKey, { silent: true });
+    return;
+  }
   loadInbox({ silent: true });
   if (state.selectedId && Date.now() - state.activeThreadAt > 1500) {
     loadTicket(state.selectedId, { silent: true });
@@ -2156,8 +3149,24 @@ async function boot() {
   await loadInbox();
   state.booted = true;
   /* Enlace de un aviso: `?v=ops&ticket=<id>` abre ESE ticket. */
-  const deep = new URLSearchParams(location.search).get('ticket');
-  if (deep) await loadTicket(deep);
+  const params = new URLSearchParams(location.search);
+  const deep = params.get('ticket');
+  const deepOrder = params.get('order');
+  if (deep) {
+    state.returnTo = null;
+    state.screen = 'tickets';
+    ensureShell();
+    renderRows();
+    await loadTicket(deep);
+    return;
+  }
+  /* Enlace desde una ficha de reparto/pedido: `?v=ops&order=<id>`. */
+  if (deepOrder) {
+    await openOrderTicket(deepOrder);
+    return;
+  }
+  /* La entrada del Centro IA es el EQUIPO, no una bandeja abierta. */
+  if (isCentroScreen()) await loadCentro();
 }
 
 function onTab(event) {
@@ -2172,11 +3181,23 @@ function onTab(event) {
     closeSheet();
     return;
   }
-  boot().then(() => loadInbox({ silent: true }));
+  boot().then(() => {
+    if (event?.detail?.orderId) {
+      openOrderTicket(event.detail.orderId);
+      return;
+    }
+    if (event?.detail?.ticketId) {
+      loadTicket(event.detail.ticketId);
+      return;
+    }
+    if (isCentroScreen()) loadCentro({ silent: true });
+    else loadInbox({ silent: true });
+  });
   renderChat();
 }
 
 window.addEventListener('fulltech:tab', onTab);
+window.addEventListener('fulltech:ops-open', onOpenRequest);
 
 /* Avisos de la propia app: solo se recargan los tickets afectados. */
 window.addEventListener('fulltech:crm-event', (event) => {

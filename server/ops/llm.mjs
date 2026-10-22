@@ -26,7 +26,7 @@
 import { OPS_TOOLS, toolOf, validateArgs } from './tools.mjs';
 
 /** Acciones que el modelo puede proponer. Lista cerrada. */
-export const LLM_ACTIONS = Object.freeze(['message', 'follow_up', 'ack', 'escalate', 'wait']);
+export const LLM_ACTIONS = Object.freeze(['message', 'follow_up', 'ack', 'escalate', 'collaborate', 'wait']);
 
 /**
  * MODO DEL PASO — lo que separa «escribir» de «callar».
@@ -40,7 +40,7 @@ export const LLM_ACTIONS = Object.freeze(['message', 'follow_up', 'ack', 'escala
 export const LLM_MODES = Object.freeze({ REPLY: 'reply', IDLE: 'idle' });
 
 const MODE_ACTIONS = Object.freeze({
-  reply: ['message', 'escalate'],
+  reply: ['message', 'escalate', 'collaborate'],
   idle: ['wait', 'follow_up'],
 });
 
@@ -56,6 +56,7 @@ const ACTION_TO_TOOL = Object.freeze({
   ack: 'ticket.request_ack',
   escalate: 'ticket.escalate',
   follow_up: 'ticket.set_follow_up',
+  collaborate: 'agent.request_help',
 });
 
 const EFFECT_WORDS = Object.freeze({
@@ -63,6 +64,7 @@ const EFFECT_WORDS = Object.freeze({
   'ticket.request_ack': 'pedir a una persona que confirme el acuse',
   'ticket.escalate': 'escalar el ticket a una persona',
   'ticket.set_follow_up': 'programar un seguimiento para más tarde',
+  'agent.request_help': 'pedir ayuda a otro agente autorizado sobre este mismo ticket',
 });
 
 /*
@@ -138,12 +140,20 @@ export function llmTools(agent, mode = 'reply') {
  * Instrucciones fijas. Se escriben aquí, no en la base: el ticket no puede
  * cambiarlas. El contenido del ticket viaja aparte, como DATO.
  */
-export function buildSystemPrompt({ agent, ticket, tools, now, timeZone = 'America/Santo_Domingo', mode = 'reply' }) {
+export function buildSystemPrompt({ agent, ticket, tools, now, collaborators = [], timeZone = 'America/Santo_Domingo', mode = 'reply' }) {
   const allowed = tools.map((row) => `- "${row.action}": ${row.description}`).join('\n');
+  /*
+   * Compañeros a los que SÍ se les puede pedir ayuda: la lista ya viene
+   * filtrada por el servidor (activos, con herramientas y de este tipo de
+   * ticket), así que el modelo no puede inventarse un destinatario.
+   */
+  const peers = collaborators.length
+    ? collaborators.map((row) => `- "${row.key}": ${row.name}${row.role ? ` (${row.role})` : ''}`).join('\n')
+    : '';
   const momento =
     mode === 'idle'
       ? 'AHORA MISMO no toca escribir: el equipo ya tiene lo que necesita. Elige "wait" (volver a mirar) o "follow_up" (programar un seguimiento). No escribas un mensaje.'
-      : 'Ahora toca escribir en el hilo: redacta el mensaje para el equipo, o "escalate" si hace falta una persona.';
+      : 'Ahora toca escribir en el hilo: redacta el mensaje para el equipo, "escalate" si hace falta una persona o "collaborate" si necesitas que otro agente revise algo.';
   return [
     'Eres un asistente interno de una empresa de suplementos en República Dominicana.',
     'Trabajas DENTRO del panel del equipo: NO hablas con clientes y no envías WhatsApp.',
@@ -163,14 +173,18 @@ export function buildSystemPrompt({ agent, ticket, tools, now, timeZone = 'Ameri
     'QUÉ PUEDES HACER (solo esto):',
     allowed || '- "wait": no hay nada que decir todavía.',
     '',
+    ...(peers
+      ? ['COMPAÑEROS A LOS QUE PUEDES PEDIR AYUDA (solo estos, por su clave):', peers, '- Solo para una aclaración concreta; el trabajo sigue en este mismo ticket.', '']
+      : []),
     `MOMENTO DEL TICKET: ${momento}`,
     '',
     'RESPUESTA',
     'Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:',
-    '{"action":"message|follow_up|ack|escalate|wait","body":"texto para el equipo","at":"fecha ISO para follow_up","minutes":30,"note":"por qué"}',
+    '{"action":"message|follow_up|ack|escalate|collaborate|wait","body":"texto para el equipo","at":"fecha ISO para follow_up","minutes":30,"agentKey":"clave del compañero","question":"qué necesitas","note":"por qué"}',
     '- "body" es obligatorio para message, ack y escalate; en los demás puede ir vacío.',
     '- "at" es obligatorio para follow_up: fecha y hora ISO con zona (por ejemplo 2026-10-22T15:00:00-04:00).',
     '- "minutes" es obligatorio para wait (entre 5 y 720).',
+    '- "agentKey" y "question" son obligatorios para collaborate, y "agentKey" tiene que ser una de las claves de la lista de compañeros.',
     `- Fecha y hora actuales del negocio (${timeZone}): ${now}.`,
     '- Si dudas entre escribir y esperar, espera. Es preferible callar a inventar.',
   ].join('\n');
@@ -268,6 +282,18 @@ export function parseDecision({ raw, agent, ticket, now = new Date().toISOString
     const existing = Date.parse(String(ticket?.follow_up_at ?? ''));
     if (Number.isFinite(existing) && existing > nowMs) return { ok: false, error: 'duplicate_follow_up' };
     args = { at, note: body ?? undefined };
+  } else if (action === 'collaborate') {
+    /*
+     * Solo se puede pedir ayuda a quien el servidor puso en la lista: si el
+     * modelo se inventa una clave (o pide ayuda a sí mismo), se descarta.
+     */
+    const target = String(data.agentKey ?? '').trim();
+    const allowed = Array.isArray(context.collaborators) ? context.collaborators : [];
+    const found = allowed.find((row) => row.key === target);
+    if (!target || !found) return { ok: false, error: 'invalid_collaborator' };
+    const question = cleanBody(data.question ?? body, 300);
+    if (!question) return { ok: false, error: 'empty_question' };
+    args = { agentKey: found.key, question };
   }
 
   /* Anti-invención: entrega y números de pedido. */
@@ -317,7 +343,7 @@ export async function planWithLlm({
    */
   if (!tools.length && mode !== 'idle') return { ok: false, error: 'no_content_tools', meta: null };
 
-  const system = buildSystemPrompt({ agent, ticket, tools, now, timeZone, mode });
+  const system = buildSystemPrompt({ agent, ticket, tools, now, timeZone, mode, collaborators: context.collaborators ?? [] });
   const user = buildUserPrompt({ ticket, context, messages, run, mode });
   const started = Date.now();
   let answer = null;

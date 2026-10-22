@@ -41,6 +41,17 @@ import {
   saveAgent,
 } from './agents.mjs';
 import { toolCatalog } from './tools.mjs';
+import { agentOffice, centroDirectory } from './centro.mjs';
+import { delegationsForTicket } from './collaboration.mjs';
+import {
+  applyWorkDecision,
+  buildWorkSystemPrompt,
+  buildWorkUserPrompt,
+  decideWorkProposal,
+  ensureWorkAgent,
+  proposeWork,
+  workSnapshot,
+} from './work.mjs';
 
 const ID = '[a-zA-Z0-9_.:%-]+';
 
@@ -48,7 +59,7 @@ function clean(value, max = 120) {
   return String(value ?? '').trim().slice(0, max);
 }
 
-export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJson, can, findOrder = null, listOrders = null, notify = null }) {
+export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJson, can, findOrder = null, listOrders = null, notify = null, llm = null }) {
   if (!/^\/api\/admin\/ops(?:\/|$)/.test(route)) return false;
 
   const send = (status, body) => {
@@ -167,11 +178,12 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
        * ticket y cómo van las ejecuciones de sus agentes. Se leen aparte para
        * que el módulo de tickets no dependa del de agentes.
        */
-      const [approvals, runs] = await Promise.all([
+      const [approvals, runs, delegations] = await Promise.all([
         listApprovals({ ctx, status: 'all', ticketId: result.ticket.id }),
         runsForTicket({ ctx, ticketId: result.ticket.id }),
+        delegationsForTicket({ ctx, ticketId: result.ticket.id }),
       ]);
-      return send(200, { ok: true, ...result, approvals, runs });
+      return send(200, { ok: true, ...result, approvals, runs, delegations });
     }
 
     if (ticketMatch && method === 'PATCH') {
@@ -278,6 +290,135 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
     }
 
     /* --------------------------------------------------------- agentes */
+    /*
+     * CENTRO IA — EL EQUIPO. Es la pantalla de entrada y la lee cualquiera con
+     * `tickets.read`: son agentes internos, no datos de clientes. Los extras
+     * (aprobaciones, administración) solo se cuentan a quien puede usarlos.
+     */
+    if (route === '/api/admin/ops/centro' && method === 'GET') {
+      return send(200, await centroDirectory({ ctx, can }));
+    }
+
+    /*
+     * OFICINA DE UN AGENTE. `:key` es su clave estable. Si no existe, 404: la
+     * pantalla no se inventa un agente.
+     */
+    const officeMatch = new RegExp(`^/api/admin/ops/agents/(${ID})/office$`).exec(route);
+    if (officeMatch && method === 'GET') {
+      const result = await agentOffice({ ctx, can, key: officeMatch[1] });
+      if (!result.ok) return send(404, { ok: false, error: result.error, message: 'Ese agente no existe.' });
+      return send(200, result);
+    }
+
+    /* --------------------------------- AGENTE DE SEGUIMIENTO (Centro IA) */
+    /*
+     * Lectura del trabajo comercial: seguimientos, mensajes programados,
+     * propuestas pendientes y totales. Solo lo que el usuario puede ver.
+     */
+    if (route === '/api/admin/ops/work' && method === 'GET') {
+      if (!can('followups.read')) {
+        return send(403, { ok: false, error: 'forbidden', message: 'No tienes acceso a seguimientos.' });
+      }
+      return send(200, { ok: true, ...(await workSnapshot({ ctx, actor, can })) });
+    }
+
+    /*
+     * CONVERSAR CON EL AGENTE.
+     *
+     * El modelo SOLO razona y propone: la respuesta trae texto y propuestas
+     * validadas que quedan pendientes de aprobación humana. Aquí no se escribe
+     * nada. Si el proveedor no está disponible, se dice (las listas siguen
+     * funcionando y las programaciones ya aprobadas no dependen de él).
+     */
+    if (route === '/api/admin/ops/work/chat' && method === 'POST') {
+      if (!can('followups.read')) {
+        return send(403, { ok: false, error: 'forbidden', message: 'No tienes acceso a seguimientos.' });
+      }
+      const body = await readBody();
+      if (body.__error) return send(400, { ok: false, error: 'bad_request', message: 'No se pudo leer la petición.' });
+      const message = clean(body.message, 1000);
+      if (!message) return send(422, { ok: false, error: 'message_required', message: 'Escribe qué necesitas.' });
+      const snapshot = await workSnapshot({ ctx, actor, can });
+      if (typeof llm !== 'function') {
+        return send(503, { ok: false, error: 'llm_unavailable', message: 'El modelo no está configurado en este servidor.' });
+      }
+      let answer = null;
+      try {
+        answer = await llm({
+          system: buildWorkSystemPrompt(),
+          user: buildWorkUserPrompt({ message, snapshot }),
+          maxTokens: 900,
+          actorId: 'ops-agent:followup_agent',
+        });
+      } catch {
+        answer = null;
+      }
+      if (!answer) {
+        return send(503, {
+          ok: false,
+          error: 'llm_unavailable',
+          message: 'El modelo no respondió. Las listas y las programaciones siguen funcionando.',
+        });
+      }
+      const applied = await applyWorkDecision({ ctx, actor, can, raw: answer.json });
+      return send(200, {
+        ok: true,
+        reply: applied.reply,
+        proposals: applied.proposals,
+        rejected: applied.rejected,
+        model: answer.model ?? null,
+        ms: answer.ms ?? null,
+        usage: answer.usage ?? null,
+      });
+    }
+
+    /* Alta (explícita) del Agente de Seguimiento. */
+    if (route === '/api/admin/ops/work/agent' && method === 'POST') {
+      const result = await ensureWorkAgent({ ctx, actor, can, saveAgent });
+      if (!result.ok) {
+        return send(result.status ?? 403, { ok: false, error: result.error, message: result.message ?? null });
+      }
+      return send(result.status ?? 200, { ok: true, agent: { key: result.agent.key, name: result.agent.name }, existing: result.existing === true });
+    }
+
+    /* Propuesta directa (la pide una persona desde la pantalla, sin modelo). */
+    if (route === '/api/admin/ops/work/propose' && method === 'POST') {
+      const body = await readBody();
+      if (body.__error) return send(400, { ok: false, error: 'bad_request', message: 'No se pudo leer la petición.' });
+      const result = await proposeWork({
+        ctx,
+        actor,
+        can,
+        action: clean(body.action, 40),
+        params: body.params ?? {},
+        justification: clean(body.justification, 300),
+        origin: 'panel',
+      });
+      if (!result.ok) {
+        return send(result.status ?? 422, { ok: false, error: result.error, message: result.message ?? null });
+      }
+      return send(result.status ?? 201, { ok: true, proposal: result.proposal, duplicate: Boolean(result.duplicate) });
+    }
+
+    /* Aprobar o rechazar una propuesta del Agente de Seguimiento. */
+    const workDecide = new RegExp(`^/api/admin/ops/work/proposals/(${ID})/(approve|reject)$`).exec(route);
+    if (workDecide && method === 'POST') {
+      const body = await readBody();
+      if (body.__error) return send(400, { ok: false, error: 'bad_request', message: 'No se pudo leer la petición.' });
+      const result = await decideWorkProposal({
+        ctx,
+        actor,
+        can,
+        proposalId: workDecide[1],
+        approve: workDecide[2] === 'approve',
+        note: body.note ?? '',
+      });
+      if (!result.ok) {
+        return send(result.status ?? 409, { ok: false, error: result.error, message: result.message ?? null });
+      }
+      return send(200, { ok: true, proposal: result.proposal, result: result.result ?? null, executed: result.executed === true });
+    }
+
     if (route === '/api/admin/ops/agents' && method === 'GET') {
       if (!can('admin.full')) return send(403, { ok: false, error: 'forbidden', message: 'Solo administración.' });
       return send(200, { ok: true, agents: await listAgents({ ctx }), tools: toolCatalog() });
@@ -312,6 +453,16 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
     const runsMatch = new RegExp(`^/api/admin/ops/tickets/(${ID})/runs$`).exec(route);
     if (runsMatch && method === 'GET') {
       return send(200, { ok: true, runs: await runsForTicket({ ctx, ticketId: runsMatch[1] }) });
+    }
+
+    /* Delegaciones de un ticket (quién pidió ayuda a quién y cómo acabó). */
+    if (route === '/api/admin/ops/delegations' && method === 'GET') {
+      const params = new URLSearchParams(String(req.url ?? '').split('?')[1] ?? '');
+      const ticketId = clean(params.get('ticket') ?? '', 80);
+      if (!ticketId) {
+        return send(422, { ok: false, error: 'ticket_required', message: 'Indica el ticket.' });
+      }
+      return send(200, { ok: true, delegations: await delegationsForTicket({ ctx, ticketId }) });
     }
 
     /* ------------------------------------------------------ aprobaciones */

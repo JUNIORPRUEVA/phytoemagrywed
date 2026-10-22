@@ -74,17 +74,24 @@ async function apiPost(route, body) {
   return { status: response.status, body: await response.json() };
 }
 
-function openOps() {
+/**
+ * Abre el Centro IA y entra en la pantalla de TICKETS.
+ *
+ * Desde la oficina de agentes la entrada del centro muestra EL EQUIPO; la
+ * bandeja de tickets es una sección más, así que se pulsa su pestaña.
+ */
+async function openOps() {
   /*
    * Se navega como lo hace una persona: el botón del menú. Así se ejercita de
    * verdad `setTab` (permisos, visibilidad de la vista y el evento de pestaña).
    */
   const item = $('[data-tab="ops"]');
-  if (item) {
-    item.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    return;
-  }
-  dom.window.dispatchEvent(new dom.window.CustomEvent('fulltech:tab', { detail: { tab: 'ops' } }));
+  if (item) item.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  else dom.window.dispatchEvent(new dom.window.CustomEvent('fulltech:tab', { detail: { tab: 'ops' } }));
+  await waitFor(() => Boolean($('#view-ops')?.dataset.shell), 'el armazón del centro', 15_000);
+  /* Si ya estamos en la sección de tickets no hay pestaña que pulsar. */
+  const tickets = $('[data-centro-nav="tickets"]');
+  if (tickets) tickets.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 }
 
 /** Espera a que la bandeja haya pedido los datos al servidor. */
@@ -152,7 +159,7 @@ describe('Centro de operaciones', () => {
     expect(item).toBeTruthy();
     expect(item.textContent).toContain('Centro IA');
 
-    openOps();
+    await openOps();
     await waitFor(() => $('#view-ops')?.dataset.ready === '1', 'el armazón del centro');
     await waitInbox();
     expect($('#view-ops').hidden).toBe(false);
@@ -250,7 +257,7 @@ describe('Centro de operaciones', () => {
   it('el ticket y su hilo siguen ahí al volver a la pestaña', async () => {
     /* Se sale y se vuelve a entrar: la pantalla vuelve a pedir todo al servidor. */
     dom.window.dispatchEvent(new dom.window.CustomEvent('fulltech:tab', { detail: { tab: 'hoy' } }));
-    openOps();
+    await openOps();
     await waitInbox('las filas al volver');
     await waitFor(() => $$('.ops-row').length === 2, 'las filas al volver');
 

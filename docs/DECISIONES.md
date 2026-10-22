@@ -1413,3 +1413,33 @@ registradas y **desactivadas**: activarlas exige autorización expresa y su prop
 
 
 
+
+## 51. Centro IA: una oficina para los agentes, herramientas compartidas y ayuda entre agentes (2026-10-21)
+
+Se unifica todo lo de IA en **un solo sitio** («Centro IA») y se resuelven cinco preguntas de diseño:
+
+1. **La entrada es el EQUIPO, no una bandeja.** Abrir el centro muestra los agentes registrados con
+   su estado real (derivado de sus ejecuciones), su trabajo pendiente y lo que no han leído. La
+   bandeja de tickets sigue existiendo, pero es una sección más; el chat es **el mismo** de siempre
+   (no hay un segundo motor de conversación).
+2. **Cada agente tiene su oficina.** Ficha, tickets asignados, trabajo en curso, actividad real,
+   herramientas autorizadas y colaboraciones. La oficina **lee**; no cambia reglas.
+3. **El Supervisor IA Delivery se administra desde el centro.** Lo que se movió fue la **puerta de
+   entrada**, no la pantalla: `supervisor.js` sigue siendo el único sitio donde se ejecuta la pasada,
+   se cambian las reglas o se posponen avisos. Además, cada pedido del supervisor enlaza con el
+   ticket de ese pedido en el centro (`fulltech:navigate {tab:'ops', orderId}`), y si no hay ticket
+   se dice en vez de inventarlo.
+4. **Las herramientas se ven todas, se ejecutan solo las autorizadas.** Un catálogo único declara
+   alcance, riesgo, plazo, idempotencia y auditoría de cada herramienta; cada agente tiene su lista
+   blanca y el motor lo vuelve a comprobar en cada invocación. «Ver» nunca es «poder».
+5. **Colaborar no es escalar permisos.** Un agente puede pedir ayuda a otro **sobre el mismo
+   ticket**; el receptor entra como participante y trabaja con **sus** herramientas. Hay reglas
+   duras: nada de uno mismo, nada de agentes desactivados o de otro tipo de ticket, sin bucles (la
+   cadena viaja con la ejecución), profundidad máxima 2 y 4 peticiones por ticket. Todo queda en
+   `ops_agent_delegations`, en el hilo, en los eventos y en la auditoría.
+
+**Lo que NO se hizo, a propósito:** conversaciones autónomas entre agentes, compartir datos del
+cliente entre ellos, activar herramientas de dinero, ni tocar el chat de WhatsApp. La etapa se queda
+en **UAT aislada**: GO del código, NO-GO de despliegue hasta validar el tono con el negocio.
+
+Informe completo: `docs/CENTRO-IA.md`.

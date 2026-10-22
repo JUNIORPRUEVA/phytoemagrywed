@@ -125,7 +125,23 @@ export const AUDIT_ACTIONS = Object.freeze([
   'agent_approval_decided',
   'agent_approval_executed',
   'agent_approval_failed',
+  /* COLABORACIÓN (Centro IA): quien pidió ayuda, a quién y cómo acabó. */
+  'agent_delegation_requested',
+  'agent_delegation_completed',
+  'agent_delegation_failed',
   'ticket_agent_assigned',
+  /*
+   * ASISTENTE IA CONTEXTUAL DEL CHAT: cada consulta deja rastro (quién, sobre
+   * qué conversación, qué acción y si el modelo respondió). NO se guarda el
+   * texto del cliente ni el borrador: la traza no es un archivo de conversaciones.
+   */
+  'assistant.query',
+  /* Operaciones preparadas por el asistente: se preparan, se confirman y se
+   * ejecutan (o se cancelan). La traza dice QUIÉN confirmó y con qué resultado. */
+  'assistant.action_prepared',
+  'assistant.action_confirmed',
+  'assistant.action_cancelled',
+  'assistant.action_failed',
 ]);
 
 function newId() {

@@ -79,12 +79,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=audio-1" />
+    <link rel="stylesheet" href="/admin/admin.css?v=audio-8" />
     <link rel="stylesheet" href="/admin/store.css?v=billing-cards-1" />
     <link rel="stylesheet" href="/admin/product-editor.css?v=billing-cards-2" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
     <link rel="stylesheet" href="/admin/supervisor.css?v=5" />
-    <link rel="stylesheet" href="/admin/pos.css?v=pedido-15" />
+    <link rel="stylesheet" href="/admin/pos.css?v=premium-27" />
     <link rel="stylesheet" href="/admin/offline.css?v=1" />
     <!--
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
@@ -96,7 +96,7 @@
     <link rel="stylesheet" href="/admin/fulltech.css?v=4" />
     <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-4" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=3" />
-    <link rel="stylesheet" href="/admin/proofreading.css?v=10" />
+    <link rel="stylesheet" href="/admin/proofreading.css?v=11" />
     <link rel="stylesheet" href="/admin/conversation-list.css?v=1" />
     <link rel="stylesheet" href="/admin/composer-mobile.css?v=4" />
     <!--
@@ -126,12 +126,13 @@
     <link rel="stylesheet" href="/admin/ios.css?v=ios-1" />
     <link rel="stylesheet" href="/admin/daily-close.css?v=close-compact-2" />
     <link rel="stylesheet" href="/admin/outreach.css?v=5" />
+    <link rel="stylesheet" href="/admin/assistant.css?v=2" />
     <!--
       CENTRO DE OPERACIONES (tickets internos). Va la ÚLTIMA: todo su estilo vive
       bajo `body[data-tab='ops']` y con prefijo `.ops-`, así que no puede tocar el
       chat del cliente ni el resto del panel.
     -->
-    <link rel="stylesheet" href="/admin/ops.css?v=ops-5" />
+    <link rel="stylesheet" href="/admin/ops.css?v=ops-7" />
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -216,7 +217,9 @@
         aria-expanded="false"
         aria-controls="drawer"
       >
-        <!-- Tres barras de verdad: se dibujan y se convierten en ✕ al abrir. -->
+        <!-- Icono entregado por el usuario. Al abrir el menú vuelve el aspa de
+             tres barras (misma mecánica de siempre, sin animaciones nuevas). -->
+        <img class="app-icon app-icon--menu" src="/admin/assets/icons/ui/menu.png" alt="" aria-hidden="true" draggable="false" />
         <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
       </button>
       <span class="presence" id="state-pill" role="status" hidden></span>
@@ -265,18 +268,18 @@
             <p class="drawer__group">Principal</p>
             <nav class="drawer__nav">
               <button class="drawer__item" data-tab="hoy" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="sun"></span>Hoy
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:sun"></span>Hoy
                 <span class="drawer__badge" data-drawer-badge="hoy" hidden></span>
               </button>
               <button class="drawer__item" data-tab="whatsapp" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>Chats
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:support"></span>Chats
                 <span class="drawer__badge" data-drawer-badge="whatsapp" hidden></span>
               </button>
               <button class="drawer__item" data-tab="pedidos" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="box"></span>Pedidos
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:orders"></span>Pedidos
               </button>
               <button class="drawer__item" data-tab="clientes" type="button">
-                <span class="drawer__icon" aria-hidden="true" data-icon="users"></span>Clientes
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:user"></span>Clientes
               </button>
             </nav>
           </section>
@@ -291,12 +294,12 @@
           <section class="drawer__section" aria-label="Ventas">
             <details class="drawer__fold">
               <summary class="drawer__item drawer__fold-summary">
-                <span class="drawer__icon" aria-hidden="true" data-icon="bag"></span>Ventas
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:cart"></span>Ventas
                 <span class="drawer__chev" aria-hidden="true"></span>
               </summary>
               <nav class="drawer__subnav" aria-label="Ventas">
                 <button class="drawer__item drawer__item--sub" data-tab="catalogo" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="doc"></span>Facturación
+                  <span class="drawer__icon" aria-hidden="true" data-icon="img:billing"></span>Facturación
                 </button>
                 <button class="drawer__item drawer__item--sub" data-tab="inventario" id="drawer-inventario" type="button">
                   <span class="drawer__icon" aria-hidden="true" data-icon="inventory"></span>Ajuste de stock
@@ -323,7 +326,7 @@
           <section class="drawer__section" aria-label="Entregas">
             <details class="drawer__fold">
               <summary class="drawer__item drawer__fold-summary">
-                <span class="drawer__icon" aria-hidden="true" data-icon="delivery"></span>Entregas
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:delivery"></span>Entregas
                 <span class="drawer__chev" aria-hidden="true"></span>
               </summary>
               <nav class="drawer__subnav" aria-label="Entregas">
@@ -333,9 +336,12 @@
                 <button class="drawer__item drawer__item--sub" data-tab="delivery" type="button">
                   <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
                 </button>
-                <button class="drawer__item drawer__item--sub" data-tab="supervisor" type="button" data-permission="delivery.tracking.manage_all">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="spark"></span>Supervisor IA
-                </button>
+                <!--
+                  El SUPERVISOR IA ya NO tiene entrada aquí: se administra desde
+                  «Centro IA → Supervisor IA». La pantalla (`#view-supervisor`) y
+                  su módulo siguen siendo los mismos; solo cambió la puerta de
+                  entrada, para no tener dos menús de lo mismo.
+                -->
               </nav>
             </details>
           </section>
@@ -348,41 +354,37 @@
                 oculta y esta pantalla tiene que alcanzarse desde el menú.
               -->
               <button class="drawer__item" data-tab="ops" type="button" data-permission="tickets.read">
-                <span class="drawer__icon" aria-hidden="true" data-icon="spark"></span>Centro IA
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:robot"></span>Centro IA
                 <span class="drawer__badge" data-drawer-badge="ops" hidden></span>
               </button>
             </nav>
           </section>
 
+          <!--
+            SEGUIMIENTO Y MENSAJES PROGRAMADOS ya NO tienen entrada propia en el
+            menú: se administran desde «Centro IA → Agente de Seguimiento».
+
+            NO se ha borrado nada: las pantallas (`#view-seguimientos`,
+            `#view-mensajes`), sus datos, sus rutas y el programador siguen
+            igual. Los enlaces antiguos (`?v=seguimientos`, `?v=mensajes`) siguen
+            funcionando, y el agente ofrece «Pantalla completa» cuando hace falta.
+          -->
+
           <section class="drawer__section" aria-label="Seguimiento">
-            <details class="drawer__fold">
-              <summary class="drawer__item drawer__fold-summary">
-                <span class="drawer__icon" aria-hidden="true" data-icon="bell"></span>Seguimiento
-                <span class="drawer__chev" aria-hidden="true"></span>
-              </summary>
-              <nav class="drawer__subnav" aria-label="Seguimiento">
-                <button class="drawer__item drawer__item--sub" data-tab="seguimientos" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="clock"></span>Seguimientos
-                </button>
-                <button class="drawer__item drawer__item--sub" data-tab="mensajes" type="button" data-admin-only hidden>
-                  <span class="drawer__icon" aria-hidden="true" data-icon="chat"></span>Mensajes programados
-                </button>
-              </nav>
-            </details>
           </section>
 
           <!-- Cierre diario reúne el acceso al día actual y al historial. -->
           <section class="drawer__section" aria-label="Cierre y reportes">
             <nav class="drawer__nav">
               <details class="drawer__fold">
-                <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre diario<span class="drawer__chev" aria-hidden="true"></span></summary>
+                <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="img:billing"></span>Cierre diario<span class="drawer__chev" aria-hidden="true"></span></summary>
                 <nav class="drawer__subnav" aria-label="Cierre diario">
                   <button class="drawer__item drawer__item--sub" data-tab="cierre" data-close-view="actual" type="button" data-daily-close-access><span class="drawer__icon" aria-hidden="true" data-icon="checkCircle"></span>Cierre actual</button>
                   <button class="drawer__item drawer__item--sub" data-tab="historial-cierres" data-close-view="history" type="button" data-daily-close-access><span class="drawer__icon" aria-hidden="true" data-icon="calendar"></span>Historial</button>
                 </nav>
               </details>
               <button class="drawer__item" data-tab="reportes" type="button" data-permission="reports.profit.view">
-                <span class="drawer__icon" aria-hidden="true" data-icon="chart"></span>Reportes
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:chart"></span>Reportes
               </button>
             </nav>
           </section>
@@ -393,7 +395,7 @@
         <div class="drawer__foot">
           <section class="drawer__section drawer__foot-links drawer__share-section" aria-label="Compartir">
             <details class="drawer__fold">
-              <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="share"></span>Compartir<span class="drawer__chev" aria-hidden="true"></span></summary>
+              <summary class="drawer__item drawer__fold-summary"><span class="drawer__icon" aria-hidden="true" data-icon="img:share"></span>Compartir<span class="drawer__chev" aria-hidden="true"></span></summary>
               <nav class="drawer__subnav" aria-label="Compartir">
                 <div class="drawer__row">
                   <button class="drawer__item drawer__item--sub" id="drawer-share-web" type="button"><span class="drawer__icon" aria-hidden="true" data-icon="web"></span>Phytoemagry Tienda</button>
@@ -413,7 +415,7 @@
           <section class="drawer__section drawer__foot-links" aria-label="Administración">
             <nav class="drawer__nav">
               <button class="drawer__item" data-tab="usuarios" type="button" data-admin-only hidden>
-                <span class="drawer__icon" aria-hidden="true" data-icon="userCog"></span>Usuarios
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:usersadd"></span>Usuarios
               </button>
               <button class="drawer__item" data-tab="ajustes" type="button" data-permission="settings.manage">
                 <span class="drawer__icon" aria-hidden="true" data-icon="gear"></span>Configuración
@@ -424,7 +426,7 @@
             <div id="drawer-theme" class="drawer__themes" role="radiogroup" aria-label="Apariencia del panel"></div>
             <div class="drawer__foot-actions">
               <button class="drawer__logout" id="logout-drawer" type="button" aria-label="Cerrar sesión" title="Cerrar sesión">
-                <span class="drawer__icon" aria-hidden="true" data-icon="logout"></span>
+                <span class="drawer__icon" aria-hidden="true" data-icon="img:logout"></span>
               </button>
             </div>
           </div>
@@ -1063,18 +1065,18 @@
 
       <nav class="tabs" aria-label="Secciones">
         <button class="tab" data-tab="hoy" type="button">
-          <span class="tab__icon" aria-hidden="true" data-icon="sun"></span><span>Hoy</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="img:sun"></span><span>Hoy</span>
           <span class="tab__badge" id="badge-hoy" hidden></span>
         </button>
         <button class="tab" data-tab="whatsapp" type="button">
-          <span class="tab__icon" aria-hidden="true" data-icon="chat"></span><span>Chats</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="img:whatsapp"></span><span>Chats</span>
           <span class="tab__badge" id="badge-whatsapp" hidden></span>
         </button>
         <button class="tab" data-tab="pedidos" type="button">
-          <span class="tab__icon" aria-hidden="true" data-icon="box"></span><span>Pedidos</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="img:orders"></span><span>Pedidos</span>
         </button>
         <button class="tab" data-tab="clientes" type="button">
-          <span class="tab__icon" aria-hidden="true" data-icon="users"></span><span>Clientes</span>
+          <span class="tab__icon" aria-hidden="true" data-icon="img:user"></span><span>Clientes</span>
         </button>
       </nav>
     </div>
@@ -1151,24 +1153,25 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=hora-rd-6" defer></script>
+    <script src="/admin/app.js?v=premium-33" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
-    <script src="/admin/proofreading.js?v=16" defer></script>
+    <script src="/admin/proofreading.js?v=17" defer></script>
+    <script src="/admin/assistant.js?v=2" defer></script>
     <script src="/admin/deepseek-settings.js?v=3" defer></script>
     <script src="/admin/chat-sharing-settings.js?v=3" defer></script>
     <script src="/admin/calling.js?v=header-actions-113" defer></script>
-    <script src="/admin/store.js?v=billing-cards-1" defer></script>
+    <script src="/admin/store.js?v=premium-19" defer></script>
     <script src="/admin/store-requests.js?v=3" defer></script>
     <script src="/admin/recogidas.js?v=1" type="module"></script>
-    <script src="/admin/supervisor.js?v=4" type="module"></script>
+    <script src="/admin/supervisor.js?v=5" type="module"></script>
     <!--
       CENTRO DE OPERACIONES: módulo propio (como `supervisor.js`). Se pinta en
       `#view-ops` cuando la pestaña activa es `ops` y no toca `app.js`.
     -->
-    <script src="/admin/ops.js?v=ops-5" type="module"></script>
-    <script src="/admin/pos.js?v=pedido-confirmar-18" type="module"></script>
+    <script src="/admin/ops.js?v=ops-7" type="module"></script>
+    <script src="/admin/pos.js?v=premium-29" type="module"></script>
   </body>
 </html>
 

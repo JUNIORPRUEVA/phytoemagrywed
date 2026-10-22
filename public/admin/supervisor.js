@@ -128,6 +128,7 @@ function rowHtml(row) {
       <p class="sup-row__next">${esc(row.next_action)}</p>
       <div class="sup-row__actions">
         <a class="sup-btn" href="${esc(row.deep_link)}">Abrir pedido</a>
+        <button class="sup-btn sup-btn--ghost" type="button" data-sup-centro="${esc(row.id)}">Centro IA</button>
         ${row.review_reason && row.responsible ? `<button class="sup-btn" type="button" data-sup-include="${esc(row.id)}">Incluir en seguimiento</button>` : ''}
         <button class="sup-btn sup-btn--ghost" type="button" data-sup-postpone="${esc(row.id)}" data-sup-number="${esc(row.order_number)}">Posponer</button>
       </div>
@@ -491,6 +492,17 @@ document.addEventListener('click', (event) => {
   if (target.closest('[data-sup-run]')) return void runNow();
   if (target.closest('[data-sup-daily]')) return void dailySummary();
   if (target.closest('[data-sup-save-settings]')) return void saveSettings();
+  /*
+   * ENLACE CONTEXTUAL AL CENTRO IA: abre el ticket de ESTE pedido (si existe).
+   * El supervisor no duplica la conversación: solo lleva a ella.
+   */
+  const centro = target.closest('[data-sup-centro]');
+  if (centro) {
+    window.dispatchEvent(
+      new CustomEvent('fulltech:navigate', { detail: { tab: 'ops', orderId: centro.dataset.supCentro } }),
+    );
+    return;
+  }
   const bucket = target.closest('[data-sup-bucket]');
   if (bucket) {
     state.bucket = bucket.dataset.supBucket;

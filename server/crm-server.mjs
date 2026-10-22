@@ -143,6 +143,7 @@ import {
 import { createSettingsService } from './settings.mjs';
 import { createProofreadingService } from './proofreading.mjs';
 import { handleProofreadingRoute } from './proofreading-routes.mjs';
+import { handleAssistantRoute } from './assistant-routes.mjs';
 import { createChatSharingService, handleChatSharingRoute } from './chat-sharing.mjs';
 import { createSqlQuery } from './sql-query.mjs';
 import { createMediaStore, MEDIA_STATUS, SEND_STATUS } from './media.mjs';
@@ -5925,6 +5926,9 @@ async function handle(req, res, ctx) {
     if (await handleProofreadingRoute({ req, res, route, ctx, actor, can,
       canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
       readJson: readJsonBody, json })) return;
+    if (await handleAssistantRoute({ req, res, route, ctx, actor, can,
+      canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
+      readJson: readJsonBody, json })) return;
     if (await handleChatSharingRoute({ req, res, route, ctx, can, readJson: readJsonBody, json })) return;
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
@@ -6592,6 +6596,8 @@ async function handle(req, res, ctx) {
       can:permission=>hasPermission(actor,permission),
       findOrder:id=>findOrderItem(ctx.store,id),
       listOrders:()=>ctx.store.listAdmin({limit:5000}),
+      /* El Agente de Seguimiento razona con el MISMO proveedor del corrector. */
+      llm:(input)=>ctx.proofreading?.plan?.(input),
       notify:(input)=>notifyOpsUser(ctx,input)})) return;
 
     if (route === '/api/admin/inventory' && req.method === 'GET') {
@@ -12255,6 +12261,57 @@ export async function startCrmServer(config = {}) {
       Promise.resolve()
         .then(() => opsOnTicketEvent({ ctx: ctxRef.current, ...input }))
         .catch((error) => console.error('[ops] onTicketEvent:', error));
+    },
+  };
+
+  /*
+   * OPERACIONES ASISTIDAS DEL CHAT: el asistente PREPARA y la persona CONFIRMA.
+   * Aquí se exponen los MISMOS servicios que usa el panel, para no duplicar
+   * reglas de negocio (precios, stock, permisos, idempotencia).
+   */
+  ctx.assistantOps = {
+    catalog: () => ctx.storeCatalog.list(),
+    checkStock: (sale) => ctx.storeCatalog.checkOrder({ items: sale.items }),
+    createOrder: (body, actor) => createOrder(ctx, body, actor),
+    createFollowup: (input) => followups.createManual(input),
+    setCustomerNotes: (customerId, notes) => ctx.db.update('customers', customerId, { notes }),
+    /*
+     * COTIZACIÓN: se reutiliza la RUTA REAL del punto de venta (mismas
+     * validaciones de precio, stock, idempotencia por `requestId` y auditoría).
+     * Se llama a la propia instancia en 127.0.0.1 con la cookie del operador
+     * que confirma; no hay una segunda implementación de cotizaciones.
+     */
+    createQuote: async ({ proposal, cookie }) => {
+      const body = {
+        requestId: `assistant_${proposal.id}`.slice(0, 80),
+        customerId: proposal.customer_id,
+        conversationId: proposal.conversation_id ?? '',
+        items: proposal.params.items,
+        paymentMethod: proposal.params.paymentMethod,
+        deliveryFee: 0,
+        discount: 0,
+        deliveryMethod: 'pickup',
+        expectedTotal: Math.round(Number(proposal.preview?.total ?? 0) * 100),
+      };
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/api/admin/pos/quotes`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', cookie: String(cookie ?? '') },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data?.ok !== true) {
+          return { ok: false, error: data?.error ?? 'quote_failed', message: data?.message ?? 'No se pudo crear la cotización.' };
+        }
+        return {
+          ok: true,
+          duplicate: data.duplicate === true,
+          ref: { type: 'quote', id: data.quoteId ?? data.document?.id ?? null, number: data.document?.number ?? null },
+          summary: `Cotización ${data.document?.number ?? ''}`.trim(),
+        };
+      } catch {
+        return { ok: false, error: 'quote_failed', message: 'No se pudo crear la cotización.' };
+      }
     },
   };
 

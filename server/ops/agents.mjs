@@ -34,8 +34,9 @@ import {
 } from './tickets.mjs';
 import { postMessage } from './messages.mjs';
 import { notifyAckRequired, notifyApprovalRequested, ticketRecipients } from './notify.mjs';
-import { AGENT_PERMISSIONS, OPS_TOOLS, assignableTools, toolOf, validateArgs } from './tools.mjs';
+import { AGENT_PERMISSIONS, OPS_TOOLS, assignableTools, toolOf, timeoutOf, validateArgs } from './tools.mjs';
 import { planWithLlm } from './llm.mjs';
+import { listCollaborators, markAccepted, requestHelp, settleDelegationOfRun } from './collaboration.mjs';
 
 /** Estados de un run. `succeeded/failed/cancelled` son finales. */
 export const AGENT_RUN_STATUSES = Object.freeze([
@@ -114,6 +115,10 @@ export async function listAgents({ ctx }) {
       permissions: agent.permissions ?? [],
       ticketTypes: agent.ticket_types ?? [],
       config: agent.config ?? {},
+      responsibilities: Array.isArray(agent.responsibilities) ? agent.responsibilities : [],
+      planner: agent.config?.planner === 'llm' ? 'llm' : 'deterministic',
+      collaboration: agent.config?.collaboration !== false,
+      workMode: agent.config?.workMode ?? null,
       activeRuns: suyos.filter((run) => !FINAL_RUN_STATUSES.includes(run.status)).length,
       lastRunAt: suyos[0]?.updated_at ?? null,
       updatedAt: agent.updated_at ?? null,
@@ -179,6 +184,13 @@ export async function saveAgent({ ctx, actor, input = {} }) {
     : ['delivery'];
 
   const existing = await agentByKey(ctx, key);
+  /*
+   * RESPONSABILIDADES (Fase 5): texto para las personas, no lógica. Se recortan
+   * a seis y no pueden venir del navegador sin control.
+   */
+  const responsibilities = Array.isArray(input.responsibilities)
+    ? [...new Set(input.responsibilities.map((item) => clean(item, 120)).filter(Boolean))].slice(0, 6)
+    : (Array.isArray(existing?.responsibilities) ? existing.responsibilities : []);
   const at = nowIso(ctx);
   const doc = {
     key,
@@ -189,6 +201,7 @@ export async function saveAgent({ ctx, actor, input = {} }) {
     tools: unique,
     permissions,
     ticket_types: ticketTypes,
+    responsibilities,
     config: {
       maxMessagesPerRun: Number(input.config?.maxMessagesPerRun) > 0 ? Number(input.config.maxMessagesPerRun) : MAX_MESSAGES_PER_RUN,
       followUpMinutes: Number(input.config?.followUpMinutes) > 0 ? Number(input.config.followUpMinutes) : 30,
@@ -199,6 +212,14 @@ export async function saveAgent({ ctx, actor, input = {} }) {
        * pauta como red de seguridad si falla.
        */
       planner: input.config?.planner === 'llm' ? 'llm' : 'deterministic',
+      /* Puede negarse a recibir peticiones de ayuda de otros agentes. */
+      collaboration: input.config?.collaboration === false ? false : true,
+      /*
+       * MODO DE TRABAJO: `followups` = el agente de seguimiento (su oficina son
+       * seguimientos y mensajes programados, no tickets). Cualquier otro valor
+       * se guarda como `null` (agente de tickets).
+       */
+      workMode: input.config?.workMode === 'followups' ? 'followups' : null,
     },
     updated_at: at,
   };
@@ -244,10 +265,12 @@ export async function saveAgent({ ctx, actor, input = {} }) {
 /* ======================================================= EJECUCIÓN */
 
 /** Crea (o despierta) el run de este agente para este ticket. */
-export async function ensureRunForEvent({ ctx, ticket, agent, event = 'ticket' }) {
+export async function ensureRunForEvent({ ctx, ticket, agent, event = 'ticket', workflow: workflowKey = null, state: seed = null }) {
   if (!ticket?.id || !agent?.id) return null;
   const at = nowIso(ctx);
-  const workflow = clean(agent.config?.workflowKey, 40) ?? 'assist';
+  const workflow = clean(workflowKey, 40) ?? clean(agent.config?.workflowKey, 40) ?? 'assist';
+  /* Estado con el que nace (o se completa) el run: p. ej. la colaboración. */
+  const extra = seed && typeof seed === 'object' ? seed : {};
   const rows = await ctx.db.list('ops_agent_runs', { where: { ticket_id: ticket.id }, limit: 200 });
   const mine = rows.filter((run) => run.agent_key === agent.key && run.workflow_key === workflow);
   const active = mine.find((run) => !FINAL_RUN_STATUSES.includes(run.status));
@@ -259,7 +282,7 @@ export async function ensureRunForEvent({ ctx, ticket, agent, event = 'ticket' }
     if (active.status === 'waiting_human') {
       /* Esperando una persona: se anota el evento pero NO se reanuda solo. */
       await ctx.db.update('ops_agent_runs', active.id, {
-        state: { ...(active.state ?? {}), pendingEvent: event },
+        state: { ...(active.state ?? {}), ...extra, pendingEvent: event },
         updated_at: at,
       });
       return active;
@@ -267,7 +290,7 @@ export async function ensureRunForEvent({ ctx, ticket, agent, event = 'ticket' }
     return ctx.db.update('ops_agent_runs', active.id, {
       status: active.status === 'running' ? 'running' : 'pending',
       next_run_at: at,
-      state: { ...(active.state ?? {}), pendingEvent: event, lastEventAt: at },
+      state: { ...(active.state ?? {}), ...extra, pendingEvent: event, lastEventAt: at },
       updated_at: at,
     });
   }
@@ -281,7 +304,7 @@ export async function ensureRunForEvent({ ctx, ticket, agent, event = 'ticket' }
     attempt: 0,
     step: 0,
     /* Estado del plan: lo único que hace que un reinicio no repita trabajo. */
-    state: { pendingEvent: event, lastEventAt: at },
+    state: { ...extra, pendingEvent: event, lastEventAt: at },
     next_run_at: at,
     lease_owner: null,
     lease_until: null,
@@ -444,8 +467,8 @@ async function buildLlmContext({ ctx, ticket, run }) {
  * mensaje o **cuándo** volver a mirar; nunca la lectura de contexto, el acuse,
  * el escalado ni la aprobación.
  */
-async function decideNextStep({ ctx, deps, agent, ticket, run, now }) {
-  const deterministic = planStep({ ticket, run, agent, now });
+async function decideNextStep({ ctx, deps, agent, ticket, run, now, collaborators = [] }) {
+  const deterministic = planStep({ ticket, run, agent, now, collaborators });
   const plan = typeof deps?.llm === 'function' ? deps.llm : null;
   if (!plan || agent?.config?.planner !== 'llm') return { decision: deterministic, source: 'deterministic' };
 
@@ -457,7 +480,9 @@ async function decideNextStep({ ctx, deps, agent, ticket, run, now }) {
   /* «Escribir» solo cuando la pauta dice que toca escribir. */
   const mode = deterministic.type === 'wait' ? 'idle' : 'reply';
   const { messages, context } = await buildLlmContext({ ctx, ticket, run });
-  const result = await planWithLlm({ plan, agent, ticket, run, context, messages, now, mode });
+  /* Los compañeros disponibles viajan como DATO: el modelo no los inventa. */
+  const contextWithPeers = { ...context, collaborators };
+  const result = await planWithLlm({ plan, agent, ticket, run, context: contextWithPeers, messages, now, mode });
   if (!result.ok) {
     /* Se deja constancia del motivo: un proveedor caído no puede ser invisible. */
     return { decision: deterministic, source: 'deterministic_fallback', error: result.error, meta: result.meta };
@@ -473,7 +498,7 @@ async function decideNextStep({ ctx, deps, agent, ticket, run, now }) {
  * una de estas mismas decisiones). No puede devolver una herramienta fuera del
  * catálogo del agente: eso se valida al ejecutar.
  */
-export function planStep({ ticket, run, agent, now = null }) {
+export function planStep({ ticket, run, agent, now = null, collaborators = [] }) {
   const state = run.state ?? {};
   const nowIsoValue = now ?? new Date().toISOString();
   const maxMessages = Number(agent?.config?.maxMessagesPerRun ?? MAX_MESSAGES_PER_RUN);
@@ -487,6 +512,33 @@ export function planStep({ ticket, run, agent, now = null }) {
 
   if (!state.contextLoaded) {
     return { type: 'tool', tool: 'ticket.get_context', args: { ticketId: ticket.id }, note: 'cargar contexto' };
+  }
+  /*
+   * COLABORACIÓN RECIBIDA: este run nace porque otro agente pidió ayuda.
+   * No saluda como si fuera suyo el ticket: deja su lectura y cierra. Va antes
+   * que cualquier otra regla para no pisar el trabajo de quien pidió ayuda.
+   */
+  if (state.collabFrom) {
+    if (!state.collabAnswered && sent < maxMessages && has('ticket.post_message')) {
+      return {
+        type: 'tool',
+        tool: 'ticket.post_message',
+        args: {
+          body: `Reviso lo que me pide ${state.collabFromName ?? state.collabFrom}: «${state.collabQuestion ?? 'necesita una revisión'}». Dejo aquí lo que puedo confirmar con los datos de este ticket.`,
+          clientKey: `agent:${run.id}:collab`,
+        },
+        note: 'responder a la colaboración',
+      };
+    }
+    if (state.collabAnswered && !state.workCompleted && has('ticket.complete_work')) {
+      return {
+        type: 'tool',
+        tool: 'ticket.complete_work',
+        args: { note: 'Colaboración atendida' },
+        note: 'cerrar la colaboración',
+      };
+    }
+    return { type: 'wait', minutes: Number(agent?.config?.followUpMinutes ?? 30), reason: 'colaboración atendida' };
   }
   /*
    * ESTADO DEL PEDIDO VINCULADO (solo lectura, `orders.read`).
@@ -568,6 +620,32 @@ export function planStep({ ticket, run, agent, now = null }) {
       note: 'escalar por plazo',
     };
   }
+  /*
+   * PEDIR AYUDA A OTRO AGENTE (Fase 6).
+   *
+   * Solo cuando hay una razón comprobable: el ticket ya se escaló o es urgente,
+   * y hay un compañero autorizado para este tipo de ticket. Una sola vez por
+   * run: si el servidor la rechaza, no se reintenta en bucle.
+   */
+  if (
+    (state.escalated || ticket.priority === 'urgent') &&
+    !state.helpRequested &&
+    !state.closureRequested &&
+    sent < maxMessages &&
+    has('agent.request_help') &&
+    collaborators.length
+  ) {
+    const peer = collaborators[0];
+    return {
+      type: 'tool',
+      tool: 'agent.request_help',
+      args: {
+        agentKey: peer.key,
+        question: `Necesito que revises el pedido de este ticket (${ticket.number}) porque con mis herramientas no puedo confirmarlo.`,
+      },
+      note: `pedir ayuda a ${peer.name}`,
+    };
+  }
   return {
     type: 'wait',
     minutes: Number(agent?.config?.followUpMinutes ?? 30),
@@ -584,6 +662,17 @@ async function executeTool({ ctx, deps, agent, ticket, run, name, args, actor, a
   if (tool.effect === 'forbidden') {
     return { ok: false, error: { code: 'tool_forbidden', message: 'Herramienta prohibida', retryable: false } };
   }
+  /*
+   * SOLO POR APROBACIÓN: las herramientas del Agente de Seguimiento se ejecutan
+   * únicamente cuando una persona aprueba la propuesta. Sin `approvalId` no hay
+   * forma de ejecutarlas desde un plan, aunque alguien lo intentara.
+   */
+  if (tool.approvalOnly === true && !approvalId) {
+    return {
+      ok: false,
+      error: { code: 'approval_required', message: 'Esta acción necesita aprobación humana', retryable: false },
+    };
+  }
   /* Doble comprobación de permiso: la herramienta debe estar en la lista del agente. */
   if (!Array.isArray(agent.tools) || !agent.tools.includes(name)) {
     return { ok: false, error: { code: 'tool_not_allowed', message: 'La herramienta no está asignada a este agente', retryable: false } };
@@ -599,6 +688,18 @@ async function executeTool({ ctx, deps, agent, ticket, run, name, args, actor, a
    * cuenta, ni siquiera intentándolo por esta vía.
    */
   const can = approvalId && typeof approveCan === 'function' ? approveCan : agentCan(agent);
+
+  /*
+   * COLABORACIÓN: se delega en el módulo que conoce las reglas (destinatario
+   * activo, tipo de ticket, bucles, profundidad y tope). Aquí solo se comprueba
+   * el permiso del agente que pide, como con cualquier otra herramienta.
+   */
+  if (name === 'agent.request_help') {
+    if (!can('tickets.update')) {
+      return { ok: false, error: { code: 'agent_permission_denied', message: 'Falta tickets.update', retryable: false } };
+    }
+    return requestHelp({ ctx, deps, agent, ticket, run, args, ensureRun: ensureRunForEvent });
+  }
 
   if (name === 'ticket.get_context') {
     const view = projectTicket(ticket, { can });
@@ -720,7 +821,8 @@ async function invokeTool({ ctx, deps, agent, ticket, run, name, args, actor = n
   try {
     outcome = await withTimeout(
       executeTool({ ctx, deps, agent, ticket, run, name, args: validation.args, actor, approvalId, approveCan }),
-      STEP_TIMEOUT_MS,
+      /* Cada herramienta declara su plazo; ninguna puede pasar del global. */
+      timeoutOf(name),
     );
   } catch (error) {
     outcome = { ok: false, error: { code: 'tool_timeout', message: error?.message ?? 'tiempo agotado', retryable: true } };
@@ -1034,7 +1136,16 @@ export async function opsAgentTick({ ctx, deps = {} }) {
         continue;
       }
 
-      const planning = await decideNextStep({ ctx, deps, agent, ticket, run, now: at });
+      /*
+       * Compañeros a los que se les puede pedir ayuda: se calcula solo si el
+       * agente tiene la herramienta y no está ya atendiendo una colaboración.
+       * Es la MISMA regla que aplica el servidor al delegar.
+       */
+      const collaborators =
+        (agent.tools ?? []).includes('agent.request_help') && !run.state?.collabFrom
+          ? await listCollaborators({ ctx, agent, ticket })
+          : [];
+      const planning = await decideNextStep({ ctx, deps, agent, ticket, run, now: at, collaborators });
       const decision = planning.decision;
       publishTicketEvent(ctx, {
         type: 'agent.execution.started',
@@ -1068,17 +1179,22 @@ export async function opsAgentTick({ ctx, deps = {} }) {
         });
         if (!outcome.ok) {
           /*
-           * Una LECTURA opcional que falla (pedido inexistente, sin permiso) no
-           * puede matar el trabajo: se anota el paso como error, se marca como
-           * comprobada y el plan sigue por donde iba.
+           * Una LECTURA opcional o una petición de ayuda RECHAZADA no pueden
+           * matar el trabajo: se anota el paso como error, se marca como hecha
+           * y el plan sigue por donde iba (sin reintentar en bucle).
            */
-          if (decision.tool === 'order.get_status') {
+          if (decision.tool === 'order.get_status' || decision.tool === 'agent.request_help') {
             patch = {
               status: 'pending',
               step: (Number(run.step ?? 0) || 0) + 1,
               attempt: 0,
               next_run_at: at,
-              state: { ...(run.state ?? {}), orderChecked: true, orderStatus: null },
+              state: {
+                ...(run.state ?? {}),
+                ...(decision.tool === 'order.get_status'
+                  ? { orderChecked: true, orderStatus: null }
+                  : { helpRequested: true, helpFailed: outcome.error?.code ?? 'error' }),
+              },
               last_error: outcome.error ?? null,
             };
             await recordStep({
@@ -1117,6 +1233,13 @@ export async function opsAgentTick({ ctx, deps = {} }) {
           if (decision.tool === 'ticket.request_ack') state.ackRequested = true;
           if (decision.tool === 'ticket.escalate') state.escalated = true;
           if (decision.tool === 'ticket.complete_work') state.workCompleted = true;
+          if (decision.tool === 'agent.request_help') state.helpRequested = true;
+          /* Atender una colaboración: queda dicho en el hilo y se cierra. */
+          if (decision.tool === 'ticket.post_message' && state.collabFrom) state.collabAnswered = true;
+          if (decision.tool === 'ticket.get_context' && state.delegationId) {
+            const own = await ctx.db.get('ops_agent_delegations', state.delegationId);
+            if (own) await markAccepted({ ctx, delegation: own });
+          }
           patch = {
             status: 'pending',
             step: (Number(run.step ?? 0) || 0) + 1,
@@ -1162,6 +1285,34 @@ export async function opsAgentTick({ ctx, deps = {} }) {
 
       const updated = await releaseRun({ ctx, runId: run.id, patch });
       executed += 1;
+      /*
+       * CIERRE DE LA COLABORACIÓN: el agente que atendió la petición la deja
+       * `completed` al terminar su trabajo, o `failed` si su run se cayó.
+       */
+      if (run.state?.delegationId && updated) {
+        const settled = await settleDelegationOfRun({
+          ctx,
+          run,
+          status:
+            updated.status === 'failed'
+              ? 'failed'
+              : decision.type === 'tool' && decision.tool === 'ticket.complete_work'
+                ? 'completed'
+                : null,
+          note:
+            decision.args?.note ??
+            (updated.status === 'failed' ? updated.last_error?.code ?? null : null),
+        }).catch(() => null);
+        if (settled) {
+          publishTicketEvent(ctx, {
+            type: 'agent.delegation.changed',
+            ticket,
+            participantIds: await participantIdsOf(ctx, ticket.id),
+            actor: agentActor(agent),
+            data: { agent_key: agent.key, run_id: run.id, delegation_id: run.state.delegationId, status: settled.status },
+          });
+        }
+      }
       const finalType =
         updated?.status === 'failed'
           ? 'agent.execution.failed'

@@ -182,8 +182,8 @@ async function createGuidedOrder(conversationId, variantId = 'capsules_10') {
     await waitFor(() => dom.window.document.body.dataset.tab === 'whatsapp', 'pestaña WhatsApp');
   }
   click(`[data-conv="${conversationId}"]`);
-  await waitFor(() => $('#wa-chat-pane') && $('#wa-actions')?.disabled === false, 'chat seleccionado');
-  click('#wa-actions');
+  await waitFor(() => $('#wa-chat-pane') && $('#wa-edge-right'), 'chat seleccionado');
+  await abrirAccionesChat();
   const create = await waitFor(
     () => $(`[data-order-new][data-conversation="${conversationId}"]`),
     'crear pedido desde la conversación',
@@ -209,8 +209,38 @@ async function createGuidedOrder(conversationId, variantId = 'capsules_10') {
   await waitFor(() => dom.window.document.body.dataset.tab === 'whatsapp' && $('#wa-chat-pane'), 'regreso al chat');
   click(`[data-conv="${conversationId}"]`);
   await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'conversación activa después del POS');
-  await waitFor(() => $('#wa-actions')?.disabled === false, 'acciones del chat disponibles');
+  await waitFor(() => $('#wa-edge-right'), 'acciones del chat disponibles');
   return number;
+}
+
+/**
+ * ACCIONES DEL CHAT — entrada vigente.
+ *
+ * El botón `#wa-actions` se retiró: el MISMO menú (crear pedido, plantilla,
+ * ubicación, confirmación…) se pinta en la columna derecha del chat
+ * (`#wa-chat-cols`), que se abre con la pestaña `#wa-edge-right`.
+ */
+async function abrirAccionesChat() {
+  // La hoja anterior puede seguir abierta y tapar la pestaña del borde: se
+  // cierra igual que lo haría la persona antes de abrir otra acción.
+  if ($('[data-close-sheet]')) closeSheetForUat();
+  if (dom.window.document.body.dataset.waCol) {
+    const close = $('#wa-chat-cols [data-wa-col-close]');
+    if (close) click(close);
+    await waitFor(() => !dom.window.document.body.dataset.waCol, 'columna de acciones cerrada', 9000);
+  }
+  click('#wa-edge-right');
+  await waitFor(() => dom.window.document.body.dataset.waCol === 'right', 'columna de acciones abierta', 9000);
+  return waitFor(
+    () => $('#wa-chat-cols [data-side="right"] .wa-col__body')?.children.length ? $('#wa-chat-cols [data-side="right"]') : null,
+    'las acciones de la conversación',
+    9000,
+  );
+}
+
+function cerrarAccionesChat() {
+  const close = $('#wa-chat-cols [data-wa-col-close]');
+  if (close) click(close);
 }
 
 /**
@@ -933,13 +963,12 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
      */
     expect($('#wa-template-open')).toBeNull();
 
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
-    expect($('#sheet-body [data-wa-ask-location]')).not.toBeNull();
-    expect($('#sheet-body').textContent).toContain('Pedir / confirmar ubicación');
-    expect($('#sheet-body').textContent).toContain('Mensajes');
+    await abrirAccionesChat();
+    await waitFor(() => $('#wa-chat-cols [data-wa-template]'), 'la entrada «Enviar plantilla»', 9000);
+    expect($('#wa-chat-cols [data-wa-ask-location]')).not.toBeNull();
+    expect($('#wa-chat-cols').textContent).toContain('Pedir / confirmar ubicación');
 
-    click('#sheet-body [data-wa-template]');
+    click($('#wa-chat-cols [data-wa-template]'));
     await waitFor(() => $('#sheet-body #wa-send-template'), 'la hoja de plantillas', 9000);
     const opciones = $$('#wa-template option').map((option) => option.value);
     expect(opciones).toContain('phyto_ubicacion_entrega_v1');
@@ -948,13 +977,10 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
   }, 30000);
 
   it('«Pedir / confirmar ubicación» sin ubicación guardada: solo la pide (texto, sin plantilla)', async () => {
-    // El menú puede haberse cerrado con la hoja anterior: se vuelve a abrir.
-    if (!$('#sheet-body [data-wa-ask-location]')) {
-      click('#wa-actions');
-      await waitFor(() => $('#sheet-body [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
-    }
-    click('#sheet-body [data-wa-ask-location]');
-    /*
+    // La columna de acciones se cierra al abrir una hoja: se vuelve a abrir.
+    await abrirAccionesChat();
+    const pedirUbicacion = await waitFor(() => $('#wa-chat-cols [data-wa-ask-location]'), 'el menú de acciones del chat', 9000);
+    click(pedirUbicacion);    /*
      * Luis todavía NO ha mandado ninguna ubicación: ni se inventa un mapa ni se
      * manda una plantilla. Solo se le pide que la envíe (la ventana está abierta).
      */
@@ -969,6 +995,9 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     expect(enviado.body).toBe('Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.');
     // Es TEXTO libre, no una plantilla.
     expect(enviado.template).toBeUndefined();
+    // Se cierra la hoja: el test siguiente abre otra acción y no debe leer
+    // una previsualización vieja.
+    closeSheetForUat();
   }, 30000);
 
   it('«Pedir confirmación» usa el pedido REAL de esa conversación (no una plantilla)', async () => {
@@ -976,12 +1005,17 @@ describe('enviar una plantilla y pedir la ubicación desde el chat', () => {
     const numero = await createGuidedOrder(ids.luis, 'capsules_10');
     expect(numero).toBeTruthy();
 
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-wa-confirm-order]');
+    await abrirAccionesChat();
+    const pedirConfirmacion = await waitFor(() => $('#wa-chat-cols [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
+    click(pedirConfirmacion);
 
     // Con UN solo pedido abierto no hay que elegir: va directo al mensaje.
-    const preview = await waitFor(() => $('#sheet-body .wa-preview'), 'el resumen del pedido', 9000);
+    // La hoja conserva su HTML al cerrarse, así que se espera al texto NUEVO
+    // (el resumen del pedido), no a que exista cualquier `.wa-preview`.
+    const preview = await waitFor(() => {
+      const node = $('#sheet-body .wa-preview');
+      return node && /revísalo y confírmalos/i.test(node.textContent) ? node : null;
+    }, 'el resumen del pedido', 9000);
     // Nadie tiene que saberse el número de la factura: sale del pedido real.
     expect(preview.textContent).toContain(numero);
     expect(preview.textContent).toContain('10 cápsulas');
@@ -1036,9 +1070,9 @@ describe('preferencias del pedido del cliente', () => {
     const fila = await waitFor(() => $(`[data-conv="${ids.luis}"]`), 'la fila de Luis', 9000);
     click(fila);
     await waitFor(() => $('#wa-chat-name')?.textContent.includes('Luis'), 'el chat de Luis', 9000);
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-order-new]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-order-new]');
+    await abrirAccionesChat();
+    const crearPedido = await waitFor(() => $('#wa-chat-cols [data-order-new]'), 'el menú de acciones del chat', 9000);
+    click(crearPedido);
     await waitFor(() => $('.pos-cart-lines [data-pos-quantity="0"]')?.textContent === '3', 'frasco y cantidad preferidos en el POS');
     expect($('.pos-cart-lines .pos-line-info strong').textContent).toContain('15');
     click('.pos-cart-lines [data-pos-edit="0"]');
@@ -1087,9 +1121,9 @@ describe('preferencias del pedido del cliente', () => {
 
 describe('pedir al cliente que confirme su pedido', () => {
   it('«Pedir confirmación» manda el pedido REAL como texto (con varios, se elige CUÁL)', async () => {
-    click('#wa-actions');
-    await waitFor(() => $('#sheet-body [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
-    click('#sheet-body [data-wa-confirm-order]');
+    await abrirAccionesChat();
+    const pedirConfirmacion = await waitFor(() => $('#wa-chat-cols [data-wa-confirm-order]'), 'el menú de acciones del chat', 9000);
+    click(pedirConfirmacion);
 
     /*
      * Luis ya tiene MÁS DE UN pedido abierto: el CRM pregunta CUÁL, porque

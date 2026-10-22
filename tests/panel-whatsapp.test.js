@@ -68,7 +68,8 @@ describe('el panel tiene las secciones nuevas', () => {
     expect(nav).toContain('data-tab="pedidos"');
     expect(nav).not.toContain('data-tab="delivery"');
     expect(html).toContain('data-tab="delivery"');
-    expect(html).toContain('data-tab="seguimientos"');
+    // El módulo de seguimiento del equipo se gestiona desde «Centro IA» (`ops`).
+    expect(html).toContain('data-tab="ops"');
     expect(html).not.toContain('class="tab" data-tab="mensajes"');
   });
 
@@ -164,6 +165,10 @@ describe('nada se envía solo', () => {
       'setInterval(()',
       // Contador de la nota de voz en el compositor (200 ms): anónimo desde que
       // la grabación vive dentro del propio compositor. Solo pinta el tiempo.
+      'setInterval(()',
+      // Refresco de la lista de MENSAJES PROGRAMADOS cada 15 s: solo se ejecuta
+      // con la pestaña «mensajes» visible y solo LEE (refreshScheduled). No
+      // envía ni guarda nada; el envío lo hace el planificador del servidor.
       'setInterval(()',
       'setInterval(deliveryPollTick, 8000)',
       'setInterval(sincroniaSilenciosaTick, 60000)',

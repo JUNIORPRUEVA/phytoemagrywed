@@ -43,7 +43,7 @@ it('permite cantidades, descuentos por línea y total, y eliminar artículos',as
   expect(w.document.querySelector('.pos-dialog').textContent).toContain('Editar artículo');
   click('[data-pos-line-step="1"]');expect(w.document.querySelector('.pos-dialog [name=quantity]').value).toBe('3');
   fill('quantity','2');fill('type','amount');fill('value','0.01');await submit();
-  click('[data-pos-discount="total"]');fill('type','percent');fill('value','10');await submit();
+  click('[data-pos-discount="total"]');await flush();fill('type','percent');fill('value','10');await submit();
   expect(w.document.querySelector('.pos-total').textContent).toContain('2,250.89');expect(w.document.querySelector('.pos-profit').textContent).toContain('1,050.39');
   click('[data-pos-quantity="0"]');await flush();click('[data-pos-line-remove]');await flush();await submit();
   expect(w.document.querySelector('[data-pos-pay]').disabled).toBe(true);
@@ -77,13 +77,14 @@ it('el carrito responde al gesto vertical y se conserva al actualizar catálogo'
   w.dispatchEvent(new w.CustomEvent('fulltech:pos-products',{detail:{products:[{...products[0],price_cents:130000}]}}));expect(w.document.querySelector('.pos-total').textContent).toContain('1,300.00');
 });
 it('acciones permite guardar varias ventas y cambiar entre tickets sin perder artículos',async()=>{
-  click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-new-ticket]');await flush();
+  click('[data-pos-add]');click('[data-pos-tickets]');await flush();click('[data-pos-tickets-new]');await flush();
   expect(tickets.size).toBe(2);expect(w.document.querySelector('.pos-total').textContent).toContain('0.00');
   click('[data-pos-add]');click('[data-pos-add]');click('[data-pos-tickets]');await flush();
-  expect(w.document.querySelector('.pos-dialog').textContent).toContain('Tickets');
+  expect(w.document.body.dataset.posTicketDrawer).toBe('open');
+  expect(w.document.querySelector('#pos-tickets-drawer').textContent).toContain('Tickets');
   expect([...tickets.values()].map(t=>t.draft.items.reduce((n,i)=>n+i.quantity,0))).toEqual([1,2]);
   click('[data-pos-ticket="ticket_1"]');await flush();expect(w.document.querySelector('.pos-total').textContent).toContain('1,250.50');
-  expect(w.document.querySelector('.pos-cart-handle').textContent).toContain('Ticket 1');
+  expect(w.document.querySelector('.pos-cart-handle').textContent).toContain('1 artículo');
 });
 it('acciones permite agregar una venta ocasional sin crear un producto de catálogo',async()=>{
   click('[data-pos-actions]');click('[data-pos-manual]');fill('name','Trabajo ocasional');fill('quantity','2');fill('price','1250.50');fill('cost','600.25');await submit();
@@ -94,14 +95,20 @@ it('acciones permite agregar una venta ocasional sin crear un producto de catál
 it('acciones es un drawer separado, ordena venta rápida primero y no incluye guardar ticket ni gestión de tickets',()=>{
   click('[data-pos-actions]');const drawer=w.document.querySelector('.pos-actions-drawer');
   expect(drawer.open).toBe(true);expect(w.document.querySelector('.pos-dialog').open).toBe(false);
-  expect(drawer.querySelector('nav button').hasAttribute('data-pos-manual')).toBe(true);
-  expect(drawer.querySelector('nav button:nth-of-type(2)').hasAttribute('data-pos-new-ticket')).toBe(true);
-  expect(drawer.querySelector('[data-pos-save-ticket]')).toBeNull();
-  expect(drawer.querySelector('nav button:nth-of-type(3)').hasAttribute('data-pos-note')).toBe(true);
+  const orden=[...drawer.querySelectorAll('nav button')].map(b=>Object.keys(b.dataset).find(k=>k.startsWith('pos'))||'');
+  expect(orden).toEqual(['posManual','posNote','posOrders','posCreateProduct','posStock']);
+  expect(drawer.querySelector('[data-pos-save-ticket],[data-pos-new-ticket],[data-pos-discount-total]')).toBeNull();
   expect(drawer.querySelector('[data-pos-tickets],[data-pos-ticket-rename],[data-pos-ticket-discard]')).toBeNull();
   expect(w.document.querySelector('#pos-client [data-pos-tickets]').textContent).toContain('Tickets');
   drawer.dispatchEvent(new w.Event('cancel',{cancelable:true}));expect(drawer.open).toBe(false);
 });
+/* «Ir a pedidos» reutiliza la navegación existente: no abre otra pantalla. */
+it('«Ir a pedidos» navega a la pestaña de pedidos',()=>{
+  const nav=vi.fn();w.addEventListener('fulltech:pos-navigate',nav);
+  click('[data-pos-actions]');click('[data-pos-orders]');
+  expect(nav.mock.calls[0][0].detail.tab).toBe('pedidos');
+});
+
 it('la nota del pedido se edita desde acciones y se refleja en el carrito',async()=>{
   click('[data-pos-actions]');await flush();click('[data-pos-note]');await flush();
   expect(w.document.querySelector('.pos-dialog').textContent).toContain('Nota del pedido');
@@ -128,7 +135,7 @@ it('cancelar o rechazar una edición inválida conserva la cantidad, el descuent
 it('conserva la nota al guardar y recuperar un ticket',async()=>{
   click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-note]');
   fill('notes','Llamar antes de entregar');await submit();
-  click('[data-pos-actions]');click('[data-pos-new-ticket]');await flush();
+  click('[data-pos-tickets]');await flush();click('[data-pos-tickets-new]');await flush();
   click('[data-pos-tickets]');await flush();click('[data-pos-ticket="ticket_1"]');await flush();
   expect(w.document.querySelector('.pos-cart-note').textContent).toContain('Llamar antes de entregar');
   expect(tickets.get('ticket_1').draft.notes).toBe('Llamar antes de entregar');
@@ -143,17 +150,36 @@ it('los gestos de los bordes abren cada drawer y los gestos verticales o central
    * gesto es el de las respuestas rápidas (lo maneja el chat, no el borde).
    */
   swipe(4,200,110,208);expect(main).not.toHaveBeenCalled();
-  /* En FACTURACIÓN ese mismo gesto abre el SELECTOR DE CLIENTE, no el menú. */
-  expect(w.document.querySelector('.pos-client-dialog').open).toBe(true);
-  click('[data-pos-close]');expect(w.document.querySelector('.pos-client-dialog').open).toBe(false);
+  /* En FACTURACIÓN ese mismo gesto abre el CAJÓN DE CLIENTES, no el menú. */
+  expect(w.document.body.dataset.posDrawer).toBe('open');
+  click('[data-pos-close]');expect(w.document.body.dataset.posDrawer).toBeUndefined();
+  /* Un arrastre corto se cancela: no abre el cajón. */
+  swipe(4,200,60,205);expect(w.document.body.dataset.posDrawer).toBeUndefined();
+  /* Abrir y cerrar arrastrando dentro del cajón hacia la izquierda. */
+  swipe(4,200,250,205);expect(w.document.body.dataset.posDrawer).toBe('open');
+  const cajon=w.document.querySelector('#pos-client-drawer');
+  const arrastrar=(x1,x2)=>{for(const [type,x] of [['pointerdown',x1],['pointermove',x2],['pointerup',x2]]){const event=new w.Event(type,{bubbles:true,cancelable:true});for(const [key,value] of Object.entries({clientX:x,clientY:300,pointerId:8,pointerType:'touch',isPrimary:true}))Object.defineProperty(event,key,{value});cajon.dispatchEvent(event);}};
+  arrastrar(250,120);expect(w.document.body.dataset.posDrawer).toBeUndefined();
   w.document.body.dataset.tab='hoy';
   swipe(4,200,110,208);expect(main.mock.calls[0][0].detail.open).toBe(true);
   w.document.body.dataset.tab='catalogo';
   swipe(387,200,270,207);expect(w.document.querySelector('.pos-actions-drawer').open).toBe(true);
   swipe(260,200,370,205);expect(w.document.querySelector('.pos-actions-drawer').open).toBe(false);
 });
+/* Un cajón cada vez: abrir uno cierra el otro (si no, los dos velos bloquean el panel). */
+it('no permite tener abiertos a la vez el cajón de clientes y el de tickets',async()=>{
+  click('[data-pos-client]');expect(w.document.body.dataset.posDrawer).toBe('open');
+  click('[data-pos-tickets]');await flush();
+  expect(w.document.body.dataset.posDrawer).toBeUndefined();
+  expect(w.document.body.dataset.posTicketDrawer).toBe('open');
+  click('[data-pos-client]');await flush();
+  expect(w.document.body.dataset.posTicketDrawer).toBeUndefined();
+  expect(w.document.body.dataset.posDrawer).toBe('open');
+  click('[data-pos-close]');
+});
+
 it('cada ticket ofrece editar y eliminar en sus tres puntos, conservando el nombre',async()=>{
-  click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-new-ticket]');await flush();click('[data-pos-tickets]');await flush();
+  click('[data-pos-add]');click('[data-pos-tickets]');await flush();click('[data-pos-tickets-new]');await flush();click('[data-pos-tickets]');await flush();
   expect(w.document.querySelectorAll('.pos-ticket-more')).toHaveLength(2);
   expect(w.document.querySelectorAll('.pos-ticket-menu:not([hidden])')).toHaveLength(0);
   click('[data-pos-ticket-menu="ticket_1"]');expect(w.document.querySelector('.pos-ticket-menu:not([hidden])').textContent).toContain('Eliminar ticket');
@@ -163,13 +189,28 @@ it('cada ticket ofrece editar y eliminar en sus tres puntos, conservando el nomb
   expect(w.document.querySelector('.pos-ticket-list').textContent).not.toContain('Venta de María');expect(tickets.get('ticket_1').status).toBe('discarded');
   expect(requests.some(r=>r.url.endsWith('/checkout'))).toBe(false);
 });
-it('busca y confirma un cliente desde el selector de pantalla completa',async()=>{
-  click('[data-pos-client]');expect(w.document.querySelector('.pos-client-dialog').open).toBe(true);
+it('busca y confirma un cliente desde el cajón lateral',async()=>{
+  click('[data-pos-client]');expect(w.document.body.dataset.posDrawer).toBe('open');
+  expect(w.document.querySelector('#pos-client-drawer .pos-modal-form')).toBeNull();
+  expect(w.document.querySelector('#pos-client-drawer').textContent).not.toContain('Seleccionar cliente');
   const search=w.document.querySelector('#pos-client-search');search.value='no existe';search.dispatchEvent(new w.Event('input'));expect(w.document.querySelectorAll('[data-client-choice]')).toHaveLength(0);
   search.value='Cliente';search.dispatchEvent(new w.Event('input'));
   expect(w.document.querySelector('#pos-client-search')).toBe(search);
   click('[data-client-choice]');await flush();
-  expect(w.document.querySelector('[data-pos-client]').textContent).toContain('Cliente <script>');expect(w.document.querySelector('.pos-dialog').open).toBe(false);
+  expect(w.document.querySelector('[data-pos-client]').textContent).toContain('Cliente <script>');expect(w.document.body.dataset.posDrawer).toBeUndefined();
+  expect(w.document.querySelector('[data-pos-client] .pos-ico')).toBeTruthy();
+});
+/* El ticket toma el nombre del cliente y vuelve al genérico al quitarlo. */
+it('nombra el ticket con el cliente sin cambiar su identificador',async()=>{
+  w.dispatchEvent(new w.CustomEvent('fulltech:pos-context',{detail:{customerId:'c1',conversationId:'chat1'}}));await flush();
+  click('[data-pos-add]');click('[data-pos-expand]');
+  /* El botón de tickets muestra el primer nombre del cliente… */
+  expect(w.document.querySelector('[data-pos-tickets]').textContent).toContain('Cliente');
+  /* …y el carrito solo la cantidad de artículos, sin el nombre. */
+  const caption=w.document.querySelector('.pos-cart-handle').textContent;
+  expect(caption).toContain('1 artículo');expect(caption).not.toContain('Cliente');
+  click('[data-pos-remove-client]');await flush();
+  expect(w.document.querySelector('[data-pos-tickets]').textContent).toContain('Tickets');
 });
 /* FILTRO POR ORIGEN: se apoya en los grupos guardados, nunca en el nombre. */
 it('filtra clientes por grupo sin perder la búsqueda escrita',async()=>{

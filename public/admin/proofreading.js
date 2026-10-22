@@ -484,7 +484,12 @@
     aiReplyBusy = true;
     boton.disabled = true;
     let box = document.querySelector('#wa-ai-reply-result');
-    if (!box) { box = document.createElement('div'); box.id = 'wa-ai-reply-result'; box.className = 'wa-proofreading wa-ai-reply-result'; input.closest('#wa-composer')?.prepend(box); }
+    if (!box) {
+      box = document.createElement('div'); box.id = 'wa-ai-reply-result'; box.className = 'wa-proofreading wa-ai-reply-result';
+      // Si el panel contextual está abierto, el resultado se pinta DENTRO de él
+      // (deja libre el compositor); si no, se comporta como siempre.
+      (document.querySelector('#wa-assistant-out') ?? input.closest('#wa-composer'))?.prepend(box);
+    }
     const pintar = (texto, acciones = []) => {
       box.replaceChildren();
       const span = document.createElement('span'); span.className = 'wa-proofreading__text'; span.setAttribute('role', 'status'); span.textContent = texto; box.append(span);
@@ -527,6 +532,9 @@
     if (aiButton) {
       event.preventDefault(); event.stopPropagation();
       if (aiButton.disabled || aiReplyBusy || !conversation() || !area() || document.body.dataset.waView === 'list') return;
+      // El MISMO toque abre el Asistente IA contextual (asistant.js). Si ese
+      // archivo no está cargado, no cambia nada del comportamiento anterior.
+      window.PhytoAssistant?.open?.({ conversationId: conversation() });
       await pedirSugerenciaIA(aiButton);
       return;
     }

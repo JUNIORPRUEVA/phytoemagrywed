@@ -76,7 +76,7 @@ body[data-tab=catalogo]:has(.pos-expanded) #view-catalogo .store-fab{display:gri
 @media(min-width:900px){body[data-tab=catalogo] .mobile-header{padding-inline:24px}.pos-appbar{max-width:1168px;margin:auto}}
 @media(prefers-reduced-motion:reduce){.pos-search-trigger{transition:none}.pos-search-open .pos-appbar-search{animation:none}}
 
-.pos-appbar .wa-appbar__back,.pos-appbar .wa-appbar__icon{display:grid;place-items:center;width:42px;height:42px;min-width:42px;flex-shrink:0;border:0;border-radius:12px;background:transparent;color:var(--text-primary,#e7eefb);cursor:pointer}.pos-appbar svg{width:22px;height:22px}
+.pos-appbar .wa-appbar__back,.pos-appbar .wa-appbar__icon{display:grid;place-items:center;width:42px;height:42px;min-width:42px;flex-shrink:0;border:0;border-radius:12px;background:transparent;color:var(--text-primary,#e7eefb);cursor:pointer}.pos-appbar svg{width:22px;height:22px}.pos-appbar .app-icon--back,.quotes-appbar .app-icon--back{width:22px;height:22px}
 
 body[data-tab=catalogo]:has(#update-bar.update-bar--show) .app,body[data-tab=cotizaciones]:has(#update-bar.update-bar--show) .app{padding-top:var(--pos-update-height,60px);box-sizing:border-box}
 
@@ -439,3 +439,148 @@ body[data-quote-detail='true'] .quotes-appbar .wa-appbar__actions{visibility:hid
 .pos-pending-main small{font-size:.72rem;opacity:.62}
 .pos-pending-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .pos-pending-actions .btn{flex:1 1 140px}
+
+/* ================================================================== *
+ * IDENTIDAD VISUAL PREMIUM (referencia: FullPOS Cloud móvil)
+ *
+ * Valores tomados del tema real de FULLPOS_CLOUD
+ * (lib/features/settings/data/theme_settings_model.dart):
+ *   primary #2563EB · selectionSurface #EFF6FF · surface #F8FAFC
+ *   gradient #FFFFFF → #F8FAFC (70%) → #E5E7EB, topLeft → bottomRight (135deg)
+ *   oscuro: #020617 · #0F172A · #111827
+ * El azul de la familia es #EFF6FF; el degradado va de azul suave a blanco.
+ * ================================================================== */
+html body[data-tab=catalogo]{
+  background-color:#fff;
+  background-image:linear-gradient(135deg,#DFEBFF 0%,#F6F9FF 58%,#FFFFFF 100%);
+  background-attachment:fixed;
+}
+:root[data-theme='dark'] body[data-tab=catalogo]{
+  background-color:#020617;
+  background-image:linear-gradient(135deg,#0B1220 0%,#0F172A 58%,#020617 100%);
+}
+body[data-tab=catalogo] #view-catalogo,
+body[data-tab=catalogo] #store-catalogo{background:transparent}
+
+/* ICONOS DEL USUARIO: un PNG negro con alfa sirve para claro y oscuro. */
+.pos-ico{display:block;width:20px;height:20px;object-fit:contain;pointer-events:none;user-select:none}
+.pos-ico--sm{width:14px;height:14px}
+:root[data-theme='dark'] .pos-ico{filter:invert(1)}
+.pos-client-icon .pos-ico{width:19px;height:19px}
+.pos-remove-client .pos-ico{width:17px;height:17px}
+.pos-tickets-trigger .pos-ico{width:18px;height:18px}
+.pos-card-plus .pos-ico{width:14px;height:14px}
+.pos-client-add .pos-ico{width:18px;height:18px}
+
+/* APPBAR ULTRA COMPACTA: 46px de contenido (+ safe area del dispositivo). */
+body[data-tab=catalogo] .mobile-header{padding:env(safe-area-inset-top,0px) 0 0!important}
+body[data-tab=catalogo] .mobile-header .pos-appbar{
+  min-height:46px!important;padding:0 6px!important;box-sizing:border-box;
+  background:color-mix(in srgb,var(--surface,#fff) 86%,transparent);
+  border-bottom:1px solid #7186a21f;backdrop-filter:blur(12px);
+}
+.pos-appbar-default{min-height:46px;gap:4px}
+.pos-appbar-default>strong{font-size:.92rem;font-weight:600;line-height:1}
+.pos-appbar .wa-appbar__back,.pos-appbar .wa-appbar__icon{width:38px;height:38px;min-width:38px}
+.pos-appbar-tools{gap:2px;display:flex;align-items:center}
+.pos-appbar-search{min-height:46px;gap:2px}
+#pos-search-host .field__input,#pos-search-host .store-filter-trigger{min-height:38px}
+body[data-tab=catalogo] #store-product-grid{padding:4px 10px calc(74px + env(safe-area-inset-bottom,0px))}
+/* Rejilla: menos margen exterior, mismo aire entre tarjetas. */
+.store-items{gap:10px}
+@media(max-width:560px){.store-items{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* El precio nunca parte en dos líneas dentro de la tarjeta. */
+.store-price{white-space:nowrap}
+@media(max-width:430px){.store-items{gap:9px}body[data-tab=catalogo] #store-product-grid{padding-inline:8px}}
+
+/* RESUMEN: superficie elevada, sin sombras duras. */
+.pos-summary{
+  position:relative;padding:8px 10px calc(10px + env(safe-area-inset-bottom,0px));
+  background:color-mix(in srgb,var(--surface,#fff) 94%,transparent);
+  border-top:1px solid #7186a21f;border-radius:16px 16px 0 0;
+  box-shadow:0 -6px 22px #0b1a2e12;backdrop-filter:blur(14px);
+}
+:root[data-theme='dark'] .pos-summary{box-shadow:0 -6px 22px #00000045}
+
+/* ================================================================== *
+ * CAJÓN DE CLIENTES (70% del ancho, alto completo, sigue el dedo)
+ * ================================================================== */
+.pos-drawer{
+  position:fixed;top:0;bottom:0;left:0;z-index:75;
+  width:min(70vw,340px);min-width:262px;max-width:340px;
+  display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+  background:var(--surface,#fff);color:var(--text-primary,#17243b);
+  border-right:1px solid #7186a226;
+  box-shadow:12px 0 34px #0b1a2e1f;
+  transform:translate3d(-101%,0,0);visibility:hidden;touch-action:pan-y;
+  transition:transform .26s cubic-bezier(.22,.61,.36,1),visibility .26s linear;
+}
+/* Abrir el cajón de clientes NO debe arrastrar el de tickets: cada uno tiene su
+   propia bandera y su propio transform. */
+body[data-pos-drawer=open] .pos-drawer:not(.pos-drawer--right){transform:translate3d(0,0,0);visibility:visible}
+.pos-drawer.pos-dragging{transition:none;visibility:visible}
+.pos-drawer-scrim{
+  position:fixed;inset:0;z-index:74;background:#0b1a2e52;
+  opacity:0;pointer-events:none;transition:opacity .26s ease;
+}
+/* Cada cajón tiene SU velo: uno no puede tapar al otro. */
+body[data-pos-drawer=open] .pos-drawer-scrim--client,
+body[data-pos-ticket-drawer=open] .pos-drawer-scrim--tickets{opacity:1;pointer-events:auto}
+.pos-drawer-head{flex-shrink:0;padding:8px 10px 0}
+.pos-drawer .pos-client-toolbar{display:flex;align-items:center;gap:6px;padding:0 0 8px;border-bottom:1px solid #7186a21f}
+.pos-drawer .store-search{flex:1;min-width:0;margin:0}
+.pos-drawer .field__input{height:38px;border-radius:11px;font-size:.82rem}
+.pos-drawer .pos-client-tool{width:38px;height:38px;border-radius:11px}
+.pos-drawer .pos-client-chips{padding:8px 0 2px}
+.pos-drawer .pos-customer-row{
+  display:flex;align-items:center;gap:10px;width:100%;padding:8px 6px;margin:0;
+  border:0;border-bottom:1px solid #7186a222;border-radius:0;background:none;
+  color:inherit;text-align:left;cursor:pointer;
+}
+.pos-drawer .pos-customer-row:last-child{border-bottom:0}
+.pos-drawer .pos-customer-row:focus-visible,.pos-drawer .pos-customer-row:hover{background:#3478ef12}
+.pos-drawer .pos-customer-row[aria-pressed=true]{background:#3478ef14}
+.pos-drawer .pos-customer-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.pos-drawer .pos-customer-main strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pos-drawer .pos-customer-main small{display:block;margin:0}
+.pos-drawer .pos-customer-check{margin-left:auto;flex:0 0 16px;text-align:center}
+.pos-drawer #pos-customer-results{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 10px}
+.pos-drawer .pos-drawer-foot{flex-shrink:0;padding:8px 10px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid #7186a21f}
+.pos-drawer .pos-drawer-foot .pos-text{width:100%;text-align:center;min-height:38px}
+.pos-drawer form.pos-new-client{margin:8px 10px 0;padding:10px;border:1px solid #7186a233;border-radius:12px}
+.pos-drawer form.pos-new-client[hidden]{display:none}
+.pos-drawer .pos-customer-avatar{width:32px;height:32px;font-size:.7rem}
+.pos-drawer .pos-customer-main strong{font-size:.82rem}
+.pos-drawer .pos-customer-main small{font-size:.72rem}
+.pos-drawer .pos-customer-tag{font-size:.55rem}
+@media(min-width:900px){.pos-drawer{width:min(30vw,340px);min-width:300px}}
+
+/* CAJÓN DE TICKETS: mismo estilo, entra por la DERECHA. */
+.pos-drawer--right{
+  left:auto;right:0;
+  transform:translate3d(101%,0,0);
+  border-right:0;border-left:1px solid #7186a226;
+  box-shadow:-12px 0 34px #0b1a2e1f;
+}
+body[data-pos-ticket-drawer=open] .pos-drawer--right{transform:translate3d(0,0,0);visibility:visible}
+.pos-drawer--right.pos-dragging{transition:none;visibility:visible}
+.pos-tickets-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0 10px}
+.pos-tickets-head strong{font-size:1rem;font-weight:600}
+#pos-tickets-drawer .pos-ticket-drawer-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 11px calc(14px + env(safe-area-inset-bottom,0px))}
+
+/* Flechas del carrito y del selector de cliente (iconos del usuario). */
+.pos-cart-chevron{display:grid;place-items:center;width:18px;height:18px;flex-shrink:0}
+.pos-cart-chevron .pos-ico{width:15px;height:15px}
+.pos-client-chevron{display:grid;place-items:center}
+.pos-client-chevron .pos-ico{width:13px;height:13px;opacity:.55}
+
+/* «Cotizar»: secundario, más pequeño y discreto que Cobrar. */
+.pos-actions{grid-template-columns:minmax(0,.85fr) minmax(0,1.5fr)}
+.pos-actions .pos-quote-btn{
+  min-height:0;height:34px;align-self:center;
+  padding:0 12px;font-size:.76rem;font-weight:500;letter-spacing:.01em;
+  border-radius:10px;color:var(--text-secondary,#6b7a75);
+  box-shadow:none;
+}
+.pos-tickets-name{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

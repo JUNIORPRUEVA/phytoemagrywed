@@ -93,12 +93,13 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     // «Principal» va primero: es lo que se usa todo el día.
     expect(posicion('drawer__section--main')).toBeGreaterThan(-1);
     expect(posicion('drawer__section--main')).toBeLessThan(posicion('aria-label="Ventas"'));
-    // Cada grupo es un desplegable con su cabecera, en el orden de siempre.
-    for (const grupo of ['Ventas', 'Entregas', 'Seguimiento']) {
-      expect(html).toMatch(new RegExp(`data-icon="[a-z]+"></span>${grupo}\\s*<span class="drawer__chev"`));
+    // Cada grupo desplegable es un <details> con su cabecera y su flecha.
+    // (Operación y Seguimiento son secciones con botones, no desplegables.)
+    for (const grupo of ['Ventas', 'Entregas']) {
+      expect(html).toMatch(new RegExp(`data-icon="(?:img:)?[a-z]+"></span>${grupo}\\s*<span class="drawer__chev"`));
     }
     expect(posicion('aria-label="Ventas"')).toBeLessThan(posicion('aria-label="Entregas"'));
-    expect(posicion('aria-label="Entregas"')).toBeLessThan(posicion('aria-label="Seguimiento"'));
+    expect(posicion('aria-label="Entregas"')).toBeLessThan(posicion('aria-label="Operación"'));
     // Cierre y Reportes quedan FUERA de los desplegables; «Sistema» ya no existe
     // (sus tres acciones se movieron fuera del menú).
     expect(html).toContain('aria-label="Cierre y reportes"');
@@ -130,7 +131,7 @@ describe('app shell: barra ligera, menú y estado flotantes', () => {
     expect(css).toMatch(/\.drawer \{[\s\S]*?display: flex;\n\s+flex-direction: column;/);
     expect(css).toMatch(/\.drawer__foot \{[\s\S]*?margin-top: auto;/);
     expect(css).toMatch(/\.drawer__logout \{[\s\S]*?justify-self: end;/);
-    expect(html).toContain('data-icon="logout"');
+    expect(html).toContain('data-icon="img:logout"');
     expect(app).toContain('logout: svg(');
   });
 
@@ -335,16 +336,28 @@ describe('compositor y acciones del cliente', () => {
   it('las acciones del chat flotan sobre el compositor, sin duplicarse en la cabecera', () => {
     expect(waHtml).not.toContain('id="compra-nueva-wa"');
     expect(app).not.toContain('compra-nueva-wa');
+    /*
+     * El FAB de acciones del cliente se sustituyó por el botón de IA (✦), que
+     * vive en la MISMA franja flotante. Las acciones comerciales se movieron a
+     * la columna lateral del chat (`#wa-chat-cols`), así que ya no hay
+     * `#wa-actions` en la cabecera ni un segundo menú flotante.
+     */
     expect(waHtml).toContain('class="wa__fab-row"');
-    expect(waHtml).toContain('class="wa-fab"');
+    expect(waHtml).toContain('id="wa-ai-reply"');
+    expect(waHtml).toContain('class="wa-ai-fab"');
     expect(waHtml).not.toContain('class="wa__chat-menu"');
-    expect(waHtml).toContain('id="wa-actions"');
+    expect(waHtml).not.toContain('id="wa-actions"');
     const head = waHtml.slice(waHtml.indexOf('class="wa__chat-head"'), waHtml.indexOf('class="thread thread--wa'));
-    expect(head).not.toContain('id="wa-actions"');
+    expect(head).not.toContain('id="wa-ai-reply"');
   });
 
   it('el cajón de acciones lleva las acciones, con cliente ya elegido', () => {
-    const menu = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatActions') + 5200);
+    // El contenido del cajón vive en `chatActionsMenuHtml`; `openChatActions`
+    // solo lo abre en la hoja.
+    const desde = app.indexOf('function chatActionsMenuHtml');
+    // Hasta la función siguiente: si se corta por longitud se cuela el marcado
+    // de las columnas, que sí usa `<small>` a propósito.
+    const menu = app.slice(desde, app.indexOf('function openChatActions'));
     for (const accion of ['Crear pedido', 'Programar seguimiento', 'Programar mensaje', 'Ver cliente', 'Asignación']) {
       expect(menu).toContain(accion);
     }
@@ -357,7 +370,9 @@ describe('compositor y acciones del cliente', () => {
     // La lupa ya está en la cabecera del chat: aquí no se repite.
     expect(menu).not.toContain('Buscar en esta conversación');
     // Sale como cajón por la derecha (cuadrado y a todo el alto), no como hoja.
-    expect(menu).toContain("variant: 'chat-actions'");
+    // El que abre la hoja es `openChatActions`, no el generador del menú.
+    const abre = app.slice(app.indexOf('function openChatActions'), app.indexOf('function openChatActions') + 400);
+    expect(abre).toContain("variant: 'chat-actions'");
     expect(cssWaLista).toContain("#sheet[data-variant='chat-actions'] .sheet__panel");
     expect(cssWaLista).toContain('@keyframes wa-chat-drawer-in');
     expect(cssWaLista).toContain('border-radius: 0;');

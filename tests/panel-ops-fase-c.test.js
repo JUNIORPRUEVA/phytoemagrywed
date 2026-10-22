@@ -85,10 +85,15 @@ async function api(route, { method = 'GET', body = null, useCookie = cookie } = 
 
 const serverTicket = async (id = ticketId) => (await api(`/api/admin/ops/tickets/${id}`)).body;
 
-function openOps() {
+/** Abre el Centro IA y entra en la sección de TICKETS (la entrada es el equipo). */
+async function openOps() {
   const item = $('[data-tab="ops"]');
   if (item) item.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   else dom.window.dispatchEvent(new dom.window.CustomEvent('fulltech:tab', { detail: { tab: 'ops' } }));
+  await waitFor(() => Boolean($('#view-ops')?.dataset.shell), 'el armazón del centro', 15_000);
+  /* Si ya estamos en la sección de tickets no hay pestaña que pulsar. */
+  const tickets = $('[data-centro-nav="tickets"]');
+  if (tickets) tickets.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 }
 
 beforeAll(async () => {
@@ -193,7 +198,7 @@ afterAll(async () => {
 
 describe('Centro de operaciones · Etapa C', () => {
   it('la bandeja muestra CUÁNTOS mensajes sin leer y el menú lleva el total', async () => {
-    openOps();
+    await openOps();
     await waitFor(() => $$('.ops-row').length === 1, 'la fila del ticket');
     await waitFor(() => $('.ops-row__count')?.textContent === '2', 'el contador de la fila');
     expect($('.ops-row__count').textContent).toBe('2');

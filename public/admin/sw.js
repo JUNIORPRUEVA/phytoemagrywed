@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v229-centro-operaciones-d-admin-20261022';
+const VERSION = 'crm-v240-flecha-atras-c';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -40,9 +40,35 @@ const SHELL = [
   '/admin/assets/icons/chat-search.png',
   '/admin/assets/icons/chat-microphone.png',
   '/admin/assets/icons/chat-send.png',
+  '/admin/assets/icons/billing/tickets.png',
+  '/admin/assets/icons/billing/customer.png',
+  '/admin/assets/icons/billing/remove.png',
+  '/admin/assets/icons/billing/options.png',
+  '/admin/assets/icons/billing/plus.png',
+  '/admin/assets/icons/billing/chevron-up.png',
+  '/admin/assets/icons/billing/chevron-down.png',
+  '/admin/assets/icons/ui/menu.png',
+  '/admin/assets/icons/ui/sun.png',
+  '/admin/assets/icons/ui/whatsapp.png',
+  '/admin/assets/icons/ui/orders.png',
+  '/admin/assets/icons/ui/user.png',
+  '/admin/assets/icons/ui/bell.png',
+  '/admin/assets/icons/ui/back.png',
+  '/admin/assets/icons/ui/support.png',
+  '/admin/assets/icons/ui/cart.png',
+  '/admin/assets/icons/ui/usersadd.png',
+  '/admin/assets/icons/ui/billing.png',
+  '/admin/assets/icons/ui/chart.png',
+  '/admin/assets/icons/ui/share.png',
+  '/admin/assets/icons/ui/robot.png',
+  '/admin/assets/icons/ui/delivery.png',
+  '/admin/assets/icons/ui/logout.png',
+  '/admin/assets/icons/ui/moon.png',
   '/admin/menus-safe-area.css',
   '/admin/proofreading.css',
   '/admin/proofreading.js',
+  '/admin/assistant.css',
+  '/admin/assistant.js',
   '/admin/deepseek-settings.js',
   '/admin/chat-sharing-settings.js',
   '/admin/chat-sharing.css',
