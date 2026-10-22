@@ -444,7 +444,16 @@ describe('delivery assignment notifications and contact flow', () => {
     expect(tickNew.delivery.reminders).toBe(2);
     expect(mockWhatsApp.sent.some((row) => row.to === '+18293333333')).toBe(true);
     expect(mockWhatsApp.sent.some((row) => row.to === '+18294444444')).toBe(true);
-    expect(mockWhatsApp.sent.some((row) => row.to === '+18291111111')).toBe(false);
+    /*
+     * Al repartidor ANTERIOR no le llega nada de ESTE pedido. (Desde que el
+     * supervisor escribe también a los repartidores del CRM puede tener avisos
+     * de otros pedidos suyos: se comprueba por número de pedido, no por número
+     * de teléfono.)
+     */
+    const delPedidoViejo = mockWhatsApp.sent.some(
+      (row) => row.to === '+18291111111' && JSON.stringify(row).includes(order.item.order_number ?? order.item.orderNumber ?? ''),
+    );
+    expect(delPedidoViejo).toBe(false);
   });
 
   it('entrega completada notifica admins y fallo de WhatsApp no revierte entrega', async () => {

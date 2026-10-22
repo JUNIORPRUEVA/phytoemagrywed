@@ -251,6 +251,33 @@ describe('multiusuario, auth y asignación', () => {
     expect(delivery.role).toBe('DELIVERY');
   });
 
+  it('ADMIN guarda los DOS teléfonos del repartidor (personal y flota) y se leen en la lista', async () => {
+    /*
+     * El negocio pidió poder configurar al menos dos números por repartidor para
+     * poder contactarlo: el Supervisor IA escribe al personal y, si falta, al de
+     * la flota. Ambos los pone administración desde Usuarios.
+     */
+    const saved = await request(`/api/admin/users/${maria.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ personalPhone: '+18095550123', fleetPhone: '+18095550999' }),
+    });
+    expect(saved.status).toBe(200);
+    const users = (await body(await request('/api/admin/users'))).users;
+    const fila = users.find((user) => user.id === maria.id);
+    expect(fila.personal_phone).toBe('+18095550123');
+    expect(fila.fleet_phone).toBe('+18095550999');
+
+    // Y se puede borrar: dejar los dos vacíos significa «no le escribas».
+    const cleared = await request(`/api/admin/users/${maria.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ personalPhone: '', fleetPhone: '' }),
+    });
+    expect(cleared.status).toBe(200);
+    const despues = (await body(await request('/api/admin/users'))).users.find((user) => user.id === maria.id);
+    expect(despues.personal_phone ?? null).toBe(null);
+    expect(despues.fleet_phone ?? null).toBe(null);
+  });
+
   it('la contraseña mínima son 6 caracteres (y el servidor dice cuál es el mínimo)', async () => {
     // El negocio pidió seis: se crea la cuenta con el cliente delante.
     const corta = await request('/api/admin/users', {

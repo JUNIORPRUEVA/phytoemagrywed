@@ -264,8 +264,11 @@ describe('ciclo con repartidor INTERNO', () => {
 
     const notifications = await app.collections.list('user_notifications', { limit: 1000 });
     expect(notifications.some((row) => row.type === 'DELIVERY_SUPERVISOR_REMINDER' && row.recipient_user_id === agentId)).toBe(true);
-    // Al interno se le avisa por la app: NO se le manda una plantilla por WhatsApp.
-    expect(mockWhatsApp.sent.filter((row) => row.to === `+${AGENT_PHONE}` && row.template?.name === 'phyto_supervisor_recordatorio_v1')).toHaveLength(0);
+    /*
+     * REGLA NUEVA: al repartidor con cuenta en el CRM también se le escribe por
+     * WhatsApp de verdad (antes solo campana). Se usa su teléfono guardado.
+     */
+    expect(mockWhatsApp.sent.filter((row) => row.to === `+${AGENT_PHONE}` && row.template?.name === 'phyto_supervisor_recordatorio_v1')).toHaveLength(1);
 
     // El agente responde desde SU teléfono por el webhook (como en producción).
     await inbound(AGENT_PHONE, 'Voy para allá');

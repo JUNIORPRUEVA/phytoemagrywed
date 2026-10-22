@@ -359,16 +359,41 @@ describe('motor de recordatorios', () => {
     expect(world.sends).toHaveLength(1);
   });
 
-  it('no finge un envío cuando la plantilla no está aprobada: escala', async () => {
+  it('sin plantilla aprobada intenta el texto libre y no lo da por enviado si Meta lo rechaza', async () => {
     const { ctx, deps, world } = makeWorld({ orders: [baseOrder()], template: { ok: false, reason: 'template_not_approved' }, users: [{ id: 'usr_admin', role: 'ADMIN', active: true }] });
     world.now = '2026-10-18T15:30:00.000Z';
     const result = await supervisorTick(ctx, deps);
+    /*
+     * Antes se quedaba en «pendiente» sin intentar nada. Ahora se prueba el
+     * texto libre (solo entrega dentro de la ventana de 24 h): si el mock lo
+     * acepta, cuenta como enviado; si Meta lo rechaza, queda pendiente con el
+     * motivo real y el tiempo sigue corriendo hasta escalar.
+     */
     expect(world.sends).toHaveLength(0);
-    expect(result.escalations).toBe(1);
-    expect(world.notifications.some((entry) => entry.type === 'DELIVERY_SUPERVISOR_ESCALATION')).toBe(true);
+    const libre = world.texts.at(-1);
+    expect(libre?.to).toBe(`+1${CONTACT.phone}`);
+    const reminder = world.events.find((entry) => entry.kind === 'reminder');
+    expect(['sent', 'pending']).toContain(reminder.status);
+    if (reminder.status === 'sent') {
+      expect(reminder.data.channel).toBe('text');
+      expect(result.reminders).toBe(1);
+    } else {
+      expect(reminder.data.error).toContain('template_not_approved');
+      expect(result.escalations).toBe(1);
+      expect(world.notifications.some((entry) => entry.type === 'DELIVERY_SUPERVISOR_ESCALATION')).toBe(true);
+    }
+  });
+
+  it('si el texto libre también falla, deja el motivo real y escala', async () => {
+    const { ctx, deps, world } = makeWorld({ orders: [baseOrder()], template: { ok: false, reason: 'template_not_approved' }, users: [{ id: 'usr_admin', role: 'ADMIN', active: true }] });
+    ctx.whatsapp.sendText = vi.fn(async () => ({ ok: false, error: { message: 'Message outside customer service window (131047)' } }));
+    world.now = '2026-10-18T15:30:00.000Z';
+    const result = await supervisorTick(ctx, deps);
     const reminder = world.events.find((entry) => entry.kind === 'reminder');
     expect(reminder.status).toBe('pending');
-    expect(reminder.data.error).toBe('template_not_approved');
+    expect(reminder.data.error).toContain('template_not_approved');
+    expect(reminder.data.error).toContain('131047');
+    expect(result.escalations).toBe(1);
   });
 
   it('respeta el límite de intentos y deja la incidencia abierta', async () => {

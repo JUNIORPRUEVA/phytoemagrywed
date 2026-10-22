@@ -682,17 +682,23 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
   });
   if (!claim.claimed) return 'duplicate';
 
-  if (settings.whatsAppReminders && state.responsible?.type === 'external' && phone) {
+  /*
+   * WHATSAPP REAL AL RESPONSABLE.
+   *
+   * Antes SOLO se le escribía al repartidor externo (contacto libre); al que
+   * tiene cuenta en el CRM se le dejaba una campana y nada más. El negocio lo
+   * pidió claro: al mensajero hay que escribirle por WhatsApp de verdad. Se usa
+   * su teléfono personal y, si no tiene, el de la flota.
+   */
+  let channel = null;
+  if (settings.whatsAppReminders && phone) {
     if (!ctx.whatsapp?.enabled) {
       status = 'failed';
       error = 'whatsapp_not_configured';
     } else {
       if (typeof deps.refreshTemplate === 'function') await deps.refreshTemplate(SUPERVISOR_REMINDER_TEMPLATE).catch(() => null);
       const check = typeof deps.checkTemplate === 'function' ? await deps.checkTemplate(SUPERVISOR_REMINDER_TEMPLATE) : { ok: false, reason: 'template_check_unavailable' };
-      if (!check?.ok) {
-        status = 'pending';
-        error = check?.reason ?? 'template_not_approved';
-      } else {
+      if (check?.ok) {
         const sent = await ctx.whatsapp
           .sendTemplate(phone, {
             name: check.template.name,
@@ -707,10 +713,30 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
           .catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
         if (sent?.ok) {
           status = 'sent';
+          channel = 'template';
           messageId = sent.messageId ?? null;
         } else {
           status = 'failed';
           error = clean(sent?.error?.message ?? sent?.reason ?? 'send_failed', 200);
+        }
+      } else {
+        /*
+         * Sin plantilla aprobada se intenta el texto libre. Solo entrega dentro
+         * de la ventana de 24 h; si Meta lo rechaza se guarda el motivo REAL y
+         * el estado queda «pendiente» (la causa de fondo es la plantilla).
+         */
+        const motivoPlantilla = check?.reason ?? 'template_not_approved';
+        const texto = `Hola ${state.responsible.name}, te recuerdo el pedido ${number}: ${state.nextAction}. Cuando lo hagas, avísame por aquí.`.slice(0, MAX_TEXT);
+        const sent = await ctx.whatsapp
+          .sendText(phone, texto, { idempotencyKey: `supervisor-reminder:${item.id}:${state.stage}:${attempt}` })
+          .catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
+        if (sent?.ok) {
+          status = 'sent';
+          channel = 'text';
+          messageId = sent.messageId ?? null;
+        } else {
+          status = 'pending';
+          error = clean(`${motivoPlantilla}: ${sent?.error?.message ?? sent?.reason ?? 'send_failed'}`, 200);
         }
       }
     }
@@ -738,7 +764,15 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
   await settleSupervisorEvent(ctx, claim.id, {
     status,
     detail: `${state.nextAction}${status === 'sent' ? ' · enviado' : status === 'notified' ? ' · aviso interno' : error ? ` · ${error}` : ''}`,
-    data: { attempt, phone_masked: phone ? `***${phone.slice(-4)}` : null, error, message_id: messageId, responsible: state.responsible?.type ?? null },
+    data: {
+      attempt,
+      phone_masked: phone ? `***${phone.slice(-4)}` : null,
+      error,
+      message_id: messageId,
+      channel,
+      whatsapp: phone ? (status === 'sent' ? 'sent' : 'failed') : 'no_phone',
+      responsible: state.responsible?.type ?? null,
+    },
   });
   await ctx.audit?.record({
     entity: 'order',
@@ -1872,4 +1906,261 @@ export async function handleSupervisorReply(input) {
   }
 
   return { handled: false, reason: 'unhandled' };
+}
+
+// ------------------------------------------------- DIAGNÓSTICO DEL AGENTE
+
+const maskPhone = (phone) => (phone ? `***${String(phone).slice(-4)}` : null);
+
+/**
+ * ¿POR QUÉ EL SUPERVISOR NO LE ESTÁ ESCRIBIENDO AL REPARTIDOR?
+ *
+ * Es un chequeo REAL, no una suposición: mira si WhatsApp está configurado, si
+ * los recordatorios están encendidos, si la plantilla está aprobada, si es la
+ * hora de contactar y si cada repartidor tiene un teléfono con el que se le
+ * pueda escribir. Nada se inventa y nada se envía aquí.
+ */
+export async function supervisorDiagnostics(ctx, deps = {}) {
+  const settings = await supervisorSettings(ctx);
+  const users = deps.users ?? (await ctx.users.listUsers().catch(() => []));
+  const now = Number.isFinite(deps.now) ? deps.now : ctx.clock().getTime();
+  const timeZone = deps.timeZone ?? DEFAULT_TIME_ZONE;
+  const localHour = hourIn(timeZone, new Date(now));
+  const dentroDeHorario = localHour >= settings.contactFromHour && localHour < settings.contactToHour;
+  const consultar = async (name) =>
+    typeof deps.checkTemplate === 'function' ? await deps.checkTemplate(name).catch(() => null) : null;
+  const plantilla = await consultar(SUPERVISOR_REMINDER_TEMPLATE);
+  const plantillaEscalado = await consultar(SUPERVISOR_ESCALATION_TEMPLATE);
+
+  const repartidores = users
+    .filter((user) => user.active !== false && ['DELIVERY', 'AGENT'].includes(String(user.role ?? '')))
+    .map((user) => {
+      const phone = toE164(user.personal_phone) ?? toE164(user.fleet_phone);
+      return {
+        id: user.id,
+        name: user.display_name ?? user.username ?? 'Sin nombre',
+        role: user.role,
+        personal: maskPhone(toE164(user.personal_phone)),
+        fleet: maskPhone(toE164(user.fleet_phone)),
+        phone: maskPhone(phone),
+        has_phone: Boolean(phone),
+        active: user.active !== false,
+      };
+    });
+  const conTelefono = repartidores.filter((row) => row.has_phone).length;
+
+  const filas = (await ctx.store.listAdmin({ limit: 5000 })).filter((row) => row.type === 'order_intent');
+  const pickups = deps.pickups ?? (await pendingPickupsByOrder(ctx));
+  let abiertos = 0;
+  let internos = 0;
+  let externos = 0;
+  let sinTelefono = 0;
+  const pedidosSinTelefono = [];
+  for (const item of filas) {
+    if (abiertos >= 300) break;
+    const order = parseOrderRow(item);
+    if (!order) continue;
+    if (!supervisionEligibility(order, settings, item.id).eligible) continue;
+    const state = supervisionOf(order, { settings, now, pendingPickups: pickups.get(item.id) ?? 0 });
+    if (state.stage === SUPERVISOR_STAGES.CLOSED || state.stage === SUPERVISOR_STAGES.POSTPONED) continue;
+    abiertos += 1;
+    if (state.responsible?.type === 'external') {
+      externos += 1;
+      continue;
+    }
+    if (state.responsible?.type !== 'internal') continue;
+    internos += 1;
+    const phone = await recipientPhoneOf(ctx, state.responsible, users);
+    if (!phone) {
+      sinTelefono += 1;
+      if (pedidosSinTelefono.length < 10) {
+        pedidosSinTelefono.push({
+          order_id: item.id,
+          order_number: orderNumberOf(order, item),
+          responsible: state.responsible?.name ?? null,
+        });
+      }
+    }
+  }
+
+  /*
+   * BLOQUEOS, en el orden en que hay que resolverlos. Cada uno lleva el texto
+   * que se le enseña a la persona: el mismo que usa el chat del supervisor.
+   */
+  const bloqueos = [];
+  if (!settings.enabled) {
+    bloqueos.push({
+      code: 'supervisor_off',
+      label: 'El supervisor está apagado.',
+      fix: 'Enciende «Supervisor activo» en las reglas y guarda.',
+    });
+  }
+  if (!ctx.whatsapp?.enabled) {
+    bloqueos.push({
+      code: 'whatsapp_not_configured',
+      label: 'WhatsApp no está configurado en el CRM.',
+      fix: 'Revisa Ajustes → WhatsApp: sin credenciales válidas no sale ningún mensaje.',
+    });
+  }
+  if (!settings.whatsAppReminders) {
+    bloqueos.push({
+      code: 'whatsapp_reminders_off',
+      label: 'Los recordatorios por WhatsApp están desactivados.',
+      fix: 'Activa «Recordatorios por WhatsApp» y guarda las reglas.',
+    });
+  }
+  if (!dentroDeHorario) {
+    bloqueos.push({
+      code: 'out_of_hours',
+      label: `Ahora son las ${localHour}:00, fuera del horario de contacto (${settings.contactFromHour}:00 a ${settings.contactToHour}:00).`,
+      fix: 'El supervisor espera a la hora de contacto; no es un fallo.',
+    });
+  }
+  if (plantilla && plantilla.ok !== true) {
+    bloqueos.push({
+      code: 'template_not_approved',
+      label: `La plantilla ${SUPERVISOR_REMINDER_TEMPLATE} no está aprobada en Meta (${plantilla.reason ?? 'sin aprobar'}).`,
+      fix: 'Mientras tanto se intenta el texto libre; fuera de la ventana de 24 h Meta lo rechaza. Aprueba la plantilla en Meta.',
+    });
+  }
+  if (repartidores.length && !conTelefono) {
+    bloqueos.push({
+      code: 'couriers_without_phone',
+      label: 'Ningún repartidor tiene teléfono guardado.',
+      fix: 'Usuarios → abre el repartidor y guarda su teléfono personal o el de la flota.',
+    });
+  }
+  if (!abiertos) {
+    bloqueos.push({
+      code: 'no_open_orders',
+      label: 'No hay pedidos abiertos que supervisar.',
+      fix: 'Asigna un pedido a un repartidor; en cuanto pase el primer minuto de aviso se le escribe.',
+    });
+  }
+  if (sinTelefono) {
+    bloqueos.push({
+      code: 'orders_without_phone',
+      label: `${sinTelefono} pedido(s) abierto(s) con un repartidor sin teléfono: a esos no se les puede escribir.`,
+      fix: 'Guarda el teléfono del repartidor en Usuarios.',
+    });
+  }
+
+  return {
+    ok: true,
+    generated_at: new Date(now).toISOString(),
+    ready: bloqueos.length === 0,
+    blockers: bloqueos,
+    whatsapp: {
+      configured: Boolean(ctx.whatsapp?.enabled),
+      graph_version: ctx.whatsapp?.graphVersion ?? null,
+    },
+    settings: {
+      enabled: settings.enabled,
+      whatsAppReminders: settings.whatsAppReminders,
+      internalNotifications: settings.internalNotifications,
+      contactFromHour: settings.contactFromHour,
+      contactToHour: settings.contactToHour,
+      firstReminderMinutes: settings.firstReminderMinutes,
+      followUpMinutes: settings.followUpMinutes,
+      maxAttempts: settings.maxAttempts,
+      escalateAfterMinutes: settings.escalateAfterMinutes,
+      localHour,
+      within_hours: dentroDeHorario,
+    },
+    templates: {
+      reminder: { name: SUPERVISOR_REMINDER_TEMPLATE, ok: Boolean(plantilla?.ok), status: plantilla?.template?.status ?? null, reason: plantilla?.reason ?? null },
+      escalation: { name: SUPERVISOR_ESCALATION_TEMPLATE, ok: Boolean(plantillaEscalado?.ok), status: plantillaEscalado?.template?.status ?? null, reason: plantillaEscalado?.reason ?? null },
+    },
+    couriers: repartidores,
+    orders: { open: abiertos, internal: internos, external: externos, without_phone: sinTelefono, without_phone_sample: pedidosSinTelefono },
+  };
+}
+
+/**
+ * RESPUESTA DEL SUPERVISOR (chat del panel).
+ *
+ * Habla con datos REALES del diagnóstico; si no sabe algo, lo dice. No promete
+ * envíos que no puede hacer ni culpa a nadie: enumera lo que falta y el paso
+ * concreto para arreglarlo.
+ */
+export function supervisorAnswer(diagnostics, question = '') {
+  const q = fold(question);
+  const hay = (...palabras) => palabras.some((palabra) => q.includes(palabra));
+  const d = diagnostics ?? {};
+  const b = (code) => (d.blockers ?? []).find((row) => row.code === code) ?? null;
+  const lista = (rows) => rows.map((row) => `· ${row.label} ${row.fix ? `→ ${row.fix}` : ''}`.trim()).join('\n');
+
+  if (hay('plantilla', 'aprobad', 'meta rechaz', 'template')) {
+    const t = d.templates?.reminder ?? {};
+    if (t.ok) {
+      return {
+        topic: 'template',
+        answer: `La plantilla ${t.name} está aprobada y la uso para el recordatorio. Si el repartidor no la recibe, el problema está en su número (Usuarios → teléfono) o en la ventana de WhatsApp, no en la plantilla.`,
+      };
+    }
+    return {
+      topic: 'template',
+      answer: `Me falta la plantilla ${t.name}: Meta todavía no la tiene aprobada (${t.reason ?? t.status ?? 'sin aprobar'}). Mientras espero, intento mandar el aviso como texto libre, pero fuera de la ventana de 24 h WhatsApp lo rechaza. En cuanto esté aprobada, el recordatorio sale solo.`,
+    };
+  }
+
+  if (hay('telefono', 'numero', 'contact', 'a quien', 'repartidor') && !hay('por que', 'no manda', 'no envia', 'no llega')) {
+    const repartidores = d.couriers ?? [];
+    const sin = repartidores.filter((row) => !row.has_phone);
+    const con = repartidores.filter((row) => row.has_phone);
+    const detalle = repartidores
+      .map((row) => `· ${row.name} (${row.role}) · personal ${row.personal ?? 'sin guardar'} · flota ${row.fleet ?? 'sin guardar'}`)
+      .join('\n');
+    if (!repartidores.length) {
+      return { topic: 'couriers', answer: 'No hay ninguna cuenta de repartidor o agente activa. Crea el usuario en Usuarios y guárdale el teléfono.' };
+    }
+    return {
+      topic: 'couriers',
+      answer: `${con.length} de ${repartidores.length} repartidor(es) tienen teléfono con el que puedo escribir.${sin.length ? ` Me faltan: ${sin.map((row) => row.name).join(', ')}.` : ''}\n${detalle}\nSe usa el teléfono personal y, si no hay, el de la flota. Los dos se guardan en Usuarios (solo administración).`,
+    };
+  }
+
+  if (hay('horario', 'hora', 'noche', 'madrugada', 'cuando')) {
+    const s = d.settings ?? {};
+    return {
+      topic: 'schedule',
+      answer: `Solo contacto entre las ${s.contactFromHour}:00 y las ${s.contactToHour}:00. Ahora son las ${s.localHour}:00, así que ${s.within_hours ? 'estoy dentro del horario' : 'estoy esperando la hora de contacto'}. El primer aviso sale a los ${s.firstReminderMinutes} min y repito cada ${s.followUpMinutes} min, hasta ${s.maxAttempts} veces; luego escalo a administración a los ${s.escalateAfterMinutes} min.`,
+    };
+  }
+
+  if (hay('apagad', 'encendid', 'activo', 'activar', 'no funciona', 'no hace nada')) {
+    const s = d.settings ?? {};
+    return {
+      topic: 'settings',
+      answer: `Supervisor ${s.enabled ? 'encendido' : 'APAGADO'}. Recordatorios por WhatsApp ${s.whatsAppReminders ? 'encendidos' : 'APAGADOS'}. Avisos internos ${s.internalNotifications ? 'encendidos' : 'apagados'}. WhatsApp ${d.whatsapp?.configured ? 'configurado' : 'SIN configurar'}.${(d.blockers ?? []).length ? `\nTengo ${d.blockers.length} bloqueo(s) ahora mismo:\n${lista(d.blockers)}` : '\nNo veo bloqueos: puedo escribir.'}`,
+    };
+  }
+
+  if (hay('pedido', 'atrasad', 'abiert', 'quien', 'cuant')) {
+    const o = d.orders ?? {};
+    return {
+      topic: 'orders',
+      answer: `Tengo ${o.open ?? 0} pedido(s) abierto(s): ${o.internal ?? 0} con repartidor del CRM y ${o.external ?? 0} con contacto externo.${o.without_phone ? ` ${o.without_phone} de ellos son de un repartidor sin teléfono, así que a esos no les puedo escribir.` : ''}`,
+    };
+  }
+
+  if (hay('whatsapp', 'mensaje', 'envia', 'enviar', 'llega', 'no manda', 'por que no')) {
+    const bloqueos = d.blockers ?? [];
+    if (!bloqueos.length) {
+      return {
+        topic: 'whatsapp',
+        answer: `Sí estoy enviando por WhatsApp: hay ${d.couriers?.filter((row) => row.has_phone).length ?? 0} repartidor(es) con teléfono y la plantilla ${d.templates?.reminder?.name ?? ''} está ${d.templates?.reminder?.ok ? 'aprobada' : 'pendiente'}. Si aun así no llega, revisa el número guardado y la calidad del número de WhatsApp del negocio.`,
+      };
+    }
+    return { topic: 'whatsapp', answer: `No puedo escribir todavía por ${bloqueos.length} motivo(s):\n${lista(bloqueos)}` };
+  }
+
+  // Sin tema reconocido: el estado completo, corto y en orden.
+  const bloqueos = d.blockers ?? [];
+  return {
+    topic: 'summary',
+    answer: bloqueos.length
+      ? `Esto es lo que me falta para escribirle al repartidor:\n${lista(bloqueos)}`
+      : `Estoy listo: WhatsApp configurado, recordatorios encendidos y ${d.couriers?.filter((row) => row.has_phone).length ?? 0} repartidor(es) con teléfono. Puedes preguntarme por «plantilla», «teléfono», «horario» o «pedidos».`,
+  };
 }

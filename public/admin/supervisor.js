@@ -16,12 +16,14 @@
 const state = {
   tab: '',
   data: null,
+  diagnostics: null,
   bucket: 'todas',
   loading: false,
   error: '',
   busy: '',
   form: null,
   preview: null,
+  ask: { question: '', answer: '', topic: '', busy: false, error: '' },
 };
 
 const esc = (value) =>
@@ -147,6 +149,66 @@ function listHtml() {
   return `<div class="sup-list">${rows.map(rowHtml).join('')}</div>`;
 }
 
+/**
+ * PREGÚNTALE AL SUPERVISOR.
+ *
+ * El negocio quiere hablar con el agente: preguntarle por qué no le escribe al
+ * repartidor y que conteste si le falta configuración. Las respuestas salen del
+ * diagnóstico REAL del servidor (WhatsApp, plantilla, horario y teléfonos); no
+ * se inventa nada ni se envía ningún mensaje desde aquí.
+ */
+function agentHtml() {
+  const d = state.diagnostics;
+  const bloqueos = d?.blockers ?? [];
+  const answer = state.ask.answer ? esc(state.ask.answer).replace(/\n/g, '<br>') : '';
+  const detalle = d
+    ? d.ready
+      ? '<p class="sup-note">Puedo escribir por WhatsApp: no veo bloqueos.</p>'
+      : `<ul class="sup-agent__blockers">${bloqueos
+          .map((row) => `<li><strong>${esc(row.label)}</strong>${row.fix ? `<span>${esc(row.fix)}</span>` : ''}</li>`)
+          .join('')}</ul>`
+    : '<p class="sup-note">Comprobando WhatsApp, plantilla y teléfonos…</p>';
+  const sugerencias = [
+    '¿Por qué no le escribes al repartidor?',
+    '¿Qué teléfonos tienes guardados?',
+    '¿La plantilla está aprobada?',
+    '¿Estás activo y en horario?',
+  ];
+  return `
+    <section class="sup-agent">
+      <h3>Pregúntale al Supervisor</h3>
+      <p class="sup-lede">Contesta con lo que ve el sistema ahora mismo.</p>
+      ${detalle}
+      <div class="sup-agent__chips">
+        ${sugerencias.map((texto) => `<button class="sup-chip" type="button" data-sup-ask="${esc(texto)}">${esc(texto)}</button>`).join('')}
+      </div>
+      <form class="sup-agent__form" data-sup-ask-form>
+        <input type="text" name="question" maxlength="300" autocomplete="off" placeholder="Escribe tu pregunta…" value="${esc(state.ask.question)}">
+        <button class="sup-btn" type="submit" ${state.ask.busy ? 'disabled' : ''}>${state.ask.busy ? 'Revisando…' : 'Preguntar'}</button>
+      </form>
+      ${answer ? `<div class="sup-agent__answer"><strong>Supervisor IA</strong><p>${answer}</p></div>` : ''}
+      ${state.ask.error ? `<p class="sup-alert" role="alert">${esc(state.ask.error)}</p>` : ''}
+    </section>`;
+}
+
+async function askQuestion(question) {
+  const texto = String(question ?? '').trim();
+  if (!texto || state.ask.busy) return;
+  state.ask = { question: texto, answer: state.ask.answer, topic: state.ask.topic, busy: true, error: '' };
+  render();
+  try {
+    const result = await api('/api/admin/delivery-supervisor/ask', {
+      method: 'POST',
+      body: JSON.stringify({ question: texto }),
+    });
+    state.ask = { question: '', answer: result.answer ?? '', topic: result.topic ?? '', busy: false, error: '' };
+    if (result.diagnostics) state.diagnostics = result.diagnostics;
+  } catch (error) {
+    state.ask = { question: texto, answer: '', topic: '', busy: false, error: error.message };
+  }
+  render();
+}
+
 function settingsHtml() {
   const s = state.data?.settings;
   if (!s) return '';
@@ -186,8 +248,7 @@ function settingsHtml() {
 
 function render() {
   const host = VIEW();
-  if (!host) return;
-  if (state.error && !state.data) {
+  if (!host) return;  if (state.error && !state.data) {
     host.innerHTML = `
       <div class="sup-head"><h2>Supervisor IA Delivery</h2></div>
       <p class="sup-empty" role="alert">${esc(state.error)}</p>
@@ -239,6 +300,7 @@ function render() {
     <div class="sup-foot">
       <button class="sup-btn sup-btn--ghost" type="button" data-sup-daily ${state.busy === 'daily' ? 'disabled' : ''}>Generar resumen diario</button>
     </div>
+    ${agentHtml()}
     ${settingsHtml()}
     <section class="sup-activity">
       <h3>Actividad reciente</h3>
@@ -254,6 +316,16 @@ async function load() {
   state.error = '';
   try {
     state.data = await api('/api/admin/delivery-supervisor');
+    /*
+     * DIAGNÓSTICO APARTE: si falla no se cae la pantalla; solo se avisa de que
+     * no se pudo comprobar el envío.
+     */
+    try {
+      const diag = await api('/api/admin/delivery-supervisor/diagnostics');
+      state.diagnostics = diag.diagnostics ?? null;
+    } catch {
+      state.diagnostics = null;
+    }
   } catch (error) {
     state.error = error.status === 403 ? 'Solo administración puede ver el supervisor.' : error.message;
   } finally {
@@ -509,6 +581,11 @@ document.addEventListener('click', (event) => {
     render();
     return;
   }
+  const sugerencia = target.closest('[data-sup-ask]');
+  if (sugerencia) {
+    void askQuestion(sugerencia.dataset.supAsk);
+    return;
+  }
   const postpone = target.closest('[data-sup-postpone]');
   if (postpone) {
     openPostpone(postpone.dataset.supPostpone, postpone.dataset.supNumber ?? 'pedido');
@@ -527,7 +604,14 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('submit', (event) => {
   const form = event.target instanceof HTMLFormElement ? event.target : null;
-  if (!form || !form.matches('[data-sup-postpone-form]')) return;
+  if (!form) return;
+  if (form.matches('[data-sup-ask-form]')) {
+    event.preventDefault();
+    const data = new FormData(form);
+    void askQuestion(data.get('question'));
+    return;
+  }
+  if (!form.matches('[data-sup-postpone-form]')) return;
   event.preventDefault();
   submitPostpone(form).catch(() => {});
 });

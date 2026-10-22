@@ -1350,7 +1350,7 @@ body[data-tab='ops'] .centro__body {
 
 /* ----------------------------------------------------------- el equipo */
 
-body[data-tab='ops'] .centro-dir { padding: 14px 12px 6px; max-width: 780px; margin: 0 auto; }
+body[data-tab='ops'] .centro-dir { padding: 14px 12px 6px; max-width: 1180px; margin: 0 auto; }
 
 body[data-tab='ops'] .centro-dir__head {
   display: flex;

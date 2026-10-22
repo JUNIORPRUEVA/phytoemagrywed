@@ -345,6 +345,40 @@ describe('supervisor de delivery con el servidor real', () => {
     const response = await request('/api/admin/delivery-supervisor', {}, cookie);
     expect(response.status).toBe(403);
   }, 30000);
+
+  it('el diagnóstico dice qué falta para escribirle al repartidor y el chat lo explica', async () => {
+    const diag = await request('/api/admin/delivery-supervisor/diagnostics');
+    expect(diag.status).toBe(200);
+    const { diagnostics } = await json(diag);
+    expect(diagnostics.ok).toBe(true);
+    expect(Array.isArray(diagnostics.blockers)).toBe(true);
+    expect(Array.isArray(diagnostics.couriers)).toBe(true);
+    /* El teléfono nunca se manda completo: solo los últimos cuatro dígitos. */
+    for (const courier of diagnostics.couriers) {
+      for (const masked of [courier.personal, courier.fleet, courier.phone]) {
+        if (masked) expect(masked.startsWith('***')).toBe(true);
+      }
+    }
+
+    const ask = await request('/api/admin/delivery-supervisor/ask', {
+      method: 'POST',
+      body: JSON.stringify({ question: '¿Por qué no le escribes al repartidor?' }),
+    });
+    expect(ask.status).toBe(200);
+    const answer = await json(ask);
+    expect(answer.ok).toBe(true);
+    expect(typeof answer.answer).toBe('string');
+    expect(answer.answer.length).toBeGreaterThan(10);
+    expect(['whatsapp', 'couriers', 'summary']).toContain(answer.topic);
+  }, 30000);
+
+  it('un agente sin permiso tampoco puede preguntarle al supervisor', async () => {
+    const cookie = await login('agente.supervisor@phyto.local', 'Agente-Supervisor-12345');
+    expect((await request('/api/admin/delivery-supervisor/diagnostics', {}, cookie)).status).toBe(403);
+    const ask = await request('/api/admin/delivery-supervisor/ask', { method: 'POST', body: JSON.stringify({ question: 'hola' }) }, cookie);
+    expect(ask.status).toBe(403);
+  }, 30000);
+
   it('asignar con autoSend manda el pedido al repartidor externo en el mismo paso', async () => {
     const order = await createOrder();
     const antes = mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_pedido_repartidor_v1').length;

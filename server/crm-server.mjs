@@ -127,9 +127,6 @@ import { handleSupplierRoutes } from './suppliers-routes.mjs';
  * con el chat de WhatsApp del cliente.
  */
 import { handleOpsRoute } from './ops/routes.mjs';
-import { onTicketEvent as opsOnTicketEvent, opsAgentTick } from './ops/agents.mjs';
-import { opsDeliveryTicketTick } from './ops/delivery-tickets.mjs';
-import { opsDeadlineTick } from './ops/notify.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
 import { createRealtimeHub, eventFromMutation } from './realtime.mjs';
@@ -143,7 +140,6 @@ import {
 import { createSettingsService } from './settings.mjs';
 import { createProofreadingService } from './proofreading.mjs';
 import { handleProofreadingRoute } from './proofreading-routes.mjs';
-import { handleAssistantRoute } from './assistant-routes.mjs';
 import { createChatSharingService, handleChatSharingRoute } from './chat-sharing.mjs';
 import { createSqlQuery } from './sql-query.mjs';
 import { createMediaStore, MEDIA_STATUS, SEND_STATUS } from './media.mjs';
@@ -210,6 +206,8 @@ import {
   handleSupervisorReply,
   postponeDelivery,
   saveSupervisorSettings,
+  supervisorAnswer,
+  supervisorDiagnostics,
   supervisorPreview,
   supervisorSnapshot,
   supervisorTick,
@@ -1361,22 +1359,6 @@ async function closeActiveTrackingForOrder(ctx, orderId, status, actor = null) {
     await emitDeliveryEvent(ctx, status === 'COMPLETED' ? 'delivery.completed' : 'delivery.tracking_stopped', updated);
   }
   return closed;
-}
-
-/**
- * AVISO DEL CENTRO DE OPERACIONES: se guarda y se intenta el push.
- *
- * El orden importa: primero la fila en `user_notifications` (idempotente por
- * clave) y después el envío. Si el push falla, el aviso sigue estando y su
- * estado real queda en `push_jobs`. Es el mismo camino que usan WhatsApp y los
- * pedidos, sin inventar un segundo sistema de avisos.
- */
-async function notifyOpsUser(ctx, input) {
-  const created = await createUserNotification(ctx, input);
-  if (created?.notification && !created.duplicate) {
-    await sendPushForNotification(ctx, created.notification).catch(() => null);
-  }
-  return created;
 }
 
 async function createUserNotification(ctx, input) {
@@ -5926,9 +5908,6 @@ async function handle(req, res, ctx) {
     if (await handleProofreadingRoute({ req, res, route, ctx, actor, can,
       canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
       readJson: readJsonBody, json })) return;
-    if (await handleAssistantRoute({ req, res, route, ctx, actor, can,
-      canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
-      readJson: readJsonBody, json })) return;
     if (await handleChatSharingRoute({ req, res, route, ctx, can, readJson: readJsonBody, json })) return;
 
     if (route === '/api/admin/auth/me' && req.method === 'GET') {
@@ -6595,10 +6574,7 @@ async function handle(req, res, ctx) {
   if (await handleOpsRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,
       can:permission=>hasPermission(actor,permission),
       findOrder:id=>findOrderItem(ctx.store,id),
-      listOrders:()=>ctx.store.listAdmin({limit:5000}),
-      /* El Agente de Seguimiento razona con el MISMO proveedor del corrector. */
-      llm:(input)=>ctx.proofreading?.plan?.(input),
-      notify:(input)=>notifyOpsUser(ctx,input)})) return;
+      listOrders:()=>ctx.store.listAdmin({limit:5000})})) return;
 
     if (route === '/api/admin/inventory' && req.method === 'GET') {
       const snapshot = await ctx.inventory.catalog();
@@ -8370,6 +8346,35 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/delivery-supervisor/preview' && req.method === 'GET') {
       if (!requirePermission('delivery.tracking.manage_all')) return;
       json(res, 200, await supervisorPreview(ctx, supervisorBridge(ctx)));
+      return;
+    }
+
+    /*
+     * DIAGNÓSTICO Y CHAT DEL SUPERVISOR.
+     *
+     * El negocio preguntó «¿por qué el agente no manda WhatsApp?». Esto responde
+     * con datos REALES (WhatsApp configurado, plantilla aprobada, horario y el
+     * teléfono de cada repartidor) y no envía nada: solo informa.
+     */
+    if (route === '/api/admin/delivery-supervisor/diagnostics' && req.method === 'GET') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      json(res, 200, { ok: true, diagnostics: await supervisorDiagnostics(ctx, supervisorBridge(ctx)) });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-supervisor/ask' && req.method === 'POST') {
+      if (!requirePermission('delivery.tracking.manage_all')) return;
+      /** @type {any} */
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const diagnostics = await supervisorDiagnostics(ctx, supervisorBridge(ctx));
+      const question = text(body.question, 300) ?? '';
+      const answer = supervisorAnswer(diagnostics, question);
+      json(res, 200, { ok: true, question, topic: answer.topic, answer: answer.answer, diagnostics });
       return;
     }
 
@@ -12088,46 +12093,6 @@ export async function startCrmServer(config = {}) {
     resolveTemplate: (name) => approvedTemplate(ctxRef.current, name),
     deliveryControlTick: () => deliveryControlTick(ctxRef.current),
     deliverySupervisorTick: () => supervisorTick(ctxRef.current, supervisorBridge(ctxRef.current)),
-    /* Plazos de los tickets internos: aviso aunque nadie tenga el panel abierto. */
-    opsDeadlineTick: () =>
-      opsDeadlineTick({
-        ctx: ctxRef.current,
-        deps: { notify: (input) => notifyOpsUser(ctxRef.current, input) },
-      }),
-    /*
-     * AGENTES (Etapa D). Una vuelta = como máximo un paso por run. Las
-     * herramientas que necesitan leer pedidos los reciben inyectados: el motor
-     * de agentes no conoce el almacén legacy.
-     */
-    opsAgentTick: () =>
-      opsAgentTick({
-        ctx: ctxRef.current,
-        deps: {
-          notify: (input) => notifyOpsUser(ctxRef.current, input),
-          findOrder: (id) => findOrderItem(ctxRef.current.store, id),
-          /*
-           * MODELO DE LENGUAJE (Etapa E). Se inyecta la consulta del servicio
-           * de corrección, que ya tiene la clave cifrada, la política de modelo
-           * y el contador diario. Si no hay clave o está apagado devuelve null
-           * y el agente sigue con su pauta determinista.
-           */
-          llm: config.opsLlm
-            ? config.opsLlm.plan
-            : (input) => ctxRef.current.proofreading?.plan?.(input),
-        },
-      }),
-    /*
-     * PUENTE SUPERVISOR → CENTRO DE OPERACIONES: abre el ticket del pedido que
-     * necesita atención y le pone al agente encima. No envía nada al cliente.
-     */
-    opsDeliveryTicketTick: () =>
-      opsDeliveryTicketTick({
-        ctx: ctxRef.current,
-        deps: {
-          listOrders: () => ctxRef.current.store.listAdmin({ limit: 5000 }),
-          findOrder: (id) => findOrderItem(ctxRef.current.store, id),
-        },
-      }),
     clock: config.clock,
     intervalMs: config.schedulerIntervalMs,
     log: settings.quiet ? () => {} : (message) => console.log(message),
@@ -12251,69 +12216,6 @@ export async function startCrmServer(config = {}) {
   };
   ctxRef.current = ctx;
   chatEventsRef.current = (info) => emitChatEvent(ctx, info);
-  /*
-   * GANCHO DE AGENTES (Etapa D). `publishTicketEvent` lo llama tras publicar un
-   * evento de ticket para marcar trabajo pendiente; es "dispara y olvida" y
-   * nunca puede tumbar la operación que sí se guardó.
-   */
-  ctx.opsAgents = {
-    onTicketEvent: (input) => {
-      Promise.resolve()
-        .then(() => opsOnTicketEvent({ ctx: ctxRef.current, ...input }))
-        .catch((error) => console.error('[ops] onTicketEvent:', error));
-    },
-  };
-
-  /*
-   * OPERACIONES ASISTIDAS DEL CHAT: el asistente PREPARA y la persona CONFIRMA.
-   * Aquí se exponen los MISMOS servicios que usa el panel, para no duplicar
-   * reglas de negocio (precios, stock, permisos, idempotencia).
-   */
-  ctx.assistantOps = {
-    catalog: () => ctx.storeCatalog.list(),
-    checkStock: (sale) => ctx.storeCatalog.checkOrder({ items: sale.items }),
-    createOrder: (body, actor) => createOrder(ctx, body, actor),
-    createFollowup: (input) => followups.createManual(input),
-    setCustomerNotes: (customerId, notes) => ctx.db.update('customers', customerId, { notes }),
-    /*
-     * COTIZACIÓN: se reutiliza la RUTA REAL del punto de venta (mismas
-     * validaciones de precio, stock, idempotencia por `requestId` y auditoría).
-     * Se llama a la propia instancia en 127.0.0.1 con la cookie del operador
-     * que confirma; no hay una segunda implementación de cotizaciones.
-     */
-    createQuote: async ({ proposal, cookie }) => {
-      const body = {
-        requestId: `assistant_${proposal.id}`.slice(0, 80),
-        customerId: proposal.customer_id,
-        conversationId: proposal.conversation_id ?? '',
-        items: proposal.params.items,
-        paymentMethod: proposal.params.paymentMethod,
-        deliveryFee: 0,
-        discount: 0,
-        deliveryMethod: 'pickup',
-        expectedTotal: Math.round(Number(proposal.preview?.total ?? 0) * 100),
-      };
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/api/admin/pos/quotes`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', cookie: String(cookie ?? '') },
-          body: JSON.stringify(body),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data?.ok !== true) {
-          return { ok: false, error: data?.error ?? 'quote_failed', message: data?.message ?? 'No se pudo crear la cotización.' };
-        }
-        return {
-          ok: true,
-          duplicate: data.duplicate === true,
-          ref: { type: 'quote', id: data.quoteId ?? data.document?.id ?? null, number: data.document?.number ?? null },
-          summary: `Cotización ${data.document?.number ?? ''}`.trim(),
-        };
-      } catch {
-        return { ok: false, error: 'quote_failed', message: 'No se pudo crear la cotización.' };
-      }
-    },
-  };
 
   /**
    * Quién firma una petición de multimedia: la MISMA sesión que el resto del panel
@@ -12595,11 +12497,6 @@ export async function startCrmServer(config = {}) {
     whatsapp,
     purchaseStatus: ctx.purchaseStatus,
     businessCompletedPurchaseStatus: BUSINESS_COMPLETED_PURCHASE_STATUS,
-    /*
-     * Aviso interno (persistente + push). Se expone también para las pruebas y
-     * para las pasadas que no nacen de una petición HTTP (plazos de tickets).
-     */
-    notifyUser: (input) => notifyOpsUser(ctx, input),
     ctx,
     close,
   };

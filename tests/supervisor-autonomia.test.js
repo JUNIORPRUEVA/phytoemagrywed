@@ -21,6 +21,8 @@ import {
   SUPERVISOR_EVENTS,
   SUPERVISOR_REMINDER_TEMPLATE,
   handleSupervisorReply,
+  supervisorAnswer,
+  supervisorDiagnostics,
   supervisorTick,
 } from '../server/delivery-supervisor.mjs';
 import { COURIER_STATUS } from '../server/delivery-courier.mjs';
@@ -327,5 +329,102 @@ describe('Supervisor IA: webhooks y avisos internos', () => {
     await supervisorTick(ctx, deps);
     expect(world.settings.delivery_supervisor_heartbeat.at).toBe(minutos(15));
     expect(world.settings.delivery_supervisor_heartbeat.reminders).toBe(1);
+  });
+});
+
+/*
+ * WHATSAPP REAL AL REPARTIDOR DEL CRM.
+ *
+ * El negocio se quejó de que al mensajero solo le llegaban notificaciones. Estas
+ * pruebas fijan lo que ahora tiene que pasar: se le escribe por WhatsApp a su
+ * teléfono (personal o flota) y, si la plantilla no está aprobada, se intenta el
+ * texto libre dejando constancia del motivo real si Meta lo rechaza.
+ */
+describe('Supervisor IA: WhatsApp real al repartidor del CRM', () => {
+  const conTelefono = [
+    { id: 'usr_del', role: 'DELIVERY', active: true, display_name: 'Carlos', personal_phone: '+18095550123' },
+    { id: 'usr_admin', role: 'ADMIN', active: true, display_name: 'Jefa' },
+  ];
+
+  it('escribe al teléfono personal del repartidor con cuenta en el CRM', async () => {
+    const { ctx, deps, world } = mundo({ ordenes: [pedidoInterno()] });
+    deps.users = conTelefono;
+    ctx.users.listUsers = async () => conTelefono;
+    world.now = minutos(11);
+
+    const r = await supervisorTick(ctx, deps);
+    expect(r.reminders).toBe(1);
+    expect(world.sends).toHaveLength(1);
+    expect(world.sends[0].to).toBe('+18095550123');
+    const evento = eventos(world, 'reminder')[0];
+    expect(evento.status).toBe('sent');
+    expect(evento.data.channel).toBe('template');
+    expect(evento.data.responsible).toBe('internal');
+  });
+
+  it('si el personal falta usa el teléfono de la flota', async () => {
+    const { ctx, deps, world } = mundo({ ordenes: [pedidoInterno()] });
+    deps.users = [{ id: 'usr_del', role: 'DELIVERY', active: true, display_name: 'Carlos', fleet_phone: '+18095550777' }];
+    ctx.users.listUsers = async () => deps.users;
+    world.now = minutos(11);
+    await supervisorTick(ctx, deps);
+    expect(world.sends[0].to).toBe('+18095550777');
+  });
+
+  it('sin plantilla aprobada intenta el texto libre y lo deja registrado', async () => {
+    const { ctx, deps, world } = mundo({ ordenes: [pedidoInterno()] });
+    deps.users = conTelefono;
+    ctx.users.listUsers = async () => conTelefono;
+    deps.checkTemplate = async () => ({ ok: false, reason: 'template_not_approved' });
+    world.now = minutos(11);
+
+    await supervisorTick(ctx, deps);
+    expect(world.texts).toHaveLength(1);
+    expect(world.texts[0].to).toBe('+18095550123');
+    const evento = eventos(world, 'reminder')[0];
+    expect(evento.status).toBe('sent');
+    expect(evento.data.channel).toBe('text');
+  });
+});
+
+describe('Supervisor IA: diagnóstico y chat', () => {
+  it('dice qué falta: ningún repartidor tiene teléfono', async () => {
+    const { ctx, deps } = mundo({ ordenes: [pedidoInterno()] });
+    const diag = await supervisorDiagnostics(ctx, deps);
+    expect(diag.ready).toBe(false);
+    expect(diag.blockers.map((row) => row.code)).toContain('couriers_without_phone');
+    expect(diag.blockers.map((row) => row.code)).toContain('orders_without_phone');
+    expect(diag.orders.without_phone).toBe(1);
+
+    const answer = supervisorAnswer(diag, '¿por qué no le escribes al repartidor?');
+    expect(answer.topic).toBe('whatsapp');
+    expect(answer.answer).toContain('teléfono');
+  });
+
+  it('con teléfono, WhatsApp y plantilla listos responde que puede escribir', async () => {
+    const { ctx, deps } = mundo({ ordenes: [pedidoInterno()] });
+    deps.users = [{ id: 'usr_del', role: 'DELIVERY', active: true, display_name: 'Carlos', personal_phone: '+18095550123' }];
+    ctx.users.listUsers = async () => deps.users;
+    const diag = await supervisorDiagnostics(ctx, deps);
+    expect(diag.ready).toBe(true);
+    expect(diag.blockers).toHaveLength(0);
+    expect(diag.couriers[0].has_phone).toBe(true);
+    expect(diag.couriers[0].personal).toBe('***0123');
+
+    const answer = supervisorAnswer(diag, '¿me puedes escribir por WhatsApp?');
+    expect(answer.topic).toBe('whatsapp');
+    expect(answer.answer).toContain('Sí estoy enviando');
+  });
+
+  it('avisa cuando el supervisor está apagado o fuera de horario', async () => {
+    const { ctx, deps, world } = mundo({ ordenes: [pedidoInterno()], supervisor: { enabled: false } });
+    const diag = await supervisorDiagnostics(ctx, deps);
+    expect(diag.blockers.map((row) => row.code)).toContain('supervisor_off');
+    expect(supervisorAnswer(diag, '¿estás activo?').topic).toBe('settings');
+
+    world.now = '2026-10-20T02:00:00.000Z'; // 22:00 en RD
+    const tarde = await supervisorDiagnostics(ctx, deps);
+    expect(tarde.blockers.map((row) => row.code)).toContain('out_of_hours');
+    expect(supervisorAnswer(tarde, '¿a qué hora escribes?').topic).toBe('schedule');
   });
 });

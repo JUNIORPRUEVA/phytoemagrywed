@@ -251,10 +251,21 @@ describe('Centro IA · oficina de agentes', () => {
     expect($$('.centro-card').length).toBe(2);
   }, 30_000);
 
-  it('el Supervisor IA se alcanza desde el centro (una sola pantalla)', async () => {
+  it('el Supervisor IA se alcanza desde su fila del centro (una sola pantalla)', async () => {
     await openCentro();
-    const nav = $$('[data-centro-nav]').find((node) => node.dataset.centroNav === 'supervisor');
-    expect(nav).toBeTruthy();
+    /*
+     * En el centro los agentes son FILAS de una sola lista: no hay un acceso
+     * aparte que duplique al supervisor. Su pantalla se abre desde su oficina.
+     */
+    expect($$('[data-centro-nav]').filter((node) => node.dataset.centroNav === 'supervisor')).toHaveLength(0);
+    const card = $$('.centro-card').find((node) => node.textContent.includes('Supervisor de reparto'));
+    expect(card).toBeTruthy();
+    click(card);
+    const nav = await waitFor(
+      () => $$('[data-centro-nav]').find((node) => node.dataset.centroNav === 'supervisor'),
+      'el acceso a su pantalla desde la oficina',
+      15_000,
+    );
     click(nav);
     await waitFor(() => dom.window.document.body.dataset.tab === 'supervisor', 'la pestaña del supervisor', 15_000);
     expect($('#view-supervisor')).toBeTruthy();

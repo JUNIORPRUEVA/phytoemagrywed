@@ -412,7 +412,6 @@ function centroShellHtml() {
         <nav class="centro__seg" aria-label="Secciones del Centro IA">
           <button class="centro__segbtn" data-centro-nav="agents" type="button" aria-current="${state.screen === 'agents'}">Agentes</button>
           <button class="centro__segbtn" data-centro-nav="tickets" type="button" aria-current="false">Tickets</button>
-          <button class="centro__segbtn" data-centro-nav="supervisor" type="button" aria-current="false">Supervisor IA</button>
         </nav>
         <div class="centro__tools" id="centro-tools"></div>
       </header>
@@ -721,6 +720,8 @@ function officeHtml() {
         <div class="centro-id__actions">
           <span class="centro-meta" data-kind="pending">${esc(stats.pending ?? 0)} en curso</span>
           <span class="centro-meta" data-kind="unread">${esc(stats.unread ?? 0)} sin leer</span>
+          <!-- Su pantalla de siempre se abre DESDE aquí: en el centro no hay un acceso aparte que lo duplique. -->
+          ${agent.key === 'delivery_supervisor' ? `<button class="centro-btn centro-btn--ghost" data-centro-nav="supervisor" type="button">Pantalla del supervisor</button>` : ''}
           <button class="centro-btn centro-btn--ghost" data-centro-nav="tickets" type="button">Bandeja completa</button>
         </div>
       </div>

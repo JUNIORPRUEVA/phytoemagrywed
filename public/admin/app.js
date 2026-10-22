@@ -158,15 +158,6 @@
     ['auto', 'Como el teléfono', 'contrast'],
   ];
   const TEMA_BARRA = { light: '#145bd7', dark: '#0b1424' };
-  /*
-   * El sol del tema «Claro» es el icono entregado por el usuario (PNG local
-   * optimizado). Los demás temas siguen con su vector de siempre.
-   */
-  const temaIcono = (name) => {
-    if (name === 'sun') return '<img class="app-icon" src="/admin/assets/icons/ui/sun.png" alt="" aria-hidden="true" draggable="false">';
-    if (name === 'moon') return '<img class="app-icon" src="/admin/assets/icons/ui/moon.png" alt="" aria-hidden="true" draggable="false">';
-    return ICONS[name];
-  };
 
   const temaDeLaPersona = () => document.documentElement.dataset.tema ?? 'auto';
   const temaDelTelefono = () =>
@@ -187,7 +178,7 @@
           ([valor, texto, icono]) => `<button class="tema-opt" data-tema="${valor}" type="button" role="radio" aria-checked="${
             valor === elegido
           }">
-              <span class="tema-opt__icon" aria-hidden="true">${temaIcono(icono)}</span>
+              <span class="tema-opt__icon" aria-hidden="true">${ICONS[icono]}</span>
               <span class="tema-opt__label">${escapeHtml(texto)}</span>
             </button>`,
         ).join('')}
@@ -203,7 +194,7 @@
     // sigue valiendo (si ya estaba elegido se respeta), pero no ocupa sitio aquí.
     const temasMenu = TEMAS.filter(([key]) => key !== 'auto');
     if (!box.children.length) box.innerHTML = temasMenu.map(([key, label, icon]) =>
-      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${temaIcono(icon)}</span><span>${label}</span></button>`
+      `<button class="drawer__theme" type="button" data-tema="${key}" role="radio" aria-checked="false" aria-label="${label}"><span aria-hidden="true">${ICONS[icon]}</span><span>${label}</span></button>`
     ).join('');
     box.querySelectorAll('[data-tema]').forEach((button) => {
       button.setAttribute('aria-checked', String(button.dataset.tema === temaDeLaPersona()));
@@ -686,7 +677,7 @@
     /* Ajustes = mandos que se deslizan (un engranaje aquí se confundía con el sol de Hoy). */
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
-    back: '<img class="app-icon app-icon--back" src="/admin/assets/icons/ui/back.png" alt="" aria-hidden="true" draggable="false">',
+    back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
     /* «⋮» de verdad: tres puntos RELLENOS (con trazo quedaban huecos y no se veían). */
     more: svg('<circle cx="12" cy="5.2" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="12" cy="18.8" r="1.9" fill="currentColor" stroke="none"/>'),
     search: svg('<circle cx="10.8" cy="10.8" r="5.8"/><path d="m15.2 15.2 4.6 4.6"/>'),
@@ -739,17 +730,7 @@
   /** Pinta los iconos declarados en el HTML (`data-icon="..."`). */
   function paintIcons(root = document) {
     $$('[data-icon]', root).forEach((slot) => {
-      const key = slot.dataset.icon;
-      /*
-       * ICONOS ENTREGADOS POR EL USUARIO: `data-icon="img:<nombre>"` pinta un PNG
-       * local ya optimizado (72 px, `scripts/optimize-ui-icons.py`). Se resuelve
-       * desde disco como el resto del panel: nada se pide a un servidor externo.
-       */
-      if (key.startsWith('img:')) {
-        slot.innerHTML = `<img class="app-icon" src="/admin/assets/icons/ui/${key.slice(4)}.png" alt="" aria-hidden="true" draggable="false">`;
-        return;
-      }
-      const art = ICONS[key];
+      const art = ICONS[slot.dataset.icon];
       if (art) slot.innerHTML = art;
     });
   }
@@ -2491,7 +2472,7 @@
     if(state.tab==='catalogo'){
       const search=$('.store-search-line'),input=search?.querySelector('input'),focused=input===document.activeElement,start=input?.selectionStart,end=input?.selectionEnd;search?.remove();
       const detail=new URLSearchParams(location.search).has('product');
-      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false"><img class="pos-ico" src="/admin/assets/icons/billing/options.png" alt="" aria-hidden="true" draggable="false"></button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div>`;
+      box.innerHTML=`<div class="wa-appbar pos-appbar"><div class="pos-appbar-default"><button class="wa-appbar__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button><strong>Facturación</strong><div class="pos-appbar-tools">${!detail?`<button class="wa-appbar__icon pos-search-trigger" data-pos-search-open type="button" aria-label="Buscar productos y servicios">${ICONS.search}</button><button class="wa-appbar__icon" data-pos-actions type="button" aria-label="Acciones" aria-haspopup="dialog" aria-expanded="false">${ICONS.more||'<span aria-hidden="true">⋯</span>'}</button>`:''}</div></div><div class="pos-appbar-search"><button class="wa-appbar__icon" data-pos-search-close type="button" aria-label="Cerrar búsqueda">${ICONS.close}</button><div id="pos-search-host"></div></div></div><button class="pos-swipe-close" data-billing-close type="button" aria-label="Cerrar facturación" title="Cerrar">${ICONS.close}</button>`;
       if(search)$('#pos-search-host').append(search);
       window.dispatchEvent(new Event('fulltech:pos-appbar'));
       if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}return;
@@ -2540,8 +2521,7 @@
       const unreadNotifications = unreadNotificationCount();
       box.innerHTML = `<div class="dashboard-head">
         <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
-          <!-- Icono entregado por el usuario; al abrir vuelve el aspa de barras. -->
-          <img class="app-icon app-icon--menu" src="/admin/assets/icons/ui/menu.png" alt="" aria-hidden="true" draggable="false">
+          <!-- Tres barras que se convierten en ✕ al abrir: se ve que hay menú. -->
           <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="dashboard-head__title">
@@ -2549,11 +2529,11 @@
           <span>CRM</span>
         </div>
         <div class="dashboard-head__actions">
-          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil"><img class="app-icon app-icon--quick" src="/admin/assets/icons/ui/user.png" alt="" aria-hidden="true" draggable="false"></button>
+          <button class="dashboard-head__quick" data-dashboard-profile type="button" aria-label="Abrir mi perfil" title="Mi perfil">${ICONS.person}</button>
           <button class="dashboard-head__quick ${unreadNotifications ? 'dashboard-head__quick--alert' : ''}" data-dashboard-notifications type="button" aria-label="${
             unreadNotifications ? `${unreadNotifications} notificación(es)` : 'Sin notificaciones'
           }" title="Notificaciones">
-            <img class="app-icon app-icon--quick" src="/admin/assets/icons/ui/bell.png" alt="" aria-hidden="true" draggable="false">
+            ${ICONS.bell}
             ${unreadNotifications ? `<span class="dashboard-head__badge">${unreadNotifications > 99 ? '99+' : unreadNotifications}</span>` : ''}
           </button>
         </div>
@@ -9235,6 +9215,16 @@
         </span>
         <span class="field__hint">Mínimo ${minPass()} caracteres.</span>
       </label>
+      <label class="field">
+        <span class="field__label">Teléfono personal (opcional)</span>
+        <input class="field__input" name="personalPhone" inputmode="tel" autocomplete="tel" placeholder="+1 809 555 1234" />
+        <span class="field__hint">Aquí le escribe el Supervisor IA al repartidor.</span>
+      </label>
+      <label class="field">
+        <span class="field__label">Teléfono de la flota (opcional)</span>
+        <input class="field__input" name="fleetPhone" inputmode="tel" placeholder="+1 809 555 0000" />
+        <span class="field__hint">Se usa si el personal no está disponible. Puedes guardar los dos.</span>
+      </label>
       <button class="btn btn--primary btn--block" type="submit">Crear usuario</button>
     </form>`;
   }
@@ -9274,6 +9264,18 @@
         <div class="user-row__permissions user-row__permissions--sheet">
           ${permisos.map((permiso) => `<span>${escapeHtml(permiso)}</span>`).join('')}
         </div>
+        <form class="grid-form" id="user-phones" data-user-phones="${escapeHtml(user.id)}">
+          <label class="field">
+            <span class="field__label">Teléfono personal</span>
+            <input class="field__input" name="personalPhone" inputmode="tel" autocomplete="off" value="${escapeHtml(user.personal_phone ?? '')}" placeholder="+1 809 555 1234" />
+          </label>
+          <label class="field">
+            <span class="field__label">Teléfono de la flota</span>
+            <input class="field__input" name="fleetPhone" inputmode="tel" autocomplete="off" value="${escapeHtml(user.fleet_phone ?? '')}" placeholder="+1 809 555 0000" />
+          </label>
+          <p class="field__hint">El Supervisor IA escribe a estos números (primero el personal; si falta, el de la flota). Deja los dos vacíos para no escribirle.</p>
+          <button class="btn btn--primary btn--block" type="submit">Guardar teléfonos</button>
+        </form>
         <div class="menu-list user-profile__actions">
           <button class="menu-item" data-user-role="${escapeHtml(user.id)}" data-role="${user.role === 'ADMIN' ? 'AGENT' : 'ADMIN'}" type="button">
             <span class="menu-item__icon" aria-hidden="true">${ICONS.userCog}</span>
@@ -9294,6 +9296,30 @@
         </div>
       </section>`,
     );
+    /*
+     * TELÉFONOS DEL REPARTIDOR.
+     *
+     * El negocio pidió poder configurar DOS números por usuario para poder
+     * contactarlo. El backend ya los guardaba (`personal_phone` / `fleet_phone`)
+     * pero solo se editaban en «Mi perfil»; aquí los pone administración.
+     */
+    $('#user-phones')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = Object.fromEntries(new FormData(form).entries());
+      await working(form.querySelector('button[type="submit"]'), 'Guardando…', async () => {
+        try {
+          await api(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ personalPhone: data.personalPhone ?? '', fleetPhone: data.fleetPhone ?? '' }),
+          });
+          await loadUsers();
+          toast('Teléfonos guardados');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast(error.body?.message ?? 'No se pudieron guardar los teléfonos');
+        }
+      });
+    });
   }
 
   function renderUsuarios() {
@@ -9325,6 +9351,11 @@
                 <small>${escapeHtml(user.last_login_at ? fmtWhen(user.last_login_at) : 'Sin acceso')}</small>
               </span>
               <span class="item__meta">${escapeHtml(user.username ?? '')} · ${escapeHtml(roleLabel(user.role))} · ${escapeHtml(userStatusText(user))}</span>
+              ${
+                [user.personal_phone, user.fleet_phone].filter(Boolean).length
+                  ? `<span class="item__meta">${escapeHtml([user.personal_phone, user.fleet_phone].filter(Boolean).join(' · '))}</span>`
+                  : '<span class="item__meta">Sin teléfono para WhatsApp</span>'
+              }
               ${
                 user.role === 'ADMIN'
                   ? '<span class="user-row__permissions"><span>Todos los permisos</span></span>'
@@ -11869,18 +11900,6 @@
       },
     }[contactState];
     if (!copy || contactState === CONTACT_STATE.OPEN_WINDOW) return '';
-    /*
-     * MIENTRAS SE ESPERA AL CLIENTE, UNA SOLA LÍNEA.
-     * Antes este aviso ocupaba título + párrafo + explicación + botón grande y
-     * empujaba el compositor. Ahora es una etiqueta discreta con la acción
-     * pequeña al lado: informa sin comer espacio.
-     */
-    if (contactState === CONTACT_STATE.WAITING_CUSTOMER_REPLY) {
-      return `<section class="wa-state wa-state--mini wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}" title="${escapeHtml(copy.detail)}">
-        <strong>${escapeHtml(copy.title)}</strong>
-        <button class="wa-state__action" id="wa-open-template" type="button">Enviar plantilla</button>
-      </section>`;
-    }
     return `<section class="wa-state wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}">
       <div>
         <strong>${escapeHtml(copy.title)}</strong>
@@ -22619,7 +22638,7 @@
     delivery: 'Mis entregas',
     mapa: 'Mapa y entregas',
     supervisor: 'Supervisor IA',
-    ops: 'Centro IA',
+    ops: 'Centro de operaciones',
     'perfil-cliente': 'Perfil del cliente',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
@@ -22905,14 +22924,28 @@
     window.addEventListener('fulltech:pos-saved',()=>load({silent:true}));
     window.addEventListener('fulltech:catalog-view',renderMobileHeader);
     window.addEventListener('fulltech:pos-navigate',e=>setTab(e.detail.tab));
+    /*
+     * NAVEGACIÓN ENTRE MÓDULOS (Centro IA ↔ Supervisor).
+     *
+     * `ops.js` y `supervisor.js` avisan con `fulltech:navigate`, pero nadie lo
+     * escuchaba: el acceso «Supervisor IA» de la oficina del agente no hacía
+     * nada. Aquí se cambia de pestaña y, si viene un pedido, se abre en el Centro.
+     */
+    window.addEventListener('fulltech:navigate', (event) => {
+      const detalle = event.detail || {};
+      const destino = detalle.tab;
+      if (!destino || !VIEWS.includes(destino)) return;
+      setTab(destino, { silent: false });
+      if (detalle.orderId) {
+        setTimeout(() => window.dispatchEvent(new CustomEvent('fulltech:ops-open', { detail: { orderId: detalle.orderId } })), 0);
+      }
+    });
     window.addEventListener('fulltech:main-drawer',e=>{
       if(e.detail?.open===false){closeDrawer();return;}
       if($('#app')?.hidden!==false)return;
       window.dispatchEvent(new Event('fulltech:close-actions'));openDrawer();
     });
     window.addEventListener('fulltech:pos-delivery',async e=>{await load({silent:true});openDeliveryAssignSheet({orderId:e.detail.orderId});});
-    /* Continuar un pedido pendiente desde facturación: abre ESE pedido, no otro. */
-    window.addEventListener('fulltech:order-edit',e=>{const orderId=e.detail?.orderId;if(orderId)openOrderEditor(orderId);});
     /*
      * Deja un mensaje escrito en el chat del cliente sin enviarlo: se abre la
      * conversación con el borrador puesto y la persona solo pulsa Enviar.
@@ -22999,22 +23032,6 @@
     });
 
     $('#settings-offline-data')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('fulltech:offline-open')));
-
-    /*
-     * Navegación pedida por un módulo (p. ej. el Centro IA abre el Supervisor
-     * IA). Los módulos no tocan `setTab` directamente: piden la pestaña y el
-     * panel decide, con sus permisos y su historial.
-     */
-    window.addEventListener('fulltech:navigate', (event) => {
-      const tab = String(event?.detail?.tab ?? '');
-      if (!VIEWS.includes(tab)) return;
-      setTab(tab);
-      /* Si además piden un registro concreto, se le pasa al módulo. */
-      const detalle = event?.detail ?? {};
-      if (tab === 'ops' && (detalle.orderId || detalle.ticketId)) {
-        window.dispatchEvent(new CustomEvent('fulltech:ops-open', { detail: detalle }));
-      }
-    });
 
     $('#search').addEventListener('input', (event) => {
       state.q = event.target.value.trim();
