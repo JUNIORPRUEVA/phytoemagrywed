@@ -176,7 +176,7 @@ it('usa tarjetas compactas, alterna lista/cuadrícula y conserva la preferencia'
   const card=w.document.querySelector('[data-store-detail]');
   expect(card.textContent).not.toContain('600.25');expect(card.textContent).not.toContain('unidades');expect(card.textContent).not.toContain('CAM-1');
   expect(w.document.querySelector('[data-store-sale],[data-store-refresh]')).toBeNull();
-  expect(w.document.querySelector('[data-pos-actions]').getAttribute('aria-label')).toBe('Acciones de facturación');
+  expect(w.document.querySelector('.store-fab')).toBeNull();
   w.document.querySelector('[data-store-filters]').click();w.document.querySelector('[data-store-layout="list"]').click();
   expect(w.document.querySelector('#store-product-grid').dataset.layout).toBe('list');
   expect(w.localStorage.getItem('fulltech.catalog.layout')).toBe('list');

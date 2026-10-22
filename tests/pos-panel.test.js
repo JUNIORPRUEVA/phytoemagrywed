@@ -8,6 +8,9 @@ const store=readFileSync('public/admin/store.js','utf8');
 let dom,w,requests,admin,customers,fail,products,tickets,ticketCounter,pendingOrders;
 const flush=async()=>{for(let i=0;i<15;i++)await new Promise(r=>setImmediate(r));};
 const click=s=>w.document.querySelector(s).click();
+// «Acciones» vive en la barra superior (app.js no se carga en esta prueba): se
+// dispara sobre el mismo botón delegado para verificar el comportamiento real.
+const openActions=()=>{const b=w.document.createElement('button');b.setAttribute('data-pos-actions','');w.document.body.append(b);b.click();b.remove();};
 const fill=(name,value)=>{w.document.querySelector(`.pos-dialog [name=${name}]`).value=value;};
 const submit=async()=>{w.document.querySelector('.pos-modal-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await flush();};
 beforeEach(async()=>{
@@ -87,16 +90,20 @@ it('acciones permite guardar varias ventas y cambiar entre tickets sin perder ar
   expect(w.document.querySelector('.pos-cart-handle').textContent).toContain('1 artículo');
 });
 it('acciones permite agregar una venta ocasional sin crear un producto de catálogo',async()=>{
-  click('[data-pos-actions]');click('[data-pos-manual]');fill('name','Trabajo ocasional');fill('quantity','2');fill('price','1250.50');fill('cost','600.25');await submit();
+  openActions();click('[data-pos-manual]');fill('name','Trabajo ocasional');fill('quantity','2');fill('price','1250.50');fill('cost','600.25');await submit();
   expect(w.document.querySelector('.pos-total').textContent).toContain('2,501.00');
   expect(w.document.querySelector('.pos-cart-lines').textContent).toContain('Trabajo ocasional');
   expect(requests.some(r=>r.url.endsWith('/store/products')&&r.body)).toBe(false);
 });
 it('acciones es un drawer separado, ordena venta rápida primero y no incluye guardar ticket ni gestión de tickets',()=>{
-  click('[data-pos-actions]');const drawer=w.document.querySelector('.pos-actions-drawer');
+  openActions();const drawer=w.document.querySelector('.pos-actions-drawer');
   expect(drawer.open).toBe(true);expect(w.document.querySelector('.pos-dialog').open).toBe(false);
   const orden=[...drawer.querySelectorAll('nav button')].map(b=>Object.keys(b.dataset).find(k=>k.startsWith('pos'))||'');
-  expect(orden).toEqual(['posManual','posNote','posOrders','posCreateProduct','posStock']);
+  expect(orden).toEqual(['posManual','posNote','posOptions','posPending','posSaveOrder','posOrders','posCreateProduct','posStock']);
+  // La casilla del pedido viene marcada: guardar el pedido es lo de siempre.
+  expect(drawer.querySelector('[data-pos-save-order]').getAttribute('aria-checked')).toBe('true');
+  // Sin artículos no hay nada que guardar, aunque la casilla esté marcada.
+  expect(drawer.querySelector('[data-pos-pending]').disabled).toBe(true);
   expect(drawer.querySelector('[data-pos-save-ticket],[data-pos-new-ticket],[data-pos-discount-total]')).toBeNull();
   expect(drawer.querySelector('[data-pos-tickets],[data-pos-ticket-rename],[data-pos-ticket-discard]')).toBeNull();
   expect(w.document.querySelector('#pos-client [data-pos-tickets]').textContent).toContain('Tickets');
@@ -105,12 +112,12 @@ it('acciones es un drawer separado, ordena venta rápida primero y no incluye gu
 /* «Ir a pedidos» reutiliza la navegación existente: no abre otra pantalla. */
 it('«Ir a pedidos» navega a la pestaña de pedidos',()=>{
   const nav=vi.fn();w.addEventListener('fulltech:pos-navigate',nav);
-  click('[data-pos-actions]');click('[data-pos-orders]');
+  openActions();click('[data-pos-orders]');
   expect(nav.mock.calls[0][0].detail.tab).toBe('pedidos');
 });
 
 it('la nota del pedido se edita desde acciones y se refleja en el carrito',async()=>{
-  click('[data-pos-actions]');await flush();click('[data-pos-note]');await flush();
+  openActions();await flush();click('[data-pos-note]');await flush();
   expect(w.document.querySelector('.pos-dialog').textContent).toContain('Nota del pedido');
   fill('notes','Entregar por la tarde');await submit();
   expect(w.document.querySelector('.pos-cart-note').textContent).toContain('Entregar por la tarde');
@@ -133,7 +140,7 @@ it('cancelar o rechazar una edición inválida conserva la cantidad, el descuent
   expect(w.document.querySelector('.pos-dialog [name=value]').value).toBe('10');
 });
 it('conserva la nota al guardar y recuperar un ticket',async()=>{
-  click('[data-pos-add]');click('[data-pos-actions]');click('[data-pos-note]');
+  click('[data-pos-add]');openActions();click('[data-pos-note]');
   fill('notes','Llamar antes de entregar');await submit();
   click('[data-pos-tickets]');await flush();click('[data-pos-tickets-new]');await flush();
   click('[data-pos-tickets]');await flush();click('[data-pos-ticket="ticket_1"]');await flush();

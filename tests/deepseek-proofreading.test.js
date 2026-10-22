@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PER_MINUTE_CALLS, DAILY_LIMIT_MAX, createProofreadingService, validCorrection } from '../server/proofreading.mjs';
+import { PER_MINUTE_CALLS, DAILY_LIMIT_MAX, createProofreadingService, validCorrection, ensureClosingQuestion, sinPreciosInventados } from '../server/proofreading.mjs';
 import { handleProofreadingRoute } from '../server/proofreading-routes.mjs';
 import { startCrmServer } from '../server/crm-server.mjs';
 
@@ -18,6 +18,34 @@ function fixture(options={}) {
   return {service,settings,rows,fetchImpl:options.fetchImpl || fetchImpl,input};
 }
 async function enable(f, extra={}) { await f.service.save({apiKey:API_KEY,enabled:true,dailyLimit:100,...extra}); }
+describe('Tono dominicano: cierre en pregunta y precios reales',()=>{
+  it('convierte el «dime qué producto…» imperativo en una pregunta de cierre',()=>{
+    expect(ensureClosingQuestion('De una, claro que sí. Dime qué producto quieres y te lo preparo.'))
+      .toBe('De una, claro que sí. ¿Qué producto quieres?');
+  });
+  it('no fuerza una venta donde no la hay',()=>{
+    expect(ensureClosingQuestion('Buenas, claro que sí tenemos delivery.'))
+      .toBe('Buenas, claro que sí tenemos delivery.');
+  });
+  it('corta lo que venga después de la última pregunta',()=>{
+    expect(ensureClosingQuestion('Perfecto, el de 60. ¿Me confirmas cuál es? Y dime la zona para el delivery.'))
+      .toBe('Perfecto, el de 60. ¿Me confirmas cuál es?');
+  });
+  it('quita los cierres genéricos de call center',()=>{
+    const texto = ensureClosingQuestion('Listo, ya lo reviso. ¿En qué más puedo ayudarle?');
+    expect(texto).toBe('Listo, ya lo reviso. ¿Qué producto te interesa?');
+    expect(texto).not.toMatch(/en qué más puedo/iu);
+  });
+  it('no deja pasar un precio que no está en el hilo',()=>{
+    expect(sinPreciosInventados('Claro que sí, el de 60 te sale en RD$1,850. ¿Te lo preparo?', 'cuanto cuesta el de 60'))
+      .toBe('¿Te lo preparo?');
+  });
+  it('conserva el precio cuando el cliente o el equipo ya lo había dicho',()=>{
+    const hilo = 'el de 60 cuesta RD$1,850';
+    expect(sinPreciosInventados('Sí, el de 60 está en RD$1,850. ¿Te lo preparo?', hilo))
+      .toBe('Sí, el de 60 está en RD$1,850. ¿Te lo preparo?');
+  });
+});
 describe('DeepSeek: secretos, consumo y correcciones',()=>{
   it('guarda cifrado y mantiene la configuración al recrear el servicio',async()=>{
     const f=fixture();await enable(f);
@@ -44,6 +72,26 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     await enable(f);
     expect((await f.service.correct({...f.input,text:'el pedido llega oy'})).correctedText).toBe('El pedido llega hoy.');
     expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it('la sugerencia pide tono dominicano cercano y cierre por el producto', async () => {
+    /*
+     * El equipo pidió respuestas que suenen a una persona real de Higüey, no a
+     * un call center, y que cierren preguntando por el PRODUCTO («¿Qué producto
+     * te interesa?») en vez de «¿qué te gustaría ordenar?». Si alguien borra
+     * estas reglas del prompt, esta prueba cae.
+     */
+    const f = fixture();
+    await enable(f);
+    await f.service.suggestReply({ messages: [{ direction: 'inbound', text: 'Buenas, tienen delivery?' }], actorId: 'a' });
+    const payload = JSON.parse(f.fetchImpl.mock.calls[0][1].body);
+    const instruccion = payload.messages.at(-1).content;
+    expect(instruccion).toContain('vendedor dominicano cercano');
+    expect(instruccion).toContain('de tú');
+    expect(instruccion).toContain('¿Qué producto te interesa?');
+    expect(instruccion).toContain('Nunca cierres con «¿qué te gustaría ordenar?');
+    expect(instruccion).toContain('«¿en qué más puedo ayudarle?»');
+    // El cierre útil también cubre quejas y dudas de entrega.
+    expect(instruccion).toContain('fecha, dirección o qué pasó');
   });
   it('la sugerencia lleva la hora local del negocio y las fotos del cliente',async()=>{
     const clock=()=>new Date('2026-10-19T23:30:00Z');
@@ -142,7 +190,7 @@ describe('DeepSeek: secretos, consumo y correcciones',()=>{
     expect(dialog.at(-2)).toEqual({role:'assistant',content:'[ENVIADO_POR_NUESTRO_EQUIPO] mensaje 5'});
     expect(payload.messages[0].content).toContain('Los mensajes user son textos RECIBIDOS DEL CLIENTE');
     expect(payload.messages[0].content).toContain('nunca hables como si fueras el cliente');
-    expect(payload.messages.at(-1).content).toContain('español dominicano natural');
+    expect(payload.messages.at(-1).content).toContain('español dominicano');
     expect(payload.messages.at(-1).content).toContain('Máximo 140 caracteres');
     expect(payload.max_tokens).toBe(160);
   });

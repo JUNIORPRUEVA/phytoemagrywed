@@ -27,6 +27,7 @@
 
 import { catalogItems } from '../src/lib/catalog.js';
 import { prepareProposal } from './assistant-actions.mjs';
+import { ensureClosingQuestion, sinPreciosInventados } from './proofreading.mjs';
 
 /** Acciones cerradas: el panel no puede inventar otras. */
 export const ASSISTANT_ACTIONS = Object.freeze([
@@ -51,7 +52,7 @@ export const ASSISTANT_ACTION_LABELS = Object.freeze({
 
 /** Instrucción por defecto de cada acceso (la persona puede escribir la suya). */
 const ACTION_INSTRUCTION = Object.freeze({
-  draft_reply: 'Redacta un borrador de respuesta para el último mensaje del cliente, usando su historial y sin inventar datos.',
+  draft_reply: 'Redacta un borrador cercano y dominicano para responder al último mensaje del cliente, cerrando con una pregunta concreta por el producto o el frasco. Usa su historial y no inventes datos.',
   analyze_customer: 'Resume el expediente de este cliente: quién es, qué ha comprado, qué está pendiente y qué conviene tener en cuenta.',
   orders: 'Dime el estado de los pedidos de este cliente: cuáles están abiertos, cuáles entregados, importes y fechas.',
   templates: 'Dime qué plantillas aprobadas de WhatsApp existen y cuál encaja mejor para este caso. No afirmes que un mensaje libre se puede enviar si la ventana de 24 h está cerrada.',
@@ -86,6 +87,13 @@ const SYSTEM_PROMPT = [
   '- «answer», «bullets» y «suggestions» van en español para el empleado. Sin emojis.',
   '- El «draft» va DIRIGIDO AL CLIENTE: escríbelo en el idioma del último mensaje del cliente',
   '  (español dominicano, inglés o criollo haitiano; si mezcla idiomas, usa el dominante), sin emojis.',
+  '- El «draft» suena a una persona real dominicana: de tú, cercano y natural, no a call center.',
+  '  Prohibido «usted», «estimado/a», «le informamos», «quedamos atentos» y las preguntas genéricas',
+  '  («¿en qué más puedo ayudarte?»).',
+  '- El «draft» termina con UNA pregunta corta y concreta que haga avanzar: el producto, el frasco,',
+  '  la cantidad o el dato que falta. Esa pregunta es la ÚLTIMA frase y acaba en «?»; no escribas',
+  '  nada después. Nunca cierres con «¿qué te gustaría ordenar?»; si el cliente quiere comprar,',
+  '  pregunta por el producto («¿Qué producto te interesa?»).',
   '',
   'Devuelve SOLO un objeto JSON con estas claves:',
   '{',
@@ -263,7 +271,7 @@ function normalizeIntent(raw) {
 }
 
 /** Valida la respuesta del modelo contra el esquema cerrado (nada libre). */
-function normalizeAnswer(json, action) {
+function normalizeAnswer(json, action, contexto = '') {
   if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
   const answer = short(json.answer, MAX_ANSWER_CHARS);
   if (!answer) return null;
@@ -277,7 +285,9 @@ function normalizeAnswer(json, action) {
     .slice(0, MAX_SUGGESTIONS);
   // El borrador SOLO se acepta cuando se pidió redactar: nunca se cuela una
   // "propuesta de envío" en una consulta de análisis.
-  const draftRaw = action === 'draft_reply' && typeof json.draft === 'string' ? short(json.draft, MAX_DRAFT_CHARS) : '';
+  const draftRaw = action === 'draft_reply' && typeof json.draft === 'string'
+    ? ensureClosingQuestion(sinPreciosInventados(short(json.draft, MAX_DRAFT_CHARS), contexto))
+    : '';
   return { answer, bullets, suggestions, draft: draftRaw || null, intent: normalizeIntent(json.action) };
 }
 
@@ -308,7 +318,7 @@ export async function assistantQuery({ ctx, actor, conversation, customer, actio
   if (!plan) {
     return { ok: true, ai: false, reason: 'ai_unavailable', sources: built.sources, scope };
   }
-  const parsed = normalizeAnswer(plan.json, resolved);
+  const parsed = normalizeAnswer(plan.json, resolved, JSON.stringify(built.context));
   if (!parsed) {
     return { ok: true, ai: false, reason: 'invalid_response', sources: built.sources, scope };
   }

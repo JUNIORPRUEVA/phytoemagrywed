@@ -5985,6 +5985,51 @@ body[data-wa-view='chat'] .float-btn--menu {
 }
 
 /*
+ * Versión COMPACTA (esperando respuesta del cliente): una línea, sin caja.
+ * Solo informa y deja la acción pequeña al lado. No debe robar espacio al chat.
+ */
+.wa-state--mini {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 2px 4px 2px 2px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wa-state--mini strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--pe-ink-600);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wa-state__action {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pe-brand-text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wa-state__action:hover { background: var(--pe-brand-soft); }
+.wa-state__action:focus-visible { outline: 2px solid var(--pe-focus); outline-offset: 1px; }
+
+/*
  * Vista previa del mensaje de una plantilla: se ven los huecos ya rellenos, tal
  * como se van a enviar por WhatsApp (el texto fijo de la plantilla no cambia).
  */
@@ -6075,6 +6120,14 @@ body[data-wa-view='chat'] .float-btn--menu {
   .wa-state .btn {
     width: 100%;
   }
+
+  /* La versión compacta NO se apila: sigue siendo una sola línea. */
+  .wa-state--mini {
+    display: flex;
+    grid-template-columns: none;
+  }
+
+  .wa-state--mini .wa-state__action { width: auto; }
 }
 
 .composer-bar {

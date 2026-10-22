@@ -20,8 +20,19 @@
   const clone=value=>structuredClone(value);
   const uuid=()=>crypto.randomUUID();
   const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','x-fulltech-local':'1'}});
+  /*
+   * LO QUE NO SE PUEDE GUARDAR PARA DESPUÉS.
+   *
+   * Además de mensajes, claves y llamadas, aquí van las decisiones del Agente de
+   * Seguimiento (`/ops/work/...`): conversar es una PREGUNTA (no un cambio que
+   * se pueda reenviar horas más tarde) y aprobar o rechazar una propuesta es una
+   * DECISIÓN con contrato de seguridad (se ejecuta una sola vez, con el permiso
+   * de la persona). Si se encolaran, el servidor las marcaría como «de revisión»
+   * y el panel mostraría un 409 opaco en lugar del motivo real. Sin conexión
+   * fallan en el acto y se dice que hace falta conexión.
+   */
   const excluded=url=>/\/(calling|push-subscriptions|proofreading|ai\/reply-suggestion)(\/|$)|\/wa-templates.*sync|\/(send|invoice-whatsapp|meta-purchase|message-send)(\/|$)|\/conversations\/[^/]+\/messages$/.test(url.pathname);
-  const protectedWrite=url=>excluded(url)||/\/(auth|login|logout)(\/|$)|\/password(?:\/|$)|\/whatsapp|\/deepseek\/test$|\/locations\/[^/]+\/share$|\/conversations\/[^/]+\/(location|order-confirmation)$|\/customer-campaigns\//.test(url.pathname);
+  const protectedWrite=url=>excluded(url)||/\/(auth|login|logout)(\/|$)|\/password(?:\/|$)|\/whatsapp|\/deepseek\/test$|\/locations\/[^/]+\/share$|\/conversations\/[^/]+\/(location|order-confirmation)$|\/customer-campaigns\/|\/ops\/work\/(chat|agent|propose)$|\/ops\/work\/proposals\/[^/]+\/(approve|reject)$/.test(url.pathname);
   /*
    * MARCAS DE «LEÍDO» Y SEÑALES DE PRESENCIA: NO SON UN CAMBIO.
    *
@@ -856,7 +867,19 @@
           const body=await response.clone().json().catch(()=>({}));
           if(body?.error==='offline'||!body?.message)return sinConexion();
         }
-        else if(!legacy&&!efimeroEscribir)return enqueue(url,{...options,method,operationId});
+        else if(!legacy&&!efimeroEscribir){
+          /*
+           * EL AGENTE DE SEGUIMIENTO EXPLICA SUS 503.
+           *
+           * Sus rutas nunca se encolan, así que convertir el 503 en «requiere
+           * conexión» solo escondía el motivo real («el modelo no respondió»,
+           * «falta el almacén»). Si la respuesta trae el JSON del servidor, se
+           * enseña tal cual; si es la página de error de un proxy, se sigue
+           * tratando como caída de red.
+           */
+          if(/\/ops\/work\//.test(url.pathname)&&/application\/json/i.test(response.headers.get('content-type')||''))return response;
+          return enqueue(url,{...options,method,operationId});
+        }
         // Una marca de leído que el servidor no atiende no se guarda: se da por vista.
         else if(efimeroEscribir)return json({ok:true,offline:true,omitted:true});
       }

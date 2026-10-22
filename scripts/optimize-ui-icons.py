@@ -34,6 +34,7 @@ ICONOS = {
     "el-tiempo-de-entrega.png": "delivery.png",
     "cerrar-sesion (1).png": "logout.png",
     "flecha-izquierda.png": "back.png",
+    "filtrar (1).png": "filter.png",
 }
 
 TAMANO = 72

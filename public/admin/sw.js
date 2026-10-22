@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v240-flecha-atras-c';
+const VERSION = 'crm-v253-guardar-pedido-g-20261021';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -54,6 +54,7 @@ const SHELL = [
   '/admin/assets/icons/ui/user.png',
   '/admin/assets/icons/ui/bell.png',
   '/admin/assets/icons/ui/back.png',
+  '/admin/assets/icons/ui/filter.png',
   '/admin/assets/icons/ui/support.png',
   '/admin/assets/icons/ui/cart.png',
   '/admin/assets/icons/ui/usersadd.png',

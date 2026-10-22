@@ -227,8 +227,8 @@
       const selected=detailId();d.getElementById('view-catalogo')?.classList.toggle('store-is-detail',!!selected);
       if(selected){box.innerHTML=head()+detail(products.find(p=>p.id===selected));window.dispatchEvent(new Event('fulltech:catalog-view'));cargarTiendas(selected);return;}
       d.querySelector('#pos-search-host .store-search-line')?.remove();
-      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}" autocomplete="off" enterkeyhint="done"></label>${canManage?`<button type="button" class="store-filter-trigger" data-store-archived aria-label="Artículos archivados" title="Archivados"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M6 7v12h12V7M9 4h6l1 3H8l1-3Z"/></svg></button>`:''}<button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog">${svg('filter')}${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
-      <div id="store-product-grid"></div>${`<button class="store-fab pos-actions-fab" type="button" data-pos-actions aria-label="Acciones de facturación" title="Acciones"><img class="pos-ico" src="/admin/assets/icons/billing/options.png" alt="" aria-hidden="true" draggable="false"></button>`}`;
+      box.innerHTML=head()+`<div class="store-search-line"><label class="store-search field">${svg('search')}<span class="sr-only">Buscar producto, código o categoría</span><input class="field__input" type="search" id="store-search" placeholder="Buscar productos y servicios" value="${esc(query)}" autocomplete="off" enterkeyhint="done"></label><button type="button" class="store-filter-trigger" data-store-filters aria-label="Filtros del catálogo" aria-haspopup="dialog"><img class="pos-ico pos-ico--filter" src="/admin/assets/icons/ui/filter.png" alt="" aria-hidden="true" draggable="false">${category||kind!=='all'||businessGroup?'<span class="store-filter-dot"></span>':''}</button></div>
+      <div id="store-product-grid"></div>`;
       cards();window.dispatchEvent(new Event('fulltech:catalog-view'));
     }else {
       /*
@@ -413,18 +413,19 @@
   function openFilters(){
     const rows=new Map(categoryRows.map(c=>[categoryKey({category:c.name}),{...c,count:0}]));
     for(const p of products){const key=categoryKey(p);if(!rows.has(key))rows.set(key,{name:categoryName(p),count:0});rows.get(key).count++;}
-    filterDrawer.innerHTML=`<div class="store-drawer-head"><h2>Filtros</h2><button class="store-icon-button" type="button" data-filter-close aria-label="Cerrar filtros">${svg('close')}</button></div><div class="store-drawer-body">
+    filterDrawer.innerHTML=`<div class="store-drawer-head" tabindex="-1"><h2>Filtros</h2><div class="store-drawer-head-actions">${canManage?'<button type="button" class="store-text-button" data-store-archived>Archivados</button>':''}<button class="store-icon-button" type="button" data-filter-close aria-label="Cerrar filtros">${svg('close')}</button></div></div><div class="store-drawer-body">
       <fieldset><legend>Tipo de artículo</legend><div class="store-segmented">${[['all','Todos'],['product','Productos'],['service','Servicios']].map(([value,name])=>`<label><input type="radio" name="kind" value="${value}" ${kind===value?'checked':''}><span>${name}</span></label>`).join('')}</div></fieldset>
       <fieldset><legend>Procedencia</legend><div class="store-segmented">${[['all','Todos'],['own','Propios'],['third_party','De terceros']].map(([value,name])=>`<label><input type="radio" name="productType" value="${value}" ${productType===value?'checked':''}><span>${name}</span></label>`).join('')}</div></fieldset>
-      <fieldset><legend>Grupo de negocio</legend><div class="store-category-choices"><label><input type="radio" name="businessGroup" value="" ${!businessGroup?'checked':''}><span class="store-category-thumb">⊞</span><span>Todos los grupos</span><small>${products.length}</small></label>${gruposNegocio().map(g=>`<label><input type="radio" name="businessGroup" value="${esc(g)}" ${businessGroup===g?'checked':''}><span class="store-category-thumb">${esc(g[0])}</span><span>${esc(g)}</span><small>${products.filter(p=>p.business_group===g).length}</small></label>`).join('')}</div></fieldset>
+      ${gruposNegocio().length?`<fieldset class="store-drawer-groups"><div class="store-group-chips"><label><input type="radio" name="businessGroup" value="" ${!businessGroup?'checked':''}><span>Todos</span></label>${gruposNegocio().map(g=>`<label><input type="radio" name="businessGroup" value="${esc(g)}" ${businessGroup===g?'checked':''}><span>${esc(g)}</span></label>`).join('')}</div></fieldset>`:''}
       <fieldset><legend>Categoría</legend><div class="store-category-choices"><label><input type="radio" name="category" value="" ${!category?'checked':''}><span class="store-category-thumb">⊞</span><span>Todas las categorías</span><small>${products.length}</small></label>${[...rows.entries()].sort((a,b)=>a[1].name.localeCompare(b[1].name,'es')).map(([key,c])=>`<label><input type="radio" name="category" value="${esc(key)}" ${category===key?'checked':''}>${c.image_url?`<img class="store-category-thumb" src="${esc(c.image_url)}" alt="">`:`<span class="store-category-thumb">${esc(c.name[0])}</span>`}<span>${esc(c.name)}</span><small>${c.count}</small></label>`).join('')}</div>${canManage?`<button type="button" class="store-text-button" data-category-new>${svg('plus')}Nueva categoría</button>`:''}</fieldset>
       <fieldset><legend>Presentación</legend><div class="store-layout-switch" role="group" aria-label="Vista del catálogo"><button type="button" data-store-layout="grid" aria-label="Vista de cuadrícula" aria-pressed="${layout==='grid'}">${svg('grid')}<span>Cuadrícula</span></button><button type="button" data-store-layout="list" aria-label="Vista de lista" aria-pressed="${layout==='list'}">${svg('list')}<span>Lista</span></button></div></fieldset></div>
       <div class="store-drawer-footer"><button class="btn btn--ghost" type="button" data-filter-reset>Restablecer</button><button class="btn btn--primary" type="button" data-filter-close>Ver resultados</button></div>`;
-    if(!filterDrawer.open)filterDrawer.showModal();
+    if(!filterDrawer.open){filterDrawer.showModal();filterDrawer.querySelector('.store-drawer-head')?.focus({preventScroll:true});}
   }
   filterDrawer.addEventListener('change',e=>{if(e.target.name==='kind')kind=e.target.value;if(e.target.name==='productType')productType=e.target.value;if(e.target.name==='category')category=e.target.value;if(e.target.name==='businessGroup')businessGroup=e.target.value;render();});
   filterDrawer.addEventListener('click',e=>{
     if(e.target.closest('[data-filter-close]'))filterDrawer.close();
+    if(e.target.closest('[data-store-archived]')){filterDrawer.close();openArchived();return;}
     if(e.target.closest('[data-filter-reset]')){kind='all';productType='all';category='';businessGroup='';render();openFilters();}
     if(e.target.closest('[data-category-new]'))openCategory();
     const b=e.target.closest('[data-store-layout]');if(b){layout=b.dataset.storeLayout;try{localStorage.setItem('fulltech.catalog.layout',layout);}catch{}cards();filterDrawer.querySelectorAll('[data-store-layout]').forEach(n=>n.setAttribute('aria-pressed',String(n.dataset.storeLayout===layout)));}
@@ -680,7 +681,7 @@
     if(e.target.closest('[data-store-clear]')){query='';kind='all';productType='all';category='';businessGroup='';render();return;}
     const addSupplier=e.target.closest('[data-supplier-add]');
     if(addSupplier){agregarTienda(addSupplier.dataset.supplierAdd);return;}
-    if(e.target.closest('[data-store-archived]')){openArchived();return;}
+    if(e.target.closest('[data-store-archived]')){if(filterDrawer.open)filterDrawer.close();openArchived();return;}
     if(e.target.closest('[data-store-new]'))edit();
     const editButton=e.target.closest('[data-store-edit]');if(editButton)edit(editButton.dataset.storeEdit);
   });

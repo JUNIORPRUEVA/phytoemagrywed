@@ -632,10 +632,39 @@ async function executeWork({ ctx, actor, action, params }) {
  *
  * Aprobar EJECUTA una vez, con la identidad y los permisos de la persona.
  * Rechazar no ejecuta nada y deja el motivo.
+ *
+ * Los parámetros NO vienen del cliente: se ejecuta lo que se guardó al
+ * proponer (`approval.params`), así que nadie puede aprobar una cosa y
+ * ejecutar otra.
  */
 export async function decideWorkProposal({ ctx, actor, can, proposalId, approve, note = '' }) {
   const id = clean(proposalId, 80);
   if (!id) return { ok: false, status: 422, error: 'proposal_required', message: 'Falta la propuesta.' };
+  /*
+   * UNA SOLA EJECUCIÓN POR PROPUESTA, también si llegan dos a la vez.
+   *
+   * Con SQLite las escrituras se resuelven sin ceder el turno y la segunda
+   * petición ya encontraba la propuesta consumida (medido: 5 aprobaciones
+   * simultáneas → 1 ejecución). Este cerrojo lo garantiza igual cuando el
+   * almacén responde en diferido (PostgreSQL) o si el proceso atiende dos
+   * peticiones intercaladas.
+   */
+  if (decisionsInFlight.has(id)) {
+    return { ok: false, status: 409, error: 'proposal_busy', message: 'Esa propuesta se está decidiendo ahora mismo.' };
+  }
+  decisionsInFlight.add(id);
+  try {
+    return await decideWorkProposalLocked({ ctx, actor, can, proposalId: id, approve, note });
+  } finally {
+    decisionsInFlight.delete(id);
+  }
+}
+
+/** Propuestas que se están decidiendo en este proceso (ver más abajo). */
+const decisionsInFlight = new Set();
+
+async function decideWorkProposalLocked({ ctx, actor, can, proposalId, approve, note = '' }) {
+  const id = clean(proposalId, 80);
   const approval = await ctx.db.get('ops_agent_approvals', id);
   if (!approval || approval.agent_key !== WORK_AGENT_KEY) {
     return { ok: false, status: 404, error: 'proposal_not_found', message: 'Esa propuesta no existe.' };

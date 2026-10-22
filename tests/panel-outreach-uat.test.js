@@ -58,8 +58,26 @@ async function waitFor(check, label, timeout = 8000) {
 
 const $ = (selector) => dom.window.document.querySelector(selector);
 const $$ = (selector) => [...dom.window.document.querySelectorAll(selector)];
+
+/**
+ * Las pantallas de Seguimientos y Mensajes programados ya NO tienen entrada en
+ * el menú: viven dentro de «Centro IA → Agente de Seguimiento». Se abren por la
+ * navegación interna del panel, que es la misma que usan los enlaces antiguos
+ * (`?v=seguimientos`, `?v=mensajes`).
+ */
+const PANELES_SIN_MENU = ['seguimientos', 'mensajes'];
+function gotoTab(tab) {
+  dom.window.dispatchEvent(new dom.window.CustomEvent('fulltech:navigate', { detail: { tab } }));
+}
+
 const click = (element) => {
-  const target = typeof element === 'string' ? $(element) : element;
+  const selector = typeof element === 'string' ? element : null;
+  const tab = selector?.match(/^\[data-tab="([a-z-]+)"\]$/)?.[1] ?? null;
+  const target = selector ? $(selector) : element;
+  if (!target && tab && PANELES_SIN_MENU.includes(tab)) {
+    gotoTab(tab);
+    return true;
+  }
   if (!target) throw new Error(`no existe el elemento: ${element}`);
   if (target.disabled === true) return false;
   target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
@@ -225,10 +243,13 @@ afterAll(async () => {
 });
 
 describe('seguimiento y programación desde el menú', () => {
-  it('ofrece solo seguimientos y mensajes programados; plantillas permanece en configuración', async () => {
-    const nav = $('nav[aria-label="Seguimiento"]');
-    expect(nav.textContent).toContain('Mensajes programados');
-    expect(nav.textContent).not.toContain('Plantillas');
+  it('el grupo «Seguimiento» ya no está en el menú y las dos pantallas siguen funcionando', async () => {
+    /* Se movieron al Centro IA: «Agente de Seguimiento». */
+    expect($('nav[aria-label="Seguimiento"]')).toBeNull();
+    expect($('[data-tab="seguimientos"]')).toBeNull();
+    expect($('[data-tab="mensajes"]')).toBeNull();
+
+    /* Y no se ha perdido nada: la pantalla abre con su enlace de siempre. */
     click('[data-tab="mensajes"]');
     await waitFor(() => $('#scheduled-refresh').disabled === false && $('#scheduled-list-caption').textContent.includes('mensajes'), 'bandeja cargada');
     expect($('#view-mensajes').hidden).toBe(false);

@@ -244,6 +244,37 @@ Los **3 fallos restantes** de `panel-conv-list` están clasificados:
 
 No se modificaron estas tres pruebas para «forzar verde».
 
+## 8-BIS. TONO DOMINICANO Y CIERRE POR EL PRODUCTO (2026-10-21, proveedor real)
+
+Problema real observado: las respuestas sonaban a call center («¿en qué más puedo ayudarle?») y
+cerraban con «¿qué te gustaría ordenar?». Se corrigió en tres capas:
+
+1. **Prompt** (`server/proofreading.mjs`, `suggestReply`): bloque `TONO` (vendedor dominicano cercano,
+   de tú, prohibido «usted», «estimado/a», «le informamos», «quedamos atentos») y bloque `CIERRE`
+   (la última frase es una pregunta que acaba en «?»; cierra por el producto o el frasco).
+   En `server/assistant.mjs` las mismas reglas aplican al `draft`.
+2. **Guardia determinista** `ensureClosingQuestion`: corta lo que venga después de la última pregunta,
+   elimina los cierres genéricos y convierte «Dime qué producto quieres y te lo preparo.» en
+   «¿Qué producto quieres?». No fuerza una venta en un «gracias» ni en un «Sí.».
+3. **Guardia de precio** `sinPreciosInventados`: el modelo contestó «te sale en RD$1,850» sin que ese
+   monto estuviera en el hilo. Ahora se descarta la frase cuyo importe no aparece en el contexto real
+   (si no queda nada, la sugerencia falla con `invalid_response` y devuelve la cuota).
+
+**UAT real (DeepSeek `deepseek-flash`, 7 llamadas, temp SQLite, WhatsApp desactivado): 7/7.**
+
+| Caso | Respuesta real | ms |
+| --- | --- | --- |
+| «Buenas, tienen delivery?» | «Buenas, claro que sí, tenemos delivery. ¿Qué producto te interesa?» | 877 |
+| «cuanto cuesta el de 60» | «Buenas, ¿el de 60 de cuál producto?» | 891 |
+| «quiero ordenar uno» | «Claro que sí, de una. ¿Qué producto te interesa?» | 682 |
+| «mi pedido no ha llegado y ya van 2 dias» | «Buenas, claro que sí. Déjame revisar eso ahora mismo. ¿Me confirmas la dirección exacta a la que iba el pedido?» | 1375 |
+| «Hello, do you have the 60 capsules bottle?» | «Claro que sí, tenemos el frasco de 60 cápsulas disponible. ¿Te preparo el de 60?» | 925 |
+| borrador 1 | «Claro que sí, tenemos delivery. Para mandarte el detalle, ¿me confirmas el nombre del producto de 60?» | 2463 |
+| borrador 2 | «Perfecto, el de 60 cápsulas. Para apartártelo y decirte el precio, ¿me confirmas el nombre del producto tal como lo viste?» | 2268 |
+
+Pruebas nuevas: `tests/deepseek-proofreading.test.js` (5 casos de las dos guardias) y
+`tests/assistant-ia.test.js` (tono y cierre en el prompt del asistente).
+
 ## 10. Decisión
 
 - **GO** para UAT con el equipo: consultas, borradores y **operaciones asistidas** verificadas con

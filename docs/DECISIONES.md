@@ -1443,3 +1443,32 @@ cliente entre ellos, activar herramientas de dinero, ni tocar el chat de WhatsAp
 en **UAT aislada**: GO del código, NO-GO de despliegue hasta validar el tono con el negocio.
 
 Informe completo: `docs/CENTRO-IA.md`.
+
+## 52. Seguimientos y mensajes programados pasan a ser UN agente (2026-10-21)
+
+El grupo «Seguimiento» del menú desaparece y esas dos pantallas se administran desde **Centro IA →
+Agente de Seguimiento**. Cinco reglas que se respetaron al pie de la letra:
+
+1. **Reubicar no es reescribir.** Los motores siguen siendo los mismos (`followups.mjs`,
+   `scheduler.mjs`) y las rutas de siempre. El agente los **usa**; no hay una cola ni un estado
+   paralelos. Las pantallas clásicas siguen existiendo y se abren con sus enlaces antiguos
+   (`?v=seguimientos`, `?v=mensajes`).
+2. **La IA propone; la persona decide.** Las siete herramientas de escritura nacen con
+   `approvalOnly: true` y el motor rechaza ejecutarlas sin aprobación. Una propuesta **no crea nada**:
+   solo aparece en «Aprobaciones» durante 30 minutos. Los permisos al aprobar son los de la persona
+   (un operador no puede cancelar aunque el agente lo proponga).
+3. **Aprobado ≠ enviado.** Al aprobar un mensaje se escribe la fila en la cola con el **texto exacto**
+   aprobado (chip «Programado»); el «Enviado» lo pone el programador cuando WhatsApp responde. Si al
+   enviar ya no se cumple una regla (ventana de 24 h, plantilla, opt-out), la fila se **bloquea** con
+   motivo: nunca se fuerza.
+4. **Sin proveedor de IA y sin panel abierto, lo aprobado se envía igual.** Comprobado: el chat
+   devuelve 503 `llm_unavailable` y el mensaje aprobado sale con el `tick()` del servidor. No hay
+   ningún paso que espere al modelo.
+5. **Ver, proponer y aprobar son permisos distintos.** El agente tiene `followups.propose` /
+   `messages.propose`; aprobar exige `followups.create/update/delete`. Todo queda en
+   `ops_agent_approvals` y en la auditoría.
+
+Consecuencia práctica del punto 1: dos pruebas de panel que pulsaban las entradas retiradas ahora
+navegan por `fulltech:navigate`, que es el mismo camino de los enlaces antiguos.
+
+Informe completo: `docs/CENTRO-IA-SEGUIMIENTO.md`.

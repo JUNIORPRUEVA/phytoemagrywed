@@ -6,7 +6,7 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 import { startCrmServer } from '../server/crm-server.mjs';
 import { AUDIT_ACTIONS } from '../server/audit.mjs';
-import { ASSISTANT_ACTIONS, assistantQuery, buildAssistantContext } from '../server/assistant.mjs';
+import { ASSISTANT_ACTIONS, SYSTEM_PROMPT, assistantQuery, buildAssistantContext } from '../server/assistant.mjs';
 import { handleAssistantRoute } from '../server/assistant-routes.mjs';
 
 const CONVERSATION = { id: 'chat-1', customer_id: 'cus_1', assigned_user_id: 'usr_1' };
@@ -65,6 +65,17 @@ function makeCtx(overrides = {}) {
 }
 
 describe('Asistente IA · contexto autorizado', () => {
+  it('el borrador suena dominicano y cierra por el producto', () => {
+    /*
+     * Tono pedido por el negocio: persona real de Higüey, de tú, sin call center
+     * y con una pregunta concreta al final (producto/frasco), nunca
+     * «¿qué te gustaría ordenar?».
+     */
+    expect(SYSTEM_PROMPT).toContain('cercano y natural, no a call center');
+    expect(SYSTEM_PROMPT).toContain('¿Qué producto te interesa?');
+    expect(SYSTEM_PROMPT).toContain('Nunca cierres con «¿qué te gustaría ordenar?»');
+    expect(SYSTEM_PROMPT).toContain('«quedamos atentos»');
+  });
   it('arma el contexto desde el SERVIDOR y no manda teléfono ni dirección al modelo', async () => {
     const ctx = makeCtx();
     const built = await buildAssistantContext({ ctx, conversation: CONVERSATION, customer: CUSTOMER, action: 'draft_reply' });
@@ -340,6 +351,40 @@ describe('Asistente IA · panel del chat (jsdom)', () => {
     const retry = [...ui.$('#wa-assistant-out').querySelectorAll('button')].find((button) => button.textContent === 'Reintentar');
     retry.click();
     await vi.waitFor(() => expect(ui.$('#wa-assistant-out').textContent).toContain('Ahora sí.'));
+  });
+
+  it('la respuesta se puede abrir a pantalla completa y cerrar con Escape', async () => {
+    const ui = setup();
+    ui.click('#wa-ai-reply');
+    ui.click('[data-assistant-action="orders"]');
+    await vi.waitFor(() => expect(ui.$('.wa-assistant__answer')).not.toBeNull());
+
+    const expand = ui.$('.wa-assistant__expand');
+    expect(expand).not.toBeNull();
+    expect(expand.getAttribute('aria-label')).toContain('pantalla completa');
+    expand.click();
+
+    const zoom = ui.$('#wa-assistant-zoom');
+    expect(zoom).not.toBeNull();
+    expect(zoom.hidden).toBe(false);
+    expect(ui.$('.wa-assistant-zoom__text').textContent).toContain('Ana tiene un pedido abierto.');
+
+    ui.win.document.dispatchEvent(new ui.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(zoom.hidden).toBe(true);
+    // Cerrar la pantalla completa NO cierra el panel ni envía nada.
+    expect(ui.$('#wa-assistant').hidden).toBe(false);
+    expect(ui.sends).toBe(0);
+  });
+
+  it('el panel no lleva texto descriptivo de relleno', async () => {
+    const ui = setup();
+    ui.click('#wa-ai-reply');
+    ui.click('[data-assistant-action="orders"]');
+    await vi.waitFor(() => expect(ui.$('.wa-assistant__answer')).not.toBeNull());
+    expect(ui.$('.wa-assistant__foot')).toBeNull();
+    const texto = ui.$('#wa-assistant-out').textContent;
+    expect(texto).not.toContain('Solo lectura');
+    expect(texto).not.toContain('Insertar no envía');
   });
 
   it('el panel se cierra sin tocar la conversación del cliente', () => {

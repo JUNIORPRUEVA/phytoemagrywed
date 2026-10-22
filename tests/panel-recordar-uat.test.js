@@ -133,7 +133,15 @@ async function abrirPanel({ storage = {}, conCuenta = true } = {}) {
     $: (selector) => doc.querySelector(selector),
     $$: (selector) => [...doc.querySelectorAll(selector)],
     click: (target) => {
-      const element = typeof target === 'string' ? doc.querySelector(target) : target;
+      const selector = typeof target === 'string' ? target : null;
+      const element = selector ? doc.querySelector(selector) : target;
+      /* Seguimientos y Mensajes ya no están en el menú (viven en el Centro IA):
+         se abren por la navegación interna, igual que los enlaces antiguos. */
+      const tab = selector?.match(/\[data-tab="([a-z-]+)"\]$/)?.[1] ?? null;
+      if (!element && tab && ['seguimientos', 'mensajes'].includes(tab)) {
+        win.dispatchEvent(new win.CustomEvent('fulltech:navigate', { detail: { tab } }));
+        return doc.querySelector(`#view-${tab}`);
+      }
       if (!element) throw new Error(`no existe el elemento para pulsar: ${target}`);
       element.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
       return element;

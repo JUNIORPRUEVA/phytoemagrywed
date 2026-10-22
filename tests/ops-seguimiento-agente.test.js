@@ -32,6 +32,8 @@ import { saveAgent } from '../server/ops/agents.mjs';
 const TOKEN = 'work-token';
 const ADMIN = { username: 'w.admin', password: 'W-Admin-123', name: 'Ana Admin' };
 const OPERADOR = { username: 'w.op', password: 'W-Oper-123', name: 'Oscar Operador' };
+/** Lo que el WhatsApp simulado "enviaría": la UAT comprueba que no sale nada real. */
+const sent = [];
 
 let tmpDir;
 let app;
@@ -82,12 +84,16 @@ beforeAll(async () => {
     quiet: true,
     schedulerEnabled: false,
     whatsapp: {
-      enabled: false,
-      async sendText() {
-        throw new Error('UAT: no se envía WhatsApp');
+      /* Simulado: apunta lo que se enviaría y NUNCA sale a la red. */
+      enabled: true,
+      phoneNumberId: 'pnid-uat-work',
+      async sendText(to, body) {
+        sent.push({ to, body, type: 'text' });
+        return { ok: true, status: 200, messageId: `wamid.W${sent.length}` };
       },
-      async sendTemplate() {
-        throw new Error('UAT: no se envía WhatsApp');
+      async sendTemplate(to, template) {
+        sent.push({ to, template, type: 'template' });
+        return { ok: true, status: 200, messageId: `wamid.WT${sent.length}` };
       },
       async markAsRead() {
         return { ok: true };
@@ -212,6 +218,38 @@ describe('propuestas con aprobación', () => {
     expect(second.proposal.id).toBe(first.proposal.id);
   });
 
+  it('dos aprobaciones simultáneas no ejecutan dos veces la misma propuesta', async () => {
+    const proposal = await proposeWork({
+      ctx: app.ctx,
+      actor: adminActor(),
+      can: canAdmin(),
+      action: 'followup.create',
+      params: { customerId, reason: 'Propuesta con dos aprobadores', date: '2026-11-08' },
+    });
+    const before = (await app.ctx.db.list('followups', { limit: 50 })).length;
+    /* La primera se queda decidiendo (no se espera); la segunda llega antes. */
+    const primera = decideWorkProposal({
+      ctx: app.ctx,
+      actor: adminActor(),
+      can: canAdmin(),
+      proposalId: proposal.proposal.id,
+      approve: true,
+    });
+    const segunda = await decideWorkProposal({
+      ctx: app.ctx,
+      actor: adminActor(),
+      can: canAdmin(),
+      proposalId: proposal.proposal.id,
+      approve: true,
+    });
+    expect(segunda.ok).toBe(false);
+    expect(segunda.error).toBe('proposal_busy');
+    const fin = await primera;
+    expect(fin.ok).toBe(true);
+    expect(fin.executed).toBe(true);
+    expect((await app.ctx.db.list('followups', { limit: 50 })).length).toBe(before + 1);
+  });
+
   it('rechazar no ejecuta nada y deja el motivo', async () => {
     const before = await app.ctx.db.list('followups', { limit: 50 });
     const proposal = await proposeWork({
@@ -317,6 +355,74 @@ describe('propuestas con aprobación', () => {
     /* El texto es EXACTAMENTE el aprobado (no se regenera después). */
     expect(row.text).toBe(text);
     expect(row.scheduled_at).toBe(when);
+  });
+
+  it('aprobar ejecuta lo propuesto aunque la petición traiga otros parámetros', async () => {
+    await openWindow();
+    const textoAprobado = 'Texto que la persona aprobó, palabra por palabra.';
+    const when = new Date(Date.now() + 4 * 3_600_000).toISOString();
+    const proposal = await proposeWork({
+      ctx: app.ctx,
+      actor: adminActor(),
+      can: canAdmin(),
+      action: 'schedule.create',
+      params: { customerId, text: textoAprobado, scheduledAt: when },
+    });
+    expect(proposal.ok).toBe(true);
+
+    /* Se intenta colar otro texto en el cuerpo de la aprobación. */
+    const response = await call(`/api/admin/ops/work/proposals/${proposal.proposal.id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({
+        note: 'aprobado',
+        params: { customerId, text: 'OTRO TEXTO que nadie aprobó', scheduledAt: when },
+        action: 'schedule.create',
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = await json(response);
+    expect(body.executed).toBe(true);
+
+    const row = await app.ctx.db.get('scheduled_messages', body.result.scheduledId);
+    expect(row.text).toBe(textoAprobado);
+    expect(row.text).not.toContain('OTRO TEXTO');
+  });
+
+  it('si la ventana se cierra después de aprobar, el programador bloquea y no envía', async () => {
+    await openWindow();
+    const text = 'Mensaje aprobado con la ventana abierta.';
+    const when = new Date(Date.now() + 5 * 3_600_000).toISOString();
+    const proposal = await proposeWork({
+      ctx: app.ctx,
+      actor: adminActor(),
+      can: canAdmin(),
+      action: 'schedule.create',
+      params: { customerId, text, scheduledAt: when },
+    });
+    const approved = await decideWorkProposal({
+      ctx: app.ctx,
+      actor: adminActor(),
+      can: canAdmin(),
+      proposalId: proposal.proposal.id,
+      approve: true,
+    });
+    expect(approved.executed).toBe(true);
+
+    /* El cliente no escribe en 25 horas: la ventana se cerró. */
+    await app.ctx.db.update('conversations', conversationId, {
+      last_inbound_at: new Date(Date.now() - 25 * 3_600_000).toISOString(),
+    });
+    await app.ctx.db.update('scheduled_messages', approved.result.scheduledId, {
+      scheduled_at: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const before = sent.length;
+    await app.scheduler.tick();
+
+    const row = await app.ctx.db.get('scheduled_messages', approved.result.scheduledId);
+    expect(row.status).toBe('BLOCKED');
+    expect(String(row.blocked_reason ?? row.error_message ?? '')).toMatch(/WINDOW|OUTSIDE/i);
+    /* Lo importante: no salió nada. */
+    expect(sent.length).toBe(before);
   });
 
   it('una propuesta caducada no se puede aprobar', async () => {

@@ -11869,6 +11869,18 @@
       },
     }[contactState];
     if (!copy || contactState === CONTACT_STATE.OPEN_WINDOW) return '';
+    /*
+     * MIENTRAS SE ESPERA AL CLIENTE, UNA SOLA LÍNEA.
+     * Antes este aviso ocupaba título + párrafo + explicación + botón grande y
+     * empujaba el compositor. Ahora es una etiqueta discreta con la acción
+     * pequeña al lado: informa sin comer espacio.
+     */
+    if (contactState === CONTACT_STATE.WAITING_CUSTOMER_REPLY) {
+      return `<section class="wa-state wa-state--mini wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}" title="${escapeHtml(copy.detail)}">
+        <strong>${escapeHtml(copy.title)}</strong>
+        <button class="wa-state__action" id="wa-open-template" type="button">Enviar plantilla</button>
+      </section>`;
+    }
     return `<section class="wa-state wa-state--${escapeHtml(copy.tone)}" data-wa-contact-state="${escapeHtml(contactState)}">
       <div>
         <strong>${escapeHtml(copy.title)}</strong>

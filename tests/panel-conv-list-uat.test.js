@@ -759,7 +759,16 @@ describe('UX de ventana 24 h y plantillas en el chat', () => {
       { type: 'body', parameters: [{ type: 'text', text: 'Cliente UX Nuevo' }] },
     ]);
     expect($('#thread').textContent).toContain('Hola Cliente UX Nuevo');
-    expect($('#wa-composer').textContent).toContain('Esperando respuesta de Cliente UX Nuevo');
+    /*
+     * El aviso de «esperando respuesta» es COMPACTO a propósito: una sola línea
+     * con la etiqueta y la acción pequeña. El estado se identifica por su
+     * atributo y el texto sigue diciendo si WhatsApp confirmó la entrega.
+     */
+    const estadoEspera = $('#wa-composer [data-wa-contact-state="WAITING_CUSTOMER_REPLY"]');
+    expect(estadoEspera.classList.contains('wa-state--mini')).toBe(true);
+    expect(estadoEspera.textContent).toContain('Plantilla');
+    expect(estadoEspera.textContent).toContain('Enviar plantilla');
+    expect(estadoEspera.querySelectorAll('p, small').length).toBe(0);
     // «Enviado» no es «entregado»: WhatsApp solo aceptó el mensaje, así que la
     // burbuja y el estado lo dicen sin prometer una entrega que no se confirmó.
     expect($('#wa-composer').textContent).toContain('sin confirmar');

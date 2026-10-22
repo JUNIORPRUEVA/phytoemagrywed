@@ -200,9 +200,18 @@ it('prepara los módulos y navega por las pantallas principales sin red',async()
   const until=async f=>{for(let i=0;i<150;i++){if(f())return;await new Promise(r=>setTimeout(r,20));}throw new Error('UI timeout');};
   await until(()=>!w.document.querySelector('#app').hidden);await w.FulltechOffline.warm();online=false;
   const visited=[];
+  /*
+   * Seguimientos y mensajes programados ya NO tienen entrada en el menú: viven
+   * en «Centro IA → Agente de Seguimiento». Se abren con la navegación interna,
+   * que es la misma que usan los enlaces antiguos (`?v=seguimientos`).
+   */
+  const abrirPantalla=tab=>{
+    const button=w.document.querySelector(`[data-tab="${tab}"]`)||(tab==='historial-cierres'?w.document.querySelector('[data-close-history-go]'):null);
+    if(button){button.click();return;}
+    w.dispatchEvent(new w.CustomEvent('fulltech:navigate',{detail:{tab}}));
+  };
   for(const tab of ['hoy','pedidos','clientes','catalogo','inventario','recuento','cotizaciones','reportes','cierre','historial-cierres','seguimientos','mensajes','ajustes','usuarios','perfil','whatsapp','delivery','mapa']){
-    const button=w.document.querySelector(`[data-tab="${tab}"]`)||(tab==='historial-cierres'?w.document.querySelector('[data-close-history-go]'):null);expect(button,tab).toBeTruthy();
-    button.click();await until(()=>w.document.body.dataset.tab===tab);
+    abrirPantalla(tab);await until(()=>w.document.body.dataset.tab===tab);
     const view=w.document.getElementById('view-'+tab);if(view)expect(view.hidden,tab).toBe(false);visited.push(tab);
   }
   expect(visited).toEqual(['hoy','pedidos','clientes','catalogo','inventario','recuento','cotizaciones','reportes','cierre','historial-cierres','seguimientos','mensajes','ajustes','usuarios','perfil','whatsapp','delivery','mapa']);

@@ -109,9 +109,7 @@
     out.setAttribute('role', 'log');
     out.setAttribute('aria-live', 'polite');
 
-    const foot = h('p', 'wa-assistant__foot', 'Solo consultas y borradores. Nada se envía ni se modifica sin tu confirmación.');
-
-    section.append(head, chips, form, out, foot);
+    section.append(head, chips, form, out);
     const composer = $('#wa-composer');
     if (composer && composer.parentElement === pane) pane.insertBefore(section, composer);
     else pane.append(section);
@@ -150,6 +148,7 @@
     state.gen += 1;
     state.conv = id || '';
     state.action = 'free';
+    closeZoom();
     setBusy(false);
     clearOutput();
     const field = input();
@@ -178,9 +177,71 @@
     state.open = false;
     state.el.hidden = true;
     delete state.el.dataset.open;
+    closeZoom();
     // Lo que estuviera en vuelo ya no se pinta (el panel está cerrado).
     state.gen += 1;
     setBusy(false);
+  }
+
+  /*
+   * VER LA RESPUESTA EN PANTALLA COMPLETA.
+   *
+   * El panel es compacto; cuando el texto es largo, este botón abre SOLO la
+   * respuesta (y sus datos) a pantalla completa. No toca el chat, no envía nada
+   * y se cierra con la ✕, tocando fuera o con Escape.
+   */
+  const EXPAND_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4 13.5 10.5"/><path d="M10 20H4v-6"/><path d="M4 20l6.5-6.5"/></svg>';
+
+  function expandButton(result) {
+    const button = h('button', 'wa-assistant__expand');
+    button.type = 'button';
+    button.innerHTML = EXPAND_ICON;
+    button.setAttribute('aria-label', 'Ver la respuesta en pantalla completa');
+    button.title = 'Pantalla completa';
+    button.addEventListener('click', () => openZoom(result));
+    return button;
+  }
+
+  function openZoom(result) {
+    let overlay = document.getElementById('wa-assistant-zoom');
+    if (!overlay) {
+      overlay = h('div', 'wa-assistant-zoom');
+      overlay.id = 'wa-assistant-zoom';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'Respuesta del asistente');
+      overlay.hidden = true;
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay || event.target.closest('[data-zoom-close]')) closeZoom();
+      });
+      document.body.append(overlay);
+    }
+    overlay.replaceChildren();
+    const head = h('div', 'wa-assistant-zoom__head');
+    head.append(h('p', 'wa-assistant-zoom__title', 'Asistente IA'));
+    const closeButton = h('button', 'wa-assistant-zoom__close', '\u00d7');
+    closeButton.type = 'button';
+    closeButton.dataset.zoomClose = '1';
+    closeButton.setAttribute('aria-label', 'Cerrar');
+    head.append(closeButton);
+    const body = h('div', 'wa-assistant-zoom__body');
+    body.append(h('p', 'wa-assistant-zoom__text', result.answer ?? ''));
+    if (Array.isArray(result.bullets) && result.bullets.length) {
+      const list = h('ul', 'wa-assistant__bullets');
+      for (const item of result.bullets) list.append(h('li', null, item));
+      body.append(list);
+    }
+    overlay.append(head, body);
+    overlay.hidden = false;
+    document.body.dataset.assistantZoom = '1';
+    closeButton.focus({ preventScroll: true });
+  }
+
+  function closeZoom() {
+    const overlay = document.getElementById('wa-assistant-zoom');
+    if (!overlay || overlay.hidden) return;
+    overlay.hidden = true;
+    delete document.body.dataset.assistantZoom;
   }
 
   /* ------------------------------------------------------------------ pintado */
@@ -223,8 +284,9 @@
       return;
     }
 
-    const answer = h('p', 'wa-assistant__answer', result.answer);
-    box.append(answer);
+    const answerRow = h('div', 'wa-assistant__answer-row');
+    answerRow.append(h('p', 'wa-assistant__answer', result.answer), expandButton(result));
+    box.append(answerRow);
 
     if (Array.isArray(result.bullets) && result.bullets.length) {
       const list = h('ul', 'wa-assistant__bullets');
@@ -243,7 +305,9 @@
       const actions = h('div', 'wa-assistant__draft-actions');
       const use = h('button', 'wa-assistant__link wa-assistant__link--primary', 'Insertar en el compositor');
       use.type = 'button';
-      const note = h('p', 'wa-assistant__hint', 'Insertar no envía: el mensaje lo revisas y lo mandas tú.');
+      // Sin explicaciones permanentes: el aviso solo aparece si hace falta.
+      const note = h('p', 'wa-assistant__hint');
+      note.hidden = true;
       use.addEventListener('click', () => {
         const target = $('#wa-text');
         const text = area.value.trim();
@@ -259,14 +323,16 @@
             ? window.confirm('El compositor ya tiene texto sin enviar. ¿Reemplazarlo por el borrador?')
             : true;
           if (!reemplazar) {
-            note.textContent = 'Se conservó el texto que ya tenías en el compositor.';
+            note.hidden = false;
+            note.textContent = 'Se conservó tu texto.';
             return;
           }
         }
         target.value = text;
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.focus({ preventScroll: true });
-        note.textContent = 'Borrador colocado en el compositor. Revísalo antes de enviarlo.';
+        note.hidden = false;
+        note.textContent = 'Insertado en el compositor.';
       });
       actions.append(use);
       block.append(area, actions, note);
@@ -289,7 +355,6 @@
     }
 
     if (Array.isArray(result.sources) && result.sources.length) box.append(sourcesRow(result.sources));
-    box.append(h('p', 'wa-assistant__hint', 'Solo lectura · no se envió ni cambió nada.'));
     box.scrollTop = 0;
   }
 
@@ -486,7 +551,10 @@
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || !state.open) return;
+    if (event.key !== 'Escape') return;
+    // Primero se cierra la pantalla completa; después, el panel.
+    if (document.body.dataset.assistantZoom) { closeZoom(); return; }
+    if (!state.open) return;
     close();
   });
 
