@@ -2557,7 +2557,14 @@
       const unreadNotifications = unreadNotificationCount();
       box.innerHTML = `<div class="dashboard-head">
         <button class="dashboard-head__menu" data-open-drawer type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
-          <!-- Tres barras que se convierten en ✕ al abrir: se ve que hay menú. -->
+          <!--
+            EL ICONO DEL MENÚ, SIEMPRE VISIBLE.
+
+            El CSS oculta las tres barras mientras el menú está cerrado y espera
+            esta imagen (menu.png); sin ella el botón quedaba como un cuadro
+            vacío. Al abrir, las barras vuelven (y se ven como aspa).
+          -->
+          <img class="app-icon app-icon--menu" src="/admin/assets/icons/ui/menu.png" alt="" aria-hidden="true" draggable="false" />
           <span class="burger" aria-hidden="true"><span></span><span></span><span></span></span>
         </button>
         <div class="dashboard-head__title">
