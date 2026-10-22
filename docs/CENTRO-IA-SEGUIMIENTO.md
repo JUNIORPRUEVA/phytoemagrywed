@@ -347,3 +347,51 @@ prueba, cero regresiones propias, UAT real en 4 combinaciones.
 
 Antes de publicar: congelar el árbol, que cada autor cierre sus rojos, volver a ejecutar esta misma
 tabla y repetir la UAT de navegador. El Agente de Seguimiento, por su parte, está listo.
+
+---
+
+# 15. La pantalla de agentes: dos listones (2026-10-21)
+
+Lo que se pidió: **una sola pantalla con los dos agentes en listones, uno debajo del otro**, y al
+pulsar uno, su oficina con todo lo suyo.
+
+## 15.1 Qué se cambió
+
+| Antes | Ahora |
+| --- | --- |
+| Cabecera «Agentes \| Tickets \| **Supervisor IA**»: el supervisor salía dos veces (acceso suelto + su fila). | Cabecera «Agentes \| Tickets». El supervisor solo existe como **fila**; su pantalla única se abre desde su propia oficina («Pantalla del supervisor»). |
+| Las tarjetas vivían en una columna de 780 px, con medio panel vacío al lado. | `.centro-team` a todo el ancho del lienzo (1180 px), una fila por agente, apiladas. |
+| Si un agente no estaba dado de alta, **desaparecía** (podías ver un solo listón sin saber por qué). | La lista muestra **siempre** los dos: el que falta aparece como «Sin dar de alta», con su botón **Dar de alta** en la propia fila. |
+
+El alta sigue siendo explícita (nada se registra solo): el servidor manda la definición por defecto
+del agente conocido (`knownAgents` en `GET /api/admin/ops/centro`) y el botón la envía a
+`POST /api/admin/ops/agents` (solo administración).
+
+## 15.2 Por qué no se «veía» el arreglo anterior
+
+El panel es una PWA: el service worker sirve **el `index.html` de su caché**. En el arreglo anterior
+solo se subió la versión de los recursos (`ops.js?v=ops-7` → `ops-8`) dentro del HTML, pero **no** la
+`VERSION` del service worker: la app seguía sirviendo el HTML cacheado con `ops-7`, así que no había
+nada nuevo que pintar y tampoco aparecía la barra «Actualizar» (el `sw.js` era idéntico byte a byte).
+
+Ahora `sw.js` es `crm-v255-centro-ia-listones-20261021`, lo que hace que el navegador instale un
+service worker nuevo, refresque el armazón y ofrezca «Actualizar». Comprobado con un perfil real:
+el SW queda al mando y su caché `crm-v255-…` guarda `index.html` con `ops.js?v=ops-8` y
+`ops.css?v=ops-8` (y los dos archivos versionados).
+
+Para verlo en un aparato que ya tenía la app abierta: abrir el panel y pulsar **Actualizar** en la
+barra que aparece; si no sale, **Ajustes → Buscar actualización** (o recargar con Ctrl+F5).
+
+## 15.3 Comprobado en navegador real
+
+- Con **un solo** agente dado de alta, la pantalla muestra **dos listones** (el segundo, «Sin dar de
+  alta», con su botón). Tras pulsarlo quedan dos agentes reales y el pendiente desaparece.
+- Los dos listones abren su oficina y se vuelve a la lista con «← Agentes».
+- Escritorio 1440×900 y móvil 390×844, claro y oscuro: apilados, a todo el ancho, sin desbordamiento.
+- Suites: `panel-centro-ia-uat` (8), `panel-seguimiento-agente-uat` (9), `ops-centro-ia` (18) y
+  `ops-seguimiento-agente` (15) en verde.
+
+Capturas: `docs/capturas/equipo-agentes-{escritorio,movil}-{light,dark}.png`,
+`equipo-agentes-dos-listones-antes.png` (uno de alta y el otro pendiente),
+`equipo-agentes-dos-listones.png` (los dos dados de alta),
+`equipo-agentes-oficina-supervisor.png` y `equipo-agentes-supervisor-pantalla.png`.

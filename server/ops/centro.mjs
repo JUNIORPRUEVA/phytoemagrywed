@@ -40,6 +40,39 @@ export const AGENT_STATE_LABELS = Object.freeze({
 
 const LIVE_RUNS = new Set(['pending', 'running', 'waiting_human', 'waiting_event']);
 
+/**
+ * Los dos agentes que el Centro IA conoce de fábrica.
+ *
+ * `alto` dice cómo se dan de alta si faltan:
+ *   work  → `POST /api/admin/ops/work/agent` (el Agente de Seguimiento se define solo)
+ *   agent → `POST /api/admin/ops/agents` con `defaults` (formulario de agentes de siempre)
+ */
+const KNOWN_AGENTS = [
+  {
+    key: 'followup_agent',
+    name: 'Agente de Seguimiento',
+    role: 'Seguimientos y mensajes programados',
+    summary: 'Organiza los seguimientos comerciales y prepara los mensajes programados.',
+    alta: 'work',
+  },
+  {
+    key: 'delivery_supervisor',
+    name: 'Supervisor de reparto',
+    role: 'Supervisión de entregas y avisos al repartidor',
+    summary: 'Vigila las entregas sin confirmar y pide el acuse al repartidor.',
+    alta: 'agent',
+    defaults: {
+      key: 'delivery_supervisor',
+      name: 'Supervisor de reparto',
+      role: 'Seguimiento de entregas',
+      responsibilities: ['Vigilar entregas sin confirmar', 'Pedir acuse al repartidor'],
+      ticketTypes: ['delivery'],
+      tools: ['ticket.get_context', 'ticket.post_message', 'ticket.request_ack', 'agent.request_help'],
+      config: { followUpMinutes: 20 },
+    },
+  },
+];
+
 function nowIso(ctx) {
   const clock = ctx?.clock ?? (() => new Date());
   return clock().toISOString();
@@ -172,6 +205,17 @@ export async function centroDirectory({ ctx, can }) {
       key: 'followup_agent',
       ready: agents.some((agent) => agent.key === 'followup_agent'),
     },
+    /*
+     * LOS AGENTES QUE EL CENTRO CONOCE, ESTÉN O NO DADOS DE ALTA.
+     *
+     * La pantalla enseña siempre los dos listones: si uno falta, aparece como
+     * «pendiente de alta» con su botón, en vez de desaparecer sin explicación.
+     * El alta sigue siendo de una persona (aquí solo se ofrece el formulario).
+     */
+    knownAgents: KNOWN_AGENTS.map((entry) => ({
+      ...entry,
+      ready: agents.some((agent) => agent.key === entry.key),
+    })),
   };
 }
 

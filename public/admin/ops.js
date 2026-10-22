@@ -470,6 +470,34 @@ function agentCardHtml(agent) {
     </li>`;
 }
 
+/**
+ * Listón de un agente que el centro conoce pero todavía no está dado de alta.
+ *
+ * Se pinta como una fila más (mismo sitio, mismo orden) para que la lista
+ * siempre tenga los dos agentes; si falta uno se ve el hueco con su botón, no
+ * una pantalla con un solo listón y sin explicación.
+ */
+function pendingAgentRowHtml(entry) {
+  const altaTrabajo = entry.alta === 'work';
+  const boton = altaTrabajo
+    ? '<button class="centro-btn centro-btn--xs" data-work-seed type="button">Dar de alta</button>'
+    : `<button class="centro-btn centro-btn--xs" data-agent-seed="${esc(entry.key)}" type="button">Dar de alta</button>`;
+  return `
+    <li class="centro-team__item">
+      <div class="centro-pending" data-agent-pending="${esc(entry.key)}">
+        <span class="centro-ava" data-state="paused" aria-hidden="true">${esc(initialsOf(entry.name))}</span>
+        <span class="centro-card__body">
+          <span class="centro-card__line">
+            <strong class="centro-card__name">${esc(entry.name)}</strong>
+            <span class="centro-state" data-state="paused"><i aria-hidden="true"></i>Sin dar de alta</span>
+          </span>
+          <span class="centro-card__role">${esc(entry.summary ?? entry.role ?? '')}</span>
+        </span>
+        <span class="centro-card__actions">${boton}</span>
+      </div>
+    </li>`;
+}
+
 function directoryHtml() {
   if (state.centroError) {
     return `<div class="centro-empty centro-empty--error">
@@ -482,6 +510,9 @@ function directoryHtml() {
   const data = state.centro;
   const agents = data.agents ?? [];
   const totals = data.totals ?? {};
+  /* Los agentes que el centro conoce y aún no están dados de alta. */
+  const faltan = data.canAdmin ? (data.knownAgents ?? []).filter((entry) => !entry.ready) : [];
+  const pendientes = faltan.map(pendingAgentRowHtml).join('');
   const empty = `
     <div class="centro-empty">
       <strong>Todavía no hay agentes</strong>
@@ -500,17 +531,10 @@ function directoryHtml() {
         ${centroStatHtml('Pendientes', totals.pending ?? 0, 'ejecuciones')}
         ${centroStatHtml('Sin leer', totals.unread ?? 0, 'para agentes')}
       </ul>
-      ${agents.length ? `<ul class="centro-team">${agents.map(agentCardHtml).join('')}</ul>` : empty}
       ${
-        data.workAgent && !data.workAgent.ready && data.canAdmin
-          ? `<div class="centro-seed">
-              <div>
-                <strong>Agente de Seguimiento</strong>
-                <span>Seguimientos y mensajes programados en una sola oficina. Su alta la haces tú, no se crea sola.</span>
-              </div>
-              <button class="centro-btn centro-btn--xs" data-work-seed type="button">Dar de alta</button>
-            </div>`
-          : ''
+        agents.length || pendientes
+          ? `<ul class="centro-team">${agents.map(agentCardHtml).join('')}${pendientes}</ul>`
+          : empty
       }
       <p class="centro-note">El estado y los contadores salen de las ejecuciones reales de cada agente.</p>
     </section>`;
@@ -2766,7 +2790,7 @@ function onViewClick(event) {
       '[data-ops-approve],[data-ops-reject],[data-ops-assign-agent],[data-ops-approvals],[data-ops-approvals-refresh],' +
       '[data-ops-agents],[data-ops-agent-edit],[data-ops-agent-new],' +
       '[data-centro-nav],[data-centro-agent],[data-centro-ticket],[data-centro-office-tab],[data-centro-reload],' +
-      '[data-work-tab],[data-work-approve],[data-work-reject],[data-work-fu],[data-work-sch],[data-work-full],[data-work-seed]',
+      '[data-work-tab],[data-work-approve],[data-work-reject],[data-work-fu],[data-work-sch],[data-work-full],[data-work-seed],[data-agent-seed]',
   );
   if (!target) {
     /* Un clic fuera cierra los menús flotantes (sin cerrar la ficha). */
@@ -2851,6 +2875,33 @@ function onViewClick(event) {
   if (target.dataset.workFull) {
     /* Las pantallas completas siguen existiendo: el centro es la puerta principal. */
     window.dispatchEvent(new CustomEvent('fulltech:navigate', { detail: { tab: target.dataset.workFull } }));
+    return;
+  }
+  if (target.dataset.agentSeed) {
+    /*
+     * Alta de un agente conocido desde su propio listón.
+     *
+     * Se envía la definición que manda el servidor (misma que usa el panel de
+     * agentes): no se inventa nada en el navegador y sigue siendo una acción
+     * explícita de una persona.
+     */
+    event.preventDefault();
+    const entry = (state.centro?.knownAgents ?? []).find((row) => row.key === target.dataset.agentSeed);
+    if (!entry?.defaults) {
+      toast('Ese agente se da de alta desde su propia oficina.');
+      return;
+    }
+    const boton = target;
+    boton.disabled = true;
+    api('/api/admin/ops/agents', { method: 'POST', body: JSON.stringify(entry.defaults) })
+      .then(() => {
+        toast(`${entry.name} dado de alta`);
+        return loadCentro();
+      })
+      .catch((error) => {
+        boton.disabled = false;
+        toast(error.message);
+      });
     return;
   }
   if (target.hasAttribute('data-work-seed')) {
