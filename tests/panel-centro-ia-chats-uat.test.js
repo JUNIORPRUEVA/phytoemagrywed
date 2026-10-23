@@ -247,9 +247,6 @@ beforeAll(async () => {
   });
   expect(nota.status).toBeLessThan(400);
 
-  /* El repartidor contesta por WhatsApp y el equipo deja una nota interna. */
-  await respuestaDelRepartidor('Voy para allá');
-
   dom = new JSDOM(readFileSync(path.join(ADMIN_DIR, 'index.html'), 'utf8'), {
     url: `${app.url}/admin/`,
     runScripts: 'outside-only',
@@ -318,7 +315,9 @@ describe('Centro IA · chats del supervisor', () => {
     /* Lo que contestó el repartidor: entra, no es un aviso nuestro. */
     expect(mensajes.some((text) => text.includes('Recibido') && text.includes('Voy para allá')), `mensajes: ${mensajes.join(' || ')}`).toBe(true);
     /* La nota del equipo: interna y marcada como NO enviada por WhatsApp. */
-    expect(mensajes.some((text) => text.includes('Interno') && text.includes('Nota interna de la UAT')), `mensajes: ${mensajes.join(' || ')}`).toBe(true);
+    expect(mensajes.some((text) => text.includes('Nota interna') && text.includes('Nota interna de la UAT')), `mensajes: ${mensajes.join(' || ')}`).toBe(true);
+    /* Ni se pierde ni se duplica: una sola respuesta del repartidor. */
+    expect(mensajes.filter((text) => text.includes('Voy para allá')), `mensajes: ${mensajes.join(' || ')}`).toHaveLength(1);
     /* Nada se inventa: el número del pedido está en el encabezado. */
     expect($('.centro-chatpane__num')?.textContent).toContain(orderNumber);
   });

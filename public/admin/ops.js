@@ -271,12 +271,28 @@ function fieldValue(form, name) {
   return String(form?.querySelector?.(`[name="${name}"]`)?.value ?? '');
 }
 
-const timeFmt = new Intl.DateTimeFormat('es-DO', { hour: '2-digit', minute: '2-digit' });
-const dayFmt = new Intl.DateTimeFormat('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' });
-const weekdayFmt = new Intl.DateTimeFormat('es-DO', { weekday: 'short', day: '2-digit', month: '2-digit' });
+/*
+ * HORA DE REPÚBLICA DOMINICANA, SIEMPRE.
+ *
+ * `Intl` usa la zona del DISPOSITIVO si no se le dice otra: un teléfono en
+ * Madrid vería las 01:00 de un aviso enviado a las 19:00 de Santiago. Todo el
+ * panel (mensajes, chats, tickets) se muestra en `America/Santo_Domingo`, que
+ * es la zona del negocio, y el «hoy/ayer» se calcula en esa misma zona.
+ */
+const ZONA_RD = 'America/Santo_Domingo';
+const timeFmt = new Intl.DateTimeFormat('es-DO', { hour: '2-digit', minute: '2-digit', timeZone: ZONA_RD });
+const dayFmt = new Intl.DateTimeFormat('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: ZONA_RD });
+const weekdayFmt = new Intl.DateTimeFormat('es-DO', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: ZONA_RD });
+const dayKeyFmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: ZONA_RD });
 
 function sameDay(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return dayKeyFmt.format(a) === dayKeyFmt.format(b);
+}
+
+/** El día anterior en el calendario de RD (no en el del dispositivo). */
+function rdYesterday(now) {
+  const [year, month, day] = dayKeyFmt.format(now).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day) - 24 * 60 * 60 * 1000);
 }
 
 /** «14:32» hoy · «Ayer 14:32» · «lun 20/10 14:32» · fecha corta. */
@@ -285,8 +301,7 @@ function stamp(value) {
   if (Number.isNaN(date.getTime())) return '';
   const now = new Date();
   if (sameDay(date, now)) return timeFmt.format(date);
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
+  const yesterday = rdYesterday(now);
   if (sameDay(date, yesterday)) return `Ayer ${timeFmt.format(date)}`;
   if (now.getTime() - date.getTime() < 6 * 24 * 60 * 60 * 1000) return `${weekdayFmt.format(date)} ${timeFmt.format(date)}`;
   return dayFmt.format(date);
@@ -297,9 +312,7 @@ function dayLabel(value) {
   if (Number.isNaN(date.getTime())) return '';
   const now = new Date();
   if (sameDay(date, now)) return 'Hoy';
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (sameDay(date, yesterday)) return 'Ayer';
+  if (sameDay(date, rdYesterday(now))) return 'Ayer';
   return dayFmt.format(date);
 }
 
@@ -649,7 +662,12 @@ function chatMessageHtml(message) {
   const estado = esExterno ? WA_STATUS_LABELS[meta.status] ?? null : null;
   const esAgente = message.authorType === 'agent';
   const esSistema = meta.direction === 'system';
-  const notaInterna = esAgente && !esExterno && !esSistema;
+  /*
+   * LO QUE NO SALIÓ SE DICE TAL CUAL. Antes las notas de una persona se
+   * etiquetaban «Interno», que se lee como «mensaje interno del sistema»; ahora
+   * cualquier cosa sin canal externo dice que NO se envió por WhatsApp.
+   */
+  const notaInterna = !esExterno && !esSistema;
   const quien = entrante
     ? message.authorName ?? 'Repartidor'
     : esAgente
@@ -661,11 +679,9 @@ function chatMessageHtml(message) {
       ? `<span class="ops-chip ops-chip--wa">WhatsApp</span>${estado ? `<span class="ops-chip ops-chip--wa-${esc(meta.status ?? 'pending')}">${esc(estado)}</span>` : ''}`
       : esSistema
         ? '<span class="ops-chip ops-chip--in">Sistema</span>'
-        : notaInterna
-          ? '<span class="ops-chip ops-chip--note">Nota interna · no se envió</span>'
-          : '<span class="ops-chip ops-chip--in">Interno</span>';
+        : '<span class="ops-chip ops-chip--note">Nota interna · no se envió</span>';
   return `
-    <article class="ops-msg${esAgente ? ' ops-msg--agent' : ''}${entrante ? ' ops-msg--in' : ''}${esExterno ? ' ops-msg--wa' : ''}" data-seq="${esc(message.seq)}">
+    <article class="ops-msg${esAgente ? ' ops-msg--agent' : ''}${entrante ? ' ops-msg--in' : ''}${esExterno ? ' ops-msg--wa' : ''}${notaInterna ? ' ops-msg--note' : ''}" data-seq="${esc(message.seq)}">
       <p class="ops-msg__who">${etiqueta} ${esc(quien)} · ${esc(stamp(message.createdAt) ?? '')}</p>
       <div class="ops-msg__bubble">${esc(message.body).replace(/\n/g, '<br>')}</div>
       ${esExterno && meta.status === 'failed' && meta.error ? `<p class="ops-msg__error">${esc(meta.error)}</p>` : ''}
@@ -684,7 +700,21 @@ function chatPaneHtml() {
           fila?.agent ? ` · IA ${esc(fila.agent)}` : ''
         }</p>
       </div>
-      ${fila?.deepLink ? `<a class="centro-btn centro-btn--ghost centro-btn--xs" href="${esc(fila.deepLink)}">Abrir pedido</a>` : ''}
+      ${(() => {
+        /*
+         * EL ENLACE ES DEL REPARTIDOR, NO DEL ADMINISTRADOR.
+         *
+         * `?v=delivery&order=…` abre la pantalla «Mis entregas»: al repartidor
+         * asignado le muestra su pedido, pero a quien administra le dice «no
+         * tienes entregas asignadas» (la vista es del repartidor). Por eso al
+         * equipo se le lleva a «Pedidos», que es donde administración trabaja, y
+         * el enlace del repartidor se sigue viendo pero se copia/abre aparte.
+         */
+        if (can('delivery.tracking.manage_all')) {
+          return '<button class="centro-btn centro-btn--ghost centro-btn--xs" data-centro-nav="pedidos" type="button">Ir a Pedidos</button>';
+        }
+        return fila?.deepLink ? `<a class="centro-btn centro-btn--ghost centro-btn--xs" href="${esc(fila.deepLink)}" title="Enlace que recibe el repartidor">Abrir pedido</a>` : '';
+      })()}
     </header>`;
   const cuerpo = state.chatBusy
     ? '<div class="ops-thread__empty"><p>Cargando la conversación…</p></div>'
@@ -3267,6 +3297,11 @@ function onViewClick(event) {
       ensureShell();
       renderCentro();
       loadChats();
+      return;
+    }
+    if (nav === 'pedidos') {
+      /* Administración trabaja los pedidos en su propia pantalla: se navega allí. */
+      window.dispatchEvent(new CustomEvent('fulltech:navigate', { detail: { tab: 'pedidos' } }));
       return;
     }
     state.returnTo = null;

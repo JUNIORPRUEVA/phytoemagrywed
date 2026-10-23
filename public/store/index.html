@@ -11,11 +11,13 @@
     <link rel="manifest" href="/store/manifest.webmanifest" />
     <link rel="icon" href="/store/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/store/icon-192.png" />
-    <link rel="stylesheet" href="/store/store.css?v=6" />
-    <link rel="stylesheet" href="/store/premium.css?v=4" />
+    <link rel="stylesheet" href="/store/store.css?v=7" />
+    <link rel="stylesheet" href="/store/premium.css?v=5" />
     <link rel="stylesheet" href="/store/design-system.css?v=10" />
-    <link rel="stylesheet" href="/store/product-gallery.css?v=2" />    <link rel="stylesheet" href="/store/storefront.css?v=2" />    <link rel="stylesheet" href="/store/custom-icons.css?v=1" />
+    <link rel="stylesheet" href="/store/product-gallery.css?v=5" />    <link rel="stylesheet" href="/store/storefront.css?v=3" />    <link rel="stylesheet" href="/store/custom-icons.css?v=1" />
     <link rel="stylesheet" href="/store/presentation.css?v=2" />
+    <link rel="stylesheet" href="/store/floating-cart.css?v=3" />
+    <link rel="stylesheet" href="/store/discovery.css?v=13" />
     <title>FULLTECH Store</title>
   </head>
   <body>
@@ -35,7 +37,11 @@
             <a href="/store/#/nosotros" data-route="nosotros">Nosotros</a>
           </nav>
           <div class="ft-header__actions">
-            <a class="ft-iconbtn cart-shortcut" href="/store/#/cart" data-route="cart" aria-label="Carrito" title="Carrito">
+            <button class="ft-iconbtn ft-install" id="install-app" type="button" aria-label="Instalar FULLTECH Store" title="Instalar FULLTECH Store">
+              <span class="ft-install-icon" style="--install-icon-url:url('/store/assets/icons/custom/instalar-en-pc.png')" aria-hidden="true"></span><span class="ft-install-label">Instalar</span>
+            </button>
+            <a class="ft-iconbtn ft-profile" href="/store/#/account/register" aria-label="Crear mi cuenta" title="Crear mi cuenta"><svg data-msr="account" data-msr-size="22" aria-hidden="true"></svg></a>
+            <a class="ft-iconbtn cart-shortcut" href="/store/#/cart" data-route="cart" aria-label="Carrito" title="Carrito" hidden>
               <svg data-msr="cart" data-msr-size="22" aria-hidden="true"></svg>
               <span class="ft-cart-badge" data-cart-badge hidden></span>
             </a>
@@ -59,11 +65,12 @@
           <span>Carrito</span>
           <span class="ft-cart-badge ft-cart-badge--nav" data-cart-badge hidden></span>
         </a>
-        <a href="/store/#/account" class="ft-nav__item" data-route="account">
-          <svg data-msr="account" data-msr-size="22" aria-hidden="true"></svg>
-          <span>Mi cuenta</span>
+        <a href="/store/#/request" class="ft-nav__item" data-route="request" aria-label="Lo conseguimos por ti">
+          <svg data-msr="search" data-msr-size="22" aria-hidden="true"></svg>
+          <span>Lo conseguimos</span>
         </a>
       </nav>
+      <a class="ft-signup-prompt" id="signup-prompt" href="/store/#/account/register" aria-live="polite" hidden>Regístrate con Google</a>
     </div>
 
     <div class="drawer-scrim" id="drawer-scrim" hidden></div>
@@ -77,11 +84,12 @@
       <a href="/store/#/nosotros" data-route="nosotros">Nosotros</a>
       <div class="drawer-divider"></div>
       <p class="drawer-label">TU ESPACIO</p>
+      <a href="/store/#/favorites" data-route="favorites">♡ Mis favoritos</a>
       <a href="/store/#/orders" data-route="orders">Mis pedidos</a>
       <a href="/store/#/account" data-route="account">Mi cuenta</a>
       <div class="drawer-bottom"><span class="status-dot"></span> Tu tienda FULLTECH</div>
     </aside>
     <div id="cart-feedback-status" class="ft-action-status" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/store/store.js?v=31"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
+    <script type="module" src="/store/store.js?v=44"></script>    <script type="module" src="/store/google-signin.js?v=1"></script>  </body>
 </html>

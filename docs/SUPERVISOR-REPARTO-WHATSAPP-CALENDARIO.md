@@ -118,10 +118,10 @@ pero **no cambia** el estado de la entrega. Fallo encontrado y corregido en esta
 fase: el registro usaba una variable inexistente (`store`) y la respuesta se
 perdía en silencio.
 
-**Hallazgo pendiente (fuera del alcance):** el clasificador de la conversación de
-cliente marca un «Voy para allá» de un repartidor como `OPT_OUT`. No se ha
-tocado para no alterar el módulo de conversaciones; conviene revisarlo aparte
-porque podría activar «no contactar» en el registro de cliente del repartidor.
+**Hallazgo corregido el 2026-10-22:** el clasificador de la conversación de cliente marcaba
+«Voy para allá» de un repartidor como `OPT_OUT` (la regla `\bparar?\b` casaba con la preposición
+«para») y lo dejaba como «no contactar». Ya está arreglado y con pruebas; ver
+`docs/SUPERVISOR-REPARTO-VERIFICACION-2026-10-22.md` §1.
 
 ---
 
@@ -201,10 +201,9 @@ y concurrencia.
 
 ## 15. Capturas
 
-No se han generado capturas de navegador: el modo de trabajo de este proyecto
-prohíbe abrir navegadores automatizados sin petición expresa. La evidencia de
-pantalla es la prueba de panel en jsdom (`tests/panel-centro-ia-chats-uat.test.js`),
-que carga el panel real y navega como una persona.
+No se han generado capturas de navegador en esta fase. La verificación en **Chromium real**, con
+capturas de escritorio, móvil y tema oscuro, está en
+`docs/SUPERVISOR-REPARTO-VERIFICACION-2026-10-22.md` (y en `docs/capturas/chats-0*.png`).
 
 ---
 
@@ -220,11 +219,14 @@ que carga el panel real y navega como una persona.
 
 ## GO / NO-GO
 
-- **UAT: GO.** Las 158 pruebas pasan; el calendario 5/20/30, el enlace, la
-  separación interno/externo y los chats están demostrados con WhatsApp simulado.
-- **Producción: NO-GO todavía.** Antes hay que: aprobar las plantillas, fijar
-  `META_APP_SECRET`, decidir el contacto de administración y revisar el hallazgo
-  de `OPT_OUT` del clasificador. Después, desplegar solo con autorización
-  explícita y comprobar el primer pedido real de punta a punta.
+- **UAT: GO.** El calendario 5/20/30, el enlace, la separación interno/externo,
+  el escalado con destinatario configurado, el repartidor sin teléfono y los chats
+  están demostrados con WhatsApp simulado, reloj falso y **Chromium real**.
+- **Producción: GO condicionado** (actualizado el 2026-10-22). Las tres plantillas
+  están **APPROVED** en Meta y `META_APP_SECRET` está presente y verificado. Falta:
+  decidir el contacto de administración del escalado, cargar el teléfono de los
+  repartidores activos, desplegar con autorización explícita y vigilar el primer
+  pedido real de punta a punta. Detalle en
+  `docs/SUPERVISOR-REPARTO-VERIFICACION-2026-10-22.md`.
 
 **No se ha commiteado, empujado ni desplegado nada.**

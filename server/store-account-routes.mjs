@@ -1,5 +1,6 @@
 import { STORE_REQUEST_STATUSES } from './store-accounts.mjs';
 import { maskPhone, phoneRequirement } from './store-verifications.mjs';
+import { publicProduct } from './store-public-routes.mjs';
 
 const COOKIE = 'ft_store_session';
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
@@ -154,6 +155,27 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
   };
 
   try {
+    if (route === '/api/store/account/favorites' && req.method === 'GET') {
+      const session = requireAccount();
+      if (!session) return true;
+      const ids = await accounts.favoriteIds(session.account.id);
+      if (url.searchParams.get('ids') === '1') return send(200, { ok: true, ids }, { 'cache-control': 'no-store' });
+      if (!ctx.storeCatalog) return send(503, { ok: false, message: 'El catálogo no está disponible. Intenta de nuevo.' });
+      const products = (await ctx.storeCatalog.publicProducts()).filter(p => ids.includes(p.id)).map(publicProduct);
+      products.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      return send(200, { ok: true, ids, products }, { 'cache-control': 'no-store' });
+    }
+    const favoriteMatch = /^\/api\/store\/account\/favorites\/([a-zA-Z0-9_-]{1,180})$/.exec(route);
+    if (favoriteMatch && ['POST', 'DELETE'].includes(req.method)) {
+      const session = requireAccount();
+      if (!session) return true;
+      if (req.method === 'POST') {
+        if (!ctx.storeCatalog) return send(503, { ok: false, message: 'El catálogo no está disponible. Intenta de nuevo.' });
+        if (!(await ctx.storeCatalog.publicProducts()).some(p => p.id === favoriteMatch[1])) return send(404, { ok: false, message: 'Este producto ya no está publicado.' });
+      }
+      const ids = await accounts.setFavorite(session.account.id, favoriteMatch[1], req.method === 'POST');
+      return send(200, { ok: true, ids }, { 'cache-control': 'no-store' });
+    }
     if (route === '/api/store/account/providers' && req.method === 'GET') {
       return send(200, {
         ok: true,

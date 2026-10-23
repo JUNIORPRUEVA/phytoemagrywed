@@ -74,6 +74,11 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
       last_seen_at TEXT NOT NULL,
       revoked_at TEXT);
     CREATE INDEX IF NOT EXISTS fulltech_customer_sessions_account_idx ON fulltech_customer_sessions_v1(account_id);
+    CREATE TABLE IF NOT EXISTS fulltech_customer_favorites_v1 (
+      account_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(account_id, product_id));
     CREATE TABLE IF NOT EXISTS fulltech_store_requests_v1 (
       id TEXT PRIMARY KEY,
       customer_id TEXT NOT NULL,
@@ -774,6 +779,20 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     return { account: publicAccount(updated, await customers.get(customer.id)), customer };
   }
 
+  async function favoriteIds(accountId) {
+    return (await sql.query('SELECT product_id FROM fulltech_customer_favorites_v1 WHERE account_id=$1 ORDER BY created_at DESC, product_id', [accountId])).rows.map(row => row.product_id);
+  }
+  async function setFavorite(accountId, productId, selected) {
+    if (selected) {
+      const ids = await favoriteIds(accountId);
+      if (ids.length >= 250 && !ids.includes(productId)) throw fail('favorites_limit', 'Puedes guardar hasta 250 favoritos.', 422);
+      await sql.query('INSERT INTO fulltech_customer_favorites_v1(account_id,product_id,created_at) VALUES($1,$2,$3) ON CONFLICT(account_id,product_id) DO NOTHING', [accountId, productId, clock().toISOString()]);
+    } else {
+      await sql.query('DELETE FROM fulltech_customer_favorites_v1 WHERE account_id=$1 AND product_id=$2', [accountId, productId]);
+    }
+    return favoriteIds(accountId);
+  }
+
   return {
     register, login, session, revokeSession, createSession, updateProfile, setPassword,
     setPhone, ensureCustomerForPhone,
@@ -781,6 +800,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     createRequest, listRequestsForCustomer, getRequest, requestImage, decideRequest, reportTransfer,
     adminListRequests, adminUpdateRequest,
     accountBy,
+    favoriteIds, setFavorite,
     viewAccount: (account, customer) => publicAccount(account, customer),
     providers: { password: true },
   };

@@ -19,6 +19,46 @@ const clean = (v, n = 160) => String(v ?? '').trim().slice(0, n);
  * NO se puede comprar aunque alguien lo haya marcado AVAILABLE_NOW.
  */
 const AVAILABILITY_STATES = new Set(['AVAILABLE_NOW', 'ON_REQUEST', 'UNAVAILABLE']);
+const STORE_TIME_ZONE = 'America/Santo_Domingo';
+
+export function businessDate(value = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: STORE_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
+  const get = type => parts.find(part => part.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function parseOfferDate(value, field) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const raw = String(value).trim();
+  const local = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw) ? `${raw}:00-04:00` :
+    /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00-04:00` : raw;
+  const parsed = new Date(local);
+  if (!Number.isFinite(parsed.getTime())) throw fail('invalid_offer_date', `La fecha de ${field} no es válida.`);
+  return parsed.toISOString();
+}
+
+function booleanInput(value, fallback = false) {
+  if (value === undefined) return fallback;
+  return value === true || ['true', '1', 'on', 'yes', 'si'].includes(String(value).trim().toLowerCase());
+}
+
+export function offerPricing(product, now = new Date()) {
+  const referenceCents = Number(product?.compare_at_cents);
+  const baseCents = Number(product?.price_cents);
+  const offerCents = product?.offer_price_cents == null ? baseCents : Number(product.offer_price_cents);
+  const legacyOffer = product?.offer_active === undefined && referenceCents > baseCents;
+  const configured = product?.offer_active === true || legacyOffer;
+  const starts = product?.offer_start_at ? Date.parse(product.offer_start_at) : -Infinity;
+  const ends = product?.offer_end_at ? Date.parse(product.offer_end_at) : Infinity;
+  const nowMs = new Date(now).getTime();
+  const active = configured && Number.isFinite(nowMs) && referenceCents > offerCents && offerCents > 0 && nowMs >= starts && nowMs < ends;
+  return {
+    active,
+    priceCents: active ? offerCents : baseCents,
+    compareAtCents: active ? referenceCents : null,
+    discountPercent: active ? Math.max(1, Math.round((1 - offerCents / referenceCents) * 100)) : null,
+  };
+}
 
 export function effectiveAvailability(product) {
   if (!product) return 'UNAVAILABLE';
@@ -109,6 +149,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     featured INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL)`);
   await sql.query('CREATE TABLE IF NOT EXISTS fulltech_store_first_publication_v1 (product_id TEXT PRIMARY KEY, published_at TEXT NOT NULL)');
+  await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_daily_offers_v1 (
+    offer_date TEXT PRIMARY KEY, product_ids TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
   await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_publication_status_order_idx ON fulltech_store_publication_v1(status, sort_order, product_id)');
   await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_store_search_terms_v2 (
     product_id TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(product_id,token))`);
@@ -150,6 +192,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   async function publicProducts() {
     if (publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
+    const now = clock();
     const pubs = (await sql.query("SELECT p.product_id,p.featured,p.sort_order,p.updated_at,f.published_at FROM fulltech_store_publication_v1 p LEFT JOIN fulltech_store_first_publication_v1 f ON f.product_id=p.product_id WHERE p.status='published' ORDER BY p.sort_order,p.product_id")).rows;
     if (!pubs.length) { publicCache = { items: [], expiresAt: Date.now() + 5000 }; return []; }
     /*
@@ -174,23 +217,23 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       else if (p.quantity <= 0) availability = 'out_of_stock';
       else if (p.quantity <= 2) availability = 'low_stock';
       else availability = 'available';
+      const pricing = offerPricing(p, now);
+      const availabilityState = effectiveAvailability(p);
       return [{
         id: p.id, kind: p.kind === 'service' ? 'service' : 'product', name: p.store_public_name || p.name,
-        category: p.category || null, price: Number(p.price_cents) / 100, currency: 'DOP',
+        category: p.category || null, price: pricing.priceCents / 100, currency: 'DOP',
         /*
          * OFERTA: solo existe si una persona configuró un precio anterior MÁS
          * ALTO que el de venta. El descuento se calcula aquí (servidor), nunca en
          * el navegador, para que nadie pueda inventar un porcentaje.
          */
-        compareAtPrice: Number(p.compare_at_cents) > Number(p.price_cents) ? Number(p.compare_at_cents) / 100 : null,
-        discountPercent: Number(p.compare_at_cents) > Number(p.price_cents)
-          ? Math.max(1, Math.round((1 - Number(p.price_cents) / Number(p.compare_at_cents)) * 100))
-          : null,
+        compareAtPrice: pricing.compareAtCents === null ? null : pricing.compareAtCents / 100,
+        discountPercent: pricing.discountPercent,
         /* Fechas reales: creación del registro y publicación en la tienda. */
         createdAt: p.created_at ?? null,
         publishedAt: pub.published_at ?? null,
-        availability, availabilityState: effectiveAvailability(p),
-        purchaseable: effectiveAvailability(p) === 'AVAILABLE_NOW',
+        availability, availabilityState,
+        purchaseable: availabilityState === 'AVAILABLE_NOW',
         shortDescription: p.store_short_description || '', description: p.store_public_description || '',
         brand: p.store_brand || null,
         warranty: publicWarranty(p),
@@ -199,10 +242,50 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         featured: Boolean(Number(pub.featured)), sortOrder: Number(pub.sort_order),
         /* Fecha real de publicación: única fuente válida para <lastmod>. */
         updatedAt: pub.updated_at ?? null,
+        _dailyOfferEligible: pricing.active && p.daily_offer === true && availabilityState === 'AVAILABLE_NOW',
+        _offerSavingsCents: pricing.active ? pricing.compareAtCents - pricing.priceCents : 0,
       }];
     });
     publicCache = { items, expiresAt: Date.now() + 5000 };
     return items;
+  }
+  function dailyOfferHash(value) {
+    let hash = 2166136261;
+    for (const char of String(value)) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+    return hash >>> 0;
+  }
+  async function dailyOffers(now = clock()) {
+    const date = businessDate(now);
+    return exclusive(async () => {
+      const items = await publicProducts();
+      const eligible = items.filter(item => item._dailyOfferEligible);
+      if (!eligible.length) return [];
+      const byId = new Map(eligible.map(item => [item.id, item]));
+      const current = (await sql.query('SELECT product_ids FROM fulltech_store_daily_offers_v1 WHERE offer_date=$1', [date])).rows[0];
+      let currentIds = [];
+      try { currentIds = Array.isArray(JSON.parse(current?.product_ids || '[]')) ? JSON.parse(current.product_ids) : []; } catch {}
+      const desired = Math.min(2, eligible.length);
+      const stillValid = [...new Set(currentIds)].filter(id => byId.has(id)).slice(0, desired);
+      if (stillValid.length === desired) return stillValid.map(id => byId.get(id));
+      const historyRows = (await sql.query('SELECT product_ids FROM fulltech_store_daily_offers_v1 WHERE offer_date<>$1 ORDER BY offer_date DESC LIMIT 14', [date])).rows;
+      const seen = new Map();
+      for (const row of historyRows) {
+        let ids = []; try { ids = JSON.parse(row.product_ids); } catch {}
+        for (const id of Array.isArray(ids) ? ids : []) seen.set(id, (seen.get(id) || 0) + 1);
+      }
+      const selected = [...stillValid];
+      const ranked = eligible.filter(item => !selected.includes(item.id)).sort((a, b) =>
+        (seen.get(a.id) || 0) - (seen.get(b.id) || 0) ||
+        Number(b.discountPercent) - Number(a.discountPercent) ||
+        Number(b._offerSavingsCents) - Number(a._offerSavingsCents) ||
+        Number(a.price) - Number(b.price) ||
+        dailyOfferHash(`${date}:${a.id}`) - dailyOfferHash(`${date}:${b.id}`));
+      selected.push(...ranked.slice(0, desired - selected.length).map(item => item.id));
+      const timestamp = new Date(now).toISOString();
+      await sql.query(`INSERT INTO fulltech_store_daily_offers_v1(offer_date,product_ids,created_at,updated_at) VALUES($1,$2,$3,$4)
+        ON CONFLICT(offer_date) DO UPDATE SET product_ids=excluded.product_ids,updated_at=excluded.updated_at`, [date, JSON.stringify(selected), timestamp, timestamp]);
+      return selected.map(id => byId.get(id)).filter(Boolean);
+    });
   }
   async function searchPublicProducts(value) {
     const terms = [...new Set(normalizeSearch(value).split(/[^a-z0-9]+/).filter(Boolean))].slice(0, 8);
@@ -326,11 +409,12 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     } : { ...p, stock_initialized: true });
   }
   function saleItem(p) {
+    const pricing = offerPricing(p, clock());
     return { id: p.id, name: p.name, label: p.name, kind: p.kind, product_type: p.product_type ?? null, product_id: p.id,
-      price: p.price_cents / 100, currency: 'DOP', available: p.active, active: p.active,
+      price: pricing.priceCents / 100, currency: 'DOP', available: p.active, active: p.active,
       capsules: p.capsules || 0, capsule_quantity: p.capsules || 0, completeBottle: !!p.completeBottle,
       general: !p.legacy, track_stock: p.track_stock, stock: p.quantity,
-      image_url: p.image_url, sale_price_cents: p.price_cents };
+      image_url: p.image_url, sale_price_cents: pricing.priceCents, regular_price_cents: p.price_cents, compare_at_cents: pricing.compareAtCents };
   }
   async function save(input, actor, id = null) {
     if(input.images!==undefined&&(!Array.isArray(input.images)||input.images.length>3))throw fail('image_limit','Puedes guardar un máximo de 3 imágenes.');
@@ -406,6 +490,17 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       if (compareCents !== null && compareCents <= priceCents) {
         throw fail('invalid_compare_at', 'El precio anterior debe ser mayor que el precio de venta.');
       }
+      let offerPriceCents = previous?.offer_price_cents ?? null;
+      if (input.offer_price !== undefined) offerPriceCents = input.offer_price === '' || input.offer_price === null ? null : money(input.offer_price);
+      if (offerPriceCents !== null && offerPriceCents <= 0) throw fail('invalid_offer_price', 'El precio de oferta debe ser mayor que cero.');
+      if (offerPriceCents !== null && compareCents !== null && compareCents <= offerPriceCents) throw fail('invalid_compare_at', 'El precio anterior debe ser mayor que el precio de oferta.');
+      const offerActive = booleanInput(input.offer_active, previous?.offer_active === undefined ? compareCents !== null : previous.offer_active === true);
+      if (offerActive && offerPriceCents === null) offerPriceCents = priceCents;
+      if (offerActive && (compareCents === null || compareCents <= offerPriceCents)) throw fail('invalid_offer', 'Activa la oferta solo con precio anterior y precio de oferta válidos.');
+      const offerStartAt = input.offer_start_at === undefined ? previous?.offer_start_at ?? null : parseOfferDate(input.offer_start_at, 'inicio de la oferta');
+      const offerEndAt = input.offer_end_at === undefined ? previous?.offer_end_at ?? null : parseOfferDate(input.offer_end_at, 'final de la oferta');
+      if (offerStartAt && offerEndAt && Date.parse(offerEndAt) <= Date.parse(offerStartAt)) throw fail('invalid_offer_dates', 'La fecha final debe ser posterior a la fecha inicial.');
+      const dailyOffer = booleanInput(input.daily_offer, previous?.daily_offer === true);
       if (!integer(input.min_stock ?? 0)) throw fail('invalid_quantity', 'El stock mínimo debe ser un número entero mayor o igual a cero.');
       let category=null;
       if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
@@ -432,7 +527,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         warranty_claim: clean(input.warranty_claim ?? previous?.warranty_claim ?? '', 1000),
         warranty_public_notes: clean(input.warranty_public_notes ?? previous?.warranty_public_notes ?? '', 500),
         warranty_private_notes: clean(input.warranty_private_notes ?? previous?.warranty_private_notes ?? '', 1000),
-        price_cents: priceCents, compare_at_cents: compareCents,
+        price_cents: priceCents, compare_at_cents: compareCents, offer_active: offerActive, offer_price_cents: offerPriceCents,
+        offer_start_at: offerStartAt, offer_end_at: offerEndAt, daily_offer: dailyOffer,
         cost_cents: previous?.legacy ? 0 : money(input.cost),
         track_stock: trackStock, active: input.active !== false, min_stock: Number(input.min_stock ?? 0),
         legacy: !!previous?.legacy, created_at: previous?.created_at || clock().toISOString(),
@@ -662,7 +758,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return lines;
   }
 
-  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
+  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,dailyOffers,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

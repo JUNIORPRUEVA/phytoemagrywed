@@ -279,13 +279,25 @@ describe('Fase 2 · el repartidor sin teléfono se detecta y se escala', () => {
     expect(vuelta.supervisor).toBeTruthy();
   }, 60000);
 
-  it('la segunda pasada no repite el escalado (no es un aviso, es un estado)', async () => {
+  it('la segunda pasada no duplica el escalado: lo reevalúa sin volver a avisar', async () => {
     advance(30);
     await tick();
     const escalados = (await eventos()).filter(
       (entry) => entry.order_id === pedido.id && entry.kind === 'escalation' && entry.data?.reason === 'courier_without_phone',
     );
-    expect(escalados).toHaveLength(1);
+    /*
+     * Un escalado BLOQUEADO (nadie con teléfono) se reevalúa a los 15 minutos:
+     * queda marcado como `:recheck:` y NO repite avisos ni WhatsApp. Lo que no
+     * puede pasar es que se duplique el escalado original.
+     */
+    const iniciales = escalados.filter((entry) => !String(entry.idempotency_key ?? '').includes(':recheck:'));
+    expect(iniciales).toHaveLength(1);
+    expect(new Set(escalados.map((entry) => entry.idempotency_key)).size).toBe(escalados.length);
+    const avisos = (await app.collections.list('user_notifications', { limit: 500 })).filter(
+      (row) => row.entity_id === pedido.id && row.type === 'DELIVERY_SUPERVISOR_ESCALATION',
+    );
+    /* Un aviso por administrador y etapa: la reevaluación no lo repite. */
+    expect(new Set(avisos.map((row) => row.recipient_user_id)).size).toBe(avisos.length);
   }, 60000);
 
   it('el chat del supervisor lo explica con el número de pedido y pide el dato', async () => {

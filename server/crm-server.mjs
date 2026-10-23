@@ -138,7 +138,7 @@ import { handleOpsRoute } from './ops/routes.mjs';
  */
 import { opsAgentTick } from './ops/agents.mjs';
 import { opsDeadlineTick } from './ops/notify.mjs';
-import { opsDeliveryTicketTick, recordExternalMessage } from './ops/delivery-tickets.mjs';
+import { opsDeliveryTicketTick, recordExternalMessage, reconcileDeliveryReceipt } from './ops/delivery-tickets.mjs';
 import { buildCustomerHistory } from './history.mjs';
 import { syncOrderPickups } from './suppliers.mjs';
 import { createRealtimeHub, eventFromMutation } from './realtime.mjs';
@@ -5385,6 +5385,13 @@ export async function processWebhookPayload(ctx, body) {
     if (!status.waMessageId || !status.status) continue;
     const result = await ctx.customers.updateMessageStatus(status);
     if (result.ok) updated.push(status.status);
+    /*
+     * EL MISMO ACUSE, EN EL CHAT DEL PEDIDO.
+     * Los avisos del supervisor al repartidor y a administración viven en el
+     * ticket del pedido: si Meta confirma «entregado» o «leído», el panel tiene
+     * que decirlo en vez de quedarse en «Enviado».
+     */
+    await reconcileDeliveryReceipt({ ctx, providerId: status.waMessageId, status: status.status, at: status.at ?? null }).catch(() => null);
   }
   return {
     messages: parsed.messages.length,

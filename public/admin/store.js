@@ -20,6 +20,7 @@
   const svg=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${icon(name)}</svg>`;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const cash=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(Number(c||0)/100);
+  const dateTimeLocal=v=>{if(!v)return '';const d=new Date(v);if(!Number.isFinite(d.getTime()))return String(v).slice(0,16);const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;};
   const root=()=>doc()?.getElementById(`store-${page}`)??null;
   /*
    * EL AVISO SOBREVIVE AL REPINTADO.
@@ -499,6 +500,16 @@
       <label class="field"><span class="field__label">Descripción pública (opcional)</span><textarea class="field__input" name="store_public_description" maxlength="2000">${esc(p.store_public_description)}</textarea></label>
 
       <label class="field"><span class="field__label">¿Se puede comprar?</span><select class="field__select" name="store_availability"><option value="AVAILABLE_NOW">Disponible para entrega</option><option value="ON_REQUEST">Disponible bajo pedido</option><option value="UNAVAILABLE">No disponible</option></select><small>Si lleva control de existencias y llega a cero, la compra se bloquea aunque esté marcado como disponible.</small></label>
+
+      <fieldset class="store-offer-fieldset"><legend>Configuración de oferta</legend>
+        <label class="store-check"><input name="offer_active" type="checkbox" ${p.offer_active === true || (p.offer_active === undefined && Number(p.compare_at_cents) > Number(p.price_cents)) ? 'checked' : ''}> Activar oferta</label>
+        <div class="store-form-grid"><label class="field"><span class="field__label">Precio anterior o de referencia (RD$)</span><input class="field__input" name="compare_at_price" type="number" min="0" step="0.01" value="${p.compare_at_cents!=null?(Number(p.compare_at_cents)/100).toFixed(2):''}"><small>Debe ser un precio histórico o referencia comercial verificable.</small></label>
+        <label class="field"><span class="field__label">Precio actual de oferta (RD$)</span><input class="field__input" name="offer_price" type="number" min="0.01" step="0.01" value="${p.offer_price_cents!=null?(Number(p.offer_price_cents)/100).toFixed(2):(Number(p.compare_at_cents)>Number(p.price_cents)?(Number(p.price_cents)/100).toFixed(2):'')}"></label></div>
+        <div class="store-form-grid"><label class="field"><span class="field__label">Inicio (opcional)</span><input class="field__input" name="offer_start_at" type="datetime-local" value="${dateTimeLocal(p.offer_start_at)}"></label>
+        <label class="field"><span class="field__label">Final (opcional)</span><input class="field__input" name="offer_end_at" type="datetime-local" value="${dateTimeLocal(p.offer_end_at)}"></label></div>
+        <label class="store-check"><input name="daily_offer" type="checkbox" ${p.daily_offer === true ? 'checked' : ''}> Participar en ofertas diarias</label>
+        <small>Las ofertas diarias se seleccionan automáticamente en la zona horaria America/Santo_Domingo y solo usan productos publicados, vendibles y disponibles.</small>
+      </fieldset>
 
       </div></details>
       <details class="product-accordion" data-product-section="warranty"><summary>Garantía comercial</summary><div class="product-accordion-body">

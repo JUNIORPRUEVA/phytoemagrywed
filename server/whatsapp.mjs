@@ -58,7 +58,21 @@ export function detectOptOut(text) {
   if (!value) return false;
   return [
     /\bstop\b/,
-    /\bparar?\b/,
+    /*
+     * «PARA» ES UNA TRAMPA.
+     *
+     * `\bparar?\b` casaba con la preposición «para» de cualquier frase normal:
+     * «Voy para allá» de un repartidor se clasificaba como opt-out y marcaba al
+     * remitente como «no contactar» (fallo medido en la UAT del supervisor,
+     * 2026-10-22). El imperativo real («para», «para ya», «para de escribirme»)
+     * se detecta ahora por su forma exacta y «parar» se mantiene tal cual: un
+     * pedido de baja de verdad sigue cortando el contacto.
+     */
+    /\bparar\b/,
+    /^para$/,
+    /^ya\s+para$/,
+    /^para\s+ya$/,
+    /\bpara\s+de\s+(escribir|escribirme|enviar|enviarme|mandar|mandarme|molestar|molestarme)\b/,
     /\bno\s+mas\b/,
     /\bno\s+quiero\s+(recibir|mas)\b/,
     /\bcancel\w*\s+(los\s+)?mensajes\b/,

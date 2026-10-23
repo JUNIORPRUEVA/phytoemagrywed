@@ -541,7 +541,7 @@ describe('escalado a administración por WhatsApp', () => {
     expect(world.audits.some((entry) => entry.action === 'delivery.supervisor_escalation_unavailable')).toBe(true);
   });
 
-  it('no dispara a más de cuatro administradores por incidencia', async () => {
+  it('manda a TODOS los destinos de administración únicos (sin tope de cuatro)', async () => {
     const adminContacts = Array.from({ length: 6 }, (_, index) => ({
       name: `Admin ${index + 1}`,
       phone: `82940000${index}0`,
@@ -554,7 +554,8 @@ describe('escalado a administración por WhatsApp', () => {
     });
     world.now = '2026-10-18T15:30:00.000Z';
     await supervisorTick(ctx, deps);
-    expect(world.sends.filter((row) => row.payload.name === SUPERVISOR_ESCALATION_TEMPLATE)).toHaveLength(4);
+    /* Seis contactos de respaldo (ningún ADMIN con teléfono) → seis mensajes. */
+    expect(world.sends.filter((row) => row.payload.name === SUPERVISOR_ESCALATION_TEMPLATE)).toHaveLength(6);
   });
 });
 

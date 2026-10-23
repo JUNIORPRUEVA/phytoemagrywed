@@ -1,0 +1,43 @@
+/* Only show the floating shortcut when the customer's cart contains products. */
+.cart-shortcut[hidden] { display: none !important; }
+@media (max-width: 760px) {
+  /* backdrop-filter makes the sticky header a containing block for fixed children. */
+  .ft-header { backdrop-filter: none; background: var(--ft-surface); }
+  .ft-header__row { position: relative; }
+  .ft-header__row .ft-wordmark {
+    position: absolute;
+    left: 50%;
+    width: 144px;
+    transform: translateX(-50%);
+  }
+  .ft-header__actions .cart-shortcut {
+    position: fixed;
+    top: auto;
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    z-index: 40;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--ft-primary);
+    color: #fff;
+    box-shadow: 0 4px 14px #1258d633;
+  }
+  .ft-nav {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    transform: none;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-radius: 0;
+  }
+  .ft-nav__item[data-route="cart"] { display: none; }
+  .app-shell { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
+}
+
+.detail-quantity { display: inline-flex; align-items: center; gap: 8px; }
+.detail-quantity input { width: 64px; min-height: 44px; }
+#share-status { overflow-wrap: anywhere; }
+#share-status input { max-width: 100%; }

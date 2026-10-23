@@ -84,7 +84,14 @@ const MAX_TEXT = 300;
  * Tope de administradores avisados por WhatsApp en UN escalamiento. Es un freno
  * de frecuencia: una incidencia no puede convertirse en una ráfaga de mensajes.
  */
-const MAX_ESCALATION_RECIPIENTS = 4;
+const MAX_ESCALATION_RECIPIENTS = 20;
+/**
+ * Cada cuánto se reintenta un escalado que quedó BLOQUEADO por falta de destino
+ * (ningún administrador con teléfono válido). Nunca se reintenta en bucle.
+ */
+const ADMIN_RECHECK_MINUTES = 15;
+/** Reintento de un escalado con fallo TRANSITORIO del proveedor. */
+const RETRY_PENDING_MINUTES = 2;
 
 export const SUPERVISOR_STAGES = Object.freeze({
   CLOSED: 'closed',
@@ -134,6 +141,17 @@ export const DEFAULT_SUPERVISOR_SETTINGS = Object.freeze({
   firstReminderMinutes: 5,
   acceptSecondMinutes: 20,
   acceptEscalateMinutes: 30,
+  /*
+   * PRIMER PLAZO DEL CALENDARIO DE ACEPTACIÓN, PROPIO.
+   *
+   * `firstReminderMinutes` es la política GENERAL (etapas de entrega) y una
+   * instalación antigua la heredó del motor retirado (`delivery_control`), a
+   * menudo en 10 minutos. El aviso de ACEPTAR no puede depender de eso: medido
+   * en la UAT del 2026-10-22, un `delivery_reminder_minutes: 10` movía el T+5 a
+   * T+10 y rompía el calendario acordado. Con este valor, el calendario de
+   * aceptación es siempre 5 → 20 → 30, sin importar la política heredada.
+   */
+  acceptFirstMinutes: 5,
   /*
    * PRIMER CONTACTO ENRIQUECIDO (apagado por defecto).
    *
@@ -214,6 +232,7 @@ export function normalizeSupervisorSettings(raw = null) {
     firstReminderMinutes: bounded(read('firstReminderMinutes', 'first_reminder_minutes', DEFAULT_SUPERVISOR_SETTINGS.firstReminderMinutes), DEFAULT_SUPERVISOR_SETTINGS.firstReminderMinutes, 1, 24 * 60),
     followUpMinutes: bounded(read('followUpMinutes', 'follow_up_minutes', DEFAULT_SUPERVISOR_SETTINGS.followUpMinutes), DEFAULT_SUPERVISOR_SETTINGS.followUpMinutes, 5, 24 * 60),
     acceptSecondMinutes: bounded(read('acceptSecondMinutes', 'accept_second_minutes', DEFAULT_SUPERVISOR_SETTINGS.acceptSecondMinutes), DEFAULT_SUPERVISOR_SETTINGS.acceptSecondMinutes, 6, 24 * 60),
+    acceptFirstMinutes: bounded(read('acceptFirstMinutes', 'accept_first_minutes', DEFAULT_SUPERVISOR_SETTINGS.acceptFirstMinutes), DEFAULT_SUPERVISOR_SETTINGS.acceptFirstMinutes, 1, 24 * 60),
     acceptEscalateMinutes: bounded(read('acceptEscalateMinutes', 'accept_escalate_minutes', DEFAULT_SUPERVISOR_SETTINGS.acceptEscalateMinutes), DEFAULT_SUPERVISOR_SETTINGS.acceptEscalateMinutes, 6, 48 * 60),
     sendFullFirstContact: flag(read('sendFullFirstContact', 'send_full_first_contact', DEFAULT_SUPERVISOR_SETTINGS.sendFullFirstContact), DEFAULT_SUPERVISOR_SETTINGS.sendFullFirstContact),
     maxAttempts: bounded(read('maxAttempts', 'max_attempts', DEFAULT_SUPERVISOR_SETTINGS.maxAttempts), DEFAULT_SUPERVISOR_SETTINGS.maxAttempts, 1, 10),
@@ -260,7 +279,6 @@ async function importLegacyControlPolicy(ctx, settings) {
   const doc = await ctx.settings.read(LEGACY_CONTROL_KEY).catch(() => null);
   const legacy = doc?.value;
   if (!legacy || typeof legacy !== 'object') return settings;
-  const reminder = Number(legacy.deliveryReminderMinutes ?? legacy.delivery_reminder_minutes);
   const escalation = Number(legacy.deliveryAdminEscalationMinutes ?? legacy.delivery_admin_escalation_minutes);
   const next = { ...settings };
   /*
@@ -269,14 +287,17 @@ async function importLegacyControlPolicy(ctx, settings) {
    * Un valor enorme (p. ej. 100000) era la forma de APAGAR el motor antiguo: no
    * es una política, es un interruptor. Importarlo dejaría al supervisor mudo
    * durante un mes. Se aceptan únicamente valores operativos.
+   *
+   * WHATSAPP: el plazo del motor retirado NO se copia `firstReminderMinutes`,
+   * porque el calendario de ACEPTACIÓN (5/20/30) es un compromiso del negocio y
+   * no puede depender de una configuración vieja. Medido en la UAT del
+   * 2026-10-22: con `delivery_reminder_minutes: 10` el T+5 se convertía en T+10.
+   * El plazo general sigue siendo configurable en el supervisor.
    */
-  if (Number.isFinite(reminder) && reminder > 0 && reminder <= 60) {
-    next.firstReminderMinutes = bounded(reminder, settings.firstReminderMinutes, 1, 24 * 60);
-  }
   if (Number.isFinite(escalation) && escalation >= 15 && escalation <= 240) {
     next.escalateAfterMinutes = bounded(escalation, settings.escalateAfterMinutes, 15, 30 * 24 * 60);
   }
-  if (next.firstReminderMinutes === settings.firstReminderMinutes && next.escalateAfterMinutes === settings.escalateAfterMinutes) {
+  if (next.escalateAfterMinutes === settings.escalateAfterMinutes) {
     return settings;
   }
   const importedAt = ctx.clock().toISOString();
@@ -284,7 +305,7 @@ async function importLegacyControlPolicy(ctx, settings) {
   await ctx.settings
     .write(LEGACY_IMPORT_KEY, {
       importedAt,
-      firstReminderMinutes: next.firstReminderMinutes,
+      firstReminderMinutes: null,
       escalateAfterMinutes: next.escalateAfterMinutes,
     })
     .catch(() => null);
@@ -386,10 +407,36 @@ export function courierPhonesByUser(users = []) {
   const map = new Map();
   for (const user of Array.isArray(users) ? users : []) {
     if (!user?.id || user.active === false) continue;
-    const phone = toE164(user.personal_phone) ?? toE164(user.fleet_phone);
+    const { phone } = phoneFieldsOf(user);
     if (phone) map.set(String(user.id), phone);
   }
   return map;
+}
+
+/**
+ * TELÉFONO OPERATIVO DE UN USUARIO, CON SU ORIGEN.
+ *
+ * La FLOTA MANDA. Si el usuario tiene `fleet_phone` válido se usa ese; solo si
+ * falta o no es usable se cae a `personal_phone`. Antes era al revés (personal
+ * primero), así que un repartidor con teléfono de flota recibía los avisos en su
+ * número privado.
+ *
+ * Devuelve también de qué campo salió y el destino enmascarado: el chat y los
+ * eventos necesitan decir «se envió al de flota», no solo «se envió». Nunca se
+ * registra el número completo.
+ */
+export function phoneFieldsOf(user) {
+  const fleet = toE164(user?.fleet_phone);
+  if (fleet) return { phone: fleet, field: 'fleet_phone', masked: maskPhone(fleet) };
+  const personal = toE164(user?.personal_phone);
+  if (personal) return { phone: personal, field: 'personal_phone', masked: maskPhone(personal) };
+  return { phone: null, field: null, masked: null };
+}
+
+/** Enmascarado único para logs, eventos, chat y panel: `***1234`. */
+function maskPhone(phone) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  return digits ? `***${digits.slice(-4)}` : null;
 }
 
 /**
@@ -800,14 +847,29 @@ export async function postponeDelivery(input) {
 
 // ------------------------------------------------------------- recordatorios
 
-const recipientPhoneOf = async (ctx, responsible, users) => {
-  if (responsible?.type === 'external') return responsible.phone ?? null;
-  if (responsible?.type === 'internal') {
-    const user = (users ?? []).find((row) => row.id === responsible.userId) ?? (await ctx.users.get(responsible.userId).catch(() => null));
-    return toE164(user?.personal_phone) ?? toE164(user?.fleet_phone) ?? null;
+/**
+ * DESTINATARIO DEL REPARTIDOR ASIGNADO (siempre el ACTUAL).
+ *
+ * El pedido se relee en cada pasada y el responsable sale de `delivery_user_id`
+ * vigente: tras una reasignación nunca se usa el teléfono del anterior.
+ *
+ * Devuelve `{ phone, field, masked, userId, name }`. `phone: null` significa
+ * «contacto bloqueado»: no se intenta ningún envío externo.
+ */
+const courierDestination = async (ctx, responsible, users) => {
+  if (responsible?.type === 'external') {
+    const phone = toE164(responsible.phone);
+    return { phone: phone ?? null, field: phone ? 'external_contact' : null, masked: phone ? maskPhone(phone) : null, userId: null, name: responsible.name ?? null };
   }
-  return null;
+  if (responsible?.type !== 'internal' || !responsible.userId) {
+    return { phone: null, field: null, masked: null, userId: responsible?.userId ?? null, name: responsible?.name ?? null };
+  }
+  const user = (users ?? []).find((row) => String(row.id) === String(responsible.userId)) ?? (await ctx.users.get(responsible.userId).catch(() => null));
+  const { phone, field, masked } = phoneFieldsOf(user);
+  return { phone, field, masked, userId: responsible.userId, name: user?.display_name ?? responsible.name ?? null };
 };
+
+const recipientPhoneOf = async (ctx, responsible, users) => (await courierDestination(ctx, responsible, users)).phone;
 
 async function notifySupervisorAdmins(ctx, deps, input) {
   const users = deps.users ?? (await ctx.users.listUsers().catch(() => []));
@@ -825,7 +887,12 @@ async function notifySupervisorAdmins(ctx, deps, input) {
         entityId: input.orderId,
         deepLink: `/admin/?v=supervisor&order=${encodeURIComponent(input.orderId)}`,
         data: input.data ?? null,
-        idempotencyKey: input.idempotencyKey,
+        /*
+         * CLAVE POR ADMINISTRADOR. La clave lleva el destinatario: con una sola
+         * clave compartida, el índice único de avisos dejaba el aviso solo al
+         * primero y los demás administradores no se enteraban.
+         */
+        idempotencyKey: `${input.idempotencyKey}:${admin.id}`,
       })
       .catch(() => null);
     if (result?.notification && !result.duplicate) {
@@ -843,7 +910,9 @@ async function notifySupervisorAdmins(ctx, deps, input) {
  */
 async function sendReminder(ctx, deps, { item, order, state, settings, attempt }) {
   const number = orderNumberOf(order, item);
-  const phone = await recipientPhoneOf(ctx, state.responsible, deps.users);
+  /* Destino del repartidor ACTUAL, con el campo del que salió (flota o personal). */
+  const destino = await courierDestination(ctx, state.responsible, deps.users);
+  const phone = destino.phone;
   let status = 'skipped';
   let error = null;
   let messageId = null;
@@ -1000,7 +1069,10 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
     detail: `${state.nextAction}${status === 'sent' ? ' · enviado' : status === 'notified' ? ' · aviso interno' : error ? ` · ${error}` : ''}`,
     data: {
       attempt,
-      phone_masked: phone ? `***${phone.slice(-4)}` : null,
+      phone_masked: destino.masked,
+      phone_field: destino.field,
+      courier_user_id: destino.userId,
+      courier_name: destino.name,
       error,
       message_id: messageId,
       channel,
@@ -1031,6 +1103,8 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
         direction: 'outbound',
         channel: channel ?? 'whatsapp',
         to: phone,
+        phoneField: destino.field,
+        recipientUserId: destino.userId,
         status,
         providerId: messageId,
         error,
@@ -1044,13 +1118,39 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
 }
 
 /**
+ * MOTIVO DEL ESCALADO EN PALABRAS. El evento y el chat dicen «sin teléfono del
+ * repartidor» en vez de `courier_without_phone`: quien lo lee a las 21:00 no
+ * debería tener que descifrar un código interno.
+ */
+const ESCALATION_REASON_LABELS = Object.freeze({
+  courier_without_phone: 'sin teléfono del repartidor',
+  overdue: 'tiempo vencido sin resolver',
+  max_attempts: 'se agotaron los avisos',
+  incident: 'incidencia abierta',
+});
+
+function escalationReasonLabel(reason) {
+  return ESCALATION_REASON_LABELS[String(reason ?? '')] ?? String(reason ?? 'motivo no indicado');
+}
+
+/** Último evento de escalado de una clave (o de sus reevaluaciones). */
+async function latestEscalationEvent(ctx, key) {
+  const eventos = await ctx.db.list(SUPERVISOR_EVENTS, { limit: 20000 }).catch(() => []);
+  const propios = eventos
+    .filter((row) => String(row.idempotency_key ?? '').startsWith(key))
+    .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+  return propios[0] ?? null;
+}
+
+/**
  * Escala la incidencia a administración. Una vez por pedido y etapa.
  *
  * Dos canales, UN solo escalamiento:
- *   1. la campana/push interno (siempre, cuantas cuentas ADMIN haya);
- *   2. WhatsApp a los contactos de `delivery_control.deliveryAdminEscalationContacts`
- *      con la plantilla aprobada, para que el aviso llegue aunque nadie tenga el
- *      panel abierto.
+ *   1. la campana/push interno (siempre, a TODAS las cuentas ADMIN activas);
+ *   2. WhatsApp a los teléfonos de esas mismas cuentas ADMIN, resueltos de su
+ *      ficha en el momento del escalado (flota primero), deduplicados por
+ *      destino. Los contactos de `delivery_control` solo actúan de respaldo si
+ *      ningún administrador tiene número.
  *
  * La clave de idempotencia del EVENTO es la que impide repetir: si ya existe, no
  * se vuelve a enviar ni por campana ni por WhatsApp (los reintentos del webhook y
@@ -1058,15 +1158,39 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
  */
 async function escalate(ctx, deps, { item, order, state, settings, reason }) {
   const key = `supervisor-escalation:${item.id}:${state.stage}:${reason}`;
+  const ahora = ctx.clock().getTime();
+  /*
+   * REEVALUACIÓN CONTROLADA. Si el escalado anterior quedó BLOQUEADO (ningún
+   * administrador con teléfono usable), no se cierra para siempre: pasados
+   * `ADMIN_RECHECK_MINUTES` se vuelve a intentar con una clave nueva. Los envíos
+   * ya realizados no se repiten (cada destino tiene su propia reserva).
+   */
+  const previo = await latestEscalationEvent(ctx, key);
+  let claimKey = key;
+  if (previo) {
+    const edad = (ahora - (Date.parse(previo.created_at ?? '') || ahora)) / 60000;
+    const estadoPrevio = String(previo.status);
+    /* Bloqueado por falta de destino: se reevalúa a los 15 min. */
+    if (estadoPrevio === 'blocked_no_destination') {
+      if (edad < ADMIN_RECHECK_MINUTES) return 0;
+      claimKey = `${key}:recheck:${Math.floor(ahora / (ADMIN_RECHECK_MINUTES * 60000))}`;
+    } else if (estadoPrevio === 'retry_pending') {
+      /* Fallo transitorio del proveedor: se reintenta en la pasada siguiente. */
+      if (edad < RETRY_PENDING_MINUTES) return 0;
+      claimKey = `${key}:retry:${Math.floor(ahora / (RETRY_PENDING_MINUTES * 60000))}`;
+    } else {
+      return 0;
+    }
+  }
   /* Reserva atómica: dos pasadas solapadas no escalan (ni escriben) dos veces. */
   const claim = await claimSupervisorEvent(ctx, {
     orderId: item.id,
     kind: 'escalation',
     stage: state.stage,
     status: 'claiming',
-    detail: `Escalando a administración · ${state.nextAction}`,
+    detail: `Escalando a administración (${escalationReasonLabel(reason)}) · ${state.nextAction}`,
     actor: 'Supervisor IA',
-    idempotencyKey: key,
+    idempotencyKey: claimKey,
   });
   if (!claim.claimed) return 0;
   const number = orderNumberOf(order, item);
@@ -1085,34 +1209,57 @@ async function escalate(ctx, deps, { item, order, state, settings, reason }) {
     },
   });
   const whatsapp = await sendEscalationWhatsApp(ctx, deps, { item, order, state, reason });
+  const bloqueado = whatsapp.blocked === true;
+  const hayTransitorio = (whatsapp.retryable ?? 0) > 0;
+  const estadoEscalado = bloqueado
+    ? 'blocked_no_destination'
+    : hayTransitorio
+      ? 'retry_pending'
+      : alerts > 0 || whatsapp.sent > 0
+        ? 'notified'
+        : 'recorded';
   /*
    * EL ESCALADO TAMBIÉN QUEDA EN EL CHAT DEL PEDIDO, con lo que necesita quien
-   * lo lea: pedido, repartidor, desde cuándo, intentos y estado real del envío.
+   * lo lea: pedido, repartidor, desde cuándo, intentos y estado real del envío
+   * DESTINATARIO A DESTINATARIO (sin números completos).
    * No se envía nada nuevo por WhatsApp aquí: solo se documenta.
    */
   if (typeof deps.recordExternalMessage === 'function') {
     const intentos = (deps.supervisionEvents ?? [])
       .filter((row) => row.order_id === item.id && row.kind === 'reminder')
       .map((row) => `${row.data?.attempt ?? '?'}→${row.status}`);
+    const porDestino = whatsapp.results.map((row) => {
+      const quien = row.admin_names?.length ? ` [${row.admin_names.join(' + ')}]` : '';
+      const campo = row.phone_field ? ` (${row.phone_field === 'fleet_phone' ? 'flota' : row.phone_field === 'personal_phone' ? 'personal' : row.phone_field})` : '';
+      return `${row.destination_masked ?? '(sin destino)'}${campo}${quien} → ${row.status}${row.error ? ` (${row.error})` : ''}`;
+    });
+    const sinTelefono = (whatsapp.withoutPhone ?? []).map((row) => row.name).filter(Boolean);
     await deps
       .recordExternalMessage({
         orderId: item.id,
         direction: 'system',
         channel: 'supervisor',
-        status: alerts > 0 || whatsapp.sent > 0 ? 'notified' : 'recorded',
+        status: bloqueado ? 'blocked' : estadoEscalado,
         kind: 'escalation',
-        body: `Escalado a administración (${reason}). Pedido ${number} · ${state.responsible?.name ?? 'sin responsable'} · ${state.elapsedMinutes} min sin resolver · ${state.nextAction}${
+        body: `Escalado a administración (${escalationReasonLabel(reason)}). Pedido ${number} · ${state.responsible?.name ?? 'sin responsable'} · ${state.elapsedMinutes} min sin resolver · ${state.nextAction}${
           intentos.length ? ` · avisos: ${intentos.join(', ')}` : ''
-        }${whatsapp.sent ? ` · WhatsApp a ${whatsapp.sent} administrador(es)` : whatsapp.pending ? ' · WhatsApp pendiente (revisar plantilla/configuración)' : ''}`,
+        }${porDestino.length ? `\nWhatsApp por destinatario: ${porDestino.join(' | ')}` : ''}${
+          bloqueado ? '\nSIN DESTINO DE ADMINISTRACIÓN: nadie tiene teléfono válido; la incidencia sigue abierta y se reevalúa.' : ''
+        }${sinTelefono.length ? `\nAdministradores sin teléfono (aviso interno sí enviado): ${sinTelefono.join(', ')}` : ''}`,
       })
       .catch(() => null);
   }
   await settleSupervisorEvent(ctx, claim.id, {
-    status: alerts > 0 || whatsapp.sent > 0 ? 'notified' : 'recorded',
-    detail: `Escalado a administración · ${state.nextAction}`,
+    status: estadoEscalado,
+    detail: `Escalado a administración (${escalationReasonLabel(reason)}) · ${state.nextAction}`,
     data: {
       reason,
-      admins: alerts,
+      admins_notified: alerts,
+      admin_users: whatsapp.admins ?? 0,
+      destinations: whatsapp.results,
+      without_phone: whatsapp.withoutPhone ?? [],
+      blocked: bloqueado,
+      legacy_contacts: whatsapp.legacy === true,
       elapsed_minutes: state.elapsedMinutes,
       whatsapp: whatsapp.results,
     },
@@ -1127,12 +1274,17 @@ async function escalate(ctx, deps, { item, order, state, settings, reason }) {
       order_id: item.id,
       stage: state.stage,
       admins_notified: alerts,
+      admin_users: whatsapp.admins ?? 0,
       elapsed_minutes: state.elapsedMinutes,
       whatsapp_sent: whatsapp.sent,
       whatsapp_pending: whatsapp.pending,
       whatsapp_failed: whatsapp.failed,
+      whatsapp_retryable: whatsapp.retryable ?? 0,
+      blocked: bloqueado,
+      destinations: whatsapp.results,
+      without_phone_users: (whatsapp.withoutPhone ?? []).map((row) => row.userId),
     },
-    idempotencyKey: `delivery.supervisor_escalated:${item.id}:${state.stage}:${reason}`,
+    idempotencyKey: `delivery.supervisor_escalated:${item.id}:${state.stage}:${reason}:${bloqueado ? Math.floor(ahora / (ADMIN_RECHECK_MINUTES * 60000)) : 'ok'}`,
   });
   /*
    * Se cuenta como escalamiento aunque ningún administrador tenga cuenta con
@@ -1156,19 +1308,26 @@ async function escalate(ctx, deps, { item, order, state, settings, reason }) {
  * @returns {Promise<{sent: number, pending: number, failed: number, results: any[]}>}
  */
 async function sendEscalationWhatsApp(ctx, deps, { item, order, state, reason }) {
-  const recipients = await escalationRecipients(ctx);
+  const { targets, withoutPhone, admins, legacy } = await escalationTargets(ctx, deps);
   const results = [];
-  const empty = { sent: 0, pending: 0, failed: 0, results };
-  if (!recipients.length) return empty;
-
+  const empty = { sent: 0, pending: 0, failed: 0, retryable: 0, results, withoutPhone, admins: admins.length, legacy, blocked: false };
   const link = typeof deps.orderDeepLink === 'function' ? deps.orderDeepLink(item.id) : null;
   if (!link) {
-    for (const row of recipients) results.push({ admin: row.name, status: 'skipped', error: 'no_deep_link' });
-    return { ...empty, results };
+    for (const target of targets) results.push({ destination_masked: target.masked, status: 'skipped', error: 'no_deep_link', admins: target.admins.map((row) => row.userId) });
+    return { ...empty, results, blocked: true };
+  }
+  /*
+   * SIN DESTINO VÁLIDO NO SE FINGE: el escalado sigue activo, se dice el motivo
+   * y se reprograma la reevaluación. Nunca se afirma «entregado».
+   */
+  if (!targets.length) {
+    return { ...empty, results, blocked: true, reason: 'no_admin_phone' };
   }
   if (!ctx.whatsapp?.enabled) {
-    for (const row of recipients) results.push({ admin: row.name, phone_masked: `***${row.phone.slice(-4)}`, status: 'pending', error: 'whatsapp_not_configured' });
-    return { ...empty, pending: recipients.length, results };
+    for (const target of targets) {
+      results.push({ destination_masked: target.masked, phone_field: target.field, status: 'pending', error: 'whatsapp_not_configured', admins: target.admins.map((row) => row.userId) });
+    }
+    return { ...empty, pending: targets.length, results };
   }
 
   let check = { ok: false, reason: 'template_check_unavailable' };
@@ -1176,7 +1335,9 @@ async function sendEscalationWhatsApp(ctx, deps, { item, order, state, reason })
   if (typeof deps.checkTemplate === 'function') check = await deps.checkTemplate(SUPERVISOR_ESCALATION_TEMPLATE).catch(() => ({ ok: false, reason: 'template_check_failed' }));
   if (!check?.ok) {
     const error = check?.reason ?? 'template_not_approved';
-    for (const row of recipients) results.push({ admin: row.name, phone_masked: `***${row.phone.slice(-4)}`, status: 'pending', error });
+    for (const target of targets) {
+      results.push({ destination_masked: target.masked, phone_field: target.field, status: 'pending', error, admins: target.admins.map((row) => row.userId) });
+    }
     // Queda registrado el motivo real: no se da por avisado a nadie.
     await ctx.audit?.record({
       entity: 'order',
@@ -1187,7 +1348,7 @@ async function sendEscalationWhatsApp(ctx, deps, { item, order, state, reason })
       data: { order_id: item.id, stage: state.stage, reason, template: SUPERVISOR_ESCALATION_TEMPLATE, error },
       idempotencyKey: `delivery.supervisor_escalation_unavailable:${item.id}:${state.stage}:${reason}`,
     });
-    return { ...empty, pending: recipients.length, results };
+    return { ...empty, pending: targets.length, results };
   }
 
   const parameters = [
@@ -1197,72 +1358,171 @@ async function sendEscalationWhatsApp(ctx, deps, { item, order, state, reason })
   ];
   let sent = 0;
   let failed = 0;
-  for (const row of recipients) {
-    /* Reserva por administrador: un reintento no vuelve a escribirle. */
+  let pending = 0;
+  let retryable = 0;
+  /* Un destino = un mensaje. Secuencial a propósito: respeta el ritmo de Meta. */
+  for (const target of targets) {
+    const baseKey = `delivery.supervisor_escalation_wa:${item.id}:${state.stage}:${reason}:${target.phone}`;
+    const previo = await sendStateFor(ctx, item.id, baseKey);
+    if (previo.yaEnviado) {
+      results.push({ destination_masked: target.masked, phone_field: target.field, status: 'duplicate', error: null, admins: target.admins.map((row) => row.userId) });
+      continue;
+    }
+    if (previo.fallos >= 3) {
+      results.push({ destination_masked: target.masked, phone_field: target.field, status: 'failed', error: 'retry_exhausted', admins: target.admins.map((row) => row.userId) });
+      failed += 1;
+      continue;
+    }
+    const claveIntento = previo.fallos ? `${baseKey}:r${previo.fallos + 1}` : baseKey;
     const waClaim = await claimSupervisorEvent(ctx, {
       orderId: item.id,
       kind: 'escalation_whatsapp',
       stage: state.stage,
       status: 'sending',
       actor: 'Supervisor IA',
-      idempotencyKey: `delivery.supervisor_escalation_wa:${item.id}:${state.stage}:${reason}:${row.phone}`,
+      idempotencyKey: claveIntento,
     });
     if (!waClaim.claimed) {
-      results.push({ admin: row.name, phone_masked: `***${row.phone.slice(-4)}`, status: 'duplicate', error: null });
+      results.push({ destination_masked: target.masked, phone_field: target.field, status: 'duplicate', error: null, admins: target.admins.map((row) => row.userId) });
       continue;
     }
     const message = await ctx.whatsapp
-      .sendTemplate(row.phone, {
+      .sendTemplate(target.phone, {
         name: check.template?.name ?? SUPERVISOR_ESCALATION_TEMPLATE,
         language: check.template?.language ?? 'es',
         components: [{ type: 'body', parameters: parameters.map((text) => ({ type: 'text', text })) }],
       })
       .catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
-    const status = message?.ok ? 'sent' : 'failed';
+    const reIntentable = !message?.ok && isRetryableSendError(message);
+    const status = message?.ok ? 'sent' : reIntentable ? 'retryable' : 'failed';
     if (status === 'sent') sent += 1;
-    else failed += 1;
+    else if (status === 'retryable') {
+      retryable += 1;
+      pending += 1;
+    } else failed += 1;
     const entry = {
-      admin: row.name,
-      phone_masked: `***${row.phone.slice(-4)}`,
+      destination_masked: target.masked,
+      phone_field: target.field,
+      /* Qué administradores cubre este mensaje (uno o varios si comparten número). */
+      admins: target.admins.map((row) => row.userId),
+      admin_names: target.admins.map((row) => row.name),
+      shared_destination: target.admins.length > 1,
       status,
       error: message?.ok ? null : clean(message?.error?.message ?? message?.reason ?? 'send_failed', 200),
+      provider_status: message?.ok ? 'submitted' : 'failed',
       message_id: message?.messageId ?? null,
     };
     results.push(entry);
     await settleSupervisorEvent(ctx, waClaim.id, {
       status,
-      detail: `Escalado por WhatsApp a ${row.name}`,
-      data: { ...entry, template: SUPERVISOR_ESCALATION_TEMPLATE },
+      detail: `Escalado por WhatsApp a ${entry.admin_names.join(' + ') || target.masked} · ${status}`,
+      data: { ...entry, template: SUPERVISOR_ESCALATION_TEMPLATE, attempt: previo.fallos + 1 },
     });
     await ctx.audit?.record({
       entity: 'order',
       entityId: item.id,
       action: status === 'sent' ? 'delivery.supervisor_escalation_sent' : 'delivery.supervisor_escalation_failed',
       actor: 'Sistema',
-      summary: status === 'sent' ? `Escalado por WhatsApp a ${row.name}` : `Escalado por WhatsApp falló (${row.name})`,
+      summary:
+        status === 'sent'
+          ? `Escalado por WhatsApp a ${entry.admin_names.join(' + ') || target.masked}`
+          : `Escalado por WhatsApp falló (${target.masked})${reIntentable ? ' · reintentable' : ''}`,
       data: { order_id: item.id, stage: state.stage, reason, template: SUPERVISOR_ESCALATION_TEMPLATE, ...entry },
-      idempotencyKey: `delivery.supervisor_escalation_wa:${item.id}:${state.stage}:${reason}:${row.phone}`,
+      idempotencyKey: claveIntento,
     });
   }
-  return { sent, pending: 0, failed, results };
+  return { sent, pending, failed, retryable, results, withoutPhone, admins: admins.length, legacy, blocked: false };
 }
 
 /**
- * Contactos de administración para el escalado, desde `delivery_control`.
- * Se eliminan duplicados y se corta el lote: una incidencia no puede disparar
- * una lista enorme de mensajes.
+ * DESTINOS DEL ESCALADO — RESUELTOS DEL DIRECTORIO EN EL MOMENTO.
+ *
+ * Antes dependía de una lista de teléfonos escrita a mano en
+ * `delivery_control.deliveryAdminEscalationContacts`: si nadie la configuraba,
+ * el escalado solo dejaba campana y nadie se enteraba por WhatsApp.
+ *
+ * Ahora manda el DIRECTORIO REAL de usuarios: todas las cuentas **ADMIN
+ * activas**, leyendo su teléfono de la ficha (flota primero, personal después).
+ * Se deduplica por destino normalizado: tres administradores con tres números
+ * distintos reciben tres mensajes; dos que comparten número reciben **uno**, y
+ * ambos conservan su aviso interno.
+ *
+ * Los contactos de `delivery_control` solo se usan como respaldo cuando NINGÚN
+ * administrador tiene teléfono usable (compatibilidad con instalaciones viejas).
+ *
+ * @returns {Promise<{targets: any[], withoutPhone: any[], admins: any[], legacy: boolean}>}
+ */
+async function escalationTargets(ctx, deps = {}) {
+  const users = deps.users ?? (await ctx.users.listUsers().catch(() => []));
+  const admins = (Array.isArray(users) ? users : []).filter(
+    (user) => String(user?.role ?? '').toUpperCase() === 'ADMIN' && user.active !== false,
+  );
+  const byPhone = new Map();
+  const withoutPhone = [];
+  for (const admin of admins) {
+    const nombre = clean(admin.display_name ?? admin.username, 120) ?? 'Administración';
+    const { phone, field, masked } = phoneFieldsOf(admin);
+    if (!phone) {
+      withoutPhone.push({ userId: admin.id, name: nombre, phone_field: null, phone_masked: null, reason: 'sin_telefono_en_su_ficha' });
+      continue;
+    }
+    const existente = byPhone.get(phone);
+    if (existente) {
+      /* Mismo número: un solo mensaje externo, dos avisos internos. */
+      existente.admins.push({ userId: admin.id, name: nombre, phone_field: field });
+      continue;
+    }
+    if (byPhone.size >= MAX_ESCALATION_RECIPIENTS) {
+      withoutPhone.push({ userId: admin.id, name: nombre, phone_field: field, phone_masked: masked, reason: 'limite_de_destinatarios' });
+      continue;
+    }
+    byPhone.set(phone, { phone, masked, field, admins: [{ userId: admin.id, name: nombre, phone_field: field }], legacyName: null });
+  }
+  let legacy = false;
+  if (!byPhone.size) {
+    /* Respaldo heredado: nunca se mezcla con números de usuarios reales. */
+    const doc = await ctx.settings.read('delivery_control').catch(() => null);
+    const rows = Array.isArray(doc?.value?.deliveryAdminEscalationContacts) ? doc.value.deliveryAdminEscalationContacts : [];
+    for (const row of rows) {
+      const phone = toE164(row?.phone ?? row);
+      if (!phone || byPhone.has(phone)) continue;
+      byPhone.set(phone, { phone, masked: maskPhone(phone), field: 'delivery_control', admins: [], legacyName: clean(row?.name, 80) ?? 'Administración' });
+      legacy = true;
+    }
+  }
+  return { targets: [...byPhone.values()], withoutPhone, admins, legacy };
+}
+
+/** ¿El fallo del proveedor merece otro intento? (429, 5xx, red) */
+function isRetryableSendError(message) {
+  const code = Number(message?.error?.code ?? message?.code ?? 0);
+  if (code === 429 || (code >= 500 && code <= 599)) return true;
+  const texto = String(message?.error?.message ?? message?.reason ?? '').toLowerCase();
+  return /timeout|timed out|econnreset|socket hang up|rate|temporar|unavailable/.test(texto);
+}
+
+/** Estado previo de los envíos de un destino: sirve para no repetir ni rendirse. */
+async function sendStateFor(ctx, orderId, baseKey) {
+  const eventos = await ctx.db.list(SUPERVISOR_EVENTS, { limit: 20000 }).catch(() => []);
+  const propios = eventos.filter((row) => String(row.idempotency_key ?? '').startsWith(baseKey));
+  return {
+    yaEnviado: propios.some((row) => String(row.status) === 'sent'),
+    fallos: propios.filter((row) => String(row.status) === 'failed' || String(row.status) === 'retryable').length,
+  };
+}
+
+/**
+ * Contactos de administración (compatibilidad y diagnóstico).
+ * @deprecated El escalado usa `escalationTargets`, que resuelve usuarios reales.
  */
 async function escalationRecipients(ctx) {
-  const doc = await ctx.settings.read('delivery_control').catch(() => null);
-  const rows = Array.isArray(doc?.value?.deliveryAdminEscalationContacts) ? doc.value.deliveryAdminEscalationContacts : [];
-  const out = [];
-  for (const row of rows) {
-    const phone = toE164(row?.phone ?? row);
-    if (!phone || out.some((entry) => entry.phone === phone)) continue;
-    out.push({ phone, name: clean(row?.name, 80) ?? 'Administración' });
-    if (out.length >= MAX_ESCALATION_RECIPIENTS) break;
-  }
-  return out;
+  const { targets, withoutPhone } = await escalationTargets(ctx);
+  return targets.map((target) => ({
+    phone: target.phone,
+    name: target.admins[0]?.name ?? target.legacyName ?? 'Administración',
+    admins: target.admins,
+    withoutPhone: withoutPhone.length,
+  }));
 }
 
 /** Pedidos con recogida pendiente, contados de una sola pasada. */
@@ -1436,14 +1696,15 @@ export async function supervisorTick(ctx, deps = {}) {
 
     const lastAttemptAt = Math.max(0, ...remindersOf(history, state.stage).map((row) => Date.parse(row.created_at ?? '') || 0));
     /*
-     * EL PRIMER PLAZO DEPENDE DE LA ETAPA. Para ACEPTAR son los 5 minutos del
-     * negocio; una vez aceptada, insistir en «inicia la entrega» a los 5 minutos
-     * sería ruido: se espera el intervalo completo (15).
+     * EL PRIMER PLAZO DEPENDE DE LA ETAPA. Para ACEPTAR manda el calendario del
+     * negocio (`acceptFirstMinutes`, 5) y NO la política general heredada; una
+     * vez aceptada, insistir en «inicia la entrega» a los 5 minutos sería ruido:
+     * se espera el intervalo completo (`followUpMinutes`).
      */
-    const primeraEspera = settings.firstReminderMinutes;
+    const primeraEspera = state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED ? settings.acceptFirstMinutes : settings.firstReminderMinutes;
     /* Si es la segunda vez, se cuenta desde el PRIMER aviso. */
     const intervalo = state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED
-      ? Math.max(1, settings.acceptSecondMinutes - settings.firstReminderMinutes)
+      ? Math.max(1, settings.acceptSecondMinutes - settings.acceptFirstMinutes)
       : settings.followUpMinutes;
     const dueAt = attempts === 0 ? state.anchorAt + primeraEspera * 60000 : lastAttemptAt + intervalo * 60000;
     if (now < dueAt) continue;
@@ -1746,9 +2007,9 @@ export async function supervisorPreview(ctx, options = {}) {
       continue;
     }
     const lastAttemptAt = Math.max(0, ...remindersOf(history, state.stage).map((row) => Date.parse(row.created_at ?? '') || 0));
-    const primeraEsperaPreview = settings.firstReminderMinutes;
+    const primeraEsperaPreview = state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED ? settings.acceptFirstMinutes : settings.firstReminderMinutes;
     const intervaloPreview = state.stage === SUPERVISOR_STAGES.NOT_ACCEPTED
-      ? Math.max(1, settings.acceptSecondMinutes - settings.firstReminderMinutes)
+      ? Math.max(1, settings.acceptSecondMinutes - settings.acceptFirstMinutes)
       : settings.followUpMinutes;
     const dueAt = attempts === 0 ? state.anchorAt + primeraEsperaPreview * 60000 : lastAttemptAt + intervaloPreview * 60000;
     if (now < dueAt) continue;
@@ -2260,7 +2521,7 @@ export async function handleSupervisorReply(input) {
 
 // ------------------------------------------------- DIAGNÓSTICO DEL AGENTE
 
-const maskPhone = (phone) => (phone ? `***${String(phone).slice(-4)}` : null);
+/* `maskPhone` vive arriba (junto a `phoneFieldsOf`): aquí se reutiliza. */
 
 /**
  * ¿POR QUÉ EL SUPERVISOR NO LE ESTÁ ESCRIBIENDO AL REPARTIDOR?

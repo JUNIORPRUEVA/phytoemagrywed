@@ -324,6 +324,9 @@ describe('frases de opt-out que la gente escribe de verdad', () => {
       'quiero que quiten mi número',
       'unsubscribe',
       'baja de mensajes',
+      /* El imperativo de verdad sigue cortando. */
+      'para ya',
+      'para de escribirme',
     ]) {
       expect(detectOptOut(phrase)).toBe(true);
     }
@@ -332,6 +335,25 @@ describe('frases de opt-out que la gente escribe de verdad', () => {
   it('NO corta una conversación normal', () => {
     for (const phrase of ['Hola, ¿cuánto cuesta?', 'quiero comprar dos frascos', '¿cómo se usa?', 'gracias']) {
       expect(detectOptOut(phrase)).toBe(false);
+    }
+  });
+
+  /*
+   * REGRESIÓN 2026-10-22: «para» es también una preposición. `\bparar?\b` casaba
+   * con «Voy para allá» y marcaba al REPARTIDOR como «no contactar», cortando
+   * los avisos del supervisor. Un mensaje operativo nunca es una baja.
+   */
+  it('NO confunde «para» con una baja cuando es una preposición', () => {
+    for (const phrase of [
+      'Voy para allá',
+      'Voy para el negocio',
+      'Salgo para la entrega ahora',
+      'Ya voy para tu casa',
+      'Estoy para llegar en 10 minutos',
+      'Listo, para la dirección que me diste',
+      'Entregado, ya para cerrar',
+    ]) {
+      expect(detectOptOut(phrase), phrase).toBe(false);
     }
   });
 });

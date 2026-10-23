@@ -266,6 +266,9 @@ export async function recordExternalMessage({
   direction = 'outbound',
   channel = 'whatsapp',
   to = null,
+  phoneField = null,
+  recipientUserId = null,
+  recipientName = null,
   status = 'sent',
   providerId = null,
   error = null,
@@ -296,6 +299,10 @@ export async function recordExternalMessage({
       channel: direction === 'system' ? 'supervisor' : 'whatsapp',
       direction,
       to: to ? `***${String(to).slice(-4)}` : null,
+      /* De qué campo salió el número y a quién pertenece: auditoría sin datos personales. */
+      phone_field: phoneField ?? null,
+      recipient_user_id: recipientUserId ?? null,
+      recipient_name: recipientName ?? null,
       status,
       provider_id: providerId ?? null,
       error: error ?? null,
@@ -306,6 +313,41 @@ export async function recordExternalMessage({
     },
   }).catch(() => null);
   return resultado?.ok ? { ticketId: ticket.id, messageId: resultado.message?.id ?? null } : null;
+}
+
+/**
+ * ACUSE DEL PROVEEDOR EN EL CHAT DEL PEDIDO.
+ *
+ * Los mensajes que el supervisor envía al repartidor o a administración se
+ * guardan con el `provider_id` de Meta. Cuando llega el webhook de estados
+ * (`delivered`, `read`, `failed`), el estado REAL tiene que actualizarse también
+ * en el chat operativo: antes solo se actualizaba el hilo de cliente y el panel
+ * seguía diciendo «Enviado» para siempre.
+ *
+ * Es idempotente y no inventa: si el estado ya es el mismo, no escribe.
+ */
+export async function reconcileDeliveryReceipt({ ctx, providerId = null, status = null, at = null } = {}) {
+  const id = String(providerId ?? '').trim();
+  const nuevo = String(status ?? '').trim().toLowerCase();
+  if (!id || !nuevo) return { ok: false, reason: 'missing_data' };
+  const filas = await ctx.db.list('ops_ticket_messages', { limit: 5000 }).catch(() => []);
+  const fila = filas.find((row) => String(row?.meta?.provider_id ?? '') === id);
+  if (!fila) return { ok: false, reason: 'not_tracked' };
+  const meta = fila.meta && typeof fila.meta === 'object' ? fila.meta : {};
+  if (String(meta.status ?? '') === nuevo) return { ok: true, reason: 'unchanged', messageId: fila.id };
+  const actualizado = await ctx.db
+    .update('ops_ticket_messages', fila.id, {
+      meta: { ...meta, status: nuevo, provider_status_at: at ?? ctx.clock().toISOString() },
+    })
+    .catch(() => null);
+  if (!actualizado) return { ok: false, reason: 'update_failed' };
+  /* El hilo se repinta al instante para quien tenga el panel abierto. */
+  try {
+    ctx.realtime?.emit?.('ops_ticket_messages', 'update', { id: fila.id, ticketId: fila.ticket_id });
+  } catch {
+    /* sin tiempo real: el panel lo verá al refrescar */
+  }
+  return { ok: true, reason: 'updated', messageId: fila.id, ticketId: fila.ticket_id, status: nuevo };
 }
 
 /**

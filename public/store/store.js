@@ -1,6 +1,6 @@
 const $ = (s, root = document) => root.querySelector(s);
 import { hydrateIcons, hydrateMaterialIcons, paintMaterialIcon, materialIcon } from './custom-icons.js?v=1';
-import {galleryMarkup,mountGallery,mountCardImageFallbacks} from './product-gallery.js?v=2';
+import {galleryMarkup,mountGallery,mountCardImageFallbacks} from './product-gallery.js?v=4';
 /* Cabecera y barra inferior usan la familia Material Symbols Rounded ya descargada. */
 hydrateMaterialIcons();
 hydrateIcons();
@@ -12,6 +12,22 @@ const canBuy = p => p.purchaseable === true;
 const requestHref = p => `${href('request')}?title=${encodeURIComponent(p.name)}&details=${encodeURIComponent(`Producto: ${p.name}${p.category ? ` (${p.category})` : ''}`)}`;
 const main = $('#main'), drawer = $('#drawer'), bottom = $('#bottom-nav');
 mountCardImageFallbacks(main);
+let deferredInstallPrompt=null,installReminderTimer;
+const installButton=$('#install-app');
+const standaloneMode=()=>window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true;
+function syncInstallButton(){if(!installButton)return;installButton.hidden=standaloneMode()}
+function remindInstall(){if(!installButton||installButton.hidden)return;installButton.classList.remove('is-reminded');void installButton.offsetWidth;installButton.classList.add('is-reminded');clearTimeout(installReminderTimer);installReminderTimer=setTimeout(()=>installButton.classList.remove('is-reminded'),4200)}
+async function promptInstall(){
+  if(standaloneMode()){syncInstallButton();return}
+  if(!deferredInstallPrompt){favoriteMessage('Para instalar, abre el menú del navegador y elige «Instalar FULLTECH Store».');remindInstall();return}
+  const prompt=deferredInstallPrompt;deferredInstallPrompt=null;syncInstallButton();
+  try{await prompt.prompt();await prompt.userChoice}catch{/* The browser owns the install dialog; no error is shown in the store. */}
+}
+window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=event;syncInstallButton()});
+window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;syncInstallButton();syncAnnouncement()});
+installButton?.addEventListener('click',promptInstall);
+syncInstallButton();setInterval(()=>{remindInstall();rotateAnnouncement()},10000);
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/store/sw.js',{scope:'/store/'}).catch(()=>{})}
 
 /*
  * CARRITO PERSISTENTE (localStorage). Guarda solo id + cantidad: el precio y la
@@ -51,7 +67,7 @@ function confirmAdded(button){
   let state=addFeedback.get(button);
   if(!state){state={html:button.innerHTML};addFeedback.set(button,state)}
   clearTimeout(state.timer);
-  button.innerHTML=materialIcon('cart',{size:18})+'<span>Agregado</span>';
+  button.innerHTML=materialIcon('cart',{size:18})+'<span>Agregado</span>';button.setAttribute('title','Agregado al carrito');
   button.classList.add('is-added');
   const status=document.getElementById('cart-feedback-status');
   if(status)status.textContent=`Producto agregado. ${cartCount()} artículos en el carrito.`;
@@ -62,6 +78,7 @@ function updateCartBadge() {
   document.querySelectorAll('[data-cart-badge]').forEach(badge => { badge.textContent = n ? String(n) : ''; badge.hidden = !n; });
   const shortcut = document.querySelector('.cart-shortcut');
   if (shortcut) {
+    shortcut.hidden = n === 0;
     shortcut.setAttribute('aria-label', n ? `Carrito (${n})` : 'Carrito');
     shortcut.classList.toggle('has-items',n>0);
     if(previousCartCount!==null&&n!==previousCartCount&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
@@ -74,6 +91,87 @@ function updateCartBadge() {
 }
 let homeData = null, catalogState = {kind:'all',category:'',q:'',page:1,pages:1}, searchTimer;
 const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false} };
+let announcementIndex=0;
+const announcementNode=()=>$('#hero-promo');
+function announcementItems(){
+  const items=[{key:'request',label:'Lo conseguimos por ti',cta:'Solicitar',href:href('request')}];
+  if(!session.account)items.push({key:'register',label:'Regístrate ahora',cta:'Crear cuenta',href:href('account/register')});
+  if(!standaloneMode())items.push({key:'install',label:'Instala nuestra app',cta:'Instalar',href:'#'});
+  return items;
+}
+function syncAnnouncement(){
+  const node=announcementNode();
+  if(!node)return;
+  const key=location.hash||'';
+  const hidden=/^#\/?(?:account|checkout|request|favorites)/.test(key);
+  if(hidden){node.hidden=true;return}
+  const items=announcementItems();
+  if(!items.length){node.hidden=true;return}
+  announcementIndex%=items.length;const item=items[announcementIndex];
+  const icon=item.key==='request'?materialIcon('search',{size:16}):item.key==='register'?materialIcon('account',{size:16}):'<span class="ft-announcement-install-icon" aria-hidden="true"></span>';
+  node.dataset.announcement=item.key;node.href=item.href;node.setAttribute('aria-label',`${item.label}. ${item.cta}`);
+  node.innerHTML=`<span class="ft-announcement__copy">${icon}<span>${item.label}</span></span><strong>${item.cta}</strong>`;
+  node.hidden=false;node.classList.remove('is-switching');void node.offsetWidth;node.classList.add('is-switching');
+  node.onclick=event=>{if(node.dataset.announcement==='install'){event.preventDefault();promptInstall()}};
+}
+function rotateAnnouncement(){
+  const node=announcementNode();
+  if(!node||node.hidden)return;
+  const items=announcementItems();if(!items.length)return;announcementIndex=(announcementIndex+1)%items.length;syncAnnouncement();
+}
+let favoriteIds=new Set(),favoriteOwner=null,favoriteToastTimer;
+const favoriteBusy=new Set();
+function favoriteButton(p){const active=favoriteOwner===session.account?.id&&favoriteIds.has(p.id);return `<button class="ft-favorite${active?' is-favorite':''}" type="button" data-favorite="${esc(p.id)}" data-favorite-name="${esc(p.name)}" aria-pressed="${active}" aria-label="${active?'Quitar de':'Guardar en'} favoritos: ${esc(p.name)}"><span class="ft-favorite__icon" aria-hidden="true"></span></button>`}
+function syncFavoriteButtons(){document.querySelectorAll('[data-favorite]').forEach(button=>{
+  const active=favoriteOwner===session.account?.id&&favoriteIds.has(button.dataset.favorite);
+  button.classList.toggle('is-favorite',active);button.setAttribute('aria-pressed',String(active));
+  button.setAttribute('aria-label',`${active?'Quitar de':'Guardar en'} favoritos: ${button.dataset.favoriteName}`);
+  button.disabled=favoriteBusy.has(button.dataset.favorite);
+})}
+function favoriteMessage(message){const toast=$('#toast');toast.textContent=message;toast.classList.add('show');clearTimeout(favoriteToastTimer);favoriteToastTimer=setTimeout(()=>toast.classList.remove('show'),3500)}
+async function refreshFavoriteState(){
+  const owner=session.account?.id;
+  if(!owner){favoriteOwner=null;favoriteIds.clear();syncFavoriteButtons();return}
+  try{const data=await api('/api/store/account/favorites?ids=1');if(session.account?.id!==owner)return;favoriteOwner=owner;favoriteIds=new Set(data.ids||[]);syncFavoriteButtons()}catch{/* Saving retries against the authenticated API; never claim a failed save succeeded. */}
+}
+async function renderFavorites(){
+  setNav('favorites');main.innerHTML='<p class="ft-section">Cargando favoritos…</p>';
+  await ensureSession(true);
+  if(location.hash.split('?')[0]!=='#/favorites')return;
+  if(!session.account){
+    main.innerHTML=`${authHead('Mis favoritos')}<section class="account-card"><h2>Guarda lo que te gusta</h2><p>Crea tu cuenta o inicia sesión para guardar productos y encontrarlos cuando quieras comprar.</p><div class="account-actions"><a class="button" data-favorite-auth href="${href('account/register')}">Crear cuenta</a><a class="button button-outline" data-favorite-auth href="${href('account/login')}">Iniciar sesión</a></div></section>${footer()}`;
+    bindAuthBack();document.querySelectorAll('[data-favorite-auth]').forEach(a=>a.onclick=()=>{try{sessionStorage.setItem('fulltech_auth_return','/favorites')}catch{}});return;
+  }
+  const owner=session.account.id;
+  try{
+    let pending='';try{pending=sessionStorage.getItem('fulltech_pending_favorite')||''}catch{}
+    if(pending){
+      try{await apiPost(`/api/store/account/favorites/${encodeURIComponent(pending)}`,{},'POST');sessionStorage.removeItem('fulltech_pending_favorite')}
+      catch(error){if(error.status===404)try{sessionStorage.removeItem('fulltech_pending_favorite')}catch{};throw error}
+    }
+    const data=await api('/api/store/account/favorites');
+    if(location.hash.split('?')[0]!=='#/favorites'||session.account?.id!==owner)return;
+    favoriteOwner=owner;favoriteIds=new Set(data.ids||[]);
+    main.innerHTML=`${authHead('Mis favoritos')}<p class="ft-favorites-intro">Tus productos guardados, listos para cuando quieras comprar.</p>${data.products?.length?`<div class="ft-grid ft-favorites-grid">${data.products.map(homeCard).join('')}</div>`:`<section class="empty"><h3>Aún no tienes favoritos disponibles</h3><p>Toca la estrella de un producto para guardarlo aquí.</p><a class="button" href="${href('catalog')}">Explorar catálogo</a></section>`}${(data.ids?.length||0)>(data.products?.length||0)?'<p class="ft-favorites-intro">Algunos productos guardados ya no están publicados.</p>':''}${footer()}`;
+    bindAuthBack();
+  }catch{if(location.hash.split('?')[0]==='#/favorites'){main.innerHTML=`<section class="state-error"><h1>No pudimos cargar tus favoritos</h1><button class="button" id="retry-favorites">Reintentar</button></section>`;$('#retry-favorites').onclick=renderFavorites}}
+}
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-favorite]');if(!button)return;
+  event.preventDefault();const id=button.dataset.favorite;if(favoriteBusy.has(id))return;
+  favoriteBusy.add(id);syncFavoriteButtons();
+  try{
+    await ensureSession(true);
+    if(!session.account){try{sessionStorage.setItem('fulltech_pending_favorite',id)}catch{};favoriteMessage('Crea tu cuenta o inicia sesión para guardar favoritos.');location.hash='/favorites';return}
+    const owner=session.account.id;
+    const active=button.getAttribute('aria-pressed')==='true';
+    const data=await apiPost(`/api/store/account/favorites/${encodeURIComponent(id)}`,{},active?'DELETE':'POST');
+    if(session.account?.id!==owner)return;
+    favoriteOwner=owner;favoriteIds=new Set(data.ids||[]);favoriteMessage(active?'Producto quitado de favoritos.':'Producto guardado en favoritos.');
+    if(location.hash.split('?')[0]==='#/favorites')await renderFavorites();
+  }catch(error){favoriteMessage(error.status===401?'Tu sesión terminó. Inicia sesión para guardar favoritos.':error.message||'No pudimos guardar el favorito. Intenta de nuevo.')}
+  finally{favoriteBusy.delete(id);syncFavoriteButtons()}
+});
 async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(d.message||'No pudimos completar la operación.');error.code=d.error||'';error.status=r.status;throw error;}return d}
 async function ensureSession(force=false){if(session.loaded&&!force)return session.account;try{const d=await api('/api/store/account/me');session.account=d.account}catch{session.account=null}session.loaded=true;return session.account}
 async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})}}catch{}return session.providers}
@@ -107,23 +205,31 @@ const offerBadge = (p, extra = '') => hasOffer(p)
 const priceRow = (p, cls = 'ft-card__price') => hasOffer(p)
   ? `<span class="ft-card__price-row"><span class="${cls}">${money(p)}</span><span class="ft-card__price--old">${money({ ...p, price: p.compareAtPrice })}</span></span>`
   : `<span class="${cls}">${money(p)}</span>`;
+function cardSummary(p){
+  const text=String(p.shortDescription||p.description||'').replace(/\s+/g,' ').trim();
+  const chars=Array.from(text);
+  return text?`<p class="ft-card__summary">${esc(chars.slice(0,84).join(''))}${chars.length>84?'…':''}</p>`:'';
+}
 function productCard(p){
   return `<article class="product-card">
     ${offerBadge(p)}
+    ${favoriteButton(p)}
     <a href="${href(`product/${encodeURIComponent(p.id)}`)}" class="product-link" aria-label="Ver ${esc(p.name)}">
       <div class="product-image">${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="480" height="480" loading="lazy" decoding="async">`:'<span class="image-fallback" aria-hidden="true">◈</span>'}</div>
       <div class="product-info">
+        <span class="ft-card__category">${esc(p.category||'Catálogo')}</span>
         <h3 class="product-name">${esc(p.name)}</h3>
+        ${cardSummary(p)}
         <div class="product-bottom">${priceRow(p, 'price')}<span class="card-arrow" aria-hidden="true">›</span></div>
         <span class="availability ${p.availabilityState==='UNAVAILABLE'?'out':''}">${avail(p)}</span>
       </div>
     </a>
-    <div class="card-actions">${canBuy(p)?`<button class="button button-block" type="button" data-add-cart="${esc(p.id)}">${materialIcon('cart',{size:18})}<span>Agregar</span></button>`:`<a class="button button-outline button-block" href="${requestHref(p)}">Solicitar producto</a>`}</div>
+    <div class="card-actions">${canBuy(p)?`<button class="button ft-cart-icon" type="button" data-add-cart="${esc(p.id)}" aria-label="Agregar ${esc(p.name)} al carrito">${materialIcon('cart',{size:22})}<span>Agregar</span></button>`:`<a class="button button-outline button-block" href="${requestHref(p)}">Solicitar producto</a>`}</div>
   </article>`
 }
-function searchMarkup(value=''){return `<label class="ft-search">${materialIcon('search',{size:20})}<input id="store-search" type="search" value="${esc(value)}" placeholder="¿Qué buscas hoy?" aria-label="Buscar productos" autocomplete="off"></label>`}
+function searchMarkup(value=''){return `<label class="ft-search"><input id="store-search" type="search" value="${esc(value)}" placeholder="¿Qué buscas hoy?" aria-label="Buscar productos" autocomplete="off"><span class="ft-search-tile">${materialIcon('search',{size:25})}</span></label>`}
 /* Portada: el buscador es una puerta de entrada a la pantalla de búsqueda real. */
-function searchEntryMarkup(){return `<a class="ft-search ft-search--entry" href="${href('search')}" aria-label="Buscar productos">${materialIcon('search',{size:20})}<span class="ft-search__placeholder">¿Qué buscas hoy?</span></a>`}
+function searchEntryMarkup(){return `<a class="ft-search ft-search--entry" href="${href('search')}" aria-label="Buscar productos"><span class="ft-search-tile">${materialIcon('search',{size:29})}</span><span class="ft-search__placeholder">¿Qué buscas hoy?</span></a>`}
 function footer(){return `<footer class="footer">FULLTECH Store · República Dominicana</footer>`}
 /*
  * Buscador: en el catálogo filtra EN EL SITIO (sin re-renderizar la pantalla, así
@@ -156,7 +262,7 @@ function setNav(route){
     const match=node.dataset.route===route;
     node.classList.toggle('active',match);
     if(match)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');
-    paintMaterialIcon(node.querySelector('[data-msr]'),node.dataset.route,{variant:match?'filled':'outline'});
+    paintMaterialIcon(node.querySelector('[data-msr]'),node.dataset.route==='request'?'search':node.dataset.route,{variant:match?'filled':'outline'});
   });
 }
 /* Portada comercial: buscador, héroe, confianza, categorías con imagen,
@@ -172,22 +278,34 @@ async function renderHome(){
     const sections=homeData.sections||{};
     const tiles=(homeData.categoryCards||[]).filter(t=>t&&t.name);
     const total=Number(homeData.total||products.length);
-    const featured=sections.featured?.length?sections.featured:products.filter(p=>p.featured);
-    const offers=sections.offers||[];
-    const nuevos=sections.newArrivals||[];
-    const descubrir=sections.discover||[];
+    const seen=new Set();
+    const unique=items=>items.filter(p=>{if(seen.has(p.id))return false;seen.add(p.id);return true});
+    const offers=unique((sections.offers||[]).filter(hasOffer));
+    const featured=unique(sections.featured?.length?sections.featured:products.filter(p=>p.featured));
+    const nuevos=unique(sections.newArrivals||[]);
+    const descubrir=unique(sections.discover||[]);
     const algunaCosa=featured.length||offers.length||nuevos.length||descubrir.length;
+    const dailyOffers=(homeData.dailyOffers||[]).filter(hasOffer).slice(0,2);
+    const heroOfferCard=p=>`<a class="ft-hero-offer" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver oferta de ${esc(p.name)}">
+      <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="180" height="104" loading="eager" decoding="async">
+      <span class="ft-hero-offer__shade"><span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span><strong>${esc(p.name)}</strong><span class="ft-hero-offer__prices">${money(p)} <del>${money({price:p.compareAtPrice,currency:p.currency})}</del></span></span>
+    </a>`;
+    const heroPlaceholder='<span class="ft-hero-offer-placeholder">Ofertas diarias<br><small>Vuelve pronto para descubrirlas</small></span>';
+    const heroOffers=dailyOffers.length===2
+      ? dailyOffers.map(heroOfferCard).join('')
+      : dailyOffers.length===1
+        ? heroOfferCard(dailyOffers[0])+heroPlaceholder
+        : heroPlaceholder;
 
     const hero=`<section class="ft-hero">
       <div class="ft-hero__copy">
-        <span class="ft-hero__eyebrow">${materialIcon('security',{size:14})} FULLTECH STORE</span>
+        <span class="ft-hero__eyebrow">${materialIcon('security',{size:14})} ENCUENTRA TU PRÓXIMO FAVORITO</span>
         <h1>Todo lo que necesitas,<br>en un solo lugar</h1>
         <p>Tecnología, hogar y seguridad para tu día a día.</p>
-        <a class="ft-hero__cta" href="${href('catalog')}">Ver productos ${materialIcon('arrow-right',{size:18})}</a>
+        <a id="hero-promo" class="ft-hero-promo" href="${href('request')}" aria-live="polite" hidden></a>
       </div>
-      <div class="ft-hero__art" aria-hidden="true">
-        <img src="/store/assets/img/hero-productos.jpg" alt="" width="720" height="420" loading="eager" decoding="async">
-        <span class="ft-hero__tag">Compra segura</span>
+      <div class="ft-hero__art ft-hero__duo" aria-label="Ofertas diarias">
+        ${heroOffers}
       </div>
     </section>`;
 
@@ -219,21 +337,16 @@ async function renderHome(){
       <span class="ft-about-entry__arrow" aria-hidden="true">${materialIcon('chevron-right',{size:18})}</span>
     </a>`;
 
-    const request=`<section class="ft-request">
-      <div class="ft-request__copy"><strong>¿No lo encuentras?</strong><small>Lo conseguimos por ti.</small></div>
-      <a class="ft-request__cta" href="${href('request')}">Solicitar ahora ${materialIcon('arrow-right',{size:16})}</a>
-    </section>`;
-
     const vacio=`<div class="empty"><h3>Aún no hay productos publicados</h3><p>Estamos preparando el catálogo. Vuelve pronto.</p></div>`;
 
-    main.innerHTML=`${searchEntryMarkup()}${hero}${benefits}${catStrip}${algunaCosa?`
+    main.innerHTML=`<section class="ft-discovery" aria-label="Descubre FULLTECH"><div class="ft-home-search-slot"><div class="ft-home-search">${searchEntryMarkup()}</div></div>${hero}${benefits}${catStrip}</section>${algunaCosa?`
       ${block('Destacados',featured,{link:href('catalog?featured=true'),linkLabel:'Ver más'})}
       ${block('Ofertas',offers,{link:href('catalog?offers=1'),linkLabel:'Ver ofertas',cls:'ft-section--offers'})}
       ${block('Novedades',nuevos,{link:href('catalog?sort=recent'),linkLabel:'Ver todo'})}
       ${block('Descubrir más',descubrir,{link:href('catalog'),linkLabel:'Ver catálogo'})}
       <p class="ft-section__note" style="margin-inline:var(--ft-pad)">${total} producto${total===1?'':'s'} publicado${total===1?'':'s'} · precios en RD$</p>
-    `:`<div class="ft-section">${vacio}</div>`}${aboutEntry}${request}${footer()}`;
-    syncFloatingRequest();
+    `:`<div class="ft-section">${vacio}</div>`}${aboutEntry}${footer()}`;
+    syncHomeSearch();
   }catch{
     main.innerHTML=`<div class="state-error"><h1>No pudimos cargar la tienda</h1><p>Revisa tu conexión e inténtalo de nuevo.</p><button class="button" id="retry-home">Intentar de nuevo</button></div>${footer()}`;
     $('#retry-home').onclick=renderHome;
@@ -247,15 +360,18 @@ function homeCard(p){
   /* Etiqueta corta para la tarjeta: misma verdad que avail(p), sin frases largas. */
   const stateLabel=p.availabilityState==='AVAILABLE_NOW'?'Disponible':p.availabilityState==='ON_REQUEST'?'Bajo pedido':'No disponible';
   const action=canBuy(p)
-    ? `<button class="ft-card__cta" type="button" data-add-cart="${esc(p.id)}">${materialIcon('cart',{size:15})}<span>Agregar</span></button>`
+    ? `<button class="ft-card__cta" type="button" data-add-cart="${esc(p.id)}" aria-label="Agregar ${esc(p.name)} al carrito">${materialIcon('cart',{size:18})}<span>Agregar</span></button>`
     : `<a class="ft-card__cta ft-card__cta--ghost" href="${requestHref(p)}">Solicitar</a>`;
-  return `<article class="ft-card">
+  return `<article class="ft-card" data-product-id="${esc(p.id)}" data-category="${esc(p.category || 'FULLTECH')}">
     ${offerBadge(p)}
+    ${favoriteButton(p)}
     <a class="ft-card__media" href="${href('product/'+encodeURIComponent(p.id))}" aria-label="Ver ${esc(p.name)}">
-      ${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="480" height="480" loading="lazy" decoding="async">`:`<span class="ft-card__fallback">${materialIcon('package',{size:28})}</span>`}
+      ${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="480" height="480" loading="lazy" decoding="async">`:`<span class="ft-card__fallback">${materialIcon('categories',{size:28})}<small>${esc(p.category || 'FULLTECH')}</small><small>Imagen no disponible</small></span>`}
     </a>
     <div class="ft-card__body">
+      <span class="ft-card__category">${esc(p.category||'Catálogo')}</span>
       <h3 class="ft-card__name"><a href="${href('product/'+encodeURIComponent(p.id))}" style="color:inherit;text-decoration:none">${esc(p.name)}</a></h3>
+      ${cardSummary(p)}
       ${priceRow(p)}
       <span class="${stateClass}"><span class="ft-card__dot"></span>${esc(stateLabel)}</span>
       ${action}
@@ -269,6 +385,7 @@ function homeCard(p){
  * El estado (búsqueda, categoría, ofertas, orden) vive en el hash para que al
  * volver de una ficha se recupere exactamente lo que el cliente estaba viendo.
  */
+let catalogCategoryCards=[];
 const SORT_LABELS=[['relevance','Relevancia'],['recent','Más recientes'],['price-asc','Precio: menor a mayor'],['price-desc','Precio: mayor a menor']];
 function catalogUrl(){
   const p=new URLSearchParams();
@@ -283,6 +400,8 @@ function catalogUrl(){
 }
 function syncCatalogHash(){try{history.replaceState(null,'',catalogUrl());renderedRoute=location.hash}catch{/* sin historial */}}
 function paintCatalogApplied(){
+  const title=$('#catalog-title');if(title){title.textContent=catalogState.category || 'Catálogo';title.parentElement.querySelector('.catalog-category-image')?.remove();const category=catalogCategoryCards.find(c=>c.name===catalogState.category);if(category?.imageUrl)title.insertAdjacentHTML('beforebegin',`<img class="catalog-category-image" src="${esc(category.imageUrl)}" width="48" height="48" alt="">`);}
+  if(catalogState.category)try{localStorage.setItem('fulltech_last_category',catalogState.category)}catch{}
   const box=$('#catalog-applied');
   if(!box)return;
   const partes=[];
@@ -304,7 +423,7 @@ async function renderCatalog(params){
   setNav('catalog');
   catalogState={kind:'product',category:params.get('category')||'',q:params.get('q')||'',sort:SORT_LABELS.some(([v])=>v===params.get('sort'))?params.get('sort'):'relevance',offers:params.get('offers')==='1',featured:params.get('featured')==='true',page:1,pages:1};
   main.innerHTML=`${searchMarkup(catalogState.q)}
-    <div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Catálogo</h1></div>
+    <div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1 id="catalog-title">${esc(catalogState.category || 'Catálogo')}</h1></div>
     <div class="ft-toolbar">${materialIcon('filter',{size:20})}
       <select id="category-filter" class="ft-toolbar__select" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option></select>
       <select id="sort-select" class="ft-toolbar__select" aria-label="Ordenar resultados">${SORT_LABELS.map(([value,label])=>`<option value="${value}"${value===catalogState.sort?' selected':''}>${label}</option>`).join('')}</select>
@@ -318,7 +437,7 @@ async function renderCatalog(params){
   $('#sort-select').onchange=e=>{catalogState.sort=e.target.value;catalogState.page=1;syncCatalogHash();loadCatalog()};
   $('#category-filter').onchange=e=>{catalogState.category=e.target.value;catalogState.page=1;syncCatalogHash();paintCatalogApplied();loadCatalog()};
   try{
-    const c=await api('/api/store/categories');
+    const c=await api('/api/store/categories');catalogCategoryCards=c.categoryCards||[];
     $('#category-filter').innerHTML+=(c.categories||[]).map(v=>`<option value="${esc(v)}"${v===catalogState.category?' selected':''}>${esc(v)}</option>`).join('');
     const chips=$('#catalog-chips');
     chips.innerHTML=[
@@ -380,7 +499,20 @@ async function loadCatalog(append=false){
   }
 }
 function warrantyBlock(w){if(!w||!w.available&&!w.conditions&&!w.coverage&&!w.exclusions&&!w.claim)return '';const details=(w.coverage||w.exclusions||w.conditions||w.claim)?`<details class="warranty"><summary>Consulta las condiciones de garantía</summary>${w.coverage?`<p><strong>Qué cubre:</strong> ${esc(w.coverage)}</p>`:''}${w.exclusions?`<p><strong>Qué no cubre:</strong> ${esc(w.exclusions)}</p>`:''}${w.conditions?`<p>${esc(w.conditions)}</p>`:''}${w.claim?`<p><strong>Cómo reclamar:</strong> ${esc(w.claim)}</p>`:''}</details>`:'';return `<div class="product-warranty"><span class="warranty-label">${esc(w.label)}</span>${w.notes?`<small>${esc(w.notes)}</small>`:''}${details}</div>`}
-async function renderProduct(id){setNav('product');main.innerHTML='<div class="loading-cards"><div class="skeleton"></div></div>';try{const {product:p}=await api(`/api/store/products/${encodeURIComponent(id)}`);const consultar=`#/request?title=${encodeURIComponent(p.name)}&details=${encodeURIComponent(`Consulta por: ${p.name}${p.category?` (${p.category})`:''}`)}`;main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button></div><article class="detail">${galleryMarkup(p)}<div class="detail-copy"><span class="product-category">${esc(p.category||'FULLTECH')}${p.brand?` · ${esc(p.brand)}`:''}</span><h1>${esc(p.name)}</h1>${priceRow(p,'price')}<p>${esc(p.description||p.shortDescription||'')}</p><span class="availability">${avail(p)}</span><div class="detail-actions">${canBuy(p)?`<button class="button" type="button" id="add-to-cart">${materialIcon('cart',{size:20})}<span>Agregar al carrito</span></button>`:`<a class="button" href="${consultar}">Solicitar producto</a>`}<button class="button button-outline" id="share-product">${materialIcon('share',{size:18})} Compartir</button></div>${warrantyBlock(p.warranty)}</div></article>${footer()}`;mountGallery(main);$('[data-back]').onclick=()=>history.back();$('#add-to-cart')?.addEventListener('click',()=>{addToCart(p.id,1);const b=$('#add-to-cart');confirmAdded(b)});$('#share-product').onclick=async()=>{try{await navigator.share({title:p.name,url:location.href})}catch{await navigator.clipboard?.writeText(location.href);$('#share-product').textContent='Enlace copiado'}}}catch{main.innerHTML=`<div class="state-error"><h1>Producto no disponible</h1><p>Este artículo no aparece en el catálogo público.</p><a class="button" href="${href('catalog')}">Volver al catálogo</a></div>`}}
+async function renderProduct(id){
+ setNav('product');main.innerHTML='<div class="loading-cards"><div class="skeleton"></div></div>';
+ try{const {product:p}=await api(`/api/store/products/${encodeURIComponent(id)}`);
+ if(p.category)try{localStorage.setItem('fulltech_last_category',p.category)}catch{}
+  main.innerHTML=`<article class="detail detail--product"><div class="detail-visual">${galleryMarkup(p,{controls:true})}</div><div class="detail-copy"><span class="product-category">${esc(p.category||'FULLTECH')}${p.brand?` · ${esc(p.brand)}`:''}</span><h1>${esc(p.name)}</h1><div class="detail-price">${offerBadge(p,' detail-offer')}${priceRow(p,'price')}</div><span class="availability">${avail(p)}</span>
+  <div class="detail-actions">${canBuy(p)?`<label class="detail-quantity">Cantidad <input id="product-quantity" type="number" inputmode="numeric" min="1" max="99" value="1" aria-label="Cantidad de producto"></label><button class="button" type="button" id="add-to-cart">${materialIcon('cart',{size:20})}<span>Agregar al carrito</span></button>`:`<a class="button" href="${requestHref(p)}">Solicitar producto</a>`}<span id="share-status" role="status"></span></div>
+  <div class="detail-trust" aria-label="Información de compra"><div><span class="detail-trust__icon">${materialIcon('truck',{size:18})}</span><span><strong>Entrega coordinada</strong><small>Confirmamos disponibilidad y entrega contigo.</small></span></div><div><span class="detail-trust__icon">${materialIcon('security',{size:18})}</span><span><strong>Pago seguro</strong><small>Te confirmamos la forma de pago antes de cobrar.</small></span></div></div>
+  ${(p.description||p.shortDescription)?`<section class="detail-description"><h2>Descripción</h2><p>${esc(p.description||p.shortDescription)}</p></section>`:''}${warrantyBlock(p.warranty)}<p class="checkout-note">Confirmamos entrega, disponibilidad y forma de pago antes de cobrar.</p></div></article><section class="ft-section" id="related-products"></section>${footer()}`;
+ mountGallery(main);const back=$('[data-product-back]');if(back)back.onclick=()=>history.length>1?history.back():location.assign(href('catalog'));const search=$('[data-product-search]');if(search)search.onclick=()=>location.assign(href('search'));$('#add-to-cart')?.addEventListener('click',()=>{const input=$('#product-quantity');if(!input.reportValidity())return;addToCart(p.id,Number(input.value));confirmAdded($('#add-to-cart'))});
+ const shareProduct=async()=>{const status=$('#share-status'),url=new URL(href('product/'+encodeURIComponent(p.id)),location.origin).href;try{if(navigator.share){await navigator.share({title:p.name,url});return}if(!navigator.clipboard)throw Error();await navigator.clipboard.writeText(url);status.textContent='Enlace copiado';}catch(e){if(e.name!=='AbortError'){status.innerHTML=`<label>Enlace del producto <input readonly value="${esc(url)}" aria-label="Enlace para copiar"></label>`;status.querySelector('input').select();}}};
+ $('[data-product-share]')?.addEventListener('click',shareProduct);
+ const box=$('#related-products');if(p.category)try{const d=await api(`/api/store/catalog?limit=12&category=${encodeURIComponent(p.category)}`);if(!box.isConnected)return;const related=(d.products||[]).filter(x=>x.id!==p.id).sort((a,b)=>Number(canBuy(b))-Number(canBuy(a)));if(related.length)box.innerHTML=`<div class="ft-section__head"><h2>Más de ${esc(p.category)}</h2><a href="${href('catalog?category='+encodeURIComponent(p.category))}">Ver categoría</a></div><div class="ft-grid">${related.slice(0,6).map(homeCard).join('')}</div>`;}catch{/* optional related products */}
+ }catch{main.innerHTML=`<div class="state-error"><h1>Producto no disponible</h1><p>No pudimos cargar su ficha. Revisa la conexión e inténtalo de nuevo.</p><button class="button" id="retry-product">Reintentar</button><a class="button button-outline" href="${href('catalog')}">Volver al catálogo</a></div>`;$('#retry-product').onclick=()=>renderProduct(id)}
+}
 /* ---------------------------------------------------------------- CARRITO */
 async function cartCatalog(rows = readCart()) {
   const d = await api('/api/store/catalog?limit=48');
@@ -583,7 +715,10 @@ async function renderRequest(params = new URLSearchParams()){
   };
 }
 /* Tras entrar: si había algo en el carrito, se vuelve al pedido (no se pierde). */
-function afterAuth(){location.hash=readCart().length?'/checkout':'/account'}
+function afterAuth(){
+  let returnTo='';try{returnTo=sessionStorage.getItem('fulltech_auth_return')||'';sessionStorage.removeItem('fulltech_auth_return')}catch{}
+  location.hash=returnTo==='/favorites'?returnTo:readCart().length?'/checkout':'/account';
+}
 
 /* -------------------------------------------------------------- INICIAR SESIÓN */
 async function renderLogin(message=''){
@@ -611,10 +746,10 @@ async function renderRegister(){
   setNav('account');await ensureProviders();
   main.innerHTML=`${authHead('Crear cuenta')}
     <section class="auth-panel auth-panel--choice">
-      <p class="auth-sub auth-sub--center">Elige cómo quieres crear tu cuenta.</p>
+      <p class="auth-sub auth-sub--center">Continúa de forma rápida y segura.</p>
       <div class="auth-stack">
         ${googleOption()}
-        <a class="button button-outline button-block" href="#/account/register/manual">Crear cuenta manual</a>
+        <a class="auth-manual-link" href="#/account/register/manual">Crear cuenta manual</a>
       </div>
     </section>${footer()}`;
   bindAuthBack();
@@ -939,26 +1074,41 @@ let renderedRoute=location.hash, routeRun=0;
 if('scrollRestoration' in history)history.scrollRestoration='manual';
 window.addEventListener('scroll',()=>{routeScroll.set(renderedRoute,window.scrollY)},{passive:true});
 async function route(){
+  $('#signup-prompt').hidden=true;
   const run=++routeRun;
   routeScroll.set(renderedRoute,window.scrollY);
   const key=location.hash;
   const saved=routeScroll.get(key)||0;
-  await renderRoute();
+  await (key.replace(/^#\/?/,'').split('?')[0]==='favorites'?renderFavorites():renderRoute());
   if(run!==routeRun||key!==location.hash)return;
   renderedRoute=key;
   window.scrollTo(0,saved);
+  await ensureSession();
+  if(run===routeRun&&key===location.hash){
+    const prompt=$('#signup-prompt');
+    prompt.hidden=!!session.account||/^#\/?(?:account|checkout|request|favorites)/.test(key);
+    if(!prompt.hidden){
+      await ensureProviders();
+      if(run!==routeRun||key!==location.hash)return;
+      prompt.innerHTML=GOOGLE_ICON+'<span>Regístrate con Google</span><strong>Continuar</strong>';
+      prompt.href=session.providers.google?'/api/store/account/auth/google/start':href('account/register');
+    }
+    syncAnnouncement();
+    await refreshFavoriteState();
+  }
 }
 function openDrawer(open){if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open))}
 $('#menu-button').onclick=()=>openDrawer(true);$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
-/*
- * Banner flotante «¿No lo encuentras?»: se muestra en cuanto el cliente
- * desplaza, y queda pegado sobre la barra inferior. Al cargar no tapa precios.
- */
-function syncFloatingRequest(){
-  const banner=document.querySelector('.ft-request');
-  if(banner)banner.classList.toggle('is-visible',window.scrollY>60);
+function syncHomeSearch(){
+  const slot=document.querySelector('.ft-home-search-slot');
+  if(!slot)return;
+  const bar=slot.firstElementChild,rect=slot.getBoundingClientRect();
+  bar.classList.toggle('is-fixed',rect.top<=0);
+  bar.style.setProperty('--search-left',`${rect.left}px`);
+  bar.style.setProperty('--search-width',`${rect.width}px`);
 }
-window.addEventListener('scroll',syncFloatingRequest,{passive:true});
+window.addEventListener('scroll',syncHomeSearch,{passive:true});
+window.addEventListener('resize',syncHomeSearch,{passive:true});
 updateCartBadge();
 /*
  * FRESCURA DE DISPONIBILIDAD: el catálogo visible se vuelve a pedir cada minuto

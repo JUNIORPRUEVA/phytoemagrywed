@@ -1,6 +1,6 @@
 const normalize = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim();
 
-function publicProduct(product) {
+export function publicProduct(product) {
   // Construct the public object field by field; never spread the CRM record.
   return {
     id: product.id,
@@ -78,6 +78,7 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
   }
   if (route === '/api/store/home' || route === '/api/store/categories') {
     const all = await catalog.publicProducts();
+    const dailyOffers = route === '/api/store/home' ? await catalog.dailyOffers() : [];
     const categories = [...new Set(all.map(item => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
     const products = all.filter(item => item.kind === 'product');
     /*
@@ -137,6 +138,7 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
     res.writeHead(200, { ...cacheHeaders, 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true, categories, categoryCards, products: items.map(publicProduct), sections,
+      dailyOffers: dailyOffers.map(publicProduct),
       services: ordered(services).slice(0, 4).map(publicProduct), featured: featured.length > 0, total: products.length,
     }));
     return true;
