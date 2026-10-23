@@ -31,7 +31,7 @@ main:has(> .ft-discovery) { padding-inline: 0; padding-top: 8px; }
 .ft-hero__duo img { position: absolute; top: 0; right: -5px; height: 88px; width: 116px; object-fit: cover; background: #fff; border: 1px solid #ffffff55; box-shadow: 0 4px 12px #050b1855; }
 .ft-hero__duo img + img { top: auto; right: auto; bottom: 0; left: -24px; width: 116px; height: 88px; }
 .ft-hero-offer, .ft-hero-offer-placeholder { position: absolute; top: 0; right: -5px; width: 116px; height: 88px; overflow: hidden; border: 1px solid #ffffff55; border-radius: 10px; background: #fff; color: #12346c; box-shadow: 0 4px 12px #050b1855; text-decoration: none; }
-.ft-hero-offer + .ft-hero-offer, .ft-hero-offer-placeholder + .ft-hero-offer, .ft-hero-offer + .ft-hero-offer-placeholder { top: auto; right: auto; bottom: 0; left: -24px; }
+.ft-hero-offer + .ft-hero-offer, .ft-hero-offer-placeholder + .ft-hero-offer, .ft-hero-offer + .ft-hero-offer-placeholder, .ft-hero-offer-placeholder + .ft-hero-offer-placeholder { top: auto; right: auto; bottom: 0; left: -24px; }
 .ft-hero-offer img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
 .ft-hero-offer__shade { position: absolute; inset: auto 0 0; display: grid; gap: 1px; padding: 16px 5px 5px; background: linear-gradient(transparent, #07182ce6 42%); color: #fff; }
 .ft-hero-offer__discount { width: fit-content; padding: 2px 4px; border-radius: 4px; background: #e9f1ff; color: #1258d6; font-size: 8px; font-weight: 800; }

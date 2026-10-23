@@ -40,8 +40,8 @@ import {
   runsForTicket,
   saveAgent,
 } from './agents.mjs';
-import { toolCatalog } from './tools.mjs';
-import { agentOffice, centroDirectory } from './centro.mjs';
+import { toolCatalog } from './tools.mjs';import { agentOffice, centroDirectory } from './centro.mjs';
+import { phoneFieldsOf } from '../delivery-supervisor.mjs';
 import { delegationsForTicket } from './collaboration.mjs';
 import { commercialSnapshot } from './commercial.mjs';
 import { agentAsk, agentFacts, factsToText } from './ask.mjs';
@@ -424,6 +424,170 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
         return send(200, { ok: true, usage: null, message: 'Este servidor no tiene el proveedor de IA configurado.' });
       }
       return send(200, { ok: true, usage });
+    }
+
+    /*
+     * PRUEBA DE CONEXIÓN DE WHATSAPP — UN SOLO MENSAJE, AL PROPIO ADMINISTRADOR.
+     *
+     * Para qué sirve: comprobar de punta a punta que el token de Meta funciona y
+     * que el mensaje queda registrado en Centro IA → Chats con su estado real,
+     * SIN inventar pedidos ni incidentes.
+     *
+     * Reglas de seguridad (todas deliberadas):
+     *   · solo `admin.full`;
+     *   · el destino sale de la FICHA DEL ADMINISTRADOR que la pide (flota
+     *     primero, personal después) — nunca un número del navegador;
+     *   · exige `confirm: true` explícito;
+     *   · UN mensaje por día y administrador (la referencia lleva la fecha de RD);
+     *     si ya existe, se responde `duplicate` y NO se vuelve a enviar;
+     *   · una sola llamada a Meta, sin reintentos;
+     *   · se guarda en un ticket de referencia `SUPERVISOR-TEST-AAAAMMDD`, sin
+     *     pedido y sin tocar clientes ni pedidos reales.
+     */
+    if (route === '/api/admin/ops/whatsapp/self-test' && method === 'POST') {
+      if (!can('admin.full')) {
+        return send(403, { ok: false, error: 'forbidden', message: 'Solo administración puede hacer la prueba.' });
+      }
+      const body = await readBody();
+      if (body.__error) return send(400, { ok: false, error: 'bad_request', message: 'No se pudo leer la petición.' });
+      if (body.confirm !== true) {
+        return send(422, {
+          ok: false,
+          error: 'confirmation_required',
+          message: 'La prueba envía un WhatsApp real: hay que confirmarla con `confirm: true`.',
+        });
+      }
+      const usuario = await ctx.users.get(actor?.id ?? actor?.user_id ?? actor?.userId ?? '').catch(() => null);
+      if (!usuario) return send(404, { ok: false, error: 'user_not_found', message: 'No se encontró tu usuario.' });
+      /*
+       * Destino: SIEMPRE de la ficha del administrador que hace la prueba.
+       * Por defecto la flota (regla operativa); se puede pedir el personal con
+       * `preferred: 'personal'` — nunca un número enviado en la petición.
+       */
+      const preferido = String(body.preferred ?? 'fleet').toLowerCase() === 'personal' ? 'personal_phone' : 'fleet_phone';
+      const base = phoneFieldsOf(usuario);
+      const alterno = phoneFieldsOf({ fleet_phone: usuario.personal_phone, personal_phone: usuario.fleet_phone });
+      const elegido =
+        (preferido === 'personal_phone' && base.field === 'personal_phone') || (preferido === 'fleet_phone' && base.field === 'fleet_phone')
+          ? base
+          : alterno.field === preferido
+            ? alterno
+            : base;
+      const { phone, field, masked } = elegido;
+      if (!phone) {
+        return send(409, {
+          ok: false,
+          error: 'no_admin_phone',
+          message: 'Tu ficha no tiene teléfono válido (ni de flota ni personal). Actualízala antes de probar.',
+        });
+      }
+      if (!ctx.whatsapp?.enabled) {
+        return send(409, { ok: false, error: 'whatsapp_not_configured', message: 'WhatsApp no está configurado en este servidor.' });
+      }
+      /* Referencia del día EN HORA DE REPÚBLICA DOMINICANA. */
+      const fechaRd = new Intl.DateTimeFormat('en-CA', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: 'America/Santo_Domingo',
+      }).format(new Date());
+      const referencia = `SUPERVISOR-TEST-${String(fechaRd).replace(/-/g, '')}`;
+      const TEXTO =
+        'Prueba del Supervisor IA Delivery de PHYTOEMAGRY. Este mensaje verifica la conexión de WhatsApp y el registro en Centro IA. No requiere ninguna acción.';
+
+      /* El ticket de referencia se reutiliza: un ticket por día. */
+      const tickets = await ctx.db.list('ops_tickets', { by: 'created_at', order: 'desc', limit: 200 }).catch(() => []);
+      let ticket = tickets.find((row) => String(row.title ?? '') === referencia) ?? null;
+      if (!ticket) {
+        const creado = await createTicket({
+          ctx,
+          actor,
+          can,
+          input: {
+            type: 'delivery',
+            title: referencia,
+            description: 'Prueba controlada de conexión de WhatsApp. No es un pedido ni una incidencia real.',
+            priority: 'low',
+          },
+        }).catch(() => null);
+        if (!creado?.ok) {
+          return send(creado?.status ?? 500, { ok: false, error: creado?.error ?? 'ticket_failed', message: creado?.message ?? 'No se pudo preparar la conversación de prueba.' });
+        }
+        ticket = creado.ticket;
+      }
+
+      /* Ya existe el mensaje de hoy: NO se reenvía (protección anti-duplicado). */
+      const mensajes = await ctx.db.list('ops_ticket_messages', { by: 'seq', order: 'desc', limit: 500 }).catch(() => []);
+      const previo = mensajes.find((row) => String(row.ticket_id) === String(ticket.id) && row.meta?.kind === 'self_test');
+      if (previo) {
+        return send(409, {
+          ok: true,
+          duplicate: true,
+          reference: referencia,
+          ticketId: ticket.id,
+          status: previo.meta?.status ?? null,
+          messageId: previo.meta?.provider_id ?? null,
+          to: previo.meta?.to ?? masked,
+          phone_field: previo.meta?.phone_field ?? field,
+          message: 'La prueba de hoy ya se envió: no se repite para no duplicar el mensaje externo.',
+        });
+      }
+
+      const envio = await ctx.whatsapp.sendText(phone, TEXTO).catch((failure) => ({ ok: false, error: { message: failure?.message ?? 'send_failed' } }));
+      const estado = envio?.ok ? 'sent' : 'failed';
+      const messageId = envio?.messageId ?? null;
+      const error = envio?.ok ? null : clean(envio?.error?.message ?? envio?.reason ?? 'send_failed', 200);
+
+      const registrado = await postMessage({
+        ctx,
+        actor,
+        can,
+        ticketId: ticket.id,
+        body: TEXTO,
+        clientKey: `wa-self-test:${referencia}:${usuario.id}`,
+        authorType: 'agent',
+        kind: 'text',
+        meta: {
+          channel: 'whatsapp',
+          direction: 'outbound',
+          kind: 'self_test',
+          to: masked,
+          phone_field: field,
+          recipient_user_id: usuario.id,
+          recipient_name: usuario.display_name ?? usuario.username ?? null,
+          status: estado,
+          provider_id: messageId,
+          error,
+          order_number: referencia,
+          at: ctx.clock().toISOString(),
+          tz: 'America/Santo_Domingo',
+        },
+      }).catch(() => null);
+
+      await ctx.audit
+        ?.record({
+          entity: 'user',
+          entityId: usuario.id,
+          action: estado === 'sent' ? 'whatsapp.self_test_sent' : 'whatsapp.self_test_failed',
+          actor: actor?.display_name ?? 'Administración',
+          summary: `Prueba de WhatsApp ${referencia} · ${masked} (${field}) · ${estado}`,
+          data: { reference: referencia, to_masked: masked, phone_field: field, status: estado, provider_id: messageId, error, ticket_id: ticket.id },
+          idempotencyKey: `whatsapp.self_test:${referencia}:${usuario.id}`,
+        })
+        .catch(() => null);
+
+      return send(estado === 'sent' ? 200 : 502, {
+        ok: estado === 'sent',
+        reference: referencia,
+        ticketId: ticket.id,
+        messageRegistered: Boolean(registrado?.ok),
+        status: estado,
+        provider_status: estado === 'sent' ? 'submitted' : 'failed',
+        messageId,
+        error,
+        to: masked,
+        phone_field: field,
+      });
     }
 
 

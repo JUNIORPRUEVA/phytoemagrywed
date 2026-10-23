@@ -633,6 +633,8 @@
     const data=Object.fromEntries(new FormData(form));data.kind=editing?.kind||data.kind;data.active=form.elements.active.checked;
     if(form.elements.track_stock)data.track_stock=data.kind==='product'&&form.elements.track_stock.checked;
     data.warranty_available=form.elements.warranty_available.checked;
+    data.offer_active=form.elements.offer_active.checked;
+    data.daily_offer=form.elements.daily_offer.checked;
     delete data.image;if(galleryDirty)data.images=gallery.map(entry=>entry.data?{data:entry.data}:{id:entry.id});if(editing)data.version=editing.version;
     try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load(true);notice(`${data.kind==='service'?'Servicio':'Producto'} guardado.`);}
     catch(err){

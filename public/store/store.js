@@ -290,12 +290,12 @@ async function renderHome(){
       <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="180" height="104" loading="eager" decoding="async">
       <span class="ft-hero-offer__shade"><span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span><strong>${esc(p.name)}</strong><span class="ft-hero-offer__prices">${money(p)} <del>${money({price:p.compareAtPrice,currency:p.currency})}</del></span></span>
     </a>`;
-    const heroPlaceholder='<span class="ft-hero-offer-placeholder">Ofertas diarias<br><small>Vuelve pronto para descubrirlas</small></span>';
+    const heroPlaceholder=(label='Ofertas diarias')=>`<span class="ft-hero-offer-placeholder">${label}<br><small>Vuelve pronto para descubrirlas</small></span>`;
     const heroOffers=dailyOffers.length===2
       ? dailyOffers.map(heroOfferCard).join('')
       : dailyOffers.length===1
-        ? heroOfferCard(dailyOffers[0])+heroPlaceholder
-        : heroPlaceholder;
+        ? heroOfferCard(dailyOffers[0])+heroPlaceholder('Otra oferta pronto')
+        : heroPlaceholder()+heroPlaceholder('Próxima oferta');
 
     const hero=`<section class="ft-hero">
       <div class="ft-hero__copy">

@@ -487,13 +487,12 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
           ? null
           : money(input.compare_at_price);
       }
-      if (compareCents !== null && compareCents <= priceCents) {
-        throw fail('invalid_compare_at', 'El precio anterior debe ser mayor que el precio de venta.');
-      }
       let offerPriceCents = previous?.offer_price_cents ?? null;
       if (input.offer_price !== undefined) offerPriceCents = input.offer_price === '' || input.offer_price === null ? null : money(input.offer_price);
       if (offerPriceCents !== null && offerPriceCents <= 0) throw fail('invalid_offer_price', 'El precio de oferta debe ser mayor que cero.');
-      if (offerPriceCents !== null && compareCents !== null && compareCents <= offerPriceCents) throw fail('invalid_compare_at', 'El precio anterior debe ser mayor que el precio de oferta.');
+      if (compareCents !== null && compareCents <= (offerPriceCents ?? priceCents)) {
+        throw fail('invalid_compare_at', 'El precio anterior debe ser mayor que el precio de oferta.');
+      }
       const offerActive = booleanInput(input.offer_active, previous?.offer_active === undefined ? compareCents !== null : previous.offer_active === true);
       if (offerActive && offerPriceCents === null) offerPriceCents = priceCents;
       if (offerActive && (compareCents === null || compareCents <= offerPriceCents)) throw fail('invalid_offer', 'Activa la oferta solo con precio anterior y precio de oferta válidos.');

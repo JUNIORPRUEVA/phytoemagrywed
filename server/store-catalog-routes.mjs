@@ -49,14 +49,24 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
     }
     const body=await readJson(req,4500000);
     if(route==='/api/admin/store/categories'&&req.method==='POST')return send(201,{ok:true,category:await catalog.createCategory(body,actor)});
-    if(route==='/api/admin/store/products'&&req.method==='POST') return send(201,{ok:true,product:await catalog.save(body,actor)});
+    if(route==='/api/admin/store/products'&&req.method==='POST') {
+      const product=await catalog.save(body,actor);
+      const offerChange=['offer_active','compare_at_price','offer_price','offer_start_at','offer_end_at','daily_offer'].some(field=>Object.prototype.hasOwnProperty.call(body,field));
+      await ctx.audit?.record({entity:'product',entityId:product.id,action:offerChange?'store.product_offer_updated':'store.product_saved',actor:actor.display_name,summary:offerChange?'Configuración de oferta actualizada':'Producto creado en el catálogo'});
+      return send(201,{ok:true,product});
+    }
     if(publicationMatch&&req.method==='POST') {
       if(actor.role!=='ADMIN')return send(403,{ok:false,error:'forbidden'});
       const publication=await catalog.setPublication(publicationMatch[1],body);
       await ctx.audit?.record({entity:'product',entityId:publication.product_id,action:publication.status==='published'?'store.product_published':'store.product_unpublished',actor:actor.display_name,summary:publication.status==='published'?'Artículo publicado en FULLTECH Store':'Artículo retirado de FULLTECH Store'});
       return send(200,{ok:true,publication});
     }
-    if(match&&!match[2]&&req.method==='PATCH')return send(200,{ok:true,product:await catalog.save(body,actor,match[1])});
+    if(match&&!match[2]&&req.method==='PATCH') {
+      const product=await catalog.save(body,actor,match[1]);
+      const offerChange=['offer_active','compare_at_price','offer_price','offer_start_at','offer_end_at','daily_offer'].some(field=>Object.prototype.hasOwnProperty.call(body,field));
+      await ctx.audit?.record({entity:'product',entityId:product.id,action:offerChange?'store.product_offer_updated':'store.product_saved',actor:actor.display_name,summary:offerChange?'Configuración de oferta actualizada':'Producto actualizado en el catálogo'});
+      return send(200,{ok:true,product});
+    }
     if(match?.[2]==='stock'&&req.method==='POST')return send(200,{ok:true,...await catalog.adjust(match[1],body,actor)});
     return send(404,{ok:false,error:'not_found'});
   }catch(e){
