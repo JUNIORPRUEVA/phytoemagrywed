@@ -1,6 +1,7 @@
 import { STORE_REQUEST_STATUSES } from './store-accounts.mjs';
 import { maskPhone, phoneRequirement } from './store-verifications.mjs';
 import { publicProduct } from './store-public-routes.mjs';
+import { bindRequestTrust, trustOf } from './http-trust.mjs';
 
 const COOKIE = 'ft_store_session';
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
@@ -17,8 +18,14 @@ function readCookie(req, name) {
   return null;
 }
 
+/*
+ * HTTPS real de la petición: la cabecera del proxy solo vale si viene de un
+ * proxy de confianza (ver `http-trust.mjs`). Antes se comparaba a mano y, con
+ * nginx reescribiendo `X-Forwarded-Proto` a `http`, la cookie salía SIN `Secure`
+ * en producción.
+ */
 function secureRequest(req) {
-  return String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() === 'https';
+  return trustOf(req).isSecure(req);
 }
 
 function storeCookie(req, value, maxAge = SESSION_SECONDS) {
@@ -79,7 +86,12 @@ function oauthStateCookie(req, value) {
 /** Límite simple por IP: frena la fuerza bruta sin bloquear al cliente real. */
 const attempts = new Map();
 function throttle(req, key) {
-  const id = `${key}:${req.socket?.remoteAddress ?? 'local'}`;
+  /*
+   * Clave por CLIENTE, no por socket: detrás de nginx todos los sockets son
+   * `127.0.0.1`, así que este mapa era un único cubo compartido por todo el
+   * sitio (20 intentos y bloqueábamos a todos los clientes).
+   */
+  const id = `${key}:${trustOf(req).clientIp(req)}`;
   const now = Date.now();
   const entry = attempts.get(id);
   if (entry && entry.until > now && entry.count >= 20) return false;
@@ -94,6 +106,8 @@ const publicOrderError = (error) => {
 };
 
 export async function handleStoreAccountRoute({ req, res, route, url, ctx, json, readJson }) {
+  /* Confianza de proxy resuelta por el servidor (o la del proceso en UAT). */
+  bindRequestTrust(req, ctx.requestTrust);
   const accounts = ctx.storeAccounts;
   const accountRoute = route === '/api/store/account' || route.startsWith('/api/store/account/');
   const requestRoute = route === '/api/store/requests' || route.startsWith('/api/store/requests/');
@@ -242,8 +256,13 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
         });
         const result = await accounts.oauthLogin(identity);
         if (result.pending) {
+          /*
+           * `modo=clave` cuando el correo ya pertenece a una cuenta con
+           * contraseña y hay que demostrar que es suya antes de enlazar Google.
+           */
+          const mode = result.needsProof === 'password' ? '&modo=clave' : '';
           res.writeHead(302, {
-            location: `/store/#/account/complete?token=${encodeURIComponent(result.pendingToken)}`,
+            location: `/store/#/account/complete?token=${encodeURIComponent(result.pendingToken)}${mode}`,
             'set-cookie': oauthStateCookie(req, ''),
             'cache-control': 'no-store',
           });

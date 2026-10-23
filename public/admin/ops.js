@@ -684,7 +684,7 @@ function chatMessageHtml(message) {
     <article class="ops-msg${esAgente ? ' ops-msg--agent' : ''}${entrante ? ' ops-msg--in' : ''}${esExterno ? ' ops-msg--wa' : ''}${notaInterna ? ' ops-msg--note' : ''}" data-seq="${esc(message.seq)}">
       <p class="ops-msg__who">${etiqueta} ${esc(quien)} · ${esc(stamp(message.createdAt) ?? '')}</p>
       <div class="ops-msg__bubble">${esc(message.body).replace(/\n/g, '<br>')}</div>
-      ${esExterno && meta.status === 'failed' && meta.error ? `<p class="ops-msg__error">${esc(meta.error)}</p>` : ''}
+      ${esExterno && meta.status === 'failed' && (meta.error || meta.error_code) ? `<p class="ops-msg__error">${esc(meta.error ?? 'No se pudo entregar.')}${meta.error_code ? ` · código ${esc(meta.error_code)}` : ''}</p>` : ''}
     </article>`;
 }
 

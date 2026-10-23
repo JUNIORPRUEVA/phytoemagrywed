@@ -25,6 +25,19 @@ import { createSelectionStore } from './selection.js';
 import { initVariantSelector } from './variant-selector.js';
 import { initWhatsAppActions } from './whatsapp-actions.js';
 
+function finishStartup() {
+  const startup = document.querySelector('[data-startup]');
+  if (!startup || startup.dataset.closed === 'true') return;
+  startup.dataset.closed = 'true';
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reducedMotion) {
+    startup.hidden = true;
+    return;
+  }
+  startup.classList.add('is-done');
+  window.setTimeout(() => { startup.hidden = true; }, 240);
+}
+
 export function boot() {
   const view = buildView();
   const debug = view.site.tracking.debug === true;
@@ -141,6 +154,8 @@ export function boot() {
     });
   }
 
+  finishStartup();
+
   return ctx;
 }
 
@@ -151,6 +166,7 @@ try {
         boot();
       } catch (error) {
         console.error('[phytoemagry] error al inicializar:', error);
+        finishStartup();
       }
     });
   } else {
@@ -158,4 +174,5 @@ try {
   }
 } catch (error) {
   console.error('[phytoemagry] error al inicializar:', error);
+  finishStartup();
 }

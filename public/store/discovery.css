@@ -30,8 +30,8 @@ main:has(> .ft-discovery) { padding-inline: 0; padding-top: 8px; }
 .ft-discovery .ft-hero__duo { position: relative; display: block; width: 132px; height: 192px; }
 .ft-hero__duo img { position: absolute; top: 0; right: -5px; height: 88px; width: 116px; object-fit: cover; background: #fff; border: 1px solid #ffffff55; box-shadow: 0 4px 12px #050b1855; }
 .ft-hero__duo img + img { top: auto; right: auto; bottom: 0; left: -24px; width: 116px; height: 88px; }
-.ft-hero-offer, .ft-hero-offer-placeholder { position: absolute; top: 0; right: -5px; width: 116px; height: 88px; overflow: hidden; border: 1px solid #ffffff55; border-radius: 10px; background: #fff; color: #12346c; box-shadow: 0 4px 12px #050b1855; text-decoration: none; }
-.ft-hero-offer + .ft-hero-offer, .ft-hero-offer-placeholder + .ft-hero-offer, .ft-hero-offer + .ft-hero-offer-placeholder, .ft-hero-offer-placeholder + .ft-hero-offer-placeholder { top: auto; right: auto; bottom: 0; left: -24px; }
+.ft-hero-offer { position: absolute; top: 0; right: -5px; width: 116px; height: 88px; overflow: hidden; border: 1px solid #ffffff55; border-radius: 10px; background: #fff; color: #12346c; box-shadow: 0 4px 12px #050b1855; text-decoration: none; }
+.ft-hero-offer + .ft-hero-offer { top: auto; right: auto; bottom: 0; left: -24px; }
 .ft-hero-offer img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
 .ft-hero-offer__shade { position: absolute; inset: auto 0 0; display: grid; gap: 1px; padding: 16px 5px 5px; background: linear-gradient(transparent, #07182ce6 42%); color: #fff; }
 .ft-hero-offer__discount { width: fit-content; padding: 2px 4px; border-radius: 4px; background: #e9f1ff; color: #1258d6; font-size: 8px; font-weight: 800; }
@@ -39,8 +39,6 @@ main:has(> .ft-discovery) { padding-inline: 0; padding-top: 8px; }
 .ft-hero-offer__prices { display: flex; align-items: baseline; gap: 3px; overflow: hidden; white-space: nowrap; font-size: 9px; font-weight: 800; }
 .ft-hero-offer__prices del { color: #d9e5f8; font-size: 7px; font-weight: 500; }
 .ft-hero-offer:active { transform: scale(.97); }
-.ft-hero-offer-placeholder { display: grid; place-content: center; padding: 8px; text-align: center; background: #ffffffee; color: #12346c; font-size: 10px; font-weight: 800; line-height: 1.2; }
-.ft-hero-offer-placeholder small { display: block; margin-top: 3px; color: #60708a; font-size: 7px; font-weight: 600; }
 .ft-discovery .ft-benefits { margin: 8px; }
 .ft-discovery .ft-cats { padding-bottom: 4px; margin-top: 10px; }
 .ft-discovery .ft-section__head { margin-inline: 8px !important; }
@@ -71,7 +69,7 @@ main:has(> .ft-discovery) { padding-inline: 0; padding-top: 8px; }
   .ft-discovery .ft-hero { grid-template-columns: minmax(0, 1fr) 250px; }
   .ft-discovery .ft-hero__duo { width: 250px; height: 224px; }
   .ft-hero__duo img, .ft-hero__duo img + img { width: 180px; height: 104px; }
-  .ft-hero-offer, .ft-hero-offer-placeholder { width: 180px; height: 104px; }
+  .ft-hero-offer { width: 180px; height: 104px; }
 }
 
 .ft-hero__eyebrow { font-size: 8px; letter-spacing: .8px; }

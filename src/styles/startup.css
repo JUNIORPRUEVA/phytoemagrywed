@@ -1,0 +1,28 @@
+/* Entrada de marca: rápida, silenciosa y compartida por la web pública. */
+.pe-startup {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 38%, rgb(69 130 255 / 18%), transparent 34%), linear-gradient(145deg, #0a1830, #123b7b 58%, #1a62d7);
+  color: #fff;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 220ms ease, visibility 220ms ease;
+}
+.pe-startup::before, .pe-startup::after { content: ''; position: absolute; border: 1px solid rgb(255 255 255 / 12%); border-radius: 50%; pointer-events: none; }
+.pe-startup::before { width: 56vmax; height: 56vmax; top: -34vmax; right: -16vmax; box-shadow: 0 0 0 28px rgb(255 255 255 / 4%); }
+.pe-startup::after { width: 34vmax; height: 34vmax; bottom: -25vmax; left: -12vmax; }
+.pe-startup[hidden], .pe-startup.is-done { visibility: hidden; opacity: 0; pointer-events: none; }
+.pe-startup__inner { position: relative; z-index: 1; display: grid; justify-items: center; gap: 11px; text-align: center; }
+.pe-startup__logo { width: min(112px, 30vw); height: auto; object-fit: contain; filter: drop-shadow(0 12px 24px rgb(0 0 0 / 20%)); animation: pe-startup-logo 420ms cubic-bezier(.2,.8,.2,1) both; }
+.pe-startup__name { margin: 0; font-size: 1.05rem; font-weight: 800; letter-spacing: .02em; }
+.pe-startup__text { margin: 0; color: rgb(232 241 255 / 84%); font-size: .78rem; }
+.pe-startup__line { width: 128px; height: 3px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: rgb(255 255 255 / 18%); }
+.pe-startup__line::after { content: ''; display: block; width: 42%; height: 100%; border-radius: inherit; background: #fff; animation: pe-startup-line 1.15s ease-in-out infinite; }
+@keyframes pe-startup-logo { from { opacity: 0; transform: translateY(7px) scale(.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes pe-startup-line { from { transform: translateX(-120%); } to { transform: translateX(315%); } }
+@media (prefers-reduced-motion: reduce) { .pe-startup, .pe-startup__logo { transition: none; animation: none; } .pe-startup__line::after { width: 100%; animation: none; } }

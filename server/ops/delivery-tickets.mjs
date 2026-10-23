@@ -272,6 +272,7 @@ export async function recordExternalMessage({
   status = 'sent',
   providerId = null,
   error = null,
+  errorCode = null,
   kind = 'text',
   attempt = null,
   body = '',
@@ -306,6 +307,7 @@ export async function recordExternalMessage({
       status,
       provider_id: providerId ?? null,
       error: error ?? null,
+      error_code: Number.isFinite(Number(errorCode)) && Number(errorCode) > 0 ? Number(errorCode) : null,
       attempt,
       order_number: orderNumber ?? order?.order_number ?? null,
       at: at ?? ctx.clock().toISOString(),
@@ -326,7 +328,7 @@ export async function recordExternalMessage({
  *
  * Es idempotente y no inventa: si el estado ya es el mismo, no escribe.
  */
-export async function reconcileDeliveryReceipt({ ctx, providerId = null, status = null, at = null } = {}) {
+export async function reconcileDeliveryReceipt({ ctx, providerId = null, status = null, at = null, errorCode = null, errorMessage = null } = {}) {
   const id = String(providerId ?? '').trim();
   const nuevo = String(status ?? '').trim().toLowerCase();
   if (!id || !nuevo) return { ok: false, reason: 'missing_data' };
@@ -334,10 +336,29 @@ export async function reconcileDeliveryReceipt({ ctx, providerId = null, status 
   const fila = filas.find((row) => String(row?.meta?.provider_id ?? '') === id);
   if (!fila) return { ok: false, reason: 'not_tracked' };
   const meta = fila.meta && typeof fila.meta === 'object' ? fila.meta : {};
-  if (String(meta.status ?? '') === nuevo) return { ok: true, reason: 'unchanged', messageId: fila.id };
+  /*
+   * EL MOTIVO DEL PROVEEDOR SE GUARDA, NO SE PIERDE.
+   *
+   * Meta manda el código y el título del error en el webhook de estados. Antes
+   * solo se copiaba el estado («failed») y el diagnóstico se perdía: en la
+   * prueba real del 2026-10-23 el mensaje quedó `failed` sin poder saber por qué
+   * sin volver a enviar. Ahora se persisten `error_code` y `error` (título
+   * recortado) y el panel los muestra en la misma burbuja.
+   */
+  const codigo = Number.isFinite(Number(errorCode)) && Number(errorCode) > 0 ? Number(errorCode) : null;
+  const titulo = errorMessage ? String(errorMessage).slice(0, 200) : null;
+  const mismoEstado = String(meta.status ?? '') === nuevo;
+  const mismoError = (meta.error_code ?? null) === codigo && (meta.error ?? null) === titulo;
+  if (mismoEstado && mismoError) return { ok: true, reason: 'unchanged', messageId: fila.id };
   const actualizado = await ctx.db
     .update('ops_ticket_messages', fila.id, {
-      meta: { ...meta, status: nuevo, provider_status_at: at ?? ctx.clock().toISOString() },
+      meta: {
+        ...meta,
+        status: nuevo,
+        provider_status_at: at ?? ctx.clock().toISOString(),
+        ...(codigo ? { error_code: codigo } : {}),
+        ...(titulo ? { error: titulo } : {}),
+      },
     })
     .catch(() => null);
   if (!actualizado) return { ok: false, reason: 'update_failed' };
@@ -347,7 +368,7 @@ export async function reconcileDeliveryReceipt({ ctx, providerId = null, status 
   } catch {
     /* sin tiempo real: el panel lo verá al refrescar */
   }
-  return { ok: true, reason: 'updated', messageId: fila.id, ticketId: fila.ticket_id, status: nuevo };
+  return { ok: true, reason: 'updated', messageId: fila.id, ticketId: fila.ticket_id, status: nuevo, errorCode: codigo, errorMessage: titulo };
 }
 
 /**

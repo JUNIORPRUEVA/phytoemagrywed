@@ -90,7 +90,7 @@ function updateCartBadge() {
   previousCartCount=n;
 }
 let homeData = null, catalogState = {kind:'all',category:'',q:'',page:1,pages:1}, searchTimer;
-const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false} };
+const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false}, providersReady:false };
 let announcementIndex=0;
 const announcementNode=()=>$('#hero-promo');
 function announcementItems(){
@@ -174,7 +174,7 @@ document.addEventListener('click',async event=>{
 });
 async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(d.message||'No pudimos completar la operación.');error.code=d.error||'';error.status=r.status;throw error;}return d}
 async function ensureSession(force=false){if(session.loaded&&!force)return session.account;try{const d=await api('/api/store/account/me');session.account=d.account}catch{session.account=null}session.loaded=true;return session.account}
-async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})}}catch{}return session.providers}
+async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})};session.providersReady=true}catch{session.providersReady=false}return session.providers}
 const initials = value => String(value||'F').trim().split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
 const orderStatus = {nuevo:'Recibido',confirmado:'Confirmado',en_preparacion:'En preparación',enviado:'En camino',entregado:'Entregado',cancelado:'Cancelado',perdido:'No disponible'};
 const requestStatus = {nuevo:'Recibida',en_revision:'En revisión',cotizado:'Cotizada',aprobado:'Aprobada',anticipo_pendiente:'Anticipo pendiente',en_proceso:'En proceso',completado:'Completada',rechazado:'No disponible',cancelado:'Cancelada'};
@@ -187,9 +187,18 @@ const GOOGLE_ICON = '<svg class="google-g" viewBox="0 0 48 48" aria-hidden="true
  */
 function googleOption(label='Continuar con Google'){
   const inner=`${GOOGLE_ICON}<span>${esc(label)}</span>`;
-  return session.providers.google===true
-    ? `<a class="button button-outline button-block auth-google" href="/api/store/account/auth/google/start">${inner}</a>`
-    : `<button class="button button-outline button-block auth-google" type="button" disabled>${inner}</button><small class="auth-hint">Google estará disponible muy pronto.</small>`;
+  if(session.providers.google===true)return `<a class="button button-outline button-block auth-google" href="/api/store/account/auth/google/start">${inner}</a>`;
+  /*
+   * Si el servidor no ofrece Google NO se dice «muy pronto» (era mentira y no
+   * caducaba nunca): se dice exactamente lo que pasa y se mantiene el acceso por
+   * correo, que funciona igual. Nunca se simula un acceso.
+   */
+  const hint=navigator.onLine===false
+    ? 'Sin conexión. Conéctate a internet para entrar con Google.'
+    : session.providersReady
+      ? 'El acceso con Google no está disponible ahora mismo. Entra con tu correo y contraseña.'
+      : 'Comprobando el acceso con Google…';
+  return `<button class="button button-outline button-block auth-google" type="button" disabled>${inner}</button><small class="auth-hint">${esc(hint)}</small>`;
 }
 function authHead(title){return `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>${esc(title)}</h1></div>`}
 async function api(path){const r=await fetch(path,{headers:{accept:'application/json'}});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}
@@ -286,16 +295,17 @@ async function renderHome(){
     const descubrir=unique(sections.discover||[]);
     const algunaCosa=featured.length||offers.length||nuevos.length||descubrir.length;
     const dailyOffers=(homeData.dailyOffers||[]).filter(hasOffer).slice(0,2);
-    const heroOfferCard=p=>`<a class="ft-hero-offer" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver oferta de ${esc(p.name)}">
+    const heroSeen=new Set();
+    const uniqueHero=items=>items.filter(p=>{if(heroSeen.has(p.id))return false;heroSeen.add(p.id);return true});
+    const latestNonOffers=uniqueHero([...nuevos,...products])
+      .filter(p=>!hasOffer(p))
+      .sort((a,b)=>(Date.parse(b.publishedAt||b.createdAt||'')||0)-(Date.parse(a.publishedAt||a.createdAt||'')||0)||String(a.name||'').localeCompare(String(b.name||''),'es'));
+    const heroProducts=[...dailyOffers,...latestNonOffers].slice(0,2);
+    const heroOfferCard=p=>`<a class="ft-hero-offer${hasOffer(p)?'':' ft-hero-offer--regular'}" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver ${hasOffer(p)?'oferta de ':''}${esc(p.name)}">
       <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="180" height="104" loading="eager" decoding="async">
-      <span class="ft-hero-offer__shade"><span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span><strong>${esc(p.name)}</strong><span class="ft-hero-offer__prices">${money(p)} <del>${money({price:p.compareAtPrice,currency:p.currency})}</del></span></span>
+      <span class="ft-hero-offer__shade">${hasOffer(p)?`<span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span>`:''}<strong>${esc(p.name)}</strong><span class="ft-hero-offer__prices">${money(p)} ${hasOffer(p)?`<del>${money({price:p.compareAtPrice,currency:p.currency})}</del>`:''}</span></span>
     </a>`;
-    const heroPlaceholder=(label='Ofertas diarias')=>`<span class="ft-hero-offer-placeholder">${label}<br><small>Vuelve pronto para descubrirlas</small></span>`;
-    const heroOffers=dailyOffers.length===2
-      ? dailyOffers.map(heroOfferCard).join('')
-      : dailyOffers.length===1
-        ? heroOfferCard(dailyOffers[0])+heroPlaceholder('Otra oferta pronto')
-        : heroPlaceholder()+heroPlaceholder('Próxima oferta');
+    const heroOffers=heroProducts.map(heroOfferCard).join('');
 
     const hero=`<section class="ft-hero">
       <div class="ft-hero__copy">
@@ -304,9 +314,7 @@ async function renderHome(){
         <p>Tecnología, hogar y seguridad para tu día a día.</p>
         <a id="hero-promo" class="ft-hero-promo" href="${href('request')}" aria-live="polite" hidden></a>
       </div>
-      <div class="ft-hero__art ft-hero__duo" aria-label="Ofertas diarias">
-        ${heroOffers}
-      </div>
+      ${heroOffers?`<div class="ft-hero__art ft-hero__duo" aria-label="Ofertas y novedades">${heroOffers}</div>`:''}
     </section>`;
 
     /* Solo promesas verificadas: exactamente lo que el checkout dice al cliente. */
@@ -838,12 +846,27 @@ async function renderRecover(){
 
 async function renderComplete(params){
   setNav('account');const token=params.get('token')||'';
+  const clave=params.get('modo')==='clave';
   if(!token){
     main.innerHTML=`${authHead('Completa tu cuenta')}<section class="auth-panel"><p class="auth-sub">El enlace caducó. Vuelve a intentarlo.</p><a class="button button-block" href="#/account/login">Volver a iniciar sesión</a></section>${footer()}`;
     bindAuthBack();return;
   }
-  /* Solo lo imprescindible: WhatsApp y ciudad. El nombre ya viene de Google. */
-  main.innerHTML=`${authHead('Completa tu cuenta')}<p class="auth-sub">Solo faltan tu WhatsApp y tu ciudad.</p><section class="auth-panel">
+  /*
+   * DOS CAMINOS:
+   *  · `modo=clave` — ese correo ya tiene una cuenta con contraseña. Se pide la
+   *    contraseña para enlazar Google SIN quitarle el acceso a nadie (antes se
+   *    enlazaba solo y cualquiera podía quedarse con la cuenta ajena).
+   *  · normal — cuenta nueva: solo faltan WhatsApp y ciudad.
+   */
+  main.innerHTML=clave
+    ? `${authHead('Vincula tu cuenta')}<p class="auth-sub">Ese correo ya tiene una cuenta en la tienda. Escribe su contraseña para vincular Google y conservar tus pedidos.</p><section class="auth-panel">
+    <form id="complete-form" class="auth-form" novalidate>
+      <label class="field"><span class="field__label">Contraseña de tu cuenta</span><input class="field__input" name="password" type="password" autocomplete="current-password" required></label>
+      <p class="form-error" id="auth-error" role="alert"></p>
+      <button class="button button-block" type="submit">Vincular y entrar</button>
+    </form>
+    <a class="auth-link" href="#/account/recover">¿Olvidaste tu contraseña?</a></section>${footer()}`
+    : `${authHead('Completa tu cuenta')}<p class="auth-sub">Solo faltan tu WhatsApp y tu ciudad.</p><section class="auth-panel">
     <form id="complete-form" class="auth-form" novalidate>
       <label class="field"><span class="field__label">Número de WhatsApp</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label>
       <label class="field"><span class="field__label">Ciudad</span><input class="field__input" name="city" autocomplete="address-level2" maxlength="80" required placeholder="Santo Domingo"></label>
@@ -857,12 +880,15 @@ async function renderComplete(params){
     event.preventDefault();
     button.disabled=true;$('#auth-error').textContent='';
     try{
-      const data=await apiPost('/api/store/account/complete',{token,phone:form.phone.value.trim(),city:form.city.value.trim(),orderNumber:(form.orderNumber.value||'').trim()});
+      const body=clave
+        ? {token,password:form.password.value}
+        : {token,phone:form.phone.value.trim(),city:form.city.value.trim(),orderNumber:(form.orderNumber.value||'').trim()};
+      const data=await apiPost('/api/store/account/complete',body);
       session.account=data.account;session.loaded=true;
       afterAuth();
     }catch(error){
       $('#auth-error').textContent=error.message;
-      if(error.code==='verification_required'){$('#complete-proof').hidden=false;form.orderNumber.focus();}
+      if(error.code==='verification_required'&&!clave){$('#complete-proof').hidden=false;form.orderNumber.focus();}
       button.disabled=false;
     }
   };
@@ -1071,31 +1097,42 @@ const presentation=`<section class="ft-intro" aria-labelledby="ft-intro-title">
 async function renderRoute(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request')return renderRequest(params);if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='account/requests')return renderRequests();if(path==='nosotros')return renderAbout();return renderHome()}
 const routeScroll=new Map();
 let renderedRoute=location.hash, routeRun=0;
+function finishStoreStartup(){
+  const startup=document.querySelector('[data-store-startup]');
+  if(!startup||startup.dataset.closed==='true')return;
+  startup.dataset.closed='true';
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduced){startup.hidden=true;return;}
+  startup.classList.add('is-done');
+  setTimeout(()=>{startup.hidden=true},240);
+}
 if('scrollRestoration' in history)history.scrollRestoration='manual';
 window.addEventListener('scroll',()=>{routeScroll.set(renderedRoute,window.scrollY)},{passive:true});
 async function route(){
-  $('#signup-prompt').hidden=true;
-  const run=++routeRun;
-  routeScroll.set(renderedRoute,window.scrollY);
-  const key=location.hash;
-  const saved=routeScroll.get(key)||0;
-  await (key.replace(/^#\/?/,'').split('?')[0]==='favorites'?renderFavorites():renderRoute());
-  if(run!==routeRun||key!==location.hash)return;
-  renderedRoute=key;
-  window.scrollTo(0,saved);
-  await ensureSession();
-  if(run===routeRun&&key===location.hash){
-    const prompt=$('#signup-prompt');
-    prompt.hidden=!!session.account||/^#\/?(?:account|checkout|request|favorites)/.test(key);
-    if(!prompt.hidden){
-      await ensureProviders();
-      if(run!==routeRun||key!==location.hash)return;
-      prompt.innerHTML=GOOGLE_ICON+'<span>Regístrate con Google</span><strong>Continuar</strong>';
-      prompt.href=session.providers.google?'/api/store/account/auth/google/start':href('account/register');
+  try{
+    $('#signup-prompt').hidden=true;
+    const run=++routeRun;
+    routeScroll.set(renderedRoute,window.scrollY);
+    const key=location.hash;
+    const saved=routeScroll.get(key)||0;
+    await (key.replace(/^#\/?/,'').split('?')[0]==='favorites'?renderFavorites():renderRoute());
+    if(run!==routeRun||key!==location.hash)return;
+    renderedRoute=key;
+    window.scrollTo(0,saved);
+    await ensureSession();
+    if(run===routeRun&&key===location.hash){
+      const prompt=$('#signup-prompt');
+      prompt.hidden=!!session.account||/^#\/?(?:account|checkout|request|favorites)/.test(key);
+      if(!prompt.hidden){
+        await ensureProviders();
+        if(run!==routeRun||key!==location.hash)return;
+        prompt.innerHTML=GOOGLE_ICON+'<span>Regístrate con Google</span><strong>Continuar</strong>';
+        prompt.href=session.providers.google?'/api/store/account/auth/google/start':href('account/register');
+      }
+      syncAnnouncement();
+      await refreshFavoriteState();
     }
-    syncAnnouncement();
-    await refreshFavoriteState();
-  }
+  }finally{finishStoreStartup()}
 }
 function openDrawer(open){if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open))}
 $('#menu-button').onclick=()=>openDrawer(true);$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});

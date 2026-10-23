@@ -134,12 +134,80 @@ describe('prueba de WhatsApp al propio administrador', () => {
     expect(mensaje.meta.tz).toBe('America/Santo_Domingo');
   }, 60_000);
 
-  it('la segunda llamada del día no reenvía (anti-duplicado)', async () => {
+  it('la segunda llamada al MISMO destino no reenvía (anti-duplicado)', async () => {
     const antes = whatsapp.sent.length;
     const respuesta = await api('/api/admin/ops/whatsapp/self-test', { method: 'POST', body: JSON.stringify({ confirm: true }) });
     expect(respuesta.status).toBe(409);
     const cuerpo = await json(respuesta);
     expect(cuerpo.duplicate).toBe(true);
     expect(whatsapp.sent.length).toBe(antes);
+  }, 60_000);
+
+  it('`preferred: personal` usa el teléfono PERSONAL del administrador', async () => {
+    const respuesta = await api('/api/admin/ops/whatsapp/self-test', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true, preferred: 'personal' }),
+    });
+    const cuerpo = await json(respuesta);
+    expect(respuesta.status, JSON.stringify(cuerpo)).toBe(200);
+    expect(cuerpo.phone_field).toBe('personal_phone');
+    expect(String(cuerpo.to)).toMatch(/^\*\*\*\d{4}$/);
+    const ultimo = whatsapp.sent.at(-1);
+    expect(ultimo.to).toBe('+18095559001');
+    /* Y queda registrado también en el mismo chat de prueba. */
+    const detalle = await json(await api(`/api/admin/ops/tickets/${cuerpo.ticketId}`));
+    const propio = (detalle.messages ?? []).filter((row) => row.meta?.kind === 'self_test');
+    expect(propio.length).toBe(2);
+    expect(propio.some((row) => row.meta.phone_field === 'personal_phone')).toBe(true);
+  }, 60_000);
+
+  it('el webhook de fallo guarda el código y el título del proveedor en el chat', async () => {
+    const chats = await json(await api('/api/admin/ops/chats'));
+    const chat = (chats.chats ?? []).find((row) => String(row.title ?? '').startsWith('SUPERVISOR-TEST-'));
+    expect(chat).toBeTruthy();
+    const detalle = await json(await api(`/api/admin/ops/tickets/${chat.ticketId}`));
+    const mensaje = (detalle.messages ?? []).find((row) => row.meta?.kind === 'self_test' && row.meta?.phone_field === 'personal_phone');
+    expect(mensaje, 'hay un mensaje de prueba al personal').toBeTruthy();
+
+    const payload = {
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: 'WABA-SELF',
+          changes: [
+            {
+              value: {
+                messaging_product: 'whatsapp',
+                metadata: { phone_number_id: 'PN-SELF' },
+                statuses: [
+                  {
+                    id: mensaje.meta.provider_id,
+                    status: 'failed',
+                    timestamp: `${Math.floor(Date.now() / 1000)}`,
+                    recipient_id: '18095559001',
+                    errors: [{ code: 131047, title: 'Re-engagement message' }],
+                  },
+                ],
+              },
+              field: 'messages',
+            },
+          ],
+        },
+      ],
+    };
+    const crudo = JSON.stringify(payload);
+    const respuesta = await fetch(`${app.url}/api/webhooks/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: crudo,
+    });
+    expect(respuesta.status).toBe(200);
+
+    const despues = await json(await api(`/api/admin/ops/tickets/${chat.ticketId}`));
+    const actualizado = (despues.messages ?? []).find((row) => row.id === mensaje.id);
+    expect(actualizado.meta.status).toBe('failed');
+    expect(Number(actualizado.meta.error_code)).toBe(131047);
+    expect(String(actualizado.meta.error)).toContain('Re-engagement');
+    expect(actualizado.meta.provider_status_at).toBeTruthy();
   }, 60_000);
 });

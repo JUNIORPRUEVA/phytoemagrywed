@@ -162,6 +162,10 @@ describe('SEO de la tienda', () => {
     category: 'Redes',
     price: 2500,
     currency: 'DOP',
+    /* `purchaseable` marca «se puede comprar ahora»; el sitemap solo publica
+       artículos vendibles (ver `isSitemapEligible`). Faltaba en este fixture y
+       dejaba el test del sitemap en rojo desde que se añadió la regla. */
+    purchaseable: true,
     availabilityState: 'AVAILABLE_NOW',
     description: 'Router de doble banda para el hogar',
     brand: 'TP-Link',
@@ -210,7 +214,8 @@ describe('SEO de la tienda', () => {
     expect(sitemap.included).toEqual(['prod-1']);
     expect(sitemap.xml).toContain('https://fulltech.test/store/p/prod-1');
     expect(sitemap.xml).not.toContain('sin-publicar');
-    expect(sitemap.xml.match(/<url>/g)).toHaveLength(2);
+    /* 3 = portada + catálogo + el artículo vendible que se acaba de recibir. */
+    expect(sitemap.xml.match(/<url>/g)).toHaveLength(3);
   });
 
   it('robots cierra el rastreo en UAT y lo abre con sitemap en producción', () => {

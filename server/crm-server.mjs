@@ -120,6 +120,12 @@ import { createStoreOAuth } from './store-oauth.mjs';
 import { createMailSender, createSmsSender, createStoreVerifications } from './store-verifications.mjs';
 import { handleStoreAuthRoute } from './store-auth-routes.mjs';
 import { createGoogleIdVerifier } from './store-google-idtoken.mjs';
+/*
+ * Confianza de cabeceras de proxy: IP real del cliente y HTTPS real. Sin esto,
+ * detrás de nginx todos los clientes comparten 127.0.0.1 (un único cubo de
+ * intentos) y las cookies salen sin `Secure`.
+ */
+import { createRequestTrust } from './http-trust.mjs';
 import { handleStoreSeoRoute } from './store-seo-routes.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
 /*
@@ -5391,7 +5397,14 @@ export async function processWebhookPayload(ctx, body) {
      * ticket del pedido: si Meta confirma «entregado» o «leído», el panel tiene
      * que decirlo en vez de quedarse en «Enviado».
      */
-    await reconcileDeliveryReceipt({ ctx, providerId: status.waMessageId, status: status.status, at: status.at ?? null }).catch(() => null);
+    await reconcileDeliveryReceipt({
+      ctx,
+      providerId: status.waMessageId,
+      status: status.status,
+      at: status.timestamp ? new Date(Number(status.timestamp) * 1000).toISOString() : null,
+      errorCode: status.errorCode ?? null,
+      errorMessage: status.errorMessage ?? null,
+    }).catch(() => null);
   }
   return {
     messages: parsed.messages.length,
@@ -12972,6 +12985,16 @@ export async function startCrmServer(config = {}) {
     storeOAuth,
     storeVerifications,
     googleId,
+    /*
+     * Quién es el proxy y cuándo se le cree: lo decide el servidor, no el
+     * cliente. `PHYTO_TRUSTED_PROXIES` permite añadir IPs; por defecto solo el
+     * loopback (nginx del contenedor). `PHYTO_FORCE_SECURE_COOKIES=true` marca
+     * las cookies `Secure` aunque el proxy no reenvíe el esquema.
+     */
+    requestTrust: config.requestTrust ?? createRequestTrust({
+      trustedProxies: process.env.PHYTO_TRUSTED_PROXIES,
+      forceSecure: process.env.PHYTO_FORCE_SECURE_COOKIES,
+    }),
     storeSeo: settings.storeSeo,
     settings: settingsService,
     chatSharing: createChatSharingService({ settings: settingsService, customers }),

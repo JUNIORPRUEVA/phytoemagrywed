@@ -1,5 +1,6 @@
-const VERSION = 'fulltech-store-v59';
+const VERSION = 'fulltech-store-v64';
 const SHELL = [
+  '/store/startup.css?v=2',
   '/store/discovery.css?v=15',
   '/store/assets/icons/custom/search-large.png',
   '/store/assets/icons/custom/find-for-you.png',
@@ -7,11 +8,11 @@ const SHELL = [
   '/store/presentation.css?v=2',
   '/store/',
   '/store/index.html',
-  '/store/store.css?v=7',
+  '/store/store.css?v=8',
   '/store/premium.css?v=5',
   '/store/design-system.css?v=10',
   '/store/storefront.css?v=3',
-  '/store/store.js?v=46',
+  '/store/store.js?v=49',
   '/store/product-gallery.js?v=4',
   '/store/product-gallery.css?v=5',
   '/store/icons.js',

@@ -8,6 +8,20 @@ import sharp from 'sharp';
 const fail = (code, message, status = 422) => Object.assign(new Error(message), { code, status });
 const clean = (v, n = 160) => String(v ?? '').trim().slice(0, n);
 
+/* Canales públicos estables: el catálogo compartido no decide el escaparate
+ * por nombre, descripción ni palabras clave. */
+export const STOREFRONTS = Object.freeze({ FULLTECH: 'FULLTECH_STORE', PHYTOEMAGRY: 'PHYTOEMAGRY_STORE' });
+const normalizeStorefront = value => Object.values(STOREFRONTS).includes(String(value ?? '').trim()) ? String(value).trim() : null;
+export function storefrontOf(product) {
+  const explicit = normalizeStorefront(product?.storefront);
+  if (explicit) return explicit;
+  if (product?.storefront !== undefined && product?.storefront !== null && String(product.storefront).trim() !== '') return null;
+  /* Compatibilidad: las presentaciones históricas de cápsulas pertenecen al
+   * sitio dedicado; los artículos nuevos/antiguos del catálogo general son
+   * FULLTECH salvo que administración los asigne explícitamente. */
+  return product?.legacy === true ? STOREFRONTS.PHYTOEMAGRY : STOREFRONTS.FULLTECH;
+}
+
 /*
  * DISPONIBILIDAD COMERCIAL (independiente de la publicación).
  *
@@ -156,7 +170,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     product_id TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY(product_id,token))`);
   await sql.query('CREATE INDEX IF NOT EXISTS fulltech_store_search_token_product_v2_idx ON fulltech_store_search_terms_v2(token,product_id)');
   for (const p of productConfig.variants) {
-    const doc = { id: p.id, sku: `PHYTO-${p.capsules}`, kind: 'product', name: `Phytoemagry · ${p.capsules} cápsulas`,
+    const doc = { id: p.id, sku: `PHYTO-${p.capsules}`, kind: 'product', storefront: STOREFRONTS.PHYTOEMAGRY, name: `Phytoemagry · ${p.capsules} cápsulas`,
       category: 'Phytoemagry', description: '', price_cents: p.price * 100, cost_cents: 0,
       image_url: `/api/admin/store/products/${p.id}/image?v=1`, active: true, track_stock: true, min_stock: 0,
       capsules: p.capsules, legacy: true, completeBottle: !!p.completeBottle, unit: 'unidad', created_at: clock().toISOString() };
@@ -175,6 +189,9 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return transaction(async q => {
     const current = await one(id, q, true);
     if (!current) throw fail('not_found', 'El artículo ya no existe.', 404);
+    if (status === 'published' && storefrontOf(current) !== STOREFRONTS.FULLTECH) {
+      throw fail('wrong_storefront', 'Este artículo pertenece al sitio PHYTOEMAGRY y no se puede publicar en FULLTECH Store.', 409);
+    }
     if (status === 'published' && !current.active) throw fail('inactive_product', 'Activa el artículo en el catálogo antes de publicarlo.', 409);
     if (status === 'published') await requireGallery(current, q);
     const prior = (await q('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1', [id])).rows[0];
@@ -219,6 +236,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       else availability = 'available';
       const pricing = offerPricing(p, now);
       const availabilityState = effectiveAvailability(p);
+      if (storefrontOf(p) !== STOREFRONTS.FULLTECH) return [];
       return [{
         id: p.id, kind: p.kind === 'service' ? 'service' : 'product', name: p.store_public_name || p.name,
         category: p.category || null, price: pricing.priceCents / 100, currency: 'DOP',
@@ -335,7 +353,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     const pub = (await sql.query('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1', [id])).rows[0];
     if (pub?.status !== 'published') return null;
     const p = await one(id);
-    if (!p?.active) return null;
+    if (!p?.active || storefrontOf(p) !== STOREFRONTS.FULLTECH) return null;
     return image(id,imageId);
   }
   let ordersTail = Promise.resolve();
@@ -401,12 +419,15 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   async function list({ includeInactive = true, includeArchived = false } = {}) {
     const [rows, legacy] = await Promise.all([sql.query('SELECT * FROM fulltech_catalog_v1 ORDER BY sku'), legacyInventory.catalog()]);
-    return rows.rows.map(decode).filter(p => (includeArchived || !p.archived) && (includeInactive || p.active)).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => p.legacy ? { ...p,
-      quantity: legacy.initialized ? Math.floor(legacy.stock / p.capsules) : null,
-      stock_initialized: legacy.initialized, base_quantity: legacy.stock, base_unit: 'cápsulas',
-      cost_cents: legacy.product.current_unit_cost_cents * p.capsules,
-      image_url: p.image_url?.startsWith('/assets/') ? `/api/admin/store/products/${p.id}/image?v=${p.version}` : p.image_url,
-    } : { ...p, stock_initialized: true });
+    return rows.rows.map(decode).filter(p => (includeArchived || !p.archived) && (includeInactive || p.active)).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => {
+      const listed = p.legacy ? { ...p,
+        quantity: legacy.initialized ? Math.floor(legacy.stock / p.capsules) : null,
+        stock_initialized: legacy.initialized, base_quantity: legacy.stock, base_unit: 'cápsulas',
+        cost_cents: legacy.product.current_unit_cost_cents * p.capsules,
+        image_url: p.image_url?.startsWith('/assets/') ? `/api/admin/store/products/${p.id}/image?v=${p.version}` : p.image_url,
+      } : { ...p, stock_initialized: true };
+      return { ...listed, storefront: storefrontOf(p) };
+    });
   }
   function saleItem(p) {
     const pricing = offerPricing(p, clock());
@@ -470,6 +491,12 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       if (kind === 'service' && productType === 'third_party') {
         throw fail('invalid_product_type', 'Un servicio no se compra en una tienda: elige «Propio».');
       }
+      const hasStorefront = input.storefront !== undefined;
+      const storefront = hasStorefront ? normalizeStorefront(input.storefront) : storefrontOf(previous);
+      if (!storefront) throw fail('invalid_storefront', 'Selecciona un escaparate válido.');
+      if (previous?.legacy && storefront !== STOREFRONTS.PHYTOEMAGRY) {
+        throw fail('legacy_storefront_locked', 'Las presentaciones Phytoemagry permanecen en su sitio dedicado.', 409);
+      }
       if (productType === 'third_party' && trackStock && Number(previous?.quantity ?? 0) > 0) {
         throw fail('policy_locked', 'Un producto de terceros no lleva existencias propias: deja antes el stock en cero con un ajuste.', 409);
       }
@@ -504,7 +531,11 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       let category=null;
       if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
       else if(input.category_id===undefined)category=await ensureCategory(q,input.category||'');
-      const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind, product_type: productType,
+      const publication=(await q('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1',[previous?.id || id || ''])).rows[0];
+      if (previous && storefront !== storefrontOf(previous) && publication?.status === 'published') {
+        throw fail('storefront_requires_unpublish', 'Retira primero el artículo de FULLTECH Store antes de cambiar su escaparate.', 409);
+      }
+      const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind, storefront, product_type: productType,
         description: clean(input.description, 2000), category: category?.name||'',category_id:category?.id||null,unit: 'unidad',
         store_public_name: clean(input.store_public_name ?? previous?.store_public_name ?? '', 160),
         store_short_description: clean(input.store_short_description ?? previous?.store_short_description ?? '', 240),
@@ -544,7 +575,6 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         p.image_url=p.gallery.length?`/api/admin/store/products/${encodeURIComponent(p.id)}/image?v=${(previous?.version||0)+1}`:null;
       }
       delete p.images;
-      const publication=(await q('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1',[p.id])).rows[0];
       if(publication?.status==='published')await requireGallery(p,q);
       const initial = kind === 'product' && !previous ? Number(input.quantity ?? 0) : 0;
       if (!integer(initial)) throw fail('invalid_quantity', 'La cantidad inicial debe ser un número entero mayor o igual a cero.');

@@ -464,16 +464,11 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
        * Por defecto la flota (regla operativa); se puede pedir el personal con
        * `preferred: 'personal'` — nunca un número enviado en la petición.
        */
-      const preferido = String(body.preferred ?? 'fleet').toLowerCase() === 'personal' ? 'personal_phone' : 'fleet_phone';
-      const base = phoneFieldsOf(usuario);
-      const alterno = phoneFieldsOf({ fleet_phone: usuario.personal_phone, personal_phone: usuario.fleet_phone });
-      const elegido =
-        (preferido === 'personal_phone' && base.field === 'personal_phone') || (preferido === 'fleet_phone' && base.field === 'fleet_phone')
-          ? base
-          : alterno.field === preferido
-            ? alterno
-            : base;
-      const { phone, field, masked } = elegido;
+      const quierePersonal = String(body.preferred ?? 'fleet').toLowerCase() === 'personal';
+      const soloFlota = phoneFieldsOf({ fleet_phone: usuario.fleet_phone, personal_phone: '' });
+      const soloPersonal = phoneFieldsOf({ fleet_phone: '', personal_phone: usuario.personal_phone });
+      const elegido = quierePersonal ? (soloPersonal.phone ? soloPersonal : soloFlota) : soloFlota.phone ? soloFlota : soloPersonal;
+      const { phone, field, masked } = elegido.phone ? elegido : phoneFieldsOf(usuario);
       if (!phone) {
         return send(409, {
           ok: false,
@@ -516,9 +511,13 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
         ticket = creado.ticket;
       }
 
-      /* Ya existe el mensaje de hoy: NO se reenvía (protección anti-duplicado). */
+      /*
+       * Ya existe un mensaje de hoy A ESE DESTINO: NO se reenvía.
+       * El anti-duplicado es por destino (no por día global): probar la flota y
+       * el personal son dos destinos distintos y cada uno se envía una vez.
+       */
       const mensajes = await ctx.db.list('ops_ticket_messages', { by: 'seq', order: 'desc', limit: 500 }).catch(() => []);
-      const previo = mensajes.find((row) => String(row.ticket_id) === String(ticket.id) && row.meta?.kind === 'self_test');
+      const previo = mensajes.find((row) => String(row.ticket_id) === String(ticket.id) && row.meta?.kind === 'self_test' && row.meta?.to === masked);
       if (previo) {
         return send(409, {
           ok: true,
@@ -537,6 +536,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
       const estado = envio?.ok ? 'sent' : 'failed';
       const messageId = envio?.messageId ?? null;
       const error = envio?.ok ? null : clean(envio?.error?.message ?? envio?.reason ?? 'send_failed', 200);
+      const errorCode = envio?.ok ? null : Number(envio?.error?.code ?? 0) || null;
 
       const registrado = await postMessage({
         ctx,
@@ -544,7 +544,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
         can,
         ticketId: ticket.id,
         body: TEXTO,
-        clientKey: `wa-self-test:${referencia}:${usuario.id}`,
+        clientKey: `wa-self-test:${referencia}:${usuario.id}:${masked}`,
         authorType: 'agent',
         kind: 'text',
         meta: {
@@ -558,6 +558,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
           status: estado,
           provider_id: messageId,
           error,
+          error_code: errorCode,
           order_number: referencia,
           at: ctx.clock().toISOString(),
           tz: 'America/Santo_Domingo',
@@ -585,6 +586,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
         provider_status: estado === 'sent' ? 'submitted' : 'failed',
         messageId,
         error,
+        error_code: errorCode,
         to: masked,
         phone_field: field,
       });

@@ -89,3 +89,16 @@
 .checkout-summary p { margin: 6px 0; font-size: .85rem; line-height: 1.45; }
 .checkout-method { background: var(--paper); color: var(--ink); border-color: var(--line); min-height: 44px; }
 .checkout-method:focus-within { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* Promoción compacta del sitio dedicado, dentro del drawer existente. */
+.ft-drawer-promo { display: flex; align-items: center; gap: 11px; margin: 18px 0 8px; padding: 12px; border: 1px solid #dbe7fb; border-radius: 16px; background: linear-gradient(135deg, #f5f9ff, #eef7f3); color: #17345f; box-shadow: 0 8px 22px #315c9914; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.ft-drawer-promo:hover { border-color: #b9cff6; box-shadow: 0 10px 26px #315c9922; transform: translateY(-1px); }
+.ft-drawer-promo:focus-visible { outline: 3px solid #2c6bdd55; outline-offset: 2px; }
+.ft-drawer-promo__icon { flex: 0 0 34px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: #e0f2e9; color: #22805f; }
+.ft-drawer-promo__icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.ft-drawer-promo__copy { display: grid; min-width: 0; gap: 3px; }
+.ft-drawer-promo__copy strong { font-size: 12px; line-height: 1.2; }
+.ft-drawer-promo__copy small { overflow: hidden; color: #62738c; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.ft-drawer-promo__copy em { color: #1459c7; font-size: 11px; font-style: normal; font-weight: 800; }
+.ft-drawer-promo__copy em span { font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .ft-drawer-promo { transition: none; } .ft-drawer-promo:hover { transform: none; } }

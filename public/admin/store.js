@@ -16,6 +16,8 @@
   try {layout=localStorage.getItem('fulltech.catalog.layout')==='list'?'list':'grid';}catch{}
   const categoryName=p=>String(p.category||'').trim().replace(/\s+/g,' ')||'Sin categoría';
   const categoryKey=p=>categoryName(p).toLocaleLowerCase('es');
+  const storefrontOf=p=>p?.storefront==='PHYTOEMAGRY_STORE'||p?.legacy?'PHYTOEMAGRY_STORE':'FULLTECH_STORE';
+  const storefrontLabel=p=>storefrontOf(p)==='PHYTOEMAGRY_STORE'?'PHYTOEMAGRY · sitio dedicado':'FULLTECH Store';
   const icon=name=>({grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',list:'<path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/>',arrow:'<path d="m14 7-5 5 5 5"/>',plus:'<path d="M12 5v14M5 12h14"/>',filter:'<path d="M4 7h16M7 12h10M10 17h4"/>',close:'<path d="m6 6 12 12M18 6 6 18"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>'}[name]||'');
   const svg=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">${icon(name)}</svg>`;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -182,7 +184,7 @@
   }
   function detail(p) {
     if(!p)return `<div class="store-empty"><h2 id="store-detail-title" tabindex="-1">Artículo no encontrado</h2><p>Puede que ya no esté disponible para tu cuenta.</p></div>`;
-    const service=p.kind==='service',published=p.store_publication?.status==='published';
+    const service=p.kind==='service',published=p.store_publication?.status==='published',phyto=storefrontOf(p)==='PHYTOEMAGRY_STORE';
     const fact=(label,value)=>`<div><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
     const text=(label,value)=>value?`<div class="product-description"><h3>${esc(label)}</h3><p>${esc(value)}</p></div>`:'';
     return `<article class="store-detail product-details">
@@ -195,7 +197,7 @@
       <dl class="store-detail-facts product-facts">
         ${fact('Precio de venta',cash(p.price_cents))}
         ${canManage?fact(service?'Costo del servicio':'Costo unitario',cash(p.cost_cents))+fact('Ganancia por unidad',cash(p.price_cents-p.cost_cents)):''}
-        ${fact('Inventario',esc(stockLabel(p)))}${fact('Categoría',esc(categoryName(p)))}${fact('Procedencia',esc(etiquetaProcedencia(p)))}
+        ${fact('Inventario',esc(stockLabel(p)))}${fact('Categoría',esc(categoryName(p)))}${fact('Procedencia',esc(etiquetaProcedencia(p)))}${fact('Escaparate',esc(storefrontLabel(p)))}
         ${p.business_group?fact('Grupo de negocio',esc(p.business_group)):''}
       </dl>
       <details class="product-accordion product-detail-inventory"><summary>Inventario y acciones</summary><div class="product-accordion-body">
@@ -206,10 +208,10 @@
       <details class="product-accordion"><summary>Descripciones y atributos</summary><div class="product-accordion-body">
         ${text('Descripción interna',p.description||'Sin descripción interna.')}${text('Marca',p.store_brand)}
       </div></details>
-      <details class="product-accordion"><summary>Tienda en línea <small>${published?'Publicado':'Oculto'}</small></summary><div class="product-accordion-body">
+      <details class="product-accordion"><summary>${phyto?'Sitio PHYTOEMAGRY':'Tienda en línea'} <small>${phyto?'Canal dedicado':published?'Publicado':'Oculto'}</small></summary><div class="product-accordion-body">
         ${text('Nombre público',p.store_public_name)}${text('Descripción corta',p.store_short_description)}${text('Descripción pública',p.store_public_description)}
-        <p class="store-muted">${({AVAILABLE_NOW:'Disponible para entrega',ON_REQUEST:'Disponible bajo pedido',UNAVAILABLE:'No disponible'})[p.store_availability]||'Disponibilidad según inventario'}${p.store_publication?.featured?' · Destacado':''}</p>
-        ${canManage?`<div class="store-actions"><button class="btn btn--ghost btn--sm" type="button" data-store-publication="${esc(p.id)}" data-next-status="${published?'unpublished':'published'}" ${!published&&!p.active?'disabled':''}>${published?'Retirar de la tienda':'Publicar en FULLTECH Store'}</button><button class="btn btn--ghost btn--sm" type="button" data-store-featured="${esc(p.id)}" data-next-featured="${!p.store_publication?.featured}" ${!published?'disabled':''}>${p.store_publication?.featured?'Quitar destacado':'Destacar en inicio'}</button></div>${!p.active&&!published?'<p class="store-muted">Activa el artículo para publicarlo.</p>':''}`:''}
+        <p class="store-muted">${phyto?'Este artículo queda fuera de FULLTECH Store y se administra en el sitio oficial de PHYTOEMAGRY.':({AVAILABLE_NOW:'Disponible para entrega',ON_REQUEST:'Disponible bajo pedido',UNAVAILABLE:'No disponible'})[p.store_availability]||'Disponibilidad según inventario'}${p.store_publication?.featured?' · Destacado':''}</p>
+        ${canManage?`<div class="store-actions">${phyto?(published?`<button class="btn btn--ghost btn--sm" type="button" data-store-publication="${esc(p.id)}" data-next-status="unpublished">Retirar publicación heredada</button>`:''):`<button class="btn btn--ghost btn--sm" type="button" data-store-publication="${esc(p.id)}" data-next-status="${published?'unpublished':'published'}" ${!published&&!p.active?'disabled':''}>${published?'Retirar de la tienda':'Publicar en FULLTECH Store'}</button><button class="btn btn--ghost btn--sm" type="button" data-store-featured="${esc(p.id)}" data-next-featured="${!p.store_publication?.featured}" ${!published?'disabled':''}>${p.store_publication?.featured?'Quitar destacado':'Destacar en inicio'}</button>`}</div>${!phyto&&!p.active&&!published?'<p class="store-muted">Activa el artículo para publicarlo.</p>':''}`:''}
       </div></details>
       <details class="product-accordion"><summary>Garantía comercial</summary><div class="product-accordion-body">
         ${p.warranty_available?`<p class="store-muted">${Number(p.warranty_months||0)} meses · ${esc(({FULLTECH:'FULLTECH',manufacturer:'Fabricante',other:'Otro'})[p.warranty_provider]||'Sin proveedor indicado')}</p>${text('Cobertura',p.warranty_coverage)}${text('Exclusiones',p.warranty_exclusions)}${text('Condiciones',p.warranty_conditions)}${text('Cómo reclamar',p.warranty_claim)}${text('Nota pública',p.warranty_public_notes)}`:'<p class="store-muted">Sin garantía comercial registrada.</p>'}
@@ -495,6 +497,7 @@
       </div></details>
       <details class="product-accordion" data-product-section="store"><summary>Información de la tienda</summary><div class="product-accordion-body"><div class="product-service-image-host"></div>
         <p class="product-form-note">${editing?'La edición conserva el estado de publicación.':'Se guarda oculto. Puedes publicarlo desde la ficha.'}</p>
+      <label class="field"><span class="field__label">Escaparate público</span><select class="field__select" name="storefront" ${p.legacy?'disabled':''}><option value="FULLTECH_STORE" ${storefrontOf(p)==='FULLTECH_STORE'?'selected':''}>FULLTECH Store</option><option value="PHYTOEMAGRY_STORE" ${storefrontOf(p)==='PHYTOEMAGRY_STORE'?'selected':''}>PHYTOEMAGRY · sitio dedicado</option></select><small>${p.legacy?'Bloqueado: las presentaciones de cápsulas pertenecen al sitio dedicado.':'Este canal controla qué web puede recibir el producto; cambiar la categoría no lo publica en otra web.'}</small></label>
       <label class="field"><span class="field__label">Nombre público (opcional)</span><input class="field__input" name="store_public_name" maxlength="160" value="${esc(p.store_public_name)}" placeholder="Usar el nombre del artículo"></label>
       <label class="field"><span class="field__label">Descripción corta</span><input class="field__input" name="store_short_description" maxlength="240" value="${esc(p.store_short_description)}"></label>
       <label class="field"><span class="field__label">Descripción pública (opcional)</span><textarea class="field__input" name="store_public_description" maxlength="2000">${esc(p.store_public_description)}</textarea></label>

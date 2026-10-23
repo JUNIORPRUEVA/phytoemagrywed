@@ -21,6 +21,7 @@
  * tokens internos ni detalles de autenticación en los mensajes de error.
  */
 import { maskPhone, normalizeDnPhone } from './store-verifications.mjs';
+import { bindRequestTrust, trustOf } from './http-trust.mjs';
 
 const COOKIE = 'ft_store_session';
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
@@ -37,8 +38,9 @@ function readCookie(req, name) {
   return null;
 }
 
+/* HTTPS real: la cabecera del proxy solo cuenta si el proxy es de confianza. */
 function secureRequest(req) {
-  return String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() === 'https';
+  return trustOf(req).isSecure(req);
 }
 
 function storeCookie(req, value, maxAge = SESSION_SECONDS) {
@@ -70,7 +72,8 @@ function sameOrigin(req) {
 /** Límite por ruta e IP: frena el abuso sin castigar al cliente legítimo. */
 const attempts = new Map();
 function throttle(req, key, max = 20, windowMs = 15 * 60 * 1000) {
-  const id = `${key}:${req.socket?.remoteAddress ?? 'local'}`;
+  /* Por CLIENTE real, no por socket: detrás de nginx todos llegan de 127.0.0.1. */
+  const id = `${key}:${trustOf(req).clientIp(req)}`;
   const now = Date.now();
   const entry = attempts.get(id);
   if (entry && entry.until > now && entry.count >= max) return false;
@@ -100,6 +103,8 @@ export async function handleStoreAuthRoute({ req, res, route, url, ctx, json, re
   ]);
   if (!ROUTES.has(route)) return false;
 
+  /* Confianza de proxy de ESTA petición (la resuelve `crm-server`). */
+  bindRequestTrust(req, ctx.requestTrust);
   const accounts = ctx.storeAccounts;
   const verifications = ctx.storeVerifications;
   if (!accounts) {
@@ -246,7 +251,12 @@ export async function handleStoreAuthRoute({ req, res, route, url, ctx, json, re
       const identity = await verifier.verify(body?.credential);
       const result = await accounts.oauthLogin(identity);
       if (result.pending) {
-        return send(200, { ok: true, pending: true, pending_token: result.pendingToken });
+        /*
+         * `needs_proof: 'password'` = ese correo ya tiene una cuenta con
+         * contraseña: para enlazar Google hay que demostrar que es suya. El
+         * navegador lo usa para pedir la contraseña en vez del teléfono.
+         */
+        return send(200, { ok: true, pending: true, pending_token: result.pendingToken, needs_proof: result.needsProof ?? null });
       }
       const session = await accounts.createSession(result.account.id);
       if (!session) throw fail('session_error', 'No pudimos iniciar tu sesión.', 500);

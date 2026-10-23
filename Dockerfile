@@ -140,6 +140,16 @@ http {
     server_tokens off;
     client_max_body_size 256k;
 
+    # ESQUEMA REAL DEL CLIENTE. Traefik termina el TLS y lo anuncia en
+    # `X-Forwarded-Proto`; este nginx lo recibía y lo PISABA con `$scheme`, que
+    # detrás de Traefik es `http`. La app creía que la conexión era insegura y
+    # las cookies de sesión y del `state` de Google salían SIN `Secure` justo en
+    # producción. Si no hay ningún proxy delante se usa el esquema local.
+    map $http_x_forwarded_proto $phyto_forwarded_proto {
+        default $http_x_forwarded_proto;
+        ''      $scheme;
+    }
+
     server {
         listen ${PORT};
         listen [::]:${PORT};
@@ -148,6 +158,17 @@ http {
         root /usr/share/nginx/html;
         index index.html;
         charset utf-8;
+
+        # ------------------------------------------------- REDIRECCIÓN CANÓNICA
+        # Un solo dominio para entrar con Google. El `redirect_uri` está fijado a
+        # https://fulltechrd.com/... y la cookie de `state` se emite para el host
+        # que INICIA el flujo: si el cliente entra por `www`, el callback llega
+        # al dominio raíz SIN esa cookie y el acceso fallaba siempre
+        # (`invalid_state`). Se redirige antes de tocar nada, conservando ruta y
+        # query (`$request_uri`), con 308 para no cambiar el método.
+        if ($host = 'www.fulltechrd.com') {
+            return 308 https://fulltechrd.com$request_uri;
+        }
 
         # -------------------------------------------------------- seguridad
         add_header X-Content-Type-Options "nosniff" always;
@@ -208,7 +229,7 @@ http {
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
             # SIN BÚFER: las respuestas JSON grandes no se acumulan antes de enviarse.
             proxy_buffering off;
             proxy_cache off;
@@ -261,25 +282,25 @@ http {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
         }
         location = /store/sitemap.xml {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
         }
         location = /store/catalogo {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
         }
         location ^~ /store/p/ {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
         }
 
         # Portada de la tienda: el servidor del CRM devuelve el MISMO HTML de la
@@ -291,7 +312,7 @@ http {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
             proxy_set_header X-Forwarded-Host $host;
             error_page 502 503 504 = @store_static_home;
         }
@@ -299,7 +320,7 @@ http {
             proxy_pass http://127.0.0.1:8787;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $phyto_forwarded_proto;
             proxy_set_header X-Forwarded-Host $host;
         }
         location @store_static_home {

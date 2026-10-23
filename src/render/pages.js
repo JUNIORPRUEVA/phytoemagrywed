@@ -83,6 +83,7 @@ ${head
   .join('\n')}
 </head>
 <body class="pe-body">
+${renderStartup(view)}
 ${renderSkipLink(view)}
 ${renderHeader(view)}
 ${body}
@@ -92,6 +93,23 @@ ${renderCheckoutDialog(view)}
 ${renderConsentBanner(view)}
 </body>
 </html>`;
+}
+
+function renderStartup(view) {
+  const logo = view.site.brand.logo
+    ? `<img class="pe-startup__logo" src="${escapeHtml(view.site.brand.logo)}" alt="" width="112" height="112" fetchpriority="high" decoding="async">`
+    : `<span class="pe-startup__name">${escapeHtml(view.site.brand.name)}</span>`;
+  return `<div class="pe-startup" id="pe-startup" role="status" aria-live="polite" aria-label="Cargando ${escapeHtml(view.site.brand.name)}" data-startup>
+    <div class="pe-startup__inner">
+      ${logo}
+      <p class="pe-startup__name">${escapeHtml(view.site.brand.name)}</p>
+      <p class="pe-startup__text">Preparando tu experiencia</p>
+      <span class="pe-startup__line" aria-hidden="true"></span>
+    </div>
+  </div>
+  <script>
+    window.setTimeout(function(){var e=document.getElementById('pe-startup');if(e&&!e.hidden){e.classList.add('is-done');window.setTimeout(function(){e.hidden=true},240)}},8000);
+  </script>`;
 }
 
 /**
@@ -240,11 +258,16 @@ function legalBody(view, kind) {
               : 'No cedemos tus datos a terceros. Actualmente no se carga ningún servicio de medición publicitaria.',
         },
         {
-          title: '7. Tus derechos',
+          title: '7. Acceso con Google',
+          text:
+            'Si eliges «Continuar con Google», Google nos entrega tu identificador de cuenta, tu nombre y tu correo electrónico para crear tu cuenta de la tienda o reconocerte cuando vuelves. Solo pedimos los permisos básicos (openid, email y profile): no accedemos a Gmail, Drive, Contactos ni a ningún otro servicio de Google, y no usamos esos datos para publicidad ni los vendemos. Al entrar con Google aceptas que enlacemos esa identidad con tu cuenta de la tienda; si la cuenta aún no existe, te pediremos tu número de WhatsApp y tu ciudad para poder entregarte los pedidos. Puedes usar la tienda sin Google, con correo y contraseña, y borrar el enlace cuando quieras escribiéndonos. El uso de la información recibida de las APIs de Google se ajusta a la Política de Datos de Usuario de los Servicios API de Google, incluidos sus requisitos de Uso Limitado.',
+        },
+        {
+          title: '8. Tus derechos',
           text: `Puedes solicitar acceso, rectificación, eliminación u oposición al tratamiento escribiendo a ${company.contactEmail ?? pending(view, 'Email de contacto')}.`,
         },
         {
-          title: '8. Cookies y medición',
+          title: '9. Cookies y medición',
           text: !site.tracking.metaPixelId
             ? 'No se instalan cookies de medición publicitaria en esta web.'
             : site.tracking.consentRequired === false

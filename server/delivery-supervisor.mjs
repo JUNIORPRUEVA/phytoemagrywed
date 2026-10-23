@@ -915,6 +915,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
   const phone = destino.phone;
   let status = 'skipped';
   let error = null;
+  let errorCode = null;
   let messageId = null;
 
   /*
@@ -1021,6 +1022,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
         } else {
           status = 'failed';
           error = clean(sent?.error?.message ?? sent?.reason ?? 'send_failed', 200);
+          errorCode = Number(sent?.error?.code ?? 0) || null;
         }
       } else {
         /*
@@ -1074,6 +1076,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
       courier_user_id: destino.userId,
       courier_name: destino.name,
       error,
+      error_code: errorCode,
       message_id: messageId,
       channel,
       whatsapp: phone ? (status === 'sent' ? 'sent' : 'failed') : 'no_phone',
@@ -1108,6 +1111,7 @@ async function sendReminder(ctx, deps, { item, order, state, settings, attempt }
         status,
         providerId: messageId,
         error,
+        errorCode,
         kind: 'reminder',
         attempt,
         body: cuerpoChat,
