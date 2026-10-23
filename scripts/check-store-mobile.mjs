@@ -27,9 +27,11 @@ for (const [width, height, scale = 1] of [[320,568],[375,667],[390,844],[412,915
     return {overlaps,hitTargets,overflow:document.documentElement.scrollWidth>innerWidth,header:box('.ft-header'),logo:box('.ft-logo'),nav:box('.ft-nav'),target:box('.ft-nav__item'),search:box('.ft-search'),hero:box('.ft-hero'),offers:[...document.querySelectorAll('.ft-hero-offer')].map(e=>({href:e.getAttribute('href'),width:e.clientWidth,height:e.clientHeight}))};
   });
   results.push({width,height,scale,...metrics});
-  for(const route of ['catalog','cart','request']) {
+  for(const route of ['catalog','cart','request','']) {
     await page.goto(`http://localhost:4175/store/#/${route}`,{waitUntil:'networkidle'});
     if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)) results.push({width,height,route,overflow:true});
+    if(await page.locator('.ft-header').count()!==1)throw new Error(`Header missing or duplicated on ${route}`);
+    if(!route)await page.locator('.ft-masthead .ft-hero').waitFor();
   }
   await context.close();
 }

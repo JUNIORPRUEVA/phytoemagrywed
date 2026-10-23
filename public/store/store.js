@@ -355,6 +355,11 @@ async function renderHome(){
       ${block('Descubrir más',descubrir,{link:href('catalog'),linkLabel:'Ver catálogo'})}
       <p class="ft-section__note" style="margin-inline:var(--ft-pad)">${total} producto${total===1?'':'s'} publicado${total===1?'':'s'} · precios en RD$</p>
     `:`<div class="ft-section">${vacio}</div>`}${aboutEntry}${footer()}`;
+    const masthead=document.createElement('section');
+    masthead.className='ft-masthead ft-discovery';
+    masthead.setAttribute('aria-label','Bienvenido a FULLTECH');
+    main.before(masthead);
+    masthead.append(document.querySelector('.ft-header'),main.querySelector('.ft-home-search-slot'),main.querySelector('.ft-hero'));
     syncHomeSearch();
   }catch{
     main.innerHTML=`<div class="state-error"><h1>No pudimos cargar la tienda</h1><p>Revisa tu conexión e inténtalo de nuevo.</p><button class="button" id="retry-home">Intentar de nuevo</button></div>${footer()}`;
@@ -1101,6 +1106,8 @@ let renderedRoute=location.hash, routeRun=0;
 if('scrollRestoration' in history)history.scrollRestoration='manual';
 window.addEventListener('scroll',()=>{routeScroll.set(renderedRoute,window.scrollY)},{passive:true});
 async function route(){
+  const masthead=document.querySelector('.ft-masthead');
+  if(masthead){masthead.before(masthead.querySelector('.ft-header'));masthead.remove();}
   $('#signup-prompt').hidden=true;
   const run=++routeRun;
   routeScroll.set(renderedRoute,window.scrollY);
