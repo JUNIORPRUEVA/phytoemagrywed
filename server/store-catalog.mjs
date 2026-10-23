@@ -21,6 +21,34 @@ const clean = (v, n = 160) => String(v ?? '').trim().slice(0, n);
 const AVAILABILITY_STATES = new Set(['AVAILABLE_NOW', 'ON_REQUEST', 'UNAVAILABLE']);
 const STORE_TIME_ZONE = 'America/Santo_Domingo';
 
+/*
+ * ============================================================================
+ * AISLAMIENTO POR TIENDA
+ *
+ * El catálogo administrativo es COMPARTIDO (el CRM y el POS facturan desde él),
+ * pero cada artículo y cada categoría PERTENECEN a una tienda. La tienda
+ * pública solo recibe lo suyo y el filtro se aplica AQUÍ, en el servidor:
+ * nunca ocultando cosas con CSS ni confiando en parámetros del navegador.
+ *
+ *   · FULLTECH STORE → `fulltech`
+ *   · PHYTOEMAGRY    → `phytoemagry`
+ *
+ * Los registros históricos NO se reasignan a ciegas: `storeOfProduct()` deduce
+ * el dueño de la evidencia verificable (un PHYTO-* legacy es de Phytoemagry;
+ * cualquier otro, de Fulltech) y, cuando no hay evidencia, no se inventa.
+ * ========================================================================== */
+export const STORE_KEYS = Object.freeze(['fulltech', 'phytoemagry']);
+export const DEFAULT_STORE_KEY = 'fulltech';
+/** Clave de tienda válida o `null` (nunca se acepta texto libre del cliente). */
+export function normalizeStoreKey(value) {
+  const key = String(value ?? '').trim().toLowerCase();
+  return STORE_KEYS.includes(key) ? key : null;
+}
+/** Dueño real de un artículo: campo explícito o, si es histórico, la marca legacy. */
+export function storeOfProduct(product) {
+  return normalizeStoreKey(product?.store) ?? (product?.legacy ? 'phytoemagry' : DEFAULT_STORE_KEY);
+}
+
 export function businessDate(value = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: STORE_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
   const get = type => parts.find(part => part.type === type)?.value;
@@ -130,9 +158,15 @@ async function usableImage(image, optimize = false) {
 }
 
 /** Catálogo POS persistente. No modifica las tablas ni las unidades históricas de Phytoemagry. */
-export async function createStoreCatalog({ backend, handle, legacyInventory, clock = () => new Date() }) {
+export async function createStoreCatalog({ backend, handle, legacyInventory, clock = () => new Date(), storeKey = DEFAULT_STORE_KEY }) {
   const sql = createSqlQuery({ backend, handle });
   if (!sql.enabled) return null;
+  /*
+   * CONTEXTO DE TIENDA (de confianza): lo fija el SERVIDOR al arrancar
+   * (`PHYTO_STORE_KEY`), no el navegador. Ningún endpoint público acepta
+   * `?store=` ni cabeceras para cambiarlo.
+   */
+  const activeStore = normalizeStoreKey(storeKey) ?? DEFAULT_STORE_KEY;
   await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_catalog_v1 (
     id TEXT PRIMARY KEY, sku TEXT NOT NULL UNIQUE, quantity BIGINT NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1, doc TEXT NOT NULL);
@@ -205,6 +239,13 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     const items = pubs.flatMap(pub => {
       const p = byId.get(pub.product_id);
       if (!p?.active) return [];
+      /*
+       * AQUÍ SE CORTA LA CONTAMINACIÓN CRUZADA: un artículo de otra tienda no
+       * entra al escaparate aunque esté publicado. El filtro es por PRODUCTO
+       * (dueño del artículo), así que también arrastra sus ofertas, destacados,
+       * novedades y su aparición en el buscador.
+       */
+      if (storeOfProduct(p) !== activeStore) return [];
       /*
        * FASE 1: la tienda SOLO vende productos. Los servicios siguen existiendo
        * en el CRM, pero no se listan, no se buscan y no se pueden pedir.
@@ -336,6 +377,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     if (pub?.status !== 'published') return null;
     const p = await one(id);
     if (!p?.active) return null;
+    /* Una imagen de otra tienda tampoco se sirve, ni con la URL exacta. */
+    if (storeOfProduct(p) !== activeStore) return null;
     return image(id,imageId);
   }
   let ordersTail = Promise.resolve();
@@ -370,43 +413,93 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   const one = async (id, q = sql.query, lock = false) => decode((await q('SELECT * FROM fulltech_catalog_v1 WHERE id=$1'+(lock&&backend==='postgres'?' FOR UPDATE':''), [id])).rows[0]);
   const categoryKey=name=>name.trim().replace(/\s+/g,' ').toLocaleLowerCase('es');
-  async function ensureCategory(q,name,imageUrl=null) {
-    name=clean(name,100).replace(/\s+/g,' ');if(!name)return null;
-    const id=`category_${randomUUID()}`,key=categoryKey(name);
-    const doc={id,name,image_url:imageUrl,created_at:clock().toISOString()};
-    await q('INSERT INTO fulltech_categories_v1(id,category_key,doc) VALUES($1,$2,$3) ON CONFLICT(category_key) DO NOTHING',[id,key,JSON.stringify(doc)]);
-    return JSON.parse((await q('SELECT doc FROM fulltech_categories_v1 WHERE category_key=$1',[key])).rows[0].doc);
+  /*
+   * Las categorías también tienen dueño. La clave lleva la tienda delante para
+   * que dos tiendas puedan tener «Accesorios» sin chocar; las categorías
+   * históricas (clave sin prefijo) se siguen leyendo si su dueño coincide.
+   */
+  const categoryStoreKey=(name,store)=>`${store}:${categoryKey(name)}`;
+  async function findCategory(q,name,store) {
+    const namespaced=(await q('SELECT doc FROM fulltech_categories_v1 WHERE category_key=$1',[categoryStoreKey(name,store)])).rows[0];
+    if(namespaced)return JSON.parse(namespaced.doc);
+    const legacy=(await q('SELECT doc FROM fulltech_categories_v1 WHERE category_key=$1',[categoryKey(name)])).rows[0];
+    if(!legacy)return null;
+    const doc=JSON.parse(legacy.doc);
+    return (normalizeStoreKey(doc.store)??DEFAULT_STORE_KEY)===store?doc:null;
   }
-  // Importación aditiva de las categorías de las fichas existentes.
+  async function ensureCategory(q,name,imageUrl=null,store=activeStore) {
+    const owner=normalizeStoreKey(store)??activeStore;
+    name=clean(name,100).replace(/\s+/g,' ');if(!name)return null;
+    const existing=await findCategory(q,name,owner);
+    if(existing)return existing;
+    const id=`category_${randomUUID()}`,key=categoryStoreKey(name,owner);
+    const doc={id,name,image_url:imageUrl,store:owner,created_at:clock().toISOString()};
+    await q('INSERT INTO fulltech_categories_v1(id,category_key,doc) VALUES($1,$2,$3) ON CONFLICT(category_key) DO NOTHING',[id,key,JSON.stringify(doc)]);
+    const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE category_key=$1',[key])).rows[0];
+    return row?JSON.parse(row.doc):null;
+  }
+  /*
+   * CLASIFICACIÓN DE REGISTROS HISTÓRICOS (aditiva, sin borrar nada).
+   *
+   * 1) Producto sin `store` → se queda con el dueño que ya se deduce de su
+   *    propia ficha (PHYTO-* legacy = phytoemagry; el resto = fulltech).
+   * 2) Categoría sin `store` → se deduce de los productos que la usan SI todos
+   *    son de la misma tienda. Si los usa más de una (o ninguna), queda
+   *    `unassigned`: no se publica en ninguna tienda y se avisa para que una
+   *    persona decida. Nunca se adivina.
+   * 3) Categoría de una ficha sin `category_id` → se enlaza dentro de SU tienda.
+   */
   for(const row of (await sql.query('SELECT id,doc FROM fulltech_catalog_v1')).rows){
-    const p=JSON.parse(row.doc);if(!p.category||p.category_id)continue;
-    const c=await ensureCategory(sql.query,p.category,p.image_url?.startsWith('/assets/')?`/api/admin/store/products/${p.id}/image?v=1`:p.image_url);
-    if(c)await sql.query('UPDATE fulltech_catalog_v1 SET doc=$1 WHERE id=$2 AND doc=$3',[JSON.stringify({...p,category:c.name,category_id:c.id}),row.id,row.doc]);
+    const p=JSON.parse(row.doc);
+    const owner=storeOfProduct(p);
+    if(p.store!==owner){
+      await sql.query('UPDATE fulltech_catalog_v1 SET doc=$1 WHERE id=$2 AND doc=$3',[JSON.stringify({...p,store:owner}),row.id,row.doc]);
+      p.store=owner;
+    }
+    if(!p.category||p.category_id)continue;
+    const c=await ensureCategory(sql.query,p.category,p.image_url?.startsWith('/assets/')?`/api/admin/store/products/${p.id}/image?v=1`:p.image_url,owner);
+    if(c)await sql.query('UPDATE fulltech_catalog_v1 SET doc=$1 WHERE id=$2 AND doc=$3',[JSON.stringify({...p,category:c.name,category_id:c.id}),row.id,JSON.stringify({...p,store:owner})]);
+  }
+  {
+    const products=(await sql.query('SELECT doc FROM fulltech_catalog_v1')).rows.map(r=>JSON.parse(r.doc));
+    const dueñosPorCategoria=new Map();
+    for(const product of products){
+      const key=product.category_id||null;if(!key)continue;
+      const set=dueñosPorCategoria.get(key)??new Set();set.add(storeOfProduct(product));dueñosPorCategoria.set(key,set);
+    }
+    for(const row of (await sql.query('SELECT doc FROM fulltech_categories_v1')).rows){
+      const c=JSON.parse(row.doc);if(normalizeStoreKey(c.store))continue;
+      const dueños=[...(dueñosPorCategoria.get(c.id)??new Set())];
+      const owner=dueños.length===1?dueños[0]:'unassigned';
+      await sql.query('UPDATE fulltech_categories_v1 SET doc=$1 WHERE id=$2 AND doc=$3',[JSON.stringify({...c,store:owner}),c.id,row.doc]);
+    }
   }
   async function categories(){return (await sql.query('SELECT doc FROM fulltech_categories_v1')).rows.map(r=>{
     const c=JSON.parse(r.doc),seed=productConfig.variants.find(p=>c.image_url===`${p.image}-320.webp`);
-    return seed?{...c,image_url:`/api/admin/store/products/${seed.id}/image?v=1`}:c;
+    const store=normalizeStoreKey(c.store)??'unassigned';
+    return seed?{...c,store,image_url:`/api/admin/store/products/${seed.id}/image?v=1`}:{...c,store};
   }).sort((a,b)=>a.name.localeCompare(b.name,'es'));}
   async function createCategory(input,actor){
     const name=clean(input.name,100).replace(/\s+/g,' ');if(!name)throw fail('category_name_required','Escribe el nombre de la categoría.');
+    const store=normalizeStoreKey(input.store)??activeStore;
     const image=input.image?parseProductImage(input.image):null;
     return transaction(async q=>{
-      const existing=(await q('SELECT id FROM fulltech_categories_v1 WHERE category_key=$1',[categoryKey(name)])).rows[0];
-      if(existing)throw fail('duplicate_category','Ya existe una categoría con ese nombre.',409);
-      const c={id:`category_${randomUUID()}`,name,image_url:null,created_at:clock().toISOString(),created_by:actor?.display_name||'Administración'};
+      const existing=await findCategory(q,name,store);
+      if(existing)throw fail('duplicate_category','Ya existe una categoría con ese nombre en esta tienda.',409);
+      const c={id:`category_${randomUUID()}`,name,store,image_url:null,created_at:clock().toISOString(),created_by:actor?.display_name||'Administración'};
       if(image){await q('INSERT INTO fulltech_product_images_v1(id,mime,data) VALUES($1,$2,$3)',[c.id,image.mime,image.data]);c.image_url=`/api/admin/store/categories/${c.id}/image?v=1`;}
-      await q('INSERT INTO fulltech_categories_v1(id,category_key,doc) VALUES($1,$2,$3)',[c.id,categoryKey(name),JSON.stringify(c)]);
+      await q('INSERT INTO fulltech_categories_v1(id,category_key,doc) VALUES($1,$2,$3)',[c.id,categoryStoreKey(name,store),JSON.stringify(c)]);
       return c;
     });
   }
   async function list({ includeInactive = true, includeArchived = false } = {}) {
     const [rows, legacy] = await Promise.all([sql.query('SELECT * FROM fulltech_catalog_v1 ORDER BY sku'), legacyInventory.catalog()]);
-    return rows.rows.map(decode).filter(p => (includeArchived || !p.archived) && (includeInactive || p.active)).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => p.legacy ? { ...p,
+    return rows.rows.map(decode).filter(p => (includeArchived || !p.archived) && (includeInactive || p.active)).sort((a,b)=>a.legacy&&b.legacy?a.capsules-b.capsules:a.legacy?-1:b.legacy?1:a.name.localeCompare(b.name)).map(p => p.legacy ? { ...p, store: storeOfProduct(p),
       quantity: legacy.initialized ? Math.floor(legacy.stock / p.capsules) : null,
       stock_initialized: legacy.initialized, base_quantity: legacy.stock, base_unit: 'cápsulas',
       cost_cents: legacy.product.current_unit_cost_cents * p.capsules,
       image_url: p.image_url?.startsWith('/assets/') ? `/api/admin/store/products/${p.id}/image?v=${p.version}` : p.image_url,
-    } : { ...p, stock_initialized: true });
+    } : { ...p, store: storeOfProduct(p), stock_initialized: true });
   }
   function saleItem(p) {
     const pricing = offerPricing(p, clock());
@@ -501,10 +594,27 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       if (offerStartAt && offerEndAt && Date.parse(offerEndAt) <= Date.parse(offerStartAt)) throw fail('invalid_offer_dates', 'La fecha final debe ser posterior a la fecha inicial.');
       const dailyOffer = booleanInput(input.daily_offer, previous?.daily_offer === true);
       if (!integer(input.min_stock ?? 0)) throw fail('invalid_quantity', 'El stock mínimo debe ser un número entero mayor o igual a cero.');
+      /*
+       * DUEÑO DEL ARTÍCULO (aislamiento por tienda).
+       *   · un PHYTO-* legacy es SIEMPRE de Phytoemagry: su inventario y su
+       *     precio viven ahí y no se pueden mover desde aquí;
+       *   · el resto conserva su dueño, o toma el que pida un ADMIN, o la
+       *     tienda de esta instalación si es nuevo.
+       */
+      const requestedStore = normalizeStoreKey(input.store);
+      const store = previous?.legacy
+        ? 'phytoemagry'
+        : requestedStore ?? (previous ? storeOfProduct(previous) : activeStore);
       let category=null;
-      if(input.category_id){const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];if(!row)throw fail('category_not_found','Selecciona una categoría existente.');category=JSON.parse(row.doc);}
-      else if(input.category_id===undefined)category=await ensureCategory(q,input.category||'');
-      const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind, product_type: productType,
+      if(input.category_id){
+        const row=(await q('SELECT doc FROM fulltech_categories_v1 WHERE id=$1',[String(input.category_id)])).rows[0];
+        if(!row)throw fail('category_not_found','Selecciona una categoría existente.');
+        category=JSON.parse(row.doc);
+        /* Una categoría de otra tienda no se puede colgar de este artículo. */
+        if((normalizeStoreKey(category.store)??DEFAULT_STORE_KEY)!==store)throw fail('category_store_mismatch','Esa categoría pertenece a otra tienda.',409);
+      }
+      else if(input.category_id===undefined)category=await ensureCategory(q,input.category||'',null,store);
+      const p = { ...previous, id: id || `product_${randomUUID()}`, sku, name, kind, product_type: productType, store,
         description: clean(input.description, 2000), category: category?.name||'',category_id:category?.id||null,unit: 'unidad',
         store_public_name: clean(input.store_public_name ?? previous?.store_public_name ?? '', 160),
         store_short_description: clean(input.store_short_description ?? previous?.store_short_description ?? '', 240),
@@ -757,7 +867,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return lines;
   }
 
-  return {list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,dailyOffers,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
+  return {storeKey: activeStore, stores: STORE_KEYS, storeOf: storeOfProduct, list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,dailyOffers,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

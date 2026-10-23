@@ -148,8 +148,14 @@ export async function handleStoreSeoRoute({ req, res, route, ctx }) {
      */
     let everExisted = false;
     try {
+      /*
+       * Solo cuenta lo que EXISTIÓ EN ESTA TIENDA: un artículo de la otra tienda
+       * no debe revelar su existencia con un 410 (se comporta como inexistente).
+       */
       const all = typeof catalog.list === 'function' ? await catalog.list({ includeInactive: true }) : [];
-      everExisted = all.some((item) => String(item.id) === id);
+      const owner = typeof catalog.storeOf === 'function' ? catalog.storeOf : () => 'fulltech';
+      const active = typeof catalog.storeKey === 'string' ? catalog.storeKey : 'fulltech';
+      everExisted = all.some((item) => String(item.id) === id && owner(item) === active);
     } catch {
       everExisted = false;
     }

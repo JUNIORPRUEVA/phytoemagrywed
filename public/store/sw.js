@@ -1,6 +1,6 @@
-const VERSION = 'fulltech-store-v60';
+const VERSION = 'fulltech-store-v62';
 const SHELL = [
-  '/store/discovery.css?v=15',
+  '/store/discovery.css?v=17',
   '/store/assets/icons/custom/search-large.png',
   '/store/assets/icons/custom/find-for-you.png',
   '/store/floating-cart.css?v=3',

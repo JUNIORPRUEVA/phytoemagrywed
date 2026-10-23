@@ -32,7 +32,11 @@ export async function handleStoreCatalogRoute({req,res,route,ctx,actor,json,read
       const products=all.filter(product=>archivedOnly?product.archived===true:product.archived!==true);
       const publication=await catalog.publicationStates();
       for(const product of products)product.store_publication=publication[product.id]||{status:'unpublished',featured:false,sort_order:0,updated_at:null};
-      return send(200,{ok:true,products,categories:await catalog.categories(),movements:sanitize(await catalog.history()),canManage:actor.role==='ADMIN'});
+      /*
+       * Cada artículo viaja con su DUEÑO (`store`) y el panel recibe la lista de
+       * tiendas disponibles y en cuál está corriendo esta instalación.
+       */
+      return send(200,{ok:true,products,categories:await catalog.categories(),movements:sanitize(await catalog.history()),canManage:actor.role==='ADMIN',stores:typeof catalog.stores==='object'?catalog.stores:null,storeKey:catalog.storeKey??null});
     }
     if(route==='/api/admin/store/categories'&&req.method==='GET')return send(200,{ok:true,categories:await catalog.categories()});
     if(req.method!=='POST'&&req.method!=='PATCH'&&req.method!=='DELETE')return send(405,{ok:false,error:'method_not_allowed'});

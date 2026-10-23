@@ -109,7 +109,7 @@ import {
   MIN_PASSWORD_LENGTH,
 } from './users.mjs';
 import { createInventoryService, centsToMoney } from './inventory.mjs';
-import { createStoreCatalog, storeInventoryFacade } from './store-catalog.mjs';
+import { createStoreCatalog, storeInventoryFacade, DEFAULT_STORE_KEY, normalizeStoreKey } from './store-catalog.mjs';
 import { handleStoreCatalogRoute } from './store-catalog-routes.mjs';
 import { handleStorePublicRoute } from './store-public-routes.mjs';
 import { createStoreAccounts } from './store-accounts.mjs';
@@ -484,6 +484,15 @@ const STORE_SEO = {
 };
 /* Verificación por SMS: APLAZADA. Solo se enciende con `PHYTO_STORE_PHONE_OTP=enabled`. */
 const STORE_PHONE_OTP = (process.env.PHYTO_STORE_PHONE_OTP ?? 'off').trim().toLowerCase() === 'enabled';
+/*
+ * TIENDA DE ESTA INSTALACIÓN (aislamiento de catálogo).
+ *
+ * El contexto de tienda lo fija el SERVIDOR al arrancar y no se puede cambiar
+ * desde la URL ni con cabeceras: un `?store=phytoemagry` en la tienda Fulltech no
+ * abre el catálogo ajeno. Un valor inválido cae al de por defecto en vez de
+ * romper el arranque.
+ */
+const STORE_KEY = normalizeStoreKey(process.env.PHYTO_STORE_KEY) ?? DEFAULT_STORE_KEY;
 if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
   webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
   console.log('[push] Web Push configurado (llaves VAPID presentes).');
@@ -12815,7 +12824,7 @@ export async function startCrmServer(config = {}) {
     displayName: config.bootstrapAdminDisplayName ?? 'Ana Admin',
   });
   const legacyInventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
-  const storeCatalog = await createStoreCatalog({backend:db.kind,handle:store.handle,legacyInventory,clock:config.clock});
+  const storeCatalog = await createStoreCatalog({backend:db.kind,handle:store.handle,legacyInventory,clock:config.clock,storeKey:config.storeKey ?? STORE_KEY});
   const inventory = storeInventoryFacade(legacyInventory,storeCatalog);
 
   /*
@@ -12974,6 +12983,7 @@ export async function startCrmServer(config = {}) {
     users,
     inventory,
     storeCatalog,
+    storeKey: storeCatalog?.storeKey ?? STORE_KEY,
     storeAccounts,
     storeOAuth,
     storeVerifications,

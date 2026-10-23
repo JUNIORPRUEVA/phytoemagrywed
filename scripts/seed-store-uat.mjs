@@ -248,6 +248,11 @@ for (const [index, product] of PRODUCTS.entries()) {
     kind: 'product',
     name: product.name,
     sku,
+    /*
+     * DUEÑO EXPLÍCITO: estos artículos son de FULLTECH Store. El catálogo
+     * administrativo es compartido, pero la tienda pública filtra por dueño.
+     */
+    store: 'fulltech',
     category: product.cat,
     /* Descripción INTERNA: marca el registro como demostración. */
     description: `DEMO UAT · Artículo de demostración generado por scripts/seed-store-uat.mjs. No usar en producción.`,
@@ -296,6 +301,7 @@ if (!DRY) {
         kind: 'product',
         name: current.name,
         sku: current.sku,
+        store: current.store || 'fulltech',
         category: current.category,
         description: current.description,
         store_public_name: current.store_public_name,
