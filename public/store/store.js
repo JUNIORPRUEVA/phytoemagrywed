@@ -90,7 +90,7 @@ function updateCartBadge() {
   previousCartCount=n;
 }
 let homeData = null, catalogState = {kind:'all',category:'',q:'',page:1,pages:1}, searchTimer;
-const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false} };
+const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false}, providersReady:false };
 let announcementIndex=0;
 const announcementNode=()=>$('#hero-promo');
 function announcementItems(){
@@ -174,7 +174,7 @@ document.addEventListener('click',async event=>{
 });
 async function apiPost(path, body, method='POST'){const r=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(d.message||'No pudimos completar la operación.');error.code=d.error||'';error.status=r.status;throw error;}return d}
 async function ensureSession(force=false){if(session.loaded&&!force)return session.account;try{const d=await api('/api/store/account/me');session.account=d.account}catch{session.account=null}session.loaded=true;return session.account}
-async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})}}catch{}return session.providers}
+async function ensureProviders(){try{const d=await api('/api/store/account/providers');session.providers={password:true,google:false,apple:false,...(d.providers||{})};session.providersReady=true}catch{session.providersReady=false}return session.providers}
 const initials = value => String(value||'F').trim().split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
 const orderStatus = {nuevo:'Recibido',confirmado:'Confirmado',en_preparacion:'En preparación',enviado:'En camino',entregado:'Entregado',cancelado:'Cancelado',perdido:'No disponible'};
 const requestStatus = {nuevo:'Recibida',en_revision:'En revisión',cotizado:'Cotizada',aprobado:'Aprobada',anticipo_pendiente:'Anticipo pendiente',en_proceso:'En proceso',completado:'Completada',rechazado:'No disponible',cancelado:'Cancelada'};
@@ -187,9 +187,18 @@ const GOOGLE_ICON = '<svg class="google-g" viewBox="0 0 48 48" aria-hidden="true
  */
 function googleOption(label='Continuar con Google'){
   const inner=`${GOOGLE_ICON}<span>${esc(label)}</span>`;
-  return session.providers.google===true
-    ? `<a class="button button-outline button-block auth-google" href="/api/store/account/auth/google/start">${inner}</a>`
-    : `<button class="button button-outline button-block auth-google" type="button" disabled>${inner}</button><small class="auth-hint">Google estará disponible muy pronto.</small>`;
+  if(session.providers.google===true)return `<a class="button button-outline button-block auth-google" href="/api/store/account/auth/google/start">${inner}</a>`;
+  /*
+   * Si el servidor no ofrece Google NO se dice «muy pronto» (era mentira y no
+   * caducaba nunca): se dice exactamente lo que pasa y se mantiene el acceso por
+   * correo, que funciona igual. Nunca se simula un acceso.
+   */
+  const hint=navigator.onLine===false
+    ? 'Sin conexión. Conéctate a internet para entrar con Google.'
+    : session.providersReady
+      ? 'El acceso con Google no está disponible ahora mismo. Entra con tu correo y contraseña.'
+      : 'Comprobando el acceso con Google…';
+  return `<button class="button button-outline button-block auth-google" type="button" disabled>${inner}</button><small class="auth-hint">${esc(hint)}</small>`;
 }
 function authHead(title){return `<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>${esc(title)}</h1></div>`}
 async function api(path){const r=await fetch(path,{headers:{accept:'application/json'}});if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}
@@ -838,12 +847,27 @@ async function renderRecover(){
 
 async function renderComplete(params){
   setNav('account');const token=params.get('token')||'';
+  const clave=params.get('modo')==='clave';
   if(!token){
     main.innerHTML=`${authHead('Completa tu cuenta')}<section class="auth-panel"><p class="auth-sub">El enlace caducó. Vuelve a intentarlo.</p><a class="button button-block" href="#/account/login">Volver a iniciar sesión</a></section>${footer()}`;
     bindAuthBack();return;
   }
-  /* Solo lo imprescindible: WhatsApp y ciudad. El nombre ya viene de Google. */
-  main.innerHTML=`${authHead('Completa tu cuenta')}<p class="auth-sub">Solo faltan tu WhatsApp y tu ciudad.</p><section class="auth-panel">
+  /*
+   * DOS CAMINOS:
+   *  · `modo=clave` — ese correo ya tiene una cuenta con contraseña. Se pide la
+   *    contraseña para enlazar Google SIN quitarle el acceso a nadie (antes se
+   *    enlazaba solo y cualquiera podía quedarse con la cuenta ajena).
+   *  · normal — cuenta nueva: solo faltan WhatsApp y ciudad.
+   */
+  main.innerHTML=clave
+    ? `${authHead('Vincula tu cuenta')}<p class="auth-sub">Ese correo ya tiene una cuenta en la tienda. Escribe su contraseña para vincular Google y conservar tus pedidos.</p><section class="auth-panel">
+    <form id="complete-form" class="auth-form" novalidate>
+      <label class="field"><span class="field__label">Contraseña de tu cuenta</span><input class="field__input" name="password" type="password" autocomplete="current-password" required></label>
+      <p class="form-error" id="auth-error" role="alert"></p>
+      <button class="button button-block" type="submit">Vincular y entrar</button>
+    </form>
+    <a class="auth-link" href="#/account/recover">¿Olvidaste tu contraseña?</a></section>${footer()}`
+    : `${authHead('Completa tu cuenta')}<p class="auth-sub">Solo faltan tu WhatsApp y tu ciudad.</p><section class="auth-panel">
     <form id="complete-form" class="auth-form" novalidate>
       <label class="field"><span class="field__label">Número de WhatsApp</span><input class="field__input" name="phone" type="tel" autocomplete="tel" inputmode="tel" required placeholder="809 000 0000"></label>
       <label class="field"><span class="field__label">Ciudad</span><input class="field__input" name="city" autocomplete="address-level2" maxlength="80" required placeholder="Santo Domingo"></label>
@@ -857,12 +881,15 @@ async function renderComplete(params){
     event.preventDefault();
     button.disabled=true;$('#auth-error').textContent='';
     try{
-      const data=await apiPost('/api/store/account/complete',{token,phone:form.phone.value.trim(),city:form.city.value.trim(),orderNumber:(form.orderNumber.value||'').trim()});
+      const body=clave
+        ? {token,password:form.password.value}
+        : {token,phone:form.phone.value.trim(),city:form.city.value.trim(),orderNumber:(form.orderNumber.value||'').trim()};
+      const data=await apiPost('/api/store/account/complete',body);
       session.account=data.account;session.loaded=true;
       afterAuth();
     }catch(error){
       $('#auth-error').textContent=error.message;
-      if(error.code==='verification_required'){$('#complete-proof').hidden=false;form.orderNumber.focus();}
+      if(error.code==='verification_required'&&!clave){$('#complete-proof').hidden=false;form.orderNumber.focus();}
       button.disabled=false;
     }
   };

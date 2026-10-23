@@ -102,8 +102,24 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     CREATE TABLE IF NOT EXISTS fulltech_customer_account_links_v1 (
       token_hash TEXT PRIMARY KEY,
       account_id TEXT NOT NULL,
+      provider TEXT,
+      sub TEXT,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL)`);
+
+  /*
+   * COLUMNAS NUEVAS, ADITIVAS: el enlace que se guarda al entrar con Google
+   * necesita recordar QUÉ identidad va a enlazarse (`provider` + `sub`).
+   * El error de «ya existe» se ignora para que el mismo código sirva en SQLite
+   * y en Postgres y una base ya creada se actualice sin tocar una sola fila.
+   */
+  for (const column of ['provider TEXT', 'sub TEXT']) {
+    try {
+      await sql.query(`ALTER TABLE fulltech_customer_account_links_v1 ADD COLUMN ${column}`);
+    } catch {
+      /* la columna ya existe en esta base */
+    }
+  }
 
   async function hashPassword(password) {
     const salt = randomBytes(16).toString('hex');
@@ -677,14 +693,30 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     return created.customer;
   }
 
-  async function issueLinkToken(accountId) {
+  async function issueLinkToken(accountId, identity = {}) {
     const token = randomBytes(32).toString('base64url');
     const now = new Date(clock());
+    const provider = identity.provider === 'apple' ? 'apple' : identity.provider === 'google' ? 'google' : null;
+    const sub = provider ? clean(identity.sub, 200) || null : null;
     await sql.query('DELETE FROM fulltech_customer_account_links_v1 WHERE expires_at<$1', [now.toISOString()]);
-    await sql.query('INSERT INTO fulltech_customer_account_links_v1(token_hash,account_id,created_at,expires_at) VALUES($1,$2,$3,$4)', [
-      tokenHash(token), accountId, now.toISOString(), new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
+    await sql.query('INSERT INTO fulltech_customer_account_links_v1(token_hash,account_id,provider,sub,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6)', [
+      tokenHash(token), accountId, provider, sub, now.toISOString(), new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
     ]);
     return token;
+  }
+
+  /**
+   * Enlaza la identidad del proveedor (`sub`) a la cuenta, con guarda de
+   * unicidad: un `sub` no puede colgar de dos cuentas de la tienda.
+   */
+  async function attachProvider(accountId, provider, sub) {
+    const column = provider === 'apple' ? 'apple_sub' : 'google_sub';
+    const owner = await accountBy(column, sub);
+    if (owner && owner.id !== accountId) {
+      throw fail('provider_already_linked', 'Esa cuenta ya está vinculada a otra cuenta de la tienda. Inicia sesión con ella.', 409);
+    }
+    await sql.query(`UPDATE fulltech_customer_accounts_v1 SET ${column}=$1, updated_at=$2 WHERE id=$3`, [sub, clock().toISOString(), accountId]);
+    return accountBy('id', accountId);
   }
 
   /**
@@ -712,30 +744,47 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (email) {
       const byEmail = await accountBy('email_key', emailKey(email));
       if (byEmail) {
-        await sql.query(`UPDATE fulltech_customer_accounts_v1 SET ${column}=$1, updated_at=$2 WHERE id=$3`, [sub, now, byEmail.id]);
-        const updated = await accountBy('id', byEmail.id);
-        if (updated.status !== 'active') return { pending: true, pendingToken: await issueLinkToken(updated.id), account: updated };
-        const customer = updated.customer_id ? await customers.get(updated.customer_id) : null;
-        return { account: publicAccount(updated, customer), customer };
-      }
-      const customer = typeof findCustomerByEmail === 'function' ? await findCustomerByEmail(email) : null;
-      if (customer) {
-        const existing = await accountBy('customer_id', customer.id);
-        if (existing) {
-          await sql.query(`UPDATE fulltech_customer_accounts_v1 SET ${column}=$1, updated_at=$2 WHERE id=$3`, [sub, now, existing.id]);
-          return { account: publicAccount({ ...existing, [provider]: true }, customer), customer };
+        /*
+         * ENLACE SEGURO — aquí estaba el fallo real.
+         *
+         * Antes, si el correo ya existía se pegaba el `sub` de Google y se
+         * entraba sin más. Pero las cuentas manuales NO verifican el correo
+         * (`PHYTO_STORE_MAIL_*` está apagado), así que cualquiera puede
+         * registrarse con el correo de otra persona: al entrar esa persona con
+         * Google, quedaba DENTRO de la cuenta del otro, que además conservaba
+         * su contraseña y veía sus pedidos (robo de cuenta).
+         *
+         * Regla nueva:
+         *  · Cuenta SIN contraseña (solo Google/Apple): enlazar es seguro,
+         *    no hay credencial de nadie que robar.
+         *  · Cuenta CON contraseña: no se toca nada; se devuelve un enlace
+         *    pendiente y hay que demostrar propiedad con esa contraseña.
+         */
+        if (!byEmail.has_password) {
+          const updated = await attachProvider(byEmail.id, provider, sub);
+          if (updated.status !== 'active') {
+            return { pending: true, pendingToken: await issueLinkToken(updated.id, { provider, sub }), account: updated };
+          }
+          const customer = updated.customer_id ? await customers.get(updated.customer_id) : null;
+          return { account: publicAccount(updated, customer), customer };
         }
-        const id = `acc_${randomUUID()}`;
-        const profile = JSON.stringify({ name: customer.name ?? clean(identity.name, 120), email });
-        await sql.query(
-          'INSERT INTO fulltech_customer_accounts_v1(id,customer_id,phone_e164,email,email_key,password_hash,google_sub,apple_sub,status,profile,preferences,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
-          [id, customer.id, customer.phone_e164 ?? null, email, emailKey(email), null,
-            provider === 'google' ? sub : null, provider === 'apple' ? sub : null, 'active', profile,
-            JSON.stringify({ contact: 'whatsapp', marketing: false, language: 'es' }), now, now],
-        );
-        const account = await accountBy('id', id);
-        return { account: publicAccount(account, customer), customer };
+        return {
+          pending: true,
+          pendingToken: await issueLinkToken(byEmail.id, { provider, sub }),
+          needsProof: 'password',
+          account: publicAccount(byEmail, null),
+        };
       }
+      /*
+       * SIN ENLACE AUTOMÁTICO AL CLIENTE DEL CRM POR CORREO.
+       *
+       * Antes, si el correo coincidía con la ficha de un cliente, la cuenta
+       * nacía YA atada a esa ficha y heredaba su historial de pedidos. El correo
+       * del CRM lo escribe el equipo: un error de tecleo (o un correo
+       * compartido) le mostraba los pedidos a quien no era. Ahora se sigue el
+       * camino normal de cuenta nueva: se pide teléfono y, si ese teléfono ya
+       * tiene historial, la prueba del número de pedido.
+       */
     }
 
     const id = `acc_${randomUUID()}`;
@@ -747,7 +796,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
         JSON.stringify({ contact: 'whatsapp', marketing: false, language: 'es' }), now, now],
     );
     const pending = await accountBy('id', id);
-    return { pending: true, pendingToken: await issueLinkToken(id), account: pending };
+    return { pending: true, pendingToken: await issueLinkToken(id, { provider, sub }), account: pending };
   }
 
   async function completePendingLink(token, input = {}) {
@@ -756,7 +805,30 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (!row || new Date(row.expires_at).getTime() <= clock().getTime()) throw fail('link_expired', 'El enlace caducó. Vuelve a entrar con Google o Apple.', 410);
     const account = await accountBy('id', row.account_id);
     if (!account) throw fail('link_expired', 'El enlace caducó. Vuelve a entrar con Google o Apple.', 410);
-    if (account.status === 'active' && account.customer_id) return { account: publicAccount(account, await customers.get(account.customer_id)) };
+
+    /* Identidad que este enlace va a vincular (vacía en los enlaces antiguos). */
+    const provider = row.provider === 'apple' ? 'apple' : row.provider === 'google' ? 'google' : null;
+    const sub = provider ? clean(row.sub, 200) : '';
+
+    /*
+     * PRUEBA DE PROPIEDAD OBLIGATORIA cuando el enlace apunta a una cuenta con
+     * contraseña: nadie enlaza Google a una cuenta ajena sin conocerla. Es lo
+     * que convierte el antiguo «enlace por correo» en un enlace consentido.
+     */
+    if (sub && account.has_password) {
+      const stored = (await sql.query('SELECT password_hash FROM fulltech_customer_accounts_v1 WHERE id=$1', [account.id])).rows[0]?.password_hash ?? '';
+      const ok = await verifyPassword(String(input.password ?? ''), stored);
+      if (!ok) throw fail('invalid_credentials', 'Escribe la contraseña de tu cuenta para vincular este acceso.', 401);
+      const linked = await attachProvider(account.id, provider, sub);
+      await sql.query('DELETE FROM fulltech_customer_account_links_v1 WHERE token_hash=$1', [row.token_hash]);
+      const customer = linked.customer_id ? await customers.get(linked.customer_id) : null;
+      return { account: publicAccount(linked, customer), customer };
+    }
+
+    if (account.status === 'active' && account.customer_id) {
+      const linked = sub ? await attachProvider(account.id, provider, sub) : account;
+      return { account: publicAccount(linked, await customers.get(linked.customer_id)) };
+    }
 
     const provided = clean(input.name, 120) || clean(account.profile?.name, 120);
     const name = provided.length >= 2 ? provided : nameFromEmail(account.email);
@@ -774,6 +846,8 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     await sql.query('UPDATE fulltech_customer_accounts_v1 SET customer_id=$1,phone_e164=$2,status=$3,profile=$4,updated_at=$5 WHERE id=$6', [
       customer.id, phone, 'active', JSON.stringify(profile), now, account.id,
     ]);
+    /* La cuenta ya es del cliente demostrado: ahora sí se enlaza el proveedor. */
+    if (sub) await attachProvider(account.id, provider, sub);
     await sql.query('DELETE FROM fulltech_customer_account_links_v1 WHERE token_hash=$1', [row.token_hash]);
     const updated = await accountBy('id', account.id);
     return { account: publicAccount(updated, await customers.get(customer.id)), customer };

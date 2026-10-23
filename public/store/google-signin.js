@@ -64,7 +64,8 @@ async function handleCredential(credential, clientId) {
       return;
     }
     if (data.pending && data.pending_token) {
-      location.assign(`/store/#/account/complete?token=${encodeURIComponent(data.pending_token)}`);
+      const mode = data.needs_proof === 'password' ? '&modo=clave' : '';
+      location.assign(`/store/#/account/complete?token=${encodeURIComponent(data.pending_token)}${mode}`);
       return;
     }
     location.assign(cartHasItems() ? '/store/#/checkout' : '/store/#/account');

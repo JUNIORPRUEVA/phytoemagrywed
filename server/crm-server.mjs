@@ -120,6 +120,12 @@ import { createStoreOAuth } from './store-oauth.mjs';
 import { createMailSender, createSmsSender, createStoreVerifications } from './store-verifications.mjs';
 import { handleStoreAuthRoute } from './store-auth-routes.mjs';
 import { createGoogleIdVerifier } from './store-google-idtoken.mjs';
+/*
+ * Confianza de cabeceras de proxy: IP real del cliente y HTTPS real. Sin esto,
+ * detrás de nginx todos los clientes comparten 127.0.0.1 (un único cubo de
+ * intentos) y las cookies salen sin `Secure`.
+ */
+import { createRequestTrust } from './http-trust.mjs';
 import { handleStoreSeoRoute } from './store-seo-routes.mjs';
 import { handleSupplierRoutes } from './suppliers-routes.mjs';
 /*
@@ -12972,6 +12978,16 @@ export async function startCrmServer(config = {}) {
     storeOAuth,
     storeVerifications,
     googleId,
+    /*
+     * Quién es el proxy y cuándo se le cree: lo decide el servidor, no el
+     * cliente. `PHYTO_TRUSTED_PROXIES` permite añadir IPs; por defecto solo el
+     * loopback (nginx del contenedor). `PHYTO_FORCE_SECURE_COOKIES=true` marca
+     * las cookies `Secure` aunque el proxy no reenvíe el esquema.
+     */
+    requestTrust: config.requestTrust ?? createRequestTrust({
+      trustedProxies: process.env.PHYTO_TRUSTED_PROXIES,
+      forceSecure: process.env.PHYTO_FORCE_SECURE_COOKIES,
+    }),
     storeSeo: settings.storeSeo,
     settings: settingsService,
     chatSharing: createChatSharingService({ settings: settingsService, customers }),
