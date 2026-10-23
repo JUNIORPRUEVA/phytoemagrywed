@@ -286,6 +286,12 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
     }
 
     if (route === '/api/store/account/complete' && req.method === 'POST') {
+      /*
+       * Este endpoint puede pedir la CONTRASEÑA (vincular Google a una cuenta
+       * existente), así que necesita su propio límite: sin él sería la puerta
+       * de atrás para adivinar contraseñas saltándose el tope de `/login`.
+       */
+      if (!throttle(req, 'complete', 20)) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
       const body = await readJson(req, 40000);
       const result = await accounts.completePendingLink(body.token, body);
       const session = await accounts.createSession(result.account.id);
