@@ -128,6 +128,7 @@ import {
   nextOfferExpiry,
 } from './delivery-lifecycle.mjs';
 import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, validateRemittance } from './delivery-cash.mjs';
+import { reconcileDeliveryCash } from './delivery-reconciliation.mjs';
 /* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
 import {
   COURIER_LOCK_MS,
@@ -6994,6 +6995,54 @@ async function handle(req, res, ctx) {
         duplicate: created?.duplicate === true,
         summary: custodySummary(nextRows, courierId),
       });
+      return;
+    }
+
+    /* CUSTODIA — MOVIMIENTOS: el libro append-only, en solo lectura. */
+    if (route === '/api/admin/delivery-cash/movements' && req.method === 'GET') {
+      if (!can('admin.full') && !can('delivery.manage')) {
+        forbid();
+        return;
+      }
+      const courierId = text(new URL(req.url, 'http://local').searchParams.get('courierId'), 80);
+      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const pick = (row, field) => row?.[field] ?? row?.doc?.[field] ?? null;
+      const movements = rows
+        .filter((row) => !courierId || String(pick(row, 'courier_account_id') ?? '') === courierId)
+        .map((row) => ({
+          id: row.id,
+          kind: pick(row, 'kind'),
+          order_id: pick(row, 'order_id'),
+          courier_account_id: pick(row, 'courier_account_id'),
+          amount_cents: Number(pick(row, 'amount_cents')) || 0,
+          note: pick(row, 'note'),
+          idempotency_key: pick(row, 'idempotency_key'),
+          created_at: pick(row, 'created_at'),
+        }))
+        .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+      json(res, 200, { ok: true, movements }, { 'cache-control': 'no-store' });
+      return;
+    }
+
+    /*
+     * CUSTODIA — INCIDENCIAS: conciliación de SOLO LECTURA.
+     * Detecta y describe; nunca corrige dinero. La reparación contable es otro
+     * flujo (permisos + confirmación + auditoría) y no existe a propósito.
+     */
+    if (route === '/api/admin/delivery-cash/incidents' && req.method === 'GET') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const ledger = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const items = (await store.listAdmin({ limit: 5000 })) ?? [];
+      const orders = [];
+      for (const item of items) {
+        if (item.type !== 'order_intent') continue;
+        const order = orderOf(item);
+        if (order) orders.push({ ...order, id: item.id });
+      }
+      json(res, 200, { ok: true, ...reconcileDeliveryCash({ orders, ledger }) }, { 'cache-control': 'no-store' });
       return;
     }
 

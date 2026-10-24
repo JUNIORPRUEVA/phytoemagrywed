@@ -224,6 +224,24 @@ check('rendición total aceptada', [200, 201].includes(total.status), JSON.strin
 const settled = await cashRow();
 check('saldo en cero tras rendir todo', settled.pending_cents === 0, `pending=${settled.pending_cents}`);
 
+/* ------------------------------------------------------------------ panel de custodia */
+const movements = await admin('delivery-cash/movements');
+check('movimientos del libro visibles en el panel', movements.status === 200 && (movements.data?.movements ?? []).length >= 3, `n=${(movements.data?.movements ?? []).length}`);
+check(
+  'cada movimiento conserva su clave de idempotencia',
+  (movements.data?.movements ?? []).every((row) => typeof row.idempotency_key === 'string' && row.idempotency_key.length > 0),
+);
+const filtered = await admin(`delivery-cash/movements?courierId=${encodeURIComponent(courierId)}`);
+check(
+  'el historial se filtra por repartidor',
+  filtered.status === 200 && (filtered.data?.movements ?? []).every((row) => row.courier_account_id === courierId),
+);
+const incidents = await admin('delivery-cash/incidents');
+check('la conciliación del panel no encuentra discrepancias', incidents.status === 200 && incidents.data?.ok === true && (incidents.data?.incidents ?? []).length === 0, JSON.stringify(incidents.data?.incidents ?? []).slice(0, 200));
+check('la conciliación informa totales en centavos', incidents.data?.totals?.chargedCents === incidents.data?.totals?.remittedCents + incidents.data?.totals?.pendingCents);
+const courierOnPanel = await courier('/api/admin/delivery-cash/movements', { token });
+check('el token del repartidor NO abre la custodia', [401, 403].includes(courierOnPanel.status), `status=${courierOnPanel.status}`);
+
 /* ------------------------------------------------------------------ Smart Commerce intacto */
 const commerceConfig = await call('/api/store/commerce/config');
 check('endpoint de Smart Commerce responde', commerceConfig.status === 200);
