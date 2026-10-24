@@ -685,6 +685,15 @@ function hashDeliveryProof(orderId, code) {
   return createHash('sha256').update(`delivery-proof:${orderId}:${String(code).trim()}`).digest('hex');
 }
 
+/** Vida de un código de entrega (minutos configurables). */
+const DELIVERY_PROOF_TTL_MS =
+  Math.max(5, Number(process.env.PHYTO_DELIVERY_PROOF_TTL_MINUTES ?? 4320) || 4320) * 60_000;
+/** Intentos fallidos antes de bloquear el código. */
+const DELIVERY_PROOF_MAX_ATTEMPTS = Math.max(
+  3,
+  Number(process.env.PHYTO_DELIVERY_PROOF_MAX_ATTEMPTS ?? 5) || 5,
+);
+
 /*
  * Los DOS mensajes rutinarios al cliente (Fase 06). Los nombres son los que deben
  * aprobarse en Meta; mientras no existan, el evento queda `pending_template`.
@@ -1251,6 +1260,8 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, opti
       delivery_assignment_note_by_user_id: assignmentNote && actor?.actor_type === 'USER' ? actor.id : null,
       delivery_assignment_note_by_display_name_snapshot: assignmentNote ? actor?.display_name ?? null : null,
       delivery_assignment_note_at: assignmentNote ? ctx.clock().toISOString() : null,
+      /* Reasignar invalida el código de entrega anterior: era de otra persona. */
+      proof: previousUserId !== deliveryUser?.id ? null : current.delivery?.proof ?? null,
       /* Fase 05: asignar abre una OFERTA con vencimiento; aceptar es otro paso. */
       lifecycle: deliveryUser ? DELIVERY_STATES.OFFERED : DELIVERY_STATES.ASSIGNED,
       offer_expires_at: deliveryUser ? nextOfferExpiry(Date.now(), OFFER_TTL_MS) : null,
@@ -6550,14 +6561,62 @@ async function handle(req, res, ctx) {
           });
           return;
         }
+        if (proof.used_at) {
+          json(res, 409, { ok: false, error: 'proof_already_used', message: 'Ese código ya se usó.' });
+          return;
+        }
+        if (proof.expires_at && Date.parse(proof.expires_at) <= Date.now()) {
+          json(res, 409, { ok: false, error: 'proof_expired', message: 'El código de entrega venció.' });
+          return;
+        }
+        const attempts = Number(proof.attempts ?? 0) || 0;
+        if (attempts >= DELIVERY_PROOF_MAX_ATTEMPTS) {
+          json(res, 429, {
+            ok: false,
+            error: 'proof_locked',
+            message: 'Demasiados intentos. Administración debe generar un código nuevo.',
+          });
+          return;
+        }
         if (!code) {
           json(res, 422, { ok: false, error: 'proof_required', message: 'Escribe el código de entrega.' });
           return;
         }
         if (hashDeliveryProof(orderId, code) !== proof.hash) {
-          json(res, 409, { ok: false, error: 'invalid_proof', message: 'El código de entrega no coincide.' });
+          const nextAttempts = attempts + 1;
+          const locked = nextAttempts >= DELIVERY_PROOF_MAX_ATTEMPTS;
+          const failedOrder = {
+            ...found.order,
+            delivery: {
+              ...(found.order.delivery ?? {}),
+              proof: { ...proof, attempts: nextAttempts, last_failed_at: new Date().toISOString() },
+            },
+            updated_at: new Date().toISOString(),
+          };
+          await ctx.store.update(found.item.id, { orderJson: JSON.stringify(failedOrder) });
+          await ctx.audit?.record({
+            entity: 'order',
+            entityId: found.item.id,
+            action: 'delivery.proof_failed',
+            actor: auth.account.display_name ?? auth.account.id,
+            summary: `Intento de código incorrecto (${nextAttempts}/${DELIVERY_PROOF_MAX_ATTEMPTS})`,
+            data: { attempts: nextAttempts, locked },
+          });
+          json(res, locked ? 429 : 409, {
+            ok: false,
+            error: locked ? 'proof_locked' : 'invalid_proof',
+            message: locked
+              ? 'Demasiados intentos. Administración debe generar un código nuevo.'
+              : 'El código de entrega no coincide.',
+            attempts_left: Math.max(0, DELIVERY_PROOF_MAX_ATTEMPTS - nextAttempts),
+          });
           return;
         }
+        /* Correcto: el código queda marcado como usado (no se puede reutilizar). */
+        found.order.delivery = {
+          ...(found.order.delivery ?? {}),
+          proof: { ...proof, hash: null, used_at: new Date().toISOString() },
+        };
       } else {
         /* Sin prueba segura: se anota lo declarado y se deja PENDIENTE, nunca confirmada. */
         const declared = Number(body.cashAmountCents ?? body.cash_amount_cents ?? 0) || 0;
@@ -6831,6 +6890,9 @@ async function handle(req, res, ctx) {
             required: true,
             hash: hashDeliveryProof(item.id, code),
             created_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + DELIVERY_PROOF_TTL_MS).toISOString(),
+            attempts: 0,
+            used_at: null,
             created_by: actor?.display_name ?? actor?.id ?? null,
           },
         },

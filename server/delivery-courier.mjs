@@ -218,6 +218,8 @@ export async function assignCourier(input) {
       delivery_previous_user_id:
         order.delivery?.delivery_user_id ?? order.delivery?.delivery_previous_user_id ?? null,
       delivery_assigned_at: at,
+      /* Reasignar a un mensajero externo invalida el código de entrega anterior. */
+      proof: null,
       /* Fase 05: el pedido externo también nace como OFERTA con vencimiento. */
       lifecycle: DELIVERY_STATES.OFFERED,
       offer_expires_at: nextOfferExpiry(Date.now(), OFFER_TTL_MS),
