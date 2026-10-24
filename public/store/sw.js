@@ -1,5 +1,13 @@
-const VERSION = 'fulltech-store-v100';
+const VERSION = 'fulltech-store-v102';
 const SHELL = [
+  '/store/first-launch.css?v=1',
+  '/store/first-launch.js?v=2',
+  '/store/assets/app-icons/icon-32.png',
+  '/store/assets/app-icons/icon-180.png',
+  '/store/assets/app-icons/icon-192.png',
+  '/store/assets/app-icons/icon-512.png',
+  '/store/assets/app-icons/maskable-192.png',
+  '/store/assets/app-icons/maskable-512.png',
   '/store/discovery.css?v=22',
   '/store/assets/icons/custom/search-large.png',
   '/store/assets/icons/custom/find-for-you.png',
@@ -86,6 +94,8 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // Video stays on-demand: no install download, range caching or replay download.
+  if (url.pathname.startsWith('/store/assets/welcome/')) return;
   if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/api/admin/')) return;
   if (PUBLIC_CATALOG.test(`${url.pathname}${url.search}`)) {
     event.respondWith((async () => {

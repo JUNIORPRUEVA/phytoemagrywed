@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v271-centro-chats-aislamiento-20261022';
+const VERSION = 'crm-v273-pedidos-cajon-20261024';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -117,12 +117,12 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-icon.png',
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
-  '/admin/fulltech-logo-transparent.png?v=1',
-  '/admin/fulltech-favicon.png?v=3',
-  '/admin/fulltech-icon-192.png?v=3',
-  '/admin/fulltech-icon-512.png?v=3',
-  '/admin/fulltech-icon-maskable-512.png?v=3',
-  '/admin/fulltech-apple-touch-icon.png?v=3',
+  '/admin/assets/branding/fulltech-crm-256.png',
+  '/admin/assets/branding/fulltech-crm-32.png',
+  '/admin/assets/branding/fulltech-crm-192.png',
+  '/admin/assets/branding/fulltech-crm-512.png',
+  '/admin/assets/branding/fulltech-crm-maskable-512.png',
+  '/admin/assets/branding/fulltech-crm-180.png',
 ];
 for(const file of ['/admin/receipt-pdf.js','/admin/receipt-brand.js','/admin/receipt-viewer.html','/admin/receipt-launcher.js','/admin/receipt-viewer.js'])REQUIRED_SHELL.add(file);
 /*
@@ -529,8 +529,8 @@ self.addEventListener('push', (event) => {
           conversationId: payload.conversationId || null,
           notificationId: payload.notificationId || null,
         },
-        icon: '/admin/fulltech-icon-192.png?v=3',
-        badge: '/admin/fulltech-icon-192.png?v=3',
+        icon: '/admin/assets/branding/fulltech-crm-192.png',
+        badge: '/admin/assets/branding/fulltech-crm-192.png',
         vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : undefined,
       });
     } catch (error) {

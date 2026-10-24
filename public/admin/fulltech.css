@@ -12,9 +12,9 @@
 body[data-tab], body { background: var(--ft-page-gradient); background-attachment: fixed; }
 .topbar__brand, .dashboard-head__title strong, .login__title, .splash__brand { font-family: var(--pe-font); font-weight: 750; letter-spacing: -.035em; }
 .topbar__brand { display: flex; align-items: center; gap: 10px; }
-.topbar__brand::before { content: ''; width: 30px; height: 30px; background: url('/admin/fulltech-logo-transparent.png?v=1') center / contain no-repeat; }
+.topbar__brand::before { content: ''; width: 30px; height: 30px; background: url('/admin/assets/branding/fulltech-crm-256.png') center / contain no-repeat; }
 #drawer .drawer__eyebrow { display: flex; align-items: center; gap: 9px; }
-#drawer .drawer__eyebrow::before { content: ''; width: 22px; height: 22px; background: url('/admin/fulltech-logo-transparent.png?v=1') center / contain no-repeat; }
+#drawer .drawer__eyebrow::before { content: ''; width: 22px; height: 22px; background: url('/admin/assets/branding/fulltech-crm-256.png') center / contain no-repeat; }
 :root body #menu { background: var(--pe-card-bg); color: var(--pe-brand-text); border-color: var(--pe-line); }
 :root body #state-pill { background: var(--pe-chip-bg); color: var(--pe-brand-text); border-color: var(--pe-line); }
 :root body #state-pill.presence--offline { background: var(--pe-warn-bg); color: var(--pe-warn); }
