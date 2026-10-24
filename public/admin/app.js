@@ -5997,9 +5997,12 @@
         ${fila('aqui', ICONS.send, 'Ir a mi ubicación', 'Fija tu punto y ordena todo por cercanía')}
         ${fila('ajustar', ICONS.search, 'Ver todo', 'Encuadra todos los puntos del mapa')}
         ${activas.length ? fila('seguir', ICONS.retry, 'Seguir la entrega en vivo', `${activas.length} en camino: centra en el repartidor`) : ''}
+        ${fila('actualizar', ICONS.retry, 'Actualizar el mapa', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
       </div>
       <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
       `,
+      /* Panel lateral derecho: alto completo y la mitad del ancho. */
+      { variant: 'right' },
     );
   }
 

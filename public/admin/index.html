@@ -135,6 +135,40 @@
     <link rel="stylesheet" href="/admin/ops.css?v=ops-14" />
     <link rel="stylesheet" href="/admin/chat-appbar.css?v=custom-icons-1" />
     <link rel="stylesheet" href="/admin/delivery-flow.css?v=flujo-1" />
+    <!--
+      PANEL LATERAL DERECHO (mapa).
+      El mismo `#sheet` de siempre, pero cuando se abre con `variant: 'right'`
+      entra por la derecha, ocupa TODO el alto y la mitad del ancho: dentro, la
+      lista de acciones se desplaza y el resto queda libre para los botones.
+    -->
+    <style>
+      #sheet[data-variant='right'] { align-items: stretch; justify-content: flex-end; }
+      #sheet[data-variant='right'] .sheet__panel {
+        height: 100dvh;
+        max-height: 100dvh;
+        width: min(50vw, 420px);
+        max-width: 50vw;
+        border-radius: 14px 0 0 14px;
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+        animation: sheetRightIn .18s ease-out;
+      }
+      #sheet[data-variant='right'] .sheet__body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      @keyframes sheetRightIn { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+      @media (max-width: 720px) {
+        #sheet[data-variant='right'] .sheet__panel { width: 92vw; max-width: 92vw; }
+      }
+      /* En el mapa no hay tarjeta de título: solo la flecha de volver, flotando. */
+      #view-mapa .map-appbar { padding: 6px; gap: 0; }
+      #view-mapa .map-appbar .icon-btn { box-shadow: 0 2px 10px rgba(15, 23, 42, .22); }
+    </style>
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -628,13 +662,6 @@
             <div class="map-appbar">
               <button class="icon-btn" data-simple-back type="button" aria-label="Volver" title="Volver">
                 <svg class="ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/></svg>
-              </button>
-              <span class="map-appbar__title">
-                <strong id="mapa-titulo">Mapa y entregas</strong>
-                <small id="mapa-sub">Pedidos, ubicaciones y GPS en vivo</small>
-              </span>
-              <button class="icon-btn" id="mapa-actualizar" type="button" aria-label="Actualizar ahora">
-                <span class="ico" aria-hidden="true" data-icon="retry"></span>
               </button>
             </div>
             <!-- Entrega seleccionada: lo esencial, flotando sobre el mapa. -->
