@@ -5,9 +5,10 @@ import {mountOfferCarousel} from './offer-carousel.js?v=1';
 import {createProductFeed} from './product-feed.js?v=1';
 import {mountMasonry} from './masonry.js?v=1';
 import {navigationIcon} from './navigation-icons.js?v=1';
-import {mountReverseScroll} from './reverse-scroll.js?v=1';
-import {zonePath,initCommerceLocation,mountSmartCheckout} from './smart-commerce-ui.js?v=1';
+import {mountReverseScroll} from './reverse-scroll.js?v=2';
+import {zonePath,initCommerceLocation,mountSmartCheckout} from './smart-commerce-ui.js?v=2';
 import {mountPickupOrders} from './pickup-orders.js?v=1';
+import {mountInfoSlider} from './info-slider.js?v=2';
 mountReverseScroll();
 /* Cabecera y barra inferior usan la familia Material Symbols Rounded ya descargada. */
 hydrateMaterialIcons();
@@ -90,6 +91,7 @@ function updateCartBadge() {
 let homeData = null, catalogState = {kind:'all',category:'',q:'',page:1,pages:1}, searchTimer;
 let activeFeed=null,masonry=null;
 let commerceCheckout=null;
+let disposeInfoSlider=()=>{};
 const feedSnapshots=new Map();
 const session = { loaded:false, account:null, providers:{password:true,google:false,apple:false}, providersReady:false };
 let announcementIndex=0;
@@ -277,7 +279,7 @@ function setNav(route){
   });
 }
 /* Portada comercial: buscador, héroe, confianza, categorías con imagen,
-   destacados, ofertas reales, novedades, descubrir más y entrada a «Nosotros».
+   un único feed de productos y entrada a «Nosotros».
    Nada inventado: todo sale de /api/store/home y de las mismas reglas de
    publicación del catálogo. */
 async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]||'')){
@@ -289,61 +291,40 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
     homeData=await api('/api/store/home');
     if(location.hash!==homeRoute)return;
     const products=homeData.products||[];
-    const sections=homeData.sections||{};
-    const tiles=(homeData.categoryCards||[]).filter(t=>t&&t.name);
-    const total=Number(homeData.total||products.length);
-    const seen=new Set();
-    const unique=items=>items.filter(p=>{if(seen.has(p.id))return false;seen.add(p.id);return true});
-    const offers=unique((sections.offers||[]).filter(hasOffer));
-    const featured=unique(sections.featured?.length?sections.featured:products.filter(p=>p.featured));
-    const nuevos=unique(sections.newArrivals||[]);
-    const descubrir=unique(sections.discover||[]);
-    const algunaCosa=featured.length||offers.length||nuevos.length||descubrir.length;
+    const categories=(homeData.categoryCards||[]).filter(c=>c?.name);
+    const homeLinks=`<nav class="ft-home-links" aria-label="Explorar la tienda"><a href="${href('catalog')}">Todos</a>${categories.map(c=>`<a href="${href('catalog?category='+encodeURIComponent(c.name))}">${esc(c.name)}</a>`).join('')}<a href="${href('offers')}">Ofertas</a></nav>`;
     const dailyOffers=(homeData.dailyOffers||[]).filter(hasOffer).slice(0,2);
-    const heroOfferCard=p=>`<a class="ft-hero-offer" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver oferta de ${esc(p.name)}">
+    const recent=[...(homeData.sections?.newArrivals||[]),...products];
+    const selectedIds=new Set();
+    const heroProducts=[...dailyOffers,...recent].filter(p=>p.imageUrl&&!selectedIds.has(p.id)&&selectedIds.add(p.id)).slice(0,2);
+    const promoTitle=dailyOffers.length?'Ofertas para ti':'Descubre lo nuevo';
+    const promoDetail=dailyOffers.length?`Hasta ${Math.max(...dailyOffers.map(p=>Number(p.discountPercent)))}% menos`:'Novedades de la tienda';
+    const promoLink=dailyOffers.length?href('offers'):href('catalog?sort=recent');
+    const heroOfferCard=p=>`<a class="ft-hero-offer" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver ${esc(p.name)}">
       <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="180" height="104" loading="eager" decoding="async">
-      <span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span>
+      ${hasOffer(p)?`<span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span>`:''}
     </a>`;
-    const heroPlaceholder=(label='Ofertas diarias')=>`<span class="ft-hero-offer-placeholder">${label}<br><small>Vuelve pronto para descubrirlas</small></span>`;
-    const heroOffers=dailyOffers.length===2
-      ? dailyOffers.map(heroOfferCard).join('')
-      : dailyOffers.length===1
-        ? heroOfferCard(dailyOffers[0])
-        : heroPlaceholder('Explora nuestro catálogo');
+    const heroOffers=heroProducts.map(heroOfferCard).join('');
 
     const hero=`<section class="ft-hero">
+      <a class="ft-hero-logo" href="/store/" aria-label="FULLTECH Store, inicio"><img src="/store/assets/branding/fulltech-store-header-transparent-144.png" width="144" height="32" alt="FULLTECH STORE" fetchpriority="high"></a>
       <div class="ft-hero__copy">
-        <span class="ft-hero__eyebrow">${materialIcon('security',{size:14})} ENCUENTRA TU PRÓXIMO FAVORITO</span>
-        <h1>Todo lo que necesitas,<br>en un solo lugar</h1>
-        <p>Tecnología, hogar y seguridad para tu día a día.</p>
-        <a id="hero-promo" class="ft-hero-promo" href="${href('offers')}" aria-live="polite" hidden></a>
+        <h1>${esc(promoTitle)}</h1>
+        <p>${esc(promoDetail)}</p>
+        <a class="ft-promotion-cta" href="${promoLink}">${dailyOffers.length?'Ver ofertas':'Explorar'} <span aria-hidden="true">›</span></a>
       </div>
-      <div class="ft-hero__art ft-hero__duo" aria-label="Ofertas diarias">
+      <div class="ft-hero__art ft-hero__duo" aria-label="Productos seleccionados">
         ${heroOffers}
       </div>
     </section>`;
 
-    /* Solo promesas verificadas: exactamente lo que el checkout dice al cliente. */
-    const benefits=`<section class="ft-benefits" aria-label="Ventajas de comprar en FULLTECH Store">
-      <article class="ft-benefit"><span class="ft-benefit__icon">${materialIcon('truck',{size:16})}</span><strong>Entrega coordinada</strong></article>
-      <article class="ft-benefit"><span class="ft-benefit__icon">${materialIcon('security',{size:16})}</span><strong>Compra segura</strong></article>
-      <article class="ft-benefit"><span class="ft-benefit__icon">${materialIcon('package',{size:16})}</span><strong>Garantía según ficha</strong></article>
+    const announcement=`<div class="ft-promotion-announcement" aria-label="Anuncios de la tienda"><a id="hero-promo" class="ft-hero-promo" href="${href('offers')}" aria-live="polite" hidden></a></div>`;
+    const benefits=`<section class="ft-service-ribbon" aria-label="Entrega y garantía">
+      <article>${materialIcon('truck',{size:18})}<div><strong>Entrega rápida</strong><small>Coordinada según destino</small></div></article>
+      <article>${materialIcon('security',{size:18})}<div><strong>Productos con garantía</strong><small>Según condiciones de la ficha</small></div></article>
     </section>`;
-
-    const catStrip=tiles.length?`<section class="ft-cats" aria-label="Explorar por categoría">
-      <div class="ft-section__head" style="margin-inline:var(--ft-pad)"><h2>Explora por categoría</h2><a href="${href('catalog')}">Ver catálogo ${materialIcon('chevron-right',{size:16})}</a></div>
-      <div class="ft-catstrip">${tiles.map(tile=>`<a class="ft-cattile" href="${href(`catalog?category=${encodeURIComponent(tile.name)}`)}">
-        ${tile.imageUrl?`<img src="${esc(tile.imageUrl)}" alt="" width="320" height="240" loading="lazy" decoding="async">`:`<span class="ft-cattile__fallback">${materialIcon('categories',{size:22})}</span>`}
-        <span class="ft-cattile__body"><span class="ft-cattile__name">${esc(tile.name)}</span><span class="ft-cattile__count">${tile.count} producto${Number(tile.count)===1?'':'s'}</span></span>
-      </a>`).join('')}<a class="ft-cattile ft-cattile--all" href="${href('catalog')}">
-        <span class="ft-cattile__body"><span class="ft-cattile__name">Todo el catálogo</span><span class="ft-cattile__count">${total} productos</span></span>
-      </a></div>
-    </section>`:'';
-
-    const block=(titulo,items,opciones={})=>items.length?`<section class="ft-section${opciones.cls?' '+opciones.cls:''}">
-      <div class="ft-section__head"><h2>${titulo}</h2>${opciones.link?`<a href="${opciones.link}">${opciones.linkLabel||'Ver todo'} ${materialIcon('chevron-right',{size:16})}</a>`:''}</div>
-      <div class="ft-grid">${items.map(homeCard).join('')}</div>
-    </section>`:'';
+    const infoSlider=`<section class="ft-info-slider" aria-label="Información útil de FULLTECH" aria-roledescription="carrusel"><div class="ft-info-slider__track" tabindex="0"><a href="${href('nosotros')}" class="ft-info-slide" aria-label="1 de 3"><strong>Conoce FULLTECH</strong><span>Quiénes somos ›</span></a><a href="${href('offers')}" class="ft-info-slide" aria-label="2 de 3"><strong>Precios especiales</strong><span>Ver ofertas ›</span></a><a href="https://wa.me/18494240621" class="ft-info-slide" aria-label="3 de 3" target="_blank" rel="noopener noreferrer"><strong>Te asesoramos</strong><span>Consultar ›</span></a></div><div class="ft-info-slider__controls"><button type="button" data-info-prev aria-label="Información anterior"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg></button><span data-info-position aria-live="off">1 / 3</span><button type="button" data-info-next aria-label="Siguiente información"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button><button type="button" data-info-pause aria-label="Pausar información automática"></button></div></section>`;
+    const offerPair=`<section class="ft-promotion-pair" aria-label="Explorar ofertas"><div class="ft-promotion-pair__grid">${[0,1].map(i=>{const p=dailyOffers[i]||heroProducts[i],isOffer=!!p&&dailyOffers.some(o=>o.id===p.id),title=i===0?'Ofertas para ti':'Descubre descuentos';return `<a class="ft-promotion-product ft-promotion-product--${i===0?'navy':'teal'}" href="${href('offers')}" aria-label="${title}"><div class="ft-promotion-product__copy"><span class="ft-promotion-product__kicker">${i===0?'Selección FULLTECH':'Explora el catálogo'}</span><strong>${title}</strong></div><div class="ft-promotion-product__image">${p?.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="320" height="320" loading="lazy">`:`<div class="ft-promotion-product__placeholder">${materialIcon('package',{size:52})}</div>`}${isOffer?`<span>-${Number(p.discountPercent)}%</span>`:''}</div>${isOffer?`<h3>${esc(p.name)}</h3>${priceRow(p)}`:'<p class="ft-promotion-product__hint">Consulta la selección disponible</p>'}<span class="ft-promotion-product__cta">Explorar ofertas <span aria-hidden="true">›</span></span></a>`;}).join('')}</div></section>`;
 
     const aboutEntry=`<a class="ft-about-entry" href="${href('nosotros')}">
       <span class="ft-about-entry__icon">${materialIcon('support',{size:18})}</span>
@@ -351,29 +332,13 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
       <span class="ft-about-entry__arrow" aria-hidden="true">${materialIcon('chevron-right',{size:18})}</span>
     </a>`;
 
-    const vacio=`<div class="empty"><h3>Aún no hay productos publicados</h3><p>Estamos preparando el catálogo. Vuelve pronto.</p></div>`;
-
-    const homeChips=`<div class="ft-home-chips" role="group" aria-label="Filtrar productos por categoría"><button type="button" class="ft-chip" data-home-category="" aria-pressed="${!catalogState.category}">Todos</button>${tiles.map(t=>`<button type="button" class="ft-chip" data-home-category="${esc(t.name)}" aria-pressed="${catalogState.category===t.name}">${esc(t.name)}</button>`).join('')}<a class="ft-chip" href="${href('offers')}">Ofertas</a></div>`;
-    main.innerHTML=`<section class="ft-discovery" aria-label="Descubre FULLTECH"><div class="ft-home-search-slot"><div class="ft-home-search">${searchEntryMarkup()}${homeChips}</div></div>${hero}${benefits}${catStrip}</section>${algunaCosa?`
-      ${block('Destacados',featured,{link:href('catalog?featured=true'),linkLabel:'Ver más'})}
-      ${block('Ofertas',offers,{link:href('offers'),linkLabel:'Ver ofertas',cls:'ft-section--offers'})}
-      ${block('Novedades',nuevos,{link:href('catalog?sort=recent'),linkLabel:'Ver todo'})}
-      ${block('Descubrir más',descubrir,{link:href('catalog'),linkLabel:'Ver catálogo'})}
-      <p class="ft-section__note" style="margin-inline:var(--ft-pad)">${total} producto${total===1?'':'s'} publicado${total===1?'':'s'} · precios en RD$</p>
-    `:`<div class="ft-section">${vacio}</div>`}<section class="ft-home-feed" aria-label="Catálogo de productos"><h2 class="ft-browse-title">${esc(catalogState.category||'Productos para ti')}</h2><div id="catalog-count" class="ft-results-note"></div><div id="home-feed-result"></div></section>${aboutEntry}${footer()}`;
+    main.innerHTML=`<section class="ft-discovery" aria-label="Descubre FULLTECH"><div class="ft-home-search-slot"><div class="ft-home-search">${searchEntryMarkup()}${homeLinks}</div></div>${hero}${announcement}</section>${benefits}${infoSlider}${offerPair}<section class="ft-home-feed" aria-label="Catálogo de productos"><h2 class="ft-browse-title">${esc(catalogState.category||'Productos')}</h2><div id="catalog-count" class="ft-results-note" hidden></div><div id="home-feed-result"></div></section>${aboutEntry}${footer()}`;
     const masthead=document.createElement('section');
     masthead.className='ft-masthead ft-discovery';
     masthead.setAttribute('aria-label','Bienvenido a FULLTECH');
     main.before(masthead);
-    masthead.append(document.querySelector('.ft-header'),main.querySelector('.ft-home-search-slot'),main.querySelector('.ft-hero'));
-    masthead.querySelector('.ft-home-chips').addEventListener('click',async event=>{
-      const chip=event.target.closest('[data-home-category]');if(!chip)return;
-      catalogState.category=chip.dataset.homeCategory;catalogState.page=1;
-      masthead.querySelectorAll('[data-home-category]').forEach(b=>b.setAttribute('aria-pressed',String(b===chip)));
-      main.querySelector('.ft-home-feed h2').textContent=catalogState.category||'Productos para ti';
-      syncCatalogHash();await loadCatalog();
-      main.querySelector('.ft-home-feed')?.scrollIntoView({block:'start',behavior:'auto'});
-    });
+    masthead.append(main.querySelector('.ft-home-search-slot'),main.querySelector('.ft-hero'),main.querySelector('.ft-promotion-announcement'));
+    disposeInfoSlider=mountInfoSlider(main.querySelector('.ft-info-slider'));
     syncHomeSearch();
     await loadCatalog({restore:true});
   }catch{
@@ -1055,6 +1020,7 @@ let renderedRoute=location.hash, routeRun=0,navigating=false;
 if('scrollRestoration' in history)history.scrollRestoration='manual';
 window.addEventListener('scroll',()=>{if(!navigating)routeScroll.set(renderedRoute,window.scrollY)},{passive:true});
 async function route(){
+  disposeInfoSlider();disposeInfoSlider=()=>{};
   commerceCheckout?.dispose();commerceCheckout=null;
   routeScroll.set(renderedRoute,window.scrollY);navigating=true;
   disposeOfferCarousel();
@@ -1062,7 +1028,7 @@ async function route(){
   masonry?.dispose();masonry=null;
   clearTimeout(searchTimer);
   const masthead=document.querySelector('.ft-masthead');
-  if(masthead){masthead.before(masthead.querySelector('.ft-header'));masthead.remove();}
+  masthead?.remove();
   $('#signup-prompt').hidden=true;
   const run=++routeRun;
   const key=location.hash;
@@ -1091,14 +1057,14 @@ async function route(){
     await refreshFavoriteState();
   }
 }
-function openDrawer(open){if(open)syncDrawer();if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open))}
-$('#menu-button').onclick=()=>openDrawer(true);$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
+function openDrawer(open){if(open)syncDrawer();if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open));if(open)$('#close-drawer').focus({preventScroll:true});}
+$('#menu-button').onclick=()=>openDrawer(!drawer.classList.contains('open'));$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&drawer.classList.contains('open'))openDrawer(false);});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
 function syncHomeSearch(){
   const slot=document.querySelector('.ft-home-search-slot');
   if(!slot)return;
   const bar=slot.firstElementChild,rect=slot.getBoundingClientRect();
   slot.style.height=`${bar.offsetHeight}px`;
-  bar.classList.toggle('is-fixed',rect.top<=0);
+  bar.classList.toggle('is-fixed',rect.top<0);
   bar.style.setProperty('--search-left',`${rect.left}px`);
   bar.style.setProperty('--search-width',`${rect.width}px`);
 }

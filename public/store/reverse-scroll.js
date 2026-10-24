@@ -2,7 +2,10 @@
 export function mountReverseScroll({win=window,doc=document}={}){
   const controller=new AbortController(),signal=controller.signal;
   let gesture=null,frame=0,velocity=0,lastFrame=0;
-  const protectedTarget=target=>target?.closest?.('input,textarea,select,[contenteditable="true"],.drawer,dialog,[role="dialog"]');
+  // Overlays own their scrolling, including their scrim: never move the shop
+  // underneath an open drawer. Run in capture so card handlers cannot swallow
+  // the vertical gesture before it reaches the reverse-scroll controller.
+  const protectedTarget=target=>doc.querySelector('.drawer.open,dialog[open],[role="dialog"][aria-modal="true"]')||target?.closest?.('input,textarea,select,[contenteditable="true"],.drawer,dialog,[role="dialog"]');
   const stop=()=>{win.cancelAnimationFrame(frame);frame=0;velocity=0;};
   const scroll=delta=>{const before=win.scrollY;win.scrollBy({top:delta,left:0,behavior:'instant'});return win.scrollY!==before;};
   const coast=now=>{
@@ -15,19 +18,19 @@ export function mountReverseScroll({win=window,doc=document}={}){
   win.addEventListener('wheel',event=>{
     if(event.defaultPrevented||!event.cancelable||event.ctrlKey||event.shiftKey||protectedTarget(event.target)||Math.abs(event.deltaX)>=Math.abs(event.deltaY))return;
     stop();event.preventDefault();const unit=event.deltaMode===1?16:event.deltaMode===2?win.innerHeight:1;scroll(-event.deltaY*unit);
-  },{passive:false,signal});
+  },{passive:false,capture:true,signal});
   win.addEventListener('touchstart',event=>{
     stop();gesture=null;if(event.touches.length!==1||protectedTarget(event.target))return;
     const t=event.touches[0];gesture={x:t.clientX,y:t.clientY,lastY:t.clientY,time:performance.now(),axis:null};
-  },{passive:true,signal});
+  },{passive:true,capture:true,signal});
   win.addEventListener('touchmove',event=>{
-    if(!gesture||event.touches.length!==1){gesture=null;return;}
+    if(!gesture||event.touches.length!==1||protectedTarget(event.target)){gesture=null;stop();return;}
     const t=event.touches[0],dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
     if(!gesture.axis){if(Math.max(Math.abs(dx),Math.abs(dy))<8){if(event.cancelable&&Math.abs(dy)>Math.abs(dx))event.preventDefault();return;}gesture.axis=Math.abs(dx)>Math.abs(dy)?'x':'y';}
     if(gesture.axis!=='y'||!event.cancelable)return;
     event.preventDefault();const now=performance.now(),step=t.clientY-gesture.lastY;
     scroll(step);velocity=Math.max(-1.8,Math.min(1.8,step/Math.max(8,now-gesture.time)));gesture.lastY=t.clientY;gesture.time=now;
-  },{passive:false,signal});
+  },{passive:false,capture:true,signal});
   win.addEventListener('touchend',()=>{
     const vertical=gesture?.axis==='y',recent=gesture&&performance.now()-gesture.time<100;gesture=null;
     if(vertical&&recent&&!win.matchMedia('(prefers-reduced-motion: reduce)').matches&&Math.abs(velocity)>.08){lastFrame=performance.now();frame=win.requestAnimationFrame(coast);}else stop();

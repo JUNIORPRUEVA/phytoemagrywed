@@ -7,7 +7,7 @@ export function zonePath(path){if(!zoneId||!/^\/api\/store\/(catalog|home|produc
 const gps=()=>new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(Error('GPS no disponible. Puedes escribir la dirección y solicitar revisión.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser_geolocation'}),()=>reject(Error('No se pudo obtener la ubicación. Puedes escribir la dirección o coordenadas manualmente.')),{timeout:10000,maximumAge:0,enableHighAccuracy:true});});
 export async function initCommerceLocation(){
  const c=await capabilities();if(!c.enabled)return;
- const host=document.querySelector('.ft-header');if(!host||host.querySelector('.ft-location'))return;
+ const host=document.querySelector('#drawer');if(!host||host.querySelector('.ft-location'))return;
  const row=document.createElement('div');row.className='ft-location';row.innerHTML='<span role="status">Elige dónde recibes · sin rastreo continuo</span><button type="button">Usar ubicación</button>';host.append(row);
  row.querySelector('button').onclick=async event=>{const button=event.currentTarget,status=row.querySelector('span');button.disabled=true;try{const point=await gps(),data=await call('/api/store/commerce/resolve',point);zoneId=data.zone?.id||null;status.textContent=data.zone?.name||'Cobertura por confirmar';window.dispatchEvent(new CustomEvent('ft-location-change'));}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
 }

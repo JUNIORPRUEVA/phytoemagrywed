@@ -24,33 +24,11 @@
     <link rel="stylesheet" href="/store/shopping-experience.css?v=2" />
     <link rel="stylesheet" href="/store/cart-experience.css?v=1" />
     <link rel="stylesheet" href="/store/smart-commerce.css?v=1" />
+    <link rel="stylesheet" href="/store/compact-masthead.css?v=7" />
     <title>FULLTECH Store</title>
   </head>
   <body>
     <div class="app-shell">
-      <header class="ft-header">
-        <div class="ft-header__row">
-          <button class="ft-iconbtn" id="menu-button" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
-            <svg data-msr="menu" data-msr-size="22" aria-hidden="true"></svg>
-          </button>
-          <a class="ft-wordmark" href="/store/" aria-label="FULLTECH Store, inicio">
-            <picture>
-              <source type="image/webp" srcset="/store/assets/branding/fulltech-store-header-transparent-144.webp 1x, /store/assets/branding/fulltech-store-header-transparent-288.webp 2x, /store/assets/branding/fulltech-store-header-transparent-432.webp 3x" />
-              <img class="ft-logo" src="/store/assets/branding/fulltech-store-header-transparent-144.png" srcset="/store/assets/branding/fulltech-store-header-transparent-288.png 2x, /store/assets/branding/fulltech-store-header-transparent-432.png 3x" width="2355" height="528" alt="FULLTECH STORE" fetchpriority="high" />
-            </picture>
-          </a>
-          <nav class="ft-header__nav" aria-label="Información">
-            <a href="/store/#/nosotros" data-route="nosotros">Nosotros</a>
-          </nav>
-          <div class="ft-header__actions">
-            <button class="ft-iconbtn ft-install" id="install-app" type="button" aria-label="Instalar FULLTECH Store" title="Instalar FULLTECH Store">
-              <span class="ft-install-icon" style="--install-icon-url:url('/store/assets/icons/custom/instalar-en-pc.png')" aria-hidden="true"></span><span class="ft-install-label">Instalar</span>
-            </button>
-            <a class="ft-iconbtn ft-profile" href="/store/#/account/register" aria-label="Crear mi cuenta" title="Crear mi cuenta"><svg data-msr="account" data-msr-size="22" aria-hidden="true"></svg></a>
-          </div>
-        </div>
-      </header>
-
       <main id="main" tabindex="-1" aria-live="polite"></main>
 
       <nav class="ft-nav" id="bottom-nav" aria-label="Navegación principal">
@@ -62,10 +40,10 @@
           <span class="ft-nav-icons" aria-hidden="true"></span>
           <span>Categorías</span>
         </a>
-        <a href="/store/#/offers" class="ft-nav__item" data-route="offers">
+        <button type="button" class="ft-nav__item" id="menu-button" data-route="menu" aria-label="Abrir menú" aria-expanded="false" aria-controls="drawer">
           <span class="ft-nav-icons" aria-hidden="true"></span>
-          <span>Ofertas</span>
-        </a>
+          <span>Menú</span>
+        </button>
         <a href="/store/#/cart" class="ft-nav__item" data-route="cart">
           <span class="ft-nav-icons" aria-hidden="true"></span>
           <span class="ft-cart-nav-label">Carrito<small>Entrega coordinada</small></span><span data-cart-badge hidden></span>
@@ -86,10 +64,11 @@
       <a href="https://wa.me/18494240621" target="_blank" rel="noopener noreferrer">Atención al cliente ↗</a>
       <div class="drawer-divider"></div>
       <div id="drawer-customer" class="drawer-customer"></div>
+      <button class="ft-drawer-install" id="install-app" type="button"><span class="ft-install-icon" style="--install-icon-url:url('/store/assets/icons/custom/instalar-en-pc.png')" aria-hidden="true"></span><span>Instalar la app</span></button>
       <section class="ft-ecosystem" aria-label="Ecosistema FULLTECH"><p class="drawer-label">ECOSISTEMA FULLTECH</p><a href="https://phytoemagryrd.lat/" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span><span><strong>Phytoemagry</strong><small>Visitar tienda oficial</small></span></a><a href="https://fullpos.fulltechrd.com/" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span><span><strong>Fullpos Cloud</strong><small>Conoce nuestro punto de venta</small></span></a></section>
       <div class="drawer-bottom"><span class="status-dot"></span> Tu tienda FULLTECH</div>
     </aside>
     <div id="cart-feedback-status" class="ft-action-status" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/store/store.js?v=58"></script>    <script type="module" src="/store/google-signin.js?v=2"></script>  </body>
+    <script type="module" src="/store/store.js?v=64"></script>    <script type="module" src="/store/google-signin.js?v=2"></script>  </body>
 </html>
