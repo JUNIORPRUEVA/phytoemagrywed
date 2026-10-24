@@ -2754,7 +2754,7 @@
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
       ${
         state.tab === 'perfil'
-          ? '<img class="simple-head__logo" src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="24" height="24" decoding="async" aria-hidden="true">'
+          ? '<img class="simple-head__logo" src="/admin/assets/branding/fulltech-crm-256.png" alt="" width="24" height="24" decoding="async" aria-hidden="true">'
           : ''
       }
       <strong>${escapeHtml(currentViewTitle())}</strong>
@@ -2784,7 +2784,7 @@
      */
     const rolMostrado = user?.role ?? (state.auth?.legacy ? 'ADMIN' : null);
     brand.innerHTML = `
-      <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="26" height="26" /></span>
+      <span class="drawer__logo" aria-hidden="true"><img src="/admin/assets/branding/fulltech-crm-256.png" alt="" width="26" height="26" /></span>
       <span class="drawer__identity"><strong>${escapeHtml(name)}</strong><span class="drawer__role">${escapeHtml(
         roleLabel(rolMostrado),
       )}</span></span>
@@ -5241,12 +5241,38 @@
     return operationalStatusLabel(estado);
   }
 
+  /**
+   * CUÁNDO SE FINALIZÓ EL PEDIDO.
+   *
+   * En la lista de entregados lo que se lee tiene que ser el DÍA DE LA ENTREGA,
+   * no «ayer» ni «hace 2 días»: al cuadrar el día o al reclamar una venta se
+   * necesita la fecha exacta. Se toma el sello del pedido (`delivered_at`), luego
+   * el del reparto y, en pedidos viejos que no lo traen, la última actualización
+   * del pedido —el mismo criterio que usa el servidor en el historial de
+   * entregados—. Si no hay ningún dato se dice: no se inventa una fecha.
+   */
+  function orderDeliveredAt(item, order = itemOrder(item) ?? {}) {
+    const status = String(order?.status ?? item?.status ?? '').toLowerCase();
+    return (
+      order?.delivered_at ??
+      order?.delivery?.delivery_delivered_at ??
+      order?.completed_at ??
+      (status === 'entregado' ? order?.updated_at ?? null : null)
+    );
+  }
+
   function orderRow(item, { pendiente = false } = {}) {
     const estado = orderOperational(item);
     const order = itemOrder(item) ?? {};
     const agente = orderAgent(item);
     const entregado = ['ENTREGADO', 'CANCELADO'].includes(estado);
     const repartidor = order.delivery?.delivery_user_name_snapshot ?? null;
+    const completedAt = estado === 'ENTREGADO' ? orderDeliveredAt(item, order) : null;
+    const when = completedAt
+      ? fmtBusinessDateTime(completedAt, { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
+      : estado === 'ENTREGADO'
+        ? 'Fecha de entrega sin registrar'
+        : fmtWhen(item.received_at);
     /*
      * CÓMO SE COBRÓ. Al cuadrar el día lo primero que se pregunta es si el dinero
      * entró en efectivo o por transferencia, así que tiene que verse EN LA PROPIA
@@ -5277,7 +5303,7 @@
     )}" data-open="${escapeHtml(item.id)}" type="button">
       <span class="order-row__top">
         <strong class="order-row__name">${escapeHtml(item.name ?? 'Sin nombre')}</strong>
-        <span class="order-row__when">${escapeHtml(fmtWhen(item.received_at))}</span>
+        <span class="order-row__when"${completedAt ? ` title="Entregado: ${escapeHtml(fmtBusinessDateTime(completedAt))} (República Dominicana)"` : ''}>${escapeHtml(when)}</span>
       </span>
       <span class="order-row__bottom">
         <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
@@ -5324,16 +5350,17 @@
     const items = ordersNewestFirst(applyOutbox(state.items.filter((item) => item.type === 'order_intent')));
     const filter = state.pedidosFilter ?? 'todo';
     const range = orderDateRange();
+    const query = state.pedidosSearch.trim().toLowerCase();
+    const matchingSearch = query ? items.filter((item) => orderMatchesSearch(item, query)) : items;
     const porFecha = items.filter((item) => orderInDateRange(item, range));
+    const porFechaYBusqueda = matchingSearch.filter((item) => orderInDateRange(item, range));
     const byFilter = (value, pool) =>
       value === 'todo' ? pool : pool.filter((item) => orderOperational(item) === orderFilterValue(value));
-    /*
-     * Los chips de estado cuentan sobre TODOS los pedidos, no sobre los del día:
-     * un contador que baila al cambiar la fecha no sirve para decidir nada.
-     */
+    // Cada cifra del panel usa el otro filtro activo; al pulsarla, esa cantidad
+    // coincide con las filas que aparecen en la lista.
     $$('#pedidos-filtros [data-order-filter]').forEach((chip) => {
       const value = chip.dataset.orderFilter;
-      const total = byFilter(value, items).length;
+      const total = byFilter(value, porFechaYBusqueda).length;
       const base = ORDER_FILTERS.find(([known]) => known === value)?.[1] ?? 'Pedidos';
       chip.textContent = total ? `${base} ${total}` : base;
       chip.setAttribute('aria-pressed', String(value === filter));
@@ -5346,7 +5373,7 @@
      */
     $$('#pedidos-filtros [data-order-date]').forEach((chip) => {
       const modo = chip.dataset.orderDate;
-      const total = items.filter((item) => orderInDateRange(item, orderDateRange({ mode: modo, from: '', to: '' }))).length;
+      const total = byFilter(filter, matchingSearch.filter((item) => orderInDateRange(item, orderDateRange({ mode: modo, from: '', to: '' })))).length;
       const base = ORDER_DATE_LABELS[modo] ?? 'Fecha';
       chip.textContent = total ? `${base} ${total}` : base;
       chip.setAttribute('aria-pressed', String(range.mode === modo));
@@ -5356,19 +5383,17 @@
       chipIntervalo.textContent = range.mode === 'custom' ? `Intervalo · ${range.label}` : 'Intervalo…';
       chipIntervalo.setAttribute('aria-pressed', String(range.mode === 'custom'));
     }
-    const query = state.pedidosSearch.trim().toLowerCase();
-    const visibles = query ? byStatus.filter((item) => orderMatchesSearch(item, query)) : byStatus;
+    const visibles = byFilter(filter, porFechaYBusqueda);
     pedidosVisibles = visibles;
     const count = $('#pedidos-count');
     if (count) {
-      const total = items.length;
-      // La cuenta dice SIEMPRE de dónde salen los que se ven (si no, la lista
-      // parece vacía sin motivo cuando el filtro de fecha deja fuera lo demás).
-      count.textContent = !total
+      // El total es la intersección de estado y fecha antes de la búsqueda.
+      const total = byStatus.length;
+      count.textContent = !items.length
         ? ''
-        : visibles.length === total && !query && range.mode === 'all'
-          ? `${total} ${total === 1 ? 'pedido' : 'pedidos'}`
-          : `${visibles.length} de ${total} pedidos · ${orderDateName(range)}`;
+        : query
+          ? `${visibles.length} de ${total} pedidos · ${orderDateName(range)}`
+          : `${total} ${total === 1 ? 'pedido' : 'pedidos'} · ${orderDateName(range)}`;
     }
     renderOrderBulk();
     box.innerHTML = visibles.length
@@ -22732,8 +22757,8 @@
       await registration.showNotification('Prueba en este teléfono', {
         body: 'Si ves este aviso, este teléfono muestra los avisos del CRM.',
         tag: 'phyto-push-test-local',
-        icon: '/admin/fulltech-icon-192.png?v=3',
-        badge: '/admin/fulltech-icon-192.png?v=3',
+        icon: '/admin/assets/branding/fulltech-crm-192.png',
+        badge: '/admin/assets/branding/fulltech-crm-192.png',
         data: { deepLink: '/admin/?v=hoy' },
       });
       return true;

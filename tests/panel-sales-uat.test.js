@@ -841,6 +841,14 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
         ) ?? null,
       'la fila del pedido entregado',
     );
+    const fechaEntrega = ordenDe(entregado)?.delivered_at;
+    expect(fechaEntrega).toBeTruthy();
+    expect(fila.querySelector('.order-row__when')?.textContent).toBe(
+      new Intl.DateTimeFormat('es-DO', {
+        timeZone: 'America/Santo_Domingo', weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+      }).format(new Date(fechaEntrega)),
+    );
+    expect(fila.querySelector('.order-row__when')?.title).toContain('República Dominicana');
     click(fila);
     const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del entregado');
     click(fab);
@@ -853,6 +861,19 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(menu.textContent).toContain('Programar mensaje al cliente');
     click('[data-close-sheet]');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+
+    // Estado y fecha se cruzan: el número del chip coincide con las filas visibles.
+    click($('#pedidos-filtros [data-order-filter="entregado"]'));
+    expect($('#pedidos-filtros [data-order-filter="entregado"]').textContent).toContain('1');
+    expect($$('#list-pedidos .order-row')).toHaveLength(1);
+    click($('#pedidos-filtros [data-order-date="yesterday"]'));
+    expect($$('#list-pedidos .order-row')).toHaveLength(0);
+    expect($('#pedidos-filtros [data-order-filter="entregado"]').textContent).not.toContain('1');
+    click($('#pedidos-filtros [data-order-date="all"]'));
+    expect($('#pedidos-filtros [data-order-filter="entregado"]').textContent).toContain('1');
+    expect($$('#list-pedidos .order-row')).toHaveLength(1);
+    click($('#pedidos-filtros [data-order-filter="todo"]'));
+    click($('#pedidos-filtros [data-order-date="today"]'));
   });
 
   /*
