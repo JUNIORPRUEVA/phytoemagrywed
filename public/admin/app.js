@@ -5970,8 +5970,7 @@
     openSheet(
       'Acciones del mapa',
       `
-      <p class="view__hint">Cómo se ve el terreno</p>
-      <div class="menu-list">
+      <div class="menu-list" style="max-height:50vh;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
         ${baseRow('satelite')}
         ${baseRow('calles')}
         ${
@@ -5984,16 +5983,10 @@
               )
             : ''
         }
-      </div>
-      <p class="view__hint">Qué se ve en el mapa</p>
-      <div class="menu-list">
         ${capa('orders', ICONS.box, 'Pedidos con ubicación', 'Dónde hay que entregar')}
         ${capa('locations', ICONS.pin, 'Ubicaciones de clientes', 'Los puntos que han mandado por WhatsApp')}
         ${capa('live', ICONS.send, 'Entregas en vivo', 'El GPS del repartidor mientras reparte')}
-      </div>
-      <p class="view__hint">Herramientas</p>
-      <div class="menu-list">
-        ${fila('lista', ICONS.box, 'Pedidos y ubicaciones', 'Abre la lista (con distancias y acciones)')}
+        ${fila('lista', ICONS.box, 'Abrir la lista de pedidos', 'Con distancias y acciones')}
         ${fila(
           'medir',
           ICONS.pin,
@@ -6004,9 +5997,7 @@
         ${fila('aqui', ICONS.send, 'Ir a mi ubicación', 'Fija tu punto y ordena todo por cercanía')}
         ${fila('ajustar', ICONS.search, 'Ver todo', 'Encuadra todos los puntos del mapa')}
         ${activas.length ? fila('seguir', ICONS.retry, 'Seguir la entrega en vivo', `${activas.length} en camino: centra en el repartidor`) : ''}
-        ${fila('actualizar', ICONS.retry, 'Actualizar ahora', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
       </div>
-      <button class="btn btn--ghost btn--block" data-delivery-push type="button">${ICONS.bell} ${escapeHtml(pushPermissionLabel())}</button>
       <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
       `,
     );
