@@ -1,6 +1,9 @@
 import { handleOfflineOperation, operationStatuses } from './offline-operations.mjs';
 import { FULLTECH_CONTACT_TEMPLATE } from './fulltech-contact-template.mjs';
 import { QUOTE_WHATSAPP_TEMPLATE } from './quote-template.mjs';
+import {createSmartCommerce} from './smart-commerce.mjs';
+import {createRoadRouter} from './smart-commerce-routing.mjs';
+import {handleCommercePublic,handleCommerceAdmin} from './smart-commerce-routes.mjs';
 /**
  * ============================================================================
  *  API del CRM + panel de administración (PWA).
@@ -2773,6 +2776,7 @@ function newId(prefix) {
 }
 
 async function ensureInventoryForSale(ctx, item) {
+  if(isCompletedPurchaseStatus(item.status)){try{await ctx.smartCommerce?.fulfillment.assertSale({...orderOf(item),id:item.id});}catch(error){return {ok:false,status:error.status||409,error:error.code,message:error.message};}}
   if (!ctx.inventory) return { ok: true };
   const order = orderOf(item);
   if (ctx.storeCatalog && order) {
@@ -2976,6 +2980,7 @@ async function auditOrderStatusTransition(ctx, input) {
 }
 
 async function markOrderDelivered(ctx, item, actor = null, options = {}) {
+  try{await ctx.smartCommerce?.fulfillment.assertSale({...orderOf(item),id:item.id});}catch(error){return {ok:false,status:error.status||409,error:error.code,message:error.message};}
   const beforeStatus = item.status ?? orderOf(item)?.status ?? 'nuevo';
   const alreadyDelivered = isCompletedPurchaseStatus(beforeStatus);
   const updatedStatus = alreadyDelivered
@@ -3028,6 +3033,7 @@ async function markOrderDelivered(ctx, item, actor = null, options = {}) {
 async function cancelOpenOrder(ctx, item, reason, actor = null, source = 'MANUAL_ADMIN') {
   const order = orderOf(item);
   if (!order) return { ok: false, status: 422, error: 'invalid_order' };
+  try{await ctx.smartCommerce?.fulfillment.cancelOrder(item.id,actor);}catch(error){return {ok:false,status:error.status||409,error:error.code,message:error.message};}
   const at = ctx.clock().toISOString();
   const cancelledOrder = {
     ...order,
@@ -3626,13 +3632,14 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
     built.order.fulfillment_method = body.fulfillment === 'pickup' ? 'pickup' : 'delivery';
     built.order.payment_status = 'pending';
     built.order.warranty_snapshot = Array.isArray(body.warrantySnapshot) ? body.warrantySnapshot : [];
+    if(options.smartQuote)built.order.smart_commerce=options.smartQuote;
   }
   /*
    * La ubicación elegida queda en el HISTORIAL del cliente con su procedencia
    * (dispositivo del operador, coordenadas a mano o reutilizada), para poder
    * elegirla la próxima vez. Reutilizar una que ya existía no duplica filas.
    */
-  await rememberOrderLocation(ctx, {
+  if(!options.smartQuote||options.smartQuote.saveAddressPreference)await rememberOrderLocation(ctx, {
     location: entrega.location,
     customerId: customer.id,
     conversationId,
@@ -3795,6 +3802,7 @@ async function createStoreOrderUnlocked(ctx, session, body = {}) {
   const previous = scoped || (legacy?.customer_id === customerId && orderOf(legacy)?.origin === 'FULLTECH_STORE' ? legacy : null);
   if (previous) {
     const order = orderOf(previous);
+    if(ctx.smartCommerce&&order?.smart_commerce?.id)await ctx.smartCommerce.completeOrder(account,order.smart_commerce.id,requestKey,previous.id);
     return { ok: true, duplicate: true, order: {
       id: previous.id, number: order?.order_number, status: previous.status,
       total: order?.total, currency: order?.currency ?? 'DOP',
@@ -3807,20 +3815,28 @@ async function createStoreOrderUnlocked(ctx, session, body = {}) {
   } catch (error) {
     return { ok: false, status: error.status ?? 422, error: error.code ?? 'invalid_cart', message: error.message };
   }
-  const fulfillment = body.fulfillment === 'pickup' ? 'pickup' : 'delivery';
+  let smartQuote=null;
+  if(ctx.smartCommerce){
+    if(!body.quoteId)return {ok:false,status:409,error:'quote_required',message:'Confirma primero la cotización de entrega.'};
+    try{smartQuote=await ctx.smartCommerce.prepareOrder(account,body.quoteId,requestKey,body.items,body.paymentMethod||'arrange_later');}
+    catch(error){return {ok:false,status:error.status||503,error:error.code||'quote_unavailable',message:error.status?error.message:'No pudimos validar la cotización.'};}
+  }
+  const fulfillment = smartQuote?.fulfillment ?? (body.fulfillment === 'pickup' ? 'pickup' : 'delivery');
   const address = fulfillment === 'delivery'
-    ? String(body.address ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
+    ? String(smartQuote?.destination?.address ?? body.address ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
     : '';
   if (fulfillment === 'delivery' && address.length < 8) {
     return { ok: false, status: 422, error: 'address_required', message: 'Escribe la dirección de entrega.' };
   }
   const notes = String(body.notes ?? '').trim().slice(0, 500);
+  if(smartQuote?.managedFulfillment){try{await ctx.smartCommerce.fulfillment.holdOrder(account,smartQuote,idempotentId);}catch(error){return {ok:false,status:error.status||409,error:error.code||'reservation_failed',message:error.message};}}
   const result = await createOrderUnlocked(
     ctx,
     {
       id: idempotentId,
       customerId: customerId,
-      items: lines.map((line) => ({ variantId: line.id, quantity: line.quantity })),
+      items: lines.map((line) => ({ variantId: line.id, quantity: line.quantity,...(smartQuote?{unitPrice:smartQuote.lines.find(i=>i.id===line.id).unitPriceCents/100}:{}) })),
+      ...(smartQuote?{deliveryFee:smartQuote.deliveryFeeCents/100,paymentMethod:smartQuote.paymentIntent==='cash'?'CASH':smartQuote.paymentIntent.startsWith('transfer')?'TRANSFER':undefined,deliveryLocation:smartQuote.destination}:{}),
       origin: 'FULLTECH_STORE',
       source: 'FULLTECH_STORE',
       channel: 'store',
@@ -3830,15 +3846,17 @@ async function createStoreOrderUnlocked(ctx, session, body = {}) {
       warrantySnapshot: lines.map((line) => ({
         product_id: line.id,
         name: line.name,
-        unit_price: line.price,
+        unit_price: smartQuote?smartQuote.lines.find(i=>i.id===line.id).unitPriceCents/100:line.price,
         quantity: line.quantity,
         warranty: line.warranty,
         captured_at: new Date().toISOString(),
       })),
     },
     null,
+    {smartQuote},
   );
-  if (!result?.ok) return result;
+  if (!result?.ok){if(smartQuote?.managedFulfillment)await ctx.smartCommerce.fulfillment.cancelOrder(idempotentId,null);return result;}
+  if(smartQuote)await ctx.smartCommerce.completeOrder(account,smartQuote.id,requestKey,result.item?.id??result.order?.id);
   return {
     ok: true,
     duplicate: result.duplicate === true,
@@ -5723,6 +5741,7 @@ async function handle(req, res, ctx) {
 
   // Cuenta de cliente y solicitudes de la tienda (sesión propia, separada del panel).
   if (await handleStoreAccountRoute({ req, res, route, url, ctx, json, readJson: readJsonBody })) return;
+  if (await handleCommercePublic({req,res,route,ctx,json,readJson:readJsonBody}))return;
 
   // Confirmación limitada a un envío: no requiere la cookie de una app cerrada.
   if (route === '/api/push/receipts' && req.method === 'POST') {
@@ -5918,6 +5937,7 @@ async function handle(req, res, ctx) {
     legacy: Boolean(legacyAuthenticated),
     permissions: permissionsForRole(actor?.role),
   });
+  if(actor?.role==='SUPPLIER'&&route.startsWith('/api/admin/')&&!route.startsWith('/api/admin/store/commerce/operations/')&&!['/api/admin/login','/api/admin/auth/login','/api/admin/logout','/api/admin/auth/logout','/api/admin/session','/api/admin/auth/me','/api/admin/users/me/password'].includes(route)){forbid('La cuenta de proveedor solo puede operar sus sucursales autorizadas.');return;}
 
   /*
    * CANAL ÚNICO DE TIEMPO REAL DEL CRM (`GET /api/admin/events`).
@@ -6205,7 +6225,7 @@ async function handle(req, res, ctx) {
         firstName: body.firstName ?? body.first_name,
         lastName: body.lastName ?? body.last_name,
         displayName: body.displayName ?? body.display_name,
-        role: ['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR'].includes(String(body.role)) ? String(body.role) : 'AGENT',
+        role: ['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR', 'SUPPLIER'].includes(String(body.role)) ? String(body.role) : 'AGENT',
         personalPhone: body.personalPhone ?? body.personal_phone,
         fleetPhone: body.fleetPhone ?? body.fleet_phone,
         active: body.active !== false,
@@ -6810,6 +6830,7 @@ async function handle(req, res, ctx) {
     if (await handlePosRoute({req,res,route,ctx,actor,json,readJson:readJsonBody,can:permission=>hasPermission(actor,permission),createOrder,findOrder:id=>findOrderItem(ctx.store,id),
       listDeliveryCandidates: async () => (await ctx.users.listUsers()).filter((user) => canDeliver(user) && user.active !== false).map((user) => ({ id: user.id, name: user.display_name || user.name || user.username || user.id, role: user.role })),
       listDeliveryContacts: async () => { const value = (await ctx.settings.read('delivery_contacts'))?.value; return Array.isArray(value) ? value.filter((row) => row?.phone).map((row) => ({ id: row.id || row.phone, name: row.name || row.phone, phone: row.phone })) : []; }})) return;
+    if (await handleCommerceAdmin({req,res,route,ctx,actor,json,readJson:readJsonBody}))return;
     if (await handleSupplierRoutes({req,res,route,ctx,actor,json,readJson:readJsonBody,
   can:permission=>hasPermission(actor,permission),
   sanitize:value=>hasPermission(actor,'cost.view')?value:stripSensitiveFinancials(value)})) return;
@@ -7093,6 +7114,7 @@ async function handle(req, res, ctx) {
       }
       const beforeRows = await store.listAdmin({ limit: 1000 });
       const before = beforeRows.find((row) => row.id === id);
+      if(orderOf(before)?.smart_commerce?.managedFulfillment){json(res,409,{ok:false,error:'managed_order_locked',message:'Usa las acciones de fulfillment, pago o estado del pedido; la edición genérica no puede sustituir reservas.'});return;}
       const legacyDeliveryRollback =
         before?.type === 'order_intent' &&
         isDeliveryOnly(actor) &&
@@ -10229,6 +10251,7 @@ async function handle(req, res, ctx) {
         });
         return;
       }
+      try{await ctx.smartCommerce?.fulfillment.cancelOrder(orderId,actor);}catch(error){json(res,error.status||409,{ok:false,error:error.code,message:error.message});return;}
       const deleted = await store.remove(orderId);
       await ctx.audit?.record({
         entity: 'order',
@@ -10261,6 +10284,7 @@ async function handle(req, res, ctx) {
       }
       const current = orderOf(item);
       const currentFirst = current?.items?.[0] ?? null;
+      if(current?.smart_commerce?.managedFulfillment){json(res,409,{ok:false,error:'managed_order_locked',message:'Cancela y recotiza para cambiar líneas, destino o importes de un pedido reservado.'});return;}
       /*
        * UBICACIÓN DE ENTREGA: si se manda una, se resuelve y se comprueba que es
        * de ESE cliente. Si no se manda nada, se CONSERVA la que ya tenía el pedido
@@ -12945,6 +12969,8 @@ export async function startCrmServer(config = {}) {
     clock: config.clock,
   });
   const storeOAuth = createStoreOAuth({ config: settings.storeOAuth, fetchImpl: config.storeOAuthFetch ?? fetch, clock: config.clock });
+  const smartCommerce=await createSmartCommerce({enabled:config.storeSmartCommerce?.enabled===true||(config.storeSmartCommerce?.enabled!==false&&process.env.FULLTECH_SMART_COMMERCE_ENABLED==='true'),backend:db.kind,handle:store.handle,catalog:storeCatalog,db,customers,audit,clock:config.clock,
+    router:config.storeSmartCommerce?.router??createRoadRouter({baseUrl:process.env.FULLTECH_ROUTING_OSRM_URL||'',profile:process.env.FULLTECH_ROUTING_PROFILE||'driving',fetchImpl:config.storeSmartCommerce?.routingFetch??fetch}),capacityProvider:config.storeSmartCommerce?.capacityProvider,supplierNotifier:config.storeSmartCommerce?.supplierNotifier});
 
   /*
    * Identidad de cliente: OTP de teléfono, confirmación de correo, recuperación
@@ -12985,6 +13011,7 @@ export async function startCrmServer(config = {}) {
     storeCatalog,
     storeKey: storeCatalog?.storeKey ?? STORE_KEY,
     storeAccounts,
+    smartCommerce,
     storeOAuth,
     storeVerifications,
     googleId,
@@ -13053,6 +13080,7 @@ export async function startCrmServer(config = {}) {
     timeZone: TIME_ZONE,
     clock: config.clock ?? (() => new Date()),
   };
+  smartCommerce?.fulfillment.setAdapters({getOrder:async orderId=>{const row=await store.getAdmin(orderId);return row?{row,order:orderOf(row)}:null;},completeOrder:(orderId,actor)=>transitionOrderStatus(ctx,{orderId,targetStatus:'ENTREGADO',actor,source:'SMART_PICKUP',reason:'Retiro autorizado con código de un solo uso'}),cancelOrder:(orderId,actor)=>transitionOrderStatus(ctx,{orderId,targetStatus:'CANCELADO',actor,source:'STORE_CUSTOMER',reason:'Cancelación solicitada por el propietario del pedido'})});
   ctxRef.current = ctx;
   chatEventsRef.current = (info) => emitChatEvent(ctx, info);
 

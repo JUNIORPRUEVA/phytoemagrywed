@@ -507,7 +507,7 @@
         <label class="field"><span class="field__label">Precio actual de oferta (RD$)</span><input class="field__input" name="offer_price" type="number" min="0.01" step="0.01" value="${p.offer_price_cents!=null?(Number(p.offer_price_cents)/100).toFixed(2):(Number(p.compare_at_cents)>Number(p.price_cents)?(Number(p.price_cents)/100).toFixed(2):'')}"></label></div>
         <div class="store-form-grid"><label class="field"><span class="field__label">Inicio (opcional)</span><input class="field__input" name="offer_start_at" type="datetime-local" value="${dateTimeLocal(p.offer_start_at)}"></label>
         <label class="field"><span class="field__label">Final (opcional)</span><input class="field__input" name="offer_end_at" type="datetime-local" value="${dateTimeLocal(p.offer_end_at)}"></label></div>
-        <label class="store-check"><input name="daily_offer" type="checkbox" ${p.daily_offer === true ? 'checked' : ''}> Participar en ofertas diarias</label>
+        <p class="store-muted">Las ofertas vigentes, publicadas y disponibles participan automáticamente en la selección diaria de la tienda.</p>
         <small>Las ofertas diarias se seleccionan automáticamente en la zona horaria America/Santo_Domingo y solo usan productos publicados, vendibles y disponibles.</small>
       </fieldset>
 
@@ -634,7 +634,6 @@
     if(form.elements.track_stock)data.track_stock=data.kind==='product'&&form.elements.track_stock.checked;
     data.warranty_available=form.elements.warranty_available.checked;
     data.offer_active=form.elements.offer_active.checked;
-    data.daily_offer=form.elements.daily_offer.checked;
     delete data.image;if(galleryDirty)data.images=gallery.map(entry=>entry.data?{data:entry.data}:{id:entry.id});if(editing)data.version=editing.version;
     try {await request(`products${editing?'/'+encodeURIComponent(editing.id):''}`,data,editing?'PATCH':'POST');dialog.close();await load(true);notice(`${data.kind==='service'?'Servicio':'Producto'} guardado.`);}
     catch(err){

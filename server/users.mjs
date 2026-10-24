@@ -38,7 +38,7 @@ export function validateUserPhone(raw) {
   return { ok: true, value: `+${digits}` };
 }
 
-export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR']);
+export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR', 'SUPPLIER']);
 
 /**
  * Largo mínimo de una contraseña.
@@ -50,6 +50,9 @@ export const USER_ROLES = Object.freeze(['ADMIN', 'AGENT', 'DELIVERY', 'OPERADOR
 export const MIN_PASSWORD_LENGTH = 6;
 export const ROLE_PERMISSIONS = Object.freeze({
   ADMIN: Object.freeze(['*']),
+  // Supplier access is exclusively granted per branch in Smart Commerce.
+  // Never inherit AGENT's customer/chat/payment permissions.
+  SUPPLIER: Object.freeze([]),
   AGENT: Object.freeze([
     'clients.read',
     'clients.update',

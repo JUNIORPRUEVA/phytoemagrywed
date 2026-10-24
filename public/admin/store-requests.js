@@ -84,7 +84,7 @@
       ${images ? `<div class="requests-photos">${images}</div>` : ''}
       <ul class="requests-timeline">${timeline}</ul>
       ${request.quote ? `<div class="requests-quote-read"><span>Propuesta enviada</span><strong>${money(request.quote.amount, request.quote.currency)}</strong>${request.quote.advance_amount > 0 ? `<p>Anticipo ${request.quote.advance_percent}%: ${money(request.quote.advance_amount, request.quote.currency)}</p>` : ''}${request.quote.notes ? `<p>${esc(request.quote.notes)}</p>` : ''}</div>` : ''}
-      ${request.payment ? `<div class="requests-payment"><h4>Anticipo reportado por el cliente</h4><p><strong>${money(request.payment.amount, 'DOP')}</strong>${request.payment.reference ? ` · Ref. ${esc(request.payment.reference)}` : ''} · ${esc(date(request.payment.reported_at))}</p><p class="store-muted">Estado: ${esc(PAYMENT_LABEL[request.payment.status] || request.payment.status)}${request.payment.verified_at ? ` · verificado ${esc(date(request.payment.verified_at))}` : ''}${request.payment.reason ? ` · ${esc(request.payment.reason)}` : ''}</p>${request.payment.status === 'reported' ? '<div class="requests-payment__actions"><button class="btn btn--primary btn--sm" type="button" data-payment-confirm>Confirmar anticipo</button><button class="btn btn--ghost btn--sm" type="button" data-payment-reject>Rechazar</button></div>' : ''}<p class="store-muted">Confirmar el anticipo no marca el pedido como pagado: el resto se cobra por los canales normales.</p></div>` : ''}
+      ${request.payment ? `<div class="requests-payment"><h4>Anticipo reportado por el cliente</h4><p><strong>${money(request.payment.amount, 'DOP')}</strong>${request.payment.reference ? ` · Ref. ${esc(request.payment.reference)}` : ''} · ${esc(date(request.payment.reported_at))}</p><p class="store-muted">Estado: ${esc(PAYMENT_LABEL[request.payment.status] || request.payment.status)}${request.payment.verified_at ? ` · verificado ${esc(date(request.payment.verified_at))}` : ''}${request.payment.reason ? ` · ${esc(request.payment.reason)}` : ''}</p>${state.canManage && request.payment.status === 'reported' ? '<div class="requests-payment__actions"><button class="btn btn--primary btn--sm" type="button" data-payment-confirm>Confirmar anticipo</button><button class="btn btn--ghost btn--sm" type="button" data-payment-reject>Rechazar</button></div>' : ''}<p class="store-muted">Confirmar el anticipo no marca el pedido como pagado: el resto se cobra por los canales normales.</p></div>` : ''}
       ${state.canManage ? `<form class="requests-form" id="request-admin-form" data-request-id="${esc(request.id)}">
         <label class="field"><span class="field__label">Estado</span><select class="field__select" name="status">${STATUSES.map(([value, label]) => `<option value="${value}" ${request.status === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <div class="requests-form__grid">
@@ -96,7 +96,7 @@
         <label class="field"><span class="field__label">Nota interna</span><textarea class="field__input" name="adminNotes" rows="2" maxlength="2000">${esc(request.admin_notes ?? '')}</textarea></label>
         <p class="store-form-error" id="request-admin-error" role="alert"></p>
         <button class="btn btn--primary btn--block" type="submit">Guardar solicitud</button>
-      </form>` : '<p class="store-muted">Solo administración puede cambiar el estado o enviar una cotización.</p>'}
+      </form>` : '<p class="store-muted">Archivo histórico de solo lectura. Este servicio fue retirado.</p>'}
     </section>`;
   }
 
