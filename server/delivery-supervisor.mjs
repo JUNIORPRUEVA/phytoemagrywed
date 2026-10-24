@@ -29,6 +29,62 @@
 import { randomUUID } from 'node:crypto';
 import { toE164 } from './whatsapp.mjs';
 import { COURIER_STATUS, courierOf, savedCourierContacts } from './delivery-courier.mjs';
+import { DELIVERY_STATES } from './delivery-lifecycle.mjs';
+
+/**
+ * ETAPAS LOGÍSTICAS QUE CIERRAN LA SUPERVISIÓN.
+ *
+ * `delivery_lifecycle` es la verdad del reparto en el móvil (asignado, ofrecido,
+ * aceptado, recogido, en ruta, en el domicilio, entregado...). Cuando el pedido
+ * ya está entregado —o su asignación terminó en rechazo, caducidad o cancelación—
+ * NO se le puede seguir recordando al repartidor que «inicie la entrega»: es el
+ * error más caro del supervisor y la razón de este cruce.
+ *
+ * `REASSIGNED` queda FUERA a propósito: el pedido sigue vivo con otro
+ * responsable y debe volver a aceptarse.
+ */
+const LIFECYCLE_FINISHED = Object.freeze([
+  DELIVERY_STATES.DELIVERED,
+  DELIVERY_STATES.CANCELLED,
+  DELIVERY_STATES.EXPIRED,
+  DELIVERY_STATES.REJECTED,
+]);
+
+/**
+ * Etapa de supervisión derivada del estado logístico REAL, o null si el
+ * `delivery_lifecycle` no manda para este pedido (los pedidos antiguos, sin
+ * ciclo logístico, siguen usando las reglas de siempre).
+ *
+ * @param {any} order Pedido ya parseado.
+ * @returns {{stage:string|null, finished:boolean}}
+ */
+export function lifecycleSupervisionOf(order) {
+  /*
+   * SOLO el estado logístico GUARDADO. La derivación para pedidos antiguos es
+   * una heurística y no puede pisar el calendario del supervisor.
+   */
+  const stored = String(order?.delivery?.lifecycle ?? '').trim().toUpperCase();
+  const lifecycle = DELIVERY_STATES[stored] ? stored : null;
+  if (!lifecycle) return { stage: null, finished: false };
+  if (LIFECYCLE_FINISHED.includes(lifecycle)) {
+    return { stage: SUPERVISOR_STAGES.CLOSED, finished: true };
+  }
+  return { stage: null, finished: false };
+}
+
+/**
+ * NOTA DE DISEÑO (por qué NO se remapea la etapa del supervisor).
+ *
+ * La etapa del supervisor NO es el estado logístico: es un CALENDARIO de avisos
+ * (T+0, T+5, T+20, T+30) con reglas ya cubiertas por 111 pruebas. Remapear la
+ * etapa desde `delivery_lifecycle` cambió el significado de `not_accepted` y de
+ * `pending_start` y rompió 8 de esas pruebas (incidencias, auditoría de cierre,
+ * calendario de aceptación). Por eso esta integración solo aplica la regla
+ * inequívoca: **una entrega terminada deja de supervisarse**.
+ *
+ * El estado logístico se expone en el resultado (`lifecycle`) para que el panel
+ * y la IA puedan leerlo sin reinterpretar el calendario.
+ */
 
 /** Ajustes del supervisor (un documento en la colección `settings`). */
 export const SUPERVISOR_SETTINGS_KEY = 'delivery_supervisor';
@@ -480,6 +536,8 @@ export function supervisionEligibility(order, settings = {}, itemId = '') {
   const s = normalizeSupervisorSettings(settings);
   if (!order) return { eligible: false, reason: 'invalid' };
   if (CLOSED_STATUSES.includes(String(order.status ?? ''))) return { eligible: false, reason: 'closed' };
+  /* Una entrega ya terminada en el móvil no se supervisa ni se recuerda. */
+  if (lifecycleSupervisionOf(order).finished) return { eligible: false, reason: 'delivery_finished' };
   const responsible = responsibleOf(order);
   if (!responsible) return { eligible: false, reason: 'unassigned' };
   if (String(order.delivery?.delivery_status ?? '').toUpperCase() === 'CANCELLED') {
@@ -543,6 +601,24 @@ export function supervisionOf(order, options = {}) {
 
   const responsible = responsibleOf(order);
   const phone = phoneOf(responsible);
+  /*
+   * UN PEDIDO YA ENTREGADO NO SE LE RECUERDA A NADIE.
+   * El estado logístico manda sobre cualquier heurística de estados antiguos.
+   */
+  const lifecycle = lifecycleSupervisionOf(order);
+  if (lifecycle.finished) {
+    return {
+      stage: SUPERVISOR_STAGES.CLOSED,
+      severity: 'ok',
+      nextAction: STAGE_NEXT_ACTION.closed,
+      closed: true,
+      responsible: null,
+      phone: null,
+      hasPhone: null,
+      lifecycle: String(order?.delivery?.lifecycle ?? '').toUpperCase() || null,
+      pendingPickups,
+    };
+  }
   /* Se sabe si hay teléfono cuando es externo (viene en el pedido) o cuando
      quien llama pasó el mapa de teléfonos del equipo. */
   const phoneKnown = Boolean(responsible) && (responsible.type === 'external' || Boolean(phoneByUser));
@@ -592,6 +668,11 @@ export function supervisionOf(order, options = {}) {
     else stage = SUPERVISOR_STAGES.PENDING_START;
   }
 
+  /*
+   * EL ESTADO LOGÍSTICO SE EXPONE, NO MANDA.
+   * Se devuelve para que el panel y la IA sepan en qué paso real va la entrega
+   * sin reinterpretar el calendario de avisos.
+   */
   const assignedAt = firstTime(supervisor.assigned_at, order.delivery?.delivery_assigned_at, order.delivery?.external?.assigned_at, order.created_at);
   const acceptedAt = firstTime(order.delivery?.delivery_accepted_at, supervisor.acknowledged_at);
   const startedAt = firstTime(supervisor.started_at, order.delivery?.external?.started_at, order.delivery?.delivery_started_at, assignedAt);
@@ -640,6 +721,8 @@ export function supervisionOf(order, options = {}) {
     anchorAt: anchorAt || now,
     elapsedMinutes,
     pendingPickups,
+    /* Paso logístico real del móvil (o null si el pedido es anterior). */
+    lifecycle: String(order?.delivery?.lifecycle ?? '').toUpperCase() || null,
     postponeCount: Number(supervisor.postpone_count ?? 0) || 0,
     postponedUntil: postponedUntilMs ? new Date(postponedUntilMs).toISOString() : null,
   };
