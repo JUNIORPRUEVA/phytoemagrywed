@@ -214,6 +214,21 @@ export const COLLECTIONS = Object.freeze({
     },
   },
   /*
+   * ÚLTIMA UBICACIÓN CONOCIDA DEL REPARTIDOR (`courier_positions`).
+   *
+   * Una fila por cuenta de repartidor: NO es un historial de rutas. Se guarda
+   * solo mientras hay una entrega en curso y sirve para que el CRM muestre el
+   * punto con su antigüedad y el estado de señal. La retención es mínima por
+   * diseño: la posición se sobrescribe en cada actualización.
+   */
+  courier_positions: {
+    indexed: {
+      courier_id: 'text',
+      order_id: 'text',
+      updated_at: 'text',
+    },
+  },
+  /*
    * HISTORIAL DE LA ENTREGA (`delivery_events`).
    *
    * Una fila por transición real (o por mensaje encolado), con `idempotency_key`

@@ -130,6 +130,7 @@ import {
 import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, validateRemittance } from './delivery-cash.mjs';
 import { reconcileDeliveryCash } from './delivery-reconciliation.mjs';
 import { applyTransferVerification, planDeliveryPayment } from './delivery-payment.mjs';
+import { describePosition, signalState, validateCourierLocation } from './courier-location.mjs';
 /* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
 import {
   COURIER_LOCK_MS,
@@ -6402,6 +6403,58 @@ async function handle(req, res, ctx) {
     return;
   }
 
+  /*
+   * UBICACIÓN DEL REPARTIDOR (FULLTECH DELIVERY).
+   * La identidad sale del TOKEN, nunca del cuerpo. Solo se acepta durante una
+   * entrega activa y solo se guarda la ÚLTIMA posición: no se construye un
+   * historial de rutas ni se guarda nada fuera de la jornada de reparto.
+   */
+  if (route === '/api/courier/location' && req.method === 'POST') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    let body = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      body = {};
+    }
+    const mine = await listCourierOrders(store, auth.account, {
+      includeClosed: false,
+      getCustomer: null,
+    }).catch(() => []);
+    const activeIds = mine
+      .filter((order) => ['ASSIGNED', 'OFFERED', 'ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'EN_ROUTE', 'ARRIVED'].includes(String(order.delivery_lifecycle ?? '').toUpperCase()))
+      .map((order) => order.id);
+    if (!activeIds.length) {
+      json(res, 409, {
+        ok: false,
+        error: 'no_active_delivery',
+        message: 'El seguimiento solo está activo durante una entrega en curso.',
+      });
+      return;
+    }
+    const previous = await ctx.db.get('courier_positions', auth.account.id).catch(() => null);
+    const checked = validateCourierLocation(body, { now: Date.now(), previous });
+    if (!checked.ok) {
+      json(res, checked.status ?? 422, { ok: false, error: checked.error, message: checked.message, at: checked.previous_at ?? null });
+      return;
+    }
+    const doc = {
+      courier_id: auth.account.id,
+      ...checked.point,
+      order_id: checked.point.orderId ?? activeIds[0],
+      suspicious: checked.suspicious,
+      updated_at: new Date().toISOString(),
+    };
+    if (previous) await ctx.db.update('courier_positions', auth.account.id, doc);
+    else await ctx.db.insert('courier_positions', { id: auth.account.id, ...doc });
+    json(res, 200, { ok: true, state: signalState(checked.point), suspicious: checked.suspicious });
+    return;
+  }
+
   if (route === '/api/courier/me' && req.method === 'GET') {
     const auth = await courierAuth();
     if (!auth.ok) {
@@ -7120,6 +7173,35 @@ async function handle(req, res, ctx) {
         if (order) orders.push({ ...order, id: item.id });
       }
       json(res, 200, { ok: true, ...reconcileDeliveryCash({ orders, ledger }) }, { 'cache-control': 'no-store' });
+      return;
+    }
+
+    /*
+     * POSICIONES DE REPARTIDORES (solo lectura, para el centro de monitoreo).
+     * Devuelve la ÚLTIMA posición conocida con su antigüedad y estado de señal.
+     * No expone historial de rutas ni el teléfono del repartidor.
+     */
+    if (route === '/api/admin/delivery-courier-positions' && req.method === 'GET') {
+      if (!can('admin.full') && !can('delivery.manage')) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list('courier_positions', { limit: 1000 })) ?? [];
+      const accounts = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
+      const byId = new Map(accounts.map((row) => [row.id, row]));
+      const now = Date.now();
+      const positions = rows.map((row) =>
+        describePosition(row, {
+          now,
+          courierId: row.courier_id ?? row.id,
+          orderIds: row.order_id ? [row.order_id] : [],
+        }),
+      ).map((row) => ({
+        ...row,
+        courier_name: byId.get(row.courier_id)?.display_name ?? null,
+        kind: byId.get(row.courier_id)?.kind ?? null,
+      }));
+      json(res, 200, { ok: true, positions, server_time: new Date(now).toISOString() }, { 'cache-control': 'no-store' });
       return;
     }
 
@@ -14559,3 +14641,4 @@ if (isEntryPoint) {
 }
 
 export { CLOSED_STATUSES, STATUSES };
+

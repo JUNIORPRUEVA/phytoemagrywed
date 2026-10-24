@@ -1,52 +1,72 @@
 <!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Custodia y rendiciones · FULLTECH</title>
-<link rel="stylesheet" href="/admin/smart-commerce.css">
 <style>
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#0f172a;background:#f6f8fb}
-main{max-width:1080px;margin:0 auto;padding:20px 16px 48px}
-header h1{font-size:22px;margin:6px 0 4px}
-header p{margin:0;color:#475569;font-size:13.5px;max-width:70ch}
-.metrics{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:16px 0}
-.metric{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px}
-.metric small{display:block;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
-.metric strong{font-size:19px;font-variant-numeric:tabular-nums}
-.metric--warn{border-color:#f2c17b;background:#fffaf1}
-.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 12px}
-.toolbar input,.toolbar select{min-height:38px;padding:0 10px;border:1px solid #cbd5e1;border-radius:9px;font-size:13.5px;background:#fff}
-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;font-size:13.5px}
-th,td{padding:9px 10px;text-align:left;border-bottom:1px solid #eef2f7}
-th{background:#f1f5f9;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#475569}
+:root{--line:#e4e9f0;--ink:#0f172a;--muted:#64748b;--brand:#1d4ed8;--warn:#b45309;--ok:#15803d;--bg:#f5f7fa}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);font-size:13.5px;line-height:1.35}
+main{max-width:1180px;margin:0 auto;padding:14px 14px 32px}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.bar h1{font-size:16px;margin:0;letter-spacing:.01em}
+.bar .sp{flex:1}
+.bar a,.bar button{font:inherit}
+.bar a{color:var(--brand);text-decoration:none;font-weight:600;font-size:12.5px}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 10px}
+.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 9px;min-height:52px}
+.card small{display:block;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.card b{display:block;font-size:15.5px;font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.warn{border-color:#f0c987;background:#fffdf7}
+.toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.toolbar input,.toolbar select{min-height:32px;padding:0 9px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;background:#fff}
+.toolbar input[type=search]{min-width:190px}
+button{min-height:32px;padding:0 11px;border-radius:8px;border:1px solid var(--brand);background:var(--brand);color:#fff;font-weight:600;cursor:pointer}
+button.ghost{background:#fff;color:var(--brand)}
+button[disabled]{opacity:.5;cursor:not-allowed}
+.wrap{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid #eef2f7}
+th{font-size:9.8px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:#f8fafc;font-weight:700;white-space:nowrap}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:#f8fafc}
+tbody tr:last-child td{border-bottom:0}
 td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-tr[data-courier]{cursor:pointer}
-tr[data-courier]:hover{background:#f8fafc}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid}
-.badge--ok{color:#166534;background:#f0fdf4;border-color:#bbf7d0}
-.badge--warn{color:#92400e;background:#fffbeb;border-color:#fde68a}
-button{min-height:38px;padding:0 14px;border-radius:9px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;font-size:13.5px;font-weight:600;cursor:pointer}
-button[disabled]{opacity:.55;cursor:not-allowed}
-button.ghost{background:#fff;color:#1d4ed8}
-#incidents article{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
-#incidents .type{font-weight:700;font-size:13px}
-#incidents .action{color:#475569;font-size:12.5px;margin:4px 0 0}
-#detail{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;justify-content:flex-end;z-index:20}
-#detail[open]{display:flex}
-#detail .sheet{background:#fff;width:min(460px,100%);height:100%;overflow:auto;padding:18px;box-shadow:-8px 0 24px rgba(15,23,42,.18)}
-#detail h2{font-size:17px;margin:4px 0 2px}
-#detail .row{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #eef2f7;font-size:13px}
-#detail .row span{color:#64748b}
-.form-grid{display:grid;gap:10px;grid-template-columns:1fr 1fr;margin:10px 0}
-.form-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#475569;font-weight:600}
-.form-grid input,.form-grid select{min-height:38px;padding:0 8px;border:1px solid #cbd5e1;border-radius:9px;font-size:13.5px}
-.muted{color:#64748b;font-size:12px}
+td.act{text-align:right}
+.who b{display:block;font-size:13px}
+.who span{font-size:11px;color:var(--muted)}
+.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;border:1px solid}
+.tag.ok{color:var(--ok);background:#f0fdf4;border-color:#bbf7d0}
+.tag.warn{color:var(--warn);background:#fffbeb;border-color:#fde68a}
+.tag.none{color:var(--muted);background:#f8fafc;border-color:var(--line)}
+.empty{padding:22px;text-align:center;color:var(--muted);font-size:12.5px}
+#incidents{margin-top:10px}
+#incidents h2{font-size:12.5px;margin:0 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+#incidents .item{border:1px solid var(--line);border-left:3px solid #f0c987;background:#fff;border-radius:8px;padding:7px 9px;margin-bottom:5px;font-size:12.5px}
+#incidents .item b{font-size:12px}
+#incidents .item p{margin:2px 0 0;color:var(--muted);font-size:11.8px}
+#drawer{position:fixed;inset:0;background:rgba(15,23,42,.32);display:none;justify-content:flex-end;z-index:30}
+#drawer[open]{display:flex}
+#drawer .sheet{background:#fff;width:min(380px,100%);height:100%;display:flex;flex-direction:column;box-shadow:-6px 0 22px rgba(15,23,42,.16)}
+#drawer header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+#drawer header h2{font-size:14px;margin:0;flex:1}
+#drawer .body{padding:10px 12px;overflow:auto;flex:1}
+#drawer .row{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #f1f5f9}
+#drawer .row span{color:var(--muted);font-size:12px}
+#drawer .row b{font-variant-numeric:tabular-nums}
+#drawer h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:12px 0 5px}
+#remittance{display:grid;gap:6px}
+#remittance input{min-height:32px;padding:0 8px;border:1px solid #cbd5e1;border-radius:8px;font:inherit}
+.hint{font-size:11.5px;color:var(--muted);margin:0}
+@media(max-width:900px){.cards{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}th.hide,td.hide{display:none}.toolbar input[type=search]{flex:1;min-width:0}}
 </style></head>
 <body><main>
-<header>
-  <a href="/admin/">← CRM FULLTECH</a>
+<div class="bar">
   <h1>Custodia y rendiciones</h1>
-  <p>Efectivo cobrado por los repartidores y su rendición a la empresa. <strong>El efectivo declarado no es efectivo verificado</strong>: aquí se ve lo que el repartidor declaró, lo que se le cargó en el libro y lo que devolvió. No se corrige ningún saldo desde esta pantalla.</p>
-</header>
+  <span class="sp"></span>
+  <a href="/admin/">← CRM</a>
+  <button id="refresh" class="ghost" type="button">Actualizar</button>
+</div>
+<p class="hint" id="status" role="status">Comprobando sesión…</p>
 
-<p id="status" role="status">Comprobando sesión…</p>
 <form id="login" hidden>
   <label>Usuario<input name="username" autocomplete="username" required></label>
   <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
@@ -54,51 +74,48 @@ button.ghost{background:#fff;color:#1d4ed8}
 </form>
 
 <div id="workspace" hidden>
-  <div class="metrics" id="metrics"></div>
+  <div class="cards" id="cards"></div>
 
   <div class="toolbar">
     <input id="search" type="search" placeholder="Buscar repartidor…" aria-label="Buscar repartidor">
-    <select id="filter" aria-label="Filtrar por saldo">
+    <select id="filter" aria-label="Filtrar">
       <option value="all">Todos</option>
-      <option value="pending">Con saldo pendiente</option>
+      <option value="pending">Con saldo</option>
       <option value="settled">Conciliados</option>
       <option value="risk">Con diferencia</option>
     </select>
-    <button id="refresh" class="ghost" type="button">Actualizar</button>
-    <span class="muted" id="updated"></span>
+    <span class="hint" id="updated"></span>
   </div>
 
-  <table>
-    <thead><tr><th>Repartidor</th><th>Tipo</th><th class="num">Cargado</th><th class="num">Rendido</th><th class="num">Saldo</th><th>Estado</th></tr></thead>
-    <tbody id="couriers"><tr><td colspan="6" class="muted">Cargando…</td></tr></tbody>
-  </table>
+  <div class="wrap">
+    <table>
+      <thead><tr>
+        <th>Repartidor</th><th class="hide">Pedidos</th><th class="num">Efectivo</th><th class="num hide">Rendido</th><th class="num">Pendiente</th><th>Estado</th><th class="act"></th>
+      </tr></thead>
+      <tbody id="couriers"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
+    </table>
+  </div>
 
-  <h2 style="font-size:16px;margin:22px 0 8px">Incidencias de conciliación</h2>
-  <p class="muted" style="margin:0 0 10px">Solo lectura. Detecta pedidos entregados sin cargo, cargos duplicados o huérfanos y cargos distintos del efectivo declarado. Ninguna incidencia modifica el libro.</p>
   <div id="incidents"></div>
 </div>
 
-<div id="detail" role="dialog" aria-modal="true" aria-label="Detalle del repartidor">
+<div id="drawer" role="dialog" aria-modal="true" aria-label="Detalle del repartidor">
   <div class="sheet">
-    <button id="close-detail" class="ghost" type="button" style="float:right">Cerrar</button>
-    <h2 id="detail-name">Repartidor</h2>
-    <p class="muted" id="detail-meta"></p>
-    <div id="detail-totals"></div>
-
-    <h3 style="font-size:14px;margin:16px 0 6px">Registrar rendición</h3>
-    <form id="remittance">
-      <div class="form-grid">
-        <label>Monto recibido (RD$)<input name="amount" inputmode="decimal" placeholder="0.00" required></label>
-        <label>Referencia (opcional)<input name="note" maxlength="120" placeholder="Depósito, recibo…"></label>
-      </div>
-      <p class="muted" id="remittance-preview">Saldo pendiente: RD$0.00 · Nuevo saldo: RD$0.00</p>
-      <button type="submit">Confirmar rendición</button>
-      <p class="muted" id="remittance-result" role="status"></p>
-    </form>
-
-    <h3 style="font-size:14px;margin:16px 0 6px">Movimientos</h3>
-    <div id="detail-movements"></div>
+    <header><h2 id="d-name">Repartidor</h2><button id="d-close" class="ghost" type="button">Cerrar</button></header>
+    <div class="body">
+      <div id="d-totals"></div>
+      <h3>Registrar rendición</h3>
+      <form id="remittance">
+        <input name="amount" inputmode="decimal" placeholder="Monto recibido (RD$)" required>
+        <input name="note" maxlength="120" placeholder="Referencia (opcional)">
+        <p class="hint" id="r-preview">Saldo pendiente: RD$0.00 · Nuevo saldo: RD$0.00</p>
+        <button type="submit">Confirmar rendición</button>
+        <p class="hint" id="r-result" role="status"></p>
+      </form>
+      <h3>Movimientos</h3>
+      <div id="d-movements"></div>
+    </div>
   </div>
 </div>
-<script type="module" src="/admin/custody.js?v=1"></script>
+<script type="module" src="/admin/custody.js?v=2"></script>
 </main></body></html>
