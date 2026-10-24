@@ -141,10 +141,20 @@ describe('custodia sobre entregas reales', () => {
     await courier(`/api/courier/orders/${orderId}/start`, { token, method: 'POST', body: {} });
     const codeResponse = await call(`orders/${orderId}/delivery-code`, {});
     const code = codeResponse.data.code;
-    const delivered = await courier(`/api/courier/orders/${orderId}/deliver`, {
+    /* Primero sin importe: el servidor debe exigirlo (no cobra el saldo por su cuenta). */
+    const probe = await courier(`/api/courier/orders/${orderId}/deliver`, {
       token,
       method: 'POST',
       body: { proofCode: code },
+    });
+    expect(probe.status).toBe(422);
+    expect(probe.data.error).toBe('cash_amount_required');
+    const expected = probe.data.expected_cents;
+
+    const delivered = await courier(`/api/courier/orders/${orderId}/deliver`, {
+      token,
+      method: 'POST',
+      body: { proofCode: code, cashReceivedCents: expected },
     });
     expect(delivered.status).toBe(200);
     expect(delivered.data.state).toBe('DELIVERED');
@@ -166,7 +176,16 @@ describe('custodia sobre entregas reales', () => {
     const token = session.data.token;
     await courier(`/api/courier/orders/${orderId}/start`, { token, method: 'POST', body: {} });
     const code = (await call(`orders/${orderId}/delivery-code`, {})).data.code;
-    await courier(`/api/courier/orders/${orderId}/deliver`, { token, method: 'POST', body: { proofCode: code } });
+    const probe = await courier(`/api/courier/orders/${orderId}/deliver`, {
+      token,
+      method: 'POST',
+      body: { proofCode: code },
+    });
+    await courier(`/api/courier/orders/${orderId}/deliver`, {
+      token,
+      method: 'POST',
+      body: { proofCode: code, cashReceivedCents: probe.data.expected_cents },
+    });
 
     const before = await call('delivery-cash');
     const own = before.data.couriers.find((row) => row.courier_id === courierId);

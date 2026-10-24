@@ -226,7 +226,13 @@ describe('endpoints del repartidor', () => {
     const codeResponse = await call(`orders/${orderId}/delivery-code`, {});
     const code = codeResponse.data?.code;
     expect(typeof code).toBe('string');
-    const delivered = await courier(`${base}/deliver`, { token, method: 'POST', body: { proofCode: code } });
+    const probe = await courier(`${base}/deliver`, { token, method: 'POST', body: { proofCode: code } });
+    expect(probe.data.error).toBe('cash_amount_required');
+    const delivered = await courier(`${base}/deliver`, {
+      token,
+      method: 'POST',
+      body: { proofCode: code, cashReceivedCents: probe.data.expected_cents },
+    });
     expect(delivered.data.state).toBe('DELIVERED');
     expect(delivered.data.order.order_status).toBe('entregado');
 

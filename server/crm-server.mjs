@@ -6592,6 +6592,49 @@ async function handle(req, res, ctx) {
         });
         return;
       }
+
+      /*
+       * EFECTIVO REALMENTE COBRADO ≠ SALDO PENDIENTE DEL PEDIDO.
+       * El repartidor declara lo que recibió; si no coincide con lo esperado hay que decir
+       * por qué. Sin importe declarado no se confirma la entrega de un pedido contra efectivo.
+       */
+      const blockForCash = paymentBlockOf(found.order);
+      const cashExpected = Math.round(Number(blockForCash.due ?? 0) * 100);
+      const cashMethod = String(
+        found.order?.payment?.method ?? found.order?.payment_method ?? '',
+      ).toUpperCase();
+      if (cashMethod === 'CASH' && cashExpected > 0) {
+        const raw = Number(body.cashReceivedCents ?? body.cash_received_cents ?? NaN);
+        if (!Number.isFinite(raw) || raw < 0) {
+          json(res, 422, {
+            ok: false,
+            error: 'cash_amount_required',
+            message: 'Indica cuánto efectivo recibiste del cliente.',
+            expected_cents: cashExpected,
+          });
+          return;
+        }
+        const declared = Math.round(raw);
+        const reason = text(body.cashReason ?? body.cash_reason, 300);
+        if (declared !== cashExpected && !reason) {
+          json(res, 422, {
+            ok: false,
+            error: 'difference_reason_required',
+            message: 'El importe no coincide con lo esperado: escribe el motivo.',
+            expected_cents: cashExpected,
+            declared_cents: declared,
+            difference_cents: declared - cashExpected,
+          });
+          return;
+        }
+        found.order.delivery = {
+          ...(found.order.delivery ?? {}),
+          cash_expected_cents: cashExpected,
+          cash_declared_cents: declared,
+          cash_difference_cents: declared - cashExpected,
+          cash_difference_reason: reason,
+        };
+      }
     }
     const now = new Date().toISOString();
     const result = applyTransition(found.order, event, {
@@ -6617,7 +6660,8 @@ async function handle(req, res, ctx) {
     if (event === 'deliver') {
       const block = paymentBlockOf(result.order);
       const isCash = String(result.order?.payment?.method ?? result.order?.payment_method ?? '').toUpperCase() === 'CASH';
-      const dueCents = Math.round(Number(block.due ?? 0) * 100);
+      /* Se carga lo que el repartidor DECLARÓ haber recibido (validado arriba), no el saldo. */
+      const dueCents = Math.round(Number(result.order?.delivery?.cash_declared_cents ?? 0));
       if (isCash && dueCents > 0) {
         await ctx.db.insert(CASH_COLLECTION, {
           id: `cash_${randomUUID().replace(/-/g, '')}`,
