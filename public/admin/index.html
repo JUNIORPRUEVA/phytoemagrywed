@@ -143,30 +143,65 @@
     -->
     <style>
       /*
-        DRAWER DERECHO DEL MAPA: pegado al borde derecho, el 70% del ancho y todo
-        el alto. La lista de opciones llena ese alto y se desplaza dentro.
+        DRAWER DERECHO DEL MAPA: pegado al borde derecho, 70% del ancho y TODO
+        el alto (de arriba abajo), sin título y con las opciones sin borde.
       */
       #sheet[data-variant='right'] { align-items: stretch; justify-content: flex-end; }
       #sheet[data-variant='right'] .sheet__panel {
-        height: 100dvh;
-        max-height: 100dvh;
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: auto;
+        height: 100%;
+        max-height: none;
         width: 70vw;
         max-width: 70vw;
-        margin: 0 0 0 auto;
+        margin: 0;
         border-radius: 14px 0 0 14px;
         display: flex;
         flex-direction: column;
         animation: sheetRightIn .18s ease-out;
       }
+      /* El título «Acciones del mapa» no hace falta: solo queda la X de cerrar. */
+      #sheet[data-variant='right'] .sheet__head {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        left: auto;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        z-index: 2;
+      }
+      #sheet[data-variant='right'] .sheet__title { display: none; }
       #sheet[data-variant='right'] .sheet__body {
         flex: 1;
         min-height: 0;
+        padding-top: 50px;
         overflow: auto;
         display: flex;
         flex-direction: column;
         gap: 8px;
       }
-      #sheet[data-variant='right'] .sheet__body .menu-list { flex: 1 1 auto; min-height: 0; }
+      #sheet[data-variant='right'] .sheet__body .menu-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      /* Opciones elegantes: sin caja ni borde, solo el resaltado al pasar. */
+      #sheet[data-variant='right'] .menu-item {
+        background: transparent;
+        border: 0;
+        border-radius: 9px;
+        box-shadow: none;
+      }
+      #sheet[data-variant='right'] .menu-item:hover,
+      #sheet[data-variant='right'] .menu-item:focus-visible { background: rgba(29, 78, 216, .09); }
+      html[data-theme='dark'] #sheet[data-variant='right'] .menu-item:hover,
+      html[data-theme='dark'] #sheet[data-variant='right'] .menu-item:focus-visible { background: rgba(148, 190, 255, .14); }
       @keyframes sheetRightIn { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
 
       /*
