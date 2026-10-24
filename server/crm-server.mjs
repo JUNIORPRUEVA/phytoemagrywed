@@ -129,6 +129,7 @@ import {
 } from './delivery-lifecycle.mjs';
 import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, validateRemittance } from './delivery-cash.mjs';
 import { reconcileDeliveryCash } from './delivery-reconciliation.mjs';
+import { applyTransferVerification, planDeliveryPayment } from './delivery-payment.mjs';
 /* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
 import {
   COURIER_LOCK_MS,
@@ -6654,47 +6655,53 @@ async function handle(req, res, ctx) {
       }
 
       /*
-       * EFECTIVO REALMENTE COBRADO ≠ SALDO PENDIENTE DEL PEDIDO.
-       * El repartidor declara lo que recibió; si no coincide con lo esperado hay que decir
-       * por qué. Sin importe declarado no se confirma la entrega de un pedido contra efectivo.
+       * CÓMO PAGÓ EL CLIENTE. Antes solo existía «contra efectivo»; ahora el
+       * repartidor declara EFECTIVO, TRANSFERENCIA, MIXTO o NO HA PAGADO.
+       * La custodia en efectivo es SOLO el efectivo declarado y acotado al saldo
+       * (el cambio no es custodia) y una transferencia declarada no se da por
+       * cobrada hasta que administración la verifique.
        */
       const blockForCash = paymentBlockOf(found.order);
-      const cashExpected = Math.round(Number(blockForCash.due ?? 0) * 100);
-      const cashMethod = String(
-        found.order?.payment?.method ?? found.order?.payment_method ?? '',
-      ).toUpperCase();
-      if (cashMethod === 'CASH' && cashExpected > 0) {
-        const raw = Number(body.cashReceivedCents ?? body.cash_received_cents ?? NaN);
-        if (!Number.isFinite(raw) || raw < 0) {
-          json(res, 422, {
-            ok: false,
-            error: 'cash_amount_required',
-            message: 'Indica cuánto efectivo recibiste del cliente.',
-            expected_cents: cashExpected,
-          });
-          return;
-        }
-        const declared = Math.round(raw);
-        const reason = text(body.cashReason ?? body.cash_reason, 300);
-        if (declared !== cashExpected && !reason) {
-          json(res, 422, {
-            ok: false,
-            error: 'difference_reason_required',
-            message: 'El importe no coincide con lo esperado: escribe el motivo.',
-            expected_cents: cashExpected,
-            declared_cents: declared,
-            difference_cents: declared - cashExpected,
-          });
-          return;
-        }
-        found.order.delivery = {
-          ...(found.order.delivery ?? {}),
-          cash_expected_cents: cashExpected,
-          cash_declared_cents: declared,
-          cash_difference_cents: declared - cashExpected,
-          cash_difference_reason: reason,
-        };
+      const dueCents = Math.max(0, Math.round(Number(blockForCash.due ?? 0) * 100));
+      const requestedMethod = String(body.paymentMethod ?? body.payment_method ?? 'cash').toLowerCase();
+      const orderIsPrepaid = String(found.order?.payment?.method ?? found.order?.payment_method ?? '').toUpperCase() !== 'CASH';
+      const prepaidRequired = Boolean(found.order?.delivery?.prepaid_required ?? found.order?.prepaid_required);
+      const plan = planDeliveryPayment({
+        method: requestedMethod,
+        dueCents,
+        cashDeclaredCents: body.cashReceivedCents ?? body.cash_received_cents ?? 0,
+        transferDeclaredCents: body.transferDeclaredCents ?? body.transfer_declared_cents ?? 0,
+        reason: body.cashReason ?? body.cash_reason ?? body.differenceReason,
+        unpaidReason: body.unpaidReason ?? body.unpaid_reason,
+        /* Entregar sin cobrar se bloquea si el pedido exige prepago o no da crédito. */
+        allowUnpaid: !(prepaidRequired || (orderIsPrepaid && dueCents > 0)),
+      });
+      if (!plan.ok) {
+        json(res, plan.status ?? 422, {
+          ok: false,
+          error: plan.error,
+          message: plan.message,
+          due_cents: plan.due_cents,
+          expected_cents: plan.due_cents,
+          declared_cents: plan.declared_cents,
+          difference_cents: plan.difference_cents,
+        });
+        return;
       }
+      found.order.delivery = {
+        ...(found.order.delivery ?? {}),
+        cash_expected_cents: dueCents,
+        cash_declared_cents: plan.payment.cash_cents,
+        cash_difference_cents: plan.payment.cash_cents - dueCents,
+        cash_difference_reason: plan.payment.reason,
+        cash_change_cents: plan.payment.cash_change_cents ?? 0,
+        transfer_declared_cents: plan.payment.transfer_cents,
+        transfer_reference: text(body.transferReference ?? body.transfer_reference, 120),
+        unpaid_reason: plan.payment.unpaid_reason,
+        payment_declared_method: plan.payment.method,
+        payment_financial_state: plan.financialState,
+        payment_still_due_cents: plan.stillDueCents,
+      };
     }
     const now = new Date().toISOString();
     const result = applyTransition(found.order, event, {
@@ -6718,11 +6725,9 @@ async function handle(req, res, ctx) {
      * que el repartidor debe rendir. Idempotente por pedido: reintentar no duplica.
      */
     if (event === 'deliver') {
-      const block = paymentBlockOf(result.order);
-      const isCash = String(result.order?.payment?.method ?? result.order?.payment_method ?? '').toUpperCase() === 'CASH';
-      /* Se carga lo que el repartidor DECLARÓ haber recibido (validado arriba), no el saldo. */
+      /* Se carga lo que el repartidor DECLARÓ en efectivo (acotado al saldo), nunca la transferencia. */
       const dueCents = Math.round(Number(result.order?.delivery?.cash_declared_cents ?? 0));
-      if (isCash && dueCents > 0) {
+      if (dueCents > 0) {
         await ctx.db.insert(CASH_COLLECTION, {
           id: `cash_${randomUUID().replace(/-/g, '')}`,
           order_id: orderId,
@@ -6868,6 +6873,70 @@ async function handle(req, res, ctx) {
      */
     const canManageCouriers = can('admin.full') || can('delivery.manage');
     const couriersCollection = 'courier_accounts';
+
+    /*
+     * TRANSFERENCIA DECLARADA POR EL REPARTIDOR: administración la verifica o la
+     * rechaza. El repartidor nunca puede confirmar su propia transferencia.
+     * Verificar dos veces el mismo pago devuelve 409 y no duplica nada.
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/payment/transfer') && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/payment/transfer'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const order = orderOf(item) ?? {};
+      const decision = applyTransferVerification({
+        order,
+        decision: body.decision ?? body.estado,
+        reference: body.reference ?? body.referencia,
+        actor: actor?.display_name ?? actor?.id ?? null,
+      });
+      if (!decision.ok) {
+        json(res, decision.status ?? 409, { ok: false, error: decision.error, message: decision.message });
+        return;
+      }
+      const history = Array.isArray(order.delivery?.transfer_verifications) ? order.delivery.transfer_verifications : [];
+      const next = {
+        ...order,
+        delivery: {
+          ...(order.delivery ?? {}),
+          transfer_verified_cents: decision.transferVerifiedCents,
+          payment_financial_state: decision.financialState,
+          payment_still_due_cents: decision.stillDueCents,
+          transfer_reference: decision.record.reference ?? order.delivery?.transfer_reference ?? null,
+          transfer_verifications: [...history, decision.record],
+        },
+        updated_at: new Date().toISOString(),
+      };
+      await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: item.id,
+        action: `delivery.transfer_${decision.record.decision}`,
+        actor: actor?.display_name ?? actor?.id ?? null,
+        summary: `Transferencia ${decision.record.decision} por ${decision.record.declared_cents} cts`,
+        data: { amount_cents: decision.record.amount_cents, financial_state: decision.financialState },
+      });
+      json(res, 200, {
+        ok: true,
+        financial_state: decision.financialState,
+        still_due_cents: decision.stillDueCents,
+        transfer_verified_cents: decision.transferVerifiedCents,
+      });
+      return;
+    }
 
     /* CÓDIGO DE ENTREGA: lo genera el CRM y se le dice al cliente. Se guarda el hash. */
     if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery-code') && req.method === 'POST') {
