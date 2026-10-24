@@ -214,6 +214,39 @@ export const COLLECTIONS = Object.freeze({
     },
   },
   /*
+   * HISTORIAL DE LA ENTREGA (`delivery_events`).
+   *
+   * Una fila por transición real (o por mensaje encolado), con `idempotency_key`
+   * ÚNICA: repetir la petición devuelve el mismo resultado y no ejecuta dos veces.
+   * Nunca se borra: es la traza que explica quién movió el pedido y cuándo.
+   */
+  delivery_events: {
+    indexed: {
+      order_id: 'text',
+      event: 'text',
+      idempotency_key: 'text',
+      courier_account_id: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * MENSAJES AL CLIENTE POR TRANSICIÓN (`delivery_message_outbox`).
+   *
+   * `pending` = todavía no hay plantilla aprobada o falta el proveedor; NUNCA se
+   * marca `sent` sin respuesta del proveedor.
+   */
+  delivery_message_outbox: {
+    indexed: {
+      order_id: 'text',
+      kind: 'text',
+      status: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
    * FACTURAS DE PROVEEDOR (`supplier_invoices`): el comprobante ORIGINAL de la
    * tienda donde se compró un producto de terceros. Es documentación interna y
    * NUNCA se adjunta al PDF ni al WhatsApp que recibe el cliente.

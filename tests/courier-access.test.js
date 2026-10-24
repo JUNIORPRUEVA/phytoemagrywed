@@ -433,8 +433,8 @@ describe('sesión y límites', () => {
   });
 });
 
-describe('solo lectura: nada escribe', () => {
-  it('ninguna ruta del móvil acepta cambios y los datos quedan intactos', async () => {
+describe('solo lectura: lo que no es una transición sigue cerrado', () => {
+  it('las rutas del móvil que no son transiciones responden 405 read_only', async () => {
     const orderId = await createOrder({ phone: '8095557301' });
     expect((await call(`orders/${orderId}/courier/assign`, { contactPhone: EXTERNAL_PHONE })).status).toBe(200);
     await createCourierAccount({
@@ -448,13 +448,37 @@ describe('solo lectura: nada escribe', () => {
     const session = await login(EXTERNAL_PHONE, '123456');
     const token = session.data.token;
 
-    const before = JSON.stringify((await app.ctx.store.getAdmin(orderId)).orderJson);
-    for (const route of ['deliver', 'accept', 'pickup', 'payments', 'cancel', 'status']) {
+    for (const route of ['payments', 'cancel', 'status', 'refund', 'total']) {
       const attempt = await courierCall(`/api/courier/orders/${orderId}/${route}`, { token, method: 'POST', body: {} });
-      expect(attempt.status).toBe(405);
-      expect(attempt.data.error).toBe('read_only');
+      /* Acción desconocida (404) o ruta cerrada (405): nunca se ejecuta nada. */
+      expect([404, 405]).toContain(attempt.status);
+      expect(['unknown_action', 'read_only']).toContain(attempt.data.error);
     }
-    const after = JSON.stringify((await app.ctx.store.getAdmin(orderId)).orderJson);
+  });
+
+  /* Fase 05: entregar sin haber aceptado no puede mover el pedido ni un byte. */
+  it('una transición inválida no muta el pedido', async () => {
+    const orderId = await createOrder({ phone: '8095557311' });
+    expect((await call(`orders/${orderId}/courier/assign`, { contactPhone: EXTERNAL_PHONE })).status).toBe(200);
+    await createCourierAccount({
+      kind: 'EXTERNAL',
+      phone: EXTERNAL_PHONE,
+      displayName: 'Mensajero Externo',
+      contactId: 'contact-ext',
+      appAccess: true,
+      pin: '123456',
+    });
+    const token = (await login(EXTERNAL_PHONE, '123456')).data.token;
+
+    const before = JSON.stringify((await app.ctx.store.listAdmin({ limit: 5000 })).find((row) => row.id === orderId));
+    const attempt = await courierCall(`/api/courier/orders/${orderId}/deliver`, {
+      token,
+      method: 'POST',
+      body: {},
+    });
+    expect(attempt.status).toBe(409);
+    expect(attempt.data.error).toBe('invalid_transition');
+    const after = JSON.stringify((await app.ctx.store.listAdmin({ limit: 5000 })).find((row) => row.id === orderId));
     expect(after).toBe(before);
   });
 });

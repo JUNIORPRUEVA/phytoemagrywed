@@ -34,6 +34,13 @@
 
 import { toE164 } from './whatsapp.mjs';
 import { orderDestination } from './delivery-tracking.mjs';
+import { DELIVERY_STATES, DEFAULT_OFFER_TTL_MS, nextOfferExpiry } from './delivery-lifecycle.mjs';
+
+const OFFER_TTL_MS = Math.max(
+  60_000,
+  (Number(process.env.PHYTO_DELIVERY_OFFER_TTL_MINUTES ?? 15) || 15) * 60_000 ||
+    DEFAULT_OFFER_TTL_MS,
+);
 
 /** Plantilla con la que se manda el pedido (debe estar aprobada por Meta). */
 export const COURIER_TEMPLATE = 'phyto_pedido_repartidor_v1';
@@ -211,6 +218,9 @@ export async function assignCourier(input) {
       delivery_previous_user_id:
         order.delivery?.delivery_user_id ?? order.delivery?.delivery_previous_user_id ?? null,
       delivery_assigned_at: at,
+      /* Fase 05: el pedido externo también nace como OFERTA con vencimiento. */
+      lifecycle: DELIVERY_STATES.OFFERED,
+      offer_expires_at: nextOfferExpiry(Date.now(), OFFER_TTL_MS),
       external: {
         ...previous,
         contact_id: contact.id,

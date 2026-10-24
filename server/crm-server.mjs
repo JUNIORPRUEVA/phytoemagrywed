@@ -82,7 +82,7 @@ import { createCallingApi } from './calling-api.mjs';
 import { createCallingStore } from './calling-store.mjs';
 import { createCallingService } from './calling-service.mjs';
 import { handleCallingRoute } from './calling-routes.mjs';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -118,6 +118,15 @@ import { handleStorePublicRoute } from './store-public-routes.mjs';
 import { createStoreAccounts } from './store-accounts.mjs';
 import { handleStoreAccountRoute } from './store-account-routes.mjs';
 import { handleStoreRequestsAdminRoute } from './store-requests-admin-routes.mjs';
+/* Motor operativo de entregas (Fase 05): estados, transiciones e idempotencia. */
+import {
+  COURIER_ACTIONS,
+  DELIVERY_STATES,
+  applyTransition,
+  isOfferExpired,
+  lifecycleOf,
+  nextOfferExpiry,
+} from './delivery-lifecycle.mjs';
 /* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
 import {
   COURIER_LOCK_MS,
@@ -664,6 +673,12 @@ const TYPES = new Set(['lead', 'order_intent']);
 const SESSION_SECONDS = 90 * 24 * 60 * 60;
 const COOKIE = 'pe_crm';
 
+/** Vida de una oferta de reparto. Configurable; nunca menos de un minuto. */
+const OFFER_TTL_MS = Math.max(
+  60_000,
+  (Number(process.env.PHYTO_DELIVERY_OFFER_TTL_MINUTES ?? 15) || 15) * 60_000,
+);
+
 const STATUS_LABELS = {
   nuevo: 'Nuevo',
   contactado: 'Contactado',
@@ -1126,8 +1141,7 @@ async function listVisibleTracking(ctx, actor) {
   return out;
 }
 
-async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {
-  const current = orderOf(item);
+async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {  const current = orderOf(item);
   if (!current) return null;
   const previousUserId = text(current.delivery?.delivery_user_id, 80);
   const sameDelivery = previousUserId && previousUserId === deliveryUser?.id;
@@ -1166,6 +1180,9 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, opti
       delivery_assignment_note_by_user_id: assignmentNote && actor?.actor_type === 'USER' ? actor.id : null,
       delivery_assignment_note_by_display_name_snapshot: assignmentNote ? actor?.display_name ?? null : null,
       delivery_assignment_note_at: assignmentNote ? ctx.clock().toISOString() : null,
+      /* Fase 05: asignar abre una OFERTA con vencimiento; aceptar es otro paso. */
+      lifecycle: deliveryUser ? DELIVERY_STATES.OFFERED : DELIVERY_STATES.ASSIGNED,
+      offer_expires_at: deliveryUser ? nextOfferExpiry(Date.now(), OFFER_TTL_MS) : null,
       /*
        * EL REPARTIDOR EXTERNO ANTERIOR DEJA DE TENER EL PEDIDO.
        * Se conserva su bloque (historial de envíos y mensajes) pero marcado como
@@ -6345,6 +6362,160 @@ async function handle(req, res, ctx) {
       return;
     }
     json(res, 200, { ok: true, order: found.dto, read_only: true });
+    return;
+  }
+
+  if (route.startsWith('/api/courier/orders/') && req.method === 'POST') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    const rest = decodeURIComponent(route.slice('/api/courier/orders/'.length));
+    const slash = rest.lastIndexOf('/');
+    const orderId = slash > 0 ? rest.slice(0, slash) : rest;
+    const event = slash > 0 ? rest.slice(slash + 1) : '';
+    const COURIER_EVENTS = ['accept', 'reject', 'pickup', 'start', 'arrive', 'deliver'];
+    if (!COURIER_EVENTS.includes(event)) {
+      json(res, 404, { ok: false, error: 'unknown_action', message: 'Acción no reconocida.' });
+      return;
+    }
+    let body = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      body = {};
+    }
+    const found = await findCourierOrder(store, orderId, auth.account, {
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+    });
+    if (!found.ok) {
+      json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no está a tu nombre.' });
+      return;
+    }
+    const idempotencyKey = text(body.idempotencyKey ?? body.idempotency_key, 120);
+    if (idempotencyKey) {
+      const seen = (await ctx.db.list('delivery_events', { limit: 2000 }))?.find(
+        (row) => row.idempotency_key === idempotencyKey,
+      );
+      if (seen) {
+        const fresh = await findCourierOrder(store, orderId, auth.account, {
+          getCustomer: (customerId) => ctx.customers.get(customerId),
+        });
+        json(res, 200, {
+          ok: true,
+          duplicate: true,
+          order: fresh.dto,
+          state: fresh.dto?.delivery_lifecycle ?? lifecycleOf(fresh.order),
+          actions: COURIER_ACTIONS[lifecycleOf(fresh.order)] ?? [],
+        });
+        return;
+      }
+    }
+    /* Concurrencia optimista: si el cliente vio otra versión, no se le pisa el trabajo. */
+    const expectedVersion = Number(body.expectedVersion ?? body.expected_version);
+    const currentVersion = Number(found.order?.version) > 0 ? Number(found.order.version) : 1;
+    if (Number.isInteger(expectedVersion) && expectedVersion > 0 && expectedVersion !== currentVersion) {
+      json(res, 409, {
+        ok: false,
+        error: 'stale_order',
+        message: 'Otro cambio ocurrió mientras mirabas el pedido. Vuelve a abrirlo.',
+        currentVersion,
+      });
+      return;
+    }
+    /* La oferta vencida se cierra en el servidor, no en el teléfono. */
+    if (isOfferExpired(found.order)) {
+      const expired = applyTransition(found.order, 'expire', { now: new Date().toISOString() });
+      if (expired.ok) {
+        await ctx.store.update(found.item.id, { orderJson: JSON.stringify(expired.order) });
+        await ctx.db.insert('delivery_events', {
+          id: `evt_${randomUUID().replace(/-/g, '')}`,
+          order_id: orderId,
+          event: 'expire',
+          from_state: expired.from,
+          to_state: expired.to,
+          courier_account_id: auth.account.id,
+          idempotency_key: `expire:${orderId}:${expired.from}`,
+          created_at: new Date().toISOString(),
+        });
+      }
+      json(res, 409, {
+        ok: false,
+        error: 'offer_expired',
+        message: 'La oferta venció. El pedido volverá a asignarse.',
+      });
+      return;
+    }
+    const now = new Date().toISOString();
+    const result = applyTransition(found.order, event, {
+      actor,
+      now,
+      extra: { reason: text(body.reason ?? body.note, 300) },
+    });
+    if (!result.ok) {
+      json(res, result.status ?? 409, {
+        ok: false,
+        error: result.error,
+        message: result.message,
+        currentState: result.currentState,
+        allowed: result.allowed ?? [],
+      });
+      return;
+    }
+    const updated = await ctx.store.update(found.item.id, { orderJson: JSON.stringify(result.order) });
+    const eventId = `evt_${randomUUID().replace(/-/g, '')}`;
+    await ctx.db.insert('delivery_events', {
+      id: eventId,
+      order_id: orderId,
+      event,
+      from_state: result.from,
+      to_state: result.to,
+      courier_account_id: auth.account.id,
+      courier_display_name: auth.account.display_name ?? null,
+      idempotency_key: idempotencyKey ?? `${event}:${orderId}:${currentVersion}`,
+      reason: text(body.reason ?? body.note, 300),
+      created_at: now,
+    });
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: found.item.id,
+      action: `delivery.${event}`,
+      actor: auth.account.display_name ?? auth.account.id,
+      summary: `Entrega ${result.from} → ${result.to}`,
+      data: { from: result.from, to: result.to, courier: auth.account.id },
+    });
+    /*
+     * AVISOS AL CLIENTE (Fase 06): los DOS únicos rutinarios son el inicio de la
+     * entrega y la llegada. Se encolan SIEMPRE como evento; solo pasan a `sent` si
+     * un proveedor real confirma. Sin plantilla aprobada quedan `pending`.
+     */
+    const messageKind =
+      event === 'start' ? 'delivery_started' : event === 'arrive' ? 'delivery_arrived' : null;
+    if (messageKind) {
+      const approved = false; /* UAT: sin plantilla autorizada ni proveedor real. */
+      await ctx.db.insert('delivery_message_outbox', {
+        id: `msg_${randomUUID().replace(/-/g, '')}`,
+        order_id: orderId,
+        kind: messageKind,
+        status: approved ? 'pending' : 'pending_template',
+        idempotency_key: `${messageKind}:${orderId}`,
+        template: null,
+        error: approved ? null : 'no_approved_template',
+        created_at: now,
+      });
+    }
+    const fresh = await findCourierOrder(store, orderId, auth.account, {
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+    });
+    json(res, 200, {
+      ok: true,
+      duplicate: false,
+      order: fresh.dto ?? courierOrderDTO(updated, {}),
+      state: result.to,
+      actions: COURIER_ACTIONS[result.to] ?? [],
+      version: Number(result.order.version),
+    });
     return;
   }
 

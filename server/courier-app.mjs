@@ -18,6 +18,8 @@
 import { createHmac, pbkdf2, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
+import { COURIER_ACTIONS, lifecycleOf, operationalStatusFor } from './delivery-lifecycle.mjs';
+
 const derive = promisify(pbkdf2);
 
 const CREDENTIAL_VERSION = 'pbkdf2-sha256';
@@ -203,7 +205,6 @@ export function courierOrderStatus(order) {
     delivery_status: operational || null,
   };
 }
-
 /* ------------------------------------------------------------------ lectura */
 
 const money = (value) => {
@@ -246,6 +247,10 @@ export function courierOrderDTO(item, { customer = null } = {}) {
     order_number: order.order_number ?? null,
     version: Number.isInteger(order.version) && order.version > 0 ? order.version : 1,
     ...courierOrderStatus(order),
+    /* Estado LOGÍSTICO (Fase 05) y acciones que la app puede ofrecer. */
+    delivery_lifecycle: lifecycleOf(order),
+    available_actions: COURIER_ACTIONS[lifecycleOf(order)] ?? [],
+    offer_expires_at: delivery.offer_expires_at ?? null,
     customer: {
       display_name: customer?.name ?? order.customer_name ?? order.name ?? null,
       phone: customer?.phone_e164 ?? customer?.phone ?? order.customer_phone ?? order.phone ?? null,
