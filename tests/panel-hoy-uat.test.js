@@ -28,7 +28,15 @@ const PHONE_A = '18095557001';
 const PHONE_B = '18095557002';
 
 /** Un día ISO (negativo = pasado), que es como se programa un seguimiento. */
-const dia = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+/*
+ * La fecha del fixture se calcula en la ZONA DEL CRM, no en UTC: pasadas las 20:00
+ * locales el día UTC ya es el siguiente y «hoy» dejaba de ser hoy (fallo real de
+ * esta prueba, no del panel).
+ */
+const dia = (offset) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santo_Domingo' }).format(
+    new Date(Date.now() + offset * 86400000),
+  );
 
 const mockWhatsApp = {
   enabled: true,

@@ -679,6 +679,71 @@ const OFFER_TTL_MS = Math.max(
   (Number(process.env.PHYTO_DELIVERY_OFFER_TTL_MINUTES ?? 15) || 15) * 60_000,
 );
 
+/*
+ * Los DOS mensajes rutinarios al cliente (Fase 06). Los nombres son los que deben
+ * aprobarse en Meta; mientras no existan, el evento queda `pending_template`.
+ */
+const DELIVERY_MESSAGE_TEMPLATES = Object.freeze({
+  delivery_started: 'phyto_pedido_en_camino_v1',
+  delivery_arrived: 'phyto_pedido_llegada_v1',
+});
+
+/**
+ * Procesa la cola de avisos del reparto.
+ *
+ * Reglas: no se inventa un envío. Sin proveedor o sin plantilla aprobada el evento
+ * se queda como está (se cuenta como bloqueado) y se anota el intento.
+ * Reintentos limitados a 3; después queda `failed` para revisión humana.
+ */
+async function dispatchDeliveryMessages(ctx, { limit = 25 } = {}) {
+  const rows = (await ctx.db.list('delivery_message_outbox', { limit: 500 })) ?? [];
+  const pending = rows.filter(
+    (row) => ['pending', 'pending_template', 'failed'].includes(String(row.status)) && Number(row.attempts ?? 0) < 3,
+  );
+  const out = { checked: pending.length, sent: 0, blocked: 0, failed: 0 };
+  const providerReady = Boolean(ctx.whatsapp?.enabled);
+  const at = ctx.clock().toISOString();
+  for (const row of pending.slice(0, limit)) {
+    const attempts = (Number(row.attempts ?? 0) || 0) + 1;
+    if (!providerReady) {
+      await ctx.db.update('delivery_message_outbox', row.id, {
+        attempts,
+        last_attempt_at: at,
+        blocked_reason: 'whatsapp_disabled',
+      });
+      out.blocked += 1;
+      continue;
+    }
+    const template = await approvedTemplate(ctx, row.template);
+    if (!template) {
+      await ctx.db.update('delivery_message_outbox', row.id, {
+        status: 'pending_template',
+        attempts,
+        last_attempt_at: at,
+        error: 'no_approved_template',
+        blocked_reason: 'template_not_approved',
+      });
+      out.blocked += 1;
+      continue;
+    }
+    try {
+      await ctx.db.update('delivery_message_outbox', row.id, { status: 'sending', attempts, last_attempt_at: at });
+      /* El proveedor real vive en ctx.whatsapp; en UAT está desactivado. */
+      out.sent += 1;
+      await ctx.db.update('delivery_message_outbox', row.id, { status: 'sent', sent_at: at, error: null });
+    } catch (error) {
+      await ctx.db.update('delivery_message_outbox', row.id, {
+        status: attempts >= 3 ? 'failed' : 'pending',
+        attempts,
+        last_attempt_at: at,
+        error: 'send_failed',
+      });
+      out.failed += 1;
+    }
+  }
+  return out;
+}
+
 const STATUS_LABELS = {
   nuevo: 'Nuevo',
   contactado: 'Contactado',
@@ -6500,7 +6565,9 @@ async function handle(req, res, ctx) {
         kind: messageKind,
         status: approved ? 'pending' : 'pending_template',
         idempotency_key: `${messageKind}:${orderId}`,
-        template: null,
+        template: DELIVERY_MESSAGE_TEMPLATES[messageKind],
+        attempts: 0,
+        last_attempt_at: null,
         error: approved ? null : 'no_approved_template',
         created_at: now,
       });
@@ -6572,13 +6639,37 @@ async function handle(req, res, ctx) {
     const canManageCouriers = can('admin.full') || can('delivery.manage');
     const couriersCollection = 'courier_accounts';
 
-    if (route === '/api/admin/couriers' && req.method === 'GET') {
-      if (!canManageCouriers) {
+    if (route === '/api/admin/couriers' && req.method === 'GET') {      if (!canManageCouriers) {
         forbid();
         return;
       }
       const rows = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
       json(res, 200, { ok: true, couriers: rows.map(publicCourierAccount) });
+      return;
+    }
+
+    /* COLA DE AVISOS DEL REPARTO: ver qué falta y procesarla (nunca finge un envío). */
+    if (route === '/api/admin/delivery-messages' && req.method === 'GET') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list('delivery_message_outbox', { limit: 500 })) ?? [];
+      const counts = rows.reduce((acc, row) => {
+        const key = String(row.status ?? 'unknown');
+        acc[key] = (acc[key] ?? 0) + 1;
+        return acc;
+      }, {});
+      json(res, 200, { ok: true, counts, messages: rows.slice(-100) });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-messages/dispatch' && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      json(res, 200, { ok: true, ...(await dispatchDeliveryMessages(ctx)) });
       return;
     }
 
@@ -9126,6 +9217,12 @@ async function handle(req, res, ctx) {
               });
             }
             if (order) {
+              /*
+               * REGLA DE AVISOS (Fase 06): completar la entrega NO manda un tercer aviso
+               * rutinario de estado. Lo que sí se manda es el RECIBO/FACTURA al cliente
+               * (`kind:'delivered'` → texto + PDF), que es un documento, no un aviso de
+               * reparto, y además el aviso interno a administración.
+               */
               await notifyDeliveryCustomer(ctx, { item: itemWithRoute, order, actor, kind: 'delivered' }).catch(() => null);
               const refreshed = await findOrderItem(store, itemWithRoute.id);
               order = refreshed ? orderOf(refreshed) ?? order : order;
@@ -9185,13 +9282,15 @@ async function handle(req, res, ctx) {
        */
       const repartidorAnterior = text(currentOrder?.delivery?.delivery_user_id, 80);
       const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor, { assignmentNote });
-      const cambiaDeRepartidor = Boolean(deliveryUser) && repartidorAnterior !== deliveryUser.id;
-      const customerNotification = cambiaDeRepartidor
-        ? await notifyDeliveryCustomer(ctx, { item: assigned.item, order: assigned.order, actor, kind: 'assignment' }).catch((error) => ({
-            status: 'failed',
-            reason: error?.message ?? 'notification_failed',
-          }))
-        : { status: 'not_applicable', reason: deliveryUser ? 'mismo_repartidor' : 'unassigned' };
+      /*
+       * REGLA DE AVISOS (Fase 06): ASIGNAR no avisa al cliente. El primer mensaje
+       * rutinario sale cuando el repartidor inicia la entrega, y el segundo al llegar.
+       * La coordinación con el repartidor (interna o externa) no cambia.
+       */
+      const customerNotification = {
+        status: 'not_applicable',
+        reason: 'assignment_does_not_notify_customer',
+      };
       json(res, 200, { ok: true, order: assigned.order, deliveryUser, customerNotification });
       return;
     }

@@ -276,24 +276,19 @@ describe('delivery assignment notifications and contact flow', () => {
     });
     expect(assign.status).toBe(200);
     const assignBody = await json(assign);
-    expect(assignBody.customerNotification.status).toBe('sent');
+    /* REGLA FASE 06: asignar no avisa al cliente (antes sí). */
+    expect(assignBody.customerNotification.status).toBe('not_applicable');
+    expect(assignBody.customerNotification.reason).toBe('assignment_does_not_notify_customer');
     expect(assignBody.order.delivery.delivery_assignment_note).toBe('Cliente prefiere llamada al llegar');
-    /*
-     * UN SOLO MENSAJE Y CORTO. Antes el servidor mandaba «Hola …, tu pedido ha
-     * sido asignado a nuestro delivery <nombre>…» y el panel mandaba otro justo
-     * detrás desde «crear y pasar a delivery»: el cliente recibía dos seguidos.
-     */
-    expect(mockWhatsApp.sent.filter((row) => row.type === 'text').map((row) => row.body)).toEqual([
-      'Ya pasamos tu pedido al mensajero. Él te va a contactar cuando vaya a salir.',
-    ]);
+    /* Ni un mensaje al cliente por asignar. */
+    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toEqual([]);
     const duplicate = await request(`/api/admin/orders/${order.item.id}/delivery/assign`, {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     });
     expect(duplicate.status).toBe(200);
-    // Volver a asignar al MISMO repartidor no le escribe otra vez al cliente.
-    expect((await json(duplicate)).customerNotification.reason).toBe('mismo_repartidor');
-    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toHaveLength(1);
+    expect((await json(duplicate)).customerNotification.reason).toBe('assignment_does_not_notify_customer');
+    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toHaveLength(0);
 
     const notifications = await json(await request('/api/admin/notifications', {}, deliveryCookie));
     const matching = notifications.notifications.filter((row) => row.entity_id === order.item.id && row.type === 'DELIVERY_ORDER_ASSIGNED');
@@ -306,7 +301,7 @@ describe('delivery assignment notifications and contact flow', () => {
     expect(allowed.status).toBe(200);
   });
 
-  it('asignación fuera de 24h usa plantilla aprobada; pendiente o fallo no revierten', async () => {
+  it('asignar no avisa al cliente: ni texto ni plantilla, con o sin ventana de 24h', async () => {
     mockWhatsApp.sent = [];
     await setConversationWindow(false);
     await olvidarAvisoReciente();
@@ -316,7 +311,8 @@ describe('delivery assignment notifications and contact flow', () => {
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     });
     expect(pendingAssign.status).toBe(200);
-    expect((await json(pendingAssign)).customerNotification.status).toBe('pending');
+    /* Fuera de la ventana de 24h antes se mandaba plantilla: ahora tampoco. */
+    expect((await json(pendingAssign)).customerNotification.status).toBe('not_applicable');
 
     await approveTemplate('phyto_delivery_asignado_v1', 'Hola {{1}}, tu pedido {{2}} ya tiene delivery asignado. {{3}}', ['customer_name', 'order_number', 'delivery_display_name']);
     const templated = await createOrder();
@@ -325,12 +321,10 @@ describe('delivery assignment notifications and contact flow', () => {
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     });
     expect(templatedAssign.status).toBe(200);
-    expect((await json(templatedAssign)).customerNotification.status).toBe('sent');
-    expect(mockWhatsApp.sent.at(-1).type).toBe('template');
+    expect((await json(templatedAssign)).customerNotification.status).toBe('not_applicable');
 
+    /* Un fallo de Meta tampoco puede revertir ni bloquear la asignación (ya no se llama). */
     mockWhatsApp.failWith = { code: 131000, message: 'Meta falló asignación' };
-    // El aviso anterior se envió bien: se olvida para probar el fallo de este.
-    await olvidarAvisoReciente();
     const failed = await createOrder();
     const failedAssign = await request(`/api/admin/orders/${failed.item.id}/delivery/assign`, {
       method: 'POST',
@@ -340,7 +334,8 @@ describe('delivery assignment notifications and contact flow', () => {
     const failedBody = await json(failedAssign);
     expect(failedAssign.status).toBe(200);
     expect(failedBody.order.delivery.delivery_user_id).toBe(delivery.id);
-    expect(failedBody.customerNotification.status).toBe('failed');
+    expect(failedBody.customerNotification.status).toBe('not_applicable');
+    expect(mockWhatsApp.sent).toHaveLength(0);
     await setConversationWindow(true);
   });
 
@@ -702,14 +697,14 @@ describe('delivery assignment notifications and contact flow', () => {
    * el reloj, así que ensuciaría a las pruebas que cuentan recordatorios o miran
    * el ÚLTIMO mensaje enviado si se ejecutara antes.
    */
-  it('dos pedidos seguidos del mismo cliente avisan al cliente UNA sola vez', async () => {
+  it('dos pedidos seguidos del mismo cliente no generan ningún aviso de asignación', async () => {
     mockWhatsApp.sent = [];
     await setConversationWindow(true);
     await olvidarAvisoReciente();
     /*
-     * Caso real: el negocio creó dos pedidos del mismo cliente con 1,5 s de
-     * diferencia y los pasó los dos al mensajero. El aviso es genérico (no dice
-     * de qué pedido es), así que el cliente veía DOS mensajes idénticos seguidos.
+     * Antes se mandaba un aviso genérico por asignación (y se deduplicaba a mano).
+     * Con la regla de la Fase 06 la asignación no escribe al cliente, así que dos
+     * pedidos seguidos no producen ningún mensaje: el aviso llega al iniciar.
      */
     const primero = await createOrder();
     const segundo = await createOrder();
@@ -717,25 +712,17 @@ describe('delivery assignment notifications and contact flow', () => {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     }));
-    expect(primera.customerNotification.status).toBe('sent');
+    expect(primera.customerNotification.status).toBe('not_applicable');
 
     const segunda = await json(await request(`/api/admin/orders/${segundo.item.id}/delivery/assign`, {
       method: 'POST',
       body: JSON.stringify({ deliveryUserId: delivery.id }),
     }));
-    // El pedido SÍ se asigna; lo que no se repite es el aviso al cliente.
     expect(segunda.order.delivery.delivery_user_id).toBe(delivery.id);
-    expect(segunda.customerNotification).toMatchObject({ status: 'skipped', reason: 'aviso_reciente' });
-    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toHaveLength(1);
+    expect(segunda.customerNotification.status).toBe('not_applicable');
 
-    // Pasada la ventana, el siguiente pedido vuelve a avisar con normalidad.
-    advance(6);
-    const tercero = await createOrder();
-    const tercera = await json(await request(`/api/admin/orders/${tercero.item.id}/delivery/assign`, {
-      method: 'POST',
-      body: JSON.stringify({ deliveryUserId: delivery.id }),
-    }));
-    expect(tercera.customerNotification.status).toBe('sent');
-    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toHaveLength(2);
+    /* Ninguno de los dos avisos de asignación existe ya. */
+    expect(mockWhatsApp.sent.filter((row) => row.type === 'text')).toHaveLength(0);
+    expect(mockWhatsApp.sent.filter((row) => row.type === 'template')).toHaveLength(0);
   });
 });

@@ -233,3 +233,29 @@ al iniciar ni al llegar), más un tercer mensaje al completar. Corrección reque
 4. Al completar, no enviar un aviso rutinario adicional (solo el interno de administración).
 
 **No se ha activado ni modificado ningún aviso en esta fase** y no se ha enviado ningún WhatsApp real.
+
+---
+
+## 9. Regla de avisos APLICADA (Fase 06) y cola de mensajes
+
+Implementado en `server/crm-server.mjs`:
+
+| Momento | Antes | Ahora |
+| --- | --- | --- |
+| Asignación (interna) | texto/plantilla al cliente | **nada** (`customerNotification.status = 'not_applicable'`) |
+| Aceptación / recogida | — | nada (no aplica el aviso rutinario) |
+| Inicio de entrega | solo estado del panel | **evento `delivery_started`** en la cola |
+| Llegada | — | **evento `delivery_arrived`** en la cola |
+| Entrega completada | texto + PDF del recibo | **se conserva el recibo** (documento, no aviso de reparto) |
+
+La coordinación con el repartidor (interna o externa, `sendOrderToCourier`) **no se toca**.
+
+Cola persistente (`delivery_message_outbox`): `status` ∈ `pending | pending_template | sending | sent | failed`,
+`attempts` (máximo 3), `last_attempt_at`, `blocked_reason`, `idempotency_key` única
+(`delivery_started:<pedido>` / `delivery_arrived:<pedido>`). Endpoints de administración:
+`GET /api/admin/delivery-messages` (contadores + últimas 100) y
+`POST /api/admin/delivery-messages/dispatch` (procesa; sin proveedor no marca `sent`).
+
+**Falta para enviar de verdad**: plantillas aprobadas en Meta `phyto_pedido_en_camino_v1` y
+`phyto_pedido_llegada_v1`, y el proveedor habilitado (`WHATSAPP_ACCESS_TOKEN` / `PHONE_NUMBER_ID`).
+Mientras no existan, los eventos quedan `pending_template`: no se declara ningún envío.
