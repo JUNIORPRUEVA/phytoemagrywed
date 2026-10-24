@@ -335,9 +335,14 @@
                 <button class="drawer__item drawer__item--sub" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
                   <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa
                 </button>
-                <button class="drawer__item drawer__item--sub" data-tab="delivery" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
-                </button>
+                <a class="drawer__item drawer__item--sub" href="/admin/custody.html">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Custodia y rendiciones
+                </a>
+                <!--
+                  «MIS ENTREGAS» SE RETIRÓ DEL CRM.
+                  El repartidor opera únicamente en FULLTECH DELIVERY (app Android).
+                  El CRM asigna, supervisa, cobra y administra; no ejecuta entregas.
+                -->
                 <!--
                   El SUPERVISOR IA ya NO tiene entrada aquí: se administra desde
                   «Centro IA → Supervisor IA». La pantalla (`#view-supervisor`) y
@@ -659,8 +664,10 @@
 
         <!-- MIS ENTREGAS -->
         <section class="view view--delivery" id="view-delivery" hidden>
-          <!-- CUSTODIA: panel propio (custody.html) sobre el mismo libro append-only. -->
-          <a class="btn btn--ghost" href="/admin/custody.html">Custodia y rendiciones</a>
+          <!--
+            FUNCIONALIDAD RETIRADA. La operación del repartidor vive en la app
+            FULLTECH DELIVERY; esta ruta solo informa para no dejar un enlace muerto.
+          -->
           <div class="delivery-view" id="delivery-view"></div>
         </section>
 

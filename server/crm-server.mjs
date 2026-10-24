@@ -6245,6 +6245,14 @@ async function handle(req, res, ctx) {
         json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Usuario o contraseña incorrectos.', storage: store.kind });
         return;
       }
+      /*
+       * PENDIENTE DE MIGRACIÓN: bloquear aquí el rol DELIVERY rompe 27 pruebas
+       * del flujo interno de reparto que sigue vivo en el supervisor y en los
+       * UAT de panel (usuarios DELIVERY asignados a pedidos). El retiro de ese
+       * rol exige migrar antes esas cuentas a cuentas de la app. Mientras no se
+       * migre, el acceso se retira en la INTERFAZ (menú y selector de roles) y
+       * no se abre ninguna ruta operativa nueva.
+       */
       loginAttempts.delete(ip);
       setSessionCookie(req, res, createUserSessionValue(result.session, token));
       json(res, 200, { ok: true, storage: store.kind, user: result.user });

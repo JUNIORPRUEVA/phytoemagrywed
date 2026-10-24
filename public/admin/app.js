@@ -8132,6 +8132,26 @@
   function renderDelivery() {
     const box = $('#delivery-view');
     if (!box) return;
+    /*
+     * LA PANTALLA OPERATIVA DEL REPARTIDOR SE RETIRÓ DEL CRM.
+     * El CRM administra y supervisa; el repartidor trabaja en FULLTECH DELIVERY.
+     * Cualquier ruta antigua (favorito, hash guardado) ve este aviso en lugar de
+     * la consola de entregas: se retira la FUNCIÓN, no se deja un acceso abierto.
+     */
+    box.classList.remove('delivery-view--detail');
+    delete document.body.dataset.deliveryDetail;
+    box.innerHTML = `<div class="delivery-retired" role="status">
+      <h3>Mis entregas se trasladó a la app</h3>
+      <p>La operación del repartidor se hace en <strong>FULLTECH DELIVERY</strong>.
+      Aquí puedes <a href="#mapa">seguir el reparto</a>, asignar o reasignar,
+      y revisar la <a href="/admin/custody.html">custodia y rendiciones</a>.</p>
+    </div>`;
+    return;
+  }
+
+  function renderDeliveryLegacyUnused() {
+    const box = $('#delivery-view');
+    if (!box) return;
     const mine = deliveryMyOrders();
     const mineIds = new Set(mine.map((order) => order.id));
     const orders = deliveryOrdersSorted().filter((order) => mineIds.has(order.id));
@@ -9764,11 +9784,10 @@
         <span class="field__label">Rol</span>
         <select class="field__select" name="role">
           <option value="AGENT">Agente (también puede entregar un pedido)</option>
-          <option value="DELIVERY">Repartidor (solo entregas)</option>
           <option value="OPERADOR">Operador</option>
           <option value="ADMIN">Administrador</option>
         </select>
-        <span class="field__hint">Un pedido se le pasa a un AGENTE y ese agente lo entrega. El administrador gestiona; no reparte.</span>
+        <span class="field__hint">El repartidor ya no es un usuario del CRM: se da de alta en FULLTECH DELIVERY. Los usuarios históricos con rol Repartidor se conservan, pero no ganan acceso al panel.</span>
       </label>
       <label class="field">
         <span class="field__label">Contraseña inicial</span>
