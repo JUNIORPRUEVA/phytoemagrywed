@@ -59,19 +59,24 @@ const TRANSITIONS = Object.freeze({
     accept: DELIVERY_STATES.ACCEPTED,
     reject: DELIVERY_STATES.REJECTED,
     expire: DELIVERY_STATES.EXPIRED,
+    /* Flujo de dos botones: INICIAR supone que ya tiene el paquete (recogida implícita). */
+    start: DELIVERY_STATES.EN_ROUTE,
   },
   [DELIVERY_STATES.OFFERED]: {
     accept: DELIVERY_STATES.ACCEPTED,
     reject: DELIVERY_STATES.REJECTED,
     expire: DELIVERY_STATES.EXPIRED,
+    start: DELIVERY_STATES.EN_ROUTE,
   },
   [DELIVERY_STATES.ACCEPTED]: {
     pickup: DELIVERY_STATES.PICKED_UP,
     expire: DELIVERY_STATES.EXPIRED,
+    start: DELIVERY_STATES.EN_ROUTE,
   },
   [DELIVERY_STATES.PICKUP_PENDING]: {
     pickup: DELIVERY_STATES.PICKED_UP,
     expire: DELIVERY_STATES.EXPIRED,
+    start: DELIVERY_STATES.EN_ROUTE,
   },
   [DELIVERY_STATES.PICKED_UP]: {
     start: DELIVERY_STATES.EN_ROUTE,
@@ -88,14 +93,26 @@ const TRANSITIONS = Object.freeze({
 
 /** Qué puede hacer el repartidor en cada estado (la app dibuja los botones con esto). */
 export const COURIER_ACTIONS = Object.freeze({
-  [DELIVERY_STATES.ASSIGNED]: ['accept', 'reject'],
-  [DELIVERY_STATES.OFFERED]: ['accept', 'reject'],
-  [DELIVERY_STATES.ACCEPTED]: ['pickup'],
-  [DELIVERY_STATES.PICKUP_PENDING]: ['pickup'],
+  [DELIVERY_STATES.ASSIGNED]: ['accept', 'reject', 'start'],
+  [DELIVERY_STATES.OFFERED]: ['accept', 'reject', 'start'],
+  [DELIVERY_STATES.ACCEPTED]: ['pickup', 'start'],
+  [DELIVERY_STATES.PICKUP_PENDING]: ['pickup', 'start'],
   [DELIVERY_STATES.PICKED_UP]: ['start'],
   [DELIVERY_STATES.EN_ROUTE]: ['arrive', 'deliver'],
   [DELIVERY_STATES.ARRIVED]: ['deliver'],
 });
+
+/**
+ * Acciones según el tipo de repartidor.
+ *
+ * Interno autorizado: la asignación es directa, así que aceptar/rechazar no tienen sentido
+ * como botones (el CRM ya se lo dio). Externo: conserva aceptación explícita.
+ */
+export function courierActionsFor(lifecycle, kind) {
+  const base = COURIER_ACTIONS[lifecycle] ?? [];
+  if (String(kind ?? '').toUpperCase() !== 'INTERNAL') return base;
+  return base.filter((action) => action !== 'accept' && action !== 'reject');
+}
 
 /** Estado logístico de un pedido: el nuevo campo o, si no existe, se deriva del histórico. */
 export function lifecycleOf(order) {
@@ -227,6 +244,9 @@ export function applyTransition(order, event, { actor = null, now, extra = {} } 
       break;
     case 'start':
       delivery.delivery_started_at = at;
+      /* INICIAR implica que ya tiene el paquete: recogida registrada en el mismo acto. */
+      delivery.delivery_picked_up_at = delivery.delivery_picked_up_at ?? at;
+      delivery.pickup_implicit = true;
       break;
     case 'arrive':
       delivery.delivery_arrived_at = at;

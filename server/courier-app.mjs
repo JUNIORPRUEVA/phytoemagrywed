@@ -18,7 +18,7 @@
 import { createHmac, pbkdf2, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
-import { COURIER_ACTIONS, lifecycleOf, operationalStatusFor } from './delivery-lifecycle.mjs';
+import { COURIER_ACTIONS, courierActionsFor, lifecycleOf, operationalStatusFor } from './delivery-lifecycle.mjs';
 
 const derive = promisify(pbkdf2);
 
@@ -217,7 +217,7 @@ const cents = (value) => Math.round(money(value) * 100);
  * Vista mínima del pedido para el repartidor: lo que necesita para entregar.
  * Nada de costos, márgenes, clientes completos, notas internas ni historial de ventas.
  */
-export function courierOrderDTO(item, { customer = null } = {}) {
+export function courierOrderDTO(item, { customer = null, kind = null } = {}) {
   if (!item) return null;
   let order = null;
   try {
@@ -249,7 +249,7 @@ export function courierOrderDTO(item, { customer = null } = {}) {
     ...courierOrderStatus(order),
     /* Estado LOGÍSTICO (Fase 05) y acciones que la app puede ofrecer. */
     delivery_lifecycle: lifecycleOf(order),
-    available_actions: COURIER_ACTIONS[lifecycleOf(order)] ?? [],
+    available_actions: courierActionsFor(lifecycleOf(order), kind),
     offer_expires_at: delivery.offer_expires_at ?? null,
     customer: {
       display_name: customer?.name ?? order.customer_name ?? order.name ?? null,
@@ -308,7 +308,7 @@ export async function findCourierOrder(store, orderId, account, { getCustomer = 
     if (!matches) continue;
     if (!assignedToCourier(account, order)) return { ok: false, status: 404, error: 'not_found' };
     const customer = order.customer_id ? await Promise.resolve(getCustomer(order.customer_id)) : null;
-    return { ok: true, item, order, dto: courierOrderDTO(item, { customer }) };
+    return { ok: true, item, order, dto: courierOrderDTO(item, { customer, kind: account.kind }) };
   }
   return { ok: false, status: 404, error: 'not_found' };
 }
@@ -328,7 +328,7 @@ export async function listCourierOrders(store, account, { includeClosed = false,
     const status = String(order.status ?? item.status ?? '').trim();
     if (!includeClosed && COURIER_CLOSED_ORDER_STATUSES.includes(status)) continue;
     const customer = order.customer_id ? await Promise.resolve(getCustomer(order.customer_id)) : null;
-    const dto = courierOrderDTO(item, { customer });
+    const dto = courierOrderDTO(item, { customer, kind: account.kind });
     if (dto) out.push(dto);
   }
   out.sort((a, b) => String(b.delivery?.assigned_at ?? b.updated_at ?? '').localeCompare(String(a.delivery?.assigned_at ?? a.updated_at ?? '')));

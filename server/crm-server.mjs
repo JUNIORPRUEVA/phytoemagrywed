@@ -679,6 +679,11 @@ const OFFER_TTL_MS = Math.max(
   (Number(process.env.PHYTO_DELIVERY_OFFER_TTL_MINUTES ?? 15) || 15) * 60_000,
 );
 
+/** Hash del código de entrega. Se guarda solo el hash, nunca el código. */
+function hashDeliveryProof(orderId, code) {
+  return createHash('sha256').update(`delivery-proof:${orderId}:${String(code).trim()}`).digest('hex');
+}
+
 /*
  * Los DOS mensajes rutinarios al cliente (Fase 06). Los nombres son los que deben
  * aprobarse en Meta; mientras no existan, el evento queda `pending_template`.
@@ -6512,6 +6517,81 @@ async function handle(req, res, ctx) {
       });
       return;
     }
+    /*
+     * PRUEBA DE ENTREGA (seguridad crítica).
+     *
+     * El CRM genera un código de 4 dígitos y guarda SOLO su hash. El PIN que escribe el
+     * repartidor se comprueba AQUÍ, no en el teléfono. Sin código configurado la entrega
+     * NO se declara confirmada: queda pendiente de verificación administrativa.
+     */
+    if (event === 'deliver') {
+      /* Primero se comprueba que la transición sea válida: nada muta si no lo es. */
+      const preview = applyTransition(found.order, event, { actor, now: new Date().toISOString() });
+      if (!preview.ok) {
+        json(res, preview.status ?? 409, {
+          ok: false,
+          error: preview.error,
+          message: preview.message,
+          currentState: preview.currentState,
+          allowed: preview.allowed ?? [],
+        });
+        return;
+      }
+      const proof = found.order?.delivery?.proof ?? null;
+      const required = proof?.required === true;
+      const code = String(body.proofCode ?? body.proof_code ?? body.pin ?? '').trim();
+      if (required) {
+        if (!proof?.hash) {
+          json(res, 409, {
+            ok: false,
+            error: 'proof_not_configured',
+            message: 'Falta configurar el código de entrega de este pedido en el CRM.',
+          });
+          return;
+        }
+        if (!code) {
+          json(res, 422, { ok: false, error: 'proof_required', message: 'Escribe el código de entrega.' });
+          return;
+        }
+        if (hashDeliveryProof(orderId, code) !== proof.hash) {
+          json(res, 409, { ok: false, error: 'invalid_proof', message: 'El código de entrega no coincide.' });
+          return;
+        }
+      } else {
+        /* Sin prueba segura: se anota lo declarado y se deja PENDIENTE, nunca confirmada. */
+        const declared = Number(body.cashAmountCents ?? body.cash_amount_cents ?? 0) || 0;
+        const pendingOrder = {
+          ...found.order,
+          delivery: {
+            ...(found.order.delivery ?? {}),
+            verification: 'pending_admin',
+            verification_requested_at: new Date().toISOString(),
+            cash_declared_cents: declared > 0 ? declared : found.order.delivery?.cash_declared_cents ?? null,
+          },
+          updated_at: new Date().toISOString(),
+        };
+        await ctx.store.update(found.item.id, { orderJson: JSON.stringify(pendingOrder) });
+        await ctx.db.insert('delivery_events', {
+          id: `evt_${randomUUID().replace(/-/g, '')}`,
+          order_id: orderId,
+          event: 'deliver_pending_verification',
+          from_state: lifecycleOf(found.order),
+          to_state: lifecycleOf(found.order),
+          courier_account_id: auth.account.id,
+          idempotency_key: idempotencyKey ?? `deliver-pending:${orderId}`,
+          created_at: new Date().toISOString(),
+        });
+        json(res, 202, {
+          ok: true,
+          pending_verification: true,
+          message: 'Entrega registrada. Queda pendiente de confirmación por administración.',
+          state: lifecycleOf(found.order),
+          actions: COURIER_ACTIONS[lifecycleOf(found.order)] ?? [],
+          order: found.dto,
+        });
+        return;
+      }
+    }
     const now = new Date().toISOString();
     const result = applyTransition(found.order, event, {
       actor,
@@ -6638,6 +6718,69 @@ async function handle(req, res, ctx) {
      */
     const canManageCouriers = can('admin.full') || can('delivery.manage');
     const couriersCollection = 'courier_accounts';
+
+    /* CÓDIGO DE ENTREGA: lo genera el CRM y se le dice al cliente. Se guarda el hash. */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery-code') && req.method === 'POST') {
+      if (!can('admin.full') && !can('orders.update_operational')) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery-code'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const code = String(Math.floor(1000 + Math.random() * 9000));
+      const order = orderOf(item) ?? {};
+      const next = {
+        ...order,
+        delivery: {
+          ...(order.delivery ?? {}),
+          proof: {
+            required: true,
+            hash: hashDeliveryProof(item.id, code),
+            created_at: new Date().toISOString(),
+            created_by: actor?.display_name ?? actor?.id ?? null,
+          },
+        },
+        updated_at: new Date().toISOString(),
+      };
+      await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      /* Se devuelve UNA vez para que administración se lo diga al cliente. */
+      json(res, 200, { ok: true, orderId: item.id, code });
+      return;
+    }
+
+    /* Confirmación administrativa de una entrega sin prueba en el teléfono. */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/confirm') && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/confirm'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const result = applyTransition(orderOf(item) ?? {}, 'deliver', {
+        actor,
+        now: new Date().toISOString(),
+        extra: { reason: 'confirmacion administrativa' },
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 409, { ok: false, error: result.error, message: result.message });
+        return;
+      }
+      const withVerification = {
+        ...result.order,
+        delivery: { ...result.order.delivery, verification: 'confirmed_by_admin' },
+      };
+      await ctx.store.update(item.id, { orderJson: JSON.stringify(withVerification) });
+      json(res, 200, { ok: true, order: withVerification });
+      return;
+    }
 
     if (route === '/api/admin/couriers' && req.method === 'GET') {      if (!canManageCouriers) {
         forbid();

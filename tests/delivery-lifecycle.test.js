@@ -160,7 +160,8 @@ describe('máquina de estados (pura)', () => {
   it('rechaza transiciones imposibles y estados finales', () => {
     const offered = { status: 'nuevo', delivery: { lifecycle: DELIVERY_STATES.OFFERED } };
     expect(applyTransition(offered, 'deliver').ok).toBe(false);
-    expect(applyTransition(offered, 'start').error).toBe('invalid_transition');
+    /* Recoger sin aceptar sigue siendo imposible (INICIAR sí está permitido desde oferta). */
+    expect(applyTransition(offered, 'pickup').error).toBe('invalid_transition');
 
     const delivered = { status: 'entregado', delivery: { lifecycle: DELIVERY_STATES.DELIVERED } };
     const again = applyTransition(delivered, 'accept');
@@ -192,7 +193,8 @@ describe('endpoints del repartidor', () => {
     const detail = await courier(`/api/courier/orders/${orderId}`, { token });
     expect(detail.status).toBe(200);
     expect(detail.data.order.delivery_lifecycle).toBe('OFFERED');
-    expect(detail.data.order.available_actions).toEqual(['accept', 'reject']);
+    /* Externo: aceptación explícita. INICIAR también está disponible (flujo de dos botones). */
+    expect(detail.data.order.available_actions).toEqual(['accept', 'reject', 'start']);
     expect(typeof detail.data.order.offer_expires_at).toBe('string');
   });
 
@@ -203,7 +205,8 @@ describe('endpoints del repartidor', () => {
     const accepted = await courier(`${base}/accept`, { token, method: 'POST', body: {} });
     expect(accepted.status).toBe(200);
     expect(accepted.data.state).toBe('ACCEPTED');
-    expect(accepted.data.actions).toEqual(['pickup']);
+    /* Tras aceptar: recoger o ir directo a INICIAR (que implica recogida). */
+    expect(accepted.data.actions).toEqual(['pickup', 'start']);
 
     const picked = await courier(`${base}/pickup`, { token, method: 'POST', body: {} });
     expect(picked.data.state).toBe('PICKED_UP');
@@ -214,14 +217,23 @@ describe('endpoints del repartidor', () => {
     const arrived = await courier(`${base}/arrive`, { token, method: 'POST', body: {} });
     expect(arrived.data.state).toBe('ARRIVED');
 
-    const delivered = await courier(`${base}/deliver`, { token, method: 'POST', body: {} });
+    /* Seguridad: sin código de entrega configurado NO se confirma; queda pendiente. */
+    const pending = await courier(`${base}/deliver`, { token, method: 'POST', body: {} });
+    expect(pending.status).toBe(202);
+    expect(pending.data.pending_verification).toBe(true);
+
+    /* Administración fija el código y el repartidor lo usa: ahí sí se confirma. */
+    const codeResponse = await call(`orders/${orderId}/delivery-code`, {});
+    const code = codeResponse.data?.code;
+    expect(typeof code).toBe('string');
+    const delivered = await courier(`${base}/deliver`, { token, method: 'POST', body: { proofCode: code } });
     expect(delivered.data.state).toBe('DELIVERED');
     expect(delivered.data.order.order_status).toBe('entregado');
 
-    /* Historial real de la entrega. */
+    /* Historial real de la entrega, incluido el intento que quedó pendiente. */
     const events = await app.ctx.db.list('delivery_events', { limit: 100 });
     expect(events.map((row) => row.event).sort()).toEqual(
-      ['accept', 'arrive', 'deliver', 'pickup', 'start'].sort(),
+      ['accept', 'arrive', 'deliver', 'deliver_pending_verification', 'pickup', 'start'].sort(),
     );
   });
 
