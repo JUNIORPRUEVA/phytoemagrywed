@@ -23,3 +23,7 @@ output/pdf/
 
 # pdf.js se copia en el build (no se versiona la copia local)
 public/admin/vendor/pdfjs/
+
+# Bases de datos de UAT local (nunca se versionan)
+uat-*.sqlite*
+

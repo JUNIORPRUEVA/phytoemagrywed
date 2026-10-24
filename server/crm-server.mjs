@@ -11324,6 +11324,15 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: 'invalid_order', message: 'Ese pedido no se pudo leer.' });
         return;
       }
+      /* Smart Commerce: un pedido con reservas no se edita de forma genérica. */
+      if (current?.smart_commerce?.managedFulfillment) {
+        json(res, 409, {
+          ok: false,
+          error: 'managed_order_locked',
+          message: 'Cancela y recotiza para cambiar líneas, destino o importes de un pedido reservado.',
+        });
+        return;
+      }
       /*
        * UBICACIÓN DE ENTREGA: si se manda una, se resuelve y se comprueba que es
        * de ESE cliente. Si no se manda nada, se CONSERVA la que ya tenía el pedido
