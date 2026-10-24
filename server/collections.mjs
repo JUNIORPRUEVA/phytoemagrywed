@@ -195,6 +195,25 @@ export const COLLECTIONS = Object.freeze({
     unique: ['idempotency_key'],
   },
   /*
+   * CUENTAS DE ACCESO DEL REPARTIDOR AL MÓVIL (`courier_accounts`).
+   *
+   * No son usuarios del CRM ni una segunda ficha del repartidor: son la AUTORIZACIÓN de
+   * acceso de una persona que ya existe (usuario con rol DELIVERY o contacto de reparto
+   * guardado). El teléfono sirve para elegir la cuenta, nunca como prueba de identidad.
+   * `token_epoch` sube al desactivar o cerrar sesión: invalida todos los tokens emitidos.
+   */
+  courier_accounts: {
+    indexed: {
+      phone_e164: 'text',
+      user_id: 'text',
+      contact_id: 'text',
+      active: 'text',
+      app_access: 'text',
+      company_id: 'text',
+      created_at: 'text',
+    },
+  },
+  /*
    * FACTURAS DE PROVEEDOR (`supplier_invoices`): el comprobante ORIGINAL de la
    * tienda donde se compró un producto de terceros. Es documentación interna y
    * NUNCA se adjunta al PDF ni al WhatsApp que recibe el cliente.

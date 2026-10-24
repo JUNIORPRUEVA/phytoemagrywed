@@ -201,6 +201,16 @@ export async function assignCourier(input) {
     ...order,
     delivery: {
       ...(order.delivery ?? {}),
+      /*
+       * UN PEDIDO TIENE UN SOLO REPARTIDOR VIGENTE.
+       * Al pasar a un mensajero externo, el repartidor interno anterior deja de
+       * ser el asignado: si se quedara, seguiría viendo el pedido en la app.
+       */
+      delivery_user_id: null,
+      delivery_user_name_snapshot: null,
+      delivery_previous_user_id:
+        order.delivery?.delivery_user_id ?? order.delivery?.delivery_previous_user_id ?? null,
+      delivery_assigned_at: at,
       external: {
         ...previous,
         contact_id: contact.id,
@@ -212,6 +222,8 @@ export async function assignCourier(input) {
         assigned_at: at,
         assigned_by_user_id: actor?.id ?? null,
         assigned_by_display_name: actor?.display_name ?? null,
+        superseded_at: null,
+        superseded_by: null,
       },
     },
     updated_at: at,
