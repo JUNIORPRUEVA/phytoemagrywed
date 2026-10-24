@@ -143,16 +143,15 @@
     -->
     <style>
       /*
-        DRAWER DERECHO DEL MAPA: pegado al borde derecho, EXACTAMENTE la mitad
-        del ancho y todo el alto. La lista de opciones llena ese alto y se
-        desplaza dentro; no se queda a media pantalla.
+        DRAWER DERECHO DEL MAPA: pegado al borde derecho, el 70% del ancho y todo
+        el alto. La lista de opciones llena ese alto y se desplaza dentro.
       */
       #sheet[data-variant='right'] { align-items: stretch; justify-content: flex-end; }
       #sheet[data-variant='right'] .sheet__panel {
         height: 100dvh;
         max-height: 100dvh;
-        width: 50vw;
-        max-width: 50vw;
+        width: 70vw;
+        max-width: 70vw;
         margin: 0 0 0 auto;
         border-radius: 14px 0 0 14px;
         display: flex;

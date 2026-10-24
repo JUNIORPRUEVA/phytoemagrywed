@@ -5999,9 +5999,8 @@
         ${activas.length ? fila('seguir', ICONS.retry, 'Seguir la entrega en vivo', `${activas.length} en camino: centra en el repartidor`) : ''}
         ${fila('actualizar', ICONS.retry, 'Actualizar el mapa', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
       </div>
-      <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
       `,
-      /* Panel lateral derecho: alto completo y la mitad del ancho. */
+      /* Panel lateral derecho: alto completo y el 70% del ancho. */
       { variant: 'right' },
     );
   }
