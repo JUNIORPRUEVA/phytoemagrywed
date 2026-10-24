@@ -64,7 +64,7 @@ it('mantiene obligatorios visibles y conserva todos los campos secundarios en se
   for(const name of ['kind','name','sku','price','cost','category_id','quantity','image'])expect(form.elements[name].closest('details')).toBeNull();
   expect(form.elements.sku.required).toBe(true);expect(form.elements.image.required).toBe(false);
   expect(form.querySelectorAll('details[open]')).toHaveLength(0);
-  expect([...form.elements].map(node=>node.name).filter(Boolean).sort()).toEqual(['kind','name','sku','price','cost','category_id','quantity','image','description','store_brand','store_public_name','store_short_description','store_public_description','store_availability','offer_active','compare_at_price','offer_price','offer_start_at','offer_end_at','daily_offer','warranty_available','warranty_months','warranty_provider','warranty_coverage','warranty_exclusions','warranty_conditions','warranty_claim','warranty_public_notes','warranty_private_notes','min_stock','track_stock','active'].sort());
+    expect([...form.elements].map(node=>node.name).filter(Boolean).sort()).toEqual(['kind','name','sku','price','cost','category_id','quantity','image','description','store_brand','store_public_name','store_short_description','store_public_description','store_availability','offer_active','compare_at_price','offer_price','offer_start_at','offer_end_at','warranty_available','warranty_months','warranty_provider','warranty_coverage','warranty_exclusions','warranty_conditions','warranty_claim','warranty_public_notes','warranty_private_notes','min_stock','track_stock','active'].sort());
   expect(form.textContent).toContain('Se guarda oculto');
 });
 it('al cambiar de tipo conserva valores e imágenes opcionales y no envía inventario para servicios',async()=>{
