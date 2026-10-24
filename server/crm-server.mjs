@@ -127,6 +127,7 @@ import {
   lifecycleOf,
   nextOfferExpiry,
 } from './delivery-lifecycle.mjs';
+import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, validateRemittance } from './delivery-cash.mjs';
 /* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
 import {
   COURIER_LOCK_MS,
@@ -6609,6 +6610,28 @@ async function handle(req, res, ctx) {
       return;
     }
     const updated = await ctx.store.update(found.item.id, { orderJson: JSON.stringify(result.order) });
+    /*
+     * CUSTODIA: si la entrega se confirma y era contra efectivo, se registra el dinero
+     * que el repartidor debe rendir. Idempotente por pedido: reintentar no duplica.
+     */
+    if (event === 'deliver') {
+      const block = paymentBlockOf(result.order);
+      const isCash = String(result.order?.payment?.method ?? result.order?.payment_method ?? '').toUpperCase() === 'CASH';
+      const dueCents = Math.round(Number(block.due ?? 0) * 100);
+      if (isCash && dueCents > 0) {
+        await ctx.db.insert(CASH_COLLECTION, {
+          id: `cash_${randomUUID().replace(/-/g, '')}`,
+          order_id: orderId,
+          courier_account_id: auth.account.id,
+          kind: 'charge',
+          amount_cents: dueCents,
+          note: `Cobro contra entrega ${found.dto?.order_number ?? orderId}`,
+          idempotency_key: `charge:${orderId}`,
+          actor: auth.account.display_name ?? null,
+          created_at: now,
+        });
+      }
+    }
     const eventId = `evt_${randomUUID().replace(/-/g, '')}`;
     await ctx.db.insert('delivery_events', {
       id: eventId,
@@ -6666,7 +6689,30 @@ async function handle(req, res, ctx) {
     return;
   }
 
-  if (route.startsWith('/api/courier/')) {
+  if (route === '/api/courier/custody' && req.method === 'GET') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+    const summary = custodySummary(rows, auth.account.id);
+    const rate = (await ctx.settings.read('delivery_rate'))?.value ?? {};
+    const events = (await ctx.db.list('delivery_events', { limit: 5000 })) ?? [];
+    const deliveredCount = events.filter(
+      (row) => row.event === 'deliver' && row.courier_account_id === auth.account.id,
+    ).length;
+    json(res, 200, {
+      ok: true,
+      custody: summary,
+      earnings: earningsFor({ deliveredCount, rateCents: rate.rateCents ?? null }),
+      note: rate.rateCents ? null : 'Tarifa pendiente de configurar',
+      read_only: true,
+    });
+    return;
+  }
+
+  if (route.startsWith('/api/courier/') && req.method === 'GET') {
     /* Nada de escrituras desde el móvil en esta fase: se dice, no se finge. */
     json(res, 405, {
       ok: false,
@@ -6779,6 +6825,94 @@ async function handle(req, res, ctx) {
       };
       await ctx.store.update(item.id, { orderJson: JSON.stringify(withVerification) });
       json(res, 200, { ok: true, order: withVerification });
+      return;
+    }
+
+    /* CUSTODIA: saldos por repartidor, rendiciones y tarifa configurable. */
+    if (route === '/api/admin/delivery-cash' && req.method === 'GET') {
+      if (!can('admin.full') && !can('delivery.manage')) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const couriers = (await ctx.db.list('courier_accounts', { limit: 1000 })) ?? [];
+      const rate = (await ctx.settings.read('delivery_rate'))?.value ?? {};
+      json(res, 200, {
+        ok: true,
+        couriers: custodyByCourier(rows, couriers),
+        rate_cents: rate.rateCents ?? null,
+      });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-cash/remittance' && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const courierId = text(body.courierAccountId ?? body.courier_account_id, 80);
+      const courier = courierId ? await ctx.db.get('courier_accounts', courierId) : null;
+      if (!courier) {
+        json(res, 404, { ok: false, error: 'not_found', message: 'Ese repartidor no existe.' });
+        return;
+      }
+      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const summary = custodySummary(rows, courierId);
+      const check = validateRemittance(summary, body.amountCents ?? body.amount_cents);
+      if (!check.ok) {
+        json(res, 422, { ok: false, error: check.error, message: check.message, pending: check.pending });
+        return;
+      }
+      const key = text(body.idempotencyKey ?? body.idempotency_key, 120) ?? `remittance:${courierId}:${Date.now()}`;
+      const created = await ctx.db.insert(CASH_COLLECTION, {
+        id: `cash_${randomUUID().replace(/-/g, '')}`,
+        order_id: null,
+        courier_account_id: courierId,
+        kind: 'remittance',
+        amount_cents: check.amount,
+        note: text(body.note, 300),
+        idempotency_key: key,
+        actor: actor?.display_name ?? null,
+        created_at: ctx.clock().toISOString(),
+      });
+      const stored = created?.doc ?? null;
+      const nextRows = stored ? [...rows, stored] : rows;
+      json(res, 201, {
+        ok: true,
+        duplicate: created?.duplicate === true,
+        summary: custodySummary(nextRows, courierId),
+      });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-rate' && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const rateCents = Number(body.rateCents ?? body.rate_cents);
+      if (!Number.isFinite(rateCents) || rateCents < 0) {
+        json(res, 422, { ok: false, error: 'invalid_rate', message: 'La tarifa debe ser un número mayor o igual a cero.' });
+        return;
+      }
+      await ctx.settings.write('delivery_rate', {
+        rateCents: Math.round(rateCents),
+        updated_at: ctx.clock().toISOString(),
+        updated_by: actor?.display_name ?? actor?.id ?? null,
+      });
+      json(res, 200, { ok: true, rate_cents: Math.round(rateCents) });
       return;
     }
 

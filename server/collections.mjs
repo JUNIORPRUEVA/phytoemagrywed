@@ -247,6 +247,21 @@ export const COLLECTIONS = Object.freeze({
     unique: ['idempotency_key'],
   },
   /*
+   * LIBRO DE CUSTODIA DEL EFECTIVO (`delivery_cash_ledger`).
+   * Append-only: `charge` (cobrado al cliente), `remittance` (rendido a administración),
+   * `adjustment` (corrección autorizada). `idempotency_key` única evita duplicar dinero.
+   */
+  delivery_cash_ledger: {
+    indexed: {
+      order_id: 'text',
+      courier_account_id: 'text',
+      kind: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
    * FACTURAS DE PROVEEDOR (`supplier_invoices`): el comprobante ORIGINAL de la
    * tienda donde se compró un producto de terceros. Es documentación interna y
    * NUNCA se adjunta al PDF ni al WhatsApp que recibe el cliente.
