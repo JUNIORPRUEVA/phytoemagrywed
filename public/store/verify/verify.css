@@ -1,4 +1,6 @@
 /* Confirmación del número — reutiliza los tokens de la tienda. */
+.app-shell{touch-action:pan-x pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.app-shell :is(input,textarea,[contenteditable],[role="textbox"]){-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 .verify-loading{display:grid;place-items:center;gap:12px;padding:56px 0;color:var(--muted);font-size:13px}
 .verify-spinner{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--brand);animation:verify-spin .8s linear infinite}
 @keyframes verify-spin{to{transform:rotate(360deg)}}
