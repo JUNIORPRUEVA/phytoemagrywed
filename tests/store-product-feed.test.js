@@ -42,3 +42,14 @@ it('starts a fresh selection at page 1 and handles empty results without a spinn
 it('refreshes loaded pages atomically and keeps all results if refresh fails',async()=>{
  const request=vi.fn(async n=>data(rows((n-1)*100,100),n));make(request);await feed.start();await feed.loadNext();await feed.refresh();expect(feed.state.items).toHaveLength(200);request.mockRejectedValue(Error('offline'));await feed.refresh();expect(feed.state.items).toHaveLength(200);
 });
+it('supports smaller incremental account/about batches, including refresh',async()=>{
+ const request=vi.fn(async page=>({products:rows((page-1)*12,12),pagination:{page,pages:3,total:36,limit:12}}));
+ make(request,{batchSize:12});await feed.start();expect(feed.state.items).toHaveLength(12);
+ await feed.loadNext();expect(feed.state.items).toHaveLength(24);await feed.refresh();
+ expect(request.mock.calls.every(call=>call[1]===12)).toBe(true);expect(feed.state.items).toHaveLength(24);
+});
+it('rearms the sentinel after nonempty small pages that may remain in the preload margin',async()=>{
+ const observe=vi.fn(),unobserve=vi.fn();vi.stubGlobal('IntersectionObserver',class{constructor(cb){intersect=cb;}observe=observe;unobserve=unobserve;disconnect(){}});
+ make(vi.fn(async page=>({products:rows((page-1)*12,12),pagination:{page,pages:3,total:36}})),{batchSize:12});
+ await feed.start();expect(unobserve).toHaveBeenCalledTimes(1);intersect([{isIntersecting:true}]);await vi.waitFor(()=>expect(feed.state.page).toBe(2));expect(unobserve).toHaveBeenCalledTimes(2);
+});

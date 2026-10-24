@@ -1,15 +1,16 @@
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=c=>new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(c/100);
-let zoneId=null,configuration;
+let zoneId=null,zoneName='',configuration;
 async function call(path,body){const r=await fetch(path,{method:body?'POST':'GET',credentials:'same-origin',headers:{accept:'application/json',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const d=await r.json();if(!r.ok)throw Error(d.message||'No pudimos comprobar la ubicación o cotización.');return d;}
 const capabilities=()=>configuration??=(call('/api/store/commerce/config').catch(()=>({enabled:false})));
+export async function commerceLocationEnabled(){return (await capabilities()).enabled===true;}
 export function zonePath(path){if(!zoneId||!/^\/api\/store\/(catalog|home|products\/)/.test(path))return path;const url=new URL(path,location.origin);url.searchParams.set('zone',zoneId);return url.pathname+url.search;}
 const gps=()=>new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(Error('GPS no disponible. Puedes escribir la dirección y solicitar revisión.'));navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,source:'browser_geolocation'}),()=>reject(Error('No se pudo obtener la ubicación. Puedes escribir la dirección o coordenadas manualmente.')),{timeout:10000,maximumAge:0,enableHighAccuracy:true});});
 export async function initCommerceLocation(){
  const c=await capabilities();if(!c.enabled)return;
- const host=document.querySelector('#drawer');if(!host||host.querySelector('.ft-location'))return;
- const row=document.createElement('div');row.className='ft-location';row.innerHTML='<span role="status">Elige dónde recibes · sin rastreo continuo</span><button type="button">Usar ubicación</button>';host.append(row);
- row.querySelector('button').onclick=async event=>{const button=event.currentTarget,status=row.querySelector('span');button.disabled=true;try{const point=await gps(),data=await call('/api/store/commerce/resolve',point);zoneId=data.zone?.id||null;status.textContent=data.zone?.name||'Cobertura por confirmar';window.dispatchEvent(new CustomEvent('ft-location-change'));}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
+ const host=document.querySelector('[data-menu-location]');if(!host||host.querySelector('.ft-location'))return;
+ const row=document.createElement('div');row.className='ft-location';row.innerHTML=`<span role="status">${esc(zoneName?'Recibes en '+zoneName:'Elige dónde recibes · sin rastreo continuo')}</span><button type="button">${zoneName?'Cambiar ubicación':'Usar ubicación'}</button>`;host.append(row);
+ row.querySelector('button').onclick=async event=>{const button=event.currentTarget,status=row.querySelector('span');button.disabled=true;try{const point=await gps(),data=await call('/api/store/commerce/resolve',point);zoneId=data.zone?.id||null;zoneName=data.zone?.name||'';status.textContent=zoneName||'Cobertura por confirmar';window.dispatchEvent(new CustomEvent('ft-location-change'));}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
 }
 export async function mountSmartCheckout({form,items,draft}){
  const c=await capabilities();if(!c.enabled||!form.isConnected)return null;

@@ -1,7 +1,8 @@
 export const PRODUCT_BATCH_SIZE=100;
 
 /** A disposable feed: one request at a time, explicit retry and stable ID deduplication. */
-export function createProductFeed({root,fetchPage,renderItem,onChange=()=>{},onSnapshot=()=>{},snapshot,emptyText='No hay productos en esta selección.'}){
+export function createProductFeed({root,fetchPage,renderItem,onChange=()=>{},onSnapshot=()=>{},snapshot,batchSize=PRODUCT_BATCH_SIZE,emptyText='No hay productos en esta selección.'}){
+  const limit=Number.isInteger(batchSize)&&batchSize>0?Math.min(batchSize,PRODUCT_BATCH_SIZE):PRODUCT_BATCH_SIZE;
   let items=[],ids=new Set(),page=0,pages=1,total=0,busy=false,failed=false,disposed=false,request;
   root.innerHTML='<div class="product-grid ft-masonry"></div><div class="ft-feed-status" role="status" aria-live="polite"></div><div class="ft-feed-sentinel" aria-hidden="true"></div>';
   const grid=root.querySelector('.product-grid'),status=root.querySelector('.ft-feed-status'),sentinel=root.querySelector('.ft-feed-sentinel');
@@ -17,7 +18,7 @@ export function createProductFeed({root,fetchPage,renderItem,onChange=()=>{},onS
     if(disposed||busy||page>=pages)return;
     busy=true;failed=false;request=new AbortController();paintStatus();let added=null;
     try{
-      const next=page+1,data=await fetchPage(next,PRODUCT_BATCH_SIZE,request.signal);
+      const next=page+1,data=await fetchPage(next,limit,request.signal);
       if(disposed||request.signal.aborted)return;
       const batch=(data.products||[]).filter(item=>item.id&&!ids.has(item.id)&&(ids.add(item.id),true));
       items.push(...batch);grid.insertAdjacentHTML('beforeend',batch.map(renderItem).join(''));
@@ -25,7 +26,7 @@ export function createProductFeed({root,fetchPage,renderItem,onChange=()=>{},onS
       page=next;pages=Math.max(page,Number(data.pagination?.pages)||0);total=Number(data.pagination?.total??items.length);
       notify();
     }catch(error){if(!disposed&&error.name!=='AbortError')failed=true;}
-    finally{busy=false;if(!disposed){paintStatus();if(added===0&&!failed&&page<pages){observer?.unobserve?.(sentinel);observer?.observe(sentinel);}}}
+    finally{busy=false;if(!disposed){paintStatus();if(added!==null&&!failed&&page<pages){observer?.unobserve?.(sentinel);observer?.observe(sentinel);}}}
   }
   const observer=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)&&!failed)loadNext();},{rootMargin:'600px 0px'}):null;
   status.addEventListener('click',event=>{if(event.target.closest('.ft-feed-retry'))loadNext();});
@@ -37,7 +38,7 @@ export function createProductFeed({root,fetchPage,renderItem,onChange=()=>{},onS
     try{
       const fresh=[],seen=new Set();let last;
       for(let n=1;n<=page;n++){
-        last=await fetchPage(n,PRODUCT_BATCH_SIZE,request.signal);
+        last=await fetchPage(n,limit,request.signal);
         if(disposed||request.signal.aborted)return;
         for(const item of last.products||[])if(!seen.has(item.id)){seen.add(item.id);fresh.push(item);}
         if(n>=last.pagination?.pages)break;

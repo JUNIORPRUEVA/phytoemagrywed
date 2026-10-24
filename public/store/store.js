@@ -2,14 +2,13 @@ const $ = (s, root = document) => root.querySelector(s);
 import { hydrateIcons, hydrateMaterialIcons, paintMaterialIcon, materialIcon } from './custom-icons.js?v=1';
 import {galleryMarkup,mountGallery,mountCardImageFallbacks} from './product-gallery.js?v=4';
 import {mountOfferCarousel} from './offer-carousel.js?v=1';
-import {createProductFeed} from './product-feed.js?v=1';
+import {createProductFeed} from './product-feed.js?v=3';
+import {menuMarkup,recommendedMarkup,solutionsMarkup} from './account-hub.js?v=5';
 import {mountMasonry} from './masonry.js?v=1';
-import {navigationIcon} from './navigation-icons.js?v=1';
-import {mountReverseScroll} from './reverse-scroll.js?v=2';
-import {zonePath,initCommerceLocation,mountSmartCheckout} from './smart-commerce-ui.js?v=2';
+import {navigationIcon} from './navigation-icons.js?v=2';
+import {zonePath,initCommerceLocation,commerceLocationEnabled,mountSmartCheckout} from './smart-commerce-ui.js?v=3';
 import {mountPickupOrders} from './pickup-orders.js?v=1';
-import {mountInfoSlider} from './info-slider.js?v=2';
-mountReverseScroll();
+import {mountInfoSlider} from './info-slider.js?v=3';
 /* Cabecera y barra inferior usan la familia Material Symbols Rounded ya descargada. */
 hydrateMaterialIcons();
 hydrateIcons();
@@ -19,13 +18,13 @@ const AVAIL_LABEL = { AVAILABLE_NOW: 'Disponible', ON_REQUEST: 'Bajo pedido', UN
 const avail = p => AVAIL_LABEL[p.availabilityState] || (p.kind === 'service' ? 'Servicio' : 'Consultar disponibilidad');
 const canBuy = p => p.purchaseable === true;
 const contactHref = p => `https://wa.me/18494240621?text=${encodeURIComponent('Hola FULLTECH, quiero consultar sobre '+p.name)}`;
-const main = $('#main'), drawer = $('#drawer'), bottom = $('#bottom-nav');
+const main = $('#main'), bottom = $('#bottom-nav');
 mountCardImageFallbacks(main);
 let deferredInstallPrompt=null,installReminderTimer;
-const installButton=$('#install-app');
+const installControl=()=>$('#install-app');
 const standaloneMode=()=>window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true;
-function syncInstallButton(){if(!installButton)return;installButton.hidden=standaloneMode()}
-function remindInstall(){if(!installButton||installButton.hidden)return;installButton.classList.remove('is-reminded');void installButton.offsetWidth;installButton.classList.add('is-reminded');clearTimeout(installReminderTimer);installReminderTimer=setTimeout(()=>installButton.classList.remove('is-reminded'),4200)}
+function syncInstallButton(){const button=installControl();if(button)button.hidden=standaloneMode()}
+function remindInstall(){const button=installControl();if(!button||button.hidden)return;button.classList.remove('is-reminded');void button.offsetWidth;button.classList.add('is-reminded');clearTimeout(installReminderTimer);installReminderTimer=setTimeout(()=>button.classList.remove('is-reminded'),4200)}
 async function promptInstall(){
   if(standaloneMode()){syncInstallButton();return}
   if(!deferredInstallPrompt){favoriteMessage('Para instalar, abre el menú del navegador y elige «Instalar FULLTECH Store».');remindInstall();return}
@@ -34,7 +33,7 @@ async function promptInstall(){
 }
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=event;syncInstallButton()});
 window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;syncInstallButton();syncAnnouncement()});
-installButton?.addEventListener('click',promptInstall);
+document.addEventListener('click',event=>{if(event.target.closest('#install-app'))promptInstall()});
 syncInstallButton();setInterval(()=>{remindInstall();rotateAnnouncement()},10000);
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/store/sw.js',{scope:'/store/'}).catch(()=>{})}
 
@@ -271,7 +270,8 @@ function setNav(route){
   /* La barra inferior es fija: se ve en todas las pantallas y marca la activa.
      El ítem activo usa la variante FILLED; el resto, OUTLINE. */
   document.querySelectorAll('.ft-nav__item').forEach(node=>{
-    const match=node.dataset.route===(route==='checkout'?'cart':route);
+    const destination=route==='checkout'?'cart':['account','orders','favorites','nosotros'].includes(route)?'menu':route;
+    const match=node.dataset.route===destination;
     node.classList.toggle('active',match);
     if(match)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');
     const icon=node.querySelector('.ft-nav-icons');
@@ -323,7 +323,7 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
       <article>${materialIcon('truck',{size:18})}<div><strong>Entrega rápida</strong><small>Coordinada según destino</small></div></article>
       <article>${materialIcon('security',{size:18})}<div><strong>Productos con garantía</strong><small>Según condiciones de la ficha</small></div></article>
     </section>`;
-    const infoSlider=`<section class="ft-info-slider" aria-label="Información útil de FULLTECH" aria-roledescription="carrusel"><div class="ft-info-slider__track" tabindex="0"><a href="${href('nosotros')}" class="ft-info-slide" aria-label="1 de 3"><strong>Conoce FULLTECH</strong><span>Quiénes somos ›</span></a><a href="${href('offers')}" class="ft-info-slide" aria-label="2 de 3"><strong>Precios especiales</strong><span>Ver ofertas ›</span></a><a href="https://wa.me/18494240621" class="ft-info-slide" aria-label="3 de 3" target="_blank" rel="noopener noreferrer"><strong>Te asesoramos</strong><span>Consultar ›</span></a></div><div class="ft-info-slider__controls"><button type="button" data-info-prev aria-label="Información anterior"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg></button><span data-info-position aria-live="off">1 / 3</span><button type="button" data-info-next aria-label="Siguiente información"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button><button type="button" data-info-pause aria-label="Pausar información automática"></button></div></section>`;
+    const infoSlider=`<section class="ft-info-slider" aria-label="Información útil de FULLTECH" aria-roledescription="carrusel"><div class="ft-info-slider__track" tabindex="0"><a href="${href('nosotros')}" class="ft-info-slide" aria-label="1 de 3: Conoce quiénes somos"><div class="ft-info-slide__copy"><strong>Conoce quiénes somos en FULLTECH</strong></div><span>Ver ›</span></a><a href="${href('offers')}" class="ft-info-slide" aria-label="2 de 3: Descubre nuestras ofertas"><div class="ft-info-slide__copy"><strong>Precios especiales para tus proyectos</strong></div><span>Ofertas ›</span></a><a href="https://wa.me/18494240621" class="ft-info-slide" aria-label="3 de 3: Te ayudamos a elegir" target="_blank" rel="noopener noreferrer"><div class="ft-info-slide__copy"><strong>Te ayudamos a elegir tus productos</strong></div><span>Chat ›</span></a></div></section>`;
     const offerPair=`<section class="ft-promotion-pair" aria-label="Explorar ofertas"><div class="ft-promotion-pair__grid">${[0,1].map(i=>{const p=dailyOffers[i]||heroProducts[i],isOffer=!!p&&dailyOffers.some(o=>o.id===p.id),title=i===0?'Ofertas para ti':'Descubre descuentos';return `<a class="ft-promotion-product ft-promotion-product--${i===0?'navy':'teal'}" href="${href('offers')}" aria-label="${title}"><div class="ft-promotion-product__copy"><span class="ft-promotion-product__kicker">${i===0?'Selección FULLTECH':'Explora el catálogo'}</span><strong>${title}</strong></div><div class="ft-promotion-product__image">${p?.imageUrl?`<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="320" height="320" loading="lazy">`:`<div class="ft-promotion-product__placeholder">${materialIcon('package',{size:52})}</div>`}${isOffer?`<span>-${Number(p.discountPercent)}%</span>`:''}</div>${isOffer?`<h3>${esc(p.name)}</h3>${priceRow(p)}`:'<p class="ft-promotion-product__hint">Consulta la selección disponible</p>'}<span class="ft-promotion-product__cta">Explorar ofertas <span aria-hidden="true">›</span></span></a>`;}).join('')}</div></section>`;
 
     const aboutEntry=`<a class="ft-about-entry" href="${href('nosotros')}">
@@ -338,6 +338,7 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
     masthead.setAttribute('aria-label','Bienvenido a FULLTECH');
     main.before(masthead);
     masthead.append(main.querySelector('.ft-home-search-slot'),main.querySelector('.ft-hero'),main.querySelector('.ft-promotion-announcement'));
+    main.querySelector(':scope > .ft-discovery')?.remove();
     disposeInfoSlider=mountInfoSlider(main.querySelector('.ft-info-slider'));
     syncHomeSearch();
     await loadCatalog({restore:true});
@@ -697,13 +698,32 @@ function afterAuth(){
 }
 
 const firstName=account=>String(account?.name||'').trim().split(/\s+/)[0]||'cliente';
-function syncDrawer(){
- const host=$('#drawer-customer');if(!host)return;
- drawer.querySelectorAll(':scope > a[data-route]').forEach(a=>{if(!a.dataset.decorated){const label=a.textContent.trim();a.innerHTML=materialIcon(a.dataset.route==='home'?'home':a.dataset.route==='catalog'?'categories':a.dataset.route==='cart'?'cart':a.dataset.route==='offers'?'categories':a.dataset.route==='nosotros'?'security':'settings',{size:20})+`<span>${esc(label)}</span>`;a.dataset.decorated='1';}});
- const link=(route,label,icon)=>`<a href="${href(route)}" data-route="${route}">${materialIcon(icon==='favorite'?'heart':icon,{size:20})}<span>${label}</span></a>`;
- host.innerHTML=session.account?`<p class="drawer-label">TU ESPACIO</p><div class="drawer-person"><span class="account-avatar">${esc(initials(session.account.name))}</span><div><small>Qué bueno verte</small><strong>${esc(firstName(session.account))}</strong></div></div>${link('account','Mi perfil','account')}${link('orders','Mis pedidos','cart')}${link('favorites','Mis favoritos','favorite')}<button type="button" id="drawer-logout">Cerrar sesión</button><p id="drawer-auth-error" role="alert"></p>`:`<div class="drawer-registration"><strong>¿Aún no tienes cuenta?</strong><p>Guarda tus favoritos y sigue tus pedidos.</p><a class="button" href="${href('account/register')}">Regístrate</a><a class="drawer-login" href="${href('account/login')}">Iniciar sesión</a></div>`;
- $('#drawer-logout')?.addEventListener('click',async event=>{event.target.disabled=true;try{await apiPost('/api/store/account/logout',{});session.account=null;session.loaded=true;favoriteIds.clear();syncDrawer();openDrawer(false);location.hash='/account/login';}catch(e){$('#drawer-auth-error').textContent=e.message;event.target.disabled=false;}});
- drawer.querySelectorAll('[data-route]').forEach(a=>a.setAttribute('aria-current',String((location.hash||'#/home').includes('/'+a.dataset.route))));
+function syncAccountChrome(){syncInstallButton();}
+async function mountHubProducts(){
+ const root=$('[data-hub-products]');if(!root)return;
+ const key='hub:'+location.hash;
+ activeFeed?.dispose();
+ activeFeed=createProductFeed({root,batchSize:12,renderItem:productCard,snapshot:feedSnapshots.get(key),onSnapshot:state=>{feedSnapshots.delete(key);feedSnapshots.set(key,state);if(feedSnapshots.size>12)feedSnapshots.delete(feedSnapshots.keys().next().value);},fetchPage:async(page,limit,signal)=>{
+  const response=await fetch(zonePath(`/api/store/catalog?kind=product&sort=relevance&page=${page}&limit=${limit}`),{signal,credentials:'same-origin',headers:{accept:'application/json'}});
+  if(!response.ok)throw Error('catalog_unavailable');return response.json();
+ },onChange:()=>{syncFavoriteButtons();masonry?.layout();}});
+ await activeFeed.start();
+}
+async function renderMenu(){
+ const key=location.hash;await ensureSession(true);const addressesEnabled=await commerceLocationEnabled();if(key!==location.hash)return;
+ setNav('menu');main.innerHTML=menuMarkup({account:session.account,addressesEnabled})+footer();
+ bindAuthBack();syncInstallButton();initCommerceLocation().catch(()=>{});await mountHubProducts();
+}
+async function renderAddresses(){
+ const key=location.hash;
+ setNav('menu');await ensureSession(true);
+ if(key!==location.hash)return;
+ if(!session.account)return renderLogin('Entra para ver tus direcciones.');
+ main.innerHTML=`${authHead('Mis direcciones')}<section class="account-card" data-addresses><p role="status">Cargando direcciones…</p></section>${footer()}`;bindAuthBack();
+ const host=$('[data-addresses]');
+ try{const data=await api('/api/store/account/commerce/addresses');if(key!==location.hash||!host.isConnected)return;
+  host.innerHTML=`<p class="auth-note">Estas direcciones se guardan desde el checkout, solo cuando eliges hacerlo.</p>${(data.addresses||[]).map(a=>`<article class="ft-hub-address"><h2>${esc(a.name||'Dirección guardada')}</h2><p>${esc(a.address||'Dirección sin texto adicional')}</p></article>`).join('')||'<p>Aún no tienes direcciones guardadas.</p>'}`;
+ }catch(error){if(host.isConnected){host.innerHTML=`<p role="alert">${esc(error.message)}</p><button class="button button-outline" data-retry-addresses>Reintentar</button>`;$('[data-retry-addresses]').onclick=renderAddresses;}}
 }
 async function renderOnboarding(){
  setNav('account');await ensureSession(true);if(!session.account){location.hash='/account/login';return;}
@@ -711,7 +731,7 @@ async function renderOnboarding(){
  const account=session.account;
  main.innerHTML=`${authHead('Bienvenido a FULLTECH')}<section class="auth-panel welcome-panel"><span class="welcome-mark" aria-hidden="true">${materialIcon('account',{size:28})}</span><h2>¡Bienvenido, ${esc(firstName(account))}!</h2><p class="auth-sub">Encuentra lo que necesitas, guarda tus favoritos y compra a tu ritmo. Estos datos son opcionales y puedes cambiarlos después.</p><form id="welcome-form"><label class="field"><span>WhatsApp (opcional)</span><input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="+1 809 555 1234" value="${esc(account.phone||'')}"></label><label class="field"><span>Ciudad o localidad (opcional)</span><input name="city" autocomplete="address-level2" maxlength="80" placeholder="Ej. Higüey" value="${esc(account.city||'')}"></label><p id="welcome-error" class="form-error" role="alert"></p><button class="button button-block" type="submit">Continuar</button><button class="welcome-skip" id="welcome-skip" type="button">Omitir</button></form></section>${footer()}`;
  bindAuthBack();
- const save=async skip=>{const form=$('#welcome-form');const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);$('#welcome-error').textContent='';try{const body=skip?{onboarding:'skipped'}:{phone:form.phone.value.trim(),city:form.city.value.trim(),onboarding:'completed'};const data=await apiPost('/api/store/account/me',body,'PATCH');session.account=data.account;session.loaded=true;syncDrawer();afterAuth();}catch(e){$('#welcome-error').textContent=e.message;buttons.forEach(b=>b.disabled=false);}};
+ const save=async skip=>{const form=$('#welcome-form');const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);$('#welcome-error').textContent='';try{const body=skip?{onboarding:'skipped'}:{phone:form.phone.value.trim(),city:form.city.value.trim(),onboarding:'completed'};const data=await apiPost('/api/store/account/me',body,'PATCH');session.account=data.account;session.loaded=true;syncAccountChrome();afterAuth();}catch(e){$('#welcome-error').textContent=e.message;buttons.forEach(b=>b.disabled=false);}};
  $('#welcome-form').onsubmit=e=>{e.preventDefault();save(false);};$('#welcome-skip').onclick=()=>save(true);
 }
 
@@ -878,8 +898,11 @@ async function renderComplete(params){
   };
 }
 function bindAuthBack(){const back=$('[data-back]');if(back)back.onclick=()=>history.length>1?history.back():location.assign('/store/')}
-async function renderAccount(){
+async function renderAccount(mode='profile'){
+  const key=location.hash;
+  activeFeed?.dispose();masonry?.dispose();masonry=null;
   setNav('account');await Promise.all([ensureSession(true),ensureProviders()]);
+  if(key!==location.hash)return;
   if(!session.account){
     main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Mi cuenta</h1></div>
       <section class="auth-hero">
@@ -894,13 +917,18 @@ async function renderAccount(){
     bindAuthBack();return;
   }
   let counts={orders_count:0};try{counts=await api('/api/store/account/me');session.account=counts.account||session.account}catch{}
+  if(key!==location.hash)return;
   const account=session.account;
   main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Mi cuenta</h1></div><section class="account-hero account-hero--signed"><span class="account-avatar" aria-hidden="true">${esc(initials(account.name))}</span><div><span class="eyebrow">TU CUENTA</span><h2>${esc(account.name||'Mi cuenta')}</h2><p>${esc(account.phone||'')}${account.email?' · '+esc(account.email):''}</p></div></section><div class="account-grid"><a class="account-tile" href="#/orders"><strong>${Number(counts.orders_count)||0}</strong><span>Pedidos</span></a><a class="account-tile" href="#/favorites"><strong>♡</strong><span>Favoritos</span></a></div>${account.phone_saved === false ? `<section class="account-card"><h3>Agrega tu número</h3><p class="auth-note">Lo necesitas para tu próximo pedido. No enviamos códigos: solo guardamos el número.</p><a class="button button-outline button-block" href="/store/verify/?next=%2Fstore%2F%23%2Faccount">Agregar número</a></section>` : ''}<section class="account-card"><h3>Preferencias</h3><label class="switch-row"><span>Contactarme por WhatsApp</span><input type="checkbox" id="pref-contact" ${account.preferences?.contact!=='phone'?'checked':''}></label><label class="switch-row"><span>Recibir novedades</span><input type="checkbox" id="pref-marketing" ${account.preferences?.marketing?'checked':''}></label><button class="button button-outline button-block" id="save-preferences">Guardar preferencias</button></section><section class="account-card"><h3>Mis datos</h3><form id="profile-form"><label class="field"><span class="field__label">Nombre</span><input class="field__input" name="name" value="${esc(account.name)}" maxlength="120" required></label><label class="field"><span class="field__label">Correo (opcional)</span><input class="field__input" name="email" type="email" value="${esc(account.email||'')}" maxlength="160"></label><p class="form-error" id="profile-error" role="alert"></p><button class="button button-block" type="submit">Guardar datos</button></form></section><button class="button button-ghost button-block" id="logout">Cerrar sesión</button>${footer()}`;
+  main.classList.add('ft-hub-profile');
+  if(mode==='settings')$('.page-head h1').textContent='Configuración';
+  $('#logout').insertAdjacentHTML('afterend',recommendedMarkup('Recomendados para ti'));
   bindAuthBack();
   $('#save-preferences').onclick=async()=>{const button=$('#save-preferences');button.disabled=true;try{const data=await apiPost('/api/store/account/me',{preferences:{contact:$('#pref-contact').checked?'whatsapp':'phone',marketing:$('#pref-marketing').checked}},'PATCH');session.account=data.account;button.textContent='Preferencias guardadas';}catch(error){button.textContent='No se pudo guardar';}finally{setTimeout(()=>{button.disabled=false;button.textContent='Guardar preferencias'},1400);}};
   $('#profile-error').insertAdjacentHTML('beforebegin',`<label class="field"><span>WhatsApp (opcional)</span><input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" value="${esc(account.phone||'')}" placeholder="+1 809 555 1234"></label><label class="field"><span>Ciudad o localidad (opcional)</span><input name="city" autocomplete="address-level2" maxlength="80" value="${esc(account.city||'')}"></label>`);
-  $('#profile-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#profile-error').textContent='';try{const data=await apiPost('/api/store/account/me',{name:form.name.value.trim(),email:form.email.value.trim(),phone:form.phone.value.trim(),city:form.city.value.trim()},'PATCH');session.account=data.account;syncDrawer();await renderAccount();favoriteMessage('Tus datos se guardaron');}catch(error){$('#profile-error').textContent=error.message;button.disabled=false;}};
-  $('#logout').onclick=async()=>{try{await apiPost('/api/store/account/logout',{});session.account=null;session.loaded=true;syncDrawer();location.hash='/account/login';}catch(e){favoriteMessage(e.message);}};
+  $('#profile-form').onsubmit=async event=>{event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;$('#profile-error').textContent='';try{const data=await apiPost('/api/store/account/me',{name:form.elements.namedItem('name').value.trim(),email:form.elements.namedItem('email').value.trim(),phone:form.elements.namedItem('phone').value.trim(),city:form.elements.namedItem('city').value.trim()},'PATCH');session.account=data.account;syncAccountChrome();await renderAccount(mode);favoriteMessage('Tus datos se guardaron');}catch(error){$('#profile-error').textContent=error.message;button.disabled=false;}};
+  $('#logout').onclick=async()=>{try{await apiPost('/api/store/account/logout',{});session.account=null;session.loaded=true;favoriteIds.clear();syncAccountChrome();location.hash='/account/login';}catch(e){favoriteMessage(e.message);}};
+  await mountHubProducts();if(key===location.hash)masonry=mountMasonry(main);
 }
 async function renderOrders(){
   setNav('orders');await ensureSession(true);
@@ -931,33 +959,13 @@ async function renderSearch(params){
  */
 const STORE_WHATSAPP = '18494240621';
 const STORE_WHATSAPP_TEXT = encodeURIComponent('Hola, soy cliente de FULLTECH Store y quiero hacer una consulta.');
-async function renderAbout(){
-const presentation=`<section class="ft-intro" aria-labelledby="ft-intro-title">
-      <div class="ft-intro-brand" aria-label="FULLTECH, SRL"><span>FULL</span>TECH, SRL</div>
-      <h2 id="ft-intro-title">Tecnología, herramientas y soluciones profesionales.</h2>
-      <picture class="ft-intro-visual">
-        <img class="ft-intro-photo" src="/store/assets/presentation/fulltech-scene-800.webp"
-          srcset="/store/assets/presentation/fulltech-scene-480.webp 480w, /store/assets/presentation/fulltech-scene-800.webp 800w, /store/assets/presentation/fulltech-scene-1200.webp 1200w, /store/assets/presentation/fulltech-scene-1448.webp 1448w"
-          sizes="(min-width: 1220px) 1220px, 100vw"
-          width="1448" height="1086" alt="Computadora, teléfono, accesorios, cámaras y herramientas junto a un portón automatizado en una instalación moderna."
-          fetchpriority="high" loading="eager" decoding="async">
-      </picture>
-      <p class="ft-intro-description">En FULLTECH ofrecemos productos tecnológicos, herramientas, sistemas de cámaras de seguridad y soluciones de automatización de portones para hogares y negocios.</p>
-      <div class="ft-intro-actions"><a class="button ft-intro-explore" href="${href('catalog')}">Explorar productos ${materialIcon('arrow-right',{size:18})}</a><button type="button" class="ft-intro-services-link" data-scroll-services>Conoce nuestras soluciones</button></div>
-    </section>`;
-  const services=`<section class="ft-intro-services" id="fulltech-services" aria-labelledby="ft-services-title">
-      <div class="ft-intro-services-copy"><span class="ft-intro-kicker">PARA HOGARES Y NEGOCIOS</span><h2 id="ft-services-title">Soluciones que te acompañan.</h2>
-        <p>Estamos ubicados en Higüey, República Dominicana.</p>
-        <ul><li>Tecnología y accesorios.</li><li>Herramientas y equipos.</li><li>Cámaras de seguridad.</li><li>Instalación de motores para portones.</li><li>Asesoría sobre nuestros productos.</li></ul>
-        <a class="button button-outline ft-intro-install" href="https://wa.me/${STORE_WHATSAPP}?text=${encodeURIComponent('Hola FULLTECH, quiero consultar una instalación y solicitar una cotización.')}" target="_blank" rel="noopener">Consultar instalación ${materialIcon('whatsapp',{size:18})}</a>
-      </div>
-      <div class="ft-intro-sourcing"><span class="ft-intro-kicker">ATENCIÓN DIRECTA</span><h2>Estamos para ayudarte</h2><p>Consulta productos, instalaciones y detalles de tu pedido.</p><a class="button" href="https://wa.me/18494240621" target="_blank" rel="noopener noreferrer">Hablar con FULLTECH</a></div>
-    </section>`;
+async function renderAbout(params=new URLSearchParams()){
+const presentation=`<section class="ft-hub-about-intro"><span class="ft-hub-kicker">FULLTECH, SRL</span><h2>Tecnología y soluciones para tus proyectos.</h2><p>Conoce quiénes somos, cómo trabajamos y qué puedes encontrar en FULLTECH Store.</p></section>`;
+const services=solutionsMarkup();
   setNav('nosotros');
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Nosotros</h1></div><div class="loading-cards"><div class="skeleton"></div></div>`;
-  $('[data-back]').onclick=()=>history.back();
-  main.innerHTML=`<div class="page-head"><button class="back-button" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button><h1>Nosotros</h1></div>
-    ${presentation}${services}
+  main.classList.add('ft-hub-about');
+  main.innerHTML=`<div class="ft-hub-about-visual"><picture class="ft-intro-visual"><img class="ft-intro-photo" src="/store/assets/presentation/fulltech-scene-800.webp" width="1448" height="1086" alt="Equipos tecnológicos, cámaras y herramientas junto a un portón automatizado." fetchpriority="high" decoding="async"></picture><button class="back-button ft-hub-about-back" data-back aria-label="Volver">${materialIcon('back',{size:18})}</button></div>
+    ${presentation}<section class="ft-hub-about-details" id="fulltech-company-details">
     <section class="about-section">
       <h2>Quiénes somos</h2>
       <p>FULLTECH Store es la tienda en línea de FULLTECH, SRL, una empresa dominicana. Trabajamos con dos tipos de artículos: los que salen de nuestro propio almacén y los que se consiguen con proveedores. En la ficha de cada producto y en el carrito verás siempre cuál es el caso, sin letra pequeña.</p>
@@ -1009,17 +1017,22 @@ const presentation=`<section class="ft-intro" aria-labelledby="ft-intro-title">
       <a class="button button-outline" href="https://wa.me/${STORE_WHATSAPP}?text=${STORE_WHATSAPP_TEXT}" target="_blank" rel="noopener">${materialIcon('whatsapp',{size:18})} Escribir por WhatsApp</a>
     </div>
     <p class="about-note">Las condiciones de garantía, plazos de entrega y formas de pago se confirman en cada pedido antes de cobrar.</p>
+    </section>${services}${recommendedMarkup('Explora nuestros productos')}
     ${footer()}`;
   $('[data-scroll-services]')?.addEventListener('click', () => $('#fulltech-services').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));
-  $('[data-back]').onclick=()=>history.back();
+  bindAuthBack();
+  await mountHubProducts();
 }
 
-async function renderRoute(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path==='offers')return renderCatalog(params,true);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request'||path==='account/requests'){location.replace(href('catalog'));return;}if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='nosotros')return renderAbout();return renderHome()}
+async function renderRoute(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path==='offers')return renderCatalog(params,true);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request'||path==='account/requests'){location.replace(href('catalog'));return;}if(path==='menu')return renderMenu();if(path==='account/settings')return renderAccount('settings');if(path==='account/addresses')return renderAddresses();if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='nosotros')return renderAbout(params);return renderHome()}
 const routeScroll=new Map();
 let renderedRoute=location.hash, routeRun=0,navigating=false;
 if('scrollRestoration' in history)history.scrollRestoration='manual';
 window.addEventListener('scroll',()=>{if(!navigating)routeScroll.set(renderedRoute,window.scrollY)},{passive:true});
 async function route(){
+  main.setAttribute('aria-busy','true');
+  main.classList.remove('ft-hub-profile');
+  main.classList.remove('ft-hub-about');
   disposeInfoSlider();disposeInfoSlider=()=>{};
   commerceCheckout?.dispose();commerceCheckout=null;
   routeScroll.set(renderedRoute,window.scrollY);navigating=true;
@@ -1033,15 +1046,21 @@ async function route(){
   const run=++routeRun;
   const key=location.hash;
   await ensureSession();
-  syncDrawer();
+  syncAccountChrome();
   if(session.account?.onboarding==='pending'&&!key.includes('/account/welcome')&&!key.includes('/account/complete')){location.hash='/account/welcome';return;}
   const saved=routeScroll.get(key)||0;
   await (key.includes('/account/welcome')?renderOnboarding():key.replace(/^#\/?/,'').split('?')[0]==='favorites'?renderFavorites():renderRoute());
   if(run!==routeRun||key!==location.hash)return;
   renderedRoute=key;
+  masonry?.dispose();
   masonry=mountMasonry(main);
+  // Let masonry/ResizeObserver finish their initial layout before restoring the route.
+  // This is navigation restoration only; gestures remain owned by the document.
+  if(document.visibilityState==='visible')await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  if(run!==routeRun||key!==location.hash)return;
   window.scrollTo(0,saved);
   syncHomeSearch();navigating=false;
+  main.setAttribute('aria-busy','false');
   await ensureSession();
   if(run===routeRun&&key===location.hash){
     const prompt=$('#signup-prompt');
@@ -1053,12 +1072,11 @@ async function route(){
       prompt.href=session.providers.google?'/api/store/account/auth/google/start':href('account/register');
     }
     syncAnnouncement();
-    syncDrawer();
+    syncAccountChrome();
     await refreshFavoriteState();
   }
 }
-function openDrawer(open){if(open)syncDrawer();if(!open&&drawer.contains(document.activeElement))$('#menu-button').focus();drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));drawer.inert=!open;$('#drawer-scrim').hidden=!open;$('#menu-button').setAttribute('aria-expanded',String(open));if(open)$('#close-drawer').focus({preventScroll:true});}
-$('#menu-button').onclick=()=>openDrawer(!drawer.classList.contains('open'));$('#close-drawer').onclick=()=>openDrawer(false);$('#drawer-scrim').onclick=()=>openDrawer(false);drawer.addEventListener('click',e=>{if(e.target.closest('a'))openDrawer(false)});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&drawer.classList.contains('open'))openDrawer(false);});document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
+document.querySelector('.cart-shortcut')?.addEventListener('click',()=>{location.hash='#/cart'});
 function syncHomeSearch(){
   const slot=document.querySelector('.ft-home-search-slot');
   if(!slot)return;
