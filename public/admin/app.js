@@ -5970,7 +5970,7 @@
     openSheet(
       'Acciones del mapa',
       `
-      <div class="menu-list" style="max-height:50vh;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div class="menu-list" style="overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
         ${baseRow('satelite')}
         ${baseRow('calles')}
         ${
