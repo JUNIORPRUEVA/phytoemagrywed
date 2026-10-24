@@ -6001,7 +6001,7 @@
       </div>
       `,
       /* Panel lateral derecho: alto completo y el 70% del ancho. */
-      { variant: 'right' },
+      { variant: 'actions-drawer' },
     );
   }
 
@@ -26740,3 +26740,4 @@
     window.dispatchEvent(new Event('fulltech:startup-failed'));
   }));
 })();
+
