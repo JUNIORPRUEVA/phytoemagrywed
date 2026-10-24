@@ -2,6 +2,7 @@ import { STORE_REQUEST_STATUSES } from './store-accounts.mjs';
 import { maskPhone, phoneRequirement } from './store-verifications.mjs';
 import { publicProduct } from './store-public-routes.mjs';
 import { bindRequestTrust, trustOf } from './http-trust.mjs';
+import {handleCommerceAccount} from './smart-commerce-routes.mjs';
 
 const COOKIE = 'ft_store_session';
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
@@ -84,8 +85,9 @@ function oauthStateCookie(req, value) {
 }
 
 /** Límite simple por IP: frena la fuerza bruta sin bloquear al cliente real. */
-const attempts = new Map();
-function throttle(req, key) {
+const instanceAttempts = new WeakMap();
+function throttle(req, key, owner) {
+  let attempts=instanceAttempts.get(owner);if(!attempts){attempts=new Map();instanceAttempts.set(owner,attempts);}
   /*
    * Clave por CLIENTE, no por socket: detrás de nginx todos los sockets son
    * `127.0.0.1`, así que este mapa era un único cubo compartido por todo el
@@ -113,6 +115,11 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
   const requestRoute = route === '/api/store/requests' || route.startsWith('/api/store/requests/');
   const orderRoute = route === '/api/store/orders';
   if (!accountRoute && !requestRoute && !orderRoute) return false;
+  // Retired sourcing service: historical records remain administrator-only.
+  if (requestRoute || route === '/api/store/account/requests') {
+    json(res, 410, {ok:false,error:'sourcing_retired',message:'Este servicio ya no está disponible. Puedes seguir comprando en el catálogo.'}, {'cache-control':'no-store'});
+    return true;
+  }
   if (!accounts) {
     json(res, 503, { ok: false, error: 'accounts_unavailable', message: 'La cuenta estará disponible en breve.' });
     return true;
@@ -169,6 +176,7 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
   };
 
   try {
+    if(await handleCommerceAccount({req,res,route,ctx,current,json,readJson}))return true;
     if (route === '/api/store/account/favorites' && req.method === 'GET') {
       const session = requireAccount();
       if (!session) return true;
@@ -202,7 +210,7 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
     }
 
     if (route === '/api/store/account/register' && req.method === 'POST') {
-      if (!throttle(req, 'register')) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
+      if (!throttle(req, 'register',ctx)) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
       const body = await readJson(req, 40000);
       const result = await accounts.register(body);
       const session = await accounts.createSession(result.account.id);
@@ -211,7 +219,7 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
     }
 
     if (route === '/api/store/account/login' && req.method === 'POST') {
-      if (!throttle(req, 'login')) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
+      if (!throttle(req, 'login',ctx)) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
       const body = await readJson(req, 20000);
       const result = await accounts.login(body);
       const session = await accounts.createSession(result.account.id);
@@ -291,7 +299,7 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
        * existente), así que necesita su propio límite: sin él sería la puerta
        * de atrás para adivinar contraseñas saltándose el tope de `/login`.
        */
-      if (!throttle(req, 'complete', 20)) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
+      if (!throttle(req, 'complete',ctx)) return send(429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos. Espera unos minutos.' });
       const body = await readJson(req, 40000);
       const result = await accounts.completePendingLink(body.token, body);
       const session = await accounts.createSession(result.account.id);
@@ -302,7 +310,7 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
       if (!current) return send(200, { ok: true, account: null, customer: null, orders_count: 0, requests_count: 0 });
       const session = requireAccount();
       if (!session) return true;
-      const [orders, requests] = await Promise.all([accounts.ordersForCustomer(session.account.customer_id), accounts.listRequestsForCustomer(session.account.customer_id)]);
+      const orders = await accounts.ordersForCustomer(session.account.customer_id);
       const verification = ctx.storeVerifications ? await ctx.storeVerifications.phoneStatus(session.account.id, session.account.phone_e164) : null;
       const emailVerified = ctx.storeVerifications ? await ctx.storeVerifications.emailVerified(session.account) : false;
       return send(200, {
@@ -316,7 +324,7 @@ export async function handleStoreAccountRoute({ req, res, route, url, ctx, json,
         },
         customer: { id: session.customer?.id ?? null, name: session.customer?.name ?? '' },
         orders_count: orders.length,
-        requests_count: requests.length,
+        requests_count: 0, // Compatibility field for clients predating feature retirement.
         email_verified: emailVerified,
       });
     }

@@ -1,0 +1,30 @@
+/* Refine the existing components, preserving product media and search geometry. */
+.ft-favorite, .ft-favorite.is-favorite, .ft-favorite:hover,
+.ft-gallery-action, .ft-gallery-action:hover { background: transparent; color: #fff; box-shadow: none; isolation: isolate; }
+.ft-favorite::before, .ft-gallery-action::before { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: rgba(0,0,0,.22); z-index: -1; pointer-events: none; transition: background-color 160ms ease; }
+.ft-favorite:hover::before, .ft-gallery-action:hover::before { background: rgba(0,0,0,.32); }
+.ft-favorite__icon, .ft-gallery-action .ft-custom-icon { filter: drop-shadow(0 1px 1px #0009); }
+.ft-favorite.is-favorite { color: #ffb4ce; }
+.ft-favorite.is-favorite::before { background: rgba(0,0,0,.3); }
+.ft-favorite:focus-visible, .ft-gallery-action:focus-visible { outline: 2px solid #fff; outline-offset: 1px; box-shadow: 0 0 0 4px #1258d6; }
+.ft-gallery-action { position: relative; }
+.ft-gallery-actions .ft-favorite { position: relative; inset: auto; width: 44px; height: 44px; flex: 0 0 44px; pointer-events: auto; }
+.ft-gallery-actions { gap: clamp(4px,2vw,10px); }
+.ft-card__summary, .product-card .ft-card__summary { grid-column: 1 / -1; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 2px 0 5px; min-height: 0; font-size: .6875rem; line-height: 1.35; color: #687689; }
+.ft-card__state, .availability, .detail--product .availability { background: transparent; border: 0; box-shadow: none; padding: 0; transition: color 160ms ease; }
+.ft-browse-search { position: sticky; top: env(safe-area-inset-top,0px); z-index: 40; background: var(--canvas,#f7f8fa); padding-block: 4px; width: 100%; min-width: 0; }
+.ft-catalog-page, .ft-offer-carousel { min-width: 0; overflow: visible; }
+.ft-offer-track { min-width: 0; max-width: 100%; scrollbar-width: none; scroll-padding-inline: 2px; cursor: grab; }
+.ft-offer-track:active { cursor: grabbing; }
+.ft-offer-track::-webkit-scrollbar { display: none; }
+.ft-offer-carousel__head > div { display: flex; gap: 4px; align-items: center; }
+.ft-offer-carousel__head [data-carousel-play] { padding-inline: 8px; font-size: .6875rem; }
+.ft-offers-heading h1 { margin-block: 7px 8px; font-size: clamp(21px,5vw,26px); }
+.ft-offers-heading p { display: none; }
+.ft-catalog-page:has(.ft-offers-heading) #catalog-title { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip-path: inset(50%); }
+.ft-offer-carousel { margin-block: 8px 14px; }
+.ft-offers-icon { display: inline-block; width: 21px; height: 21px; flex: 0 0 21px; background: currentColor; -webkit-mask: url('/store/assets/icons/custom/etiqueta.png') center / contain no-repeat; mask: url('/store/assets/icons/custom/etiqueta.png') center / contain no-repeat; }
+/* This is the store's registration link, not a Google-controlled iframe. */
+.ft-signup-prompt { position: static; display: flex; transform: none; width: fit-content; max-width: calc(100% - 24px); margin: 12px 12px 0 auto; }
+.app-shell:has(.ft-signup-prompt:not([hidden])) { padding-bottom: calc(var(--ft-dock-height) + 28px + env(safe-area-inset-bottom,0px)); }
+@media(prefers-reduced-motion:reduce) { .ft-card__state, .availability, .ft-favorite::before, .ft-gallery-action::before { transition: none; } .ft-offer-track { scroll-behavior: auto; } }

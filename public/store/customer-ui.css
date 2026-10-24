@@ -1,0 +1,53 @@
+/* Customer surfaces share one scale, including guest and empty states. */
+.drawer { z-index: 90; width: min(328px,90vw); padding: max(12px,env(safe-area-inset-top,0px)) 14px max(12px,env(safe-area-inset-bottom,0px)); overflow-y: auto; overscroll-behavior: contain; gap: 3px; }
+.drawer-scrim:not([hidden]) { z-index: 89; }
+.drawer > * { flex-shrink: 0; }
+.drawer-head { padding-bottom: 12px; gap: 8px; }
+.drawer-head .ft-drawer-logo { width: 208px; max-width: calc(100% - 48px); }
+.drawer-head .icon-button { width: 40px; height: 40px; background: #f1f5fb; border-radius: 12px; }
+.drawer .drawer-label { margin: 14px 10px 5px; font-size: 10px; letter-spacing: .1em; }
+.drawer > a:not(.wordmark), .drawer-customer > a { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 9px 11px; border-radius: 11px; font-size: 13px; font-weight: 600; color: #304462; }
+.drawer a svg { color: #597295; flex-shrink: 0; }
+.drawer a[aria-current="true"], .drawer a:hover { background: #edf4ff; color: #1258d6; }
+.drawer a:focus-visible, .drawer button:focus-visible { outline: 2px solid #1258d6; outline-offset: 2px; }
+.drawer-divider { margin-top: 10px; }
+.drawer-customer { margin-top: auto; padding-top: 12px; }
+.drawer-person { display: flex; gap: 10px; align-items: center; margin: 8px 10px 12px; }
+.drawer-person .account-avatar { width: 38px; height: 38px; font-size: 14px; }
+.drawer-person small, .drawer-person strong { display: block; }
+.drawer-person small { color: #687689; font-size: 11px; }
+.drawer-person strong { font-size: 16px; overflow-wrap: anywhere; }
+.drawer-registration { padding: 14px; background: linear-gradient(135deg,#f5f8ff,#eaf2ff); border: 1px solid #e0e9f8; border-radius: 14px; }
+.drawer-registration strong { font-size: 14px; }
+.drawer-registration p { font-size: 12px; color: #687689; line-height: 1.5; margin: 6px 0 12px; }
+.drawer-registration .button { height: 40px; width: 100%; font-size: 13px; }
+.drawer-login { display: flex; justify-content: center; align-items: center; min-height: 40px; margin-top: 4px; font-size: 12px; color: #315780; }
+#drawer-logout { min-height: 40px; padding: 8px 11px; border: 0; background: transparent; color: #687689; font-size: 12px; cursor: pointer; }
+#drawer-auth-error { font-size: 12px; color: #a52d38; }
+.drawer-bottom { margin-top: 12px; padding: 12px 10px 0; font-size: 11px; }
+main:has(.auth-panel), main:has(.account-card), main:has(.order-list), main:has(#request-form) { padding-top: 12px; }
+.auth-panel, .account-card { width: 100%; max-width: 620px; margin: 12px auto; padding: clamp(16px,4vw,24px); border: 1px solid #e4ebf5; border-radius: 17px; background: #fff; box-shadow: 0 5px 20px #17355e06; }
+.auth-panel h2, .account-card h3 { margin: 0 0 10px; letter-spacing: -.4px; }
+.auth-panel .field, .account-card .field { margin-bottom: 14px; gap: 6px; }
+.auth-panel input, .account-card input:not([type=checkbox]) { min-width: 0; width: 100%; font-size: 16px; border-radius: 10px; }
+.auth-panel .button, .account-card .button { min-height: 44px; height: auto; padding-block: 11px; font-size: 13px; }
+.auth-sub, .account-card p { font-size: 13px; line-height: 1.6; color: #687689; }
+.welcome-panel { max-width: 480px; }
+.welcome-panel h2 { font-size: clamp(22px,6vw,28px); }
+.welcome-mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 15px; background: #edf4ff; color: #1258d6; margin-bottom: 15px; }
+.welcome-skip { display: block; min-height: 40px; min-width: 80px; margin: 5px auto 0; padding: 5px 12px; border: 0; background: transparent; color: #687689; font-size: 12px; cursor: pointer; }
+.welcome-skip:focus-visible { outline: 2px solid #1258d6; border-radius: 8px; }
+.account-hero--signed { padding: 18px; gap: 12px; }
+.account-hero--signed h2 { font-size: 21px; }
+.account-hero--signed p { overflow-wrap: anywhere; line-height: 1.5; }
+.account-grid { gap: 10px; }
+.account-tile { padding: 15px; border-radius: 14px; }
+main:has(.auth-panel) .page-head, main:has(.account-card) .page-head { margin-bottom: 12px; gap: 10px; }
+main:has(.auth-panel) .page-head h1, main:has(.account-card) .page-head h1 { font-size: clamp(20px,5vw,25px); }
+.order-list, .request-list { display: grid; gap: 12px; }
+.form-error { overflow-wrap: anywhere; }
+.request-form { max-width: 620px; margin: 12px auto; padding: clamp(14px,4vw,22px); border: 1px solid #e4ebf5; border-radius: 17px; background: #fff; }
+.request-form .field { margin-bottom: 14px; }
+.request-form input, .request-form textarea { font-size: 16px; min-width: 0; }
+.page-intro { font-size: 13px; line-height: 1.55; color: #687689; }
+@media(max-height:600px) { .drawer-customer { margin-top: 6px; } .drawer-head { padding-bottom: 8px; } .drawer .drawer-label { margin-top: 9px; } }

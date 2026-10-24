@@ -322,28 +322,29 @@ describe('enlace de Google con una cuenta existente', () => {
     });
     expect(patched.status).toBe(200);
 
-    /* Entra con Google con ese mismo correo: debe nacer PENDIENTE, sin ficha. */
+    /* Google creates an active account with optional onboarding, never the CRM history. */
     identity = { sub: 'google-crm', email: 'crm.solo@example.test' };
     const { callback } = await googleLogin();
-    expect(callback.location).toContain('/store/#/account/complete?token=');
-    expect(callback.location).not.toContain('modo=clave');
-    const token = new URLSearchParams(callback.location.split('?')[1] ?? '').get('token');
+    expect(callback.location).toBe('/store/#/account');
+    const cookie=callback.headers.getSetCookie().find(v=>v.startsWith('ft_store_session=')).split(';')[0];
+    expect((await api('/api/store/account/orders',{cookie})).data.orders).toEqual([]);
 
     /* Su teléfono ya tiene historial: sin número de pedido NO se vincula. */
-    const sinPrueba = await api('/api/store/account/complete', {
+    const sinPrueba = await api('/api/store/account/phone', {
       method: 'POST',
-      body: { token, phone: '8095550801', city: 'Santo Domingo' },
+      cookie, body: { phone: '8095550801' },
     });
-    expect(sinPrueba.status).toBe(403);
-    expect(sinPrueba.data.error).toBe('verification_required');
+    expect(sinPrueba.status).toBe(200);
+    expect(sinPrueba.data.needs_proof).toBe(true);
+    expect((await api('/api/store/account/orders',{cookie})).data.orders).toEqual([]);
 
     /* Con la prueba sí, y entonces ve su pedido. */
-    const conPrueba = await api('/api/store/account/complete', {
+    const conPrueba = await api('/api/store/account/phone', {
       method: 'POST',
-      body: { token, phone: '8095550801', city: 'Santo Domingo', orderNumber },
+      cookie,body: { phone: '8095550801', orderNumber },
     });
     expect(conPrueba.status).toBe(200);
-    const orders = await api('/api/store/account/orders', { cookie: conPrueba.cookie });
+    const orders = await api('/api/store/account/orders', { cookie });
     expect(orders.data.orders.some((row) => row.order_number === orderNumber)).toBe(true);
   });
 });

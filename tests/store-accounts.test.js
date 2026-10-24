@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { startCrmServer } from '../server/crm-server.mjs';
 
 const IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
@@ -51,6 +52,34 @@ afterEach(async () => {
 });
 
 describe('FULLTECH Store customer accounts', () => {
+  it('does not require onboarding for an existing account without a welcome marker', async () => {
+    const created=await register({name:'Cliente Anterior',phone:'8095551266',email:'existing-welcome@example.test',password:'Cliente-123'});
+    const db=new DatabaseSync(path.join(dir,'accounts.sqlite'));
+    db.prepare('UPDATE fulltech_customer_accounts_v1 SET profile=? WHERE id=?').run(JSON.stringify({name:'Cliente Anterior',email:'existing-welcome@example.test'}),created.data.account.id);db.close();
+    const returned=await login({identifier:'existing-welcome@example.test',password:'Cliente-123'});
+    expect(returned.status).toBe(200);expect(returned.data.account.onboarding).toBeNull();
+  });
+  it('persists optional welcome data, rejects invalid phones without completing, and keeps email-only accounts isolated', async () => {
+    const created=await register({name:'Lina Nueva',email:'welcome@example.test',password:'Cliente-123'});
+    expect(created.status).toBe(201);
+    expect(created.data.account).toMatchObject({onboarding:'pending',phone:null});
+    const patch=body=>api('/api/store/account/me',{method:'PATCH',cookie:created.cookie,body});
+    expect((await patch({phone:'80912',city:'Higüey',onboarding:'completed'})).status).toBe(422);
+    expect((await api('/api/store/account/me',{cookie:created.cookie})).data.account.onboarding).toBe('pending');
+    const saved=await patch({phone:'809 555 1287',city:'Higüey',onboarding:'completed'});
+    expect(saved.status).toBe(200);
+    expect(saved.data.account).toMatchObject({phone:'+18095551287',city:'Higüey',onboarding:'completed'});
+    await api('/api/store/account/logout',{method:'POST',cookie:created.cookie,body:{}});
+    const logged=await login({identifier:'welcome@example.test',password:'Cliente-123'});
+    expect(logged.data.account).toMatchObject({city:'Higüey',onboarding:'completed'});
+    const second=await register({name:'Otra Nueva',email:'other-welcome@example.test',password:'Cliente-123'});
+    expect((await api('/api/store/account/orders',{cookie:second.cookie})).data.orders).toEqual([]);
+    expect((await api('/api/store/account/me',{cookie:second.cookie})).data.account.city).toBe('');
+    expect((await api('/api/store/account/me',{method:'PATCH',cookie:second.cookie,body:{onboarding:'skipped'}})).status).toBe(200);
+    expect((await api('/api/store/account/me',{cookie:second.cookie})).data.account.onboarding).toBe('skipped');
+    expect((await api('/api/store/account/me',{method:'PATCH',cookie:logged.cookie,body:{phone:'8295551287',city:'Santo Domingo'}})).status).toBe(200);
+    expect((await api('/api/store/account/me',{cookie:logged.cookie})).data.account.phone).toBe('+18295551287');
+  });
   it('creates an account linked to one CRM customer, keeps sessions separate and refuses duplicates', async () => {
     const created = await register({ name: 'Ana Cliente', phone: '8095550201', email: 'ana@example.test', password: 'Cliente-123' });
     expect(created.status).toBe(201);
@@ -125,109 +154,26 @@ describe('FULLTECH Store customer accounts', () => {
     expect(JSON.stringify(orders.data)).not.toMatch(/cost_cents|product_cost_snapshot|gross_profit/i);
   });
 
-  it('creates real requests with idempotency, ownership, quotes and customer decisions', async () => {
-    const owner = await register({ name: 'Dueña', phone: '8095550301', password: 'Cliente-123' });
-    const other = await register({ name: 'Otra Persona', phone: '8095550302', password: 'Cliente-123' });
-    expect(owner.status).toBe(201);
-    expect(other.status).toBe(201);
-
-    const key = `sreq_${randomUUID().replaceAll('-', '')}`;
-    const body = {
-      kind: 'product', title: 'Busco un router de doble banda', details: 'Para una casa de dos plantas.',
-      referenceUrl: 'https://example.test/router', requestKey: key, images: [IMAGE],
-    };
-    const created = await api('/api/store/requests', { method: 'POST', cookie: owner.cookie, body });
-    expect(created.status).toBe(201);
-    expect(created.data.request).toMatchObject({ status: 'nuevo', kind: 'product', images: 1 });
-    const requestId = created.data.request.id;
-
-    const repeated = await api('/api/store/requests', { method: 'POST', cookie: owner.cookie, body });
-    expect(repeated.status).toBe(200);
-    expect(repeated.data.duplicate).toBe(true);
-    expect(repeated.data.request.id).toBe(requestId);
-
-    const similar = await api('/api/store/requests', {
-      method: 'POST', cookie: owner.cookie,
-      body: { ...body, requestKey: `sreq_${randomUUID().replaceAll('-', '')}`, images: [] },
-    });
-    expect(similar.status).toBe(200);
-    expect(similar.data.duplicate).toBe(true);
-
-    const mine = await api('/api/store/account/requests', { cookie: owner.cookie });
-    expect(mine.data.requests).toHaveLength(1);
-    expect((await api('/api/store/account/requests', { cookie: other.cookie })).data.requests).toHaveLength(0);
-
-    const ownImage = await fetch(`${app.url}/api/store/requests/${requestId}/image/0`, { headers: { cookie: owner.cookie } });
-    expect(ownImage.status).toBe(200);
-    expect(ownImage.headers.get('content-type')).toBe('image/png');
-    expect((await fetch(`${app.url}/api/store/requests/${requestId}/image/0`)).status).toBe(401);
-    expect((await fetch(`${app.url}/api/store/requests/${requestId}/image/0`, { headers: { cookie: other.cookie } })).status).toBe(404);
-
-    const adminList = await api('/api/admin/store/requests', { cookie: adminCookie });
-    expect(adminList.status).toBe(200);
-    expect(adminList.data.requests.find((row) => row.id === requestId)?.customer?.name).toBe('Dueña');
-
-    const agentUser = await api('/api/admin/users', {
-      method: 'POST', cookie: adminCookie,
-      body: { username: 'requests-agent', displayName: 'Agente solicitudes', role: 'AGENT', password: 'Agente-12345' },
-    });
-    expect(agentUser.status).toBe(201);
-    const agentLogin = await fetch(`${app.url}/api/admin/auth/login`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'requests-agent', password: 'Agente-12345' }),
-    });
-    const agentCookie = agentLogin.headers.get('set-cookie').split(';')[0];
-    expect((await api('/api/admin/store/requests', { cookie: agentCookie })).data.canManage).toBe(false);
-    expect((await api(`/api/admin/store/requests/${requestId}`, { method: 'PATCH', cookie: agentCookie, body: { status: 'en_revision' } })).status).toBe(403);
-
-    const reviewing = await api(`/api/admin/store/requests/${requestId}`, {
-      method: 'PATCH', cookie: adminCookie, body: { status: 'en_revision', admin_notes: 'Revisando proveedor.' },
-    });
-    expect(reviewing.status).toBe(200);
-    expect(reviewing.data.request.status).toBe('en_revision');
-
-    const quoted = await api(`/api/admin/store/requests/${requestId}`, {
-      method: 'PATCH', cookie: adminCookie, body: { quote: { amount: '3500.00', notes: 'Incluye instalación.' } },
-    });
-    expect(quoted.status).toBe(200);
-    expect(quoted.data.request).toMatchObject({ status: 'cotizado', quote: { amount: 3500, currency: 'DOP', advance_percent: 30, advance_amount: 1050 } });
-
-    const customerView = await api(`/api/store/requests/${requestId}`, { cookie: owner.cookie });
-    expect(customerView.data.request.status).toBe('cotizado');
-    expect(customerView.data.request.admin_notes).toBeUndefined();
-    expect((await api(`/api/store/requests/${requestId}`, { cookie: other.cookie })).status).toBe(404);
-
-    const accepted = await api(`/api/store/requests/${requestId}/decision`, {
-      method: 'POST', cookie: owner.cookie, body: { decision: 'accept' },
-    });
-    expect(accepted.status).toBe(200);
-    /* Con anticipo configurado, aceptar deja la solicitud esperando el pago. */
-    expect(accepted.data.request.status).toBe('anticipo_pendiente');
-    expect((await api(`/api/store/requests/${requestId}/decision`, { method: 'POST', cookie: owner.cookie, body: { decision: 'accept' } })).status).toBe(409);
-
-    /* El cliente REPORTA la transferencia: no se confirma sola. */
-    const reported = await api(`/api/store/requests/${requestId}/transfer`, {
-      method: 'POST', cookie: owner.cookie, body: { reference: 'REF-123', amount: '1050.00' },
-    });
-    expect(reported.status).toBe(200);
-    expect(reported.data.request.payment).toMatchObject({ status: 'reported', amount: 1050 });
-
-    /* Solo administración verifica, y confirmar no marca pagado el total. */
-    const confirmed = await api(`/api/admin/store/requests/${requestId}`, {
-      method: 'PATCH', cookie: adminCookie, body: { payment: { decision: 'confirmed' } },
-    });
-    expect(confirmed.status).toBe(200);
-    expect(confirmed.data.request.payment.status).toBe('confirmed');
-    expect(confirmed.data.request.status).toBe('en_proceso');
-
-    const filtered = await api('/api/admin/store/requests?status=en_proceso', { cookie: adminCookie });
-    expect(filtered.data.requests.some((row) => row.id === requestId)).toBe(true);
+  it('retires sourcing endpoints and preserves historical requests and payments as read-only', async () => {
+    await expect(app.ctx.storeAccounts.createRequest({},{})).rejects.toMatchObject({code:'sourcing_retired',status:410});
+    const owner=await register({name:'Titular archivo',phone:'8095550301',password:'Cliente-123'});
+    const db=new DatabaseSync(path.join(dir,'accounts.sqlite'));
+    const customerId=db.prepare('SELECT customer_id FROM fulltech_customer_accounts_v1 WHERE id=?').get(owner.data.account.id).customer_id;
+    const doc={id:'req_historical',customer_id:customerId,account_id:owner.data.account.id,title:'Solicitud histórica',status:'cotizado',kind:'product',created_at:'2026-01-01T00:00:00Z',quote:{amount:1000,currency:'DOP'},payment:{amount:300,status:'confirmed'},timeline:[{status:'nuevo',at:'2026-01-01T00:00:00Z'}]};
+    const raw=JSON.stringify(doc);
+    db.prepare('INSERT INTO fulltech_store_requests_v1(id,customer_id,account_id,request_key,status,kind,title_key,doc,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(doc.id,customerId,owner.data.account.id,'legacy-key','cotizado','product','solicitud historica',raw,doc.created_at,doc.created_at);
+    for(const route of ['/api/store/requests','/api/store/account/requests','/api/store/requests/req_historical','/api/store/requests/req_historical/decision','/api/store/requests/req_historical/transfer'])for(const method of ['GET','POST'])expect((await api(route,{method,cookie:owner.cookie,...(method==='POST'?{body:{title:'No crear'}}:{})})).status).toBe(410);
+    const archive=await api('/api/admin/store/requests',{cookie:adminCookie});expect(archive.status).toBe(200);expect(archive.data.canManage).toBe(false);expect(archive.data.requests.some(r=>r.id===doc.id)).toBe(true);
+    expect((await api('/api/admin/store/requests/req_historical',{method:'PATCH',cookie:adminCookie,body:{status:'cancelado'}})).status).toBe(410);
+    expect((await api('/api/admin/store/requests',{method:'POST',cookie:adminCookie,body:{title:'No crear'}})).status).toBe(410);
+    expect(db.prepare('SELECT doc FROM fulltech_store_requests_v1 WHERE id=?').get(doc.id).doc).toBe(raw);
+    expect(db.prepare('SELECT count(*) AS n FROM fulltech_store_requests_v1').get().n).toBe(1);db.close();
   });
 
   it('requires a session for requests and rejects cross-origin writes', async () => {
     expect((await api('/api/store/requests', {
       method: 'POST', body: { title: 'Sin sesión', kind: 'product', requestKey: 'abcdefgh' },
-    })).status).toBe(401);
+    })).status).toBe(410);
 
     const owner = await register({ name: 'Cliente CSRF', phone: '8095550401', password: 'Cliente-123' });
     const proxied = await fetch(`${app.url}/api/store/account/login`, {
@@ -236,8 +182,8 @@ describe('FULLTECH Store customer accounts', () => {
       body: JSON.stringify({ identifier: '8095550401', password: 'Cliente-123' }),
     });
     expect(proxied.status).toBe(200);
-    const response = await fetch(`${app.url}/api/store/requests`, {
-      method: 'POST',
+    const response = await fetch(`${app.url}/api/store/account/me`, {
+      method: 'PATCH',
       headers: { 'content-type': 'application/json', cookie: owner.cookie, origin: 'https://evil.example' },
       body: JSON.stringify({ title: 'Intento externo', kind: 'product', requestKey: 'csrf_12345678' }),
     });
@@ -278,19 +224,14 @@ describe('FULLTECH Store customer accounts', () => {
     const callback = await api(`/api/store/account/auth/google/callback?code=ok&state=${encodeURIComponent(state)}`, { cookie: stateCookie, redirect: 'manual' });
     expect(callback.status).toBe(302);
     const completeLocation = callback.headers.get('location');
-    expect(completeLocation).toContain('/store/#/account/complete?token=');
-    const setupToken = new URLSearchParams(completeLocation.split('?')[1] ?? '').get('token');
-    expect(setupToken).toBeTruthy();
-    expect(callback.cookie ?? '').not.toMatch(/^ft_store_session=/);
-
-    const completed = await api('/api/store/account/complete', {
-      method: 'POST', body: { token: setupToken, name: 'OAuth Cliente', phone: '8095550501', city: 'Santo Domingo' },
+    expect(completeLocation).toBe('/store/#/account');
+    const sessionCookie=callback.headers.getSetCookie().find(v=>v.startsWith('ft_store_session=')).split(';')[0];
+    const completed = await api('/api/store/account/me', {
+      method: 'PATCH',cookie:sessionCookie,body:{phone:'8095550501',city:'Santo Domingo',onboarding:'completed'},
     });
     expect(completed.status).toBe(200);
     expect(completed.data.account).toMatchObject({ name: 'OAuth Cliente', phone: '+18095550501', providers: { google: true, password: false } });
-    expect(completed.cookie).toMatch(/^ft_store_session=/);
-
-    const me = await api('/api/store/account/me', { cookie: completed.cookie });
+    const me = await api('/api/store/account/me', { cookie: sessionCookie });
     expect(me.status).toBe(200);
     expect(me.data.account.name).toBe('OAuth Cliente');
 
@@ -303,6 +244,10 @@ describe('FULLTECH Store customer accounts', () => {
       cookie: again.headers.get('set-cookie').split(';')[0], redirect: 'manual',
     });
     expect(secondCallback.headers.get('location')).toBe('/store/#/account');
+    const secondCookie=secondCallback.headers.getSetCookie().find(v=>v.startsWith('ft_store_session=')).split(';')[0];
+    const returned=await api('/api/store/account/me',{cookie:secondCookie});
+    expect(returned.data.account.id).toBe(me.data.account.id);
+    expect(returned.data.account.onboarding).toBe('completed');
     expect(calls.filter((url) => url.includes('/token')).length).toBe(2);
   });
 });

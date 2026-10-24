@@ -21,3 +21,18 @@
 @media(min-width:768px){.ft-intro{gap:20px;margin-block:28px}.ft-intro-services{grid-template-columns:1.1fr 1fr;gap:40px}.ft-intro-services ul{grid-template-columns:1fr 1fr;column-gap:24px}.ft-intro-services li:last-child{grid-column:1/-1}}
 @media(min-width:1000px){.ft-intro{grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);grid-template-areas:"brand visual" "title visual" "description visual" "actions visual";column-gap:36px;align-items:center;padding-block:20px}#ft-intro-title{font-size:clamp(32px,3.4vw,48px)}.ft-intro-visual{align-self:center}.ft-intro-brand{align-self:end}.ft-intro-actions{align-self:start}}
 @media(prefers-reduced-motion:reduce){.ft-intro *, .ft-intro-services *{scroll-behavior:auto;transition:none}}
+
+/* About: immersive opening, followed by the company's identity and services. */
+main:has(.ft-intro) { padding: 0 0 32px; }
+main:has(.ft-intro) > .page-head { display: none; }
+.ft-intro { grid-template-columns: minmax(0,1fr); grid-template-areas: "visual" "brand" "title" "description" "actions"; gap: 14px; margin: 0 0 28px; padding: 0; }
+.ft-intro-visual { width: 100%; border-radius: 0; box-shadow: none; }
+.ft-intro-photo { width: 100%; height: 70svh; height: 70dvh; aspect-ratio: auto; object-fit: cover; object-position: center; }
+.ft-intro-brand { margin: 10px var(--ft-pad) 0; padding: 0; background: transparent; font-size: clamp(24px,6vw,34px); }
+#ft-intro-title { margin: 0 var(--ft-pad); font-size: clamp(23px,5vw,36px); letter-spacing: -.7px; }
+.ft-intro-description, .ft-intro-actions { margin-inline: var(--ft-pad); }
+.ft-intro-description { font-size: .9375rem; line-height: 1.65; }
+.ft-intro-actions { flex-wrap: wrap; }
+.ft-intro-services { margin-top: 0; }
+.about-section { line-height: 1.65; }
+@media(min-width:1000px) { .ft-intro-brand, .ft-intro-actions { align-self: auto; } }

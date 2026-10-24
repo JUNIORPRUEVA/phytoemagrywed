@@ -9,15 +9,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="description" content="Explora el catálogo de FULLTECH Store." />
     <link rel="manifest" href="/store/manifest.webmanifest" />
-    <link rel="icon" href="/store/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/store/icon-192.png" />
+    <link rel="icon" href="/store/launcher-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/store/launcher-192.png" />
     <link rel="stylesheet" href="/store/store.css?v=7" />
     <link rel="stylesheet" href="/store/premium.css?v=5" />
     <link rel="stylesheet" href="/store/design-system.css?v=10" />
-    <link rel="stylesheet" href="/store/product-gallery.css?v=5" />    <link rel="stylesheet" href="/store/storefront.css?v=3" />    <link rel="stylesheet" href="/store/custom-icons.css?v=1" />
-    <link rel="stylesheet" href="/store/presentation.css?v=2" />
+    <link rel="stylesheet" href="/store/product-gallery.css?v=6" />    <link rel="stylesheet" href="/store/storefront.css?v=3" />    <link rel="stylesheet" href="/store/custom-icons.css?v=1" />
+    <link rel="stylesheet" href="/store/presentation.css?v=3" />
     <link rel="stylesheet" href="/store/floating-cart.css?v=3" />
-    <link rel="stylesheet" href="/store/discovery.css?v=21" />
+    <link rel="stylesheet" href="/store/discovery.css?v=22" />
+    <link rel="stylesheet" href="/store/customer-ui.css?v=1" />
+    <link rel="stylesheet" href="/store/commerce-ui.css?v=2" />
+    <link rel="stylesheet" href="/store/final-refinements.css?v=1" />
+    <link rel="stylesheet" href="/store/shopping-experience.css?v=2" />
+    <link rel="stylesheet" href="/store/cart-experience.css?v=1" />
+    <link rel="stylesheet" href="/store/smart-commerce.css?v=1" />
     <title>FULLTECH Store</title>
   </head>
   <body>
@@ -41,10 +47,6 @@
               <span class="ft-install-icon" style="--install-icon-url:url('/store/assets/icons/custom/instalar-en-pc.png')" aria-hidden="true"></span><span class="ft-install-label">Instalar</span>
             </button>
             <a class="ft-iconbtn ft-profile" href="/store/#/account/register" aria-label="Crear mi cuenta" title="Crear mi cuenta"><svg data-msr="account" data-msr-size="22" aria-hidden="true"></svg></a>
-            <a class="ft-iconbtn cart-shortcut" href="/store/#/cart" data-route="cart" aria-label="Carrito" title="Carrito" hidden>
-              <svg data-msr="cart" data-msr-size="22" aria-hidden="true"></svg>
-              <span class="ft-cart-badge" data-cart-badge hidden></span>
-            </a>
           </div>
         </div>
       </header>
@@ -53,21 +55,20 @@
 
       <nav class="ft-nav" id="bottom-nav" aria-label="Navegación principal">
         <a href="/store/" class="ft-nav__item" data-route="home" aria-current="page">
-          <svg data-msr="home" data-msr-size="22" data-msr-variant="filled" aria-hidden="true"></svg>
+          <span class="ft-nav-icons" aria-hidden="true"></span>
           <span>Inicio</span>
         </a>
         <a href="/store/#/catalog" class="ft-nav__item" data-route="catalog">
-          <svg data-msr="categories" data-msr-size="22" aria-hidden="true"></svg>
+          <span class="ft-nav-icons" aria-hidden="true"></span>
           <span>Categorías</span>
         </a>
-        <a href="/store/#/cart" class="ft-nav__item" data-route="cart">
-          <svg data-msr="cart" data-msr-size="22" aria-hidden="true"></svg>
-          <span>Carrito</span>
-          <span class="ft-cart-badge ft-cart-badge--nav" data-cart-badge hidden></span>
+        <a href="/store/#/offers" class="ft-nav__item" data-route="offers">
+          <span class="ft-nav-icons" aria-hidden="true"></span>
+          <span>Ofertas</span>
         </a>
-        <a href="/store/#/request" class="ft-nav__item" data-route="request" aria-label="Lo conseguimos por ti">
-          <svg data-msr="search" data-msr-size="22" aria-hidden="true"></svg>
-          <span>Lo conseguimos</span>
+        <a href="/store/#/cart" class="ft-nav__item" data-route="cart">
+          <span class="ft-nav-icons" aria-hidden="true"></span>
+          <span class="ft-cart-nav-label">Carrito<small>Entrega coordinada</small></span><span data-cart-badge hidden></span>
         </a>
       </nav>
       <a class="ft-signup-prompt" id="signup-prompt" href="/store/#/account/register" aria-live="polite" hidden>Regístrate con Google</a>
@@ -78,18 +79,17 @@
       <div class="drawer-head"><a class="ft-drawer-logo" href="/store/" aria-label="FULLTECH Store, inicio"><picture><source type="image/webp" srcset="/store/assets/branding/fulltech-store-horizontal-240.webp 1x, /store/assets/branding/fulltech-store-horizontal-480.webp 2x, /store/assets/branding/fulltech-store-horizontal-720.webp 3x" /><img src="/store/assets/branding/fulltech-store-horizontal-240.png" srcset="/store/assets/branding/fulltech-store-horizontal-480.png 2x, /store/assets/branding/fulltech-store-horizontal-720.png 3x" width="240" height="84" alt="FULLTECH STORE" /></picture></a><button class="icon-button" id="close-drawer" aria-label="Cerrar menú"><span class="ft-custom-icon" data-custom-icon="close" style="--icon-url:url('/store/assets/icons/custom/close.png');--icon-size:18px" aria-hidden="true"></span></button></div>
       <p class="drawer-label">EXPLORA</p>
       <a href="/store/" data-route="home">Inicio</a>
-      <a href="/store/#/catalog" data-route="catalog">Catálogo</a>
-      <a href="/store/#/catalog?kind=service" data-route="catalog?kind=service">Servicios</a>
-      <a href="/store/#/request" data-route="request">Lo conseguimos por ti</a>
+      <a href="/store/#/catalog" data-route="catalog">Categorías</a>
+      <a href="/store/#/offers" data-route="offers">Ofertas</a>
+      <a href="/store/#/cart" data-route="cart">Mi carrito</a>
       <a href="/store/#/nosotros" data-route="nosotros">Nosotros</a>
+      <a href="https://wa.me/18494240621" target="_blank" rel="noopener noreferrer">Atención al cliente ↗</a>
       <div class="drawer-divider"></div>
-      <p class="drawer-label">TU ESPACIO</p>
-      <a href="/store/#/favorites" data-route="favorites">♡ Mis favoritos</a>
-      <a href="/store/#/orders" data-route="orders">Mis pedidos</a>
-      <a href="/store/#/account" data-route="account">Mi cuenta</a>
+      <div id="drawer-customer" class="drawer-customer"></div>
+      <section class="ft-ecosystem" aria-label="Ecosistema FULLTECH"><p class="drawer-label">ECOSISTEMA FULLTECH</p><a href="https://phytoemagryrd.lat/" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span><span><strong>Phytoemagry</strong><small>Visitar tienda oficial</small></span></a><a href="https://fullpos.fulltechrd.com/" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span><span><strong>Fullpos Cloud</strong><small>Conoce nuestro punto de venta</small></span></a></section>
       <div class="drawer-bottom"><span class="status-dot"></span> Tu tienda FULLTECH</div>
     </aside>
     <div id="cart-feedback-status" class="ft-action-status" role="status" aria-live="polite" aria-atomic="true"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/store/store.js?v=48"></script>    <script type="module" src="/store/google-signin.js?v=2"></script>  </body>
+    <script type="module" src="/store/store.js?v=58"></script>    <script type="module" src="/store/google-signin.js?v=2"></script>  </body>
 </html>

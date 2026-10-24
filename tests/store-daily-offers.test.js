@@ -82,3 +82,23 @@ it('usa la zona horaria dominicana para la fecha comercial y el cálculo es dete
   const product = { price_cents: 325000, compare_at_cents: 450000, offer_price_cents: 325000, offer_active: true };
   expect(offerPricing(product, new Date('2026-10-22T12:00:00Z'))).toMatchObject({ active: true, priceCents: 325000, compareAtCents: 450000, discountPercent: 28 });
 });
+
+it('rota entre días y admite ofertas vigentes aunque no tengan la antigua marca daily_offer', async () => {
+  await app.close();let current=new Date();
+  app=await startCrmServer({port:0,host:'127.0.0.1',databaseUrl:'',dataFile:path.join(dir,'catalog.sqlite'),token:'daily-offers-test-token',quiet:true,schedulerEnabled:false,clock:()=>new Date(current)});
+  const candidates=[];for(let i=0;i<3;i++){const p=await create({sku:`ROTATE-${i}`,daily_offer:false});expect(p.status).toBe(201);await publish(p.data.product.id);candidates.push(p.data.product.id);}
+  const first=(await request('/api/store/home',{auth:''})).data.dailyOffers.map(p=>p.id);
+  expect(first).toHaveLength(2);expect(new Set(first).size).toBe(2);
+  expect((await request('/api/store/home',{auth:''})).data.dailyOffers.map(p=>p.id)).toEqual(first);
+  current=new Date(current.getTime()+86400000);
+  const second=(await request('/api/store/home',{auth:''})).data.dailyOffers.map(p=>p.id);
+  expect(second).toHaveLength(2);expect(second).not.toEqual(first);expect(second).toContain(candidates.find(id=>!first.includes(id)));
+});
+
+it('ordena ofertas por descuento real y rechaza referencias no finitas en el cálculo', async () => {
+  const low=await create({sku:'DISC-LOW',offer_price:'950',compare_at_price:'1000'}),high=await create({sku:'DISC-HIGH',offer_price:'500',compare_at_price:'1000'});
+  await publish(low.data.product.id);await publish(high.data.product.id);
+  const sorted=await request('/api/store/catalog?offers=true&sort=discount',{auth:''});
+  expect(sorted.data.products.map(p=>p.id)).toEqual([high.data.product.id,low.data.product.id]);
+  expect(offerPricing({price_cents:500,offer_price_cents:200,compare_at_cents:Infinity,offer_active:true}).active).toBe(false);
+});

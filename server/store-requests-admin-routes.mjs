@@ -10,6 +10,7 @@ export async function handleStoreRequestsAdminRoute({ req, res, route, ctx, acto
     return true;
   };
   if (!can('orders.read')) return send(403, { ok: false, error: 'forbidden' });
+  if (req.method !== 'GET') return send(410,{ok:false,error:'sourcing_retired',message:'Archivo histórico de solo lectura. El servicio de solicitudes fue retirado.'});
   try {
     if (route === '/api/admin/store/requests' && req.method === 'GET') {
       const url = new URL(req.url, 'http://localhost');
@@ -24,7 +25,7 @@ export async function handleStoreRequestsAdminRoute({ req, res, route, ctx, acto
       return send(200, {
         ok: true,
         requests: requests.map((request) => ({ ...request, customer: customers.get(request.customer_id) ?? null })),
-        canManage: actor?.role === 'ADMIN',
+        canManage: false,
       });
     }
 
@@ -51,7 +52,7 @@ export async function handleStoreRequestsAdminRoute({ req, res, route, ctx, acto
       const request = await accounts.getRequest(match[1]);
       if (!request) return send(404, { ok: false, error: 'not_found' });
       const customer = request.customer_id ? await ctx.customers.get(request.customer_id) : null;
-      return send(200, { ok: true, request: { ...request, admin_notes: request.admin_notes ?? '' }, customer, canManage: actor?.role === 'ADMIN' });
+      return send(200, { ok: true, request: { ...request, admin_notes: request.admin_notes ?? '' }, customer, canManage: false });
     }
 
     if (match && req.method === 'PATCH') {

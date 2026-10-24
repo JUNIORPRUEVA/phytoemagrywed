@@ -18,8 +18,8 @@
 /* Ficha móvil: los controles viven sobre la imagen, como en una app de compras. */
 .ft-gallery--product .ft-gallery-stage { background: #f1f3f6; border-color: transparent; }
 .ft-gallery-actions { position: absolute; z-index: 3; inset: 14px 14px auto; display: flex; align-items: center; gap: 10px; pointer-events: none; }
-.ft-gallery-action { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--brand,#1258d6); color: #fff; box-shadow: 0 5px 14px rgba(14,30,50,.16); cursor: pointer; pointer-events: auto; }
-.ft-gallery-action:hover { background: var(--brand2,#0d3d9e); transform: translateY(-1px); }
+.ft-gallery-action { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--brand,#1258d6); box-shadow: none; cursor: pointer; pointer-events: auto; }
+.ft-gallery-action:hover { background: transparent; color: var(--brand2,#0d3d9e); transform: translateY(-1px); }
 .ft-gallery-action:active { transform: scale(.96); }
 .ft-gallery-action[data-product-search] { margin-left: auto; }
 .ft-gallery-action:focus-visible { outline: 3px solid #2c6bdd88; outline-offset: 3px; }

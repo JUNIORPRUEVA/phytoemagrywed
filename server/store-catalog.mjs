@@ -79,7 +79,7 @@ export function offerPricing(product, now = new Date()) {
   const starts = product?.offer_start_at ? Date.parse(product.offer_start_at) : -Infinity;
   const ends = product?.offer_end_at ? Date.parse(product.offer_end_at) : Infinity;
   const nowMs = new Date(now).getTime();
-  const active = configured && Number.isFinite(nowMs) && referenceCents > offerCents && offerCents > 0 && nowMs >= starts && nowMs < ends;
+  const active = configured && [referenceCents,baseCents,offerCents].every(v=>Number.isSafeInteger(v)&&v>0) && Number.isFinite(nowMs) && referenceCents > offerCents && nowMs >= starts && nowMs < ends;
   return {
     active,
     priceCents: active ? offerCents : baseCents,
@@ -224,8 +224,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   async function publicationStates() {
     return Object.fromEntries((await sql.query('SELECT product_id,status,featured,sort_order,updated_at FROM fulltech_store_publication_v1')).rows.map(row => [row.product_id, { status: row.status, featured: Boolean(Number(row.featured)), sort_order: Number(row.sort_order), updated_at: row.updated_at }]));
   }
-  async function publicProducts() {
-    if (publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
+  async function publicProducts({fresh=false}={}) {
+    if (!fresh&&publicCache && publicCache.expiresAt > Date.now()) return publicCache.items;
     const now = clock();
     const pubs = (await sql.query("SELECT p.product_id,p.featured,p.sort_order,p.updated_at,f.published_at FROM fulltech_store_publication_v1 p LEFT JOIN fulltech_store_first_publication_v1 f ON f.product_id=p.product_id WHERE p.status='published' ORDER BY p.sort_order,p.product_id")).rows;
     if (!pubs.length) { publicCache = { items: [], expiresAt: Date.now() + 5000 }; return []; }
@@ -283,7 +283,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         featured: Boolean(Number(pub.featured)), sortOrder: Number(pub.sort_order),
         /* Fecha real de publicación: única fuente válida para <lastmod>. */
         updatedAt: pub.updated_at ?? null,
-        _dailyOfferEligible: pricing.active && p.daily_offer === true && availabilityState === 'AVAILABLE_NOW',
+        _dailyOfferEligible: pricing.active && availabilityState === 'AVAILABLE_NOW',
         _offerSavingsCents: pricing.active ? pricing.compareAtCents - pricing.priceCents : 0,
       }];
     });
@@ -390,12 +390,14 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     const before = tail; let release; tail = new Promise(r => { release = r; }); await before;
     try { return await fn(); } finally { release(); }
   }
+  let reservationHooks=null;
   async function transaction(fn) {
     return exclusive(async () => {
       const client = backend === 'postgres' ? await handle.connect() : null;
       const q = client ? (text, args) => client.query(text, args) : (text, args) => sql.query(text, args);
       let started = false;
       try { await q(backend === 'postgres' ? 'BEGIN' : 'BEGIN IMMEDIATE'); started = true;
+        await reservationHooks?.lock?.(q);
         const result = await fn(q); await q('COMMIT'); changed(); return result; }
       catch (e) { if (started) await q('ROLLBACK'); throw e; }
       finally { client?.release(); }
@@ -654,6 +656,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         p.image_url=p.gallery.length?`/api/admin/store/products/${encodeURIComponent(p.id)}/image?v=${(previous?.version||0)+1}`:null;
       }
       delete p.images;
+      await reservationHooks?.assertProductStore(p.id,store,q);
       const publication=(await q('SELECT status FROM fulltech_store_publication_v1 WHERE product_id=$1',[p.id])).rows[0];
       if(publication?.status==='published')await requireGallery(p,q);
       const initial = kind === 'product' && !previous ? Number(input.quantity ?? 0) : 0;
@@ -701,6 +704,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
       const delta = count ? Number(input.quantity)-p.quantity : Number(input.quantity)*(input.type === 'out'?-1:1);
       const after = p.quantity+delta;
       if(after < 0) throw fail('insufficient_stock',`Stock insuficiente de ${p.name}: hay ${p.quantity} unidades.`,409);
+      if(reservationHooks&&after<await reservationHooks.protectedQuantity(p.id,q))throw fail('branch_stock_protected','El stock está asignado a sucursales. Ajusta primero el recuento de sucursal.',409);
       await q('UPDATE fulltech_catalog_v1 SET quantity=quantity+$1,version=version+1 WHERE id=$2',[delta,id]);
       return { movement:await movement(q,p,delta,p.quantity,after,count?'COUNT':input.type==='in'?'RESTOCK':'ADJUSTMENT_OUT',reason,actor,key) };
     });
@@ -712,8 +716,9 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     for(const line of order.items || []) { const p=products.get(line.variantId); if(p && !p.legacy && p.track_stock) required.set(p.id,(required.get(p.id)||0)+Number(line.quantity)); }
     for(const [id,n] of required) {
       const p=products.get(id);
-      const net = previous ? await sold(order.id,id) : 0;
-      if(p.quantity < n-net) return {ok:false,status:409,error:'insufficient_stock',message:`Stock insuficiente de ${p.name}: hay ${p.quantity} unidades.`,available:p.quantity,required:n-net};
+      const net = previous||order.smart_commerce?.managedFulfillment ? await sold(order.id,id) : 0;
+      const protectedStock=reservationHooks&&!order.smart_reservation_check&&!order.smart_commerce?.managedFulfillment?await reservationHooks.protectedQuantity(id):0;
+      if(p.quantity-protectedStock < n-net) return {ok:false,status:409,error:'insufficient_stock',message:`Stock libre insuficiente de ${p.name}.`,available:Math.max(0,p.quantity-protectedStock),required:n-net};
     }
     return {ok:true};
   }
@@ -723,6 +728,8 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
   }
   async function syncSale(item, order, previous, legacyWork) {
     return transaction(async q=>{
+      await reservationHooks?.assertSale({...order,id:item.id},q);
+      await reservationHooks?.consumeDelivery({...order,id:item.id},q);
       const rows=(await q('SELECT * FROM fulltech_catalog_v1 ORDER BY id'+(backend==='postgres'?' FOR UPDATE':''))).rows.map(decode);
       const next = {...order,items:[...(order.items||[])]};
       const allMoves=[];
@@ -731,6 +738,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
         const target=p.track_stock?lines.reduce((s,l)=>s+Number(l.quantity),0):0;
         const old=await sold(item.id,p.id,q), delta=old-target;
         if(p.quantity+delta<0) throw fail('insufficient_stock',`Stock insuficiente de ${p.name}.`,409);
+        if(reservationHooks&&p.quantity+delta<await reservationHooks.protectedQuantity(p.id,q))throw fail('branch_stock_protected','Hay existencias asignadas a sucursales.',409);
         if(delta) {
           await q('UPDATE fulltech_catalog_v1 SET quantity=quantity+$1,version=version+1 WHERE id=$2',[delta,p.id]);
           allMoves.push(await movement(q,p,delta,p.quantity,p.quantity+delta,delta<0?'SALE':'SALE_REVERSAL',`Pedido ${order.order_number||item.id}`,null,`sale:${randomUUID()}`,item.id));
@@ -848,7 +856,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     }
     const rows = Array.isArray(input) ? input : [];
     if (!rows.length) throw fail('empty_cart', 'El carrito está vacío.', 422);
-    const pubs = await publicProducts();
+    const pubs = await publicProducts({fresh:true});
     const byId = new Map(pubs.map(p => [p.id, p]));
     const lines = [];
     for (const raw of rows) {
@@ -867,7 +875,7 @@ export async function createStoreCatalog({ backend, handle, legacyInventory, clo
     return lines;
   }
 
-  return {storeKey: activeStore, stores: STORE_KEYS, storeOf: storeOfProduct, list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,dailyOffers,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
+  return {setReservationHooks(value){reservationHooks=value;},storeKey: activeStore, stores: STORE_KEYS, storeOf: storeOfProduct, list,save,setProductType,adjust,history,checkOrder,syncSale,exclusive,integrity,orderLock,changed,categories,createCategory,setPublication,publicationStates,galleryAudit,publicProducts,dailyOffers,publicOrderItems,searchPublicProducts,publicImage,archive,restore,
     subscribe:listener=>{listeners.add(listener);return ()=>listeners.delete(listener);},
     product:(options={})=>list({includeInactive:options.includeInactive===true}).then(rows=>({variants:rows.map(p=>({...saleItem(p),general:!p.legacy}))})),
     saleItems:()=>list({includeInactive:false}).then(rows=>rows.map(saleItem)),

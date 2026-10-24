@@ -169,7 +169,7 @@ describe('FULLTECH Store public catalog API', () => {
     expect(first.data.products[0].id).not.toBe(second.data.products[0].id);
     const search = await request('/api/store/catalog?q=camara&limit=48', { auth: false });
     expect(search.data.products.map(item => item.id).sort()).toEqual([a.id, b.id].sort());
-    expect((await request('/api/store/catalog?limit=200', { auth: false })).data.pagination.limit).toBe(48);
+    expect((await request('/api/store/catalog?limit=200', { auth: false })).data.pagination.limit).toBe(100);
   });
 
   it('invalidates the public projection immediately after unpublishing', async () => {

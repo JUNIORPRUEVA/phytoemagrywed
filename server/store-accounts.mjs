@@ -4,6 +4,7 @@ import { createSqlQuery } from './sql-query.mjs';
 import { parseProductImage } from './store-catalog.mjs';
 import { orderOf } from './orders.mjs';
 import { moneyToCents } from './inventory.mjs';
+import { normalizeDnPhone } from './store-verifications.mjs';
 
 const scryptAsync = promisify(scrypt);
 const fail = (code, message, status = 422) => Object.assign(new Error(message), { code, status });
@@ -167,6 +168,8 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
       phone: account.phone_e164,
       email: account.email,
       name: customer?.name ?? profile.name ?? '',
+      city: profile.city ?? customer?.location ?? '',
+      onboarding: profile.onboarding ?? null,
       providers: { password: account.has_password, google: account.google, apple: account.apple },
       preferences: {
         contact: preferences.contact ?? 'whatsapp',
@@ -230,11 +233,19 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     const phone = customers.normalizePhone(input.phone);
     const password = String(input.password ?? '');
     if (name.length < 2) throw fail('invalid_name', 'Escribe tu nombre.');
-    if (!phone) throw fail('invalid_phone', 'Escribe un teléfono válido.');
+    if (!phone && clean(input.phone)) throw fail('invalid_phone', 'Escribe un teléfono válido.');
     if (password.length < 8 || password.length > 200) throw fail('invalid_password', 'La contraseña debe tener al menos 8 caracteres.');
     const email = clean(input.email, 160);
     if (email && !isEmail(email)) throw fail('invalid_email', 'Escribe un correo válido.');
     const key = await assertEmailAvailable(email);
+
+    // Email-only accounts have no CRM identity until contact ownership is resolved.
+    if (!phone) {
+      if (!email) throw fail('invalid_email', 'Escribe tu correo electrónico.');
+      const id = `acc_${randomUUID()}`, now = clock().toISOString();
+      await sql.query('INSERT INTO fulltech_customer_accounts_v1(id,customer_id,phone_e164,email,email_key,password_hash,google_sub,apple_sub,status,profile,preferences,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [id,null,null,email,key,await hashPassword(password),null,null,'active',JSON.stringify({name,email,onboarding:'pending'}),JSON.stringify({contact:'whatsapp',marketing:false,language:'es'}),now,now]);
+      return {account:publicAccount(await accountBy('id',id),null),customer:null};
+    }
 
     if (await accountBy('phone_e164', phone)) throw fail('account_exists', GENERIC_EXISTS, 409);
 
@@ -261,7 +272,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
       id: `acc_${randomUUID()}`, customer_id: customer.id, phone_e164: phone,
       email: email || null, email_key: key, password_hash: await hashPassword(password),
       google_sub: null, apple_sub: null, status: 'active',
-      profile: JSON.stringify({ name, email: email || null }),
+      profile: JSON.stringify({ name, email: email || null, onboarding: 'pending' }),
       preferences: JSON.stringify({ contact: input.preferences?.contact === 'phone' ? 'phone' : 'whatsapp', marketing: input.preferences?.marketing === true, language: 'es' }),
       created_at: now, updated_at: now,
     };
@@ -370,8 +381,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   async function updateProfile(account, input = {}) {
-    const current = await customers.get(account.customer_id);
-    if (!current) throw fail('not_found', 'La cuenta no tiene un cliente asociado.', 404);
+    const current = account.customer_id ? await customers.get(account.customer_id) : null;
     const patch = {};
     if (input.name !== undefined) {
       const name = clean(input.name, 120);
@@ -394,11 +404,33 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
       account = { ...account, preferences: prefs };
     }
     const profile = { ...safeJson(account.profile), ...(patch.name ? { name: patch.name } : {}), email: accountEmail };
+    if (input.city !== undefined) {
+      const city = String(input.city ?? '').trim();
+      if (city.length > 80 || (city && city.length < 2)) throw fail('invalid_city', 'Escribe una ciudad válida de hasta 80 caracteres.');
+      profile.city = city;
+    }
+    let phone = null;
+    if (input.phone !== undefined && String(input.phone).trim()) {
+      phone = normalizeDnPhone(input.phone);
+      if (!phone.ok) throw fail('invalid_phone', 'Escribe un WhatsApp válido, por ejemplo +1 809 555 1234.');
+      const other = await accountBy('phone_e164', phone.e164);
+      if (other && other.id !== account.id) throw fail('phone_in_use', 'Ese número ya está asociado a otra cuenta.', 409);
+    }
+    if (input.onboarding !== undefined) {
+      if (!['completed','skipped'].includes(input.onboarding)) throw fail('invalid_onboarding', 'Opción de bienvenida inválida.');
+      profile.onboarding = input.onboarding;
+    }
+    // Validate all fields before updating anything; a failed phone save never completes onboarding.
+    if (phone) {
+      await setPhone(account.id, phone.e164);
+      account = {...account,phone_e164:phone.e164};
+      await ensureCustomerForPhone(account);
+    }
     const now = clock().toISOString();
     await sql.query('UPDATE fulltech_customer_accounts_v1 SET email=$1,email_key=$2,profile=$3,preferences=$4,updated_at=$5 WHERE id=$6', [accountEmail, accountEmailKey, JSON.stringify(profile), JSON.stringify(account.preferences ?? {}), now, account.id]);
-    if (Object.keys(patch).length) await customers.update(current.id, patch);
+    if (current && Object.keys(patch).length) await customers.update(current.id, patch);
     const refreshed = await accountBy('id', account.id);
-    return publicAccount(refreshed, await customers.get(current.id));
+    return publicAccount(refreshed, current ? await customers.get(current.id) : null);
   }
 
   async function accountForCustomer(customerId) {
@@ -409,6 +441,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   async function ordersForCustomer(customerId) {
+    if (!customerId) return [];
     if (typeof listOrders !== 'function') return [];
     const rows = await listOrders();
     return rows
@@ -479,6 +512,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   async function createRequest(account, input = {}) {
+    throw fail('sourcing_retired', 'El servicio de solicitudes fue retirado.', 410);
     if (!account?.customer_id) throw fail('account_not_linked', 'Completa tu cuenta para enviar una solicitud.', 403);
     const kind = input.kind === 'service' ? 'service' : 'product';
     const title = clean(input.title, 120);
@@ -518,6 +552,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   async function listRequestsForCustomer(customerId, limit = 50) {
+    if (!customerId) return [];
     const rows = (await sql.query('SELECT doc FROM fulltech_store_requests_v1 WHERE customer_id=$1 ORDER BY created_at DESC LIMIT $2', [customerId, Number(limit)])).rows;
     return rows.map((row) => publicRequest(safeJson(row.doc)));
   }
@@ -544,6 +579,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   async function decideRequest(id, account, input = {}) {
+    throw fail('sourcing_retired', 'El archivo de solicitudes es de solo lectura.', 410);
     const doc = await requestForAccount(id, account);
     if (!doc) throw fail('not_found', 'La solicitud no existe.', 404);
     if (doc.status !== 'cotizado') throw fail('not_quoted', 'Esta solicitud todavía no tiene una cotización para responder.', 409);
@@ -563,6 +599,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
    * «reported» hasta que un administrador verifique el dinero.
    */
   async function reportTransfer(id, account, input = {}) {
+    throw fail('sourcing_retired', 'El archivo de solicitudes es de solo lectura.', 410);
     const doc = await requestForAccount(id, account);
     if (!doc) throw fail('not_found', 'La solicitud no existe.', 404);
     if (!doc.quote?.amount_cents) throw fail('not_quoted', 'Todavía no hay una propuesta para esta solicitud.', 409);
@@ -606,6 +643,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
   }
 
   async function adminUpdateRequest(id, input = {}) {
+    throw fail('sourcing_retired', 'El archivo de solicitudes es de solo lectura.', 410);
     const row = (await sql.query('SELECT * FROM fulltech_store_requests_v1 WHERE id=$1', [id])).rows[0];
     if (!row) throw fail('not_found', 'La solicitud no existe.', 404);
     const doc = requestFromRow(row);
@@ -788,15 +826,15 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     }
 
     const id = `acc_${randomUUID()}`;
-    const profile = JSON.stringify({ name: clean(identity.name, 120), email: email || null });
+    const profile = JSON.stringify({ name: clean(identity.name, 120), email: email || null, onboarding: 'pending' });
     await sql.query(
       'INSERT INTO fulltech_customer_accounts_v1(id,customer_id,phone_e164,email,email_key,password_hash,google_sub,apple_sub,status,profile,preferences,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
       [id, null, null, email || null, email ? emailKey(email) : null, null,
-        provider === 'google' ? sub : null, provider === 'apple' ? sub : null, 'pending_link', profile,
+        provider === 'google' ? sub : null, provider === 'apple' ? sub : null, 'active', profile,
         JSON.stringify({ contact: 'whatsapp', marketing: false, language: 'es' }), now, now],
     );
     const pending = await accountBy('id', id);
-    return { pending: true, pendingToken: await issueLinkToken(id, { provider, sub }), account: pending };
+    return { account: publicAccount(pending, null), customer: null };
   }
 
   async function completePendingLink(token, input = {}) {

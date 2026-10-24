@@ -23,6 +23,7 @@ export function publicProduct(product) {
     imageUrl: product.imageUrl,
     images: product.images,
     featured: product.featured,
+    ...(product.commerce?{commerce:{zoneId:product.commerce.zoneId,dispatchCity:product.commerce.dispatchCity,availabilityLabel:product.commerce.availabilityLabel,requiresConfirmation:product.commerce.requiresConfirmation===true}}:{}),
   };
 }
 
@@ -66,7 +67,8 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
   };
   if (productMatch) {
     const id = decodeURIComponent(productMatch[1]);
-    const item = (await catalog.publicProducts()).find(product => product.id === id);
+    let item = (await catalog.publicProducts()).find(product => product.id === id);
+    if(item&&ctx.smartCommerce&&url.searchParams.get('zone')){try{item=(await ctx.smartCommerce.regionalize([item],url.searchParams.get('zone')))[0];}catch(error){json(res,error.status||422,{ok:false,error:error.code||'invalid_zone',message:error.message});return true;}}
     if (!item) {
       res.writeHead(404, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
       res.end();
@@ -77,8 +79,10 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
     return true;
   }
   if (route === '/api/store/home' || route === '/api/store/categories') {
-    const all = await catalog.publicProducts();
-    const dailyOffers = route === '/api/store/home' ? await catalog.dailyOffers() : [];
+    let all = await catalog.publicProducts();
+    if(ctx.smartCommerce&&url.searchParams.get('zone')){try{all=await ctx.smartCommerce.regionalize(all,url.searchParams.get('zone'));}catch(error){json(res,error.status||422,{ok:false,error:error.code||'invalid_zone',message:error.message});return true;}}
+    const byId=new Map(all.map(p=>[p.id,p]));
+    const dailyOffers = route === '/api/store/home' ? (await catalog.dailyOffers()).map(p=>byId.get(p.id)).filter(p=>p&&Number(p.discountPercent)>0) : [];
     const categories = [...new Set(all.map(item => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
     const products = all.filter(item => item.kind === 'product');
     /*
@@ -145,7 +149,7 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
   }
 
   const page = Math.max(1, Math.min(1000000, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1));
-  const limit = Math.max(1, Math.min(48, Number.parseInt(url.searchParams.get('limit') || '24', 10) || 24));
+  const limit = Math.max(1, Math.min(100, Number.parseInt(url.searchParams.get('limit') || '24', 10) || 24));
   const query = normalize(url.searchParams.get('q')).slice(0, 100);
   const category = normalize(url.searchParams.get('category'));
   const kind = url.searchParams.get('kind');
@@ -158,10 +162,11 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
    * criterio (nunca se presenta una semilla como si fueran ventas).
    */
   const SORTS = {
-    relevance: (a, b) => Number(b.featured) - Number(a.featured) || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es'),
+    relevance: (a, b) => Number(b.featured) - Number(a.featured) || Number(b.availabilityState==='AVAILABLE_NOW')-Number(a.availabilityState==='AVAILABLE_NOW') || a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es'),
     recent: (a, b) => String(b.publishedAt || '').localeCompare(String(a.publishedAt || '')) || a.name.localeCompare(b.name, 'es'),
     'price-asc': (a, b) => Number(a.price) - Number(b.price) || a.name.localeCompare(b.name, 'es'),
     'price-desc': (a, b) => Number(b.price) - Number(a.price) || a.name.localeCompare(b.name, 'es'),
+    discount: (a,b) => Number(b.discountPercent||0)-Number(a.discountPercent||0) || Number(a.price)-Number(b.price),
     name: (a, b) => a.name.localeCompare(b.name, 'es'),
   };
   const sortKey = SORTS[url.searchParams.get('sort')] ? url.searchParams.get('sort') : 'relevance';
@@ -169,14 +174,17 @@ export async function handleStorePublicRoute({ req, res, route, url, ctx, json }
     json(res, 400, { ok: false, error: 'invalid_kind' });
     return true;
   }
-  const all = query ? await catalog.searchPublicProducts(query) : await catalog.publicProducts();
+  let all = query ? await catalog.searchPublicProducts(query) : await catalog.publicProducts();
+  if(ctx.smartCommerce&&url.searchParams.get('zone')){
+    try{all=await ctx.smartCommerce.regionalize(all,url.searchParams.get('zone'));}catch(error){json(res,error.status||422,{ok:false,error:error.code||'invalid_zone',message:error.message});return true;}
+  }
   const filtered = all.filter(item => {
     if (category && normalize(item.category) !== category) return false;
     if (kind && kind !== 'all' && item.kind !== kind) return false;
     if (featured && !item.featured) return false;
     if (offersOnly && !(Number(item.discountPercent) > 0)) return false;
     return true;
-  }).sort(SORTS[sortKey]);
+  }).sort((a,b)=>SORTS[sortKey](a,b)||String(a.id).localeCompare(String(b.id)));
   const start = (page - 1) * limit;
   const products = filtered.slice(start, start + limit).map(publicProduct);
   res.writeHead(200, { ...cacheHeaders, 'content-type': 'application/json; charset=utf-8' });

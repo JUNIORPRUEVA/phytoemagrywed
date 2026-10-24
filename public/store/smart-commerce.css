@@ -1,0 +1,19 @@
+.ft-location { display: flex; justify-content: space-between; gap: 8px; align-items: center; min-height: 30px; font-size: 10px; line-height: 1.4; padding: 3px 4px; }
+.ft-location > span { min-width: 0; color: #586b82; }
+.ft-location button { flex: 0 0 auto; background: #edf4ff; color: var(--brand); border: 0; border-radius: 8px; padding: 7px 9px; font-weight: 650; font-size: 10px; }
+.ft-smart-checkout { padding: 14px; border: 1px solid var(--line); border-radius: 12px; margin: 12px 0; min-width: 0; }
+.ft-smart-checkout h2 { font-size: 17px; margin: 0 0 10px; }
+.ft-smart-checkout .button.button-outline { background: #fff; color: #1258d6; border: 1px solid #c9d9f8; }
+.ft-smart-checkout .button[data-smart-calculate] { background: #1258d6; color: #fff; border-color: #1258d6; }
+.ft-smart-checkout p,.ft-smart-checkout small { font-size: 11px; color: #586b82; line-height: 1.5; overflow-wrap: anywhere; }
+.ft-smart-checkout select,.ft-smart-checkout input[type=number] { max-width: 100%; width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-height: 40px; }
+.ft-smart-check { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; font-size: 12px; line-height: 1.5; }
+.ft-smart-check input { flex: 0 0 auto; margin-top: 4px; }
+.ft-coordinate-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 10px; font-size: 11px; }
+.ft-smart-checkout summary { font-size: 12px; padding: 8px 0; cursor: pointer; }
+.ft-smart-checkout [data-smart-summary] { margin-top: 12px; padding: 10px; border-radius: 9px; background: #f5f8ff; }
+.ft-smart-checkout [data-smart-summary] strong { color: var(--ink); }
+.ft-pickup { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.ft-pickup button { margin: 5px 4px 5px 0; min-height: 42px; }
+.ft-pickup-code { display: block; font: 700 15px/1.6 ui-monospace,monospace; letter-spacing: .08em; padding: 12px; background: #edf4ff; overflow-wrap: anywhere; }
+.ft-smart-checkout [data-refresh],.ft-pickup [data-cancel] { border: 1px solid #c9d9f8; border-radius: 9px; color: #1258d6; background: #fff; padding: 9px 12px; min-height: 42px; font: inherit; font-size: 12px; cursor: pointer; }
