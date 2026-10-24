@@ -112,11 +112,17 @@ describe('filtros por etapa comercial', () => {
     const sinFecha = await bandeja('filter=todos&stage=interesados');
     expect(sinFecha.conversations.some((row) => row.id === viejo.conversation.id)).toBe(true);
 
-    const soloHoy = await bandeja(`filter=todos&stage=interesados&from=${new Date().toISOString().slice(0, 10)}`);
+    /*
+     * La fecha se calcula en la ZONA DEL CRM, no en UTC: después de las 20:00 locales
+     * el día UTC ya es otro y «ayer» apuntaba a hoy (fallo real de esta prueba).
+     */
+    const diaCrm = (date) =>
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santo_Domingo' }).format(date);
+    const soloHoy = await bandeja(`filter=todos&stage=interesados&from=${diaCrm(new Date())}`);
     expect(soloHoy.conversations.some((row) => row.id === viejo.conversation.id)).toBe(false);
 
     // Y con el rango que SÍ la incluye, aparece: la etapa no borró la fecha.
-    const ayerISO = ayer.toISOString().slice(0, 10);
+    const ayerISO = diaCrm(ayer);
     const conAyer = await bandeja(`filter=todos&stage=interesados&from=${ayerISO}&to=${ayerISO}`);
     expect(conAyer.conversations.some((row) => row.id === viejo.conversation.id)).toBe(true);
   });

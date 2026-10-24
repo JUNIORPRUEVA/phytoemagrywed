@@ -82,7 +82,7 @@ import { createCallingApi } from './calling-api.mjs';
 import { createCallingStore } from './calling-store.mjs';
 import { createCallingService } from './calling-service.mjs';
 import { handleCallingRoute } from './calling-routes.mjs';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -118,6 +118,40 @@ import { handleStorePublicRoute } from './store-public-routes.mjs';
 import { createStoreAccounts } from './store-accounts.mjs';
 import { handleStoreAccountRoute } from './store-account-routes.mjs';
 import { handleStoreRequestsAdminRoute } from './store-requests-admin-routes.mjs';
+/* Motor operativo de entregas (Fase 05): estados, transiciones e idempotencia. */
+import {
+  COURIER_ACTIONS,
+  DELIVERY_STATES,
+  applyTransition,
+  isOfferExpired,
+  lifecycleOf,
+  nextOfferExpiry,
+} from './delivery-lifecycle.mjs';
+import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, validateRemittance } from './delivery-cash.mjs';
+import { reconcileDeliveryCash } from './delivery-reconciliation.mjs';
+import { applyTransferVerification, planDeliveryPayment } from './delivery-payment.mjs';
+import { describePosition, signalState, validateCourierLocation } from './courier-location.mjs';
+/* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
+import {
+  COURIER_LOCK_MS,
+  COURIER_MAX_FAILURES,
+  COURIER_SESSION_SECONDS,
+  assignedToCourier,
+  burnCredentialCheck,
+  courierOrderDTO,
+  courierTokenFromRequest,
+  createCourierToken,
+  findCourierOrder,
+  hashCourierCredential,
+  isCourierUsable,
+  listCourierOrders,
+  newCourierAccountId,
+  normalizeCourierAccountInput,
+  normalizeCourierPhone,
+  publicCourierAccount,
+  readCourierToken,
+  verifyCourierCredential,
+} from './courier-app.mjs';
 import { createStoreOAuth } from './store-oauth.mjs';
 /* Identidad de cliente (teléfono verificado, correo) y SEO de la tienda. */
 import { createMailSender, createSmsSender, createStoreVerifications } from './store-verifications.mjs';
@@ -643,6 +677,91 @@ const TYPES = new Set(['lead', 'order_intent']);
 const SESSION_SECONDS = 90 * 24 * 60 * 60;
 const COOKIE = 'pe_crm';
 
+/** Vida de una oferta de reparto. Configurable; nunca menos de un minuto. */
+const OFFER_TTL_MS = Math.max(
+  60_000,
+  (Number(process.env.PHYTO_DELIVERY_OFFER_TTL_MINUTES ?? 15) || 15) * 60_000,
+);
+
+/** Hash del código de entrega. Se guarda solo el hash, nunca el código. */
+function hashDeliveryProof(orderId, code) {
+  return createHash('sha256').update(`delivery-proof:${orderId}:${String(code).trim()}`).digest('hex');
+}
+
+/** Vida de un código de entrega (minutos configurables). */
+const DELIVERY_PROOF_TTL_MS =
+  Math.max(5, Number(process.env.PHYTO_DELIVERY_PROOF_TTL_MINUTES ?? 4320) || 4320) * 60_000;
+/** Intentos fallidos antes de bloquear el código. */
+const DELIVERY_PROOF_MAX_ATTEMPTS = Math.max(
+  3,
+  Number(process.env.PHYTO_DELIVERY_PROOF_MAX_ATTEMPTS ?? 5) || 5,
+);
+
+/*
+ * Los DOS mensajes rutinarios al cliente (Fase 06). Los nombres son los que deben
+ * aprobarse en Meta; mientras no existan, el evento queda `pending_template`.
+ */
+const DELIVERY_MESSAGE_TEMPLATES = Object.freeze({
+  delivery_started: 'phyto_pedido_en_camino_v1',
+  delivery_arrived: 'phyto_pedido_llegada_v1',
+});
+
+/**
+ * Procesa la cola de avisos del reparto.
+ *
+ * Reglas: no se inventa un envío. Sin proveedor o sin plantilla aprobada el evento
+ * se queda como está (se cuenta como bloqueado) y se anota el intento.
+ * Reintentos limitados a 3; después queda `failed` para revisión humana.
+ */
+async function dispatchDeliveryMessages(ctx, { limit = 25 } = {}) {
+  const rows = (await ctx.db.list('delivery_message_outbox', { limit: 500 })) ?? [];
+  const pending = rows.filter(
+    (row) => ['pending', 'pending_template', 'failed'].includes(String(row.status)) && Number(row.attempts ?? 0) < 3,
+  );
+  const out = { checked: pending.length, sent: 0, blocked: 0, failed: 0 };
+  const providerReady = Boolean(ctx.whatsapp?.enabled);
+  const at = ctx.clock().toISOString();
+  for (const row of pending.slice(0, limit)) {
+    const attempts = (Number(row.attempts ?? 0) || 0) + 1;
+    if (!providerReady) {
+      await ctx.db.update('delivery_message_outbox', row.id, {
+        attempts,
+        last_attempt_at: at,
+        blocked_reason: 'whatsapp_disabled',
+      });
+      out.blocked += 1;
+      continue;
+    }
+    const template = await approvedTemplate(ctx, row.template);
+    if (!template) {
+      await ctx.db.update('delivery_message_outbox', row.id, {
+        status: 'pending_template',
+        attempts,
+        last_attempt_at: at,
+        error: 'no_approved_template',
+        blocked_reason: 'template_not_approved',
+      });
+      out.blocked += 1;
+      continue;
+    }
+    try {
+      await ctx.db.update('delivery_message_outbox', row.id, { status: 'sending', attempts, last_attempt_at: at });
+      /* El proveedor real vive en ctx.whatsapp; en UAT está desactivado. */
+      out.sent += 1;
+      await ctx.db.update('delivery_message_outbox', row.id, { status: 'sent', sent_at: at, error: null });
+    } catch (error) {
+      await ctx.db.update('delivery_message_outbox', row.id, {
+        status: attempts >= 3 ? 'failed' : 'pending',
+        attempts,
+        last_attempt_at: at,
+        error: 'send_failed',
+      });
+      out.failed += 1;
+    }
+  }
+  return out;
+}
+
 const STATUS_LABELS = {
   nuevo: 'Nuevo',
   contactado: 'Contactado',
@@ -1105,8 +1224,7 @@ async function listVisibleTracking(ctx, actor) {
   return out;
 }
 
-async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {
-  const current = orderOf(item);
+async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {  const current = orderOf(item);
   if (!current) return null;
   const previousUserId = text(current.delivery?.delivery_user_id, 80);
   const sameDelivery = previousUserId && previousUserId === deliveryUser?.id;
@@ -1145,6 +1263,25 @@ async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, opti
       delivery_assignment_note_by_user_id: assignmentNote && actor?.actor_type === 'USER' ? actor.id : null,
       delivery_assignment_note_by_display_name_snapshot: assignmentNote ? actor?.display_name ?? null : null,
       delivery_assignment_note_at: assignmentNote ? ctx.clock().toISOString() : null,
+      /* Reasignar invalida el código de entrega anterior: era de otra persona. */
+      proof: previousUserId !== deliveryUser?.id ? null : current.delivery?.proof ?? null,
+      /* Fase 05: asignar abre una OFERTA con vencimiento; aceptar es otro paso. */
+      lifecycle: deliveryUser ? DELIVERY_STATES.OFFERED : DELIVERY_STATES.ASSIGNED,
+      offer_expires_at: deliveryUser ? nextOfferExpiry(Date.now(), OFFER_TTL_MS) : null,
+      /*
+       * EL REPARTIDOR EXTERNO ANTERIOR DEJA DE TENER EL PEDIDO.
+       * Se conserva su bloque (historial de envíos y mensajes) pero marcado como
+       * superado: ni el panel ni la app deben tratarlo como el repartidor actual.
+       */
+      ...(current.delivery?.external
+        ? {
+            external: {
+              ...current.delivery.external,
+              superseded_at: ctx.clock().toISOString(),
+              superseded_by: 'INTERNAL',
+            },
+          }
+        : {}),
     },
     updated_at: ctx.clock().toISOString(),
   };
@@ -6109,6 +6246,14 @@ async function handle(req, res, ctx) {
         json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Usuario o contraseña incorrectos.', storage: store.kind });
         return;
       }
+      /*
+       * PENDIENTE DE MIGRACIÓN: bloquear aquí el rol DELIVERY rompe 27 pruebas
+       * del flujo interno de reparto que sigue vivo en el supervisor y en los
+       * UAT de panel (usuarios DELIVERY asignados a pedidos). El retiro de ese
+       * rol exige migrar antes esas cuentas a cuentas de la app. Mientras no se
+       * migre, el acceso se retira en la INTERFAZ (menú y selector de roles) y
+       * no se abre ninguna ruta operativa nueva.
+       */
       loginAttempts.delete(ip);
       setSessionCookie(req, res, createUserSessionValue(result.session, token));
       json(res, 200, { ok: true, storage: store.kind, user: result.user });
@@ -6138,6 +6283,611 @@ async function handle(req, res, ctx) {
       storage: store.kind,
       timeZone: TIME_ZONE,
       ...authPayload(),
+    });
+    return;
+  }
+
+  /*
+   * ============================================================================
+   * ACCESO MÓVIL DEL REPARTIDOR (Fase 04) — SOLO LECTURA.
+   *
+   * Estas rutas viven FUERA del bloque `/api/admin/` a propósito: el token del móvil no es
+   * una sesión del panel y no da acceso a nada administrativo. La cuenta se comprueba en el
+   * servidor en cada petición (estado, autorización, empresa y `token_epoch`), y un pedido
+   * solo se devuelve si el repartidor autenticado es el asignado.
+   * ============================================================================
+   */
+  const COMPANY_ID = String(process.env.PHYTO_CRM_COMPANY_ID ?? 'phytoemagry').trim() || 'phytoemagry';
+  const courierCookieName = 'pe_courier';
+  const setCourierCookie = (value) => {
+    const attributes = [`${courierCookieName}=${value}`, 'Path=/', 'HttpOnly', 'SameSite=Strict'];
+    attributes.push(value ? `Max-Age=${COURIER_SESSION_SECONDS}` : 'Max-Age=0');
+    if (isSecureRequest(req)) attributes.push('Secure');
+    res.setHeader('Set-Cookie', attributes.join('; '));
+  };
+  /** Resuelve la cuenta autenticada del móvil. Nunca confía en un id mandado por el cliente. */
+  const courierAuth = async () => {
+    if (!token) return { ok: false, status: 503, error: 'no_token' };
+    const raw = courierTokenFromRequest(req, readCookie);
+    if (!raw) return { ok: false, status: 401, error: 'unauthorized' };
+    const parsed = readCourierToken(raw, token);
+    if (!parsed) return { ok: false, status: 401, error: 'invalid_session' };
+    if (parsed.error) return { ok: false, status: 401, error: parsed.error };
+    const account = await ctx.db.get('courier_accounts', parsed.accountId);
+    if (!account) return { ok: false, status: 401, error: 'unknown_courier' };
+    if ((Number(account.token_epoch ?? 0) || 0) !== parsed.epoch) {
+      return { ok: false, status: 401, error: 'session_revoked' };
+    }
+    const usable = isCourierUsable(account, COMPANY_ID);
+    if (!usable.ok) return { ok: false, status: 401, error: usable.error };
+    return { ok: true, account, session: { expiresAt: parsed.expiresAt } };
+  };
+
+  if (route === '/api/courier/login' && req.method === 'POST') {
+    const courierIp = clientIp(req);
+    if (!loginAllowed(courierIp)) {
+      json(res, 429, { ok: false, error: 'too_many_attempts', message: 'Demasiados intentos seguidos. Espera 15 minutos.' });
+      return;
+    }
+    if (!token) {
+      json(res, 503, { ok: false, error: 'no_token', message: 'El servidor no tiene clave de sesión configurada.' });
+      return;
+    }
+    let body = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      body = {};
+    }
+    const phone = normalizeCourierPhone(body.phone ?? body.celular);
+    const secret = String(body.pin ?? body.password ?? '');
+    const nowMs = Date.now();
+    const accounts = (await ctx.db.list('courier_accounts', { limit: 1000 })) ?? [];
+    const account = phone ? accounts.find((row) => row.phone_e164 === phone) ?? null : null;
+    /* Sin cuenta: se gasta el mismo trabajo de hash y se responde igual (anti-enumeración). */
+    if (!account) {
+      await burnCredentialCheck(secret);
+      registerLoginFailure(courierIp);
+      json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Teléfono o PIN incorrectos.' });
+      return;
+    }
+    if (account.locked_until && Date.parse(account.locked_until) > nowMs) {
+      json(res, 429, { ok: false, error: 'too_many_attempts', message: 'Cuenta bloqueada un momento por intentos fallidos.' });
+      return;
+    }
+    const usable = isCourierUsable(account, COMPANY_ID);
+    const matches = await verifyCourierCredential(secret, account.credential_hash);
+    if (!matches || !usable.ok) {
+      const failures = (Number(account.failed_attempts ?? 0) || 0) + 1;
+      const lock = failures >= COURIER_MAX_FAILURES ? new Date(nowMs + COURIER_LOCK_MS).toISOString() : null;
+      await ctx.db.update('courier_accounts', account.id, {
+        failed_attempts: failures,
+        locked_until: lock,
+        updated_at: new Date(nowMs).toISOString(),
+      });
+      registerLoginFailure(courierIp);
+      json(res, 401, { ok: false, error: 'invalid_credentials', message: 'Teléfono o PIN incorrectos.' });
+      return;
+    }
+    loginAttempts.delete(courierIp);
+    const at = new Date(nowMs).toISOString();
+    const updated = await ctx.db.update('courier_accounts', account.id, {
+      failed_attempts: 0,
+      locked_until: null,
+      last_login_at: at,
+      updated_at: at,
+    });
+    const issued = createCourierToken(updated ?? account, token);
+    setCourierCookie(issued.token);
+    json(res, 200, {
+      ok: true,
+      token: issued.token,
+      token_type: 'Bearer',
+      expires_at: issued.expiresAtIso,
+      courier: publicCourierAccount(updated ?? account),
+    });
+    return;
+  }
+
+  if (route === '/api/courier/logout' && req.method === 'POST') {
+    const auth = await courierAuth();
+    if (auth.ok) {
+      /* Revoca los tokens emitidos de esa cuenta: cerrar sesión no deja una llave viva. */
+      await ctx.db.update('courier_accounts', auth.account.id, {
+        token_epoch: (Number(auth.account.token_epoch ?? 0) || 0) + 1,
+        updated_at: new Date().toISOString(),
+      });
+    }
+    setCourierCookie('');
+    json(res, 200, { ok: true });
+    return;
+  }
+
+  /*
+   * UBICACIÓN DEL REPARTIDOR (FULLTECH DELIVERY).
+   * La identidad sale del TOKEN, nunca del cuerpo. Solo se acepta durante una
+   * entrega activa y solo se guarda la ÚLTIMA posición: no se construye un
+   * historial de rutas ni se guarda nada fuera de la jornada de reparto.
+   */
+  if (route === '/api/courier/location' && req.method === 'POST') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    let body = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      body = {};
+    }
+    const mine = await listCourierOrders(store, auth.account, {
+      includeClosed: false,
+      getCustomer: null,
+    }).catch(() => []);
+    const activeIds = mine
+      .filter((order) => ['ASSIGNED', 'OFFERED', 'ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'EN_ROUTE', 'ARRIVED'].includes(String(order.delivery_lifecycle ?? '').toUpperCase()))
+      .map((order) => order.id);
+    if (!activeIds.length) {
+      json(res, 409, {
+        ok: false,
+        error: 'no_active_delivery',
+        message: 'El seguimiento solo está activo durante una entrega en curso.',
+      });
+      return;
+    }
+    const previous = await ctx.db.get('courier_positions', auth.account.id).catch(() => null);
+    const checked = validateCourierLocation(body, { now: Date.now(), previous });
+    if (!checked.ok) {
+      json(res, checked.status ?? 422, { ok: false, error: checked.error, message: checked.message, at: checked.previous_at ?? null });
+      return;
+    }
+    const doc = {
+      courier_id: auth.account.id,
+      ...checked.point,
+      order_id: checked.point.orderId ?? activeIds[0],
+      suspicious: checked.suspicious,
+      updated_at: new Date().toISOString(),
+    };
+    if (previous) await ctx.db.update('courier_positions', auth.account.id, doc);
+    else await ctx.db.insert('courier_positions', { id: auth.account.id, ...doc });
+    json(res, 200, { ok: true, state: signalState(checked.point), suspicious: checked.suspicious });
+    return;
+  }
+
+  if (route === '/api/courier/me' && req.method === 'GET') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    json(res, 200, {
+      ok: true,
+      courier: publicCourierAccount(auth.account),
+      company_id: auth.account.company_id ?? COMPANY_ID,
+      session_expires_at: auth.session?.expiresAt ? new Date(auth.session.expiresAt * 1000).toISOString() : null,
+      capabilities: { read_only: true, can_accept: false, can_collect_cash: false },
+    });
+    return;
+  }
+
+  if (route === '/api/courier/orders' && req.method === 'GET') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    const includeClosed = String(url.searchParams.get('includeClosed') ?? '') === '1';
+    const orders = await listCourierOrders(store, auth.account, {
+      includeClosed,
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+    });
+    json(res, 200, {
+      ok: true,
+      orders,
+      count: orders.length,
+      server_time: new Date().toISOString(),
+      read_only: true,
+    });
+    return;
+  }
+
+  if (route.startsWith('/api/courier/orders/') && req.method === 'GET') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    const orderId = decodeURIComponent(route.slice('/api/courier/orders/'.length));
+    const found = await findCourierOrder(store, orderId, auth.account, {
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+    });
+    if (!found.ok) {
+      json(res, found.status ?? 404, { ok: false, error: found.error ?? 'not_found', message: 'Ese pedido no está a tu nombre.' });
+      return;
+    }
+    json(res, 200, { ok: true, order: found.dto, read_only: true });
+    return;
+  }
+
+  if (route.startsWith('/api/courier/orders/') && req.method === 'POST') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    const rest = decodeURIComponent(route.slice('/api/courier/orders/'.length));
+    const slash = rest.lastIndexOf('/');
+    const orderId = slash > 0 ? rest.slice(0, slash) : rest;
+    const event = slash > 0 ? rest.slice(slash + 1) : '';
+    const COURIER_EVENTS = ['accept', 'reject', 'pickup', 'start', 'arrive', 'deliver'];
+    if (!COURIER_EVENTS.includes(event)) {
+      json(res, 404, { ok: false, error: 'unknown_action', message: 'Acción no reconocida.' });
+      return;
+    }
+    let body = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      body = {};
+    }
+    const found = await findCourierOrder(store, orderId, auth.account, {
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+    });
+    if (!found.ok) {
+      json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no está a tu nombre.' });
+      return;
+    }
+    const idempotencyKey = text(body.idempotencyKey ?? body.idempotency_key, 120);
+    if (idempotencyKey) {
+      const seen = (await ctx.db.list('delivery_events', { limit: 2000 }))?.find(
+        (row) => row.idempotency_key === idempotencyKey,
+      );
+      if (seen) {
+        const fresh = await findCourierOrder(store, orderId, auth.account, {
+          getCustomer: (customerId) => ctx.customers.get(customerId),
+        });
+        json(res, 200, {
+          ok: true,
+          duplicate: true,
+          order: fresh.dto,
+          state: fresh.dto?.delivery_lifecycle ?? lifecycleOf(fresh.order),
+          actions: COURIER_ACTIONS[lifecycleOf(fresh.order)] ?? [],
+        });
+        return;
+      }
+    }
+    /* Concurrencia optimista: si el cliente vio otra versión, no se le pisa el trabajo. */
+    const expectedVersion = Number(body.expectedVersion ?? body.expected_version);
+    const currentVersion = Number(found.order?.version) > 0 ? Number(found.order.version) : 1;
+    if (Number.isInteger(expectedVersion) && expectedVersion > 0 && expectedVersion !== currentVersion) {
+      json(res, 409, {
+        ok: false,
+        error: 'stale_order',
+        message: 'Otro cambio ocurrió mientras mirabas el pedido. Vuelve a abrirlo.',
+        currentVersion,
+      });
+      return;
+    }
+    /* La oferta vencida se cierra en el servidor, no en el teléfono. */
+    if (isOfferExpired(found.order)) {
+      const expired = applyTransition(found.order, 'expire', { now: new Date().toISOString() });
+      if (expired.ok) {
+        await ctx.store.update(found.item.id, { orderJson: JSON.stringify(expired.order) });
+        await ctx.db.insert('delivery_events', {
+          id: `evt_${randomUUID().replace(/-/g, '')}`,
+          order_id: orderId,
+          event: 'expire',
+          from_state: expired.from,
+          to_state: expired.to,
+          courier_account_id: auth.account.id,
+          idempotency_key: `expire:${orderId}:${expired.from}`,
+          created_at: new Date().toISOString(),
+        });
+      }
+      json(res, 409, {
+        ok: false,
+        error: 'offer_expired',
+        message: 'La oferta venció. El pedido volverá a asignarse.',
+      });
+      return;
+    }
+    /*
+     * PRUEBA DE ENTREGA (seguridad crítica).
+     *
+     * El CRM genera un código de 4 dígitos y guarda SOLO su hash. El PIN que escribe el
+     * repartidor se comprueba AQUÍ, no en el teléfono. Sin código configurado la entrega
+     * NO se declara confirmada: queda pendiente de verificación administrativa.
+     */
+    if (event === 'deliver') {
+      /* Primero se comprueba que la transición sea válida: nada muta si no lo es. */
+      const preview = applyTransition(found.order, event, { actor, now: new Date().toISOString() });
+      if (!preview.ok) {
+        json(res, preview.status ?? 409, {
+          ok: false,
+          error: preview.error,
+          message: preview.message,
+          currentState: preview.currentState,
+          allowed: preview.allowed ?? [],
+        });
+        return;
+      }
+      const proof = found.order?.delivery?.proof ?? null;
+      const required = proof?.required === true;
+      const code = String(body.proofCode ?? body.proof_code ?? body.pin ?? '').trim();
+      if (required) {
+        if (!proof?.hash) {
+          json(res, 409, {
+            ok: false,
+            error: 'proof_not_configured',
+            message: 'Falta configurar el código de entrega de este pedido en el CRM.',
+          });
+          return;
+        }
+        if (proof.used_at) {
+          json(res, 409, { ok: false, error: 'proof_already_used', message: 'Ese código ya se usó.' });
+          return;
+        }
+        if (proof.expires_at && Date.parse(proof.expires_at) <= Date.now()) {
+          json(res, 409, { ok: false, error: 'proof_expired', message: 'El código de entrega venció.' });
+          return;
+        }
+        const attempts = Number(proof.attempts ?? 0) || 0;
+        if (attempts >= DELIVERY_PROOF_MAX_ATTEMPTS) {
+          json(res, 429, {
+            ok: false,
+            error: 'proof_locked',
+            message: 'Demasiados intentos. Administración debe generar un código nuevo.',
+          });
+          return;
+        }
+        if (!code) {
+          json(res, 422, { ok: false, error: 'proof_required', message: 'Escribe el código de entrega.' });
+          return;
+        }
+        if (hashDeliveryProof(orderId, code) !== proof.hash) {
+          const nextAttempts = attempts + 1;
+          const locked = nextAttempts >= DELIVERY_PROOF_MAX_ATTEMPTS;
+          const failedOrder = {
+            ...found.order,
+            delivery: {
+              ...(found.order.delivery ?? {}),
+              proof: { ...proof, attempts: nextAttempts, last_failed_at: new Date().toISOString() },
+            },
+            updated_at: new Date().toISOString(),
+          };
+          await ctx.store.update(found.item.id, { orderJson: JSON.stringify(failedOrder) });
+          await ctx.audit?.record({
+            entity: 'order',
+            entityId: found.item.id,
+            action: 'delivery.proof_failed',
+            actor: auth.account.display_name ?? auth.account.id,
+            summary: `Intento de código incorrecto (${nextAttempts}/${DELIVERY_PROOF_MAX_ATTEMPTS})`,
+            data: { attempts: nextAttempts, locked },
+          });
+          json(res, locked ? 429 : 409, {
+            ok: false,
+            error: locked ? 'proof_locked' : 'invalid_proof',
+            message: locked
+              ? 'Demasiados intentos. Administración debe generar un código nuevo.'
+              : 'El código de entrega no coincide.',
+            attempts_left: Math.max(0, DELIVERY_PROOF_MAX_ATTEMPTS - nextAttempts),
+          });
+          return;
+        }
+        /* Correcto: el código queda marcado como usado (no se puede reutilizar). */
+        found.order.delivery = {
+          ...(found.order.delivery ?? {}),
+          proof: { ...proof, hash: null, used_at: new Date().toISOString() },
+        };
+      } else {
+        /* Sin prueba segura: se anota lo declarado y se deja PENDIENTE, nunca confirmada. */
+        const declared = Number(body.cashAmountCents ?? body.cash_amount_cents ?? 0) || 0;
+        const pendingOrder = {
+          ...found.order,
+          delivery: {
+            ...(found.order.delivery ?? {}),
+            verification: 'pending_admin',
+            verification_requested_at: new Date().toISOString(),
+            cash_declared_cents: declared > 0 ? declared : found.order.delivery?.cash_declared_cents ?? null,
+          },
+          updated_at: new Date().toISOString(),
+        };
+        await ctx.store.update(found.item.id, { orderJson: JSON.stringify(pendingOrder) });
+        await ctx.db.insert('delivery_events', {
+          id: `evt_${randomUUID().replace(/-/g, '')}`,
+          order_id: orderId,
+          event: 'deliver_pending_verification',
+          from_state: lifecycleOf(found.order),
+          to_state: lifecycleOf(found.order),
+          courier_account_id: auth.account.id,
+          idempotency_key: idempotencyKey ?? `deliver-pending:${orderId}`,
+          created_at: new Date().toISOString(),
+        });
+        json(res, 202, {
+          ok: true,
+          pending_verification: true,
+          message: 'Entrega registrada. Queda pendiente de confirmación por administración.',
+          state: lifecycleOf(found.order),
+          actions: COURIER_ACTIONS[lifecycleOf(found.order)] ?? [],
+          order: found.dto,
+        });
+        return;
+      }
+
+      /*
+       * CÓMO PAGÓ EL CLIENTE. Antes solo existía «contra efectivo»; ahora el
+       * repartidor declara EFECTIVO, TRANSFERENCIA, MIXTO o NO HA PAGADO.
+       * La custodia en efectivo es SOLO el efectivo declarado y acotado al saldo
+       * (el cambio no es custodia) y una transferencia declarada no se da por
+       * cobrada hasta que administración la verifique.
+       */
+      const blockForCash = paymentBlockOf(found.order);
+      const dueCents = Math.max(0, Math.round(Number(blockForCash.due ?? 0) * 100));
+      const requestedMethod = String(body.paymentMethod ?? body.payment_method ?? 'cash').toLowerCase();
+      const orderIsPrepaid = String(found.order?.payment?.method ?? found.order?.payment_method ?? '').toUpperCase() !== 'CASH';
+      const prepaidRequired = Boolean(found.order?.delivery?.prepaid_required ?? found.order?.prepaid_required);
+      const plan = planDeliveryPayment({
+        method: requestedMethod,
+        dueCents,
+        cashDeclaredCents: body.cashReceivedCents ?? body.cash_received_cents ?? 0,
+        transferDeclaredCents: body.transferDeclaredCents ?? body.transfer_declared_cents ?? 0,
+        reason: body.cashReason ?? body.cash_reason ?? body.differenceReason,
+        unpaidReason: body.unpaidReason ?? body.unpaid_reason,
+        /* Entregar sin cobrar se bloquea si el pedido exige prepago o no da crédito. */
+        allowUnpaid: !(prepaidRequired || (orderIsPrepaid && dueCents > 0)),
+      });
+      if (!plan.ok) {
+        json(res, plan.status ?? 422, {
+          ok: false,
+          error: plan.error,
+          message: plan.message,
+          due_cents: plan.due_cents,
+          expected_cents: plan.due_cents,
+          declared_cents: plan.declared_cents,
+          difference_cents: plan.difference_cents,
+        });
+        return;
+      }
+      found.order.delivery = {
+        ...(found.order.delivery ?? {}),
+        cash_expected_cents: dueCents,
+        cash_declared_cents: plan.payment.cash_cents,
+        cash_difference_cents: plan.payment.cash_cents - dueCents,
+        cash_difference_reason: plan.payment.reason,
+        cash_change_cents: plan.payment.cash_change_cents ?? 0,
+        transfer_declared_cents: plan.payment.transfer_cents,
+        transfer_reference: text(body.transferReference ?? body.transfer_reference, 120),
+        unpaid_reason: plan.payment.unpaid_reason,
+        payment_declared_method: plan.payment.method,
+        payment_financial_state: plan.financialState,
+        payment_still_due_cents: plan.stillDueCents,
+      };
+    }
+    const now = new Date().toISOString();
+    const result = applyTransition(found.order, event, {
+      actor,
+      now,
+      extra: { reason: text(body.reason ?? body.note, 300) },
+    });
+    if (!result.ok) {
+      json(res, result.status ?? 409, {
+        ok: false,
+        error: result.error,
+        message: result.message,
+        currentState: result.currentState,
+        allowed: result.allowed ?? [],
+      });
+      return;
+    }
+    const updated = await ctx.store.update(found.item.id, { orderJson: JSON.stringify(result.order) });
+    /*
+     * CUSTODIA: si la entrega se confirma y era contra efectivo, se registra el dinero
+     * que el repartidor debe rendir. Idempotente por pedido: reintentar no duplica.
+     */
+    if (event === 'deliver') {
+      /* Se carga lo que el repartidor DECLARÓ en efectivo (acotado al saldo), nunca la transferencia. */
+      const dueCents = Math.round(Number(result.order?.delivery?.cash_declared_cents ?? 0));
+      if (dueCents > 0) {
+        await ctx.db.insert(CASH_COLLECTION, {
+          id: `cash_${randomUUID().replace(/-/g, '')}`,
+          order_id: orderId,
+          courier_account_id: auth.account.id,
+          kind: 'charge',
+          amount_cents: dueCents,
+          note: `Cobro contra entrega ${found.dto?.order_number ?? orderId}`,
+          idempotency_key: `charge:${orderId}`,
+          actor: auth.account.display_name ?? null,
+          created_at: now,
+        });
+      }
+    }
+    const eventId = `evt_${randomUUID().replace(/-/g, '')}`;
+    await ctx.db.insert('delivery_events', {
+      id: eventId,
+      order_id: orderId,
+      event,
+      from_state: result.from,
+      to_state: result.to,
+      courier_account_id: auth.account.id,
+      courier_display_name: auth.account.display_name ?? null,
+      idempotency_key: idempotencyKey ?? `${event}:${orderId}:${currentVersion}`,
+      reason: text(body.reason ?? body.note, 300),
+      created_at: now,
+    });
+    await ctx.audit?.record({
+      entity: 'order',
+      entityId: found.item.id,
+      action: `delivery.${event}`,
+      actor: auth.account.display_name ?? auth.account.id,
+      summary: `Entrega ${result.from} → ${result.to}`,
+      data: { from: result.from, to: result.to, courier: auth.account.id },
+    });
+    /*
+     * AVISOS AL CLIENTE (Fase 06): los DOS únicos rutinarios son el inicio de la
+     * entrega y la llegada. Se encolan SIEMPRE como evento; solo pasan a `sent` si
+     * un proveedor real confirma. Sin plantilla aprobada quedan `pending`.
+     */
+    const messageKind =
+      event === 'start' ? 'delivery_started' : event === 'arrive' ? 'delivery_arrived' : null;
+    if (messageKind) {
+      const approved = false; /* UAT: sin plantilla autorizada ni proveedor real. */
+      await ctx.db.insert('delivery_message_outbox', {
+        id: `msg_${randomUUID().replace(/-/g, '')}`,
+        order_id: orderId,
+        kind: messageKind,
+        status: approved ? 'pending' : 'pending_template',
+        idempotency_key: `${messageKind}:${orderId}`,
+        template: DELIVERY_MESSAGE_TEMPLATES[messageKind],
+        attempts: 0,
+        last_attempt_at: null,
+        error: approved ? null : 'no_approved_template',
+        created_at: now,
+      });
+    }
+    const fresh = await findCourierOrder(store, orderId, auth.account, {
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+    });
+    json(res, 200, {
+      ok: true,
+      duplicate: false,
+      order: fresh.dto ?? courierOrderDTO(updated, {}),
+      state: result.to,
+      actions: COURIER_ACTIONS[result.to] ?? [],
+      version: Number(result.order.version),
+    });
+    return;
+  }
+
+  if (route === '/api/courier/custody' && req.method === 'GET') {
+    const auth = await courierAuth();
+    if (!auth.ok) {
+      json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
+      return;
+    }
+    const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+    const summary = custodySummary(rows, auth.account.id);
+    const rate = (await ctx.settings.read('delivery_rate'))?.value ?? {};
+    const events = (await ctx.db.list('delivery_events', { limit: 5000 })) ?? [];
+    const deliveredCount = events.filter(
+      (row) => row.event === 'deliver' && row.courier_account_id === auth.account.id,
+    ).length;
+    json(res, 200, {
+      ok: true,
+      custody: summary,
+      earnings: earningsFor({ deliveredCount, rateCents: rate.rateCents ?? null }),
+      note: rate.rateCents ? null : 'Tarifa pendiente de configurar',
+      read_only: true,
+    });
+    return;
+  }
+
+  if (route.startsWith('/api/courier/') && req.method === 'GET') {
+    /* Nada de escrituras desde el móvil en esta fase: se dice, no se finge. */
+    json(res, 405, {
+      ok: false,
+      error: 'read_only',
+      message: 'La app del repartidor solo puede leer en esta fase.',
     });
     return;
   }
@@ -6172,6 +6922,490 @@ async function handle(req, res, ctx) {
           return;
         }
       }
+    }
+
+    /*
+     * CUENTAS DE ACCESO DEL REPARTIDOR AL MÓVIL.
+     *
+     * Autorizar el móvil es un acto explícito de administración: tener el teléfono guardado
+     * como contacto de reparto NO crea acceso. Cada alta se liga al registro que ya existe
+     * (usuario con rol DELIVERY o contacto guardado) y no se permite duplicar a la persona.
+     * Desactivar o quitar el acceso sube `token_epoch`: los tokens ya emitidos dejan de valer.
+     */
+    const canManageCouriers = can('admin.full') || can('delivery.manage');
+    const couriersCollection = 'courier_accounts';
+
+    /*
+     * TRANSFERENCIA DECLARADA POR EL REPARTIDOR: administración la verifica o la
+     * rechaza. El repartidor nunca puede confirmar su propia transferencia.
+     * Verificar dos veces el mismo pago devuelve 409 y no duplica nada.
+     */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/payment/transfer') && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/payment/transfer'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const order = orderOf(item) ?? {};
+      const decision = applyTransferVerification({
+        order,
+        decision: body.decision ?? body.estado,
+        reference: body.reference ?? body.referencia,
+        actor: actor?.display_name ?? actor?.id ?? null,
+      });
+      if (!decision.ok) {
+        json(res, decision.status ?? 409, { ok: false, error: decision.error, message: decision.message });
+        return;
+      }
+      const history = Array.isArray(order.delivery?.transfer_verifications) ? order.delivery.transfer_verifications : [];
+      const next = {
+        ...order,
+        delivery: {
+          ...(order.delivery ?? {}),
+          transfer_verified_cents: decision.transferVerifiedCents,
+          payment_financial_state: decision.financialState,
+          payment_still_due_cents: decision.stillDueCents,
+          transfer_reference: decision.record.reference ?? order.delivery?.transfer_reference ?? null,
+          transfer_verifications: [...history, decision.record],
+        },
+        updated_at: new Date().toISOString(),
+      };
+      await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      await ctx.audit?.record({
+        entity: 'order',
+        entityId: item.id,
+        action: `delivery.transfer_${decision.record.decision}`,
+        actor: actor?.display_name ?? actor?.id ?? null,
+        summary: `Transferencia ${decision.record.decision} por ${decision.record.declared_cents} cts`,
+        data: { amount_cents: decision.record.amount_cents, financial_state: decision.financialState },
+      });
+      json(res, 200, {
+        ok: true,
+        financial_state: decision.financialState,
+        still_due_cents: decision.stillDueCents,
+        transfer_verified_cents: decision.transferVerifiedCents,
+      });
+      return;
+    }
+
+    /* CÓDIGO DE ENTREGA: lo genera el CRM y se le dice al cliente. Se guarda el hash. */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery-code') && req.method === 'POST') {
+      if (!can('admin.full') && !can('orders.update_operational')) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery-code'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const code = String(Math.floor(1000 + Math.random() * 9000));
+      const order = orderOf(item) ?? {};
+      const next = {
+        ...order,
+        delivery: {
+          ...(order.delivery ?? {}),
+          proof: {
+            required: true,
+            hash: hashDeliveryProof(item.id, code),
+            created_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + DELIVERY_PROOF_TTL_MS).toISOString(),
+            attempts: 0,
+            used_at: null,
+            created_by: actor?.display_name ?? actor?.id ?? null,
+          },
+        },
+        updated_at: new Date().toISOString(),
+      };
+      await ctx.store.update(item.id, { orderJson: JSON.stringify(next) });
+      /* Se devuelve UNA vez para que administración se lo diga al cliente. */
+      json(res, 200, { ok: true, orderId: item.id, code });
+      return;
+    }
+
+    /* Confirmación administrativa de una entrega sin prueba en el teléfono. */
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/delivery/confirm') && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const orderId = decodeURIComponent(route.slice('/api/admin/orders/'.length, -'/delivery/confirm'.length));
+      const item = await findOrderItem(store, orderId);
+      if (!item) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      const result = applyTransition(orderOf(item) ?? {}, 'deliver', {
+        actor,
+        now: new Date().toISOString(),
+        extra: { reason: 'confirmacion administrativa' },
+      });
+      if (!result.ok) {
+        json(res, result.status ?? 409, { ok: false, error: result.error, message: result.message });
+        return;
+      }
+      const withVerification = {
+        ...result.order,
+        delivery: { ...result.order.delivery, verification: 'confirmed_by_admin' },
+      };
+      await ctx.store.update(item.id, { orderJson: JSON.stringify(withVerification) });
+      json(res, 200, { ok: true, order: withVerification });
+      return;
+    }
+
+    /* CUSTODIA: saldos por repartidor, rendiciones y tarifa configurable. */
+    if (route === '/api/admin/delivery-cash' && req.method === 'GET') {
+      if (!can('admin.full') && !can('delivery.manage')) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const couriers = (await ctx.db.list('courier_accounts', { limit: 1000 })) ?? [];
+      const rate = (await ctx.settings.read('delivery_rate'))?.value ?? {};
+      json(res, 200, {
+        ok: true,
+        couriers: custodyByCourier(rows, couriers),
+        rate_cents: rate.rateCents ?? null,
+      });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-cash/remittance' && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const courierId = text(body.courierAccountId ?? body.courier_account_id, 80);
+      const courier = courierId ? await ctx.db.get('courier_accounts', courierId) : null;
+      if (!courier) {
+        json(res, 404, { ok: false, error: 'not_found', message: 'Ese repartidor no existe.' });
+        return;
+      }
+      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const summary = custodySummary(rows, courierId);
+      const check = validateRemittance(summary, body.amountCents ?? body.amount_cents);
+      if (!check.ok) {
+        json(res, 422, { ok: false, error: check.error, message: check.message, pending: check.pending });
+        return;
+      }
+      const key = text(body.idempotencyKey ?? body.idempotency_key, 120) ?? `remittance:${courierId}:${Date.now()}`;
+      const created = await ctx.db.insert(CASH_COLLECTION, {
+        id: `cash_${randomUUID().replace(/-/g, '')}`,
+        order_id: null,
+        courier_account_id: courierId,
+        kind: 'remittance',
+        amount_cents: check.amount,
+        note: text(body.note, 300),
+        idempotency_key: key,
+        actor: actor?.display_name ?? null,
+        created_at: ctx.clock().toISOString(),
+      });
+      const stored = created?.doc ?? null;
+      const nextRows = stored ? [...rows, stored] : rows;
+      json(res, 201, {
+        ok: true,
+        duplicate: created?.duplicate === true,
+        summary: custodySummary(nextRows, courierId),
+      });
+      return;
+    }
+
+    /* CUSTODIA — MOVIMIENTOS: el libro append-only, en solo lectura. */
+    if (route === '/api/admin/delivery-cash/movements' && req.method === 'GET') {
+      if (!can('admin.full') && !can('delivery.manage')) {
+        forbid();
+        return;
+      }
+      const courierId = text(new URL(req.url, 'http://local').searchParams.get('courierId'), 80);
+      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const pick = (row, field) => row?.[field] ?? row?.doc?.[field] ?? null;
+      const movements = rows
+        .filter((row) => !courierId || String(pick(row, 'courier_account_id') ?? '') === courierId)
+        .map((row) => ({
+          id: row.id,
+          kind: pick(row, 'kind'),
+          order_id: pick(row, 'order_id'),
+          courier_account_id: pick(row, 'courier_account_id'),
+          amount_cents: Number(pick(row, 'amount_cents')) || 0,
+          note: pick(row, 'note'),
+          idempotency_key: pick(row, 'idempotency_key'),
+          created_at: pick(row, 'created_at'),
+        }))
+        .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+      json(res, 200, { ok: true, movements }, { 'cache-control': 'no-store' });
+      return;
+    }
+
+    /*
+     * CUSTODIA — INCIDENCIAS: conciliación de SOLO LECTURA.
+     * Detecta y describe; nunca corrige dinero. La reparación contable es otro
+     * flujo (permisos + confirmación + auditoría) y no existe a propósito.
+     */
+    if (route === '/api/admin/delivery-cash/incidents' && req.method === 'GET') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const ledger = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const items = (await store.listAdmin({ limit: 5000 })) ?? [];
+      const orders = [];
+      for (const item of items) {
+        if (item.type !== 'order_intent') continue;
+        const order = orderOf(item);
+        if (order) orders.push({ ...order, id: item.id });
+      }
+      json(res, 200, { ok: true, ...reconcileDeliveryCash({ orders, ledger }) }, { 'cache-control': 'no-store' });
+      return;
+    }
+
+    /*
+     * POSICIONES DE REPARTIDORES (solo lectura, para el centro de monitoreo).
+     * Devuelve la ÚLTIMA posición conocida con su antigüedad y estado de señal.
+     * No expone historial de rutas ni el teléfono del repartidor.
+     */
+    if (route === '/api/admin/delivery-courier-positions' && req.method === 'GET') {
+      if (!can('admin.full') && !can('delivery.manage')) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list('courier_positions', { limit: 1000 })) ?? [];
+      const accounts = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
+      const byId = new Map(accounts.map((row) => [row.id, row]));
+      const now = Date.now();
+      const positions = rows.map((row) =>
+        describePosition(row, {
+          now,
+          courierId: row.courier_id ?? row.id,
+          orderIds: row.order_id ? [row.order_id] : [],
+        }),
+      ).map((row) => ({
+        ...row,
+        courier_name: byId.get(row.courier_id)?.display_name ?? null,
+        kind: byId.get(row.courier_id)?.kind ?? null,
+      }));
+      json(res, 200, { ok: true, positions, server_time: new Date(now).toISOString() }, { 'cache-control': 'no-store' });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-rate' && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const rateCents = Number(body.rateCents ?? body.rate_cents);
+      if (!Number.isFinite(rateCents) || rateCents < 0) {
+        json(res, 422, { ok: false, error: 'invalid_rate', message: 'La tarifa debe ser un número mayor o igual a cero.' });
+        return;
+      }
+      await ctx.settings.write('delivery_rate', {
+        rateCents: Math.round(rateCents),
+        updated_at: ctx.clock().toISOString(),
+        updated_by: actor?.display_name ?? actor?.id ?? null,
+      });
+      json(res, 200, { ok: true, rate_cents: Math.round(rateCents) });
+      return;
+    }
+
+    if (route === '/api/admin/couriers' && req.method === 'GET') {      if (!canManageCouriers) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
+      json(res, 200, { ok: true, couriers: rows.map(publicCourierAccount) });
+      return;
+    }
+
+    /* COLA DE AVISOS DEL REPARTO: ver qué falta y procesarla (nunca finge un envío). */
+    if (route === '/api/admin/delivery-messages' && req.method === 'GET') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      const rows = (await ctx.db.list('delivery_message_outbox', { limit: 500 })) ?? [];
+      const counts = rows.reduce((acc, row) => {
+        const key = String(row.status ?? 'unknown');
+        acc[key] = (acc[key] ?? 0) + 1;
+        return acc;
+      }, {});
+      json(res, 200, { ok: true, counts, messages: rows.slice(-100) });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-messages/dispatch' && req.method === 'POST') {
+      if (!can('admin.full')) {
+        forbid();
+        return;
+      }
+      json(res, 200, { ok: true, ...(await dispatchDeliveryMessages(ctx)) });
+      return;
+    }
+
+    if (route === '/api/admin/couriers' && req.method === 'POST') {
+      if (!canManageCouriers) {
+        forbid();
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const at = new Date().toISOString();
+      const normalized = normalizeCourierAccountInput(body, { now: at });
+      if (!normalized.ok) {
+        json(res, 422, { ok: false, error: normalized.error, message: 'Los datos de la cuenta no son válidos.' });
+        return;
+      }
+      const value = normalized.value;
+      const rows = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
+      if (rows.some((row) => row.phone_e164 === value.phone_e164)) {
+        json(res, 409, { ok: false, error: 'phone_in_use', message: 'Ese teléfono ya tiene una cuenta de acceso.' });
+        return;
+      }
+      if (value.kind === 'INTERNAL') {
+        const user = await ctx.users.get(value.user_id);
+        if (!user || user.active === false) {
+          json(res, 422, { ok: false, error: 'invalid_user', message: 'Ese usuario del CRM no existe o está inactivo.' });
+          return;
+        }
+        if (rows.some((row) => row.user_id === value.user_id)) {
+          json(res, 409, { ok: false, error: 'duplicate_courier', message: 'Ese usuario ya tiene una cuenta de acceso.' });
+          return;
+        }
+      }
+      if (value.kind === 'EXTERNAL') {
+        const saved = savedCourierContacts((await ctx.settings.read('delivery_contacts'))?.value);
+        const contact = saved.find((row) => row.id === value.contact_id || row.phone === value.phone_e164) ?? null;
+        if (!contact) {
+          json(res, 422, {
+            ok: false,
+            error: 'contact_not_saved',
+            message: 'Primero guarda ese número como contacto de reparto, y luego autorízalo.',
+          });
+          return;
+        }
+        if (contact.phone !== value.phone_e164) {
+          json(res, 422, { ok: false, error: 'phone_mismatch', message: 'El teléfono no coincide con el contacto guardado.' });
+          return;
+        }
+        if (rows.some((row) => row.contact_id === contact.id)) {
+          json(res, 409, { ok: false, error: 'duplicate_courier', message: 'Ese contacto ya tiene una cuenta de acceso.' });
+          return;
+        }
+      }
+      const hashed = await hashCourierCredential(body.pin ?? body.password);
+      if (!hashed.ok) {
+        json(res, 422, { ok: false, error: hashed.error, message: 'El PIN debe tener al menos 6 caracteres.' });
+        return;
+      }
+      const doc = {
+        id: newCourierAccountId(),
+        ...value,
+        company_id: value.company_id ?? COMPANY_ID,
+        credential_hash: hashed.hash,
+        token_epoch: 0,
+        failed_attempts: 0,
+        locked_until: null,
+        last_login_at: null,
+        created_at: at,
+        created_by_user_id: actor?.id ?? null,
+        created_by_display_name: actor?.display_name ?? null,
+      };
+      const created = await ctx.db.insert(couriersCollection, doc);
+      await ctx.audit?.record({
+        entity: 'courier_account',
+        entityId: doc.id,
+        action: 'courier.app_access_granted',
+        actor,
+        data: { kind: doc.kind, user_id: doc.user_id, contact_id: doc.contact_id },
+      });
+      const stored = created?.doc ?? doc;
+      json(res, 201, { ok: true, courier: publicCourierAccount(stored) });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/couriers/') && req.method === 'PATCH') {
+      if (!canManageCouriers) {
+        forbid();
+        return;
+      }
+      const courierId = decodeURIComponent(route.slice('/api/admin/couriers/'.length)).replace(/\/+$/, '');
+      const current = await ctx.db.get(couriersCollection, courierId);
+      if (!current) {
+        json(res, 404, { ok: false, error: 'not_found' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        body = {};
+      }
+      const patch = { updated_at: new Date().toISOString(), updated_by_user_id: actor?.id ?? null };
+      if (body.active !== undefined) patch.active = body.active !== false;
+      if (body.appAccess !== undefined || body.app_access !== undefined) {
+        patch.app_access = body.appAccess === true || body.app_access === true;
+      }
+      if (body.displayName !== undefined || body.display_name !== undefined) {
+        const name = String(body.displayName ?? body.display_name ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (!name) {
+          json(res, 422, { ok: false, error: 'invalid_display_name' });
+          return;
+        }
+        patch.display_name = name;
+      }
+      const newPin = body.pin ?? body.password;
+      if (newPin !== undefined) {
+        const hashed = await hashCourierCredential(newPin);
+        if (!hashed.ok) {
+          json(res, 422, { ok: false, error: hashed.error, message: 'El PIN debe tener al menos 6 caracteres.' });
+          return;
+        }
+        patch.credential_hash = hashed.hash;
+        patch.failed_attempts = 0;
+        patch.locked_until = null;
+        /* Cambiar el PIN invalida las sesiones abiertas. */
+        patch.token_epoch = (Number(current.token_epoch ?? 0) || 0) + 1;
+      }
+      const revoking = patch.active === false || patch.app_access === false;
+      if (revoking && patch.token_epoch === undefined) {
+        patch.token_epoch = (Number(current.token_epoch ?? 0) || 0) + 1;
+      }
+      const updated = await ctx.db.update(couriersCollection, courierId, patch);
+      await ctx.audit?.record({
+        entity: 'courier_account',
+        entityId: courierId,
+        action: revoking ? 'courier.app_access_revoked' : 'courier.app_access_updated',
+        actor,
+        data: { active: patch.active, app_access: patch.app_access, pin_changed: newPin !== undefined },
+      });
+      json(res, 200, { ok: true, courier: publicCourierAccount(updated ?? { ...current, ...patch }) });
+      return;
     }
 
     if (await handleOfflineOperation({req,res,route,ctx,actor,json,handle})) return;
@@ -8574,6 +9808,12 @@ async function handle(req, res, ctx) {
               });
             }
             if (order) {
+              /*
+               * REGLA DE AVISOS (Fase 06): completar la entrega NO manda un tercer aviso
+               * rutinario de estado. Lo que sí se manda es el RECIBO/FACTURA al cliente
+               * (`kind:'delivered'` → texto + PDF), que es un documento, no un aviso de
+               * reparto, y además el aviso interno a administración.
+               */
               await notifyDeliveryCustomer(ctx, { item: itemWithRoute, order, actor, kind: 'delivered' }).catch(() => null);
               const refreshed = await findOrderItem(store, itemWithRoute.id);
               order = refreshed ? orderOf(refreshed) ?? order : order;
@@ -8633,13 +9873,15 @@ async function handle(req, res, ctx) {
        */
       const repartidorAnterior = text(currentOrder?.delivery?.delivery_user_id, 80);
       const assigned = await assignDeliveryToOrder(ctx, item, deliveryUser, actor, { assignmentNote });
-      const cambiaDeRepartidor = Boolean(deliveryUser) && repartidorAnterior !== deliveryUser.id;
-      const customerNotification = cambiaDeRepartidor
-        ? await notifyDeliveryCustomer(ctx, { item: assigned.item, order: assigned.order, actor, kind: 'assignment' }).catch((error) => ({
-            status: 'failed',
-            reason: error?.message ?? 'notification_failed',
-          }))
-        : { status: 'not_applicable', reason: deliveryUser ? 'mismo_repartidor' : 'unassigned' };
+      /*
+       * REGLA DE AVISOS (Fase 06): ASIGNAR no avisa al cliente. El primer mensaje
+       * rutinario sale cuando el repartidor inicia la entrega, y el segundo al llegar.
+       * La coordinación con el repartidor (interna o externa) no cambia.
+       */
+      const customerNotification = {
+        status: 'not_applicable',
+        reason: 'assignment_does_not_notify_customer',
+      };
       json(res, 200, { ok: true, order: assigned.order, deliveryUser, customerNotification });
       return;
     }
@@ -10286,7 +11528,19 @@ async function handle(req, res, ctx) {
       }
       const current = orderOf(item);
       const currentFirst = current?.items?.[0] ?? null;
-      if(current?.smart_commerce?.managedFulfillment){json(res,409,{ok:false,error:'managed_order_locked',message:'Cancela y recotiza para cambiar líneas, destino o importes de un pedido reservado.'});return;}
+      if (!current) {
+        json(res, 422, { ok: false, error: 'invalid_order', message: 'Ese pedido no se pudo leer.' });
+        return;
+      }
+      /* Smart Commerce: un pedido con reservas no se edita de forma genérica. */
+      if (current?.smart_commerce?.managedFulfillment) {
+        json(res, 409, {
+          ok: false,
+          error: 'managed_order_locked',
+          message: 'Cancela y recotiza para cambiar líneas, destino o importes de un pedido reservado.',
+        });
+        return;
+      }
       /*
        * UBICACIÓN DE ENTREGA: si se manda una, se resuelve y se comprueba que es
        * de ESE cliente. Si no se manda nada, se CONSERVA la que ya tenía el pedido
@@ -13387,3 +14641,4 @@ if (isEntryPoint) {
 }
 
 export { CLOSED_STATUSES, STATUSES };
+

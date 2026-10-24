@@ -5970,8 +5970,7 @@
     openSheet(
       'Acciones del mapa',
       `
-      <p class="view__hint">Cómo se ve el terreno</p>
-      <div class="menu-list">
+      <div class="menu-list" style="overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
         ${baseRow('satelite')}
         ${baseRow('calles')}
         ${
@@ -5984,16 +5983,10 @@
               )
             : ''
         }
-      </div>
-      <p class="view__hint">Qué se ve en el mapa</p>
-      <div class="menu-list">
         ${capa('orders', ICONS.box, 'Pedidos con ubicación', 'Dónde hay que entregar')}
         ${capa('locations', ICONS.pin, 'Ubicaciones de clientes', 'Los puntos que han mandado por WhatsApp')}
         ${capa('live', ICONS.send, 'Entregas en vivo', 'El GPS del repartidor mientras reparte')}
-      </div>
-      <p class="view__hint">Herramientas</p>
-      <div class="menu-list">
-        ${fila('lista', ICONS.box, 'Pedidos y ubicaciones', 'Abre la lista (con distancias y acciones)')}
+        ${fila('lista', ICONS.box, 'Abrir la lista de pedidos', 'Con distancias y acciones')}
         ${fila(
           'medir',
           ICONS.pin,
@@ -6004,11 +5997,11 @@
         ${fila('aqui', ICONS.send, 'Ir a mi ubicación', 'Fija tu punto y ordena todo por cercanía')}
         ${fila('ajustar', ICONS.search, 'Ver todo', 'Encuadra todos los puntos del mapa')}
         ${activas.length ? fila('seguir', ICONS.retry, 'Seguir la entrega en vivo', `${activas.length} en camino: centra en el repartidor`) : ''}
-        ${fila('actualizar', ICONS.retry, 'Actualizar ahora', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
+        ${fila('actualizar', ICONS.retry, 'Actualizar el mapa', 'Vuelve a pedir pedidos, ubicaciones y GPS')}
       </div>
-      <button class="btn btn--ghost btn--block" data-delivery-push type="button">${ICONS.bell} ${escapeHtml(pushPermissionLabel())}</button>
-      <button class="btn btn--ghost btn--block" data-close-sheet type="button">Cerrar</button>
       `,
+      /* Panel lateral derecho: alto completo y el 70% del ancho. */
+      { variant: 'actions-drawer' },
     );
   }
 
@@ -8132,6 +8125,26 @@
   function renderDelivery() {
     const box = $('#delivery-view');
     if (!box) return;
+    /*
+     * LA PANTALLA OPERATIVA DEL REPARTIDOR SE RETIRÓ DEL CRM.
+     * El CRM administra y supervisa; el repartidor trabaja en FULLTECH DELIVERY.
+     * Cualquier ruta antigua (favorito, hash guardado) ve este aviso en lugar de
+     * la consola de entregas: se retira la FUNCIÓN, no se deja un acceso abierto.
+     */
+    box.classList.remove('delivery-view--detail');
+    delete document.body.dataset.deliveryDetail;
+    box.innerHTML = `<div class="delivery-retired" role="status">
+      <h3>Mis entregas se trasladó a la app</h3>
+      <p>La operación del repartidor se hace en <strong>FULLTECH DELIVERY</strong>.
+      Aquí puedes <a href="#mapa">seguir el reparto</a>, asignar o reasignar,
+      y revisar la <a href="/admin/custody.html">custodia y rendiciones</a>.</p>
+    </div>`;
+    return;
+  }
+
+  function renderDeliveryLegacyUnused() {
+    const box = $('#delivery-view');
+    if (!box) return;
     const mine = deliveryMyOrders();
     const mineIds = new Set(mine.map((order) => order.id));
     const orders = deliveryOrdersSorted().filter((order) => mineIds.has(order.id));
@@ -9764,11 +9777,10 @@
         <span class="field__label">Rol</span>
         <select class="field__select" name="role">
           <option value="AGENT">Agente (también puede entregar un pedido)</option>
-          <option value="DELIVERY">Repartidor (solo entregas)</option>
           <option value="OPERADOR">Operador</option>
           <option value="ADMIN">Administrador</option>
         </select>
-        <span class="field__hint">Un pedido se le pasa a un AGENTE y ese agente lo entrega. El administrador gestiona; no reparte.</span>
+        <span class="field__hint">El repartidor ya no es un usuario del CRM: se da de alta en FULLTECH DELIVERY. Los usuarios históricos con rol Repartidor se conservan, pero no ganan acceso al panel.</span>
       </label>
       <label class="field">
         <span class="field__label">Contraseña inicial</span>
@@ -26728,3 +26740,4 @@
     window.dispatchEvent(new Event('fulltech:startup-failed'));
   }));
 })();
+

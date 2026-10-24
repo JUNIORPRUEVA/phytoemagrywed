@@ -135,6 +135,66 @@
     <link rel="stylesheet" href="/admin/ops.css?v=ops-14" />
     <link rel="stylesheet" href="/admin/chat-appbar.css?v=custom-icons-1" />
     <link rel="stylesheet" href="/admin/delivery-flow.css?v=flujo-1" />
+    <!--
+      PANEL LATERAL DERECHO (mapa).
+      El mismo `#sheet` de siempre, pero cuando se abre con `variant: 'right'`
+      entra por la derecha, ocupa TODO el alto y la mitad del ancho: dentro, la
+      lista de acciones se desplaza y el resto queda libre para los botones.
+    -->
+    <style>
+      /*
+        DRAWER DERECHO DEL MAPA.
+        Se reutiliza la variante "actions-drawer" que ya existe en admin.css
+        (alto completo, animacion, areas seguras). Aqui solo se ajusta el ancho
+        al 70%, se oculta el titulo y se quitan las cajas de cada opcion.
+      */
+      :root body #sheet[data-variant='actions-drawer'] .sheet__panel {
+        width: 70vw;
+        max-width: 70vw;
+      }
+      :root body #sheet[data-variant='actions-drawer'] .sheet__title { display: none; }
+      :root body #sheet[data-variant='actions-drawer'] .menu-item {
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+      }
+      :root body #sheet[data-variant='actions-drawer'] .menu-item:hover,
+      :root body #sheet[data-variant='actions-drawer'] .menu-item:focus-visible { background: rgba(29, 78, 216, .09); }
+      html[data-theme='dark'] :root body #sheet[data-variant='actions-drawer'] .menu-item:hover,
+      html[data-theme='dark'] :root body #sheet[data-variant='actions-drawer'] .menu-item:focus-visible { background: rgba(148, 190, 255, .14); }
+
+      /*
+        MAPA: se retiró la tarjeta de título. Queda SOLO la flecha de volver,
+        flotando arriba a la izquierda, legible en tema claro y oscuro.
+      */
+      #view-mapa .map-appbar {
+        inset: 12px auto auto 12px;
+        width: auto;
+        padding: 0;
+        gap: 0;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+      #view-mapa .map-appbar .icon-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: #ffffff;
+        color: #0f172a;
+        border: 1px solid rgba(15, 23, 42, .18);
+        box-shadow: 0 3px 12px rgba(15, 23, 42, .28);
+      }
+      #view-mapa .map-appbar .icon-btn:hover { background: #eff6ff; }
+      #view-mapa .map-appbar .icon-btn svg { display: block; }
+      html[data-theme='dark'] #view-mapa .map-appbar .icon-btn {
+        background: #0f172a;
+        color: #e2e8f0;
+        border-color: rgba(226, 232, 240, .32);
+        box-shadow: 0 3px 12px rgba(0, 0, 0, .55);
+      }
+      html[data-theme='dark'] #view-mapa .map-appbar .icon-btn:hover { background: #1e293b; }
+    </style>
   </head>
   <body>
     <div class="splash" id="splash" role="status" aria-live="polite">
@@ -335,9 +395,14 @@
                 <button class="drawer__item drawer__item--sub" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
                   <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa
                 </button>
-                <button class="drawer__item drawer__item--sub" data-tab="delivery" type="button">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Mis entregas
-                </button>
+                <a class="drawer__item drawer__item--sub" href="/admin/custody.html">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Custodia y rendiciones
+                </a>
+                <!--
+                  «MIS ENTREGAS» SE RETIRÓ DEL CRM.
+                  El repartidor opera únicamente en FULLTECH DELIVERY (app Android).
+                  El CRM asigna, supervisa, cobra y administra; no ejecuta entregas.
+                -->
                 <!--
                   El SUPERVISOR IA ya NO tiene entrada aquí: se administra desde
                   «Centro IA → Supervisor IA». La pantalla (`#view-supervisor`) y
@@ -621,15 +686,8 @@
             <div class="map-view map-view--full" id="orders-map" aria-label="Mapa de pedidos, ubicaciones y entregas en vivo"></div>
             <p class="map-notice" id="orders-map-notice" hidden></p>
             <div class="map-appbar">
-              <button class="icon-btn" data-simple-back type="button" aria-label="Volver">
-                <span class="ico" aria-hidden="true" data-icon="back"></span>
-              </button>
-              <span class="map-appbar__title">
-                <strong id="mapa-titulo">Mapa y entregas</strong>
-                <small id="mapa-sub">Pedidos, ubicaciones y GPS en vivo</small>
-              </span>
-              <button class="icon-btn" id="mapa-actualizar" type="button" aria-label="Actualizar ahora">
-                <span class="ico" aria-hidden="true" data-icon="retry"></span>
+              <button class="icon-btn" data-simple-back type="button" aria-label="Volver" title="Volver">
+                <svg class="ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/></svg>
               </button>
             </div>
             <!-- Entrega seleccionada: lo esencial, flotando sobre el mapa. -->
@@ -659,6 +717,10 @@
 
         <!-- MIS ENTREGAS -->
         <section class="view view--delivery" id="view-delivery" hidden>
+          <!--
+            FUNCIONALIDAD RETIRADA. La operación del repartidor vive en la app
+            FULLTECH DELIVERY; esta ruta solo informa para no dejar un enlace muerto.
+          -->
           <div class="delivery-view" id="delivery-view"></div>
         </section>
 
@@ -1169,6 +1231,7 @@
     <script src="/admin/pos.js?v=premium-37" type="module"></script>
   </body>
 </html>
+
 
 
 

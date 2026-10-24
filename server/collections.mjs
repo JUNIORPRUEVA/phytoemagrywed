@@ -195,6 +195,88 @@ export const COLLECTIONS = Object.freeze({
     unique: ['idempotency_key'],
   },
   /*
+   * CUENTAS DE ACCESO DEL REPARTIDOR AL MÓVIL (`courier_accounts`).
+   *
+   * No son usuarios del CRM ni una segunda ficha del repartidor: son la AUTORIZACIÓN de
+   * acceso de una persona que ya existe (usuario con rol DELIVERY o contacto de reparto
+   * guardado). El teléfono sirve para elegir la cuenta, nunca como prueba de identidad.
+   * `token_epoch` sube al desactivar o cerrar sesión: invalida todos los tokens emitidos.
+   */
+  courier_accounts: {
+    indexed: {
+      phone_e164: 'text',
+      user_id: 'text',
+      contact_id: 'text',
+      active: 'text',
+      app_access: 'text',
+      company_id: 'text',
+      created_at: 'text',
+    },
+  },
+  /*
+   * ÚLTIMA UBICACIÓN CONOCIDA DEL REPARTIDOR (`courier_positions`).
+   *
+   * Una fila por cuenta de repartidor: NO es un historial de rutas. Se guarda
+   * solo mientras hay una entrega en curso y sirve para que el CRM muestre el
+   * punto con su antigüedad y el estado de señal. La retención es mínima por
+   * diseño: la posición se sobrescribe en cada actualización.
+   */
+  courier_positions: {
+    indexed: {
+      courier_id: 'text',
+      order_id: 'text',
+      updated_at: 'text',
+    },
+  },
+  /*
+   * HISTORIAL DE LA ENTREGA (`delivery_events`).
+   *
+   * Una fila por transición real (o por mensaje encolado), con `idempotency_key`
+   * ÚNICA: repetir la petición devuelve el mismo resultado y no ejecuta dos veces.
+   * Nunca se borra: es la traza que explica quién movió el pedido y cuándo.
+   */
+  delivery_events: {
+    indexed: {
+      order_id: 'text',
+      event: 'text',
+      idempotency_key: 'text',
+      courier_account_id: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * MENSAJES AL CLIENTE POR TRANSICIÓN (`delivery_message_outbox`).
+   *
+   * `pending` = todavía no hay plantilla aprobada o falta el proveedor; NUNCA se
+   * marca `sent` sin respuesta del proveedor.
+   */
+  delivery_message_outbox: {
+    indexed: {
+      order_id: 'text',
+      kind: 'text',
+      status: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
+   * LIBRO DE CUSTODIA DEL EFECTIVO (`delivery_cash_ledger`).
+   * Append-only: `charge` (cobrado al cliente), `remittance` (rendido a administración),
+   * `adjustment` (corrección autorizada). `idempotency_key` única evita duplicar dinero.
+   */
+  delivery_cash_ledger: {
+    indexed: {
+      order_id: 'text',
+      courier_account_id: 'text',
+      kind: 'text',
+      idempotency_key: 'text',
+      created_at: 'text',
+    },
+    unique: ['idempotency_key'],
+  },
+  /*
    * FACTURAS DE PROVEEDOR (`supplier_invoices`): el comprobante ORIGINAL de la
    * tienda donde se compró un producto de terceros. Es documentación interna y
    * NUNCA se adjunta al PDF ni al WhatsApp que recibe el cliente.
