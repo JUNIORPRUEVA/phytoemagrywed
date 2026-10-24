@@ -1,6 +1,6 @@
 # FULLTECH Smart Commerce — informe de implementación y GO/NO-GO
 
-> **Actualización de continuidad:** los tres flujos críticos se implementaron y verificaron en SQLite aislada. El estado vigente está en la sección 24; las secciones 1–23 conservan el diagnóstico y las evidencias de la primera entrega. **Se mantiene NO-GO para producción.** No interpretar los bloqueos históricos como el estado actual, ni las pruebas locales como certificación de operación real.
+> **Actualización vigente, 24/10/2026:** validación adicional en PostgreSQL 17.9 real y aislado, recuperación ante fallos y UAT automatizado. Ver sección 25 y [auditoría PostgreSQL/UAT](FULLTECH-SMART-COMMERCE-POSTGRES-UAT.md). Las secciones 1–24 conservan el historial, no el estado vigente de los pendientes. **Se mantiene NO-GO para producción.** Las pruebas locales no certifican operación real.
 
 Fecha: 23 de octubre de 2026. Alcance: trabajo local; no despliegue, cobros, envíos de mensajes ni modificación de bases de producción. Los cambios anteriores del árbol de trabajo se conservaron.
 
@@ -323,3 +323,47 @@ Selección final: **103/103 aprobados**, incluidos los50 originales y los17 nuev
 Nuevos: `server/smart-fulfillment.mjs`; `public/admin/fulfillment.html` y `.js`; `public/store/pickup-orders.js`; `tests/store-fulfillment.test.js`; `scripts/audit-store-critical-tests.mjs`; `docs/FULLTECH-SMART-COMMERCE-TEST-BASELINE.md`.
 
 Extendidos: `server/smart-commerce.mjs`, `server/smart-commerce-routes.mjs`, `server/crm-server.mjs`, `server/store-catalog.mjs`, `server/store-account-routes.mjs`, `server/users.mjs`; `public/admin/smart-commerce.html` y `.css`; `public/store/store.js`, `smart-commerce-ui.js`, `smart-commerce.css`, `index.html`, `sw.js`; `scripts/check-store-smart-uat.mjs`; este informe y la matriz UAT existente. Las capturas/resultados son artefactos de QA local. Los demás cambios iniciales del árbol compartido se conservan y no se atribuyen a esta continuidad.
+
+## 25. Cierre vigente: PostgreSQL real, recuperación y UAT — 24/10/2026
+
+Informe detallado en español: [validación PostgreSQL, recuperación y UAT](FULLTECH-SMART-COMMERCE-POSTGRES-UAT.md). Esta sección actualiza los pendientes históricos de la sección 24; no borra ni sustituye su evidencia.
+
+### 25.1 Resultado verificable
+
+| Comprobación | Resultado final |
+|---|---|
+| PostgreSQL 17.9 real, clúster efímero positivamente identificado | **29/29 aprobadas** |
+| Selección dirigida, incluidos los 50 originales | **103/103 aprobados**, sin omisiones |
+| Suite general | **2344 total: 2244 aprobados, 97 fallidos, 3 omitidos** |
+| Archivos de la suite general | 167; 27 con fallos |
+| Chromium responsive | 7 tamaños anteriores + 3 retiros completos, sin errores JS/overflow |
+| Build | 327 archivos, aprobado; siete advertencias previas de contenido |
+| `git diff --check` | Aprobado |
+
+Evidencia local: `.tmp/store-postgres-uat.json`, `.tmp/store-final-validation-targeted.json`, `.tmp/store-final-validation-full.json`, `.tmp/store-final-validation-failures.json` y `docs/capturas/smart-commerce/results.json`. Los comandos exactos, identidad SQL, límites y archivos intervenidos se detallan en el informe enlazado.
+
+### 25.2 Correcciones y recuperación
+
+Se validaron constraints/FK PostgreSQL, sesiones concurrentes, reservas/liberación, códigos de un solo uso y aislamiento. Se corrigieron descarte de conexiones PostgreSQL rotas y captura de su evento de error durante el préstamo: una repetición había terminado Node, por lo que no se atribuyó ese defecto al entorno. La repetición final comprueba rollback y reintento correcto. Se conservan las FK aditivas validadas y la lectura fresca en comprobaciones críticas del catálogo.
+
+Se añadieron checkpoints programáticos UAT, dos cortes abruptos de procesos API hijos (dentro de la transacción y tras persistir la reserva), reinicios después de crear pedido y después de consumir retiro, y fallo real de sesión SQL. Se agregó conciliación ADMIN de retiros consumidos cuyo pedido nativo no quedó finalizado. El outbox ahora vence reclamos `sending` a `unknown` con auditoría; no reenvía automáticamente ni confunde mensaje enviado con aceptación. También se corrige lectura de estado anterior al barrido de vencimientos.
+
+Las pruebas del ciclo de notificaciones usan adaptador simulado, excepción y reinicio del servicio: no certifican un worker WhatsApp externo ni su entrega real. Mantenimiento/conciliación siguen requiriendo un job operativo supervisado. Ninguna prueba produjo un pago o cargo bancario real.
+
+### 25.3 UAT y tarifa
+
+Escenarios A–G automatizados: delivery con precio regional RD$2000 + tarifa RD$1100 = RD$3100 y pedido CRM; proveedor/stock confirmado/pago verificado/retiro; rechazo; dos orígenes con cotización manual; interciudad La Romana/Higüey con producto visible y sin tarifa local inventada; dirección manual sin GPS; transferencia pendiente hasta verificar. Delivery conserva la política nativa de entrega con saldo pendiente; no declara pago por una entrega. Las condiciones comerciales de esa política requieren aprobación.
+
+Se comprueban 1000→100, 1001→150, 1500→150, 1501→200, 10790→1100, 15000→1500 y 15001 m→no disponible. Polígono y máximo de distancia se validan separadamente. Timeout de AbortSignal real con proveedor inyectado: sin distancia ni tarifa fabricadas. Las rutas/geografías de UAT son sintéticas, no acreditan un proveedor vial comercial ni cobertura real. **No hubo UAT manual con operador humano.**
+
+### 25.4 Baseline e intermitencia: no se ocultan fallos
+
+Baseline de esta fase: **2344/2243 aprobados/98 fallidos/3 omitidos**, capturado antes de modificar código. Cierre: **2344/2244/97/3**. Coinciden **96 fallos anteriores**; aparecen aprobadas dos assertions antes fallidas (HOY «Seguimientos de hoy» y filtro combinado etapa+fecha de inbox). Como no se corrigieron esos módulos, no se cuentan como dos arreglos: son variación de ejecución/contrato pendiente de diagnóstico.
+
+El fallo adicional es el descarte masivo de notificaciones. Se capturó dos veces **`ECONNRESET: read ECONNRESET`** en GET de notificaciones durante ejecuciones generales; pasa aislado. El ensayo controlado de 5005 marcas y bloqueo de seis segundos, con/sin cesión de I/O, no lo reprodujo. Se conoce el error de transporte, **no la causa raíz definitiva**. No se añadieron reintentos, skips ni timeouts mayores; el test solo incorpora instrumentación optativa y vuelve a lanzar el error original. No se identificó una nueva regresión persistente en los tres flujos, pero la suite general sigue fallando y no se certifica como inocua.
+
+### 25.5 Veredicto y siguientes condiciones
+
+**GO para seguir pruebas en desarrollo aislado. NO-GO para producción o declaración de release candidate seguro.** PostgreSQL y recuperación ya tienen evidencia real adicional; quedan privacidad AGENT y otros defectos generales, causa raíz de la conexión intermitente, semántica financiera histórica, revisión humana de reglas/roles, pruebas de dispositivos y redes reales, proveedor vial, contrato sandbox de notificación/idempotencia y job supervisado de mantenimiento/conciliación. No se desplegó ni se habilitaron flags productivas.
+
+Rollback conserva la protección de inventario y auditoría: detener entradas, respaldar, conciliar retiros y pedidos, liberar solo reservas no consumidas, resolver `unknown` sin reenvío ciego y revocar sesiones incompatibles antes de volver de versión. No borrar tablas o movimientos para superar FK ni volver a un binario sin protección de stock con reservas activas. El clúster UAT final quedó detenido; se conservaron sus datos temporales de diagnóstico.

@@ -14,7 +14,7 @@ async function confirmedCapacity(provider,input){
 const initialConfig=()=>({branches:[],origins:[],offers:[],zones:[],banks:[],policy:{...DEFAULT_DELIVERY_POLICY},defaultOriginId:null,cashOnDelivery:false});
 
 /** Additive quote/preflight layer. It never creates a second order or stock ledger. */
-export async function createSmartCommerce({enabled=false,backend,handle,catalog,db,customers,audit,router,capacityProvider,supplierNotifier=null,clock=()=>new Date()}={}){
+export async function createSmartCommerce({enabled=false,backend,handle,catalog,db,customers,audit,router,capacityProvider,supplierNotifier=null,faultInjector=null,clock=()=>new Date()}={}){
   if(!enabled||catalog?.storeKey!=='fulltech')return null;
   const sql=createSqlQuery({backend,handle});if(!sql.enabled)return null;
   await sql.query(`CREATE TABLE IF NOT EXISTS fulltech_smart_config_v1(id TEXT PRIMARY KEY,version INTEGER NOT NULL,doc TEXT NOT NULL);
@@ -58,7 +58,7 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
     if(input.addressId){const loc=await customers.getLocation(input.addressId);if(!account.customer_id||!loc||loc.customer_id!==account.customer_id)throw fail('address_not_found','La dirección no existe.',404);return {...coordinates(loc),source:'reused_location',address:clean(loc.address,240)};}
     if(!input.destination)return null;return {...coordinates(input.destination),source:input.destination.source==='browser_geolocation'?'browser_geolocation':'manual_coordinates',address:clean(input.address,240)};
   }
-  const fulfillment=await createSmartFulfillment({backend,handle,catalog,config,clock,notifier:supplierNotifier});
+  const fulfillment=await createSmartFulfillment({backend,handle,catalog,config,clock,notifier:supplierNotifier,faultInjector});
   catalog.setReservationHooks?.(fulfillment);
   async function plan(account,input){
     const c=await config(),items=normalizedItems(input.items),destination=await destinationFor(account,input),method=input.fulfillment||'delivery';
@@ -123,7 +123,7 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
       return {...p,price:selected.price/100,...(different?{compareAtPrice:null,discountPercent:null}:{}),commerce:{zoneId,dispatchCity:selected.origin.city,availabilityLabel:`Despacho desde ${selected.origin.city}${selected.offer.requiresConfirmation?' · por confirmar':''}`,requiresConfirmation:selected.offer.requiresConfirmation}};
     });
   }
-  return {config,saveConfig,resolveLocation,quote,get,requestReview,prepareOrder,completeOrder,saveAddress,regionalize,fulfillment,
+  return {checkpoint:(point,data)=>faultInjector?.(point,data),config,saveConfig,resolveLocation,quote,get,requestReview,prepareOrder,completeOrder,saveAddress,regionalize,fulfillment,
     async addresses(account){return account.customer_id?customers.listLocations(account.customer_id):[];},
     async publicConfig(){const c=await config();return {enabled:true,routingConfigured:router.configured,banks:c.banks.filter(b=>b.active),pickupAutomatic:false,regionalPricing:true};},
     async adminQuotes(){return (await sql.query('SELECT id,account_id,state,order_id,expires_at,doc,created_at FROM fulltech_checkout_quotes_v1 ORDER BY created_at DESC LIMIT 200')).rows.map(r=>({id:r.id,accountId:r.account_id,state:r.state,orderId:r.order_id,createdAt:r.created_at,...publicQuote(JSON.parse(r.doc),r.state)}));},

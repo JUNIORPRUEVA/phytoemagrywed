@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeAll, afterAll, afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { JSDOM } from 'jsdom';
@@ -15,10 +15,10 @@ const waitFor = async (check) => {
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 20)); }
   throw new Error('No se confirmó el estado esperado de las notificaciones');
 };
-const request = (user, route, method = 'GET', body) => fetch(app.url + route, {
+const request = async (user, route, method = 'GET', body) => {try{return await fetch(app.url + route, {
   method, headers: { cookie: user.cookie, 'content-type': 'application/json' },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-});
+});}catch(error){if(process.env.FULLTECH_NOTIFY_DIAGNOSTICS==='1'){const diagnostic={route,method,message:error.message,cause:error.cause?.code,detail:error.cause?.message};console.error('[notification-test-transport]',JSON.stringify(diagnostic));try{appendFileSync('.tmp/store-notification-transport.ndjson',JSON.stringify(diagnostic)+'\n');}catch{}}throw error;}};
 const data = async (user) => (await request(user, '/api/admin/data')).json();
 const list = async (user) => (await (await request(user, '/api/admin/notifications')).json()).notifications;
 async function login(name) {

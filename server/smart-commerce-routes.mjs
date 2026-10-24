@@ -48,6 +48,7 @@ export async function handleCommerceAdmin({req,res,route,ctx,actor,json,readJson
     if(route===op+'/requests'&&req.method==='GET')return send(200,{ok:true,requests:await f.requests(actor)});
     if(route===op+'/grants'&&req.method==='PUT'){if(actor?.role!=='ADMIN')return send(403,{ok:false,error:'forbidden'});const body=await readJson(req,10000);if(!(await ctx.users.listUsers()).some(u=>u.id===body.userId&&u.active!==false))return send(422,{ok:false,error:'user_not_found',message:'El usuario no existe o está inactivo.'});return send(200,await f.grant(actor,body));}
     if(route===op+'/maintenance'&&req.method==='POST'){if(actor?.role!=='ADMIN')return send(403,{ok:false,error:'forbidden'});return send(200,{ok:true,expired:await f.maintenance()});}
+    if(route===op+'/reconcile'&&req.method==='POST')return send(200,{ok:true,results:await f.reconcile(actor)});
     if(route===op+'/audit'&&req.method==='GET')return send(200,{ok:true,events:await f.audit(actor)});
     const action=new RegExp('^'+op+'/requests/(ftf_[a-f0-9]+)/(accept|reject|prepare|ready|handover|notify)$').exec(route);
     if(action&&req.method==='POST'){const body=await readJson(req,10000);return send(200,{ok:true,...(action[2]==='handover'?await f.handover(actor,action[1],body):action[2]==='notify'?await f.notify(actor,action[1]):{request:await f.decision(actor,action[1],action[2])})});}

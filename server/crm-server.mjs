@@ -3830,6 +3830,7 @@ async function createStoreOrderUnlocked(ctx, session, body = {}) {
   }
   const notes = String(body.notes ?? '').trim().slice(0, 500);
   if(smartQuote?.managedFulfillment){try{await ctx.smartCommerce.fulfillment.holdOrder(account,smartQuote,idempotentId);}catch(error){return {ok:false,status:error.status||409,error:error.code||'reservation_failed',message:error.message};}}
+  if(smartQuote?.managedFulfillment)await ctx.smartCommerce.checkpoint('checkout.after_reservation',{orderId:idempotentId});
   const result = await createOrderUnlocked(
     ctx,
     {
@@ -3856,6 +3857,7 @@ async function createStoreOrderUnlocked(ctx, session, body = {}) {
     {smartQuote},
   );
   if (!result?.ok){if(smartQuote?.managedFulfillment)await ctx.smartCommerce.fulfillment.cancelOrder(idempotentId,null);return result;}
+  if(smartQuote?.managedFulfillment)await ctx.smartCommerce.checkpoint('checkout.after_order',{orderId:idempotentId});
   if(smartQuote)await ctx.smartCommerce.completeOrder(account,smartQuote.id,requestKey,result.item?.id??result.order?.id);
   return {
     ok: true,
@@ -12970,7 +12972,7 @@ export async function startCrmServer(config = {}) {
   });
   const storeOAuth = createStoreOAuth({ config: settings.storeOAuth, fetchImpl: config.storeOAuthFetch ?? fetch, clock: config.clock });
   const smartCommerce=await createSmartCommerce({enabled:config.storeSmartCommerce?.enabled===true||(config.storeSmartCommerce?.enabled!==false&&process.env.FULLTECH_SMART_COMMERCE_ENABLED==='true'),backend:db.kind,handle:store.handle,catalog:storeCatalog,db,customers,audit,clock:config.clock,
-    router:config.storeSmartCommerce?.router??createRoadRouter({baseUrl:process.env.FULLTECH_ROUTING_OSRM_URL||'',profile:process.env.FULLTECH_ROUTING_PROFILE||'driving',fetchImpl:config.storeSmartCommerce?.routingFetch??fetch}),capacityProvider:config.storeSmartCommerce?.capacityProvider,supplierNotifier:config.storeSmartCommerce?.supplierNotifier});
+    router:config.storeSmartCommerce?.router??createRoadRouter({baseUrl:process.env.FULLTECH_ROUTING_OSRM_URL||'',profile:process.env.FULLTECH_ROUTING_PROFILE||'driving',fetchImpl:config.storeSmartCommerce?.routingFetch??fetch}),capacityProvider:config.storeSmartCommerce?.capacityProvider,supplierNotifier:config.storeSmartCommerce?.supplierNotifier,faultInjector:config.storeSmartCommerce?.faultInjector});
 
   /*
    * Identidad de cliente: OTP de teléfono, confirmación de correo, recuperación

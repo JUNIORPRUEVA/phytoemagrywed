@@ -61,3 +61,15 @@ Correcciones propias verificadas: rol SUPPLIER preservado al alta y con denegaci
 - `.tmp/store-critical-targeted.json`: 103 tests seleccionados aprobados.
 
 Prioridad: resolver primero el contrato de privacidad de agentes con responsables de negocio; después avisos de supervisor/reasignación; luego reconciliar el contrato de UI/fixtures de panel, conversaciones y POS con la interfaz actual. Investigar timeouts/fetch bajo carga y sesiones JSDOM sin asumir que el entorno es la única causa. Cualquier actualización futura de tests debe responder a un cambio de contrato aprobado y venir acompañada de evidencia, no reemplazar una corrección funcional.
+
+## Actualización PostgreSQL y recuperación — 24/10/2026
+
+Nuevo baseline previo a esta fase: `.tmp/store-final-validation-baseline.json`, **2344 totales / 2243 aprobados / 98 fallidos / 3 omitidos**, 167 archivos, 28 fallidos. Última suite tras los cambios: `.tmp/store-final-validation-full.json`, **2344 / 2244 / 97 / 3**, 167 archivos, 27 fallidos. Comparación completa: `.tmp/store-final-validation-failures.json`.
+
+Persisten 96 assertions fallidas anteriores. Dos ya no fallan: HOY «Seguimientos de hoy» y filtro etapa+fecha de inbox. No se corrigieron sus módulos: no se les atribuye resolución, solo variación entre ejecuciones. El único candidato adicional frente al baseline de esta fase es el descarte masivo de notificaciones, observado también antes de esta fase. No es un fallo de las pruebas nuevas de fulfillment y sigue abierto.
+
+La instrumentación optativa capturó **ECONNRESET, read ECONNRESET** en GET `/api/admin/notifications` en dos pases generales. El caso aislado pasa. El ensayo de 5005 marcas + seis segundos de starvation con/sin cesión de I/O también pasa; no demuestra causa raíz. Clasificación: fallo intermitente de transporte, sensibilidad a ejecución/entorno sospechada, **causa raíz no determinada**. No se cambian assertions, timeouts ni la configuración de paralelismo para declarar verde. Se mantiene la instrumentación para futuras trazas; no hay reintento que oculte la caída.
+
+Las 96 coincidencias siguen siendo defectos previos a esta fase o contratos UI/fixtures por investigar; incluye problemas reales de privacidad AGENT, avisos de asignación y permisos que bloquean producción. No se rebajan por ser anteriores. Correcciones confirmadas de esta fase: conexiones SQL rotas no recicladas y evento de error manejado; lectura posterior al barrido de expiración; concesión/conciliación del outbox ambiguo; conciliación explícita entre consumo del retiro y pedido CRM. Los checks críticos preservados pasan **103/103** y PostgreSQL aislado **29/29**.
+
+Ver [auditoría PostgreSQL/UAT](FULLTECH-SMART-COMMERCE-POSTGRES-UAT.md) e informe principal sección25 para identidad, comandos, limitaciones de simulación, pendientes y NO-GO. La mejora del total global no significa que se hayan solucionado dos defectos UI ni la intermitencia.
