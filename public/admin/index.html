@@ -79,7 +79,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=expediente-4" />
+    <link rel="stylesheet" href="/admin/admin.css?v=expediente-5" />
     <link rel="stylesheet" href="/admin/store.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/product-editor.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
@@ -753,6 +753,18 @@
         </section>
 
         <!--
+          PEDIDO EN PÁGINA COMPLETA.
+
+          Tocar una fila de Pedidos entra aquí (antes se abría una hoja a media
+          pantalla y las acciones tapaban el contenido). Mismo acabado plano que
+          la ficha del cliente: barra con el volver arriba y secciones que se
+          abren al tocarlas.
+        -->
+        <section class="view view--customer-profile" id="view-pedido" hidden>
+          <div id="pedido-ficha"></div>
+        </section>
+
+        <!--
           PEDIDOS Y COMPRAS (menú lateral).
 
           Una FILA por pedido, de dos líneas, con SUS BOTONES al pie (estado,
@@ -1205,7 +1217,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=ftcrm-6" defer></script>
+    <script src="/admin/app.js?v=ftcrm-7" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>

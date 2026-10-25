@@ -434,6 +434,8 @@
     metrics: null,
     metricsPeriod: '30d',
     orderId: null,
+    /** Pedido abierto en su PÁGINA completa (no en la hoja). */
+    orderPageId: null,
     previousTab: null,
     customerProfile: null,
     customerProfileLoading: false,
@@ -2159,6 +2161,7 @@
     usuarios: [['usuarios', renderUsuarios]],
     perfil: [['perfil', renderPerfil]],
     'perfil-cliente': [['ficha del cliente', renderCustomerProfile]],
+    pedido: [['detalle del pedido', renderOrderPage]],
   };
 
   /*
@@ -2757,6 +2760,22 @@
           <input class="wa-appbar__search" id="quote-appbar-search" type="search" placeholder="Buscar cliente o cotización" aria-label="Buscar cotización" autocomplete="off" />
           <button class="wa-appbar__icon" data-quote-search-clear type="button" aria-label="Limpiar búsqueda">${ICONS.close}</button>
         </div>
+      </div>`;
+      return;
+    }
+    /*
+     * LA PÁGINA DEL PEDIDO TIENE SU BARRA: VOLVER A PEDIDOS Y EL NÚMERO AL LADO.
+     *
+     * Es una pantalla completa (no una hoja), así que necesita el mismo volver
+     * que el expediente del cliente: redondo, a la izquierda y con el título
+     * pegado para no gastar una franja entera.
+     */
+    if (state.tab === 'pedido') {
+      const pedido = state.items.find((row) => row.id === state.orderPageId) ?? null;
+      const titulo = pedido ? pedido.order_number ?? pedido.name ?? 'Pedido' : 'Pedido';
+      box.innerHTML = `<div class="simple-head simple-head--expediente">
+        <button class="simple-head__back" data-simple-back type="button" aria-label="Volver a Pedidos">${ICONS.back}</button>
+        <strong>${escapeHtml(titulo)}</strong>
       </div>`;
       return;
     }
@@ -5351,7 +5370,7 @@
       .join(' · ');
     return `<button class="order-row order-row--${escapeHtml(
       estado.toLowerCase(),
-    )}" data-open="${escapeHtml(item.id)}" type="button">
+    )}" data-order-page="${escapeHtml(item.id)}" type="button">
       <span class="order-row__top">
         <strong class="order-row__name">${escapeHtml(item.name ?? 'Sin nombre')}</strong>
         <span class="order-row__when"${completedAt ? ` title="Entregado: ${escapeHtml(fmtBusinessDateTime(completedAt))} (República Dominicana)"` : ''}>${escapeHtml(when)}</span>
@@ -6315,6 +6334,14 @@
           ${html}
         </div>`
       : emptyState('No hay notificaciones.');
+    /*
+     * LAS NOTIFICACIONES SE ABREN EN CAJÓN, NO EN UNA HOJA BAJA.
+     *
+     * Son listas con su título, su texto y dos botones cada una: en una hoja a
+     * media pantalla se veía una y media. Ahora entra desde la derecha, con todo
+     * el alto y el 90 % del ancho, para leerlas enteras.
+     */
+    $('#sheet').dataset.variant = 'notices-drawer';
     $('#sheet').hidden = false;
   }
 
@@ -10375,6 +10402,8 @@
     if (hoja) {
       if (item.type === 'order_intent') hoja.dataset.kind = 'pedido';
       else delete hoja.dataset.kind;
+      // La ficha del pedido es una hoja normal, no el cajón de notificaciones.
+      delete hoja.dataset.variant;
     }
     const phone = digits(item.phone);
     const operational = item.type === 'order_intent' ? orderOperational(item) : null;
@@ -10622,6 +10651,8 @@
     // El acabado plano del detalle de pedido no debe quedarse en otras hojas.
     const hoja = $('#sheet');
     delete hoja.dataset.kind;
+    // Tampoco el cajón de notificaciones: la próxima hoja es una hoja normal.
+    delete hoja.dataset.variant;
     hoja.hidden = true;
   }
 
@@ -21155,6 +21186,156 @@
     seccion.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   });
 
+  /*
+   * ABRIR UN PEDIDO EN SU PÁGINA COMPLETA.
+   *
+   * Tocar la fila ya no levanta una hoja a media pantalla: entra en la pantalla
+   * del pedido (con su barra y su volver), que es donde se lee todo sin que las
+   * acciones tapen el contenido.
+   */
+  function openOrderPage(orderId) {
+    const item = state.items.find((row) => row.id === orderId) ?? null;
+    if (!item) return;
+    closeSheet();
+    state.orderPageId = orderId;
+    if (state.tab !== 'pedido') state.previousTab = state.tab;
+    // Se pinta siempre: el pedido que se abre puede no ser el de la última vez.
+    viewsPintadas.delete('pedido');
+    setTab('pedido');
+  }
+
+  /**
+   * PÁGINA COMPLETA DEL PEDIDO.
+   *
+   * Mismo acabado plano que el expediente del cliente: barra con el volver y el
+   * número arriba, resumen comercial, y el resto en secciones que se abren al
+   * tocarlas. Todo sale del pedido que ya está cargado (`itemOrder`); no hace
+   * ninguna petición de más.
+   */
+  function renderOrderPage() {
+    renderMobileHeader();
+    const box = $('#pedido-ficha');
+    if (!box) return;
+    const item = state.items.find((row) => row.id === state.orderPageId) ?? null;
+    if (!item) {
+      box.innerHTML = '<p class="view__hint">Este pedido ya no está disponible. Vuelve a la lista.</p>';
+      return;
+    }
+    const esPedido = item.type === 'order_intent';
+    const order = itemOrder(item) ?? {};
+    const estado = esPedido ? orderOperational(item) : String(item.status ?? '');
+    const cliente = item.customer_id ? customerById(item.customer_id) : null;
+    const telefono = digits(item.phone ?? cliente?.phone_e164 ?? cliente?.phone ?? '');
+    const moneda = order.currency ?? item.currency ?? 'DOP';
+    const lineas = Array.isArray(order.items) ? order.items : [];
+    const total = Number(order.total ?? item.total ?? 0) || 0;
+    const pagado = Number(order.payment?.received ?? 0) || 0;
+    const falta = Number.isFinite(Number(order.payment?.due)) ? Number(order.payment.due) : Math.max(0, total - pagado);
+    const entrega = order.delivery ?? {};
+    const ubicacion = entrega.location ?? null;
+    const metodoPago = order.payment_method ?? order.payment?.method ?? null;
+    const estadoPago = String(order.payment_status ?? order.payment?.status ?? '').toLowerCase();
+    const etiquetaPago = estadoPago === 'paid' ? 'Cobrado' : falta > 0 ? `Faltan ${money(falta, moneda)}` : 'Cobrado';
+
+    const cabecera = `<header class="profile-head">
+      <div class="profile-head__id">
+        <a class="profile-head__wa" href="https://wa.me/${escapeHtml(digits(item.phone ?? cliente?.phone_e164 ?? cliente?.phone ?? ''))}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+          item.phone ?? cliente?.phone_e164 ?? cliente?.phone ?? 'Sin teléfono',
+        )}</a>
+        <div class="profile-tags profile-tags--compact">
+          <span class="tag">${escapeHtml(esPedido ? operationalStatusLabel(estado) : statusLabel(item.status ?? 'nuevo'))}</span>
+          ${cliente ? `<span class="tag">${escapeHtml(customerName(cliente))}</span>` : ''}
+          ${item.next_action_at ? `<span class="tag">${escapeHtml(fmtDay(item.next_action_at))}</span>` : ''}
+        </div>
+      </div>
+      <div class="profile-head__actions">
+        ${
+          telefono
+            ? `<a class="profile-head__icon" href="https://wa.me/${escapeHtml(telefono)}" target="_blank" rel="noopener noreferrer" aria-label="Escribir por WhatsApp" title="WhatsApp">${ICONS.chat}</a>
+               <a class="profile-head__icon" href="tel:${escapeHtml(telefono)}" aria-label="Llamar" title="Llamar">${ICONS.phone}</a>`
+            : ''
+        }
+      </div>
+    </header>`;
+
+    const metrica = (etiqueta, valor, tono = '') =>
+      `<div class="profile-metric${tono ? ` profile-metric--${tono}` : ''}"><span>${escapeHtml(
+        etiqueta,
+      )}</span><strong>${escapeHtml(String(valor))}</strong></div>`;
+    const resumen = `<div class="profile-summary" aria-label="Resumen del pedido">
+      ${metrica('Total', money(total, moneda))}
+      ${metrica(falta > 0 ? 'Por cobrar' : 'Cobrado', falta > 0 ? money(falta, moneda) : money(pagado || total, moneda), falta > 0 ? 'alert' : '')}
+      ${metrica('Estado', esPedido ? operationalStatusLabel(estado) : statusLabel(item.status ?? 'nuevo'))}
+      ${metrica('Pago', metodoPago ? paymentMethodLabel(metodoPago) : '—')}
+      ${metrica('Cantidad', lineas.length ? `${lineas.length} línea${lineas.length === 1 ? '' : 's'}` : '—')}
+      ${metrica('Entrada', item.received_at ? formatShortDate(businessDayISO(item.received_at)) : '—')}
+    </div>`;
+
+    const productos = lineas.length
+      ? `<div class="order-page__lines">${lineas
+          .map((linea) => {
+            const precio = Number(linea.subtotal ?? (Number(linea.unitPrice) || 0) * (Number(linea.quantity) || 1)) || 0;
+            return `<div class="order-page__line">
+              <span class="order-page__line-name">${escapeHtml(linea.label ?? linea.variantName ?? 'Producto')}${
+                Number(linea.quantity) > 1 ? `<small>${escapeHtml(String(linea.quantity))} ×</small>` : ''
+              }</span>
+              <b>${escapeHtml(money(precio, moneda))}</b>
+            </div>`;
+          })
+          .join('')}</div>`
+      : '<p class="view__hint">Este pedido no trae líneas guardadas.</p>';
+
+    const datos = `<dl class="facts facts--compact profile-facts">
+      ${profileFact('Pedido', escapeHtml(item.order_number ?? order.order_number ?? '—'))}
+      ${profileFact('Artículo', escapeHtml(item.variant_name ?? lineas[0]?.label ?? '—'))}
+      ${profileFact('Atendido por', escapeHtml(orderAgent(item).label))}
+      ${profileFact('Creado por', escapeHtml(orderAgent(item).creador ?? '—'))}
+      ${profileFact('Origen', escapeHtml(order.source ?? item.source ?? '—'))}
+      ${profileFact('Última actualización', item.last_contact_at ? escapeHtml(fmtWhen(item.last_contact_at)) : '—')}
+    </dl>`;
+
+    const pago = `<dl class="facts facts--compact profile-facts">
+      ${profileFact('Total', escapeHtml(money(total, moneda)))}
+      ${profileFact('Recibido', escapeHtml(money(pagado, moneda)))}
+      ${profileFact('Falta', escapeHtml(money(falta, moneda)))}
+      ${profileFact('Medio de pago', escapeHtml(metodoPago ? paymentMethodLabel(metodoPago) : '—'))}
+      ${profileFact('Situación', escapeHtml(etiquetaPago))}
+    </dl>`;
+
+    const entregaHtml = `<dl class="facts facts--compact profile-facts">
+      ${profileFact('Repartidor', escapeHtml(entrega.delivery_user_name_snapshot ?? 'Sin asignar'))}
+      ${profileFact('Dirección', escapeHtml(ubicacion?.address ?? ubicacion?.name ?? item.location ?? '—'))}
+      ${profileFact('Costo de entrega', escapeHtml(money(Number(entrega.fee ?? order.delivery_fee ?? 0) || 0, moneda)))}
+      ${profileFact('Estado', escapeHtml(esPedido ? operationalStatusLabel(estado) : statusLabel(item.status ?? 'nuevo')))}
+    </dl>`;
+
+    const notasHtml = `<textarea class="field__area field__area--compact" id="order-page-notes" rows="3" placeholder="Qué dijo, cuándo paga, a qué hora llamar…">${escapeHtml(
+      item.notes ?? '',
+    )}</textarea>
+      <div class="profile-note-actions"><button class="btn btn--primary btn--sm" id="order-page-save" type="button">Guardar nota</button></div>`;
+
+    box.innerHTML = `${cabecera}
+      ${resumen}
+      <div class="profile-grid">
+        ${customerProfileSection('Productos', productos, '', { open: true, note: lineas.length ? `${lineas.length}` : '', id: 'productos' })}
+        ${customerProfileSection('Pago', pago, '', { note: falta > 0 ? 'pendiente' : 'al día', id: 'pago' })}
+        ${customerProfileSection('Entrega', entregaHtml, '', { note: entrega.delivery_user_name_snapshot ?? '', id: 'entrega' })}
+        ${customerProfileSection('Datos del pedido', datos, '', { id: 'datos' })}
+        ${customerProfileSection('Notas', notasHtml, '', { note: item.notes ? 'escritas' : '', id: 'notas' })}
+      </div>
+      ${sheetFabHtml(`data-item="${escapeHtml(item.id)}"`)}`;
+
+    $('#order-page-save')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await patchItem(item.id, { notes: $('#order-page-notes').value }, 'Notas guardadas');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast('No se pudieron guardar las notas');
+        }
+      });
+    });
+  }
+
   /** Las acciones del pedido, todas dentro de su botón flotante. */
   function openOrderActionsMenu(itemId) {
     const item = state.items.find((candidate) => candidate.id === itemId) ?? null;
@@ -24032,7 +24213,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'ops', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'ops', 'perfil-cliente', 'pedido', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -24043,6 +24224,7 @@
     supervisor: 'Supervisor IA',
     ops: 'Centro de operaciones',
     'perfil-cliente': 'Perfil del cliente',
+    pedido: 'Pedido',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
     catalogo: 'Facturación',
@@ -24160,7 +24342,9 @@
     state.tab = tab;
     if (vuelveDeUnAtajo) cerrarContextoDeHoy(tab);
     window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
-    localStorage.setItem(TAB_KEY, tab);
+    // La página de UN pedido no se recuerda como última pantalla: al recargar
+    // hay que volver a abrirla a propósito.
+    if (tab !== 'pedido') localStorage.setItem(TAB_KEY, tab);
     /*
      * Cambiar de pestaña guarda los filtros que hubiera puestos. En un viaje de
      * IDA desde HOY no: el filtro es del atajo, no una preferencia de la persona
@@ -25804,7 +25988,7 @@
           openSettingsPage('');
           return;
         }
-        if (state.tab === 'perfil-cliente' || state.tab === 'mapa') {
+        if (state.tab === 'perfil-cliente' || state.tab === 'pedido' || state.tab === 'mapa') {
           setTab(state.previousTab && state.previousTab !== state.tab ? state.previousTab : 'hoy');
         } else if (state.tab === 'historial-cierres') {
           // El historial se entra DESDE EL CIERRE: el volver lleva al cierre.
@@ -26812,6 +26996,17 @@
       if (open) {
         state.openId = open.dataset.open;
         renderSheet();
+        return;
+      }
+      /*
+       * UNA FILA DE PEDIDOS ABRE LA PÁGINA DEL PEDIDO.
+       *
+       * Va antes que cualquier otra cosa de la fila: el importe, la etiqueta de
+       * pago y el estado tienen sus propios manejadores y se comprueban antes.
+       */
+      const pedidoPage = event.target.closest('[data-order-page]');
+      if (pedidoPage) {
+        openOrderPage(pedidoPage.dataset.orderPage);
         return;
       }
       const del = event.target.closest('[data-del-message]');

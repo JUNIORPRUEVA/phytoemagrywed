@@ -16309,7 +16309,117 @@ body[data-tab='perfil-cliente'] .content {
   }
 }
 
+/* ==========================================================================
+   PÁGINA COMPLETA DEL PEDIDO
+   --------------------------------------------------------------------------
+   Es una pantalla, no una hoja: se comporta como el expediente del cliente
+   (barra con el volver, contenido al borde y secciones planas).
+   ========================================================================== */
+body[data-tab='pedido'] .topbar,
+body[data-tab='pedido'] .float-btn--menu,
+body[data-tab='pedido'] .presence {
+  display: none;
+}
 
+body[data-tab='pedido'] .content {
+  padding-top: 4px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
 
+@media (min-width: 980px) {
+  body[data-tab='pedido'] .mobile-header {
+    display: block;
+  }
+}
 
+/* Líneas del pedido: una fila por producto con su importe a la derecha. */
+.order-page__lines {
+  display: grid;
+}
 
+.order-page__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.1));
+  font-size: 0.86rem;
+}
+
+.order-page__line:last-child {
+  border-bottom: 0;
+}
+
+.order-page__line-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.order-page__line-name small {
+  margin-left: 6px;
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.order-page__line b {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   NOTIFICACIONES — CAJÓN LATERAL ANCHO
+   --------------------------------------------------------------------------
+   La misma mecánica que el cajón de acciones, pero más ancho (90 %): cada aviso
+   lleva título, texto y dos botones, y a media pantalla no cabía ni uno entero.
+   ========================================================================== */
+:root body #sheet[data-variant='notices-drawer'] .sheet__backdrop {
+  background: rgba(11, 20, 26, 0.4);
+}
+
+:root body #sheet[data-variant='notices-drawer'] .sheet__panel {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: 90%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-left: 1px solid var(--pe-border, #dce5f2);
+  border-radius: 0;
+  box-shadow: -26px 0 54px rgba(11, 20, 26, 0.32);
+  transform: none;
+  animation: sheet-notices-drawer-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes sheet-notices-drawer-in {
+  from { transform: translateX(102%); }
+  to { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root body #sheet[data-variant='notices-drawer'] .sheet__panel { animation: none; }
+}
+
+/* En escritorio el 90 % de una pantalla grande es demasiado: se pone un tope. */
+@media (min-width: 980px) {
+  :root body #sheet[data-variant='notices-drawer'] .sheet__panel {
+    width: min(90%, 680px);
+  }
+}
+
+:root body #sheet[data-variant='notices-drawer'] .sheet__head {
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 10px 10px 16px;
+}
+
+:root body #sheet[data-variant='notices-drawer'] .sheet__body {
+  padding: 10px 12px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+#sheet[data-variant='notices-drawer'] .notice-list {
+  gap: 8px;
+}
