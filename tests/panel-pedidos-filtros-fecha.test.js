@@ -164,7 +164,9 @@ describe('pedidos: el filtro cuenta lo que se ve', () => {
   it('al pulsar «Entregados» sale exactamente lo que decía el chip', async () => {
     click('#pedidos-filtros [data-order-filter="entregado"]');
     await waitFor(() => filas().length === 1, 'la fila entregada de hoy');
-    expect(filas()[0].getAttribute('data-open')).toBe('hoy-entregado');
+    // La fila abre la PÁGINA del pedido (ya no la hoja): su destino va en
+    // `data-order-page`.
+    expect(filas()[0].getAttribute('data-order-page')).toBe('hoy-entregado');
     expect(numeroDelChip('entregado')).toBe(1);
   });
 
@@ -334,5 +336,35 @@ describe('pedidos: el menú de cada pedido (los tres puntos)', () => {
     expect(css).toMatch(/\.side-drawer--half \{[^}]*width:\s*min\(70vw, 420px\)/s);
     // Y nada se sale: las etiquetas parten de línea dentro del cajón.
     expect(css).toMatch(/\.side-drawer \.menu-item strong[\s\S]{0,200}overflow-wrap:\s*anywhere/);
+  });
+
+  it('la fila abre el pedido en una página completa, no en la hoja', async () => {
+    click('#pedidos-filtros [data-order-filter="todo"]');
+    await waitFor(() => filas().length >= 1, 'las filas del día');
+    click(filas()[0]);
+    await waitFor(() => $('body').dataset.tab === 'pedido', 'la página del pedido');
+    // Es una pantalla propia: la vista del pedido se ve y la hoja queda cerrada.
+    expect($('#view-pedido').hidden).toBe(false);
+    expect($('#sheet').hidden).toBe(true);
+    // Con su barra y su volver, como el expediente del cliente.
+    expect($('#mobile-header .simple-head--expediente')).toBeTruthy();
+    expect($('#mobile-header [data-simple-back]')).toBeTruthy();
+    // Y el contenido de la ficha (resumen, secciones y acciones).
+    expect($('#pedido-ficha .profile-summary')).toBeTruthy();
+    expect($('#pedido-ficha [data-sheet-actions]')).toBeTruthy();
+    expect($$('#pedido-ficha .profile-fold').length).toBeGreaterThan(2);
+    // El volver devuelve a la lista de Pedidos.
+    click('#mobile-header [data-simple-back]');
+    await waitFor(() => $('body').dataset.tab === 'pedidos', 'de vuelta a Pedidos');
+  });
+
+  it('las notificaciones se abren en un cajón del 90 % del ancho y todo el alto', () => {
+    const css = readFileSync(path.join(ADMIN_DIR, 'admin.css'), 'utf8');
+    expect(css).toMatch(
+      /#sheet\[data-variant='notices-drawer'\] \.sheet__panel \{[^}]*width:\s*90%;[\s\S]*?height:\s*100%;/s,
+    );
+    // La hoja se abre como cajón: entra desde la derecha y ocupa todo el alto.
+    expect(css).toMatch(/sheet-notices-drawer-in/);
+    expect(css).toMatch(/#sheet\[data-variant='notices-drawer'\] \.sheet__panel \{[^}]*bottom:\s*0;/s);
   });
 });
