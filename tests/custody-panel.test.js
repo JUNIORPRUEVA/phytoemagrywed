@@ -68,6 +68,24 @@ describe('detalle y rendición', () => {
   });
 });
 
+describe('aspecto del panel', () => {
+  it('usa el mismo tema que el CRM: variables y modo oscuro', () => {
+    // La página es independiente, así que tiene que leer la preferencia guardada.
+    expect(html).toContain("localStorage.getItem(KEY)");
+    expect(html).toContain("pe_tema");
+    expect(html).toContain(":root[data-theme='dark']");
+    // Ningún color de fondo blanco fijo en las piezas grandes.
+    expect(html).not.toMatch(/\.card\{[^}]*background:#fff/);
+    expect(html).not.toMatch(/\.wrap\{[^}]*background:#fff/);
+    expect(html).not.toMatch(/#drawer \.sheet\{[^}]*background:#fff/);
+  });
+
+  it('el volver es el icono redondo del panel', () => {
+    expect(html).toMatch(/\.bar a\.back\{[^}]*border-radius:50%/s);
+    expect(html).not.toMatch(/<a class="back"[^>]*>\s*Volver/);
+  });
+});
+
 describe('datos reales', () => {
   it('no inventa saldos: los lee del backend', () => {
     expect(js).toContain('/api/admin/delivery-cash');

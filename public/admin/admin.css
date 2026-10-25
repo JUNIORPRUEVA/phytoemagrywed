@@ -12582,6 +12582,34 @@ body[data-tab='pedidos'] .order-row__status,
     padding: 0;
   }
 
+  /*
+   * CLIENTES: LA LISTA TIENE QUE LLENAR LO QUE QUEDA.
+   *
+   * La rejilla de arriba tiene DOS filas (cabecera y resto), pero la pantalla de
+   * Clientes mete tres cosas en flujo (chips de grupo, contador y lista), así
+   * que la fila flexible se la quedaba el CONTADOR y la lista caía en una fila
+   * implícita al final: un hueco enorme en medio y los clientes cortados por
+   * abajo. Se usa la misma mecánica que Pedidos: cabecera fija y lista que se
+   * queda con el alto restante y se desplaza sola.
+   */
+  body[data-tab='clientes'] #view-clientes {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    height: 100%;
+    min-height: 0;
+  }
+
+  body[data-tab='clientes'] #view-clientes > :is(.chips, #clientes-grupos, #clientes-count) {
+    flex: 0 0 auto;
+  }
+
+  body[data-tab='clientes'] #list-clientes {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+  }
+
   body[data-tab='clientes'] #view-clientes .filters {
     display: contents;
   }
@@ -12714,6 +12742,37 @@ body[data-tab='pedidos'] .order-row__status,
   /* Las etiquetas largas («Intervalo · 17/10–24/10») se parten en dos líneas
      en vez de salirse del cajón: a la mitad de ancho no siempre caben. */
   body[data-tab='pedidos'] #pedidos-filtros .chip {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+  }
+
+  /*
+   * EL MISMO CAJÓN EN CLIENTES.
+   *
+   * Los filtros de personas usaban una columna más estrecha que se encogía al
+   * contenido. Ahora es igual que la de Pedidos: todo el alto de la pantalla y
+   * la mitad del ancho, para que se lea la etiqueta y su número.
+   */
+  body[data-tab='clientes'] #chips {
+    top: 0;
+    bottom: 0;
+    z-index: 66;
+    width: 50vw;
+    max-width: 50vw;
+    min-width: 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    border-radius: 0;
+    background: #fff;
+    box-shadow: -18px 0 40px rgba(12, 36, 66, 0.22);
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body[data-tab='clientes'] #chips .chip {
     white-space: normal;
     overflow-wrap: anywhere;
     line-height: 1.2;
@@ -13106,6 +13165,21 @@ body[data-tab='pedidos'] .order-row__status,
   min-width: 0;
 }
 
+/*
+ * EL MONTO VENDIDO, SIEMPRE A LA VISTA.
+ *
+ * Va al principio de la línea de datos y NO se encoge: antes viajaba dentro de
+ * la línea que se recorta con puntos suspensivos, así que en un pedido con
+ * nombre largo el precio era justo lo que desaparecía.
+ */
+.order-row__total {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--order-tone, var(--phyto-primary));
+  white-space: nowrap;
+}
+
 /* Llamadas: dialogo accesible y controles persistentes durante la navegación. */
 .calling { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid #d5e5dc; border-radius: 18px; padding: 22px; color: #16382b; background: #fff; }
 .calling::backdrop { background: rgb(10 35 24 / 50%); }
@@ -13232,6 +13306,176 @@ body[data-tab='pedidos'] .wa-filter-panel__close {
 body[data-tab='pedidos'] #pedidos-filtros [data-order-date-custom][aria-pressed='true'] {
   font-weight: 750;
 }
+
+/* ==========================================================================
+   CAJÓN DE ACCIONES — la columna que entra desde la DERECHA
+   --------------------------------------------------------------------------
+   El mismo lenguaje que el cajón de filtros: alto completo, ancho generoso
+   (70 % en el teléfono, 420 px como tope) y un velo detrás para que se lea
+   como un menú y no como una tarjeta suelta.
+   ========================================================================== */
+.side-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  width: min(70vw, 420px);
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 14px calc(18px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  background: #fff;
+  border-left: 1px solid rgba(20, 91, 215, 0.12);
+  box-shadow: -22px 0 46px rgba(12, 36, 66, 0.24);
+  transform: translateX(104%);
+  transition: transform 0.22s ease;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+body[data-side-drawer='open'] .side-drawer {
+  transform: none;
+}
+
+.side-drawer[hidden] {
+  display: none;
+}
+
+.side-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+  display: none;
+  padding: 0;
+  border: 0;
+  background: rgba(8, 34, 53, 0.34);
+  backdrop-filter: blur(1.5px);
+}
+
+body[data-side-drawer='open'] .side-drawer-scrim {
+  display: block;
+}
+
+.side-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.side-drawer__head > span {
+  display: grid;
+  min-width: 0;
+}
+
+.side-drawer__head strong {
+  color: var(--pe-ink-900, #0f2430);
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.side-drawer__head small {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 11.5px;
+}
+
+.side-drawer__close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgba(20, 91, 215, 0.12);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--phyto-primary-dark, #145bd7);
+  cursor: pointer;
+}
+
+.side-drawer__close .svg {
+  width: 18px;
+  height: 18px;
+}
+
+.side-drawer__note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(20, 91, 215, 0.06);
+  color: var(--pe-ink-600, #40585f);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.side-drawer__list {
+  display: grid;
+  gap: 8px;
+}
+
+.side-drawer .menu-item {
+  width: 100%;
+  border: 1px solid rgba(20, 91, 215, 0.1);
+  border-radius: 14px;
+  background: rgba(20, 91, 215, 0.045);
+}
+
+/* Cierra el cajón tocando el velo (el botón ocupa toda la pantalla). */
+@media (min-width: 980px) {
+  .side-drawer {
+    width: 400px;
+  }
+}
+
+/*
+ * EL MENÚ DE UN PEDIDO VA AL MISMO ANCHO QUE EL DE LA LISTA (70 %).
+ *
+ * Se probó a media pantalla y quedaba estrecho: el nombre del cliente y las
+ * notas se partían en tres o cuatro líneas. Con el 70 % se lee todo de un
+ * vistazo sin tener que arrastrar el dedo de lado.
+ */
+.side-drawer--half {
+  width: min(70vw, 420px);
+  max-width: 70vw;
+}
+
+@media (min-width: 980px) {
+  .side-drawer--half {
+    width: 400px;
+    max-width: 400px;
+  }
+}
+
+/*
+ * NADA SE SALE DEL CAJÓN.
+ *
+ * Con textos largos («Delivery Local Prueba», «Plantilla o mensaje libre») el
+ * contenido empujaba el ancho y aparecía una barra horizontal. Aquí las
+ * etiquetas parten de línea y ningún hijo puede crecer más que el cajón.
+ */
+.side-drawer {
+  overflow-x: hidden;
+}
+
+.side-drawer__list,
+.side-drawer .menu-item,
+.side-drawer .menu-item > span {
+  min-width: 0;
+}
+
+.side-drawer .menu-item strong,
+.side-drawer .menu-item small,
+.side-drawer__head strong,
+.side-drawer__head small,
+.side-drawer__note {
+  overflow-wrap: anywhere;
+}
+
 
 /* ==========================================================================
    PEDIDOS — semáforo de estado, botones al pie y selección múltiple
@@ -15294,3 +15538,778 @@ body[data-tab='hoy'] .stat__hint{
 @media (max-width:979px){
   body[data-tab='hoy'] .stat__hint{font-size:.62rem}
 }
+
+/* ==========================================================================
+   PANEL DE FILTROS DE CLIENTES — la misma cabecera que el de Pedidos
+   --------------------------------------------------------------------------
+   El título y el «Clientes» salían pegados («FiltrosClientes») y la ✕ caía
+   debajo, porque esos estilos solo existían para Pedidos. Aquí se replican:
+   título en dos líneas, ✕ a la derecha y cada grupo como una columna.
+   ========================================================================== */
+body[data-tab='clientes'] .wa-filter-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+body[data-tab='clientes'] .wa-filter-panel__head > span {
+  display: grid;
+  min-width: 0;
+}
+
+body[data-tab='clientes'] .wa-filter-panel__head strong {
+  color: var(--pe-ink-900);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+body[data-tab='clientes'] .wa-filter-panel__head small {
+  color: var(--pe-ink-500);
+  font-size: 11.5px;
+}
+
+body[data-tab='clientes'] .wa-filter-panel__close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(20, 91, 215, 0.1);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--phyto-primary-dark);
+  cursor: pointer;
+}
+
+body[data-tab='clientes'] #chips .wa-filter-panel__group {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+
+/* ==========================================================================
+   FICHA DEL CLIENTE — compacta y plegable
+   --------------------------------------------------------------------------
+   Cada bloque es una fila con su título y un resumen a la derecha; el contenido
+   se abre al tocarla. Lo importante (WhatsApp, dirección) va primero y el resto
+   no ocupa sitio hasta que se pide.
+   ========================================================================== */
+.profile-grid {
+  gap: 8px;
+}
+
+.profile-fold {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--pe-border, rgba(20, 91, 215, 0.12));
+  border-radius: 14px;
+  background: var(--pe-surface, #fff);
+  overflow: hidden;
+}
+
+.profile-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 10px 12px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 740;
+  color: var(--text-primary, #10222d);
+}
+
+.profile-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.profile-fold__title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.profile-fold__note {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 46%;
+  overflow: hidden;
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-fold__chev {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  margin-left: 2px;
+  transition: transform 0.18s ease;
+}
+
+.profile-fold__chev .svg {
+  width: 16px;
+  height: 16px;
+}
+
+.profile-fold[open] > summary .profile-fold__chev {
+  transform: rotate(90deg);
+}
+
+.profile-fold__body {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+/* «Ver más» de la información personal: pequeño y sin ruido. */
+.profile-more > summary {
+  padding: 2px 0;
+  color: var(--phyto-primary, #145bd7);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-more[open] > summary {
+  margin-bottom: 4px;
+}
+
+/* Datos en dos columnas de texto, SIN caja: se leen como una lista. */
+.facts--compact {
+  gap: 2px;
+  font-size: 0.82rem;
+}
+
+.facts--compact .fact {
+  padding-bottom: 3px;
+}
+
+/* Gráfico de compras de la etapa. */
+.profile-chart {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.profile-chart svg {
+  width: 100%;
+  height: auto;
+}
+
+.profile-chart__bar {
+  fill: var(--phyto-primary, #145bd7);
+  opacity: 0.85;
+}
+
+.profile-chart__base {
+  stroke: rgba(20, 91, 215, 0.18);
+  stroke-width: 1;
+}
+
+.profile-chart__label {
+  fill: var(--pe-ink-500, #56707c);
+  font-size: 7px;
+}
+
+.profile-chart figcaption {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+/* ==========================================================================
+   EXPEDIENTE DEL CLIENTE 360° — cabecera, buscador, resumen y seguimientos
+   --------------------------------------------------------------------------
+   La cabecera es UNA fila: nombre, WhatsApp y acciones en iconos. Si el cliente
+   no tiene foto real no se pinta ningún hueco (antes había un bloque enorme con
+   iniciales que se comía media pantalla).
+   ========================================================================== */
+.profile-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 2px 10px;
+}
+
+/* Sin foto, la identidad ocupa el ancho y los iconos quedan a la derecha. */
+.profile-head:not(:has(.profile-head__photo)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.profile-head__photo {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--pe-border, rgba(20, 91, 215, 0.16));
+  border-radius: 50%;
+  background-color: transparent;
+  background-position: center;
+  background-size: cover;
+  cursor: pointer;
+}
+
+.profile-head__id {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-head__id h2 {
+  margin: 0;
+  font-size: 1.16rem;
+  font-weight: 800;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.profile-head__wa {
+  color: var(--phyto-primary, #145bd7);
+  font-size: 0.98rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.profile-tags--compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.profile-tags--compact .tag {
+  font-size: 0.66rem;
+  padding: 1px 7px;
+}
+
+.profile-head__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.profile-head__icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(20, 91, 215, 0.12);
+  border-radius: 12px;
+  background: var(--pe-surface, #fff);
+  color: var(--phyto-primary-dark, #145bd7);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.profile-head__icon .svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Buscador DENTRO del expediente. */
+.profile-search {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.profile-search__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--pe-border, rgba(20, 91, 215, 0.14));
+  border-radius: 12px;
+  background: var(--pe-surface, #fff);
+}
+
+.profile-search__icon {
+  display: grid;
+  place-items: center;
+  color: var(--pe-ink-500, #56707c);
+}
+
+.profile-search__icon .svg {
+  width: 17px;
+  height: 17px;
+}
+
+.profile-search__field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary, #10222d);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.profile-search__results {
+  display: grid;
+  gap: 6px;
+}
+
+.profile-search__count,
+.profile-search__empty {
+  margin: 0;
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.74rem;
+}
+
+.profile-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--pe-border, rgba(20, 91, 215, 0.12));
+  border-radius: 12px;
+  background: var(--pe-surface, #fff);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-result__type {
+  color: var(--phyto-primary, #145bd7);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.profile-result__body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.profile-result__body strong {
+  font-size: 0.84rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.profile-result__body span {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.profile-result time {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* Resumen comercial: dos columnas en el teléfono, tres cuando cabe. */
+.profile-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+@media (min-width: 560px) {
+  .profile-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.profile-metric {
+  display: grid;
+  gap: 1px;
+  padding: 8px 10px;
+  border: 1px solid var(--pe-border, rgba(20, 91, 215, 0.12));
+  border-radius: 12px;
+  background: var(--pe-surface, #fff);
+}
+
+.profile-metric span {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.64rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.profile-metric strong {
+  font-size: 0.95rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.profile-metric--alert strong {
+  color: #c05621;
+}
+
+/* Seguimientos: motivo, estado, responsable y vencidos en rojo. */
+.profile-followups {
+  display: grid;
+  gap: 6px;
+}
+
+.profile-followup {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--pe-border, rgba(20, 91, 215, 0.1));
+  border-radius: 10px;
+}
+
+.profile-followup--late {
+  border-color: rgba(192, 86, 33, 0.45);
+  background: rgba(192, 86, 33, 0.06);
+}
+
+.profile-followup__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.profile-followup__state {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.profile-followup--late .profile-followup__state {
+  color: #c05621;
+}
+
+.profile-followup__reason {
+  font-size: 0.78rem;
+}
+
+.profile-followup small {
+  color: var(--pe-ink-500, #56707c);
+  font-size: 0.68rem;
+}
+
+/* Campos cortos en dos columnas cuando hay ancho; en el teléfono, uno debajo del otro. */
+@media (min-width: 480px) {
+  .facts--compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 12px;
+  }
+}
+
+/* ==========================================================================
+   EXPEDIENTE — ACABADO PLANO, COMPACTO Y SIN TARJETAS DENTRO DE TARJETAS
+   --------------------------------------------------------------------------
+   Se quitaron los bordes y fondos de cada sección: ahora es una lista con
+   separadores finos sobre el fondo de la pantalla. Menos caja, menos aire
+   desperdiciado y lo importante a la vista.
+   ========================================================================== */
+
+/* Barra del expediente: el volver pegado a la izquierda y el nombre al lado. */
+.simple-head--expediente {
+  gap: 8px;
+  padding-left: 8px;
+}
+
+.simple-head--expediente .simple-head__back {
+  width: 40px;
+  height: 40px;
+  box-shadow: none;
+}
+
+.simple-head--expediente strong {
+  min-width: 0;
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-tab='perfil-cliente'] .content {
+  padding-top: 4px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* En escritorio la barra también se ve: es donde vive el volver del expediente. */
+@media (min-width: 980px) {
+  body[data-tab='perfil-cliente'] .mobile-header {
+    display: block;
+  }
+}
+
+/* Secciones como filas, no como tarjetas. */
+.profile-grid {
+  gap: 0;
+  padding: 0 0 6px;
+}
+
+.profile-fold {
+  border: 0;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.1));
+  border-radius: 0;
+  background: transparent;
+}
+
+.profile-fold:last-child {
+  border-bottom: 0;
+}
+
+.profile-fold > summary {
+  min-height: 38px;
+  padding: 7px 0;
+  font-size: 0.82rem;
+}
+
+.profile-fold__body {
+  padding: 0 0 10px;
+  gap: 6px;
+}
+
+.profile-fold__note {
+  font-size: 0.7rem;
+}
+
+/* Resumen comercial plano, sin cajas. */
+.profile-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin-bottom: 2px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.1));
+}
+
+@media (min-width: 560px) {
+  .profile-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.profile-metric {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.profile-metric span {
+  font-size: 0.6rem;
+}
+
+.profile-metric strong {
+  font-size: 0.9rem;
+}
+
+/* Buscador fino. */
+.profile-search {
+  margin-bottom: 6px;
+}
+
+.profile-search__field {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.14));
+  border-radius: 10px;
+  background: var(--pe-surface);
+}
+
+.profile-search__field input {
+  font-size: 0.84rem;
+}
+
+/* Resultados de la búsqueda: filas, sin borde de tarjeta. */
+.profile-result {
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.08));
+  border-radius: 0;
+  background: transparent;
+}
+
+.profile-result:last-child {
+  border-bottom: 0;
+}
+
+/* Notas: campo corto y botón pequeño, alineado a la derecha. */
+.field__area--compact {
+  min-height: 56px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+
+.profile-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Seguimientos: filas con separador; el vencido se marca con el estado. */
+.profile-followup {
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.08));
+  border-radius: 0;
+}
+
+.profile-followup:last-child {
+  border-bottom: 0;
+}
+
+.profile-followup--late {
+  background: transparent;
+}
+
+.profile-followup--late .profile-followup__state {
+  font-weight: 800;
+}
+
+/* ==========================================================================
+   DETALLE DE PEDIDO — EL MISMO ACABADO PLANO QUE EL EXPEDIENTE DEL CLIENTE
+   --------------------------------------------------------------------------
+   La hoja del pedido se marca con data-kind="pedido": las filas de datos y los
+   campos pasan a ser líneas con separador fino (sin cajas dentro de cajas), con
+   menos aire y la nota corta con su botón pequeño a la derecha.
+   ========================================================================== */
+#sheet[data-kind='pedido'] .sheet__body {
+  gap: 0;
+  padding: 4px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+/* La fila de etiquetas (estado + tipo) abre la ficha, sin gastar una tarjeta. */
+#sheet[data-kind='pedido'] .sheet__body > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.1));
+}
+
+#sheet[data-kind='pedido'] .sheet__body > div:first-child .tag {
+  font-size: 0.68rem;
+  padding: 1px 8px;
+}
+
+/* Datos: etiqueta a la izquierda, valor a la derecha, separador fino. */
+#sheet[data-kind='pedido'] .facts {
+  gap: 0;
+  font-size: 0.86rem;
+}
+
+#sheet[data-kind='pedido'] .fact {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.1));
+}
+
+#sheet[data-kind='pedido'] .fact:last-child {
+  border-bottom: 0;
+}
+
+#sheet[data-kind='pedido'] .fact dt {
+  font-size: 0.78rem;
+}
+
+/* Campos (estado, recordatorio, notas): filas, no bloques con aire. */
+#sheet[data-kind='pedido'] .field {
+  gap: 6px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--pe-border-soft, rgba(20, 91, 215, 0.1));
+}
+
+#sheet[data-kind='pedido'] .field:last-of-type {
+  border-bottom: 0;
+}
+
+#sheet[data-kind='pedido'] .field__label {
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--pe-ink-500, #56707c);
+}
+
+#sheet[data-kind='pedido'] .field__select,
+#sheet[data-kind='pedido'] .field__input {
+  min-height: 40px;
+  padding: 6px 10px;
+  font-size: 0.86rem;
+}
+
+#sheet[data-kind='pedido'] .field__area--compact {
+  min-height: 56px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+
+#sheet[data-kind='pedido'] .chip {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+
+#sheet[data-kind='pedido'] .view__hint {
+  margin: 8px 0 0;
+  font-size: 0.74rem;
+}
+
+/* ==========================================================================
+   FILTROS DE CLIENTES — UNA SOLA COLUMNA Y EN ORDEN
+   --------------------------------------------------------------------------
+   El panel se abría a la mitad del ancho pero los dos grupos se ponían uno al
+   lado del otro y cada chip se quedaba en ~80 px: «Prospectos» se partía letra a
+   letra. Aquí se fuerza UNA columna: primero la cabecera, después los estados y
+   al final las fechas. Cada chip ocupa el ancho del cajón y no parte el texto.
+   ========================================================================== */
+@media (max-width: 979px) {
+  body[data-tab='clientes'] #chips.chips {
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 14px;
+    overflow-x: hidden;
+  }
+
+  body[data-tab='clientes'] #chips.chips > .wa-filter-panel__head {
+    order: 0;
+    flex: 0 0 auto;
+  }
+
+  /* Estados primero y fechas después: es el orden del documento, sin trucos. */
+  body[data-tab='clientes'] #chips.chips > .wa-filter-panel__group {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    order: 1;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  body[data-tab='clientes'] #chips.chips .chip {
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    padding: 7px 12px;
+    justify-content: flex-start;
+    font-size: 13.5px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+  }
+
+  body[data-tab='clientes'] #chips.chips .order-filters__label {
+    padding: 0 2px;
+  }
+}
+
+
+
+
+

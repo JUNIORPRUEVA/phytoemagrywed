@@ -1,7 +1,7 @@
 {
-  "name": "FullTECH",
-  "short_name": "FullTECH",
-  "description": "FullTECH · Clientes, conversaciones, pedidos y seguimiento.",
+  "name": "FT CRM",
+  "short_name": "FT CRM",
+  "description": "FT CRM · Clientes, conversaciones, pedidos y seguimiento.",
   "lang": "es",
   "dir": "ltr",
   "start_url": "/admin/",

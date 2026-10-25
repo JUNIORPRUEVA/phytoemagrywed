@@ -28,17 +28,21 @@ body .login .login__submit::after { display: none; }
 body .login { background: var(--ft-page-gradient); }
 body .login__card { background: var(--pe-card-bg); border: 1px solid var(--pe-line); border-radius: 28px; box-shadow: 0 24px 80px rgb(20 60 120 / 12%); }
 body .login__mark { width: 68px; height: 68px; border-radius: 0; background: transparent; box-shadow: none; }
-body .login__logo { width: 54px; height: 54px; object-fit: contain; }
+body .login__logo { width: 54px; height: 54px; object-fit: contain; border-radius: 13px; }
 body .login__title { color: var(--text-primary); }
 body .login__title span { color: var(--pe-brand-text); }
-body .splash { z-index: 10000; gap: 8px; isolation: isolate; background: var(--pe-page-bg); color: var(--text-primary); transition: opacity 160ms ease, visibility 160ms ease; }
+body .splash { z-index: 10000; gap: 10px; isolation: isolate; background: var(--pe-page-bg); color: var(--text-primary); transition: opacity 160ms ease, visibility 160ms ease; }
 body .splash::before { inset: auto; top: calc(50% - 155px); left: calc(50% - 150px); width: 300px; height: 300px; border: none; border-radius: 50%; background: radial-gradient(circle, rgb(55 141 255 / 12%), transparent 68%); }
-body .splash__mark { width: 100px; height: 100px; border-radius: 0; background: transparent; border: 0; box-shadow: none; animation: ft-reveal 360ms cubic-bezier(.2,.8,.2,1) both; }
-body .splash__mark img { width: 88px; height: 88px; object-fit: contain; }
-body .splash__brand { margin: 2px 0 0; font-size: 1.15rem; line-height: 1.2; }
-body .splash__text { max-width: 260px; color: var(--text-secondary); font-size: .85rem; letter-spacing: .01em; }
-body .splash__bar { width: 150px; height: 3px; margin-top: 6px; background: var(--pe-brand-soft); }
-body .splash__bar::after { background: linear-gradient(90deg, #145bd7, #69b9ff); }
+/* El logo va sobre una teja blanca redondeada, igual que el icono instalado. */
+body .splash__mark { width: 104px; height: 104px; border-radius: 26px; background: #fff; border: 1px solid rgb(15 45 100 / 6%); box-shadow: 0 14px 34px rgb(15 45 100 / 16%), 0 2px 6px rgb(15 45 100 / 8%); animation: ft-reveal 360ms cubic-bezier(.2,.8,.2,1) both; }
+/* El archivo del arranque va recortado al contenido: la marca llena la teja. */
+body .splash__mark img { width: 84px; height: 84px; object-fit: contain; border-radius: 19px; }
+:root[data-theme='dark'] body .splash__mark { border-color: rgb(255 255 255 / 10%); box-shadow: 0 18px 44px rgb(0 0 0 / 55%); }
+body .splash__brand { margin: 0; font-size: 1.15rem; line-height: 1.2; }
+/* El logo nuevo es un cuadrado blanco: en tamaños pequeños se redondea como
+   una teja de app para que no parezca un recorte pegado a la barra. */
+.topbar__brand::before, #drawer .drawer__eyebrow::before { border-radius: 8px; }
+#drawer .drawer__logo img, .simple-head__logo { border-radius: 7px; }
 @keyframes ft-reveal { from { opacity: 0; transform: translateY(12px) scale(.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { body .splash, body .splash__mark { animation: none; transition: none; } body .splash__bar::after { animation: none; width: 100%; } }
-@media (max-height: 500px) { body .splash__mark { width: 112px; height: 112px; border-radius: 24px; } body .splash__mark img { width: 92px; height: 92px; } body .splash__brand { margin-top: 4px; font-size: 1.6rem; } }
+@media (prefers-reduced-motion: reduce) { body .splash, body .splash__mark { animation: none; transition: none; } }
+@media (max-height: 500px) { body .splash__mark { width: 96px; height: 96px; border-radius: 24px; } body .splash__mark img { width: 78px; height: 78px; } }

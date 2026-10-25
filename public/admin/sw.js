@@ -8,7 +8,7 @@
  */
 
 if(typeof importScripts==='function')importScripts('/admin/offline-storage.js');
-const VERSION = 'crm-v273-pedidos-cajon-20261024';
+const VERSION = 'crm-v286-expediente-20261024';
 const TILE_CACHE = `${VERSION}-tiles`;
 const TILE_META = `${VERSION}-tile-meta`;
 const MAX_TILE_ENTRIES = 1200;
@@ -118,6 +118,7 @@ const SHELL = [
   '/admin/vendor/leaflet/images/marker-shadow.png',
   '/admin/assets/sounds/message-notification.wav',
   '/admin/assets/branding/fulltech-crm-256.png',
+  '/admin/assets/branding/fulltech-crm-mark.png',
   '/admin/assets/branding/fulltech-crm-32.png',
   '/admin/assets/branding/fulltech-crm-192.png',
   '/admin/assets/branding/fulltech-crm-512.png',

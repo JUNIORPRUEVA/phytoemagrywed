@@ -166,7 +166,11 @@ $('#login').onsubmit = async (event) => {
     await load();
   } catch (error) { notice(error.message); }
 };
-$('#refresh').onclick = load;
+$('#refresh').onclick = async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { await load(); } finally { button.disabled = false; }
+};
 $('#search').oninput = renderTable;
 $('#filter').onchange = renderTable;
 $('#couriers').addEventListener('click', (event) => {
@@ -175,7 +179,20 @@ $('#couriers').addEventListener('click', (event) => {
   state.selected = state.couriers.find((row) => String(row.courier_id) === id) ?? null;
   renderDrawer();
 });
-$('#d-close').onclick = () => $('#drawer').removeAttribute('open');
+$('#d-close').onclick = () => cerrarCajon();
+/*
+ * EL CAJÓN SE CIERRA COMO CUALQUIER OTRO DEL PANEL: con Escape y tocando fuera.
+ * Antes solo se cerraba con el botón, que en el teléfono queda lejos del pulgar.
+ */
+function cerrarCajon() {
+  $('#drawer').removeAttribute('open');
+}
+$('#drawer').addEventListener('click', (event) => {
+  if (event.target === $('#drawer')) cerrarCajon();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && $('#drawer').hasAttribute('open')) cerrarCajon();
+});
 $('#remittance').addEventListener('input', () => {
   const row = state.selected;
   if (!row) return;

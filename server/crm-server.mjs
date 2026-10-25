@@ -14099,9 +14099,20 @@ export async function startCrmServer(config = {}) {
       config.bootstrapAdminPassword ||
       BOOTSTRAP_ADMIN_PASSWORD ||
       ((config.bootstrapAdminUser ?? BOOTSTRAP_ADMIN_USER) ? settings.token : ''),
-    firstName: config.bootstrapAdminFirstName ?? 'Ana',
-    lastName: config.bootstrapAdminLastName ?? 'Admin',
-    displayName: config.bootstrapAdminDisplayName ?? 'Ana Admin',
+    /*
+     * EL NOMBRE NO TIENE VALOR POR DEFECTO, a propósito.
+     *
+     * `ensureBootstrapAdmin` reaplica estos campos en CADA arranque si vienen
+     * informados. Con los valores fijos de antes («Ana» / «Admin» / «Ana
+     * Admin»), cualquier reinicio del servidor borraba el nombre que la persona
+     * había guardado en su perfil y volvía a aparecer «Ana Admin». Ahora solo se
+     * envían si vienen de configuración explícita; si no, se conserva lo que ya
+     * está guardado. Al crear el administrador por primera vez, `createUser`
+     * aplica sus propios valores por defecto.
+     */
+    firstName: config.bootstrapAdminFirstName,
+    lastName: config.bootstrapAdminLastName,
+    displayName: config.bootstrapAdminDisplayName,
   });
   const legacyInventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
   const storeCatalog = await createStoreCatalog({backend:db.kind,handle:store.handle,legacyInventory,clock:config.clock,storeKey:config.storeKey ?? STORE_KEY});
