@@ -7935,7 +7935,24 @@ async function handle(req, res, ctx) {
       const at = new Date().toISOString();
       const normalized = normalizeCourierAccountInput(body, { now: at });
       if (!normalized.ok) {
-        json(res, 422, { ok: false, error: normalized.error, message: 'Los datos de la cuenta no son válidos.' });
+        /*
+         * Cada rechazo con su motivo legible: "los datos no son válidos" no dice
+         * QUÉ corregir, y el panel mostraba ese texto genérico.
+         */
+        const MENSAJES = {
+          invalid_kind: 'Elige el tipo de repartidor (externo o interno).',
+          invalid_phone: 'Escribe el teléfono completo con código de país, por ejemplo +18095551234.',
+          invalid_display_name: 'Escribe el nombre del repartidor.',
+          invalid_pin: 'El PIN debe tener al menos 6 caracteres.',
+          external_requires_contact: 'Falta el contacto de reparto de ese teléfono: escríbelo completo con el código de país (+1…) para que se cree, o guárdalo antes en Contactos.',
+          internal_requires_user: 'Elige el usuario del CRM para la cuenta interna.',
+          invalid_user: 'Ese usuario del CRM no existe o está inactivo.',
+        };
+        json(res, 422, {
+          ok: false,
+          error: normalized.error,
+          message: MENSAJES[normalized.error] ?? 'Los datos de la cuenta no son válidos.',
+        });
         return;
       }
       const value = normalized.value;

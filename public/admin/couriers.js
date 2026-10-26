@@ -466,6 +466,22 @@ async function openCourier(id) {
 
 /* --------------------------------------------------------- alta y edición */
 
+/*
+ * TELÉFONO COMO LO ESPERA EL SERVIDOR.
+ *
+ * Si se escribe 8095551234 (10 dígitos) se completa a +18095551234: sin el
+ * código de país el alta se rechaza y el mensaje no lo explicaba.
+ */
+function normalizarTelefono(value) {
+  const raw = String(value ?? '').trim();
+  const digits = raw.replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  if (raw.startsWith('+')) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return `+${digits}`;
+}
+
 function openCourierForm(id = null, prefill = null) {
   const row = id ? state.couriers.find((item) => item.id === id) : null;
   state.selecting = { kind: 'form', id };
@@ -516,7 +532,8 @@ function openCourierForm(id = null, prefill = null) {
     <div class="sep"></div>
     <label class="field--check"><input id="f-access" type="checkbox"${row ? (row.app_access === true ? ' checked' : '') : ' checked'}><span>Acceso a la app</span></label>
     <label class="field--check"><input id="f-active" type="checkbox"${row ? (row.active !== false ? ' checked' : '') : ' checked'}><span>Cuenta activa</span></label>
-    <p class="hint">${row ? 'Cambiar el PIN o quitar el acceso cierra las sesiones abiertas del teléfono.' : 'El PIN es lo que el repartidor escribe en la app para entrar. Se guarda cifrado: no se puede ver después.'}</p>`;
+    <p class="hint">${row ? 'Cambiar el PIN o quitar el acceso cierra las sesiones abiertas del teléfono.' : 'El PIN es lo que el repartidor escribe en la app para entrar. Se guarda cifrado: no se puede ver después.'}</p>
+    <p class="hint" id="f-error" role="alert" hidden></p>`;
   $('#d-actions').innerHTML = `
     <button class="ghost" type="button" data-form-cancel>Cancelar</button>
     <button type="button" data-form-save>${row ? 'Guardar cambios' : 'Crear repartidor'}</button>`;
@@ -534,7 +551,7 @@ async function saveCourierForm(button) {
   const selection = state.selecting;
   if (selection?.kind !== 'form') return;
   const nombre = ($('#f-name')?.value ?? '').trim();
-  const telefono = ($('#f-phone')?.value ?? '').trim();
+  const telefono = normalizarTelefono($('#f-phone')?.value ?? '');
   const pin = ($('#f-pin')?.value ?? '').trim();
   const acceso = $('#f-access')?.checked === true;
   const activo = $('#f-active')?.checked === true;
@@ -544,6 +561,11 @@ async function saveCourierForm(button) {
   if (pin && pin.length < 6) return notice('El PIN debe tener al menos 6 caracteres.');
   button.disabled = true;
   notice('Guardando…');
+  const errorBox = $('#f-error');
+  if (errorBox) {
+    errorBox.hidden = true;
+    errorBox.textContent = '';
+  }
   try {
     if (selection.id) {
       const body = { displayName: nombre, phone: telefono, appAccess: acceso, active: activo };
@@ -576,7 +598,18 @@ async function saveCourierForm(button) {
       if (created?.courier?.id) await openCourier(created.courier.id);
     }
   } catch (error) {
-    notice(`No se pudo guardar: ${error.message}`);
+    /*
+     * El error se pinta DENTRO del cajón: la barra de estado queda tapada por el
+     * propio cajón y el alta parecía "no hacer nada".
+     */
+    const mensaje = `No se pudo guardar: ${error.message}`;
+    notice(mensaje);
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = mensaje;
+      errorBox.style.color = 'var(--bad, #b91c1c)';
+      errorBox.scrollIntoView({ block: 'nearest' });
+    }
   } finally {
     button.disabled = false;
   }
