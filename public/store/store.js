@@ -299,7 +299,14 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
     const heroProducts=[...dailyOffers,...recent].filter(p=>p.imageUrl&&!selectedIds.has(p.id)&&selectedIds.add(p.id)).slice(0,2);
     const promoTitle=dailyOffers.length?'Ofertas para ti':'Descubre lo nuevo';
     const promoDetail=dailyOffers.length?`Hasta ${Math.max(...dailyOffers.map(p=>Number(p.discountPercent)))}% menos`:'Novedades de la tienda';
-    const promoLink=dailyOffers.length?href('offers'):href('catalog?sort=recent');
+    /*
+     * EL BOTÓN DE LA PORTADA CAMBIA CON LA PERSONA:
+     *  - sin cuenta: «Regístrate» (lo más corto y directo).
+     *  - con cuenta: «Comprar», que abre el catálogo completo para comprar.
+     */
+    const signedIn=Boolean(session.account);
+    const promoLink=signedIn?href('comprar'):href('account/register');
+    const promoLabel=signedIn?'Comprar':'Regístrate';
     const heroOfferCard=p=>`<a class="ft-hero-offer" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver ${esc(p.name)}">
       <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="180" height="104" loading="eager" decoding="async">
       ${hasOffer(p)?`<span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span>`:''}
@@ -309,9 +316,9 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
     const hero=`<section class="ft-hero">
       <a class="ft-hero-logo" href="/store/" aria-label="FULLTECH Store, inicio"><img src="/store/assets/branding/fulltech-store-header-transparent-144.png" width="144" height="32" alt="FULLTECH STORE" fetchpriority="high"></a>
       <div class="ft-hero__copy">
-        <h1>${esc(promoTitle)}</h1>
+        <h1>${esc(promoTitle).toUpperCase()}</h1>
         <p>${esc(promoDetail)}</p>
-        <a class="ft-promotion-cta" href="${promoLink}">${dailyOffers.length?'Ver ofertas':'Explorar'} <span aria-hidden="true">›</span></a>
+        <a class="ft-promotion-cta" href="${promoLink}">${promoLabel} <span aria-hidden="true">›</span></a>
       </div>
       <div class="ft-hero__art ft-hero__duo" aria-label="Productos seleccionados">
         ${heroOffers}
@@ -477,6 +484,44 @@ async function loadCatalog({restore=false}={}){
   await activeFeed.start();
 }
 function warrantyBlock(w){if(!w||!w.available&&!w.conditions&&!w.coverage&&!w.exclusions&&!w.claim)return '';const details=(w.coverage||w.exclusions||w.conditions||w.claim)?`<details class="warranty"><summary>Consulta las condiciones de garantía</summary>${w.coverage?`<p><strong>Qué cubre:</strong> ${esc(w.coverage)}</p>`:''}${w.exclusions?`<p><strong>Qué no cubre:</strong> ${esc(w.exclusions)}</p>`:''}${w.conditions?`<p>${esc(w.conditions)}</p>`:''}${w.claim?`<p><strong>Cómo reclamar:</strong> ${esc(w.claim)}</p>`:''}</details>`:'';return `<div class="product-warranty"><span class="warranty-label">${esc(w.label)}</span>${w.notes?`<small>${esc(w.notes)}</small>`:''}${details}</div>`}
+/*
+ * COMPRAR: la portada, pero solo para comprar.
+ *
+ * Muestra TODOS los productos publicados en rejilla (las mismas tarjetas de la
+ * portada, con su botón de agregar al carrito). Se abre desde el botón
+ * «Comprar» de la portada cuando la persona ya tiene cuenta.
+ */
+async function renderBuy(){
+  setNav('comprar');
+  activeFeed?.dispose();
+  main.innerHTML=`<section class="ft-buy">${searchEntryMarkup()}
+    <div class="ft-buy__head"><h1>Comprar</h1><p>Todo el catálogo de la tienda, listo para agregar al carrito.</p></div>
+    <div id="buy-count" class="ft-results-note" aria-live="polite"></div>
+    <div id="buy-feed"></div>${footer()}</section>`;
+  const out=$('#buy-feed');
+  activeFeed=createProductFeed({
+    root:out,
+    renderItem:homeCard,
+    fetchPage:async(page,limit,signal)=>{
+      const query=new URLSearchParams({kind:'product',page:String(page),limit:String(limit)});
+      const response=await fetch(zonePath(`/api/store/catalog?${query}`),{signal,credentials:'same-origin',headers:{accept:'application/json'}});
+      if(!response.ok)throw Error('catalog_unavailable');
+      return response.json();
+    },
+    emptyText:'Todavía no hay productos publicados.',
+    onChange:({total})=>{
+      const count=$('#buy-count');
+      if(count)count.textContent=total?`${total} producto${total===1?'':'s'}`:'';
+      syncFavoriteButtons();masonry?.layout();
+    },
+  });
+  await activeFeed.start();
+  /* «Todos»: se piden las páginas que falten sin esperar a que hagan scroll. */
+  for(let guard=0;activeFeed&&!activeFeed.state.failed&&activeFeed.state.page<activeFeed.state.pages&&guard<30;guard++){
+    await activeFeed.loadNext();
+  }
+  masonry?.layout();
+}
 async function renderProduct(id){
  setNav('product');main.innerHTML='<div class="loading-cards"><div class="skeleton"></div></div>';
  try{const {product:p}=await api(`/api/store/products/${encodeURIComponent(id)}`);
@@ -1024,7 +1069,7 @@ const services=solutionsMarkup();
   await mountHubProducts();
 }
 
-async function renderRoute(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path==='offers')return renderCatalog(params,true);if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request'||path==='account/requests'){location.replace(href('catalog'));return;}if(path==='menu')return renderMenu();if(path==='account/settings')return renderAccount('settings');if(path==='account/addresses')return renderAddresses();if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='nosotros')return renderAbout(params);return renderHome()}
+async function renderRoute(){const raw=location.hash.replace(/^#\/?/,'');const [path,query='']=raw.split('?');const params=new URLSearchParams(query);if(!path)return renderHome();if(path==='search')return renderSearch(params);if(path==='catalog')return renderCatalog(params);if(path==='offers')return renderCatalog(params,true);if(path==='comprar')return renderBuy();if(path.startsWith('product/'))return renderProduct(decodeURIComponent(path.slice(8)));if(path==='cart')return renderCart();if(path==='checkout')return renderCheckout();if(path==='request'||path==='account/requests'){location.replace(href('catalog'));return;}if(path==='menu')return renderMenu();if(path==='account/settings')return renderAccount('settings');if(path==='account/addresses')return renderAddresses();if(path==='orders')return renderOrders();if(path==='account')return renderAccount();if(path==='account/login')return renderLogin();if(path==='account/register')return renderRegister();if(path==='account/register/manual')return renderRegisterManual(params);if(path==='account/recover')return renderRecover();if(path==='account/complete')return renderComplete(params);if(path==='nosotros')return renderAbout(params);return renderHome()}
 const routeScroll=new Map();
 let renderedRoute=location.hash, routeRun=0,navigating=false;
 if('scrollRestoration' in history)history.scrollRestoration='manual';

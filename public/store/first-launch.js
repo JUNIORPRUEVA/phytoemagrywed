@@ -2,8 +2,10 @@
  * BIENVENIDA DE FULLTECH STORE (video de arranque).
  *
  * Reglas de esta pantalla:
- *  1. Se muestra CADA vez que se abre la app, en la web y en la PWA instalada.
- *     Ya no se guarda ninguna marca de «visto»: abrir la app = ver el video.
+ *  1. Se muestra SOLO la primera vez de cada apertura: al abrir la app o la
+ *     pestaña de cero. Mientras la pestaña siga abierta (navegar dentro de la
+ *     tienda, recargar, volver desde otra pestaña) NO se repite: se entra
+ *     directo, sin volver a «cargar».
  *  2. NO tiene botón de omitir: el video se va solo al terminar.
  *  3. Funciona sin conexión: el archivo se guarda en la caché del service
  *     worker (`sw.js`), así la PWA instalada lo reproduce igual que la web.
@@ -12,13 +14,41 @@
  */
 const SOURCE = '/store/assets/welcome/first-launch-v2.mp4';
 const POSTER = '/store/assets/welcome/poster-v2.jpg';
+/*
+ * UNA VEZ POR APERTURA, NO POR RECARGA.
+ *
+ * La marca vive en `sessionStorage`: se borra sola cuando se cierra la app o
+ * la pestaña, y se mantiene mientras la sesión siga viva. Así el video sale al
+ * abrir la app y NO vuelve a salir por navegar dentro de la tienda, por recargar
+ * ni por volver desde otra pestaña (eso era lo que parecía «cargando otra vez»).
+ */
+const SESSION_KEY = 'ft_welcome_shown_v1';
+
+function alreadyShown() {
+  try {
+    return sessionStorage.getItem(SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markShown() {
+  try {
+    sessionStorage.setItem(SESSION_KEY, '1');
+  } catch {
+    /* Sin Storage el video sale en cada carga: es el mal menor. */
+  }
+}
 
 function welcome() {
   // Enlaces profundos, checkout y vueltas de OAuth abren directo.
   if (location.hash && !['#', '#/', '#/home'].includes(location.hash)) return;
   if (document.visibilityState === 'hidden') return;
+  // Ya se vio en esta apertura de la app: se entra normal, sin «cargar».
+  if (alreadyShown()) return;
   // Quien pidió menos movimiento en el sistema no ve el video.
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  markShown();
 
   const overlay = document.createElement('section');
   overlay.className = 'ft-welcome';
@@ -92,24 +122,3 @@ function welcome() {
 }
 
 welcome();
-
-/*
- * VOLVER A ENTRAR CUENTA.
- *
- * En el teléfono la PWA suele quedar viva en segundo plano: al tocar el icono
- * se reanuda sin recargar y, sin esto, el video solo se vería la primera vez
- * del día. Si la app estuvo fuera 10 minutos o más y se vuelve al inicio, se
- * muestra otra vez. Nunca interrumpe una compra ni una ficha de producto.
- */
-const AWAY_MS = 10 * 60 * 1000;
-let hiddenAt = 0;
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    hiddenAt = Date.now();
-    return;
-  }
-  const home = !location.hash || ['#', '#/', '#/home'].includes(location.hash);
-  const away = hiddenAt && Date.now() - hiddenAt >= AWAY_MS;
-  hiddenAt = 0;
-  if (away && home && !document.querySelector('.ft-welcome')) welcome();
-});
