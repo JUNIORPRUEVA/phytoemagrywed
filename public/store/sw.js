@@ -1,4 +1,4 @@
-const VERSION = 'fulltech-store-v103';
+const VERSION = 'fulltech-store-v104';
 const SHELL = [
   '/store/first-launch.css?v=2',
   '/store/first-launch.js?v=3',
