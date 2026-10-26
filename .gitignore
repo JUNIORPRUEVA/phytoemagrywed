@@ -27,3 +27,9 @@ public/admin/vendor/pdfjs/
 # Bases de datos de UAT local (nunca se versionan)
 uat-*.sqlite*
 
+# Material CRUDO de los iconos oficiales: pesa y se regenera con
+# scripts/prepare-official-app-branding.py. Se versionan los iconos que sirven
+# las apps (public/…), no los archivos de trabajo ni los videos de origen.
+assets/branding/official-apps/**/source.png
+assets/branding/official-apps/**/source-welcome*.mp4
+

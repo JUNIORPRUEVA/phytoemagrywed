@@ -107,11 +107,17 @@ const setValue = (selector, value) => {
   input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 };
 
-/** Abre la hoja de campaña desde Clientes (el botón flotante de administración). */
+/**
+ * Abre la hoja de campaña desde Clientes.
+ *
+ * La campaña dejó de tener botón flotante propio: vive DENTRO del menú lateral
+ * de Clientes (el mismo cajón de acciones), así que se abre desde ahí.
+ */
 async function abrirCampana() {
   click('[data-tab="clientes"]');
-  const fab = await waitFor(() => $('#customer-campaign-fab'), 'el botón de campaña');
-  click(fab);
+  click('#clientes-acciones');
+  const opcion = await waitFor(() => $('#side-drawer [data-customer-campaign-open]'), 'la opción de campaña');
+  click(opcion);
   await waitFor(() => $('#campaign-message'), 'la hoja de campaña');
   // La hoja sincroniza plantillas con Meta antes de pintar los desplegables.
   await waitFor(() => $$('#campaign-template option').length > 0, 'las plantillas de la hoja');

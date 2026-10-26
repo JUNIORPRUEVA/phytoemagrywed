@@ -260,7 +260,9 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
     await waitFor(() => panel.$('#sheet').hidden, 'la hoja cerrada');
 
     // 4) REGISTRAR UN PEDIDO sin conexión: queda en la lista y en la cola de envíos.
-    panel.click('#compra-nueva-ped');
+    //    El alta vive en el menú de la lista (el «+» flotante ya no existe).
+    panel.click('#pedidos-acciones');
+    panel.click(await waitFor(() => panel.$('#side-drawer [data-purchase]'), 'la opción Registrar compra'));
     await waitFor(() => panel.$('[data-pos-client]'), 'Facturación');
     panel.click('[data-pos-client]');
     panel.setValue('.pos-modal-form [name=name]', 'Pedido Sin Red');
@@ -281,9 +283,10 @@ describe('el panel trabaja sin conexión y sincroniza al volver', () => {
     expect((await panel.win.FulltechOffline.listQueue()).some(row=>row.path.endsWith('/checkout'))).toBe(true);
     expect(panel.$('#toast').hidden).toBe(true);
 
-    // 5) FINALIZAR ese pedido sin conexión (todo lo del pedido vive en su «⋯»).
+    // 5) FINALIZAR ese pedido sin conexión (todo lo del pedido vive en su «⋯»,
+    //    que abre la columna lateral de acciones).
     panel.click(nuevo.querySelector('[data-order-more]'));
-    const estado = await waitFor(() => panel.$('#sheet-body [data-order-quick-status]'), 'el menú del pedido');
+    const estado = await waitFor(() => panel.$('#side-drawer [data-order-quick-status]'), 'el menú del pedido');
     panel.click(estado);
     await waitFor(() => panel.$('#order-qs-confirm'), 'la hoja de estado');
     panel.click('#order-qs-confirm');

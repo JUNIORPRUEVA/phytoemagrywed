@@ -524,7 +524,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     const boton = $('[data-customer]');
     expect(boton?.dataset.customer).toBeTruthy();
     click(boton);
-    await waitFor(() => $('#customer-profile .profile-hero'), 'el perfil del cliente');
+    await waitFor(() => $('#customer-profile .profile-head'), 'el perfil del cliente');
     expect(ficha).toBeTruthy();
     // Volver a Pedidos para no dejar la pantalla cambiada.
     click('[data-tab="pedidos"]');
@@ -689,8 +689,9 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     );
     click(fila);
     const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del pedido');
-    // La ficha dice DÓNDE están las acciones (antes había que adivinarlo).
-    expect($('#sheet-body').textContent).toContain('abajo a la derecha');
+    // La ficha ya NO explica dónde están las acciones: el botón flotante se
+    // explica solo y ese párrafo alargaba la hoja sin aportar nada.
+    expect($('#sheet-body').textContent).not.toContain('abajo a la derecha');
     click(fab);
     const menu = await waitFor(
       () => ($('#sheet-body .menu-list') ? $('#sheet-body') : null),
@@ -737,12 +738,12 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect($('#pedidos-count').textContent).toContain(String(total));
   });
 
-  it('el alta vive en un botón cuadrado flotante, no en una barra ancha al pie', async () => {
-    const fab = $('#compra-nueva-ped');
-    expect(fab.classList.contains('list-fab')).toBe(true);
-    // Solo el icono: sin texto de botón grande.
-    expect(fab.textContent.trim()).toBe('');
-    click(fab);
+  it('el alta vive en el menú de la lista, sin botón flotante de agregar', async () => {
+    // La esquina tenía dos botones (acciones y «+»): el alta es una acción más.
+    expect($('#compra-nueva-ped')).toBe(null);
+    click('#pedidos-acciones');
+    const alta = await waitFor(() => $('#side-drawer [data-purchase]'), 'la opción Registrar compra');
+    click(alta);
     await waitFor(() => dom.window.document.body.dataset.tab==='catalogo'&&$('[data-pos-add]'),'Facturación');
     click('[data-simple-back]');
   });
@@ -841,6 +842,14 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
         ) ?? null,
       'la fila del pedido entregado',
     );
+    const fechaEntrega = ordenDe(entregado)?.delivered_at;
+    expect(fechaEntrega).toBeTruthy();
+    expect(fila.querySelector('.order-row__when')?.textContent).toBe(
+      new Intl.DateTimeFormat('es-DO', {
+        timeZone: 'America/Santo_Domingo', weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+      }).format(new Date(fechaEntrega)),
+    );
+    expect(fila.querySelector('.order-row__when')?.title).toContain('República Dominicana');
     click(fila);
     const fab = await waitFor(() => $('#sheet-body [data-sheet-actions]'), 'el botón flotante del entregado');
     click(fab);
@@ -853,6 +862,19 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(menu.textContent).toContain('Programar mensaje al cliente');
     click('[data-close-sheet]');
     await waitFor(() => $('#sheet').hidden, 'la hoja cerrada');
+
+    // Estado y fecha se cruzan: el número del chip coincide con las filas visibles.
+    click($('#pedidos-filtros [data-order-filter="entregado"]'));
+    expect($('#pedidos-filtros [data-order-filter="entregado"]').textContent).toContain('1');
+    expect($$('#list-pedidos .order-row')).toHaveLength(1);
+    click($('#pedidos-filtros [data-order-date="yesterday"]'));
+    expect($$('#list-pedidos .order-row')).toHaveLength(0);
+    expect($('#pedidos-filtros [data-order-filter="entregado"]').textContent).not.toContain('1');
+    click($('#pedidos-filtros [data-order-date="all"]'));
+    expect($('#pedidos-filtros [data-order-filter="entregado"]').textContent).toContain('1');
+    expect($$('#list-pedidos .order-row')).toHaveLength(1);
+    click($('#pedidos-filtros [data-order-filter="todo"]'));
+    click($('#pedidos-filtros [data-order-date="today"]'));
   });
 
   /*
@@ -940,10 +962,13 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     expect(tarjeta.querySelector('[data-order-select]')).toBeNull();
     expect(tarjeta.querySelector('[data-order-quick-status]')).toBeNull();
     click(tarjeta.querySelector('[data-order-more]'));
-    await waitFor(() => $('#sheet-body [data-order-quick-status]'), 'el menú del pedido');
-    expect($('#sheet-body [data-order-quick-status]').textContent).toContain('Cambiar el estado');
-    expect($('#sheet-body [data-order-quick-chat]')).toBeTruthy();
-    expect($('#sheet-body [data-order-select-toggle]')).toBeTruthy();
+    await waitFor(() => $('#side-drawer [data-order-quick-status]'), 'el menú del pedido');
+    expect($('#side-drawer [data-order-quick-status]').textContent).toContain('Cambiar el estado');
+    // El menú ya no repite lo que ya está a un toque: el pedido se abre con la fila.
+    expect($('#side-drawer [data-open]')).toBe(null);
+    expect($('#side-drawer [data-order-delivery]')).toBe(null);
+    expect($('#side-drawer [data-order-quick-chat]')).toBeTruthy();
+    expect($('#side-drawer [data-order-select-toggle]')).toBeTruthy();
     dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     // El color es del estado: lo entregado en verde y lo que falta, no.
     const tonos = $$('#list-pedidos .order-card').map((card) => card.className.match(/order-card--(\w+)/)?.[1] ?? '');
@@ -960,7 +985,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
       'la tarjeta del pedido abierto',
     );
     click(tarjeta.querySelector('[data-order-more]'));
-    const cambiar = await waitFor(() => $('#sheet-body [data-order-quick-status]'), 'el menú del pedido');
+    const cambiar = await waitFor(() => $('#side-drawer [data-order-quick-status]'), 'el menú del pedido');
     click(cambiar);
     await waitFor(() => $('#order-qs-confirm'), 'la hoja de estado');
     expect($('#sheet-body').textContent).toContain('Finalizar');
@@ -988,7 +1013,7 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
     for (const item of lote) {
       const tarjeta = await waitFor(() => $(`[data-order-card="${item.id}"]`), `la tarjeta del pedido ${item.id}`);
       click(tarjeta.querySelector('[data-order-more]'));
-      const marcar = await waitFor(() => $('#sheet-body [data-order-select-toggle]'), `la marca del pedido ${item.id}`);
+      const marcar = await waitFor(() => $('#side-drawer [data-order-select-toggle]'), `la marca del pedido ${item.id}`);
       click(marcar);
     }
     const barra = await waitFor(() => $('#pedidos-bulk:not([hidden]) .order-bulk'), 'la barra de la selección');

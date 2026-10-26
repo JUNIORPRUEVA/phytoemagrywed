@@ -7903,10 +7903,56 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
+      /*
+       * ALTA RÁPIDA DE UN REPARTIDOR EXTERNO.
+       *
+       * La regla de siempre sigue en pie: un externo solo se autoriza si su
+       * número está guardado como contacto de reparto (así no se autoriza un
+       * número escrito a la carrera). Lo que cambia es que el panel ya no manda a
+       * la persona a otro sitio: si viene nombre + teléfono, el contacto se guarda
+       * aquí mismo y la cuenta se crea en el mismo paso.
+       */
+      if (String(body.kind ?? '').toUpperCase() === 'EXTERNAL' && !body.contactId && !body.contact_id) {
+        const telefonoExterno = normalizeCourierPhone(body.phone ?? body.phone_e164);
+        const nombreExterno = text(body.displayName ?? body.display_name, 80);
+        if (telefonoExterno && nombreExterno) {
+          const actuales = (await ctx.settings.read('delivery_contacts'))?.value;
+          const lista = Array.isArray(actuales) ? actuales : [];
+          const guardado = lista.find((row) => row.phone === telefonoExterno) ?? null;
+          const contacto = guardado ?? {
+            id: `contact_${randomUUID().replaceAll('-', '').slice(0, 16)}`,
+            name: nombreExterno,
+            phone: telefonoExterno,
+            concept: 'Reparto',
+            updated_at: new Date().toISOString(),
+          };
+          if (!guardado) {
+            await ctx.settings.write('delivery_contacts', [...lista, contacto].slice(-100));
+          }
+          body.contactId = contacto.id;
+        }
+      }
       const at = new Date().toISOString();
       const normalized = normalizeCourierAccountInput(body, { now: at });
       if (!normalized.ok) {
-        json(res, 422, { ok: false, error: normalized.error, message: 'Los datos de la cuenta no son válidos.' });
+        /*
+         * Cada rechazo con su motivo legible: "los datos no son válidos" no dice
+         * QUÉ corregir, y el panel mostraba ese texto genérico.
+         */
+        const MENSAJES = {
+          invalid_kind: 'Elige el tipo de repartidor (externo o interno).',
+          invalid_phone: 'Escribe el teléfono completo con código de país, por ejemplo +18095551234.',
+          invalid_display_name: 'Escribe el nombre del repartidor.',
+          invalid_pin: 'El PIN debe tener al menos 6 caracteres.',
+          external_requires_contact: 'Falta el contacto de reparto de ese teléfono: escríbelo completo con el código de país (+1…) para que se cree, o guárdalo antes en Contactos.',
+          internal_requires_user: 'Elige el usuario del CRM para la cuenta interna.',
+          invalid_user: 'Ese usuario del CRM no existe o está inactivo.',
+        };
+        json(res, 422, {
+          ok: false,
+          error: normalized.error,
+          message: MENSAJES[normalized.error] ?? 'Los datos de la cuenta no son válidos.',
+        });
         return;
       }
       const value = normalized.value;
@@ -8071,6 +8117,26 @@ async function handle(req, res, ctx) {
           return;
         }
         patch.display_name = name;
+      }
+      /*
+       * CORREGIR EL TELÉFONO.
+       *
+       * Es el dato con el que el repartidor entra en la app y con el que se le
+       * escribe: si se escribió mal, hay que poder arreglarlo sin borrar la
+       * cuenta (que se lleva por delante el historial y las empresas).
+       */
+      if (body.phone !== undefined || body.phone_e164 !== undefined) {
+        const telefono = normalizeCourierPhone(body.phone ?? body.phone_e164);
+        if (!telefono) {
+          json(res, 422, { ok: false, error: 'invalid_phone', message: 'Escribe un teléfono válido con código de país.' });
+          return;
+        }
+        const otras = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
+        if (otras.some((row) => row.phone_e164 === telefono && row.id !== courierId)) {
+          json(res, 409, { ok: false, error: 'phone_in_use', message: 'Ese teléfono ya tiene una cuenta de acceso.' });
+          return;
+        }
+        patch.phone_e164 = telefono;
       }
       const newPin = body.pin ?? body.password;
       if (newPin !== undefined) {
@@ -14923,9 +14989,20 @@ export async function startCrmServer(config = {}) {
       config.bootstrapAdminPassword ||
       BOOTSTRAP_ADMIN_PASSWORD ||
       ((config.bootstrapAdminUser ?? BOOTSTRAP_ADMIN_USER) ? settings.token : ''),
-    firstName: config.bootstrapAdminFirstName ?? 'Ana',
-    lastName: config.bootstrapAdminLastName ?? 'Admin',
-    displayName: config.bootstrapAdminDisplayName ?? 'Ana Admin',
+    /*
+     * EL NOMBRE NO TIENE VALOR POR DEFECTO, a propósito.
+     *
+     * `ensureBootstrapAdmin` reaplica estos campos en CADA arranque si vienen
+     * informados. Con los valores fijos de antes («Ana» / «Admin» / «Ana
+     * Admin»), cualquier reinicio del servidor borraba el nombre que la persona
+     * había guardado en su perfil y volvía a aparecer «Ana Admin». Ahora solo se
+     * envían si vienen de configuración explícita; si no, se conserva lo que ya
+     * está guardado. Al crear el administrador por primera vez, `createUser`
+     * aplica sus propios valores por defecto.
+     */
+    firstName: config.bootstrapAdminFirstName,
+    lastName: config.bootstrapAdminLastName,
+    displayName: config.bootstrapAdminDisplayName,
   });
   const legacyInventory = createInventoryService({ db, store, audit, timeZone: TIME_ZONE, clock: config.clock });
   const storeCatalog = await createStoreCatalog({backend:db.kind,handle:store.handle,legacyInventory,clock:config.clock,storeKey:config.storeKey ?? STORE_KEY});

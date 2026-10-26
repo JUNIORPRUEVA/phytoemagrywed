@@ -1079,7 +1079,7 @@ describe('preferencias del pedido del cliente', () => {
       'la ficha completa del cliente',
       9000,
     );
-    expect($('#customer-profile').textContent).toContain('Preferencias del pedido');
+    expect($('#customer-profile').textContent).toContain('Información guardada de pedido');
     expect($('#customer-profile').textContent).toContain('Compras');
 
     $('#prefs-variant').value = 'capsules_15';
@@ -1267,17 +1267,17 @@ describe('la foto del cliente', () => {
     click('#wa-chat-avatar');
     // La ficha se pinta dos veces (lo que ya sabemos y luego lo que confirma el
     // servidor): se espera a la segunda, que es la que trae la foto.
-    const cambiar = await waitFor(
-      () => ($('#customer-photo-pick')?.textContent.includes('Cambiar foto') ? $('#customer-photo-pick') : null),
-      'los controles de foto en la ficha',
+    const conFoto = await waitFor(
+      () => $('.profile-head__photo'),
+      'la foto en la cabecera de la ficha',
       9000,
     );
-    expect(cambiar.textContent).toContain('Cambiar foto');
+    // La foto real se enseña pequeña en la cabecera compacta (sin bloque enorme).
+    expect(conFoto.getAttribute('data-profile-photo')).toBe(FOTO);
+    expect(conFoto.getAttribute('style')).toContain(FOTO.slice(0, 40));
+    expect($('#customer-photo-pick')).not.toBeNull();
     expect($('#customer-photo-clear')).not.toBeNull();
     expect($('#customer-photo-file').getAttribute('accept')).toContain('image/');
-    const hero = $('.profile-hero');
-    expect(hero.className).toContain('profile-hero--photo');
-    expect(hero.getAttribute('style')).toContain(FOTO.slice(0, 40));
   }, 15000);
 
   it('se puede quitar y vuelven las iniciales', async () => {

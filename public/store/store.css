@@ -89,3 +89,11 @@
 .checkout-summary p { margin: 6px 0; font-size: .85rem; line-height: 1.45; }
 .checkout-method { background: var(--paper); color: var(--ink); border-color: var(--line); min-height: 44px; }
 .checkout-method:focus-within { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* ------------------------------------------------------------- COMPRAR */
+/* Pantalla de compra: la portada sin adornos, con TODOS los productos. */
+.ft-buy { padding: 0 0 18px; }
+.ft-buy__head { margin: 12px var(--ft-pad) 2px; }
+.ft-buy__head h1 { margin: 0 0 3px; font-size: 22px; letter-spacing: -.5px; }
+.ft-buy__head p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.ft-buy #buy-count { margin: 6px var(--ft-pad); }

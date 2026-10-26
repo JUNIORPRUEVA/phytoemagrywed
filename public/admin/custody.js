@@ -62,17 +62,47 @@ function tagFor(row) {
   return '<span class="tag none">Sin movimientos</span>';
 }
 
+/*
+ * LOS FILTROS, EN EL CAJÓN.
+ *
+ * Antes eran un desplegable suelto en la barra de herramientas. Aquí son filas
+ * con su número real, en el mismo cajón del 70 % que usan Pedidos, Clientes y
+ * Repartidores: el gesto (deslizar el dedo) y el sitio son los mismos en toda la
+ * app.
+ */
+const FILTROS_CUSTODIA = [
+  ['all', 'Todos los repartidores', () => true],
+  ['pending', 'Con saldo pendiente', (row) => Number(row.pending_cents) > 0],
+  ['settled', 'Conciliados', (row) => Number(row.charged_cents) > 0 && Number(row.pending_cents) === 0],
+  ['risk', 'Con diferencia (sobrerrendido)', (row) => Number(row.pending_cents) < 0],
+];
+
+function renderFiltros() {
+  const caja = $('#filtros-opciones');
+  if (!caja) return;
+  const actual = $('#filter')?.value ?? 'all';
+  caja.innerHTML = FILTROS_CUSTODIA.map(([valor, texto, prueba]) => {
+    const total = state.couriers.filter(prueba).length;
+    return `<button class="fopt" type="button" data-filtro="${valor}" aria-pressed="${valor === actual ? 'true' : 'false'}">${esc(texto)}<em>${total}</em></button>`;
+  }).join('');
+  const nota = $('#filters-note');
+  if (nota) {
+    const elegido = FILTROS_CUSTODIA.find(([valor]) => valor === actual);
+    nota.textContent = actual === 'all' ? 'Custodia por repartidor' : elegido?.[1] ?? 'Custodia por repartidor';
+  }
+}
+
 function renderTable() {
   const term = $('#search').value.trim().toLowerCase();
   const filter = $('#filter').value;
   const orders = ordersByCourier();
   const rows = state.couriers.filter((row) => {
     if (term && !`${row.courier_name ?? ''} ${row.courier_id ?? ''}`.toLowerCase().includes(term)) return false;
-    if (filter === 'pending') return Number(row.pending_cents) > 0;
-    if (filter === 'settled') return Number(row.charged_cents) > 0 && Number(row.pending_cents) === 0;
-    if (filter === 'risk') return Number(row.pending_cents) < 0;
-    return true;
+    const prueba = FILTROS_CUSTODIA.find(([valor]) => valor === filter)?.[2];
+    return prueba ? prueba(row) : true;
   });
+  const contador = $('#couriers-count');
+  if (contador) contador.textContent = String(rows.length);
   if (!rows.length) {
     $('#couriers').innerHTML = '<tr><td colspan="7" class="empty">No hay repartidores con movimientos de custodia.</td></tr>';
     return;
@@ -189,9 +219,11 @@ async function load() {
     $('#workspace').hidden = false;
     renderCards();
     renderTable();
-    renderIncidents();
     renderReconciliation();
-    $('#updated').textContent = `Actualizado ${new Date().toLocaleTimeString('es-DO')}`;
+    renderIncidents();
+    renderFiltros();
+    const marca = $('#updated');
+    if (marca) marca.textContent = `Actualizado ${new Date().toLocaleTimeString('es-DO')}`;
     notice('Custodia actualizada.');
     if (state.selected) {
       state.selected = state.couriers.find((row) => row.courier_id === state.selected.courier_id) ?? null;
@@ -214,16 +246,54 @@ $('#login').onsubmit = async (event) => {
     await load();
   } catch (error) { notice(error.message); }
 };
-$('#refresh').onclick = load;
+$('#refresh').onclick = async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { await load(); } finally { button.disabled = false; }
+};
 $('#search').oninput = renderTable;
-$('#filter').onchange = renderTable;
+/*
+ * LOS FILTROS DEL CAJÓN.
+ *
+ * El cajón solo cambia el valor del filtro (el `<input hidden>` de siempre) y
+ * repinta: la tabla sigue siendo la misma de antes, sin lógica nueva.
+ */
+document.addEventListener('click', (event) => {
+  const opcion = event.target.closest('[data-filtro]');
+  if (opcion) {
+    const caja = $('#filter');
+    if (caja) caja.value = opcion.dataset.filtro ?? 'all';
+    renderFiltros();
+    renderTable();
+    return;
+  }
+  if (event.target.closest('[data-filters-clear]')) {
+    const caja = $('#filter');
+    if (caja) caja.value = 'all';
+    renderFiltros();
+    renderTable();
+  }
+});
 $('#couriers').addEventListener('click', (event) => {
   const id = event.target.closest('[data-courier]')?.dataset.courier;
   if (!id) return;
   state.selected = state.couriers.find((row) => String(row.courier_id) === id) ?? null;
   renderDrawer();
 });
-$('#d-close').onclick = () => $('#drawer').removeAttribute('open');
+$('#d-close').onclick = () => cerrarCajon();
+/*
+ * EL CAJÓN SE CIERRA COMO CUALQUIER OTRO DEL PANEL: con Escape y tocando fuera.
+ * Antes solo se cerraba con el botón, que en el teléfono queda lejos del pulgar.
+ */
+function cerrarCajon() {
+  $('#drawer').removeAttribute('open');
+}
+$('#drawer').addEventListener('click', (event) => {
+  if (event.target === $('#drawer')) cerrarCajon();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && $('#drawer').hasAttribute('open')) cerrarCajon();
+});
 
 /*
  * REGISTRAR LA REVISIÓN DE UN MOVIMIENTO AMBIGUO.

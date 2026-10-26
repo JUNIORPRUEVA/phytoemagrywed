@@ -6,8 +6,8 @@
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#145bd7" />
     <meta name="color-scheme" content="light dark" />
-    <title>CRM · FullTECH</title>
-    <meta name="description" content="Panel de FullTECH: clientes, WhatsApp, pedidos y seguimiento." />
+    <title>FT CRM</title>
+    <meta name="description" content="Panel de FT CRM: clientes, WhatsApp, pedidos y seguimiento." />
 
     <!--
       EL TEMA, ANTES DE PINTAR NADA.
@@ -69,17 +69,17 @@
       html[data-theme="dark"] { background-color: #0b1424; }
     </style>
     <!-- PWA: se instala en el móvil y abre a pantalla completa -->
-    <link rel="manifest" href="/admin/manifest.json?v=3" />
-    <link rel="icon" href="/admin/fulltech-favicon.png?v=3" sizes="32x32" type="image/png" />
-    <link rel="icon" href="/admin/fulltech-icon-192.png?v=3" sizes="192x192" type="image/png" />
-    <link rel="apple-touch-icon" href="/admin/fulltech-apple-touch-icon.png?v=3" />
+    <link rel="manifest" href="/admin/manifest.json?v=ftcrm-2" />
+    <link rel="icon" href="/admin/assets/branding/fulltech-crm-32.png?v=ftcrm-2" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/admin/assets/branding/fulltech-crm-192.png?v=ftcrm-2" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="/admin/assets/branding/fulltech-crm-180.png?v=ftcrm-2" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="FullTECH" />
+    <meta name="apple-mobile-web-app-title" content="FT CRM" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=hoy-cero-1" />
+    <link rel="stylesheet" href="/admin/admin.css?v=expediente-5" />
     <link rel="stylesheet" href="/admin/store.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/product-editor.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
@@ -90,10 +90,10 @@
       El sistema del shell (tema, barra superior, navbar, drawer y marca) va
       DESPUÉS de admin.css a propósito: es la última palabra sobre esas piezas.
     -->
-    <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-3" />
+    <link rel="stylesheet" href="/admin/shell-v2-tema.css?v=fulltech-4" />
     <link rel="stylesheet" href="/admin/settings.css?v=fulltech-1" />
     <link rel="stylesheet" href="/admin/chat-sharing.css?v=3" />
-    <link rel="stylesheet" href="/admin/fulltech.css?v=4" />
+    <link rel="stylesheet" href="/admin/fulltech.css?v=ftcrm-4" />
     <link rel="stylesheet" href="/admin/navigation.css?v=chat-ai-4" />
     <link rel="stylesheet" href="/admin/menus-safe-area.css?v=3" />
     <link rel="stylesheet" href="/admin/proofreading.css?v=11" />
@@ -197,22 +197,26 @@
     </style>
   </head>
   <body>
-    <div class="splash" id="splash" role="status" aria-live="polite">
+    <!--
+      ARRANQUE: SOLO EL LOGO.
+      Antes había una barra animada, el texto «Preparando tu espacio de trabajo»
+      y el nombre de la marca debajo; se quitaron porque el panel abre en
+      décimas y eso solo añadía sensación de espera. Aquí queda el mismo logo
+      del icono del teléfono, sin ningún texto.
+    -->
+    <div class="splash" id="splash" role="status" aria-live="polite" aria-label="Cargando FT CRM">
       <div class="splash__mark">
-        <img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="96" height="96" fetchpriority="high" decoding="async" />
+        <img src="/admin/assets/branding/fulltech-crm-mark.png" alt="" width="84" height="84" fetchpriority="high" decoding="async" />
       </div>
-      <p class="splash__brand">FullTECH</p>
-      <p class="splash__text">Preparando tu espacio de trabajo</p>
-      <span class="splash__bar" aria-hidden="true"></span>
     </div>
 
     <!-- ------------------------------------------------------------- ENTRAR -->
     <main id="login" class="login" hidden>
       <section class="login__card" aria-labelledby="login-title">
         <span class="login__mark">
-          <img class="login__logo" src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="54" height="54" decoding="async" />
+          <img class="login__logo" src="/admin/assets/branding/fulltech-crm-256.png" alt="" width="54" height="54" decoding="async" />
         </span>
-        <h1 class="login__title" id="login-title">FullTECH <span>CRM</span></h1>
+        <h1 class="login__title" id="login-title">FT <span>CRM</span></h1>
         <p class="login__lede">Acceso privado del equipo</p>
         <form id="login-form" class="login__form" autocomplete="on">
           <label class="field">
@@ -305,7 +309,7 @@
         <div class="drawer__head">
           <button class="drawer__brand" data-tab="perfil" type="button" aria-label="Abrir mi perfil">
             <span class="drawer__logo" aria-hidden="true">
-              <img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="26" height="26" decoding="async" />
+              <img src="/admin/assets/branding/fulltech-crm-256.png" alt="" width="26" height="26" decoding="async" />
             </span>
             <span class="drawer__identity">
               <strong>FullTECH</strong>
@@ -395,16 +399,16 @@
                 <button class="drawer__item drawer__item--sub" data-tab="mapa" type="button" data-permission="delivery.tracking.manage_all">
                   <span class="drawer__icon" aria-hidden="true" data-icon="pin"></span>Mapa
                 </button>
-                <a class="drawer__item drawer__item--sub" href="/admin/custody.html">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="send"></span>Custodia y rendiciones
+                <a class="drawer__item drawer__item--sub" href="/admin/custody.html?v=tema-3">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="img:custody"></span>Custodia y rendiciones
                 </a>
                 <!--
                   REPARTIDORES: solicitudes de ingreso, aprobación y empresas
                   autorizadas. Es una página propia (como Custodia) para no
                   engordar esta vista; comparte estilos y navegación.
                 -->
-                <a class="drawer__item drawer__item--sub" href="/admin/couriers.html" data-permission="delivery.manage">
-                  <span class="drawer__icon" aria-hidden="true" data-icon="user"></span>Repartidores
+                <a class="drawer__item drawer__item--sub" href="/admin/couriers.html?v=reparto-3" data-permission="delivery.manage">
+                  <span class="drawer__icon" aria-hidden="true" data-icon="img:couriers"></span>Repartidores
                 </a>
                 <!--
                   «MIS ENTREGAS» SE RETIRÓ DEL CRM.
@@ -670,8 +674,8 @@
           -->
           <div class="chips chips--groups" id="clientes-grupos" role="group" aria-label="Filtrar clientes por grupo de negocio"></div>
           <p class="view__count" id="clientes-count"></p>
-          <button class="client-fab" id="clientes-acciones" type="button" aria-label="Acciones de clientes" title="Acciones de clientes">
-            <span class="ico" aria-hidden="true" data-icon="plus"></span>
+          <button class="client-fab" id="clientes-acciones" type="button" aria-label="Menú de clientes" title="Menú de clientes">
+            <span class="ico" aria-hidden="true" data-icon="actions"></span>
           </button>
           <div class="list" id="list-clientes"></div>
         </section>
@@ -754,6 +758,18 @@
         <!-- PERFIL DEL CLIENTE -->
         <section class="view view--customer-profile" id="view-perfil-cliente" hidden>
           <div id="customer-profile"></div>
+        </section>
+
+        <!--
+          PEDIDO EN PÁGINA COMPLETA.
+
+          Tocar una fila de Pedidos entra aquí (antes se abría una hoja a media
+          pantalla y las acciones tapaban el contenido). Mismo acabado plano que
+          la ficha del cliente: barra con el volver arriba y secciones que se
+          abren al tocarlas.
+        -->
+        <section class="view view--customer-profile" id="view-pedido" hidden>
+          <div id="pedido-ficha"></div>
         </section>
 
         <!--
@@ -842,16 +858,7 @@
             aria-label="Acciones de los pedidos"
             title="Acciones de los pedidos"
           >
-            <span class="ico" aria-hidden="true" data-icon="spark"></span>
-          </button>
-          <button
-            class="client-fab list-fab"
-            id="compra-nueva-ped"
-            type="button"
-            aria-label="Registrar compra de un cliente"
-            title="Registrar compra"
-          >
-            <span class="ico" aria-hidden="true" data-icon="plus"></span>
+            <span class="ico" aria-hidden="true" data-icon="actions"></span>
           </button>
         </section>
 
@@ -1218,7 +1225,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=hoy-cero-1" defer></script>
+    <script src="/admin/app.js?v=ftcrm-7" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>

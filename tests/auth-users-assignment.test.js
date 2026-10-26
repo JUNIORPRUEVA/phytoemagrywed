@@ -200,6 +200,56 @@ describe('multiusuario, auth y asignación', () => {
     }
   });
 
+  it('un reinicio no devuelve el nombre del administrador al valor por defecto', async () => {
+    /*
+     * Regresión: el arranque pasaba «Ana Admin» como nombre de bootstrap, así que
+     * cada reinicio machacaba el nombre guardado y el perfil volvía a decir «Ana».
+     */
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'phyto-bootstrap-nombre-'));
+    const config = {
+      port: 0,
+      host: '127.0.0.1',
+      dataFile: path.join(dir, 'phytoemagry.sqlite'),
+      token: TOKEN,
+      quiet: true,
+      bootstrapAdminUser: 'junior@phyto.local',
+      bootstrapAdminPassword: 'Clave-Junior-12345',
+    };
+    let first = null;
+    let second = null;
+    const entrar = async (instance) => {
+      const response = await fetch(`${instance.url}/api/admin/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'junior@phyto.local', password: 'Clave-Junior-12345' }),
+      });
+      return { response, cookie: (response.headers.get('set-cookie') ?? '').split(';')[0], body: await body(response) };
+    };
+    try {
+      first = await startCrmServer(config);
+      const open = await entrar(first);
+      expect(open.response.status).toBe(200);
+      const saved = await fetch(`${first.url}/api/admin/users/me`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', cookie: open.cookie },
+        body: JSON.stringify({ displayName: 'Junior', firstName: 'Junior' }),
+      });
+      expect(saved.status).toBe(200);
+      expect((await body(saved)).user).toMatchObject({ display_name: 'Junior' });
+      await first.close();
+      first = null;
+
+      second = await startCrmServer(config);
+      const again = await entrar(second);
+      expect(again.response.status).toBe(200);
+      expect(again.body.user).toMatchObject({ display_name: 'Junior', first_name: 'Junior' });
+    } finally {
+      await first?.close?.();
+      await second?.close?.();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rechaza ruta privada sin sesión y login incorrecto sin enumerar usuarios', async () => {
     expect((await request('/api/admin/data', {}, '')).status).toBe(401);
     const wrong = await login('nadie@phyto.local', 'contraseña-mala');

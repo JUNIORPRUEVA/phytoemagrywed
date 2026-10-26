@@ -879,6 +879,81 @@ body[data-drawer='open'] .burger span:nth-child(3),
   color: var(--pe-brand-text);
 }
 
+/*
+ * EL CAJÓN DE ACCIONES DE NOCHE.
+ *
+ * Era blanco fijo: en modo oscuro el título y las notas quedaban texto claro
+ * sobre blanco (ilegible) y los botones oscuros sobre una hoja blanca. Ahora
+ * usa el mismo fondo de hoja y los mismos bordes que los paneles de filtros.
+ */
+:root[data-theme='dark'] .side-drawer {
+  border-left-color: var(--pe-border);
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: -22px 0 46px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme='dark'] .side-drawer__head strong {
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .side-drawer__head small {
+  color: var(--text-secondary);
+}
+
+:root[data-theme='dark'] .side-drawer__close {
+  border-color: var(--pe-border);
+  background: var(--pe-chip-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .side-drawer__note {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+:root[data-theme='dark'] .side-drawer .menu-item {
+  border-color: var(--pe-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme='dark'] .side-drawer-scrim {
+  background: rgba(3, 8, 18, 0.62);
+}
+
+/* La ficha del cliente, de noche: mismas filas plegables, fondo de hoja. */
+:root[data-theme='dark'] .profile-fold {
+  border-color: var(--pe-border);
+  background: var(--surface);
+}
+
+:root[data-theme='dark'] .profile-fold > summary {
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .profile-fold__note {
+  color: var(--text-secondary);
+}
+
+:root[data-theme='dark'] .profile-more > summary {
+  color: var(--pe-brand-text);
+}
+
+:root[data-theme='dark'] body[data-tab='clientes'] .wa-filter-panel__close,
+:root[data-theme='dark'] body[data-tab='pedidos'] .wa-filter-panel__close {
+  border-color: var(--pe-border);
+  background: var(--pe-chip-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] body[data-tab='clientes'] .wa-filter-panel__head strong {
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] body[data-tab='clientes'] .wa-filter-panel__head small {
+  color: var(--text-secondary);
+}
+
 /* Las iniciales del avatar: color de marca sobre su propio tono, no verde
    oscuro sobre una pastilla clara (que en oscuro se perdía). */
 :root[data-theme='dark'] .avatar {

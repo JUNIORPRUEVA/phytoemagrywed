@@ -434,14 +434,20 @@
     metrics: null,
     metricsPeriod: '30d',
     orderId: null,
+    /** Pedido abierto en su PÁGINA completa (no en la hoja). */
+    orderPageId: null,
     previousTab: null,
     customerProfile: null,
     customerProfileLoading: false,
     customerProfileOrderId: null,
     customerHistoryFilter: 'all',
+    /** Texto de la búsqueda DENTRO del expediente abierto (no es la global). */
+    profileQuery: '',
     customerCampaignPreview: null,
     tab: 'hoy',
     filter: 'todos',
+    /** Fecha de INGRESO del cliente (cuándo entró al CRM). Por defecto, todas. */
+    clientDate: { mode: 'all', from: '', to: '' },
     q: '',
     /*
      * VIAJES TEMPORALES DESDE HOY (por pestaña de destino).
@@ -710,6 +716,12 @@
     /* Ajustes = mandos que se deslizan (un engranaje aquí se confundía con el sol de Hoy). */
     gear: svg('<path d="M4 7.4h9M17.4 7.4H20M4 16.6h2.6M11 16.6h9"/><circle cx="15.2" cy="7.4" r="2.2"/><circle cx="8.8" cy="16.6" r="2.2"/>'),
     close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
+    /*
+     * «ACCIONES»: tres renglones, cada uno con su punto y su pastilla. Es el
+     * icono con el que se abre el menú lateral en Pedidos y Clientes (el de
+     * chispas se leía como «IA» y el «+» como «agregar»).
+     */
+    actions: svg('<circle cx="4.7" cy="6.1" r="2.1" fill="currentColor" stroke="none"/><rect x="9.6" y="4" width="11.2" height="4.2" rx="2.1"/><circle cx="4.7" cy="12" r="2.1" fill="currentColor" stroke="none"/><rect x="9.6" y="9.9" width="11.2" height="4.2" rx="2.1"/><circle cx="4.7" cy="17.9" r="2.1" fill="currentColor" stroke="none"/><rect x="9.6" y="15.8" width="11.2" height="4.2" rx="2.1"/>'),
     back: svg('<path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/>'),
     /*
      * FLECHA DE LA BANDEJA DE WHATSAPP: el trazo suelto de `flecha-izquierda.png`
@@ -1612,8 +1624,8 @@
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     setTimeout(() => {
       splash.classList.add('splash--hide');
-      setTimeout(() => { splash.hidden = true; }, reducedMotion ? 0 : 180);
-    }, reducedMotion ? 0 : Math.max(0, 120 - (performance.now() - splashStartedAt)));
+      setTimeout(() => { splash.hidden = true; }, reducedMotion ? 0 : 140);
+    }, reducedMotion ? 0 : Math.max(0, 40 - (performance.now() - splashStartedAt)));
   }
 
   function showLogin(message = '') {
@@ -2149,6 +2161,7 @@
     usuarios: [['usuarios', renderUsuarios]],
     perfil: [['perfil', renderPerfil]],
     'perfil-cliente': [['ficha del cliente', renderCustomerProfile]],
+    pedido: [['detalle del pedido', renderOrderPage]],
   };
 
   /*
@@ -2750,11 +2763,42 @@
       </div>`;
       return;
     }
+    /*
+     * LA PÁGINA DEL PEDIDO TIENE SU BARRA: VOLVER A PEDIDOS Y EL NÚMERO AL LADO.
+     *
+     * Es una pantalla completa (no una hoja), así que necesita el mismo volver
+     * que el expediente del cliente: redondo, a la izquierda y con el título
+     * pegado para no gastar una franja entera.
+     */
+    if (state.tab === 'pedido') {
+      const pedido = state.items.find((row) => row.id === state.orderPageId) ?? null;
+      const titulo = pedido ? pedido.order_number ?? pedido.name ?? 'Pedido' : 'Pedido';
+      box.innerHTML = `<div class="simple-head simple-head--expediente">
+        <button class="simple-head__back" data-simple-back type="button" aria-label="Volver a Pedidos">${ICONS.back}</button>
+        <strong>${escapeHtml(titulo)}</strong>
+      </div>`;
+      return;
+    }
+    /*
+     * EL EXPEDIENTE LLEVA SU BARRA: VOLVER A LA IZQUIERDA Y EL NOMBRE AL LADO.
+     *
+     * El nombre se dice UNA sola vez (aquí, en la barra) y el contenido empieza
+     * alineado al borde: ni botón flotante tapando la cabecera ni nombre repetido
+     * dentro del contenido.
+     */
+    if (state.tab === 'perfil-cliente') {
+      const cliente = state.customerProfile?.customer;
+      box.innerHTML = `<div class="simple-head simple-head--expediente">
+        <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
+        <strong>${escapeHtml(cliente ? customerName(cliente) : 'Expediente del cliente')}</strong>
+      </div>`;
+      return;
+    }
     box.innerHTML = `<div class="simple-head">
       <button class="simple-head__back" data-simple-back type="button" aria-label="Regresar">${ICONS.back}</button>
       ${
         state.tab === 'perfil'
-          ? '<img class="simple-head__logo" src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="24" height="24" decoding="async" aria-hidden="true">'
+          ? '<img class="simple-head__logo" src="/admin/assets/branding/fulltech-crm-256.png" alt="" width="24" height="24" decoding="async" aria-hidden="true">'
           : ''
       }
       <strong>${escapeHtml(currentViewTitle())}</strong>
@@ -2784,7 +2828,7 @@
      */
     const rolMostrado = user?.role ?? (state.auth?.legacy ? 'ADMIN' : null);
     brand.innerHTML = `
-      <span class="drawer__logo" aria-hidden="true"><img src="/admin/fulltech-logo-transparent.png?v=1" alt="" width="26" height="26" /></span>
+      <span class="drawer__logo" aria-hidden="true"><img src="/admin/assets/branding/fulltech-crm-256.png" alt="" width="26" height="26" /></span>
       <span class="drawer__identity"><strong>${escapeHtml(name)}</strong><span class="drawer__role">${escapeHtml(
         roleLabel(rolMostrado),
       )}</span></span>
@@ -3819,6 +3863,9 @@
       const buscado = String(state.clientGroup).toLocaleLowerCase('es');
       rows = rows.filter((customer) => customerGroups(customer).some((group) => group.toLocaleLowerCase('es') === buscado));
     }
+    // La FECHA DE INGRESO también se combina con lo anterior (no lo borra).
+    const rangoFecha = clientDateRange();
+    if (rangoFecha.mode !== 'all') rows = rows.filter((customer) => customerInDateRange(customer, rangoFecha));
     if (q) {
       const needle = q.toLowerCase();
       rows = rows.filter((customer) =>
@@ -3935,8 +3982,17 @@
   function renderClientes() {
     document.body.dataset.clientFilters = state.clientFiltersOpen ? 'open' : 'closed';
     renderClientGroupChips();
+    /* Los dos grupos del panel (estado y fecha) se marcan con lo que está puesto. */
+    const rango = clientDateRange();
+    $$('#chips [data-filter]').forEach((boton) =>
+      boton.setAttribute('aria-pressed', String(boton.dataset.filter === state.filter)),
+    );
+    $$('#chips [data-client-date]').forEach((boton) =>
+      boton.setAttribute('aria-pressed', String(boton.dataset.clientDate === rango.mode)),
+    );
     const customers = filteredCustomers();
-    $('#clientes-count').textContent = `${customers.length} de ${state.customers.length} clientes`;
+    const nombreRango = rango.mode === 'all' ? '' : ` · ${String(rango.label).toLowerCase()}`;
+    $('#clientes-count').textContent = `${customers.length} de ${state.customers.length} clientes${nombreRango}`;
     $('#list-clientes').innerHTML = customers.length
       ? customers.map(customerRow).join('')
       : emptyState('No hay clientes con este filtro.');
@@ -4068,23 +4124,15 @@
   }
 
   function renderCustomerCampaignFab() {
-    let button = $('#customer-campaign-fab');
-    const visible = isAdmin() && state.tab === 'clientes';
-    if (!visible) {
-      button?.remove();
-      return;
-    }
-    if (!button) {
-      button = document.createElement('button');
-      button.id = 'customer-campaign-fab';
-      button.className = 'campaign-fab';
-      button.type = 'button';
-      button.dataset.customerCampaignOpen = '1';
-      button.setAttribute('aria-label', 'Programar campaña de WhatsApp');
-      button.title = 'Programar campaña de WhatsApp';
-      button.innerHTML = ICONS.send;
-      document.body.append(button);
-    }
+    /*
+     * LA CAMPAÑA YA NO TIENE BOTÓN PROPIO.
+     *
+     * Era un segundo botón flotante en la esquina de Clientes que competía con
+     * el de acciones (y se confundía con una campana). «Crear campaña» vive
+     * dentro del menú de Clientes, con su explicación, y aquí solo se retira el
+     * botón viejo si quedó pegado de una versión anterior.
+     */
+    $('#customer-campaign-fab')?.remove();
   }
 
   async function openCustomerCampaignSheet() {
@@ -5174,10 +5222,24 @@
     const visibles = pedidosVisibles.length;
     const plural = n === 1 ? '' : 's';
     const sinSeleccion = `Marca primero los pedidos (el «⋯» de cada uno → Marcar para acciones en lote). Ahora hay ${visibles} a la vista.`;
-    openSheetActionMenu({
+    openSideDrawer({
       title: 'Pedidos',
-      nota: n ? `${n} pedido${plural} seleccionado${plural}: las acciones de abajo se aplican a esos.` : sinSeleccion,
+      subtitle: 'Compras y entregas',
+      note: n ? `${n} pedido${plural} seleccionado${plural}: las acciones de abajo se aplican a esos.` : sinSeleccion,
       acciones: [
+        /*
+         * EL ALTA VIVE AQUÍ, NO EN UN SEGUNDO BOTÓN FLOTANTE.
+         *
+         * Había un «+» flotante debajo del de acciones y la esquina quedaba con
+         * dos botones para lo mismo. Registrar la compra es una acción de la
+         * lista: se hace desde este menú.
+         */
+        {
+          icon: ICONS.bag,
+          label: 'Registrar compra',
+          note: 'Alta de pedido para un cliente nuevo o existente',
+          data: { 'data-purchase': '' },
+        },
         {
           icon: ICONS.users,
           label: n ? 'Quitar la selección' : 'Seleccionar los que se ven',
@@ -5241,12 +5303,38 @@
     return operationalStatusLabel(estado);
   }
 
+  /**
+   * CUÁNDO SE FINALIZÓ EL PEDIDO.
+   *
+   * En la lista de entregados lo que se lee tiene que ser el DÍA DE LA ENTREGA,
+   * no «ayer» ni «hace 2 días»: al cuadrar el día o al reclamar una venta se
+   * necesita la fecha exacta. Se toma el sello del pedido (`delivered_at`), luego
+   * el del reparto y, en pedidos viejos que no lo traen, la última actualización
+   * del pedido —el mismo criterio que usa el servidor en el historial de
+   * entregados—. Si no hay ningún dato se dice: no se inventa una fecha.
+   */
+  function orderDeliveredAt(item, order = itemOrder(item) ?? {}) {
+    const status = String(order?.status ?? item?.status ?? '').toLowerCase();
+    return (
+      order?.delivered_at ??
+      order?.delivery?.delivery_delivered_at ??
+      order?.completed_at ??
+      (status === 'entregado' ? order?.updated_at ?? null : null)
+    );
+  }
+
   function orderRow(item, { pendiente = false } = {}) {
     const estado = orderOperational(item);
     const order = itemOrder(item) ?? {};
     const agente = orderAgent(item);
     const entregado = ['ENTREGADO', 'CANCELADO'].includes(estado);
     const repartidor = order.delivery?.delivery_user_name_snapshot ?? null;
+    const completedAt = estado === 'ENTREGADO' ? orderDeliveredAt(item, order) : null;
+    const when = completedAt
+      ? fmtBusinessDateTime(completedAt, { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
+      : estado === 'ENTREGADO'
+        ? 'Fecha de entrega sin registrar'
+        : fmtWhen(item.received_at);
     /*
      * CÓMO SE COBRÓ. Al cuadrar el día lo primero que se pregunta es si el dinero
      * entró en efectivo o por transferencia, así que tiene que verse EN LA PROPIA
@@ -5255,10 +5343,18 @@
      */
     const pago = orderPaymentMethodOf(item);
     const pagoTono = pago === 'CASH' ? 'cash' : pago === 'TRANSFER' ? 'transfer' : 'otro';
+    /*
+     * EL MONTO VA EN SU SITIO, NO AL FINAL DE UNA LÍNEA QUE SE CORTA.
+     *
+     * Estaba dentro de la línea de datos («PE-… · 5 cápsulas ×1 · DOP 1,250») y,
+     * con el nombre del producto largo, el precio era justo lo que desaparecía
+     * tras los puntos suspensivos. Ahora tiene su propio hueco al principio de
+     * la línea: cuánto se vendió se lee siempre.
+     */
+    const totalPedido = orderTotalOf(item) || null;
     const meta = [
       item.order_number ?? order.order_number ?? null,
       item.variant_name ? `${item.variant_name}${item.quantity ? ` ×${item.quantity}` : ''}` : null,
-      orderTotalOf(item) || null,
     ].filter(Boolean);
     /*
      * La referencia dice quién es el cliente (teléfono), quién atiende y si el
@@ -5274,12 +5370,13 @@
       .join(' · ');
     return `<button class="order-row order-row--${escapeHtml(
       estado.toLowerCase(),
-    )}" data-open="${escapeHtml(item.id)}" type="button">
+    )}" data-order-page="${escapeHtml(item.id)}" type="button">
       <span class="order-row__top">
         <strong class="order-row__name">${escapeHtml(item.name ?? 'Sin nombre')}</strong>
-        <span class="order-row__when">${escapeHtml(fmtWhen(item.received_at))}</span>
+        <span class="order-row__when"${completedAt ? ` title="Entregado: ${escapeHtml(fmtBusinessDateTime(completedAt))} (República Dominicana)"` : ''}>${escapeHtml(when)}</span>
       </span>
       <span class="order-row__bottom">
+        ${totalPedido ? `<span class="order-row__total">${escapeHtml(totalPedido)}</span>` : ''}
         <span class="order-row__meta">${escapeHtml(meta.join(' · '))}</span>
         ${
           pendiente
@@ -5324,16 +5421,17 @@
     const items = ordersNewestFirst(applyOutbox(state.items.filter((item) => item.type === 'order_intent')));
     const filter = state.pedidosFilter ?? 'todo';
     const range = orderDateRange();
+    const query = state.pedidosSearch.trim().toLowerCase();
+    const matchingSearch = query ? items.filter((item) => orderMatchesSearch(item, query)) : items;
     const porFecha = items.filter((item) => orderInDateRange(item, range));
+    const porFechaYBusqueda = matchingSearch.filter((item) => orderInDateRange(item, range));
     const byFilter = (value, pool) =>
       value === 'todo' ? pool : pool.filter((item) => orderOperational(item) === orderFilterValue(value));
-    /*
-     * Los chips de estado cuentan sobre TODOS los pedidos, no sobre los del día:
-     * un contador que baila al cambiar la fecha no sirve para decidir nada.
-     */
+    // Cada cifra del panel usa el otro filtro activo; al pulsarla, esa cantidad
+    // coincide con las filas que aparecen en la lista.
     $$('#pedidos-filtros [data-order-filter]').forEach((chip) => {
       const value = chip.dataset.orderFilter;
-      const total = byFilter(value, items).length;
+      const total = byFilter(value, porFechaYBusqueda).length;
       const base = ORDER_FILTERS.find(([known]) => known === value)?.[1] ?? 'Pedidos';
       chip.textContent = total ? `${base} ${total}` : base;
       chip.setAttribute('aria-pressed', String(value === filter));
@@ -5346,7 +5444,7 @@
      */
     $$('#pedidos-filtros [data-order-date]').forEach((chip) => {
       const modo = chip.dataset.orderDate;
-      const total = items.filter((item) => orderInDateRange(item, orderDateRange({ mode: modo, from: '', to: '' }))).length;
+      const total = byFilter(filter, matchingSearch.filter((item) => orderInDateRange(item, orderDateRange({ mode: modo, from: '', to: '' })))).length;
       const base = ORDER_DATE_LABELS[modo] ?? 'Fecha';
       chip.textContent = total ? `${base} ${total}` : base;
       chip.setAttribute('aria-pressed', String(range.mode === modo));
@@ -5356,19 +5454,17 @@
       chipIntervalo.textContent = range.mode === 'custom' ? `Intervalo · ${range.label}` : 'Intervalo…';
       chipIntervalo.setAttribute('aria-pressed', String(range.mode === 'custom'));
     }
-    const query = state.pedidosSearch.trim().toLowerCase();
-    const visibles = query ? byStatus.filter((item) => orderMatchesSearch(item, query)) : byStatus;
+    const visibles = byFilter(filter, porFechaYBusqueda);
     pedidosVisibles = visibles;
     const count = $('#pedidos-count');
     if (count) {
-      const total = items.length;
-      // La cuenta dice SIEMPRE de dónde salen los que se ven (si no, la lista
-      // parece vacía sin motivo cuando el filtro de fecha deja fuera lo demás).
-      count.textContent = !total
+      // El total es la intersección de estado y fecha antes de la búsqueda.
+      const total = byStatus.length;
+      count.textContent = !items.length
         ? ''
-        : visibles.length === total && !query && range.mode === 'all'
-          ? `${total} ${total === 1 ? 'pedido' : 'pedidos'}`
-          : `${visibles.length} de ${total} pedidos · ${orderDateName(range)}`;
+        : query
+          ? `${visibles.length} de ${total} pedidos · ${orderDateName(range)}`
+          : `${total} ${total === 1 ? 'pedido' : 'pedidos'} · ${orderDateName(range)}`;
     }
     renderOrderBulk();
     box.innerHTML = visibles.length
@@ -6238,6 +6334,14 @@
           ${html}
         </div>`
       : emptyState('No hay notificaciones.');
+    /*
+     * LAS NOTIFICACIONES SE ABREN EN CAJÓN, NO EN UNA HOJA BAJA.
+     *
+     * Son listas con su título, su texto y dos botones cada una: en una hoja a
+     * media pantalla se veía una y media. Ahora entra desde la derecha, con todo
+     * el alto y el 90 % del ancho, para leerlas enteras.
+     */
+    $('#sheet').dataset.variant = 'notices-drawer';
     $('#sheet').hidden = false;
   }
 
@@ -10288,14 +10392,21 @@
       $('#sheet').hidden = true;
       return;
     }
+    /*
+     * EL DETALLE DE PEDIDO USA EL MISMO ACABADO PLANO QUE EL EXPEDIENTE.
+     *
+     * Se marca la hoja para que las filas, los separadores y los campos sean los
+     * mismos que en la ficha del cliente; las demás hojas no cambian.
+     */
+    const hoja = $('#sheet');
+    if (hoja) {
+      if (item.type === 'order_intent') hoja.dataset.kind = 'pedido';
+      else delete hoja.dataset.kind;
+      // La ficha del pedido es una hoja normal, no el cajón de notificaciones.
+      delete hoja.dataset.variant;
+    }
     const phone = digits(item.phone);
     const operational = item.type === 'order_intent' ? orderOperational(item) : null;
-    const reminders = [
-      { label: 'Hoy', days: 0 },
-      { label: 'Mañana', days: 1 },
-      { label: '3 días', days: 3 },
-      { label: '1 semana', days: 7 },
-    ];
     $('#sheet-title').textContent = item.name ?? label(item.type);
     $('#sheet-body').innerHTML = `
       <div>
@@ -10352,33 +10463,43 @@
         </select>
       </label>
 
-      <div class="field">
+      ${
+        /*
+         * EL PEDIDO NO LLEVA RECORDATORIO EN LA FICHA.
+         *
+         * Sus cuatro chips y la fecha ocupaban media hoja; viven en el menú de
+         * acciones del botón flotante. El resto de fichas (mensajes, avisos)
+         * conservan aquí su recordatorio como siempre.
+         */
+        item.type === 'order_intent'
+          ? ''
+          : `<div class="field">
         <span class="field__label">Recordatorio</span>
         <div class="item__actions" style="margin-top:0">
-          ${reminders
+          ${[
+            ['Hoy', 0],
+            ['Mañana', 1],
+            ['3 días', 3],
+            ['1 semana', 7],
+          ]
             .map(
-              (option) =>
-                `<button class="chip" data-remind="${option.days}" data-id="${escapeHtml(item.id)}" type="button">${option.label}</button>`,
+              ([texto, days]) =>
+                `<button class="chip" data-remind="${days}" data-id="${escapeHtml(item.id)}" type="button">${texto}</button>`,
             )
             .join('')}
           <button class="chip" data-remind="clear" data-id="${escapeHtml(item.id)}" type="button">Quitar</button>
         </div>
         <input class="field__input" type="date" id="sheet-date" value="${escapeHtml(item.next_action_at ?? '')}" />
+      </div>`
+      }
+
+      <div class="field">
+        <span class="field__label">Notas</span>
+        <textarea class="field__area field__area--compact" id="sheet-notes" rows="2" placeholder="Qué dijo, cuándo pagar, a qué hora llamar…">${escapeHtml(item.notes ?? '')}</textarea>
+        <div class="profile-note-actions"><button class="btn btn--primary btn--sm" id="sheet-save" type="button">Guardar nota</button></div>
       </div>
 
-      <label class="field">
-        <span class="field__label">Notas</span>
-        <textarea class="field__area" id="sheet-notes" placeholder="Qué dijo, cuándo pagar, a qué hora llamar…">${escapeHtml(item.notes ?? '')}</textarea>
-      </label>
-      <button class="btn btn--primary btn--block" id="sheet-save" type="button">Guardar notas</button>
-
       ${metaBlock(item)}
-
-      ${
-        item.type === 'order_intent'
-          ? `<p class="view__hint">Factura, delivery, cliente, seguimiento y mensajes: en el botón <strong>✦</strong>, abajo a la derecha.</p>`
-          : ''
-      }
 
       ${sheetFabHtml(`data-item="${escapeHtml(item.id)}"`)}
     `;
@@ -10402,18 +10523,12 @@
     $('#sheet-status').addEventListener('change', (event) => {
       patchItem(item.id, { status: event.target.value }, `Estado: ${statusLabel(event.target.value)}`);
     });
-    $('#sheet-date').addEventListener('change', (event) => {
+    // Solo existe en las fichas que no son pedidos (ver comentario arriba).
+    $('#sheet-date')?.addEventListener('change', (event) => {
       patchItem(item.id, { nextActionAt: event.target.value }, event.target.value ? 'Recordatorio guardado' : 'Recordatorio quitado');
     });
     $('#sheet-save').addEventListener('click', () => {
       patchItem(item.id, { notes: $('#sheet-notes').value }, 'Notas guardadas');
-    });
-    $$('[data-remind]', $('#sheet')).forEach((button) => {
-      button.addEventListener('click', () => {
-        const days = button.dataset.remind;
-        const value = days === 'clear' ? '' : addDaysISO(Number(days));
-        patchItem(item.id, { nextActionAt: value }, value ? `Recordatorio: ${fmtDay(value)}` : 'Recordatorio quitado');
-      });
     });
   }
 
@@ -10516,6 +10631,8 @@
     const sheet = $('#sheet');
     if (variant) sheet.dataset.variant = variant;
     else delete sheet.dataset.variant;
+    // Las hojas genéricas (formularios) no llevan el acabado plano del pedido.
+    delete sheet.dataset.kind;
     sheet.hidden = false;
   }
 
@@ -10531,7 +10648,12 @@
     state.customerId = null;
     state.chat = null;
     pendingOptOut = null;
-    $('#sheet').hidden = true;
+    // El acabado plano del detalle de pedido no debe quedarse en otras hojas.
+    const hoja = $('#sheet');
+    delete hoja.dataset.kind;
+    // Tampoco el cajón de notificaciones: la próxima hoja es una hoja normal.
+    delete hoja.dataset.variant;
+    hoja.hidden = true;
   }
 
   /** Botón con estado "trabajando" (evita dos toques que envían dos mensajes). */
@@ -10866,6 +10988,37 @@
     ['clientes', 'Clientes'],
     ['recompra', 'Recompra'],
   ];
+
+  /**
+   * FECHAS DE INGRESO: SOLO HOY Y LOS INTERVALOS.
+   *
+   * «Ayer» era un día suelto que nadie usaba y obligaba a leer cinco chips en
+   * una columna estrecha. Se queda el reinicio («Todas»), hoy y los rangos.
+   */
+  const CLIENT_DATE_FILTERS = [
+    ['all', 'Todas'],
+    ['today', 'Hoy'],
+    ['7d', '7 días'],
+    ['month', 'Este mes'],
+  ];
+
+  const clientDateRange = (filter = state.clientDate) => waDateRange(filter ?? { mode: 'all' });
+
+  /**
+   * FILTRO POR FECHA DE INGRESO.
+   *
+   * Cuenta el día en que el cliente ENTRÓ al CRM (`created_at`), leído en la
+   * zona del negocio: es lo que se pregunta al revisar altas («¿cuántos entraron
+   * esta semana?»).
+   */
+  function customerInDateRange(customer, range = clientDateRange()) {
+    if (!range || range.mode === 'all') return true;
+    const day = businessDayISO(customer?.created_at ?? customer?.createdAt ?? '');
+    if (!day) return false;
+    if (range.from && day < range.from) return false;
+    if (range.to && day > range.to) return false;
+    return true;
+  }
 
   /**
    * « · Archivados» cuando hay un filtro puesto, y nada cuando es «todos».
@@ -15265,6 +15418,8 @@
     state.chat = null;
     state.customerId = customerId;
     state.customerProfileOrderId = null;
+    // La búsqueda del expediente es de ESTE cliente: al abrir otro se empieza limpio.
+    state.profileQuery = '';
     state.previousTab = state.tab === 'perfil-cliente' ? state.previousTab : state.tab;
     const customer = customerById(customerId) ?? (state.wa.chat?.customer?.id === customerId ? state.wa.chat.customer : null);
     state.customerProfile = customer ? { customer, totals: {}, purchases: [], followups: [], scheduled: [], loadingBasic: true } : null;
@@ -15286,11 +15441,186 @@
     return `<div class="fact"><dt>${escapeHtml(label)}</dt><dd>${content}</dd></div>`;
   }
 
-  function customerProfileSection(title, html, className = '') {
-    return `<section class="profile-card ${escapeHtml(className)}">
-      <h3>${escapeHtml(title)}</h3>
-      ${html}
-    </section>`;
+  /**
+   * SECCIÓN PLEGABLE DE LA FICHA.
+   *
+   * Antes cada bloque era una tarjeta ABIERTA: con doce tarjetas la ficha medía
+   * metros y lo importante quedaba enterrado. Ahora cada cosa es una fila con su
+   * título (y un resumen a la derecha) que se abre al tocarla.
+   */
+  function customerProfileSection(title, html, className = '', { open = false, note = '', id = '' } = {}) {
+    return `<details class="profile-fold ${escapeHtml(className)}"${id ? ` data-fold="${escapeHtml(id)}"` : ''}${open ? ' open' : ''}>
+      <summary>
+        <span class="profile-fold__title">${escapeHtml(title)}</span>
+        ${note ? `<small class="profile-fold__note">${escapeHtml(note)}</small>` : ''}
+        <span class="profile-fold__chev" aria-hidden="true">${ICONS.chevron}</span>
+      </summary>
+      <div class="profile-fold__body">${html}</div>
+    </details>`;
+  }
+
+  /**
+   * GRÁFICO DE COMPRAS.
+   *
+   * Una barra por venta ENTREGADA (hasta ocho), con su día debajo, más el total.
+   * Se dibuja con SVG en línea: no hay librerías, no hay peticiones y funciona
+   * sin conexión. Si todavía no hay compras entregadas no se pinta nada.
+   */
+  function purchaseChart(purchases = [], currency = 'DOP') {
+    const ventas = purchases
+      .filter((row) => String(row.status ?? '').toLowerCase() === 'entregado')
+      .slice()
+      .sort((a, b) => String(a.received_at ?? '').localeCompare(String(b.received_at ?? '')))
+      .slice(-8);
+    if (!ventas.length) return '';
+    const montos = ventas.map((row) => Number(row.total ?? 0) || 0);
+    const maximo = Math.max(...montos, 1);
+    const barras = ventas
+      .map((row, indice) => {
+        const alto = Math.max(6, Math.round((montos[indice] / maximo) * 46));
+        const dia = row.received_at ? formatShortDate(businessDayISO(row.received_at)) : '';
+        return `<g>
+          <rect class="profile-chart__bar" x="${indice * 26 + 4}" y="${52 - alto}" width="16" height="${alto}" rx="5"></rect>
+          <text class="profile-chart__label" x="${indice * 26 + 12}" y="66" text-anchor="middle">${escapeHtml(dia)}</text>
+        </g>`;
+      })
+      .join('');
+    const total = montos.reduce((suma, valor) => suma + valor, 0);
+    return `<figure class="profile-chart">
+      <svg viewBox="0 0 220 72" role="img" aria-label="Compras entregadas del cliente">
+        <line class="profile-chart__base" x1="0" y1="52" x2="220" y2="52"></line>
+        ${barras}
+      </svg>
+      <figcaption>${ventas.length} compra${ventas.length === 1 ? '' : 's'} · ${escapeHtml(money(total, currency))}</figcaption>
+    </figure>`;
+  }
+
+  /** Texto «plano» para buscar: sin acentos y en minúsculas («jose» encuentra «José»). */
+  const plano = (value) =>
+    String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+  /** Trozo de texto alrededor de la coincidencia (para el resultado de la búsqueda). */
+  function profileExcerpt(text, query, size = 74) {
+    const limpio = String(text ?? '').replace(/\s+/g, ' ').trim();
+    if (!limpio) return '';
+    const pos = plano(limpio).indexOf(plano(query));
+    if (pos < 0) return limpio.slice(0, size);
+    const desde = Math.max(0, pos - 22);
+    return `${desde > 0 ? '…' : ''}${limpio.slice(desde, desde + size)}${desde + size < limpio.length ? '…' : ''}`;
+  }
+
+  /**
+   * BÚSQUEDA DENTRO DEL EXPEDIENTE.
+   *
+   * Busca SOLO en el cliente abierto y SOLO en lo que la ficha ya tiene cargado:
+   * sus datos, sus notas, sus pedidos (con sus productos), los últimos mensajes
+   * de su conversación (el servidor manda 100), sus seguimientos, los mensajes
+   * programados y las filas del historial. Nada de recorrer años de mensajes en
+   * el navegador: no se consulta lo que no está cargado, y el texto lo dice.
+   */
+  function profileSearchRows(profile, query) {
+    const q = plano(query).trim();
+    if (!profile || q.length < 2) return [];
+    const { customer } = profile;
+    const filas = [];
+    const añadir = (tipo, titulo, texto, at, datos = {}) => {
+      if (!plano(`${titulo} ${texto}`).includes(q)) return;
+      filas.push({ tipo, titulo: titulo || tipo, excerpt: profileExcerpt(texto, query), at, ...datos });
+    };
+    añadir(
+      'Datos',
+      customerName(customer),
+      [customer.phone_e164, customer.phone, customer.email, customer.address, customer.city, customer.document]
+        .filter(Boolean)
+        .join(' · '),
+      null,
+      { fold: 'info' },
+    );
+    añadir('Nota', 'Notas del cliente', customer.notes ?? '', customer.updated_at ?? null, { fold: 'notas' });
+    for (const row of profile.purchases ?? []) {
+      const order = itemOrder(row) ?? {};
+      const items = Array.isArray(order.items)
+        ? order.items.map((linea) => `${linea.name ?? linea.variant_name ?? ''} ×${linea.quantity ?? 1}`).join(' · ')
+        : '';
+      añadir(
+        'Pedido',
+        row.order_number ?? row.id ?? 'Pedido',
+        [row.variant_name, items, row.notes, statusLabel(row.status ?? '')].filter(Boolean).join(' · '),
+        row.received_at ?? null,
+        { fold: 'pedidos', order: row.id },
+      );
+    }
+    for (const row of profile.messages ?? []) {
+      const cuerpo = row.body ?? '';
+      const tipo = row.direction === 'inbound' ? 'Mensaje recibido' : 'Mensaje enviado';
+      añadir(tipo, WA_KIND_LABEL?.[row.type] ?? 'Mensaje', cuerpo, row.created_at ?? row.sent_at ?? null, {
+        fold: 'conversacion',
+        chat: profile.conversation?.id ?? '',
+      });
+    }
+    for (const row of profile.followups ?? []) {
+      añadir(
+        'Seguimiento',
+        followupLabel(row.type),
+        [row.reason, row.notes, row.outcome].filter(Boolean).join(' · '),
+        row.scheduled_at ?? null,
+        { fold: 'seguimiento' },
+      );
+    }
+    for (const row of profile.scheduled ?? []) {
+      añadir(
+        'Mensaje programado',
+        scheduledStateTitle(row.status),
+        String(row.template_body ?? row.text ?? '').trim(),
+        row.scheduled_at ?? null,
+        { fold: 'programados' },
+      );
+    }
+    for (const row of profile.history ?? []) {
+      añadir('Actividad', row.title ?? 'Actividad', row.detail ?? '', row.at ?? null, {
+        fold: 'historial',
+        order: row.ref?.kind === 'order' ? row.ref.id : '',
+      });
+    }
+    return filas
+      .sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')))
+      .slice(0, 40);
+  }
+
+  /** Pinta los resultados de la búsqueda del expediente (o su vacío). */
+  function renderProfileSearchResults() {
+    const box = $('#profile-search-results');
+    if (!box) return;
+    const query = String(state.profileQuery ?? '').trim();
+    if (plano(query).length < 2) {
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    box.hidden = false;
+    const rows = profileSearchRows(state.customerProfile, query);
+    if (!rows.length) {
+      box.innerHTML = `<p class="profile-search__empty">Nada en este expediente coincide con «${escapeHtml(query)}».</p>`;
+      return;
+    }
+    box.innerHTML =
+      `<p class="profile-search__count">${rows.length} resultado${rows.length === 1 ? '' : 's'} · datos, pedidos, últimos mensajes, seguimientos y actividad</p>` +
+      rows
+        .map(
+          (row) => `<button class="profile-result" type="button" data-profile-goto="${escapeHtml(row.fold)}"${
+            row.order ? ` data-profile-order="${escapeHtml(row.order)}"` : ''
+          }${row.chat ? ` data-chat="${escapeHtml(row.chat)}"` : ''}>
+            <span class="profile-result__type">${escapeHtml(row.tipo)}</span>
+            <span class="profile-result__body"><strong>${escapeHtml(row.titulo)}</strong>${
+              row.excerpt ? `<span>${escapeHtml(row.excerpt)}</span>` : ''
+            }</span>
+            ${row.at ? `<time>${escapeHtml(fmtWhen(row.at))}</time>` : ''}
+          </button>`,
+        )
+        .join('');
   }
 
   function renderCustomerProfile(errorHtml = '') {
@@ -15316,8 +15646,10 @@
     const lastPurchase = purchases.find((row) => row.status === 'entregado') ?? purchases[0] ?? null;
     const selectedOrder = purchases.find((row) => row.id === state.customerProfileOrderId) ?? null;
     const photo = customerPhotoUrl(customer);
+    const gruposCliente = customerGroups(customer);
     const tags = [
       customerStageLabel(stage),
+      profile.store_account ? 'FULLTECH Store' : null,
       customer.do_not_contact ? 'No contactar' : null,
       customerCampaignOptOut(customer) ? 'Sin campañas' : null,
       ...customerTags.slice(0, 3).map((tag) => tag.label),
@@ -15330,40 +15662,67 @@
       CLOSED: 'Cerrado',
     }[customer.automation_state] ?? customer.automation_state ?? '—';
 
-    const header = `<header class="profile-hero ${photo ? 'profile-hero--photo' : 'profile-hero--fallback'}" ${
-      photo ? `style="--profile-photo:url('${escapeHtml(photo)}')"` : ''
-    }>
-      <button class="profile-hero__media" ${
-        photo ? `data-profile-photo="${escapeHtml(photo)}"` : ''
-      } type="button" aria-label="Ver foto de ${escapeHtml(customerName(customer))}" ${photo ? '' : 'disabled'}>
-        ${photo ? '' : `<span>${escapeHtml(waInitials(customerName(customer)))}</span>`}
-      </button>
-      <div class="profile-hero__main">
-        <h2>${escapeHtml(customerName(customer))}</h2>
-        <p>${escapeHtml(customer.phone_e164 ?? customer.phone ?? 'Sin teléfono')}</p>
-        <div class="profile-tags">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
-        <div class="profile-photo-actions">
-          <button class="btn btn--ghost btn--sm" id="customer-photo-pick" type="button">${photo ? 'Cambiar foto' : 'Poner foto'}</button>
-          ${photo ? '<button class="btn btn--ghost btn--sm" id="customer-photo-clear" type="button">Quitar foto</button>' : ''}
-        </div>
-        ${photo ? '' : '<p class="profile-photo-hint">WhatsApp no entrega la foto de perfil de los contactos: si la pones aquí, se ve en la lista, en el chat y en la ficha.</p>'}
+    /*
+     * CABECERA COMPACTA — identidad sin foto inventada.
+     *
+     * Antes era un bloque enorme con un avatar vacío (iniciales) y el botón de
+     * foto: se comía media pantalla para no decir nada. Ahora es una fila: nombre
+     * (lo más grande), su WhatsApp como enlace, las etiquetas que importan y las
+     * acciones rápidas en iconos. Si HAY foto real se enseña pequeña; si no, no
+     * se pinta ningún hueco.
+     */
+    const header = `<header class="profile-head">
+      ${
+        photo
+          ? `<button class="profile-head__photo" data-profile-photo="${escapeHtml(photo)}" style="background-image:url('${escapeHtml(
+              photo,
+            )}')" type="button" aria-label="Ver foto de ${escapeHtml(customerName(customer))}"></button>`
+          : ''
+      }
+      <div class="profile-head__id">
+        <a class="profile-head__wa" href="https://wa.me/${escapeHtml(digits(customer.phone_e164 ?? customer.phone ?? ''))}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+          customer.phone_e164 ?? customer.phone ?? 'Sin teléfono',
+        )}</a>
+        <div class="profile-tags profile-tags--compact">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
+      </div>
+      <div class="profile-head__actions">
+        ${
+          phone
+            ? `<a class="profile-head__icon" href="https://wa.me/${escapeHtml(digits(customer.phone_e164 ?? phone))}" target="_blank" rel="noopener noreferrer" aria-label="Escribir por WhatsApp" title="WhatsApp">${ICONS.chat}</a>`
+            : ''
+        }
+        ${phone ? `<a class="profile-head__icon" href="tel:${escapeHtml(phone)}" aria-label="Llamar" title="Llamar">${ICONS.phone}</a>` : ''}
+        <button class="profile-head__icon" id="customer-photo-pick" type="button" aria-label="${
+          photo ? 'Cambiar foto' : 'Poner foto'
+        }" title="${photo ? 'Cambiar foto' : 'Poner foto'}">${ICONS.camera}</button>
+        ${
+          photo
+            ? `<button class="profile-head__icon" id="customer-photo-clear" type="button" aria-label="Quitar foto" title="Quitar foto">${ICONS.trash}</button>`
+            : ''
+        }
       </div>
       <input class="profile-photo-file" id="customer-photo-file" type="file" accept="image/png,image/jpeg,image/webp" />
     </header>`;
 
     const personal = customerProfileSection(
-      'Información Personal',
-      `<dl class="facts profile-facts">
-        ${profileFact('Nombre', escapeHtml(customer.name ?? '—'))}
-        ${profileFact('Teléfono', phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(customer.phone_e164 ?? customer.phone ?? phone)}</a>` : '—')}
-        ${profileFact('WhatsApp', customer.phone_e164 ? `<a href="https://wa.me/${escapeHtml(digits(customer.phone_e164))}" target="_blank" rel="noopener noreferrer">${escapeHtml(customer.phone_e164)}</a>` : '—')}
-        ${profileFact('Email', escapeHtml(customer.email ?? '—'))}
-        ${profileFact('Documento/Cédula', escapeHtml(customer.document ?? customer.document_id ?? customer.cedula ?? '—'))}
-        ${profileFact('Dirección', escapeHtml(customer.address ?? customer.direccion ?? '—'))}
-        ${profileFact('Ciudad/Provincia', escapeHtml(customer.city ?? customer.province ?? customer.location ?? '—'))}
-        ${profileFact('Creación', customer.created_at ? escapeHtml(fmtWhen(customer.created_at)) : '—')}
-        ${profileFact('Última actualización', customer.updated_at ? escapeHtml(fmtWhen(customer.updated_at)) : '—')}
-      </dl>`,
+      'Información personal',
+      `<dl class="facts facts--compact profile-facts">
+        ${profileFact('Dirección', escapeHtml(customer.address ?? customer.direccion ?? customer.location ?? '—'))}
+        ${profileFact('Ciudad/Provincia', escapeHtml(customer.city ?? customer.province ?? '—'))}
+      </dl>
+      <details class="profile-more">
+        <summary>Ver más</summary>
+        <dl class="facts facts--compact profile-facts">
+          ${profileFact('WhatsApp', customer.phone_e164 ? `<a href="https://wa.me/${escapeHtml(digits(customer.phone_e164))}" target="_blank" rel="noopener noreferrer">${escapeHtml(customer.phone_e164)}</a>` : phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : '—')}
+          ${profileFact('Email', escapeHtml(customer.email ?? '—'))}
+          ${profileFact('Documento/Cédula', escapeHtml(customer.document ?? customer.document_id ?? customer.cedula ?? '—'))}
+          ${profileFact('Ingresó', customer.created_at ? escapeHtml(fmtBusinessDateTime(customer.created_at, { dateStyle: 'medium' })) : '—')}
+          ${profileFact('Última actualización', customer.updated_at ? escapeHtml(fmtBusinessDateTime(customer.updated_at)) : '—')}
+          ${profileFact('Origen', escapeHtml(customer.source ?? '—'))}
+        </dl>
+      </details>`,
+      '',
+      { open: true, id: 'info' },
     );
 
     const stages = [
@@ -15403,8 +15762,9 @@
     const compras = customerPurchaseStats(customer.id);
     const seguimiento = nextFollowupFor(customer.id) ?? customer.next_followup ?? null;
     const stageHtml = customerProfileSection(
-      'Etapa del Cliente',
-      `<label class="field profile-field">
+      'Etapa del cliente',
+      `${purchaseChart(purchases, lastPurchase?.currency)}
+      <label class="field profile-field">
         <span class="field__label">Etapa</span>
         <select class="field__select" id="customer-stage">
           ${stages
@@ -15421,17 +15781,14 @@
         </select>
         <small class="field__hint">Cliente y Recompra se calculan solos con los pedidos entregados.</small>
       </label>
-      <dl class="facts profile-facts">
-        ${profileFact('Etapa actual', escapeHtml(customerStageLabel(stage)))}
+      <dl class="facts facts--compact profile-facts">
         ${profileFact('Por qué', escapeHtml(motivoTexto))}
         ${profileFact('Evidencia', escapeHtml(evidenciaTexto))}
-        ${profileFact('Compras entregadas', escapeHtml(String(compras.delivered)))}
-        ${profileFact('Seguimiento', escapeHtml(seguimiento ? fmtWhen(seguimiento.scheduled_at) : '—'))}
         ${profileFact('Origen de etapa', escapeHtml(customer.customer_stage_source ?? profile.customer_stage_source ?? 'automático'))}
-        ${profileFact('Estado comercial legacy', escapeHtml(commercialLabel(commercial)))}
-        ${profileFact('Origen', escapeHtml(customer.source ?? '—'))}
-        ${profileFact('Campaña/origen', escapeHtml(customer.campaign ?? customer.utm_campaign ?? customer.origin_campaign ?? '—'))}
+        ${profileFact('Estado comercial', escapeHtml(commercialLabel(commercial)))}
       </dl>`,
+      '',
+      { note: customerStageLabel(stage), id: 'etapa' },
     );
 
     /*
@@ -15439,12 +15796,10 @@
      * Se muestran los grupos configurados y los que ya tenga el cliente, por si
      * alguno se añadió después y hoy no está en la lista por defecto.
      */
-    const gruposCliente = customerGroups(customer);
     const gruposDisponibles = [...new Set([...(state.businessGroups ?? []), ...gruposCliente])];
     const groupsSection = customerProfileSection(
       'Grupos de negocio',
-      `<p class="view__hint">Clasifica al cliente por actividad. Toca una etiqueta para ponerla o quitarla: se guarda al instante.</p>
-       <div class="profile-groups" data-customer-groups="${escapeHtml(customer.id)}">
+      `<div class="profile-groups" data-customer-groups="${escapeHtml(customer.id)}">
          ${gruposDisponibles
            .map(
              (group) =>
@@ -15454,17 +15809,20 @@
            )
            .join('')}
        </div>`,
+      '',
+      { note: gruposCliente.join(' · '), id: 'grupos' },
     );
 
-    const tagsHtml = customerProfileSection(
-      'Etiquetas',
-      `${
-        customerTags.length
-          ? `<div class="profile-tags">${customerTags.map((tag) => `<span class="tag">${escapeHtml(tag.label)}</span>`).join('')}</div>`
-          : '<p class="view__hint">Sin etiquetas.</p>'
-      }
-      <button class="btn btn--ghost btn--block" data-customer-tags="${escapeHtml(customer.id)}" type="button">Administrar etiquetas</button>`,
-    );
+    // Sin etiquetas, la sección no existe (no se enseña un hueco vacío).
+    const tagsHtml = customerTags.length
+      ? customerProfileSection(
+          'Etiquetas',
+          `<div class="profile-tags">${customerTags.map((tag) => `<span class="tag">${escapeHtml(tag.label)}</span>`).join('')}</div>
+          <button class="btn btn--ghost btn--sm" data-customer-tags="${escapeHtml(customer.id)}" type="button">Administrar etiquetas</button>`,
+          '',
+          { note: `${customerTags.length}`, id: 'etiquetas' },
+        )
+      : '';
 
     const commercialHtml = customerProfileSection(
       'Conversación',
@@ -15474,7 +15832,14 @@
         ${profileFact('Última conversación', conversation?.updated_at ? escapeHtml(fmtWhen(conversation.updated_at)) : '—')}
         ${profileFact('Último mensaje', escapeHtml(lastMessage?.body ?? (lastMessage?.type ? WA_KIND_LABEL[lastMessage.type] : '—') ?? '—'))}
         ${profileFact('Mensajes no leídos', escapeHtml(String(conversation?.unread_count ?? 0)))}
-      </dl>`,
+      </dl>
+      ${
+        conversation?.id
+          ? `<button class="btn btn--ghost btn--sm" data-chat="${escapeHtml(conversation.id)}" type="button">Abrir conversación</button>`
+          : ''
+      }`,
+      '',
+      { note: conversation?.id ? 'Ver el chat' : 'Sin chat', id: 'conversacion' },
     );
 
     const commercialSummary = customerProfileSection(
@@ -15560,31 +15925,60 @@
             }</p>`
       }`,
       'profile-history-card',
+      { note: historyVisible.length ? `${historyVisible.length}` : 'Sin movimientos', id: 'historial' },
+    );
+
+    /*
+     * NOTAS: SI HAY, SE LEEN EN LA FILA; SI NO, SOLO UN BOTÓN PARA AÑADIR.
+     * Antes era un cuadro de texto abierto siempre, ocupando media pantalla para
+     * un campo que casi siempre está vacío.
+     */
+    const notaCliente = String(customer.notes ?? '').trim();
+    const notesHtml = customerProfileSection(
+      notaCliente ? 'Notas' : 'Añadir una nota',
+      `<textarea class="field__area field__area--compact" id="customer-notes" rows="2" placeholder="Lo que hay que recordar de este cliente…">${escapeHtml(customer.notes ?? '')}</textarea>
+      <div class="profile-note-actions">
+        <button class="btn btn--primary btn--sm" id="customer-save" type="button">Guardar nota</button>
+      </div>`,
+      '',
+      {
+        open: !notaCliente,
+        note: notaCliente ? `${notaCliente.slice(0, 40)}${notaCliente.length > 40 ? '…' : ''}` : '',
+        id: 'notas',
+      },
     );
 
     const followupHtml = customerProfileSection(
       'Seguimiento',
-      `<dl class="facts profile-facts">
+      `<dl class="facts facts--compact profile-facts">
         ${profileFact('Próximo seguimiento', profile.nextFollowup ? escapeHtml(fmtDay(profile.nextFollowup.scheduled_at)) : '—')}
         ${profileFact('Última gestión', followups[0]?.updated_at ? escapeHtml(fmtWhen(followups[0].updated_at)) : '—')}
       </dl>
       ${
         followups.length
-          ? `<div class="profile-history">${followups
-              .map(
-                (row) =>
-                  `<div><strong>${escapeHtml(fmtDay(row.scheduled_at))}</strong><span>${escapeHtml(
-                    followupLabel(row.type),
-                  )} · ${escapeHtml({ pending: 'pendiente', completed: 'hecho', cancelled: 'cancelado', skipped: 'omitido' }[row.status] ?? row.status)}</span></div>`,
-              )
+          ? `<div class="profile-followups">${followups
+              .map((row) => {
+                const vencido = row.status === 'pending' && String(row.scheduled_at ?? '') < todayISO();
+                const responsable =
+                  row.assigned_display_name_snapshot ?? row.created_by_display_name_snapshot ?? null;
+                const estado = vencido
+                  ? 'Vencido'
+                  : { pending: 'Pendiente', completed: 'Hecho', cancelled: 'Cancelado', skipped: 'Omitido' }[row.status] ??
+                    row.status;
+                return `<div class="profile-followup${vencido ? ' profile-followup--late' : ''}">
+                  <div class="profile-followup__top">
+                    <strong>${escapeHtml(fmtDay(row.scheduled_at))}</strong>
+                    <span class="profile-followup__state">${escapeHtml(String(estado))}</span>
+                  </div>
+                  <span class="profile-followup__reason">${escapeHtml(row.reason ?? followupLabel(row.type))}</span>
+                  ${responsable ? `<small>Responsable: ${escapeHtml(responsable)}</small>` : ''}
+                </div>`;
+              })
               .join('')}</div>`
           : '<p class="view__hint">Sin historial de seguimiento.</p>'
-      }
-      <label class="field profile-field">
-        <span class="field__label">Notas</span>
-        <textarea class="field__area" id="customer-notes">${escapeHtml(customer.notes ?? '')}</textarea>
-      </label>
-      <button class="btn btn--primary btn--block" id="customer-save" type="button">Guardar notas</button>`,
+      }`,
+      '',
+      { note: profile.nextFollowup ? fmtDay(profile.nextFollowup.scheduled_at) : '', id: 'seguimiento' },
     );
 
     /*
@@ -15628,6 +16022,7 @@
             .join('')}</div>`
         : '<p class="view__hint">No hay mensajes programados. Programar un mensaje NO es un seguimiento: aquí el sistema intenta enviar.</p>',
       'profile-card--wide',
+      { note: scheduled.length ? `${scheduled.length}` : 'Ninguno', id: 'programados' },
     );
 
     const orderDetail = (row) => `
@@ -15666,9 +16061,8 @@
     const ubicaciones = profile.locations ?? [];
     const entregaPreferida = preferredDeliveryLocation(customer.id, ubicaciones);
     const prefsSection = customerProfileSection(
-      'Preferencias del pedido',
-      `<p class="view__hint">Lo que se repite en cada pedido. Al crear uno nuevo, el formulario ya viene con esto: solo confirmas la cantidad.</p>
-       <label class="field">
+      'Información guardada de pedido',
+      `<label class="field">
          <span class="field__label">Producto o servicio habitual</span>
          <select class="field__select" id="prefs-variant">
            <option value="">Sin preferencia</option>
@@ -15722,12 +16116,14 @@
        <div class="profile-order-actions">
          <button class="btn btn--primary btn--sm" id="prefs-save" type="button">Guardar preferencias</button>
        </div>
-       <dl class="facts profile-facts">
+       <dl class="facts facts--compact profile-facts">
          ${profileFact('Compras', stats.count ? `${stats.count} (${stats.delivered} entregadas)` : 'Ninguna todavía')}
          ${profileFact('Invertido', stats.invested ? money(stats.invested) : '—')}
          ${profileFact('Última compra', stats.last?.received_at ? escapeHtml(fmtWhen(stats.last.received_at)) : '—')}
          ${profileFact('Entrega de siempre', entregaPreferida ? escapeHtml(locationTitle(entregaPreferida)) : '—')}
        </dl>`,
+      '',
+      { note: stats.count ? `${stats.count} compra${stats.count === 1 ? '' : 's'}` : 'Sin compras', id: 'guardado' },
     );
 
     const orders = customerProfileSection(
@@ -15759,31 +16155,7 @@
             .join('')}</div>`
         : '<p class="view__hint">Todavía no tiene pedidos registrados.</p>',
       'profile-card--wide',
-    );
-
-    const automation = customerProfileSection(
-      'Acciones',
-      `<div class="item__actions">
-        ${phone ? `<a class="btn btn--ghost btn--sm" href="tel:${escapeHtml(phone)}">Llamar</a>` : ''}
-        <button class="btn btn--ghost btn--sm" data-scheduled-new="${escapeHtml(customer.id)}" data-conversation="${escapeHtml(
-          conversation?.id ?? '',
-        )}" type="button">Programar mensaje</button>
-        ${
-          customer.automation_state === 'PAUSED'
-            ? `<button class="btn btn--ghost btn--sm" data-resume="${escapeHtml(customer.id)}" type="button">Reactivar</button>`
-            : `<button class="btn btn--ghost btn--sm" data-pause="${escapeHtml(customer.id)}" type="button">Pausar</button>`
-        }
-        ${
-          customer.do_not_contact
-            ? `<button class="btn btn--ghost btn--sm" data-optin="${escapeHtml(customer.id)}" type="button">Volver a permitir mensajes</button>`
-            : `<button class="btn btn--danger btn--sm" data-optout="${escapeHtml(customer.id)}" type="button">No contactar nunca más</button>`
-        }
-        ${
-          customerCampaignOptOut(customer)
-            ? `<button class="btn btn--ghost btn--sm" data-campaign-optin="${escapeHtml(customer.id)}" type="button">Permitir campañas</button>`
-            : `<button class="btn btn--ghost btn--sm" data-campaign-optout="${escapeHtml(customer.id)}" type="button">No campañas</button>`
-        }
-      </div>`,
+      { note: purchases.length ? `${purchases.length}` : 'Sin pedidos', id: 'pedidos' },
     );
 
     /*
@@ -15794,40 +16166,105 @@
     const storeAccount = profile.store_account ?? null;
     const storeRequests = profile.store_requests ?? [];
     const storeRequestStatus = { nuevo: 'Recibida', en_revision: 'En revisión', cotizado: 'Cotizada', aprobado: 'Aprobada', en_proceso: 'En proceso', completado: 'Completada', rechazado: 'No disponible', cancelado: 'Cancelada' };
-    const storeSection = customerProfileSection(
-      'Cuenta en FULLTECH Store',
-      storeAccount
-        ? `<dl class="facts profile-facts">
+    /*
+     * SIN CUENTA, LA SECCIÓN NO EXISTE.
+     *
+     * Antes se pintaba una tarjeta entera para decir «este cliente no tiene
+     * cuenta». Si no la tiene, no hay nada que contar: el acceso se vincula al
+     * crearla con su teléfono y el número de un pedido.
+     */
+    const storeSection = storeAccount
+      ? customerProfileSection(
+          'Cuenta en FULLTECH Store',
+          `<dl class="facts facts--compact profile-facts">
             ${profileFact('Estado', storeAccount.status === 'active' ? 'Activa' : 'Pendiente de verificación')}
             ${profileFact('Teléfono', escapeHtml(storeAccount.phone ?? '—'))}
             ${profileFact('Correo', escapeHtml(storeAccount.email ?? '—'))}
             ${profileFact('Acceso', escapeHtml([storeAccount.providers?.password ? 'Teléfono y contraseña' : null, storeAccount.providers?.google ? 'Google' : null, storeAccount.providers?.apple ? 'Apple' : null].filter(Boolean).join(' · ') || '—'))}
-            ${profileFact('Creada', storeAccount.created_at ? escapeHtml(fmtWhen(storeAccount.created_at)) : '—')}
+            ${profileFact('Creada', storeAccount.created_at ? escapeHtml(fmtBusinessDateTime(storeAccount.created_at, { dateStyle: 'medium' })) : '—')}
           </dl>
-          <p class="view__hint">${storeRequests.length ? `${storeRequests.length} solicitud(es) enviadas desde la tienda.` : 'Sin solicitudes enviadas desde la tienda.'}</p>
-          ${storeRequests.length ? `<ul class="profile-store-requests">${storeRequests.slice(0, 5).map((row) => `<li><strong>${escapeHtml(row.title)}</strong><span>${escapeHtml(storeRequestStatus[row.status] ?? row.status)} · ${escapeHtml(fmtWhen(row.created_at))}</span></li>`).join('')}</ul>` : ''}`
-        : '<p class="view__hint">Este cliente todavía no tiene cuenta en FULLTECH Store. Se vinculará al crearla con su teléfono y el número de un pedido.</p>',
-      'profile-card--wide',
-    );
+          ${storeRequests.length ? `<ul class="profile-store-requests">${storeRequests.slice(0, 5).map((row) => `<li><strong>${escapeHtml(row.title)}</strong><span>${escapeHtml(storeRequestStatus[row.status] ?? row.status)} · ${escapeHtml(fmtWhen(row.created_at))}</span></li>`).join('')}</ul>` : ''}`,
+          '',
+          { note: storeAccount.status === 'active' ? 'Activa' : 'Pendiente' },
+        )
+      : '';
 
-    box.innerHTML = `${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
+    /*
+     * RESUMEN COMERCIAL: solo datos verificados y sin confundir conteos.
+     * «Pedidos» es todo lo registrado; «Compras entregadas» es lo que cuenta como
+     * venta. El saldo solo aparece si los pedidos traen el dato de cobro.
+     */
+    const seguimientosPendientes = followups.filter((row) => row.status === 'pending').length;
+    const saldoPendiente = (() => {
+      let total = 0;
+      let hay = false;
+      for (const row of purchases) {
+        const due = Number((itemOrder(row) ?? {})?.payment?.due ?? row?.payment_due);
+        if (Number.isFinite(due)) {
+          total += due;
+          hay = true;
+        }
+      }
+      return hay ? total : null;
+    })();
+    const metrica = (etiqueta, valor, tono = '') =>
+      `<div class="profile-metric${tono ? ` profile-metric--${tono}` : ''}"><span>${escapeHtml(
+        etiqueta,
+      )}</span><strong>${escapeHtml(String(valor))}</strong></div>`;
+    const resumen = `<div class="profile-summary" aria-label="Resumen del cliente">
+      ${metrica('Pedidos', compras.count)}
+      ${metrica('Compras entregadas', compras.delivered)}
+      ${metrica('Última compra', compras.last?.received_at ? formatShortDate(businessDayISO(compras.last.received_at)) : '—')}
+      ${metrica('Etapa', customerStageLabel(stage))}
+      ${metrica('Seguimientos pendientes', seguimientosPendientes, seguimientosPendientes ? 'alert' : '')}
+      ${saldoPendiente !== null ? metrica('Por cobrar', money(saldoPendiente)) : ''}
+    </div>`;
+
+    /*
+     * ORDEN DE LA FICHA: LO QUE SE MIRA, ARRIBA Y CORTO.
+     *
+     * 1. Quién es y cómo se le escribe (cabecera compacta).
+     * 2. Buscar dentro del expediente y resumen comercial.
+     * 3. De dónde viene (tienda), etapa, lo guardado del pedido y los grupos.
+     * 4. Etiquetas y notas, SOLO si existen.
+     * 5. El resto (historial, pedidos, seguimiento, mensajes, conversación),
+     *    plegado: se abre cuando se necesita.
+     */
+    box.innerHTML = `
+      ${state.customerProfileLoading ? '<p class="profile-loading">Actualizando datos...</p>' : ''}${errorHtml}${header}
+      <div class="profile-search">
+        <label class="profile-search__field">
+          <span class="profile-search__icon" aria-hidden="true">${ICONS.search}</span>
+          <input id="profile-search" type="search" value="${escapeHtml(
+            state.profileQuery ?? '',
+          )}" placeholder="Buscar en este expediente..." aria-label="Buscar en este expediente" autocomplete="off" />
+        </label>
+        <div class="profile-search__results" id="profile-search-results" hidden></div>
+      </div>
+      ${resumen}
       <div class="profile-grid">
         ${personal}
         ${storeSection}
-        ${groupsSection}
-        ${prefsSection}
         ${stageHtml}
+        ${prefsSection}
+        ${groupsSection}
         ${tagsHtml}
-        ${commercialHtml}
-        ${commercialSummary}
+        ${notesHtml}
+        ${historyHtml}
+        ${orders}
         ${followupHtml}
         ${scheduledHtml}
-        ${orders}
-        ${historyHtml}
+        ${commercialHtml}
       </div>
       <button class="profile-fab" id="profile-actions" type="button" aria-label="Acciones del cliente" title="Acciones del cliente">
-        <span class="ico" aria-hidden="true">${ICONS.spark}</span>
+        <span class="ico" aria-hidden="true">${ICONS.actions}</span>
       </button>`;
+
+    renderProfileSearchResults();
+    $('#profile-search')?.addEventListener('input', (event) => {
+      state.profileQuery = event.target.value;
+      renderProfileSearchResults();
+    });
 
     $('#customer-save')?.addEventListener('click', async (event) => {
       await working(event.currentTarget, 'Guardando…', async () => {
@@ -16697,24 +17134,47 @@
   }
 
   function openClientsActions() {
-    openSheet(
-      'Clientes',
-      `<div class="menu-list">
-        <button class="menu-item" data-purchase="" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.bag}</span>
-          <span><strong>Registrar compra</strong><small>Para cliente nuevo o existente</small></span>
-        </button>
-        <button class="menu-item" data-new-conversation="1" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.person}</span>
-          <span><strong>Nuevo chat</strong><small>Teléfono y mensaje opcional</small></span>
-        </button>
-        <button class="menu-item" data-tab="pedidos" type="button">
-          <span class="menu-item__icon" aria-hidden="true">${ICONS.box}</span>
-          <span><strong>Ver pedidos</strong><small>Historial comercial completo</small></span>
-        </button>
-      </div>`,
-      { variant: 'menu' },
-    );
+    /*
+     * EL MENÚ DE CLIENTES, EN COLUMNA.
+     *
+     * Antes eran dos botones flotantes peleándose la esquina (el de acciones y el
+     * de campañas). Ahora hay UNO que abre esta columna con todo lo que se hace
+     * sobre la lista, en orden: crear, vender, campaña y ver pedidos. Lo que no
+     * era necesario en esta pantalla se fue (nada de duplicar el menú general).
+     */
+    const total = (state.customers ?? []).length;
+    openSideDrawer({
+      title: 'Clientes',
+      subtitle: 'Personas y campañas',
+      note: total ? `${total} cliente${total === 1 ? '' : 's'} en el CRM.` : 'Todavía no hay clientes registrados.',
+      acciones: [
+        {
+          icon: ICONS.person,
+          label: 'Crear cliente',
+          note: 'Teléfono y, si quieres, el primer mensaje',
+          data: { 'data-new-conversation': '1' },
+        },
+        {
+          icon: ICONS.bag,
+          label: 'Registrar compra',
+          note: 'Para cliente nuevo o existente',
+          data: { 'data-purchase': '' },
+        },
+        {
+          icon: ICONS.send,
+          label: 'Crear campaña',
+          note: isAdmin() ? 'WhatsApp masivo con plantilla aprobada' : 'Solo administración puede programar campañas',
+          data: { 'data-customer-campaign-open': '1' },
+          disabled: !isAdmin(),
+        },
+        {
+          icon: ICONS.box,
+          label: 'Ver pedidos',
+          note: 'Historial comercial completo',
+          data: { 'data-tab': 'pedidos' },
+        },
+      ],
+    });
   }
 
   function openProfileActions() {
@@ -16723,9 +17183,12 @@
     if (!customer) return;
     const conversation = profile.conversation ?? conversationForCustomer(customer.id);
     const phone = digits(customer.phone_e164 ?? customer.phone);
-    openSheet(
-      customerName(customer),
-      `<div class="menu-list">
+    openSideDrawer({
+      title: customerName(customer),
+      subtitle: 'Acciones del cliente',
+      /* La ficha usa el MISMO cajón de 70 % que Pedidos y Clientes. */
+      half: true,
+      html: `<div class="menu-list">
         ${
           conversation
             ? `<button class="menu-item" data-chat="${escapeHtml(conversation.id)}" type="button">
@@ -16786,13 +17249,23 @@
                 <span><strong>No campañas</strong><small>No recibe campañas, pero conserva el chat normal</small></span>
               </button>`
         }
+        ${
+          customer.do_not_contact
+            ? `<button class="menu-item" data-optin="${escapeHtml(customer.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.chat}</span>
+                <span><strong>Volver a permitir mensajes</strong></span>
+              </button>`
+            : `<button class="menu-item" data-optout="${escapeHtml(customer.id)}" type="button">
+                <span class="menu-item__icon" aria-hidden="true">${ICONS.close}</span>
+                <span><strong>No contactar nunca más</strong><small>Deja de recibir mensajes del negocio</small></span>
+              </button>`
+        }
         <button class="menu-item menu-item--danger" data-customer-delete="${escapeHtml(customer.id)}" type="button">
           <span class="menu-item__icon" aria-hidden="true">${ICONS.trash}</span>
           <span><strong>Eliminar cliente</strong><small>Solo si no tiene pedidos ni conversaciones</small></span>
         </button>
       </div>`,
-      { variant: 'menu' },
-    );
+    });
   }
 
   async function deleteCustomer(customerId, button = null) {
@@ -20577,6 +21050,292 @@
     );
   }
 
+  /* =========================================================================
+     CAJÓN DE ACCIONES (la columna que entra desde la DERECHA)
+     -------------------------------------------------------------------------
+     Las acciones de una lista entera (Pedidos, Clientes) no caben en una hoja
+     que sube desde abajo: son muchas, con su explicación, y en el teléfono
+     tapaban la lista. Ahora entran como una COLUMNA lateral —el mismo lenguaje
+     del panel de filtros— a todo el alto, con su título y su ✕. Se abre con el
+     botón flotante, se cierra con la ✕, tocando fuera o deslizando.
+     ========================================================================= */
+  let sideDrawerSpec = null;
+
+  function sideDrawerItemHtml(accion) {
+    const cuerpo = `<span class="menu-item__icon" aria-hidden="true">${accion.icon ?? ''}</span>
+      <span><strong>${escapeHtml(accion.label)}</strong>${
+        accion.note ? `<small>${escapeHtml(accion.note)}</small>` : ''
+      }</span>`;
+    if (accion.disabled) return `<button class="menu-item menu-item--off" type="button" disabled>${cuerpo}</button>`;
+    if (accion.href) return `<a class="menu-item" href="${escapeHtml(accion.href)}">${cuerpo}</a>`;
+    const attrs = Object.entries(accion.data ?? {})
+      .map(([clave, valor]) => `${clave}="${escapeHtml(String(valor))}"`)
+      .join(' ');
+    return `<button class="menu-item" type="button" ${attrs}>${cuerpo}</button>`;
+  }
+
+  function ensureSideDrawer() {
+    let drawer = $('#side-drawer');
+    if (drawer) return drawer;
+    const scrim = document.createElement('button');
+    scrim.type = 'button';
+    scrim.id = 'side-drawer-scrim';
+    scrim.className = 'side-drawer-scrim';
+    scrim.setAttribute('aria-label', 'Cerrar el menú');
+    scrim.tabIndex = -1;
+    drawer = document.createElement('aside');
+    drawer.id = 'side-drawer';
+    drawer.className = 'side-drawer';
+    drawer.setAttribute('role', 'dialog');
+    drawer.setAttribute('aria-modal', 'true');
+    drawer.setAttribute('aria-label', 'Acciones');
+    document.body.append(scrim, drawer);
+    return drawer;
+  }
+
+  function renderSideDrawer() {
+    const drawer = ensureSideDrawer();
+    const spec = sideDrawerSpec;
+    if (!spec) {
+      drawer.hidden = true;
+      drawer.innerHTML = '';
+      delete document.body.dataset.sideDrawer;
+      return;
+    }
+    drawer.hidden = false;
+    drawer.className = `side-drawer${spec.half ? ' side-drawer--half' : ''}`;
+    drawer.innerHTML = `<div class="side-drawer__head">
+        <span><strong>${escapeHtml(spec.title ?? 'Acciones')}</strong>${
+          spec.subtitle ? `<small>${escapeHtml(spec.subtitle)}</small>` : ''
+        }</span>
+        <button class="side-drawer__close" data-side-drawer-close type="button" aria-label="Cerrar el menú">${ICONS.close}</button>
+      </div>
+      ${spec.note ? `<p class="side-drawer__note">${escapeHtml(spec.note)}</p>` : ''}
+      <div class="side-drawer__list">${spec.html ?? (spec.acciones ?? []).map(sideDrawerItemHtml).join('')}</div>`;
+    document.body.dataset.sideDrawer = 'open';
+  }
+
+  function openSideDrawer(spec = {}) {
+    sideDrawerSpec = { title: 'Acciones', subtitle: '', note: '', acciones: [], half: false, ...spec };
+    renderSideDrawer();
+    // El foco espera al pintado; sin `requestAnimationFrame` (jsdom) va directo.
+    const enfocar = () => $('#side-drawer .side-drawer__close')?.focus?.({ preventScroll: true });
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(enfocar);
+    else enfocar();
+  }
+
+  function closeSideDrawer() {
+    if (!sideDrawerSpec) return;
+    sideDrawerSpec = null;
+    renderSideDrawer();
+  }
+
+  const isSideDrawerOpen = () => Boolean(sideDrawerSpec);
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-side-drawer-close]')) {
+      closeSideDrawer();
+      return;
+    }
+    if (event.target.closest('#side-drawer-scrim')) {
+      closeSideDrawer();
+      return;
+    }
+    /*
+     * Al elegir una acción el cajón se va: la acción la atiende su propio
+     * manejador (los mismos `data-*` de siempre), aquí solo se cierra.
+     */
+    const accion = event.target.closest('#side-drawer .menu-item');
+    if (accion && !accion.disabled) closeSideDrawer();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isSideDrawerOpen()) closeSideDrawer();
+  });
+
+  /*
+   * RECORDATORIO DE UN PEDIDO (hoy, mañana, 3 días, 1 semana o quitarlo).
+   *
+   * Se atiende de forma delegada porque los botones viven en el menú de
+   * acciones, no dentro de la ficha: así funcionan en cualquier sitio donde se
+   * pinten y la ficha no carga con cuatro chips fijos.
+   */
+  document.addEventListener('click', (event) => {
+    const boton = event.target.closest('[data-remind]');
+    if (!boton) return;
+    const id = boton.dataset.id;
+    if (!id) return;
+    const days = boton.dataset.remind;
+    const valor = days === 'clear' ? '' : addDaysISO(Number(days));
+    patchItem(id, { nextActionAt: valor }, valor ? `Recordatorio: ${fmtDay(valor)}` : 'Recordatorio quitado');
+  });
+
+  /*
+   * SALTAR A LA SECCIÓN DESDE UN RESULTADO DE LA BÚSQUEDA DEL EXPEDIENTE.
+   * Abre la sección y la pone arriba. Si el resultado es un pedido o un mensaje,
+   * su propio manejador (`data-profile-order` / `data-chat`) hace el resto.
+   */
+  document.addEventListener('click', (event) => {
+    const resultado = event.target.closest('[data-profile-goto]');
+    if (!resultado) return;
+    const seccion = document.querySelector(
+      `#customer-profile .profile-fold[data-fold="${resultado.dataset.profileGoto}"]`,
+    );
+    if (!seccion) return;
+    seccion.open = true;
+    seccion.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  });
+
+  /*
+   * ABRIR UN PEDIDO EN SU PÁGINA COMPLETA.
+   *
+   * Tocar la fila ya no levanta una hoja a media pantalla: entra en la pantalla
+   * del pedido (con su barra y su volver), que es donde se lee todo sin que las
+   * acciones tapen el contenido.
+   */
+  function openOrderPage(orderId) {
+    const item = state.items.find((row) => row.id === orderId) ?? null;
+    if (!item) return;
+    closeSheet();
+    state.orderPageId = orderId;
+    if (state.tab !== 'pedido') state.previousTab = state.tab;
+    // Se pinta siempre: el pedido que se abre puede no ser el de la última vez.
+    viewsPintadas.delete('pedido');
+    setTab('pedido');
+  }
+
+  /**
+   * PÁGINA COMPLETA DEL PEDIDO.
+   *
+   * Mismo acabado plano que el expediente del cliente: barra con el volver y el
+   * número arriba, resumen comercial, y el resto en secciones que se abren al
+   * tocarlas. Todo sale del pedido que ya está cargado (`itemOrder`); no hace
+   * ninguna petición de más.
+   */
+  function renderOrderPage() {
+    renderMobileHeader();
+    const box = $('#pedido-ficha');
+    if (!box) return;
+    const item = state.items.find((row) => row.id === state.orderPageId) ?? null;
+    if (!item) {
+      box.innerHTML = '<p class="view__hint">Este pedido ya no está disponible. Vuelve a la lista.</p>';
+      return;
+    }
+    const esPedido = item.type === 'order_intent';
+    const order = itemOrder(item) ?? {};
+    const estado = esPedido ? orderOperational(item) : String(item.status ?? '');
+    const cliente = item.customer_id ? customerById(item.customer_id) : null;
+    const telefono = digits(item.phone ?? cliente?.phone_e164 ?? cliente?.phone ?? '');
+    const moneda = order.currency ?? item.currency ?? 'DOP';
+    const lineas = Array.isArray(order.items) ? order.items : [];
+    const total = Number(order.total ?? item.total ?? 0) || 0;
+    const pagado = Number(order.payment?.received ?? 0) || 0;
+    const falta = Number.isFinite(Number(order.payment?.due)) ? Number(order.payment.due) : Math.max(0, total - pagado);
+    const entrega = order.delivery ?? {};
+    const ubicacion = entrega.location ?? null;
+    const metodoPago = order.payment_method ?? order.payment?.method ?? null;
+    const estadoPago = String(order.payment_status ?? order.payment?.status ?? '').toLowerCase();
+    const etiquetaPago = estadoPago === 'paid' ? 'Cobrado' : falta > 0 ? `Faltan ${money(falta, moneda)}` : 'Cobrado';
+
+    const cabecera = `<header class="profile-head">
+      <div class="profile-head__id">
+        <a class="profile-head__wa" href="https://wa.me/${escapeHtml(digits(item.phone ?? cliente?.phone_e164 ?? cliente?.phone ?? ''))}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+          item.phone ?? cliente?.phone_e164 ?? cliente?.phone ?? 'Sin teléfono',
+        )}</a>
+        <div class="profile-tags profile-tags--compact">
+          <span class="tag">${escapeHtml(esPedido ? operationalStatusLabel(estado) : statusLabel(item.status ?? 'nuevo'))}</span>
+          ${cliente ? `<span class="tag">${escapeHtml(customerName(cliente))}</span>` : ''}
+          ${item.next_action_at ? `<span class="tag">${escapeHtml(fmtDay(item.next_action_at))}</span>` : ''}
+        </div>
+      </div>
+      <div class="profile-head__actions">
+        ${
+          telefono
+            ? `<a class="profile-head__icon" href="https://wa.me/${escapeHtml(telefono)}" target="_blank" rel="noopener noreferrer" aria-label="Escribir por WhatsApp" title="WhatsApp">${ICONS.chat}</a>
+               <a class="profile-head__icon" href="tel:${escapeHtml(telefono)}" aria-label="Llamar" title="Llamar">${ICONS.phone}</a>`
+            : ''
+        }
+      </div>
+    </header>`;
+
+    const metrica = (etiqueta, valor, tono = '') =>
+      `<div class="profile-metric${tono ? ` profile-metric--${tono}` : ''}"><span>${escapeHtml(
+        etiqueta,
+      )}</span><strong>${escapeHtml(String(valor))}</strong></div>`;
+    const resumen = `<div class="profile-summary" aria-label="Resumen del pedido">
+      ${metrica('Total', money(total, moneda))}
+      ${metrica(falta > 0 ? 'Por cobrar' : 'Cobrado', falta > 0 ? money(falta, moneda) : money(pagado || total, moneda), falta > 0 ? 'alert' : '')}
+      ${metrica('Estado', esPedido ? operationalStatusLabel(estado) : statusLabel(item.status ?? 'nuevo'))}
+      ${metrica('Pago', metodoPago ? paymentMethodLabel(metodoPago) : '—')}
+      ${metrica('Cantidad', lineas.length ? `${lineas.length} línea${lineas.length === 1 ? '' : 's'}` : '—')}
+      ${metrica('Entrada', item.received_at ? formatShortDate(businessDayISO(item.received_at)) : '—')}
+    </div>`;
+
+    const productos = lineas.length
+      ? `<div class="order-page__lines">${lineas
+          .map((linea) => {
+            const precio = Number(linea.subtotal ?? (Number(linea.unitPrice) || 0) * (Number(linea.quantity) || 1)) || 0;
+            return `<div class="order-page__line">
+              <span class="order-page__line-name">${escapeHtml(linea.label ?? linea.variantName ?? 'Producto')}${
+                Number(linea.quantity) > 1 ? `<small>${escapeHtml(String(linea.quantity))} ×</small>` : ''
+              }</span>
+              <b>${escapeHtml(money(precio, moneda))}</b>
+            </div>`;
+          })
+          .join('')}</div>`
+      : '<p class="view__hint">Este pedido no trae líneas guardadas.</p>';
+
+    const datos = `<dl class="facts facts--compact profile-facts">
+      ${profileFact('Pedido', escapeHtml(item.order_number ?? order.order_number ?? '—'))}
+      ${profileFact('Artículo', escapeHtml(item.variant_name ?? lineas[0]?.label ?? '—'))}
+      ${profileFact('Atendido por', escapeHtml(orderAgent(item).label))}
+      ${profileFact('Creado por', escapeHtml(orderAgent(item).creador ?? '—'))}
+      ${profileFact('Origen', escapeHtml(order.source ?? item.source ?? '—'))}
+      ${profileFact('Última actualización', item.last_contact_at ? escapeHtml(fmtWhen(item.last_contact_at)) : '—')}
+    </dl>`;
+
+    const pago = `<dl class="facts facts--compact profile-facts">
+      ${profileFact('Total', escapeHtml(money(total, moneda)))}
+      ${profileFact('Recibido', escapeHtml(money(pagado, moneda)))}
+      ${profileFact('Falta', escapeHtml(money(falta, moneda)))}
+      ${profileFact('Medio de pago', escapeHtml(metodoPago ? paymentMethodLabel(metodoPago) : '—'))}
+      ${profileFact('Situación', escapeHtml(etiquetaPago))}
+    </dl>`;
+
+    const entregaHtml = `<dl class="facts facts--compact profile-facts">
+      ${profileFact('Repartidor', escapeHtml(entrega.delivery_user_name_snapshot ?? 'Sin asignar'))}
+      ${profileFact('Dirección', escapeHtml(ubicacion?.address ?? ubicacion?.name ?? item.location ?? '—'))}
+      ${profileFact('Costo de entrega', escapeHtml(money(Number(entrega.fee ?? order.delivery_fee ?? 0) || 0, moneda)))}
+      ${profileFact('Estado', escapeHtml(esPedido ? operationalStatusLabel(estado) : statusLabel(item.status ?? 'nuevo')))}
+    </dl>`;
+
+    const notasHtml = `<textarea class="field__area field__area--compact" id="order-page-notes" rows="3" placeholder="Qué dijo, cuándo paga, a qué hora llamar…">${escapeHtml(
+      item.notes ?? '',
+    )}</textarea>
+      <div class="profile-note-actions"><button class="btn btn--primary btn--sm" id="order-page-save" type="button">Guardar nota</button></div>`;
+
+    box.innerHTML = `${cabecera}
+      ${resumen}
+      <div class="profile-grid">
+        ${customerProfileSection('Productos', productos, '', { open: true, note: lineas.length ? `${lineas.length}` : '', id: 'productos' })}
+        ${customerProfileSection('Pago', pago, '', { note: falta > 0 ? 'pendiente' : 'al día', id: 'pago' })}
+        ${customerProfileSection('Entrega', entregaHtml, '', { note: entrega.delivery_user_name_snapshot ?? '', id: 'entrega' })}
+        ${customerProfileSection('Datos del pedido', datos, '', { id: 'datos' })}
+        ${customerProfileSection('Notas', notasHtml, '', { note: item.notes ? 'escritas' : '', id: 'notas' })}
+      </div>
+      ${sheetFabHtml(`data-item="${escapeHtml(item.id)}"`)}`;
+
+    $('#order-page-save')?.addEventListener('click', async (event) => {
+      await working(event.currentTarget, 'Guardando…', async () => {
+        try {
+          await patchItem(item.id, { notes: $('#order-page-notes').value }, 'Notas guardadas');
+        } catch (error) {
+          if (error.message !== 'unauthorized') toast('No se pudieron guardar las notas');
+        }
+      });
+    });
+  }
+
   /** Las acciones del pedido, todas dentro de su botón flotante. */
   function openOrderActionsMenu(itemId) {
     const item = state.items.find((candidate) => candidate.id === itemId) ?? null;
@@ -20590,12 +21349,12 @@
     const estadoComercial = esPedido ? String(itemOrder(item)?.status ?? item.status ?? 'nuevo') : '';
     const ubicacionPedido = esPedido ? itemOrder(item)?.delivery?.location ?? null : null;
     /*
-     * REPARTIDOR EXTERNO: mensajero sin cuenta en el CRM. Si el pedido ya lo
-     * tiene asignado se ofrece ENVIAR el pedido; si no, se ofrece elegirlo.
+     * REPARTIDOR EXTERNO: mensajero sin cuenta en el CRM.
+     *
+     * AQUÍ NO SE OFRECE ASIGNARLO: el reparto se gestiona desde FULLTECH
+     * DELIVERY y desde la ficha del pedido. Repetirlo en este menú era una
+     * tercera puerta a lo mismo y llenaba la lista de opciones.
      */
-    const repartidorExterno = esPedido ? itemOrder(item)?.delivery?.external ?? null : null;
-    const puedeRepartidorExterno =
-      hasPermission('delivery.manage') || hasPermission('orders.update_operational') || hasPermission('delivery.tracking.manage_all');
     /*
      * DINERO: quién puede anotar un cobro y cuánto falta de verdad.
      * El saldo lo calcula el servidor (`payment.due`); si el pedido es antiguo y
@@ -20656,9 +21415,12 @@
         ? 'Falta vincular al cliente de este pedido'
         : 'Este pedido no trae teléfono ni cliente: no hay a quién avisar'
       : '';
-    openSheetActionMenu({
+    openSideDrawer({
       title: item.order_number ?? item.name ?? 'Acciones',
-      nota,
+      subtitle: item.name ?? '',
+      note: nota,
+      /* Columna al 50 %: es el menú de UN pedido, no el de toda la lista. */
+      half: true,
       acciones: [
         /*
          * LO DE TODOS LOS DÍAS, ARRIBA Y A UN TOQUE.
@@ -20708,7 +21470,6 @@
           note: marcado ? 'Ya está marcado en la lista' : 'Finalizar o cambiar varios a la vez',
           data: { 'data-order-select-toggle': item.id },
         },
-        { icon: ICONS.chevron, label: 'Ver el pedido completo', data: { 'data-open': item.id } },
         esPedido ?
           {
             icon: ICONS.doc,
@@ -20740,14 +21501,6 @@
               data: { 'data-order-map': item.id },
             }
           : null,
-        esPedido && hasPermission('delivery.tracking.manage_all')
-          ? {
-              icon: ICONS.send,
-              label: 'Pasar a un delivery',
-              note: 'Elige el agente que lo lleva',
-              data: { 'data-order-delivery': item.id },
-            }
-          : null,
         esPedido && isAdmin() && estado !== 'CANCELADO'
           ? {
               icon: ICONS.trash,
@@ -20768,7 +21521,6 @@
         clienteId
           ? { icon: ICONS.person, label: 'Ver cliente', note: 'Su ficha completa', data: { 'data-customer': clienteId } }
           : null,
-        { icon: ICONS.chat, label: 'Escribir por WhatsApp', note: 'Plantilla o mensaje libre', data: { 'data-item-wa': item.id } },
         clienteId
           ? {
               icon: ICONS.clock,
@@ -20789,6 +21541,37 @@
           : sinCliente
             ? { icon: ICONS.send, label: 'Programar mensaje al cliente', note: sinCliente, disabled: true }
             : null,
+        /*
+         * RECORDATORIO DEL PEDIDO — AQUÍ, NO EN LA FICHA.
+         *
+         * En la ficha eran cuatro chips fijos y una fecha al pie que robaban
+         * sitio a lo que de verdad se mira (estado, datos, nota). Aquí siguen a
+         * un toque y la ficha queda limpia.
+         */
+        esPedido
+          ? {
+              icon: ICONS.clock,
+              label: 'Recordar hoy',
+              data: { 'data-remind': '0', 'data-id': item.id },
+            }
+          : null,
+        esPedido
+          ? { icon: ICONS.clock, label: 'Recordar mañana', data: { 'data-remind': '1', 'data-id': item.id } }
+          : null,
+        esPedido
+          ? { icon: ICONS.clock, label: 'Recordar en 3 días', data: { 'data-remind': '3', 'data-id': item.id } }
+          : null,
+        esPedido
+          ? { icon: ICONS.clock, label: 'Recordar en 1 semana', data: { 'data-remind': '7', 'data-id': item.id } }
+          : null,
+        esPedido && item.next_action_at
+          ? {
+              icon: ICONS.close,
+              label: 'Quitar el recordatorio',
+              note: `Puesto para el ${fmtDay(item.next_action_at)}`,
+              data: { 'data-remind': 'clear', 'data-id': item.id },
+            }
+          : null,
         phone ? { icon: ICONS.phone, label: 'Llamar', note: item.phone, href: `tel:${phone}` } : null,
       ].filter(Boolean),
     });
@@ -22732,8 +23515,8 @@
       await registration.showNotification('Prueba en este teléfono', {
         body: 'Si ves este aviso, este teléfono muestra los avisos del CRM.',
         tag: 'phyto-push-test-local',
-        icon: '/admin/fulltech-icon-192.png?v=3',
-        badge: '/admin/fulltech-icon-192.png?v=3',
+        icon: '/admin/assets/branding/fulltech-crm-192.png',
+        badge: '/admin/assets/branding/fulltech-crm-192.png',
         data: { deepLink: '/admin/?v=hoy' },
       });
       return true;
@@ -23430,7 +24213,7 @@
 
   // ------------------------------------------------------------------- tabs
   /** Destinos principales + lo que vive en el menú lateral. */
-  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'ops', 'perfil-cliente', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
+  const VIEWS = ['hoy', 'whatsapp', 'clientes', 'solicitudes', 'delivery', 'mapa', 'supervisor', 'ops', 'perfil-cliente', 'pedido', 'pedidos', 'productos', 'catalogo', 'inventario', 'recuento', 'recogidas', 'tiendas', 'cotizaciones', 'reportes', 'cierre', 'historial-cierres', 'seguimientos', 'mensajes', 'ajustes', 'usuarios', 'perfil'];
   const VIEW_SUBTITLE = {
     hoy: 'CRM',
     whatsapp: 'WhatsApp',
@@ -23441,6 +24224,7 @@
     supervisor: 'Supervisor IA',
     ops: 'Centro de operaciones',
     'perfil-cliente': 'Perfil del cliente',
+    pedido: 'Pedido',
     pedidos: 'Pedidos',
     productos: 'Cápsulas de Phytoemagry',
     catalogo: 'Facturación',
@@ -23558,7 +24342,9 @@
     state.tab = tab;
     if (vuelveDeUnAtajo) cerrarContextoDeHoy(tab);
     window.dispatchEvent(new CustomEvent('fulltech:tab', {detail:{tab}}));
-    localStorage.setItem(TAB_KEY, tab);
+    // La página de UN pedido no se recuerda como última pantalla: al recargar
+    // hay que volver a abrirla a propósito.
+    if (tab !== 'pedido') localStorage.setItem(TAB_KEY, tab);
     /*
      * Cambiar de pestaña guarda los filtros que hubiera puestos. En un viaje de
      * IDA desde HOY no: el filtro es del atajo, no una preferencia de la persona
@@ -24083,14 +24869,32 @@
         <span><strong>Filtros</strong><small>Clientes</small></span>
         <button class="wa-filter-panel__close" data-client-filter-close type="button" aria-label="Cerrar filtros">${ICONS.close}</button>
       </div>
-      <div class="wa-filter-panel__group">` + CLIENT_FILTERS
+      <div class="wa-filter-panel__group">
+        <p class="order-filters__label">Estado</p>
+        ` + CLIENT_FILTERS
       .map(
         ([value, text]) =>
           `<button class="chip" data-filter="${value}" aria-pressed="${value === state.filter}" type="button">${text}</button>`,
       )
+      .join('') + `</div>
+      <div class="wa-filter-panel__group">
+        <p class="order-filters__label">Fecha de ingreso</p>
+        ` + CLIENT_DATE_FILTERS
+      .map(
+        ([value, text]) =>
+          `<button class="chip" data-client-date="${value}" aria-pressed="${value === state.clientDate?.mode}" type="button">${text}</button>`,
+      )
       .join('') + `</div>`;
 
     $('#chips').addEventListener('click', (event) => {
+      const fecha = event.target.closest('[data-client-date]');
+      if (fecha) {
+        state.clientDate = { mode: fecha.dataset.clientDate, from: '', to: '' };
+        state.clientFiltersOpen = false;
+        document.body.dataset.clientFilters = 'closed';
+        renderClientes();
+        return;
+      }
       const chip = event.target.closest('[data-filter]');
       if (!chip) return;
       state.filter = chip.dataset.filter;
@@ -24236,10 +25040,40 @@
         if (direction < 0) closeDrawer();
         return;
       }
+      /* 2b) Cajón de acciones (columna derecha): se cierra hacia la derecha. */
+      if (isSideDrawerOpen()) {
+        if (direction > 0) closeSideDrawer();
+        return;
+      }
       /* 3) Hoy: abrir el menú (→) y Facturación (←). Solo en la portada. */
       if (state.tab === 'hoy') {
         if (direction > 0) openDrawer();
         else setTab('catalogo');
+        return;
+      }
+      /*
+       * 3b) PEDIDOS Y CLIENTES: el gesto de la casa.
+       *
+       * Deslizar HACIA LA IZQUIERDA abre la columna de filtros de la pantalla (la
+       * misma que abre el chip «Filtros»), a todo el alto. Hacia la derecha se
+       * cierra esa columna o, si no hay ninguna abierta, se abre el menú general.
+       */
+      if (state.tab === 'pedidos' || state.tab === 'clientes') {
+        const abiertos = state.tab === 'pedidos' ? state.pedidosFiltersOpen : state.clientFiltersOpen;
+        const ponerFiltros = (abrir) => {
+          if (state.tab === 'pedidos') {
+            state.pedidosFiltersOpen = abrir;
+            document.body.dataset.orderFilters = abrir ? 'open' : 'closed';
+            renderPedidos();
+          } else {
+            state.clientFiltersOpen = abrir;
+            document.body.dataset.clientFilters = abrir ? 'open' : 'closed';
+            renderClientes();
+          }
+        };
+        if (direction < 0) ponerFiltros(true);
+        else if (abiertos) ponerFiltros(false);
+        else openDrawer();
         return;
       }
       if (state.tab !== 'whatsapp') return;
@@ -25154,7 +25988,7 @@
           openSettingsPage('');
           return;
         }
-        if (state.tab === 'perfil-cliente' || state.tab === 'mapa') {
+        if (state.tab === 'perfil-cliente' || state.tab === 'pedido' || state.tab === 'mapa') {
           setTab(state.previousTab && state.previousTab !== state.tab ? state.previousTab : 'hoy');
         } else if (state.tab === 'historial-cierres') {
           // El historial se entra DESDE EL CIERRE: el volver lleva al cierre.
@@ -26164,6 +26998,17 @@
         renderSheet();
         return;
       }
+      /*
+       * UNA FILA DE PEDIDOS ABRE LA PÁGINA DEL PEDIDO.
+       *
+       * Va antes que cualquier otra cosa de la fila: el importe, la etiqueta de
+       * pago y el estado tienen sus propios manejadores y se comprueban antes.
+       */
+      const pedidoPage = event.target.closest('[data-order-page]');
+      if (pedidoPage) {
+        openOrderPage(pedidoPage.dataset.orderPage);
+        return;
+      }
       const del = event.target.closest('[data-del-message]');
       if (del) {
         const id = del.dataset.delMessage;
@@ -26234,7 +27079,7 @@
       if (event.target.closest('[data-outreach-schedule]')) void openScheduledComposer();
     });
     $('#clientes-acciones').addEventListener('click', () => openClientsActions());
-    $('#compra-nueva-ped').addEventListener('click', () => openPurchaseForm(null));
+    // El alta de pedido ya no tiene botón propio: vive en «Acciones de los pedidos».
     $('#pedidos-acciones').addEventListener('click', () => openPedidosAcciones());
     $('#usuario-nuevo')?.addEventListener('click', () => openUserCreateSheet());
 

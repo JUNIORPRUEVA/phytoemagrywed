@@ -23,7 +23,26 @@ describe('métricas', () => {
 
   it('no usa una cabecera gigante', () => {
     expect(html).not.toMatch(/height:\s*(1[5-9]\d|2\d\d)px/);
-    expect(html).toContain('.bar h1{font-size:16px');
+    // Sin barra de aplicación: el título vive en la fila de acciones.
+    expect(html).toContain('.acciones h1{font-size:16px');
+    expect(html).not.toContain('class="bar"');
+    expect(html).toContain('class="back-float"');
+  });
+
+  it('los filtros son un cajón al 70 % que se abre deslizando', () => {
+    expect(html).toMatch(/#filters \.sheet\{[^}]*width:70%/s);
+    // El gesto va con eventos de puntero: vale con el dedo y con el ratón.
+    expect(html).toContain('pointerdown');
+    expect(html).toContain('pointerup');
+    expect(html).not.toContain('changedTouches[0]');
+    // El valor del filtro sigue existiendo (lo usan la tabla y el cajón).
+    expect(html).toContain('id="filter"');
+    expect(js).toContain('renderFiltros');
+  });
+
+  it('el texto no se puede sombrear (solo dentro de los campos)', () => {
+    expect(html).toContain('-webkit-user-select:none');
+    expect(html).toMatch(/input,textarea[^{]*\{[^}]*-webkit-user-select:text/s);
   });
 });
 
@@ -65,6 +84,24 @@ describe('detalle y rendición', () => {
   it('sigue usando el endpoint existente de rendiciones', () => {
     expect(js).toContain('/api/admin/delivery-cash/remittance');
     expect(js).not.toContain('/api/admin/delivery-cash/charge');
+  });
+});
+
+describe('aspecto del panel', () => {
+  it('usa el mismo tema que el CRM: variables y modo oscuro', () => {
+    // La página es independiente, así que tiene que leer la preferencia guardada.
+    expect(html).toContain("localStorage.getItem(KEY)");
+    expect(html).toContain("pe_tema");
+    expect(html).toContain(":root[data-theme='dark']");
+    // Ningún color de fondo blanco fijo en las piezas grandes.
+    expect(html).not.toMatch(/\.card\{[^}]*background:#fff/);
+    expect(html).not.toMatch(/\.wrap\{[^}]*background:#fff/);
+    expect(html).not.toMatch(/#drawer \.sheet\{[^}]*background:#fff/);
+  });
+
+  it('el volver es el icono redondo del panel, flotando', () => {
+    expect(html).toMatch(/\.back-float\{[^}]*border-radius:50%/s);
+    expect(html).not.toMatch(/<a class="back"[^>]*>\s*Volver/);
   });
 });
 

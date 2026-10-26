@@ -1,0 +1,407 @@
+/*
+ * Tarjeta de instalación de la app (ver `install-prompt.js`).
+ *
+ * OJO CON EL NOMBRE: `discovery.css` ya usa `.ft-install` para el botón pequeño
+ * de instalar de la cabecera (54×40 px). Por eso todo esto vive bajo
+ * `.ft-installprompt`, un espacio propio que no hereda nada de aquel botón.
+ *
+ * Tarjeta ancha, centrada y con el fondo difuminado: se nota que está, pero no
+ * interrumpe lo que la persona estaba mirando.
+ */
+.ft-installprompt {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgb(6 20 43 / 52%);
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
+  backdrop-filter: blur(10px) saturate(115%);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.ft-installprompt.is-in { opacity: 1; }
+
+/* La tarjeta que se está retirando no debe interceptar clics. */
+.ft-installprompt.is-out { opacity: 0; pointer-events: none; }
+
+.ft-installprompt__card {
+  position: relative;
+  width: min(400px, 100%);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  padding: 20px 18px 15px;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+  color: #0f172a;
+  text-align: center;
+  box-shadow: 0 26px 60px rgb(2 12 32 / 36%), 0 2px 6px rgb(2 12 32 / 12%);
+  transform: translateY(14px) scale(0.97);
+  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ft-installprompt.is-in .ft-installprompt__card { transform: none; }
+
+.ft-installprompt__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(15 23 42 / 6%);
+  color: #4a5670;
+  cursor: pointer;
+}
+
+.ft-installprompt__close:hover { background: rgb(15 23 42 / 12%); }
+.ft-installprompt__close:focus-visible { outline: 3px solid #8ab4ff; outline-offset: 2px; }
+
+.ft-installprompt__title {
+  margin: 0 0 5px;
+  padding: 0 18px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.26;
+  letter-spacing: -0.2px;
+}
+
+.ft-installprompt__text {
+  max-width: 280px;
+  margin: 0 auto 13px;
+  font-size: 11.8px;
+  line-height: 1.5;
+  color: #5b6880;
+}
+
+.ft-installprompt__list {
+  display: grid;
+  gap: 8px;
+  margin: 11px 0 13px;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.ft-installprompt__list li {
+  display: grid;
+  grid-template-columns: 17px 1fr;
+  gap: 9px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #46536b;
+}
+
+.ft-installprompt__list svg {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  color: #0a63e8;
+}
+
+/* Botón de instalar: pulso suave + brillo que pasa cada tanto. */
+.ft-installprompt__action {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0a3f9e 0%, #0f6cf5 100%);
+  color: #fff;
+  font: 700 13px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  cursor: pointer;
+  animation: ft-installprompt-pulse 2.6s ease-in-out infinite;
+}
+
+.ft-installprompt__action::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 32%, rgb(255 255 255 / 42%) 50%, transparent 68%);
+  transform: translateX(-130%);
+  animation: ft-installprompt-shine 3.4s ease-in-out infinite;
+}
+
+.ft-installprompt__action:focus-visible { outline: 3px solid #7fb2ff; outline-offset: 3px; }
+
+.ft-installprompt__hint {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6b7891;
+}
+
+.ft-installprompt__steps {
+  margin: 12px 0 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #46536b;
+  text-align: left;
+}
+
+.ft-installprompt__steps li + li { margin-top: 4px; }
+
+/* Pasos numerados de la guía (iPhone y navegadores sin diálogo). */
+.ft-installprompt__guide {
+  display: grid;
+  gap: 9px;
+  margin: 10px 0 13px;
+  padding: 0;
+  list-style: none;
+  counter-reset: ft-guide;
+  text-align: left;
+}
+
+.ft-installprompt__guide li {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #3d4a63;
+  counter-increment: ft-guide;
+}
+
+.ft-installprompt__guide li::before {
+  content: counter(ft-guide);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #0a3f9e 0%, #1a7bff 100%);
+  color: #fff;
+  font: 800 11.5px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  box-shadow: 0 4px 10px rgb(9 44 120 / 30%);
+}
+
+@keyframes ft-installprompt-pulse {
+  0%, 100% { box-shadow: 0 8px 18px rgb(15 108 245 / 28%); }
+  50% { box-shadow: 0 12px 26px rgb(15 108 245 / 46%); }
+}
+
+@keyframes ft-installprompt-shine {
+  0% { transform: translateX(-130%); }
+  55%, 100% { transform: translateX(130%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ft-installprompt,
+  .ft-installprompt__card { transition: none; }
+  .ft-installprompt__action,
+  .ft-installprompt__action::after { animation: none; }
+}
+/*
+ * ICONO FLOTANTE DE INSTALAR (después del anuncio).
+ *
+ * Flota abajo a la derecha, por encima de la barra de navegación, para no
+ * tapar nada ni ensuciar el buscador. Cada 50 s se le asoma al lado el texto
+ * «Instálalo ahora» durante 2 s y el propio icono se menea una vez.
+ */
+.ft-installpin {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+/* Aro exterior que late: invita a tocar sin tapar nada. */
+.ft-installpin::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid rgb(24 104 235 / 45%);
+  animation: ft-installpin-ring 3.4s ease-out infinite;
+  pointer-events: none;
+}
+
+/* La pieza azul de la marca, con su brillo y su sombra. */
+.ft-installpin__art {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background:
+    radial-gradient(120% 120% at 28% 18%, rgb(255 255 255 / 26%) 0%, transparent 58%),
+    linear-gradient(150deg, #0a2f77 0%, #1258d6 58%, #1a7bff 100%);
+  box-shadow:
+    0 12px 26px rgb(9 44 120 / 45%),
+    0 3px 8px rgb(3 22 55 / 22%),
+    inset 0 1px 0 rgb(255 255 255 / 32%);
+  animation: ft-installpin-glow 3.4s ease-in-out infinite;
+  transition: transform 160ms ease, filter 160ms ease;
+}
+
+.ft-installpin:hover .ft-installpin__art { filter: brightness(1.07); }
+.ft-installpin:active .ft-installpin__art { transform: scale(0.95); }
+.ft-installpin:focus-visible { outline: 3px solid #7fb2ff; outline-offset: 4px; }
+
+/* Onda que sale del centro, como un sonar. */
+.ft-installpin__sonar {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 48%);
+  animation: ft-installpin-sonar 3.4s ease-out infinite;
+  pointer-events: none;
+}
+
+/* Reflejo que cruza la pieza cada tanto. */
+.ft-installpin__sheen {
+  position: absolute;
+  inset: -30%;
+  background: linear-gradient(115deg, transparent 40%, rgb(255 255 255 / 55%) 50%, transparent 60%);
+  transform: translateX(-120%);
+  animation: ft-installpin-sheen 5.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* El icono (teléfono con la descarga) en blanco sobre el azul, sin placa. */
+.ft-installpin__glyph {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 27px;
+  height: 27px;
+  background: #fff;
+  -webkit-mask: var(--pin-icon) center / contain no-repeat;
+  mask: var(--pin-icon) center / contain no-repeat;
+  filter: drop-shadow(0 1px 2px rgb(3 22 55 / 30%));
+  pointer-events: none;
+}
+
+/* iPhone: píldora estática, sin animaciones. */
+.ft-installpin.is-ios {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: auto;
+  min-width: 0;
+  height: 46px;
+  padding: 0 16px 0 10px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  background: linear-gradient(150deg, #0a2f77 0%, #1258d6 58%, #1a7bff 100%);
+  color: #fff;
+  box-shadow: 0 10px 24px rgb(9 44 120 / 38%), 0 2px 6px rgb(3 22 55 / 18%);
+}
+
+.ft-installpin.is-ios::before { content: none; }
+.ft-installpin.is-ios .ft-installpin__glyph { width: 22px; height: 22px; }
+
+.ft-installpin__text {
+  font: 700 12.5px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+}
+
+/* Aviso periódico: se menea mientras el bocadillo está a la vista. */
+.ft-installpin.is-hinting { animation: ft-installpin-wiggle 900ms ease-in-out 2; }
+
+.ft-installpin__label {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 12px);
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0a3f9e 0%, #0f6cf5 100%);
+  color: #fff;
+  font: 700 11.5px/1 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+  box-shadow: 0 8px 18px rgb(3 22 55 / 26%);
+  opacity: 0;
+  transform: translateY(-50%) scale(0.94);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+/* Pico del bocadillo apuntando al icono. */
+.ft-installpin__label::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 7px;
+  height: 7px;
+  background: #0f6cf5;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border-radius: 1px;
+}
+
+.ft-installpin.is-hinting .ft-installpin__label {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+@keyframes ft-installpin-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-9deg); }
+  45% { transform: rotate(8deg); }
+  70% { transform: rotate(-4deg); }
+  85% { transform: rotate(2deg); }
+}
+
+@keyframes ft-installpin-ring {
+  0% { transform: scale(0.92); opacity: 0.6; }
+  70% { transform: scale(1.22); opacity: 0; }
+  100% { transform: scale(1.22); opacity: 0; }
+}
+
+@keyframes ft-installpin-sonar {
+  0% { transform: scale(0.35); opacity: 0.75; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+@keyframes ft-installpin-sheen {
+  0%, 55% { transform: translateX(-120%); }
+  85%, 100% { transform: translateX(120%); }
+}
+
+@keyframes ft-installpin-glow {
+  0%, 100% {
+    box-shadow:
+      0 12px 26px rgb(9 44 120 / 42%),
+      0 3px 8px rgb(3 22 55 / 22%),
+      inset 0 1px 0 rgb(255 255 255 / 38%);
+  }
+  50% {
+    box-shadow:
+      0 16px 34px rgb(18 88 214 / 55%),
+      0 4px 10px rgb(3 22 55 / 26%),
+      inset 0 1px 0 rgb(255 255 255 / 45%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ft-installpin__art,
+  .ft-installpin__sonar,
+  .ft-installpin__sheen,
+  .ft-installpin::before { animation: none; }
+  .ft-installpin__label { transition: none; }
+  .ft-installpin.is-hinting { animation: none; }
+}
+
