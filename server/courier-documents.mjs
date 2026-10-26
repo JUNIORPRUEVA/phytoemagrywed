@@ -22,13 +22,18 @@ export const DOCUMENT_MAX_BYTES = 4 * 1024 * 1024;
 /**
  * Qué documentos pide cada tipo de vehículo.
  *
- * `DRIVING_LICENSE` y `VEHICLE` solo tienen sentido con motor. Queda como
- * política editable: la empresa puede endurecerla, pero no se inventan
- * requisitos legales dominicanos ni se exige lo que no aplica.
+ * Se pide SOLO lo que aplica al vehículo con el que la persona va a trabajar:
+ *   · CARRO            → identidad, licencia de conducir y documento del vehículo
+ *   · MOTO             → identidad y documento del vehículo (sin licencia)
+ *   · BICICLETA / A_PIE → identidad
+ *
+ * Queda como política editable: la empresa puede endurecerla, pero no se
+ * inventan requisitos legales dominicanos ni se pide lo que no aplica.
  */
 export function requiredDocumentsFor(vehicleType) {
   const vehicle = String(vehicleType ?? '').toUpperCase();
-  if (vehicle === 'MOTO' || vehicle === 'CARRO') return ['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE'];
+  if (vehicle === 'CARRO') return ['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE'];
+  if (vehicle === 'MOTO') return ['IDENTITY', 'VEHICLE'];
   if (vehicle === 'BICICLETA' || vehicle === 'A_PIE') return ['IDENTITY'];
   return ['IDENTITY'];
 }

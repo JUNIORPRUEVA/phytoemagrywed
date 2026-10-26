@@ -70,15 +70,17 @@ describe('expediente de documentos', () => {
     const listed = await fetch(`${app.url}/api/courier/applications/${applicationId}/documents?receipt=${receipt}`);
     expect(listed.status).toBe(200);
     const body = await listed.json();
-    expect(body.required).toEqual(['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE']);
-    expect(body.missing).toEqual(['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE']);
+    // MOTO: identidad y documento del vehículo. La licencia es solo para carro.
+    expect(body.vehicle_type).toBe('MOTO');
+    expect(body.required).toEqual(['IDENTITY', 'VEHICLE']);
+    expect(body.missing).toEqual(['IDENTITY', 'VEHICLE']);
     expect(body.operational_access).toBe(false);
 
     const subido = await upload({ receipt, kind: 'IDENTITY', dataBase64: PNG });
     expect(subido.status).toBe(201);
     expect(subido.data.document.kind).toBe('IDENTITY');
     expect(subido.data.document).not.toHaveProperty('file');
-    expect(subido.data.missing).toEqual(['DRIVING_LICENSE', 'VEHICLE']);
+    expect(subido.data.missing).toEqual(['VEHICLE']);
   });
 
   it('rechaza ejecutables y archivos demasiado grandes aunque se disfracen', async () => {
