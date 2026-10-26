@@ -70,17 +70,17 @@ describe('expediente de documentos', () => {
     const listed = await fetch(`${app.url}/api/courier/applications/${applicationId}/documents?receipt=${receipt}`);
     expect(listed.status).toBe(200);
     const body = await listed.json();
-    // MOTO: identidad y documento del vehículo. La licencia es solo para carro.
+    // MOTO: identidad, licencia y selfie. La matrícula se escribe, no se sube.
     expect(body.vehicle_type).toBe('MOTO');
-    expect(body.required).toEqual(['IDENTITY', 'VEHICLE']);
-    expect(body.missing).toEqual(['IDENTITY', 'VEHICLE']);
+    expect(body.required).toEqual(['IDENTITY', 'DRIVING_LICENSE', 'SELFIE']);
+    expect(body.missing).toEqual(['IDENTITY', 'DRIVING_LICENSE', 'SELFIE']);
     expect(body.operational_access).toBe(false);
 
     const subido = await upload({ receipt, kind: 'IDENTITY', dataBase64: PNG });
     expect(subido.status).toBe(201);
     expect(subido.data.document.kind).toBe('IDENTITY');
     expect(subido.data.document).not.toHaveProperty('file');
-    expect(subido.data.missing).toEqual(['VEHICLE']);
+    expect(subido.data.missing).toEqual(['DRIVING_LICENSE', 'SELFIE']);
   });
 
   it('rechaza ejecutables y archivos demasiado grandes aunque se disfracen', async () => {
@@ -148,7 +148,7 @@ describe('expediente de documentos', () => {
     const data = await applied.json();
     const listed = await fetch(`${app.url}/api/courier/applications/${data.applicationId}/documents?receipt=${data.receipt}`);
     const body = await listed.json();
-    expect(body.required).toEqual(['IDENTITY']);
-    expect(body.missing).toEqual(['IDENTITY']);
+    expect(body.required).toEqual(['IDENTITY', 'SELFIE']);
+    expect(body.missing).toEqual(['IDENTITY', 'SELFIE']);
   });
 });

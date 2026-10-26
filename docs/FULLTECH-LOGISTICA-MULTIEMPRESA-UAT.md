@@ -280,3 +280,48 @@ Veredicto: **NO-GO** hasta la aceptación en dispositivo real; el camino para ha
 
 Veredicto sin cambios: **NO-GO** hasta dominio real, autorización de despliegue y
 aceptación en teléfono físico.
+
+### Asistente de ingreso del repartidor (25-10-2026)
+
+**Qué cambió.** El alta dejó de repartirse entre «Solicitar ingreso» y «Mis documentos»:
+ahora es un asistente de seis pasos dentro de la misma pantalla (datos personales,
+vehículo, disponibilidad, documentos, normas de operación y revisión). La solicitud se
+crea en el servidor al salir del paso de disponibilidad —el recibo es lo que autoriza
+cada subida— y el envío final es idempotente: repetirlo devuelve el mismo recibo.
+
+**Backend** (`server/courier-application-profile.mjs`, nuevo):
+- Valida fecha real (incluye 29 de febrero), edad mínima configurable (18 por defecto),
+  correo, documento, placa, tipo de bicicleta y disponibilidad. Devuelve el **campo** con
+  error para que la app lo señale.
+- Los bloques nuevos son opcionales: un cliente antiguo (solo nombre, teléfono, vehículo,
+  zona y condiciones) sigue funcionando; se guardan en el mismo registro, sin segunda base.
+- `requiredDocumentsFor` ahora pide selfie y foto del vehículo, y mantiene la licencia
+  solo para carro. La selfie es revisión **humana**: no hay reconocimiento facial.
+- El panel recibe el perfil completo (la lista de solicitudes ya devolvía la fila entera)
+  y `couriers.js` lo pinta en el cajón: documento, nacimiento, correo, residencia,
+  emergencia, marca/modelo, placa, disponibilidad, horario, experiencia y versión de normas.
+
+**App**: `courier_onboarding_screen.dart` sustituye al formulario en un diálogo
+(eliminado). Borrador en almacén seguro con **solo texto** y paso actual; nunca bytes de
+documentos. Al enviar, el borrador se descarta.
+
+**Verificado**
+| Prueba | Resultado |
+| --- | --- |
+| `courier-application-profile` (unidad + HTTP real) | 9/9 |
+| `courier-documents` + E2E + aplicación | 23/23 |
+| `couriers-panel` + documentos (panel) | 10/10 |
+| Flutter `analyze` | limpio |
+| Flutter `test` (incluye `application_onboarding_test`) | 115/115 |
+
+**Emulador (capturas reales, APK de release contra UAT)**: se comprobó el acceso sin
+modo demostración, con las tres opciones, y el **paso 1 de 6** del asistente con barra de
+progreso, secciones, campos redondeados y pie Cancelar/Continuar.
+
+**Sin verificar en emulador todavía**: pasos 2 a 6 con datos reales, subida de cada
+documento, reanudación del borrador tras cerrar la app y envío completo con referencia.
+Quedan cubiertos por pruebas automatizadas y revisión de código, no por una pasada manual.
+
+**Bloqueos conocidos**: la captura con cámara no está implementada (solo selector de
+archivos); la declaración de política de privacidad para la selfie y el certificado de
+buena conducta quedan pendientes de decisión legal.
