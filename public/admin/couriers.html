@@ -210,6 +210,13 @@ button.sm{min-height:30px;padding:0 10px;font-size:11.5px;border-radius:9px}
 
   <header class="acciones" id="acciones">
     <h1 id="titulo">Repartidores</h1>
+    <!--
+      MARCA DE VERSIÓN VISIBLE.
+
+      Dos dominios del mismo CRM pueden estar en despliegues distintos; sin esto
+      no hay forma de saber si el panel que se está mirando es el actual.
+    -->
+    <span class="hint" id="panel-version" style="margin-right:auto;padding-left:8px">v6</span>
     <button class="ico" type="button" data-search-open aria-label="Buscar" title="Buscar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
     </button>
@@ -270,7 +277,7 @@ button.sm{min-height:30px;padding:0 10px;font-size:11.5px;border-radius:9px}
   </div>
 </aside>
 
-<script src="/admin/couriers.js?v=5"></script>
+<script src="/admin/couriers.js?v=6"></script>
 <script>
 /*
  * CAJONES Y BUSCADOR — lo que no es datos.
