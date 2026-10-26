@@ -1,67 +1,115 @@
-/* Store-only welcome. Media is requested only for an eligible first opening. */
-const KEY = 'fulltech_store_welcome_seen_v1';
-function seen() {
-  if (window.__fulltechWelcomeSeen) return true;
-  for (const name of ['localStorage', 'sessionStorage']) {
-    try { if (window[name].getItem(KEY) === '1') return true; } catch {}
-  }
-  return false;
-}
-function remember() {
-  window.__fulltechWelcomeSeen = true;
-  for (const name of ['localStorage', 'sessionStorage']) {
-    try { window[name].setItem(KEY, '1'); } catch {}
-  }
-}
-async function welcome() {
-  if (seen() || document.visibilityState === 'hidden' || navigator.onLine === false) return;
-  // Authentication callbacks, checkout and shared product links open directly.
+/*
+ * BIENVENIDA DE FULLTECH STORE (video de arranque).
+ *
+ * Reglas de esta pantalla:
+ *  1. Se muestra CADA vez que se abre la app, en la web y en la PWA instalada.
+ *     Ya no se guarda ninguna marca de «visto»: abrir la app = ver el video.
+ *  2. NO tiene botón de omitir: el video se va solo al terminar.
+ *  3. Funciona sin conexión: el archivo se guarda en la caché del service
+ *     worker (`sw.js`), así la PWA instalada lo reproduce igual que la web.
+ *  4. Nunca deja la app bloqueada: si el teléfono no puede reproducirlo, la
+ *     pantalla se retira sola.
+ */
+const SOURCE = '/store/assets/welcome/first-launch-v2.mp4';
+const POSTER = '/store/assets/welcome/poster-v2.jpg';
+
+function welcome() {
+  // Enlaces profundos, checkout y vueltas de OAuth abren directo.
   if (location.hash && !['#', '#/', '#/home'].includes(location.hash)) return;
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { remember(); return; }
+  if (document.visibilityState === 'hidden') return;
+  // Quien pidió menos movimiento en el sistema no ve el video.
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
   const overlay = document.createElement('section');
   overlay.className = 'ft-welcome';
+  overlay.tabIndex = -1;
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', 'Bienvenido a FULLTECH Store');
-  overlay.innerHTML = '<video muted playsinline preload="none" aria-label="Bienvenida FULLTECH Store"></video><button class="ft-welcome__skip" type="button">Omitir</button>';
-  const video = overlay.querySelector('video'), skip = overlay.querySelector('button');
-  const roots = [...document.body.children].filter(el => !['SCRIPT', 'LINK'].includes(el.tagName));
-  const inertStates = roots.map(el => [el, el.inert]);
+  overlay.setAttribute('aria-label', 'Bienvenida FULLTECH Store');
+  overlay.innerHTML =
+    `<video muted autoplay playsinline webkit-playsinline preload="auto" poster="${POSTER}" ` +
+    'aria-label="Bienvenida FULLTECH Store"></video>';
+  const video = overlay.querySelector('video');
+
+  const roots = [...document.body.children].filter((el) => !['SCRIPT', 'LINK'].includes(el.tagName));
+  const inertStates = roots.map((el) => [el, el.inert]);
   const previousFocus = document.activeElement;
-  let done = false, loadTimer, totalTimer;
-  function finish(success = false) {
+  let done = false;
+  let safetyTimer = null;
+
+  function finish() {
     if (done) return;
     done = true;
-    if (success) remember();
-    clearTimeout(loadTimer); clearTimeout(totalTimer);
-    window.removeEventListener('hashchange', navigate);
-    document.removeEventListener('visibilitychange', visibility);
-    video.pause(); video.removeAttribute('src'); video.load();
+    clearTimeout(safetyTimer);
+    window.removeEventListener('hashchange', finish);
+    document.removeEventListener('visibilitychange', onVisibility);
+    video.pause();
     inertStates.forEach(([el, wasInert]) => { el.inert = wasInert; });
     overlay.classList.add('is-leaving');
-    setTimeout(() => overlay.remove(), 200);
-    if (document.activeElement === skip) (previousFocus?.isConnected && previousFocus !== document.body ? previousFocus : document.querySelector('#menu-button'))?.focus({ preventScroll: true });
+    setTimeout(() => {
+      video.removeAttribute('src');
+      video.load();
+      overlay.remove();
+    }, 200);
+    if (previousFocus?.isConnected && previousFocus !== document.body) {
+      previousFocus.focus({ preventScroll: true });
+    }
   }
-  const navigate = () => finish(false);
-  const visibility = () => { if (document.hidden) finish(false); };
-  overlay.addEventListener('keydown', e => {
-    if (e.key === 'Escape') finish(true);
-    if (e.key === 'Tab') { e.preventDefault(); skip.focus(); }
+
+  function onVisibility() {
+    if (document.hidden) finish();
+  }
+
+  /* Si el sistema bloquea el arranque automático, el primer toque lo arranca. */
+  const play = () => { video.play().catch(() => {}); };
+  overlay.addEventListener('pointerdown', play);
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') finish();
   });
-  skip.addEventListener('click', () => finish(true));
-  video.addEventListener('ended', () => finish(true));
-  video.addEventListener('error', () => finish(false));
-  video.addEventListener('playing', () => clearTimeout(loadTimer));
-  window.addEventListener('hashchange', navigate);
-  document.addEventListener('visibilitychange', visibility);
+
+  video.addEventListener('ended', finish);
+  video.addEventListener('playing', () => clearTimeout(safetyTimer));
+  video.addEventListener('error', finish, { once: true });
+  window.addEventListener('hashchange', finish);
+  document.addEventListener('visibilitychange', onVisibility);
+
   document.body.append(overlay);
-  roots.forEach(el => { el.inert = true; });
-  skip.focus({ preventScroll: true });
-  // Bounded fallback for offline, stalled media and autoplay restrictions.
-  loadTimer = setTimeout(() => finish(false), 1800);
-  totalTimer = setTimeout(() => finish(false), 7000);
+  roots.forEach((el) => { el.inert = true; });
+  overlay.focus({ preventScroll: true });
+
+  video.src = SOURCE;
   video.muted = true;
-  video.src = '/store/assets/welcome/first-launch-v2.mp4';
-  try { await video.play(); } catch { finish(false); }
+  play();
+
+  /*
+   * Red de seguridad: si a los 12 s el video no ha empezado (archivo dañado,
+   * decodificador ocupado, modo de bajo consumo), se retira para que la tienda
+   * quede usable. Con el video en marcha este temporizador ya no existe.
+   */
+  safetyTimer = setTimeout(() => {
+    if (video.readyState < 2) finish();
+  }, 12000);
 }
+
 welcome();
+
+/*
+ * VOLVER A ENTRAR CUENTA.
+ *
+ * En el teléfono la PWA suele quedar viva en segundo plano: al tocar el icono
+ * se reanuda sin recargar y, sin esto, el video solo se vería la primera vez
+ * del día. Si la app estuvo fuera 10 minutos o más y se vuelve al inicio, se
+ * muestra otra vez. Nunca interrumpe una compra ni una ficha de producto.
+ */
+const AWAY_MS = 10 * 60 * 1000;
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    hiddenAt = Date.now();
+    return;
+  }
+  const home = !location.hash || ['#', '#/', '#/home'].includes(location.hash);
+  const away = hiddenAt && Date.now() - hiddenAt >= AWAY_MS;
+  hiddenAt = 0;
+  if (away && home && !document.querySelector('.ft-welcome')) welcome();
+});

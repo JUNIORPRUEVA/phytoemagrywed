@@ -1,7 +1,7 @@
-const VERSION = 'fulltech-store-v102';
+const VERSION = 'fulltech-store-v103';
 const SHELL = [
-  '/store/first-launch.css?v=1',
-  '/store/first-launch.js?v=2',
+  '/store/first-launch.css?v=2',
+  '/store/first-launch.js?v=3',
   '/store/assets/app-icons/icon-32.png',
   '/store/assets/app-icons/icon-180.png',
   '/store/assets/app-icons/icon-192.png',
@@ -83,9 +83,26 @@ const SHELL = [
   '/store/icon-512.png',
 ];
 const PUBLIC_CATALOG = /^\/api\/store\/(?:catalog|categories|home)(?:\?.*)?$/;
+/*
+ * VIDEO DE BIENVENIDA (305 KB) + su póster.
+ *
+ * Se descarga al instalar para que la PWA instalada lo reproduzca igual que la
+ * web, incluso sin conexión. Va APARTE de `SHELL` a propósito: si la descarga
+ * falla, el video se pide por red y la instalación del service worker (que es
+ * lo que sostiene la app sin conexión) no se rompe.
+ */
+const MEDIA = [
+  '/store/assets/welcome/first-launch-v2.mp4',
+  '/store/assets/welcome/poster-v2.jpg',
+];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(VERSION).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(VERSION);
+    await cache.addAll(SHELL);
+    await Promise.all(MEDIA.map((url) => cache.add(url).catch(() => {})));
+    await self.skipWaiting();
+  })());
 });
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('fulltech-store-') && key !== VERSION).map(key => caches.delete(key)))).then(() => self.clients.claim()));
@@ -94,8 +111,24 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
-  // Video stays on-demand: no install download, range caching or replay download.
-  if (url.pathname.startsWith('/store/assets/welcome/')) return;
+  // Video de bienvenida: se sirve desde la caché (ya instalada) y se guarda la
+  // primera copia que llegue entera por red. El <video> acepta la respuesta
+  // completa, así que no se parte por rangos: nunca queda a medias ni en negro.
+  if (url.pathname.startsWith('/store/assets/welcome/')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(VERSION);
+      const cached = await cache.match(url.pathname);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.status === 200) await cache.put(url.pathname, response.clone());
+        return response;
+      } catch {
+        return new Response('', { status: 504, statusText: 'offline' });
+      }
+    })());
+    return;
+  }
   if (url.pathname.startsWith('/admin/') || url.pathname.startsWith('/api/admin/')) return;
   if (PUBLIC_CATALOG.test(`${url.pathname}${url.search}`)) {
     event.respondWith((async () => {
