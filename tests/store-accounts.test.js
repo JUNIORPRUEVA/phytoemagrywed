@@ -123,7 +123,7 @@ describe('FULLTECH Store customer accounts', () => {
     expect(emailTaken.data.error).toBe('email_in_use');
   });
 
-  it('only links an existing CRM customer with proof of ownership (order number)', async () => {
+  it('only links a FULLTECH order; a PHYTOEMAGRY order cannot prove account ownership', async () => {
     const order = await createOrder({
       name: 'Cliente Existente', phone: '8095550101', paymentMethod: 'CASH', status: 'nuevo',
       items: [{ variantId: 'capsules_5', quantity: 1 }],
@@ -139,6 +139,13 @@ describe('FULLTECH Store customer accounts', () => {
     const wrongProof = await register({ name: 'Cliente Existente', phone: '8095550101', password: 'Cliente-123', orderNumber: 'PE-NO-EXISTE' });
     expect(wrongProof.status).toBe(403);
 
+    const crossCompany = await register({ name: 'Cliente Existente', phone: '8095550101', password: 'Cliente-123', orderNumber });
+    expect(crossCompany.status).toBe(403);
+    const item = await app.ctx.store.getAdmin(order.data.item.id);
+    const fulltechOrder = JSON.parse(item.order_json);
+    fulltechOrder.origin = 'FULLTECH_STORE';
+    fulltechOrder.company_id = 'fulltech';
+    await app.ctx.store.update(item.id, { orderJson: JSON.stringify(fulltechOrder) });
     const linked = await register({ name: 'Cliente Existente', phone: '8095550101', password: 'Cliente-123', orderNumber });
     expect(linked.status).toBe(201);
 

@@ -215,7 +215,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     return rows.some(
       (row) =>
         row?.type === 'order_intent' &&
-        row.customer_id === customerId &&
+        row.customer_id === customerId && orderOf(row)?.origin === 'FULLTECH_STORE' &&
         [row.order_number, row.id, row.reference, row.payment_reference].some((value) => normProof(value) === target),
     );
   }
@@ -445,7 +445,7 @@ export async function createStoreAccounts({ backend, handle, customers, listOrde
     if (typeof listOrders !== 'function') return [];
     const rows = await listOrders();
     return rows
-      .filter((row) => row?.type === 'order_intent' && row.customer_id === customerId)
+      .filter((row) => row?.type === 'order_intent' && row.customer_id === customerId && orderOf(row)?.origin === 'FULLTECH_STORE')
       .map((item) => {
         const order = orderOf(item);
         return {

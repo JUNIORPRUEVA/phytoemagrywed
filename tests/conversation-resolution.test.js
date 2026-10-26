@@ -139,8 +139,13 @@ describe('finalizar una conversación sin bloquear el contacto', () => {
     expect(dueno.id).toBeTruthy();
     expect((await request(`/api/admin/conversations/${conversation.id}/assign`, 'POST', { userId: dueno.id })).status).toBe(200);
 
+    // Sin prueba de empresa, ni siquiera la asignación histórica abre el chat.
+    expect((await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST', undefined, agentCookie)).status).toBe(404);
+    expect((await request(`/api/admin/conversations/${conversation.id}/reopen`, 'POST', undefined, agentCookie)).status).toBe(404);
+    // Simula la clasificación manual revisada; recién entonces se aplican los
+    // permisos de propiedad del chat. Ninguna ruta de negocio lo reclasifica.
+    await app.ctx.db.update('conversations', conversation.id, { company_id: 'phytoemagry' });
     expect((await request(`/api/admin/conversations/${conversation.id}/resolve`, 'POST', undefined, agentCookie)).status).toBe(403);
-    expect((await request(`/api/admin/conversations/${conversation.id}/reopen`, 'POST', undefined, agentCookie)).status).toBe(403);
     // El dueño sí puede.
     const loginDueno = await request('/api/admin/auth/login', 'POST', { username: 'resolution-owner@test.local', password: 'Resolution-12345' }, '');
     const duenoCookie = loginDueno.headers.get('set-cookie').split(';')[0];

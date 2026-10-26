@@ -1,0 +1,71 @@
+# Servicio UAT independiente para FULLTECH DELIVERY
+#
+# QUÉ ES
+#   Un CRM UAT **separado** del de producción: otro servicio, otra base de datos,
+#   otras credenciales. Se usa para que una app Android real (emulador o teléfono)
+#   hable con un backend de pruebas con HTTPS válido.
+#
+# QUÉ NO HACE
+#   · No toca ni comparte la base de producción.
+#   · No publica PostgreSQL (no hay `ports:` en `db`).
+#   · No envía WhatsApp real ni eventos a Meta (las credenciales van vacías).
+#   · No despliega por sí solo: requiere `docker compose up` explícito.
+#
+# HTTPS: lo termina el ingress de la plataforma (EasyPanel/Traefik) apuntando a
+#   este servicio por su nombre interno y su puerto. No se abre ningún puerto
+#   del host para la base de datos.
+#
+# Uso (desde la raíz del repositorio CRM UAT):
+#   cp deploy/uat/.env.uat.example deploy/uat/.env.uat   # y rellenar
+#   docker compose -f deploy/uat/docker-compose.uat.yml --env-file deploy/uat/.env.uat up -d --build
+#
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fulltech_uat
+      POSTGRES_USER: fulltech_uat
+      POSTGRES_PASSWORD: ${PHYTO_UAT_DB_PASSWORD:?define PHYTO_UAT_DB_PASSWORD}
+    volumes:
+      - crm_uat_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fulltech_uat -d fulltech_uat"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Sin `ports`: la base solo es alcanzable dentro de la red del compose.
+
+  crm:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.uat
+    environment:
+      APP_ENV: uat
+      PHYTO_CRM_HOST: 0.0.0.0
+      PHYTO_CRM_PORT: "8080"
+      # Base de datos PROPIA de UAT (nunca la de producción).
+      PHYTO_CRM_DATABASE_URL: postgres://fulltech_uat:${PHYTO_UAT_DB_PASSWORD}@db:5432/fulltech_uat
+     # Cookies seguras: el ingress sirve HTTPS.
+      PHYTO_FORCE_SECURE_COOKIES: "1"
+    # El ingress de la plataforma enruta el dominio UAT a este puerto interno.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      fulltech.purpose: uat
+      fulltech.production: "false"
+
+volumes:
+  crm_uat_db:

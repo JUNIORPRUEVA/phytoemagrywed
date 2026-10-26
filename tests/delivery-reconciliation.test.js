@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { reconcileDeliveryCash } from '../server/delivery-reconciliation.mjs';
+import { reconcileDeliveryCash, reconcileDeliveryCashByCompany } from '../server/delivery-reconciliation.mjs';
 
 const deliveredOrder = (id, { expected = 500000, declared = 500000 } = {}) => ({
   id,
@@ -38,6 +38,25 @@ const remittance = (amount, { courier = 'courier_a', key = `remittance:${courier
   amount_cents: amount,
   idempotency_key: key,
   created_at: '2026-10-24T11:00:00.000Z',
+});
+
+it('conciliación empresarial conserva saldos separados y pone rendiciones históricas ambiguas en revisión', () => {
+  const orders = [
+    { ...deliveredOrder('phyto'), company_id: 'phytoemagry' },
+    { ...deliveredOrder('tech'), company_id: 'fulltech', origin: 'FULLTECH_STORE' },
+  ];
+  const ledger = [
+    { ...charge('phyto', 500000), company_id: 'phytoemagry' },
+    { ...charge('tech', 500000), company_id: 'fulltech' },
+    { ...remittance(200000), company_id: 'fulltech' },
+    remittance(100000, { id: 'ambiguous_legacy', key: 'legacy:unknown' }),
+  ];
+  const before = JSON.stringify({ orders, ledger });
+  const result = reconcileDeliveryCashByCompany({ orders, ledger, companies: ['phytoemagry', 'fulltech'] });
+  expect(result.by_company.phytoemagry.totals.pendingCents).toBe(500000);
+  expect(result.by_company.fulltech.totals.pendingCents).toBe(300000);
+  expect(result.unresolved_movements.map((row) => row.id)).toEqual(['ambiguous_legacy']);
+  expect(JSON.stringify({ orders, ledger })).toBe(before);
 });
 
 describe('conciliación correcta', () => {

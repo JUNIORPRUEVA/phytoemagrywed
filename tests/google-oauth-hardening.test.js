@@ -284,6 +284,10 @@ describe('enlace de Google con una cuenta existente', () => {
     });
     expect(order.status).toBe(201);
     const orderNumber = order.data.order.order_number;
+    const stored = await app.ctx.store.getAdmin(order.data.item.id);
+    const fulltechOrder = JSON.parse(stored.order_json);
+    fulltechOrder.origin = 'FULLTECH_STORE'; fulltechOrder.company_id = 'fulltech';
+    await app.ctx.store.update(stored.id, { orderJson: JSON.stringify(fulltechOrder) });
     const before = await api('/api/store/account/orders', { cookie: created.cookie });
     expect(before.data.orders.some((row) => row.order_number === orderNumber)).toBe(true);
 
@@ -344,6 +348,17 @@ describe('enlace de Google con una cuenta existente', () => {
       cookie,body: { phone: '8095550801', orderNumber },
     });
     expect(conPrueba.status).toBe(200);
+    expect(conPrueba.data.needs_proof).toBe(true);
+    expect((await api('/api/store/account/orders', { cookie })).data.orders).toEqual([]);
+    const stored = await app.ctx.store.getAdmin(order.data.item.id);
+    const fulltechOrder = JSON.parse(stored.order_json);
+    fulltechOrder.origin = 'FULLTECH_STORE'; fulltechOrder.company_id = 'fulltech';
+    await app.ctx.store.update(stored.id, { orderJson: JSON.stringify(fulltechOrder) });
+    const pruebaFulltech = await api('/api/store/account/phone', {
+      method: 'POST', cookie, body: { phone: '8095550801', orderNumber },
+    });
+    expect(pruebaFulltech.status).toBe(200);
+    expect(pruebaFulltech.data.needs_proof).toBe(false);
     const orders = await api('/api/store/account/orders', { cookie });
     expect(orders.data.orders.some((row) => row.order_number === orderNumber)).toBe(true);
   });

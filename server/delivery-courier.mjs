@@ -35,6 +35,7 @@
 import { toE164 } from './whatsapp.mjs';
 import { orderDestination } from './delivery-tracking.mjs';
 import { DELIVERY_STATES, DEFAULT_OFFER_TTL_MS, nextOfferExpiry } from './delivery-lifecycle.mjs';
+import { authorizedCourierAccount, companyOfOrder } from './logistics-tenancy.mjs';
 
 const OFFER_TTL_MS = Math.max(
   60_000,
@@ -194,6 +195,12 @@ export async function assignCourier(input) {
   }
   if (!contact.shareOrders) {
     return { ok: false, status: 403, error: 'contact_sharing_disabled', message: 'Ese contacto no recibe pedidos.' };
+  }
+  const companyId = companyOfOrder(order);
+  if (companyId !== 'phytoemagry' && !(await authorizedCourierAccount(ctx.db, companyId,
+    { contactId: contact.id, phone: contact.phone }))) {
+    return { ok: false, status: 403, error: 'courier_company_forbidden',
+      message: 'El repartidor no está autorizado para esta empresa.' };
   }
 
   const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;

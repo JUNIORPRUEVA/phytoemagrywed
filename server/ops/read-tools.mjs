@@ -17,6 +17,7 @@
  *   - Un nombre ambiguo devuelve las opciones en vez de adivinar.
  */
 import { commercialSnapshot } from './commercial.mjs';
+import { companyOfOrder, crmOwnership, crmRowVisible } from '../logistics-tenancy.mjs';
 
 const TZ = 'America/Santo_Domingo';
 
@@ -58,6 +59,22 @@ function ordenar(value) {
 export function createReadTools({ ctx, can, actor }) {
   const ahora = (ctx?.clock ?? (() => new Date()))().getTime();
   const veTodo = can('chats.force_reassign') || !actor?.id || actor.actor_type !== 'USER';
+  const central = can('admin.full');
+  /*
+   * LA MISMA CUARENTENA QUE LAS RUTAS.
+   *
+   * El agente puede pedir datos y el servidor los ejecuta con los permisos de la
+   * persona; sin esta comprobación, las herramientas serían una puerta trasera a
+   * los registros que las listas ocultan. Se calcula una sola vez por consulta y
+   * solo para el panel ordinario: la central sigue viendo todo para investigar.
+   */
+  let ownershipPromise = null;
+  const ownership = () => {
+    if (!ownershipPromise) ownershipPromise = crmOwnership(ctx).catch(() => null);
+    return ownershipPromise;
+  };
+  const visibleConversation = async (row) => central || crmRowVisible(actor, await ownership(), 'conversation', row, can);
+  const visibleOrder = (order) => central || companyOfOrder(order) === 'phytoemagry';
 
   const spec = [
     {
@@ -157,9 +174,14 @@ export function createReadTools({ ctx, can, actor }) {
 
   const leerConversaciones = async () => {
     const filas = await ctx.customers.listConversations({});
-    return (filas ?? [])
+    const alcanzables = (filas ?? [])
       .filter((row) => !row.deleted_at && !row.empty && !row.archived_at)
       .filter((row) => veTodo || String(row.assigned_user_id ?? row.assigned_to ?? '') === String(actor?.id ?? ''));
+    const salida = [];
+    for (const row of alcanzables) {
+      if (await visibleConversation(row)) salida.push(row);
+    }
+    return salida;
   };
 
   const comprasPorCliente = async () => {
@@ -168,6 +190,9 @@ export function createReadTools({ ctx, can, actor }) {
     for (const row of filas ?? []) {
       if (row.type !== 'order_intent') continue;
       const order = ordenar(row);
+      // Un pedido de otra empresa (o sin empresa demostrable) no entra: el
+      // agente no puede resumir compras que esa persona no puede abrir.
+      if (!visibleOrder(order)) continue;
       const clientId = order?.customer_id ?? row.customer_id ?? null;
       if (!clientId) continue;
       const estado = String(order?.status ?? row.status ?? '').toLowerCase();

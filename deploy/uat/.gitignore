@@ -1,0 +1,2 @@
+# El entorno real de UAT no se versiona (contiene credenciales).
+.env.uat

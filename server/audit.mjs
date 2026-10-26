@@ -117,6 +117,34 @@ export const AUDIT_ACTIONS = Object.freeze([
   'user_updated',
   'user_disabled',
   'user_role_changed',
+  /*
+   * ALCANCE POR EMPRESA (CRM y app de reparto).
+   *
+   * Estas cuatro acciones NO estaban en la lista blanca, y `record()` ignora en
+   * silencio lo que no está: las concesiones de empresa del repartidor se
+   * aplicaban sin dejar rastro, y la concesión de la oficina tampoco se habría
+   * guardado. Conceder o quitar una empresa es justo lo que hay que auditar.
+   */
+  'user.company_scope_granted',
+  'user.company_scope_revoked',
+  'courier.company_granted',
+  'courier.company_revoked',
+  /*
+   * REGISTRO DE REPARTIDORES. Las decisiones de la solicitud se aplicaban sin
+   * dejar traza porque sus acciones no estaban en la lista blanca. Quién aprobó,
+   * quién rechazó y a quién se le dio acceso operativo tiene que quedar escrito.
+   */
+  'courier.application_submitted',
+  'courier.application_info_requested',
+  'courier.application_approved',
+  'courier.application_rejected',
+  'courier.app_access_granted',
+  'courier.account_updated',
+  'courier.account_revoked',
+  'courier.document_accepted',
+  'courier.document_rejected',
+  'courier.document_replacement',
+  'cash.resolution_recorded',
   'password_changed',
   'login_success',
   'login_failure',

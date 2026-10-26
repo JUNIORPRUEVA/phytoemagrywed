@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Repartidores · FULLTECH</title>
+<style>
+:root{--line:#e4e9f0;--ink:#0f172a;--muted:#64748b;--brand:#1d4ed8;--warn:#b45309;--ok:#15803d;--bad:#b91c1c;--bg:#f5f7fa}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);font-size:13.5px;line-height:1.35}
+main{max-width:1180px;margin:0 auto;padding:14px 14px 32px}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.bar h1{font-size:16px;margin:0;letter-spacing:.01em}
+.bar .sp{flex:1}
+.bar a.back{display:inline-flex;align-items:center;gap:4px;padding:0 10px;min-height:32px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--brand);text-decoration:none;font-weight:700;font-size:12.5px}
+.bar a.back:hover{background:#eff6ff;border-color:#bfdbfe}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 10px}
+.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 9px;min-height:52px}
+.card small{display:block;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.card b{display:block;font-size:15.5px;font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.warn{border-color:#f0c987;background:#fffdf7}
+.toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}
+.toolbar input,.toolbar select{min-height:32px;padding:0 9px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;background:#fff}
+.toolbar input[type=search]{min-width:190px}
+h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:16px 0 6px}
+button{min-height:32px;padding:0 11px;border-radius:8px;border:1px solid var(--brand);background:var(--brand);color:#fff;font-weight:600;cursor:pointer;font:inherit}
+button.ghost{background:#fff;color:var(--brand)}
+button.danger{background:#fff;color:var(--bad);border-color:#fecaca}
+button[disabled]{opacity:.5;cursor:not-allowed}
+.wrap{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid #eef2f7;vertical-align:middle}
+th{font-size:9.8px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:#f8fafc;font-weight:700;white-space:nowrap}
+tbody tr:hover{background:#f8fafc}
+tbody tr:last-child td{border-bottom:0}
+.who b{display:block;font-size:13px}
+.who span{font-size:11px;color:var(--muted)}
+td.act{text-align:right;white-space:nowrap}
+.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;border:1px solid}
+.tag.ok{color:var(--ok);background:#f0fdf4;border-color:#bbf7d0}
+.tag.warn{color:var(--warn);background:#fffbeb;border-color:#fde68a}
+.tag.bad{color:var(--bad);background:#fef2f2;border-color:#fecaca}
+.tag.none{color:var(--muted);background:#f8fafc;border-color:var(--line)}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;border:1px solid #dbeafe;background:#eff6ff;color:#1e40af}
+.empty{padding:18px;text-align:center;color:var(--muted)}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);background:#fff;border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(15,23,42,.08);transform:translateX(100%);transition:transform .18s ease;display:flex;flex-direction:column;z-index:40}
+#drawer[open]{transform:none}
+#drawer header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+#drawer header b{font-size:14px;flex:1}
+#drawer .body{padding:12px;overflow:auto;flex:1}
+#drawer footer{padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap}
+.row{display:flex;gap:8px;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f5f9}
+.row span{color:var(--muted)}
+.row b{font-variant-numeric:tabular-nums;text-align:right}
+.hint{color:var(--muted);font-size:12px}
+#status{font-size:12px;color:var(--muted)}
+textarea{width:100%;min-height:64px;border:1px solid #cbd5e1;border-radius:8px;padding:7px 9px;font:inherit;resize:vertical}
+@media (max-width:860px){
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hide-sm{display:none}
+  main{padding:10px 10px 90px}
+}
+</style></head>
+<body>
+<main>
+  <div class="bar">
+    <a class="back" href="/admin/">← Panel</a>
+    <h1>Repartidores</h1>
+    <span class="sp"></span>
+    <span id="status" role="status"></span>
+    <button class="ghost" type="button" id="refresh">Actualizar</button>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <h2>Solicitudes de ingreso</h2>
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="Buscar nombre, teléfono o zona">
+    <select id="filter" aria-label="Estado">
+      <option value="">Todos los estados</option>
+      <option value="pending">Pendientes</option>
+      <option value="info_required">Requiere información</option>
+      <option value="approved">Aprobadas</option>
+      <option value="rejected">Rechazadas</option>
+    </select>
+    <select id="company" aria-label="Empresa"></select>
+  </div>
+  <div class="wrap">
+    <table>
+      <thead><tr>
+        <th>Solicitante</th><th class="hide-sm">Vehículo</th><th class="hide-sm">Zona</th>
+        <th>Empresa</th><th class="hide-sm">Fecha</th><th>Estado</th><th></th>
+      </tr></thead>
+      <tbody id="apps"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+
+  <h2>Repartidores con acceso a la app</h2>
+  <div class="wrap">
+    <table>
+      <thead><tr>
+        <th>Repartidor</th><th class="hide-sm">Tipo</th><th class="hide-sm">Teléfono</th>
+        <th>Empresas autorizadas</th><th>Estado</th><th></th>
+      </tr></thead>
+      <tbody id="couriers"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+
+  <section id="users-section" hidden>
+    <h2>Usuarios del CRM y empresas que pueden operar</h2>
+    <p class="hint" style="margin:0 0 6px">Sin filas asignadas, un usuario opera solo PHYTOEMAGRY. Con filas, exactamente las concedidas. La superadministración ve todas las empresas.</p>
+    <div class="wrap">
+      <table>
+        <thead><tr><th>Usuario</th><th class="hide-sm">Rol</th><th>Empresas concedidas</th><th></th></tr></thead>
+        <tbody id="users"><tr><td colspan="4" class="empty">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<aside id="drawer" aria-hidden="true">
+  <header>
+    <b id="d-title">Detalle</b>
+    <button class="ghost" type="button" id="d-close" aria-label="Cerrar">Cerrar</button>
+  </header>
+  <div class="body" id="d-body"></div>
+  <footer id="d-actions"></footer>
+</aside>
+
+<script src="/admin/couriers.js"></script>
+</body></html>

@@ -127,8 +127,9 @@ import {
   lifecycleOf,
   nextOfferExpiry,
 } from './delivery-lifecycle.mjs';
-import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, validateRemittance } from './delivery-cash.mjs';
-import { reconcileDeliveryCash } from './delivery-reconciliation.mjs';
+import { CASH_COLLECTION, custodyByCourier, custodySummary, earningsFor, recordRemittanceAtomic } from './delivery-cash.mjs';
+import { activeLogisticsCompany, actorSeesCompany, adminCompanyScope, authorizedCourierAccount, companyOfOrder, companyOfCashRow, courierCompanies, crmCompanyEvidence, crmOwnership, crmRowVisible, ensureLogisticsCompanies, explicitCrmCompany, scopeSeesCompany, selectedCourierCompany, validCompanyId } from './logistics-tenancy.mjs';
+import { reconcileDeliveryCash, reconcileDeliveryCashByCompany } from './delivery-reconciliation.mjs';
 import { applyTransferVerification, planDeliveryPayment } from './delivery-payment.mjs';
 import { describePosition, signalState, validateCourierLocation } from './courier-location.mjs';
 /* Acceso móvil del repartidor (Fase 04): identidad propia, sesión corta y lectura mínima. */
@@ -136,6 +137,7 @@ import {
   COURIER_LOCK_MS,
   COURIER_MAX_FAILURES,
   COURIER_SESSION_SECONDS,
+  COURIER_VEHICLE_TYPES,
   assignedToCourier,
   burnCredentialCheck,
   courierOrderDTO,
@@ -153,6 +155,15 @@ import {
   verifyCourierCredential,
 } from './courier-app.mjs';
 import { createStoreOAuth } from './store-oauth.mjs';
+import {
+  DOCUMENT_KINDS,
+  decodeDocument,
+  documentsDirectory,
+  readDocumentFile,
+  removeDocumentFile,
+  requiredDocumentsFor,
+  saveDocumentFile,
+} from './courier-documents.mjs';
 /* Identidad de cliente (teléfono verificado, correo) y SEO de la tienda. */
 import { createMailSender, createSmsSender, createStoreVerifications } from './store-verifications.mjs';
 import { handleStoreAuthRoute } from './store-auth-routes.mjs';
@@ -1094,6 +1105,10 @@ async function freshOrderForPayment(ctx, orderId) {
  */
 async function paymentAuthorization(ctx, actor, order, can) {
   if (can('admin.full')) return { ok: true };
+  const companyId = companyOfOrder(order);
+  if (companyId !== 'phytoemagry' && !(await authorizedCourierAccount(ctx.db, companyId, { userId: actor?.id }))) {
+    return { ok: false, status: 403, error: 'company_forbidden', message: 'Sin autorización para cobrar en esta empresa.' };
+  }
   const assignedTo = order?.delivery?.delivery_user_id ?? null;
   if (assignedTo && assignedTo === actor?.id) return { ok: true };
   if (can('sales.view_payment_method')) {
@@ -1169,45 +1184,142 @@ async function publicSessionWithOrder(ctx, session) {
  *           direction?: string|null, status?: string|null, message?: any }} info
  */
 function emitChatEvent(ctx, info) {
+  if (!ctx || !info?.conversationId) return;
   // El resto del panel también se entera (contadores de HOY, notificaciones).
   // Va sin contenido: solo de qué conversación es y en qué dirección fue.
-  if (ctx?.realtime && info?.type === 'message' && info?.direction === 'inbound') {
-    ctx.realtime.publish({
-      type: 'whatsapp.message_received',
-      entity: { kind: 'conversation', id: info.conversationId ?? null },
-      requires: 'chats.read',
-      audience: 'panel',
-      data: { conversationId: info.conversationId ?? null, customerId: info.customerId ?? null },
-    });
-  }
+  const wantsRealtime = ctx.realtime && info.type === 'message' && info.direction === 'inbound';
   const clients = ctx?.chatEventClients;
-  if (!clients?.size || !info?.conversationId) return;
-  const event = info.type === 'status' ? 'wa.status' : 'wa.message';
-  const payload = {
-    ok: true,
-    type: info.type,
-    conversationId: info.conversationId,
-    customerId: info.customerId ?? null,
-    direction: info.direction ?? null,
-    status: info.status ?? info.message?.status ?? null,
-    messageId: info.message?.id ?? null,
-    at: info.message?.created_at ?? new Date().toISOString(),
-  };
-  const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const client of [...clients]) {
-    try {
-      client.res.write(frame);
-    } catch {
-      clients.delete(client);
-    }
+  if (!wantsRealtime && !clients?.size) return;
+  /*
+   * LA EMPRESA DECIDE QUIÉN RECIBE EL AVISO.
+   *
+   * El aviso lleva identificadores, no contenido, pero saber que existe una
+   * conversación de OTRA empresa ya es información. Se resuelve de las etiquetas
+   * explícitas de conversación y ficha (sin recorrer el almacén en cada mensaje):
+   * si no hay etiqueta no se inventa pertenencia y el aviso sigue su curso normal,
+   * porque el acceso al hilo ya está cerrado por la cuarentena en la ruta HTTP.
+   */
+  void chatEventScope(ctx, info)
+    .then(({ company, companyScoped }) => {
+      if (wantsRealtime) {
+        ctx.realtime.publish({
+          type: 'whatsapp.message_received',
+          entity: { kind: 'conversation', id: info.conversationId ?? null },
+          requires: 'chats.read',
+          audience: 'panel',
+          company,
+          companyScoped,
+          data: { conversationId: info.conversationId ?? null, customerId: info.customerId ?? null },
+        });
+      }
+      const abiertos = ctx?.chatEventClients;
+      if (!abiertos?.size) return;
+      const event = info.type === 'status' ? 'wa.status' : 'wa.message';
+      const payload = {
+        ok: true,
+        type: info.type,
+        conversationId: info.conversationId,
+        customerId: info.customerId ?? null,
+        direction: info.direction ?? null,
+        status: info.status ?? info.message?.status ?? null,
+        messageId: info.message?.id ?? null,
+        at: info.message?.created_at ?? new Date().toISOString(),
+      };
+      const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+      for (const client of [...abiertos]) {
+        if (companyScoped && !actorSeesCompany(client.actor, company)) continue;
+        try {
+          client.res.write(frame);
+        } catch {
+          abiertos.delete(client);
+        }
+      }
+    })
+    .catch(() => { /* avisar no puede frenar el guardado */ });
+}
+
+/**
+ * Empresa de un aviso de chat, leída de las etiquetas de la conversación y de la
+ * ficha. `companyScoped: false` cuando no hay etiqueta: no se puede demostrar la
+ * empresa y no se bloquea el aviso por eso (el hilo sigue cerrado por la ruta).
+ */
+async function chatEventScope(ctx, info) {
+  try {
+    const conversation = await ctx.db.get('conversations', info.conversationId);
+    const customerId = info.customerId ?? conversation?.customer_id ?? null;
+    const customer = customerId ? await ctx.db.get('customers', customerId) : null;
+    const company = explicitCrmCompany({ conversation, customer });
+    return company ? { company, companyScoped: true } : { company: null, companyScoped: false };
+  } catch {
+    return { company: null, companyScoped: false };
   }
+}
+
+/**
+ * EMPRESA DE UN AVISO DE MUTACIÓN.
+ *
+ * El evento ya está guardado; aquí solo se decide a qué empresa pertenece para
+ * no repartirlo por el panel de otra. Se acota cuando el evento habla de un
+ * pedido, una recogida o una ficha; inventario, supervisor y tickets son
+ * globales. Sin empresa demostrable el evento queda para la central: cerrar
+ * antes que adivinar.
+ */
+async function mutationEventScope(ctx, events, body) {
+  const kinds = new Set(events.map((event) => String(event.entity?.kind ?? '')));
+  if (!['order', 'pickup', 'customer'].some((kind) => kinds.has(kind))) {
+    return { company: null, companyScoped: false };
+  }
+  const candidate = body?.order ?? body?.item ?? null;
+  if (candidate && typeof candidate === 'object') {
+    return { company: companyOfOrder(candidate.order_json ? orderOf(candidate) : candidate), companyScoped: true };
+  }
+  const orderId = events
+    .map((event) => event.data?.orderId ?? (event.entity?.kind === 'order' ? event.entity?.id : null))
+    .find(Boolean);
+  if (orderId) {
+    const item = await findOrderItem(ctx.store, String(orderId)).catch(() => null);
+    if (item) return { company: companyOfOrder(orderOf(item)), companyScoped: true };
+  }
+  if (kinds.has('customer') && body?.customer?.id) {
+    const ownership = await crmOwnership(ctx).catch(() => null);
+    return { company: ownership?.evidence.customer(body.customer.id) ?? null, companyScoped: true };
+  }
+  return { company: null, companyScoped: true };
+}
+
+/**
+ * Proyección pública de un documento del expediente.
+ *
+ * Nunca incluye `file` (la ruta privada en disco) ni el binario: el panel pide
+ * la descarga por su ruta autenticada. `status` es lo que ve la app.
+ */
+function publicDocument(document) {
+  if (!document) return null;
+  return {
+    id: document.id,
+    kind: document.kind,
+    status: document.status,
+    content_type: document.content_type,
+    bytes: Number(document.bytes) || 0,
+    created_at: document.created_at ?? null,
+    updated_at: document.updated_at ?? null,
+    review_note: document.review_note ?? null,
+  };
 }
 
 async function emitDeliveryEvent(ctx, type, session) {  if (!ctx.deliveryEventClients?.size || !session) return;
   const payload = await publicSessionWithOrder(ctx, session);
+  /*
+   * MISMA REGLA QUE LA LISTA DEL MAPA: el seguimiento lleva la posición y el
+   * pedido entero, así que no basta con el permiso; hace falta poder ver esa
+   * empresa. Antes el aviso en vivo se saltaba el filtro que sí aplica la lista.
+   */
+  const item = session.order_id ? await findOrderItem(ctx.store, session.order_id).catch(() => null) : null;
+  const company = item ? companyOfOrder(orderOf(item)) : null;
   const event = `event: ${type}\ndata: ${JSON.stringify({ ok: true, type, session: payload })}\n\n`;
   for (const client of [...ctx.deliveryEventClients]) {
     if (!canReadTracking(client.actor, session)) continue;
+    if (!actorSeesCompany(client.actor, company)) continue;
     try {
       client.res.write(event);
     } catch {
@@ -1219,13 +1331,27 @@ async function emitDeliveryEvent(ctx, type, session) {  if (!ctx.deliveryEventCl
 async function listVisibleTracking(ctx, actor) {
   const rows = await ctx.db.list('delivery_tracking_sessions', { by: 'started_at', order: 'desc', limit: 500 });
   const visible = rows.filter((row) => canReadTracking(actor, row));
+  const scope = await adminCompanyScope(ctx.db, actor);
   const out = [];
-  for (const row of visible) out.push(await publicSessionWithOrder(ctx, row));
+  for (const row of visible) {
+    const item = await findOrderItem(ctx.store, row.order_id);
+    const owner = item ? companyOfOrder(orderOf(item)) : null;
+    if (!scopeSeesCompany(scope, owner)) continue;
+    out.push(await publicSessionWithOrder(ctx, row));
+  }
   return out;
 }
 
-async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {  const current = orderOf(item);
+async function assignDeliveryToOrder(ctx, item, deliveryUser, actor = null, options = {}) {
+  const current = orderOf(item);
   if (!current) return null;
+  const companyId = companyOfOrder(current);
+  if (deliveryUser && companyId !== 'phytoemagry' &&
+      !(await authorizedCourierAccount(ctx.db, companyId, { userId: deliveryUser.id }))) {
+    const error = new Error('El repartidor no está autorizado para esta empresa.');
+    error.code = 'courier_company_forbidden'; error.status = 403;
+    throw error;
+  }
   const previousUserId = text(current.delivery?.delivery_user_id, 80);
   const sameDelivery = previousUserId && previousUserId === deliveryUser?.id;
   const assignmentNote = text(options.assignmentNote ?? options.assignment_note ?? current.delivery?.delivery_assignment_note, 600);
@@ -2730,8 +2856,25 @@ async function conversationAccess(ctx, actor) {
  * @param {any} actor
  * @param {any} conversation
  */
-async function canOpenConversation(ctx, actor, conversation) {
+function crmVisibleConversationCounts(rows) {
+  const visible = rows.filter((row) => !row.deleted_at && !row.empty);
+  const active = visible.filter((row) => !row.archived_at);
+  const stage = (value) => active.filter((row) => row.customer_stage === value).length;
+  return { todos: active.length, no_leidos: active.filter((row) => Number(row.unread_count) > 0).length,
+    pendientes: active.filter((row) => row.awaiting_reply === true).length,
+    clientes: active.filter((row) => row.has_purchase === true).length,
+    seguimiento: active.filter((row) => row.next_followup).length,
+    mios: 0, sin_asignar: active.filter((row) => !row.assigned_user_id).length,
+    archivados: visible.length - active.length,
+    unread_total: visible.reduce((sum, row) => sum + (Number(row.unread_count) || 0), 0),
+    prospectos: stage('PROSPECT'), interesados: stage('INTERESTED'),
+    etapa_clientes: stage('CUSTOMER'), recompra: stage('REPEAT_CUSTOMER'),
+    inactivos: stage('INACTIVE') };
+}
+
+async function canOpenConversation(ctx, actor, conversation, ownership = null) {
   if (!conversation) return false;
+  if (!crmRowVisible(actor, ownership ?? await crmOwnership(ctx), 'conversation', conversation)) return false;
   const access = await conversationAccess(ctx, actor);
   if (access.all || access.conversationIds.has(conversation.id)) return true;
   const sinAsignar = !conversation.assigned_user_id && !conversation.assigned_to;
@@ -2775,8 +2918,9 @@ async function claimConversationIfFree(ctx, actor, conversation) {
 }
 
 /** ¿Puede este usuario trabajar con ese cliente (seguimientos, tareas)? */
-async function canWorkWithCustomer(ctx, actor, customerId) {
+async function canWorkWithCustomer(ctx, actor, customerId, ownership = null) {
   if (!customerId) return false;
+  if (!crmRowVisible(actor, ownership ?? await crmOwnership(ctx), 'customer', customerId)) return false;
   const access = await conversationAccess(ctx, actor);
   if (access.all || access.customerIds.has(customerId)) return true;
   const deliveryScope = await deliveryAccessScope(ctx, actor);
@@ -3358,6 +3502,12 @@ async function confirmOrder(ctx, input = {}) {
       if (!deliveryUser || !canDeliver(deliveryUser) || deliveryUser.active === false) {
         return { ok: false, status: 422, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor del equipo.' };
       }
+      const companyId = companyOfOrder(order);
+      if (companyId !== 'phytoemagry' &&
+          !(await authorizedCourierAccount(ctx.db, companyId, { userId: deliveryUser.id }))) {
+        return { ok: false, status: 403, error: 'courier_company_forbidden',
+          message: 'El repartidor no está autorizado para esta empresa.' };
+      }
     }
 
     const at = ctx.clock().toISOString();
@@ -3765,12 +3915,14 @@ async function createOrderUnlocked(ctx, body = {}, actor = null, options = {}) {
    */
   if (isStoreOrder) {
     built.order.origin = 'FULLTECH_STORE';
+    built.order.company_id = 'fulltech';
     built.order.origin_label = 'Pedido tienda';
     built.order.fulfillment_method = body.fulfillment === 'pickup' ? 'pickup' : 'delivery';
     built.order.payment_status = 'pending';
     built.order.warranty_snapshot = Array.isArray(body.warrantySnapshot) ? body.warrantySnapshot : [];
     if(options.smartQuote)built.order.smart_commerce=options.smartQuote;
   }
+  if (!isStoreOrder) built.order.company_id = companyOfOrder(built.order);
   /*
    * La ubicación elegida queda en el HISTORIAL del cliente con su procedencia
    * (dispositivo del operador, coordenadas a mano o reutilizada), para poder
@@ -5421,12 +5573,13 @@ function withCustomer(rows, customers) {
  * @param {any} ctx
  * @param {any} body
  */
-export async function processWebhookPayload(ctx, body) {
+export async function processWebhookPayload(ctx, body, options = {}) {
   const parsed = parseWebhook(body);
   /** @type {any[]} */
   const stored = [];
   for (const inbound of parsed.messages) {
-    const result = await ctx.customers.recordInbound({ waMessage: inbound });
+    const result = await ctx.customers.recordInbound({ waMessage: inbound,
+      companyId: options.verifiedLegacyPhytoChannel === true ? 'phytoemagry' : null });
     if (result.duplicate) continue;
     stored.push(result);
     /*
@@ -5975,7 +6128,9 @@ async function handle(req, res, ctx) {
     // y se guarda después. El guardado es idempotente, así que un reintento no
     // duplica ningún mensaje.
     json(res, 200, { ok: true, received: true });
-    processWebhookPayload(ctx, incoming.json).catch((error) =>
+    processWebhookPayload(ctx, incoming.json, {
+      verifiedLegacyPhytoChannel: signatureCheck.ok === true && Boolean(ctx.appSecret),
+    }).catch((error) =>
       console.error('[crm] webhook:', error?.message ?? error),
     );
     return;
@@ -6061,6 +6216,16 @@ async function handle(req, res, ctx) {
    */
   res.__crmActor = actor;
   const can = (permission) => hasPermission(actor, permission);
+  /*
+   * ALCANCE POR EMPRESA (una vez por petición).
+   *
+   * Toda ruta administrativa que hable de dinero, reparto o cuentas de
+   * repartidor tiene que preguntar aquí, no a un `'phytoemagry'` fijo: el dueño
+   * del CRM puede dar FULLTECH a una oficina concreta y quitársela a otra.
+   */
+  let companyScopeMemo;
+  const companyScope = () => (companyScopeMemo ??= adminCompanyScope(ctx.db, actor, can));
+  const seesCompany = async (companyId) => scopeSeesCompany(await companyScope(), companyId);
   const requirePermission = (permission, message) => {
     if (can(permission)) return true;
     forbid(message);
@@ -6077,6 +6242,21 @@ async function handle(req, res, ctx) {
     permissions: permissionsForRole(actor?.role),
   });
   if(actor?.role==='SUPPLIER'&&route.startsWith('/api/admin/')&&!route.startsWith('/api/admin/store/commerce/operations/')&&!['/api/admin/login','/api/admin/auth/login','/api/admin/logout','/api/admin/auth/logout','/api/admin/session','/api/admin/auth/me','/api/admin/users/me/password'].includes(route)){forbid('La cuenta de proveedor solo puede operar sus sucursales autorizadas.');return;}
+
+  // Los permisos antiguos del panel son de PHYTOEMAGRY. Un ID de pedido no
+  // convierte esos permisos en acceso a otra empresa. ADMIN completo es central.
+  if (!can('admin.full') && (route.startsWith('/api/admin/orders/') ||
+      route.startsWith('/api/admin/delivery/orders/'))) {
+    if (route.startsWith('/api/admin/orders/') && route.endsWith('/status') &&
+        req.method === 'PATCH' && !can('orders.change_status')) { forbid(); return; }
+    const prefix = route.startsWith('/api/admin/orders/') ? '/api/admin/orders/' : '/api/admin/delivery/orders/';
+    const orderId = decodeURIComponent(route.slice(prefix.length).split('/')[0]);
+    const item = orderId ? await findOrderItem(store, orderId) : null;
+    const owner = item ? companyOfOrder(orderOf(item)) : null;
+    if (item && !(await seesCompany(owner))) {
+      json(res, 404, { ok: false, error: 'not_found' }); return;
+    }
+  }
 
   /*
    * CANAL ÚNICO DE TIEMPO REAL DEL CRM (`GET /api/admin/events`).
@@ -6199,6 +6379,9 @@ async function handle(req, res, ctx) {
       return;
     }
     const order = orderOf(item);
+    if (!(await seesCompany(companyOfOrder(order)))) {
+      json(res, 404, { ok: false, error: 'not_found' }); return;
+    }
     json(res, 200, {
       ok: true,
       item: sanitizeItemForPermissions(item, actor),
@@ -6297,8 +6480,35 @@ async function handle(req, res, ctx) {
    * solo se devuelve si el repartidor autenticado es el asignado.
    * ============================================================================
    */
-  const COMPANY_ID = String(process.env.PHYTO_CRM_COMPANY_ID ?? 'phytoemagry').trim() || 'phytoemagry';
   const courierCookieName = 'pe_courier';
+  const courierApplicationAttempts = new Map();
+  /*
+   * Consulta del estado de una solicitud: se limita por IP igual que el alta.
+   * El recibo es aleatorio y largo, pero un limitador evita que el endpoint se
+   * use para tantear identificadores.
+   */
+  const courierApplicationStatusChecks = new Map();
+  function applicationStatusAllowed(ip) {
+    const row = courierApplicationStatusChecks.get(ip) ?? { count: 0, until: 0 };
+    if (row.until > Date.now() && row.count >= 30) return false;
+    courierApplicationStatusChecks.set(ip, {
+      count: row.until > Date.now() ? row.count + 1 : 1,
+      until: Date.now() + 15 * 60 * 1000,
+    });
+    return true;
+  }
+  const scopedCashRows = async (companyId = null) => {
+    const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+    const items = (await Promise.resolve(store.listAdmin({ limit: 5000 }))) ?? [];
+    const ordersById = new Map();
+    for (const item of items) {
+      if (item.type !== 'order_intent') continue;
+      const order = orderOf(item);
+      if (order) { ordersById.set(String(item.id), order); if (order.id) ordersById.set(String(order.id), order); }
+    }
+    return rows.map((row) => ({ ...row, company_id: companyOfCashRow(row, ordersById) }))
+      .filter((row) => row.company_id && (!companyId || row.company_id === companyId));
+  };
   const setCourierCookie = (value) => {
     const attributes = [`${courierCookieName}=${value}`, 'Path=/', 'HttpOnly', 'SameSite=Strict'];
     attributes.push(value ? `Max-Age=${COURIER_SESSION_SECONDS}` : 'Max-Age=0');
@@ -6306,7 +6516,7 @@ async function handle(req, res, ctx) {
     res.setHeader('Set-Cookie', attributes.join('; '));
   };
   /** Resuelve la cuenta autenticada del móvil. Nunca confía en un id mandado por el cliente. */
-  const courierAuth = async () => {
+  const courierAuth = async ({ allowUnselected = false } = {}) => {
     if (!token) return { ok: false, status: 503, error: 'no_token' };
     const raw = courierTokenFromRequest(req, readCookie);
     if (!raw) return { ok: false, status: 401, error: 'unauthorized' };
@@ -6318,10 +6528,166 @@ async function handle(req, res, ctx) {
     if ((Number(account.token_epoch ?? 0) || 0) !== parsed.epoch) {
       return { ok: false, status: 401, error: 'session_revoked' };
     }
-    const usable = isCourierUsable(account, COMPANY_ID);
+    const usable = isCourierUsable(account);
     if (!usable.ok) return { ok: false, status: 401, error: usable.error };
-    return { ok: true, account, session: { expiresAt: parsed.expiresAt } };
+    const companies = await courierCompanies(ctx.db, account);
+    if (!companies.length) return { ok: false, status: 403, error: 'company_forbidden' };
+    const selected = allowUnselected && !req.headers['x-courier-company']
+      ? { ok: true, companyId: companies.length === 1 ? companies[0] : null }
+      : selectedCourierCompany(companies, req.headers['x-courier-company']);
+    return { ...selected, account, companies, session: { expiresAt: parsed.expiresAt } };
   };
+
+  if (route === '/api/courier/companies' && req.method === 'GET') {
+    const companies = ((await ctx.db.list('logistics_companies', { limit: 5000 })) ?? [])
+      .filter((row) => row.active === true).map((row) => ({ id: row.id, name: row.name }));
+    json(res, 200, { ok: true, companies });
+    return;
+  }
+
+  if (route === '/api/courier/applications' && req.method === 'POST') {
+    const ip = clientIp(req);
+    const attempt = courierApplicationAttempts.get(ip) ?? { count: 0, until: 0 };
+    if (attempt.until > Date.now() && attempt.count >= 5) {
+      json(res, 429, { ok: false, error: 'too_many_attempts' }); return;
+    }
+    courierApplicationAttempts.set(ip, { count: attempt.until > Date.now() ? attempt.count + 1 : 1,
+      until: Date.now() + 15 * 60 * 1000 });
+    const body = await readJsonBody(req).catch(() => ({}));
+    const companyId = String(body.companyId ?? body.company_id ?? '').trim();
+    const phone = normalizeCourierPhone(body.phone);
+    const name = text(body.name, 80);
+    /*
+     * DATOS MÍNIMOS DE UN ALTA REAL. Sin vehículo, zona y aceptación de las
+     * condiciones, la oficina no puede decidir nada: se piden aquí y no en el
+     * panel. `termsAccepted` tiene que ser un sí explícito, no la ausencia de
+     * un "no".
+     */
+    const vehicleType = String(body.vehicleType ?? body.vehicle_type ?? '').trim().toUpperCase();
+    const zone = text(body.zone ?? body.workZone ?? body.work_zone, 80);
+    const termsAccepted = body.termsAccepted === true || body.terms_accepted === true;
+    if (!COURIER_VEHICLE_TYPES.includes(vehicleType)) {
+      json(res, 422, { ok: false, error: 'invalid_vehicle_type' }); return;
+    }
+    if (!zone || zone.length < 3) { json(res, 422, { ok: false, error: 'invalid_zone' }); return; }
+    if (!termsAccepted) { json(res, 422, { ok: false, error: 'terms_required' }); return; }
+    if (!(await activeLogisticsCompany(ctx.db, companyId)) || !phone || !name || name.length < 3) {
+      json(res, 422, { ok: false, error: 'invalid_application' }); return;
+    }
+    const key = createHash('sha256').update(`${companyId}:${phone}`).digest('hex');
+    const rows = (await ctx.db.list('courier_applications', { limit: 5000 })) ?? [];
+    const current = rows.find((row) => row.application_key === key && row.status !== 'rejected');
+    if (current) {
+      /*
+       * Ya hay una solicitud viva (pendiente o con información pedida): se
+       * devuelve el mismo recibo en vez de duplicar la fila. Si se rechazó, se
+       * permite volver a postularse creando una nueva.
+       */
+      json(res, 202, { ok: true, status: current.status, applicationId: current.id,
+        receipt: current.receipt ?? null });
+      return;
+    }
+    const now = new Date().toISOString();
+    const receipt = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '');
+    const doc = { id: `app_${randomUUID().replaceAll('-', '')}`, application_key: key,
+      company_id: companyId, phone_e164: phone, display_name: name,
+      vehicle_type: vehicleType, zone, terms_accepted_at: now,
+      status: 'pending', receipt, created_at: now, updated_at: now };
+    await ctx.db.insert('courier_applications', doc);
+    await ctx.audit?.record({ entity: 'courier_application', entityId: doc.id,
+      action: 'courier.application_submitted', actor: name,
+      data: { company_id: companyId, vehicle_type: vehicleType } });
+    // No se emite token, PIN, cuenta, asignación ni concesión operativa.
+    json(res, 202, { ok: true, status: 'pending_review', applicationId: doc.id, receipt });
+    return;
+  }
+
+  /* Consulta del estado con el recibo que se dio al solicitarla (no con el teléfono). */
+  if (route.startsWith('/api/courier/applications/') && route.endsWith('/status') && req.method === 'GET') {
+    const ip = clientIp(req);
+    if (!applicationStatusAllowed(ip)) { json(res, 429, { ok: false, error: 'too_many_attempts' }); return; }
+    const id = decodeURIComponent(route.slice('/api/courier/applications/'.length, -'/status'.length));
+    const receipt = String(url.searchParams.get('receipt') ?? '');
+    const application = await ctx.db.get('courier_applications', id);
+    if (!application || !receipt || receipt !== application.receipt) {
+      json(res, 404, { ok: false, error: 'not_found' }); return;
+    }
+    json(res, 200, { ok: true, status: application.status,
+      company_id: application.company_id, updated_at: application.updated_at ?? null,
+      note: application.review_note ?? null, operational_access: false });
+    return;
+  }
+
+  /*
+   * DOCUMENTOS DEL EXPEDIENTE (lado solicitante).
+   *
+   * Se envían con el MISMO recibo de la solicitud; sin recibo no se puede ni
+   * subir ni listar. El contenido se valida por bytes reales y se guarda en un
+   * directorio privado con nombre generado por el servidor.
+   */
+  if (route.startsWith('/api/courier/applications/') && route.endsWith('/documents') && req.method === 'POST') {
+    const ip = clientIp(req);
+    if (!applicationStatusAllowed(ip)) { json(res, 429, { ok: false, error: 'too_many_attempts' }); return; }
+    const id = decodeURIComponent(route.slice('/api/courier/applications/'.length, -'/documents'.length));
+    // El cuerpo por defecto son 64 KB: un documento viaja en base64 y necesita
+    // su propio límite, acotado (el binario real se valida aparte a 4 MB).
+    const body = await readJsonBody(req, 6 * 1024 * 1024).catch(() => ({}));
+    const application = await ctx.db.get('courier_applications', id);
+    if (!application || !body.receipt || String(body.receipt) !== application.receipt) {
+      json(res, 404, { ok: false, error: 'not_found' }); return;
+    }
+    if (!['pending', 'info_required'].includes(application.status)) {
+      json(res, 409, { ok: false, error: 'application_closed' }); return;
+    }
+    const kind = String(body.kind ?? '').toUpperCase();
+    if (!DOCUMENT_KINDS.includes(kind)) { json(res, 422, { ok: false, error: 'invalid_document_kind' }); return; }
+    const decoded = decodeDocument(body.dataBase64 ?? body.data_base64);
+    if (!decoded.ok) {
+      json(res, decoded.error === 'too_large' ? 413 : 422, { ok: false, error: decoded.error }); return;
+    }
+    const stored = await saveDocumentFile({ directory: documentsDirectory(ctx.store?.file),
+      applicationId: application.id, buffer: decoded.buffer, contentType: decoded.contentType });
+    if (!stored.ok) { json(res, 422, { ok: false, error: stored.error }); return; }
+    const now = new Date().toISOString();
+    /* Un documento por tipo: el reemplazo archiva el anterior en vez de duplicarlo. */
+    const previous = ((await ctx.db.list('courier_documents', { limit: 5000 })) ?? [])
+      .filter((row) => row.application_id === application.id && row.kind === kind && row.status !== 'replaced');
+    for (const old of previous) {
+      await removeDocumentFile(old.file).catch(() => {});
+      await ctx.db.update('courier_documents', old.id, { status: 'replaced', replaced_at: now, updated_at: now });
+    }
+    const doc = { id: stored.id, application_id: application.id, company_id: application.company_id,
+      kind, content_type: decoded.contentType, bytes: stored.bytes, file: stored.file,
+      status: 'received', created_at: now, updated_at: now };
+    await ctx.db.insert('courier_documents', doc);
+    await ctx.db.update('courier_applications', application.id, { updated_at: now });
+    const documents = ((await ctx.db.list('courier_documents', { limit: 5000 })) ?? [])
+      .filter((row) => row.application_id === application.id && row.status !== 'replaced');
+    json(res, 201, { ok: true, status: 'received', document: publicDocument(doc),
+      missing: requiredDocumentsFor(application.vehicle_type)
+        .filter((required) => !documents.some((row) => row.kind === required)) });
+    return;
+  }
+
+  if (route.startsWith('/api/courier/applications/') && route.endsWith('/documents') && req.method === 'GET') {
+    const ip = clientIp(req);
+    if (!applicationStatusAllowed(ip)) { json(res, 429, { ok: false, error: 'too_many_attempts' }); return; }
+    const id = decodeURIComponent(route.slice('/api/courier/applications/'.length, -'/documents'.length));
+    const receipt = String(url.searchParams.get('receipt') ?? '');
+    const application = await ctx.db.get('courier_applications', id);
+    if (!application || !receipt || receipt !== application.receipt) {
+      json(res, 404, { ok: false, error: 'not_found' }); return;
+    }
+    const documents = ((await ctx.db.list('courier_documents', { limit: 5000 })) ?? [])
+      .filter((row) => row.application_id === application.id && row.status !== 'replaced');
+    json(res, 200, { ok: true, status: application.status,
+      documents: documents.map(publicDocument),
+      required: requiredDocumentsFor(application.vehicle_type),
+      missing: requiredDocumentsFor(application.vehicle_type)
+        .filter((required) => !documents.some((row) => row.kind === required)),
+      operational_access: false });
+    return;
+  }
 
   if (route === '/api/courier/login' && req.method === 'POST') {
     const courierIp = clientIp(req);
@@ -6355,9 +6721,10 @@ async function handle(req, res, ctx) {
       json(res, 429, { ok: false, error: 'too_many_attempts', message: 'Cuenta bloqueada un momento por intentos fallidos.' });
       return;
     }
-    const usable = isCourierUsable(account, COMPANY_ID);
+    const usable = isCourierUsable(account);
+    const companies = await courierCompanies(ctx.db, account);
     const matches = await verifyCourierCredential(secret, account.credential_hash);
-    if (!matches || !usable.ok) {
+    if (!matches || !usable.ok || !companies.length) {
       const failures = (Number(account.failed_attempts ?? 0) || 0) + 1;
       const lock = failures >= COURIER_MAX_FAILURES ? new Date(nowMs + COURIER_LOCK_MS).toISOString() : null;
       await ctx.db.update('courier_accounts', account.id, {
@@ -6385,12 +6752,13 @@ async function handle(req, res, ctx) {
       token_type: 'Bearer',
       expires_at: issued.expiresAtIso,
       courier: publicCourierAccount(updated ?? account),
+      companies,
     });
     return;
   }
 
   if (route === '/api/courier/logout' && req.method === 'POST') {
-    const auth = await courierAuth();
+    const auth = await courierAuth({ allowUnselected: true });
     if (auth.ok) {
       /* Revoca los tokens emitidos de esa cuenta: cerrar sesión no deja una llave viva. */
       await ctx.db.update('courier_accounts', auth.account.id, {
@@ -6421,9 +6789,17 @@ async function handle(req, res, ctx) {
     } catch {
       body = {};
     }
+    /*
+     * `listCourierOrders` pide la ficha del cliente para armar el DTO. Pasando
+     * `getCustomer: null` la lista reventaba dentro y el `.catch` la dejaba
+     * vacía, así que ESTA ruta respondía siempre `no_active_delivery` y el
+     * repartidor no podía enviar ni una posición. Se pasa el cargador real: para
+     * comprobar «¿tiene una entrega en curso?» basta con el pedido.
+     */
     const mine = await listCourierOrders(store, auth.account, {
       includeClosed: false,
-      getCustomer: null,
+      getCustomer: (customerId) => ctx.customers.get(customerId),
+      companyId: auth.companyId, companyOfOrder,
     }).catch(() => []);
     const activeIds = mine
       .filter((order) => ['ASSIGNED', 'OFFERED', 'ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'EN_ROUTE', 'ARRIVED'].includes(String(order.delivery_lifecycle ?? '').toUpperCase()))
@@ -6436,7 +6812,8 @@ async function handle(req, res, ctx) {
       });
       return;
     }
-    const previous = await ctx.db.get('courier_positions', auth.account.id).catch(() => null);
+    const positionId = `${auth.account.id}:${auth.companyId}`;
+    const previous = await ctx.db.get('courier_positions', positionId).catch(() => null);
     const checked = validateCourierLocation(body, { now: Date.now(), previous });
     if (!checked.ok) {
       json(res, checked.status ?? 422, { ok: false, error: checked.error, message: checked.message, at: checked.previous_at ?? null });
@@ -6444,19 +6821,20 @@ async function handle(req, res, ctx) {
     }
     const doc = {
       courier_id: auth.account.id,
+      company_id: auth.companyId,
       ...checked.point,
       order_id: checked.point.orderId ?? activeIds[0],
       suspicious: checked.suspicious,
       updated_at: new Date().toISOString(),
     };
-    if (previous) await ctx.db.update('courier_positions', auth.account.id, doc);
-    else await ctx.db.insert('courier_positions', { id: auth.account.id, ...doc });
+    if (previous) await ctx.db.update('courier_positions', positionId, doc);
+    else await ctx.db.insert('courier_positions', { id: positionId, ...doc });
     json(res, 200, { ok: true, state: signalState(checked.point), suspicious: checked.suspicious });
     return;
   }
 
   if (route === '/api/courier/me' && req.method === 'GET') {
-    const auth = await courierAuth();
+    const auth = await courierAuth({ allowUnselected: true });
     if (!auth.ok) {
       json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
       return;
@@ -6464,7 +6842,8 @@ async function handle(req, res, ctx) {
     json(res, 200, {
       ok: true,
       courier: publicCourierAccount(auth.account),
-      company_id: auth.account.company_id ?? COMPANY_ID,
+      company_id: auth.companyId ?? null,
+      companies: auth.companies,
       session_expires_at: auth.session?.expiresAt ? new Date(auth.session.expiresAt * 1000).toISOString() : null,
       capabilities: { read_only: true, can_accept: false, can_collect_cash: false },
     });
@@ -6481,6 +6860,7 @@ async function handle(req, res, ctx) {
     const orders = await listCourierOrders(store, auth.account, {
       includeClosed,
       getCustomer: (customerId) => ctx.customers.get(customerId),
+      companyId: auth.companyId, companyOfOrder,
     });
     json(res, 200, {
       ok: true,
@@ -6501,6 +6881,7 @@ async function handle(req, res, ctx) {
     const orderId = decodeURIComponent(route.slice('/api/courier/orders/'.length));
     const found = await findCourierOrder(store, orderId, auth.account, {
       getCustomer: (customerId) => ctx.customers.get(customerId),
+      companyId: auth.companyId, companyOfOrder,
     });
     if (!found.ok) {
       json(res, found.status ?? 404, { ok: false, error: found.error ?? 'not_found', message: 'Ese pedido no está a tu nombre.' });
@@ -6533,6 +6914,7 @@ async function handle(req, res, ctx) {
     }
     const found = await findCourierOrder(store, orderId, auth.account, {
       getCustomer: (customerId) => ctx.customers.get(customerId),
+      companyId: auth.companyId, companyOfOrder,
     });
     if (!found.ok) {
       json(res, 404, { ok: false, error: 'not_found', message: 'Ese pedido no está a tu nombre.' });
@@ -6546,6 +6928,7 @@ async function handle(req, res, ctx) {
       if (seen) {
         const fresh = await findCourierOrder(store, orderId, auth.account, {
           getCustomer: (customerId) => ctx.customers.get(customerId),
+          companyId: auth.companyId, companyOfOrder,
         });
         json(res, 200, {
           ok: true,
@@ -6794,6 +7177,7 @@ async function handle(req, res, ctx) {
           order_id: orderId,
           courier_account_id: auth.account.id,
           kind: 'charge',
+          company_id: auth.companyId,
           amount_cents: dueCents,
           note: `Cobro contra entrega ${found.dto?.order_number ?? orderId}`,
           idempotency_key: `charge:${orderId}`,
@@ -6847,6 +7231,7 @@ async function handle(req, res, ctx) {
     }
     const fresh = await findCourierOrder(store, orderId, auth.account, {
       getCustomer: (customerId) => ctx.customers.get(customerId),
+      companyId: auth.companyId, companyOfOrder,
     });
     json(res, 200, {
       ok: true,
@@ -6865,12 +7250,16 @@ async function handle(req, res, ctx) {
       json(res, auth.status ?? 401, { ok: false, error: auth.error, message: 'Sesión no válida.' });
       return;
     }
-    const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+    const rows = await scopedCashRows(auth.companyId);
     const summary = custodySummary(rows, auth.account.id);
     const rate = (await ctx.settings.read('delivery_rate'))?.value ?? {};
     const events = (await ctx.db.list('delivery_events', { limit: 5000 })) ?? [];
+    const visible = await listCourierOrders(store, auth.account, {
+      includeClosed: true, companyId: auth.companyId, companyOfOrder,
+    });
+    const visibleIds = new Set(visible.map((order) => String(order.id)));
     const deliveredCount = events.filter(
-      (row) => row.event === 'deliver' && row.courier_account_id === auth.account.id,
+      (row) => row.event === 'deliver' && row.courier_account_id === auth.account.id && visibleIds.has(String(row.order_id)),
     ).length;
     json(res, 200, {
       ok: true,
@@ -6934,6 +7323,135 @@ async function handle(req, res, ctx) {
      */
     const canManageCouriers = can('admin.full') || can('delivery.manage');
     const couriersCollection = 'courier_accounts';
+
+    if (route === '/api/admin/courier-applications' && req.method === 'GET') {
+      if (!can('admin.full')) { forbid(); return; }
+      const companyId = String(url.searchParams.get('companyId') ?? '').trim();
+      if (companyId && !(await activeLogisticsCompany(ctx.db, companyId))) {
+        json(res, 422, { ok: false, error: 'invalid_company' }); return;
+      }
+      const rows = (await ctx.db.list('courier_applications', { limit: 5000 })) ?? [];
+      json(res, 200, { ok: true, applications: rows.filter((row) => !companyId || row.company_id === companyId) });
+      return;
+    }
+    if (route.startsWith('/api/admin/courier-applications/') && route.endsWith('/review') && req.method === 'POST') {
+      if (!can('admin.full')) { forbid(); return; }
+      const id = decodeURIComponent(route.slice('/api/admin/courier-applications/'.length, -'/review'.length));
+      const application = await ctx.db.get('courier_applications', id);
+      if (!application) { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      const body = await readJsonBody(req).catch(() => ({}));
+      const companyId = String(body.companyId ?? body.company_id ?? '').trim();
+      const decision = String(body.decision ?? '').trim();
+      if (companyId !== application.company_id || !['approved', 'rejected', 'info_required'].includes(decision)) {
+        json(res, 422, { ok: false, error: 'invalid_review' }); return;
+      }
+      if (!['pending', 'info_required'].includes(application.status)) {
+        json(res, 409, { ok: false, error: 'already_reviewed' }); return;
+      }
+      /* Pedir información no aprueba nada: deja la solicitud abierta y sin acceso. */
+      if (decision === 'info_required' && !text(body.note, 300)) {
+        json(res, 422, { ok: false, error: 'note_required' }); return;
+      }
+      const now = new Date().toISOString();
+      await ctx.db.update('courier_applications', id, { status: decision,
+        reviewed_at: now, reviewed_by_user_id: actor?.id ?? null,
+        review_note: text(body.note, 300), updated_at: now });
+      await ctx.audit?.record({ entity: 'courier_application', entityId: id,
+        action: `courier.application_${decision === 'info_required' ? 'info_requested' : decision}`,
+        actor: actor?.display_name ?? null,
+        data: { company_id: companyId } });
+      json(res, 200, { ok: true, status: decision, operational_access: false });
+      return;
+    }
+
+    /* Documentos del expediente, para revisión administrativa (solo central). */
+    if (route.startsWith('/api/admin/courier-applications/') && route.endsWith('/documents') && req.method === 'GET') {
+      if (!can('admin.full')) { forbid(); return; }
+      const id = decodeURIComponent(route.slice('/api/admin/courier-applications/'.length, -'/documents'.length));
+      const application = await ctx.db.get('courier_applications', id);
+      if (!application) { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      const documents = ((await ctx.db.list('courier_documents', { limit: 5000 })) ?? [])
+        .filter((row) => row.application_id === id && row.status !== 'replaced');
+      json(res, 200, { ok: true, application_id: id, vehicle_type: application.vehicle_type ?? null,
+        documents: documents.map(publicDocument),
+        required: requiredDocumentsFor(application.vehicle_type),
+        missing: requiredDocumentsFor(application.vehicle_type)
+          .filter((required) => !documents.some((row) => row.kind === required)) });
+      return;
+    }
+
+    /* Descarga autenticada: el binario nunca se sirve desde una ruta pública. */
+    if (route.startsWith('/api/admin/courier-documents/') && route.endsWith('/file') && req.method === 'GET') {
+      if (!can('admin.full')) { forbid(); return; }
+      const id = decodeURIComponent(route.slice('/api/admin/courier-documents/'.length, -'/file'.length));
+      const document = await ctx.db.get('courier_documents', id);
+      if (!document || document.status === 'replaced') { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      let buffer;
+      try {
+        buffer = await readDocumentFile(document.file);
+      } catch {
+        json(res, 404, { ok: false, error: 'file_missing' }); return;
+      }
+      res.writeHead(200, { 'content-type': document.content_type,
+        'content-length': String(buffer.length),
+        'content-disposition': `inline; filename="${document.kind.toLowerCase()}.${document.content_type.split('/')[1] ?? 'bin'}"`,
+        'cache-control': 'private, no-store',
+        'x-content-type-options': 'nosniff' });
+      res.end(buffer);
+      return;
+    }
+
+    /* Revisión de un documento: aceptado, rechazado o pedir otro. */
+    if (route.startsWith('/api/admin/courier-documents/') && route.endsWith('/review') && req.method === 'POST') {
+      if (!can('admin.full')) { forbid(); return; }
+      const id = decodeURIComponent(route.slice('/api/admin/courier-documents/'.length, -'/review'.length));
+      const document = await ctx.db.get('courier_documents', id);
+      if (!document || document.status === 'replaced') { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      const body = await readJsonBody(req).catch(() => ({}));
+      const decision = String(body.decision ?? '').trim();
+      if (!['accepted', 'rejected', 'replacement'].includes(decision)) {
+        json(res, 422, { ok: false, error: 'invalid_decision' }); return;
+      }
+      if (decision !== 'accepted' && !text(body.note, 300)) {
+        json(res, 422, { ok: false, error: 'note_required' }); return;
+      }
+      const now = new Date().toISOString();
+      await ctx.db.update('courier_documents', id, { status: decision,
+        review_note: text(body.note, 300), reviewed_at: now,
+        reviewed_by_user_id: actor?.id ?? null, updated_at: now });
+      await ctx.audit?.record({ entity: 'courier_document', entityId: id,
+        action: `courier.document_${decision}`, actor: actor?.display_name ?? null,
+        data: { application_id: document.application_id, kind: document.kind } });
+      json(res, 200, { ok: true, status: decision });
+      return;
+    }
+
+    if (route === '/api/admin/logistics/companies' && req.method === 'GET') {
+      if (!can('admin.full')) { forbid(); return; }
+      const companies = (await ctx.db.list('logistics_companies', { limit: 5000 })) ?? [];
+      json(res, 200, { ok: true, companies });
+      return;
+    }
+    if (route === '/api/admin/logistics/companies' && req.method === 'POST') {
+      if (!can('admin.full')) { forbid(); return; }
+      const body = await readJsonBody(req).catch(() => ({}));
+      const id = String(body.id ?? '').trim();
+      const name = text(body.name, 120);
+      if (!validCompanyId(id) || !name || name.length < 3) {
+        json(res, 422, { ok: false, error: 'invalid_company' }); return;
+      }
+      if (await ctx.db.get('logistics_companies', id)) {
+        json(res, 409, { ok: false, error: 'company_exists' }); return;
+      }
+      const doc = { id, name, active: true, system: false,
+        created_at: new Date().toISOString(), created_by_user_id: actor?.id ?? null };
+      const inserted = await ctx.db.insert('logistics_companies', doc);
+      if (inserted?.duplicate) { json(res, 409, { ok: false, error: 'company_exists' }); return; }
+      await ctx.audit?.record({ entity: 'logistics_company', entityId: id,
+        action: 'logistics.company_registered', actor, data: { name } });
+      json(res, 201, { ok: true, company: doc });
+      return;
+    }
 
     /*
      * TRANSFERENCIA DECLARADA POR EL REPARTIDOR: administración la verifica o la
@@ -7071,11 +7589,15 @@ async function handle(req, res, ctx) {
         forbid();
         return;
       }
-      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const companyId = String(url.searchParams.get('companyId') ?? 'phytoemagry');
+      if (!(await activeLogisticsCompany(ctx.db, companyId))) { json(res, 422, { ok: false, error: 'invalid_company' }); return; }
+      if (!(await seesCompany(companyId))) { forbid(); return; }
+      const rows = await scopedCashRows(companyId);
       const couriers = (await ctx.db.list('courier_accounts', { limit: 1000 })) ?? [];
       const rate = (await ctx.settings.read('delivery_rate'))?.value ?? {};
       json(res, 200, {
         ok: true,
+        company_id: companyId,
         couriers: custodyByCourier(rows, couriers),
         rate_cents: rate.rateCents ?? null,
       });
@@ -7099,31 +7621,31 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found', message: 'Ese repartidor no existe.' });
         return;
       }
-      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
-      const summary = custodySummary(rows, courierId);
-      const check = validateRemittance(summary, body.amountCents ?? body.amount_cents);
-      if (!check.ok) {
-        json(res, 422, { ok: false, error: check.error, message: check.message, pending: check.pending });
-        return;
-      }
+      const companies = await courierCompanies(ctx.db, courier);
+      const selected = selectedCourierCompany(companies, body.companyId ?? body.company_id);
+      if (!selected.ok) { json(res, selected.status, { ok: false, error: selected.error }); return; }
+      const companyId = selected.companyId;
       const key = text(body.idempotencyKey ?? body.idempotency_key, 120) ?? `remittance:${courierId}:${Date.now()}`;
-      const created = await ctx.db.insert(CASH_COLLECTION, {
-        id: `cash_${randomUUID().replace(/-/g, '')}`,
-        order_id: null,
-        courier_account_id: courierId,
-        kind: 'remittance',
-        amount_cents: check.amount,
-        note: text(body.note, 300),
-        idempotency_key: key,
-        actor: actor?.display_name ?? null,
-        created_at: ctx.clock().toISOString(),
-      });
-      const stored = created?.doc ?? null;
-      const nextRows = stored ? [...rows, stored] : rows;
+      const items = (await store.listAdmin({ limit: 5000 })) ?? [];
+      const ordersById = new Map();
+      for (const item of items) {
+        if (item.type !== 'order_intent') continue;
+        const order = orderOf(item);
+        if (order) { ordersById.set(String(item.id), order); if (order.id) ordersById.set(String(order.id), order); }
+      }
+      const result = await recordRemittanceAtomic({ db: ctx.db, handle: ctx.store.handle,
+        courierId, companyId, amountCents: body.amountCents ?? body.amount_cents,
+        idempotencyKey: key, actor: actor?.display_name ?? null, note: text(body.note, 300),
+        ordersById, now: ctx.clock().toISOString() });
+      if (!result.ok) {
+        json(res, result.status ?? 422, { ok: false, error: result.error,
+          message: result.message, pending: result.pending }); return;
+      }
       json(res, 201, {
         ok: true,
-        duplicate: created?.duplicate === true,
-        summary: custodySummary(nextRows, courierId),
+        duplicate: result.duplicate === true,
+        company_id: companyId,
+        summary: result.summary,
       });
       return;
     }
@@ -7135,7 +7657,10 @@ async function handle(req, res, ctx) {
         return;
       }
       const courierId = text(new URL(req.url, 'http://local').searchParams.get('courierId'), 80);
-      const rows = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const companyId = String(url.searchParams.get('companyId') ?? 'phytoemagry');
+      if (!(await activeLogisticsCompany(ctx.db, companyId))) { json(res, 422, { ok: false, error: 'invalid_company' }); return; }
+      if (!(await seesCompany(companyId))) { forbid(); return; }
+      const rows = await scopedCashRows(companyId);
       const pick = (row, field) => row?.[field] ?? row?.doc?.[field] ?? null;
       const movements = rows
         .filter((row) => !courierId || String(pick(row, 'courier_account_id') ?? '') === courierId)
@@ -7144,13 +7669,14 @@ async function handle(req, res, ctx) {
           kind: pick(row, 'kind'),
           order_id: pick(row, 'order_id'),
           courier_account_id: pick(row, 'courier_account_id'),
+          company_id: pick(row, 'company_id'),
           amount_cents: Number(pick(row, 'amount_cents')) || 0,
           note: pick(row, 'note'),
           idempotency_key: pick(row, 'idempotency_key'),
           created_at: pick(row, 'created_at'),
         }))
         .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
-      json(res, 200, { ok: true, movements }, { 'cache-control': 'no-store' });
+      json(res, 200, { ok: true, company_id: companyId, movements }, { 'cache-control': 'no-store' });
       return;
     }
 
@@ -7159,7 +7685,7 @@ async function handle(req, res, ctx) {
      * Detecta y describe; nunca corrige dinero. La reparación contable es otro
      * flujo (permisos + confirmación + auditoría) y no existe a propósito.
      */
-    if (route === '/api/admin/delivery-cash/incidents' && req.method === 'GET') {
+    if ((route === '/api/admin/delivery-cash/incidents' || route === '/api/admin/delivery-cash/reconciliation') && req.method === 'GET') {
       if (!can('admin.full')) {
         forbid();
         return;
@@ -7172,7 +7698,82 @@ async function handle(req, res, ctx) {
         const order = orderOf(item);
         if (order) orders.push({ ...order, id: item.id });
       }
-      json(res, 200, { ok: true, ...reconcileDeliveryCash({ orders, ledger }) }, { 'cache-control': 'no-store' });
+      const companies = (await ctx.db.list('logistics_companies', { limit: 5000 })) ?? [];
+      const report = reconcileDeliveryCashByCompany({ orders, ledger, companies });
+      if (route.endsWith('/reconciliation')) {
+        json(res, 200, report, { 'cache-control': 'no-store' }); return;
+      }
+      const companyId = String(url.searchParams.get('companyId') ?? 'phytoemagry');
+      if (!(await activeLogisticsCompany(ctx.db, companyId))) {
+        json(res, 422, { ok: false, error: 'invalid_company' }); return;
+      }
+      json(res, 200, { ok: true, company_id: companyId,
+        ...report.by_company[companyId], unresolved_count: report.unresolved_movements.length },
+        { 'cache-control': 'no-store' });
+      return;
+    }
+
+    /*
+     * CONCILIACIÓN — RESOLUCIONES ADMINISTRATIVAS.
+     *
+     * Registrar una resolución NO mueve dinero: deja constancia de la revisión
+     * humana (justificación + evidencia) en un registro aparte. El libro no se
+     * toca, no se cambia ningún importe y la custodia sigue bloqueada hasta que
+     * exista una autorización explícita. El id es determinista por movimiento,
+     * así que dos administradores no pueden registrar dos resoluciones distintas
+     * del mismo movimiento.
+     */
+    if (route === '/api/admin/delivery-cash/resolutions' && req.method === 'GET') {
+      if (!can('admin.full')) { forbid(); return; }
+      const rows = ((await ctx.db.list('cash_resolutions', { limit: 5000 })) ?? [])
+        .slice()
+        .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+      json(res, 200, { ok: true, resolutions: rows }, { 'cache-control': 'no-store' });
+      return;
+    }
+
+    if (route === '/api/admin/delivery-cash/resolutions' && req.method === 'POST') {
+      if (!can('admin.full')) { forbid(); return; }
+      const body = await readJsonBody(req).catch(() => ({}));
+      const movementId = text(body.movementId ?? body.movement_id, 120);
+      const justification = text(body.justification ?? body.reason, 500);
+      const evidence = text(body.evidence ?? body.evidence_reference, 300);
+      if (!movementId) { json(res, 422, { ok: false, error: 'missing_movement' }); return; }
+      if (!justification || justification.length < 10) {
+        json(res, 422, { ok: false, error: 'justification_required',
+          message: 'Explica con qué evidencia se concluyó (mínimo 10 caracteres).' }); return;
+      }
+      const ledger = (await ctx.db.list(CASH_COLLECTION, { limit: 5000 })) ?? [];
+      const movement = ledger.find((row) => String(row.id) === movementId);
+      if (!movement) { json(res, 404, { ok: false, error: 'movement_not_found' }); return; }
+      const companyId = text(body.companyId ?? body.company_id, 40) || null;
+      if (companyId && !(await activeLogisticsCompany(ctx.db, companyId))) {
+        json(res, 422, { ok: false, error: 'invalid_company' }); return;
+      }
+      const id = `res:${movementId}`;
+      const existing = await ctx.db.get('cash_resolutions', id);
+      if (existing) {
+        json(res, 409, { ok: false, error: 'already_resolved', resolution: existing }); return;
+      }
+      const doc = { id, movement_id: movementId,
+        courier_account_id: movement.courier_account_id ?? null,
+        company_id: companyId, justification, evidence_reference: evidence || null,
+        status: 'pending_authorization',
+        created_by_user_id: actor?.id ?? null,
+        created_by_display_name: actor?.display_name ?? null,
+        created_at: ctx.clock().toISOString() };
+      try {
+        await ctx.db.insert('cash_resolutions', doc);
+      } catch {
+        // Carrera entre dos administradores: el id determinista la resuelve.
+        json(res, 409, { ok: false, error: 'already_resolved' }); return;
+      }
+      await ctx.audit?.record({ entity: 'cash_movement', entityId: movementId,
+        action: 'cash.resolution_recorded', actor: actor?.display_name ?? null,
+        summary: `Revisión de movimiento de ${movement.courier_account_id ?? 'repartidor sin cuenta'}`,
+        data: { company_id: companyId, status: 'pending_authorization', evidence: evidence || null } });
+      json(res, 201, { ok: true, resolution: doc, applied: false,
+        message: 'Resolución registrada. La custodia sigue bloqueada hasta autorización explícita.' });
       return;
     }
 
@@ -7186,7 +7787,11 @@ async function handle(req, res, ctx) {
         forbid();
         return;
       }
-      const rows = (await ctx.db.list('courier_positions', { limit: 1000 })) ?? [];
+      const companyId = String(url.searchParams.get('companyId') ?? 'phytoemagry');
+      if (!(await activeLogisticsCompany(ctx.db, companyId))) { json(res, 422, { ok: false, error: 'invalid_company' }); return; }
+      if (!(await seesCompany(companyId))) { forbid(); return; }
+      const rows = ((await ctx.db.list('courier_positions', { limit: 1000 })) ?? [])
+        .filter((row) => row.company_id === companyId);
       const accounts = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
       const byId = new Map(accounts.map((row) => [row.id, row]));
       const now = Date.now();
@@ -7201,7 +7806,7 @@ async function handle(req, res, ctx) {
         courier_name: byId.get(row.courier_id)?.display_name ?? null,
         kind: byId.get(row.courier_id)?.kind ?? null,
       }));
-      json(res, 200, { ok: true, positions, server_time: new Date(now).toISOString() }, { 'cache-control': 'no-store' });
+      json(res, 200, { ok: true, company_id: companyId, positions, server_time: new Date(now).toISOString() }, { 'cache-control': 'no-store' });
       return;
     }
 
@@ -7235,7 +7840,12 @@ async function handle(req, res, ctx) {
         return;
       }
       const rows = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
-      json(res, 200, { ok: true, couriers: rows.map(publicCourierAccount) });
+      const grants = can('admin.full') ? [] : (await ctx.db.list('courier_company_grants', { limit: 5000 })) ?? [];
+      const scope = await companyScope();
+      const multiIds = new Set(grants.filter((grant) => grant.active === true && !scopeSeesCompany(scope, grant.company_id))
+        .map((grant) => grant.courier_account_id));
+      const visible = rows.filter((row) => scopeSeesCompany(scope, row.company_id) && !multiIds.has(row.id));
+      json(res, 200, { ok: true, couriers: visible.map(publicCourierAccount) });
       return;
     }
 
@@ -7282,6 +7892,11 @@ async function handle(req, res, ctx) {
         return;
       }
       const value = normalized.value;
+      const initialCompany = value.company_id ?? 'phytoemagry';
+      if (!(await activeLogisticsCompany(ctx.db, initialCompany))) {
+        json(res, 422, { ok: false, error: 'invalid_company' }); return;
+      }
+      if (!(await seesCompany(initialCompany))) { forbid(); return; }
       const rows = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
       if (rows.some((row) => row.phone_e164 === value.phone_e164)) {
         json(res, 409, { ok: false, error: 'phone_in_use', message: 'Ese teléfono ya tiene una cuenta de acceso.' });
@@ -7326,7 +7941,7 @@ async function handle(req, res, ctx) {
       const doc = {
         id: newCourierAccountId(),
         ...value,
-        company_id: value.company_id ?? COMPANY_ID,
+        company_id: initialCompany,
         credential_hash: hashed.hash,
         token_epoch: 0,
         failed_attempts: 0,
@@ -7337,6 +7952,11 @@ async function handle(req, res, ctx) {
         created_by_display_name: actor?.display_name ?? null,
       };
       const created = await ctx.db.insert(couriersCollection, doc);
+      await ctx.db.insert('courier_company_grants', {
+        id: `${doc.id}:${initialCompany}`, courier_account_id: doc.id,
+        company_id: initialCompany, active: true, updated_at: at,
+        updated_by_user_id: actor?.id ?? null,
+      });
       await ctx.audit?.record({
         entity: 'courier_account',
         entityId: doc.id,
@@ -7346,6 +7966,54 @@ async function handle(req, res, ctx) {
       });
       const stored = created?.doc ?? doc;
       json(res, 201, { ok: true, courier: publicCourierAccount(stored) });
+      return;
+    }
+
+    /*
+     * EMPRESAS CONCEDIDAS A UN REPARTIDOR (solo lectura).
+     *
+     * El panel necesita pintar el estado real de las concesiones —con fecha y
+     * responsable— antes de ofrecer el interruptor. La escritura sigue siendo
+     * el POST de aquí abajo; aquí no se toca nada.
+     */
+    if (route.startsWith('/api/admin/couriers/') && route.endsWith('/companies') && req.method === 'GET') {
+      if (!canManageCouriers) { forbid(); return; }
+      const courierId = decodeURIComponent(route.slice('/api/admin/couriers/'.length, -'/companies'.length));
+      const account = await ctx.db.get(couriersCollection, courierId);
+      if (!account) { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      if (!(await seesCompany(account.company_id))) { forbid(); return; }
+      const grants = ((await ctx.db.list('courier_company_grants', { limit: 5000 })) ?? [])
+        .filter((row) => String(row.courier_account_id) === String(courierId));
+      json(res, 200, { ok: true, courier_id: courierId,
+        companies: grants.map((row) => ({ company_id: row.company_id,
+          active: row.active === true, updated_at: row.updated_at ?? null,
+          updated_by_user_id: row.updated_by_user_id ?? null })) });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/couriers/') && route.endsWith('/companies') && req.method === 'POST') {
+      if (!can('admin.full')) { forbid(); return; }
+      const courierId = decodeURIComponent(route.slice('/api/admin/couriers/'.length, -'/companies'.length));
+      const account = await ctx.db.get(couriersCollection, courierId);
+      if (!account) { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      let body = {};
+      try { body = await readJsonBody(req); } catch { body = {}; }
+      const companyId = String(body.companyId ?? body.company_id ?? '').trim();
+      if (!(await activeLogisticsCompany(ctx.db, companyId)) || typeof body.active !== 'boolean') {
+        json(res, 422, { ok: false, error: 'invalid_company_grant' }); return;
+      }
+      const id = `${courierId}:${companyId}`;
+      const now = new Date().toISOString();
+      const grant = await ctx.db.get('courier_company_grants', id);
+      const doc = { id, courier_account_id: courierId, company_id: companyId,
+        active: body.active, updated_at: now, updated_by_user_id: actor?.id ?? null };
+      if (grant) await ctx.db.update('courier_company_grants', id, doc);
+      else await ctx.db.insert('courier_company_grants', doc);
+      await ctx.db.update(couriersCollection, courierId, { token_epoch: (Number(account.token_epoch ?? 0) || 0) + 1, updated_at: now });
+      await ctx.audit?.record({ entity: 'courier_account', entityId: courierId,
+        action: body.active ? 'courier.company_granted' : 'courier.company_revoked', actor,
+        data: { company_id: companyId } });
+      json(res, 200, { ok: true, company_id: companyId, active: body.active });
       return;
     }
 
@@ -7359,6 +8027,13 @@ async function handle(req, res, ctx) {
       if (!current) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
+      }
+      if (!(await seesCompany(current.company_id))) { forbid(); return; }
+      {
+        // Quien no es central solo toca cuentas cuyas empresas TODAS estén en su alcance.
+        const alcance = await companyScope();
+        const empresas = [current.company_id, ...(await courierCompanies(ctx.db, current))].filter(Boolean);
+        if (!empresas.every((id) => scopeSeesCompany(alcance, id))) { forbid(); return; }
       }
       let body = {};
       try {
@@ -7444,6 +8119,54 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/users' && req.method === 'GET') {
       if (!requireAdmin()) return;
       json(res, 200, { ok: true, users: await ctx.users.listUsers() });
+      return;
+    }
+
+    /*
+     * ALCANCE ADMINISTRATIVO POR EMPRESA DE UN USUARIO.
+     *
+     * Solo la superadministración central reparte empresas: es el acto que
+     * decide quién puede ver y operar FULLTECH. Se guarda una fila por pareja
+     * (usuario, empresa), se audita y se puede revocar. No crea usuarios ni
+     * toca su rol. Una empresa inactiva no se puede conceder.
+     */
+    /* Lectura del alcance por empresa de un usuario (para pintarlo antes de cambiarlo). */
+    if (route.startsWith('/api/admin/users/') && route.endsWith('/companies') && req.method === 'GET') {
+      if (!requireAdmin()) return;
+      const userId = decodeURIComponent(route.slice('/api/admin/users/'.length, -'/companies'.length));
+      const target = await ctx.users.get(userId);
+      if (!target) { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      const grants = ((await ctx.db.list('crm_company_grants', { limit: 5000 })) ?? [])
+        .filter((row) => String(row.user_id) === String(userId));
+      json(res, 200, { ok: true, user_id: userId,
+        companies: grants.map((row) => ({ company_id: row.company_id, active: row.active === true,
+          updated_at: row.updated_at ?? null, updated_by_user_id: row.updated_by_user_id ?? null })) });
+      return;
+    }
+
+    if (route.startsWith('/api/admin/users/') && route.endsWith('/companies') && req.method === 'POST') {
+      if (!requireAdmin()) return;
+      const userId = decodeURIComponent(route.slice('/api/admin/users/'.length, -'/companies'.length));
+      const target = await ctx.users.get(userId);
+      if (!target) { json(res, 404, { ok: false, error: 'not_found' }); return; }
+      let body = {};
+      try { body = await readJsonBody(req); } catch { body = {}; }
+      const companyId = String(body.companyId ?? body.company_id ?? '').trim();
+      if (!(await activeLogisticsCompany(ctx.db, companyId)) || typeof body.active !== 'boolean') {
+        json(res, 422, { ok: false, error: 'invalid_company_grant' }); return;
+      }
+      const id = `${userId}:${companyId}`;
+      const now = ctx.clock().toISOString();
+      const doc = { id, user_id: userId, company_id: companyId, active: body.active,
+        updated_at: now, updated_by_user_id: actor?.id ?? null };
+      const existing = await ctx.db.get('crm_company_grants', id);
+      if (existing) await ctx.db.update('crm_company_grants', id, doc);
+      else await ctx.db.insert('crm_company_grants', doc);
+      await ctx.audit?.record({ entity: 'user', entityId: userId,
+        action: body.active ? 'user.company_scope_granted' : 'user.company_scope_revoked', actor: actor?.display_name ?? null,
+        summary: `${body.active ? 'Concede' : 'Revoca'} ${companyId} a ${target.username ?? userId}`,
+        data: { company_id: companyId, user_id: userId } });
+      json(res, 200, { ok: true, user_id: userId, company_id: companyId, active: body.active });
       return;
     }
 
@@ -7634,6 +8357,7 @@ async function handle(req, res, ctx) {
        */
       const lightRequested = url.searchParams.get('light') === '1';
       const deliveryScope = await deliveryAccessScope(ctx, actor);
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
       /*
        * Se pide UNO de más para saber si hay truncamiento. Si el negocio cabe
        * entero en el paquete ligero, la respuesta se devuelve COMPLETA
@@ -7644,8 +8368,11 @@ async function handle(req, res, ctx) {
       });
       const hasMoreItems = lightRequested && rawItems.length > 150;
       const itemRows = hasMoreItems ? rawItems.slice(0, 150) : rawItems;
+      const orderScope = await companyScope();
       const items = itemRows
-        .filter((item) => !deliveryScope.restricted || (item.type === 'order_intent' && deliveryScope.orderIds.has(item.id)))
+        .filter((item) => (item.type !== 'order_intent' ||
+          scopeSeesCompany(orderScope, companyOfOrder(orderOf(item)))) &&
+          (!deliveryScope.restricted || (item.type === 'order_intent' && deliveryScope.orderIds.has(item.id))))
         .map((item) => sanitizeItemForPermissions(item, actor));
       const messages = actor?.role === 'ADMIN' ? await store.messages().list() : [];
       /*
@@ -7663,9 +8390,15 @@ async function handle(req, res, ctx) {
         ? fullCustomerList.filter((customer) => deliveryScope.customerIds.has(customer.id))
         : fullCustomerList;
       const fullConversationList = overview.conversations;
-      const scopedConversations = deliveryScope.restricted
+      const scopedConversationsBeforeCompany = deliveryScope.restricted
         ? fullConversationList.filter((conversation) => deliveryScope.conversationIds.has(conversation.id))
         : fullConversationList;
+      const visibleCustomers = crmOwner
+        ? scopedCustomers.filter((customer) => crmRowVisible(actor, crmOwner, 'customer', customer))
+        : scopedCustomers;
+      const scopedConversations = crmOwner
+        ? scopedConversationsBeforeCompany.filter((conversation) => crmRowVisible(actor, crmOwner, 'conversation', conversation))
+        : scopedConversationsBeforeCompany;
       /*
        * Los CLIENTES viajan completos (el tope de la lista son 500): los
        * contadores de HOY se calculan con ellos y un recorte haría que las
@@ -7673,15 +8406,18 @@ async function handle(req, res, ctx) {
        * es la bandeja y los pedidos, que son los bloques pesados.
        */
       const light = lightRequested && (hasMoreItems || scopedConversations.length > 150);
-      const customerList = scopedCustomers;
+      const customerList = visibleCustomers;
+      const visibleCustomerIds = new Set(customerList.map((customer) => customer.id));
       const conversationList = light ? scopedConversations.slice(0, 150) : scopedConversations;
-      const conversationCounts = overview.counts;
+      const conversationCounts = crmOwner ? crmVisibleConversationCounts(scopedConversations) : overview.counts;
       await ctx.customers.ensureInitialTags();
-      const buckets = deliveryScope.restricted
+      const rawBuckets = deliveryScope.restricted
         ? { reference: new Date().toISOString(), today: [], overdue: [], upcoming: [], completed: [] }
         : await ctx.followups.buckets();
+      const buckets = crmOwner ? Object.fromEntries(Object.entries(rawBuckets).map(([key, value]) =>
+        [key, Array.isArray(value) ? value.filter((row) => visibleCustomerIds.has(row.customer_id)) : value])) : rawBuckets;
       const outbound = await ctx.db.list('wa_messages', { limit: 500 });
-      const failed = deliveryScope.restricted ? [] : outbound.filter((row) => row.status === 'failed');
+      const failed = deliveryScope.restricted || crmOwner ? [] : outbound.filter((row) => row.status === 'failed');
       /*
        * Operaciones de archivo que quedaron AMBIGUAS (se intentó enviar y no hay
        * confirmación) o a medias por una caída. Lista corta, saneada y solo para
@@ -7690,7 +8426,7 @@ async function handle(req, res, ctx) {
        */
       /** @type {any[]} */
       const mediaNeedsReview = [];
-      if (!light && ctx.media?.store?.listBySendStatus) {
+      if (!light && !crmOwner && ctx.media?.store?.listBySendStatus) {
         for (const status of [SEND_STATUS.SEND_UNKNOWN, SEND_STATUS.SENDING]) {
           const rows = await ctx.media.store.listBySendStatus(status, 10);
           for (const row of rows) {
@@ -7867,6 +8603,7 @@ async function handle(req, res, ctx) {
     // `period` = hoy | 7d | 30d (por defecto 30d): todo lo que se cuenta respeta
     // el período, sin doble conteo (un pedido entra UNA vez por su fecha).
     if (route === '/api/admin/metrics' && req.method === 'GET') {
+      if (!requireAdmin()) return;
       const period = ['hoy', '7d', '30d'].includes(url.searchParams.get('period') ?? '')
         ? String(url.searchParams.get('period'))
         : '30d';
@@ -7875,7 +8612,9 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/reports/sales-by-source' && req.method === 'GET') {
-      const rows = await store.listAdmin({ limit: 5000 });
+      const scope = await companyScope();
+      const rows = (await store.listAdmin({ limit: 5000 })).filter((row) =>
+        row.type !== 'order_intent' || scopeSeesCompany(scope, companyOfOrder(orderOf(row))));
       json(res, 200, { ok: true, report: revenueBySourceReport(rows) });
       return;
     }
@@ -8213,7 +8952,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/reports/sales' && req.method === 'GET') {
-      if (!requirePermission('reports.profit.view', 'Solo ADMIN puede ver reportes de ganancia.')) return;
+      if (!requireAdmin()) return;
       const period = url.searchParams.get('period') ?? 'hoy';
       const report = await ctx.inventory.report({
         period,
@@ -8272,12 +9011,14 @@ async function handle(req, res, ctx) {
         return;
       }
       const todoElEquipo = can('reports.profit.view');
+      const scope = await companyScope();
       const rows = await store.listAdmin({ limit: 5000 });
       const items = [];
       for (const row of rows) {
         if (row.type !== 'order_intent') continue;
         const order = orderOf(row);
         if (!order) continue;
+        if (!scopeSeesCompany(scope, companyOfOrder(order))) continue;
         // Mismo criterio de «entregado» que el panel (no basta el estado del item).
         if (String(order.status ?? '').trim().toLowerCase() !== 'entregado') continue;
         if (!todoElEquipo && String(order?.delivery?.delivery_user_id ?? '') !== String(actor?.id ?? '')) continue;
@@ -8326,6 +9067,9 @@ async function handle(req, res, ctx) {
     if (item.type !== 'order_intent') {
       json(res, 409, { ok: false, error: 'not_an_order', message: 'Solo se envía la venta de un pedido.' });
       return;
+    }
+    if (!(await seesCompany(companyOfOrder(orderOf(item))))) {
+      json(res, 404, { ok: false, error: 'not_found' }); return;
     }
     const result = await sendPurchaseToMeta({ store, metaCapi: ctx.metaCapi, item, audit: ctx.audit, source: 'manual' });
     json(res, result.ok ? 200 : result.skipped ? 409 : 502, {
@@ -8592,8 +9336,10 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/customers' && req.method === 'GET') {
       if (!requirePermission('clients.read')) return;
       const deliveryScope = await deliveryAccessScope(ctx, actor);
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
       const customers = (await ctx.customers.list({ q: url.searchParams.get('q') ?? '' })).filter(
-        (customer) => !deliveryScope.restricted || deliveryScope.customerIds.has(customer.id),
+        (customer) => (!deliveryScope.restricted || deliveryScope.customerIds.has(customer.id)) &&
+          (!crmOwner || crmRowVisible(actor, crmOwner, 'customer', customer)),
       );
       const followupRows = await ctx.db.list('followups', { limit: 2000 });
       const nextByCustomer = new Map();
@@ -8613,7 +9359,7 @@ async function handle(req, res, ctx) {
     }
 
     if (route === '/api/admin/customers/stage-dry-run' && req.method === 'GET') {
-      if (!requirePermission('clients.read')) return;
+      if (!requireAdmin()) return;
       const report = await ctx.customers.customerStageDryRun({ limit: Number(url.searchParams.get('limit') || 1000) });
       json(res, 200, {
         ok: true,
@@ -8684,10 +9430,16 @@ async function handle(req, res, ctx) {
     if (route.startsWith('/api/admin/customers/')) {
       const rest = decodeURIComponent(route.slice('/api/admin/customers/'.length));
       const [customerId, action = ''] = rest.split('/');
+      if (action === 'stage' && req.method === 'POST' && !can('customer.stage.update')) {
+        forbid(); return;
+      }
       const customer = customerId ? await ctx.customers.get(customerId) : null;
       if (!customer) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
+      }
+      if (!can('admin.full') && !crmRowVisible(actor, await crmOwnership(ctx), 'customer', customer)) {
+        json(res, 404, { ok: false, error: 'not_found' }); return;
       }
 
       if (!action && req.method === 'DELETE') {
@@ -8745,24 +9497,28 @@ async function handle(req, res, ctx) {
           return;
         }
         const profile = await ctx.customers.profile(customerId);
+        const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
         /*
          * HISTORIAL 360°: se arma al abrir la ficha leyendo cada módulo (mensajes,
          * cotizaciones, facturas, pedidos, seguimientos y entregas). No duplica
          * datos y las notas internas solo salen para quien puede verlas.
          */
-        const history = await buildCustomerHistory({
+        const history = crmOwner ? null : await buildCustomerHistory({
           db: ctx.db,
           customerId,
           orders: profile.purchases ?? [],
-          includeInternal: hasPermission(actor, 'admin.full'),
+          includeInternal: true,
         });
         const [storeAccount, storeRequests] = ctx.storeAccounts
-          ? await Promise.all([
+          && !crmOwner ? await Promise.all([
               ctx.storeAccounts.accountForCustomer(customerId),
               ctx.storeAccounts.listRequestsForCustomer(customerId, 10),
             ])
           : [null, []];
-        json(res, 200, { ok: true, ...profile, history, store_account: storeAccount, store_requests: storeRequests });
+        const scopedProfile = crmOwner && profile.conversation &&
+          !crmRowVisible(actor, crmOwner, 'conversation', profile.conversation)
+          ? { ...profile, conversation: null, messages: [] } : profile;
+        json(res, 200, { ok: true, ...scopedProfile, history, store_account: storeAccount, store_requests: storeRequests });
         return;
       }
 
@@ -9581,6 +10337,13 @@ async function handle(req, res, ctx) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
       }
+      if (!can('admin.full')) {
+        const item = await findOrderItem(store, session.order_id);
+        const owner = item ? companyOfOrder(orderOf(item)) : null;
+        if (!(await seesCompany(owner))) {
+          json(res, 404, { ok: false, error: 'not_found' }); return;
+        }
+      }
       if (req.method === 'GET' && !action) {
         if (!canReadTracking(actor, session)) {
           forbid();
@@ -9862,6 +10625,12 @@ async function handle(req, res, ctx) {
       const deliveryUser = deliveryUserId ? await ctx.users.get(deliveryUserId) : null;
       if (deliveryUserId && (!deliveryUser || !canDeliver(deliveryUser) || deliveryUser.active === false)) {
         json(res, 422, { ok: false, error: 'invalid_delivery_user', message: 'Asigna un agente o un repartidor.' });
+        return;
+      }
+      const assignmentCompany = companyOfOrder(currentOrder);
+      if (deliveryUser && assignmentCompany !== 'phytoemagry' &&
+          !(await authorizedCourierAccount(ctx.db, assignmentCompany, { userId: deliveryUser.id }))) {
+        json(res, 403, { ok: false, error: 'courier_company_forbidden' });
         return;
       }
       const assignmentNote = text(body.deliveryNote ?? body.delivery_note ?? body.note, 600);
@@ -11694,14 +12463,17 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/locations' && req.method === 'GET') {
       const limite = Math.min(Math.max(Number(url.searchParams.get('limit')) || 500, 1), 2000);
       const deliveryScope = await deliveryAccessScope(ctx, actor);
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
       const locations = (await ctx.customers.listLocations(null, { limit: limite })).filter(
         (location) =>
-          !deliveryScope.restricted ||
+          (!deliveryScope.restricted ||
           deliveryScope.customerIds.has(location.customer_id) ||
-          deliveryScope.orderIds.has(location.order_id),
+          deliveryScope.orderIds.has(location.order_id)) &&
+          (!crmOwner || crmRowVisible(actor, crmOwner, 'customer', location.customer_id)),
       );
       const customerList = (await ctx.customers.list({})).filter(
-        (customer) => !deliveryScope.restricted || deliveryScope.customerIds.has(customer.id),
+        (customer) => (!deliveryScope.restricted || deliveryScope.customerIds.has(customer.id)) &&
+          (!crmOwner || crmRowVisible(actor, crmOwner, 'customer', customer)),
       );
       const clientePorId = new Map(customerList.map((row) => [row.id, row]));
       /** @type {Map<string, any>} */
@@ -12033,11 +12805,15 @@ async function handle(req, res, ctx) {
         currentUserId: actor?.actor_type === 'USER' ? actor.id : null,
       });
       const access = await conversationAccess(ctx, actor);
-      const conversations =
+      const beforeCompany =
         isDeliveryOnly(actor) && !access.all
           ? page.conversations.filter((row) => access.conversationIds.has(row.id))
           : page.conversations;
-      const counts = page.counts;
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
+      const conversations = crmOwner
+        ? beforeCompany.filter((row) => crmRowVisible(actor, crmOwner, 'conversation', row))
+        : beforeCompany;
+      const counts = crmOwner ? crmVisibleConversationCounts(conversations) : page.counts;
       json(res, 200, { ok: true, conversations, counts, dateRange: { from: dateRange.from, to: dateRange.to }, whatsapp: whatsappStatusPayload(ctx) });
       return;
     }
@@ -12057,6 +12833,12 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: 'missing_phone', message: 'Escribe el teléfono del cliente.' });
         return;
       }
+      if (!can('admin.full')) {
+        const existingCustomer = await ctx.customers.findByPhone(phone);
+        if (existingCustomer && !crmRowVisible(actor, await crmOwnership(ctx), 'customer', existingCustomer)) {
+          json(res, 404, { ok: false, error: 'not_found' }); return;
+        }
+      }
       const found = await ctx.customers.findOrCreateByPhone({
         phone,
         name,
@@ -12067,7 +12849,19 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: found.error ?? 'invalid_phone', message: 'Ese teléfono no parece válido.' });
         return;
       }
+      if (found.created && !can('admin.full')) {
+        await ctx.db.update('customers', found.customer.id, { company_id: 'phytoemagry' });
+      }
+      const previousConversation = (await ctx.db.list('conversations', {
+        where: { customer_id: found.customer.id }, limit: 1 }))[0];
       const conversation = await ctx.customers.conversationFor(found.customer.id);
+      if (!can('admin.full') && !previousConversation && conversation) {
+        await ctx.db.update('conversations', conversation.id, { company_id: 'phytoemagry' });
+      }
+      if (!can('admin.full') && previousConversation &&
+          !crmRowVisible(actor, await crmOwnership(ctx), 'conversation', previousConversation)) {
+        json(res, 404, { ok: false, error: 'not_found' }); return;
+      }
       await ctx.audit?.record({
         entity: 'conversation',
         entityId: conversation?.id ?? null,
@@ -12106,11 +12900,15 @@ async function handle(req, res, ctx) {
       }
       const results = [];
       const puedeVerTodo = hasPermission(actor, 'chats.force_reassign');
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
       for (const id of ids) {
         const conversation = await findConversation(ctx, id);
         if (!conversation) {
           results.push({ id, ok: false, error: 'not_found' });
           continue;
+        }
+        if (crmOwner && !crmRowVisible(actor, crmOwner, 'conversation', conversation)) {
+          results.push({ id, ok: false, error: 'not_found' }); continue;
         }
         /*
          * En lote también manda la regla: lo que no es tuyo no se marca leído, no
@@ -12170,6 +12968,9 @@ async function handle(req, res, ctx) {
       if (!conversation) {
         json(res, 404, { ok: false, error: 'not_found' });
         return;
+      }
+      if (!can('admin.full') && !crmRowVisible(actor, await crmOwnership(ctx), 'conversation', conversation)) {
+        json(res, 404, { ok: false, error: 'not_found' }); return;
       }
       const customer = await ctx.customers.get(conversation.customer_id);
 
@@ -12954,6 +13755,7 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/followups' && req.method === 'GET') {
       const buckets = await ctx.followups.buckets();
       const customers = await ctx.customers.list({});
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
       /*
        * BLINDADO: un agente no ve los seguimientos de un cliente cuya conversación
        * no lleva él (eran visibles para todo el equipo, con el nombre del cliente y
@@ -12961,9 +13763,10 @@ async function handle(req, res, ctx) {
        */
       const acceso = await conversationAccess(ctx, actor);
       const soloMios = (rows) =>
-        acceso.all
+        (acceso.all
           ? rows
-          : rows.filter((row) => acceso.customerIds.has(row.customer_id) || row.assigned_user_id === actor?.id);
+          : rows.filter((row) => acceso.customerIds.has(row.customer_id) || row.assigned_user_id === actor?.id))
+          .filter((row) => !crmOwner || crmRowVisible(actor, crmOwner, 'customer', row.customer_id));
       json(res, 200, {
         ok: true,
         reference: buckets.reference,
@@ -12972,7 +13775,7 @@ async function handle(req, res, ctx) {
         upcoming: withCustomer(soloMios(buckets.upcoming), customers),
         completed: withCustomer(soloMios(buckets.completed.slice(-30)), customers),
         cancelled: withCustomer(soloMios(buckets.cancelled.slice(-30)), customers),
-        summary: await ctx.followups.summary(),
+        summary: crmOwner ? null : await ctx.followups.summary(),
         // Plan EFECTIVO (el de Ajustes, ya filtrado) + el plan base para editar.
         plan: await ctx.followups.planNow(),
         basePlan: ctx.followups.plan,
@@ -13351,11 +14154,12 @@ async function handle(req, res, ctx) {
     if (route === '/api/admin/scheduled' && req.method === 'GET') {
       const rows = await ctx.scheduler.list();
       const customers = await ctx.customers.list({});
+      const crmOwner = can('admin.full') ? null : await crmOwnership(ctx);
       const byId = new Map(customers.map((row) => [row.id, row]));
       json(res, 200, {
         ok: true,
-        summary: await ctx.scheduler.summary(),
-        scheduled: rows.map((row) => ({
+        summary: crmOwner ? null : await ctx.scheduler.summary(),
+        scheduled: rows.filter((row) => !crmOwner || crmRowVisible(actor, crmOwner, 'customer', row.customer_id)).map((row) => ({
           ...row,
           customer: byId.has(row.customer_id)
             ? {
@@ -13793,6 +14597,7 @@ async function handle(req, res, ctx) {
 
     // ------------------------------------------------- auditoría comercial
     if (route === '/api/admin/audit' && req.method === 'GET') {
+      if (!requireAdmin()) return;
       const entityId = url.searchParams.get('entityId');
       json(res, 200, {
         ok: true,
@@ -13972,6 +14777,7 @@ export async function startCrmServer(config = {}) {
     dir: path.dirname(settings.dataFile),
     prefix: 'phytoemagry_',
   });
+  await ensureLogisticsCompanies(db);
 
   /*
    * Cliente de Meta. Si no hay credenciales queda desactivado y todo sigue
@@ -14511,7 +15317,14 @@ export async function startCrmServer(config = {}) {
         if (!events.length) return;
         const actor = res.__crmActor ?? null;
         const origin = String(req.headers['x-crm-device'] ?? '').slice(0, 64) || null;
-        ctx.realtime.publish(events.map((event) => ({ ...event, actor, origin })));
+        /*
+         * La empresa del aviso se resuelve aparte porque a veces exige ir al
+         * almacén. El evento sigue siendo «sin contenido»: la empresa solo dice
+         * a quién se le puede repartir.
+         */
+        void mutationEventScope(ctx, events, parsed)
+          .then((scope) => ctx.realtime.publish(events.map((event) => ({ ...event, actor, origin, ...scope }))))
+          .catch(() => { /* avisar no puede tumbar la petición que sí se guardó */ });
       } catch {
         /* Respuesta no JSON (PDF, imagen, CSV): no hay nada que anunciar. */
       }

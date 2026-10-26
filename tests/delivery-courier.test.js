@@ -217,12 +217,21 @@ describe('enviar el pedido al repartidor', () => {
 
 describe('asignar repartidor externo', () => {
   it('guarda el contacto elegido y vuelve a «asignado»', async () => {
-    const o = order({ delivery: {} });
+    const o = order({ company_id: 'phytoemagry', delivery: {} });
     const { ctx, state } = makeCtx({ orders: [row(o)] });
     const result = await assignCourier({ ctx, item: row(o), order: o, contactPhone: '8095550123', actor: { id: 'u1', display_name: 'Ana' } });
     expect(result.ok).toBe(true);
     expect(result.courier.status).toBe(COURIER_STATUS.ASSIGNED);
     expect(state.audits[0].action).toBe('order.courier_assigned');
+  });
+
+  it('no asigna un pedido de empresa ambigua a un repartidor externo', async () => {
+    const o = order({ delivery: {} });
+    const { ctx } = makeCtx({ orders: [row(o)] });
+    const result = await assignCourier({ ctx, item: row(o), order: o,
+      contactPhone: '8095550123' });
+    expect(result.status).toBe(403);
+    expect(result.error).toBe('courier_company_forbidden');
   });
 
   it('rechaza un número que no está guardado', async () => {

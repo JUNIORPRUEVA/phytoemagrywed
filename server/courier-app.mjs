@@ -33,6 +33,8 @@ export const COURIER_SESSION_SECONDS = 8 * 60 * 60;
 export const COURIER_MAX_FAILURES = 5;
 export const COURIER_LOCK_MS = 15 * 60 * 1000;
 export const COURIER_KINDS = Object.freeze(['INTERNAL', 'EXTERNAL']);
+/* Tipo de vehículo declarado al solicitar el ingreso (informativo para la oficina). */
+export const COURIER_VEHICLE_TYPES = Object.freeze(['MOTO', 'CARRO', 'BICICLETA', 'A_PIE']);
 /** Un pedido en estos estados ya no es trabajo del repartidor. */
 export const COURIER_CLOSED_ORDER_STATUSES = Object.freeze(['entregado', 'cancelado', 'perdido']);
 const MIN_CREDENTIAL_LENGTH = 6;
@@ -290,7 +292,7 @@ export function courierOrderDTO(item, { customer = null, kind = null } = {}) {
 }
 
 /** Pedido por id: el `orderId` es el del pedido, nunca el de la fila del almacén. */
-export async function findCourierOrder(store, orderId, account, { getCustomer = () => null } = {}) {
+export async function findCourierOrder(store, orderId, account, { getCustomer = () => null, companyId = null, companyOfOrder = () => null } = {}) {
   const id = String(orderId ?? '').trim();
   if (!id) return { ok: false, status: 404, error: 'not_found' };
   const items = await Promise.resolve(store.listAdmin({ limit: 5000 }));
@@ -306,14 +308,14 @@ export async function findCourierOrder(store, orderId, account, { getCustomer = 
     if (!order) continue;
     const matches = item.id === id || String(order.id ?? '') === id;
     if (!matches) continue;
-    if (!assignedToCourier(account, order)) return { ok: false, status: 404, error: 'not_found' };
+    if (!companyId || companyOfOrder(order) !== companyId || !assignedToCourier(account, order)) return { ok: false, status: 404, error: 'not_found' };
     const customer = order.customer_id ? await Promise.resolve(getCustomer(order.customer_id)) : null;
     return { ok: true, item, order, dto: courierOrderDTO(item, { customer, kind: account.kind }) };
   }
   return { ok: false, status: 404, error: 'not_found' };
 }
 
-export async function listCourierOrders(store, account, { includeClosed = false, getCustomer = () => null } = {}) {
+export async function listCourierOrders(store, account, { includeClosed = false, getCustomer = () => null, companyId = null, companyOfOrder = () => null } = {}) {
   const items = await Promise.resolve(store.listAdmin({ limit: 5000 }));
   const rows = Array.isArray(items) ? items : [];
   const out = [];
@@ -324,7 +326,7 @@ export async function listCourierOrders(store, account, { includeClosed = false,
     } catch {
       continue;
     }
-    if (!order || !assignedToCourier(account, order)) continue;
+    if (!order || !companyId || companyOfOrder(order) !== companyId || !assignedToCourier(account, order)) continue;
     const status = String(order.status ?? item.status ?? '').trim();
     if (!includeClosed && COURIER_CLOSED_ORDER_STATUSES.includes(status)) continue;
     const customer = order.customer_id ? await Promise.resolve(getCustomer(order.customer_id)) : null;
