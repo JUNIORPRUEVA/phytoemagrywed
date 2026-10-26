@@ -6664,6 +6664,7 @@ async function handle(req, res, ctx) {
     const documents = ((await ctx.db.list('courier_documents', { limit: 5000 })) ?? [])
       .filter((row) => row.application_id === application.id && row.status !== 'replaced');
     json(res, 201, { ok: true, status: 'received', document: publicDocument(doc),
+      vehicle_type: application.vehicle_type ?? null,
       missing: requiredDocumentsFor(application.vehicle_type)
         .filter((required) => !documents.some((row) => row.kind === required)) });
     return;
@@ -6681,6 +6682,7 @@ async function handle(req, res, ctx) {
     const documents = ((await ctx.db.list('courier_documents', { limit: 5000 })) ?? [])
       .filter((row) => row.application_id === application.id && row.status !== 'replaced');
     json(res, 200, { ok: true, status: application.status,
+      vehicle_type: application.vehicle_type ?? null,
       documents: documents.map(publicDocument),
       required: requiredDocumentsFor(application.vehicle_type),
       missing: requiredDocumentsFor(application.vehicle_type)

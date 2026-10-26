@@ -86,14 +86,15 @@ describe('escenario completo multiempresa', () => {
     expect(applied.status).toBe(202);
     const { applicationId, receipt } = applied.data;
 
-    for (const kind of ['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE']) {
+    // MOTO: identidad y documento del vehículo (la licencia se pide solo con carro).
+    for (const kind of ['IDENTITY', 'VEHICLE']) {
       const uploaded = await publicCall(`/api/courier/applications/${applicationId}/documents`, {
         method: 'POST', body: { receipt, kind, dataBase64: PNG } });
       expect(uploaded.status).toBe(201);
     }
     const expediente = await publicCall(`/api/courier/applications/${applicationId}/documents?receipt=${receipt}`);
     expect(expediente.data.missing).toEqual([]);
-    expect(expediente.data.documents).toHaveLength(3);
+    expect(expediente.data.documents).toHaveLength(2);
 
     const listed = await adminCall(`courier-applications/${applicationId}/documents`);
     for (const document of listed.data.documents) {
