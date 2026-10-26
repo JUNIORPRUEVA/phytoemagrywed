@@ -23,7 +23,26 @@ describe('métricas', () => {
 
   it('no usa una cabecera gigante', () => {
     expect(html).not.toMatch(/height:\s*(1[5-9]\d|2\d\d)px/);
-    expect(html).toContain('.bar h1{font-size:16px');
+    // Sin barra de aplicación: el título vive en la fila de acciones.
+    expect(html).toContain('.acciones h1{font-size:16px');
+    expect(html).not.toContain('class="bar"');
+    expect(html).toContain('class="back-float"');
+  });
+
+  it('los filtros son un cajón al 70 % que se abre deslizando', () => {
+    expect(html).toMatch(/#filters \.sheet\{[^}]*width:70%/s);
+    // El gesto va con eventos de puntero: vale con el dedo y con el ratón.
+    expect(html).toContain('pointerdown');
+    expect(html).toContain('pointerup');
+    expect(html).not.toContain('changedTouches[0]');
+    // El valor del filtro sigue existiendo (lo usan la tabla y el cajón).
+    expect(html).toContain('id="filter"');
+    expect(js).toContain('renderFiltros');
+  });
+
+  it('el texto no se puede sombrear (solo dentro de los campos)', () => {
+    expect(html).toContain('-webkit-user-select:none');
+    expect(html).toMatch(/input,textarea[^{]*\{[^}]*-webkit-user-select:text/s);
   });
 });
 
@@ -80,8 +99,8 @@ describe('aspecto del panel', () => {
     expect(html).not.toMatch(/#drawer \.sheet\{[^}]*background:#fff/);
   });
 
-  it('el volver es el icono redondo del panel', () => {
-    expect(html).toMatch(/\.bar a\.back\{[^}]*border-radius:50%/s);
+  it('el volver es el icono redondo del panel, flotando', () => {
+    expect(html).toMatch(/\.back-float\{[^}]*border-radius:50%/s);
     expect(html).not.toMatch(/<a class="back"[^>]*>\s*Volver/);
   });
 });
