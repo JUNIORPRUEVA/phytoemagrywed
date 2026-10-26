@@ -161,6 +161,7 @@ function openApplication(id) {
     <div class="row"><span>Estado</span><b>${esc(LABEL[row.status] ?? row.status)}</b></div>
     <div class="row"><span>Condiciones aceptadas</span><b>${esc(when(row.terms_accepted_at))}</b></div>
     ${row.review_note ? `<div class="row"><span>Nota de revisión</span><b>${esc(row.review_note)}</b></div>` : ''}
+    ${profileBlock(row)}
     <div id="d-documents"><p class="hint">Cargando expediente…</p></div>
     <p class="hint">Aprobar la solicitud NO crea la cuenta ni concede acceso: el alta del acceso y las empresas autorizadas son pasos administrativos aparte.</p>
     <label class="hint" for="d-note">Motivo / nota (obligatorio al pedir información o rechazar)</label>
@@ -175,7 +176,49 @@ function openApplication(id) {
   void loadDocuments(id);
 }
 
-const DOC_LABEL = { IDENTITY: 'Identidad', DRIVING_LICENSE: 'Licencia', VEHICLE: 'Vehículo' };
+/*
+ * PERFIL AMPLIADO: lo que el asistente del teléfono recogió, tal como llegó.
+ *
+ * Si la solicitud viene de un cliente antiguo, estos bloques no existen y no se
+ * pinta nada: aquí no se inventan datos ni se completan huecos.
+ */
+function profileBlock(row) {
+  const personal = row.profile ?? null;
+  const vehicle = row.vehicle_detail ?? null;
+  const availability = row.availability ?? null;
+  const policy = row.policy ?? null;
+  if (!personal && !vehicle && !availability && !policy) return '';
+  const line = (label, value) => (value
+    ? `<div class="row"><span>${esc(label)}</span><b>${esc(value)}</b></div>` : '');
+  const idType = { CEDULA: 'Cédula', PASAPORTE: 'Pasaporte' };
+  const personalRows = personal ? [
+    line('Documento', [idType[personal.id_type] ?? personal.id_type, personal.id_number].filter(Boolean).join(' ')),
+    line('Nacimiento', personal.birth_date),
+    line('Correo', personal.email),
+    line('Residencia', [personal.address, personal.municipality, personal.province].filter(Boolean).join(', ')),
+    line('Contacto de emergencia', [personal.emergency_name, personal.emergency_phone].filter(Boolean).join(' · ')),
+  ].join('') : '';
+  const vehicleRows = vehicle ? [
+    line('Marca / modelo', [vehicle.make, vehicle.model].filter(Boolean).join(' ')),
+    line('Placa', vehicle.plate),
+    line('Tipo de bicicleta', vehicle.bicycle_type),
+  ].join('') : '';
+  const availabilityRows = availability ? [
+    line('Provincia de operación', availability.province),
+    line('Municipio preferido', availability.municipality),
+    line('Disponibilidad', availability.availability),
+    line('Horario preferido', availability.schedule),
+    line('Experiencia', availability.experience),
+  ].join('') : '';
+  const policyRow = policy && policy.version
+    ? `<div class="row"><span>Normas aceptadas</span><b>${esc(policy.version)}</b></div>` : '';
+  return `<h2>Datos del solicitante</h2>${personalRows}${vehicleRows}${availabilityRows}${policyRow}`;
+}
+
+const DOC_LABEL = {
+  IDENTITY: 'Identidad', IDENTITY_BACK: 'Reverso del documento', DRIVING_LICENSE: 'Licencia',
+  VEHICLE: 'Documento del vehículo', VEHICLE_PHOTO: 'Foto del vehículo', SELFIE: 'Selfie',
+};
 const DOC_TAG = { received: ['none', 'Recibido'], accepted: ['ok', 'Aceptado'], rejected: ['bad', 'Rechazado'], replacement: ['warn', 'Pedir otro'] };
 
 /** Expediente del solicitante: lo que hay, lo que falta y la revisión de cada archivo. */

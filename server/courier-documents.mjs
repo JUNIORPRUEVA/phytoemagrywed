@@ -16,7 +16,15 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export const DOCUMENT_KINDS = Object.freeze(['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE']);
+export const DOCUMENT_KINDS = Object.freeze([
+  'IDENTITY',
+  'IDENTITY_BACK',
+  'DRIVING_LICENSE',
+  'INSURANCE',
+  'VEHICLE',
+  'VEHICLE_PHOTO',
+  'SELFIE',
+]);
 export const DOCUMENT_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
@@ -32,10 +40,19 @@ export const DOCUMENT_MAX_BYTES = 4 * 1024 * 1024;
  */
 export function requiredDocumentsFor(vehicleType) {
   const vehicle = String(vehicleType ?? '').toUpperCase();
-  if (vehicle === 'CARRO') return ['IDENTITY', 'DRIVING_LICENSE', 'VEHICLE'];
-  if (vehicle === 'MOTO') return ['IDENTITY', 'VEHICLE'];
-  if (vehicle === 'BICICLETA' || vehicle === 'A_PIE') return ['IDENTITY'];
-  return ['IDENTITY'];
+  /*
+   * Se pide lo mínimo que la oficina necesita para decidir, y nada que ya se
+   * haya escrito en el formulario: la matrícula es un NÚMERO (no un documento).
+   *   · Carro → identidad, licencia, seguro y selfie
+   *   · Moto  → identidad, licencia y selfie
+   * La selfie es revisión HUMANA: no hay reconocimiento facial ni biometría.
+   */
+  if (vehicle === 'CARRO') {
+    return ['IDENTITY', 'DRIVING_LICENSE', 'INSURANCE', 'SELFIE'];
+  }
+  if (vehicle === 'MOTO') return ['IDENTITY', 'DRIVING_LICENSE', 'SELFIE'];
+  if (vehicle === 'BICICLETA' || vehicle === 'A_PIE') return ['IDENTITY', 'SELFIE'];
+  return ['IDENTITY', 'SELFIE'];
 }
 
 /** Tipo real del archivo por sus primeros bytes. `null` = no aceptado. */

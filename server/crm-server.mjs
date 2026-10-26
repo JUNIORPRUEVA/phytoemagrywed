@@ -164,6 +164,8 @@ import {
   requiredDocumentsFor,
   saveDocumentFile,
 } from './courier-documents.mjs';
+/* Perfil ampliado del solicitante (datos, vehículo y disponibilidad). */
+import { readApplicationProfile } from './courier-application-profile.mjs';
 /* Identidad de cliente (teléfono verificado, correo) y SEO de la tienda. */
 import { createMailSender, createSmsSender, createStoreVerifications } from './store-verifications.mjs';
 import { handleStoreAuthRoute } from './store-auth-routes.mjs';
@@ -6574,6 +6576,18 @@ async function handle(req, res, ctx) {
     if (!(await activeLogisticsCompany(ctx.db, companyId)) || !phone || !name || name.length < 3) {
       json(res, 422, { ok: false, error: 'invalid_application' }); return;
     }
+    /*
+     * PERFIL AMPLIADO (opcional para clientes antiguos).
+     *
+     * Si viene el bloque de datos personales, del vehículo o de la
+     * disponibilidad, se valida ENTERO antes de guardar nada: un alta con una
+     * fecha de nacimiento imposible o un correo roto no debe llegar a la
+     * oficina como si estuviera completa.
+     */
+    const extended = readApplicationProfile(body, { vehicleType });
+    if (extended.error) {
+      json(res, 422, { ok: false, error: extended.error, field: extended.field }); return;
+    }
     const key = createHash('sha256').update(`${companyId}:${phone}`).digest('hex');
     const rows = (await ctx.db.list('courier_applications', { limit: 5000 })) ?? [];
     const current = rows.find((row) => row.application_key === key && row.status !== 'rejected');
@@ -6592,6 +6606,8 @@ async function handle(req, res, ctx) {
     const doc = { id: `app_${randomUUID().replaceAll('-', '')}`, application_key: key,
       company_id: companyId, phone_e164: phone, display_name: name,
       vehicle_type: vehicleType, zone, terms_accepted_at: now,
+      profile: extended.profile ?? null, vehicle_detail: extended.vehicle ?? null,
+      availability: extended.availability ?? null, policy: extended.policy ?? null,
       status: 'pending', receipt, created_at: now, updated_at: now };
     await ctx.db.insert('courier_applications', doc);
     await ctx.audit?.record({ entity: 'courier_application', entityId: doc.id,
