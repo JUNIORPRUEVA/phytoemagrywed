@@ -7887,6 +7887,35 @@ async function handle(req, res, ctx) {
       } catch {
         body = {};
       }
+      /*
+       * ALTA RÁPIDA DE UN REPARTIDOR EXTERNO.
+       *
+       * La regla de siempre sigue en pie: un externo solo se autoriza si su
+       * número está guardado como contacto de reparto (así no se autoriza un
+       * número escrito a la carrera). Lo que cambia es que el panel ya no manda a
+       * la persona a otro sitio: si viene nombre + teléfono, el contacto se guarda
+       * aquí mismo y la cuenta se crea en el mismo paso.
+       */
+      if (String(body.kind ?? '').toUpperCase() === 'EXTERNAL' && !body.contactId && !body.contact_id) {
+        const telefonoExterno = normalizeCourierPhone(body.phone ?? body.phone_e164);
+        const nombreExterno = text(body.displayName ?? body.display_name, 80);
+        if (telefonoExterno && nombreExterno) {
+          const actuales = (await ctx.settings.read('delivery_contacts'))?.value;
+          const lista = Array.isArray(actuales) ? actuales : [];
+          const guardado = lista.find((row) => row.phone === telefonoExterno) ?? null;
+          const contacto = guardado ?? {
+            id: `contact_${randomUUID().replaceAll('-', '').slice(0, 16)}`,
+            name: nombreExterno,
+            phone: telefonoExterno,
+            concept: 'Reparto',
+            updated_at: new Date().toISOString(),
+          };
+          if (!guardado) {
+            await ctx.settings.write('delivery_contacts', [...lista, contacto].slice(-100));
+          }
+          body.contactId = contacto.id;
+        }
+      }
       const at = new Date().toISOString();
       const normalized = normalizeCourierAccountInput(body, { now: at });
       if (!normalized.ok) {
@@ -8055,6 +8084,26 @@ async function handle(req, res, ctx) {
           return;
         }
         patch.display_name = name;
+      }
+      /*
+       * CORREGIR EL TELÉFONO.
+       *
+       * Es el dato con el que el repartidor entra en la app y con el que se le
+       * escribe: si se escribió mal, hay que poder arreglarlo sin borrar la
+       * cuenta (que se lleva por delante el historial y las empresas).
+       */
+      if (body.phone !== undefined || body.phone_e164 !== undefined) {
+        const telefono = normalizeCourierPhone(body.phone ?? body.phone_e164);
+        if (!telefono) {
+          json(res, 422, { ok: false, error: 'invalid_phone', message: 'Escribe un teléfono válido con código de país.' });
+          return;
+        }
+        const otras = (await ctx.db.list(couriersCollection, { limit: 1000 })) ?? [];
+        if (otras.some((row) => row.phone_e164 === telefono && row.id !== courierId)) {
+          json(res, 409, { ok: false, error: 'phone_in_use', message: 'Ese teléfono ya tiene una cuenta de acceso.' });
+          return;
+        }
+        patch.phone_e164 = telefono;
       }
       const newPin = body.pin ?? body.password;
       if (newPin !== undefined) {
