@@ -16423,3 +16423,98 @@ body[data-tab='pedido'] .content {
 #sheet[data-variant='notices-drawer'] .notice-list {
   gap: 8px;
 }
+
+/* ==========================================================================
+   AVISO PARA INSTALAR LA APP (PWA)
+   --------------------------------------------------------------------------
+   Sale arriba, flotando, solo cuando el panel se abre en una pestaña del
+   navegador. Usa las variables del tema, así que en modo oscuro se ve igual de
+   bien que el resto. Se cierra con la ✕ (y no vuelve en unos días).
+   ========================================================================== */
+.install-banner {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(440px, calc(100vw - 20px));
+  padding: 9px 10px 9px 11px;
+  transform: translateX(-50%);
+  border: 1px solid var(--pe-border, #dfe7f4);
+  border-radius: 14px;
+  background: var(--pe-card-bg, #fff);
+  color: var(--text-primary, #10222d);
+  box-shadow: 0 14px 34px rgba(12, 36, 66, 0.22);
+}
+
+.install-banner[hidden] {
+  display: none;
+}
+
+.install-banner__icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  object-fit: cover;
+}
+
+.install-banner__copy {
+  display: grid;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.install-banner__copy strong {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.install-banner__copy small {
+  color: var(--pe-ink-500, #64748b);
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.install-banner__go {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--pe-brand-800, #145bd7);
+  border-radius: 10px;
+  background: var(--pe-brand-800, #145bd7);
+  color: var(--pe-on-brand, #fff);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.install-banner__go[hidden] {
+  display: none;
+}
+
+.install-banner__close {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.install-banner__close:hover,
+.install-banner__close:focus-visible {
+  opacity: 1;
+  background: var(--pe-chip-bg, #edf3fc);
+}

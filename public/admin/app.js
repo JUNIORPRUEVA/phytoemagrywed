@@ -23369,6 +23369,77 @@
     }
     toast('Abre el menú del navegador y elige «Instalar aplicación»');
   }
+
+  /*
+   * AVISO DE INSTALACIÓN, A LA VISTA EN TODA LA APP.
+   *
+   * Antes solo había un botoncito escondido en el menú y una tarjeta dentro de
+   * Ajustes → Aplicación: quien no sabía dónde mirar se quedaba con la app sin
+   * instalar. Ahora, si el panel se está viendo en una PESTAÑA del navegador,
+   * sale esta tarjeta arriba con su botón.
+   *
+   * No se inventa nada: si el navegador ofrece instalar (`beforeinstallprompt`),
+   * el botón la instala de verdad; si es iPhone, explica los dos toques de
+   * Safari; y si la dirección no es segura (http sin localhost), lo dice, porque
+   * desde ahí NINGÚN navegador permite instalar.
+   */
+  const INSTALL_HIDE_KEY = 'ft_install_hide';
+
+  function avisoInstalarCerrado() {
+    try {
+      const hasta = Number(localStorage.getItem(INSTALL_HIDE_KEY) ?? 0);
+      return Number.isFinite(hasta) && hasta > Date.now();
+    } catch {
+      return false;
+    }
+  }
+
+  function mostrarAvisoInstalar(mostrar) {
+    const caja = $('#install-banner');
+    if (!caja) return;
+    const debeVerse = Boolean(mostrar) && !appInstalada() && !avisoInstalarCerrado();
+    caja.hidden = !debeVerse;
+    if (!debeVerse) return;
+    const titulo = $('#install-banner-title');
+    const texto = $('#install-banner-text');
+    const boton = $('#install-banner-go');
+    if (!titulo || !texto || !boton) return;
+    if (installEvent) {
+      titulo.textContent = 'Instala FullTECH en tu teléfono';
+      texto.textContent = 'Se abre como una app, sin barra del navegador, y puede avisarte.';
+      boton.textContent = 'Instalar';
+      boton.hidden = false;
+      return;
+    }
+    if (iphonePushDevice()) {
+      titulo.textContent = 'Añádela a tu pantalla de inicio';
+      texto.textContent = 'Toca Compartir y elige «Añadir a pantalla de inicio».';
+      boton.textContent = 'Ver cómo';
+      boton.hidden = false;
+      return;
+    }
+    if (window.isSecureContext === false) {
+      titulo.textContent = 'Aquí no se puede instalar';
+      texto.textContent = 'El navegador solo instala apps en direcciones seguras: abre el panel con https://.';
+      boton.hidden = true;
+      return;
+    }
+    titulo.textContent = 'Instala FullTECH en tu teléfono';
+    texto.textContent = 'Abre el menú del navegador (⋮) y elige «Instalar aplicación».';
+    boton.textContent = 'Cómo';
+    boton.hidden = false;
+  }
+
+  function cerrarAvisoInstalar() {
+    const caja = $('#install-banner');
+    if (caja) caja.hidden = true;
+    try {
+      // Tres días sin molestar; pasado ese tiempo vuelve a recordarlo.
+      localStorage.setItem(INSTALL_HIDE_KEY, String(Date.now() + 3 * 86400000));
+    } catch {
+      /* sin Storage se queda cerrado solo en esta visita */
+    }
+  }
   let swRegistration = null;
 
   function pushPermissionLabel() {
@@ -23888,6 +23959,7 @@
       $('#install-card').hidden = settingsPage !== 'aplicacion';
       $('#install').hidden = false; // el navegador puede instalarla por nosotros
       actualizarBotonInstalar();
+      mostrarAvisoInstalar(true);
     });
 
     /*
@@ -23914,6 +23986,8 @@
       installEvent = null;
       $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
       actualizarBotonInstalar();
+      const aviso = $('#install-banner');
+      if (aviso) aviso.hidden = true;
     });
     window.addEventListener('resize', actualizarBotonInstalar);
 
@@ -23922,10 +23996,21 @@
      */
     $('#install').addEventListener('click', () => instalarApp());
 
+    /* Los dos botones del aviso: instalar (o explicar cómo) y «ahora no». */
+    $('#install-banner-go')?.addEventListener('click', () => instalarApp());
+    $('#install-banner-close')?.addEventListener('click', () => cerrarAvisoInstalar());
+
     // Instalada (o en iPhone, que no avisa): solo las instrucciones manuales.
     if (window.matchMedia('(display-mode: standalone)').matches) $('#install-text').textContent = 'FullTECH ya está instalada en este dispositivo. Puedes buscar una actualización cuando quieras.';
     else $('#install').hidden = !installEvent;
     actualizarBotonInstalar();
+    /*
+     * Se intenta mostrar el aviso ya: en iPhone y en direcciones sin HTTPS nunca
+     * llega `beforeinstallprompt`, y esas personas también tienen que saberlo.
+     * Si el navegador ofrece instalar, el propio evento lo volverá a pintar con
+     * el botón de instalar de verdad.
+     */
+    mostrarAvisoInstalar(true);
   }
 
   // ------------------------------------------------------------------- menú

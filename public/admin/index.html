@@ -79,7 +79,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <link rel="stylesheet" href="/admin/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="/admin/admin.css?v=expediente-5" />
+    <link rel="stylesheet" href="/admin/admin.css?v=expediente-6" />
     <link rel="stylesheet" href="/admin/store.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/product-editor.css?v=billing-cards-3" />
     <link rel="stylesheet" href="/admin/stock.css?v=6" />
@@ -208,6 +208,24 @@
       <div class="splash__mark">
         <img src="/admin/assets/branding/fulltech-crm-mark.png" alt="" width="84" height="84" fetchpriority="high" decoding="async" />
       </div>
+    </div>
+
+    <!--
+      AVISO PARA INSTALAR LA APP.
+
+      Solo sale si el panel se está viendo en una PESTAÑA del navegador (no
+      instalado) y la persona no lo ha cerrado hace poco. El botón instala de
+      verdad cuando el navegador lo permite; si no, dice exactamente qué hacer
+      (iPhone o una dirección sin HTTPS). El contenido lo rellena app.js.
+    -->
+    <div class="install-banner" id="install-banner" hidden>
+      <img class="install-banner__icon" src="/admin/assets/branding/fulltech-crm-192.png" alt="" width="40" height="40" decoding="async" />
+      <div class="install-banner__copy">
+        <strong id="install-banner-title">Instala FullTECH en tu teléfono</strong>
+        <small id="install-banner-text">Se abre como una app, sin barra del navegador.</small>
+      </div>
+      <button class="install-banner__go" id="install-banner-go" type="button">Instalar</button>
+      <button class="install-banner__close" id="install-banner-close" type="button" aria-label="Ahora no">✕</button>
     </div>
 
     <!-- ------------------------------------------------------------- ENTRAR -->
@@ -1225,7 +1243,7 @@
     <script src="/admin/offline-ui.js?v=9" defer></script>
     <script src="/admin/receipt-launcher.js?v=1" defer></script>
     <script src="/admin/conversation-list.js?v=1" defer></script>
-    <script src="/admin/app.js?v=ftcrm-7" defer></script>
+    <script src="/admin/app.js?v=ftcrm-8" defer></script>
     <script src="/admin/composer-mobile.js?v=1" defer></script>
     <!-- Alto real del teclado en iOS y foco visible dentro de las hojas. -->
     <script src="/admin/ios.js?v=1" defer></script>
