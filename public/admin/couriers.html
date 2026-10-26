@@ -35,11 +35,15 @@
 </script>
 <style>
 /*
- * REPARTIDORES — misma piel que el resto del panel.
+ * REPARTIDORES — sin barra de aplicación.
  *
- * Los colores salen de variables con su versión de noche (las mismas familias
- * que el CRM: fondo de página, tarjeta, línea fina, marca). Ningún color va
- * escrito a mano en una regla: si algo se ve mal de noche se arregla aquí.
+ * Arriba solo queda el volver FLOTANDO (redondo, como en el expediente del
+ * cliente) y una fila de acciones con iconos: buscar, filtrar y actualizar. Al
+ * pulsar la lupa la fila desaparece y el buscador ocupa su sitio.
+ *
+ * La pantalla está partida en VISTAS: las tarjetas de arriba llevan a cada una
+ * (pendientes, requiere información, aprobadas, con acceso, multiempresa) y por
+ * defecto solo se ve la lista de repartidores que YA están en la app.
  */
 :root{
   color-scheme:light;
@@ -64,163 +68,311 @@
   --shadow:0 12px 30px rgba(0,0,0,.55)
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--page);font-size:13.5px;line-height:1.35;-webkit-tap-highlight-color:transparent}
-main{max-width:1180px;margin:0 auto;padding:0 14px 32px}
-.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 -14px 12px;padding:8px 14px;border-bottom:1px solid var(--hair);background:var(--bar-bg);backdrop-filter:blur(14px)}
-.bar h1{font-size:16px;margin:0;font-weight:760;letter-spacing:.01em}
-.bar .sp{flex:1}
-.bar a.back{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:40px;height:40px;padding:0;border:1px solid var(--line);border-radius:50%;background:transparent;color:var(--ink);text-decoration:none;cursor:pointer}
-.bar a.back:hover,.bar a.back:focus-visible{background:var(--chip);color:var(--brand);border-color:var(--brand)}
-.bar a.back svg{display:block;width:20px;height:20px}
-.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 12px}
-.card{background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:9px 11px;min-height:56px}
-.card small{display:block;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:750}
-.card b{display:block;margin-top:3px;font-size:15.5px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/*
+ * NADA DE SOMBREAR EL TEXTO.
+ *
+ * En una pantalla que se maneja deslizando, seleccionar letras sin querer es un
+ * estorbo: el toque largo sacaba el menú de copiar en mitad de un gesto. Se
+ * desactiva la selección en toda la página y se deja SOLO donde hace falta
+ * escribir (campos y áreas de texto).
+ */
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--page);font-size:13.5px;line-height:1.35;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
+main{max-width:1180px;margin:0 auto;padding:8px 12px 96px}
+
+/* --- Volver flotante (sin barra) --- */
+.back-float{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:10px;z-index:30;display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+.back-float:hover,.back-float:focus-visible{color:var(--brand);border-color:var(--brand)}
+.back-float img{width:19px;height:19px;display:block}
+:root[data-theme='dark'] .back-float img{filter:invert(1)}
+
+/* --- Fila de acciones (ocupa el sitio del antiguo appbar) --- */
+.acciones{display:flex;align-items:center;gap:6px;margin:0 0 10px;padding-left:48px;min-height:40px}
+/* `display:flex` gana a `[hidden]`: hay que decirlo explícitamente. */
+.acciones[hidden]{display:none}
+.acciones h1{margin:0;font-size:16px;font-weight:760;letter-spacing:.01em;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ico{display:grid;place-items:center;width:36px;height:36px;min-height:0;padding:0;border:1px solid var(--line);border-radius:11px;background:transparent;color:var(--ink);cursor:pointer;flex:0 0 auto}
+.ico:hover,.ico:focus-visible{background:var(--chip);border-color:var(--brand);color:var(--brand)}
+.ico img{width:18px;height:18px;display:block}
+.ico svg{width:18px;height:18px;display:block}
+:root[data-theme='dark'] .ico img{filter:invert(1)}
+
+/* --- Buscador: sustituye a la fila de acciones --- */
+.buscador{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:0 8px 0 12px;min-height:40px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.buscador[hidden]{display:none}
+.buscador svg{width:17px;height:17px;flex:0 0 auto;color:var(--muted)}
+.buscador input{flex:1 1 auto;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:inherit;font-size:13.5px;min-height:38px}
+.buscador input::placeholder{color:var(--muted)}
+
+.stato{margin:0 0 10px;font-size:11.5px;color:var(--muted)}
+
+/* --- Tarjetas: pequeñas, alineadas y todas tocables --- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px;margin:0 0 14px}
+.card{display:grid;gap:0;min-height:44px;padding:6px 9px;border:1px solid var(--hair);border-radius:11px;background:var(--card);color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.card:hover,.card:focus-visible{border-color:var(--brand);background:var(--chip)}
+.card small{font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card b{font-size:16px;line-height:1.15;font-variant-numeric:tabular-nums}
 .card.warn{border-color:var(--warn-line);background:var(--warn-bg)}
 .card.warn small,.card.warn b{color:var(--warn)}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
-.toolbar input,.toolbar select{min-height:38px;padding:0 11px;border:1px solid var(--line);border-radius:11px;font:inherit;background:var(--card);color:var(--ink)}
-.toolbar input::placeholder{color:var(--muted)}
-.toolbar input:focus-visible,.toolbar select:focus-visible,textarea:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
-.toolbar input[type=search]{min-width:190px}
-h2{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px;font-weight:750}
-button{min-height:36px;padding:0 13px;border-radius:11px;border:1px solid var(--brand);background:var(--brand);color:var(--on-brand);font:inherit;font-weight:700;cursor:pointer}
-button.ghost{background:transparent;color:var(--brand);border-color:var(--line)}
-button.ghost:hover{background:var(--chip)}
-button.danger{background:transparent;color:var(--bad);border-color:var(--bad-line)}
-button.danger:hover{background:var(--bad-bg)}
-button[disabled]{opacity:.55;cursor:not-allowed}
-.wrap{background:var(--card);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
-table{width:100%;border-collapse:collapse}
-th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--hair);color:var(--ink);vertical-align:middle}
-th{font-size:9.8px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:750;white-space:nowrap}
-tbody tr:hover{background:var(--chip)}
-tbody tr:last-child td{border-bottom:0}
-.who b{display:block;font-size:13px}
-.who span{font-size:11px;color:var(--muted)}
-td.act{text-align:right;white-space:nowrap}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:750;border:1px solid}
+
+h2{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:14px 0 7px;font-weight:750}
+h2 .n{display:inline-block;padding:1px 7px;border-radius:999px;background:var(--chip);color:var(--ink);font-size:10px;letter-spacing:0;text-transform:none}
+h2 .sp{flex:1}
+.enlace{display:inline-flex;align-items:center;gap:4px;margin-top:8px;padding:0;border:0;background:transparent;color:var(--brand);font:inherit;font-size:12px;font-weight:750;cursor:pointer}
+
+/* --- Lista fina --- */
+.list{display:grid;gap:6px}
+.lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 10px;width:100%;padding:9px 11px;border:1px solid var(--hair);border-radius:11px;background:var(--card);color:var(--ink);font:inherit;text-align:left;cursor:pointer;min-height:0}
+.lrow:hover,.lrow:focus-visible{background:var(--chip);border-color:var(--line)}
+.lrow b{display:block;font-size:13px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lrow small{display:block;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lrow__side{display:flex;align-items:center;gap:7px;justify-self:end}
+.lrow__chev{color:var(--muted);font-size:15px;line-height:1}
+.empty{padding:20px 12px;border:1px dashed var(--line);border-radius:11px;text-align:center;color:var(--muted);font-size:12px}
+
+.tag{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:750;border:1px solid;white-space:nowrap}
 .tag.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line)}
 .tag.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line)}
 .tag.bad{color:var(--bad);background:var(--bad-bg);border-color:var(--bad-line)}
 .tag.none{color:var(--muted);background:transparent;border-color:var(--line)}
 .chips{display:flex;gap:5px;flex-wrap:wrap}
-.chip{font-size:10.5px;font-weight:750;padding:2px 8px;border-radius:999px;border:1px solid var(--hair);background:var(--chip);color:var(--ink)}
-.empty{padding:26px;text-align:center;color:var(--muted);font-size:12.5px}
+.chip{font-size:10px;font-weight:750;padding:2px 7px;border-radius:999px;border:1px solid var(--hair);background:var(--chip);color:var(--ink)}
+
+/* --- Botón flotante de añadir (estilo hoja de app) --- */
+.fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:35;display:grid;place-items:center;width:56px;height:56px;padding:0;border:1px solid var(--line);border-radius:18px;background:var(--brand);color:var(--on-brand);box-shadow:0 14px 30px rgba(20,60,120,.28);cursor:pointer}
+.fab img{width:24px;height:24px;display:block}
+/* El icono entregado es negro: sobre el botón de marca va invertido siempre. */
+.fab img{filter:invert(1)}
+:root[data-theme='dark'] .fab img{filter:none}
+button[disabled]{opacity:.55;cursor:not-allowed}
+
+/* --- Cajón (detalle / alta / edición) --- */
 #drawer{position:fixed;inset:0;z-index:40;display:none;justify-content:flex-end;background:rgba(7,20,36,.45)}
 #drawer[open]{display:flex}
-#drawer .sheet{width:min(430px,100%);height:100%;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-left:1px solid var(--line);box-shadow:var(--shadow)}
+/* El cajón entra deslizando desde la derecha (y sale igual). */
+#drawer .sheet{width:min(430px,100%);height:100%;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-left:1px solid var(--line);box-shadow:var(--shadow);transform:translateX(102%);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+#drawer[open] .sheet{transform:none}
 #drawer header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--hair)}
-#drawer header b{font-size:15px;font-weight:760;flex:1}
+#drawer header b{font-size:15px;font-weight:760;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #drawer .body{flex:1;padding:12px 14px;overflow:auto;overscroll-behavior:contain}
 #drawer footer{padding:12px 14px;border-top:1px solid var(--hair);display:flex;gap:8px;flex-wrap:wrap}
-#drawer h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:12px 0 4px}
-#drawer .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--hair);font-size:12.8px}
-#drawer .row span{color:var(--ink-2);font-size:12.2px}
-#drawer .row b{font-variant-numeric:tabular-nums;text-align:right}
-#drawer a.back{display:inline-flex;align-items:center;min-height:32px;padding:0 11px;border:1px solid var(--line);border-radius:11px;color:var(--brand);text-decoration:none;font-weight:700;font-size:12px}
-#drawer a.back:hover{background:var(--chip)}
-.row{display:flex;gap:8px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--hair)}
-.row span{color:var(--ink-2)}
-.row b{font-variant-numeric:tabular-nums;text-align:right}
+#drawer footer button{flex:1 1 auto}
+#drawer h2{margin:14px 0 6px}
+#drawer .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--hair);font-size:12.5px}
+#drawer .row span{color:var(--ink-2);font-size:12px;min-width:0}
+#drawer .row b{font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
+.field{display:grid;gap:5px;margin:0 0 10px}
+.field span{font-size:11.5px;font-weight:750;color:var(--ink-2)}
+.field input,.field select,.field textarea{min-height:40px;padding:0 11px;border:1px solid var(--line);border-radius:11px;background:var(--page);color:var(--ink);font:inherit}
+.field textarea{min-height:64px;padding:8px 11px;resize:vertical}
+.field--check{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+.field--check input{width:18px;height:18px;min-height:0;accent-color:var(--brand)}
 .hint{color:var(--muted);font-size:11.5px;margin:0}
-#status{font-size:12px;color:var(--muted);margin:0}
-textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:11px;padding:8px 11px;font:inherit;background:var(--page);color:var(--ink);resize:vertical}
-@media (max-width:860px){
-  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .hide-sm{display:none}
-  main{padding:0 10px 90px}
-  .bar{margin:0 -10px 10px;padding:6px 10px}
+.sep{height:1px;background:var(--hair);margin:12px 0}
+button{min-height:34px;padding:0 12px;border-radius:11px;border:1px solid var(--brand);background:var(--brand);color:var(--on-brand);font:inherit;font-weight:700;cursor:pointer}
+button.ghost{background:transparent;color:var(--brand);border-color:var(--line)}
+button.ghost:hover{background:var(--chip)}
+button.danger{background:transparent;color:var(--bad);border-color:var(--bad-line)}
+button.danger:hover{background:var(--bad-bg)}
+button.sm{min-height:30px;padding:0 10px;font-size:11.5px;border-radius:9px}
+
+/* --- Filtros: cajón a la derecha, 70 % --- */
+#filters{position:fixed;inset:0;z-index:45;display:none;justify-content:flex-end;background:rgba(7,20,36,.42)}
+#filters[open]{display:flex}
+#filters .sheet{width:70%;max-width:420px;height:100%;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-left:1px solid var(--line);box-shadow:var(--shadow);transform:translateX(102%);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+#filters[open] .sheet{transform:none}
+@media (prefers-reduced-motion: reduce){
+  #drawer .sheet,#filters .sheet{transition:none}
 }
+#filters header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--hair)}
+#filters header b{font-size:15px;font-weight:760;flex:1}
+#filters header small{display:block;color:var(--muted);font-size:11px;font-weight:500}
+#filters .body{flex:1;padding:12px 14px;overflow:auto;overscroll-behavior:contain}
+#filters h3{margin:14px 0 7px;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:750}
+#filters h3:first-child{margin-top:0}
+.fopt{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:36px;margin-bottom:6px;padding:0 11px;border:1px solid var(--hair);border-radius:10px;background:var(--chip);color:var(--ink);font:inherit;font-size:12.5px;font-weight:700;text-align:left;cursor:pointer}
+.fopt em{font-style:normal;color:var(--muted);font-size:11px;font-weight:600}
+.fopt[aria-pressed='true']{border-color:var(--brand);background:var(--brand);color:var(--on-brand)}
+.fopt[aria-pressed='true'] em{color:inherit;opacity:.85}
+#filters footer{padding:12px 14px;border-top:1px solid var(--hair);display:flex;gap:8px}
+#filters footer button{flex:1}
 </style></head>
 <body>
 <main>
-  <div class="bar">
-    <a class="back" href="/admin/" aria-label="Volver al CRM" title="Volver al CRM">
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/></svg>
-    </a>
-    <h1>Repartidores</h1>
-    <span class="sp"></span>
-    <span id="status" role="status"></span>
-    <button class="ghost" type="button" id="refresh">Actualizar</button>
+  <button class="back-float" type="button" data-volver aria-label="Volver" title="Volver">
+    <img src="/admin/assets/icons/ui/back.png" alt="" width="19" height="19" decoding="async">
+  </button>
+
+  <header class="acciones" id="acciones">
+    <h1 id="titulo">Repartidores</h1>
+    <button class="ico" type="button" data-search-open aria-label="Buscar" title="Buscar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+    </button>
+    <button class="ico" type="button" data-filters-open aria-label="Filtros" title="Filtros" aria-controls="filters" aria-expanded="false">
+      <img src="/admin/assets/icons/ui/filter.png" alt="" width="18" height="18" decoding="async">
+    </button>
+    <button class="ico" type="button" id="refresh" aria-label="Actualizar" title="Actualizar">
+      <img src="/admin/assets/icons/ui/refresh.png" alt="" width="18" height="18" decoding="async">
+    </button>
+  </header>
+
+  <div class="buscador" id="buscador" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+    <input id="search" type="search" placeholder="Buscar repartidor, teléfono o zona" aria-label="Buscar">
+    <button class="ico" type="button" data-search-close aria-label="Cerrar la búsqueda" title="Cerrar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
   </div>
 
-  <div class="cards" id="cards"></div>
+  <p id="status" class="stato" role="status" aria-live="polite"></p>
 
-  <h2>Solicitudes de ingreso</h2>
-  <div class="toolbar">
-    <input id="search" type="search" placeholder="Buscar nombre, teléfono o zona">
-    <select id="filter" aria-label="Estado">
-      <option value="">Todos los estados</option>
-      <option value="pending">Pendientes</option>
-      <option value="info_required">Requiere información</option>
-      <option value="approved">Aprobadas</option>
-      <option value="rejected">Rechazadas</option>
-    </select>
-    <select id="company" aria-label="Empresa"></select>
-  </div>
-  <div class="wrap">
-    <table>
-      <thead><tr>
-        <th>Solicitante</th><th class="hide-sm">Vehículo</th><th class="hide-sm">Zona</th>
-        <th>Empresa</th><th class="hide-sm">Fecha</th><th>Estado</th><th></th>
-      </tr></thead>
-      <tbody id="apps"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
-    </table>
-  </div>
-
-  <h2>Repartidores con acceso a la app</h2>
-  <div class="wrap">
-    <table>
-      <thead><tr>
-        <th>Repartidor</th><th class="hide-sm">Tipo</th><th class="hide-sm">Teléfono</th>
-        <th>Empresas autorizadas</th><th>Estado</th><th></th>
-      </tr></thead>
-      <tbody id="couriers"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
-    </table>
-  </div>
-
-  <section id="users-section" hidden>
-    <h2>Usuarios del CRM y empresas que pueden operar</h2>
-    <p class="hint" style="margin:0 0 6px">Sin filas asignadas, un usuario opera solo PHYTOEMAGRY. Con filas, exactamente las concedidas. La superadministración ve todas las empresas.</p>
-    <div class="wrap">
-      <table>
-        <thead><tr><th>Usuario</th><th class="hide-sm">Rol</th><th>Empresas concedidas</th><th></th></tr></thead>
-        <tbody id="users"><tr><td colspan="4" class="empty">Cargando…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
+  <div id="contenido"></div>
 </main>
+
+<button class="fab" type="button" data-courier-new aria-label="Añadir repartidor" title="Añadir repartidor">
+  <img src="/admin/assets/icons/ui/usersadd.png" alt="" width="24" height="24" decoding="async">
+</button>
 
 <aside id="drawer" aria-hidden="true">
   <div class="sheet">
     <header>
       <b id="d-title">Detalle</b>
-      <button class="ghost" type="button" id="d-close" aria-label="Cerrar">Cerrar</button>
+      <button class="ghost sm" type="button" id="d-close" aria-label="Cerrar">Cerrar</button>
     </header>
     <div class="body" id="d-body"></div>
     <footer id="d-actions"></footer>
   </div>
 </aside>
 
-<script src="/admin/couriers.js"></script>
+<aside id="filters" aria-hidden="true" aria-label="Filtros de repartidores">
+  <div class="sheet">
+    <header>
+      <b>Filtros<small id="filters-note">Solicitudes de ingreso y repartidores</small></b>
+      <button class="ghost sm" type="button" data-filters-close aria-label="Cerrar filtros">Cerrar</button>
+    </header>
+    <div class="body">
+      <h3>Estado de la solicitud</h3>
+      <div id="filter-estado"></div>
+      <h3>Empresa</h3>
+      <div id="filter-empresa"></div>
+      <h3>Repartidores</h3>
+      <div id="filter-reparto"></div>
+    </div>
+    <footer>
+      <button class="ghost" type="button" data-filters-clear>Quitar filtros</button>
+      <button type="button" data-filters-close>Ver resultados</button>
+    </footer>
+  </div>
+</aside>
+
+<script src="/admin/couriers.js?v=4"></script>
 <script>
 /*
- * EL CAJÓN SE CIERRA COMO EL RESTO DEL PANEL: con Escape y tocando fuera.
- * Antes solo se cerraba con el botón, que en el teléfono queda lejos del pulgar.
+ * CAJONES Y BUSCADOR — lo que no es datos.
+ *
+ * Los dos cajones se cierran como los del panel (Escape y tocando fuera) y la
+ * lupa cambia la fila de acciones por el buscador, sin dejar los dos a la vez.
  */
 (function () {
   var drawer = document.getElementById('drawer');
-  function cerrar() {
+  var filters = document.getElementById('filters');
+  var acciones = document.getElementById('acciones');
+  var buscador = document.getElementById('buscador');
+  var campo = document.getElementById('search');
+
+  function cerrarCajon() {
     drawer.removeAttribute('open');
     drawer.setAttribute('aria-hidden', 'true');
   }
-  drawer.addEventListener('click', function (event) {
-    if (event.target === drawer) cerrar();
-  });
+  function abrirFiltros() {
+    filters.setAttribute('open', '');
+    filters.setAttribute('aria-hidden', 'false');
+    var boton = document.querySelector('[data-filters-open]');
+    if (boton) boton.setAttribute('aria-expanded', 'true');
+  }
+  function cerrarFiltros() {
+    filters.removeAttribute('open');
+    filters.setAttribute('aria-hidden', 'true');
+    var boton = document.querySelector('[data-filters-open]');
+    if (boton) boton.setAttribute('aria-expanded', 'false');
+  }
+  function abrirBusqueda(abrir) {
+    buscador.hidden = !abrir;
+    acciones.hidden = abrir;
+    if (abrir) {
+      campo.value = '';
+      campo.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(function () { campo.focus(); }, 20);
+    }
+  }
+
+  drawer.addEventListener('click', function (event) { if (event.target === drawer) cerrarCajon(); });
+  filters.addEventListener('click', function (event) { if (event.target === filters) cerrarFiltros(); });
   document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && drawer.hasAttribute('open')) cerrar();
+    if (event.key !== 'Escape') return;
+    if (drawer.hasAttribute('open')) cerrarCajon();
+    else if (filters.hasAttribute('open')) cerrarFiltros();
+    else if (!buscador.hidden) abrirBusqueda(false);
   });
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-search-open]')) { abrirBusqueda(true); return; }
+    if (event.target.closest('[data-search-close]')) { abrirBusqueda(false); return; }
+    if (event.target.closest('[data-filters-open]')) { abrirFiltros(); return; }
+    if (event.target.closest('[data-filters-close]')) cerrarFiltros();
+  });
+
+  /*
+   * DESLIZAR EL DEDO (O EL RATÓN) — EL GESTO DE TODO EL PANEL.
+   *
+   * De derecha a izquierda se abre el cajón de filtros; de izquierda a derecha
+   * se cierra. Se usan eventos de PUNTERO para que valga igual con el dedo que
+   * con el ratón del ordenador (con solo `touch` no pasaba nada al probar en el
+   * navegador del PC). Umbral de 48 px y más horizontal que vertical para no
+   * dispararse al hacer scroll.
+   *
+   * Si el gesto se hace encima de una fila (que es un botón), al soltar el
+   * navegador lanzaría su `click` y abriría la ficha: se recuerda que hubo swipe
+   * y se traga ESE click (solo ese), en fase de captura para llegar antes.
+   */
+  var puntero = { x: 0, y: 0, activo: false, swipe: false };
+  var UMBRAL = 48;
+
+  document.addEventListener('pointerdown', function (event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    puntero = { x: event.clientX, y: event.clientY, activo: true, swipe: false };
+  }, { passive: true });
+
+  document.addEventListener('pointerup', function (event) {
+    if (!puntero.activo) return;
+    puntero.activo = false;
+    var dx = event.clientX - puntero.x;
+    var dy = event.clientY - puntero.y;
+    if (Math.abs(dx) < UMBRAL || Math.abs(dy) > Math.abs(dx)) return;
+    puntero.swipe = true;
+    // Si el navegador no manda ningún click detrás, el bloqueo caduca solo.
+    setTimeout(function () { puntero.swipe = false; }, 400);
+    var abierto = drawer.hasAttribute('open') || filters.hasAttribute('open');
+    if (dx < 0) {
+      if (abierto) return;
+      abrirFiltros();
+    } else if (drawer.hasAttribute('open')) {
+      cerrarCajon();
+    } else if (filters.hasAttribute('open')) {
+      cerrarFiltros();
+    }
+  }, { passive: true });
+
+  document.addEventListener('pointercancel', function () {
+    puntero.activo = false;
+  }, { passive: true });
+
+  /* Se come el `click` que viene justo detrás del swipe (una sola vez). */
+  document.addEventListener('click', function (event) {
+    if (!puntero.swipe) return;
+    puntero.swipe = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
 })();
 </script>
 </body></html>

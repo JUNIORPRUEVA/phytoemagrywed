@@ -4,10 +4,10 @@
 /*
  * EL MISMO TEMA QUE EL PANEL, SIN PARPADEAR.
  *
- * Esta pantalla es una página aparte, así que no hereda nada del armazón: aquí
- * se lee la preferencia que guardó el panel (`pe_tema`) y se pinta claro u oscuro
- * ANTES de mostrar nada. Con «como el teléfono» se sigue al sistema, y si la
- * persona cambia el tema en otra pestaña, esta se entera.
+ * Esta página es independiente y no hereda el armazón: se lee la preferencia
+ * guardada por el panel (`pe_tema`) y se pinta claro u oscuro antes de mostrar
+ * nada. Con «como el teléfono» se sigue al sistema y, si cambia en otra pestaña,
+ * esta se entera.
  */
 (function () {
   var KEY = 'pe_tema';
@@ -35,91 +35,107 @@
 </script>
 <style>
 /*
- * CUSTODIA Y RENDICIONES — misma piel que el resto del panel.
+ * CUSTODIA Y RENDICIONES — la misma piel que Repartidores.
  *
- * Los colores salen de variables con su versión de noche (las mismas familias
- * que el CRM: fondo de página, tarjeta, línea fina, marca). Ningún color va
- * escrito a mano en una regla: si algo se ve mal de noche se arregla aquí.
+ * Sin barra de aplicación: arriba solo el volver FLOTANDO y una fila de acciones
+ * con iconos (buscar, filtrar, actualizar). Los colores salen de variables con su
+ * versión de noche y las cifras van en tarjetas pequeñas, alineadas.
  */
 :root{
   color-scheme:light;
-  --page:#f4f7fd;--card:#ffffff;--bar-bg:rgba(255,255,255,.94);
+  --page:#f4f7fd;--card:#ffffff;
   --line:#dfe7f4;--hair:rgba(23,43,77,.08);
   --ink:#10222d;--ink-2:#53647d;--muted:#64748b;
   --brand:#145bd7;--on-brand:#ffffff;--brand-soft:#e5efff;--chip:#edf3fc;
   --ok:#15803d;--ok-bg:#f0fdf4;--ok-line:#bbf7d0;
   --warn:#b45309;--warn-bg:#fffbeb;--warn-line:#fde68a;
+  --bad:#b91c1c;--bad-bg:#fef2f2;--bad-line:#fecaca;
   --shadow:0 10px 26px rgba(20,60,120,.10)
 }
 :root[data-theme='dark']{
   color-scheme:dark;
-  --page:#0b1424;--card:#152339;--bar-bg:rgba(17,29,48,.94);
+  --page:#0b1424;--card:#152339;
   --line:#30425e;--hair:rgba(255,255,255,.09);
   --ink:#eaf1fd;--ink-2:#cfdbed;--muted:#afc0d9;
   --brand:#8dbbff;--on-brand:#0b2142;--brand-soft:#203b60;--chip:#1e304a;
   --ok:#54dda2;--ok-bg:#12332a;--ok-line:#1f5a49;
   --warn:#f3c778;--warn-bg:#3a2f16;--warn-line:#5a4720;
+  --bad:#ff9b9b;--bad-bg:#3a1a1e;--bad-line:#5d2a2f;
   --shadow:0 12px 30px rgba(0,0,0,.55)
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--page);font-size:13.5px;line-height:1.35;-webkit-tap-highlight-color:transparent}
-main{max-width:1180px;margin:0 auto;padding:0 14px 32px}
+/* Nada de sombrear el texto: solo se selecciona dentro de los campos de escritura. */
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--page);font-size:13.5px;line-height:1.35;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text}
+main{max-width:1180px;margin:0 auto;padding:8px 12px 96px}
 code{background:var(--chip);color:var(--ink);padding:1px 5px;border-radius:6px;font-size:11.5px}
 
-/* --- Barra de arriba: el volver redondo del panel y el título al lado --- */
-.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 -14px 12px;padding:8px 14px;border-bottom:1px solid var(--hair);background:var(--bar-bg);backdrop-filter:blur(14px)}
-.bar h1{font-size:16px;margin:0;font-weight:760;letter-spacing:.01em}
-.bar .sp{flex:1}
-.bar a.back{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:40px;height:40px;padding:0;border:1px solid var(--line);border-radius:50%;background:transparent;color:var(--ink);text-decoration:none;cursor:pointer}
-.bar a.back:hover,.bar a.back:focus-visible{background:var(--chip);color:var(--brand);border-color:var(--brand)}
-.bar a.back svg{display:block;width:20px;height:20px}
+/* --- Volver flotante --- */
+.back-float{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:10px;z-index:30;display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+.back-float:hover,.back-float:focus-visible{color:var(--brand);border-color:var(--brand)}
+.back-float img{width:19px;height:19px;display:block}
+:root[data-theme='dark'] .back-float img{filter:invert(1)}
 
-/* --- Cifras de arriba --- */
-.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 12px}
-.card{background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:9px 11px;min-height:56px}
-.card small{display:block;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:750}
-.card b{display:block;margin-top:3px;font-size:15.5px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* --- Fila de acciones --- */
+.acciones{display:flex;align-items:center;gap:6px;margin:0 0 10px;padding-left:48px;min-height:40px}
+.acciones[hidden]{display:none}
+.acciones h1{font-size:16px;margin:0;font-weight:760;letter-spacing:.01em;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ico{display:grid;place-items:center;width:36px;height:36px;min-height:0;padding:0;border:1px solid var(--line);border-radius:11px;background:transparent;color:var(--ink);cursor:pointer;flex:0 0 auto}
+.ico:hover,.ico:focus-visible{background:var(--chip);border-color:var(--brand);color:var(--brand)}
+.ico img{width:18px;height:18px;display:block}
+.ico svg{width:18px;height:18px;display:block}
+:root[data-theme='dark'] .ico img{filter:invert(1)}
+
+/* --- Buscador --- */
+.buscador{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:0 8px 0 12px;min-height:40px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.buscador[hidden]{display:none}
+.buscador svg{width:17px;height:17px;flex:0 0 auto;color:var(--muted)}
+.buscador input{flex:1 1 auto;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:inherit;font-size:13.5px;min-height:38px}
+.buscador input::placeholder{color:var(--muted)}
+
+.stato{margin:0 0 10px;font-size:11.5px;color:var(--muted)}
+
+/* --- Tarjetas pequeñas --- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px;margin:0 0 14px}
+.card{display:grid;gap:0;min-height:44px;padding:6px 9px;border:1px solid var(--hair);border-radius:11px;background:var(--card)}
+.card small{font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card b{font-size:16px;line-height:1.15;font-variant-numeric:tabular-nums}
 .card.warn{border-color:var(--warn-line);background:var(--warn-bg)}
 .card.warn small,.card.warn b{color:var(--warn)}
 
-/* --- Buscador y filtro --- */
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-.toolbar input,.toolbar select{min-height:38px;padding:0 11px;border:1px solid var(--line);border-radius:11px;font:inherit;background:var(--card);color:var(--ink)}
-.toolbar input::placeholder{color:var(--muted)}
-.toolbar input:focus-visible,.toolbar select:focus-visible,#remittance input:focus-visible,#login input:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
-.toolbar input[type=search]{min-width:190px}
+h2{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px;font-weight:750}
+h2 .n{display:inline-block;padding:1px 7px;border-radius:999px;background:var(--chip);color:var(--ink);font-size:10px;letter-spacing:0;text-transform:none}
+h2 .sp{flex:1}
 
-button{min-height:36px;padding:0 13px;border-radius:11px;border:1px solid var(--brand);background:var(--brand);color:var(--on-brand);font:inherit;font-weight:700;cursor:pointer}
-button.ghost{background:transparent;color:var(--brand);border-color:var(--line)}
-button.ghost:hover{background:var(--chip)}
-button[disabled]{opacity:.55;cursor:not-allowed}
-
-/* --- Tabla de repartidores --- */
-.wrap{background:var(--card);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
+/* --- Tablas finas --- */
+.wrap{background:var(--card);border:1px solid var(--hair);border-radius:12px;overflow:hidden}
 table{width:100%;border-collapse:collapse}
-th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--hair);color:var(--ink)}
-th{font-size:9.8px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:750;white-space:nowrap}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--hair);color:var(--ink);vertical-align:middle}
+th{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:750;white-space:nowrap}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--chip)}
 tbody tr:last-child td{border-bottom:0}
 td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-td.act{text-align:right}
-.who b{display:block;font-size:13px}
-.who span{font-size:11px;color:var(--muted)}
+td.act{text-align:right;white-space:nowrap}
+.who b{display:block;font-size:12.5px;font-weight:750}
+.who span{font-size:10.5px;color:var(--muted)}
+.empty{padding:20px 12px;text-align:center;color:var(--muted);font-size:12px}
 
-/* --- Estado: los mismos colores de aviso del panel, también de noche --- */
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:750;border:1px solid}
+.tag{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:750;border:1px solid;white-space:nowrap}
 .tag.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line)}
 .tag.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line)}
 .tag.none{color:var(--muted);background:transparent;border-color:var(--line)}
-.empty{padding:26px;text-align:center;color:var(--muted);font-size:12.5px}
 
-/* --- Incidencias --- */
-#incidents{margin-top:14px}
-#incidents h2{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+button{min-height:34px;padding:0 12px;border-radius:11px;border:1px solid var(--brand);background:var(--brand);color:var(--on-brand);font:inherit;font-weight:700;cursor:pointer}
+button.ghost{background:transparent;color:var(--brand);border-color:var(--line)}
+button.ghost:hover{background:var(--chip)}
+button.sm{min-height:30px;padding:0 10px;font-size:11.5px;border-radius:9px}
+button[disabled]{opacity:.55;cursor:not-allowed}
+
+#incidents{margin-top:12px}
 #incidents .item{border:1px solid var(--hair);border-left:3px solid var(--warn-line);background:var(--card);border-radius:10px;padding:9px 11px;margin-bottom:6px;font-size:12.5px}
 #incidents .item b{font-size:12.5px}
-#incidents .item p{margin:3px 0 0;color:var(--muted);font-size:11.8px}
+#incidents .item p{margin:3px 0 0;color:var(--muted);font-size:11.5px}
 
 /* --- Acceso (solo si la sesión no vale) --- */
 #login{display:grid;gap:10px;max-width:340px;margin:10px 0 0;padding:14px;border:1px solid var(--hair);border-radius:14px;background:var(--card)}
@@ -128,94 +144,129 @@ td.act{text-align:right}
 #login input{min-height:40px;padding:0 11px;border:1px solid var(--line);border-radius:11px;background:var(--page);color:var(--ink);font:inherit}
 
 /* --- Cajón del repartidor --- */
-#drawer{position:fixed;inset:0;z-index:30;display:none;justify-content:flex-end;background:rgba(7,20,36,.45)}
+#drawer{position:fixed;inset:0;z-index:40;display:none;justify-content:flex-end;background:rgba(7,20,36,.45)}
 #drawer[open]{display:flex}
-#drawer .sheet{width:min(400px,100%);height:100%;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-left:1px solid var(--line);box-shadow:var(--shadow)}
+#drawer .sheet{width:min(430px,100%);height:100%;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-left:1px solid var(--line);box-shadow:var(--shadow);transform:translateX(102%);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+#drawer[open] .sheet{transform:none}
 #drawer header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--hair)}
-#drawer header h2{margin:0;flex:1;font-size:15px;font-weight:760}
+#drawer header h2{margin:0;flex:1;font-size:15px;font-weight:760;letter-spacing:0;text-transform:none;color:var(--ink)}
 #drawer .body{flex:1;padding:12px 14px;overflow:auto;overscroll-behavior:contain}
-#drawer .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--hair);font-size:12.8px}
-#drawer .row span{color:var(--ink-2);font-size:12.2px}
-#drawer .row b{font-variant-numeric:tabular-nums}
-#drawer h3{margin:14px 0 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+#drawer .row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--hair);font-size:12.5px}
+#drawer .row span{color:var(--ink-2);font-size:12px}
+#drawer .row b{font-variant-numeric:tabular-nums;text-align:right}
+#drawer h3{margin:14px 0 6px;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
 #remittance{display:grid;gap:8px}
-#remittance input{min-height:38px;padding:0 11px;border:1px solid var(--line);border-radius:11px;background:var(--page);color:var(--ink);font:inherit}
+#remittance input{min-height:40px;padding:0 11px;border:1px solid var(--line);border-radius:11px;background:var(--page);color:var(--ink);font:inherit}
 .hint{margin:0;font-size:11.5px;color:var(--muted)}
 #status{margin:0 0 10px}
 
-@media(max-width:900px){.cards{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:600px){main{padding:0 10px 28px}.bar{margin:0 -10px 10px;padding:6px 10px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}th.hide,td.hide{display:none}.toolbar input[type=search]{flex:1;min-width:0}}
+/* --- Filtros: cajón a la derecha, 70 % --- */
+#filters{position:fixed;inset:0;z-index:45;display:none;justify-content:flex-end;background:rgba(7,20,36,.42)}
+#filters[open]{display:flex}
+#filters .sheet{width:70%;max-width:420px;height:100%;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-left:1px solid var(--line);box-shadow:var(--shadow);transform:translateX(102%);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+#filters[open] .sheet{transform:none}
+#filters header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--hair)}
+#filters header b{font-size:15px;font-weight:760;flex:1}
+#filters header small{display:block;color:var(--muted);font-size:11px;font-weight:500}
+#filters .body{flex:1;padding:12px 14px;overflow:auto;overscroll-behavior:contain}
+#filters h3{margin:0 0 7px;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:750}
+.fopt{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:36px;margin-bottom:6px;padding:0 11px;border:1px solid var(--hair);border-radius:10px;background:var(--chip);color:var(--ink);font:inherit;font-size:12.5px;font-weight:700;text-align:left;cursor:pointer}
+.fopt em{font-style:normal;color:var(--muted);font-size:11px;font-weight:600}
+.fopt[aria-pressed='true']{border-color:var(--brand);background:var(--brand);color:var(--on-brand)}
+.fopt[aria-pressed='true'] em{color:inherit;opacity:.85}
+#filters footer{padding:12px 14px;border-top:1px solid var(--hair);display:flex;gap:8px}
+#filters footer button{flex:1}
+
+@media (prefers-reduced-motion: reduce){
+  #drawer .sheet,#filters .sheet{transition:none}
+}
+@media(max-width:600px){
+  main{padding:8px 10px 96px}
+  th.hide,td.hide{display:none}
+}
 </style></head>
 <body><main>
-<div class="bar">
-  <a class="back" href="/admin/" aria-label="Volver al CRM" title="Volver al CRM">
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12H4.7"/><path d="M11 5.3 4.3 12l6.7 6.7"/></svg>
-  </a>
-  <h1>Custodia y rendiciones</h1>
-  <span class="sp"></span>
-  <button id="refresh" class="ghost" type="button">Actualizar</button>
-</div>
-<p class="hint" id="status" role="status">Comprobando sesión…</p>
+  <button class="back-float" type="button" data-volver aria-label="Volver al CRM" title="Volver al CRM">
+    <img src="/admin/assets/icons/ui/back.png" alt="" width="19" height="19" decoding="async">
+  </button>
 
-<form id="login" hidden>
-  <label>Usuario<input name="username" autocomplete="username" required></label>
-  <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
-  <button>Entrar</button>
-</form>
+  <header class="acciones" id="acciones">
+    <h1>Custodia y rendiciones</h1>
+    <button class="ico" type="button" data-search-open aria-label="Buscar" title="Buscar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+    </button>
+    <button class="ico" type="button" data-filters-open aria-label="Filtros" title="Filtros" aria-controls="filters" aria-expanded="false">
+      <img src="/admin/assets/icons/ui/filter.png" alt="" width="18" height="18" decoding="async">
+    </button>
+    <button class="ico" type="button" id="refresh" aria-label="Actualizar" title="Actualizar">
+      <img src="/admin/assets/icons/ui/refresh.png" alt="" width="18" height="18" decoding="async">
+    </button>
+  </header>
 
-<div id="workspace" hidden>
-  <div class="cards" id="cards"></div>
-
-  <div class="toolbar">
+  <div class="buscador" id="buscador" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
     <input id="search" type="search" placeholder="Buscar repartidor…" aria-label="Buscar repartidor">
-    <select id="filter" aria-label="Filtrar">
-      <option value="all">Todos</option>
-      <option value="pending">Con saldo</option>
-      <option value="settled">Conciliados</option>
-      <option value="risk">Con diferencia</option>
-    </select>
+    <button class="ico" type="button" data-search-close aria-label="Cerrar la búsqueda" title="Cerrar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+  </div>
+
+  <p class="stato" id="status" role="status" aria-live="polite">Comprobando sesión…</p>
+
+  <form id="login" hidden>
+    <label>Usuario<input name="username" autocomplete="username" required></label>
+    <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Entrar</button>
+  </form>
+
+  <div id="workspace" hidden>
+    <div class="cards" id="cards"></div>
+
+    <!-- El valor del filtro sigue viviendo aquí: los chips del cajón lo cambian. -->
+    <input id="filter" type="hidden" value="all">
     <span class="hint" id="updated"></span>
-  </div>
 
-  <div class="wrap">
-    <table>
-      <thead><tr>
-        <th>Repartidor</th><th class="hide">Pedidos</th><th class="num">Efectivo</th><th class="num hide">Rendido</th><th class="num">Pendiente</th><th>Estado</th><th class="act"></th>
-      </tr></thead>
-      <tbody id="couriers"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
-    </table>
-  </div>
-
-  <div id="incidents"></div>
-
-  <!--
-    CONCILIACIÓN MANUAL DE MOVIMIENTOS AMBIGUOS.
-    Solo la superadministración ve esta sección. Registrar una resolución NO
-    mueve dinero: deja constancia de la revisión (justificación + evidencia) y la
-    custodia sigue bloqueada hasta una autorización explícita.
-  -->
-  <section id="reconciliation" hidden>
-    <h2>Movimientos por revisar</h2>
-    <p class="hint">Movimientos históricos cuya empresa no se puede demostrar. El libro no se edita: se documenta la revisión.</p>
+    <h2>Custodia por repartidor <span class="n" id="couriers-count">0</span></h2>
     <div class="wrap">
       <table>
-        <thead><tr><th>Repartidor</th><th class="hide">Pedido</th><th>Tipo</th><th class="num">Importe</th><th>Estado</th><th class="act"></th></tr></thead>
-        <tbody id="unresolved"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+        <thead><tr>
+          <th>Repartidor</th><th class="hide">Pedidos</th><th class="num">Efectivo</th><th class="num hide">Rendido</th><th class="num">Pendiente</th><th>Estado</th><th class="act"></th>
+        </tr></thead>
+        <tbody id="couriers"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
       </table>
     </div>
-    <h2>Resoluciones registradas</h2>
-    <div class="wrap">
-      <table>
-        <thead><tr><th>Movimiento</th><th>Empresa propuesta</th><th>Justificación</th><th>Quién</th><th>Estado</th></tr></thead>
-        <tbody id="resolutions"><tr><td colspan="5" class="empty">Sin resoluciones.</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-</div>
 
-<div id="drawer" role="dialog" aria-modal="true" aria-label="Detalle del repartidor">
+    <div id="incidents"></div>
+
+    <!--
+      CONCILIACIÓN MANUAL DE MOVIMIENTOS AMBIGUOS.
+      Solo la superadministración ve esta sección. Registrar una resolución NO
+      mueve dinero: deja constancia de la revisión (justificación + evidencia) y la
+      custodia sigue bloqueada hasta una autorización explícita.
+    -->
+    <section id="reconciliation" hidden>
+      <h2>Movimientos por revisar</h2>
+      <p class="hint">Movimientos históricos cuya empresa no se puede demostrar. El libro no se edita: se documenta la revisión.</p>
+      <div class="wrap">
+        <table>
+          <thead><tr><th>Repartidor</th><th class="hide">Pedido</th><th>Tipo</th><th class="num">Importe</th><th>Estado</th><th class="act"></th></tr></thead>
+          <tbody id="unresolved"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+      <h2>Resoluciones registradas</h2>
+      <div class="wrap">
+        <table>
+          <thead><tr><th>Movimiento</th><th>Empresa propuesta</th><th>Justificación</th><th>Quién</th><th>Estado</th></tr></thead>
+          <tbody id="resolutions"><tr><td colspan="5" class="empty">Sin resoluciones.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<aside id="drawer" role="dialog" aria-modal="true" aria-label="Detalle del repartidor">
   <div class="sheet">
-    <header><h2 id="d-name">Repartidor</h2><button id="d-close" class="ghost" type="button">Cerrar</button></header>
+    <header><h2 id="d-name">Repartidor</h2><button id="d-close" class="ghost sm" type="button">Cerrar</button></header>
     <div class="body">
       <div id="d-totals"></div>
       <h3>Registrar rendición</h3>
@@ -230,6 +281,129 @@ td.act{text-align:right}
       <div id="d-movements"></div>
     </div>
   </div>
-</div>
-<script type="module" src="/admin/custody.js?v=3"></script>
-</main></body></html>
+</aside>
+
+<aside id="filters" aria-hidden="true" aria-label="Filtros de custodia">
+  <div class="sheet">
+    <header>
+      <b>Filtros<small id="filters-note">Custodia por repartidor</small></b>
+      <button class="ghost sm" type="button" data-filters-close aria-label="Cerrar filtros">Cerrar</button>
+    </header>
+    <div class="body">
+      <h3>Situación de la custodia</h3>
+      <div id="filtros-opciones"></div>
+    </div>
+    <footer>
+      <button class="ghost" type="button" data-filters-clear>Quitar filtros</button>
+      <button type="button" data-filters-close>Ver resultados</button>
+    </footer>
+  </div>
+</aside>
+
+<script type="module" src="/admin/custody.js?v=4"></script>
+<script>
+/*
+ * CAJONES, BUSCADOR Y GESTO — lo que no son datos.
+ *
+ * Sin barra de aplicación: el volver es flotante, la lupa cambia la fila de
+ * acciones por el buscador y el cajón de filtros entra deslizando. Deslizar el
+ * dedo de derecha a izquierda lo abre; al revés, lo cierra.
+ */
+(function () {
+  var drawer = document.getElementById('drawer');
+  var filters = document.getElementById('filters');
+  var acciones = document.getElementById('acciones');
+  var buscador = document.getElementById('buscador');
+  var campo = document.getElementById('search');
+
+  function cerrarFiltros() {
+    filters.removeAttribute('open');
+    filters.setAttribute('aria-hidden', 'true');
+    var boton = document.querySelector('[data-filters-open]');
+    if (boton) boton.setAttribute('aria-expanded', 'false');
+  }
+  function abrirFiltros() {
+    filters.setAttribute('open', '');
+    filters.setAttribute('aria-hidden', 'false');
+    var boton = document.querySelector('[data-filters-open]');
+    if (boton) boton.setAttribute('aria-expanded', 'true');
+  }
+  function cerrarCajon() {
+    drawer.removeAttribute('open');
+    drawer.setAttribute('aria-hidden', 'true');
+  }
+  function abrirBusqueda(abrir) {
+    buscador.hidden = !abrir;
+    acciones.hidden = abrir;
+    if (abrir) {
+      campo.value = '';
+      campo.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(function () { campo.focus(); }, 20);
+    }
+  }
+
+  document.querySelector('[data-volver]')?.addEventListener('click', function () {
+    location.href = '/admin/';
+  });
+  drawer.addEventListener('click', function (event) { if (event.target === drawer) cerrarCajon(); });
+  filters.addEventListener('click', function (event) { if (event.target === filters) cerrarFiltros(); });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    if (drawer.hasAttribute('open')) cerrarCajon();
+    else if (filters.hasAttribute('open')) cerrarFiltros();
+    else if (!buscador.hidden) abrirBusqueda(false);
+  });
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-search-open]')) { abrirBusqueda(true); return; }
+    if (event.target.closest('[data-search-close]')) { abrirBusqueda(false); return; }
+    if (event.target.closest('[data-filters-open]')) { abrirFiltros(); return; }
+    if (event.target.closest('[data-filters-close]')) cerrarFiltros();
+  });
+
+  /*
+   * DESLIZAR (DEDO O RATÓN) — abre el cajón de filtros de derecha a izquierda.
+   *
+   * Con eventos de puntero funciona igual en el teléfono y en el ordenador (con
+   * solo `touch` no pasaba nada al probar en el PC). Umbral de 48 px, y solo si
+   * el movimiento es más horizontal que vertical para no dispararse al hacer
+   * scroll. Si el gesto acaba encima de una fila, se traga su `click` para no
+   * abrir la ficha sin querer.
+   */
+  var puntero = { x: 0, y: 0, activo: false, swipe: false };
+  var UMBRAL = 48;
+
+  document.addEventListener('pointerdown', function (event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    puntero = { x: event.clientX, y: event.clientY, activo: true, swipe: false };
+  }, { passive: true });
+
+  document.addEventListener('pointerup', function (event) {
+    if (!puntero.activo) return;
+    puntero.activo = false;
+    var dx = event.clientX - puntero.x;
+    var dy = event.clientY - puntero.y;
+    if (Math.abs(dx) < UMBRAL || Math.abs(dy) > Math.abs(dx)) return;
+    puntero.swipe = true;
+    // Si el navegador no manda ningún click detrás, el bloqueo caduca solo.
+    setTimeout(function () { puntero.swipe = false; }, 400);
+    var abierto = drawer.hasAttribute('open') || filters.hasAttribute('open');
+    if (dx < 0) {
+      if (abierto) return;
+      abrirFiltros();
+    } else if (drawer.hasAttribute('open')) cerrarCajon();
+    else if (filters.hasAttribute('open')) cerrarFiltros();
+  }, { passive: true });
+
+  document.addEventListener('pointercancel', function () {
+    puntero.activo = false;
+  }, { passive: true });
+
+  document.addEventListener('click', function (event) {
+    if (!puntero.swipe) return;
+    puntero.swipe = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+})();
+</script>
+</body></html>

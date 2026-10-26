@@ -37,6 +37,20 @@ ICONOS = {
     "filtrar (1).png": "filter.png",
 }
 
+#
+# LOS QUE VIENEN EN NEGRO SOBRE BLANCO.
+#
+# Estos dos llegaron con fondo blanco OPACO: si se recortan tal cual, el icono
+# del menú sería un cuadro blanco con el dibujo. Aquí el blanco se convierte en
+# transparencia (el alfa es la luminancia invertida) y queda negro puro, que es
+# lo que el CSS invierte en tema oscuro como el resto.
+#
+ICONOS_SOBRE_BLANCO = {
+    "delivery-de-pizza.png": "couriers.png",   # Repartidores
+    "panel-de-control.png": "custody.png",     # Custodia y rendiciones
+    "actualizar-flecha.png": "refresh.png",     # Actualizar (flechas circulares)
+}
+
 TAMANO = 72
 MARGEN = 0.08
 
@@ -61,6 +75,34 @@ def main() -> None:
         salida = DESTINO / destino
         img.save(salida, optimize=True)
         print(f"{origen:24} -> {destino:12} {original:6} B -> {salida.stat().st_size:5} B")
+
+    for origen, destino in ICONOS_SOBRE_BLANCO.items():
+        ruta = ORIGEN / origen
+        if not ruta.exists():
+            print(f"falta: {ruta}")
+            continue
+        original = ruta.stat().st_size
+        # El arte llega con fondo transparente: se compone sobre blanco para
+        # poder medir la tinta (si se lee el canal gris directo, lo transparente
+        # también vale 255 y todo el icono saldría vacío).
+        rgba = Image.open(ruta).convert("RGBA")
+        blanco = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        gris = Image.alpha_composite(blanco, rgba).convert("L")
+        # Blanco (255) -> alfa 0; negro (0) -> alfa 255. Bordes suavizados.
+        alfa = gris.point(lambda v: 255 - v)
+        img = Image.new("RGBA", gris.size, (0, 0, 0, 0))
+        img.putalpha(alfa)
+        caja = alfa.getbbox()
+        if caja:
+            img = img.crop(caja)
+        lado = max(img.size)
+        lienzo = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+        lienzo.paste(img, ((lado - img.size[0]) // 2, (lado - img.size[1]) // 2))
+        interior = int(TAMANO * (1 - 2 * MARGEN))
+        img = lienzo.resize((interior, interior), Image.LANCZOS)
+        salida = DESTINO / destino
+        img.save(salida, optimize=True)
+        print(f"{origen:24} -> {destino:12} {original:6} B -> {salida.stat().st_size:5} B (fondo transparente)")
 
 
 if __name__ == "__main__":
