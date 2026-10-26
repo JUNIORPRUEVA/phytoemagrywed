@@ -532,9 +532,9 @@ function openCourierForm(id = null, prefill = null) {
     <div class="sep"></div>
     <label class="field--check"><input id="f-access" type="checkbox"${row ? (row.app_access === true ? ' checked' : '') : ' checked'}><span>Acceso a la app</span></label>
     <label class="field--check"><input id="f-active" type="checkbox"${row ? (row.active !== false ? ' checked' : '') : ' checked'}><span>Cuenta activa</span></label>
-    <p class="hint">${row ? 'Cambiar el PIN o quitar el acceso cierra las sesiones abiertas del teléfono.' : 'El PIN es lo que el repartidor escribe en la app para entrar. Se guarda cifrado: no se puede ver después.'}</p>
-    <p class="hint" id="f-error" role="alert" hidden></p>`;
+    <p class="hint">${row ? 'Cambiar el PIN o quitar el acceso cierra las sesiones abiertas del teléfono.' : 'El PIN es lo que el repartidor escribe en la app para entrar. Se guarda cifrado: no se puede ver después.'}</p>`;
   $('#d-actions').innerHTML = `
+    <p id="f-error" role="alert" hidden></p>
     <button class="ghost" type="button" data-form-cancel>Cancelar</button>
     <button type="button" data-form-save>${row ? 'Guardar cambios' : 'Crear repartidor'}</button>`;
   if (!row) {
@@ -555,17 +555,25 @@ async function saveCourierForm(button) {
   const pin = ($('#f-pin')?.value ?? '').trim();
   const acceso = $('#f-access')?.checked === true;
   const activo = $('#f-active')?.checked === true;
-  if (nombre.length < 3) return notice('Escribe el nombre del repartidor (mínimo 3 letras).');
-  if (!/^\+?\d{8,15}$/.test(telefono.replace(/[\s()-]/g, ''))) return notice('Escribe el teléfono con código de país, por ejemplo +18095551234.');
-  if (!selection.id && pin.length < 6) return notice('El PIN debe tener al menos 6 caracteres.');
-  if (pin && pin.length < 6) return notice('El PIN debe tener al menos 6 caracteres.');
-  button.disabled = true;
-  notice('Guardando…');
   const errorBox = $('#f-error');
+  const showError = (message, field) => {
+    notice(message);
+    if (errorBox) {
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+    }
+    field?.focus();
+  };
   if (errorBox) {
     errorBox.hidden = true;
     errorBox.textContent = '';
   }
+  if (nombre.length < 3) return showError('Escribe el nombre del repartidor (mínimo 3 letras).', $('#f-name'));
+  if (!/^\+?\d{8,15}$/.test(telefono)) return showError('Escribe el teléfono con código de país, por ejemplo +18095551234.', $('#f-phone'));
+  if (!selection.id && pin.length < 6) return showError('El PIN debe tener al menos 6 caracteres.', $('#f-pin'));
+  if (pin && pin.length < 6) return showError('El PIN debe tener al menos 6 caracteres.', $('#f-pin'));
+  button.disabled = true;
+  notice('Guardando…');
   try {
     if (selection.id) {
       const body = { displayName: nombre, phone: telefono, appAccess: acceso, active: activo };
@@ -592,24 +600,21 @@ async function saveCourierForm(button) {
         body.userId = userId;
       }
       const created = await api('/api/admin/couriers', body);
-      notice('Repartidor creado.');
       cerrarCajon();
-      await load();
-      if (created?.courier?.id) await openCourier(created.courier.id);
+      try {
+        await load();
+        if (created?.courier?.id) await openCourier(created.courier.id);
+        notice('Repartidor creado.');
+      } catch (refreshError) {
+        notice(`Repartidor creado, pero no se pudo actualizar la vista: ${refreshError.message}`);
+      }
     }
   } catch (error) {
     /*
      * El error se pinta DENTRO del cajón: la barra de estado queda tapada por el
      * propio cajón y el alta parecía "no hacer nada".
      */
-    const mensaje = `No se pudo guardar: ${error.message}`;
-    notice(mensaje);
-    if (errorBox) {
-      errorBox.hidden = false;
-      errorBox.textContent = mensaje;
-      errorBox.style.color = 'var(--bad, #b91c1c)';
-      errorBox.scrollIntoView({ block: 'nearest' });
-    }
+    showError(`No se pudo guardar: ${error.message}`);
   } finally {
     button.disabled = false;
   }

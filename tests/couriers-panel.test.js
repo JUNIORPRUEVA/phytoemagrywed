@@ -9,9 +9,10 @@
  * empresa que no tiene.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { JSDOM } from 'jsdom';
 import { startCrmServer } from '../server/crm-server.mjs';
 
 const TOKEN = 'couriers-panel-uat';
@@ -69,6 +70,54 @@ describe('página de repartidores', () => {
     const script = await fetch(`${app.url}/admin/couriers.js`, { headers: { cookie: admin } });
     expect(script.status).toBe(200);
     expect(script.headers.get('content-type') ?? '').toContain('javascript');
+  });
+
+  it('muestra la validación junto al botón y crea un repartidor interno con PIN válido', async () => {
+    const html = readFileSync(new URL('../public/admin/couriers.html', import.meta.url), 'utf8');
+    const script = readFileSync(new URL('../public/admin/couriers.js', import.meta.url), 'utf8');
+    const dom = new JSDOM(html, { url: `${app.url}/admin/couriers.html`, runScripts: 'outside-only' });
+    const { window: win } = dom;
+    const requests = [];
+    win.fetch = (route, options = {}) => {
+      requests.push({ route, method: options.method ?? 'GET' });
+      return fetch(new URL(route, app.url), {
+        ...options, headers: { ...options.headers, cookie: admin },
+      });
+    };
+    try {
+      win.eval(script);
+      await expect.poll(() => win.document.querySelector('#status')?.textContent).toMatch(/Actualizado/);
+      win.document.querySelector('[data-courier-new]').click();
+      win.document.querySelector('#f-kind').value = 'INTERNAL';
+      win.document.querySelector('#f-kind').dispatchEvent(new win.Event('change'));
+      win.document.querySelector('#f-name').value = 'Junior Panel';
+      win.document.querySelector('#f-phone').value = '8295319442';
+      win.document.querySelector('#f-user').value =
+        (await call('users')).data.users.find((user) => user.username === 'oficina-panel').id;
+      win.document.querySelector('#f-pin').value = '0410';
+      win.document.querySelector('[data-form-save]').click();
+      const error = win.document.querySelector('#f-error');
+      expect(error.hidden).toBe(false);
+      expect(error.textContent).toContain('al menos 6 caracteres');
+      expect(error.parentElement.id).toBe('d-actions');
+      expect(requests.filter((request) => request.route === '/api/admin/couriers' && request.method === 'POST')).toHaveLength(0);
+
+      win.document.querySelector('#f-pin').value = '041010';
+      win.document.querySelector('[data-form-save]').click();
+      await expect.poll(() => requests.filter((request) => request.route === '/api/admin/couriers' && request.method === 'POST').length).toBe(1);
+      await expect.poll(() => win.document.querySelector('#status')?.textContent).toContain('Repartidor creado');
+      const accounts = await call('couriers');
+      const account = accounts.data.couriers.find((row) => row.display_name === 'Junior Panel');
+      expect(account?.kind).toBe('INTERNAL');
+      expect(account?.phone).toBe('+18295319442');
+      const loginResponse = await fetch(`${app.url}/api/courier/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '+18295319442', pin: '041010' }),
+      });
+      expect(loginResponse.status).toBe(200);
+    } finally {
+      dom.window.close();
+    }
   });
 
   it('las solicitudes llegan con vehículo, zona y condiciones; aprobar no da acceso', async () => {
