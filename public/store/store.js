@@ -300,32 +300,28 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
     const promoTitle=dailyOffers.length?'Ofertas para ti':'Descubre lo nuevo';
     const promoDetail=dailyOffers.length?`Hasta ${Math.max(...dailyOffers.map(p=>Number(p.discountPercent)))}% menos`:'Novedades de la tienda';
     /*
-     * EL BOTÓN DE LA PORTADA CAMBIA CON LA PERSONA:
-     *  - sin cuenta: «Regístrate» (lo más corto y directo).
+     * EL BOTÓN DE LA TARJETA CAMBIA CON LA PERSONA:
+     *  - sin cuenta: «Regístrate» (corto y directo).
      *  - con cuenta: «Comprar», que abre el catálogo completo para comprar.
      */
     const signedIn=Boolean(session.account);
     const promoLink=signedIn?href('comprar'):href('account/register');
     const promoLabel=signedIn?'Comprar':'Regístrate';
     const heroOfferCard=p=>`<a class="ft-hero-offer" href="${href(`product/${encodeURIComponent(p.id)}`)}" aria-label="Ver ${esc(p.name)}">
-      <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="180" height="104" loading="eager" decoding="async">
+      <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" width="96" height="96" loading="eager" decoding="async">
       ${hasOffer(p)?`<span class="ft-hero-offer__discount">-${Number(p.discountPercent)}%</span>`:''}
     </a>`;
     const heroOffers=heroProducts.map(heroOfferCard).join('');
 
     const hero=`<section class="ft-hero">
-      <a class="ft-hero-logo" href="/store/" aria-label="FULLTECH Store, inicio"><img src="/store/assets/branding/fulltech-store-header-transparent-144.png" width="144" height="32" alt="FULLTECH STORE" fetchpriority="high"></a>
       <div class="ft-hero__copy">
         <h1>${esc(promoTitle).toUpperCase()}</h1>
         <p>${esc(promoDetail)}</p>
         <a class="ft-promotion-cta" href="${promoLink}">${promoLabel} <span aria-hidden="true">›</span></a>
       </div>
-      <div class="ft-hero__art ft-hero__duo" aria-label="Productos seleccionados">
-        ${heroOffers}
-      </div>
+      ${heroOffers?`<div class="ft-hero__art ft-hero__duo" aria-label="Productos seleccionados">${heroOffers}</div>`:''}
     </section>`;
 
-    const announcement=`<div class="ft-promotion-announcement" aria-label="Anuncios de la tienda"><a id="hero-promo" class="ft-hero-promo" href="${href('offers')}" aria-live="polite" hidden></a></div>`;
     const benefits=`<section class="ft-service-ribbon" aria-label="Entrega y garantía">
       <article>${materialIcon('truck',{size:18})}<div><strong>Entrega rápida</strong><small>Coordinada según destino</small></div></article>
       <article>${materialIcon('security',{size:18})}<div><strong>Productos con garantía</strong><small>Según condiciones de la ficha</small></div></article>
@@ -339,12 +335,12 @@ async function renderHome(params=new URLSearchParams(location.hash.split('?')[1]
       <span class="ft-about-entry__arrow" aria-hidden="true">${materialIcon('chevron-right',{size:18})}</span>
     </a>`;
 
-    main.innerHTML=`<section class="ft-discovery" aria-label="Descubre FULLTECH"><div class="ft-home-search-slot"><div class="ft-home-search">${searchEntryMarkup()}${homeLinks}</div></div>${hero}${announcement}</section>${benefits}${infoSlider}${offerPair}<section class="ft-home-feed" aria-label="Catálogo de productos"><h2 class="ft-browse-title">${esc(catalogState.category||'Productos')}</h2><div id="catalog-count" class="ft-results-note" hidden></div><div id="home-feed-result"></div></section>${aboutEntry}${footer()}`;
+    main.innerHTML=`<section class="ft-discovery" aria-label="Descubre FULLTECH"><div class="ft-home-search-slot"><div class="ft-home-search">${searchEntryMarkup()}${homeLinks}</div></div>${hero}</section>${benefits}${infoSlider}${offerPair}<section class="ft-home-feed" aria-label="Catálogo de productos"><h2 class="ft-browse-title">${esc(catalogState.category||'Productos')}</h2><div id="catalog-count" class="ft-results-note" hidden></div><div id="home-feed-result"></div></section>${aboutEntry}${footer()}`;
     const masthead=document.createElement('section');
     masthead.className='ft-masthead ft-discovery';
     masthead.setAttribute('aria-label','Bienvenido a FULLTECH');
     main.before(masthead);
-    masthead.append(main.querySelector('.ft-home-search-slot'),main.querySelector('.ft-hero'),main.querySelector('.ft-promotion-announcement'));
+    masthead.append(main.querySelector('.ft-home-search-slot'),main.querySelector('.ft-hero'));
     main.querySelector(':scope > .ft-discovery')?.remove();
     disposeInfoSlider=mountInfoSlider(main.querySelector('.ft-info-slider'));
     syncHomeSearch();

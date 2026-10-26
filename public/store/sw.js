@@ -1,9 +1,9 @@
-const VERSION = 'fulltech-store-v115';
+const VERSION = 'fulltech-store-v119';
 const SHELL = [
   '/store/first-launch.css?v=2',
   '/store/first-launch.js?v=5',
-  '/store/install-prompt.css?v=8',
-  '/store/install-prompt.js?v=7',
+  '/store/install-prompt.css?v=9',
+  '/store/install-prompt.js?v=8',
   '/store/assets/icons/custom/instalar-app.png',
   '/store/assets/app-icons/icon-32.png',
   '/store/assets/app-icons/icon-180.png',
@@ -22,10 +22,10 @@ const SHELL = [
   '/store/premium.css?v=5',
   '/store/design-system.css?v=10',
   '/store/storefront.css?v=3',
-  '/store/store.js?v=77',
+  '/store/store.js?v=80',
   '/store/account-hub.js?v=5',
   '/store/account-hub.css?v=6',
-  '/store/compact-masthead.css?v=17',
+  '/store/compact-masthead.css?v=19',
   '/store/info-slider.js?v=3',
   '/store/pickup-orders.js?v=1',
   '/store/smart-commerce-ui.js?v=3',

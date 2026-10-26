@@ -19,7 +19,6 @@
  * Clases con prefijo propio: `.ft-install` ya existe en `discovery.css`.
  */
 const MEMORY_KEY = 'ft_install_prompt_v1';
-const ICON = '/store/assets/app-icons/icon-192.png';
 const PIN_ART = '/store/assets/icons/custom/instalar-app.png';
 const HOME_HASHES = ['#', '#/', '#/home'];
 const FIRST_DELAY = 7000;
@@ -119,7 +118,6 @@ function markup({ title, text = '', list = [], steps = [], action, hint = '' }) 
       <button class="${ROOT}__close" type="button" aria-label="Quitar este anuncio">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
-      <img class="${ROOT}__logo" src="${ICON}" alt="" width="52" height="52" decoding="async" />
       <h2 class="${ROOT}__title" id="ft-install-title">${title}</h2>
       ${text ? `<p class="${ROOT}__text">${text}</p>` : ''}
       ${items}
