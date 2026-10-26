@@ -48,12 +48,13 @@ const patch = async (route, body) => {
   return { status: response.status, data: await response.json().catch(() => ({})) };
 };
 
-const courierCall = async (route, { token, method = 'GET', body } = {}) => {
+const courierCall = async (route, { token, method = 'GET', body, companyId } = {}) => {
   const response = await fetch(`${app.url}${route}`, {
     method,
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(companyId ? { 'x-courier-company': companyId } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -208,7 +209,7 @@ describe('identidad del repartidor', () => {
     expect((await login(OTHER_PHONE, '123456')).status).toBe(401);
   });
 
-  it('una cuenta de otra empresa no entra en esta instalación', async () => {
+  it('rechaza una identidad empresarial no registrada desde el alta', async () => {
     const foreign = await createCourierAccount({
       kind: 'EXTERNAL',
       phone: INTL_PHONE,
@@ -218,9 +219,125 @@ describe('identidad del repartidor', () => {
       companyId: 'otra-empresa',
       pin: '123456',
     });
-    expect(foreign.status).toBe(201);
+    expect(foreign.status).toBe(422);
+    expect(foreign.data.error).toBe('invalid_company');
     const denied = await login(INTL_PHONE, '123456');
     expect(denied.status).toBe(401);
+  });
+
+  it('un repartidor multiempresa ve solo la empresa seleccionada y la revocación corta su sesión', async () => {
+    const phyto = await createOrder({ phone: '8095557901' });
+    const fulltech = await createOrder({ phone: '8095557902' });
+    const ambiguous = await createOrder({ phone: '8095557903' });
+    for (const id of [phyto, fulltech, ambiguous]) {
+      expect((await call(`orders/${id}/courier/assign`, { contactPhone: EXTERNAL_PHONE })).status).toBe(200);
+    }
+    const item = await app.ctx.store.getAdmin(fulltech);
+    const order = JSON.parse(item.order_json);
+    order.origin = 'FULLTECH_STORE';
+    order.company_id = 'fulltech';
+    await app.ctx.store.update(fulltech, { orderJson: JSON.stringify(order) });
+    const unknownItem = await app.ctx.store.getAdmin(ambiguous);
+    const unknownOrder = JSON.parse(unknownItem.order_json);
+    delete unknownOrder.company_id;
+    unknownOrder.items = [{ variantId: 'unclassified-product', quantity: 1 }];
+    await app.ctx.store.update(ambiguous, { orderJson: JSON.stringify(unknownOrder) });
+    const account = await createCourierAccount({ kind: 'EXTERNAL', phone: EXTERNAL_PHONE,
+      displayName: 'Mensajero Externo', contactId: 'contact-ext', appAccess: true, pin: '123456' });
+    expect(account.status).toBe(201);
+    const courierId = account.data.courier.id;
+    expect((await call(`couriers/${courierId}/companies`, { companyId: 'fulltech', active: true })).status).toBe(200);
+    const token = (await login(EXTERNAL_PHONE, '123456')).data.token;
+    const me = await courierCall('/api/courier/me', { token });
+    expect(me.status).toBe(200);
+    expect(me.data.companies.sort()).toEqual(['fulltech', 'phytoemagry']);
+    expect((await courierCall('/api/courier/orders', { token })).status).toBe(409);
+    const phytoList = await courierCall('/api/courier/orders', { token, companyId: 'phytoemagry' });
+    const fulltechList = await courierCall('/api/courier/orders', { token, companyId: 'fulltech' });
+    expect(phytoList.data.orders.map((row) => row.id)).toEqual([phyto]);
+    expect(fulltechList.data.orders.map((row) => row.id)).toEqual([fulltech]);
+    expect((await courierCall(`/api/courier/orders/${ambiguous}`, { token, companyId: 'fulltech' })).status).toBe(404);
+    expect((await courierCall(`/api/courier/orders/${fulltech}`, { token, companyId: 'phytoemagry' })).status).toBe(404);
+    expect((await courierCall('/api/courier/orders', { token, companyId: 'otra-empresa' })).status).toBe(403);
+    expect((await call(`couriers/${courierId}/companies`, { companyId: 'fulltech', active: false })).status).toBe(200);
+    expect((await courierCall('/api/courier/orders', { token, companyId: 'fulltech' })).status).toBe(401);
+    const newToken = (await login(EXTERNAL_PHONE, '123456')).data.token;
+    expect((await courierCall('/api/courier/orders', { token: newToken, companyId: 'fulltech' })).status).toBe(403);
+  });
+
+  it('custodia por empresa excluye cargos ajenos y movimientos sin dueño demostrable', async () => {
+    const account = await createCourierAccount({ kind: 'EXTERNAL', phone: EXTERNAL_PHONE,
+      displayName: 'Mensajero Externo', contactId: 'contact-ext', appAccess: true, pin: '123456' });
+    const id = account.data.courier.id;
+    await call(`couriers/${id}/companies`, { companyId: 'fulltech', active: true });
+    const phytoOrder = await createOrder({ phone: '8095557911' });
+    const fulltechOrder = await createOrder({ phone: '8095557912' });
+    const item = await app.ctx.store.getAdmin(fulltechOrder);
+    const order = JSON.parse(item.order_json);
+    order.origin = 'FULLTECH_STORE'; order.company_id = 'fulltech';
+    await app.ctx.store.update(fulltechOrder, { orderJson: JSON.stringify(order) });
+    for (const [orderId, amount] of [[phytoOrder, 12000], [fulltechOrder, 30000]]) {
+      await app.ctx.db.insert('delivery_cash_ledger', { id: `cash_${orderId}`,
+        order_id: orderId, courier_account_id: id, kind: 'charge', amount_cents: amount,
+        idempotency_key: `charge:${orderId}`, created_at: new Date().toISOString() });
+    }
+    await app.ctx.db.insert('delivery_cash_ledger', { id: 'cash_ambiguous',
+      order_id: null, courier_account_id: id, kind: 'remittance', amount_cents: 4000,
+      idempotency_key: 'legacy:ambiguous', created_at: new Date().toISOString() });
+    const token = (await login(EXTERNAL_PHONE, '123456')).data.token;
+    const phyto = await courierCall('/api/courier/custody', { token, companyId: 'phytoemagry' });
+    const fulltech = await courierCall('/api/courier/custody', { token, companyId: 'fulltech' });
+    expect(phyto.data.custody.pending_cents).toBe(12000);
+    expect(fulltech.data.custody.pending_cents).toBe(30000);
+    const overdraw = await call('delivery-cash/remittance', { courierAccountId: id,
+      companyId: 'phytoemagry', amountCents: 13000, idempotencyKey: 'overdraw' });
+    expect(overdraw.status).toBe(409);
+    expect(overdraw.data.error).toBe('historical_custody_unresolved');
+    const paid = await call('delivery-cash/remittance', { courierAccountId: id,
+      companyId: 'fulltech', amountCents: 5000, idempotencyKey: 'fulltech:paid' });
+    expect(paid.status).toBe(409);
+    expect(paid.data.error).toBe('historical_custody_unresolved');
+    const phytoAfter = await courierCall('/api/courier/custody', { token, companyId: 'phytoemagry' });
+    expect(phytoAfter.data.custody.pending_cents).toBe(12000);
+    const fulltechAfter = await courierCall('/api/courier/custody', { token, companyId: 'fulltech' });
+    expect(fulltechAfter.data.custody.pending_cents).toBe(30000);
+  });
+
+  it('registra una tercera empresa en la misma base sin conceder acceso implícito', async () => {
+    const registration = await call('logistics/companies', { id: 'tienda_nueva', name: 'Tienda nueva UAT' });
+    expect(registration.status).toBe(201);
+    expect((await call('logistics/companies', { id: 'tienda_nueva', name: 'Duplicada' })).status).toBe(409);
+    const orderId = await createOrder({ phone: '8095557921' });
+    await call(`orders/${orderId}/courier/assign`, { contactPhone: EXTERNAL_PHONE });
+    const item = await app.ctx.store.getAdmin(orderId);
+    const order = JSON.parse(item.order_json);
+    order.company_id = 'tienda_nueva';
+    await app.ctx.store.update(orderId, { orderJson: JSON.stringify(order) });
+    const account = await createCourierAccount({ kind: 'EXTERNAL', phone: EXTERNAL_PHONE,
+      displayName: 'Mensajero Externo', contactId: 'contact-ext', appAccess: true, pin: '123456' });
+    const before = (await login(EXTERNAL_PHONE, '123456')).data.token;
+    expect((await courierCall(`/api/courier/orders/${orderId}`, { token: before, companyId: 'tienda_nueva' })).status).toBe(403);
+    expect((await call(`couriers/${account.data.courier.id}/companies`, { companyId: 'tienda_nueva', active: true })).status).toBe(200);
+    const after = (await login(EXTERNAL_PHONE, '123456')).data.token;
+    expect((await courierCall(`/api/courier/orders/${orderId}`, { token: after, companyId: 'tienda_nueva' })).status).toBe(200);
+  });
+
+  it('una sesión CRM de Phyto no abre por ID un pedido FULLTECH conocido', async () => {
+    const id = await createOrder({ phone: '8095557931' });
+    const item = await app.ctx.store.getAdmin(id);
+    const order = JSON.parse(item.order_json);
+    order.origin = 'FULLTECH_STORE'; order.company_id = 'fulltech';
+    await app.ctx.store.update(id, { orderJson: JSON.stringify(order) });
+    const agent = await createUser({ username: 'agent-isolation-uat',
+      displayName: 'Agente UAT', role: 'AGENT' });
+    expect(agent?.id).toBeTruthy();
+    const loginResponse = await fetch(`${app.url}/api/admin/login`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        username: 'agent-isolation-uat', password: 'Clave-Reparto-1' }) });
+    expect(loginResponse.status).toBe(200);
+    const agentCookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    expect((await call(`orders/${id}`, null, agentCookie)).status).toBe(404);
+    expect((await call(`orders/${id}/payment/transfer`, { amount: 1 }, agentCookie)).status).toBe(404);
   });
 
   it('bloquea tras varios PIN incorrectos', async () => {

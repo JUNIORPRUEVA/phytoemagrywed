@@ -9,6 +9,8 @@
  * Dinero SIEMPRE en centavos enteros. Nada de coma flotante.
  */
 
+import { companyOfCashRow, companyOfOrder } from './logistics-tenancy.mjs';
+
 const cents = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number) : 0;
@@ -146,4 +148,24 @@ export function reconcileDeliveryCash({ orders = [], ledger = [] } = {}) {
     balances: [...balances.values()],
     incidents,
   };
+}
+
+/** Reportes empresariales sin compensar saldos de distintas compañías. */
+export function reconcileDeliveryCashByCompany({ orders = [], ledger = [], companies = [] } = {}) {
+  const orderMap = new Map();
+  for (const order of orders) if (order?.id) orderMap.set(String(order.id), order);
+  const known = new Set(companies.map((row) => typeof row === 'string' ? row : row.id));
+  const byCompany = {};
+  for (const companyId of known) {
+    byCompany[companyId] = reconcileDeliveryCash({
+      orders: orders.filter((order) => companyOfOrder(order) === companyId),
+      ledger: ledger.filter((row) => companyOfCashRow(row, orderMap) === companyId),
+    });
+  }
+  const unresolved = ledger.filter((row) => !known.has(companyOfCashRow(row, orderMap)))
+    .map((row) => ({ id: row.id, order_id: row.order_id ?? null,
+      courier_account_id: row.courier_account_id ?? null, kind: row.kind,
+      amount_cents: cents(row.amount_cents), reason: 'company_unverified' }));
+  return { ok: unresolved.length === 0 && Object.values(byCompany).every((row) => row.ok),
+    by_company: byCompany, unresolved_movements: unresolved };
 }

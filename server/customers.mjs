@@ -1564,6 +1564,12 @@ export function createCustomerService(deps) {
       if (!found.ok) return { ok: false, error: 'invalid_phone' };
       const customer = found.customer;
       const conversation = await this.conversationFor(customer.id);
+      // Este webhook legado pertenece al canal firmado de Phyto. Etiquetar solo
+      // filas aún sin dueño; jamás sobrescribir evidencia de otra empresa.
+      if (input.companyId === 'phytoemagry') {
+        if (!customer.company_id) await db.update('customers', customer.id, { company_id: 'phytoemagry' });
+        if (!conversation.company_id) await db.update('conversations', conversation.id, { company_id: 'phytoemagry' });
+      }
 
       const optOut = detectOptOut(message.body);
       const humanRequest = detectHumanRequest(message.body);

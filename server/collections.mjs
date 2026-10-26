@@ -213,6 +213,49 @@ export const COLLECTIONS = Object.freeze({
       created_at: 'text',
     },
   },
+  courier_company_grants: {
+    indexed: { courier_account_id: 'text', company_id: 'text', active: 'text', updated_at: 'text' },
+  },
+  /*
+   * ALCANCE ADMINISTRATIVO POR EMPRESA (`crm_company_grants`).
+   *
+   * Qué empresas puede OPERAR una persona del panel. Sin fila se mantiene el
+   * comportamiento histórico (PHYTOEMAGRY); con filas, solo las concedidas. La
+   * superadministración central (`admin.full`) no necesita filas: ve todo.
+   * Es aditivo: no cambia el rol ni los permisos existentes, solo los acota.
+   */
+  crm_company_grants: {
+    indexed: { user_id: 'text', company_id: 'text', active: 'text', updated_at: 'text' },
+  },
+  logistics_companies: {
+    indexed: { name: 'text', active: 'text', system: 'text', created_at: 'text' },
+  },
+  courier_applications: {
+    indexed: { company_id: 'text', phone_e164: 'text', status: 'text', application_key: 'text', created_at: 'text' },
+    unique: ['application_key'],
+  },
+  /*
+   * RESOLUCIONES DE CONCILIACIÓN (`cash_resolutions`).
+   *
+   * REGISTRO SEPARADO, nunca una edición del libro. Guarda la revisión humana de
+   * un movimiento antiguo cuya empresa no se puede demostrar: qué se concluyó,
+   * con qué justificación y con qué evidencia. No cambia importes ni reasigna
+   * dinero: la custodia sigue bloqueada hasta autorización explícita.
+   * Id determinista por movimiento → una segunda resolución no se duplica.
+   */
+  cash_resolutions: {
+    indexed: { movement_id: 'text', company_id: 'text', status: 'text', created_at: 'text' },
+  },
+  /*
+   * DOCUMENTOS DEL EXPEDIENTE (`courier_documents`).
+   *
+   * Solo METADATOS: el binario vive en un directorio privado del servidor con
+   * nombre generado (`file` nunca sale al cliente). Un documento por tipo; el
+   * reemplazo marca el anterior como `replaced` en vez de borrar el rastro.
+   */
+  courier_documents: {
+    indexed: { application_id: 'text', company_id: 'text', kind: 'text', status: 'text', created_at: 'text' },
+  },
   /*
    * ÚLTIMA UBICACIÓN CONOCIDA DEL REPARTIDOR (`courier_positions`).
    *
@@ -270,6 +313,7 @@ export const COLLECTIONS = Object.freeze({
     indexed: {
       order_id: 'text',
       courier_account_id: 'text',
+      company_id: 'text',
       kind: 'text',
       idempotency_key: 'text',
       created_at: 'text',

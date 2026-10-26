@@ -1019,6 +1019,10 @@ describe('pedidos: lista compacta, aviso de pedido abierto y datos al pedido', (
         name: 'UAT Finalizar',
         source: 'checkout',
         status: 'nuevo',
+        // Evidencia del catálogo Phyto para que el pedido de prueba no quede
+        // en cuarentena multiempresa como un checkout de origen desconocido.
+        variantId: 'capsules_5',
+        capsules: 5,
         variantName: '5 cápsulas',
         quantity: 1,
         total: 1250,

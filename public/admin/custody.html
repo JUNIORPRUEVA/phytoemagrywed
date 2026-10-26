@@ -102,6 +102,30 @@ td.act{text-align:right}
   </div>
 
   <div id="incidents"></div>
+
+  <!--
+    CONCILIACIÓN MANUAL DE MOVIMIENTOS AMBIGUOS.
+    Solo la superadministración ve esta sección. Registrar una resolución NO
+    mueve dinero: deja constancia de la revisión (justificación + evidencia) y la
+    custodia sigue bloqueada hasta una autorización explícita.
+  -->
+  <section id="reconciliation" hidden>
+    <h2>Movimientos por revisar</h2>
+    <p class="hint">Movimientos históricos cuya empresa no se puede demostrar. El libro no se edita: se documenta la revisión.</p>
+    <div class="wrap">
+      <table>
+        <thead><tr><th>Repartidor</th><th class="hide">Pedido</th><th>Tipo</th><th class="num">Importe</th><th>Estado</th><th class="act"></th></tr></thead>
+        <tbody id="unresolved"><tr><td colspan="6" class="empty">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+    <h2>Resoluciones registradas</h2>
+    <div class="wrap">
+      <table>
+        <thead><tr><th>Movimiento</th><th>Empresa propuesta</th><th>Justificación</th><th>Quién</th><th>Estado</th></tr></thead>
+        <tbody id="resolutions"><tr><td colspan="5" class="empty">Sin resoluciones.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 </div>
 
 <div id="drawer" role="dialog" aria-modal="true" aria-label="Detalle del repartidor">

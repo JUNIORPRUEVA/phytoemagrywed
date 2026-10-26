@@ -333,6 +333,11 @@ export function eventFromMutation({ method, route = '', status = 0, body = null 
  *   - `ticket`   → SOLO los participantes de ese ticket (o quien puede verlos
  *                  todos). Un ticket es una conversación interna: el resto del
  *                  panel no tiene por qué enterarse de que existe.
+ *
+ * Además, si el evento está acotado a una empresa (`companyScoped`), solo lo
+ * recibe quien puede ver ESA empresa: la superadministración central o el panel
+ * de PHYTOEMAGRY. Un evento de otra empresa —o de un registro cuya empresa no
+ * se puede demostrar— no se reparte al panel ordinario.
  */
 export function clientAccepts(event, { actor = null, can = () => false } = {}) {
   if (event.requires && !can(event.requires)) return false;
@@ -344,13 +349,37 @@ export function clientAccepts(event, { actor = null, can = () => false } = {}) {
     const ids = Array.isArray(event.data?.participant_ids) ? event.data.participant_ids : [];
     return ids.includes(me);
   }
-  if (event.audience !== 'assignee') return true;
+  /*
+   * Un evento dirigido a una persona concreta (`assignee`) ya está acotado por
+   * identidad: quien lo recibe es el implicado. La empresa no añade nada ahí y
+   * comprobarla podría dejar sin aviso de su propia entrega a un repartidor
+   * autorizado, así que esta rama no cambia.
+   */
+  if (event.audience === 'assignee') return assigneeAccepts(event, actor);
+  return companyAccepts(event, can);
+}
+
+/** El repartidor implicado (o administración). Sin tocar la empresa. */
+function assigneeAccepts(event, actor) {
   const role = String(actor?.role ?? '');
   if (role === 'ADMIN') return true;
   const me = String(actor?.id ?? '');
   if (!me) return false;
   const data = event.data ?? {};
   return data.delivery_user_id === me || data.previous_delivery_user_id === me;
+}
+
+/**
+ * La empresa del evento deja verlo a este cliente.
+ *
+ * `companyScoped: false` = evento global (inventario, supervisor, tickets): no
+ * se filtra por empresa. Si está acotado y la empresa no se puede demostrar
+ * (`company === null`), solo lo ve la central: cerrar antes que adivinar.
+ */
+function companyAccepts(event, can) {
+  if (!event.companyScoped) return true;
+  if (can('admin.full')) return true;
+  return event.company === 'phytoemagry';
 }
 
 /**
@@ -383,6 +412,13 @@ export function createRealtimeHub({ bufferSize = 500, heartbeatMs = 25000, now =
       entity: event.entity ?? null,
       requires: event.requires ?? null,
       audience: event.audience ?? 'panel',
+      /*
+       * Empresa del registro que cambió. `null` con `companyScoped: true`
+       * significa «no se puede demostrar»: el evento queda para la central.
+       * No se envía contenido, solo el identificador, así que no hay PII aquí.
+       */
+      company: event.company ?? null,
+      companyScoped: event.companyScoped === true,
       actor: event.actor ? { id: String(event.actor.id ?? ''), name: String(event.actor.display_name ?? event.actor.name ?? '') } : null,
       origin: event.origin ? String(event.origin).slice(0, 64) : null,
       data: event.data ?? {},

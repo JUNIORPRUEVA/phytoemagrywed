@@ -24,7 +24,8 @@ const api = async (path, body) => {
   return data;
 };
 
-const state = { couriers: [], movements: [], incidents: [], totals: {}, selected: null };
+const state = { couriers: [], movements: [], incidents: [], totals: {}, selected: null,
+  unresolved: [], resolutions: [], reconciliationVisible: false, companies: [] };
 const notice = (text) => { $('#status').textContent = text; };
 
 /* Pedidos cobrados por repartidor: se cuentan desde los cargos del libro. */
@@ -90,6 +91,45 @@ function renderTable() {
   }).join('');
 }
 
+/*
+ * CONCILIACIÓN: solo lectura del libro + registro de la revisión.
+ *
+ * La tabla de movimientos sin empresa sale del reporte del backend; aquí no se
+ * calcula ni se supone nada. «Revisar» pide justificación y evidencia y llama al
+ * endpoint, que guarda la resolución en un registro aparte y deja el bloqueo.
+ */
+function renderReconciliation() {
+  const section = $('#reconciliation');
+  if (!state.reconciliationVisible) { section.hidden = true; return; }
+  section.hidden = false;
+  const nameOf = (id) => state.companies.find((row) => row.id === id)?.name ?? id ?? '—';
+  if (!state.unresolved.length) {
+    $('#unresolved').innerHTML = '<tr><td colspan="6" class="empty">No hay movimientos ambiguos pendientes.</td></tr>';
+  } else {
+    $('#unresolved').innerHTML = state.unresolved.map((row) => `
+      <tr>
+        <td class="who"><b>${esc(row.courier_account_id || 'Sin cuenta')}</b><span>${esc(row.kind ?? '')}</span></td>
+        <td class="hide">${esc(row.order_id || '—')}</td>
+        <td>${esc(row.kind ?? '—')}</td>
+        <td class="num">${money(row.amount_cents)}</td>
+        <td><span class="tag warn">Sin empresa</span></td>
+        <td class="act"><button class="ghost" type="button" data-review="${esc(row.id)}">Revisar</button></td>
+      </tr>`).join('');
+  }
+  if (!state.resolutions.length) {
+    $('#resolutions').innerHTML = '<tr><td colspan="5" class="empty">Sin resoluciones registradas.</td></tr>';
+  } else {
+    $('#resolutions').innerHTML = state.resolutions.map((row) => `
+      <tr>
+        <td class="who"><b>${esc(String(row.movement_id).slice(0, 14))}</b><span>${esc(new Date(row.created_at).toLocaleString('es-DO'))}</span></td>
+        <td>${row.company_id ? esc(nameOf(row.company_id)) : '<span class="hint">Sin empresa propuesta</span>'}</td>
+        <td>${esc(row.justification ?? '')}${row.evidence_reference ? `<br><small>Evidencia: ${esc(row.evidence_reference)}</small>` : ''}</td>
+        <td>${esc(row.created_by_display_name || row.created_by_user_id || '—')}</td>
+        <td><span class="tag warn">Pendiente de autorización</span></td>
+      </tr>`).join('');
+  }
+}
+
 function renderIncidents() {
   if (!state.incidents.length) {
     $('#incidents').innerHTML = '<h2>Incidencias de conciliación</h2><div class="item"><b>Sin discrepancias</b><p>Los pedidos entregados con efectivo cuadran con el libro de custodia.</p></div>';
@@ -124,14 +164,21 @@ function renderDrawer() {
 
 async function load() {
   try {
-    const [cash, movements, incidents] = await Promise.all([
+    const [cash, movements, incidents, reconciliation, resolutions, companies] = await Promise.all([
       api('/api/admin/delivery-cash'),
       api('/api/admin/delivery-cash/movements'),
       api('/api/admin/delivery-cash/incidents').catch(() => ({ incidents: [] })),
+      api('/api/admin/delivery-cash/reconciliation').catch(() => null),
+      api('/api/admin/delivery-cash/resolutions').catch(() => null),
+      api('/api/admin/logistics/companies').catch(() => null),
     ]);
     state.couriers = cash.couriers ?? [];
     state.movements = movements.movements ?? [];
     state.incidents = incidents.incidents ?? [];
+    state.reconciliationVisible = Boolean(reconciliation && resolutions);
+    state.unresolved = reconciliation?.unresolved_movements ?? [];
+    state.resolutions = resolutions?.resolutions ?? [];
+    state.companies = (companies?.companies ?? []).filter((row) => row.active !== false);
     /* Los totales salen del libro, no de la suma de la tabla: es el mismo número que audita el backend. */
     state.totals = incidents.totals ?? {
       chargedCents: state.couriers.reduce((sum, row) => sum + Number(row.charged_cents ?? 0), 0),
@@ -143,6 +190,7 @@ async function load() {
     renderCards();
     renderTable();
     renderIncidents();
+    renderReconciliation();
     $('#updated').textContent = `Actualizado ${new Date().toLocaleTimeString('es-DO')}`;
     notice('Custodia actualizada.');
     if (state.selected) {
@@ -176,6 +224,33 @@ $('#couriers').addEventListener('click', (event) => {
   renderDrawer();
 });
 $('#d-close').onclick = () => $('#drawer').removeAttribute('open');
+
+/*
+ * REGISTRAR LA REVISIÓN DE UN MOVIMIENTO AMBIGUO.
+ *
+ * La justificación es obligatoria (lo exige el backend) y no se toca ningún
+ * importe: la resolución queda como propuesta pendiente de autorización.
+ */
+$('#unresolved').addEventListener('click', async (event) => {
+  const id = event.target.closest('[data-review]')?.dataset.review;
+  if (!id) return;
+  const justification = window.prompt('¿Con qué evidencia se concluye la empresa de este movimiento? (obligatorio)');
+  if (!justification || justification.trim().length < 10) return;
+  const evidence = window.prompt('Referencia de la evidencia (pedido, comprobante, nota). Opcional:') ?? '';
+  const opciones = ['(sin empresa propuesta)', ...state.companies.map((row) => row.name ?? row.id)];
+  const elegida = window.prompt(`Empresa propuesta (número):\n${opciones.map((name, index) => `${index} · ${name}`).join('\n')}`);
+  const index = Number(elegida);
+  const companyId = Number.isInteger(index) && index > 0 ? state.companies[index - 1]?.id : null;
+  try {
+    await api('/api/admin/delivery-cash/resolutions', { movementId: id,
+      companyId: companyId ?? undefined, justification: justification.trim(), evidence: evidence.trim() || undefined });
+    notice('Resolución registrada. La custodia sigue bloqueada hasta autorización explícita.');
+    await load();
+  } catch (error) {
+    notice(error.status === 409 ? 'Ese movimiento ya tiene una resolución registrada.' : error.message);
+  }
+});
+
 $('#remittance').addEventListener('input', () => {
   const row = state.selected;
   if (!row) return;
