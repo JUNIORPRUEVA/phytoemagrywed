@@ -1,0 +1,36 @@
+name: fulltech_crm
+description: "FullTECH CRM — app nativa (Android/iOS/Windows) del panel sobre la API del CRM."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.5.0
+  shared_preferences: ^2.5.3
+  # La cookie de sesión del panel ya NO se guarda en preferences en claro:
+  # va al llavero del sistema (Keystore / Keychain / Credential Manager).
+  flutter_secure_storage: ^9.2.4
+  intl: ^0.20.2
+  url_launcher: ^6.3.2
+  path_provider: ^2.1.5
+  open_filex: ^4.7.0
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
+  file_picker: ^11.0.3
+  record: ^6.2.1
+  audioplayers: ^6.7.1
+  google_fonts: ^8.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

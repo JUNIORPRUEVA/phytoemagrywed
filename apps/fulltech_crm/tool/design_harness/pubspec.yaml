@@ -1,0 +1,16 @@
+name: design_harness
+description: "Harness aislado para capturar pantallas del CRM (no forma parte del producto)."
+publish_to: 'none'
+version: 0.0.1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  fulltech_crm:
+    path: ../..
+
+flutter:
+  uses-material-design: true
