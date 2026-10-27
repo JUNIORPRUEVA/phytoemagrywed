@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/crm_app.dart';
 import '../../app/crm_scope.dart';
@@ -34,6 +35,7 @@ import '../ventas/tiendas_screen.dart';
 import '../whatsapp/chats_desktop.dart';
 import '../whatsapp/whatsapp_screen.dart';
 import 'crm_menu_drawer.dart';
+import '../../core/config/app_config.dart';
 import 'pwa_shell.dart';
 
 /// Un destino del menú (`data-tab` del panel). [image] es el **icono original
@@ -75,7 +77,7 @@ const List<CrmDestination> crmDestinations = [
   CrmDestination('seguimientos', 'Seguimientos', Icons.event_repeat_outlined, image: PwaIcons.share, group: 'Operación'),
   CrmDestination('mensajes', 'Mensajes programados', Icons.schedule_send_outlined, image: PwaIcons.bell, group: 'Operación'),
   CrmDestination('ajustes', 'Configuración', Icons.settings_outlined, image: PwaIcons.filter),
-  CrmDestination('usuarios', 'Usuarios', Icons.group_add_outlined, image: PwaIcons.usersadd),
+  CrmDestination('usuarios', 'Usuarios', Icons.group_add_outlined, image: PwaIcons.usersadd, group: 'Operación'),
   CrmDestination('perfil', 'Mi perfil', Icons.person_outline_rounded, image: PwaIcons.user),
 ];
 
@@ -168,7 +170,6 @@ class _CrmShellState extends State<CrmShell> {
     return sections;
   }
 
-  /// Dos letras para el avatar de la cabecera (Nombre + Apellido).
   String _initials(CrmState state) {
     final name = (state.session.user?.displayName ?? 'Equipo FullTECH').trim();
     final parts = name.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
@@ -177,6 +178,14 @@ class _CrmShellState extends State<CrmShell> {
       return parts.first.substring(0, parts.first.length >= 2 ? 2 : 1).toUpperCase();
     }
     return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
+  }
+
+  /// Compartir: copia el enlace real del panel al portapapeles.
+  Future<void> _sharePanelLink() async {
+    final url = AppConfig.apiBaseUrl;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    crmToast(context, 'Enlace copiado: $url');
   }
 
   List<PwaNavGroup> get _navGroups {
@@ -279,6 +288,7 @@ class _CrmShellState extends State<CrmShell> {
                     current: _tab,
                     onSelect: _go,
                     onClose: () => setState(() => _menuOpen = false),
+                    onShare: _sharePanelLink,
                     userName: state.session.user?.displayName ?? 'Equipo FullTECH',
                     userRole: _roleLabel(state),
                     initials: _initials(state),
