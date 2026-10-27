@@ -50,3 +50,8 @@ app.*.map.json
 
 # Salida efímera del toolchain de Windows (la regenera `flutter pub get`).
 windows/flutter/ephemeral/
+
+# La regla `data/` de la raíz del repositorio NO debe aplicarse al código del
+# CRM: `lib/data/` es la capa de datos (modelos, repositorio, cola offline).
+!lib/data/
+!lib/data/**
