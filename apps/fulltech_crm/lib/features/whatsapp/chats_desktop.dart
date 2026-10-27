@@ -61,7 +61,8 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   Widget build(BuildContext context) {
     final state = CrmScope.of(context);
     final conversations = _filtered(state.conversations);
-    final selectedId = _selectedId != null && conversations.any((row) => row.id == _selectedId)
+    final selectedId =
+        _selectedId != null && conversations.any((row) => row.id == _selectedId)
         ? _selectedId
         : (conversations.isEmpty ? null : conversations.first.id);
     final user = state.session.user;
@@ -73,14 +74,18 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
       math.max(272.0, (width - railWidth) * 0.3),
     );
 
-    return ColoredBox(
+    // `Material` propio: `InkWell` y `TextField` necesitan un ancestro Material.
+    // No se puede depender del shell, porque esta pantalla también se usa sola.
+    return Material(
       color: ChatDesktopColors.panelBg,
       child: Row(
         children: [
           ChatNavigationRail(
             currentTab: 'whatsapp',
             unread: state.unreadTotal,
-            initials: (user?.initials.isNotEmpty ?? false) ? user!.initials : 'FT',
+            initials: (user?.initials.isNotEmpty ?? false)
+                ? user!.initials
+                : 'FT',
             onNavigate: (tab) => widget.onNavigate?.call(tab),
             onLogout: state.logout,
           ),
@@ -104,7 +109,9 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                 : ChatScreen(
                     key: ValueKey(selectedId),
                     conversationId: selectedId,
-                    title: state.conversationById(selectedId)?.name ?? 'Conversación',
+                    title:
+                        state.conversationById(selectedId)?.name ??
+                        'Conversación',
                     desktop: true,
                   ),
           ),
@@ -123,14 +130,24 @@ class _NoConversation extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.forum_outlined, size: 38, color: ChatDesktopColors.textSecondary),
+          const Icon(
+            Icons.forum_outlined,
+            size: 38,
+            color: ChatDesktopColors.textSecondary,
+          ),
           const SizedBox(height: 12),
           Text(
             'Elige una conversación',
-            style: ChatDesktopText.title.copyWith(fontSize: 16, fontWeight: FontWeight.w500),
+            style: ChatDesktopText.title.copyWith(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           const SizedBox(height: 6),
-          Text('A la izquierda están los chats del negocio.', style: ChatDesktopText.rowPreview),
+          Text(
+            'A la izquierda están los chats del negocio.',
+            style: ChatDesktopText.rowPreview,
+          ),
         ],
       ),
     );
