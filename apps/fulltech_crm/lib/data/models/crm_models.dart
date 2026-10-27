@@ -347,16 +347,22 @@ class CatalogProduct {
     required this.id,
     required this.name,
     required this.presentations,
+    this.category = '',
   });
 
   final String id;
   final String name;
   final List<CatalogPresentation> presentations;
 
+  /// Categoría del producto si el catálogo la expone (`category`, `kind`).
+  /// Vacía cuando el API no la envía: no se inventa ninguna.
+  final String category;
+
   factory CatalogProduct.fromJson(Map<String, dynamic> json) => CatalogProduct(
         id: str(json['id'], str(json['productId'])),
         name: str(json['name'], str(json['product_name'], 'Producto')),
         presentations: listv(json['presentations']).map(CatalogPresentation.fromJson).toList(),
+        category: str(json['category'], str(json['category_name'], str(json['kind']))).trim(),
       );
 }
 

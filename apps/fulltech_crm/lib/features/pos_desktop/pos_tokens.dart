@@ -39,6 +39,9 @@ abstract final class PosMetrics {
   /// Ancho del panel de venta (carrito): 546 px en la captura ≈ 28 % del ancho.
   static double cartWidth(double screenWidth) => (screenWidth * 0.28).clamp(320.0, 480.0);
 
+  /// Columna de categorías (68 px en la captura de FullPOS Cloud).
+  static const double railWidth = 74;
+
   /// Tarjeta de producto.
   static const double cardHeight = 216;
   static const double cardMaxWidth = 200;

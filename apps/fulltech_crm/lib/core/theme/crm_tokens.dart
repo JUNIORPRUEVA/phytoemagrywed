@@ -379,6 +379,12 @@ class PwaIcons {
   static const String logout = '${base}logout.png';
   static const String moon = '${base}moon.png';
   static const String refresh = '${base}refresh.png';
+  static const String search = '${base}search.png';
+  static const String plus = '${base}plus.png';
+  static const String chevronDown = '${base}chevron-down.png';
+  static const String chevronUp = '${base}chevron-up.png';
+  static const String tickets = '${base}tickets.png';
+  static const String remove = '${base}remove.png';
   static const String whatsapp = '${base}whatsapp.png';
   static const String chatSearch = '${base}chat-search.png';
   static const String chatSend = '${base}chat-send.png';

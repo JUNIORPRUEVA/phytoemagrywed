@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/crm_tokens.dart';
 import '../common/pwa_icon.dart';
 import 'pwa_shell.dart';
 
@@ -194,7 +195,7 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
             visualDensity: VisualDensity.compact,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             color: c.muted,
-            icon: const Icon(Icons.close_rounded),
+            icon: const PwaIcon(PwaIcons.back, size: 15),
           ),
         ],
       ),
@@ -287,7 +288,7 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
             AnimatedRotation(
               turns: expanded ? 0.5 : 0,
               duration: const Duration(milliseconds: 150),
-              child: Icon(Icons.keyboard_arrow_down_rounded, size: 17, color: c.muted),
+              child: PwaIcon(PwaIcons.chevronDown, size: 14, color: c.muted),
             ),
         ],
       ),
@@ -322,7 +323,7 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
             onTap: widget.onShare,
             builder: (hovered) => Row(
               children: [
-                Icon(Icons.ios_share_rounded, size: 15.5, color: hovered ? c.ink : c.muted),
+                PwaIcon(PwaIcons.share, size: 15, color: hovered ? c.ink : c.muted),
                 const SizedBox(width: 8),
                 Text(
                   'Compartir',
@@ -342,8 +343,8 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
             ),
             child: Row(
               children: [
-                _themeToggle(Icons.light_mode_outlined, !widget.isDark, c, () => widget.onThemeChanged(false)),
-                _themeToggle(Icons.dark_mode_outlined, widget.isDark, c, () => widget.onThemeChanged(true)),
+                _themeToggle(PwaIcons.sun, !widget.isDark, c, () => widget.onThemeChanged(false)),
+                _themeToggle(PwaIcons.moon, widget.isDark, c, () => widget.onThemeChanged(true)),
                 const Spacer(),
                 IconButton(
                   tooltip: 'Cerrar sesión',
@@ -352,7 +353,7 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   color: const Color(0xFFE05252),
-                  icon: const Icon(Icons.logout_rounded),
+                  icon: const PwaIcon(PwaIcons.logout, size: 15, color: Color(0xFFE05252)),
                 ),
               ],
             ),
@@ -362,7 +363,7 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
     );
   }
 
-  Widget _themeToggle(IconData icon, bool selected, _Palette c, VoidCallback onTap) {
+  Widget _themeToggle(String icon, bool selected, _Palette c, VoidCallback onTap) {
     return InkWell(
       borderRadius: BorderRadius.circular(7),
       onTap: onTap,
@@ -376,7 +377,7 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
           borderRadius: BorderRadius.circular(7),
           border: selected ? Border.all(color: c.line) : null,
         ),
-        child: Icon(icon, size: 15, color: selected ? c.primary : c.muted),
+        child: PwaIcon(icon, size: 14, color: selected ? c.primary : c.muted),
       ),
     );
   }
@@ -433,6 +434,47 @@ class _HoverRowState extends State<_HoverRow> {
   }
 }
 
+/// Entrada suave del menú: 22 px desde la izquierda + desvanecido, 200 ms.
+class CrmDrawerEntrance extends StatefulWidget {
+  const CrmDrawerEntrance({super.key, required this.child, this.offset = 22});
+
+  final Widget child;
+  final double offset;
+
+  @override
+  State<CrmDrawerEntrance> createState() => _CrmDrawerEntranceState();
+}
+
+class _CrmDrawerEntranceState extends State<CrmDrawerEntrance> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  )..forward();
+
+  late final Animation<double> _curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curve,
+      builder: (context, child) => Opacity(
+        opacity: _curve.value,
+        child: Transform.translate(
+          offset: Offset(-(1 - _curve.value) * widget.offset, 0),
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
 /// Barra superior de 56 px, clara u oscura según el tema.
 class CrmLightTopbar extends StatelessWidget {
   const CrmLightTopbar({
@@ -441,6 +483,9 @@ class CrmLightTopbar extends StatelessWidget {
     required this.subtitle,
     required this.onMenu,
     required this.online,
+    this.menuOpen = false,
+    this.unread = 0,
+    this.onBell,
     this.loading = false,
   });
 
@@ -448,6 +493,13 @@ class CrmLightTopbar extends StatelessWidget {
   final String subtitle;
   final VoidCallback onMenu;
   final bool online;
+  final bool menuOpen;
+
+  /// Mensajes sin leer: si hay, la campana lleva un punto de aviso.
+  final int unread;
+
+  /// Acción de la campana (abre la bandeja). Sin acción, no se dibuja.
+  final VoidCallback? onBell;
   final bool loading;
 
   @override
@@ -462,14 +514,13 @@ class CrmLightTopbar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Menú',
+          CrmDrawerButton(
+            open: menuOpen,
             onPressed: onMenu,
-            iconSize: 19,
             color: c.primary,
-            icon: const Icon(Icons.menu_rounded),
+            tint: c.hover,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 6),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -491,6 +542,13 @@ class CrmLightTopbar extends StatelessWidget {
               ],
             ),
           ),
+          if (onBell != null)
+            _BellButton(
+              palette: c,
+              unread: unread,
+              onPressed: onBell!,
+            ),
+          const SizedBox(width: 6),
           if (loading)
             SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: c.primary))
           else
@@ -505,6 +563,205 @@ class CrmLightTopbar extends StatelessWidget {
               ],
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Campana de notificaciones con el PNG del panel y punto de aviso.
+class _BellButton extends StatefulWidget {
+  const _BellButton({required this.palette, required this.unread, required this.onPressed});
+
+  final _Palette palette;
+  final int unread;
+  final VoidCallback onPressed;
+
+  @override
+  State<_BellButton> createState() => _BellButtonState();
+}
+
+class _BellButtonState extends State<_BellButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.palette;
+    return Tooltip(
+      message: widget.unread > 0 ? '${widget.unread} mensaje(s) sin leer' : 'Notificaciones',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onPressed,
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: _hovered ? c.hover : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Stack(
+              children: [
+                Center(child: PwaIcon(PwaIcons.bell, size: 17, color: _hovered ? c.ink : c.muted)),
+                if (widget.unread > 0)
+                  Positioned(
+                    right: 5,
+                    top: 5,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF25D366),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: c.background, width: 1.5),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Botón del menú con el icono de barras del PWA y animación de apertura.
+///
+/// Cerrado: tres barras asimétricas (el icono original del panel).
+/// Abierto: las de arriba y abajo giran 45° y se cruzan hasta formar una ✕
+/// mientras la del medio se desvanece. 240 ms, `easeOutCubic`.
+class CrmDrawerButton extends StatefulWidget {
+  const CrmDrawerButton({
+    super.key,
+    required this.open,
+    required this.onPressed,
+    required this.color,
+    required this.tint,
+    this.size = 34,
+  });
+
+  final bool open;
+  final VoidCallback onPressed;
+
+  /// Color de las barras.
+  final Color color;
+
+  /// Relleno suave al pasar el ratón o con el menú abierto.
+  final Color tint;
+  final double size;
+
+  @override
+  State<CrmDrawerButton> createState() => _CrmDrawerButtonState();
+}
+
+class _CrmDrawerButtonState extends State<CrmDrawerButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+    value: widget.open ? 1 : 0,
+  );
+  late final Animation<double> _turn = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+
+  bool _hovered = false;
+
+  @override
+  void didUpdateWidget(covariant CrmDrawerButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.open != oldWidget.open) {
+      widget.open ? _controller.forward() : _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _hovered || widget.open;
+    return Tooltip(
+      message: widget.open ? 'Cerrar menú' : 'Menú',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onPressed,
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedScale(
+            scale: _hovered ? 1.04 : 1,
+            duration: const Duration(milliseconds: 140),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: widget.size,
+              height: widget.size,
+              decoration: BoxDecoration(
+                color: active ? widget.tint : Colors.transparent,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: AnimatedBuilder(
+                animation: _turn,
+                builder: (context, _) {
+                  final t = _turn.value;
+                  return SizedBox.expand(
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            _bar(
+                              width: 18,
+                              offset: -5.0 * (1 - t),
+                              angle: 0.7854 * t,
+                              color: widget.color,
+                            ),
+                            Opacity(
+                              opacity: (1 - t * 1.6).clamp(0.0, 1.0),
+                              child: _bar(width: 12.5 * (1 - t * 0.25), color: widget.color),
+                            ),
+                            _bar(
+                              width: 7.5 + 10.5 * t,
+                              offset: 5.0 * (1 - t),
+                              angle: -0.7854 * t,
+                              color: widget.color,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bar({required double width, required Color color, double offset = 0, double angle = 0}) {
+    return Transform.translate(
+      offset: Offset(0, offset),
+      child: Transform.rotate(
+        angle: angle,
+        child: Container(
+          width: width,
+          height: 2.2,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
       ),
     );
   }

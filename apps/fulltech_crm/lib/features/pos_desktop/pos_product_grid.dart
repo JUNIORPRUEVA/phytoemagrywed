@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../../core/format/crm_format.dart';
+import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
+import '../common/pwa_icon.dart';
+import 'pos_category_rail.dart';
 import 'pos_tokens.dart';
 
 /// Rejilla de productos del POS de escritorio, con la densidad de la captura
-/// de FullPOS Cloud: tarjetas blancas compactas, precio y disponibilidad.
+/// de FullPOS Cloud: tarjetas compactas, precio y disponibilidad.
 ///
 /// **Limitación real:** el catálogo que expone la API del CRM a este módulo
-/// (`CatalogProduct` / `CatalogPresentation`) no trae imagen ni categoría, así
-/// que la tarjeta muestra un marcador neutro (no se inventan fotos) y no hay
-/// rail de categorías (no se inventan categorías).
+/// (`CatalogProduct` / `CatalogPresentation`) no trae imagen, así que la tarjeta
+/// muestra un marcador neutro (no se inventan fotos). La categoría llega solo si
+/// el API la envía; el rail filtra por ella y por existencia.
 class PosProductGrid extends StatelessWidget {
   const PosProductGrid({
     super.key,
@@ -18,12 +21,14 @@ class PosProductGrid extends StatelessWidget {
     required this.onAdd,
     this.loading = false,
     this.query = '',
+    this.filter = const PosRailFilter(),
   });
 
   final List<CatalogProduct> products;
   final void Function(CatalogProduct product, CatalogPresentation presentation) onAdd;
   final bool loading;
   final String query;
+  final PosRailFilter filter;
 
   @override
   Widget build(BuildContext context) {
@@ -32,9 +37,7 @@ class PosProductGrid extends StatelessWidget {
         child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: PosColors.primary)),
       );
     }
-    final rows = query.isEmpty
-        ? products
-        : products.where((p) => p.name.toLowerCase().contains(query.toLowerCase())).toList();
+    final rows = products.where(_matches).toList();
     if (rows.isEmpty) {
       return Center(
         child: Column(
@@ -43,7 +46,7 @@ class PosProductGrid extends StatelessWidget {
             const Icon(Icons.inventory_2_outlined, size: 34, color: PosColors.inkSecondary),
             const SizedBox(height: 10),
             Text(
-              query.isEmpty ? 'El catálogo está vacío.' : 'Ningún producto coincide con «$query».',
+              query.isEmpty ? 'Ningún producto en este filtro.' : 'Ningún producto coincide con «$query».',
               style: PosText.secondary,
             ),
           ],
@@ -69,6 +72,21 @@ class PosProductGrid extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Aplica texto, categoría y existencia. Sin datos inventados: si el
+  /// catálogo no informa existencias, «Con stock» deja pasar todo.
+  bool _matches(CatalogProduct product) {
+    final text = query.trim().toLowerCase();
+    if (text.isNotEmpty && !product.name.toLowerCase().contains(text)) return false;
+    if (filter.category.isNotEmpty && product.category != filter.category) return false;
+    final stockKnown = _hasStockInfo(product);
+    final sellable = _sellable(product) != null;
+    return switch (filter.availability) {
+      PosAvailability.all => true,
+      PosAvailability.inStock => stockKnown ? (product.presentations.any((p) => p.stock > 0) && sellable) : sellable,
+      PosAvailability.outOfStock => !sellable || (stockKnown && !product.presentations.any((p) => p.stock > 0)),
+    };
   }
 
   /// Primera presentación vendible (activa y con existencias si el endpoint las
@@ -195,9 +213,9 @@ class _AddButton extends StatelessWidget {
             color: enabled ? PosColors.primarySoft : PosColors.surfaceMuted,
             border: Border.all(color: enabled ? PosColors.primaryBorder : PosColors.border),
           ),
-          child: Icon(
-            Icons.add_rounded,
-            size: 16,
+          child: PwaIcon(
+            PwaIcons.plus,
+            size: 13,
             color: enabled ? PosColors.primary : PosColors.inkSecondary,
           ),
         ),

@@ -264,6 +264,9 @@ class _CrmShellState extends State<CrmShell> {
                   title: title,
                   subtitle: subtitle,
                   onMenu: () => setState(() => _menuOpen = !_menuOpen),
+                  menuOpen: _menuOpen,
+                  unread: state.unreadTotal,
+                  onBell: () => _go('whatsapp'),
                   online: !state.offline,
                   loading: state.loading,
                 ),
@@ -271,7 +274,11 @@ class _CrmShellState extends State<CrmShell> {
               ],
             ),
             if (_menuOpen) ...[
-              Positioned.fill(
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 56,
+                bottom: 0,
                 child: GestureDetector(
                   onTap: () => setState(() => _menuOpen = false),
                   child: Container(color: const Color(0x66000000)),
@@ -279,11 +286,12 @@ class _CrmShellState extends State<CrmShell> {
               ),
               Positioned(
                 left: 0,
-                top: 0,
+                top: 56,
                 bottom: 0,
-                child: Material(
-                  elevation: 12,
-                  child: CrmMenuDrawer(
+                child: CrmDrawerEntrance(
+                  child: Material(
+                    elevation: 12,
+                    child: CrmMenuDrawer(
                     sections: _navSections,
                     current: _tab,
                     onSelect: _go,
@@ -298,6 +306,7 @@ class _CrmShellState extends State<CrmShell> {
                     onLogout: () => state.logout(),
                     badges: badges,
                   ),
+                ),
                 ),
               ),
             ],

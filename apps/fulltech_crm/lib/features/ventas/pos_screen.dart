@@ -10,7 +10,9 @@ import '../../core/theme/crm_theme.dart';
 import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
+import '../common/pwa_icon.dart';
 import '../pos_desktop/pos_cart_panel.dart';
+import '../pos_desktop/pos_category_rail.dart';
 import '../pos_desktop/pos_product_grid.dart';
 import '../pos_desktop/pos_tokens.dart';
 
@@ -51,6 +53,7 @@ class _PosScreenState extends State<PosScreen> {
   double _deliveryFee = 0;
   bool _saving = false;
   List<Map<String, dynamic>> _catalogRows = const [];
+  PosRailFilter _railFilter = const PosRailFilter();
 
   @override
   void initState() {
@@ -84,6 +87,16 @@ class _PosScreenState extends State<PosScreen> {
   List<CatalogProduct> get _catalogProducts => [
         for (final row in _catalogRows) CatalogProduct.fromJson(row),
       ];
+
+  /// Categorías REALES presentes en el catálogo (vacío si el API no las envía).
+  List<String> get _catalogCategories {
+    final seen = <String>{};
+    for (final product in _catalogProducts) {
+      if (product.category.isNotEmpty) seen.add(product.category);
+    }
+    final list = seen.toList()..sort();
+    return list;
+  }
 
   /// Agrega una presentación al ticket (o suma 1 si ya estaba).
   void _addFromCatalog(CatalogProduct product, CatalogPresentation presentation) {
@@ -201,6 +214,11 @@ class _PosScreenState extends State<PosScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          PosCategoryRail(
+            entries: PosCategoryRail.buildEntries(_catalogCategories),
+            selected: _railFilter,
+            onSelect: (filter) => setState(() => _railFilter = filter),
+          ),
           Expanded(
             child: Column(
               children: [
@@ -219,6 +237,7 @@ class _PosScreenState extends State<PosScreen> {
                   child: PosProductGrid(
                     products: _catalogProducts,
                     query: _productSearch.text.trim(),
+                    filter: _railFilter,
                     loading: _catalogRows.isEmpty,
                     onAdd: _addFromCatalog,
                   ),
@@ -274,7 +293,11 @@ class _PosScreenState extends State<PosScreen> {
                   filled: false,
                   hintText: 'Buscar producto por nombre o código...',
                   hintStyle: PosText.secondary,
-                  prefixIcon: const Icon(Icons.search_rounded, size: 18, color: PosColors.inkSecondary),
+                  prefixIcon: const Padding(
+                    padding: EdgeInsets.only(left: 10, right: 6),
+                    child: PwaIcon(PwaIcons.search, size: 15, color: PosColors.inkSecondary),
+                  ),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 31, minHeight: 31),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(PosMetrics.radiusField),
@@ -289,17 +312,56 @@ class _PosScreenState extends State<PosScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          _actionButton(Icons.add_box_outlined, 'Agregar artículo', _pickProduct),
+          _actionButton(PwaIcons.plus, 'Agregar artículo', _pickProduct),
           const SizedBox(width: 6),
-          _actionButton(Icons.person_add_alt_1_outlined, 'Agregar cliente', _pickCustomer),
+          _actionButton(PwaIcons.usersadd, 'Agregar cliente', _pickCustomer),
           const SizedBox(width: 6),
-          _actionButton(Icons.refresh_rounded, 'Recargar catálogo', _loadCatalog),
+          _filterButton(),
+          const SizedBox(width: 6),
+          _actionButton(PwaIcons.refresh, 'Recargar catálogo', _loadCatalog),
         ],
       ),
     );
   }
 
-  Widget _actionButton(IconData icon, String label, VoidCallback onTap) {
+  /// Filtro de existencia; el rail refleja la misma selección.
+  Widget _filterButton() {
+    final active = _railFilter.availability != PosAvailability.all;
+    return PopupMenuButton<PosRailFilter>(
+      tooltip: 'Filtrar artículos',
+      initialValue: _railFilter,
+      onSelected: (filter) => setState(() => _railFilter = filter),
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: PosRailFilter(), child: Text('Todos los artículos')),
+        PopupMenuItem(
+          value: PosRailFilter(availability: PosAvailability.inStock),
+          child: Text('Solo con stock'),
+        ),
+        PopupMenuItem(
+          value: PosRailFilter(availability: PosAvailability.outOfStock),
+          child: Text('Solo agotados'),
+        ),
+      ],
+      child: Container(
+        height: PosMetrics.actionButtonHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: active ? PosColors.primarySoft : PosColors.surface,
+          borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
+          border: Border.all(color: active ? PosColors.primaryBorder : PosColors.border),
+        ),
+        child: Row(
+          children: [
+            PwaIcon(PwaIcons.filter, size: 15, color: PosColors.primary),
+            const SizedBox(width: 6),
+            Text('Filtro', style: PosText.pill.copyWith(fontSize: 11.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionButton(String icon, String label, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
@@ -313,7 +375,7 @@ class _PosScreenState extends State<PosScreen> {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: PosColors.primary),
+            PwaIcon(icon, size: 15, color: PosColors.primary),
             const SizedBox(width: 6),
             Text(label, style: PosText.pill.copyWith(fontSize: 11.5)),
           ],

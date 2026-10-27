@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fulltech_crm/core/pos/pos_sale.dart';
+import 'package:fulltech_crm/core/theme/crm_tokens.dart';
 import 'package:fulltech_crm/data/models/crm_models.dart';
+import 'package:fulltech_crm/features/common/pwa_icon.dart';
 import 'package:fulltech_crm/features/pos_desktop/pos_cart_panel.dart';
 import 'package:fulltech_crm/features/pos_desktop/pos_product_grid.dart';
 
@@ -10,6 +12,11 @@ import 'package:fulltech_crm/features/pos_desktop/pos_product_grid.dart';
 /// No tocan red ni backend: comprueban que los widgets pintan los datos del
 /// CRM y que las acciones (agregar, cantidad, quitar, cobrar) se disparan.
 void main() {
+  /// El botón de agregar usa el icono original del PWA (`plus.png`).
+  final addIcon = find.byWidgetPredicate(
+    (widget) => widget is PwaIcon && widget.asset == PwaIcons.plus,
+  );
+
   CatalogProduct product({int stock = 5, bool available = true}) => CatalogProduct(
         id: 'prd_1',
         name: 'Auriculares Pro 4',
@@ -60,7 +67,7 @@ void main() {
       expect(find.text('Auriculares Pro 4'), findsOneWidget);
       expect(find.textContaining('900'), findsWidgets);
       expect(find.text('Disp. 5'), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.tap(addIcon);
       expect(added, 1);
     });
 
@@ -77,7 +84,7 @@ void main() {
         ),
       )));
       expect(find.text('Sin stock'), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.add_rounded), warnIfMissed: false);
+      await tester.tap(addIcon, warnIfMissed: false);
       expect(added, 0);
     });
   });
