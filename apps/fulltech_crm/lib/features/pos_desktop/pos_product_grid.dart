@@ -136,7 +136,7 @@ class _PosProductCardState extends State<PosProductCard> {
                 color: PosColors.surfaceMuted,
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(Icons.image_outlined, size: 26, color: Color(0xFFC3CDDB)),
+              child: const Icon(Icons.image_outlined, size: 26, color: Color(0xFF4A5455)),
             ),
             const SizedBox(height: 6),
             Expanded(
@@ -154,7 +154,7 @@ class _PosProductCardState extends State<PosProductCard> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
-                    color: outOfStock ? const Color(0xFFFDECEE) : PosColors.primarySoft,
+                    color: outOfStock ? const Color(0xFF3A2224) : PosColors.primarySoft,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(

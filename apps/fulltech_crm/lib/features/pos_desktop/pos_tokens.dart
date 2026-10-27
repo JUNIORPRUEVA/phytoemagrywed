@@ -7,25 +7,25 @@ import 'package:flutter/widgets.dart';
 /// Ámbito: solo `features/pos_desktop` y la presentación del POS. El chat tiene
 /// sus propios tokens (`features/whatsapp/desktop`) y no se toca.
 abstract final class PosColors {
-  /// `AppColors.primary` del POS.
+  /// Acento de marca (botones y selección). No cambia entre temas.
   static const Color primary = Color(0xFF1957E6);
-  static const Color primaryDark = Color(0xFF123A75);
-  static const Color primarySoft = Color(0xFFEAF1FF);
-  static const Color primaryBorder = Color(0xFFCFE0FF);
+  static const Color primaryDark = Color(0xFF8DBBFF);
+  static const Color primarySoft = Color(0xFF16233C);
+  static const Color primaryBorder = Color(0xFF23406B);
 
-  /// `AppColors.background`.
-  static const Color pageBg = Color(0xFFEFF5F8);
-  static const Color surface = Color(0xFFFFFFFF);
-  static const Color surfaceMuted = Color(0xFFF4F8FB);
+  /// Superficies del shell oscuro (mismo lenguaje que el chat).
+  static const Color pageBg = Color(0xFF161717);
+  static const Color surface = Color(0xFF1C1D1D);
+  static const Color surfaceMuted = Color(0xFF202121);
 
-  static const Color ink = Color(0xFF102235);
-  static const Color inkSecondary = Color(0xFF52667C);
-  static const Color border = Color(0xFFDDE7EE);
-  static const Color borderSoft = Color(0xFFEDF1F6);
+  static const Color ink = Color(0xFFFAFAFA);
+  static const Color inkSecondary = Color(0xFFC0C1C1);
+  static const Color border = Color(0xFF2E2F2F);
+  static const Color borderSoft = Color(0xFF262727);
 
-  static const Color success = Color(0xFF16A34A);
-  static const Color warning = Color(0xFFB45309);
-  static const Color danger = Color(0xFFDC2626);
+  static const Color success = Color(0xFF25D366);
+  static const Color warning = Color(0xFFE9A23B);
+  static const Color danger = Color(0xFFF15C6D);
 
   /// Azul del botón «Cobrar» (bloque grande de la captura).
   static const Color checkout = Color(0xFF1957E6);

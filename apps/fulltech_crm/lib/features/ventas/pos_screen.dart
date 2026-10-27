@@ -271,6 +271,7 @@ class _PosScreenState extends State<PosScreen> {
                 style: PosText.body,
                 decoration: InputDecoration(
                   isDense: true,
+                  filled: false,
                   hintText: 'Buscar producto por nombre o código...',
                   hintStyle: PosText.secondary,
                   prefixIcon: const Icon(Icons.search_rounded, size: 18, color: PosColors.inkSecondary),

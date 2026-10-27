@@ -33,6 +33,7 @@ import '../ventas/solicitudes_screen.dart';
 import '../ventas/tiendas_screen.dart';
 import '../whatsapp/chats_desktop.dart';
 import '../whatsapp/whatsapp_screen.dart';
+import 'crm_dark_shell.dart';
 import 'pwa_shell.dart';
 
 /// Un destino del menú (`data-tab` del panel). [image] es el **icono original
@@ -58,8 +59,8 @@ const List<CrmDestination> crmDestinations = [
   CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Punto de Ventas (POS)'),
   CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
   CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes, group: 'Punto de Ventas (POS)'),
+  CrmDestination('cierre', 'Cierre diario', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
   CrmDestination('reportes', 'Reportes', Icons.insert_chart_outlined, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
-  CrmDestination('cierre', 'Cierre', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
   CrmDestination('hoy', 'Hoy', Icons.wb_sunny_outlined, image: PwaIcons.sun, group: 'Principal'),
   CrmDestination('whatsapp', 'Chats', Icons.forum_outlined, image: PwaIcons.support, group: 'Principal'),
   CrmDestination('catalogo', 'Tienda en línea', Icons.storefront_outlined, image: PwaIcons.cart, group: 'Catálogo y stock'),
@@ -111,7 +112,9 @@ class _CrmShellState extends State<CrmShell> {
   Widget _body(bool desktop) => switch (_tab) {
         'hoy' => HoyScreen(onNavigate: _go),
         // En escritorio los chats ocupan el rail + la lista + el hilo.
-        'whatsapp' => desktop ? ChatsDesktopScreen(onNavigate: _go) : const WhatsappScreen(),
+        'whatsapp' => desktop
+            ? ChatsDesktopScreen(onNavigate: _go, showRail: false)
+            : const WhatsappScreen(),
         'pedidos' => const PedidosScreen(),
         'clientes' => const ClientesScreen(),
         'catalogo' => const CatalogoScreen(),
@@ -195,6 +198,47 @@ class _CrmShellState extends State<CrmShell> {
         Expanded(child: _body(desktop)),
       ],
     );
+
+    // ------------------------------------------------------------- escritorio
+    // Un solo sistema visual: menú lateral oscuro fijo + barra oscura. Es el
+    // mismo lenguaje del chat estilo WhatsApp, y el POS vive dentro de él.
+    if (desktop) {
+      final destination =
+          crmDestinations.firstWhere((row) => row.tab == _tab, orElse: () => crmDestinations.first);
+      final title = destination.label;
+      final subtitle = destination.group.isEmpty ? 'FullTECH CRM' : destination.group;
+      return Scaffold(
+        backgroundColor: CrmDark.panel,
+        body: Row(
+          children: [
+            CrmDarkSidebar(
+              groups: _navGroups,
+              current: _tab,
+              onSelect: _go,
+              userName: state.session.user?.displayName ?? 'Equipo FullTECH',
+              userRole: _roleLabel(state),
+              themeLabel: _themeLabel,
+              onThemeCycle: _cycleTheme,
+              onLogout: () => state.logout(),
+              badges: badges,
+            ),
+            Expanded(
+              child: Column(
+                children: [
+                  CrmDarkTopbar(
+                    title: title,
+                    subtitle: subtitle,
+                    online: !state.offline,
+                    loading: state.loading,
+                  ),
+                  Expanded(child: content),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Stack(
       children: [

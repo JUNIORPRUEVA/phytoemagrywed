@@ -333,13 +333,24 @@ class PosCartPanel extends StatelessWidget {
                   style: PosText.body,
                   decoration: const InputDecoration(
                     isDense: true,
+                    filled: false,
                     hintText: '0.00',
+                    hintStyle: PosText.secondary,
                     contentPadding: EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 8,
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.all(Radius.circular(6)),
+                      borderSide: BorderSide(color: PosColors.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(6)),
+                      borderSide: BorderSide(color: PosColors.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(6)),
+                      borderSide: BorderSide(color: PosColors.primary),
                     ),
                   ),
                   onChanged: (value) => onDeliveryFeeChanged(

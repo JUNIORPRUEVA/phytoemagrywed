@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 /// Tokens EXCLUSIVOS del módulo de conversaciones de escritorio.
 ///
@@ -83,6 +83,36 @@ abstract final class ChatDesktopMetrics {
 
 /// Escala tipográfica deducida de la captura (nombre 15, vista previa 13,
 /// hora 11, título "Chats" 22).
+/// Tema oscuro del módulo de chat (toda la pantalla, no solo el hilo).
+ThemeData buildChatDesktopTheme() {
+  return ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    scaffoldBackgroundColor: ChatDesktopColors.panelBg,
+    colorScheme: const ColorScheme.dark(
+      primary: ChatDesktopColors.accent,
+      surface: ChatDesktopColors.fieldBg,
+      onSurface: ChatDesktopColors.textPrimary,
+    ),
+    inputDecorationTheme: const InputDecorationTheme(filled: false),
+    chipTheme: const ChipThemeData(
+      backgroundColor: ChatDesktopColors.fieldBg,
+      selectedColor: ChatDesktopColors.rowSelected,
+      side: BorderSide.none,
+      labelStyle: TextStyle(
+        fontFamily: ChatDesktopMetrics.fontFamily,
+        fontSize: 12.5,
+        color: ChatDesktopColors.textPrimary,
+      ),
+    ),
+    popupMenuTheme: const PopupMenuThemeData(color: ChatDesktopColors.fieldBg),
+    dialogTheme: const DialogThemeData(
+      backgroundColor: ChatDesktopColors.fieldBg,
+    ),
+  );
+}
+
 abstract final class ChatDesktopText {
   static const TextStyle title = TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,

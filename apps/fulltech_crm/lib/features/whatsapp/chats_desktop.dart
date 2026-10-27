@@ -24,10 +24,13 @@ import 'desktop/chat_navigation_rail.dart';
 /// de compilación, porque el panel contextual se ha movido al menú del
 /// encabezado (la referencia no tiene tercera columna).
 class ChatsDesktopScreen extends StatefulWidget {
-  const ChatsDesktopScreen({super.key, this.onNavigate});
+  const ChatsDesktopScreen({super.key, this.onNavigate, this.showRail = true});
 
   /// Cambio de módulo desde el rail; lo provee el shell.
   final ValueChanged<String>? onNavigate;
+
+  /// `false` cuando el shell ya pinta el menú lateral (nada de dos rails).
+  final bool showRail;
 
   @override
   State<ChatsDesktopScreen> createState() => _ChatsDesktopScreenState();
@@ -74,48 +77,51 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
       math.max(272.0, (width - railWidth) * 0.3),
     );
 
-    // `Material` propio: `InkWell` y `TextField` necesitan un ancestro Material.
-    // No se puede depender del shell, porque esta pantalla también se usa sola.
-    return Material(
-      color: ChatDesktopColors.panelBg,
-      child: Row(
-        children: [
-          ChatNavigationRail(
-            currentTab: 'whatsapp',
-            unread: state.unreadTotal,
-            initials: (user?.initials.isNotEmpty ?? false)
-                ? user!.initials
-                : 'FT',
-            onNavigate: (tab) => widget.onNavigate?.call(tab),
-            onLogout: state.logout,
-          ),
-          SizedBox(
-            width: listWidth,
-            child: ChatListPanel(
-              conversations: conversations,
-              selectedId: selectedId,
-              onSelect: (id) => setState(() => _selectedId = id),
-              search: _search,
-              onSearchChanged: (_) => setState(() {}),
-              filter: _filter,
-              onFilterChanged: (value) => setState(() => _filter = value),
-              onRefresh: () => state.refresh(),
-              unreadTotal: state.unreadTotal,
+    // Todo el módulo (lista incluida) va con el tema oscuro del chat.
+    return Theme(
+      data: buildChatDesktopTheme(),
+      child: Material(
+        color: ChatDesktopColors.panelBg,
+        child: Row(
+          children: [
+            if (widget.showRail)
+              ChatNavigationRail(
+                currentTab: 'whatsapp',
+                unread: state.unreadTotal,
+                initials: (user?.initials.isNotEmpty ?? false)
+                    ? user!.initials
+                    : 'FT',
+                onNavigate: (tab) => widget.onNavigate?.call(tab),
+                onLogout: state.logout,
+              ),
+            SizedBox(
+              width: listWidth,
+              child: ChatListPanel(
+                conversations: conversations,
+                selectedId: selectedId,
+                onSelect: (id) => setState(() => _selectedId = id),
+                search: _search,
+                onSearchChanged: (_) => setState(() {}),
+                filter: _filter,
+                onFilterChanged: (value) => setState(() => _filter = value),
+                onRefresh: () => state.refresh(),
+                unreadTotal: state.unreadTotal,
+              ),
             ),
-          ),
-          Expanded(
-            child: selectedId == null
-                ? const ChatDoodleBackground(child: _NoConversation())
-                : ChatScreen(
-                    key: ValueKey(selectedId),
-                    conversationId: selectedId,
-                    title:
-                        state.conversationById(selectedId)?.name ??
-                        'Conversación',
-                    desktop: true,
-                  ),
-          ),
-        ],
+            Expanded(
+              child: selectedId == null
+                  ? const ChatDoodleBackground(child: _NoConversation())
+                  : ChatScreen(
+                      key: ValueKey(selectedId),
+                      conversationId: selectedId,
+                      title:
+                          state.conversationById(selectedId)?.name ??
+                          'Conversación',
+                      desktop: true,
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
