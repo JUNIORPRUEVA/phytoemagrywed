@@ -48,27 +48,32 @@ class CrmDestination {
 }
 
 /// Los mismos módulos del CRM, con los grupos y los iconos del PWA.
+///
+/// El primer grupo es **«Punto de Ventas (POS)»**: agrupa los seis módulos
+/// comerciales que en FullPOS Cloud cuelgan del menú «Ventas». Los duplicados
+/// de esos seis se han retirado de sus grupos anteriores (la ruta sigue
+/// existiendo, solo cambia dónde aparece).
 const List<CrmDestination> crmDestinations = [
+  CrmDestination('pos', 'Ventas', Icons.point_of_sale_rounded, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
+  CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Punto de Ventas (POS)'),
+  CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
+  CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes, group: 'Punto de Ventas (POS)'),
+  CrmDestination('reportes', 'Reportes', Icons.insert_chart_outlined, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
+  CrmDestination('cierre', 'Cierre', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
   CrmDestination('hoy', 'Hoy', Icons.wb_sunny_outlined, image: PwaIcons.sun, group: 'Principal'),
   CrmDestination('whatsapp', 'Chats', Icons.forum_outlined, image: PwaIcons.support, group: 'Principal'),
-  CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Principal'),
-  CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes, group: 'Principal'),
-  CrmDestination('pos', 'Facturación', Icons.point_of_sale_rounded, image: PwaIcons.billing, group: 'Ventas'),
-  CrmDestination('catalogo', 'Punto de venta', Icons.storefront_outlined, image: PwaIcons.cart, group: 'Ventas'),
-  CrmDestination('inventario', 'Ajuste de stock', Icons.inventory_2_outlined, image: PwaIcons.orders, group: 'Ventas'),
-  CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Ventas'),
-  CrmDestination('solicitudes', 'Archivo de solicitudes', Icons.folder_copy_outlined, image: PwaIcons.orders, group: 'Ventas'),
-  CrmDestination('recuento', 'Recuento', Icons.fact_check_outlined, image: PwaIcons.orders, group: 'Ventas'),
-  CrmDestination('recogidas', 'Recogidas', Icons.shopping_bag_outlined, image: PwaIcons.cart, group: 'Ventas'),
-  CrmDestination('tiendas', 'Tiendas', Icons.storefront_rounded, image: PwaIcons.cart, group: 'Ventas'),
+  CrmDestination('catalogo', 'Tienda en línea', Icons.storefront_outlined, image: PwaIcons.cart, group: 'Catálogo y stock'),
+  CrmDestination('inventario', 'Ajuste de stock', Icons.inventory_2_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
+  CrmDestination('solicitudes', 'Archivo de solicitudes', Icons.folder_copy_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
+  CrmDestination('recuento', 'Recuento', Icons.fact_check_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
+  CrmDestination('recogidas', 'Recogidas', Icons.shopping_bag_outlined, image: PwaIcons.cart, group: 'Catálogo y stock'),
+  CrmDestination('tiendas', 'Tiendas', Icons.storefront_rounded, image: PwaIcons.cart, group: 'Catálogo y stock'),
   CrmDestination('mapa', 'Mapa', Icons.map_outlined, image: PwaIcons.delivery, group: 'Entregas'),
   CrmDestination('custodia', 'Custodia y rendiciones', Icons.account_balance_wallet_outlined, image: PwaIcons.custody, group: 'Entregas'),
   CrmDestination('repartidores', 'Repartidores', Icons.delivery_dining_outlined, image: PwaIcons.couriers, group: 'Entregas'),
   CrmDestination('ops', 'Agentes IA', Icons.smart_toy_outlined, image: PwaIcons.robot),
-  CrmDestination('cierre', 'Cierre diario', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Cierre diario'),
-  CrmDestination('reportes', 'Reportes', Icons.insert_chart_outlined, image: PwaIcons.chart, group: 'Cierre diario'),
-  CrmDestination('seguimientos', 'Seguimientos', Icons.event_repeat_outlined, image: PwaIcons.share, group: 'Cierre diario'),
-  CrmDestination('mensajes', 'Mensajes programados', Icons.schedule_send_outlined, image: PwaIcons.bell, group: 'Cierre diario'),
+  CrmDestination('seguimientos', 'Seguimientos', Icons.event_repeat_outlined, image: PwaIcons.share, group: 'Operación'),
+  CrmDestination('mensajes', 'Mensajes programados', Icons.schedule_send_outlined, image: PwaIcons.bell, group: 'Operación'),
   CrmDestination('usuarios', 'Usuarios', Icons.group_add_outlined, image: PwaIcons.usersadd, group: 'Administración'),
   CrmDestination('ajustes', 'Configuración', Icons.settings_outlined, image: PwaIcons.filter, group: 'Administración'),
   CrmDestination('perfil', 'Mi perfil', Icons.person_outline_rounded, image: PwaIcons.user, group: 'Administración'),
@@ -110,7 +115,7 @@ class _CrmShellState extends State<CrmShell> {
         'pedidos' => const PedidosScreen(),
         'clientes' => const ClientesScreen(),
         'catalogo' => const CatalogoScreen(),
-        'pos' => PosScreen(embedded: desktop),
+        'pos' => PosScreen(embedded: desktop, desktop: desktop),
         'inventario' => const InventarioScreen(),
         'cotizaciones' => const CotizacionesScreen(),
         'solicitudes' => const SolicitudesScreen(),
@@ -199,7 +204,11 @@ class _CrmShellState extends State<CrmShell> {
                 ? Column(
                     children: [
                       const SizedBox(height: CrmShellMetrics.canvasTop),
-                      Expanded(child: PwaCanvas(child: content)),
+                      // El POS ocupa TODO el ancho (como FullPOS): el lienzo
+                      // centrado del PWA dejaría la rejilla en 4 columnas.
+                      Expanded(
+                        child: _tab == 'pos' ? content : PwaCanvas(child: content),
+                      ),
                     ],
                   )
                 : Column(

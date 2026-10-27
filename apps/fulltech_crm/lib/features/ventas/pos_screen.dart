@@ -10,6 +10,9 @@ import '../../core/theme/crm_theme.dart';
 import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
+import '../pos_desktop/pos_cart_panel.dart';
+import '../pos_desktop/pos_product_grid.dart';
+import '../pos_desktop/pos_tokens.dart';
 
 /// Punto de venta: cliente + artículos + cobro → pedido, factura o cotización.
 ///
@@ -19,10 +22,14 @@ import '../common/crm_ui.dart';
 /// · `x-fulltech-operation` con la misma clave: el servidor deduplica.
 /// · Sin respuesta → estado INCIERTO: nunca se reenvía solo; primero se consulta.
 class PosScreen extends StatefulWidget {
-  const PosScreen({super.key, this.embedded = false});
+  const PosScreen({super.key, this.embedded = false, this.desktop = false});
 
   /// Dentro del panel de escritorio (ya hay barra superior con el título).
   final bool embedded;
+
+  /// Presentación de escritorio al estilo FullPOS: rejilla + panel de venta.
+  /// La lógica (cobro, idempotencia, precios) es exactamente la misma.
+  final bool desktop;
 
   @override
   State<PosScreen> createState() => _PosScreenState();
@@ -30,6 +37,7 @@ class PosScreen extends StatefulWidget {
 
 class _PosScreenState extends State<PosScreen> {
   final _search = TextEditingController();
+  final _productSearch = TextEditingController();
   final _address = TextEditingController();
   final _notes = TextEditingController();
   final PosOperation _operation = PosOperation();
@@ -53,6 +61,7 @@ class _PosScreenState extends State<PosScreen> {
   @override
   void dispose() {
     _search.dispose();
+    _productSearch.dispose();
     _address.dispose();
     _notes.dispose();
     super.dispose();
@@ -69,6 +78,248 @@ class _PosScreenState extends State<PosScreen> {
     paymentMethod: _method,
     paid: _paid,
   );
+
+  // --------------------------------------------------------------- escritorio
+
+  List<CatalogProduct> get _catalogProducts => [
+        for (final row in _catalogRows) CatalogProduct.fromJson(row),
+      ];
+
+  /// Agrega una presentación al ticket (o suma 1 si ya estaba).
+  void _addFromCatalog(CatalogProduct product, CatalogPresentation presentation) {
+    final index = _lines.indexWhere((line) => line.variantId == presentation.id);
+    setState(() {
+      if (index >= 0) {
+        final line = _lines[index];
+        if (line.quantity < 9999) _lines[index] = line.copyWith(quantity: line.quantity + 1);
+      } else {
+        _lines.add(
+          PosLine(
+            variantId: presentation.id,
+            productName: product.name,
+            presentationName: presentation.name,
+            unitPriceCents: posUnitPriceCents(presentation),
+            quantity: 1,
+          ),
+        );
+      }
+    });
+  }
+
+  void _changeQuantity(PosLine line, int delta) {
+    final index = _lines.indexOf(line);
+    if (index < 0) return;
+    final next = line.quantity + delta;
+    setState(() {
+      if (next <= 0) {
+        _lines.removeAt(index);
+      } else if (next <= 9999) {
+        _lines[index] = line.copyWith(quantity: next);
+      }
+    });
+  }
+
+  void _removeLine(PosLine line) => setState(() => _lines.remove(line));
+
+  /// Selector de cliente (usa la lista real de `CrmState`).
+  Future<void> _pickCustomer() async {
+    final selected = await showDialog<Customer>(
+      context: context,
+      builder: (dialogContext) {
+        final controller = TextEditingController();
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final state = CrmScope.of(dialogContext);
+            final query = controller.text.trim().toLowerCase();
+            final matches = state.customers
+                .where(
+                  (row) =>
+                      query.isEmpty ||
+                      row.name.toLowerCase().contains(query) ||
+                      row.phone.toLowerCase().contains(query),
+                )
+                .take(60)
+                .toList();
+            return AlertDialog(
+              title: const Text('Elegir cliente'),
+              content: SizedBox(
+                width: 420,
+                height: 420,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: const InputDecoration(hintText: 'Nombre o teléfono'),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: matches.isEmpty
+                          ? const Center(child: Text('Sin coincidencias.'))
+                          : ListView.builder(
+                              itemCount: matches.length,
+                              itemBuilder: (context, index) {
+                                final row = matches[index];
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(row.name),
+                                  subtitle: Text(row.phone),
+                                  onTap: () => Navigator.of(dialogContext).pop(row),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    _newCustomer();
+                  },
+                  child: const Text('Nuevo cliente'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (selected != null && mounted) setState(() => _customer = selected);
+  }
+
+  Widget _buildDesktop(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    return Material(
+      color: PosColors.pageBg,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: Column(
+              children: [
+                _desktopActionBar(),
+                if (_operation.attempts > 1)
+                  Container(
+                    width: double.infinity,
+                    color: PosColors.primarySoft,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Text(
+                      'Reintento seguro: la operación conserva su identificador, no se duplicará.',
+                      style: PosText.pill.copyWith(color: PosColors.primaryDark, fontSize: 11.5),
+                    ),
+                  ),
+                Expanded(
+                  child: PosProductGrid(
+                    products: _catalogProducts,
+                    query: _productSearch.text.trim(),
+                    loading: _catalogRows.isEmpty,
+                    onAdd: _addFromCatalog,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: PosMetrics.cartWidth(width),
+            child: PosCartPanel(
+              lines: _lines,
+              customer: _customer,
+              mode: _mode,
+              method: _method,
+              paid: _paid,
+              deliveryFee: _deliveryFee,
+              saving: _saving,
+              onQuantity: _changeQuantity,
+              onRemove: _removeLine,
+              onPickCustomer: _pickCustomer,
+              onClear: () => setState(_lines.clear),
+              onModeChanged: (value) => setState(() => _mode = value),
+              onMethodChanged: (value) => setState(() => _method = value),
+              onPaidChanged: (value) => setState(() => _paid = value),
+              onDeliveryFeeChanged: (value) => setState(() => _deliveryFee = value),
+              onCheckout: _submit,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _desktopActionBar() {
+    return Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: const BoxDecoration(
+        color: PosColors.surface,
+        border: Border(bottom: BorderSide(color: PosColors.border)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: PosMetrics.searchHeight,
+              child: TextField(
+                controller: _productSearch,
+                onChanged: (_) => setState(() {}),
+                style: PosText.body,
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Buscar producto por nombre o código...',
+                  hintStyle: PosText.secondary,
+                  prefixIcon: const Icon(Icons.search_rounded, size: 18, color: PosColors.inkSecondary),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(PosMetrics.radiusField),
+                    borderSide: const BorderSide(color: PosColors.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(PosMetrics.radiusField),
+                    borderSide: const BorderSide(color: PosColors.border),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _actionButton(Icons.add_box_outlined, 'Agregar artículo', _pickProduct),
+          const SizedBox(width: 6),
+          _actionButton(Icons.person_add_alt_1_outlined, 'Agregar cliente', _pickCustomer),
+          const SizedBox(width: 6),
+          _actionButton(Icons.refresh_rounded, 'Recargar catálogo', _loadCatalog),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionButton(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
+      child: Container(
+        height: PosMetrics.actionButtonHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: PosColors.surface,
+          borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
+          border: Border.all(color: PosColors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: PosColors.primary),
+            const SizedBox(width: 6),
+            Text(label, style: PosText.pill.copyWith(fontSize: 11.5)),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _loadCatalog() async {
     final repo = CrmScope.of(context, listen: false).repository;
@@ -468,6 +719,9 @@ class _PosScreenState extends State<PosScreen> {
   Widget build(BuildContext context) {
     final state = CrmScope.of(context);
     final p = context.crm;
+
+    if (widget.desktop) return _buildDesktop(context);
+
     final query = _search.text.trim().toLowerCase();
     final matches = query.isEmpty
         ? const <Customer>[]
