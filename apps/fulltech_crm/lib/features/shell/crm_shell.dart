@@ -105,7 +105,8 @@ class _CrmShellState extends State<CrmShell> {
 
   Widget _body(bool desktop) => switch (_tab) {
         'hoy' => HoyScreen(onNavigate: _go),
-        'whatsapp' => desktop ? const ChatsDesktopScreen() : const WhatsappScreen(),
+        // En escritorio los chats ocupan el rail + la lista + el hilo.
+        'whatsapp' => desktop ? ChatsDesktopScreen(onNavigate: _go) : const WhatsappScreen(),
         'pedidos' => const PedidosScreen(),
         'clientes' => const ClientesScreen(),
         'catalogo' => const CatalogoScreen(),

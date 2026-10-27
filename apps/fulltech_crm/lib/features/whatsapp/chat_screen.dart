@@ -14,12 +14,22 @@ import '../../core/theme/crm_theme.dart';
 import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
+import 'desktop/chat_composer.dart';
+import 'desktop/chat_desktop_theme.dart';
+import 'desktop/chat_header.dart';
+import 'desktop/chat_thread.dart';
 import 'voice_recorder.dart';
 
 /// Hilo de WhatsApp con todo lo que permite el CRM: texto, fotos, PDF, notas de
 /// voz, ubicaciones, plantillas, asignación a un compañero y cierre.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.conversationId, required this.title, this.embedded = false});
+  const ChatScreen({
+    super.key,
+    required this.conversationId,
+    required this.title,
+    this.embedded = false,
+    this.desktop = false,
+  });
 
   final String conversationId;
   final String title;
@@ -29,6 +39,10 @@ class ChatScreen extends StatefulWidget {
   /// En móvil se sigue abriendo como pantalla completa.
   final bool embedded;
 
+  /// Presentación de escritorio (estilo WhatsApp Desktop): encabezado, hilo con
+  /// patrón de fondo y barra de redacción nuevos. La lógica es la misma.
+  final bool desktop;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -36,6 +50,9 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _composer = TextEditingController();
   final _scroll = ScrollController();
+  final _threadSearch = TextEditingController();
+  bool _searching = false;
+  String _threadQuery = '';
   List<ChatMessage> _messages = const [];
   final List<String> _queued = <String>[];
   bool _loading = true;
@@ -53,6 +70,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _composer.dispose();
     _scroll.dispose();
+    _threadSearch.dispose();
     super.dispose();
   }
 
@@ -540,6 +558,98 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Presentación de escritorio del hilo (estilo WhatsApp Desktop).
+  ///
+  /// Reutiliza exactamente los mismos manejadores (`_send`, `_pickAndSendMedia`,
+  /// `_openShareSheet`, `_recordVoice`, `_menuButton`) y los mismos datos; solo
+  /// cambia la capa visual.
+  Widget _buildDesktop(BuildContext context) {
+    final conversation = _conversation;
+    final phone = (conversation?.phone ?? '').trim();
+    final stage = (conversation?.stage ?? '').toLowerCase();
+    final subtitle = [
+      if (phone.isNotEmpty) phone,
+      if (stage.isNotEmpty) stage,
+      if (conversation?.isResolved == true) 'finalizada',
+    ].join(' · ');
+
+    final dark = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      fontFamily: ChatDesktopMetrics.fontFamily,
+      colorScheme: const ColorScheme.dark(
+        primary: ChatDesktopColors.accent,
+        surface: ChatDesktopColors.fieldBg,
+        onSurface: ChatDesktopColors.textPrimary,
+      ),
+      popupMenuTheme: const PopupMenuThemeData(color: ChatDesktopColors.fieldBg),
+      dialogTheme: const DialogThemeData(backgroundColor: ChatDesktopColors.fieldBg),
+    );
+
+    final Widget body;
+    if (_loading) {
+      body = const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2, color: ChatDesktopColors.accent),
+        ),
+      );
+    } else if (_error != null) {
+      body = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded, size: 30, color: ChatDesktopColors.danger),
+            const SizedBox(height: 10),
+            Text(_error!, textAlign: TextAlign.center, style: ChatDesktopText.rowPreview),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _load,
+              child: const Text('Reintentar', style: TextStyle(color: ChatDesktopColors.accent)),
+            ),
+          ],
+        ),
+      );
+    } else {
+      body = ChatThread(messages: _messages, queued: _queued, search: _threadQuery);
+    }
+
+    return Theme(
+      data: dark,
+      child: Column(
+        children: [
+          ChatHeader(
+            name: conversation?.name ?? widget.title,
+            subtitle: subtitle,
+            menu: _menuButton(conversation),
+            onCall: phone.isEmpty ? null : () => launchUrl(Uri.parse('tel:$phone')),
+            searching: _searching,
+            searchController: _threadSearch,
+            onSearchChanged: (value) => setState(() => _threadQuery = value),
+            onToggleSearch: () => setState(() {
+              _searching = !_searching;
+              if (!_searching) {
+                _threadSearch.clear();
+                _threadQuery = '';
+              }
+            }),
+          ),
+          Expanded(child: body),
+          ChatComposer(
+            controller: _composer,
+            sending: _sending,
+            uploadLabel: _uploadLabel,
+            onSend: () => _send(),
+            onAttach: (kind) => _pickAndSendMedia(kind),
+            onShareLocation: () => _openShareSheet(),
+            onRecord: () => _recordVoice(),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Menú de acciones del hilo. Se usa igual en la barra de la app y en el
   /// encabezado del chat embebido de escritorio (una sola definición).
   List<Widget> _menuButton(Conversation? conversation) => [
@@ -575,6 +685,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final state = CrmScope.of(context);
     final conversation = state.conversationById(widget.conversationId);
     final phone = conversation?.phone ?? '';
+
+    if (widget.desktop) return _buildDesktop(context);
 
     return Scaffold(
       backgroundColor: p.pageBg,
