@@ -56,28 +56,28 @@ class CrmDestination {
 /// existiendo, solo cambia dónde aparece).
 const List<CrmDestination> crmDestinations = [
   CrmDestination('whatsapp', 'WhatsApp', Icons.forum_outlined, image: PwaIcons.support),
-  CrmDestination('pos', 'Ventas', Icons.point_of_sale_rounded, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
-  CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Punto de Ventas (POS)'),
-  CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
-  CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes, group: 'Punto de Ventas (POS)'),
-  CrmDestination('cierre', 'Cierre diario', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
-  CrmDestination('reportes', 'Reportes', Icons.insert_chart_outlined, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
-  CrmDestination('hoy', 'Hoy', Icons.wb_sunny_outlined, image: PwaIcons.sun, group: 'Principal'),
-  CrmDestination('catalogo', 'Tienda en línea', Icons.storefront_outlined, image: PwaIcons.cart, group: 'Catálogo y stock'),
-  CrmDestination('inventario', 'Ajuste de stock', Icons.inventory_2_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
-  CrmDestination('solicitudes', 'Archivo de solicitudes', Icons.folder_copy_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
-  CrmDestination('recuento', 'Recuento', Icons.fact_check_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
-  CrmDestination('recogidas', 'Recogidas', Icons.shopping_bag_outlined, image: PwaIcons.cart, group: 'Catálogo y stock'),
-  CrmDestination('tiendas', 'Tiendas', Icons.storefront_rounded, image: PwaIcons.cart, group: 'Catálogo y stock'),
+  CrmDestination('hoy', 'Hoy', Icons.wb_sunny_outlined, image: PwaIcons.sun),
+  CrmDestination('pos', 'Facturación', Icons.point_of_sale_rounded, image: PwaIcons.billing, group: 'Ventas'),
+  CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Ventas'),
+  CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes, group: 'Ventas'),
+  CrmDestination('inventario', 'Ajuste de stock', Icons.inventory_2_outlined, image: PwaIcons.orders, group: 'Ventas'),
+  CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Ventas'),
+  CrmDestination('solicitudes', 'Archivo de solicitudes', Icons.folder_copy_outlined, image: PwaIcons.orders, group: 'Ventas'),
+  CrmDestination('recuento', 'Recuento', Icons.fact_check_outlined, image: PwaIcons.orders, group: 'Ventas'),
+  CrmDestination('recogidas', 'Recogidas', Icons.shopping_bag_outlined, image: PwaIcons.cart, group: 'Ventas'),
+  CrmDestination('tiendas', 'Tiendas', Icons.storefront_rounded, image: PwaIcons.cart, group: 'Ventas'),
+  CrmDestination('catalogo', 'Tienda en línea', Icons.storefront_outlined, image: PwaIcons.cart, group: 'Ventas'),
   CrmDestination('mapa', 'Mapa', Icons.map_outlined, image: PwaIcons.delivery, group: 'Entregas'),
   CrmDestination('custodia', 'Custodia y rendiciones', Icons.account_balance_wallet_outlined, image: PwaIcons.custody, group: 'Entregas'),
   CrmDestination('repartidores', 'Repartidores', Icons.delivery_dining_outlined, image: PwaIcons.couriers, group: 'Entregas'),
   CrmDestination('ops', 'Agentes IA', Icons.smart_toy_outlined, image: PwaIcons.robot),
+  CrmDestination('cierre', 'Cierre actual', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Cierre diario'),
+  CrmDestination('reportes', 'Reportes', Icons.insert_chart_outlined, image: PwaIcons.chart),
   CrmDestination('seguimientos', 'Seguimientos', Icons.event_repeat_outlined, image: PwaIcons.share, group: 'Operación'),
   CrmDestination('mensajes', 'Mensajes programados', Icons.schedule_send_outlined, image: PwaIcons.bell, group: 'Operación'),
-  CrmDestination('usuarios', 'Usuarios', Icons.group_add_outlined, image: PwaIcons.usersadd, group: 'Administración'),
-  CrmDestination('ajustes', 'Configuración', Icons.settings_outlined, image: PwaIcons.filter, group: 'Administración'),
-  CrmDestination('perfil', 'Mi perfil', Icons.person_outline_rounded, image: PwaIcons.user, group: 'Administración'),
+  CrmDestination('ajustes', 'Configuración', Icons.settings_outlined, image: PwaIcons.filter),
+  CrmDestination('usuarios', 'Usuarios', Icons.group_add_outlined, image: PwaIcons.usersadd),
+  CrmDestination('perfil', 'Mi perfil', Icons.person_outline_rounded, image: PwaIcons.user),
 ];
 
 /// Esqueleto del panel, reconstruido sobre el **CRM PWA**.
@@ -143,11 +143,42 @@ class _CrmShellState extends State<CrmShell> {
   String get _subtitle => crmDestinations.firstWhere((d) => d.tab == _tab, orElse: () => crmDestinations.first).label;
 
   /// Grupos del menú en el orden del PWA; los destinos sin grupo van sueltos.
-  /// Grupos del menú en el orden del PWA; los destinos sin grupo van sueltos.
-  List<PwaNavItem> get _looseItems => [
-        for (final destination in crmDestinations.where((row) => row.group.isEmpty))
-          PwaNavItem(destination.tab, destination.label, destination.image),
-      ];
+  /// Secciones del menú en el ORDEN exacto de `crmDestinations`: mezcla
+  /// destinos sueltos y grupos tal como aparecen (grupo, suelto, grupo…).
+  List<CrmNavSection> get _navSections {
+    final sections = <CrmNavSection>[];
+    final seen = <String>{};
+    for (final destination in crmDestinations) {
+      if (destination.group.isEmpty) {
+        sections.add(CrmNavSection.item(PwaNavItem(destination.tab, destination.label, destination.image)));
+        continue;
+      }
+      if (!seen.add(destination.group)) continue;
+      sections.add(
+        CrmNavSection.group(
+          PwaNavGroup(
+            destination.group,
+            [
+              for (final row in crmDestinations.where((r) => r.group == destination.group))
+                PwaNavItem(row.tab, row.label, row.image),
+            ],
+          ),
+        ),
+      );
+    }
+    return sections;
+  }
+
+  /// Dos letras para el avatar de la cabecera (Nombre + Apellido).
+  String _initials(CrmState state) {
+    final name = (state.session.user?.displayName ?? 'Equipo FullTECH').trim();
+    final parts = name.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) return 'FT';
+    if (parts.length == 1) {
+      return parts.first.substring(0, parts.first.length >= 2 ? 2 : 1).toUpperCase();
+    }
+    return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
+  }
 
   List<PwaNavGroup> get _navGroups {
     final groups = <String>[];
@@ -245,13 +276,16 @@ class _CrmShellState extends State<CrmShell> {
                 child: Material(
                   elevation: 12,
                   child: CrmMenuDrawer(
-                    groups: _navGroups,
-                    loose: _looseItems,
+                    sections: _navSections,
                     current: _tab,
                     onSelect: _go,
                     onClose: () => setState(() => _menuOpen = false),
                     userName: state.session.user?.displayName ?? 'Equipo FullTECH',
                     userRole: _roleLabel(state),
+                    initials: _initials(state),
+                    isDark: Theme.of(context).brightness == Brightness.dark,
+                    onThemeChanged: (dark) =>
+                        state.setThemeMode(dark ? ThemeMode.dark : ThemeMode.light),
                     onLogout: () => state.logout(),
                     badges: badges,
                   ),
