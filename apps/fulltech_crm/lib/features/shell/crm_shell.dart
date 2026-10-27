@@ -56,10 +56,9 @@ class CrmDestination {
 /// existiendo, solo cambia dónde aparece).
 const List<CrmDestination> crmDestinations = [
   CrmDestination('whatsapp', 'WhatsApp', Icons.forum_outlined, image: PwaIcons.support),
-  CrmDestination('hoy', 'Hoy', Icons.wb_sunny_outlined, image: PwaIcons.sun),
+  CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders),
+  CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes),
   CrmDestination('pos', 'Facturación', Icons.point_of_sale_rounded, image: PwaIcons.billing, group: 'Ventas'),
-  CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Ventas'),
-  CrmDestination('clientes', 'Clientes', Icons.people_outline_rounded, image: PwaIcons.clientes, group: 'Ventas'),
   CrmDestination('inventario', 'Ajuste de stock', Icons.inventory_2_outlined, image: PwaIcons.orders, group: 'Ventas'),
   CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Ventas'),
   CrmDestination('solicitudes', 'Archivo de solicitudes', Icons.folder_copy_outlined, image: PwaIcons.orders, group: 'Ventas'),
