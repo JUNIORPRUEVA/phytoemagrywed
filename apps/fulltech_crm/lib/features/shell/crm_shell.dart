@@ -33,7 +33,7 @@ import '../ventas/solicitudes_screen.dart';
 import '../ventas/tiendas_screen.dart';
 import '../whatsapp/chats_desktop.dart';
 import '../whatsapp/whatsapp_screen.dart';
-import 'crm_dark_shell.dart';
+import 'crm_menu_drawer.dart';
 import 'pwa_shell.dart';
 
 /// Un destino del menú (`data-tab` del panel). [image] es el **icono original
@@ -55,6 +55,7 @@ class CrmDestination {
 /// de esos seis se han retirado de sus grupos anteriores (la ruta sigue
 /// existiendo, solo cambia dónde aparece).
 const List<CrmDestination> crmDestinations = [
+  CrmDestination('whatsapp', 'WhatsApp', Icons.forum_outlined, image: PwaIcons.support),
   CrmDestination('pos', 'Ventas', Icons.point_of_sale_rounded, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
   CrmDestination('pedidos', 'Pedidos', Icons.receipt_long_outlined, image: PwaIcons.orders, group: 'Punto de Ventas (POS)'),
   CrmDestination('cotizaciones', 'Cotizaciones', Icons.description_outlined, image: PwaIcons.billing, group: 'Punto de Ventas (POS)'),
@@ -62,7 +63,6 @@ const List<CrmDestination> crmDestinations = [
   CrmDestination('cierre', 'Cierre diario', Icons.check_circle_outline_rounded, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
   CrmDestination('reportes', 'Reportes', Icons.insert_chart_outlined, image: PwaIcons.chart, group: 'Punto de Ventas (POS)'),
   CrmDestination('hoy', 'Hoy', Icons.wb_sunny_outlined, image: PwaIcons.sun, group: 'Principal'),
-  CrmDestination('whatsapp', 'Chats', Icons.forum_outlined, image: PwaIcons.support, group: 'Principal'),
   CrmDestination('catalogo', 'Tienda en línea', Icons.storefront_outlined, image: PwaIcons.cart, group: 'Catálogo y stock'),
   CrmDestination('inventario', 'Ajuste de stock', Icons.inventory_2_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
   CrmDestination('solicitudes', 'Archivo de solicitudes', Icons.folder_copy_outlined, image: PwaIcons.orders, group: 'Catálogo y stock'),
@@ -88,11 +88,14 @@ const List<CrmDestination> crmDestinations = [
 /// · **Móvil**: cabecera compacta de 52 px y barra inferior de 4 destinos, que
 ///   el PWA muestra **solo en Hoy** (`body:not([data-tab='hoy']) .tabs`).
 class CrmShell extends StatefulWidget {
-  const CrmShell({super.key, this.initialTab = 'hoy'});
+  const CrmShell({super.key, this.initialTab = 'whatsapp', this.initialMenuOpen = false});
 
   /// Módulo inicial (el arnés de diseño lo usa para capturar pantalla por
   /// pantalla).
   final String initialTab;
+
+  /// Abre el menú al arrancar (lo usa el arnés de capturas).
+  final bool initialMenuOpen;
 
   @override
   State<CrmShell> createState() => _CrmShellState();
@@ -100,8 +103,7 @@ class CrmShell extends StatefulWidget {
 
 class _CrmShellState extends State<CrmShell> {
   late String _tab = widget.initialTab;
-  bool _menuOpen = false;
-
+  late bool _menuOpen = widget.initialMenuOpen;
   void _go(String tab) {
     setState(() {
       _tab = tab;
@@ -141,6 +143,12 @@ class _CrmShellState extends State<CrmShell> {
   String get _subtitle => crmDestinations.firstWhere((d) => d.tab == _tab, orElse: () => crmDestinations.first).label;
 
   /// Grupos del menú en el orden del PWA; los destinos sin grupo van sueltos.
+  /// Grupos del menú en el orden del PWA; los destinos sin grupo van sueltos.
+  List<PwaNavItem> get _looseItems => [
+        for (final destination in crmDestinations.where((row) => row.group.isEmpty))
+          PwaNavItem(destination.tab, destination.label, destination.image),
+      ];
+
   List<PwaNavGroup> get _navGroups {
     final groups = <String>[];
     for (final destination in crmDestinations) {
@@ -208,33 +216,48 @@ class _CrmShellState extends State<CrmShell> {
       final title = destination.label;
       final subtitle = destination.group.isEmpty ? 'FullTECH CRM' : destination.group;
       return Scaffold(
-        backgroundColor: CrmDark.panel,
-        body: Row(
+        backgroundColor: const Color(0xFFF7FAFC),
+        body: Stack(
           children: [
-            CrmDarkSidebar(
-              groups: _navGroups,
-              current: _tab,
-              onSelect: _go,
-              userName: state.session.user?.displayName ?? 'Equipo FullTECH',
-              userRole: _roleLabel(state),
-              themeLabel: _themeLabel,
-              onThemeCycle: _cycleTheme,
-              onLogout: () => state.logout(),
-              badges: badges,
+            Column(
+              children: [
+                CrmLightTopbar(
+                  title: title,
+                  subtitle: subtitle,
+                  onMenu: () => setState(() => _menuOpen = !_menuOpen),
+                  online: !state.offline,
+                  loading: state.loading,
+                ),
+                Expanded(child: content),
+              ],
             ),
-            Expanded(
-              child: Column(
-                children: [
-                  CrmDarkTopbar(
-                    title: title,
-                    subtitle: subtitle,
-                    online: !state.offline,
-                    loading: state.loading,
-                  ),
-                  Expanded(child: content),
-                ],
+            if (_menuOpen) ...[
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => setState(() => _menuOpen = false),
+                  child: Container(color: const Color(0x66000000)),
+                ),
               ),
-            ),
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: Material(
+                  elevation: 12,
+                  child: CrmMenuDrawer(
+                    groups: _navGroups,
+                    loose: _looseItems,
+                    current: _tab,
+                    onSelect: _go,
+                    onClose: () => setState(() => _menuOpen = false),
+                    userName: state.session.user?.displayName ?? 'Equipo FullTECH',
+                    userRole: _roleLabel(state),
+                    onLogout: () => state.logout(),
+                    badges: badges,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       );
