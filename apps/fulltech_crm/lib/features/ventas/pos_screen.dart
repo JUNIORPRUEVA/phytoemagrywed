@@ -220,15 +220,16 @@ class _PosScreenState extends State<PosScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-          PosCategoryRail(
-            entries: PosCategoryRail.buildEntries(_catalogProducts, _catalogCategories),
-            selected: _railFilter,
-            onSelect: (filter) => setState(() => _railFilter = filter),
-          ),
           Expanded(
             child: Column(
               children: [
                 _desktopActionBar(context),
+                // Categorías como franja horizontal, justo bajo el buscador.
+                PosCategoryStrip(
+                  entries: PosCategoryStrip.buildEntries(_catalogProducts, _catalogCategories),
+                  selected: _railFilter,
+                  onSelect: (filter) => setState(() => _railFilter = filter),
+                ),
                 if (_operation.attempts > 1)
                   Container(
                     width: double.infinity,
@@ -270,6 +271,11 @@ class _PosScreenState extends State<PosScreen> {
               onPaidChanged: (value) => setState(() => _paid = value),
               onDeliveryFeeChanged: (value) => setState(() => _deliveryFee = value),
               onCheckout: _submit,
+              deliveryMethod: _deliveryMethod,
+              onDeliveryMethodChanged: (value) => setState(() => _deliveryMethod = value),
+              addressController: _address,
+              notesController: _notes,
+              onAddressChanged: () => setState(() {}),
             ),
           ),
         ],

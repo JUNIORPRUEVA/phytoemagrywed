@@ -133,8 +133,9 @@ void main() {
       await tester.pumpWidget(wrap(SizedBox(width: 380, height: 800, child: panel(onCheckout: () => checkedOut++))));
       expect(find.text('Auriculares Pro 4'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);
-      expect(find.text('Cobrar'), findsOneWidget);
-      await tester.tap(find.text('Cobrar'));
+      // Con mode `order` el botón dice «Crear pedido» (antes «Cobrar»).
+      expect(find.text('Crear pedido'), findsOneWidget);
+      await tester.tap(find.text('Crear pedido'));
       expect(checkedOut, 1);
     });
 

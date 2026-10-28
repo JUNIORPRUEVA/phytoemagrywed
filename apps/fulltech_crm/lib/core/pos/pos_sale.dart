@@ -68,7 +68,13 @@ class PosSaleDraft {
 
   int get subtotalCents => lines.fold<int>(0, (sum, line) => sum + line.grossCents);
 
-  int get expectedTotalCents => subtotalCents + deliveryFeeCents;
+  /// El servidor exige el envío en **pesos enteros**
+  /// (`Number.isInteger(input.deliveryFee)`). Se redondea aquí para que el
+  /// `expectedTotal` coincida con el suyo; si no, un envío con céntimos se
+  /// rechazaba con 409 `price_changed` y la venta no se podía cerrar.
+  int get deliveryFeePesos => (deliveryFeeCents / 100).round();
+
+  int get expectedTotalCents => subtotalCents + deliveryFeePesos * 100;
 
   /// Reglas mínimas antes de molestar al servidor.
   String? validate() {
@@ -86,7 +92,7 @@ class PosSaleDraft {
         'requestId': requestId,
         'customerId': customerId,
         'items': [for (final line in lines) line.toJson()],
-        'deliveryFee': deliveryFeeCents / 100,
+        'deliveryFee': deliveryFeePesos,
         'paymentMethod': paymentMethod,
         'paymentStatus': paid ? 'paid' : 'pending',
         'deliveryMethod': deliveryMethod,
@@ -103,7 +109,7 @@ class PosSaleDraft {
         'requestId': requestId,
         'customerId': customerId,
         'items': [for (final line in lines) line.toJson()],
-        'deliveryFee': deliveryFeeCents / 100,
+        'deliveryFee': deliveryFeePesos,
         'paymentMethod': paymentMethod,
         'notes': notes,
         'address': address,

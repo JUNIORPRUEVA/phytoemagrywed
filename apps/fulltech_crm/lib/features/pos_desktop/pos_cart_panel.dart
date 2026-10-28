@@ -33,6 +33,11 @@ class PosCartPanel extends StatelessWidget {
     required this.onPaidChanged,
     required this.onDeliveryFeeChanged,
     required this.onCheckout,
+    this.deliveryMethod = 'delivery',
+    this.onDeliveryMethodChanged,
+    this.addressController,
+    this.notesController,
+    this.onAddressChanged,
   });
 
   final List<PosLine> lines;
@@ -51,6 +56,19 @@ class PosCartPanel extends StatelessWidget {
   final ValueChanged<bool> onPaidChanged;
   final ValueChanged<double> onDeliveryFeeChanged;
   final VoidCallback onCheckout;
+
+  /// `delivery` (a domicilio) o `pickup` (retiro en tienda).
+  final String deliveryMethod;
+  final ValueChanged<String>? onDeliveryMethodChanged;
+
+  /// Dirección de entrega: obligatoria para pedidos y facturas a domicilio.
+  final TextEditingController? addressController;
+
+  /// Notas del pedido (opcionales).
+  final TextEditingController? notesController;
+
+  /// Avisa de que cambió la dirección (para recalcular el borrador).
+  final VoidCallback? onAddressChanged;
 
   int get _subtotalCents =>
       lines.fold<int>(0, (sum, line) => sum + line.grossCents);
@@ -91,6 +109,7 @@ class PosCartPanel extends StatelessWidget {
           Divider(height: 1, color: p.border),
           _documentBar(context),
           _paymentBar(context),
+          _deliveryBar(context),
           _totalsBar(context),
           _checkoutBar(context),
         ],
@@ -294,6 +313,92 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
+  /// Entrega: domicilio o retiro, dirección y notas.
+  Widget _deliveryBar(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
+    final domicilio = deliveryMethod != 'pickup';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _chip(context, 'Domicilio', domicilio, () => onDeliveryMethodChanged?.call('delivery')),
+              _chip(context, 'Retiro', !domicilio, () => onDeliveryMethodChanged?.call('pickup')),
+            ],
+          ),
+          if (domicilio && addressController != null) ...[
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 34,
+              child: TextField(
+                controller: addressController,
+                style: t.body,
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: false,
+                  hintText: 'Dirección de entrega',
+                  hintStyle: t.secondary,
+                  prefixIcon: Icon(Icons.place_outlined, size: 16, color: p.inkSecondary),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: p.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: p.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: p.primary),
+                  ),
+                ),
+                onChanged: (_) => onAddressChanged?.call(),
+              ),
+            ),
+          ],
+          if (notesController != null) ...[
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 32,
+              child: TextField(
+                controller: notesController,
+                style: t.body,
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: false,
+                  hintText: 'Notas del pedido (opcional)',
+                  hintStyle: t.secondary,
+                  prefixIcon: Icon(Icons.notes_rounded, size: 15, color: p.inkSecondary),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 30),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: p.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: p.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: p.primary),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _totalsBar(BuildContext context) {
     final p = PosPalette.of(context);
     final t = p.text;
@@ -379,7 +484,14 @@ class PosCartPanel extends StatelessWidget {
                             color: p.onCheckout,
                           ),
                         )
-                      : Text('Cobrar', style: t.checkoutLabel),
+                      : Text(
+                          switch (mode) {
+                            'quote' => 'Guardar cotización',
+                            'order' => 'Crear pedido',
+                            _ => 'Cobrar',
+                          },
+                          style: t.checkoutLabel,
+                        ),
                   const SizedBox(width: 8),
                   const Spacer(),
                   Flexible(

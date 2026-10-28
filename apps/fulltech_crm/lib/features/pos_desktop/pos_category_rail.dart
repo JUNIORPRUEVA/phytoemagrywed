@@ -38,17 +38,16 @@ class PosRailEntry {
   final PosRailFilter filter;
 }
 
-/// Columna estrecha de categorías al estilo FullPOS Cloud.
+/// Franja horizontal de categorías, debajo del buscador.
 ///
 /// Se construye SOLO con datos que existen: las categorías que traiga el
-/// catálogo (`CatalogProduct.category`) y dos filtros reales de existencia.
-/// No se inventan categorías: si el API no las envía, el rail muestra
-/// «Todos / Con stock / Agotados».
+/// catálogo (`CatalogProduct.category`) y dos filtros reales de existencia; si
+/// el API no las envía, muestra «Todos / Con stock / Agotados».
 ///
-/// Los colores salen de `PosPalette.of(context)`, así que el rail es claro u
-/// oscuro según el tema que haya elegido el usuario.
-class PosCategoryRail extends StatelessWidget {
-  const PosCategoryRail({
+/// Cada categoría es una píldora con la miniatura del producto, su nombre y el
+/// estado de selección. Los colores salen de `PosPalette.of(context)`.
+class PosCategoryStrip extends StatelessWidget {
+  const PosCategoryStrip({
     super.key,
     required this.entries,
     required this.selected,
@@ -59,35 +58,10 @@ class PosCategoryRail extends StatelessWidget {
   final PosRailFilter selected;
   final ValueChanged<PosRailFilter> onSelect;
 
-  @override
-  Widget build(BuildContext context) {
-    final p = PosPalette.of(context);
-    return Container(
-      width: PosMetrics.railWidth,
-      decoration: BoxDecoration(
-        color: p.surface,
-        border: Border(right: BorderSide(color: p.border)),
-      ),
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        itemCount: entries.length,
-        itemBuilder: (context, index) {
-          final entry = entries[index];
-          return _RailTile(
-            entry: entry,
-            selected: entry.filter == selected,
-            onTap: () => onSelect(entry.filter),
-          );
-        },
-      ),
-    );
-  }
-
-  /// Rail por defecto a partir de las categorías reales del catálogo.
+  /// Entradas de la franja a partir de las categorías reales del catálogo.
   ///
-  /// Cada categoría lleva la foto del primer producto que la tenga; así la
-  /// columna se ve como la referencia (miniaturas de producto) y no como una
-  /// fila de iconos genéricos.
+  /// Cada categoría lleva la foto del primer producto que la tenga; si no hay
+  /// foto, la píldora muestra las iniciales.
   static List<PosRailEntry> buildEntries(
     List<CatalogProduct> products,
     List<String> categories,
@@ -139,85 +113,92 @@ class PosCategoryRail extends StatelessWidget {
       ),
     ];
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
+    return Container(
+      height: 58,
+      decoration: BoxDecoration(
+        color: p.surface,
+        border: Border(bottom: BorderSide(color: p.border)),
+      ),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        itemCount: entries.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final entry = entries[index];
+          return _StripChip(
+            entry: entry,
+            selected: entry.filter == selected,
+            onTap: () => onSelect(entry.filter),
+          );
+        },
+      ),
+    );
+  }
 }
 
-class _RailTile extends StatefulWidget {
-  const _RailTile({required this.entry, required this.selected, required this.onTap});
+class _StripChip extends StatefulWidget {
+  const _StripChip({required this.entry, required this.selected, required this.onTap});
 
   final PosRailEntry entry;
   final bool selected;
   final VoidCallback onTap;
 
   @override
-  State<_RailTile> createState() => _RailTileState();
+  State<_StripChip> createState() => _StripChipState();
 }
 
-class _RailTileState extends State<_RailTile> {
+class _StripChipState extends State<_StripChip> {
   bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
     final p = PosPalette.of(context);
     final selected = widget.selected;
-    // Sobre el acento sólido el icono va en blanco; si no, tinta del tema.
-    final ink = selected
-        ? p.onCheckout
-        : (_hovered ? p.ink : p.inkSecondary);
-    return Tooltip(
-      message: widget.entry.label,
-      waitDuration: const Duration(milliseconds: 500),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          onTap: widget.onTap,
-          behavior: HitTestBehavior.opaque,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            margin: const EdgeInsets.only(bottom: 4),
-            padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
-            decoration: BoxDecoration(
-              color: selected
-                  ? p.checkout
-                  : (_hovered ? p.surfaceMuted : Colors.transparent),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Categorías con miniatura de producto; los filtros de
-                // existencia siguen con su icono.
-                if (widget.entry.filter.availability == PosAvailability.all)
-                  _RailThumb(
-                    entry: widget.entry,
-                    palette: p,
-                    selected: selected,
-                    ink: ink,
-                  )
-                else
-                  SizedBox(
-                    height: 34,
-                    child: Center(
-                      child: PwaIcon(widget.entry.icon, size: 19, color: ink),
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.entry.label,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: PosMetrics.fontFamily,
-                    fontSize: 9.2,
-                    height: 1.05,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    color: ink,
-                  ),
+    final ink = selected ? p.primary : p.ink;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 130),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: selected
+                ? p.primarySoft
+                : (_hovered ? p.surfaceMuted : Colors.transparent),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: selected ? p.primaryBorder : p.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.entry.filter.availability == PosAvailability.all)
+                PosRailThumb(entry: widget.entry, palette: p, selected: selected, ink: ink, size: 26)
+              else
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: Center(child: PwaIcon(widget.entry.icon, size: 15, color: ink)),
                 ),
-              ],
-            ),
+              const SizedBox(width: 7),
+              Text(
+                widget.entry.label,
+                style: TextStyle(
+                  fontFamily: PosMetrics.fontFamily,
+                  fontSize: 11.5,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  color: ink,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -227,30 +208,31 @@ class _RailTileState extends State<_RailTile> {
 
 /// Miniatura de la categoría: foto del producto si el catálogo la trae y, si
 /// no, una baldosa con las iniciales (nunca un icono genérico cuando hay foto).
-class _RailThumb extends StatelessWidget {
-  const _RailThumb({
+class PosRailThumb extends StatelessWidget {
+  const PosRailThumb({
+    super.key,
     required this.entry,
     required this.palette,
     required this.selected,
     required this.ink,
+    this.size = 34,
   });
 
   final PosRailEntry entry;
   final PosPalette palette;
   final bool selected;
   final Color ink;
-
-  static const double _size = 34;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     if (entry.imageUrl.isNotEmpty) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         child: Image.network(
           entry.imageUrl,
-          width: _size,
-          height: _size,
+          width: size,
+          height: size,
           fit: BoxFit.cover,
           errorBuilder: (context, error, stack) => _initials(),
         ),
@@ -269,14 +251,14 @@ class _RailThumb extends StatelessWidget {
               .map((word) => word[0].toUpperCase())
               .join();
     return Container(
-      width: _size,
-      height: _size,
+      width: size,
+      height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: selected
             ? palette.onCheckout.withValues(alpha: 0.18)
             : palette.surfaceMuted,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(
           color: selected ? palette.onCheckout.withValues(alpha: 0.35) : palette.border,
         ),
@@ -285,7 +267,7 @@ class _RailThumb extends StatelessWidget {
         initials,
         style: TextStyle(
           fontFamily: PosMetrics.fontFamily,
-          fontSize: 12,
+          fontSize: size <= 26 ? 9.5 : 12,
           fontWeight: FontWeight.w800,
           color: ink,
         ),

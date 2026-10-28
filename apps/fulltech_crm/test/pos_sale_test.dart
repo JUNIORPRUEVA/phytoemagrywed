@@ -22,14 +22,16 @@ void main() {
       expect(draft.expectedTotalCents, 250100 + 2997);
     });
 
-    test('el envío se suma en centavos, sin decimales sueltos', () {
+    test('el envío se redondea a pesos enteros, como exige el servidor', () {
       final draft = PosSaleDraft(
         mode: 'invoice',
         customerId: 'c1',
         lines: [line('a', 10000, 1)],
         deliveryFeeCents: 15050,
       );
-      expect(draft.expectedTotalCents, 25050);
+      // 150,50 → 151 pesos: el servidor rechaza decimales en `deliveryFee`.
+      expect(draft.deliveryFeePesos, 151);
+      expect(draft.expectedTotalCents, 10000 + 15100);
     });
 
     test('expectedTotal viaja como entero en el cuerpo', () {
@@ -43,7 +45,7 @@ void main() {
       final body = draft.toCheckoutBody(requestId: 'pos_1234567890123456');
       expect(body['expectedTotal'], 25000);
       expect(body['expectedTotal'], isA<int>());
-      expect(body['deliveryFee'], 50.0);
+      expect(body['deliveryFee'], 50);
       expect(body['items'], [
         {'variantId': 'a', 'quantity': 2},
       ]);
