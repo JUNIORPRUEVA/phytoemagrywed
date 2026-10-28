@@ -502,9 +502,13 @@ class CrmRailEntry {
 /// a cualquier módulo con un clic. Los iconos que corresponden a un grupo abren
 /// el menú lateral para elegir la opción concreta.
 class CrmIconRail extends StatelessWidget {
-  const CrmIconRail({super.key, required this.entries});
+  const CrmIconRail({super.key, required this.entries, this.bottom = const []});
 
+  /// Módulos y grupos (parte de arriba).
   final List<CrmRailEntry> entries;
+
+  /// Configuración, Compartir y Mi perfil: van abajo, separados.
+  final List<CrmRailEntry> bottom;
 
   static const double width = 52;
 
@@ -517,11 +521,27 @@ class CrmIconRail extends StatelessWidget {
         color: c.background,
         border: Border(right: BorderSide(color: c.line)),
       ),
-      child: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
         children: [
-          for (final entry in entries)
-            _RailTile(entry: entry, palette: c, width: width),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              children: [
+                for (final entry in entries) _RailTile(entry: entry, palette: c, width: width),
+              ],
+            ),
+          ),
+          if (bottom.isNotEmpty) ...[
+            Divider(height: 1, thickness: 1, color: c.line),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                children: [
+                  for (final entry in bottom) _RailTile(entry: entry, palette: c, width: width),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

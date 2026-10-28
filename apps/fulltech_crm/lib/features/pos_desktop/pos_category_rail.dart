@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/crm_tokens.dart';
+import '../../data/models/crm_models.dart';
 import '../common/pwa_icon.dart';
 import 'pos_tokens.dart';
 
@@ -25,12 +26,15 @@ class PosRailFilter {
   int get hashCode => Object.hash(category, availability);
 }
 
-/// Una entrada del rail: etiqueta, icono del PWA y filtro que aplica.
+/// Una entrada del rail: etiqueta, icono del PWA, foto del producto y filtro.
 class PosRailEntry {
-  const PosRailEntry(this.label, this.icon, this.filter);
+  const PosRailEntry(this.label, this.icon, this.filter, {this.imageUrl = ''});
 
   final String label;
   final String icon;
+
+  /// Foto representativa del producto (vacía si el catálogo no la envía).
+  final String imageUrl;
   final PosRailFilter filter;
 }
 
@@ -80,7 +84,14 @@ class PosCategoryRail extends StatelessWidget {
   }
 
   /// Rail por defecto a partir de las categorías reales del catálogo.
-  static List<PosRailEntry> buildEntries(List<String> categories) {
+  ///
+  /// Cada categoría lleva la foto del primer producto que la tenga; así la
+  /// columna se ve como la referencia (miniaturas de producto) y no como una
+  /// fila de iconos genéricos.
+  static List<PosRailEntry> buildEntries(
+    List<CatalogProduct> products,
+    List<String> categories,
+  ) {
     const categoryIcons = [
       PwaIcons.billing,
       PwaIcons.delivery,
@@ -94,13 +105,27 @@ class PosCategoryRail extends StatelessWidget {
       PwaIcons.user,
       PwaIcons.usersadd,
     ];
+    String photoOf(String category) {
+      for (final product in products) {
+        if (product.category.toLowerCase() != category.toLowerCase()) continue;
+        if (product.imageUrl.isNotEmpty) return product.imageUrl;
+      }
+      return '';
+    }
+
     return [
-      const PosRailEntry('Todos', PwaIcons.cart, PosRailFilter()),
+      PosRailEntry(
+        'Todos',
+        PwaIcons.cart,
+        const PosRailFilter(),
+        imageUrl: products.isEmpty ? '' : products.first.imageUrl,
+      ),
       for (var i = 0; i < categories.length; i++)
         PosRailEntry(
           categories[i],
           categoryIcons[i % categoryIcons.length],
           PosRailFilter(category: categories[i]),
+          imageUrl: photoOf(categories[i]),
         ),
       const PosRailEntry(
         'Con stock',
@@ -161,7 +186,22 @@ class _RailTileState extends State<_RailTile> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                PwaIcon(widget.entry.icon, size: 19, color: ink),
+                // Categorías con miniatura de producto; los filtros de
+                // existencia siguen con su icono.
+                if (widget.entry.filter.availability == PosAvailability.all)
+                  _RailThumb(
+                    entry: widget.entry,
+                    palette: p,
+                    selected: selected,
+                    ink: ink,
+                  )
+                else
+                  SizedBox(
+                    height: 34,
+                    child: Center(
+                      child: PwaIcon(widget.entry.icon, size: 19, color: ink),
+                    ),
+                  ),
                 const SizedBox(height: 4),
                 Text(
                   widget.entry.label,
@@ -179,6 +219,75 @@ class _RailTileState extends State<_RailTile> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Miniatura de la categoría: foto del producto si el catálogo la trae y, si
+/// no, una baldosa con las iniciales (nunca un icono genérico cuando hay foto).
+class _RailThumb extends StatelessWidget {
+  const _RailThumb({
+    required this.entry,
+    required this.palette,
+    required this.selected,
+    required this.ink,
+  });
+
+  final PosRailEntry entry;
+  final PosPalette palette;
+  final bool selected;
+  final Color ink;
+
+  static const double _size = 34;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entry.imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          entry.imageUrl,
+          width: _size,
+          height: _size,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stack) => _initials(),
+        ),
+      );
+    }
+    return _initials();
+  }
+
+  Widget _initials() {
+    final label = entry.label.trim();
+    final initials = label.isEmpty
+        ? '?'
+        : label
+              .split(RegExp(r'\s+'))
+              .take(2)
+              .map((word) => word[0].toUpperCase())
+              .join();
+    return Container(
+      width: _size,
+      height: _size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: selected
+            ? palette.onCheckout.withValues(alpha: 0.18)
+            : palette.surfaceMuted,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: selected ? palette.onCheckout.withValues(alpha: 0.35) : palette.border,
+        ),
+      ),
+      child: Text(
+        initials,
+        style: TextStyle(
+          fontFamily: PosMetrics.fontFamily,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          color: ink,
         ),
       ),
     );

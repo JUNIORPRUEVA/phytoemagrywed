@@ -375,6 +375,7 @@ class CatalogProduct {
     required this.name,
     required this.presentations,
     this.category = '',
+    this.imageUrl = '',
   });
 
   final String id;
@@ -385,11 +386,19 @@ class CatalogProduct {
   /// Vacía cuando el API no la envía: no se inventa ninguna.
   final String category;
 
+  /// Foto del producto si el catálogo la expone (`image_url`, `image`…).
+  /// Vacía cuando el API no la envía: la tarjeta pinta un marcador neutro.
+  final String imageUrl;
+
   factory CatalogProduct.fromJson(Map<String, dynamic> json) => CatalogProduct(
         id: str(json['id'], str(json['productId'])),
         name: str(json['name'], str(json['product_name'], 'Producto')),
         presentations: listv(json['presentations']).map(CatalogPresentation.fromJson).toList(),
         category: str(json['category'], str(json['category_name'], str(json['kind']))).trim(),
+        imageUrl: str(
+          json['image_url'],
+          str(json['imageUrl'], str(json['image'], str(json['photo_url'], str(json['thumbnail'])))),
+        ).trim(),
       );
 }
 

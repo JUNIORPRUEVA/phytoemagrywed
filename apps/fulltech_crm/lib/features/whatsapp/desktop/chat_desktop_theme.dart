@@ -100,24 +100,23 @@ class ChatPalette {
     danger: Color(0xFFF15C6D),
   );
 
-  /// Tema claro premium: paneles en blanco roto cálido y lienzo tipo papel,
-  /// con acento verde azulado (el verde brillante sobre blanco cansa la vista).
+  /// Tema claro al estilo WhatsApp: lienzo beige, lista blanca y bordes visibles.
   static const ChatPalette light = ChatPalette(
     dark: false,
-    railBg: Color(0xFFF1F0EC),
-    panelBg: Color(0xFFF9F8F5),
-    canvas: Color(0xFFECE8E1),
-    divider: Color(0xFFD6CFC0),
-    fieldBg: Color(0xFFFFFFFF),
+    railBg: Color(0xFFF0F2F5),
+    panelBg: Color(0xFFFFFFFF),
+    canvas: Color(0xFFEFEAE2),
+    divider: Color(0xFFD3DBE0),
+    fieldBg: Color(0xFFF0F2F5),
     composerBg: Color(0xFFFFFFFF),
     bubbleIn: Color(0xFFFFFFFF),
-    bubbleOut: Color(0xFFDCF5D0),
-    textPrimary: Color(0xFF15202B),
-    textSecondary: Color(0xFF6E7A82),
-    accent: Color(0xFF128C7E),
-    rowHover: Color(0xFFF0EEE8),
-    rowSelected: Color(0xFFEAE6DD),
-    doodle: Color(0xFFE6E2DA),
+    bubbleOut: Color(0xFFD9FDD3),
+    textPrimary: Color(0xFF111B21),
+    textSecondary: Color(0xFF667781),
+    accent: Color(0xFF00A884),
+    rowHover: Color(0xFFF5F6F6),
+    rowSelected: Color(0xFFEBEDEF),
+    doodle: Color(0xFFE4DED2),
     warning: Color(0xFFB45309),
     danger: Color(0xFFDC2626),
   );

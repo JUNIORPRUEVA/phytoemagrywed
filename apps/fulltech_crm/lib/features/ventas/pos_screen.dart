@@ -221,7 +221,7 @@ class _PosScreenState extends State<PosScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
           PosCategoryRail(
-            entries: PosCategoryRail.buildEntries(_catalogCategories),
+            entries: PosCategoryRail.buildEntries(_catalogProducts, _catalogCategories),
             selected: _railFilter,
             onSelect: (filter) => setState(() => _railFilter = filter),
           ),

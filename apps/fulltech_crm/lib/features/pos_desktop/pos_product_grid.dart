@@ -168,15 +168,25 @@ class _PosProductCardState extends State<PosProductCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Marcador de imagen: la API no expone foto para el POS.
-            Container(
-              height: 96,
-              width: double.infinity,
-              decoration: BoxDecoration(
+            // Foto real si el catálogo la trae; si no, marcador neutro.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                height: 96,
+                width: double.infinity,
                 color: p.surfaceMuted,
-                borderRadius: BorderRadius.circular(6),
+                child: widget.product.imageUrl.isEmpty
+                    ? Icon(Icons.image_outlined, size: 26, color: p.inkSecondary.withValues(alpha: 0.6))
+                    : Image.network(
+                        widget.product.imageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stack) => Icon(
+                          Icons.image_outlined,
+                          size: 26,
+                          color: p.inkSecondary.withValues(alpha: 0.6),
+                        ),
+                      ),
               ),
-              child: Icon(Icons.image_outlined, size: 26, color: p.inkSecondary.withValues(alpha: 0.6)),
             ),
             const SizedBox(height: 6),
             Expanded(

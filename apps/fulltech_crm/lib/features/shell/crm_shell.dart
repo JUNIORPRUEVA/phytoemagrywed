@@ -179,6 +179,7 @@ class _CrmShellState extends State<CrmShell> {
     for (final section in _navSections) {
       final item = section.item;
       if (item != null) {
+        if (_railFooterTabs.contains(item.tab)) continue;
         entries.add(
           CrmRailEntry(
             asset: item.icon,
@@ -202,6 +203,43 @@ class _CrmShellState extends State<CrmShell> {
       );
     }
     return entries;
+  }
+
+  /// Configuración, Compartir y Mi perfil: van al pie del rail, separados.
+  static const Set<String> _railFooterTabs = {'ajustes', 'perfil'};
+
+  List<CrmRailEntry> _railFooter() {
+    final items = <PwaNavItem>[];
+    for (final section in _navSections) {
+      if (section.item != null) {
+        items.add(section.item!);
+      } else {
+        items.addAll(section.group!.items);
+      }
+    }
+    return [
+      for (final item in items)
+        if (item.tab == 'ajustes')
+          CrmRailEntry(
+            asset: item.icon,
+            label: item.label,
+            selected: item.tab == _tab,
+            onTap: () => _go(item.tab),
+          ),
+      CrmRailEntry(
+        asset: PwaIcons.share,
+        label: 'Compartir',
+        onTap: _sharePanelLink,
+      ),
+      for (final item in items)
+        if (item.tab == 'perfil')
+          CrmRailEntry(
+            asset: item.icon,
+            label: item.label,
+            selected: item.tab == _tab,
+            onTap: () => _go(item.tab),
+          ),
+    ];
   }
 
   String _initials(CrmState state) {
@@ -312,7 +350,10 @@ class _CrmShellState extends State<CrmShell> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // Rail permanente: todos los iconos del menú a la vista.
-                      CrmIconRail(entries: _railEntries(badges)),
+                      CrmIconRail(
+                        entries: _railEntries(badges),
+                        bottom: _railFooter(),
+                      ),
                       Expanded(child: content),
                     ],
                   ),
