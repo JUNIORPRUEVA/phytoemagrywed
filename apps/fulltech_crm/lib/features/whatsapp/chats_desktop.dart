@@ -10,6 +10,7 @@ import 'chat_screen.dart';
 import 'desktop/chat_desktop_theme.dart';
 import 'desktop/chat_doodle_background.dart';
 import 'desktop/chat_filters.dart';
+import 'desktop/chat_filter_panel.dart';
 import 'desktop/chat_list_panel.dart';
 import 'desktop/chat_navigation_rail.dart';
 import 'desktop/conversation_actions.dart';
@@ -46,6 +47,9 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   String? _selectedId;
   bool _selecting = false;
   final Set<String> _selectedIds = {};
+
+  /// Columna lateral de filtros (ocupa todo el alto).
+  bool _showFilters = false;
 
   /// Adjunto que debe abrirse al entrar en el hilo (acción «Enviar una foto»).
   String? _pendingAttach;
@@ -88,6 +92,8 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
       ChatDesktopMetrics.listWidth,
       math.max(272.0, (width - railWidth) * 0.3),
     );
+    // 20 % del ancho, con suelo y techo para que siga siendo usable.
+    final filterWidth = (width * 0.20).clamp(240.0, 360.0);
 
     // Todo el módulo (lista incluida) sigue la luminosidad configurada.
     return Theme(
@@ -118,6 +124,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                 onSearchChanged: (_) => setState(() {}),
                 filters: _filters,
                 onFiltersChanged: (value) => setState(() => _filters = value),
+                onOpenFilters: () => setState(() => _showFilters = !_showFilters),
                 onRefresh: () => state.refresh(),
                 selecting: _selecting,
                 selectedIds: _selectedIds,
@@ -144,6 +151,27 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                       desktop: true,
                       autoAttach: _pendingAttach,
                     ),
+            ),
+            // Columna de filtros: todo el alto y ~20 % del ancho (nunca un
+            // diálogo en el centro). Se desliza abriendo y cerrando.
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              width: _showFilters ? filterWidth : 0,
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.centerLeft,
+                  minWidth: filterWidth,
+                  maxWidth: filterWidth,
+                  child: ChatFilterPanel(
+                    width: filterWidth,
+                    filters: _filters,
+                    conversations: state.conversations,
+                    onChanged: (value) => setState(() => _filters = value),
+                    onClose: () => setState(() => _showFilters = false),
+                  ),
+                ),
+              ),
             ),
           ],
         ),

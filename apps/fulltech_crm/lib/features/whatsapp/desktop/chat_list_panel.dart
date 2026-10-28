@@ -23,6 +23,7 @@ class ChatListPanel extends StatefulWidget {
     required this.onSearchChanged,
     required this.filters,
     required this.onFiltersChanged,
+    required this.onOpenFilters,
     required this.onRefresh,
     required this.onNewConversation,
     this.onAction,
@@ -41,6 +42,9 @@ class ChatListPanel extends StatefulWidget {
   final ValueChanged<String> onSearchChanged;
   final ChatFilters filters;
   final ValueChanged<ChatFilters> onFiltersChanged;
+
+  /// Abre/cierra la columna lateral de filtros.
+  final VoidCallback onOpenFilters;
   final VoidCallback onRefresh;
 
   /// Abre el diálogo de «nuevo mensaje».
@@ -104,8 +108,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
                     onTap: widget.onNewConversation,
                   ),
                   _FilterButton(
-                    filters: widget.filters,
-                    onChanged: widget.onFiltersChanged,
+                    active: !widget.filters.isDefault,
+                    onTap: widget.onOpenFilters,
                   ),
                   _PanelAction(
                     icon: Icons.more_vert_rounded,
@@ -206,11 +210,12 @@ class _ChatListPanelState extends State<ChatListPanel> {
 }
 
 /// Botón de filtros: abre una tarjeta con estado, etapa y fecha.
+/// Botón de filtros: abre la columna lateral con estado, etapa y fecha.
 class _FilterButton extends StatelessWidget {
-  const _FilterButton({required this.filters, required this.onChanged});
+  const _FilterButton({required this.active, required this.onTap});
 
-  final ChatFilters filters;
-  final ValueChanged<ChatFilters> onChanged;
+  final bool active;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -221,10 +226,10 @@ class _FilterButton extends StatelessWidget {
         _PanelAction(
           asset: PwaIcons.filter,
           tooltip: 'Filtros',
-          onTap: () => _openFilters(context),
-          active: !filters.isDefault,
+          onTap: onTap,
+          active: active,
         ),
-        if (!filters.isDefault)
+        if (active)
           Positioned(
             right: 6,
             top: 4,
@@ -237,152 +242,8 @@ class _FilterButton extends StatelessWidget {
       ],
     );
   }
-
-  Future<void> _openFilters(BuildContext context) async {
-    var draft = filters;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          final c = ChatPalette.of(dialogContext);
-          void apply(ChatFilters next) {
-            setDialogState(() => draft = next);
-            onChanged(next);
-          }
-
-          Widget section(String title, Widget child) => Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                    color: c.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                child,
-              ],
-            ),
-          );
-
-          Widget choices<T>(List<T> values, Map<T, String> labels, T current, ValueChanged<T> onPick) =>
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final value in values)
-                    _ChoiceChip(
-                      label: labels[value] ?? '$value',
-                      selected: value == current,
-                      onTap: () => onPick(value),
-                    ),
-                ],
-              );
-
-          return AlertDialog(
-            title: Row(
-              children: [
-                PwaIcon(PwaIcons.filter, size: 16, color: c.textPrimary),
-                const SizedBox(width: 8),
-                const Expanded(child: Text('Filtrar conversaciones')),
-                if (!draft.isDefault)
-                  TextButton(
-                    onPressed: () => apply(const ChatFilters()),
-                    child: const Text('Limpiar'),
-                  ),
-              ],
-            ),
-            content: SizedBox(
-              width: 420,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    section(
-                      'Estado',
-                      choices(
-                        ChatStatusFilter.values,
-                        chatStatusLabels,
-                        draft.status,
-                        (value) => apply(draft.copyWith(status: value)),
-                      ),
-                    ),
-                    section(
-                      'Etapa del cliente',
-                      choices(
-                        ChatStageFilter.values,
-                        chatStageLabels,
-                        draft.stage,
-                        (value) => apply(draft.copyWith(stage: value)),
-                      ),
-                    ),
-                    section(
-                      'Fecha del último mensaje',
-                      choices(
-                        ChatDateFilter.values,
-                        chatDateLabels,
-                        draft.date,
-                        (value) => apply(draft.copyWith(date: value)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Listo'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
 }
 
-class _ChoiceChip extends StatelessWidget {
-  const _ChoiceChip({required this.label, required this.selected, required this.onTap});
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = ChatPalette.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? c.accent.withValues(alpha: 0.14) : c.fieldBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: selected ? c.accent : c.divider),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: ChatDesktopMetrics.fontFamily,
-            fontSize: 12.5,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: selected ? c.accent : c.textPrimary,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Resumen de los filtros activos, con botón para quitarlos.
 class _ActiveFiltersBar extends StatelessWidget {
   const _ActiveFiltersBar({required this.filters, required this.onClear});
 
@@ -743,7 +604,7 @@ class _ConversationListTileState extends State<ConversationListTile> {
                       children: [
                         _MetaChip(
                           icon: conversation.assigned
-                              ? Icons.person_pin_circle_outlined
+                              ? Icons.person_outline_rounded
                               : Icons.person_off_outlined,
                           label: conversation.assigned
                               ? 'Asignado: ${conversation.assignedName.isEmpty ? 'Compañero' : conversation.assignedName}'
