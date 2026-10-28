@@ -90,6 +90,27 @@ class CrmRepository {
   Future<void> markRead(String conversationId) =>
       _api.post('/api/admin/conversations/${Uri.encodeComponent(conversationId)}/read', const {});
 
+  /// IA: corrige la ortografía del texto que se está escribiendo.
+  /// Devuelve la propuesta; **nunca** envía nada (la decisión es del agente).
+  Future<String> proofread({
+    required String conversationId,
+    required String text,
+  }) async {
+    final data = await _api.post('/api/admin/proofreading', {
+      'conversationId': conversationId,
+      'text': text,
+    });
+    return str(data['suggestion']);
+  }
+
+  /// IA: propone una respuesta para el hilo (tampoco la envía).
+  Future<String> replySuggestion(String conversationId) async {
+    final data = await _api.post('/api/admin/ai/reply-suggestion', {
+      'conversationId': conversationId,
+    });
+    return str(data['suggestion']);
+  }
+
   /// Archiva (sale de la bandeja) o desarchiva una conversación.
   Future<void> archiveConversation(String conversationId, bool archived) =>
       _api.post(

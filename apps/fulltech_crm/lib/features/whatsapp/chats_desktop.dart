@@ -148,6 +148,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                   title: state.conversationById(selectedId)?.name ?? 'Conversación',
                   desktop: true,
                   autoAttach: _pendingAttach,
+                  onNavigate: widget.onNavigate,
                 ),
         ),
       ],

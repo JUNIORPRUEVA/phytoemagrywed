@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -16,6 +18,7 @@ import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import 'desktop/chat_composer.dart';
 import 'desktop/chat_desktop_theme.dart';
+import 'desktop/chat_options_panel.dart';
 import 'desktop/chat_header.dart';
 import 'desktop/chat_thread.dart';
 import 'voice_recorder.dart';
@@ -31,6 +34,7 @@ class ChatScreen extends StatefulWidget {
     this.desktop = false,
     this.onNewMessage,
     this.autoAttach,
+    this.onNavigate,
   });
 
   final String conversationId;
@@ -53,6 +57,9 @@ class ChatScreen extends StatefulWidget {
   /// acción «Enviar una foto» de la bandeja de escritorio.
   final String? autoAttach;
 
+  /// Cambio de módulo desde las acciones del chat (p. ej. «Crear pedido»).
+  final ValueChanged<String>? onNavigate;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -69,6 +76,13 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   String? _error;
   String? _uploadLabel;
+
+  /// Columna de acciones (IA + ventas) del modo escritorio.
+  bool _optionsOpen = false;
+  bool _aiBusy = false;
+  String _aiOriginal = '';
+  String _aiSuggestion = '';
+  String _aiError = '';
 
   @override
   void initState() {
@@ -626,38 +640,195 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Theme(
       data: theme,
-      child: Column(
-        children: [
-          ChatHeader(
-            name: conversation?.name ?? widget.title,
-            subtitle: subtitle,
-            menu: _menuButton(conversation),
-            onNewMessage: widget.onNewMessage,
-            onCall: phone.isEmpty ? null : () => launchUrl(Uri.parse('tel:$phone')),
-            searching: _searching,
-            searchController: _threadSearch,
-            onSearchChanged: (value) => setState(() => _threadQuery = value),
-            onToggleSearch: () => setState(() {
-              _searching = !_searching;
-              if (!_searching) {
-                _threadSearch.clear();
-                _threadQuery = '';
-              }
-            }),
-          ),
-          Expanded(child: body),
-          ChatComposer(
-            controller: _composer,
-            sending: _sending,
-            uploadLabel: _uploadLabel,
-            onSend: () => _send(),
-            onAttach: (kind) => _pickAndSendMedia(kind),
-            onShareLocation: () => _openShareSheet(),
-            onRecord: () => _recordVoice(),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final panelWidth = (constraints.maxWidth * 0.20).clamp(240.0, 340.0);
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: Column(
+                  children: [
+                    ChatHeader(
+                      name: conversation?.name ?? widget.title,
+                      subtitle: subtitle,
+                      menu: _menuButton(conversation),
+                      onNewMessage: widget.onNewMessage,
+                      onCall: phone.isEmpty ? null : () => launchUrl(Uri.parse('tel:$phone')),
+                      searching: _searching,
+                      searchController: _threadSearch,
+                      onSearchChanged: (value) => setState(() => _threadQuery = value),
+                      onToggleSearch: () => setState(() {
+                        _searching = !_searching;
+                        if (!_searching) {
+                          _threadSearch.clear();
+                          _threadQuery = '';
+                        }
+                      }),
+                    ),
+                    Expanded(child: body),
+                    ChatComposer(
+                      controller: _composer,
+                      sending: _sending,
+                      uploadLabel: _uploadLabel,
+                      onSend: () => _send(),
+                      onAttach: (kind) => _pickAndSendMedia(kind),
+                      onShareLocation: () => _openShareSheet(),
+                      onRecord: () => _recordVoice(),
+                    ),
+                  ],
+                ),
+              ),
+              // Botones flotantes: IA (✦) y acciones del chat (⋮⋮).
+              Positioned(
+                right: 16,
+                bottom: 120,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ChatFab(
+                      icon: Icons.auto_awesome,
+                      tooltip: 'Corregir ortografía con IA',
+                      onTap: _proofread,
+                      accent: true,
+                      busy: _aiBusy,
+                    ),
+                    const SizedBox(height: 10),
+                    _ChatFab(
+                      icon: Icons.tune_rounded,
+                      tooltip: 'Opciones del chat',
+                      onTap: () => setState(() => _optionsOpen = true),
+                    ),
+                  ],
+                ),
+              ),
+              // Columna de acciones: ENCIMA del hilo, con el fondo desenfocado.
+              if (_optionsOpen)
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _optionsOpen = false),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                      child: Container(
+                        color: c.dark ? const Color(0x55000000) : const Color(0x220B1D24),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_optionsOpen)
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, value, child) => Transform.translate(
+                      offset: Offset(panelWidth * (1 - value), 0),
+                      child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
+                    ),
+                    child: ChatOptionsPanel(
+                      width: panelWidth,
+                      onClose: () => setState(() => _optionsOpen = false),
+                      onProofread: _proofread,
+                      onReplySuggestion: _replySuggestion,
+                      onNewOrder: () {
+                        setState(() => _optionsOpen = false);
+                        widget.onNavigate?.call('pos');
+                      },
+                      onTemplate: () {
+                        setState(() => _optionsOpen = false);
+                        _openTemplates();
+                      },
+                      onShareData: () {
+                        setState(() => _optionsOpen = false);
+                        _openShareSheet();
+                      },
+                      onAssign: () {
+                        setState(() => _optionsOpen = false);
+                        _assignment();
+                      },
+                      onResolveToggle: () {
+                        setState(() => _optionsOpen = false);
+                        _toggleResolved();
+                      },
+                      onRefresh: _load,
+                      isResolved: conversation?.isResolved ?? false,
+                      aiBusy: _aiBusy,
+                      aiOriginal: _aiOriginal,
+                      aiSuggestion: _aiSuggestion,
+                      aiError: _aiError,
+                      onUseSuggestion: _useAiSuggestion,
+                      onDiscardSuggestion: _discardAiSuggestion,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
+  }
+
+  /// IA: corrige el texto del compositor (o sugiere una respuesta).
+  Future<void> _proofread() async {
+    final text = _composer.text.trim();
+    if (text.isEmpty) {
+      crmToast(context, 'Escribe primero el mensaje que quieres corregir.');
+      return;
+    }
+    await _askAi(reply: false, text: text);
+  }
+
+  Future<void> _replySuggestion() => _askAi(reply: true, text: '');
+
+  Future<void> _askAi({required bool reply, required String text}) async {
+    if (_aiBusy) return;
+    setState(() {
+      _optionsOpen = true;
+      _aiBusy = true;
+      _aiOriginal = text;
+      _aiSuggestion = '';
+      _aiError = '';
+    });
+    try {
+      final repository = _state.repository;
+      final suggestion = reply
+          ? await repository.replySuggestion(widget.conversationId)
+          : await repository.proofread(conversationId: widget.conversationId, text: text);
+      if (!mounted) return;
+      setState(() {
+        _aiBusy = false;
+        _aiSuggestion = suggestion;
+        if (suggestion.isEmpty) _aiError = 'La IA no devolvió una propuesta.';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _aiBusy = false;
+        _aiError = error.message;
+      });
+    }
+  }
+
+  /// Rellena el compositor con la propuesta. NUNCA envía sola.
+  void _useAiSuggestion() {
+    _composer.text = _aiSuggestion;
+    _composer.selection = TextSelection.collapsed(offset: _aiSuggestion.length);
+    setState(() {
+      _optionsOpen = false;
+      _aiSuggestion = '';
+      _aiOriginal = '';
+    });
+    crmToast(context, 'Propuesta puesta en el mensaje. Revísala antes de enviar.');
+  }
+
+  void _discardAiSuggestion() {
+    setState(() {
+      _aiSuggestion = '';
+      _aiOriginal = '';
+      _aiError = '';
+    });
   }
 
   /// Menú de acciones del hilo. Se usa igual en la barra de la app y en el
@@ -1202,6 +1373,76 @@ class _EmbeddedChatHeader extends StatelessWidget {
             IconButton(tooltip: 'Llamar', icon: const Icon(Icons.call_outlined, size: 20), onPressed: onCall),
           ...menu,
         ],
+      ),
+    );
+  }
+}
+/// Botón flotante circular del hilo de escritorio (IA y acciones).
+class _ChatFab extends StatefulWidget {
+  const _ChatFab({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.accent = false,
+    this.busy = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final bool accent;
+  final bool busy;
+
+  @override
+  State<_ChatFab> createState() => _ChatFabState();
+}
+
+class _ChatFabState extends State<_ChatFab> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final background = widget.accent ? c.accent : c.panelBg;
+    final foreground = widget.accent ? Colors.white : c.textPrimary;
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.busy ? null : widget.onTap,
+          child: AnimatedScale(
+            scale: _hovered ? 1.06 : 1,
+            duration: const Duration(milliseconds: 130),
+            child: Container(
+              width: 44,
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: background,
+                shape: BoxShape.circle,
+                border: Border.all(color: widget.accent ? c.accent : c.divider),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: c.dark ? 0.40 : 0.12),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: widget.busy
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: foreground),
+                    )
+                  : Icon(widget.icon, size: 20, color: foreground),
+            ),
+          ),
+        ),
       ),
     );
   }
