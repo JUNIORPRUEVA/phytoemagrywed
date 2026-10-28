@@ -29,6 +29,7 @@ class ChatScreen extends StatefulWidget {
     required this.title,
     this.embedded = false,
     this.desktop = false,
+    this.onNewMessage,
   });
 
   final String conversationId;
@@ -42,6 +43,10 @@ class ChatScreen extends StatefulWidget {
   /// Presentación de escritorio (estilo WhatsApp Desktop): encabezado, hilo con
   /// patrón de fondo y barra de redacción nuevos. La lógica es la misma.
   final bool desktop;
+
+  /// Acción «nuevo mensaje» del encabezado (crear/abrir chat de un cliente).
+  /// La implementa el contenedor de escritorio, que es quien conoce la lista.
+  final VoidCallback? onNewMessage;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -615,6 +620,7 @@ class _ChatScreenState extends State<ChatScreen> {
             name: conversation?.name ?? widget.title,
             subtitle: subtitle,
             menu: _menuButton(conversation),
+            onNewMessage: widget.onNewMessage,
             onCall: phone.isEmpty ? null : () => launchUrl(Uri.parse('tel:$phone')),
             searching: _searching,
             searchController: _threadSearch,

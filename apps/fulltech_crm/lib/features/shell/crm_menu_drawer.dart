@@ -630,11 +630,8 @@ class _BellButtonState extends State<_BellButton> {
   }
 }
 
-/// Botón del menú con el icono de barras del PWA y animación de apertura.
-///
-/// Cerrado: tres barras asimétricas (el icono original del panel).
-/// Abierto: las de arriba y abajo giran 45° y se cruzan hasta formar una ✕
-/// mientras la del medio se desvanece. 240 ms, `easeOutCubic`.
+/// Botón del menú con el **icono oficial del panel** (`menu.png`) y animación
+/// de apertura: el icono se funde en una ✕ que gira 45°, 240 ms `easeOutCubic`.
 class CrmDrawerButton extends StatefulWidget {
   const CrmDrawerButton({
     super.key,
@@ -719,21 +716,27 @@ class _CrmDrawerButtonState extends State<CrmDrawerButton> with SingleTickerProv
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            _bar(
-                              width: 18,
-                              offset: -5.0 * (1 - t),
-                              angle: 0.7854 * t,
-                              color: widget.color,
-                            ),
+                            // Icono original (cerrado).
                             Opacity(
-                              opacity: (1 - t * 1.6).clamp(0.0, 1.0),
-                              child: _bar(width: 12.5 * (1 - t * 0.25), color: widget.color),
+                              opacity: (1 - t).clamp(0.0, 1.0),
+                              child: Transform.rotate(
+                                angle: 0.6 * t,
+                                child: PwaIcon(PwaIcons.menu, size: 18, color: widget.color),
+                              ),
                             ),
-                            _bar(
-                              width: 7.5 + 10.5 * t,
-                              offset: 5.0 * (1 - t),
-                              angle: -0.7854 * t,
-                              color: widget.color,
+                            // ✕ que aparece al abrir.
+                            Opacity(
+                              opacity: t.clamp(0.0, 1.0),
+                              child: Transform.rotate(
+                                angle: -0.7854 * (1 - t),
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    _bar(width: 16, angle: 0.7854, color: widget.color),
+                                    _bar(width: 16, angle: -0.7854, color: widget.color),
+                                  ],
+                                ),
+                              ),
                             ),
                           ],
                         ),

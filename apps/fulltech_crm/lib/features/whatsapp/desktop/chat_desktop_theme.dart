@@ -137,8 +137,8 @@ abstract final class ChatDesktopMetrics {
   /// Ancho del panel de conversaciones: `x=59..399`, línea en `x=400`.
   static const double listWidth = 342;
 
-  /// Alto del encabezado del hilo: `y=36..91` (línea en `y=35`).
-  static const double headerHeight = 56;
+  /// Alto del encabezado del hilo (versión fina y compacta).
+  static const double headerHeight = 46;
 
   /// Alto del área de redacción.
   static const double composerHeight = 104;

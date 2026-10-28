@@ -9,6 +9,7 @@ import 'desktop/chat_desktop_theme.dart';
 import 'desktop/chat_doodle_background.dart';
 import 'desktop/chat_list_panel.dart';
 import 'desktop/chat_navigation_rail.dart';
+import 'desktop/conversation_actions.dart';
 
 /// Bandeja de conversaciones de **escritorio**, con la composición de la
 /// referencia aportada (WhatsApp Desktop): rail estrecho + panel de chats +
@@ -101,6 +102,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                 conversations: conversations,
                 selectedId: selectedId,
                 onSelect: (id) => setState(() => _selectedId = id),
+                onAction: _runAction,
                 search: _search,
                 onSearchChanged: (_) => setState(() {}),
                 filter: _filter,
@@ -119,12 +121,33 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                           state.conversationById(selectedId)?.name ??
                           'Conversación',
                       desktop: true,
+                      onNewMessage: _newMessage,
                     ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Acciones de una fila de la bandeja (las mismas del hilo móvil).
+  Future<void> _runAction(Conversation conversation, String action) async {
+    if (action == 'open') {
+      setState(() => _selectedId = conversation.id);
+      return;
+    }
+    final refresh = await ConversationActions.run(context, action, conversation);
+    if (!mounted || !refresh) return;
+    await CrmScope.of(context, listen: false).refresh(quiet: true);
+  }
+
+  /// «Nuevo mensaje»: abre (o crea) la conversación de un teléfono y la muestra.
+  Future<void> _newMessage() async {
+    final id = await showNewConversationDialog(context);
+    if (!mounted || id == null) return;
+    await CrmScope.of(context, listen: false).refresh(quiet: true);
+    if (!mounted) return;
+    setState(() => _selectedId = id);
   }
 }
 

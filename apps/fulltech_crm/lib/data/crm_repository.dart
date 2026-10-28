@@ -67,6 +67,19 @@ class CrmRepository {
     return listv(data['messages'] ?? data['items']).map(ChatMessage.fromJson).toList();
   }
 
+  /// Abre (o crea) la conversación de un teléfono y, si se indica, envía el
+  /// primer mensaje. Es la misma ruta que usa el panel PWA.
+  Future<Map<String, dynamic>> startConversation({
+    required String phone,
+    String name = '',
+    String body = '',
+  }) =>
+      _api.post('/api/admin/conversations/start', {
+        'phone': phone,
+        'name': name,
+        'body': body,
+      });
+
   Future<void> sendMessage(String conversationId, String body, {String? operationKey}) =>
       _api.post(
         '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages',

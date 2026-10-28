@@ -252,8 +252,11 @@ class _CrmShellState extends State<CrmShell> {
     if (desktop) {
       final destination =
           crmDestinations.firstWhere((row) => row.tab == _tab, orElse: () => crmDestinations.first);
-      final title = destination.label;
-      final subtitle = destination.group.isEmpty ? 'FullTECH CRM' : destination.group;
+      // En la bandeja la barra muestra la marca (el módulo ya se llama WhatsApp
+      // en el panel de la lista); en el resto, el módulo y su grupo.
+      final isWhatsapp = _tab == 'whatsapp';
+      final title = isWhatsapp ? 'FULLTECH CRM' : destination.label;
+      final subtitle = isWhatsapp ? '' : destination.group;
       return Scaffold(
         backgroundColor: context.crm.pageBg,
         body: Stack(
