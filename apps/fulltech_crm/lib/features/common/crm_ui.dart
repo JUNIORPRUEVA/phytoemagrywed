@@ -646,7 +646,8 @@ class StatGrid extends StatelessWidget {
             crossAxisCount: columns,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
-            mainAxisExtent: 96,
+            // 114 px: icono + valor + pista caben sin desbordar (96 recortaba 17).
+            mainAxisExtent: 114,
           ),
           children: children,
         );

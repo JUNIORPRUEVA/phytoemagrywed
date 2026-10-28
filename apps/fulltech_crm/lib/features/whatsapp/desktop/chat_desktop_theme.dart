@@ -3,54 +3,130 @@ import 'package:flutter/material.dart';
 /// Tokens EXCLUSIVOS del módulo de conversaciones de escritorio.
 ///
 /// Referencia visual: captura de WhatsApp Desktop aportada por el usuario
-/// (1920×1080). Los valores se muestrearon pixel a pixel sobre la captura:
-/// no son estimaciones de una imagen que no se haya podido abrir.
+/// (1920×1080). Los valores oscuros se muestrearon pixel a pixel sobre la
+/// captura; los claros son el mismo lenguaje sobre la paleta clara de WhatsApp
+/// Web, de modo que el módulo respeta el modo (claro/oscuro) que haya elegido
+/// el usuario en el panel.
 ///
-/// Ámbito: **solo** `features/whatsapp/desktop`. El resto del CRM mantiene su
-/// tema; este módulo es deliberadamente oscuro porque la referencia lo es.
-abstract final class ChatDesktopColors {
-  /// Fondo del rail de navegación (muestreado en x=14).
-  static const Color railBg = Color(0xFF1D1F1F);
+/// Ámbito: **solo** `features/whatsapp/desktop`.
+@immutable
+class ChatPalette {
+  const ChatPalette({
+    required this.dark,
+    required this.railBg,
+    required this.panelBg,
+    required this.canvas,
+    required this.divider,
+    required this.fieldBg,
+    required this.composerBg,
+    required this.bubbleIn,
+    required this.bubbleOut,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.accent,
+    required this.rowHover,
+    required this.rowSelected,
+    required this.doodle,
+    required this.warning,
+    required this.danger,
+  });
 
-  /// Fondo de paneles: lista, encabezado del hilo y lienzo del chat.
-  static const Color panelBg = Color(0xFF161717);
+  final bool dark;
 
-  /// Líneas de 1 px entre zonas (y=35, x=58, x=400 en la captura).
-  static const Color divider = Color(0xFF2E2F2F);
+  /// Fondo del rail de navegación.
+  final Color railBg;
+
+  /// Fondo de paneles: lista, encabezado del hilo.
+  final Color panelBg;
+
+  /// Lienzo del hilo: distinto del panel para que las burbujas se lean.
+  final Color canvas;
+
+  /// Líneas de 1 px entre zonas.
+  final Color divider;
 
   /// Campo de búsqueda y caja de redacción.
-  static const Color fieldBg = Color(0xFF2E2F2F);
+  final Color fieldBg;
 
   /// Composer inferior (burbuja de escritura).
-  static const Color composerBg = Color(0xFF242626);
+  final Color composerBg;
 
   /// Burbuja entrante.
-  static const Color bubbleIn = Color(0xFF242626);
+  final Color bubbleIn;
 
-  /// Burbuja saliente (verde oscuro muestreado en la captura).
-  static const Color bubbleOut = Color(0xFF144D37);
+  /// Burbuja saliente.
+  final Color bubbleOut;
 
   /// Texto principal.
-  static const Color textPrimary = Color(0xFFFAFAFA);
+  final Color textPrimary;
 
   /// Texto secundario (hora, vista previa, teléfono).
-  static const Color textSecondary = Color(0xFFC0C1C1);
+  final Color textSecondary;
 
   /// Acento de la referencia (badges, indicador activo, chip seleccionado).
-  static const Color accent = Color(0xFF25D366);
+  final Color accent;
 
   /// Fila bajo el cursor.
-  static const Color rowHover = Color(0xFF202121);
+  final Color rowHover;
 
   /// Fila seleccionada.
-  static const Color rowSelected = Color(0xFF2A2B2B);
+  final Color rowSelected;
 
   /// Trazo del patrón del fondo (original, no es el recurso propietario).
-  static const Color doodle = Color(0xFF262727);
+  final Color doodle;
 
   /// Aviso de estado pendiente / error.
-  static const Color warning = Color(0xFFE9A23B);
-  static const Color danger = Color(0xFFF15C6D);
+  final Color warning;
+  final Color danger;
+
+  /// Tema oscuro: la referencia original.
+  static const ChatPalette darkPalette = ChatPalette(
+    dark: true,
+    railBg: Color(0xFF1D1F1F),
+    panelBg: Color(0xFF161717),
+    canvas: Color(0xFF161717),
+    divider: Color(0xFF2E2F2F),
+    fieldBg: Color(0xFF2E2F2F),
+    composerBg: Color(0xFF242626),
+    bubbleIn: Color(0xFF242626),
+    bubbleOut: Color(0xFF144D37),
+    textPrimary: Color(0xFFFAFAFA),
+    textSecondary: Color(0xFFC0C1C1),
+    accent: Color(0xFF25D366),
+    rowHover: Color(0xFF202121),
+    rowSelected: Color(0xFF2A2B2B),
+    doodle: Color(0xFF262727),
+    warning: Color(0xFFE9A23B),
+    danger: Color(0xFFF15C6D),
+  );
+
+  /// Tema claro: el equivalente de WhatsApp Web.
+  static const ChatPalette light = ChatPalette(
+    dark: false,
+    railBg: Color(0xFFF7F8FA),
+    panelBg: Color(0xFFFFFFFF),
+    canvas: Color(0xFFEFEAE2),
+    divider: Color(0xFFE9EDEF),
+    fieldBg: Color(0xFFF0F2F5),
+    composerBg: Color(0xFFF0F2F5),
+    bubbleIn: Color(0xFFFFFFFF),
+    bubbleOut: Color(0xFFD9FDD3),
+    textPrimary: Color(0xFF111B21),
+    textSecondary: Color(0xFF667781),
+    accent: Color(0xFF1FA855),
+    rowHover: Color(0xFFF5F6F6),
+    rowSelected: Color(0xFFF0F2F5),
+    doodle: Color(0xFFE4E9EC),
+    warning: Color(0xFFB45309),
+    danger: Color(0xFFDC2626),
+  );
+
+  /// Paleta del tema que eligió el usuario.
+  static ChatPalette of(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? darkPalette : light;
+
+  /// Escala tipográfica ya coloreada con esta paleta.
+  ChatText get text => ChatText(this);
 }
 
 /// Medidas tomadas de la captura (px lógicos con la ventana a 1920×1080).
@@ -83,104 +159,118 @@ abstract final class ChatDesktopMetrics {
 
 /// Escala tipográfica deducida de la captura (nombre 15, vista previa 13,
 /// hora 11, título "Chats" 22).
-/// Tema oscuro del módulo de chat (toda la pantalla, no solo el hilo).
-ThemeData buildChatDesktopTheme() {
+@immutable
+class ChatText {
+  const ChatText(this.c);
+
+  final ChatPalette c;
+
+  TextStyle get title => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 22,
+    fontWeight: FontWeight.w600,
+    color: c.textPrimary,
+    height: 1.2,
+  );
+
+  TextStyle get rowName => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 15,
+    fontWeight: FontWeight.w600,
+    color: c.textPrimary,
+    height: 1.25,
+  );
+
+  TextStyle get rowPreview => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 13,
+    fontWeight: FontWeight.w400,
+    color: c.textSecondary,
+    height: 1.25,
+  );
+
+  TextStyle get stamp => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 11,
+    fontWeight: FontWeight.w400,
+    color: c.textSecondary,
+  );
+
+  TextStyle get headerName => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 16,
+    fontWeight: FontWeight.w600,
+    color: c.textPrimary,
+  );
+
+  TextStyle get headerSubtitle => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 12.5,
+    fontWeight: FontWeight.w400,
+    color: c.textSecondary,
+  );
+
+  TextStyle get bubbleBody => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 14,
+    fontWeight: FontWeight.w400,
+    color: c.textPrimary,
+    height: 1.35,
+  );
+
+  TextStyle get bubbleMeta => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 11,
+    fontWeight: FontWeight.w400,
+    color: c.textSecondary,
+  );
+
+  TextStyle get author => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+    color: c.accent,
+  );
+
+  TextStyle get chip => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 12.5,
+    fontWeight: FontWeight.w500,
+  );
+
+  TextStyle get dateDivider => TextStyle(
+    fontFamily: ChatDesktopMetrics.fontFamily,
+    fontSize: 11.5,
+    fontWeight: FontWeight.w500,
+    color: c.textSecondary,
+  );
+}
+
+/// Tema Material del módulo, con la luminosidad activa.
+ThemeData buildChatDesktopTheme(BuildContext context) {
+  final c = ChatPalette.of(context);
   return ThemeData(
     useMaterial3: true,
-    brightness: Brightness.dark,
+    brightness: c.dark ? Brightness.dark : Brightness.light,
     fontFamily: ChatDesktopMetrics.fontFamily,
-    scaffoldBackgroundColor: ChatDesktopColors.panelBg,
-    colorScheme: const ColorScheme.dark(
-      primary: ChatDesktopColors.accent,
-      surface: ChatDesktopColors.fieldBg,
-      onSurface: ChatDesktopColors.textPrimary,
+    scaffoldBackgroundColor: c.panelBg,
+    colorScheme: (c.dark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
+      primary: c.accent,
+      surface: c.fieldBg,
+      onSurface: c.textPrimary,
     ),
     inputDecorationTheme: const InputDecorationTheme(filled: false),
-    chipTheme: const ChipThemeData(
-      backgroundColor: ChatDesktopColors.fieldBg,
-      selectedColor: ChatDesktopColors.rowSelected,
+    chipTheme: ChipThemeData(
+      backgroundColor: c.fieldBg,
+      selectedColor: c.rowSelected,
       side: BorderSide.none,
       labelStyle: TextStyle(
         fontFamily: ChatDesktopMetrics.fontFamily,
         fontSize: 12.5,
-        color: ChatDesktopColors.textPrimary,
+        color: c.textPrimary,
       ),
     ),
-    popupMenuTheme: const PopupMenuThemeData(color: ChatDesktopColors.fieldBg),
-    dialogTheme: const DialogThemeData(
-      backgroundColor: ChatDesktopColors.fieldBg,
-    ),
-  );
-}
-
-abstract final class ChatDesktopText {
-  static const TextStyle title = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 22,
-    fontWeight: FontWeight.w600,
-    color: ChatDesktopColors.textPrimary,
-    height: 1.2,
-  );
-  static const TextStyle rowName = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 15,
-    fontWeight: FontWeight.w600,
-    color: ChatDesktopColors.textPrimary,
-    height: 1.25,
-  );
-  static const TextStyle rowPreview = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 13,
-    fontWeight: FontWeight.w400,
-    color: ChatDesktopColors.textSecondary,
-    height: 1.25,
-  );
-  static const TextStyle stamp = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 11,
-    fontWeight: FontWeight.w400,
-    color: ChatDesktopColors.textSecondary,
-  );
-  static const TextStyle headerName = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 16,
-    fontWeight: FontWeight.w600,
-    color: ChatDesktopColors.textPrimary,
-  );
-  static const TextStyle headerSubtitle = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 12.5,
-    fontWeight: FontWeight.w400,
-    color: ChatDesktopColors.textSecondary,
-  );
-  static const TextStyle bubbleBody = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 14,
-    fontWeight: FontWeight.w400,
-    color: ChatDesktopColors.textPrimary,
-    height: 1.35,
-  );
-  static const TextStyle bubbleMeta = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 11,
-    fontWeight: FontWeight.w400,
-    color: ChatDesktopColors.textSecondary,
-  );
-  static const TextStyle author = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 12,
-    fontWeight: FontWeight.w600,
-    color: ChatDesktopColors.accent,
-  );
-  static const TextStyle chip = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 12.5,
-    fontWeight: FontWeight.w500,
-  );
-  static const TextStyle dateDivider = TextStyle(
-    fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 11.5,
-    fontWeight: FontWeight.w500,
-    color: ChatDesktopColors.textSecondary,
+    popupMenuTheme: PopupMenuThemeData(color: c.fieldBg),
+    dialogTheme: DialogThemeData(backgroundColor: c.fieldBg),
   );
 }

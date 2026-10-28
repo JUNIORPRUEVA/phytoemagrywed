@@ -62,6 +62,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     final state = CrmScope.of(context);
     final conversations = _filtered(state.conversations);
     final selectedId =
@@ -77,11 +78,11 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
       math.max(272.0, (width - railWidth) * 0.3),
     );
 
-    // Todo el módulo (lista incluida) va con el tema oscuro del chat.
+    // Todo el módulo (lista incluida) sigue la luminosidad configurada.
     return Theme(
-      data: buildChatDesktopTheme(),
+      data: buildChatDesktopTheme(context),
       child: Material(
-        color: ChatDesktopColors.panelBg,
+        color: c.panelBg,
         child: Row(
           children: [
             if (widget.showRail)
@@ -132,19 +133,21 @@ class _NoConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.forum_outlined,
             size: 38,
-            color: ChatDesktopColors.textSecondary,
+            color: c.textSecondary,
           ),
           const SizedBox(height: 12),
           Text(
             'Elige una conversación',
-            style: ChatDesktopText.title.copyWith(
+            style: t.title.copyWith(
               fontSize: 16,
               fontWeight: FontWeight.w500,
             ),
@@ -152,7 +155,7 @@ class _NoConversation extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             'A la izquierda están los chats del negocio.',
-            style: ChatDesktopText.rowPreview,
+            style: t.rowPreview,
           ),
         ],
       ),

@@ -209,8 +209,10 @@ class _PosScreenState extends State<PosScreen> {
 
   Widget _buildDesktop(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
+    final p = PosPalette.of(context);
+    final t = p.text;
     return Material(
-      color: PosColors.pageBg,
+      color: p.pageBg,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -222,15 +224,15 @@ class _PosScreenState extends State<PosScreen> {
           Expanded(
             child: Column(
               children: [
-                _desktopActionBar(),
+                _desktopActionBar(context),
                 if (_operation.attempts > 1)
                   Container(
                     width: double.infinity,
-                    color: PosColors.primarySoft,
+                    color: p.primarySoft,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     child: Text(
                       'Reintento seguro: la operación conserva su identificador, no se duplicará.',
-                      style: PosText.pill.copyWith(color: PosColors.primaryDark, fontSize: 11.5),
+                      style: t.pill.copyWith(fontSize: 11.5),
                     ),
                   ),
                 Expanded(
@@ -271,13 +273,15 @@ class _PosScreenState extends State<PosScreen> {
     );
   }
 
-  Widget _desktopActionBar() {
+  Widget _desktopActionBar(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return Container(
       height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: const BoxDecoration(
-        color: PosColors.surface,
-        border: Border(bottom: BorderSide(color: PosColors.border)),
+      decoration: BoxDecoration(
+        color: p.surface,
+        border: Border(bottom: BorderSide(color: p.border)),
       ),
       child: Row(
         children: [
@@ -287,45 +291,47 @@ class _PosScreenState extends State<PosScreen> {
               child: TextField(
                 controller: _productSearch,
                 onChanged: (_) => setState(() {}),
-                style: PosText.body,
+                style: t.body,
                 decoration: InputDecoration(
                   isDense: true,
                   filled: false,
                   hintText: 'Buscar producto por nombre o código...',
-                  hintStyle: PosText.secondary,
-                  prefixIcon: const Padding(
-                    padding: EdgeInsets.only(left: 10, right: 6),
-                    child: PwaIcon(PwaIcons.search, size: 15, color: PosColors.inkSecondary),
+                  hintStyle: t.secondary,
+                  prefixIcon: Padding(
+                    padding: const EdgeInsets.only(left: 10, right: 6),
+                    child: PwaIcon(PwaIcons.search, size: 15, color: p.inkSecondary),
                   ),
                   prefixIconConstraints: const BoxConstraints(minWidth: 31, minHeight: 31),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(PosMetrics.radiusField),
-                    borderSide: const BorderSide(color: PosColors.border),
+                    borderSide: BorderSide(color: p.border),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(PosMetrics.radiusField),
-                    borderSide: const BorderSide(color: PosColors.border),
+                    borderSide: BorderSide(color: p.border),
                   ),
                 ),
               ),
             ),
           ),
           const SizedBox(width: 8),
-          _actionButton(PwaIcons.plus, 'Agregar artículo', _pickProduct),
+          _actionButton(context, PwaIcons.plus, 'Agregar artículo', _pickProduct),
           const SizedBox(width: 6),
-          _actionButton(PwaIcons.usersadd, 'Agregar cliente', _pickCustomer),
+          _actionButton(context, PwaIcons.usersadd, 'Agregar cliente', _pickCustomer),
           const SizedBox(width: 6),
-          _filterButton(),
+          _filterButton(context),
           const SizedBox(width: 6),
-          _actionButton(PwaIcons.refresh, 'Recargar catálogo', _loadCatalog),
+          _actionButton(context, PwaIcons.refresh, 'Recargar catálogo', _loadCatalog),
         ],
       ),
     );
   }
 
   /// Filtro de existencia; el rail refleja la misma selección.
-  Widget _filterButton() {
+  Widget _filterButton(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     final active = _railFilter.availability != PosAvailability.all;
     return PopupMenuButton<PosRailFilter>(
       tooltip: 'Filtrar artículos',
@@ -346,22 +352,24 @@ class _PosScreenState extends State<PosScreen> {
         height: PosMetrics.actionButtonHeight,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
-          color: active ? PosColors.primarySoft : PosColors.surface,
+          color: active ? p.primarySoft : p.surface,
           borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
-          border: Border.all(color: active ? PosColors.primaryBorder : PosColors.border),
+          border: Border.all(color: active ? p.primaryBorder : p.border),
         ),
         child: Row(
           children: [
-            PwaIcon(PwaIcons.filter, size: 15, color: PosColors.primary),
+            PwaIcon(PwaIcons.filter, size: 15, color: p.primary),
             const SizedBox(width: 6),
-            Text('Filtro', style: PosText.pill.copyWith(fontSize: 11.5)),
+            Text('Filtro', style: t.pill.copyWith(fontSize: 11.5)),
           ],
         ),
       ),
     );
   }
 
-  Widget _actionButton(String icon, String label, VoidCallback onTap) {
+  Widget _actionButton(BuildContext context, String icon, String label, VoidCallback onTap) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
@@ -369,15 +377,15 @@ class _PosScreenState extends State<PosScreen> {
         height: PosMetrics.actionButtonHeight,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
-          color: PosColors.surface,
+          color: p.surface,
           borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
-          border: Border.all(color: PosColors.border),
+          border: Border.all(color: p.border),
         ),
         child: Row(
           children: [
-            PwaIcon(icon, size: 15, color: PosColors.primary),
+            PwaIcon(icon, size: 15, color: p.primary),
             const SizedBox(width: 6),
-            Text(label, style: PosText.pill.copyWith(fontSize: 11.5)),
+            Text(label, style: t.pill.copyWith(fontSize: 11.5)),
           ],
         ),
       ),

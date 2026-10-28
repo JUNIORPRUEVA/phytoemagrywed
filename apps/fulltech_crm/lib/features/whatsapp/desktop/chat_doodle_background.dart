@@ -18,14 +18,15 @@ class ChatDoodleBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     // El color base va DEBAJO del patrón y el contenido encima: si el
     // `ColoredBox` fuese hijo del `CustomPaint`, taparía los dibujos.
     return RepaintBoundary(
       child: Stack(
         children: [
-          const Positioned.fill(child: ColoredBox(color: ChatDesktopColors.panelBg)),
+          Positioned.fill(child: ColoredBox(color: c.canvas)),
           Positioned.fill(
-            child: CustomPaint(painter: const _DoodlePainter(), isComplex: true, willChange: false),
+            child: CustomPaint(painter: _DoodlePainter(c.doodle), isComplex: true, willChange: false),
           ),
           Positioned.fill(child: child),
         ],
@@ -35,7 +36,9 @@ class ChatDoodleBackground extends StatelessWidget {
 }
 
 class _DoodlePainter extends CustomPainter {
-  const _DoodlePainter();
+  const _DoodlePainter(this.strokeColor);
+
+  final Color strokeColor;
 
   static const double _tile = 86;
 
@@ -45,7 +48,7 @@ class _DoodlePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2
       ..strokeCap = StrokeCap.round
-      ..color = ChatDesktopColors.doodle;
+      ..color = strokeColor;
 
     final cols = (size.width / _tile).ceil() + 1;
     final rows = (size.height / _tile).ceil() + 1;

@@ -18,9 +18,11 @@ class ChatDateDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Center(child: Text(label, style: ChatDesktopText.dateDivider)),
+      child: Center(child: Text(label, style: t.dateDivider)),
     );
   }
 }
@@ -35,6 +37,8 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     final outgoing = message.outgoing;
     final radius = ChatDesktopMetrics.bubbleRadius;
     final tail = ChatDesktopMetrics.bubbleRadiusTail;
@@ -46,7 +50,7 @@ class MessageBubble extends StatelessWidget {
         constraints: BoxConstraints(maxWidth: maxWidth),
         padding: const EdgeInsets.fromLTRB(9, 6, 9, 5),
         decoration: BoxDecoration(
-          color: outgoing ? ChatDesktopColors.bubbleOut : ChatDesktopColors.bubbleIn,
+          color: outgoing ? c.bubbleOut : c.bubbleIn,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(ChatDesktopMetrics.bubbleRadius),
             topRight: const Radius.circular(ChatDesktopMetrics.bubbleRadius),
@@ -60,7 +64,7 @@ class MessageBubble extends StatelessWidget {
             if (outgoing && message.author.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 3),
-                child: Text(message.author, style: ChatDesktopText.author),
+                child: Text(message.author, style: t.author),
               ),
             if (message.hasCoordinates)
               _LocationContent(message: message)
@@ -72,16 +76,16 @@ class MessageBubble extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(_iconFor(message.type), size: 15, color: ChatDesktopColors.textSecondary),
+                    Icon(_iconFor(message.type), size: 15, color: c.textSecondary),
                     const SizedBox(width: 6),
-                    Text(_labelFor(message.type), style: ChatDesktopText.bubbleMeta),
+                    Text(_labelFor(message.type), style: t.bubbleMeta),
                   ],
                 ),
               ),
             if (message.body.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 1),
-                child: Text(message.body, style: ChatDesktopText.bubbleBody),
+                child: Text(message.body, style: t.bubbleBody),
               ),
             Padding(
               padding: const EdgeInsets.only(top: 3),
@@ -89,13 +93,13 @@ class MessageBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text(CrmFormat.chatStamp(message.at), style: ChatDesktopText.bubbleMeta),
+                  Text(CrmFormat.chatStamp(message.at), style: t.bubbleMeta),
                   if (outgoing) ...[
                     const SizedBox(width: 4),
                     Icon(
                       message.status == 'failed' ? Icons.error_outline_rounded : Icons.done_all_rounded,
                       size: 13,
-                      color: message.status == 'failed' ? ChatDesktopColors.danger : ChatDesktopColors.textSecondary,
+                      color: message.status == 'failed' ? c.danger : c.textSecondary,
                     ),
                   ],
                 ],
@@ -137,6 +141,8 @@ class QueuedMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
@@ -144,23 +150,23 @@ class QueuedMessageBubble extends StatelessWidget {
         constraints: BoxConstraints(maxWidth: maxWidth),
         padding: const EdgeInsets.fromLTRB(9, 6, 9, 6),
         decoration: BoxDecoration(
-          color: ChatDesktopColors.bubbleOut,
+          color: c.bubbleOut,
           borderRadius: BorderRadius.circular(ChatDesktopMetrics.bubbleRadius),
-          border: Border.all(color: ChatDesktopColors.warning.withValues(alpha: 0.55)),
+          border: Border.all(color: c.warning.withValues(alpha: 0.55)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(body, style: ChatDesktopText.bubbleBody),
+            Text(body, style: t.bubbleBody),
             const SizedBox(height: 4),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.schedule_rounded, size: 12, color: ChatDesktopColors.warning),
+                Icon(Icons.schedule_rounded, size: 12, color: c.warning),
                 const SizedBox(width: 4),
                 Text(
                   'Pendiente de enviar',
-                  style: ChatDesktopText.bubbleMeta.copyWith(color: ChatDesktopColors.warning),
+                  style: t.bubbleMeta.copyWith(color: c.warning),
                 ),
               ],
             ),
@@ -195,21 +201,23 @@ class _MediaContentState extends State<_MediaContent> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     if (_future == null) {
-      return Text('Adjunto no disponible', style: ChatDesktopText.bubbleMeta);
+      return Text('Adjunto no disponible', style: t.bubbleMeta);
     }
     return FutureBuilder<ApiFile>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(
+          return SizedBox(
             height: 90,
             width: 150,
             child: Center(
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: ChatDesktopColors.accent),
+                child: CircularProgressIndicator(strokeWidth: 2, color: c.accent),
               ),
             ),
           );
@@ -217,7 +225,7 @@ class _MediaContentState extends State<_MediaContent> {
         if (snapshot.hasError || snapshot.data == null) {
           return Text(
             'No pudimos abrir el adjunto',
-            style: ChatDesktopText.bubbleMeta.copyWith(color: ChatDesktopColors.danger),
+            style: t.bubbleMeta.copyWith(color: c.danger),
           );
         }
         final file = snapshot.data!;
@@ -232,7 +240,7 @@ class _MediaContentState extends State<_MediaContent> {
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stack) => Text(
                   'Imagen no válida',
-                  style: ChatDesktopText.bubbleMeta.copyWith(color: ChatDesktopColors.danger),
+                  style: t.bubbleMeta.copyWith(color: c.danger),
                 ),
               ),
             ),
@@ -242,16 +250,16 @@ class _MediaContentState extends State<_MediaContent> {
           return Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.description_outlined, size: 20, color: ChatDesktopColors.textSecondary),
+              Icon(Icons.description_outlined, size: 20, color: c.textSecondary),
               const SizedBox(width: 8),
-              Text('Documento PDF', style: ChatDesktopText.bubbleBody),
+              Text('Documento PDF', style: t.bubbleBody),
               const SizedBox(width: 10),
               TextButton(
                 onPressed: () => FileOpener.saveAndOpen(file),
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   minimumSize: const Size(0, 30),
-                  foregroundColor: ChatDesktopColors.accent,
+                  foregroundColor: c.accent,
                 ),
                 child: const Text('Abrir', style: TextStyle(fontSize: 12.5)),
               ),
@@ -276,36 +284,41 @@ class AudioMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         InkWell(
           onTap: onOpen,
           customBorder: const CircleBorder(),
-          child: const SizedBox(
+          child: SizedBox(
             width: 34,
             height: 34,
-            child: Icon(Icons.play_arrow_rounded, size: 24, color: ChatDesktopColors.textPrimary),
+            child: Icon(Icons.play_arrow_rounded, size: 24, color: c.textPrimary),
           ),
         ),
         const SizedBox(width: 4),
         SizedBox(
           width: 168,
           height: 22,
-          child: CustomPaint(painter: _WavePainter()),
+          child: CustomPaint(painter: _WavePainter(c.textSecondary)),
         ),
         const SizedBox(width: 8),
-        Text('Nota de voz', style: ChatDesktopText.bubbleMeta),
+        Text('Nota de voz', style: t.bubbleMeta),
       ],
     );
   }
 }
 
 class _WavePainter extends CustomPainter {
+  const _WavePainter(this.waveColor);
+
+  final Color waveColor;
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = ChatDesktopColors.textSecondary.withValues(alpha: 0.75)
+      ..color = waveColor.withValues(alpha: 0.75)
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round;
     const bars = 34;
@@ -319,7 +332,7 @@ class _WavePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _WavePainter oldDelegate) => false;
+  bool shouldRepaint(covariant _WavePainter oldDelegate) => oldDelegate.waveColor != waveColor;
 }
 
 class _LocationContent extends StatelessWidget {
@@ -329,6 +342,8 @@ class _LocationContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     final lat = message.latitude!;
     final lng = message.longitude!;
     return InkWell(
@@ -339,14 +354,14 @@ class _LocationContent extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.place_outlined, size: 18, color: ChatDesktopColors.accent),
+          Icon(Icons.place_outlined, size: 18, color: c.accent),
           const SizedBox(width: 8),
           Text(
             '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}',
-            style: ChatDesktopText.bubbleBody.copyWith(fontWeight: FontWeight.w600),
+            style: t.bubbleBody.copyWith(fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 6),
-          const Icon(Icons.open_in_new_rounded, size: 14, color: ChatDesktopColors.textSecondary),
+          Icon(Icons.open_in_new_rounded, size: 14, color: c.textSecondary),
         ],
       ),
     );

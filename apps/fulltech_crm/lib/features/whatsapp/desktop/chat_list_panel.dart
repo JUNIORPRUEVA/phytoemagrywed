@@ -56,14 +56,16 @@ class _ChatListPanelState extends State<ChatListPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     final rows = List<Conversation>.of(widget.conversations)
       ..sort((a, b) => _newestFirst ? b.lastAt.compareTo(a.lastAt) : a.lastAt.compareTo(b.lastAt));
 
     return Container(
       width: ChatDesktopMetrics.listWidth,
-      decoration: const BoxDecoration(
-        color: ChatDesktopColors.panelBg,
-        border: Border(right: BorderSide(color: ChatDesktopColors.divider)),
+      decoration: BoxDecoration(
+        color: c.panelBg,
+        border: Border(right: BorderSide(color: c.divider)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -74,7 +76,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
               padding: const EdgeInsets.only(left: 18, right: 10),
               child: Row(
                 children: [
-                  const Expanded(child: Text('Chats', style: ChatDesktopText.title)),
+                  Expanded(child: Text('Chats', style: t.title)),
                   _IconAction(
                     icon: Icons.more_vert_rounded,
                     tooltip: 'Opciones de la bandeja',
@@ -94,26 +96,26 @@ class _ChatListPanelState extends State<ChatListPanel> {
             child: Container(
               height: ChatDesktopMetrics.searchHeight,
               decoration: BoxDecoration(
-                color: ChatDesktopColors.fieldBg,
+                color: c.fieldBg,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Row(
                 children: [
                   const SizedBox(width: 12),
-                  const Icon(Icons.search_rounded, size: 18, color: ChatDesktopColors.textSecondary),
+                  Icon(Icons.search_rounded, size: 18, color: c.textSecondary),
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
                       controller: widget.search,
                       focusNode: _searchFocus,
                       onChanged: widget.onSearchChanged,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: ChatDesktopMetrics.fontFamily,
                         fontSize: 13.5,
-                        color: ChatDesktopColors.textPrimary,
+                        color: c.textPrimary,
                       ),
-                      cursorColor: ChatDesktopColors.accent,
-                      decoration: const InputDecoration(
+                      cursorColor: c.accent,
+                      decoration: InputDecoration(
                         isDense: true,
                         filled: false,
                         border: InputBorder.none,
@@ -121,7 +123,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
                         hintStyle: TextStyle(
                           fontFamily: ChatDesktopMetrics.fontFamily,
                           fontSize: 13.5,
-                          color: ChatDesktopColors.textSecondary,
+                          color: c.textSecondary,
                         ),
                       ),
                     ),
@@ -130,7 +132,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
                     IconButton(
                       tooltip: 'Limpiar',
                       iconSize: 16,
-                      color: ChatDesktopColors.textSecondary,
+                      color: c.textSecondary,
                       onPressed: () {
                         widget.search.clear();
                         widget.onSearchChanged('');
@@ -145,7 +147,7 @@ class _ChatListPanelState extends State<ChatListPanel> {
             value: widget.filter,
             onChanged: widget.onFilterChanged,
           ),
-          const Divider(height: 1, thickness: 1, color: ChatDesktopColors.divider),
+          Divider(height: 1, thickness: 1, color: c.divider),
           Expanded(
             child: rows.isEmpty
                 ? const _EmptyList()
@@ -167,22 +169,23 @@ class _ChatListPanelState extends State<ChatListPanel> {
   }
 
   void _openMenu(BuildContext context) {
+    final c = ChatPalette.of(context);
     final renderBox = context.findRenderObject() as RenderBox?;
     final offset = renderBox == null ? Offset.zero : renderBox.localToGlobal(Offset(260, 52));
     showMenu<String>(
       context: context,
-      color: ChatDesktopColors.fieldBg,
+      color: c.fieldBg,
       position: RelativeRect.fromLTRB(offset.dx, offset.dy, offset.dx, offset.dy),
       items: [
-        const PopupMenuItem(
+        PopupMenuItem(
           value: 'refresh',
-          child: Text('Actualizar bandeja', style: TextStyle(color: ChatDesktopColors.textPrimary, fontSize: 13)),
+          child: Text('Actualizar bandeja', style: TextStyle(color: c.textPrimary, fontSize: 13)),
         ),
         PopupMenuItem(
           value: 'sort',
           child: Text(
             _newestFirst ? 'Ordenar: más antiguas primero' : 'Ordenar: más recientes primero',
-            style: const TextStyle(color: ChatDesktopColors.textPrimary, fontSize: 13),
+            style: TextStyle(color: c.textPrimary, fontSize: 13),
           ),
         ),
       ],
@@ -202,6 +205,8 @@ class _FilterChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return SizedBox(
       height: 44,
       child: ListView.separated(
@@ -218,17 +223,17 @@ class _FilterChips extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                color: selected ? ChatDesktopColors.rowSelected : ChatDesktopColors.fieldBg,
+                color: selected ? c.rowSelected : c.fieldBg,
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: selected ? ChatDesktopColors.accent.withValues(alpha: 0.5) : Colors.transparent,
+                  color: selected ? c.accent.withValues(alpha: 0.5) : Colors.transparent,
                 ),
               ),
               alignment: Alignment.center,
               child: Text(
                 chatFilterLabels[option] ?? option,
-                style: ChatDesktopText.chip.copyWith(
-                  color: selected ? ChatDesktopColors.accent : ChatDesktopColors.textSecondary,
+                style: t.chip.copyWith(
+                  color: selected ? c.accent : c.textSecondary,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),
@@ -262,11 +267,13 @@ class _ConversationListTileState extends State<ConversationListTile> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     final conversation = widget.conversation;
     final unread = conversation.unread > 0;
     final background = widget.selected
-        ? ChatDesktopColors.rowSelected
-        : (_hovered ? ChatDesktopColors.rowHover : Colors.transparent);
+        ? c.rowSelected
+        : (_hovered ? c.rowHover : Colors.transparent);
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -295,14 +302,14 @@ class _ConversationListTileState extends State<ConversationListTile> {
                             conversation.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: ChatDesktopText.rowName,
+                            style: t.rowName,
                           ),
                         ),
                         const SizedBox(width: 6),
                         Text(
                           CrmFormat.chatStamp(conversation.lastAt),
-                          style: ChatDesktopText.stamp.copyWith(
-                            color: unread ? ChatDesktopColors.accent : ChatDesktopColors.textSecondary,
+                          style: t.stamp.copyWith(
+                            color: unread ? c.accent : c.textSecondary,
                           ),
                         ),
                       ],
@@ -311,9 +318,9 @@ class _ConversationListTileState extends State<ConversationListTile> {
                     Row(
                       children: [
                         if (conversation.lastDirection == 'outbound' || conversation.lastDirection == 'out')
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.only(right: 4),
-                            child: Icon(Icons.done_all_rounded, size: 14, color: ChatDesktopColors.textSecondary),
+                            child: Icon(Icons.done_all_rounded, size: 14, color: c.textSecondary),
                           ),
                         _TypeGlyph(type: conversation.lastType),
                         Expanded(
@@ -321,7 +328,7 @@ class _ConversationListTileState extends State<ConversationListTile> {
                             conversation.lastBody.isEmpty ? '—' : conversation.lastBody,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: ChatDesktopText.rowPreview,
+                            style: t.rowPreview,
                           ),
                         ),
                         if (unread)
@@ -332,7 +339,7 @@ class _ConversationListTileState extends State<ConversationListTile> {
                             padding: const EdgeInsets.symmetric(horizontal: 6),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: ChatDesktopColors.accent,
+                              color: c.accent,
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -354,8 +361,8 @@ class _ConversationListTileState extends State<ConversationListTile> {
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: conversation.isResolved
-                                    ? ChatDesktopColors.textSecondary
-                                    : ChatDesktopColors.warning,
+                                    ? c.textSecondary
+                                    : c.warning,
                               ),
                             ),
                           ),
@@ -379,6 +386,7 @@ class _TypeGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     final icon = switch (type) {
       'image' => Icons.photo_outlined,
       'audio' => Icons.mic_none_rounded,
@@ -391,7 +399,7 @@ class _TypeGlyph extends StatelessWidget {
     if (icon == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(right: 4),
-      child: Icon(icon, size: 14, color: ChatDesktopColors.textSecondary),
+      child: Icon(icon, size: 14, color: c.textSecondary),
     );
   }
 }
@@ -403,19 +411,20 @@ class _ListAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     final initials = _initials(label);
     return Container(
       width: ChatDesktopMetrics.avatarList,
       height: ChatDesktopMetrics.avatarList,
       alignment: Alignment.center,
-      decoration: const BoxDecoration(color: ChatDesktopColors.fieldBg, shape: BoxShape.circle),
+      decoration: BoxDecoration(color: c.fieldBg, shape: BoxShape.circle),
       child: Text(
         initials,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: ChatDesktopMetrics.fontFamily,
           fontSize: 15,
           fontWeight: FontWeight.w600,
-          color: ChatDesktopColors.textPrimary,
+          color: c.textPrimary,
         ),
       ),
     );
@@ -445,6 +454,7 @@ class _IconActionState extends State<_IconAction> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Tooltip(
       message: widget.tooltip,
       waitDuration: const Duration(milliseconds: 400),
@@ -461,9 +471,9 @@ class _IconActionState extends State<_IconAction> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _hovered ? ChatDesktopColors.rowHover : Colors.transparent,
+              color: _hovered ? c.rowHover : Colors.transparent,
             ),
-            child: Icon(widget.icon, size: 19, color: ChatDesktopColors.textSecondary),
+            child: Icon(widget.icon, size: 19, color: c.textSecondary),
           ),
         ),
       ),
@@ -486,6 +496,7 @@ class _RoundActionState extends State<_RoundAction> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Tooltip(
       message: widget.tooltip,
       waitDuration: const Duration(milliseconds: 400),
@@ -502,9 +513,9 @@ class _RoundActionState extends State<_RoundAction> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _hovered ? ChatDesktopColors.rowSelected : ChatDesktopColors.fieldBg,
+              color: _hovered ? c.rowSelected : c.fieldBg,
             ),
-            child: const Icon(Icons.chat_rounded, size: 17, color: ChatDesktopColors.textPrimary),
+            child: Icon(Icons.chat_rounded, size: 17, color: c.textPrimary),
           ),
         ),
       ),
@@ -517,18 +528,20 @@ class _EmptyList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.forum_outlined, size: 34, color: ChatDesktopColors.textSecondary),
+            Icon(Icons.forum_outlined, size: 34, color: c.textSecondary),
             const SizedBox(height: 10),
             Text(
               'Sin conversaciones con este filtro',
               textAlign: TextAlign.center,
-              style: ChatDesktopText.rowPreview.copyWith(color: ChatDesktopColors.textSecondary),
+              style: t.rowPreview.copyWith(color: c.textSecondary),
             ),
           ],
         ),

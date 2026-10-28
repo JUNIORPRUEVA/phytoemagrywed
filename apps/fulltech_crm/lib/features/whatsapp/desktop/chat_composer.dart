@@ -29,11 +29,13 @@ class ChatComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      decoration: const BoxDecoration(
-        color: ChatDesktopColors.panelBg,
-        border: Border(top: BorderSide(color: ChatDesktopColors.divider)),
+      decoration: BoxDecoration(
+        color: c.panelBg,
+        border: Border(top: BorderSide(color: c.divider)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -43,15 +45,15 @@ class ChatComposer extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 6),
               child: Row(
                 children: [
-                  const SizedBox(
+                  SizedBox(
                     width: 14,
                     height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: ChatDesktopColors.accent),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: c.accent),
                   ),
                   const SizedBox(width: 8),
                   Text(
                     uploadLabel!,
-                    style: ChatDesktopText.bubbleMeta.copyWith(color: ChatDesktopColors.textPrimary),
+                    style: t.bubbleMeta.copyWith(color: c.textPrimary),
                   ),
                 ],
               ),
@@ -69,7 +71,7 @@ class ChatComposer extends StatelessWidget {
                 child: Container(
                   constraints: const BoxConstraints(minHeight: 44),
                   decoration: BoxDecoration(
-                    color: ChatDesktopColors.composerBg,
+                    color: c.composerBg,
                     borderRadius: BorderRadius.circular(22),
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -86,21 +88,21 @@ class ChatComposer extends StatelessWidget {
                       maxLines: 5,
                       enabled: !sending,
                       textCapitalization: TextCapitalization.sentences,
-                      cursorColor: ChatDesktopColors.accent,
-                      style: const TextStyle(
+                      cursorColor: c.accent,
+                      style: TextStyle(
                         fontFamily: ChatDesktopMetrics.fontFamily,
                         fontSize: 14,
-                        color: ChatDesktopColors.textPrimary,
+                        color: c.textPrimary,
                         height: 1.35,
                       ),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         isDense: true,
                         border: InputBorder.none,
                         hintText: 'Escribe un mensaje',
                         hintStyle: TextStyle(
                           fontFamily: ChatDesktopMetrics.fontFamily,
                           fontSize: 14,
-                          color: ChatDesktopColors.textSecondary,
+                          color: c.textSecondary,
                         ),
                       ),
                     ),
@@ -127,11 +129,12 @@ class ChatComposer extends StatelessWidget {
   }
 
   void _openAttachMenu(BuildContext context) {
+    final c = ChatPalette.of(context);
     final box = context.findRenderObject() as RenderBox?;
     final origin = box == null ? Offset.zero : box.localToGlobal(Offset(16, box.size.height - 180));
     showMenu<String>(
       context: context,
-      color: ChatDesktopColors.fieldBg,
+      color: c.fieldBg,
       position: RelativeRect.fromLTRB(origin.dx, origin.dy, origin.dx, origin.dy),
       items: const [
         PopupMenuItem(value: 'image', child: _AttachLabel(icon: Icons.image_outlined, label: 'Foto')),
@@ -158,11 +161,12 @@ class _AttachLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Row(
       children: [
-        Icon(icon, size: 18, color: ChatDesktopColors.textSecondary),
+        Icon(icon, size: 18, color: c.textSecondary),
         const SizedBox(width: 10),
-        Text(label, style: const TextStyle(color: ChatDesktopColors.textPrimary, fontSize: 13)),
+        Text(label, style: TextStyle(color: c.textPrimary, fontSize: 13)),
       ],
     );
   }
@@ -190,8 +194,9 @@ class _ComposerIconState extends State<_ComposerIcon> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     final enabled = widget.onTap != null;
-    final base = widget.highlighted ? ChatDesktopColors.accent : ChatDesktopColors.textSecondary;
+    final base = widget.highlighted ? c.accent : c.textSecondary;
     final color = enabled ? base : base.withValues(alpha: 0.4);
     return Tooltip(
       message: widget.tooltip,
@@ -209,7 +214,7 @@ class _ComposerIconState extends State<_ComposerIcon> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _hovered && enabled ? ChatDesktopColors.rowHover : Colors.transparent,
+              color: _hovered && enabled ? c.rowHover : Colors.transparent,
             ),
             child: Icon(widget.icon, size: 21, color: color),
           ),

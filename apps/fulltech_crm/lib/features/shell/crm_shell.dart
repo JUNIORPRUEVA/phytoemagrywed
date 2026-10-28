@@ -247,15 +247,15 @@ class _CrmShellState extends State<CrmShell> {
     );
 
     // ------------------------------------------------------------- escritorio
-    // Un solo sistema visual: menú lateral oscuro fijo + barra oscura. Es el
-    // mismo lenguaje del chat estilo WhatsApp, y el POS vive dentro de él.
+    // Un solo sistema visual: menú lateral y barra superior que siguen el tema
+    // del usuario, con el POS y el chat dentro del mismo marco.
     if (desktop) {
       final destination =
           crmDestinations.firstWhere((row) => row.tab == _tab, orElse: () => crmDestinations.first);
       final title = destination.label;
       final subtitle = destination.group.isEmpty ? 'FullTECH CRM' : destination.group;
       return Scaffold(
-        backgroundColor: const Color(0xFFF7FAFC),
+        backgroundColor: context.crm.pageBg,
         body: Stack(
           children: [
             Column(

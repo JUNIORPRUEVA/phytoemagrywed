@@ -25,11 +25,12 @@ class ChatNavigationRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Container(
       width: ChatDesktopMetrics.railWidth,
-      decoration: const BoxDecoration(
-        color: ChatDesktopColors.railBg,
-        border: Border(right: BorderSide(color: ChatDesktopColors.divider)),
+      decoration: BoxDecoration(
+        color: c.railBg,
+        border: Border(right: BorderSide(color: c.divider)),
       ),
       child: Column(
         children: [
@@ -103,10 +104,11 @@ class _RailDivider extends StatelessWidget {
   const _RailDivider();
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Container(
       height: 1,
       width: 30,
-      color: ChatDesktopColors.divider,
+      color: c.divider,
     );
   }
 }
@@ -119,6 +121,7 @@ class _RailAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Tooltip(
       message: 'Mi perfil',
       waitDuration: const Duration(milliseconds: 400),
@@ -129,17 +132,17 @@ class _RailAvatar extends StatelessWidget {
           width: ChatDesktopMetrics.avatarRail,
           height: ChatDesktopMetrics.avatarRail,
           alignment: Alignment.center,
-          decoration: const BoxDecoration(
-            color: ChatDesktopColors.fieldBg,
+          decoration: BoxDecoration(
+            color: c.fieldBg,
             shape: BoxShape.circle,
           ),
           child: Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: ChatDesktopMetrics.fontFamily,
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: ChatDesktopColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
         ),
@@ -172,9 +175,10 @@ class _RailButtonState extends State<_RailButton> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     final color = widget.selected
-        ? ChatDesktopColors.accent
-        : (_hovered ? ChatDesktopColors.textPrimary : ChatDesktopColors.textSecondary);
+        ? c.accent
+        : (_hovered ? c.textPrimary : c.textSecondary);
     return Tooltip(
       message: widget.tooltip,
       waitDuration: const Duration(milliseconds: 400),
@@ -194,7 +198,7 @@ class _RailButtonState extends State<_RailButton> {
                     child: Container(
                       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                       decoration: BoxDecoration(
-                        color: ChatDesktopColors.rowHover,
+                        color: c.rowHover,
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
@@ -206,7 +210,7 @@ class _RailButtonState extends State<_RailButton> {
                       width: 3,
                       height: 22,
                       decoration: BoxDecoration(
-                        color: ChatDesktopColors.accent,
+                        color: c.accent,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -220,7 +224,7 @@ class _RailButtonState extends State<_RailButton> {
                       constraints: const BoxConstraints(minWidth: 16),
                       padding: const EdgeInsets.symmetric(horizontal: 4),
                       decoration: BoxDecoration(
-                        color: ChatDesktopColors.accent,
+                        color: c.accent,
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(

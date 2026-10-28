@@ -29,11 +29,13 @@ class ChatHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Container(
       height: ChatDesktopMetrics.headerHeight,
-      decoration: const BoxDecoration(
-        color: ChatDesktopColors.panelBg,
-        border: Border(bottom: BorderSide(color: ChatDesktopColors.divider)),
+      decoration: BoxDecoration(
+        color: c.panelBg,
+        border: Border(bottom: BorderSide(color: c.divider)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
@@ -48,20 +50,20 @@ class ChatHeader extends StatelessWidget {
                       controller: searchController,
                       onChanged: onSearchChanged,
                       autofocus: true,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: ChatDesktopMetrics.fontFamily,
                         fontSize: 13.5,
-                        color: ChatDesktopColors.textPrimary,
+                        color: c.textPrimary,
                       ),
-                      cursorColor: ChatDesktopColors.accent,
-                      decoration: const InputDecoration(
+                      cursorColor: c.accent,
+                      decoration: InputDecoration(
                         isDense: true,
                         border: InputBorder.none,
                         hintText: 'Buscar en la conversación',
                         hintStyle: TextStyle(
                           fontFamily: ChatDesktopMetrics.fontFamily,
                           fontSize: 13.5,
-                          color: ChatDesktopColors.textSecondary,
+                          color: c.textSecondary,
                         ),
                       ),
                     ),
@@ -70,7 +72,7 @@ class ChatHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: ChatDesktopText.headerName),
+                      Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.headerName),
                       if (subtitle.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 1),
@@ -78,7 +80,7 @@ class ChatHeader extends StatelessWidget {
                             subtitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: ChatDesktopText.headerSubtitle,
+                            style: t.headerSubtitle,
                           ),
                         ),
                     ],
@@ -106,19 +108,20 @@ class _HeaderAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     final initials = _initials(label);
     return Container(
       width: ChatDesktopMetrics.avatarHeader,
       height: ChatDesktopMetrics.avatarHeader,
       alignment: Alignment.center,
-      decoration: const BoxDecoration(color: ChatDesktopColors.fieldBg, shape: BoxShape.circle),
+      decoration: BoxDecoration(color: c.fieldBg, shape: BoxShape.circle),
       child: Text(
         initials,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: ChatDesktopMetrics.fontFamily,
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: ChatDesktopColors.textPrimary,
+          color: c.textPrimary,
         ),
       ),
     );
@@ -148,6 +151,7 @@ class _HeaderButtonState extends State<_HeaderButton> {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
     return Tooltip(
       message: widget.tooltip,
       waitDuration: const Duration(milliseconds: 400),
@@ -165,9 +169,9 @@ class _HeaderButtonState extends State<_HeaderButton> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _hovered ? ChatDesktopColors.rowHover : Colors.transparent,
+              color: _hovered ? c.rowHover : Colors.transparent,
             ),
-            child: Icon(widget.icon, size: 19, color: ChatDesktopColors.textSecondary),
+            child: Icon(widget.icon, size: 19, color: c.textSecondary),
           ),
         ),
       ),

@@ -11,6 +11,9 @@ import 'pos_tokens.dart';
 ///
 /// No calcula dinero: recibe las líneas del `PosScreen` (que a su vez usa
 /// `PosSaleDraft`, la misma fórmula del servidor).
+///
+/// Los colores salen de `PosPalette.of(context)`: el panel sigue el modo
+/// claro/oscuro que haya elegido el usuario.
 class PosCartPanel extends StatelessWidget {
   const PosCartPanel({
     super.key,
@@ -55,16 +58,18 @@ class PosCartPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return Container(
-      decoration: const BoxDecoration(
-        color: PosColors.surface,
-        border: Border(left: BorderSide(color: PosColors.border)),
+      decoration: BoxDecoration(
+        color: p.surface,
+        border: Border(left: BorderSide(color: p.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _customerBar(),
-          const Divider(height: 1, color: PosColors.borderSoft),
+          _customerBar(context),
+          Divider(height: 1, color: p.borderSoft),
           Expanded(
             child: lines.isEmpty
                 ? Center(
@@ -73,28 +78,29 @@ class PosCartPanel extends StatelessWidget {
                       child: Text(
                         'El ticket está vacío.\nAgrega productos desde la rejilla.',
                         textAlign: TextAlign.center,
-                        style: PosText.secondary,
+                        style: t.secondary,
                       ),
                     ),
                   )
                 : ListView.separated(
                     itemCount: lines.length,
-                    separatorBuilder: (_, _) =>
-                        const Divider(height: 1, color: PosColors.borderSoft),
-                    itemBuilder: (context, index) => _line(lines[index]),
+                    separatorBuilder: (_, _) => Divider(height: 1, color: p.borderSoft),
+                    itemBuilder: (context, index) => _line(context, lines[index]),
                   ),
           ),
-          const Divider(height: 1, color: PosColors.border),
-          _documentBar(),
-          _paymentBar(),
-          _totalsBar(),
-          _checkoutBar(),
+          Divider(height: 1, color: p.border),
+          _documentBar(context),
+          _paymentBar(context),
+          _totalsBar(context),
+          _checkoutBar(context),
         ],
       ),
     );
   }
 
-  Widget _customerBar() {
+  Widget _customerBar(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return SizedBox(
       height: 46,
       child: Row(
@@ -110,14 +116,10 @@ class PosCartPanel extends StatelessWidget {
                     height: 26,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: PosColors.primarySoft,
+                      color: p.primarySoft,
                       borderRadius: BorderRadius.circular(7),
                     ),
-                    child: const Icon(
-                      Icons.person_outline_rounded,
-                      size: 15,
-                      color: PosColors.primary,
-                    ),
+                    child: Icon(Icons.person_outline_rounded, size: 15, color: p.primary),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -125,14 +127,10 @@ class PosCartPanel extends StatelessWidget {
                       customer?.name ?? 'Agregar cliente',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: PosText.body.copyWith(fontWeight: FontWeight.w700),
+                      style: t.body.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ),
-                  const Icon(
-                    Icons.add_circle_outline_rounded,
-                    size: 16,
-                    color: PosColors.primary,
-                  ),
+                  Icon(Icons.add_circle_outline_rounded, size: 16, color: p.primary),
                 ],
               ),
             ),
@@ -141,7 +139,7 @@ class PosCartPanel extends StatelessWidget {
             TextButton(
               onPressed: onClear,
               style: TextButton.styleFrom(
-                foregroundColor: PosColors.inkSecondary,
+                foregroundColor: p.inkSecondary,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 minimumSize: const Size(0, 30),
               ),
@@ -153,7 +151,9 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
-  Widget _line(PosLine line) {
+  Widget _line(BuildContext context, PosLine line) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     // Sin alto fijo: la fila mide lo que mide su contenido y nunca desborda.
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
@@ -167,13 +167,13 @@ class PosCartPanel extends StatelessWidget {
                   line.productName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: PosText.body.copyWith(fontWeight: FontWeight.w700),
+                  style: t.body.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
               const SizedBox(width: 6),
               Text(
                 CrmFormat.money(line.grossCents / 100),
-                style: PosText.body.copyWith(fontWeight: FontWeight.w800),
+                style: t.body.copyWith(fontWeight: FontWeight.w800),
               ),
               IconButton(
                 tooltip: 'Quitar',
@@ -182,7 +182,7 @@ class PosCartPanel extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                color: PosColors.inkSecondary,
+                color: p.inkSecondary,
                 icon: const Icon(Icons.close_rounded),
               ),
             ],
@@ -194,19 +194,19 @@ class PosCartPanel extends StatelessWidget {
                   '${line.presentationName} · ${CrmFormat.money(line.unitPriceCents / 100)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: PosText.secondary.copyWith(fontSize: 10.5),
+                  style: t.secondary.copyWith(fontSize: 10.5),
                 ),
               ),
-              _stepButton(Icons.remove_rounded, () => onQuantity(line, -1)),
+              _stepButton(context, Icons.remove_rounded, () => onQuantity(line, -1)),
               SizedBox(
                 width: 24,
                 child: Text(
                   '${line.quantity}',
                   textAlign: TextAlign.center,
-                  style: PosText.body.copyWith(fontWeight: FontWeight.w800),
+                  style: t.body.copyWith(fontWeight: FontWeight.w800),
                 ),
               ),
-              _stepButton(Icons.add_rounded, () => onQuantity(line, 1)),
+              _stepButton(context, Icons.add_rounded, () => onQuantity(line, 1)),
               const SizedBox(width: 4),
             ],
           ),
@@ -215,7 +215,8 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
-  Widget _stepButton(IconData icon, VoidCallback onTap) {
+  Widget _stepButton(BuildContext context, IconData icon, VoidCallback onTap) {
+    final p = PosPalette.of(context);
     return InkWell(
       onTap: onTap,
       customBorder: const CircleBorder(),
@@ -223,16 +224,16 @@ class PosCartPanel extends StatelessWidget {
         width: 22,
         height: 22,
         decoration: BoxDecoration(
-          color: PosColors.surfaceMuted,
+          color: p.surfaceMuted,
           borderRadius: BorderRadius.circular(5),
-          border: Border.all(color: PosColors.border),
+          border: Border.all(color: p.border),
         ),
-        child: Icon(icon, size: 14, color: PosColors.ink),
+        child: Icon(icon, size: 14, color: p.ink),
       ),
     );
   }
 
-  Widget _documentBar() {
+  Widget _documentBar(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
       child: Wrap(
@@ -244,13 +245,13 @@ class PosCartPanel extends StatelessWidget {
             ('invoice', 'Factura'),
             ('quote', 'Cotización'),
           ])
-            _chip(entry.$2, mode == entry.$1, () => onModeChanged(entry.$1)),
+            _chip(context, entry.$2, mode == entry.$1, () => onModeChanged(entry.$1)),
         ],
       ),
     );
   }
 
-  Widget _paymentBar() {
+  Widget _paymentBar(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
       child: Wrap(
@@ -262,38 +263,30 @@ class PosCartPanel extends StatelessWidget {
             ('CASH', 'Efectivo'),
             ('TRANSFER', 'Transferencia'),
           ])
-            _chip(
-              entry.$2,
-              method == entry.$1,
-              () => onMethodChanged(entry.$1),
-            ),
-          _chip(
-            paid ? 'Pagado' : 'Por cobrar',
-            paid,
-            () => onPaidChanged(!paid),
-          ),
+            _chip(context, entry.$2, method == entry.$1, () => onMethodChanged(entry.$1)),
+          _chip(context, paid ? 'Pagado' : 'Por cobrar', paid, () => onPaidChanged(!paid)),
         ],
       ),
     );
   }
 
-  Widget _chip(String label, bool selected, VoidCallback onTap) {
+  Widget _chip(BuildContext context, String label, bool selected, VoidCallback onTap) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? PosColors.primarySoft : PosColors.surfaceMuted,
+          color: selected ? p.primarySoft : p.surfaceMuted,
           borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
-          border: Border.all(
-            color: selected ? PosColors.primaryBorder : PosColors.border,
-          ),
+          border: Border.all(color: selected ? p.primaryBorder : p.border),
         ),
         child: Text(
           label,
-          style: PosText.pill.copyWith(
-            color: selected ? PosColors.primary : PosColors.inkSecondary,
+          style: t.pill.copyWith(
+            color: selected ? p.primary : p.inkSecondary,
             fontSize: 11,
           ),
         ),
@@ -301,56 +294,51 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
-  Widget _totalsBar() {
+  Widget _totalsBar(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       child: Column(
         children: [
           Row(
             children: [
-              Expanded(child: Text('Subtotal', style: PosText.secondary)),
+              Expanded(child: Text('Subtotal', style: t.secondary)),
               Text(
                 CrmFormat.money(_subtotalCents / 100),
-                style: PosText.body.copyWith(fontWeight: FontWeight.w800),
+                style: t.body.copyWith(fontWeight: FontWeight.w800),
               ),
             ],
           ),
           const SizedBox(height: 4),
           Row(
             children: [
-              Expanded(child: Text('Envío', style: PosText.secondary)),
+              Expanded(child: Text('Envío', style: t.secondary)),
               SizedBox(
                 width: 92,
                 height: 30,
                 child: TextFormField(
-                  initialValue: deliveryFee == 0
-                      ? ''
-                      : deliveryFee.toStringAsFixed(2),
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
+                  initialValue: deliveryFee == 0 ? '' : deliveryFee.toStringAsFixed(2),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   textAlign: TextAlign.right,
-                  style: PosText.body,
-                  decoration: const InputDecoration(
+                  style: t.body,
+                  decoration: InputDecoration(
                     isDense: true,
                     filled: false,
                     hintText: '0.00',
-                    hintStyle: PosText.secondary,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
+                    hintStyle: t.secondary,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(6)),
-                      borderSide: BorderSide(color: PosColors.border),
+                      borderRadius: const BorderRadius.all(Radius.circular(6)),
+                      borderSide: BorderSide(color: p.border),
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(6)),
-                      borderSide: BorderSide(color: PosColors.border),
+                      borderRadius: const BorderRadius.all(Radius.circular(6)),
+                      borderSide: BorderSide(color: p.border),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(6)),
-                      borderSide: BorderSide(color: PosColors.primary),
+                      borderRadius: const BorderRadius.all(Radius.circular(6)),
+                      borderSide: BorderSide(color: p.primary),
                     ),
                   ),
                   onChanged: (value) => onDeliveryFeeChanged(
@@ -365,13 +353,15 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
-  Widget _checkoutBar() {
+  Widget _checkoutBar(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
       child: SizedBox(
         height: 58,
         child: Material(
-          color: PosColors.checkout,
+          color: p.checkout,
           borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
           child: InkWell(
             borderRadius: BorderRadius.circular(PosMetrics.radiusButton),
@@ -381,15 +371,15 @@ class PosCartPanel extends StatelessWidget {
               child: Row(
                 children: [
                   saving
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: PosColors.surface,
+                            color: p.onCheckout,
                           ),
                         )
-                      : const Text('Cobrar', style: PosText.checkoutLabel),
+                      : Text('Cobrar', style: t.checkoutLabel),
                   const SizedBox(width: 8),
                   const Spacer(),
                   Flexible(
@@ -398,7 +388,7 @@ class PosCartPanel extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       child: Text(
                         CrmFormat.money(_totalCents / 100),
-                        style: PosText.total,
+                        style: t.total,
                       ),
                     ),
                   ),

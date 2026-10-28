@@ -12,8 +12,10 @@ import 'pos_tokens.dart';
 ///
 /// **Limitación real:** el catálogo que expone la API del CRM a este módulo
 /// (`CatalogProduct` / `CatalogPresentation`) no trae imagen, así que la tarjeta
-/// muestra un marcador neutro (no se inventan fotos). La categoría llega solo si
-/// el API la envía; el rail filtra por ella y por existencia.
+/// muestra un marcador neutro (no se inventan fotos).
+///
+/// Los colores salen de `PosPalette.of(context)`: claro u oscuro según lo que
+/// haya configurado el usuario.
 class PosProductGrid extends StatelessWidget {
   const PosProductGrid({
     super.key,
@@ -28,26 +30,50 @@ class PosProductGrid extends StatelessWidget {
   final void Function(CatalogProduct product, CatalogPresentation presentation) onAdd;
   final bool loading;
   final String query;
+
+  /// Filtro del rail de categorías (categoría real + existencia).
   final PosRailFilter filter;
 
   @override
   Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
     if (loading) {
-      return const Center(
-        child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: PosColors.primary)),
+      return Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2, color: p.primary),
+        ),
       );
     }
-    final rows = products.where(_matches).toList();
+    final needle = query.trim().toLowerCase();
+    final rows = products.where((product) {
+      if (needle.isNotEmpty && !product.name.toLowerCase().contains(needle)) return false;
+      if (filter.category.isNotEmpty) {
+        final category = product.category.toLowerCase();
+        if (category != filter.category.toLowerCase()) return false;
+      }
+      final availability = _availability(product);
+      return switch (filter.availability) {
+        PosAvailability.all => true,
+        PosAvailability.inStock => availability == _Availability.inStock,
+        PosAvailability.outOfStock => availability == _Availability.outOfStock,
+      };
+    }).toList();
     if (rows.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.inventory_2_outlined, size: 34, color: PosColors.inkSecondary),
+            PwaIcon(PwaIcons.orders, size: 30, color: p.inkSecondary),
             const SizedBox(height: 10),
             Text(
-              query.isEmpty ? 'Ningún producto en este filtro.' : 'Ningún producto coincide con «$query».',
-              style: PosText.secondary,
+              needle.isNotEmpty
+                  ? 'Ningún producto coincide con «$query».'
+                  : (filter.isAll
+                        ? 'El catálogo está vacío.'
+                        : 'No hay productos con ese filtro.'),
+              style: p.text.secondary,
             ),
           ],
         ),
@@ -74,21 +100,6 @@ class PosProductGrid extends StatelessWidget {
     );
   }
 
-  /// Aplica texto, categoría y existencia. Sin datos inventados: si el
-  /// catálogo no informa existencias, «Con stock» deja pasar todo.
-  bool _matches(CatalogProduct product) {
-    final text = query.trim().toLowerCase();
-    if (text.isNotEmpty && !product.name.toLowerCase().contains(text)) return false;
-    if (filter.category.isNotEmpty && product.category != filter.category) return false;
-    final stockKnown = _hasStockInfo(product);
-    final sellable = _sellable(product) != null;
-    return switch (filter.availability) {
-      PosAvailability.all => true,
-      PosAvailability.inStock => stockKnown ? (product.presentations.any((p) => p.stock > 0) && sellable) : sellable,
-      PosAvailability.outOfStock => !sellable || (stockKnown && !product.presentations.any((p) => p.stock > 0)),
-    };
-  }
-
   /// Primera presentación vendible (activa y con existencias si el endpoint las
   /// informa). Si no hay, la tarjeta queda deshabilitada: no se inventa stock.
   static CatalogPresentation? _sellable(CatalogProduct product) {
@@ -103,7 +114,16 @@ class PosProductGrid extends StatelessWidget {
   }
 
   static bool _hasStockInfo(CatalogProduct product) => product.presentations.any((p) => p.stock > 0);
+
+  static _Availability _availability(CatalogProduct product) {
+    final sellable = _sellable(product);
+    if (sellable == null) return _Availability.outOfStock;
+    if (_hasStockInfo(product) && sellable.stock <= 0) return _Availability.outOfStock;
+    return _Availability.inStock;
+  }
 }
+
+enum _Availability { inStock, outOfStock }
 
 class PosProductCard extends StatefulWidget {
   const PosProductCard({super.key, required this.product, required this.presentation, this.onAdd});
@@ -121,9 +141,11 @@ class _PosProductCardState extends State<PosProductCard> {
 
   @override
   Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
     final presentation = widget.presentation;
     final stock = presentation?.stock ?? 0;
-    final stockKnown = widget.product.presentations.any((p) => p.stock > 0);
+    final stockKnown = widget.product.presentations.any((row) => row.stock > 0);
     final outOfStock = presentation == null ||
         !presentation.available ||
         (stockKnown && stock <= 0);
@@ -135,11 +157,11 @@ class _PosProductCardState extends State<PosProductCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         decoration: BoxDecoration(
-          color: PosColors.surface,
+          color: p.surface,
           borderRadius: BorderRadius.circular(PosMetrics.radiusCard),
-          border: Border.all(color: _hovered ? PosColors.primaryBorder : PosColors.borderSoft),
+          border: Border.all(color: _hovered ? p.primaryBorder : p.borderSoft),
           boxShadow: _hovered
-              ? [BoxShadow(color: PosColors.primary.withValues(alpha: 0.10), blurRadius: 14, offset: const Offset(0, 6))]
+              ? [BoxShadow(color: p.primary.withValues(alpha: 0.10), blurRadius: 14, offset: const Offset(0, 6))]
               : null,
         ),
         padding: const EdgeInsets.all(8),
@@ -151,10 +173,10 @@ class _PosProductCardState extends State<PosProductCard> {
               height: 96,
               width: double.infinity,
               decoration: BoxDecoration(
-                color: PosColors.surfaceMuted,
+                color: p.surfaceMuted,
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(Icons.image_outlined, size: 26, color: Color(0xFF4A5455)),
+              child: Icon(Icons.image_outlined, size: 26, color: p.inkSecondary.withValues(alpha: 0.6)),
             ),
             const SizedBox(height: 6),
             Expanded(
@@ -162,22 +184,22 @@ class _PosProductCardState extends State<PosProductCard> {
                 widget.product.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: PosText.cardName,
+                style: t.cardName,
               ),
             ),
-            Text(price, style: PosText.cardPrice, maxLines: 1),
+            Text(price, style: t.cardPrice, maxLines: 1),
             const SizedBox(height: 6),
             Row(
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
-                    color: outOfStock ? const Color(0xFF3A2224) : PosColors.primarySoft,
+                    color: outOfStock ? p.danger.withValues(alpha: 0.14) : p.primarySoft,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     outOfStock ? 'Sin stock' : (stockKnown ? 'Disp. $stock' : 'Disponible'),
-                    style: PosText.pill.copyWith(color: outOfStock ? PosColors.danger : PosColors.primary),
+                    style: t.pill.copyWith(color: outOfStock ? p.danger : p.primary),
                   ),
                 ),
                 const Spacer(),
@@ -198,6 +220,7 @@ class _AddButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
     final enabled = onTap != null;
     return Tooltip(
       message: enabled ? 'Agregar al ticket' : 'Sin disponibilidad',
@@ -210,13 +233,13 @@ class _AddButton extends StatelessWidget {
           height: 24,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: enabled ? PosColors.primarySoft : PosColors.surfaceMuted,
-            border: Border.all(color: enabled ? PosColors.primaryBorder : PosColors.border),
+            color: enabled ? p.primarySoft : p.surfaceMuted,
+            border: Border.all(color: enabled ? p.primaryBorder : p.border),
           ),
           child: PwaIcon(
             PwaIcons.plus,
             size: 13,
-            color: enabled ? PosColors.primary : PosColors.inkSecondary,
+            color: enabled ? p.primary : p.inkSecondary,
           ),
         ),
       ),

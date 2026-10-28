@@ -39,7 +39,10 @@ class PosRailEntry {
 /// Se construye SOLO con datos que existen: las categorías que traiga el
 /// catálogo (`CatalogProduct.category`) y dos filtros reales de existencia.
 /// No se inventan categorías: si el API no las envía, el rail muestra
-/// «Todos / Disponibles / Agotados».
+/// «Todos / Con stock / Agotados».
+///
+/// Los colores salen de `PosPalette.of(context)`, así que el rail es claro u
+/// oscuro según el tema que haya elegido el usuario.
 class PosCategoryRail extends StatelessWidget {
   const PosCategoryRail({
     super.key,
@@ -54,11 +57,12 @@ class PosCategoryRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
     return Container(
       width: PosMetrics.railWidth,
-      decoration: const BoxDecoration(
-        color: PosColors.surface,
-        border: Border(right: BorderSide(color: PosColors.border)),
+      decoration: BoxDecoration(
+        color: p.surface,
+        border: Border(right: BorderSide(color: p.border)),
       ),
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
@@ -128,10 +132,12 @@ class _RailTileState extends State<_RailTile> {
 
   @override
   Widget build(BuildContext context) {
+    final p = PosPalette.of(context);
     final selected = widget.selected;
+    // Sobre el acento sólido el icono va en blanco; si no, tinta del tema.
     final ink = selected
-        ? Colors.white
-        : (_hovered ? PosColors.ink : PosColors.inkSecondary);
+        ? p.onCheckout
+        : (_hovered ? p.ink : p.inkSecondary);
     return Tooltip(
       message: widget.entry.label,
       waitDuration: const Duration(milliseconds: 500),
@@ -148,8 +154,8 @@ class _RailTileState extends State<_RailTile> {
             padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
             decoration: BoxDecoration(
               color: selected
-                  ? PosColors.primary
-                  : (_hovered ? PosColors.surfaceMuted : Colors.transparent),
+                  ? p.checkout
+                  : (_hovered ? p.surfaceMuted : Colors.transparent),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
@@ -164,7 +170,7 @@ class _RailTileState extends State<_RailTile> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: PosMetrics.fontFamily,
-                    fontSize: 9.5,
+                    fontSize: 9.2,
                     height: 1.05,
                     fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
                     color: ink,

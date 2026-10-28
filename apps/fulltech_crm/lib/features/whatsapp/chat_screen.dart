@@ -564,6 +564,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// `_openShareSheet`, `_recordVoice`, `_menuButton`) y los mismos datos; solo
   /// cambia la capa visual.
   Widget _buildDesktop(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     final conversation = _conversation;
     final phone = (conversation?.phone ?? '').trim();
     final stage = (conversation?.stage ?? '').toLowerCase();
@@ -573,26 +575,16 @@ class _ChatScreenState extends State<ChatScreen> {
       if (conversation?.isResolved == true) 'finalizada',
     ].join(' · ');
 
-    final dark = ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      fontFamily: ChatDesktopMetrics.fontFamily,
-      colorScheme: const ColorScheme.dark(
-        primary: ChatDesktopColors.accent,
-        surface: ChatDesktopColors.fieldBg,
-        onSurface: ChatDesktopColors.textPrimary,
-      ),
-      popupMenuTheme: const PopupMenuThemeData(color: ChatDesktopColors.fieldBg),
-      dialogTheme: const DialogThemeData(backgroundColor: ChatDesktopColors.fieldBg),
-    );
+    // Misma luminosidad que eligió el usuario (claro u oscuro).
+    final theme = buildChatDesktopTheme(context);
 
     final Widget body;
     if (_loading) {
-      body = const Center(
+      body = Center(
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2, color: ChatDesktopColors.accent),
+          child: CircularProgressIndicator(strokeWidth: 2, color: c.accent),
         ),
       );
     } else if (_error != null) {
@@ -600,13 +592,13 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off_rounded, size: 30, color: ChatDesktopColors.danger),
+            Icon(Icons.cloud_off_rounded, size: 30, color: c.danger),
             const SizedBox(height: 10),
-            Text(_error!, textAlign: TextAlign.center, style: ChatDesktopText.rowPreview),
+            Text(_error!, textAlign: TextAlign.center, style: t.rowPreview),
             const SizedBox(height: 12),
             TextButton(
               onPressed: _load,
-              child: const Text('Reintentar', style: TextStyle(color: ChatDesktopColors.accent)),
+              child: Text('Reintentar', style: TextStyle(color: c.accent)),
             ),
           ],
         ),
@@ -616,7 +608,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Theme(
-      data: dark,
+      data: theme,
       child: Column(
         children: [
           ChatHeader(

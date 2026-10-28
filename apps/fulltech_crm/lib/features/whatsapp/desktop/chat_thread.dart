@@ -110,15 +110,17 @@ class _EmptyThread extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final t = c.text;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.chat_bubble_outline_rounded, size: 36, color: ChatDesktopColors.textSecondary),
+          Icon(Icons.chat_bubble_outline_rounded, size: 36, color: c.textSecondary),
           const SizedBox(height: 10),
           Text(
             'Esta conversación todavía no tiene mensajes',
-            style: ChatDesktopText.rowPreview.copyWith(color: ChatDesktopColors.textSecondary),
+            style: t.rowPreview.copyWith(color: c.textSecondary),
           ),
         ],
       ),
