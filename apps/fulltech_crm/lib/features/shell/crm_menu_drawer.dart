@@ -26,8 +26,8 @@ class _Palette {
 
   static const light = _Palette(
     background: Color(0xFFFAF9F6),
-    line: Color(0xFFECE8E0),
-    hover: Color(0xFFF2F0EA),
+    line: Color(0xFFD9D2C4),
+    hover: Color(0xFFF1EEE6),
     ink: Color(0xFF102235),
     muted: Color(0xFF64748B),
     primary: Color(0xFF1957E6),
@@ -471,6 +471,156 @@ class _CrmDrawerEntranceState extends State<CrmDrawerEntrance> with SingleTicker
         ),
       ),
       child: widget.child,
+    );
+  }
+}
+
+/// Una entrada del rail de iconos.
+class CrmRailEntry {
+  const CrmRailEntry({
+    required this.asset,
+    required this.label,
+    required this.onTap,
+    this.selected = false,
+    this.opensMenu = false,
+    this.badge,
+  });
+
+  final String asset;
+  final String label;
+  final VoidCallback onTap;
+  final bool selected;
+
+  /// Al pulsar se abre el menú lateral (es un grupo, no un destino suelto).
+  final bool opensMenu;
+  final String? badge;
+}
+
+/// Rail estrecho y permanente con TODOS los iconos del menú.
+///
+/// Va siempre visible en escritorio, ocupando solo 52 px: el profesional entra
+/// a cualquier módulo con un clic. Los iconos que corresponden a un grupo abren
+/// el menú lateral para elegir la opción concreta.
+class CrmIconRail extends StatelessWidget {
+  const CrmIconRail({super.key, required this.entries});
+
+  final List<CrmRailEntry> entries;
+
+  static const double width = 52;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _Palette.of(context);
+    return Container(
+      width: width,
+      decoration: BoxDecoration(
+        color: c.background,
+        border: Border(right: BorderSide(color: c.line)),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        children: [
+          for (final entry in entries)
+            _RailTile(entry: entry, palette: c, width: width),
+        ],
+      ),
+    );
+  }
+}
+
+class _RailTile extends StatefulWidget {
+  const _RailTile({required this.entry, required this.palette, required this.width});
+
+  final CrmRailEntry entry;
+  final _Palette palette;
+  final double width;
+
+  @override
+  State<_RailTile> createState() => _RailTileState();
+}
+
+class _RailTileState extends State<_RailTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.palette;
+    final entry = widget.entry;
+    final active = entry.selected;
+    final tint = active ? c.primary : (_hovered ? c.ink : c.muted);
+    return Tooltip(
+      message: entry.label,
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: entry.onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            height: 42,
+            margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: active ? c.activeFill : (_hovered ? c.hover : Colors.transparent),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (active)
+                  Positioned(
+                    left: 0,
+                    top: 9,
+                    bottom: 9,
+                    child: Container(
+                      width: 2.5,
+                      decoration: BoxDecoration(
+                        color: c.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                PwaIcon(entry.asset, size: 18, color: tint, opacity: 1),
+                if ((entry.badge ?? '').isNotEmpty)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF25D366),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        entry.badge!,
+                        style: const TextStyle(
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0B1F16),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Los grupos se reconocen por el puntito: abren el menú.
+                if (entry.opensMenu)
+                  Positioned(
+                    right: 8,
+                    bottom: 7,
+                    child: Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: active ? c.primary : c.muted.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

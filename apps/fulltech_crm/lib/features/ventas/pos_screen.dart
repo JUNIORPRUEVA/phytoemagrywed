@@ -208,14 +208,18 @@ class _PosScreenState extends State<PosScreen> {
   }
 
   Widget _buildDesktop(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
     final p = PosPalette.of(context);
     final t = p.text;
-    return Material(
-      color: p.pageBg,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+    // Ancho REAL disponible (el shell ya descuenta el rail): usar MediaQuery
+    // hacía que el panel de venta se saliera por la derecha.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return Material(
+          color: p.pageBg,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
           PosCategoryRail(
             entries: PosCategoryRail.buildEntries(_catalogCategories),
             selected: _railFilter,
@@ -269,7 +273,9 @@ class _PosScreenState extends State<PosScreen> {
             ),
           ),
         ],
-      ),
+          ),
+        );
+      },
     );
   }
 

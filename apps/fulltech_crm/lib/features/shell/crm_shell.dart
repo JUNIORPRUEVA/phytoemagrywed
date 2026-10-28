@@ -170,6 +170,40 @@ class _CrmShellState extends State<CrmShell> {
     return sections;
   }
 
+  /// Entradas del rail permanente: un icono por módulo y por grupo.
+  ///
+  /// Los grupos (Ventas, Entregas, Operación…) no navegan solos: abren el menú
+  /// lateral para elegir la opción concreta.
+  List<CrmRailEntry> _railEntries(Map<String, String> badges) {
+    final entries = <CrmRailEntry>[];
+    for (final section in _navSections) {
+      final item = section.item;
+      if (item != null) {
+        entries.add(
+          CrmRailEntry(
+            asset: item.icon,
+            label: item.label,
+            selected: item.tab == _tab,
+            badge: badges[item.tab] ?? item.badge,
+            onTap: () => _go(item.tab),
+          ),
+        );
+        continue;
+      }
+      final group = section.group!;
+      entries.add(
+        CrmRailEntry(
+          asset: group.items.first.icon,
+          label: group.label,
+          selected: group.items.any((row) => row.tab == _tab),
+          opensMenu: true,
+          onTap: () => setState(() => _menuOpen = true),
+        ),
+      );
+    }
+    return entries;
+  }
+
   String _initials(CrmState state) {
     final name = (state.session.user?.displayName ?? 'Equipo FullTECH').trim();
     final parts = name.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
@@ -273,7 +307,16 @@ class _CrmShellState extends State<CrmShell> {
                   online: !state.offline,
                   loading: state.loading,
                 ),
-                Expanded(child: content),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Rail permanente: todos los iconos del menú a la vista.
+                      CrmIconRail(entries: _railEntries(badges)),
+                      Expanded(child: content),
+                    ],
+                  ),
+                ),
               ],
             ),
             if (_menuOpen) ...[

@@ -95,7 +95,7 @@ class ChatPalette {
     accent: Color(0xFF25D366),
     rowHover: Color(0xFF1C2021),
     rowSelected: Color(0xFF24292A),
-    doodle: Color(0xFF1F2425),
+    doodle: Color(0xFF191D1E),
     warning: Color(0xFFE9A23B),
     danger: Color(0xFFF15C6D),
   );
@@ -105,9 +105,9 @@ class ChatPalette {
   static const ChatPalette light = ChatPalette(
     dark: false,
     railBg: Color(0xFFF1F0EC),
-    panelBg: Color(0xFFF8F7F4),
+    panelBg: Color(0xFFF9F8F5),
     canvas: Color(0xFFECE8E1),
-    divider: Color(0xFFE4E0D8),
+    divider: Color(0xFFD6CFC0),
     fieldBg: Color(0xFFFFFFFF),
     composerBg: Color(0xFFFFFFFF),
     bubbleIn: Color(0xFFFFFFFF),
