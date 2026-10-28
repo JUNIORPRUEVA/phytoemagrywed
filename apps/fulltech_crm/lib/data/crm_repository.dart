@@ -90,6 +90,18 @@ class CrmRepository {
   Future<void> markRead(String conversationId) =>
       _api.post('/api/admin/conversations/${Uri.encodeComponent(conversationId)}/read', const {});
 
+  /// Archiva (sale de la bandeja) o desarchiva una conversación.
+  Future<void> archiveConversation(String conversationId, bool archived) =>
+      _api.post(
+        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/${archived ? 'archive' : 'unarchive'}',
+        const {},
+      );
+
+  /// Acción en lote sobre varias conversaciones.
+  /// `mark_read` | `resolve` | `archive` | `unarchive`.
+  Future<Map<String, dynamic>> bulkConversations(List<String> ids, String action) =>
+      _api.post('/api/admin/conversations/bulk', {'ids': ids, 'action': action});
+
   Future<void> setResolved(String conversationId, bool resolved, {String? operationKey}) =>
       _api.post(
         '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/${resolved ? 'resolve' : 'reopen'}',

@@ -3,10 +3,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../app/crm_scope.dart';
+import '../../core/net/api_client.dart';
 import '../../data/models/crm_models.dart';
+import '../common/crm_ui.dart';
 import 'chat_screen.dart';
 import 'desktop/chat_desktop_theme.dart';
 import 'desktop/chat_doodle_background.dart';
+import 'desktop/chat_filters.dart';
 import 'desktop/chat_list_panel.dart';
 import 'desktop/chat_navigation_rail.dart';
 import 'desktop/conversation_actions.dart';
@@ -39,8 +42,14 @@ class ChatsDesktopScreen extends StatefulWidget {
 
 class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   final _search = TextEditingController();
-  String _filter = 'todos';
+  ChatFilters _filters = const ChatFilters();
   String? _selectedId;
+  bool _selecting = false;
+  final Set<String> _selectedIds = {};
+
+  /// Adjunto que debe abrirse al entrar en el hilo (acción «Enviar una foto»).
+  String? _pendingAttach;
+  int _attachRequest = 0;
 
   @override
   void dispose() {
@@ -51,13 +60,14 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   List<Conversation> _filtered(List<Conversation> rows) {
     final query = _search.text.trim().toLowerCase();
     return rows.where((row) {
-      if (_filter == 'sin_leer' && row.unread <= 0) return false;
-      if (_filter == 'pendientes' && !row.awaitingReply) return false;
-      if (_filter == 'finalizadas' && !row.isResolved) return false;
-      if (query.isEmpty) return true;
-      return row.name.toLowerCase().contains(query) ||
-          row.phone.toLowerCase().contains(query) ||
-          row.lastBody.toLowerCase().contains(query);
+      if (query.isNotEmpty) {
+        final match =
+            row.name.toLowerCase().contains(query) ||
+            row.phone.toLowerCase().contains(query) ||
+            row.lastBody.toLowerCase().contains(query);
+        if (!match) return false;
+      }
+      return _filters.matches(row);
     }).toList();
   }
 
@@ -103,11 +113,22 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                 selectedId: selectedId,
                 onSelect: (id) => setState(() => _selectedId = id),
                 onAction: _runAction,
+                onNewConversation: _newMessage,
                 search: _search,
                 onSearchChanged: (_) => setState(() {}),
-                filter: _filter,
-                onFilterChanged: (value) => setState(() => _filter = value),
+                filters: _filters,
+                onFiltersChanged: (value) => setState(() => _filters = value),
                 onRefresh: () => state.refresh(),
+                selecting: _selecting,
+                selectedIds: _selectedIds,
+                onSelectingChanged: (value) => setState(() {
+                  _selecting = value;
+                  if (!value) _selectedIds.clear();
+                }),
+                onToggleSelected: (id) => setState(() {
+                  if (!_selectedIds.remove(id)) _selectedIds.add(id);
+                }),
+                onBulkAction: _runBulk,
                 unreadTotal: state.unreadTotal,
               ),
             ),
@@ -115,13 +136,13 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
               child: selectedId == null
                   ? const ChatDoodleBackground(child: _NoConversation())
                   : ChatScreen(
-                      key: ValueKey(selectedId),
+                      key: ValueKey('$selectedId-$_attachRequest'),
                       conversationId: selectedId,
                       title:
                           state.conversationById(selectedId)?.name ??
                           'Conversación',
                       desktop: true,
-                      onNewMessage: _newMessage,
+                      autoAttach: _pendingAttach,
                     ),
             ),
           ],
@@ -130,15 +151,83 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
     );
   }
 
-  /// Acciones de una fila de la bandeja (las mismas del hilo móvil).
+  /// Acciones de una fila de la bandeja (las mismas del hilo móvil + archivar,
+  /// seguimiento, foto y selección).
   Future<void> _runAction(Conversation conversation, String action) async {
-    if (action == 'open') {
-      setState(() => _selectedId = conversation.id);
-      return;
+    final state = CrmScope.of(context, listen: false);
+    switch (action) {
+      case 'open':
+        setState(() => _selectedId = conversation.id);
+        return;
+      case 'photo':
+        setState(() {
+          _selectedId = conversation.id;
+          _pendingAttach = 'image';
+          _attachRequest++;
+        });
+        // Se limpia en el siguiente fotograma: el hilo ya lo consumió al montarse.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _pendingAttach != null) setState(() => _pendingAttach = null);
+        });
+        return;
+      case 'followup':
+        // El seguimiento se crea desde su módulo; aquí se abre con el cliente a la vista.
+        crmToast(context, 'Abre el seguimiento de ${conversation.name} en Seguimientos.');
+        widget.onNavigate?.call('seguimientos');
+        return;
+      case 'select':
+        setState(() {
+          _selecting = true;
+          _selectedIds
+            ..clear()
+            ..add(conversation.id);
+        });
+        return;
+      case 'archive':
+      case 'unarchive':
+        try {
+          await state.repository.archiveConversation(conversation.id, action == 'archive');
+          await state.refresh(quiet: true);
+          if (!mounted) return;
+          crmToast(context, action == 'archive' ? 'Conversación archivada.' : 'Conversación desarchivada.');
+        } on ApiException catch (error) {
+          if (mounted) crmToast(context, error.message);
+        }
+        return;
     }
     final refresh = await ConversationActions.run(context, action, conversation);
     if (!mounted || !refresh) return;
-    await CrmScope.of(context, listen: false).refresh(quiet: true);
+    await state.refresh(quiet: true);
+  }
+
+  /// Acciones en lote del modo de selección.
+  Future<void> _runBulk(String action) async {
+    if (action == 'cancel') {
+      setState(() {
+        _selecting = false;
+        _selectedIds.clear();
+      });
+      return;
+    }
+    if (_selectedIds.isEmpty) return;
+    final state = CrmScope.of(context, listen: false);
+    final ids = _selectedIds.toList();
+    setState(() => _selecting = false);
+    try {
+      await state.repository.bulkConversations(ids, action);
+      await state.refresh(quiet: true);
+      if (!mounted) return;
+      setState(_selectedIds.clear);
+      crmToast(context, switch (action) {
+        'mark_read' => '${ids.length} conversación(es) marcadas como leídas.',
+        'resolve' => '${ids.length} conversación(es) finalizadas.',
+        'archive' => '${ids.length} conversación(es) archivadas.',
+        _ => 'Listo.',
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      crmToast(context, error.message);
+    }
   }
 
   /// «Nuevo mensaje»: abre (o crea) la conversación de un teléfono y la muestra.

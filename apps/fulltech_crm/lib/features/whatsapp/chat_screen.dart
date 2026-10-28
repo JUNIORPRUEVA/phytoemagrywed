@@ -30,6 +30,7 @@ class ChatScreen extends StatefulWidget {
     this.embedded = false,
     this.desktop = false,
     this.onNewMessage,
+    this.autoAttach,
   });
 
   final String conversationId;
@@ -47,6 +48,10 @@ class ChatScreen extends StatefulWidget {
   /// Acción «nuevo mensaje» del encabezado (crear/abrir chat de un cliente).
   /// La implementa el contenedor de escritorio, que es quien conoce la lista.
   final VoidCallback? onNewMessage;
+
+  /// Adjunto que se abre al entrar (`image`, `document`, `audio`). Lo usa la
+  /// acción «Enviar una foto» de la bandeja de escritorio.
+  final String? autoAttach;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -69,6 +74,13 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _load();
+    // Acción «Enviar una foto» desde la bandeja: abre el selector de archivos.
+    final attach = widget.autoAttach;
+    if (attach != null && attach.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pickAndSendMedia(attach);
+      });
+    }
   }
 
   @override

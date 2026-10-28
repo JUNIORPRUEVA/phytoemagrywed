@@ -115,6 +115,11 @@ class Conversation {
     required this.stage,
     required this.tags,
     required this.companyId,
+    this.assignedUserId = '',
+    this.assignedName = '',
+    this.archived = false,
+    this.hasPurchase = false,
+    this.nextFollowupAt = '',
   });
 
   final String id;
@@ -131,6 +136,23 @@ class Conversation {
   final String stage;
   final List<String> tags;
   final String companyId;
+
+  /// Agente asignado (vacío = sin asignar).
+  final String assignedUserId;
+
+  /// Nombre del agente en el momento de asignar (para pintarlo sin otra llamada).
+  final String assignedName;
+
+  /// Archivada: sale de la bandeja pero se conserva el hilo.
+  final bool archived;
+
+  /// Tiene al menos una compra entregada.
+  final bool hasPurchase;
+
+  /// Fecha del seguimiento pendiente (ISO), vacía si no hay.
+  final String nextFollowupAt;
+
+  bool get assigned => assignedUserId.isNotEmpty;
 
   bool get pending => awaitingReply && !isResolved;
 
@@ -155,6 +177,11 @@ class Conversation {
           .where((tag) => tag.isNotEmpty)
           .toList(),
       companyId: str(json['company_id']),
+      assignedUserId: str(json['assigned_user_id'], str(json['assigned_to'])),
+      assignedName: str(json['assigned_display_name_snapshot']),
+      archived: str(json['archived_at']).isNotEmpty,
+      hasPurchase: boolv(json['has_purchase']),
+      nextFollowupAt: str(mapv(json['next_followup'])['scheduled_at']),
     );
   }
 
