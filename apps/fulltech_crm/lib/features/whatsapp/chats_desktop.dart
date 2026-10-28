@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -13,6 +14,7 @@ import 'desktop/chat_filters.dart';
 import 'desktop/chat_filter_panel.dart';
 import 'desktop/chat_list_panel.dart';
 import 'desktop/chat_navigation_rail.dart';
+import 'desktop/chat_new_message_panel.dart';
 import 'desktop/conversation_actions.dart';
 
 /// Bandeja de conversaciones de **escritorio**, con la composición de la
@@ -28,6 +30,9 @@ import 'desktop/conversation_actions.dart';
 /// cliente) se conserva en `chats_desktop_anterior.dart.txt`, fuera del árbol
 /// de compilación, porque el panel contextual se ha movido al menú del
 /// encabezado (la referencia no tiene tercera columna).
+/// Columna lateral que se pinta ENCIMA del contenido (con desenfoque detrás).
+enum _SidePanel { none, filters, newMessage }
+
 class ChatsDesktopScreen extends StatefulWidget {
   const ChatsDesktopScreen({super.key, this.onNavigate, this.showRail = true});
 
@@ -48,8 +53,8 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   bool _selecting = false;
   final Set<String> _selectedIds = {};
 
-  /// Columna lateral de filtros (ocupa todo el alto).
-  bool _showFilters = false;
+  /// Columna lateral abierta (se pinta ENCIMA del contenido, con desenfoque).
+  _SidePanel _side = _SidePanel.none;
 
   /// Adjunto que debe abrirse al entrar en el hilo (acción «Enviar una foto»).
   String? _pendingAttach;
@@ -92,91 +97,122 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
       ChatDesktopMetrics.listWidth,
       math.max(272.0, (width - railWidth) * 0.3),
     );
-    // 20 % del ancho, con suelo y techo para que siga siendo usable.
-    final filterWidth = (width * 0.20).clamp(240.0, 360.0);
+    // Columnas laterales: 20 % del ancho (filtros) y algo más para el formulario.
+    final filterWidth = (width * 0.20).clamp(260.0, 380.0);
+    final formWidth = (width * 0.24).clamp(320.0, 440.0);
+    final sideWidth = _side == _SidePanel.filters ? filterWidth : formWidth;
 
-    // Todo el módulo (lista incluida) sigue la luminosidad configurada.
+    final content = Row(
+      children: [
+        if (widget.showRail)
+          ChatNavigationRail(
+            currentTab: 'whatsapp',
+            unread: state.unreadTotal,
+            initials: (user?.initials.isNotEmpty ?? false) ? user!.initials : 'FT',
+            onNavigate: (tab) => widget.onNavigate?.call(tab),
+            onLogout: state.logout,
+          ),
+        SizedBox(
+          width: listWidth,
+          child: ChatListPanel(
+            conversations: conversations,
+            selectedId: selectedId,
+            onSelect: (id) => setState(() => _selectedId = id),
+            onAction: _runAction,
+            onNewConversation: _newMessage,
+            search: _search,
+            onSearchChanged: (_) => setState(() {}),
+            filters: _filters,
+            onFiltersChanged: (value) => setState(() => _filters = value),
+            onOpenFilters: () => _toggleSide(_SidePanel.filters),
+            onRefresh: () => state.refresh(),
+            selecting: _selecting,
+            selectedIds: _selectedIds,
+            onSelectingChanged: (value) => setState(() {
+              _selecting = value;
+              if (!value) _selectedIds.clear();
+            }),
+            onToggleSelected: (id) => setState(() {
+              if (!_selectedIds.remove(id)) _selectedIds.add(id);
+            }),
+            onBulkAction: _runBulk,
+            unreadTotal: state.unreadTotal,
+          ),
+        ),
+        Expanded(
+          child: selectedId == null
+              ? const ChatDoodleBackground(child: _NoConversation())
+              : ChatScreen(
+                  key: ValueKey('$selectedId-$_attachRequest'),
+                  conversationId: selectedId,
+                  title: state.conversationById(selectedId)?.name ?? 'Conversación',
+                  desktop: true,
+                  autoAttach: _pendingAttach,
+                ),
+        ),
+      ],
+    );
+
+    // El módulo sigue la luminosidad configurada.
     return Theme(
       data: buildChatDesktopTheme(context),
       child: Material(
         color: c.panelBg,
-        child: Row(
+        child: Stack(
           children: [
-            if (widget.showRail)
-              ChatNavigationRail(
-                currentTab: 'whatsapp',
-                unread: state.unreadTotal,
-                initials: (user?.initials.isNotEmpty ?? false)
-                    ? user!.initials
-                    : 'FT',
-                onNavigate: (tab) => widget.onNavigate?.call(tab),
-                onLogout: state.logout,
-              ),
-            SizedBox(
-              width: listWidth,
-              child: ChatListPanel(
-                conversations: conversations,
-                selectedId: selectedId,
-                onSelect: (id) => setState(() => _selectedId = id),
-                onAction: _runAction,
-                onNewConversation: _newMessage,
-                search: _search,
-                onSearchChanged: (_) => setState(() {}),
-                filters: _filters,
-                onFiltersChanged: (value) => setState(() => _filters = value),
-                onOpenFilters: () => setState(() => _showFilters = !_showFilters),
-                onRefresh: () => state.refresh(),
-                selecting: _selecting,
-                selectedIds: _selectedIds,
-                onSelectingChanged: (value) => setState(() {
-                  _selecting = value;
-                  if (!value) _selectedIds.clear();
-                }),
-                onToggleSelected: (id) => setState(() {
-                  if (!_selectedIds.remove(id)) _selectedIds.add(id);
-                }),
-                onBulkAction: _runBulk,
-                unreadTotal: state.unreadTotal,
-              ),
-            ),
-            Expanded(
-              child: selectedId == null
-                  ? const ChatDoodleBackground(child: _NoConversation())
-                  : ChatScreen(
-                      key: ValueKey('$selectedId-$_attachRequest'),
-                      conversationId: selectedId,
-                      title:
-                          state.conversationById(selectedId)?.name ??
-                          'Conversación',
-                      desktop: true,
-                      autoAttach: _pendingAttach,
+            Positioned.fill(child: content),
+            // Capa de desenfoque: la columna va ENCIMA y el contenido no se mueve.
+            if (_side != _SidePanel.none)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => setState(() => _side = _SidePanel.none),
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
+                    child: Container(
+                      color: c.dark ? const Color(0x66000000) : const Color(0x2E0B1D24),
                     ),
-            ),
-            // Columna de filtros: todo el alto y ~20 % del ancho (nunca un
-            // diálogo en el centro). Se desliza abriendo y cerrando.
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              width: _showFilters ? filterWidth : 0,
-              child: ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.centerLeft,
-                  minWidth: filterWidth,
-                  maxWidth: filterWidth,
-                  child: ChatFilterPanel(
-                    width: filterWidth,
-                    filters: _filters,
-                    conversations: state.conversations,
-                    onChanged: (value) => setState(() => _filters = value),
-                    onClose: () => setState(() => _showFilters = false),
                   ),
                 ),
               ),
-            ),
+            if (_side != _SidePanel.none)
+              Positioned(
+                top: 0,
+                bottom: 0,
+                right: 0,
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: 1),
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) => Transform.translate(
+                    offset: Offset(sideWidth * (1 - value), 0),
+                    child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
+                  ),
+                  child: _side == _SidePanel.filters
+                      ? ChatFilterPanel(
+                          width: filterWidth,
+                          filters: _filters,
+                          conversations: state.conversations,
+                          onChanged: (value) => setState(() => _filters = value),
+                          onClose: () => setState(() => _side = _SidePanel.none),
+                        )
+                      : ChatNewMessagePanel(
+                          width: formWidth,
+                          onClose: () => setState(() => _side = _SidePanel.none),
+                          onCreated: (id) => setState(() {
+                            _side = _SidePanel.none;
+                            _selectedId = id;
+                          }),
+                        ),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  void _toggleSide(_SidePanel panel) {
+    setState(() => _side = _side == panel ? _SidePanel.none : panel);
   }
 
   /// Acciones de una fila de la bandeja (las mismas del hilo móvil + archivar,
@@ -258,13 +294,9 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
     }
   }
 
-  /// «Nuevo mensaje»: abre (o crea) la conversación de un teléfono y la muestra.
+  /// «Nuevo mensaje»: abre el formulario en la columna lateral.
   Future<void> _newMessage() async {
-    final id = await showNewConversationDialog(context);
-    if (!mounted || id == null) return;
-    await CrmScope.of(context, listen: false).refresh(quiet: true);
-    if (!mounted) return;
-    setState(() => _selectedId = id);
+    _toggleSide(_SidePanel.newMessage);
   }
 }
 

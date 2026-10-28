@@ -43,6 +43,13 @@ class ChatFilterPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: c.panelBg,
         border: Border(left: BorderSide(color: c.divider)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: c.dark ? 0.45 : 0.10),
+            blurRadius: 24,
+            offset: const Offset(-6, 0),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

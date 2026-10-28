@@ -25,9 +25,9 @@ class _Palette {
   final Color activeFill;
 
   static const light = _Palette(
-    background: Color(0xFFFFFFFF),
-    line: Color(0xFFEDF1F6),
-    hover: Color(0xFFF3F6FA),
+    background: Color(0xFFFAF9F6),
+    line: Color(0xFFECE8E0),
+    hover: Color(0xFFF2F0EA),
     ink: Color(0xFF102235),
     muted: Color(0xFF64748B),
     primary: Color(0xFF1957E6),
