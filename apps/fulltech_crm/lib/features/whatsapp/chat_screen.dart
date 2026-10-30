@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'dart:ui' as ui;
@@ -11,6 +12,7 @@ import '../../core/files/file_opener.dart';
 import '../../core/format/crm_format.dart';
 import '../../core/net/api_client.dart';
 import '../../core/net/operation_key.dart';
+import '../../core/text/local_corrector.dart';
 import '../../core/theme/crm_theme.dart';
 import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
@@ -23,6 +25,7 @@ import 'desktop/chat_header.dart';
 import 'desktop/chat_thread.dart';
 import 'desktop/chat_media_reconcile_dialog.dart';
 import 'desktop/chat_correction_sheet.dart';
+import 'desktop/chat_live_suggestion.dart';
 import 'media_picker.dart';
 import 'voice_recorder.dart';
 
@@ -91,6 +94,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _load();
+    _composer.addListener(_alEscribir);
     // Acción «Enviar una foto» desde la bandeja: abre el selector de archivos.
     final attach = widget.autoAttach;
     if (attach != null && attach.isNotEmpty) {
@@ -102,11 +106,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _revisionTimer?.cancel();
+    _composer.removeListener(_alEscribir);
     _estadoEscuchado?.removeListener(_alCambiarEstado);
     _composer.dispose();
     _scroll.dispose();
     _threadSearch.dispose();
     super.dispose();
+  }
+
+  /*
+   * REVISIÓN MIENTRAS SE ESCRIBE (como la PWA).
+   *
+   * La pasada local corre sola con un retardo corto (no en cada tecla) y, si hay
+   * algo que arreglar, aparece una franja con la propuesta. Nunca reemplaza el
+   * texto ni envía nada: se aplica si la persona lo pide. Si ignora la sugerencia,
+   * no se le vuelve a insistir con el mismo texto.
+   */
+  static const Duration _revisionDebounce = Duration(milliseconds: 700);
+  Timer? _revisionTimer;
+  LocalReview? _sugerencia;
+  String _ignorado = '';
+
+  void _alEscribir() {
+    _revisionTimer?.cancel();
+    final texto = _composer.text;
+    if (texto.trim().isEmpty) {
+      if (_sugerencia != null) setState(() => _sugerencia = null);
+      return;
+    }
+    _revisionTimer = Timer(_revisionDebounce, () {
+      if (!mounted) return;
+      final textoActual = _composer.text;
+      if (textoActual == _ignorado) return;
+      final revision = revisarTexto(textoActual);
+      final mostrar = revision.hasChanges ? revision : null;
+      if (mostrar?.corrected == _sugerencia?.corrected) return;
+      setState(() => _sugerencia = mostrar);
+    });
+  }
+
+  void _aplicarSugerencia() {
+    final revision = _sugerencia;
+    if (revision == null) return;
+    setState(() {
+      _composer.text = revision.corrected;
+      _composer.selection = TextSelection.collapsed(offset: revision.corrected.length);
+      _sugerencia = null;
+    });
+  }
+
+  void _ignorarSugerencia() {
+    setState(() {
+      _ignorado = _composer.text;
+      _sugerencia = null;
+    });
   }
 
   CrmState get _state => CrmScope.of(context, listen: false);
@@ -686,6 +740,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       }),
                     ),
                     Expanded(child: body),
+                    if (_sugerencia != null)
+                      ChatLiveSuggestion(
+                        review: _sugerencia!,
+                        accent: c.accent,
+                        background: c.dark ? const Color(0xFF1E3A31) : const Color(0xFFE8F5EF),
+                        foreground: c.dark ? const Color(0xFFBFE8D8) : const Color(0xFF0E3A2B),
+                        onApply: _aplicarSugerencia,
+                        onOpen: _proofread,
+                        onDismiss: _ignorarSugerencia,
+                      ),
                     ChatComposer(
                       controller: _composer,
                       sending: _sending,
@@ -818,6 +882,8 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _composer.text = propuesta;
       _composer.selection = TextSelection.collapsed(offset: propuesta.length);
+      // La franja de sugerencia en vivo ya no tiene sentido con el texto nuevo.
+      _sugerencia = null;
     });
     crmToast(context, 'Texto corregido. Revísalo antes de enviar.');
   }
@@ -1055,6 +1121,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   Text(_uploadLabel!, style: TextStyle(fontSize: 12.5, color: p.primaryDark, fontWeight: FontWeight.w600)),
                 ],
               ),
+            ),
+          if (_sugerencia != null)
+            ChatLiveSuggestion(
+              review: _sugerencia!,
+              onApply: _aplicarSugerencia,
+              onOpen: _proofread,
+              onDismiss: _ignorarSugerencia,
             ),
           SafeArea(
             top: false,

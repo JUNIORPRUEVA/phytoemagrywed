@@ -8,8 +8,8 @@ import '../common/crm_ui.dart';
 /// Entrada al panel, calcada del PWA (`.login` / `.login__card` de `admin.css`).
 ///
 /// Tarjeta estrecha (máx. 318 px) centrada sobre el fondo con los dos
-/// degradados radiales del panel, la marca en una placa de 62 px, el rótulo
-/// «ACCESO PRIVADO DEL EQUIPO» y el botón azul degradado de 156 px.
+/// degradados radiales del panel, la marca tipográfica «FULLTECH / CRM» (sin
+/// logo), el rótulo «ACCESO PRIVADO DEL EQUIPO» y el botón azul degradado.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -76,42 +76,40 @@ class _LoginScreenState extends State<LoginScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Container(
-                        width: 62,
-                        height: 62,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: p.primary.withValues(alpha: 0.22)),
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Colors.white, p.primaryTint],
-                          ),
-                          boxShadow: const [BoxShadow(color: Color(0x2E143C78), blurRadius: 24, offset: Offset(0, 10))],
-                        ),
-                        child: Center(
-                          child: Image.asset(PwaIcons.brandLogo, width: 42, height: 42, filterQuality: FilterQuality.medium),
+                      // Marca tipográfica: sin logo, solo letra. Limpio y
+                      // moderno, como el encabezado de la app.
+                      Text(
+                        'FULLTECH',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 3.4,
+                          height: 1.1,
+                          color: p.ink,
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      RichText(
-                        textAlign: TextAlign.center,
-                        text: TextSpan(
-                          style: TextStyle(fontSize: 17.9, fontWeight: FontWeight.w600, color: p.ink, letterSpacing: 0.18),
-                          children: [
-                            const TextSpan(text: 'FT '),
-                            TextSpan(
-                              text: 'CRM',
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 22, height: 1, color: p.primary.withValues(alpha: 0.35)),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Text(
+                              'CRM',
                               style: TextStyle(
-                                color: p.primary,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w800,
-                                letterSpacing: 1.43,
+                                letterSpacing: 4,
+                                color: p.primary,
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          Container(width: 22, height: 1, color: p.primary.withValues(alpha: 0.35)),
+                        ],
                       ),
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 8),
                       Text(
                         'ACCESO PRIVADO DEL EQUIPO',
                         textAlign: TextAlign.center,

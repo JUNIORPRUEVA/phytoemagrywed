@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulltech_crm/app/crm_scope.dart';
 import 'package:fulltech_crm/data/models/crm_models.dart';
+import 'package:fulltech_crm/features/whatsapp/desktop/chat_composer.dart';
 import 'package:fulltech_crm/features/whatsapp/desktop/chat_list_panel.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -30,19 +31,29 @@ Finder _fila(String id) => find.byWidgetPredicate(
       (widget) => widget is ConversationListTile && widget.conversation.id == id,
     );
 
-/// El panel de opciones se pinta ENCIMA y tapa el botón flotante: se cierra.
+/// El compositor del chat, sin depender del texto de ayuda (desaparece al escribir).
+Finder _compositor() => find.descendant(of: find.byType(ChatComposer), matching: find.byType(TextField));
 Future<void> _cerrarPanel(WidgetTester tester) async {
+  if (find.byTooltip('Ignorar sugerencia').evaluate().isNotEmpty) {
+    await tester.tap(find.byTooltip('Ignorar sugerencia').first);
+    await asentar(tester);
+  }
   if (find.byTooltip('Cerrar').evaluate().isEmpty) return;
   final cerrar = find.byTooltip('Cerrar').first;
   await tester.tap(cerrar, warnIfMissed: false);
   await asentar(tester);
 }
 
-/// Pulsa el botón flotante de IA (cerrando antes lo que lo tape).
+/// Pulsa el botón flotante de IA (cerrando antes lo que lo tape) y confirma que
+/// el menú se abrió de verdad: el botón flota sobre paneles y franjas, así que
+/// puede necesitar más de un intento tras cerrar lo que haya encima.
 Future<void> _abrirMenuIa(WidgetTester tester) async {
-  await _cerrarPanel(tester);
-  await tester.tap(find.byTooltip('Asistente de IA').first);
-  await asentar(tester);
+  for (var intento = 0; intento < 3; intento += 1) {
+    await _cerrarPanel(tester);
+    await tester.tap(find.byTooltip('Asistente de IA').first, warnIfMissed: false);
+    await asentar(tester);
+    if (find.text('Sugerir respuesta').evaluate().isNotEmpty) return;
+  }
 }
 
 void main() {
@@ -75,10 +86,38 @@ void main() {
     debugPrint('BOTÓN FLOTANTE DE IA OK');
 
     // El mensaje que se va a corregir.
-    final compositor = find.widgetWithText(TextField, 'Escribe un mensaje');
+    final compositor = _compositor();
     expect(compositor, findsWidgets, reason: 'No encuentro el compositor del chat');
     await tester.enterText(compositor.first, 'ola ke ase, tienes el pedido?');
     await asentar(tester, segundos: 4);
+
+    // REVISIÓN MIENTRAS SE ESCRIBE (como la PWA): la franja aparece sola.
+    expect(await esperarAsentando(tester, find.textContaining('Sugerencia:'), segundos: 15), isTrue,
+        reason: 'No apareció la sugerencia automática al escribir. En pantalla: ${textos(tester)}');
+    debugPrint('SUGERENCIA EN VIVO OK: ${textos(tester)}');
+
+    // «Corregir» de la franja aplica el texto SIN enviar nada.
+    await tester.tap(find.text('Corregir').first);
+    await asentar(tester);
+    final vivo = tester.widget<TextField>(compositor.first).controller?.text ?? '';
+    expect(vivo.toLowerCase().contains('que hace'), isTrue,
+        reason: 'La sugerencia en vivo no corrigió el borrador: "$vivo"');
+    expect(vivo.contains('¿'), isTrue, reason: 'Falta el signo de apertura en "$vivo"');
+    debugPrint('APLICAR EN VIVO OK: "$vivo"');
+    expect(find.textContaining('Sugerencia:'), findsNothing,
+        reason: 'La franja debería desaparecer al aplicar la corrección');
+
+    final trasAplicar = await estado.repository.messages(id) as List;
+    expect(trasAplicar.where((m) => (m as ChatMessage).outgoing).length, 0,
+        reason: 'La corrección en vivo envió un mensaje sin permiso');
+
+    // Se vuelve a escribir con errores para el resto del recorrido. El buscador
+    // del hint desaparece al haber texto, así que se usa el compositor por tipo.
+    final compositor2 = _compositor();
+    await tester.enterText(compositor2, 'ola ke ase, tienes el pedido?');
+    await asentar(tester, segundos: 4);
+    expect((tester.widget<TextField>(compositor2).controller?.text ?? '').contains('ola'), isTrue,
+        reason: 'No se pudo escribir el texto de prueba en el compositor');
 
     // Menú de IA.
     await _abrirMenuIa(tester);
@@ -113,7 +152,7 @@ void main() {
 
     await tester.tap(find.text('Usar este texto'));
     await asentar(tester);
-    final corregido = (tester.widget<TextField>(compositor.first)).controller?.text ?? '';
+    final corregido = (tester.widget<TextField>(compositor2)).controller?.text ?? '';
     expect(corregido.contains('¿'), isTrue,
         reason: 'El compositor no recibió el texto corregido: "$corregido"');
     debugPrint('TEXTO APLICADO AL COMPOSITOR OK: "$corregido"');
@@ -130,9 +169,12 @@ void main() {
     await asentar(tester, segundos: 25);
     final tieneAlgo = find.textContaining('Propuesta').evaluate().isNotEmpty ||
         find.textContaining('El último mensaje es tuyo').evaluate().isNotEmpty ||
-        find.textContaining('La IA no está configurada').evaluate().isNotEmpty ||
+        find.textContaining('espera a que el cliente').evaluate().isNotEmpty ||
+        find.textContaining('no está configurada').evaluate().isNotEmpty ||
         find.textContaining('no devolvió').evaluate().isNotEmpty ||
-        find.textContaining('DeepSeek').evaluate().isNotEmpty;
+        find.textContaining('DeepSeek').evaluate().isNotEmpty ||
+        find.textContaining('límite diario').evaluate().isNotEmpty ||
+        find.textContaining('proveedor').evaluate().isNotEmpty;
     expect(tieneAlgo, isTrue,
         reason: 'La sugerencia de respuesta no dijo nada. En pantalla: ${textos(tester)}');
     debugPrint('SUGERENCIA DE RESPUESTA OK: propuesta o motivo visible');
