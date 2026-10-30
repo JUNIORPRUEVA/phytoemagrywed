@@ -44,6 +44,21 @@ class _Palette {
     activeFill: Color(0xFF1D2942),
   );
 
+  /// Barra superior de la app: azul claro de marca en los dos temas.
+  ///
+  /// Antes seguía el tema y en oscuro se pintaba casi negra (`#181919`); el
+  /// usuario pidió el mismo azul claro del pie del chat (`#E5EFFF`). Los tonos
+  /// de texto van fijos para que el contraste no dependa del tema.
+  static const topbar = _Palette(
+    background: CrmColors.primarySoft,
+    line: CrmColors.border,
+    hover: Color(0xFFD3E4FF),
+    ink: CrmColors.ink,
+    muted: CrmColors.inkSecondary,
+    primary: CrmColors.primary,
+    activeFill: Color(0xFFD3E4FF),
+  );
+
   static _Palette of(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark ? dark : light;
 }
@@ -645,7 +660,7 @@ class _RailTileState extends State<_RailTile> {
   }
 }
 
-/// Barra superior de 56 px, clara u oscura según el tema.
+/// Barra superior de 56 px, azul claro de marca en los dos temas.
 class CrmLightTopbar extends StatelessWidget {
   const CrmLightTopbar({
     super.key,
@@ -674,7 +689,7 @@ class CrmLightTopbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = _Palette.of(context);
+    final c = _Palette.topbar;
     return Container(
       height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 10),

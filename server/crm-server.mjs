@@ -208,6 +208,7 @@ import {
 import { createSettingsService } from './settings.mjs';
 import { createProofreadingService } from './proofreading.mjs';
 import { handleProofreadingRoute } from './proofreading-routes.mjs';
+import { handleAssistantRoute } from './assistant-routes.mjs';
 import { createChatSharingService, handleChatSharingRoute } from './chat-sharing.mjs';
 import { createSqlQuery } from './sql-query.mjs';
 import { createMediaStore, MEDIA_STATUS, SEND_STATUS } from './media.mjs';
@@ -8206,6 +8207,17 @@ async function handle(req, res, ctx) {
       canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
       readJson: readJsonBody, json })) return;
     if (await handleProofreadingRoute({ req, res, route, ctx, actor, can,
+      canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
+      readJson: readJsonBody, json })) return;
+    /*
+     * ASISTENTE IA CONTEXTUAL.
+     *
+     * El módulo existía pero NINGUNA ruta lo llamaba: `/api/admin/assistant/query`
+     * caía en el 404 genérico y el asistente no funcionaba ni en el panel ni en la
+     * app nativa. Se monta aquí, con los mismos permisos y el mismo control de
+     * acceso que el resto del chat.
+     */
+    if (await handleAssistantRoute({ req, res, route, ctx, actor, can,
       canOpen: (conversation) => canOpenConversation(ctx, actor, conversation),
       readJson: readJsonBody, json })) return;
     if (await handleChatSharingRoute({ req, res, route, ctx, can, readJson: readJsonBody, json })) return;

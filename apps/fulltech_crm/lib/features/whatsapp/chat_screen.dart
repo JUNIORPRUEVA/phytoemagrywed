@@ -22,6 +22,7 @@ import 'desktop/chat_options_panel.dart';
 import 'desktop/chat_header.dart';
 import 'desktop/chat_thread.dart';
 import 'desktop/chat_media_reconcile_dialog.dart';
+import 'desktop/chat_correction_sheet.dart';
 import 'media_picker.dart';
 import 'voice_recorder.dart';
 
@@ -706,8 +707,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   children: [
                     _ChatFab(
                       icon: Icons.auto_awesome,
-                      tooltip: 'Corregir ortografía con IA',
-                      onTap: _proofread,
+                      tooltip: 'Asistente de IA',
+                      onTap: _menuIa,
                       accent: true,
                       busy: _aiBusy,
                     ),
@@ -794,17 +795,102 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// IA: corrige el texto del compositor (o sugiere una respuesta).
+  /// CORREGIR EL BORRADOR.
+  ///
+  /// Primero la pasada LOCAL (instantánea, sin red y sin IA) y después, si la
+  /// persona quiere, la IA del servidor. Antes esto solo llamaba al servidor y se
+  /// quedaba en silencio cuando no había IA configurada: el botón parecía roto.
   Future<void> _proofread() async {
-    final text = _composer.text.trim();
-    if (text.isEmpty) {
+    final texto = _composer.text;
+    if (texto.trim().isEmpty) {
       crmToast(context, 'Escribe primero el mensaje que quieres corregir.');
       return;
     }
-    await _askAi(reply: false, text: text);
+    final propuesta = await showDialog<String>(
+      context: context,
+      builder: (_) => ChatCorrectionSheet(
+        original: texto,
+        repository: _state.repository,
+        conversationId: widget.conversationId,
+      ),
+    );
+    if (!mounted || propuesta == null || propuesta == texto) return;
+    setState(() {
+      _composer.text = propuesta;
+      _composer.selection = TextSelection.collapsed(offset: propuesta.length);
+    });
+    crmToast(context, 'Texto corregido. Revísalo antes de enviar.');
   }
 
-  Future<void> _replySuggestion() => _askAi(reply: true, text: '');
+  Future<void> _replySuggestion() async {
+    if (_aiBusy) return;
+    final actual = _conversation;
+    if (actual == null) return;
+    setState(() {
+      _optionsOpen = true;
+      _aiBusy = true;
+      _aiOriginal = '';
+      _aiSuggestion = '';
+      _aiError = '';
+    });
+    try {
+      final data = await _state.repository.replySuggestionDetailed(widget.conversationId);
+      if (!mounted) return;
+      setState(() {
+        _aiBusy = false;
+        _aiSuggestion = data.text;
+        if (data.text.isEmpty) _aiError = data.explain();
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _aiBusy = false;
+        _aiError = error.message;
+      });
+    }
+  }
+
+  /// Menú de IA del botón flotante: las tres acciones en un solo sitio.
+  Future<void> _menuIa() async {
+    final elegido = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.spellcheck_rounded),
+              title: const Text('Corregir el mensaje'),
+              subtitle: const Text('Revisión instantánea y, si quieres, con IA'),
+              onTap: () => Navigator.pop(sheetContext, 'corregir'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.forum_outlined),
+              title: const Text('Sugerir respuesta'),
+              subtitle: const Text('Propone un borrador para este chat'),
+              onTap: () => Navigator.pop(sheetContext, 'respuesta'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.psychology_alt_outlined),
+              title: const Text('Asistente contextual'),
+              subtitle: const Text('Analiza el chat y el expediente del cliente'),
+              onTap: () => Navigator.pop(sheetContext, 'asistente'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (elegido) {
+      case 'corregir':
+        await _proofread();
+      case 'respuesta':
+        await _replySuggestion();
+      case 'asistente':
+        await _asistenteContextual();
+    }
+  }
 
   /// Asistente IA contextual: la MISMA ruta del Centro IA del panel web.
   ///
@@ -826,35 +912,6 @@ class _ChatScreenState extends State<ChatScreen> {
         },
       ),
     );
-  }
-
-  Future<void> _askAi({required bool reply, required String text}) async {
-    if (_aiBusy) return;
-    setState(() {
-      _optionsOpen = true;
-      _aiBusy = true;
-      _aiOriginal = text;
-      _aiSuggestion = '';
-      _aiError = '';
-    });
-    try {
-      final repository = _state.repository;
-      final suggestion = reply
-          ? await repository.replySuggestion(widget.conversationId)
-          : await repository.proofread(conversationId: widget.conversationId, text: text);
-      if (!mounted) return;
-      setState(() {
-        _aiBusy = false;
-        _aiSuggestion = suggestion;
-        if (suggestion.isEmpty) _aiError = 'La IA no devolvió una propuesta.';
-      });
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _aiBusy = false;
-        _aiError = error.message;
-      });
-    }
   }
 
   /// Rellena el compositor con la propuesta. NUNCA envía sola.

@@ -502,17 +502,17 @@ class _MobileHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = context.crm;
     return Container(
       height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: p.surface,
-        border: Border(bottom: BorderSide(color: CrmColors.hairline)),
+        // Mismo azul claro de marca que la barra de escritorio.
+        color: CrmColors.primarySoft,
+        border: Border(bottom: BorderSide(color: CrmColors.border)),
       ),
       child: Row(
         children: [
-          IconButton(onPressed: onMenu, tooltip: 'Abrir menú', icon: PwaIcon(PwaIcons.menu, size: 20, color: p.primary)),
+          IconButton(onPressed: onMenu, tooltip: 'Abrir menú', icon: const PwaIcon(PwaIcons.menu, size: 20, color: CrmColors.primary)),
           Image.asset(PwaIcons.brandLogo, width: 22, height: 22),
           const SizedBox(width: 8),
           Flexible(
@@ -520,7 +520,7 @@ class _MobileHeader extends StatelessWidget {
               'FullTECH',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, letterSpacing: -0.4, color: p.ink),
+              style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, letterSpacing: -0.4, color: CrmColors.ink),
             ),
           ),
           const SizedBox(width: 6),
@@ -529,7 +529,7 @@ class _MobileHeader extends StatelessWidget {
               subtitle.toUpperCase(),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 1.2, color: p.inkSecondary),
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 1.2, color: CrmColors.inkSecondary),
             ),
           ),
           const Spacer(),
@@ -538,8 +538,8 @@ class _MobileHeader extends StatelessWidget {
             onPressed: state.loading ? null : () => state.refresh(),
             tooltip: 'Actualizar',
             icon: state.loading
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : Icon(Icons.refresh_rounded, size: 20, color: p.primary),
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: CrmColors.primary))
+                : const Icon(Icons.refresh_rounded, size: 20, color: CrmColors.primary),
           ),
         ],
       ),

@@ -575,3 +575,112 @@ class CourierPosition {
         orderIds: listv(json['order_ids']).map((row) => '$row').toList(),
       );
 }
+
+/// Resultado de la corrección ortográfica del servidor (IA).
+///
+/// Contrato real (`server/proofreading.mjs` -> `correct`):
+///   `{ start, end, word, replacement, correctedText, edits:[{start,end,word,replacement}],
+///      uncertain:[] }`
+/// Se lee tal cual: si la IA no está configurada, el servidor manda `null` y
+/// `available` queda en `false` (no se inventa ninguna propuesta).
+class ProofreadingEdit {
+  const ProofreadingEdit({required this.word, required this.replacement});
+
+  final String word;
+  final String replacement;
+
+  factory ProofreadingEdit.fromJson(Map<String, dynamic> json) => ProofreadingEdit(
+        word: str(json['word']),
+        replacement: str(json['replacement'], str(json['after'])),
+      );
+}
+
+class ProofreadingResult {
+  const ProofreadingResult({
+    required this.available,
+    required this.correctedText,
+    required this.word,
+    required this.replacement,
+    required this.edits,
+    required this.doubts,
+  });
+
+  /// `false` cuando el servidor no tiene IA configurada (respuesta `null`).
+  final bool available;
+  final String correctedText;
+  final String word;
+  final String replacement;
+  final List<ProofreadingEdit> edits;
+
+  /// Palabras que la IA marcó como dudosas sin atreverse a cambiarlas.
+  final List<String> doubts;
+
+  bool get hasChanges => correctedText.isNotEmpty && correctedText != word;
+
+  const ProofreadingResult.unavailable()
+      : available = false,
+        correctedText = '',
+        word = '',
+        replacement = '',
+        edits = const [],
+        doubts = const [];
+
+  factory ProofreadingResult.fromJson(Map<String, dynamic> json) {
+    if (json.isEmpty) return const ProofreadingResult.unavailable();
+    final ediciones = listv(json['edits'])
+        .map((row) => ProofreadingEdit.fromJson(mapv(row)))
+        .where((edit) => edit.word.isNotEmpty)
+        .toList();
+    return ProofreadingResult(
+      available: true,
+      correctedText: str(json['correctedText'], str(json['replacement'])),
+      word: str(json['word']),
+      replacement: str(json['replacement']),
+      edits: ediciones,
+      doubts: listv(json['uncertain'])
+          .map((row) => str(mapv(row)['word']))
+          .where((word) => word.isNotEmpty)
+          .toList(),
+    );
+  }
+}
+
+/// Respuesta sugerida por el servidor para el hilo abierto.
+///
+/// El servidor responde `{ ok, text, ai, reason }`:
+///   · `text`   → el borrador (vacío si no hay propuesta)
+///   · `reason` → `awaiting_customer` (el último mensaje es nuestro),
+///                `ai_unavailable` (sin clave configurada), `daily_limit`…
+class ReplySuggestion {
+  const ReplySuggestion({required this.text, required this.reason, required this.ai});
+
+  final String text;
+  final String reason;
+  final bool ai;
+
+  bool get hasText => text.trim().isNotEmpty;
+
+  /// Explicación en castellano del motivo por el que no hay propuesta.
+  String explain() {
+    switch (reason) {
+      case 'awaiting_customer':
+        return 'El último mensaje es tuyo: espera a que el cliente conteste para sugerir una respuesta.';
+      case 'ai_unavailable':
+        return 'La IA no está configurada (falta la clave de DeepSeek en Ajustes → IA).';
+      case 'daily_limit':
+        return 'Se alcanzó el límite diario de consultas de IA.';
+      case 'provider_error':
+        return 'El proveedor de IA no respondió. Inténtalo de nuevo.';
+      case '':
+        return 'La IA no devolvió una propuesta.';
+      default:
+        return 'La IA no devolvió una propuesta ($reason).';
+    }
+  }
+
+  factory ReplySuggestion.fromJson(Map<String, dynamic> json) => ReplySuggestion(
+        text: str(json['text']),
+        reason: str(json['reason']),
+        ai: json['ai'] == true,
+      );
+}

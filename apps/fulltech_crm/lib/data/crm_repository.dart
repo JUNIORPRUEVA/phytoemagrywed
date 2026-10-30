@@ -91,8 +91,13 @@ class CrmRepository {
       _api.post('/api/admin/conversations/${Uri.encodeComponent(conversationId)}/read', const {});
 
   /// IA: corrige la ortografía del texto que se está escribiendo.
-  /// Devuelve la propuesta; **nunca** envía nada (la decisión es del agente).
-  Future<String> proofread({
+  ///
+  /// Contrato REAL del servidor (`server/proofreading-routes.mjs`):
+  ///   `{ ok, suggestion: { edits: [...], uncertain: [...], ... } | null }`
+  /// Antes se leía `suggestion` como si fuera un texto y la app se tragaba la
+  /// propuesta: el servidor devuelve un OBJETO con `edits`. Cuando la IA no está
+  /// configurada llega `null`, y eso se informa tal cual (no se inventa nada).
+  Future<ProofreadingResult> proofread({
     required String conversationId,
     required String text,
   }) async {
@@ -100,15 +105,28 @@ class CrmRepository {
       'conversationId': conversationId,
       'text': text,
     });
-    return str(data['suggestion']);
+    return ProofreadingResult.fromJson(mapv(data['suggestion']));
   }
 
   /// IA: propone una respuesta para el hilo (tampoco la envía).
+  ///
+  /// El servidor responde `{ ok, text, ai, reason }`: el texto viaja en `text`.
+  /// Se acepta también `suggestion` por compatibilidad con respuestas antiguas.
   Future<String> replySuggestion(String conversationId) async {
     final data = await _api.post('/api/admin/ai/reply-suggestion', {
       'conversationId': conversationId,
     });
-    return str(data['suggestion']);
+    final texto = str(data['text']);
+    return texto.isNotEmpty ? texto : str(data['suggestion']);
+  }
+
+  /// Motivo por el que la IA no propuso respuesta (`awaiting_customer`,
+  /// `ai_unavailable`…). Vacío si sí propuso.
+  Future<ReplySuggestion> replySuggestionDetailed(String conversationId) async {
+    final data = await _api.post('/api/admin/ai/reply-suggestion', {
+      'conversationId': conversationId,
+    });
+    return ReplySuggestion.fromJson(data);
   }
 
   /// Asistente IA contextual del chat (`POST /api/admin/assistant/query`).
