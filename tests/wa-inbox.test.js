@@ -87,6 +87,8 @@ async function inbound(waId, from, body, name = 'Cliente', timestamp = Math.floo
           {
             field: 'messages',
             value: {
+              // Meta siempre manda el número de destino: el servidor lo exige.
+              metadata: { phone_number_id: 'PN1', display_phone_number: '18095550000' },
               contacts: [{ profile: { name }, wa_id: from }],
               messages: [
                 { from, id: waId, timestamp: String(timestamp), type: 'text', text: { body } },

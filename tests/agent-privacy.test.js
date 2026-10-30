@@ -91,6 +91,8 @@ async function inbound(id, from, text) {
         changes: [
           {
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige.
+              metadata: { phone_number_id: 'PN-BLINDAJE', display_phone_number: '18095550000' },
               contacts: [{ profile: { name: `Cliente ${text}` }, wa_id: from }],
               messages: [{ from, id, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: text } }],
             },
@@ -207,27 +209,44 @@ describe('blindaje: el agente no admin solo entra en lo suyo', () => {
     expect((await request(`/api/admin/conversations/${conv.maria.id}/messages`, {}, mariaCookie)).status).toBe(200);
   });
 
-  it('la conversación sin asignar tampoco se abre: se PIDE, y administración recibe el aviso', async () => {
+  it('la conversación SIN ASIGNAR se abre y se toma, y a partir de ahí queda exclusiva (además se puede PEDIR)', async () => {
+    /*
+     * REGLA VIGENTE (decisión de negocio, `server/users.mjs`): si el cliente
+     * escribe y nadie tiene la conversación, CUALQUIER agente con
+     * `chats.take_unassigned` puede abrirla y ponerse al frente; en cuanto uno la
+     * toma queda exclusiva para él y solo administración puede reasignarla.
+     * Antes la prueba exigía 403 «pide que te la asignen», que ya no es la regla.
+     *
+     * Lo que NO cambia y se sigue exigiendo aquí: leer no se la queda, el segundo
+     * agente no puede tomarla y pedirla genera aviso a administración.
+     */
     const hilo = await request(`/api/admin/conversations/${conv.libre.id}/messages`, {}, mariaCookie);
-    expect(hilo.status).toBe(403);
-    const detalleLibre = await body(hilo);
-    expect(detalleLibre.error).toBe('not_your_conversation');
-    expect(detalleLibre.message).toContain('todavía no está asignada');
-
-    // Ni el agente ni un tercero se la quedan solos.
-    expect((await request(`/api/admin/conversations/${conv.libre.id}/take`, { method: 'POST', body: '{}' }, mariaCookie)).status).toBe(403);
-    expect((await request(`/api/admin/conversations/${conv.libre.id}/take`, { method: 'POST', body: '{}' }, pedroCookie)).status).toBe(403);
+    expect(hilo.status).toBe(200);
+    // Leerla no la asigna: sigue sin dueño.
     expect((await body(await request(`/api/admin/conversations/${conv.libre.id}/messages`, {}, adminCookie))).conversation.assigned_user_id ?? null).toBe(null);
 
-    const peticion = await request(`/api/admin/conversations/${conv.libre.id}/assignment-request`, { method: 'POST', body: '{}' }, mariaCookie);
+    // María se la pone al frente desde la interfaz («Ponerme al frente»).
+    expect((await request(`/api/admin/conversations/${conv.libre.id}/take`, { method: 'POST', body: '{}' }, mariaCookie)).status).toBe(200);
+    expect((await body(await request(`/api/admin/conversations/${conv.libre.id}/messages`, {}, adminCookie))).conversation.assigned_user_id).toBe(maria.id);
+
+    // Ya es suya: Pedro ni la abre ni se la queda.
+    const hiloPedro = await request(`/api/admin/conversations/${conv.libre.id}/messages`, {}, pedroCookie);
+    expect(hiloPedro.status).toBe(403);
+    const detalleLibre = await body(hiloPedro);
+    expect(detalleLibre.error).toBe('not_your_conversation');
+    expect(detalleLibre.message).toContain('María');
+    expect((await request(`/api/admin/conversations/${conv.libre.id}/take`, { method: 'POST', body: '{}' }, pedroCookie)).status).toBe(403);
+
+    // Pedirla sigue existiendo y avisa a administración.
+    const peticion = await request(`/api/admin/conversations/${conv.libre.id}/assignment-request`, { method: 'POST', body: '{}' }, pedroCookie);
     expect(peticion.status).toBe(202);
     const aviso = (await app.collections.list('user_notifications', { limit: 500 }))
       .find((row) => row.type === 'CONVERSATION_ASSIGNMENT_REQUESTED' && row.entity_id === conv.libre.id);
     expect(aviso).toBeTruthy();
-    expect(aviso.recipient_user_id).not.toBe(maria.id);
-    expect(aviso.data.requested_by_user_id).toBe(maria.id);
-    // Sigue sin dueño: pedir no es asignarse.
-    expect((await body(await request(`/api/admin/conversations/${conv.libre.id}/messages`, {}, adminCookie))).conversation.assigned_user_id ?? null).toBe(null);
+    expect(aviso.recipient_user_id).not.toBe(pedro.id);
+    expect(aviso.data.requested_by_user_id).toBe(pedro.id);
+    // Pedir no cambia el dueño actual.
+    expect((await body(await request(`/api/admin/conversations/${conv.libre.id}/messages`, {}, adminCookie))).conversation.assigned_user_id).toBe(maria.id);
   });
 
   it('las acciones en lote también respetan el blindaje (no se marca leído lo ajeno)', async () => {
@@ -239,7 +258,8 @@ describe('blindaje: el agente no admin solo entra en lo suyo', () => {
     const resultados = Object.fromEntries((await body(respuesta)).results.map((row) => [row.id, row]));
     expect(resultados[conv.maria.id].ok).toBe(true);
     expect(resultados[conv.pedro.id]).toMatchObject({ ok: false, error: 'not_your_conversation' });
-    expect(resultados[conv.libre.id]).toMatchObject({ ok: false, error: 'not_your_conversation' });
+    // Sin asignar SÍ (la regla permite atenderla); lo que se blinda es lo ajeno.
+    expect(resultados[conv.libre.id].ok).toBe(true);
   });
 
   it('los seguimientos de un cliente que no lleva son invisibles (y no se pueden programar)', async () => {

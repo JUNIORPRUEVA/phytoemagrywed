@@ -6,17 +6,55 @@ import '../../core/theme/crm_theme.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import '../common/remote_view.dart';
+import 'user_forms.dart';
 
 /// Usuarios del panel y su rol.
-class UsuariosScreen extends StatelessWidget {
+///
+/// Solo ADMIN puede crear cuentas (`requireAdmin()` en el servidor). Aquí se
+/// oculta el botón sin ese permiso, pero la decisión sigue siendo del servidor.
+class UsuariosScreen extends StatefulWidget {
   const UsuariosScreen({super.key});
+
+  @override
+  State<UsuariosScreen> createState() => _UsuariosScreenState();
+}
+
+class _UsuariosScreenState extends State<UsuariosScreen> {
+  /// Cambiar la clave obliga a `RemoteListScreen` a volver a pedir la lista.
+  int _reload = 0;
+
+  Future<void> _createUser() async {
+    final form = await showNewUserDialog(context);
+    if (form == null || !mounted) return;
+    final created = await createUserFromForm(
+      context,
+      repository: CrmScope.of(context, listen: false).repository,
+      form: form,
+    );
+    if (created && mounted) setState(() => _reload += 1);
+  }
+
+  Future<void> _editUser(Map<String, dynamic> user) async {
+    final repository = CrmScope.of(context, listen: false).repository;
+    final form = await showEditUserDialog(context, user: user, repository: repository);
+    if (form == null || !mounted) return;
+    final saved = await saveUserEdit(
+      context,
+      repository: repository,
+      userId: str(user['id']),
+      form: form,
+    );
+    if (saved && mounted) setState(() => _reload += 1);
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = CrmScope.of(context);
     final p = context.crm;
+    final canCreate = state.session.can('admin.full');
 
     return RemoteListScreen(
+      key: ValueKey(_reload),
       title: 'Usuarios',
       subtitle: 'Quién entra al CRM y con qué rol',
       load: state.repository.users,
@@ -26,6 +64,7 @@ class UsuariosScreen extends StatelessWidget {
       header: (context, rows) => SectionCard(
         title: 'Resumen',
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             for (final role in const ['ADMIN', 'AGENT', 'DELIVERY', 'SUPPLIER'])
               Builder(builder: (context) {
@@ -42,6 +81,15 @@ class UsuariosScreen extends StatelessWidget {
                   ),
                 );
               }),
+            if (canCreate) ...[
+              const SizedBox(height: 10),
+              CrmButton(
+                label: 'Nuevo usuario',
+                icon: Icons.person_add_alt_1_outlined,
+                expand: true,
+                onPressed: _createUser,
+              ),
+            ],
           ],
         ),
       ),
@@ -58,6 +106,7 @@ class UsuariosScreen extends StatelessWidget {
           ].join(' · '),
           leading: CrmAvatar(label: name),
           trailing: StatusPill(label: active ? 'activo' : 'inactivo', dense: true, color: active ? p.success : p.inkSecondary),
+          onTap: canCreate ? () => _editUser(row) : null,
         );
       },
     );

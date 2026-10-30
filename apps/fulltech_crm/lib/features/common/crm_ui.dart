@@ -547,7 +547,7 @@ class FilterChips extends StatelessWidget {
             labelStyle: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w700,
-              color: selected ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF0B1424) : Colors.white) : p.ink,
+              color: selected ? (Theme.of(context).brightness == Brightness.dark ? CrmColors.onPrimaryDark : Colors.white) : p.ink,
             ),
             selectedColor: p.primary,
             backgroundColor: p.chipBg,
@@ -603,7 +603,7 @@ class CrmButton extends StatelessWidget {
         onPressed: onPressed,
         style: style.copyWith(
           backgroundColor: WidgetStatePropertyAll(accent),
-          foregroundColor: WidgetStatePropertyAll(Theme.of(context).brightness == Brightness.dark ? const Color(0xFF0B1424) : Colors.white),
+          foregroundColor: WidgetStatePropertyAll(Theme.of(context).brightness == Brightness.dark ? CrmColors.onPrimaryDark : Colors.white),
         ),
         child: child,
       );

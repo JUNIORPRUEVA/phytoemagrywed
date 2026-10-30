@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/crm_scope.dart';
 import '../../core/theme/crm_theme.dart';
+import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import '../common/remote_view.dart';
@@ -87,7 +88,7 @@ class OpsScreen extends StatelessWidget {
                   ),
                   const CrmNotice(
                     message: 'Conversar con un agente, aprobar propuestas y editar sus reglas se hace en el Centro IA del panel web.',
-                    tone: Color(0xFF0D4F6C),
+                    tone: CrmColors.info,
                     icon: Icons.info_outline_rounded,
                   ),
                 ],

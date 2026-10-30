@@ -13,6 +13,9 @@ analyzer:
   exclude:
     # Harness de diseño: app aparte que solo sirve para capturar pantallas.
     - tool/design_harness/**
+    # Código retirado, conservado solo como referencia (no se compila):
+    # shell oscuro huérfano que nadie importaba.
+    - docs/legacy/**
 
 linter:
   # The lint rules applied to this project can be customized in the

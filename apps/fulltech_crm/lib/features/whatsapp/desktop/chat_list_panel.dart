@@ -588,11 +588,11 @@ class _ConversationListTileState extends State<ConversationListTile> {
                             ),
                             child: Text(
                               '${conversation.unread}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: ChatDesktopMetrics.fontFamily,
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF0B1F16),
+                                color: c.onAccent,
                               ),
                             ),
                           ),
@@ -749,7 +749,7 @@ class _Check extends StatelessWidget {
           border: Border.all(color: checked ? c.accent : c.textSecondary, width: 1.5),
         ),
         child: checked
-            ? const Icon(Icons.check_rounded, size: 13, color: Color(0xFF0B1F16))
+            ? Icon(Icons.check_rounded, size: 13, color: c.onAccent)
             : null,
       ),
     );

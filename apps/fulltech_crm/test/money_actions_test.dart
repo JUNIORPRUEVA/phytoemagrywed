@@ -161,24 +161,49 @@ void main() {
       expect(harness.requests.single.method, 'POST');
     });
 
-    test('la paginación viaja con límite y cursor', () async {
+    test('los pedidos que no caben en el paquete ligero se piden a /api/admin/data', () async {
+      // `GET /api/admin/orders` NO existe: la UAT responde 404 (comprobado en
+      // vivo). El panel PWA pide el paquete completo y filtra en memoria; esto
+      // fija ese mismo contrato. OJO: los pedidos SON los `order_intent`
+      // (`crm_state.dart:78-79`); filtrarlos al revés devolvía lista vacía.
       final harness = buildClient({
         'ok': true,
-        'orders': [
-          {'id': 'o1', 'status': 'nuevo'},
+        'partial': false,
+        'items': [
+          {'id': 'o1', 'type': 'order_intent', 'status': 'nuevo'},
+          {'id': 'i2', 'type': 'pos_sale', 'status': 'nuevo'},
+          {'id': 'o3', 'type': 'order_intent', 'status': 'entregado'},
         ],
-        'nextCursor': '2026-10-26|o1',
-        'total': 183,
       });
       await harness.repo.api.restoreSession();
-      final page = await harness.repo.ordersPage(limit: 100, cursor: '2026-10-25|o0');
+      final all = await harness.repo.allOrders();
+      final request = harness.requests.single;
+      expect(request.url.path, '/api/admin/data');
+      expect(request.url.queryParameters.containsKey('cursor'), isFalse);
+      expect(all.orders.map((row) => row['id']), ['o1', 'o3']);
+      expect(all.total, 2);
+    });
+
+    test('el listado paginado viaja con límite, cursor y filtros, y trae el total real', () async {
+      final harness = buildClient({
+        'ok': true,
+        'items': [
+          {'id': 'o1', 'type': 'order_intent'},
+        ],
+        'total': 1040,
+        'hasMore': true,
+        'nextCursor': 'MjAyNi0xMC0yOFQxMDowMDowMC4wMDBafG8x',
+      });
+      await harness.repo.api.restoreSession();
+      final page = await harness.repo.ordersPage(limit: 200, cursor: 'abc', status: 'entregado');
       final request = harness.requests.single;
       expect(request.url.path, '/api/admin/orders');
-      expect(request.url.queryParameters['limit'], '100');
-      expect(request.url.queryParameters['cursor'], '2026-10-25|o0');
-      expect(page.orders, hasLength(1));
-      expect(page.nextCursor, '2026-10-26|o1');
-      expect(page.total, 183);
+      expect(request.url.queryParameters['limit'], '200');
+      expect(request.url.queryParameters['cursor'], 'abc');
+      expect(request.url.queryParameters['status'], 'entregado');
+      expect(page.total, 1040, reason: 'total del conjunto filtrado, no de la página');
+      expect(page.hasMore, isTrue);
+      expect(page.nextCursor, 'MjAyNi0xMC0yOFQxMDowMDowMC4wMDBafG8x');
     });
 
     test('la factura se descarga en PDF, no en HTML', () async {
@@ -192,6 +217,54 @@ void main() {
       final file = await CrmRepository(api).orderReceiptFile('o1');
       expect(requests.single.url.path, '/api/admin/orders/o1/factura');
       expect(file.isPdf, isTrue);
+    });
+  });
+
+  group('usuarios', () {
+    test('editar un usuario manda solo los campos cambiados por PATCH', () async {
+      final harness = buildClient({'ok': true, 'user': {'role': 'OPERADOR'}});
+      await harness.repo.api.restoreSession();
+      await harness.repo.updateUser('u1', displayName: 'Nombre Nuevo', role: 'OPERADOR', active: false);
+
+      final request = harness.requests.single;
+      expect(request.url.path, '/api/admin/users/u1');
+      expect(request.method, 'PATCH');
+      final body = bodyOf(request);
+      expect(body['displayName'], 'Nombre Nuevo');
+      expect(body['role'], 'OPERADOR');
+      expect(body['active'], isFalse);
+      // Lo que no se cambia no se envía: el servidor conserva su valor.
+      expect(body.containsKey('password'), isFalse);
+      expect(body.containsKey('personalPhone'), isFalse);
+    });
+
+    test('el último administrador lo bloquea el servidor, no el cliente', () async {
+      final harness = buildClient(
+        {'ok': false, 'error': 'last_admin', 'message': 'Quedaría el CRM sin administración.'},
+        status: 409,
+      );
+      await harness.repo.api.restoreSession();
+      await expectLater(
+        harness.repo.updateUser('u1', role: 'AGENT'),
+        throwsA(isA<ApiException>()
+            .having((e) => e.statusCode, 'status', 409)
+            .having((e) => e.code, 'code', 'last_admin')),
+      );
+    });
+
+    test('crear usuario manda rol y datos, sin tocar la autorización', () async {
+      final harness = buildClient({'ok': true, 'user': {'id': 'u9'}});
+      await harness.repo.api.restoreSession();
+      await harness.repo.createUser(
+        username: 'nuevo@uat.local',
+        password: 'Clave-2026',
+        displayName: 'Nuevo',
+        role: 'AGENT',
+      );
+      final body = bodyOf(harness.requests.single);
+      expect(harness.requests.single.url.path, '/api/admin/users');
+      expect(body['username'], 'nuevo@uat.local');
+      expect(body['role'], 'AGENT');
     });
   });
 
@@ -262,6 +335,64 @@ void main() {
       await harness.repo.api.restoreSession();
       await harness.repo.sendMedia('c1', bytes: [0, 1], kind: 'audio', filename: 'nota-123.wav');
       expect(harness.requests.single.headers['content-type'], 'audio/wav');
+    });
+  });
+  group('empresas y administración', () {
+    test('conceder una empresa usa POST users/:id/companies con companyId y active', () async {
+      final harness = buildClient({'ok': true});
+      await harness.repo.api.restoreSession();
+      await harness.repo.setUserCompany('u1', companyId: 'log_1', active: true);
+      final request = harness.requests.single;
+      expect(request.url.path, '/api/admin/users/u1/companies');
+      expect(request.method, 'POST');
+      final body = bodyOf(request);
+      expect(body['companyId'], 'log_1');
+      expect(body['active'], isTrue);
+    });
+
+    test('revocar manda active=false (no borra la concesión)', () async {
+      final harness = buildClient({'ok': true});
+      await harness.repo.api.restoreSession();
+      await harness.repo.setUserCompany('u1', companyId: 'log_1', active: false);
+      expect(bodyOf(harness.requests.single)['active'], isFalse);
+    });
+
+    test('una empresa inexistente se rechaza en el servidor', () async {
+      final harness = buildClient({'ok': false, 'error': 'invalid_company_grant'}, status: 422);
+      await harness.repo.api.restoreSession();
+      await expectLater(
+        harness.repo.setUserCompany('u1', companyId: 'no-existe', active: true),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'invalid_company_grant')),
+      );
+    });
+
+    test('las resoluciones de caja se leen sin recalcular importes', () async {
+      final harness = buildClient({
+        'ok': true,
+        'resolutions': [
+          {'id': 'res:m1', 'movement_id': 'm1', 'justification': 'Cuadra con el recibo', 'status': 'pending_authorization'},
+        ],
+      });
+      await harness.repo.api.restoreSession();
+      final rows = await harness.repo.cashResolutions();
+      expect(harness.requests.single.url.path, '/api/admin/delivery-cash/resolutions');
+      expect(rows, hasLength(1));
+      expect(rows.first['status'], 'pending_authorization');
+    });
+
+    test('el registro de una revisión lleva justificación y evidencia', () async {
+      final harness = buildClient({'ok': true, 'applied': false});
+      await harness.repo.api.restoreSession();
+      await harness.repo.recordCashResolution(
+        movementId: 'm1',
+        justification: 'Cuadra con el recibo firmado',
+        evidence: 'recibo-2026-10',
+      );
+      final body = bodyOf(harness.requests.single);
+      expect(harness.requests.single.url.path, '/api/admin/delivery-cash/resolutions');
+      expect(body['movementId'], 'm1');
+      expect((body['justification'] as String).length, greaterThan(9));
+      expect(body['evidence'], 'recibo-2026-10');
     });
   });
 }

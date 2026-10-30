@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -18,9 +17,12 @@ import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import 'desktop/chat_composer.dart';
 import 'desktop/chat_desktop_theme.dart';
+import 'desktop/chat_assistant_sheet.dart';
 import 'desktop/chat_options_panel.dart';
 import 'desktop/chat_header.dart';
 import 'desktop/chat_thread.dart';
+import 'desktop/chat_media_reconcile_dialog.dart';
+import 'media_picker.dart';
 import 'voice_recorder.dart';
 
 /// Hilo de WhatsApp con todo lo que permite el CRM: texto, fotos, PDF, notas de
@@ -99,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _estadoEscuchado?.removeListener(_alCambiarEstado);
     _composer.dispose();
     _scroll.dispose();
     _threadSearch.dispose();
@@ -107,6 +110,40 @@ class _ChatScreenState extends State<ChatScreen> {
 
   CrmState get _state => CrmScope.of(context, listen: false);
   Conversation? get _conversation => _state.conversationById(widget.conversationId);
+
+  /*
+   * EL HILO ABIERTO SE ENTERA DE LO QUE LLEGA.
+   *
+   * Antes solo se cargaba al abrir el chat y al enviar: si el canal en vivo se
+   * caía y volvía (o el cliente escribía mientras tanto), el mensaje existía en
+   * el servidor pero la persona no lo veía hasta recargar a mano. Ahora se escucha
+   * el estado: si cambia el último mensaje o el contador de no leídos, se vuelve
+   * a pedir el hilo. La marca evita recargar dos veces por el mismo cambio.
+   */
+  CrmState? _estadoEscuchado;
+  String _selloHilo = '';
+
+  String _selloDe(Conversation? conversation) => conversation == null
+      ? ''
+      : '${conversation.lastAt}/${conversation.unread}/${conversation.lastBody}';
+
+  void _alCambiarEstado() {
+    if (!mounted) return;
+    final sello = _selloDe(_conversation);
+    if (sello == _selloHilo) return;
+    _selloHilo = sello;
+    _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final estado = CrmScope.of(context, listen: false);
+    if (identical(estado, _estadoEscuchado)) return;
+    _estadoEscuchado?.removeListener(_alCambiarEstado);
+    _estadoEscuchado = estado..addListener(_alCambiarEstado);
+    _selloHilo = _selloDe(_conversation);
+  }
 
   Future<void> _load() async {
     final state = _state;
@@ -213,15 +250,11 @@ class _ChatScreenState extends State<ChatScreen> {
       'document' => const ['pdf'],
       _ => const ['m4a', 'mp3', 'ogg', 'opus', 'aac', 'wav'],
     };
-    final picked = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: allowed,
-      withData: true,
-    );
-    if (picked == null || picked.files.isEmpty || !mounted) return;
-    final file = picked.files.first;
+    // Selector del sistema (en pruebas se sustituye; nunca se falsea la subida).
+    final file = await MediaPicker.pick(allowed);
+    if (file == null || !mounted) return;
     final bytes = file.bytes;
-    if (bytes == null) {
+    if (bytes.isEmpty) {
       crmToast(context, 'No pudimos leer el archivo.');
       return;
     }
@@ -266,27 +299,19 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<String?> _askCaption() async {
-    final controller = TextEditingController();
-    final result = await showDialog<bool>(
+  Future<String?> _askCaption() {
+    /*
+     * El `TextEditingController` lo posee el diálogo.
+     *
+     * Antes se creaba aquí y se destruía al volver `showDialog`: mientras la ruta
+     * se animaba fuera, sus `TextField` se reconstruían con un controlador ya
+     * destruido («A TextEditingController was used after being disposed»), que
+     * rompía la interfaz justo después de adjuntar una foto.
+     */
+    return showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Texto de la foto'),
-        content: TextField(
-          controller: controller,
-          maxLines: 3,
-          decoration: const InputDecoration(hintText: 'Opcional'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Sin texto')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Enviar')),
-        ],
-      ),
+      builder: (dialogContext) => const _PhotoCaptionDialog(),
     );
-    final value = controller.text.trim();
-    controller.dispose();
-    if (result != true) return null;
-    return value;
   }
 
   Future<void> _openShareSheet() async {
@@ -322,8 +347,16 @@ class _ChatScreenState extends State<ChatScreen> {
                 title: Text(str(row['name'], 'Ubicación')),
                 subtitle: Text(str(row['address'], '')),
                 onTap: () {
+                  /*
+                   * El servidor guarda la ubicación del negocio y devuelve DOS
+                   * identificadores: `id` (la opción de la lista compartida) y
+                   * `referenceId` (la fila real de `locations`). El envío nativo
+                   * necesita el segundo: con `id` responde 422 `unknown_location`.
+                   */
+                  final referencia = str(row['referenceId']);
+                  final idUbicacion = referencia.isNotEmpty ? referencia : str(row['id']);
                   Navigator.pop(sheetContext);
-                  _sendLocation(str(row['id']));
+                  _sendLocation(idUbicacion);
                 },
               ),
             if (banks.isNotEmpty) const _SheetTitle('Datos de pago'),
@@ -361,6 +394,16 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// Abre la conciliación de un envío de archivo con resultado desconocido.
+  /// No reenvía nada: corrige el estado con datos que la persona ya verificó.
+  Future<void> _reconciliarMedia() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => ChatMediaReconcileDialog(repository: _state.repository),
+    );
+    if (mounted) await _load();
   }
 
   Future<void> _sendLocation(String locationId) async {
@@ -448,43 +491,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Pide el texto de cada hueco de la plantilla. Devuelve `null` si se cancela.
-  Future<Map<String, dynamic>?> _askTemplateValues(String templateName, List<int> huecos) async {
-    final controllers = {for (final index in huecos) index: TextEditingController()};
-    final result = await showDialog<Map<String, dynamic>>(
+  Future<Map<String, dynamic>?> _askTemplateValues(String templateName, List<int> huecos) {
+    /*
+     * Los controladores los posee el DIÁLOGO, no este método.
+     *
+     * Antes se creaban aquí y se destruían al volver `showDialog`: mientras la
+     * ruta se animaba fuera, sus `TextField` se reconstruían y usaban un
+     * controlador ya destruido («A TextEditingController was used after being
+     * disposed»). Con el diálogo como dueño, la vida útil es la correcta.
+     */
+    return showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Datos de «$templateName»'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final index in huecos)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: TextField(
-                    controller: controllers[index],
-                    autofocus: index == huecos.first,
-                    decoration: InputDecoration(labelText: 'Dato $index'),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, {
-              for (final entry in controllers.entries) '${entry.key}': entry.value.text.trim(),
-            }),
-            child: const Text('Enviar'),
-          ),
-        ],
-      ),
+      builder: (dialogContext) => _TemplateValuesDialog(templateName: templateName, huecos: huecos),
     );
-    for (final controller in controllers.values) {
-      controller.dispose();
-    }
-    return result;
   }
 
   Future<void> _toggleResolved() async {
@@ -732,6 +751,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       onClose: () => setState(() => _optionsOpen = false),
                       onProofread: _proofread,
                       onReplySuggestion: _replySuggestion,
+                      onAssistant: _asistenteContextual,
                       onNewOrder: () {
                         setState(() => _optionsOpen = false);
                         widget.onNavigate?.call('pos');
@@ -753,6 +773,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         _toggleResolved();
                       },
                       onRefresh: _load,
+                      onReconcile: () {
+                        setState(() => _optionsOpen = false);
+                        _reconciliarMedia();
+                      },
                       isResolved: conversation?.isResolved ?? false,
                       aiBusy: _aiBusy,
                       aiOriginal: _aiOriginal,
@@ -781,6 +805,28 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _replySuggestion() => _askAi(reply: true, text: '');
+
+  /// Asistente IA contextual: la MISMA ruta del Centro IA del panel web.
+  ///
+  /// Devuelve análisis y borrador (no envía nada). Si prepara una operación,
+  /// la persona la confirma dentro del propio diálogo: el servidor vuelve a
+  /// comprobar permiso y estado del recurso antes de ejecutar.
+  Future<void> _asistenteContextual() async {
+    final actual = _conversation;
+    if (actual == null) return;
+    setState(() => _optionsOpen = false);
+    await showDialog<void>(
+      context: context,
+      builder: (_) => ChatAssistantSheet(
+        conversationId: actual.id,
+        customerName: actual.name,
+        onUseDraft: (texto) {
+          if (!mounted) return;
+          setState(() => _composer.text = texto);
+        },
+      ),
+    );
+  }
 
   Future<void> _askAi({required bool reply, required String text}) async {
     if (_aiBusy) return;
@@ -1030,6 +1076,104 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Diálogo del texto que acompaña a una foto (opcional).
+class _PhotoCaptionDialog extends StatefulWidget {
+  const _PhotoCaptionDialog();
+
+  @override
+  State<_PhotoCaptionDialog> createState() => _PhotoCaptionDialogState();
+}
+
+class _PhotoCaptionDialogState extends State<_PhotoCaptionDialog> {
+  final _texto = TextEditingController();
+
+  @override
+  void dispose() {
+    _texto.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Texto de la foto'),
+      content: TextField(
+        controller: _texto,
+        maxLines: 3,
+        decoration: const InputDecoration(hintText: 'Opcional'),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Sin texto')),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _texto.text.trim()),
+          child: const Text('Enviar'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Diálogo que pide el texto de cada hueco `{{n}}` de una plantilla.
+///
+/// Es un `StatefulWidget` para que los `TextEditingController` vivan EXACTAMENTE
+/// lo que vive el diálogo: destruirlos al cerrar la ruta provocaba que sus
+/// `TextField` los usaran durante la animación de salida.
+class _TemplateValuesDialog extends StatefulWidget {
+  const _TemplateValuesDialog({required this.templateName, required this.huecos});
+
+  final String templateName;
+  final List<int> huecos;
+
+  @override
+  State<_TemplateValuesDialog> createState() => _TemplateValuesDialogState();
+}
+
+class _TemplateValuesDialogState extends State<_TemplateValuesDialog> {
+  late final Map<int, TextEditingController> _controllers = {
+    for (final index in widget.huecos) index: TextEditingController(),
+  };
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Datos de «${widget.templateName}»'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final index in widget.huecos)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: TextField(
+                  controller: _controllers[index],
+                  autofocus: index == widget.huecos.first,
+                  decoration: InputDecoration(labelText: 'Dato $index'),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, {
+            for (final entry in _controllers.entries) '${entry.key}': entry.value.text.trim(),
+          }),
+          child: const Text('Enviar'),
+        ),
+      ],
     );
   }
 }

@@ -228,7 +228,12 @@ class CrmState extends ChangeNotifier {
   }
 
   void _flushInBackground() {
-    flushOutbox().then((_) {}).catchError((Object _) {});
+    // `flushOutbox` devuelve Future<int>: encadenar `.then((_) {})` deja un
+    // `Future<void>` y, si el vaciado falla, `catchError` lanza
+    // «The error handler of Future.catchError must return a value of the
+    // future's type» en lugar de tragarse el error. Con `then<void>` + `onError`
+    // los tipos son explícitos y un fallo de red no rompe la interfaz.
+    flushOutbox().then<void>((_) {}, onError: (Object _) {});
   }
 
   /// Trae los listados completos cuando el paquete vino recortado.
@@ -376,8 +381,14 @@ class CrmState extends ChangeNotifier {
       '/api/admin/events',
       query: {if (_lastSeq > 0) 'since': '$_lastSeq'},
     );
-    _live = true;
-    notifyListeners();
+    /*
+     * EL AVISO DE «EN VIVO» NO SE DA AL INTENTAR CONECTAR.
+     *
+     * Antes se marcaba aquí mismo, así que la interfaz podía decir «En vivo» con
+     * el servidor caído (el intento ni siquiera había respondido). Ahora se marca
+     * cuando llega el primer evento del servidor (`ready`), que es la prueba de
+     * que el canal está realmente establecido.
+     */
     _events = stream.listen(
       _onEvent,
       onError: (Object error) {
@@ -395,9 +406,18 @@ class CrmState extends ChangeNotifier {
   }
 
   void _onEvent(ServerSentEvent event) {
+    if (!_live) {
+      _live = true;
+      notifyListeners();
+    }
     _attempt = 0; // el canal funciona: se reinicia el backoff
     final sequence = int.tryParse(event.id);
     if (sequence != null) _lastSeq = sequence;
+    // La sesión se cerró o el usuario se desactivó: se corta y no se reintenta.
+    if (event.event == 'revoked') {
+      stopRealtime();
+      return;
+    }
     // `ping`/comentarios: no cambian datos.
     if (event.event == 'ping' || event.data == '{}') return;
     if (event.isResync) {

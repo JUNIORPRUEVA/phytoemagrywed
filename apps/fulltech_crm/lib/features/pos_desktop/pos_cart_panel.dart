@@ -26,6 +26,7 @@ class PosCartPanel extends StatelessWidget {
     required this.saving,
     required this.onQuantity,
     required this.onRemove,
+    required this.onLineDiscount,
     required this.onPickCustomer,
     required this.onClear,
     required this.onModeChanged,
@@ -33,11 +34,22 @@ class PosCartPanel extends StatelessWidget {
     required this.onPaidChanged,
     required this.onDeliveryFeeChanged,
     required this.onCheckout,
+    this.onAskCustomerData,
     this.deliveryMethod = 'delivery',
     this.onDeliveryMethodChanged,
     this.addressController,
     this.notesController,
     this.onAddressChanged,
+    this.discountType = 'none',
+    this.discountValue = 0,
+    this.onDiscountChanged,
+    this.openOrders = const [],
+    this.loadingContext = false,
+    this.contextError,
+    this.onReloadContext,
+    this.scheduledAt,
+    this.onScheduleChanged,
+    this.referenceController,
   });
 
   final List<PosLine> lines;
@@ -49,6 +61,9 @@ class PosCartPanel extends StatelessWidget {
   final bool saving;
   final void Function(PosLine line, int delta) onQuantity;
   final ValueChanged<PosLine> onRemove;
+
+  /// Descuento de UNA línea: la pantalla abre el diálogo (`%` o importe).
+  final ValueChanged<PosLine> onLineDiscount;
   final VoidCallback onPickCustomer;
   final VoidCallback onClear;
   final ValueChanged<String> onModeChanged;
@@ -56,6 +71,9 @@ class PosCartPanel extends StatelessWidget {
   final ValueChanged<bool> onPaidChanged;
   final ValueChanged<double> onDeliveryFeeChanged;
   final VoidCallback onCheckout;
+
+  /// «Pedir datos al cliente» con IA (solo con cliente elegido).
+  final VoidCallback? onAskCustomerData;
 
   /// `delivery` (a domicilio) o `pickup` (retiro en tienda).
   final String deliveryMethod;
@@ -70,9 +88,39 @@ class PosCartPanel extends StatelessWidget {
   /// Avisa de que cambió la dirección (para recalcular el borrador).
   final VoidCallback? onAddressChanged;
 
+  /// Descuento general del ticket (`none` | `percent` | `amount`).
+  final String discountType;
+  final double discountValue;
+  final void Function(String type, double value)? onDiscountChanged;
+
+  /// Pedidos abiertos del cliente (`GET /api/admin/pos/context/:id`).
+  final List<Map<String, dynamic>> openOrders;
+  final bool loadingContext;
+  final String? contextError;
+  final VoidCallback? onReloadContext;
+
+  /// Entrega programada (hora local del equipo, enviada en ISO con zona).
+  final DateTime? scheduledAt;
+  final ValueChanged<DateTime?>? onScheduleChanged;
+
+  /// Referencia del lugar (texto libre, junto a la dirección).
+  final TextEditingController? referenceController;
+
   int get _subtotalCents =>
       lines.fold<int>(0, (sum, line) => sum + line.grossCents);
-  int get _totalCents => _subtotalCents + (deliveryFee * 100).round();
+
+  /// Misma regla que `discountCents()` de `pos-math.js`: el descuento se aplica
+  /// sobre el subtotal y el total lo confirma el servidor al cobrar.
+  int get _discountCents {
+    if (discountType == 'none' || discountValue <= 0) return 0;
+    final cents = discountType == 'percent'
+        ? (_subtotalCents * discountValue / 100).round()
+        : (discountValue * 100).round();
+    return cents.clamp(0, _subtotalCents);
+  }
+
+  int get _totalCents =>
+      _subtotalCents - _discountCents + (deliveryFee * 100).round();
 
   @override
   Widget build(BuildContext context) {
@@ -87,30 +135,38 @@ class PosCartPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _customerBar(context),
+          if (openOrders.isNotEmpty || contextError != null) _openOrdersNotice(context),
           Divider(height: 1, color: p.borderSoft),
+          // Líneas + documento + cobro + entrega + totales comparten UN solo
+          // desplazamiento vertical; el botón de cobro queda SIEMPRE visible
+          // como pie fijo. Antes, con la ventana a 681 px de alto, el pie podía
+          // quedar tapado por las secciones y el cobro no recibía el clic.
           Expanded(
-            child: lines.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Text(
-                        'El ticket está vacío.\nAgrega productos desde la rejilla.',
-                        textAlign: TextAlign.center,
-                        style: t.secondary,
-                      ),
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                if (lines.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      'El ticket está vacío.\nAgrega productos desde la rejilla.',
+                      textAlign: TextAlign.center,
+                      style: t.secondary,
                     ),
                   )
-                : ListView.separated(
-                    itemCount: lines.length,
-                    separatorBuilder: (_, _) => Divider(height: 1, color: p.borderSoft),
-                    itemBuilder: (context, index) => _line(context, lines[index]),
-                  ),
+                else
+                  for (var index = 0; index < lines.length; index += 1) ...[
+                    if (index > 0) Divider(height: 1, color: p.borderSoft),
+                    _line(context, lines[index]),
+                  ],
+                Divider(height: 1, color: p.border),
+                _documentBar(context),
+                _paymentBar(context),
+                _deliveryBar(context),
+                _totalsBar(context),
+              ],
+            ),
           ),
-          Divider(height: 1, color: p.border),
-          _documentBar(context),
-          _paymentBar(context),
-          _deliveryBar(context),
-          _totalsBar(context),
           _checkoutBar(context),
         ],
       ),
@@ -154,6 +210,25 @@ class PosCartPanel extends StatelessWidget {
               ),
             ),
           ),
+          if (customer != null && onAskCustomerData != null)
+            Tooltip(
+              message: 'Pedir datos al cliente con IA',
+              child: InkWell(
+                onTap: onAskCustomerData,
+                borderRadius: BorderRadius.circular(7),
+                child: Container(
+                  width: 26,
+                  height: 26,
+                  margin: const EdgeInsets.only(right: 4),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: p.primarySoft,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Icon(Icons.auto_awesome_outlined, size: 15, color: p.primary),
+                ),
+              ),
+            ),
           if (lines.isNotEmpty)
             TextButton(
               onPressed: onClear,
@@ -191,8 +266,18 @@ class PosCartPanel extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                CrmFormat.money(line.grossCents / 100),
+                CrmFormat.money(line.netCents / 100),
                 style: t.body.copyWith(fontWeight: FontWeight.w800),
+              ),
+              IconButton(
+                tooltip: line.discountType == 'none' ? 'Descuento en esta línea' : 'Descuento de la línea',
+                onPressed: () => onLineDiscount(line),
+                iconSize: 14,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                color: line.discountType == 'none' ? p.inkSecondary : p.primary,
+                icon: const Icon(Icons.percent_rounded),
               ),
               IconButton(
                 tooltip: 'Quitar',
@@ -210,7 +295,13 @@ class PosCartPanel extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '${line.presentationName} · ${CrmFormat.money(line.unitPriceCents / 100)}',
+                  [
+                    if (line.isManual) 'Fuera de inventario' else line.presentationName,
+                    CrmFormat.money(line.unitPriceCents / 100),
+                    if (line.lineDiscountCents > 0)
+                      'desc. −${CrmFormat.money(line.lineDiscountCents / 100)}'
+                          '${line.discountType == 'percent' ? ' (${line.discountValue.toStringAsFixed(line.discountValue % 1 == 0 ? 0 : 1)} %)' : ''}',
+                  ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: t.secondary.copyWith(fontSize: 10.5),
@@ -362,6 +453,41 @@ class PosCartPanel extends StatelessWidget {
                 onChanged: (_) => onAddressChanged?.call(),
               ),
             ),
+            if (referenceController != null) ...[
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 32,
+                child: TextField(
+                  controller: referenceController,
+                  style: t.body,
+                  maxLength: 240,
+                  buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    filled: false,
+                    hintText: 'Referencia (portón, color, piso…)',
+                    hintStyle: t.secondary,
+                    prefixIcon: Icon(Icons.flag_outlined, size: 15, color: p.inkSecondary),
+                    prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 30),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      borderSide: BorderSide(color: p.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      borderSide: BorderSide(color: p.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      borderSide: BorderSide(color: p.primary),
+                    ),
+                  ),
+                  onChanged: (_) => onAddressChanged?.call(),
+                ),
+              ),
+            ],
+            _scheduleRow(context),
           ],
           if (notesController != null) ...[
             const SizedBox(height: 6),
@@ -399,6 +525,65 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
+  /// Programación de la entrega. Se elige fecha y hora LOCALES; se envía en
+  /// ISO-8601 con la zona del equipo (el servidor valida que no esté en el
+  /// pasado y responde `schedule_in_past` en el caso guiado).
+  Widget _scheduleRow(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
+    final at = scheduledAt;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Icon(Icons.event_outlined, size: 16, color: p.inkSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              at == null
+                  ? 'Entrega sin programar'
+                  : 'Programada: ${CrmFormat.dayFull(at.toIso8601String())} · ${CrmFormat.time(at.toIso8601String())}',
+              style: t.secondary.copyWith(fontSize: 11.5),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (at != null)
+            IconButton(
+              tooltip: 'Quitar programación',
+              onPressed: () => onScheduleChanged?.call(null),
+              iconSize: 16,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              color: p.inkSecondary,
+              icon: const Icon(Icons.close_rounded),
+            ),
+          TextButton(
+            onPressed: () async {
+              final now = DateTime.now();
+              final date = await showDatePicker(
+                context: context,
+                initialDate: at ?? now,
+                firstDate: DateTime(now.year, now.month, now.day),
+                lastDate: now.add(const Duration(days: 365)),
+                helpText: 'Fecha de entrega',
+              );
+              if (date == null || !context.mounted) return;
+              final time = await showTimePicker(
+                context: context,
+                initialTime: TimeOfDay.fromDateTime(at ?? now.add(const Duration(hours: 2))),
+                helpText: 'Hora de entrega',
+              );
+              if (time == null) return;
+              onScheduleChanged?.call(DateTime(date.year, date.month, date.day, time.hour, time.minute));
+            },
+            child: Text(at == null ? 'Programar' : 'Cambiar', style: const TextStyle(fontSize: 11.5)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _totalsBar(BuildContext context) {
     final p = PosPalette.of(context);
     final t = p.text;
@@ -415,6 +600,8 @@ class PosCartPanel extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 4),
+          _discountRow(context),
           const SizedBox(height: 4),
           Row(
             children: [
@@ -458,8 +645,146 @@ class PosCartPanel extends StatelessWidget {
     );
   }
 
-  Widget _checkoutBar(BuildContext context) {
+  /// Descuento general: dos modos (porcentaje o pesos) y el valor.
+  /// El descuento NUNCA se calcula aquí como cifra definitiva: viaja al servidor,
+  /// que aplica `discountCents()` y devuelve el total real.
+  Widget _discountRow(BuildContext context) {
     final p = PosPalette.of(context);
+    final t = p.text;
+    final percent = discountType == 'percent';
+    final amount = discountType == 'amount';
+    Widget chip(String label, bool active, VoidCallback onTap) => InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: active ? p.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: active ? p.primary : p.border),
+            ),
+            child: Text(
+              label,
+              style: t.body.copyWith(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: active ? p.onCheckout : p.inkSecondary,
+              ),
+            ),
+          ),
+        );
+    return Row(
+      children: [
+        Expanded(child: Text('Descuento', style: t.secondary)),
+        if (onDiscountChanged != null) ...[
+          chip('%', percent, () => onDiscountChanged!(percent ? 'none' : 'percent', discountValue)),
+          const SizedBox(width: 4),
+          chip('\$', amount, () => onDiscountChanged!(amount ? 'none' : 'amount', discountValue)),
+          const SizedBox(width: 4),
+        ],
+        SizedBox(
+          width: 78,
+          height: 30,
+          child: TextFormField(
+            initialValue: discountValue == 0
+                ? ''
+                : (percent ? discountValue.toStringAsFixed(discountValue % 1 == 0 ? 0 : 1) : discountValue.toStringAsFixed(2)),
+            enabled: discountType != 'none' && onDiscountChanged != null,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textAlign: TextAlign.right,
+            style: t.body,
+            decoration: InputDecoration(
+              isDense: true,
+              filled: false,
+              hintText: '0',
+              hintStyle: t.secondary,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              border: OutlineInputBorder(
+                borderRadius: const BorderRadius.all(Radius.circular(6)),
+                borderSide: BorderSide(color: p.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: const BorderRadius.all(Radius.circular(6)),
+                borderSide: BorderSide(color: p.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: const BorderRadius.all(Radius.circular(6)),
+                borderSide: BorderSide(color: p.primary),
+              ),
+            ),
+            onChanged: (value) => onDiscountChanged?.call(
+              discountType == 'none' ? 'percent' : discountType,
+              double.tryParse(value.replaceAll(',', '.')) ?? 0,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 74,
+          child: Text(
+            _discountCents == 0 ? '—' : '-${CrmFormat.money(_discountCents / 100)}',
+            textAlign: TextAlign.right,
+            style: t.body.copyWith(fontSize: 11.5, color: _discountCents == 0 ? p.inkSecondary : p.danger),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Aviso de pedidos abiertos del cliente. Es INFORMATIVO: quien impide el
+  /// doble cobro es el servidor (`409 open_orders` + confirmación explícita).
+  Widget _openOrdersNotice(BuildContext context) {
+    final p = PosPalette.of(context);
+    final t = p.text;
+    if (contextError != null) {
+      return Container(
+        width: double.infinity,
+        color: p.surfaceMuted,
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'No se pudo consultar si el cliente tiene pedidos abiertos: $contextError',
+                style: t.pill.copyWith(fontSize: 11.5),
+              ),
+            ),
+            if (onReloadContext != null)
+              TextButton(
+                onPressed: onReloadContext,
+                child: const Text('Reintentar', style: TextStyle(fontSize: 11.5)),
+              ),
+          ],
+        ),
+      );
+    }
+    final numbers = [
+      for (final row in openOrders.take(3))
+        str(row['order_number'], str(row['number'], str(row['id']))),
+    ];
+    final extra = openOrders.length > 3 ? ' y ${openOrders.length - 3} más' : '';
+    return Container(
+      width: double.infinity,
+      color: p.surfaceMuted,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline_rounded, size: 16, color: p.warning),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              openOrders.length == 1
+                  ? 'Este cliente ya tiene un pedido abierto (${numbers.join(', ')})$extra. Al cobrar se pedirá confirmación.'
+                  : 'Este cliente tiene ${openOrders.length} pedidos abiertos (${numbers.join(', ')})$extra. Al cobrar se pedirá confirmación.',
+              style: t.pill.copyWith(fontSize: 11.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _checkoutBar(BuildContext context) {    final p = PosPalette.of(context);
     final t = p.text;
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),

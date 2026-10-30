@@ -111,6 +111,55 @@ class CrmRepository {
     return str(data['suggestion']);
   }
 
+  /// Asistente IA contextual del chat (`POST /api/admin/assistant/query`).
+  ///
+  /// La ruta es de SOLO LECTURA: devuelve `answer`, `bullets`, `suggestions`,
+  /// `draft` y `sources`; el borrador **no** se envía ni se guarda. Cuando la
+  /// consulta prepara una operación de negocio, llega `proposal` (con su
+  /// `fingerprint`) y hay que confirmarla o descartarla a mano.
+  Future<Map<String, dynamic>> assistantQuery({
+    required String conversationId,
+    required String action,
+    String message = '',
+  }) =>
+      _api.post('/api/admin/assistant/query', {
+        'conversationId': conversationId,
+        'action': action,
+        'message': message,
+      });
+
+  /// Confirma o descarta una operación preparada por el asistente.
+  /// El servidor vuelve a comprobar permiso y estado del recurso.
+  Future<Map<String, dynamic>> assistantDecision({
+    required String proposalId,
+    required bool confirm,
+    String? fingerprint,
+  }) {
+    final body = <String, dynamic>{};
+    if (fingerprint != null && fingerprint.isNotEmpty) body['fingerprint'] = fingerprint;
+    return _api.post(
+      '/api/admin/assistant/actions/${Uri.encodeComponent(proposalId)}/${confirm ? 'confirm' : 'cancel'}',
+      body,
+    );
+  }
+
+  /// IA: redacta el mensaje que pide los datos que faltan de un pedido.
+  /// Devuelve solo el texto; enviarlo es decisión del agente.
+  Future<String> aiOrderMessage({
+    required String conversationId,
+    List<String> missing = const [],
+    String orderNumber = '',
+    num? total,
+  }) async {
+    final data = await _api.post('/api/admin/ai/order-message', {
+      'conversationId': conversationId,
+      'missing': missing,
+      'orderNumber': orderNumber,
+      'total': ?total,
+    });
+    return str(data['text']);
+  }
+
   /// Archiva (sale de la bandeja) o desarchiva una conversación.
   Future<void> archiveConversation(String conversationId, bool archived) =>
       _api.post(
@@ -174,6 +223,25 @@ class CrmRepository {
   Future<ApiFile> mediaBytes(String mediaId) =>
       _api.getFile('/api/admin/media/${Uri.encodeComponent(mediaId)}', fallbackName: 'adjunto');
 
+  /// CONCILIACIÓN de un envío de archivo cuyo resultado quedó en duda.
+  ///
+  /// `POST /api/admin/media/retry/:id?outcome=sent|not_sent` (contrato real de
+  /// `server/media-routes.mjs`). No es un «reenviar»: es la corrección, hecha por
+  /// una persona, de un estado `SENDING`/`SEND_UNKNOWN`. Con `sent` el servidor
+  /// exige el identificador del mensaje de WhatsApp (`wa_message_id`): sin prueba
+  /// no se marca nada como enviado.
+  Future<Map<String, dynamic>> reconcileMedia(
+    String mediaId, {
+    required String outcome,
+    String? waMessageId,
+  }) {
+    final query = <String>[
+      'outcome=${Uri.encodeQueryComponent(outcome)}',
+      if ((waMessageId ?? '').isNotEmpty) 'wa_message_id=${Uri.encodeQueryComponent(waMessageId!)}',
+    ].join('&');
+    return _api.post('/api/admin/media/retry/${Uri.encodeComponent(mediaId)}?$query', const {});
+  }
+
   /// Envía una plantilla aprobada (necesario fuera de la ventana de 24 h).
   Future<Map<String, dynamic>> sendTemplate(
     String conversationId,
@@ -200,7 +268,24 @@ class CrmRepository {
       );
 
   /// Ubicaciones, bancos y catálogos que el negocio comparte en el chat.
-  Future<Map<String, dynamic>> chatSharing() => _api.get('/api/admin/chat-sharing');
+  ///
+  /// La respuesta real es `{ ok, sharing: { locations, banks, catalogs } }`
+  /// (`server/chat-sharing.mjs`). Antes se leían las claves en la raíz, así que
+  /// la app SIEMPRE decía «no hay datos para compartir» aunque estuvieran
+  /// configurados: el envío de ubicación era inalcanzable desde la interfaz.
+  Future<Map<String, dynamic>> chatSharing() async {
+    final data = await _api.get('/api/admin/chat-sharing');
+    final sharing = mapv(data['sharing']);
+    return sharing.isEmpty ? data : sharing;
+  }
+
+  /// Guarda las ubicaciones, bancos y catálogos que se comparten en el chat.
+  /// Es la misma ruta del panel web (`POST /api/admin/settings/chat-sharing`).
+  Future<Map<String, dynamic>> saveChatSharing(Map<String, dynamic> sharing) async {
+    final data = await _api.post('/api/admin/settings/chat-sharing', sharing);
+    final guardado = mapv(data['sharing']);
+    return guardado.isEmpty ? data : guardado;
+  }
 
   /// Plantillas de WhatsApp aprobadas (para escribir fuera de la ventana de 24 h).
   Future<List<Map<String, dynamic>>> waTemplates({bool onlyApproved = true}) async {
@@ -439,18 +524,60 @@ class CrmRepository {
   Future<ApiFile> orderReceiptFile(String id) =>
       _api.getFile('/api/admin/orders/${Uri.encodeComponent(id)}/factura', fallbackName: 'factura-$id.pdf');
 
-  /// Pedidos paginados con el cursor del servidor (`GET /api/admin/orders`).
-  /// Devuelve el paquete de la página y el cursor siguiente (null = no hay más).
-  Future<({List<Map<String, dynamic>> orders, String? nextCursor, int total})> ordersPage({
+  /// Pedidos que no cupieron en el paquete ligero.
+  ///
+  /// NO existe `GET /api/admin/orders`: el servidor solo tiene `POST /orders` y
+  /// `GET /orders/:id`. Comprobado en vivo contra la UAT local: `GET
+  /// /api/admin/orders`, con y sin `?limit=&cursor=`, responde **404**. El panel
+  /// PWA resuelve el caso igual que esto: pide el paquete COMPLETO
+  /// (`GET /api/admin/data`, hasta 500 pedidos) y filtra en memoria. Aquí se
+  /// hace lo mismo, sin inventar rutas ni duplicar reglas del servidor.
+  ///
+  /// **Límite real del servidor (verificado con 520 pedidos en la UAT):** el
+  /// paquete completo devuelve 500 y `partial: false`, es decir, **trunca en
+  /// silencio**, y `stats.total` sale de esa misma lista recortada. Por eso
+  /// `complete` mira el tope: con 500 filas no se puede afirmar que sean todas.
+  static const int serverOrderCeiling = 500;
+
+  /// Una página del listado REAL de pedidos (`GET /api/admin/orders`).
+  ///
+  /// Contrato: `docs/pedidos-paginacion.md`. `total` es el conteo autoritativo
+  /// del conjunto filtrado; `nextCursor` es opaco y estable
+  /// (`received_at|id`). Solo ADMIN; el resto recibe 403.
+  Future<({List<Map<String, dynamic>> orders, int total, bool hasMore, String? nextCursor})> ordersPage({
     int limit = 100,
     String? cursor,
+    String? status,
+    String? q,
+    String? from,
+    String? to,
   }) async {
-    final data = await _api.get('/api/admin/orders', query: {'limit': '$limit', 'cursor': ?cursor});
+    final data = await _api.get('/api/admin/orders', query: {
+      'limit': '$limit',
+      'cursor': ?cursor,
+      'status': ?status,
+      'q': ?q,
+      'from': ?from,
+      'to': ?to,
+    });
     return (
-      orders: listv(data['orders'] ?? data['items']),
-      nextCursor: str(data['nextCursor']).isEmpty ? null : str(data['nextCursor']),
+      orders: listv(data['items']),
       total: intv(data['total']),
+      hasMore: data['hasMore'] == true,
+      nextCursor: str(data['nextCursor']).isEmpty ? null : str(data['nextCursor']),
     );
+  }
+
+  Future<({List<Map<String, dynamic>> orders, int total, bool complete})> allOrders() async {
+    final data = await _api.get('/api/admin/data');
+    // Los pedidos SON los `order_intent` del paquete (`crm_state.dart:78-79`).
+    // Filtrarlos al revés devolvía una lista vacía: comprobado contra la UAT con
+    // 191 pedidos reales — `light=1` trae 150 con `partial:true` y el paquete
+    // completo trae los 191 con `partial:false`.
+    final items = listv(data['items']);
+    final orders = items.where((row) => str(row['type']) == 'order_intent').toList(growable: false);
+    final complete = data['partial'] != true && items.length < serverOrderCeiling;
+    return (orders: orders, total: orders.length, complete: complete);
   }
 
 
@@ -479,6 +606,40 @@ class CrmRepository {
     return listv(data['tickets'] ?? data['items']);
   }
 
+  /// Aparca el ticket (o actualiza el que ya está abierto).
+  ///
+  /// `POST /api/admin/pos/tickets` exige `requestId` de 16-80 caracteres y, al
+  /// actualizar, `version` para detectar cambios de otra sesión (409
+  /// `ticket_conflict`). Un ticket es un BORRADOR: no descuenta stock ni cobra.
+  Future<Map<String, dynamic>> parkTicket({
+    required Map<String, dynamic> draft,
+    required String requestId,
+    String? ticketId,
+    int? version,
+    String? name,
+    String? operationKey,
+  }) =>
+      _api.post(
+        ticketId == null
+            ? '/api/admin/pos/tickets'
+            : '/api/admin/pos/tickets/${Uri.encodeComponent(ticketId)}',
+        {
+          'requestId': requestId,
+          'draft': draft,
+          'name': ?name,
+          'version': ?version,
+        },
+        operationKey: operationKey,
+      );
+
+  /// Descarta un ticket aparcado (`POST /pos/tickets/:id/discard`).
+  Future<Map<String, dynamic>> discardTicket(String ticketId, {required int version, String? operationKey}) =>
+      _api.post(
+        '/api/admin/pos/tickets/${Uri.encodeComponent(ticketId)}/discard',
+        {'version': version},
+        operationKey: operationKey,
+      );
+
   /// Cobrar/emitir. `body` se construye en `pos_screen.dart` con el contrato del
   /// servidor (`requestId`, `items`, `customerId`, `paymentMethod`, `mode`…).
   Future<Map<String, dynamic>> posCheckout(Map<String, dynamic> body, {String? operationKey}) =>
@@ -498,6 +659,109 @@ class CrmRepository {
   Future<Map<String, dynamic>> catalog() => _api.get('/api/admin/catalog');
 
   Future<Map<String, dynamic>> inventory() => _api.get('/api/admin/inventory');
+
+  // -------------------------------------------------- inventario (escrituras)
+  //
+  // Las CUATRO escrituras del inventario legacy son del servidor y solo del
+  // servidor: aquí se envían los datos y se muestra el resultado. El saldo de
+  // cápsulas lo calcula `server/inventory.mjs`; nunca se recalcula en el cliente.
+  // Todas exigen rol ADMIN (`requireAdmin()`), así que un 403 es normal para el
+  // resto de roles y significa «no tienes permiso», no «falló».
+  //
+  // `idempotencyKey` viene del servidor como campo del cuerpo: reenviar la misma
+  // clave NO duplica el movimiento.
+
+  /// Reposición de stock (`POST /api/admin/inventory/restock`).
+  Future<Map<String, dynamic>> restockInventory({
+    required int quantity,
+    double? unitCost,
+    String? reason,
+    required String operationKey,
+  }) =>
+      _api.post(
+        '/api/admin/inventory/restock',
+        {
+          'quantity': quantity,
+          'unitCost': ?unitCost,
+          if (reason != null && reason.isNotEmpty) 'reason': reason,
+          'idempotencyKey': operationKey,
+        },
+        operationKey: operationKey,
+      );
+
+  /// Ajuste manual hacia dentro o hacia fuera (`POST /api/admin/inventory/adjust`).
+  Future<Map<String, dynamic>> adjustInventory({
+    required bool incoming,
+    required int quantity,
+    double? unitCost,
+    String? reason,
+    required String operationKey,
+  }) =>
+      _api.post(
+        '/api/admin/inventory/adjust',
+        {
+          'direction': incoming ? 'in' : 'out',
+          'quantity': quantity,
+          'unitCost': ?unitCost,
+          if (reason != null && reason.isNotEmpty) 'reason': reason,
+          'idempotencyKey': operationKey,
+        },
+        operationKey: operationKey,
+      );
+
+  /// Recuento físico: deja el stock en la cantidad contada
+  /// (`POST /api/admin/inventory/count`). La diferencia la calcula el servidor.
+  Future<Map<String, dynamic>> countInventory({
+    required int countedQuantity,
+    String? reason,
+    required String operationKey,
+  }) =>
+      _api.post(
+        '/api/admin/inventory/count',
+        {
+          'countedQuantity': countedQuantity,
+          if (reason != null && reason.isNotEmpty) 'reason': reason,
+          'idempotencyKey': operationKey,
+        },
+        operationKey: operationKey,
+      );
+
+  /// Costo unitario de la cápsula (`POST /api/admin/inventory/cost`).
+  Future<Map<String, dynamic>> updateInventoryCost({
+    required double unitCost,
+    required String operationKey,
+  }) =>
+      _api.post(
+        '/api/admin/inventory/cost',
+        {'unitCost': unitCost, 'idempotencyKey': operationKey},
+        operationKey: operationKey,
+      );
+
+  /// Empresas asignadas a un usuario (`GET /api/admin/users/:id/companies`).
+  /// Devuelve `{company_id, active}` por concesión.
+  Future<List<Map<String, dynamic>>> userCompanyGrants(String userId) async {
+    final data = await _api.get('/api/admin/users/${Uri.encodeComponent(userId)}/companies');
+    return listv(data['companies']);
+  }
+
+  /// Concede o revoca UNA empresa (`POST /users/:id/companies`).
+  /// El servidor exige que la empresa exista y `active` booleano (422
+  /// `invalid_company_grant`); cada cambio queda en auditoría del lado servidor.
+  Future<Map<String, dynamic>> setUserCompany(
+    String userId, {
+    required String companyId,
+    required bool active,
+  }) =>
+      _api.post('/api/admin/users/${Uri.encodeComponent(userId)}/companies', {
+        'companyId': companyId,
+        'active': active,
+      });
+
+  /// Catálogo de empresas logísticas (`GET /api/admin/logistics/companies`).
+  Future<List<Map<String, dynamic>>> logisticsCompanies() async {
+    final data = await _api.get('/api/admin/logistics/companies');
+    return listv(data['companies']);
+  }
 
   /// Expediente de una solicitud: documentos, requeridos y qué falta.
   Future<Map<String, dynamic>> courierDocuments(String applicationId) =>
@@ -652,6 +916,75 @@ class CrmRepository {
   }
 
   Future<Map<String, dynamic>> settings() => _api.get('/api/admin/settings');
+
+  // ------------------------------------------------------------- usuarios
+  //
+  // `POST /users` exige rol ADMIN en el servidor (`requireAdmin()`); el cliente
+  // solo oculta el botón. Nunca se envían ni se muestran hashes ni tokens.
+
+  /// Crea un usuario. Roles válidos: ADMIN, AGENT, DELIVERY, OPERADOR, SUPPLIER.
+  /// Errores: 409 `duplicate_user`, 422 datos inválidos.
+  Future<Map<String, dynamic>> createUser({
+    required String username,
+    required String password,
+    required String displayName,
+    required String role,
+    String firstName = '',
+    String lastName = '',
+    String personalPhone = '',
+    String fleetPhone = '',
+    bool active = true,
+  }) =>
+      _api.post('/api/admin/users', {
+        'username': username,
+        'password': password,
+        'displayName': displayName,
+        'role': role,
+        if (firstName.isNotEmpty) 'firstName': firstName,
+        if (lastName.isNotEmpty) 'lastName': lastName,
+        if (personalPhone.isNotEmpty) 'personalPhone': personalPhone,
+        if (fleetPhone.isNotEmpty) 'fleetPhone': fleetPhone,
+        'active': active,
+      });
+
+  /// Edita un usuario existente (`PATCH /api/admin/users/:id`).
+  ///
+  /// El servidor decide: rol válido (`USER_ROLES`), y **no deja** degradar ni
+  /// desactivar al último administrador (409 `last_admin`). Aquí solo se envían
+  /// los campos que se cambian.
+  Future<Map<String, dynamic>> updateUser(
+    String id, {
+    String? displayName,
+    String? role,
+    bool? active,
+    String? firstName,
+    String? lastName,
+    String? personalPhone,
+  }) =>
+      _api.patch('/api/admin/users/${Uri.encodeComponent(id)}', {
+        'displayName': ?displayName,
+        'role': ?role,
+        'active': ?active,
+        'firstName': ?firstName,
+        'lastName': ?lastName,
+        'personalPhone': ?personalPhone,
+      });
+
+  /// Cambia la contraseña de quien tiene la sesión.
+  ///
+  /// El servidor **cierra la sesión** al terminarlo (`setSessionCookie('')`), así
+  /// que después hay que volver a entrar. Errores: 422 `password_mismatch`,
+  /// `invalid_password` o contraseña corta; 409 si la sesión es del token viejo.
+  Future<Map<String, dynamic>> changeOwnPassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) =>
+      _api.post('/api/admin/users/me/password', {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+        'confirmPassword': confirmPassword,
+      });
 
   Future<List<Map<String, dynamic>>> audit() async {
     final data = await _api.get('/api/admin/audit', query: {'limit': '30'});

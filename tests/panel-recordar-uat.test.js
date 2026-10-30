@@ -165,6 +165,8 @@ async function inboundWhatsapp(id, body) {
           {
             field: 'messages',
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige (fail-closed).
+              metadata: { phone_number_id: 'PN-UAT-RECORDAR', display_phone_number: '18095550000' },
               contacts: [{ profile: { name: 'Cliente Prueba' }, wa_id: PHONE }],
               messages: [{ from: PHONE, id, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body } }],
             },

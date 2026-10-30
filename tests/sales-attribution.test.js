@@ -23,6 +23,9 @@ async function newApp() {
     token: TOKEN,
     quiet: true,
     metaAppSecret: APP_SECRET,
+    // El número del negocio: sin él la ingesta del webhook está cerrada
+    // (fail-closed) y el evento de Meta se descartaría antes de tocar la base.
+    whatsappPhoneNumberId: 'PN123',
   });
   const login = await fetch(`${app.url}/api/admin/login`, {
     method: 'POST',

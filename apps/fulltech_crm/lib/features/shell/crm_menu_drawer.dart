@@ -510,7 +510,7 @@ class CrmIconRail extends StatelessWidget {
   /// Configuración, Compartir y Mi perfil: van abajo, separados.
   final List<CrmRailEntry> bottom;
 
-  static const double width = 52;
+  static const double width = CrmShellMetrics.railWidth;
 
   @override
   Widget build(BuildContext context) {

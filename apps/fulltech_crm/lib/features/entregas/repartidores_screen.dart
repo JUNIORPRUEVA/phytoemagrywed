@@ -5,6 +5,7 @@ import '../../core/files/file_opener.dart';
 import '../../core/format/crm_format.dart';
 import '../../core/net/api_client.dart';
 import '../../core/theme/crm_theme.dart';
+import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import '../common/remote_view.dart';
@@ -81,7 +82,7 @@ class _RepartidoresScreenState extends State<RepartidoresScreen> {
                   ),
                   const CrmNotice(
                     message: 'Aprobar a un repartidor NO le da acceso operativo hasta que el servidor valide su empresa y sus documentos.',
-                    tone: Color(0xFF0D4F6C),
+                    tone: CrmColors.info,
                     icon: Icons.info_outline_rounded,
                   ),
                 ],

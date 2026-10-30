@@ -36,7 +36,12 @@ const json = async (response) => JSON.parse(await response.text());
 async function webhook(value) {
   const raw = JSON.stringify({
     object: 'whatsapp_business_account',
-    entry: [{ id: 'WABA1', changes: [{ field: 'messages', value }] }],
+    entry: [{
+      id: 'WABA1',
+      // Meta SIEMPRE incluye el número de destino; el servidor lo exige
+      // (aislamiento fail-closed) y descarta los eventos que no lo traen.
+      changes: [{ field: 'messages', value: { metadata: { phone_number_id: 'PN-UAT-RT', display_phone_number: '18095550000' }, ...value } }],
+    }],
   });
   return fetch(`${app.url}/api/webhooks/whatsapp`, {
     method: 'POST',

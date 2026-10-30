@@ -47,6 +47,8 @@ async function inbound(id, body, from = PHONE) {
           {
             field: 'messages',
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige.
+              metadata: { phone_number_id: 'PN-CORE', display_phone_number: '18095550000' },
               contacts: [{ profile: { name: 'Ana Ventas' }, wa_id: from }],
               messages: [{ from, id, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body } }],
             },
@@ -74,6 +76,8 @@ beforeAll(async () => {
     quiet: true,
     metaAppSecret: APP_SECRET,
     schedulerEnabled: false,
+    // Número del negocio: sin él la ingesta del webhook está cerrada (fail-closed).
+    whatsappPhoneNumberId: 'PN-CORE',
   });
   const login = await call('/api/admin/login', { method: 'POST', body: JSON.stringify({ token: TOKEN }) });
   cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];

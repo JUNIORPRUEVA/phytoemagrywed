@@ -237,7 +237,17 @@ export function createWhatsAppClient(options = {}) {
     enabled,
     mock,
     graphVersion,
-    phoneNumberId: enabled ? phoneNumberId : null,
+    /*
+     * IDENTIDAD DEL NÚMERO, SEPARADA DE «PODER ENVIAR».
+     *
+     * `phoneNumberId` dice PARA QUÉ NÚMERO son los eventos que llegan: es el
+     * control de aislamiento del webhook. Antes se devolvía `null` cuando el
+     * cliente quedaba desactivado (sin token), y entonces el filtro fail-closed
+     * descartaba TODOS los mensajes entrantes — pérdida silenciosa de mensajes
+     * legítimos si el token falta, caduca o se rota. Enviar sigue dependiendo de
+     * `enabled`; identificar el número, no.
+     */
+    phoneNumberId: phoneNumberId || null,
     businessAccountId: businessAccountId || null,
     send,
     /** Texto libre: SOLO dentro de la ventana de 24 h (lo valida el CRM antes). */
@@ -435,8 +445,15 @@ export function parseWebhook(body) {
       const contacts = new Map(
         (value.contacts ?? []).map((contact) => [String(contact.wa_id ?? ''), String(contact.profile?.name ?? '')]),
       );
+      /*
+       * NÚMERO DE DESTINO DEL EVENTO.
+       * Meta lo manda en `metadata.phone_number_id` y es lo único que permite
+       * saber A QUÉ negocio/número iba dirigido el mensaje. Se arrastra en cada
+       * mensaje y cada estado para poder autorizarlo ANTES de tocar la base.
+       */
+      const destino = String(value.metadata?.phone_number_id ?? '').slice(0, 80);
       for (const message of value.messages ?? []) {
-        messages.push(normalizeInboundMessage(message, contacts));
+        messages.push({ ...normalizeInboundMessage(message, contacts), phoneNumberId: destino });
       }
       for (const status of value.statuses ?? []) {
         statuses.push({
@@ -447,6 +464,7 @@ export function parseWebhook(body) {
           errorCode: status.errors?.[0]?.code ?? null,
           // Nunca se guarda el payload completo: solo el mensaje, ya recortado.
           errorMessage: status.errors?.[0]?.title ? String(status.errors[0].title).slice(0, 200) : null,
+          phoneNumberId: destino,
         });
       }
       const known = (value.messages?.length ?? 0) + (value.statuses?.length ?? 0);
@@ -454,6 +472,46 @@ export function parseWebhook(body) {
     }
   }
   return { messages, statuses, unknown };
+}
+
+/**
+ * AISLAMIENTO POR NÚMERO DE DESTINO (fail-closed).
+ *
+ * Una firma válida solo demuestra que el evento lo mandó Meta: **no** demuestra
+ * que fuera para NUESTRO número. Meta manda `metadata.phone_number_id` en cada
+ * evento y es lo único que identifica el destino real.
+ *
+ * · Con número configurado: solo pasan los eventos de ESE número. Un evento de
+ *   otro número —o sin número— se descarta entero: no crea cliente, ni
+ *   conversación, ni mensaje, ni cambia estados ni contadores.
+ * · SIN número configurado: **no se acepta nada**. Antes se aceptaba todo «por
+ *   compatibilidad», y eso convertía un despliegue mal configurado en una vía
+ *   abierta: cualquier evento firmado de CUALQUIER WABA acababa en la bandeja.
+ *   Un despliegue que quiera recibir mensajes TIENE que declarar su número
+ *   (`WHATSAPP_PHONE_NUMBER_ID`); si falta, el CRM sigue funcionando pero la
+ *   ingesta de WhatsApp queda cerrada y avisada.
+ *
+ * @param {{messages?: any[], statuses?: any[]}} parsed
+ * @param {{phoneNumberId?: string|null}} options
+ * @returns {{messages: any[], statuses: any[], ignored: number, configured: boolean, blocked: boolean}}
+ */
+export function splitByDestination(parsed, options = {}) {
+  const mensajes = Array.isArray(parsed?.messages) ? parsed.messages : [];
+  const estados = Array.isArray(parsed?.statuses) ? parsed.statuses : [];
+  const configurado = String(options.phoneNumberId ?? '').trim();
+  if (!configurado) {
+    return { messages: [], statuses: [], ignored: mensajes.length + estados.length, configured: false, blocked: true };
+  }
+  const permitido = (row) => String(row?.phoneNumberId ?? '').trim() === configurado;
+  const aceptados = mensajes.filter(permitido);
+  const estadosAceptados = estados.filter(permitido);
+  return {
+    messages: aceptados,
+    statuses: estadosAceptados,
+    ignored: mensajes.length - aceptados.length + (estados.length - estadosAceptados.length),
+    configured: true,
+    blocked: false,
+  };
 }
 
 /**

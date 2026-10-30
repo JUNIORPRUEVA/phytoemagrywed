@@ -6,6 +6,7 @@ import '../../core/format/crm_format.dart';
 import '../../core/theme/crm_theme.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
+import '../usuarios/user_forms.dart';
 import '../common/remote_view.dart';
 
 /// Configuración: ajustes del negocio, apariencia y auditoría reciente.
@@ -75,6 +76,23 @@ class AjustesScreen extends StatelessWidget {
                       leading: CrmAvatar(label: state.session.user?.initials ?? 'FT'),
                     ),
                     const SizedBox(height: 8),
+                    if (state.session.user != null) ...[
+                      CrmButton(
+                        label: 'Cambiar mi contraseña',
+                        icon: Icons.lock_reset_rounded,
+                        filled: false,
+                        expand: true,
+                        onPressed: () async {
+                          final changed = await changeOwnPasswordDialog(
+                            context,
+                            repository: state.repository,
+                          );
+                          // El servidor cierra la sesión al cambiarla: se vuelve a entrar.
+                          if (changed) await state.logout();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     CrmButton(
                       label: 'Cerrar sesión',
                       icon: Icons.logout_rounded,

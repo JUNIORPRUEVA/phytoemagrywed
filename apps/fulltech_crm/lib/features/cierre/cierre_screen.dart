@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/crm_scope.dart';
 import '../../core/format/crm_format.dart';
 import '../../core/theme/crm_theme.dart';
+import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import '../common/remote_view.dart';
@@ -119,7 +120,7 @@ class CierreScreen extends StatelessWidget {
                   const CrmNotice(
                     message: 'El cierre formal con bloqueo del día, arqueo firmado e impresión se completa en el panel web. '
                         'Estas cifras salen de las mismas fuentes, así que coinciden con la PWA.',
-                    tone: Color(0xFF0D4F6C),
+                    tone: CrmColors.info,
                   ),
                 ],
               );

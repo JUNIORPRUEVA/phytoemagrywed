@@ -67,7 +67,10 @@ describe('el panel tiene las secciones nuevas', () => {
     expect(html).toContain('id="drawer"');
     expect(nav).toContain('data-tab="pedidos"');
     expect(nav).not.toContain('data-tab="delivery"');
-    expect(html).toContain('data-tab="delivery"');
+    // El módulo de entregas se sirve en la pestaña `mapa` (con su permiso);
+    // `delivery` solo queda como alias histórico dentro de app.js.
+    expect(html).toContain('data-tab="mapa"');
+    expect(html).not.toContain('data-tab="delivery"');
     // El módulo de seguimiento del equipo se gestiona desde «Centro IA» (`ops`).
     expect(html).toContain('data-tab="ops"');
     expect(html).not.toContain('class="tab" data-tab="mensajes"');

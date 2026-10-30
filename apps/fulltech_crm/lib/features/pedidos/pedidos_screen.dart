@@ -4,13 +4,18 @@ import '../../app/crm_scope.dart';
 import '../../core/format/crm_format.dart';
 import '../../core/net/api_client.dart';
 import '../../core/theme/crm_theme.dart';
+import '../../data/crm_repository.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import 'pedido_detail_screen.dart';
 
-/// Pedidos: primero lo que trae el paquete ligero (hasta 150) y, si hay más,
-/// el resto se pide por páginas con `GET /api/admin/orders?limit=&cursor=`.
-/// El aviso de «datos parciales» NO se quita hasta que se han cargado todos.
+/// Pedidos: primero lo que trae el paquete ligero (hasta 150) y, si el servidor
+/// avisa de que hay más (`partial`), se pide el paquete COMPLETO a
+/// `GET /api/admin/data` —igual que el panel PWA—. El aviso de «datos
+/// parciales» NO se quita hasta que se han cargado todos.
+///
+/// Antes se pedía `GET /api/admin/orders?limit=&cursor=`, una ruta que **no
+/// existe**: la UAT devolvía 404 y «Cargar más» fallaba siempre.
 class PedidosScreen extends StatefulWidget {
   const PedidosScreen({super.key});
 
@@ -22,11 +27,15 @@ class _PedidosScreenState extends State<PedidosScreen> {
   final _search = TextEditingController();
   String _filter = 'abiertos';
   final List<OrderItem> _paged = [];
-  String? _cursor;
   int _total = 0;
   bool _paging = false;
   bool _allLoaded = false;
   String? _pageError;
+  /// Cursor del listado paginado real (`GET /api/admin/orders`).
+  String? _cursor;
+  /// El paquete ligero llega recortado y sin total real: se pide UNA vez la
+  /// primera página del listado paginado para conocer el total de verdad.
+  bool _firstPageAsked = false;
 
   @override
   void dispose() {
@@ -34,25 +43,56 @@ class _PedidosScreenState extends State<PedidosScreen> {
     super.dispose();
   }
 
+  /// Carga la siguiente página. Usa el listado paginado del servidor y, si el
+  /// backend desplegado todavía no lo tiene (404), cae al paquete completo.
+  /// En ambos casos se deduplica por `id` y se respeta `hasMore`.
   Future<void> _loadMore() async {
     if (_paging) return;
     final repo = CrmScope.of(context, listen: false).repository;
+    final status = switch (_filter) {
+      'entregados' => 'entregado',
+      'cancelados' => 'cancelado',
+      _ => null,
+    };
     setState(() {
       _paging = true;
       _pageError = null;
     });
     try {
-      final page = await repo.ordersPage(limit: 100, cursor: _cursor);
-      if (!mounted) return;
-      setState(() {
-        final known = {for (final row in _paged) row.id};
+      final known = {for (final row in _paged) row.id};
+      ({int total, bool hasMore, String? nextCursor})? progress;
+      try {
+        final page = await repo.ordersPage(
+          limit: 200,
+          cursor: _cursor,
+          status: status,
+          q: _search.text.trim().isEmpty ? null : _search.text.trim(),
+        );
+        progress = (total: page.total, hasMore: page.hasMore, nextCursor: page.nextCursor);
         for (final row in page.orders) {
           final item = OrderItem.fromJson(row);
           if (item.id.isNotEmpty && known.add(item.id)) _paged.add(item);
         }
-        _cursor = page.nextCursor;
-        _total = page.total;
-        _allLoaded = page.nextCursor == null;
+      } on ApiException catch (error) {
+        // 404 = backend sin el listado paginado todavía: no se inventa nada,
+        // se usa el paquete completo y se avisa de su tope.
+        if (error.statusCode != 404) rethrow;
+        final all = await repo.allOrders();
+        progress = (total: all.total, hasMore: !all.complete, nextCursor: null);
+        for (final row in all.orders) {
+          final item = OrderItem.fromJson(row);
+          if (item.id.isNotEmpty && known.add(item.id)) _paged.add(item);
+        }
+        if (!all.complete) {
+          _pageError =
+              'El servidor entrega como máximo ${CrmRepository.serverOrderCeiling} pedidos y no informa del total real.';
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _total = progress!.total;
+        _cursor = progress.nextCursor;
+        _allLoaded = !progress.hasMore;
         _paging = false;
       });
     } on ApiException catch (error) {
@@ -101,6 +141,15 @@ class _PedidosScreenState extends State<PedidosScreen> {
     final truncated = state.ordersTruncated && !_allLoaded;
     final shown = _all(state.orders).length;
 
+    // Si el paquete vino recortado y aún no hay total del servidor (`de 0`),
+    // se pide la primera página real una sola vez.
+    if (truncated && _total == 0 && !_firstPageAsked) {
+      _firstPageAsked = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadMore();
+      });
+    }
+
     return Column(
       children: [
         Padding(
@@ -131,7 +180,9 @@ class _PedidosScreenState extends State<PedidosScreen> {
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: CrmNotice(
               message: _pageError == null
-                  ? 'Se están mostrando $shown pedidos de $_total. Pulsa «Cargar más» para traer el resto.'
+                  ? (_total > 0
+                      ? 'Se están mostrando $shown pedidos de $_total. Pulsa «Cargar más» para traer el resto.'
+                      : 'Se están mostrando $shown pedidos. Pulsa «Cargar más» para traer el resto.')
                   : 'No se pudo traer el resto: $_pageError',
               icon: Icons.filter_alt_outlined,
             ),

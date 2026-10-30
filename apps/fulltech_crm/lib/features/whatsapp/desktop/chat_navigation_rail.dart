@@ -230,11 +230,11 @@ class _RailButtonState extends State<_RailButton> {
                       child: Text(
                         widget.badge > 99 ? '99+' : '${widget.badge}',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: ChatDesktopMetrics.fontFamily,
                           fontSize: 9.5,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFF0B1F16),
+                          color: c.onAccent,
                         ),
                       ),
                     ),

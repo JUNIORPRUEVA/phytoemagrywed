@@ -24,6 +24,7 @@ class ChatPalette {
     required this.textPrimary,
     required this.textSecondary,
     required this.accent,
+    required this.onAccent,
     required this.rowHover,
     required this.rowSelected,
     required this.doodle,
@@ -66,6 +67,11 @@ class ChatPalette {
   /// Acento de la referencia (badges, indicador activo, chip seleccionado).
   final Color accent;
 
+  /// Texto e iconos ENCIMA del acento (contador de no leídos, check de
+  /// selección, badge del rail). Verde muy oscuro en los dos temas: sobre
+  /// `accent` el blanco no alcanza el contraste mínimo.
+  final Color onAccent;
+
   /// Fila bajo el cursor.
   final Color rowHover;
 
@@ -93,6 +99,7 @@ class ChatPalette {
     textPrimary: Color(0xFFF1F3F3),
     textSecondary: Color(0xFF98A2A6),
     accent: Color(0xFF25D366),
+    onAccent: Color(0xFF0B1F16),
     rowHover: Color(0xFF1C2021),
     rowSelected: Color(0xFF24292A),
     doodle: Color(0xFF191D1E),
@@ -114,6 +121,7 @@ class ChatPalette {
     textPrimary: Color(0xFF111B21),
     textSecondary: Color(0xFF667781),
     accent: Color(0xFF00A884),
+    onAccent: Color(0xFF0B1F16),
     rowHover: Color(0xFFF5F6F6),
     rowSelected: Color(0xFFEBEDEF),
     doodle: Color(0xFFE4DED2),

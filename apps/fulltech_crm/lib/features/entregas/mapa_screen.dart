@@ -7,6 +7,7 @@ import '../../app/crm_scope.dart';
 import '../../app/crm_state.dart';
 import '../../core/format/crm_format.dart';
 import '../../core/theme/crm_theme.dart';
+import '../../core/theme/crm_tokens.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 
@@ -154,8 +155,7 @@ class _MapaScreenState extends State<MapaScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   color: Colors.white.withValues(alpha: 0.82),
-                  child: const Text('© OpenStreetMap', style: TextStyle(fontSize: 9.5, color: Color(0xFF14243D))),
-                ),
+                  child: const Text('© OpenStreetMap', style: TextStyle(fontSize: 9.5, color: CrmColors.ink)),                ),
               ),
               Positioned(
                 right: 10,

@@ -18,6 +18,12 @@ class PosLine {
     required this.presentationName,
     required this.unitPriceCents,
     required this.quantity,
+    this.discountType = 'none',
+    this.discountValue = 0,
+    this.manualName,
+    this.manualKind,
+    this.manualPrice,
+    this.manualCost,
   });
 
   final String variantId;
@@ -26,16 +32,62 @@ class PosLine {
   final int unitPriceCents;
   final int quantity;
 
+  /// Descuento DE LÍNEA: `none` | `percent` | `amount` (pesos).
+  /// Misma forma y misma regla que `line.discount` en `pos-math.js`.
+  final String discountType;
+  final double discountValue;
+
+  /// Venta fuera de inventario. El servidor la acepta solo si `variantId` es
+  /// `manual_` + 16-80 caracteres válidos y el nombre no está vacío, y la crea
+  /// como producto `track_stock: false`: NO toca el inventario de cápsulas.
+  final String? manualName;
+  final String? manualKind;
+  final double? manualPrice;
+  final double? manualCost;
+
+  bool get isManual => manualName != null && manualName!.isNotEmpty;
+
   int get grossCents => unitPriceCents * quantity;
 
-  Map<String, dynamic> toJson() => {'variantId': variantId, 'quantity': quantity};
+  /// `discountCents(gross, line.discount)` de `pos-math.js`.
+  int get lineDiscountCents {
+    if (discountType == 'none' || !discountValue.isFinite || discountValue <= 0) return 0;
+    final cents = discountType == 'percent'
+        ? (grossCents * discountValue / 100).round()
+        : (discountValue * 100).round();
+    if (cents < 0) return 0;
+    return cents > grossCents ? grossCents : cents;
+  }
 
-  PosLine copyWith({int? quantity}) => PosLine(
+  /// Lo que aporta la línea al subtotal (`subtotal_cents` del servidor).
+  int get netCents => grossCents - lineDiscountCents;
+
+  Map<String, dynamic> toJson() => {
+        'variantId': variantId,
+        'quantity': quantity,
+        if (discountType != 'none' && discountValue > 0)
+          'discount': {'type': discountType, 'value': discountValue},
+        if (isManual)
+          'manual': {
+            'name': manualName,
+            'kind': manualKind ?? 'product',
+            'price': manualPrice ?? unitPriceCents / 100,
+            if (manualCost != null) 'cost': manualCost,
+          },
+      };
+
+  PosLine copyWith({int? quantity, String? discountType, double? discountValue, int? unitPriceCents}) => PosLine(
         variantId: variantId,
         productName: productName,
         presentationName: presentationName,
-        unitPriceCents: unitPriceCents,
+        unitPriceCents: unitPriceCents ?? this.unitPriceCents,
         quantity: quantity ?? this.quantity,
+        discountType: discountType ?? this.discountType,
+        discountValue: discountValue ?? this.discountValue,
+        manualName: manualName,
+        manualKind: manualKind,
+        manualPrice: manualPrice,
+        manualCost: manualCost,
       );
 }
 
@@ -51,6 +103,13 @@ class PosSaleDraft {
     this.deliveryMethod = 'delivery',
     this.paymentMethod = 'CASH',
     this.paid = false,
+    this.discountType = 'none',
+    this.discountValue = 0,
+    this.quoteId = '',
+    this.ticketId = '',
+    this.ticketVersion = 0,
+    this.scheduledAt = '',
+    this.deliveryReference = '',
   });
 
   /// `order` | `invoice` | `quote`
@@ -64,9 +123,48 @@ class PosSaleDraft {
   final String paymentMethod;
   final bool paid;
 
+  /// Descuento GENERAL: `none` | `percent` | `amount` (pesos).
+  /// Misma forma que `discount` en `pos-math.js` (`{type, value}`).
+  final String discountType;
+  final double discountValue;
+
+  /// Cotización de origen: al cobrarla, el servidor la marca como convertida y
+  /// rechaza el doble cobro (`409`) aunque lleguen dos clientes a la vez.
+  final String quoteId;
+
+  /// Ticket aparcado del que sale esta venta. Con `ticketId` el servidor marca
+  /// el ticket como `processing` y luego `completed` en la MISMA transacción,
+  /// así que dos cajas no pueden cobrar el mismo ticket (`409 ticket_conflict`).
+  final String ticketId;
+  final int ticketVersion;
+
+  /// Entrega programada en ISO-8601 **con zona** (`2026-10-30T15:00:00-04:00`).
+  /// El servidor rechaza fechas pasadas (`schedule_in_past`) cuando el pedido es
+  /// guiado; aquí se envía tal cual y nunca se reinterpreta la zona.
+  final String scheduledAt;
+
+  /// Referencia del lugar ("frente al parque, portón azul"). Texto libre.
+  final String deliveryReference;
+
   bool get isQuote => mode == 'quote';
 
-  int get subtotalCents => lines.fold<int>(0, (sum, line) => sum + line.grossCents);
+  int get subtotalCents => lines.fold<int>(0, (sum, line) => sum + line.netCents);
+
+  /// Céntimos de descuento, con la MISMA regla que `discountCents()` de
+  /// `public/admin/pos-math.js`: porcentaje → `round(base*valor/100)`,
+  /// importe → `round(valor*100)`. Si supera la base, la venta es inválida y
+  /// el servidor responde 422: aquí solo se calcula lo que viajará.
+  int discountCentsFor(int baseCents) {
+    final value = discountValue;
+    if (discountType == 'none' || !value.isFinite || value <= 0) return 0;
+    final cents = discountType == 'percent' ? (baseCents * value / 100).round() : (value * 100).round();
+    return cents < 0 ? 0 : cents;
+  }
+
+  int get discountCents => discountCentsFor(subtotalCents);
+
+  /// El descuento pide más de lo que hay: el servidor lo rechazaría (422).
+  bool get discountExceedsSubtotal => discountCents > subtotalCents;
 
   /// El servidor exige el envío en **pesos enteros**
   /// (`Number.isInteger(input.deliveryFee)`). Se redondea aquí para que el
@@ -74,15 +172,31 @@ class PosSaleDraft {
   /// rechazaba con 409 `price_changed` y la venta no se podía cerrar.
   int get deliveryFeePesos => (deliveryFeeCents / 100).round();
 
-  int get expectedTotalCents => subtotalCents + deliveryFeePesos * 100;
+  int get expectedTotalCents => subtotalCents - discountCents + deliveryFeePesos * 100;
 
   /// Reglas mínimas antes de molestar al servidor.
   String? validate() {
     if (customerId.isEmpty) return 'Elige un cliente antes de guardar.';
     if (lines.isEmpty) return 'Agrega al menos un artículo.';
     if (lines.any((line) => line.quantity < 1 || line.quantity > 9999)) return 'La cantidad debe estar entre 1 y 9999.';
+    if (lines.any((line) => line.discountType == 'percent' && line.discountValue > 100)) {
+      return 'El porcentaje de una línea no puede superar 100.';
+    }
+    if (lines.any((line) => line.isManual && (line.manualName ?? '').trim().isEmpty)) {
+      return 'La venta fuera de inventario necesita una descripción.';
+    }
     if (deliveryFeeCents < 0) return 'El envío no puede ser negativo.';
+    if (discountType == 'percent' && discountValue > 100) return 'El porcentaje no puede superar 100.';
+    if (discountExceedsSubtotal) return 'El descuento supera el importe del ticket.';
     if (!isQuote && deliveryMethod == 'delivery' && address.trim().isEmpty) return 'Escribe la dirección de entrega.';
+    if (scheduledAt.isNotEmpty) {
+      final when = DateTime.tryParse(scheduledAt);
+      if (when == null) return 'La fecha programada no es válida.';
+      // El servidor tolera 5 minutos de desfase; aquí se avisa antes.
+      if (when.isBefore(DateTime.now().subtract(const Duration(minutes: 5)))) {
+        return 'La fecha programada ya pasó.';
+      }
+    }
     return null;
   }
 
@@ -93,11 +207,17 @@ class PosSaleDraft {
         'customerId': customerId,
         'items': [for (final line in lines) line.toJson()],
         'deliveryFee': deliveryFeePesos,
+        if (discountType != 'none' && discountValue > 0) 'discount': {'type': discountType, 'value': discountValue},
+        if (quoteId.isNotEmpty) 'quoteId': quoteId,
+        if (ticketId.isNotEmpty) 'ticketId': ticketId,
+        if (ticketId.isNotEmpty) 'ticketVersion': ticketVersion,
         'paymentMethod': paymentMethod,
         'paymentStatus': paid ? 'paid' : 'pending',
         'deliveryMethod': deliveryMethod,
         'notes': notes,
         'address': address,
+        if (scheduledAt.isNotEmpty) 'scheduledAt': scheduledAt,
+        if (deliveryReference.isNotEmpty) 'deliveryReference': deliveryReference,
         // Contrato exacto: centavos, entero. Si el servidor calcula otra cosa,
         // contesta `price_changed` y aquí no se registra NADA.
         'expectedTotal': expectedTotalCents,
@@ -110,6 +230,7 @@ class PosSaleDraft {
         'customerId': customerId,
         'items': [for (final line in lines) line.toJson()],
         'deliveryFee': deliveryFeePesos,
+        if (discountType != 'none' && discountValue > 0) 'discount': {'type': discountType, 'value': discountValue},
         'paymentMethod': paymentMethod,
         'notes': notes,
         'address': address,
@@ -124,8 +245,13 @@ class PosSaleDraft {
       mode,
       customerId,
       deliveryFeeCents.toString(),
+      discountType,
+      discountValue.toString(),
+      quoteId,
       notes.trim(),
       address.trim(),
+      scheduledAt,
+      deliveryReference,
       deliveryMethod,
       paymentMethod,
       paid ? '1' : '0',

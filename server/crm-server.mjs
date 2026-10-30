@@ -304,13 +304,24 @@ function whatsappStatusPayload(ctx) {
   const snapshot = ctx?.whatsappStatus?.snapshot?.();
   if (snapshot) return snapshot;
   const enabled = Boolean(ctx?.whatsapp?.enabled);
-  const receive = ctx?.whatsappVerifyToken && ctx?.appSecret ? 'ok' : 'not_configured';
+  const destino = String(ctx?.whatsapp?.phoneNumberId ?? '').trim();
+  /*
+   * `destinationConfigured` es el dato que decide si la bandeja puede recibir
+   * algo: sin `WHATSAPP_PHONE_NUMBER_ID` la ingesta está cerrada (fail-closed),
+   * porque un evento firmado de cualquier WABA no se puede atribuir a este CRM.
+   */
+  const receive = !destino
+    ? 'not_configured'
+    : ctx?.whatsappVerifyToken && ctx?.appSecret
+      ? 'ok'
+      : 'not_configured';
   return {
     configured: enabled,
+    destinationConfigured: Boolean(destino),
     mode: ctx?.whatsapp?.mock ? 'mock' : enabled ? 'live' : 'off',
     send: enabled ? 'unknown' : 'not_configured',
     receive,
-    receiveReason: receive === 'ok' ? null : 'missing_webhook_config',
+    receiveReason: receive === 'ok' ? null : destino ? 'missing_webhook_config' : 'missing_phone_number_id',
     checked: 'unknown',
     checkedAt: null,
     reason: enabled ? 'pending_check' : 'missing_credentials',
@@ -415,6 +426,7 @@ import { catalogItems, computeOrderTotals, findCatalogItem } from '../src/lib/ca
 import {
   createWhatsAppClient,
   parseWebhook,
+  splitByDestination,
   toE164,
   verifyWebhookChallenge,
   verifyWebhookSignature,
@@ -5577,6 +5589,27 @@ function withCustomer(rows, customers) {
  */
 export async function processWebhookPayload(ctx, body, options = {}) {
   const parsed = parseWebhook(body);
+  /*
+   * AISLAMIENTO POR NÚMERO DE DESTINO.
+   *
+   * La firma válida solo prueba que el evento lo mandó Meta. El destino
+   * (`metadata.phone_number_id`) es lo que dice SI ERA PARA NOSOTROS. Si el
+   * servidor tiene un número configurado y el evento trae otro —o ninguno— se
+   * descarta antes de tocar la base: ni cliente, ni conversación, ni mensaje,
+   * ni estados, ni contadores, ni eventos en vivo.
+   */
+  const destino = splitByDestination(parsed, { phoneNumberId: ctx?.whatsapp?.phoneNumberId });
+  if (destino.blocked && destino.ignored > 0) {
+    console.warn(
+      `[crm] webhook: WHATSAPP_PHONE_NUMBER_ID sin configurar; se descartan ${destino.ignored} evento(s) (fail-closed). No se puede saber para qué número eran.`,
+    );
+  } else if (destino.ignored > 0) {
+    console.warn(
+      `[crm] webhook: ${destino.ignored} evento(s) descartados por número de destino no autorizado`,
+    );
+  }
+  parsed.messages = destino.messages;
+  parsed.statuses = destino.statuses;
   /** @type {any[]} */
   const stored = [];
   for (const inbound of parsed.messages) {
@@ -9919,11 +9952,88 @@ async function handle(req, res, ctx) {
       return;
     }
 
+    /*
+     * LISTADO PAGINADO DE PEDIDOS.
+     * Contrato y riesgos: `apps/fulltech_crm/docs/pedidos-paginacion.md`.
+     *
+     * Existe porque `/api/admin/data` es un paquete de ARRANQUE: pide como máximo
+     * 500 filas y trunca en silencio (con 520 pedidos devolvía 500 con
+     * `partial:false`, y `stats.total` salía de esa lista recortada). Aquí se
+     * pagina de verdad, con orden total `(received_at, id)` y un `total`
+     * autoritativo contado con los MISMOS filtros.
+     *
+     * Solo ADMIN: los roles acotados (reparto/proveedor) siguen usando su
+     * snapshot, que ya viene filtrado por empresa. No cambia ninguna ruta
+     * existente.
+     */
+    if (route === '/api/admin/orders' && req.method === 'GET') {
+      if (!requireAdmin()) return;
+      const limitRaw = url.searchParams.get('limit');
+      const limit = limitRaw === null ? 50 : Number(limitRaw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+        json(res, 422, { ok: false, error: 'invalid_limit', message: 'El tamaño de página debe estar entre 1 y 200.' });
+        return;
+      }
+      const status = url.searchParams.get('status');
+      if (status && !Object.prototype.hasOwnProperty.call(ORDER_STATUS_LABELS, status)) {
+        json(res, 422, { ok: false, error: 'invalid_status', message: 'Ese estado no existe.' });
+        return;
+      }
+      // La fecha tiene que EXISTIR, no solo tener forma: `2026-13-40` pasaba el
+      // patrón y filtraba como texto, devolviendo 200 con todo el listado.
+      const isDay = (value) => {
+        const text = String(value ?? '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+        const [year, month, date] = text.split('-').map(Number);
+        const built = new Date(Date.UTC(year, month - 1, date));
+        return built.toISOString().slice(0, 10) === text;
+      };
+      const from = url.searchParams.get('from');
+      const to = url.searchParams.get('to');
+      if ((from && !isDay(from)) || (to && !isDay(to)) || (from && to && from > to)) {
+        json(res, 422, { ok: false, error: 'invalid_date_range', message: 'Las fechas deben ser AAAA-MM-DD y la inicial no puede ser posterior.' });
+        return;
+      }
+      const q = String(url.searchParams.get('q') ?? '').trim().slice(0, 80);
+      let cursorAt = null;
+      let cursorId = null;
+      const cursor = url.searchParams.get('cursor');
+      if (cursor) {
+        let decoded = '';
+        try {
+          decoded = Buffer.from(String(cursor), 'base64url').toString('utf8');
+        } catch {
+          decoded = '';
+        }
+        const split = decoded.lastIndexOf('|');
+        cursorAt = split > 0 ? decoded.slice(0, split) : '';
+        cursorId = split > 0 ? decoded.slice(split + 1) : '';
+        if (!cursorAt || !cursorId) {
+          json(res, 422, { ok: false, error: 'invalid_cursor', message: 'El cursor de la página no es válido.' });
+          return;
+        }
+      }
+      const filters = { status: status || null, from: from || null, to: to || null, q: q || null };
+      const rows = await Promise.resolve(ctx.store.ordersPage({ limit, cursorAt, cursorId, ...filters }));
+      const total = await Promise.resolve(ctx.store.countOrders(filters));
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      json(res, 200, {
+        ok: true,
+        items: page.map((item) => sanitizeItemForPermissions(item, actor)),
+        total,
+        limit,
+        hasMore,
+        nextCursor: hasMore && last ? Buffer.from(`${last.received_at}|${last.id}`).toString('base64url') : null,
+      });
+      return;
+    }
+
     // ------------------------------------------------ pedido desde la conversación
     // Mismo camino que la compra a mano, pero puede nacer de un chat y enlazarlo.
     if (route === '/api/admin/orders' && req.method === 'POST') {
-      if (!requirePermission('orders.create')) return;
-      /** @type {any} */
+      if (!requirePermission('orders.create')) return;      /** @type {any} */
       let body = {};
       try {
         body = await readJsonBody(req);
@@ -15029,6 +15139,7 @@ export async function startCrmServer(config = {}) {
                 media_id: result.media?.id ?? input.mediaId ?? null,
                 media_type: result.mediaType ?? null,
                 outcome: input.outcome,
+                from_status: result.from ?? null,
                 wa_message_id: input.waMessageId ?? null,
               },
             });
@@ -15291,12 +15402,42 @@ export async function startCrmServer(config = {}) {
              * ni una foto ni un audio. Se resuelve como «no existe» para no dar
              * pistas de lo ajeno, pero no se envía nada.
              */
-            if (!(await canOpenConversation(ctx, mediaActorFromRequest(req), conversation))) return null;
+            /*
+             * `mediaActorFromRequest` es ASÍNCRONA (consulta la sesión del
+             * usuario). Antes se pasaba la promesa como actor: el control de
+             * acceso veía un actor sin id ni rol y la conversación acababa en
+             * 404. Aquí se espera de verdad.
+             */
+            const actorMedia = await mediaActorFromRequest(req);
+            if (!(await canOpenConversation(ctx, actorMedia, conversation))) return null;
             const customer = await ctx.customers.get(conversation.customer_id);
             return customer ? { conversation, customer } : null;
           },
+          /*
+           * MOTIVO REAL DEL FALLO, SOLO PARA QUIEN PUEDE VER LA CONVERSACIÓN.
+           *
+           * El texto ya contesta `409 outside_window` cuando el cliente no ha
+           * escrito en 24 h; el medio contestaba un `404 not_found` que parecía
+           * «esa conversación no existe». Aquí se distingue sin filtrar nada:
+           * si la fila no es visible para quien pregunta, se sigue en 404.
+           */
+          explainConversation: async (conversationId, req = null) => {
+            const conversation = await findConversation(ctx, conversationId);
+            if (!conversation) return { error: 'not_found' };
+            const actor = await mediaActorFromRequest(req);
+            if (!crmRowVisible(actor, await crmOwnership(ctx), 'conversation', conversation)) {
+              return { error: 'not_found' };
+            }
+            if (!ctx.customers.canSendFreeText(conversation)) return { error: 'outside_window' };
+            return { error: 'conversation_not_open' };
+          },
+          /**
+           * Una foto, un PDF o una nota de voz son mensajes LIBRES: la misma
+           * ventana de 24 h que el texto tiene que valer también para ellos.
+           */
+          canSendFreeForm: (conversation) => ctx.customers.canSendFreeText(conversation),
           persistOutbound: async (input) => {
-            const mediaActor = mediaActorFromRequest(input.req);
+            const mediaActor = await mediaActorFromRequest(input.req);
             const recorded = await ctx.customers.recordOutbound({
               customer: input.customer,
               conversation: input.conversation,

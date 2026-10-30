@@ -1,0 +1,138 @@
+{
+  "$comment": "Casos de dinero del POS compartidos entre Dart (apps/fulltech_crm) y JavaScript (public/admin/pos-math.js). Los importes están en CENTAVOS. `expected` es lo que debe producir la app y lo que el servidor acepta como `expectedTotal`.",
+  "currency": "COP",
+  "cases": [
+    {
+      "name": "una línea sin envío",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 }],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 300000, "deliveryFeePesos": 0, "totalCents": 300000 }
+    },
+    {
+      "name": "envío cero explícito",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 1 }],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 150000, "deliveryFeePesos": 0, "totalCents": 150000 }
+    },
+    {
+      "name": "envío de 50 pesos",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 }],
+      "deliveryFeeCents": 5000,
+      "expected": { "subtotalCents": 300000, "deliveryFeePesos": 50, "totalCents": 305000 }
+    },
+    {
+      "name": "envío con céntimos (150,50) se redondea a 151 pesos",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 }],
+      "deliveryFeeCents": 15050,
+      "expected": { "subtotalCents": 300000, "deliveryFeePesos": 151, "totalCents": 315100 }
+    },
+    {
+      "name": "cantidad 9 con precio impar",
+      "lines": [{ "variantId": "v9", "unitPriceCents": 1999, "quantity": 9 }],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 17991, "deliveryFeePesos": 0, "totalCents": 17991 }
+    },
+    {
+      "name": "varias líneas sin envío",
+      "lines": [
+        { "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 },
+        { "variantId": "v2", "unitPriceCents": 25000, "quantity": 3 }
+      ],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 375000, "deliveryFeePesos": 0, "totalCents": 375000 }
+    },
+    {
+      "name": "varias líneas con envío de 7 pesos",
+      "lines": [
+        { "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 },
+        { "variantId": "v2", "unitPriceCents": 25000, "quantity": 3 },
+        { "variantId": "v3", "unitPriceCents": 1, "quantity": 1 }
+      ],
+      "deliveryFeeCents": 700,
+      "expected": { "subtotalCents": 375001, "deliveryFeePesos": 7, "totalCents": 375701 }
+    },
+    {
+      "name": "descuento del 10 % sobre una linea",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 }],
+      "deliveryFeeCents": 0,
+      "discount": { "type": "percent", "value": 10 },
+      "expected": { "subtotalCents": 300000, "discountCents": 30000, "deliveryFeePesos": 0, "totalCents": 270000 }
+    },
+    {
+      "name": "descuento de 50 pesos",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 }],
+      "deliveryFeeCents": 0,
+      "discount": { "type": "amount", "value": 50 },
+      "expected": { "subtotalCents": 300000, "discountCents": 5000, "deliveryFeePesos": 0, "totalCents": 295000 }
+    },
+    {
+      "name": "descuento del 7,5 % con varias lineas",
+      "lines": [
+        { "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 },
+        { "variantId": "v2", "unitPriceCents": 25000, "quantity": 3 }
+      ],
+      "deliveryFeeCents": 0,
+      "discount": { "type": "percent", "value": 7.5 },
+      "expected": { "subtotalCents": 375000, "discountCents": 28125, "deliveryFeePesos": 0, "totalCents": 346875 }
+    },
+    {
+      "name": "descuento del 10 % con envio de 50 pesos",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 }],
+      "deliveryFeeCents": 5000,
+      "discount": { "type": "percent", "value": 10 },
+      "expected": { "subtotalCents": 300000, "discountCents": 30000, "deliveryFeePesos": 50, "totalCents": 275000 }
+    },
+    {
+      "name": "descuento de línea del 10 %",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2, "discount": { "type": "percent", "value": 10 } }],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 270000, "lineDiscountCents": 30000, "deliveryFeePesos": 0, "totalCents": 270000 }
+    },
+    {
+      "name": "descuento de línea de 50 pesos",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2, "discount": { "type": "amount", "value": 50 } }],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 295000, "lineDiscountCents": 5000, "deliveryFeePesos": 0, "totalCents": 295000 }
+    },
+    {
+      "name": "descuento de línea del 10 % más descuento general del 10 %",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 2, "discount": { "type": "percent", "value": 10 } }],
+      "deliveryFeeCents": 0,
+      "discount": { "type": "percent", "value": 10 },
+      "expected": { "subtotalCents": 270000, "lineDiscountCents": 30000, "discountCents": 27000, "deliveryFeePesos": 0, "totalCents": 243000 }
+    },
+    {
+      "name": "venta fuera de inventario (servicio ocasional)",
+      "lines": [
+        {
+          "variantId": "manual_0123456789abcdef",
+          "quantity": 2,
+          "manual": { "name": "Servicio ocasional", "kind": "service", "price": 250, "cost": 100 }
+        }
+      ],
+      "deliveryFeeCents": 0,
+      "expected": { "subtotalCents": 50000, "deliveryFeePesos": 0, "totalCents": 50000 }
+    },
+    {
+      "name": "venta fuera de inventario junto a un artículo del catálogo",
+      "lines": [
+        { "variantId": "v1", "unitPriceCents": 150000, "quantity": 2 },
+        {
+          "variantId": "manual_fedcba9876543210",
+          "quantity": 1,
+          "manual": { "name": "Domicilio especial", "kind": "product", "price": 250, "cost": 0 }
+        }
+      ],
+      "deliveryFeeCents": 5000,
+      "expected": { "subtotalCents": 325000, "deliveryFeePesos": 50, "totalCents": 330000 }
+    },
+    {
+      "name": "envío de 99 céntimos: divergencia conocida y deliberada",
+      "lines": [{ "variantId": "v1", "unitPriceCents": 150000, "quantity": 1 }],
+      "deliveryFeeCents": 99,
+      "expected": { "subtotalCents": 150000, "deliveryFeePesos": 1, "totalCents": 150100 },
+      "knownDivergence": "El servidor exige `deliveryFee` en PESOS ENTEROS (Number.isInteger) y responde 409 `price_changed` con fracciones. La app redondea a pesos enteros (0,99 → 1 peso = 100 céntimos) antes de enviar, así que este caso difiere de pos-math.js en 1 céntimo a propósito.",
+      "expectedJs": { "subtotalCents": 150000, "deliveryFeePesos": 0.99, "totalCents": 150099 }
+    }
+  ]
+}

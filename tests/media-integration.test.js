@@ -122,6 +122,8 @@ async function inbound(id, node) {
           {
             field: 'messages',
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige.
+              metadata: { phone_number_id: 'PN-MEDIA', display_phone_number: '18095550000' },
               contacts: [{ profile: { name: 'Ana Media' }, wa_id: PHONE }],
               messages: [{ from: PHONE, id, timestamp: String(Math.floor(Date.now() / 1000)), ...node }],
             },
@@ -163,6 +165,8 @@ beforeAll(async () => {
     storage: fakeStorage,
     whatsappMedia: fakeMedia,
     schedulerEnabled: false,
+    // Número del negocio: sin él la ingesta del webhook está cerrada (fail-closed).
+    whatsappPhoneNumberId: 'PN-MEDIA',
   });
   const login = await call('/api/admin/login', { method: 'POST', body: JSON.stringify({ token: TOKEN }) });
   cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];

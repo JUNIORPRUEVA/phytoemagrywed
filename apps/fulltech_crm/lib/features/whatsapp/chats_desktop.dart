@@ -60,14 +60,48 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   String? _pendingAttach;
   int _attachRequest = 0;
 
+  /// Conversaciones ARCHIVADAS, pedidas al servidor cuando se filtra por ellas.
+  ///
+  /// El estado general del CRM no las trae (no son bandeja), así que el filtro
+  /// «Archivados» se quedaba vacío y una conversación archivada no se podía
+  /// recuperar desde la app. Se piden aparte, solo cuando hace falta.
+  List<Conversation> _archivedRows = const [];
+  bool _loadingArchived = false;
+
+  Future<void> _cargarArchivadas() async {
+    if (_loadingArchived) return;
+    final state = CrmScope.of(context, listen: false);
+    _loadingArchived = true;
+    try {
+      final data = await state.repository.conversations(filter: 'archivados');
+      final rows = (data['conversations'] as List? ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(Conversation.fromJson)
+          .toList();
+      if (mounted) setState(() => _archivedRows = rows);
+      debugPrint('ARCHIVADAS: ${rows.length} filas');
+    } on ApiException catch (error) {
+      debugPrint('ARCHIVADAS error: ${error.message}');
+      if (!mounted) return;
+      crmToast(context, error.message);
+    } finally {
+      _loadingArchived = false;
+    }
+  }
+
   @override
   void dispose() {
     _search.dispose();
     super.dispose();
   }
 
-  List<Conversation> _filtered(List<Conversation> rows) {
-    final query = _search.text.trim().toLowerCase();
+  /// Cambia los filtros de la bandeja. «Archivados» necesita su propia consulta.
+  void _cambiarFiltros(ChatFilters value) {
+    setState(() => _filters = value);
+    if (value.status == ChatStatusFilter.archivados) _cargarArchivadas();
+  }
+
+  List<Conversation> _filtered(List<Conversation> rows) {    final query = _search.text.trim().toLowerCase();
     return rows.where((row) {
       if (query.isNotEmpty) {
         final match =
@@ -84,7 +118,10 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   Widget build(BuildContext context) {
     final c = ChatPalette.of(context);
     final state = CrmScope.of(context);
-    final conversations = _filtered(state.conversations);
+    // «Archivados» se alimenta de su propia consulta al servidor.
+    final base =
+        _filters.status == ChatStatusFilter.archivados ? _archivedRows : state.conversations;
+    final conversations = _filtered(base);
     final selectedId =
         _selectedId != null && conversations.any((row) => row.id == _selectedId)
         ? _selectedId
@@ -123,7 +160,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
             search: _search,
             onSearchChanged: (_) => setState(() {}),
             filters: _filters,
-            onFiltersChanged: (value) => setState(() => _filters = value),
+            onFiltersChanged: _cambiarFiltros,
             onOpenFilters: () => _toggleSide(_SidePanel.filters),
             onRefresh: () => state.refresh(),
             selecting: _selecting,
@@ -193,7 +230,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                           width: filterWidth,
                           filters: _filters,
                           conversations: state.conversations,
-                          onChanged: (value) => setState(() => _filters = value),
+                          onChanged: _cambiarFiltros,
                           onClose: () => setState(() => _side = _SidePanel.none),
                         )
                       : ChatNewMessagePanel(
@@ -255,11 +292,15 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
           await state.refresh(quiet: true);
           if (!mounted) return;
           crmToast(context, action == 'archive' ? 'Conversación archivada.' : 'Conversación desarchivada.');
+          // La lista de archivadas es su propia consulta: se vuelve a pedir.
+          if (_filters.status == ChatStatusFilter.archivados) await _cargarArchivadas();
         } on ApiException catch (error) {
-          if (mounted) crmToast(context, error.message);
+          if (!mounted) return;
+          crmToast(context, error.message);
         }
         return;
     }
+    if (!mounted) return;
     final refresh = await ConversationActions.run(context, action, conversation);
     if (!mounted || !refresh) return;
     await state.refresh(quiet: true);

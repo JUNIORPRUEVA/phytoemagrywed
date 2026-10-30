@@ -78,6 +78,8 @@ async function inbound(id, from, text) {
           {
             field: 'messages',
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige (fail-closed).
+              metadata: { phone_number_id: 'PN-AUTH', display_phone_number: '18095550000' },
               contacts: [{ profile: { name: 'Cliente Auth' }, wa_id: from }],
               messages: [{ from, id, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: text } }],
             },

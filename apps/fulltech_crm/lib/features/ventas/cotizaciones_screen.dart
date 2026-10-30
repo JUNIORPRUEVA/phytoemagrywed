@@ -8,6 +8,7 @@ import '../../core/theme/crm_theme.dart';
 import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import '../common/remote_view.dart';
+import 'pos_screen.dart';
 
 /// Cotizaciones guardadas, con sus dos acciones reales: abrir el PDF y enviarla
 /// al cliente por la plantilla oficial de WhatsApp (nunca `wa.me`).
@@ -113,11 +114,27 @@ class _QuoteCardState extends State<_QuoteCard> {
     }
   }
 
+  /// Lleva la cotización al POS con cliente, líneas y descuento ya cargados.
+  ///
+  /// El cobro manda `quoteId`, así que el servidor marca el documento como
+  /// `converted` y rechaza un segundo cobro aunque venga de otra caja. Solo se
+  /// ofrece mientras la cotización siga sin convertir.
+  Future<void> _bill() async {
+    if (_busy) return;
+    final converted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PosScreen(embedded: false, desktop: true, initialQuote: widget.row),
+      ),
+    );
+    if (converted == true) widget.onChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = context.crm;
     final status = str(widget.row['status'], str(widget.row['kind'], 'cotización'));
     final number = str(widget.row['number'], str(widget.row['id']));
+    final billable = status == 'quoted' || status == 'cotizada';
     return SectionCard(
       title: '$number · $_customer',
       trailing: StatusPill(label: status, dense: true),
@@ -148,9 +165,20 @@ class _QuoteCardState extends State<_QuoteCard> {
                 child: CrmButton(
                   label: 'Enviar',
                   icon: Icons.send_rounded,
+                  filled: false,
                   onPressed: _busy ? null : _send,
                 ),
               ),
+              if (billable) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: CrmButton(
+                    label: 'Cobrar',
+                    icon: Icons.point_of_sale_outlined,
+                    onPressed: _busy ? null : _bill,
+                  ),
+                ),
+              ],
             ],
           ),
           if (_busy)

@@ -149,6 +149,78 @@ void main() {
     });
   });
 
+  group('asistente IA contextual (Centro IA)', () {
+    test('la consulta va a la ruta del panel web con conversación y acción', () async {
+      final harness = buildClient({
+        'ok': true,
+        'ai': true,
+        'answer': 'Le falta la dirección.',
+        'bullets': ['Pedido abierto'],
+        'suggestions': ['¿Me confirmas la dirección?'],
+        'draft': 'Hola María, ¿me confirmas la dirección de entrega?',
+        'sources': [
+          {'type': 'customer', 'label': 'Expediente del cliente'},
+        ],
+        'scope': {'conversationId': 'c1'},
+      });
+      final data = await harness.repo.assistantQuery(
+        conversationId: 'c1',
+        action: 'draft_reply',
+      );
+
+      final request = harness.requests.single;
+      expect(request.method, 'POST');
+      expect(request.url.path, '/api/admin/assistant/query');
+      final body = jsonDecode((request as http.Request).body) as Map<String, dynamic>;
+      expect(body['conversationId'], 'c1');
+      expect(body['action'], 'draft_reply');
+      expect(body['message'], '');
+      expect(data['ai'], isTrue);
+      expect('${data['draft']}', contains('dirección'));
+    });
+
+    test('la pregunta libre lleva el texto del agente', () async {
+      final harness = buildClient({'ok': true, 'ai': false, 'reason': 'ai_unavailable'});
+      await harness.repo.assistantQuery(
+        conversationId: 'c1',
+        action: 'free',
+        message: '¿Qué le falta para cerrar?',
+      );
+      final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
+      expect(body['action'], 'free');
+      expect(body['message'], '¿Qué le falta para cerrar?');
+    });
+
+    test('confirmar y descartar usan la ruta de acciones con la huella', () async {
+      final confirm = buildClient({'ok': true});
+      await confirm.repo.assistantDecision(proposalId: 'p 1', confirm: true, fingerprint: 'abc123');
+      final request = confirm.requests.single;
+      expect(request.url.path, '/api/admin/assistant/actions/p%201/confirm');
+      expect(jsonDecode((request as http.Request).body)['fingerprint'], 'abc123');
+
+      final cancel = buildClient({'ok': true});
+      await cancel.repo.assistantDecision(proposalId: 'p1', confirm: false);
+      expect(cancel.requests.single.url.path, '/api/admin/assistant/actions/p1/cancel');
+      expect((cancel.requests.single as http.Request).body, '{}');
+    });
+
+    test('el mensaje de pedido con IA devuelve solo el texto', () async {
+      final harness = buildClient({'ok': true, 'text': 'Hola, ¿me pasas el comprobante?', 'ai': true});
+      final texto = await harness.repo.aiOrderMessage(
+        conversationId: 'c1',
+        missing: ['comprobante'],
+        orderNumber: 'PE-1',
+        total: 1250,
+      );
+      final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
+      expect(harness.requests.single.url.path, '/api/admin/ai/order-message');
+      expect(body['missing'], ['comprobante']);
+      expect(body['orderNumber'], 'PE-1');
+      expect(body['total'], 1250);
+      expect(texto, 'Hola, ¿me pasas el comprobante?');
+    });
+  });
+
   group('modelo del mensaje', () {
     test('lee adjunto y coordenadas del hilo', () {
       final withMedia = ChatMessage.fromJson({

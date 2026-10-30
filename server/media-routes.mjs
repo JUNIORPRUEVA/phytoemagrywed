@@ -184,7 +184,8 @@ export function createMediaRoutes(deps) {
       });
       if (!reconciliado.ok) {
         const code = reconciliado.error?.code ?? 'reconcile_failed';
-        return json(res, code === 'missing_wamid' ? 422 : 409, {
+        const status = code === 'missing_wamid' || code === 'invalid_wamid' ? 422 : 409;
+        return json(res, status, {
           ok: false,
           error: code,
           message: reconciliado.error?.message ?? 'No se pudo reconciliar la operación.',
@@ -256,10 +257,62 @@ export function createMediaRoutes(deps) {
      */
     const contexto = await deps.resolveConversation(conversationId, req);
     if (!contexto?.conversation || !contexto?.customer) {
+      /*
+       * POR QUÉ NO SIEMPRE ES 404.
+       *
+       * El texto ya explica cuando no hay ventana (`409 outside_window`) o
+       * cuando la conversación no está tomada (`403`). El medio contestaba un
+       * `404 not_found` genérico, que parece «esta conversación no existe» y
+       * manda a buscar el problema donde no está.
+       *
+       * `explainConversation` solo responde por conversaciones que el actor
+       * PUEDE VER: si no la ve, sigue siendo 404 para no dar pistas de lo ajeno.
+       */
+      const explicacion = typeof deps.explainConversation === 'function'
+        ? await deps.explainConversation(conversationId, req).catch(() => null)
+        : null;
+      if (explicacion?.error === 'outside_window') {
+        return json(res, 409, {
+          ok: false,
+          error: 'outside_window',
+          message:
+            'El cliente no ha escrito en las últimas 24 h: WhatsApp solo permite enviar una plantilla aprobada. No se ha enviado el archivo.',
+        });
+      }
+      if (explicacion?.error === 'conversation_not_open') {
+        return json(res, 403, {
+          ok: false,
+          error: 'conversation_not_open',
+          message: 'Toma la conversación antes de adjuntar un archivo: aún no es tuya.',
+        });
+      }
       return json(res, 404, { ok: false, error: 'not_found' });
     }
     const telefono = contexto.customer.phone_e164;
     if (!telefono) return json(res, 422, { ok: false, error: 'missing_phone', message: 'Ese cliente no tiene teléfono.' });
+
+    /*
+     * VENTANA DE SERVICIO AL CLIENTE (24 h).
+     *
+     * Una foto, un PDF o una nota de voz son mensajes LIBRES: Meta solo los
+     * acepta dentro de las 24 h siguientes al último mensaje del cliente. El
+     * texto ya lo comprobaba (`409 outside_window`); el medio **no**, así que se
+     * guardaba y se pintaba como enviado algo que en producción habría sido
+     * rechazado por Meta.
+     *
+     * Se comprueba ANTES de leer los bytes: si no se puede enviar, no se sube
+     * nada (ni archivo huérfano ni mensaje). Fuera de la ventana queda la vía
+     * aprobada: una plantilla.
+     */
+    if (typeof deps.canSendFreeForm === 'function' && !(await deps.canSendFreeForm(contexto.conversation))) {
+      return json(res, 409, {
+        ok: false,
+        error: 'outside_window',
+        canUseTemplate: true,
+        message:
+          'El cliente no ha escrito en las últimas 24 h: WhatsApp solo permite enviar una plantilla aprobada. No se ha enviado el archivo.',
+      });
+    }
 
     let buffer;
     try {

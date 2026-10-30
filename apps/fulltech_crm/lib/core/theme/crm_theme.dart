@@ -192,7 +192,7 @@ class CrmTheme {
     final scheme = ColorScheme(
       brightness: brightness,
       primary: p.primary,
-      onPrimary: isDark ? const Color(0xFF0B1424) : Colors.white,
+      onPrimary: isDark ? CrmColors.onPrimaryDark : Colors.white,
       primaryContainer: p.primarySoft,
       onPrimaryContainer: p.primaryDark,
       secondary: p.whatsapp,

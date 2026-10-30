@@ -159,6 +159,13 @@ async function inbound(app, id, node, from = PHONE_A) {
           {
             field: 'messages',
             value: {
+              /*
+               * Meta SIEMPRE manda `metadata.phone_number_id`: es el número para el
+               * que era el evento. El servidor lo usa como control de aislamiento
+               * (fail-closed) desde la fase de endurecimiento del webhook; sin él,
+               * el evento se descarta y la prueba no mediría nada del producto.
+               */
+              metadata: { phone_number_id: 'PN-UBICACION', display_phone_number: '18095550999' },
               contacts: [{ profile: { name: `Cliente ${from.slice(-4)}` }, wa_id: from }],
               messages: [{ from, id, timestamp: String(Math.floor(Date.now() / 1000)), ...node }],
             },

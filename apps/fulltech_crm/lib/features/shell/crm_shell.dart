@@ -368,7 +368,7 @@ class _CrmShellState extends State<CrmShell> {
                 bottom: 0,
                 child: GestureDetector(
                   onTap: () => setState(() => _menuOpen = false),
-                  child: Container(color: const Color(0x66000000)),
+                  child: Container(color: CrmColors.scrim),
                 ),
               ),
               Positioned(

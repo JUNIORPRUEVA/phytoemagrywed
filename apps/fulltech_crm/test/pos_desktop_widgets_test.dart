@@ -105,6 +105,7 @@ void main() {
       List<PosLine>? lines,
       void Function(PosLine, int)? onQuantity,
       ValueChanged<PosLine>? onRemove,
+      ValueChanged<PosLine>? onLineDiscount,
       VoidCallback? onCheckout,
     }) {
       return PosCartPanel(
@@ -117,6 +118,7 @@ void main() {
         saving: false,
         onQuantity: onQuantity ?? (_, _) {},
         onRemove: onRemove ?? (_) {},
+        onLineDiscount: onLineDiscount ?? (_) {},
         onPickCustomer: () {},
         onClear: () {},
         onModeChanged: (_) {},

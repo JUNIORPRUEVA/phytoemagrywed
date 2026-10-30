@@ -109,6 +109,8 @@ async function inbound(id, node) {
           {
             field: 'messages',
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige (fail-closed).
+              metadata: { phone_number_id: 'PN-UAT-LOC', display_phone_number: '18095550000' },
               contacts: [{ profile: { name: 'Ana Ubicación' }, wa_id: PHONE }],
               messages: [{ from: PHONE, id, timestamp: String(timestamp), ...node }],
             },

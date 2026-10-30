@@ -260,6 +260,8 @@ async function inbound(phone, name, id, node) {
           {
             field: 'messages',
             value: {
+              // Meta SIEMPRE manda el número de destino; el servidor lo exige (fail-closed).
+              metadata: { phone_number_id: 'PN-UAT-MAP', display_phone_number: '18095550000' },
               contacts: [{ profile: { name }, wa_id: phone }],
               messages: [{ from: phone, id, timestamp: String(Math.floor(Date.now() / 1000) + inboundSeq), ...node }],
             },

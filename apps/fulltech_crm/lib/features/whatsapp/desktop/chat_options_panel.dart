@@ -17,12 +17,14 @@ class ChatOptionsPanel extends StatelessWidget {
     required this.onClose,
     required this.onProofread,
     required this.onReplySuggestion,
+    required this.onAssistant,
     required this.onNewOrder,
     required this.onTemplate,
     required this.onShareData,
     required this.onAssign,
     required this.onResolveToggle,
     required this.onRefresh,
+    this.onReconcile,
     required this.isResolved,
     required this.onUseSuggestion,
     required this.onDiscardSuggestion,
@@ -41,6 +43,9 @@ class ChatOptionsPanel extends StatelessWidget {
   /// Pide a la IA una respuesta sugerida para el hilo.
   final VoidCallback onReplySuggestion;
 
+  /// Abre el asistente contextual (misma ruta que el Centro IA del panel web).
+  final VoidCallback onAssistant;
+
   /// Abre Facturación para crear el pedido de este cliente.
   final VoidCallback onNewOrder;
   final VoidCallback onTemplate;
@@ -48,6 +53,9 @@ class ChatOptionsPanel extends StatelessWidget {
   final VoidCallback onAssign;
   final VoidCallback onResolveToggle;
   final VoidCallback onRefresh;
+
+  /// Conciliación de un envío de archivo cuyo resultado quedó en duda.
+  final VoidCallback? onReconcile;
   final bool isResolved;
 
   final VoidCallback onUseSuggestion;
@@ -124,6 +132,14 @@ class ChatOptionsPanel extends StatelessWidget {
                   accent: true,
                   onTap: onReplySuggestion,
                 ),
+                _action(
+                  context,
+                  icon: Icons.psychology_alt_outlined,
+                  label: 'Asistente contextual',
+                  hint: 'Analiza el chat, el expediente y prepara la siguiente acción',
+                  accent: true,
+                  onTap: onAssistant,
+                ),
                 if (aiBusy)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
@@ -190,6 +206,14 @@ class ChatOptionsPanel extends StatelessWidget {
                   label: 'Recargar mensajes',
                   onTap: onRefresh,
                 ),
+                if (onReconcile != null)
+                  _action(
+                    context,
+                    icon: Icons.fact_check_outlined,
+                    label: 'Conciliar envío de archivo',
+                    hint: 'Solo si el resultado quedó en duda',
+                    onTap: onReconcile!,
+                  ),
               ],
             ),
           ),

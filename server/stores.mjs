@@ -445,9 +445,41 @@ function normalize(item) {
   };
 }
 
+/** Condiciones SQL del listado de pedidos (idénticas en SQLite y Postgres).
+ *  `columnas` permite cambiar el nombre de las columnas, no la lógica. */
+function ordersWhere({ status = null, from = null, to = null, q = null, cursorAt = null, cursorId = null }) {
+  const where = ["type = 'order_intent'"];
+  const values = [];
+  if (status) {
+    where.push('status = ?');
+    values.push(status);
+  }
+  // `received_at` se guarda en ISO-8601 UTC: comparar como texto es exacto.
+  if (from) {
+    where.push('received_at >= ?');
+    values.push(`${from}T00:00:00.000Z`);
+  }
+  if (to) {
+    where.push('received_at <= ?');
+    values.push(`${to}T23:59:59.999Z`);
+  }
+  if (q) {
+    const like = `%${String(q).toLowerCase()}%`;
+    where.push(
+      "(lower(coalesce(name,'')) LIKE ? OR lower(coalesce(phone,'')) LIKE ? OR lower(coalesce(location,'')) LIKE ?" +
+        " OR lower(coalesce(variant_name,'')) LIKE ? OR lower(coalesce(order_number,'')) LIKE ?)",
+    );
+    values.push(like, like, like, like, like);
+  }
+  if (cursorAt && cursorId) {
+    where.push('(received_at < ? OR (received_at = ? AND id < ?))');
+    values.push(cursorAt, cursorAt, cursorId);
+  }
+  return { where, values };
+}
+
 /** Filtro común del panel (se aplica en memoria y en SQL). */
-function matches(item, { type = null, status = null, view = null, q = null }) {
-  if (type && item.type !== type) return false;
+function matches(item, { type = null, status = null, view = null, q = null }) {  if (type && item.type !== type) return false;
   if (status && item.status !== status) return false;
   if (view === 'nuevos' && item.status !== 'nuevo') return false;
   if (view === 'pedidos' && item.type !== 'order_intent') return false;
@@ -631,6 +663,21 @@ async function createSqliteStore(file) {
         .map(normalize)
         .filter((item) => matches(item, filters));
     },
+    /**
+     * Página de PEDIDOS con cursor estable `(received_at, id)`.
+     * Devuelve `limit + 1` filas: la extra solo sirve para saber si hay más.
+     */
+    ordersPage({ limit, cursorAt = null, cursorId = null, status = null, from = null, to = null, q = null }) {
+      const { where, values } = ordersWhere({ status, from, to, q, cursorAt, cursorId });
+      const sql = `SELECT * FROM items WHERE ${where.join(' AND ')} ORDER BY received_at DESC, id DESC LIMIT ?`;
+      return db.prepare(sql).all(...values, limit + 1).map(normalize);
+    },
+    /** Total AUTORITATIVO del conjunto filtrado (no del tamaño de la página). */
+    countOrders({ status = null, from = null, to = null, q = null } = {}) {
+      const { where, values } = ordersWhere({ status, from, to, q });
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM items WHERE ${where.join(' AND ')}`).get(...values);
+      return Number(row?.n ?? 0);
+    },
     /** Un pedido por su `id`, sin recorrer la lista: lo usa el tiempo real. */
     getAdmin(id) {
       const row = byId.get(String(id ?? ''));
@@ -762,6 +809,39 @@ function createJsonlStore(file) {
         .slice(-limit)
         .reverse()
         .filter((item) => matches(item, filters));
+    },
+    /** Página de pedidos en el almacén JSONL (solo desarrollo): mismo orden que
+     *  SQLite y Postgres para que las pruebas de contrato sirvan en los tres. */
+    ordersPage({ limit, cursorAt = null, cursorId = null, status = null, from = null, to = null, q = null }) {
+      const needle = q ? String(q).toLowerCase() : null;
+      const rows = readRows(file)
+        .map(normalize)
+        .filter((item) => item.type === 'order_intent')
+        .filter((item) => (status ? item.status === status : true))
+        .filter((item) => (from ? String(item.received_at) >= `${from}T00:00:00.000Z` : true))
+        .filter((item) => (to ? String(item.received_at) <= `${to}T23:59:59.999Z` : true))
+        .filter((item) =>
+          needle
+            ? [item.name, item.phone, item.location, item.variant_name, item.order_number]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase()
+                .includes(needle)
+            : true,
+        )
+        .filter((item) =>
+          cursorAt && cursorId
+            ? String(item.received_at) < cursorAt ||
+              (String(item.received_at) === cursorAt && String(item.id) < cursorId)
+            : true,
+        )
+        .sort((a, b) =>
+          String(b.received_at).localeCompare(String(a.received_at)) || String(b.id).localeCompare(String(a.id)),
+        );
+      return rows.slice(0, limit + 1);
+    },
+    countOrders({ status = null, from = null, to = null, q = null } = {}) {
+      return this.ordersPage({ limit: Number.MAX_SAFE_INTEGER, status, from, to, q }).length;
     },
     /** Un pedido por su `id` (sin conexión / JSONL: búsqueda directa). */
     getAdmin(id) {
@@ -1048,6 +1128,29 @@ async function createPostgresStore(url) {
         values,
       );
       return result.rows.map(normalize).filter((item) => matches(item, { type, status, view, q })).slice(0, limit);
+    },
+    /**
+     * Página de PEDIDOS con cursor estable `(received_at, id)`.
+     * Reutiliza `ordersWhere` (mismas condiciones que SQLite) y adapta los
+     * marcadores `?` a `$n`, para que la semántica sea idéntica en los dos.
+     */
+    async ordersPage({ limit, cursorAt = null, cursorId = null, status = null, from = null, to = null, q = null }) {
+      const { where, values } = ordersWhere({ status, from, to, q, cursorAt, cursorId });
+      let index = 0;
+      const sqlWhere = where.map((chunk) => chunk.replace(/\?/g, () => `$${(index += 1)}`)).join(' AND ');
+      const result = await pool.query(
+        `SELECT ${SELECT_ADMIN} FROM ${TABLE} WHERE ${sqlWhere} ORDER BY received_at DESC, id DESC LIMIT $${index + 1}`,
+        [...values, limit + 1],
+      );
+      return result.rows.map(normalize);
+    },
+    /** Total AUTORITATIVO del conjunto filtrado (no del tamaño de la página). */
+    async countOrders({ status = null, from = null, to = null, q = null } = {}) {
+      const { where, values } = ordersWhere({ status, from, to, q });
+      let index = 0;
+      const sqlWhere = where.map((chunk) => chunk.replace(/\?/g, () => `$${(index += 1)}`)).join(' AND ');
+      const result = await pool.query(`SELECT COUNT(*)::int AS n FROM ${TABLE} WHERE ${sqlWhere}`, values);
+      return Number(result.rows[0]?.n ?? 0);
     },
     /** Un pedido por su `id`: una consulta indexada, no la lista entera. */
     async getAdmin(id) {

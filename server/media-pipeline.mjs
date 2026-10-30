@@ -564,31 +564,86 @@ export function createMediaPipeline(deps) {
       : await mediaStore.byIdempotencyKey(input.idempotencyKey);
     if (!row) return { ok: false, error: { code: 'not_found', message: 'Esa operación no existe.' } };
 
+    /*
+     * SOLO SE CONCILIA LO QUE ESTÁ EN DUDA.
+     *
+     * Antes esta función aceptaba cualquier operación: se podía marcar como
+     * ENVIADO un archivo que nunca llegó a ser ambiguo (o que ya estaba
+     * enviado), lo que corrompe la verdad del negocio. Los únicos estados
+     * ambiguos son `SENDING` (se cayó durante el envío) y `SEND_UNKNOWN` (Meta no
+     * confirmó). Todo lo demás se rechaza y NO se toca nada.
+     */
+    if (String(row.direction ?? '') === 'inbound') {
+      return {
+        ok: false,
+        error: { code: 'not_reconcilable', message: 'Ese archivo es entrante: no hay envío que conciliar.' },
+      };
+    }
+    const estado = String(row.send_status ?? '');
+    const ambiguo = estado === SEND_STATUS.SENDING || estado === SEND_STATUS.SEND_UNKNOWN;
+
     if (input.outcome === 'sent') {
-      if (!input.waMessageId) {
+      const wamid = String(input.waMessageId ?? '').trim();
+      // Repetir EXACTAMENTE la misma conciliación es idempotente (doble clic).
+      if (!ambiguo && estado === SEND_STATUS.SENT && wamid && String(row.wa_message_id ?? '') === wamid) {
+        return { ok: true, already: true, media: row, waMessageId: wamid, mediaType: row.media_type };
+      }
+      if (!ambiguo) {
+        return {
+          ok: false,
+          error: {
+            code: 'not_ambiguous',
+            message: 'Esa operación no está en duda (estado actual: ' + (estado || 'sin estado') + ').',
+          },
+        };
+      }
+      if (!wamid) {
         return { ok: false, error: { code: 'missing_wamid', message: 'Para marcarlo como enviado hace falta el identificador del mensaje.' } };
+      }
+      /*
+       * FORMATO DEL IDENTIFICADOR DE META.
+       *
+       * El wamid lo genera Meta (`wamid.` + base64). Aceptar cualquier texto
+       * permitiría «marcar como enviado» escribiendo algo inventado; esto no es
+       * una prueba de entrega, pero al menos impide que se guarde basura como si
+       * fuera la referencia del proveedor.
+       */
+      if (!/^wamid\.[A-Za-z0-9+/=_-]{3,200}$/.test(wamid)) {
+        return {
+          ok: false,
+          error: { code: 'invalid_wamid', message: 'Ese identificador no tiene el formato de WhatsApp (wamid.…).' },
+        };
       }
       const actualizado = await mediaStore.update(row.id, {
         sendStatus: SEND_STATUS.SENT,
-        waMessageId: input.waMessageId,
+        waMessageId: wamid,
         sentAt: now().toISOString(),
         errorAt: null,
         safeCode: null,
         errorCode: null,
       });
-      log(`[media] operación ${row.id} reconciliada como ENVIADA`);
-      return { ok: true, media: actualizado.media, waMessageId: input.waMessageId, mediaType: row.media_type };
+      log(`[media] operación ${row.id} reconciliada como ENVIADA (desde ${estado})`);
+      return { ok: true, media: actualizado.media, waMessageId: wamid, mediaType: row.media_type, from: estado };
     }
 
     if (input.outcome === 'not_sent') {
+      if (!ambiguo) {
+        return {
+          ok: false,
+          error: {
+            code: 'not_ambiguous',
+            message: 'Esa operación no está en duda (estado actual: ' + (estado || 'sin estado') + ').',
+          },
+        };
+      }
       const actualizado = await mediaStore.update(row.id, {
         sendStatus: SEND_STATUS.READY_TO_SEND,
         errorAt: null,
         safeCode: null,
         errorCode: null,
       });
-      log(`[media] operación ${row.id} reconciliada como NO ENVIADA (reintentable con la misma clave)`);
-      return { ok: true, media: actualizado.media, retryable: true, mediaType: row.media_type };
+      log(`[media] operación ${row.id} reconciliada como NO ENVIADA (desde ${estado}); reintentable con la misma clave`);
+      return { ok: true, media: actualizado.media, retryable: true, mediaType: row.media_type, from: estado };
     }
 
     return { ok: false, error: { code: 'invalid_outcome', message: 'Hay que decir si el mensaje salió o no.' } };

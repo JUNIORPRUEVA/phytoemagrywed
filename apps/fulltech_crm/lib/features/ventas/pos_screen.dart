@@ -12,6 +12,9 @@ import '../../data/models/crm_models.dart';
 import '../common/crm_ui.dart';
 import '../common/pwa_icon.dart';
 import '../pos_desktop/pos_cart_panel.dart';
+import '../pos_desktop/pos_line_editors.dart';
+import '../pos_desktop/pos_order_message_dialog.dart';
+import '../pos_desktop/pos_tickets_panel.dart';
 import '../pos_desktop/pos_category_rail.dart';
 import '../pos_desktop/pos_product_grid.dart';
 import '../pos_desktop/pos_tokens.dart';
@@ -24,7 +27,7 @@ import '../pos_desktop/pos_tokens.dart';
 /// · `x-fulltech-operation` con la misma clave: el servidor deduplica.
 /// · Sin respuesta → estado INCIERTO: nunca se reenvía solo; primero se consulta.
 class PosScreen extends StatefulWidget {
-  const PosScreen({super.key, this.embedded = false, this.desktop = false});
+  const PosScreen({super.key, this.embedded = false, this.desktop = false, this.initialQuote});
 
   /// Dentro del panel de escritorio (ya hay barra superior con el título).
   final bool embedded;
@@ -32,6 +35,12 @@ class PosScreen extends StatefulWidget {
   /// Presentación de escritorio al estilo FullPOS: rejilla + panel de venta.
   /// La lógica (cobro, idempotencia, precios) es exactamente la misma.
   final bool desktop;
+
+  /// Cotización que se va a cobrar (`GET /api/admin/pos/quotes` → fila).
+  ///
+  /// Al cobrar se manda `quoteId`: el servidor marca el documento como
+  /// `converted` y rechaza el doble cobro aunque lleguen dos cajas a la vez.
+  final Map<String, dynamic>? initialQuote;
 
   @override
   State<PosScreen> createState() => _PosScreenState();
@@ -42,6 +51,8 @@ class _PosScreenState extends State<PosScreen> {
   final _productSearch = TextEditingController();
   final _address = TextEditingController();
   final _notes = TextEditingController();
+  final _reference = TextEditingController();
+  DateTime? _scheduledAt;
   final PosOperation _operation = PosOperation();
 
   Customer? _customer;
@@ -51,6 +62,20 @@ class _PosScreenState extends State<PosScreen> {
   String _deliveryMethod = 'delivery';
   bool _paid = false;
   double _deliveryFee = 0;
+  /// Descuento general del ticket: `none` | `percent` | `amount`.
+  String _discountType = 'none';
+  double _discountValue = 0;
+  /// Pedidos ABIERTOS del cliente elegido (`GET /api/admin/pos/context/:id`).
+  /// Se muestran como aviso: el que impide el doble cobro sigue siendo el
+  /// servidor, que responde `open_orders` y exige confirmación explícita.
+  List<Map<String, dynamic>> _openOrders = const [];
+  bool _loadingContext = false;
+  String? _contextError;
+  /// Ticket aparcado del que sale esta venta (vacío = venta nueva).
+  String _ticketId = '';
+  int _ticketVersion = 0;
+  /// Cotización de origen (vacío = venta nueva).
+  String _quoteId = '';
   bool _saving = false;
   List<Map<String, dynamic>> _catalogRows = const [];
   PosRailFilter _railFilter = const PosRailFilter();
@@ -58,7 +83,56 @@ class _PosScreenState extends State<PosScreen> {
   @override
   void initState() {
     super.initState();
+    _seedFromQuote();
     _loadCatalog();
+  }
+
+  /// Carga la cotización recibida: cliente, líneas, descuento y su id.
+  /// Los precios se toman del documento (son los que el cliente aceptó) y el
+  /// servidor volverá a calcularlos al cobrar; si cambiaron, responde 409.
+  void _seedFromQuote() {
+    final quote = widget.initialQuote;
+    if (quote == null) return;
+    _quoteId = str(quote['id']);
+    final customerRow = mapv(quote['customer']);
+    final customerId = str(customerRow['id'], str(mapv(quote['input'])['customerId']));
+    if (customerId.isNotEmpty) {
+      _customer = Customer(
+        id: customerId,
+        name: str(customerRow['name'], 'Cliente'),
+        phone: str(customerRow['phone_e164']),
+        email: '',
+        stage: '',
+        tags: const [],
+        city: '',
+        createdAt: '',
+        orders: 0,
+        totalSpent: 0,
+        notes: '',
+        delivered: 0,
+      );
+    }
+    for (final item in listv(mapv(quote['sale'])['items'])) {
+      _lines.add(
+        PosLine(
+          variantId: str(item['variantId']),
+          productName: str(item['name'], 'Producto'),
+          presentationName: str(item['name'], ''),
+          unitPriceCents: numv(item['unit_price_cents'], 0).toInt(),
+          quantity: numv(item['quantity'], 1).toInt(),
+        ),
+      );
+    }
+    final discount = mapv(mapv(quote['input'])['discount']);
+    if (discount['type'] == 'percent' || discount['type'] == 'amount') {
+      _discountType = str(discount['type']);
+      _discountValue = numv(discount['value'], 0).toDouble();
+    }
+    _address.text = str(mapv(quote['input'])['address']);
+    _notes.text = str(mapv(quote['input'])['notes']);
+    // Una cotización se cobra como factura por defecto (mismo criterio del PWA).
+    _mode = 'invoice';
+    _paid = false;
   }
 
   @override
@@ -67,6 +141,7 @@ class _PosScreenState extends State<PosScreen> {
     _productSearch.dispose();
     _address.dispose();
     _notes.dispose();
+    _reference.dispose();
     super.dispose();
   }
 
@@ -80,6 +155,13 @@ class _PosScreenState extends State<PosScreen> {
     deliveryMethod: _deliveryMethod,
     paymentMethod: _method,
     paid: _paid,
+    discountType: _discountType,
+    discountValue: _discountValue,
+    ticketId: _ticketId,
+    ticketVersion: _ticketVersion,
+    quoteId: _quoteId,
+    scheduledAt: _scheduledAt?.toIso8601String() ?? '',
+    deliveryReference: _reference.text.trim(),
   );
 
   // --------------------------------------------------------------- escritorio
@@ -204,7 +286,35 @@ class _PosScreenState extends State<PosScreen> {
         );
       },
     );
-    if (selected != null && mounted) setState(() => _customer = selected);
+    if (selected != null && mounted) {
+      setState(() => _customer = selected);
+      await _loadOpenOrders(selected.id);
+    }
+  }
+
+  /// Contexto del cliente: pedidos abiertos. Si falla, se dice y NO se bloquea
+  /// la venta: el servidor sigue siendo quien autoriza.
+  Future<void> _loadOpenOrders(String customerId) async {
+    final repo = CrmScope.of(context, listen: false).repository;
+    setState(() {
+      _loadingContext = true;
+      _contextError = null;
+      _openOrders = const [];
+    });
+    try {
+      final data = await repo.posContext(customerId);
+      if (!mounted || _customer?.id != customerId) return;
+      setState(() {
+        _openOrders = listv(data['openOrders']);
+        _loadingContext = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted || _customer?.id != customerId) return;
+      setState(() {
+        _contextError = error.message;
+        _loadingContext = false;
+      });
+    }
   }
 
   Widget _buildDesktop(BuildContext context) {
@@ -262,19 +372,37 @@ class _PosScreenState extends State<PosScreen> {
               paid: _paid,
               deliveryFee: _deliveryFee,
               saving: _saving,
+              discountType: _discountType,
+              discountValue: _discountValue,
+              onDiscountChanged: (type, value) => setState(() {
+                _discountType = type;
+                _discountValue = value;
+              }),
               onQuantity: _changeQuantity,
               onRemove: _removeLine,
+              onLineDiscount: _editLineDiscount,
               onPickCustomer: _pickCustomer,
+              openOrders: _openOrders,
+              loadingContext: _loadingContext,
+              contextError: _contextError,
+              onReloadContext: () {
+                final customer = _customer;
+                if (customer != null) _loadOpenOrders(customer.id);
+              },
               onClear: () => setState(_lines.clear),
               onModeChanged: (value) => setState(() => _mode = value),
               onMethodChanged: (value) => setState(() => _method = value),
               onPaidChanged: (value) => setState(() => _paid = value),
               onDeliveryFeeChanged: (value) => setState(() => _deliveryFee = value),
               onCheckout: _submit,
+              onAskCustomerData: _askCustomerData,
               deliveryMethod: _deliveryMethod,
               onDeliveryMethodChanged: (value) => setState(() => _deliveryMethod = value),
               addressController: _address,
               notesController: _notes,
+              referenceController: _reference,
+              scheduledAt: _scheduledAt,
+              onScheduleChanged: (value) => setState(() => _scheduledAt = value),
               onAddressChanged: () => setState(() {}),
             ),
           ),
@@ -283,6 +411,85 @@ class _PosScreenState extends State<PosScreen> {
         );
       },
     );
+  }
+
+  /// Guarda el descuento de una línea. La fórmula no vive aquí: la aplica el
+  /// servidor al cobrar; esto solo actualiza el borrador y la previsualización.
+  Future<void> _editLineDiscount(PosLine line) async {
+    final updated = await showLineDiscountDialog(context, line: line);
+    if (updated == null || !mounted) return;
+    final index = _lines.indexWhere((row) => row.variantId == line.variantId);
+    if (index < 0) return;
+    setState(() => _lines[index] = updated);
+    // Cambiar una línea es otra operación: que el próximo cobro use clave nueva.
+    _operation.reset();
+  }
+
+  /// Venta fuera de inventario: crea una línea `manual_*` sin tocar el catálogo
+  /// ni el stock (el servidor la registra con `track_stock: false`).
+  Future<void> _addManualSale() async {
+    final line = await showManualSaleDialog(context);
+    if (line == null || !mounted) return;
+    setState(() => _lines.add(line));
+    _operation.reset();
+  }
+
+  /// Guarda el borrador como ticket aparcado. NO cobra: no toca stock ni caja.
+  ///
+  /// El servidor exige `requestId` estable y, al actualizar uno existente,
+  /// `version` para detectar que otra caja lo cambió (`409 ticket_conflict`).
+  /// Se conserva la clave de operación del borrador para no crear dos tickets
+  /// si el operador pulsa dos veces.
+  Future<void> _parkTicket() async {
+    if (_lines.isEmpty) {
+      crmToast(context, 'Agrega al menos un artículo antes de aparcar el ticket.');
+      return;
+    }
+    final repo = CrmScope.of(context, listen: false).repository;
+    final draft = _draft;
+    final requestId = _operation.requestIdFor(draft);
+    setState(() => _saving = true);
+    try {
+      final result = await repo.parkTicket(
+        draft: draft.toCheckoutBody(requestId: requestId),
+        requestId: requestId,
+        ticketId: _ticketId.isEmpty ? null : _ticketId,
+        version: _ticketId.isEmpty ? null : _ticketVersion,
+        name: _customer == null ? null : 'Ticket de ${_customer!.name}',
+        operationKey: requestId,
+      );
+      final ticket = mapv(result['ticket']);
+      if (!mounted) return;
+      setState(() {
+        _ticketId = str(ticket['id'], _ticketId);
+        _ticketVersion = numv(ticket['version'], _ticketVersion).toInt();
+        _saving = false;
+      });
+      crmToast(context, 'Ticket guardado. No se ha cobrado nada.');
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      await crmConfirm(context, title: 'No se pudo aparcar', message: error.message, confirmLabel: 'Entendido');
+    }
+  }
+
+  /// Reanuda o descarta un ticket guardado.
+  Future<void> _openTickets() async {
+    final repo = CrmScope.of(context, listen: false).repository;
+    final ticket = await showTicketsDialog(context, repository: repo);
+    if (ticket == null || !mounted) return;
+    final resumed = resumeTicket(ticket, _catalogRows);
+    setState(() {
+      _customer = resumed.customer;
+      _lines
+        ..clear()
+        ..addAll(resumed.lines);
+      _ticketId = ticket.id;
+      _ticketVersion = ticket.version;
+    });
+    _operation.reset();
+    if (resumed.customer != null) await _loadOpenOrders(resumed.customer!.id);
+    if (resumed.problem != null && mounted) crmToast(context, resumed.problem!);
   }
 
   Widget _desktopActionBar(BuildContext context) {
@@ -328,13 +535,31 @@ class _PosScreenState extends State<PosScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          _actionButton(context, PwaIcons.plus, 'Agregar artículo', _pickProduct),
-          const SizedBox(width: 6),
-          _actionButton(context, PwaIcons.usersadd, 'Agregar cliente', _pickCustomer),
-          const SizedBox(width: 6),
-          _filterButton(context),
-          const SizedBox(width: 6),
-          _actionButton(context, PwaIcons.refresh, 'Recargar catálogo', _loadCatalog),
+          // En ventanas estrechas los accesos no caben: se desplazan en
+          // horizontal en vez de desbordar la fila (el reparto sigue intacto
+          // cuando hay ancho de sobra).
+          Flexible(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _actionButton(context, PwaIcons.plus, 'Agregar artículo', _pickProduct),
+                  const SizedBox(width: 6),
+                  _actionButton(context, PwaIcons.usersadd, 'Agregar cliente', _pickCustomer),
+                  const SizedBox(width: 6),
+                  _actionButton(context, PwaIcons.plus, 'Venta fuera de inventario', _addManualSale),
+                  const SizedBox(width: 6),
+                  _actionButton(context, PwaIcons.tickets, 'Tickets guardados', _openTickets),
+                  const SizedBox(width: 6),
+                  _actionButton(context, PwaIcons.tickets, 'Aparcar ticket', _parkTicket),
+                  const SizedBox(width: 6),
+                  _filterButton(context),
+                  const SizedBox(width: 6),
+                  _actionButton(context, PwaIcons.refresh, 'Recargar catálogo', _loadCatalog),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -480,44 +705,17 @@ class _PosScreenState extends State<PosScreen> {
 
   Future<void> _newCustomer() async {
     final repo = CrmScope.of(context, listen: false).repository;
-    final phone = TextEditingController();
-    final name = TextEditingController();
-    final confirmed = await showDialog<bool>(
+    // Los controladores viven DENTRO del diálogo: si se crean aquí y se liberan
+    // al volver de `showDialog`, el TextField todavía está animando la salida y
+    // Flutter lanza «ChangeNotifier used after being disposed», que rompe el
+    // overlay y acaba en claves globales duplicadas.
+    final datos = await showDialog<({String phone, String name})>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cliente nuevo'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: phone,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(labelText: 'Teléfono'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: name,
-              decoration: const InputDecoration(labelText: 'Nombre (opcional)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Crear'),
-          ),
-        ],
-      ),
+      builder: (context) => const _NewCustomerDialog(),
     );
-    final phoneText = phone.text.trim();
-    final nameText = name.text.trim();
-    phone.dispose();
-    name.dispose();
-    if (confirmed != true) return;
+    if (datos == null) return;
+    final phoneText = datos.phone;
+    final nameText = datos.name;
     if (phoneText.isEmpty) {
       if (mounted) crmToast(context, 'Escribe el teléfono del cliente.');
       return;
@@ -539,6 +737,33 @@ class _PosScreenState extends State<PosScreen> {
     } on ApiException catch (error) {
       if (mounted) crmToast(context, error.message);
     }
+  }
+
+  /// «Pedir datos al cliente» con IA: prepara el mensaje que pide lo que falta.
+  ///
+  /// Solo redacta: NO toca el pedido y NO envía nada. El envío se confirma
+  /// dentro del diálogo, con el mismo transporte del chat y una sola clave de
+  /// operación (dos toques no crean dos mensajes).
+  Future<void> _askCustomerData() async {
+    final cliente = _customer;
+    if (cliente == null) {
+      crmToast(context, 'Elige un cliente antes de pedirle datos.');
+      return;
+    }
+    final faltan = <String>[];
+    if (cliente.phone.trim().isEmpty) faltan.add('el teléfono');
+    if (_lines.isEmpty) faltan.add('los artículos del pedido');
+    if (_deliveryMethod == 'delivery' && _address.text.trim().isEmpty) faltan.add('la ubicación de entrega');
+    await showDialog<void>(
+      context: context,
+      builder: (_) => PosOrderMessageDialog(
+        customerName: cliente.name,
+        customerPhone: cliente.phone,
+        customerId: cliente.id,
+        missing: faltan,
+        totalCents: _draft.expectedTotalCents,
+      ),
+    );
   }
 
   Future<void> _submit() async {
@@ -595,7 +820,15 @@ class _PosScreenState extends State<PosScreen> {
       _lines.clear();
       _notes.clear();
       _address.clear();
+      _reference.clear();
+      _scheduledAt = null;
       _paid = false;
+      // El ticket quedó cerrado por el servidor (`completed`): si se sigue
+      // usando el mismo id, el próximo cobro daría 409 ticket_conflict.
+      _ticketId = '';
+      _ticketVersion = 0;
+      _quoteId = '';
+      _openOrders = const [];
     });
     if (!mounted) return;
     await showDialog<void>(
@@ -641,6 +874,11 @@ class _PosScreenState extends State<PosScreen> {
       ),
     );
     scope.refresh(quiet: true);
+    // Abierto para cobrar una cotización concreta: se devuelve a la lista para
+    // que se refresque el estado del documento (`converted`).
+    if (widget.initialQuote != null && mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop(true);
+    }
   }
 
   Future<void> _onError(
@@ -785,14 +1023,9 @@ class _PosScreenState extends State<PosScreen> {
     setState(() {
       for (var index = 0; index < _lines.length; index++) {
         final unit = prices[_lines[index].variantId];
+        // Las líneas manuales no están en el catálogo: se dejan como están.
         if (unit != null && unit != _lines[index].unitPriceCents) {
-          _lines[index] = PosLine(
-            variantId: _lines[index].variantId,
-            productName: _lines[index].productName,
-            presentationName: _lines[index].presentationName,
-            unitPriceCents: unit,
-            quantity: _lines[index].quantity,
-          );
+          _lines[index] = _lines[index].copyWith(unitPriceCents: unit);
         }
       }
     });
@@ -1213,6 +1446,61 @@ class PosLaunchButton extends StatelessWidget {
         context,
       ).push(MaterialPageRoute(builder: (_) => const PosScreen())),
       icon: const Icon(Icons.point_of_sale_rounded),
+    );
+  }
+}
+
+/// Diálogo de cliente nuevo. Es un widget con estado porque los controladores
+/// de texto deben liberarse cuando la RUTA desaparece (después de su animación
+/// de salida), no en cuanto `showDialog` devuelve el resultado.
+class _NewCustomerDialog extends StatefulWidget {
+  const _NewCustomerDialog();
+
+  @override
+  State<_NewCustomerDialog> createState() => _NewCustomerDialogState();
+}
+
+class _NewCustomerDialogState extends State<_NewCustomerDialog> {
+  final _phone = TextEditingController();
+  final _name = TextEditingController();
+
+  @override
+  void dispose() {
+    _phone.dispose();
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Cliente nuevo'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _phone,
+            autofocus: true,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(labelText: 'Teléfono'),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: 'Nombre (opcional)'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            (phone: _phone.text.trim(), name: _name.text.trim()),
+          ),
+          child: const Text('Crear'),
+        ),
+      ],
     );
   }
 }

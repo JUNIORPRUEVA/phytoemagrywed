@@ -226,6 +226,23 @@ class ApiClient {
     } on ApiException {
       rethrow;
     } catch (_) {
+      /*
+       * Un GET se puede repetir sin riesgo y, tras un corte, el primer intento
+       * suele fallar por una conexión reutilizada que ya no existe (el servidor
+       * cerró el keep-alive al caerse). Reintentarlo una vez evita que la
+       * persona vea «no pudimos conectar» cuando la red ya volvió.
+       *
+       * Las escrituras (POST/PATCH/DELETE) NO se reintentan a ciegas: no
+       * sabemos si el servidor llegó a ejecutarlas y repetirlas podría duplicar.
+       */
+      if (method == 'GET') {
+        try {
+          final reintento = await _http.get(uri, headers: _headers()).timeout(_timeout);
+          return _decode(reintento);
+        } catch (_) {
+          // Se informa del fallo original más abajo.
+        }
+      }
       // Timeout, DNS o red caída: NO sabemos si el servidor llegó a ejecutar.
       throw ApiException(0, 'No pudimos conectar con el CRM. Revisa tu conexión.');
     }

@@ -105,6 +105,25 @@ clasificación de errores (timeout / `price_changed` / `open_orders`), cola
 persistente y sus estados, deduplicación por clave, almacén de sesión con
 migración, listados parciales, permisos y cabeceras del cliente.
 
+### Paridad de dinero con el servidor (JS ↔ Dart)
+
+Los casos de dinero están en `test/fixtures/pos_money_cases.json` y los ejecutan
+**los dos lados**: `test/pos_money_parity_test.dart` (Dart) y
+`node tool/verify-pos-money.mjs` (JavaScript, contra `public/admin/pos-math.js`,
+el módulo que usa el servidor). Si los dos no coinciden, el servidor responde
+`409 price_changed` y la venta no se cierra.
+
+```powershell
+flutter test test/pos_money_parity_test.dart
+node tool/verify-pos-money.mjs
+```
+
+### Sistema visual
+
+`test/design_system_test.dart` valida los tokens contra el panel PWA
+(`public/admin/admin.css`). La propiedad de las tres paletas (CRM, POS y chat)
+está documentada en `docs/paletas.md`.
+
 ## Sesión
 
 El servidor identifica la sesión del panel con la cookie `pe_crm` (HttpOnly).

@@ -28,6 +28,11 @@ class CrmColors {
   /// `--phyto-primary-tint`.
   static const Color primaryTint = Color(0xFFF1F6FF);
 
+  /// Texto/icono sobre el azul de marca cuando el tema es oscuro.
+  /// El blanco puro deslumbra sobre `primary` en oscuro; el panel usa este
+  /// azul noche. Es el mismo valor que `ColorScheme.onPrimary` del tema oscuro.
+  static const Color onPrimaryDark = Color(0xFF0B1424);
+
   /// Borde suave de la marca (`color-mix(primary 22%)` sobre claro).
   static const Color primaryBorder = Color(0x38145BD7);
 
@@ -107,6 +112,10 @@ class CrmColors {
   /// `--pe-info-bg` / `--pe-info`.
   static const Color infoBg = Color(0xFFEAF5FA);
   static const Color info = Color(0xFF0D4F6C);
+
+  /// Velo de las capas modales (cajón abierto, panel lateral del chat).
+  /// Negro al 40 %: se usa encima de un desenfoque, nunca solo.
+  static const Color scrim = Color(0x66000000);
 
   /// `--pe-whatsapp`.
   static const Color whatsapp = Color(0xFF0E7A3D);
@@ -236,6 +245,9 @@ class CrmShellMetrics {
   static const double drawerWidth = 318;
   static const double drawerHeadHeight = 72;
   static const double drawerItemHeight = 44;
+
+  /// Rail permanente de iconos del escritorio (columna estrecha a la izquierda).
+  static const double railWidth = 52;
 
   /// Rejilla de métricas de Hoy: 5 columnas a 1920, 14 px de separación.
   static const double statGridGap = 14;

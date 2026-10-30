@@ -26,6 +26,8 @@ class CustodiaScreen extends StatefulWidget {
 class _CustodiaScreenState extends State<CustodiaScreen> {
   int _tab = 0;
   bool _busy = false;
+  /// Una revisión a la vez: evita el doble envío desde dos toques rápidos.
+  bool _resolving = false;
 
   CrmRepository get _repo => CrmScope.of(context, listen: false).repository;
 
@@ -248,15 +250,22 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
                                       movement: movement,
                                       trailing: isAdmin
                                           ? TextButton(
-                                              onPressed: () async {
-                                                String? message;
-                                                try {
-                                                  message = await _resolve(movement);
-                                                } on ApiException catch (error) {
-                                                  message = error.message;
-                                                }
-                                                await _report(message, reload);
-                                              },
+                                              onPressed: _resolving
+                                                  ? null
+                                                  : () async {
+                                                      // Un solo envío a la vez: el servidor identifica la
+                                                      // revisión por movimiento y responde 409 si ya existe.
+                                                      setState(() => _resolving = true);
+                                                      String? message;
+                                                      try {
+                                                        message = await _resolve(movement);
+                                                      } on ApiException catch (error) {
+                                                        message = error.message;
+                                                      } finally {
+                                                        if (mounted) setState(() => _resolving = false);
+                                                      }
+                                                      await _report(message, reload);
+                                                    },
                                               child: const Text('Revisar'),
                                             )
                                           : null,
@@ -264,6 +273,8 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
                                 ],
                               ),
                       ),
+                      if (isAdmin)
+                        _ResolutionsCard(repository: state.repository),
                       if (isAdmin)
                         const CrmNotice(
                           message: 'La conciliación solo describe. Ninguna pantalla mueve dinero por su cuenta: '
@@ -503,6 +514,77 @@ class DeliverySessionTile extends StatelessWidget {
       ].join(' · '),
       leading: CrmAvatar(label: session.courierName, icon: Icons.my_location_rounded, tone: hasPosition ? p.success : p.inkSecondary),
       trailing: StatusPill(label: session.status, dense: true),
+    );
+  }
+}
+
+/// Resoluciones de caja registradas (`GET /api/admin/delivery-cash/resolutions`).
+///
+/// Solo lectura a propósito: el servidor las crea con `status: pending_authorization`
+/// y **no mueve dinero** al registrarlas. Aquí se muestran tal cual, sin recalcular
+/// importes ni inventar estados.
+class _ResolutionsCard extends StatelessWidget {
+  const _ResolutionsCard({required this.repository});
+
+  final CrmRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.crm;
+    return RemoteLoader<List<Map<String, dynamic>>>(
+      load: repository.cashResolutions,
+      loadingLabel: 'Cargando resoluciones',
+      builder: (context, rows, reload) => SectionCard(
+        title: 'Resoluciones registradas (${rows.length})',
+        trailing: IconButton(
+          tooltip: 'Recargar',
+          onPressed: reload,
+          icon: Icon(Icons.refresh_rounded, size: 18, color: p.inkSecondary),
+        ),
+        child: rows.isEmpty
+            ? Text('Todavía no hay revisiones registradas.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary))
+            : Column(
+                children: [
+                  if (rows.length > 40)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        'Mostrando las 40 más recientes de ${rows.length}. El servidor devuelve la lista completa; '
+                        'para el histórico anterior usa el panel web.',
+                        style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+                      ),
+                    ),
+                  for (final row in rows.take(40))
+                    CrmListTile(
+                      title: str(row['justification'], 'Sin justificación'),
+                      subtitle: [
+                        'Movimiento ${str(row['movement_id']).split(':').last}',
+                        if (str(row['courier_account_id']).isNotEmpty) 'Repartidor ${str(row['courier_account_id'])}',
+                        if (str(row['company_id']).isNotEmpty) 'Empresa ${str(row['company_id'])}',
+                        if (str(row['evidence_reference']).isNotEmpty) 'Evidencia: ${str(row['evidence_reference'])}',
+                        CrmFormat.ago(row['created_at']),
+                      ].join(' · '),
+                      leading: CrmAvatar(
+                        label: str(row['created_by_display_name'], 'ADM'),
+                        icon: Icons.fact_check_outlined,
+                        tone: p.inkSecondary,
+                      ),
+                      trailing: StatusPill(
+                        label: str(row['status'], 'pending_authorization'),
+                        dense: true,
+                        color: p.inkSecondary,
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Estado del servidor: la custodia sigue bloqueada hasta la autorización explícita en el panel.',
+                      style: TextStyle(fontSize: 11, color: p.inkSecondary),
+                    ),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }
